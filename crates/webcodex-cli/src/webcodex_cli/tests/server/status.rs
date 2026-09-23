@@ -79,7 +79,8 @@ fn server_status_reports_revision_mismatch() {
     assert!(detail.starts_with("warning:"));
     assert!(detail.contains("local CLI commit 81f322d5b580"));
     assert!(detail.contains("server runtime commit fd156ba92fc7"));
-    assert!(detail.contains("deploy/update one side before debugging old behavior"));
+    assert!(detail.contains("build identity is diagnostic"));
+    assert!(detail.contains("compatibility depends on protocol generation and capabilities"));
 }
 
 #[test]

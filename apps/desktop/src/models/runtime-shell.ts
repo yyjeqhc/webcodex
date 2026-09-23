@@ -31,7 +31,7 @@ export interface TraceSettings {
 export interface TraceUpdate { mode: TraceMode; expected_revision: string; confirm_full: boolean; restart: boolean; confirm_interrupt: boolean }
 export type DiagnosticResource = "app_data" | "server_configuration" | "trace_directory" | "runtime_directory" | "runtime_console" | "documentation" | "github" | "report_issue";
 export interface ContinuationSummary {
-  tool_name: string | null; execution: string; response_handoff: "not_confirmed" | "stream_started" | "handed_to_mcp_client";
+  tool_name: string | null; execution: string; response_handoff: "not_confirmed" | "stream_started" | "handler_returned";
   request_observed_at_ms: number | null; response_handed_at_ms: number | null; service_ms: number | null;
   previous_response_gap_ms?: number | null;
   next_call_gap_ms: number | null; next_meaningful_call: "observed" | "not_observed"; elapsed_ms: number | null;

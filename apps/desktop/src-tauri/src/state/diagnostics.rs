@@ -12,6 +12,13 @@ fn runtime_fence(runtime: &StoredRuntime) -> String {
     format!("{:x}", Sha256::digest(value))
 }
 
+fn valid_console_user_credential(value: &str) -> bool {
+    value.starts_with("wc_pat_")
+        && value.len() <= 16384
+        && value.len() > "wc_pat_".len()
+        && !value.chars().any(char::is_whitespace)
+}
+
 impl AppState {
     pub async fn diagnostics(&self) -> DesktopResult<DiagnosticSnapshot> {
         let (settings, runtime, trace_path, recovery, mut resources, identity_fence) = {
@@ -346,16 +353,33 @@ impl AppState {
             .read_to_string(&mut token)
             .map_err(|_| diagnostics::diagnostic_error("console_copy_unavailable"))?;
         let value = token.trim();
-        if value.is_empty()
-            || value.len() > 16384
-            || value.starts_with("wc_agent_")
-            || value.chars().any(char::is_whitespace)
-        {
+        if !valid_console_user_credential(value) {
             return Err(diagnostics::diagnostic_error("console_copy_unavailable"));
         }
         app.clipboard()
             .write_text(value)
             .map_err(|_| diagnostics::diagnostic_error("clipboard_unavailable"))
+    }
+}
+
+#[cfg(test)]
+mod credential_tests {
+    use super::valid_console_user_credential;
+
+    #[test]
+    fn runtime_console_copy_accepts_only_managed_user_pat_shape() {
+        assert!(valid_console_user_credential("wc_pat_user_token"));
+        for rejected in [
+            "",
+            "wc_pat_",
+            "wc_agent_runner_token",
+            "wc_pair_pairing_code",
+            "webcodex_temporary_secret",
+            "arbitrary-bearer-token",
+            "wc_pat_has whitespace",
+        ] {
+            assert!(!valid_console_user_credential(rejected), "{rejected}");
+        }
     }
 }
 

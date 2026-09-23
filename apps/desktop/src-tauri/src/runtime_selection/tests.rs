@@ -12,8 +12,17 @@ fn source_is_explicit_and_release_resolution_prefers_custom() {
 }
 
 #[cfg(unix)]
-fn fixture(changes: impl Fn(usize, &mut MachineBuildInfo)) -> PathBuf {
+fn write_fixture_binary(directory: &Path, name: &str, info: &MachineBuildInfo) {
     use std::os::unix::fs::PermissionsExt;
+    let bytes = serde_json::to_string(info).unwrap();
+    let script = format!("#!/bin/sh\n[ \"$1\" = --build-info-json ] || exit 17\ncat <<'WEBCODEX_BUILD_INFO'\n{bytes}\nWEBCODEX_BUILD_INFO\n");
+    let path = directory.join(name);
+    std::fs::write(&path, script).unwrap();
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).unwrap();
+}
+
+#[cfg(unix)]
+fn fixture(changes: impl Fn(usize, &mut MachineBuildInfo)) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
         "webcodex-runtime-contract-{}",
         uuid::Uuid::new_v4()
@@ -25,11 +34,7 @@ fn fixture(changes: impl Fn(usize, &mut MachineBuildInfo)) -> PathBuf {
     {
         let mut info = webcodex_core::build_info::machine_build_info(name);
         changes(index, &mut info);
-        let bytes = serde_json::to_string(&info).unwrap();
-        let script = format!("#!/bin/sh\n[ \"$1\" = --build-info-json ] || exit 17\ncat <<'WEBCODEX_BUILD_INFO'\n{bytes}\nWEBCODEX_BUILD_INFO\n");
-        let path = dir.join(name);
-        std::fs::write(&path, script).unwrap();
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).unwrap();
+        write_fixture_binary(&dir, name, &info);
     }
     dir
 }
@@ -144,16 +149,29 @@ fn state_round_trip_keeps_custom_and_unknown_entries() {
     assert_eq!(config.schema_version, 1);
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn an_ordinary_restart_rejects_replaced_custom_files_until_explicit_reapproval() {
-    let dir=fixture();
-    let source=RuntimeSource::Custom { directory: dir.clone() };
-    let (_,resolved)=probe(&source,None,None,1,&CancellationContext::detached()).await.unwrap();
-    let mut adapter=crate::webcodex::WebcodexAdapter::new(None);
-    adapter.activate_binaries(source,resolved.unwrap());
-    let mut replacement=info("webcodex-runner");replacement.git_commit=Some("abcdef012345".into());
-    write_binary(&dir,"webcodex-runner",&replacement);
-    let error=adapter.ensure_binaries(&CancellationContext::detached()).await.unwrap_err();
-    assert_eq!(error.code,"runtime_candidate_changed");
+    let dir = fixture(|_, _| {});
+    let source = RuntimeSource::Custom {
+        directory: dir.clone(),
+    };
+    let (_, resolved) = candidate(&dir).await;
+    let approved_fingerprint = resolved.unwrap().fingerprint;
+
+    let mut replacement = webcodex_core::build_info::machine_build_info("webcodex-runner");
+    replacement.git_commit = Some("abcdef012345abcdef012345abcdef012345abcd".into());
+    write_fixture_binary(&dir, "webcodex-runner", &replacement);
+
+    // Model a new Desktop process: source and approval are restored from the
+    // persisted config, while no candidate bytes are cached in memory.
+    let mut adapter = crate::webcodex::WebCodexAdapter::new(None);
+    adapter.set_runtime_source(source);
+    adapter.set_runtime_approval(Some(approved_fingerprint));
+    let error = adapter
+        .ensure_binaries(&CancellationContext::never())
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, "runtime_candidate_changed");
     std::fs::remove_dir_all(dir).unwrap();
 }

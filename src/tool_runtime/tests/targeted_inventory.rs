@@ -841,6 +841,12 @@ async fn runtime_status_focus_is_not_polluted_by_unrelated_runner_mismatch() {
         .iter()
         .find(|runner| runner["client_id"] == "special")
         .unwrap();
+    let global_mini = global.output["version_compatibility"]["runners"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|runner| runner["client_id"] == "mini")
+        .unwrap();
 
     let special = runtime
         .dispatch(runtime_status_call(Some("special"), true))
@@ -875,7 +881,10 @@ async fn runtime_status_focus_is_not_polluted_by_unrelated_runner_mismatch() {
     assert!(mini.success);
     assert_eq!(mini.output["focus"]["client_id"], "mini");
     assert_eq!(mini.output["focus"]["protocol_compatibility"], "compatible");
-    assert_eq!(mini.output["focus"]["build_alignment"], "different_version");
+    assert_eq!(
+        mini.output["focus"]["build_alignment"],
+        global_mini["build_alignment"]
+    );
     assert_eq!(mini.output["version_compatibility"]["status"], "compatible");
 
     let unknown = runtime

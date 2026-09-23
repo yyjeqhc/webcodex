@@ -321,39 +321,67 @@ class BundleTests(unittest.TestCase):
 
 
 class RuntimeManifestBundleTests(unittest.TestCase):
-    def add_manifest(self, directory: Path, *, corrupt=False):
+    def add_manifest(self, directory: Path, *, corrupt: bool = False) -> None:
         path = directory / "webcodex-release-manifest.json"
-        value = {"schema_version": 1, "release_version": "0.2.1", "runtime_version": "0.2.1", "desktop_runtime_contract": {"min_generation": 1, "max_generation": 1}}
-        if corrupt: value["desktop_runtime_contract"]["min_generation"] = 0
-        path.write_text(json.dumps(value))
+        value = {
+            "schema_version": 1,
+            "release_version": VERSION,
+            "runtime_version": VERSION,
+            "desktop_runtime_contract": {"min_generation": 1, "max_generation": 1},
+        }
+        if corrupt:
+            value["desktop_runtime_contract"]["min_generation"] = 0
+        path.write_text(json.dumps(value) + "\n", encoding="utf-8")
         digest = hashlib.sha256(path.read_bytes()).hexdigest()
         metadata_path = directory / "release-build.json"
-        metadata = json.loads(metadata_path.read_text())
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
         metadata["runtime_manifest"] = {"filename": path.name, "sha256": digest}
-        metadata_path.write_text(json.dumps(metadata))
+        metadata_path.write_text(json.dumps(metadata) + "\n", encoding="utf-8")
         sums = directory / "SHA256SUMS"
-        sums.write_text(sums.read_text() + f"{digest}  {path.name}\n")
+        sums.write_text(
+            sums.read_text(encoding="ascii") + f"{digest}  {path.name}\n",
+            encoding="ascii",
+        )
 
-    def test_valid_manifest_is_collected_with_strict_digest_identity(self):
+    def verify(self, directory: Path) -> dict:
+        return collector.verify_bundle_directory(
+            directory,
+            repo=collector.DEFAULT_REPO,
+            run_id=RUN_ID,
+            expected_source_sha=SOURCE_SHA,
+            expected_tag=f"v{VERSION}",
+            artifact_name=f"webcodex-v{VERSION}-bundle",
+        )
+
+    def test_valid_manifest_is_collected_with_strict_digest_identity(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
-            root = Path(temp); write_valid_bundle(root, build_kind="release", tag="v0.2.1")
+            root = Path(temp)
+            _write_bundle(root, f"v{VERSION}", "release")
             self.add_manifest(root)
-            summary = collector.validate_bundle(root, expected_tag="v0.2.1", expected_source_sha="a" * 40, expected_run_id=123)
-            self.assertEqual(summary["runtime_manifest"]["filename"], "webcodex-release-manifest.json")
+            summary = self.verify(root)
+            self.assertEqual(
+                summary["runtime_manifest"]["filename"],
+                "webcodex-release-manifest.json",
+            )
 
-    def test_invalid_contract_rejected_even_when_checksums_match(self):
+    def test_invalid_contract_rejected_even_when_checksums_match(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
-            root = Path(temp); write_valid_bundle(root, build_kind="release", tag="v0.2.1")
+            root = Path(temp)
+            _write_bundle(root, f"v{VERSION}", "release")
             self.add_manifest(root, corrupt=True)
             with self.assertRaises(collector.CollectionError):
-                collector.validate_bundle(root, expected_tag="v0.2.1", expected_source_sha="a" * 40, expected_run_id=123)
+                self.verify(root)
 
-    def test_present_but_null_manifest_is_not_legacy_absence(self):
+    def test_present_but_null_manifest_is_not_legacy_absence(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
-            root = Path(temp); write_valid_bundle(root, build_kind="release", tag="v0.2.1")
-            path = root / "release-build.json"; value = json.loads(path.read_text()); value["runtime_manifest"] = None; path.write_text(json.dumps(value))
+            root = Path(temp)
+            _write_bundle(root, f"v{VERSION}", "release")
+            path = root / "release-build.json"
+            value = json.loads(path.read_text(encoding="utf-8"))
+            value["runtime_manifest"] = None
+            path.write_text(json.dumps(value) + "\n", encoding="utf-8")
             with self.assertRaises(collector.CollectionError):
-                collector.validate_bundle(root, expected_tag="v0.2.1", expected_source_sha="a" * 40, expected_run_id=123)
+                self.verify(root)
 
 if __name__ == "__main__":
     unittest.main()

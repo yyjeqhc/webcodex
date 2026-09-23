@@ -408,12 +408,14 @@ async fn ops_http_403_reports_forbidden() {
 #[tokio::test]
 async fn ops_connection_failure_reports_runtime_unreachable() {
     let (addr, handle) = spawn_connection_drop_server();
-    let output = run_ops_command(OpsCommand::Status(ops_common_opts(format!(
-        "http://{addr}"
-    ))))
-    .await
-    .unwrap()
-    .stdout;
+    let mut opts = ops_common_opts(format!("http://{addr}"));
+    // Keep this transport-failure fixture independent of any Runner token in
+    // the parent test environment; ops/runtime APIs require a user PAT.
+    opts.token = Some("wc_pat_connection_failure_fixture".to_string());
+    let output = run_ops_command(OpsCommand::Status(opts))
+        .await
+        .unwrap()
+        .stdout;
     handle.join().unwrap();
     assert!(output.contains("Overall: FAIL"), "{output}");
     assert!(output.contains("runtime_unreachable"), "{output}");

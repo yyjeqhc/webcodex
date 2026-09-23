@@ -505,10 +505,12 @@ mod tests {
         let status = ToolResult::ok(json!({
             "version": "1.2.3",
             "version_compatibility": {
-                "status": "version_mismatch",
+                "status": "compatible",
+                "protocol_compatibility": "compatible",
+                "build_alignment": "different_version",
                 "runners": [
-                    {"client_id":"runner-b","status":"version_mismatch","agent_protocol_generation":2},
-                    {"client_id":"runner-a","status":"compatible","agent_protocol_generation":2}
+                    {"client_id":"runner-b","status":"compatible","protocol_compatibility":"compatible","build_alignment":"different_version","agent_protocol_generation":2},
+                    {"client_id":"runner-a","status":"compatible","protocol_compatibility":"compatible","build_alignment":"exact","agent_protocol_generation":2}
                 ]
             }
         }));
@@ -573,18 +575,17 @@ mod tests {
         assert_eq!(body["devices"][0]["transport"], "websocket");
         assert_eq!(body["devices"][1]["status"], "stale");
         assert_eq!(body["devices"][1]["capabilities"], json!(["git", "shell"]));
-        assert_eq!(body["devices"][1]["compatibility"], "version_mismatch");
+        assert_eq!(body["devices"][1]["compatibility"], "compatible");
+        assert_eq!(body["devices"][1]["build_alignment"], "different_version");
         assert_eq!(body["devices"][1]["runner_protocol_generation"], 2);
         assert_eq!(body["devices"][1]["transport"], "quic");
         assert_eq!(body["projects"][0]["id"], "agent:runner-a:alpha");
         assert_eq!(body["projects"][0]["compatibility"], "compatible");
-        assert_eq!(body["projects"][1]["compatibility"], "version_mismatch");
+        assert_eq!(body["projects"][1]["compatibility"], "compatible");
+        assert_eq!(body["projects"][1]["build_alignment"], "different_version");
         assert_eq!(body["projects"][2]["compatibility"], "unknown");
         assert_eq!(body["projects"][0]["path"], "/safe/alpha");
-        assert_eq!(
-            body["overview"]["version_compatibility"],
-            "version_mismatch"
-        );
+        assert_eq!(body["overview"]["version_compatibility"], "compatible");
     }
 
     #[test]

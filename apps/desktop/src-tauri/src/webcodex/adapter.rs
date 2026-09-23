@@ -34,6 +34,7 @@ pub struct WebCodexAdapter {
     binaries: Option<ResolvedBinaries>,
     bundled_runtime_dir: Option<PathBuf>,
     runtime_source: crate::runtime_selection::RuntimeSource,
+    approved_custom_fingerprint: Option<String>,
 }
 
 impl WebCodexAdapter {
@@ -42,6 +43,7 @@ impl WebCodexAdapter {
             binaries: None,
             bundled_runtime_dir,
             runtime_source: Default::default(),
+            approved_custom_fingerprint: None,
         }
     }
 
@@ -50,11 +52,29 @@ impl WebCodexAdapter {
         self.binaries = None;
     }
 
+    pub(crate) fn set_runtime_approval(&mut self, fingerprint: Option<String>) {
+        self.approved_custom_fingerprint = fingerprint;
+    }
+
+    fn validate_runtime_approval(&self, binaries: &ResolvedBinaries) -> DesktopResult<()> {
+        if matches!(self.runtime_source, crate::runtime_selection::RuntimeSource::Custom { .. }) {
+            let expected = self.approved_custom_fingerprint.as_deref().ok_or_else(|| {
+                crate::runtime_selection::error("runtime_custom_approval_required")
+            })?;
+            if expected != binaries.fingerprint {
+                return Err(crate::runtime_selection::error("runtime_candidate_changed"));
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) fn activate_binaries(
         &mut self,
         source: crate::runtime_selection::RuntimeSource,
         binaries: ResolvedBinaries,
     ) {
+        self.approved_custom_fingerprint = matches!(source, crate::runtime_selection::RuntimeSource::Custom { .. })
+            .then(|| binaries.fingerprint.clone());
         self.runtime_source = source;
         self.binaries = Some(binaries);
     }
@@ -68,15 +88,15 @@ impl WebCodexAdapter {
         cancellation: &CancellationContext,
     ) -> DesktopResult<&ResolvedBinaries> {
         if self.binaries.is_none() {
-            self.binaries = Some(
-                ResolvedBinaries::resolve_source_until(
-                    &self.runtime_source,
-                    self.bundled_runtime_dir.as_deref(),
-                    cancellation,
-                    Deadline::after(std::time::Duration::from_secs(30)),
-                )
-                .await?,
-            );
+            let binaries = ResolvedBinaries::resolve_source_until(
+                &self.runtime_source,
+                self.bundled_runtime_dir.as_deref(),
+                cancellation,
+                Deadline::after(std::time::Duration::from_secs(30)),
+            )
+            .await?;
+            self.validate_runtime_approval(&binaries)?;
+            self.binaries = Some(binaries);
         }
         Ok(self.binaries.as_ref().expect("resolved above"))
     }
@@ -87,15 +107,15 @@ impl WebCodexAdapter {
         deadline: Deadline,
     ) -> DesktopResult<&ResolvedBinaries> {
         if self.binaries.is_none() {
-            self.binaries = Some(
-                ResolvedBinaries::resolve_source_until(
-                    &self.runtime_source,
-                    self.bundled_runtime_dir.as_deref(),
-                    cancellation,
-                    deadline,
-                )
-                .await?,
-            );
+            let binaries = ResolvedBinaries::resolve_source_until(
+                &self.runtime_source,
+                self.bundled_runtime_dir.as_deref(),
+                cancellation,
+                deadline,
+            )
+            .await?;
+            self.validate_runtime_approval(&binaries)?;
+            self.binaries = Some(binaries);
         }
         Ok(self.binaries.as_ref().expect("resolved above"))
     }
@@ -1078,6 +1098,7 @@ mod tests {
             binaries: Some(binaries),
             bundled_runtime_dir: None,
             runtime_source: Default::default(),
+            approved_custom_fingerprint: None,
         };
         let local = adapter
             .quick_share_command(Path::new("repo"), "none", None)
@@ -1137,6 +1158,7 @@ mod tests {
             binaries: Some(binaries),
             bundled_runtime_dir: None,
             runtime_source: Default::default(),
+            approved_custom_fingerprint: None,
         };
         let command = adapter
             .local_runner_command(Path::new("runner.toml"))
@@ -1190,6 +1212,7 @@ mod tests {
             binaries: Some(binaries),
             bundled_runtime_dir: None,
             runtime_source: Default::default(),
+            approved_custom_fingerprint: None,
         };
         let command = adapter
             .regular_tunnel_command(Path::new("server.env"), Some("http://127.0.0.1:7890"))

@@ -461,6 +461,8 @@ pub struct StoredDesktopConfig {
     pub runtime_binary_source: crate::runtime_selection::RuntimeSource,
     #[serde(default)]
     pub runtime_selection_revision: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_binary_fingerprint: Option<String>,
     #[serde(default)]
     pub update_cache: crate::updates::UpdateCache,
     #[serde(default)]
@@ -490,6 +492,7 @@ impl Default for StoredDesktopConfig {
             schema_version: desktop_config_schema(),
             runtime_binary_source: Default::default(),
             runtime_selection_revision: 0,
+            runtime_binary_fingerprint: None,
             previous_runtime_source: None,
             update_cache: Default::default(),
             extra: Default::default(),

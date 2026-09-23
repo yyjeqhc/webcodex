@@ -368,7 +368,7 @@ pub fn continuation(detail: &Value, now: u64) -> Option<Value> {
     });
     Some(
         json!({"tool_name":bounded_code(latest.get("tool_name")),"execution":execution,
-        "response_handoff":if handed.is_none(){"not_confirmed"}else if streaming{"stream_started"}else{"handed_to_mcp_client"},
+        "response_handoff":if handed.is_none(){"not_confirmed"}else if streaming{"stream_started"}else{"handler_returned"},
         "request_observed_at_ms":observed,"response_handed_at_ms":handed,
         "service_ms":latest.get("service_ms").and_then(Value::as_u64),
         "previous_response_gap_ms":latest.get("next_call_gap_ms").and_then(Value::as_u64),

@@ -662,6 +662,7 @@ impl DesktopCore {
         let supervisor = Arc::new(Mutex::new(ProcessSupervisor::new(activity.clone())));
         let mut adapter = WebCodexAdapter::new(Some(resource_dir.join("webcodex-runtime")));
         adapter.set_runtime_source(config.runtime_binary_source.clone());
+        adapter.set_runtime_approval(config.runtime_binary_fingerprint.clone());
         Ok(Self {
             data_dir,
             config_path,
@@ -1125,6 +1126,7 @@ impl DesktopCore {
         cancellation.check()?;
         let binaries = self.adapter.ensure_binaries(cancellation).await?.clone();
         self.snapshot.binaries = Some(binaries.info());
+        crate::runtime_selection::verify_resolved_files(&binaries).await?;
         self.activity.push(
             ActivityEventKind::LocalSetupPreparing,
             "desktop",
@@ -1543,6 +1545,7 @@ impl DesktopCore {
         cancellation.check()?;
         let binaries = self.adapter.ensure_binaries(cancellation).await?.clone();
         self.snapshot.binaries = Some(binaries.info());
+        crate::runtime_selection::verify_resolved_files(&binaries).await?;
         let exposure = if server_url.starts_with("https://") {
             Exposure::ExistingHttps {
                 url: server_url.clone(),
@@ -1788,6 +1791,7 @@ impl DesktopCore {
         cancellation.check()?;
         let binaries = self.adapter.ensure_binaries(cancellation).await?.clone();
         self.snapshot.binaries = Some(binaries.info());
+        crate::runtime_selection::verify_resolved_files(&binaries).await?;
         if self
             .process_snapshot(ProcessKey::QuickShare)
             .await

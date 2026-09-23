@@ -45,7 +45,7 @@ export function WindowActivityDetail({ id, onClose }: { id: string; onClose: () 
       </section>
       <section className="shell-subsection"><h3>{s("Observed calls")}</h3><ol className="call-history">{calls.slice(0, 30).map((row, index) => <li key={`${row.started_at_ms}-${index}`}>
         <div><strong>{row.tool_name ?? s("Unknown")}</strong><span>{name(row.project)}</span></div><span>{s(executionLabel(row.status))}</span><time>{observationTime(row.ended_at_ms || row.started_at_ms, locale)}</time>
-        <details><summary>{s("Details")}</summary>{row.server_trace_id && <code>{row.server_trace_id}</code>}<dl className="runtime-facts"><div><dt>{s("Response")}</dt><dd>{s(row.response_handed_at_ms == null ? "Response handoff not confirmed" : row.response_streaming ? "Response stream started" : "Handed to MCP client")}</dd></div>
+        <details><summary>{s("Details")}</summary>{row.server_trace_id && <code>{row.server_trace_id}</code>}<dl className="runtime-facts"><div><dt>{s("Response")}</dt><dd>{s(row.response_handed_at_ms == null ? "Response handoff not confirmed" : row.response_streaming ? "Response stream started" : "Returned to HTTP framework")}</dd></div>
           <div><dt>{s("Service time")}</dt><dd>{row.service_ms == null ? "—" : `${row.service_ms} ms`}</dd></div><div><dt>{s("Gap from preceding response")}</dt><dd>{row.next_call_gap_ms == null ? s("Not observed") : `${row.next_call_gap_ms} ms`}</dd></div></dl></details>
       </li>)}</ol>{!calls.length && <p>{s("Waiting for the first meaningful call")}</p>}{detail.activity_truncated && <p className="field-help">{s("History is partial")}</p>}</section>
       <details className="workspace-technical"><summary>{s("Details")}</summary><code>{id}</code></details>

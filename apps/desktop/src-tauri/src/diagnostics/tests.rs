@@ -100,7 +100,7 @@ fn continuation_distinguishes_handoff_unknown_streaming_and_next_observation() {
     detail["activity"][0]["request_observed_at_ms"] = json!(100);
     detail["activity"][0]["response_handed_at_ms"] = json!(210);
     let handed = continuation(&detail, 1000).unwrap();
-    assert_eq!(handed["response_handoff"], "handed_to_mcp_client");
+    assert_eq!(handed["response_handoff"], "handler_returned");
     assert_eq!(handed["elapsed_ms"], 790);
     assert_eq!(handed["next_meaningful_call"], "not_observed");
     detail["activity"][0]["next_call_gap_ms"] = json!(400);

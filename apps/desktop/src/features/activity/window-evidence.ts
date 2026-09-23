@@ -20,7 +20,7 @@ export function continuationFromWindow(detail: WindowDetail, now: number): Conti
     .map(row => row.request_observed_at_ms ?? row.started_at_ms).filter((time): time is number => time != null && time > handed);
   const next = later.length ? Math.min(...later) : null;
   return { tool_name: latest.tool_name ?? null, execution: executionLabel(latest.status).toLowerCase(),
-    response_handoff: handed == null ? "not_confirmed" : latest.response_streaming ? "stream_started" : "handed_to_mcp_client",
+    response_handoff: handed == null ? "not_confirmed" : latest.response_streaming ? "stream_started" : "handler_returned",
     request_observed_at_ms: observed, response_handed_at_ms: handed, service_ms: latest.service_ms ?? null,
     previous_response_gap_ms: latest.next_call_gap_ms ?? null,
     next_call_gap_ms: next != null && handed != null ? next - handed : null, next_meaningful_call: next == null ? "not_observed" : "observed",

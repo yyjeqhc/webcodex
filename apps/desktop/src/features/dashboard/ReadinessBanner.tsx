@@ -19,7 +19,7 @@ export function ReadinessBanner({ state, onState, onDiagnostics, onRuntime, onCo
   };
   const disabled = busy || Boolean(state.current_operation);
   const runnerProblem = state.readiness.server === "ready" && ["offline", "error"].includes(state.readiness.runner);
-  const failedConnections = state.connections?.profiles.filter(profile => profile.enabled && (profile.lifecycle === "failed" || profile.health === "error")) ?? [];
+  const failedConnections = state.connections?.profiles.filter(profile => profile.enabled && (profile.lifecycle === "error" || profile.health === "degraded")) ?? [];
   const restartRunner = () => run(async () => {
     const current = await desktopApi.runnerSettings();
     if (!current.can_restart) throw { code: "runner_not_owned", message: "Runner is not managed by Desktop", suggestion: "Open Diagnostics" };

@@ -399,6 +399,24 @@ fn lsp_typed_fields_are_closed_while_intentional_projection_boundaries_stay_open
 }
 
 #[test]
+fn apply_text_edits_success_match_ranges_require_occurrence_while_conflicts_keep_it_optional() {
+    let schema = output_schema_for_tool("apply_text_edits");
+    let success_range = &schema["properties"]["output"]["properties"]["files"]["items"]
+        ["properties"]["edits"]["items"]["properties"]["match_ranges"]["items"];
+    assert_eq!(
+        success_range["required"],
+        json!(["occurrence", "start_line", "end_line"])
+    );
+
+    let conflict_range = &schema["properties"]["output"]["properties"]["candidate_ranges"]["items"];
+    assert_eq!(
+        conflict_range["required"],
+        json!(["start_line", "end_line"]),
+        "unguarded conflict candidates intentionally omit occurrence"
+    );
+}
+
+#[test]
 fn typed_output_schemas_use_host_normalized_inline_shapes() {
     for name in [
         "runner_config_check",

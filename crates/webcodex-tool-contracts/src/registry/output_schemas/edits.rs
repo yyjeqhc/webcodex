@@ -219,7 +219,7 @@ fn apply_text_edit_summary_schema() -> Value {
             "would_change": {"type":"boolean"},
             "match_count": {"type":"integer","minimum":1},
             "expected_match_count": {"type":"integer","minimum":1,"maximum":1024},
-            "match_ranges": {"type":"array","maxItems":webcodex_core::apply_edits_shared::MAX_APPLY_TEXT_MATCH_RANGES_PER_EDIT,"items":edit_candidate_range_schema()},
+            "match_ranges": {"type":"array","maxItems":webcodex_core::apply_edits_shared::MAX_APPLY_TEXT_MATCH_RANGES_PER_EDIT,"items":edit_success_match_range_schema()},
             "match_ranges_truncated": {"type":"boolean"},
             "warning": {
                 "type": "string",
@@ -265,6 +265,12 @@ fn apply_text_edits_file_summary_schema() -> Value {
             ]
         }
     })
+}
+
+fn edit_success_match_range_schema() -> Value {
+    let mut schema = edit_candidate_range_schema();
+    schema["required"] = json!(["occurrence", "start_line", "end_line"]);
+    schema
 }
 
 fn edit_candidate_range_schema() -> Value {

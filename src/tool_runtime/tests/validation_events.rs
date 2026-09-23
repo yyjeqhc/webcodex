@@ -24,6 +24,7 @@ async fn run_shell_declared_validation_enters_unified_summary_with_shell_and_roo
             runtime
                 .dispatch_with_auth(
                     ToolCall::RunShell {
+                        login: false,
                         project,
                         command: "cargo test focused".to_string(),
                         session_id: Some(session_id),
@@ -85,6 +86,7 @@ async fn completed_run_job_validation_enters_handoff_from_job_authority() {
     let capabilities = crate::runner_protocol::RunnerCapabilities {
         async_shell_jobs: true,
         explicit_shell_selection: true,
+        bash_login_shell: true,
         ..Default::default()
     };
     register_agent_projects_for_auth(

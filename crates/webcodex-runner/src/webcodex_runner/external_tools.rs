@@ -235,6 +235,7 @@ impl ExternalToolRouter {
             return ExternalRoute::Native;
         }
         let operation = RunnerShellOperation {
+            login: false,
             cwd: request.cwd.clone(),
             command: request.command.clone(),
             shell: None,

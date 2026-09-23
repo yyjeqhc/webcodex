@@ -877,6 +877,7 @@ mod tests {
 
     fn active_job_request(client_id: &str, command: &str) -> ShellJobOpRequest {
         ShellJobOpRequest {
+            login: false,
             op: "start".to_string(),
             client_id: Some(client_id.to_string()),
             cwd: None,

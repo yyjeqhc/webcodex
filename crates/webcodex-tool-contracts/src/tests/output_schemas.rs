@@ -1271,7 +1271,14 @@ fn key_tool_output_schemas_include_expected_fields() {
     }
     assert_eq!(
         output_schema_property(&specs, "run_script", "language")["enum"],
-        serde_json::json!(["sh", "bash", "powershell", "javascript", "typescript"])
+        serde_json::json!([
+            "sh",
+            "bash",
+            "powershell",
+            "python",
+            "javascript",
+            "typescript"
+        ])
     );
     assert_eq!(
         output_schema_property(&specs, "run_script", "execution_source")["const"],
@@ -2951,16 +2958,18 @@ fn agent_wait_model_schema_preserves_bounded_join_sources_without_private_bookke
 }
 
 #[test]
-fn run_process_shell_recovery_schema_is_optional_and_failure_only() {
+fn run_process_shell_normalization_schema_is_success_only_and_payload_free() {
     let specs = registered_tool_specs();
     let spec = spec_named(&specs, "run_process");
-    let suggested = json!({"tool":"run_shell", "arguments":{"project":"demo","shell":"bash","command":"echo hello"}});
-    let failure = json!({"success":false,"output":{"command_started":false,
-        "command_completed":false,"execution_state":"not_started","failure_kind":"invalid_arguments",
-        "suggested_call":suggested},"error":"shell command mode rejected"});
-    test_support::validate_schema_instance(&failure, &spec.output_schema).unwrap();
-    let success = json!({"success":true,"output":{"suggested_call":suggested},"error":null});
-    assert!(test_support::validate_schema_instance(&success, &spec.output_schema).is_err());
+    let normalized = json!({"success":true,"output":{
+        "requested_surface":"run_process", "execution_source":"run_shell",
+        "input_normalization":{"code":"run_process_bash_c_to_run_shell",
+            "hint":"normalized run_process bash -c → run_shell"}
+    },"error":null});
+    test_support::validate_schema_instance(&normalized, &spec.output_schema).unwrap();
+    let mut invalid = normalized;
+    invalid["output"]["input_normalization"]["command"] = json!("private command");
+    assert!(test_support::validate_schema_instance(&invalid, &spec.output_schema).is_err());
 }
 
 #[test]

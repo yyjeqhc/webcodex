@@ -355,15 +355,19 @@ pub(crate) fn configured_explicit_shell_command(
     shell: &ShellConfig,
     profile: Option<&PreparedShellProfile>,
     selection: ExecutionShell,
+    login: bool,
     command: &str,
 ) -> Result<Command, String> {
+    if login && selection != ExecutionShell::Bash {
+        return Err("bash login mode requires shell=bash".to_string());
+    }
     let language = match selection {
         ExecutionShell::Sh => ShellScriptLanguage::Sh,
         ExecutionShell::Bash => ShellScriptLanguage::Bash,
     };
     let program = configured_script_interpreter(shell, profile, language)?;
     let mut cmd = Command::new(program);
-    cmd.arg("-c").arg(command);
+    cmd.arg(if login { "-lc" } else { "-c" }).arg(command);
     match profile {
         Some(profile) => apply_env_snapshot(&mut cmd, &profile.env_snapshot),
         None => apply_shell_environment(&mut cmd, shell)?,
@@ -757,6 +761,12 @@ fn configured_script_interpreter(
         ShellScriptLanguage::Powershell => {
             matches!(configured_basename.as_str(), "pwsh" | "pwsh.exe")
         }
+        ShellScriptLanguage::Python => {
+            matches!(
+                configured_basename.as_str(),
+                "python3" | "python3.exe" | "python" | "python.exe"
+            )
+        }
         ShellScriptLanguage::Javascript | ShellScriptLanguage::Typescript => {
             matches!(configured_basename.as_str(), "node" | "node.exe")
         }
@@ -773,6 +783,13 @@ fn configured_script_interpreter(
             candidates.push("powershell".to_string());
         }
         ShellScriptLanguage::Powershell => candidates.push("pwsh".to_string()),
+        ShellScriptLanguage::Python => {
+            if cfg!(windows) {
+                candidates.extend(["python".to_string(), "python3".to_string()]);
+            } else {
+                candidates.extend(["python3".to_string(), "python".to_string()]);
+            }
+        }
         ShellScriptLanguage::Javascript | ShellScriptLanguage::Typescript => {
             candidates.push("node".to_string())
         }
@@ -789,6 +806,18 @@ fn configured_script_interpreter(
         if let Some(super::util::ResolvedProgram::Native(path)) =
             super::util::resolve_program_in_path(&candidate, &path)
         {
+            #[cfg(windows)]
+            if language == ShellScriptLanguage::Python
+                && std::fs::symlink_metadata(&path)
+                    .ok()
+                    .is_none_or(|metadata| {
+                        super::configured_skills::metadata_is_link_like(&metadata)
+                    })
+            {
+                // Windows App Execution Aliases are link-like launch stubs, not
+                // a proven Python interpreter. Keep interpreter admission exact.
+                continue;
+            }
             return Ok(path.into_os_string());
         }
     }
@@ -2748,6 +2777,7 @@ pub(crate) fn run_shell(
         cwd,
         command,
         None,
+        false,
         stdin,
         timeout_secs,
         stop_requested,
@@ -2778,6 +2808,7 @@ pub(crate) fn run_shell_with_profiles(
         cwd,
         command,
         None,
+        false,
         stdin,
         timeout_secs,
         stop_requested,
@@ -2795,6 +2826,7 @@ pub(crate) fn run_shell_with_profiles_and_execution_state(
     cwd: Option<&str>,
     command: &str,
     explicit_shell: Option<ExecutionShell>,
+    login: bool,
     stdin: Option<&str>,
     timeout_secs: u64,
     stop_requested: Option<&AtomicBool>,
@@ -2806,6 +2838,7 @@ pub(crate) fn run_shell_with_profiles_and_execution_state(
         cwd,
         command,
         explicit_shell,
+        login,
         stdin,
         timeout_secs,
         stop_requested,
@@ -2819,10 +2852,20 @@ fn run_shell_impl(
     cwd: Option<&str>,
     command: &str,
     explicit_shell: Option<ExecutionShell>,
+    login: bool,
     stdin: Option<&str>,
     timeout_secs: u64,
     stop_requested: Option<&AtomicBool>,
 ) -> ShellCommandResult {
+    if login && explicit_shell != Some(ExecutionShell::Bash) {
+        return ShellCommandResult::not_started(CommandResult {
+            exit_code: None,
+            stdout: None,
+            stderr: None,
+            duration_ms: Some(0),
+            error: Some("bash login mode requires shell=bash".to_string()),
+        });
+    }
     if !policy.allow_raw_shell {
         return ShellCommandResult::not_started(CommandResult {
             exit_code: None,
@@ -2859,9 +2902,13 @@ fn run_shell_impl(
         ) {
             Ok(Some(profile)) => {
                 let configured = match explicit_shell {
-                    Some(selection) => {
-                        configured_explicit_shell_command(shell, Some(&profile), selection, command)
-                    }
+                    Some(selection) => configured_explicit_shell_command(
+                        shell,
+                        Some(&profile),
+                        selection,
+                        login,
+                        command,
+                    ),
                     None => configured_prepared_shell_command(&profile, command),
                 };
                 match configured {
@@ -2886,7 +2933,7 @@ fn run_shell_impl(
             Ok(None) => {
                 let configured = match explicit_shell {
                     Some(selection) => {
-                        configured_explicit_shell_command(shell, None, selection, command)
+                        configured_explicit_shell_command(shell, None, selection, login, command)
                     }
                     None => configured_shell_command(shell, command),
                 };
@@ -2916,7 +2963,7 @@ fn run_shell_impl(
         None => {
             let configured = match explicit_shell {
                 Some(selection) => {
-                    configured_explicit_shell_command(shell, None, selection, command)
+                    configured_explicit_shell_command(shell, None, selection, login, command)
                 }
                 None => configured_shell_command(shell, command),
             };

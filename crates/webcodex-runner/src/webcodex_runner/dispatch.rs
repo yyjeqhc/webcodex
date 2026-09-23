@@ -149,6 +149,7 @@ fn run_native_shell_or_internal_search(
         operation.cwd.as_deref(),
         &operation.command,
         operation.shell,
+        operation.login,
         operation.stdin.as_deref(),
         operation.timeout_secs,
         Some(runtime.shutdown_flag()),

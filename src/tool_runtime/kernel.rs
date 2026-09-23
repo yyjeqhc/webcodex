@@ -763,10 +763,11 @@ impl ToolRuntime {
         // pre-execution audit projection and later dispatch. Malformed input is
         // recorded with an empty request projection rather than reparsed through
         // a schema-filter fallback.
-        let parsed_call = ToolCall::from_tool_name(&request.tool_name, concrete_arguments);
+        let parsed_call =
+            ToolCall::from_tool_name_with_normalization(&request.tool_name, concrete_arguments);
         let session_log_arguments = parsed_call
             .as_ref()
-            .map(|call| session_log_arguments_for_typed_call(&request.tool_name, call))
+            .map(|(call, _)| session_log_arguments_for_typed_call(&request.tool_name, call))
             .unwrap_or_else(|_| Value::Object(Default::default()));
         let mut session_event = self.sessions.record_tool_call_started_with_metadata(
             context.session_id,
@@ -804,8 +805,8 @@ impl ToolRuntime {
             }
         }
 
-        let mut call = match parsed_call {
-            Ok(call) => call,
+        let (mut call, input_normalization) = match parsed_call {
+            Ok(parsed) => parsed,
             Err(message) => {
                 self.sessions.record_tool_call_finished(
                     session_event,
@@ -930,6 +931,16 @@ impl ToolRuntime {
                 capabilities,
             )
             .await;
+        if result.success {
+            if let Some(code) = input_normalization {
+                let hint = match code {
+                    "argv_to_args" => "normalized argv→args",
+                    _ => unreachable!("parser returns only stable known normalization codes"),
+                };
+                result.output["input_normalization"] =
+                    serde_json::json!({"code": code, "hint": hint});
+            }
+        }
         if let Some(control) = control.as_mut() {
             control
                 .after(self, &request.tool_name, &result, context)

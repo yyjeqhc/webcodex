@@ -196,6 +196,7 @@ async fn trusted_agent_smoke_full_chain_has_zero_approval_interruptions() {
     let failing = dispatch_with_local_agent(
         &runtime,
         ToolCall::RunShell {
+            login: false,
             project: project.clone(),
             command: "sh check.sh".to_string(),
             session_id: Some(session_id.clone()),
@@ -238,6 +239,7 @@ async fn trusted_agent_smoke_full_chain_has_zero_approval_interruptions() {
     let passing = dispatch_with_local_agent(
         &runtime,
         ToolCall::RunShell {
+            login: false,
             project: project.clone(),
             command: "sh check.sh".to_string(),
             session_id: Some(session_id.clone()),

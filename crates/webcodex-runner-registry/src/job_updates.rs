@@ -744,6 +744,12 @@ impl RunnerRegistry {
         let validation_tool = metadata.validation_tool.clone();
         let assertion_name = metadata.assertion_name.clone();
         let explicit_shell = metadata.explicit_shell;
+        let login = body.login;
+        if login
+            && (metadata.ssh_resource.is_some() || explicit_shell != Some(ExecutionShell::Bash))
+        {
+            return Err("bash login mode requires local shell=bash".to_string());
+        }
         let structured_execution = metadata.structured_execution;
         let javascript_script_request = matches!(
             structured_execution.as_ref(),
@@ -754,6 +760,11 @@ impl RunnerRegistry {
             structured_execution.as_ref(),
             Some(StructuredJobExecution::Script(script))
                 if script.language == ShellScriptLanguage::Typescript
+        );
+        let python_script_request = matches!(
+            structured_execution.as_ref(),
+            Some(StructuredJobExecution::Script(script))
+                if script.language == ShellScriptLanguage::Python
         );
         let skill_resource_request = matches!(
             structured_execution.as_ref(),
@@ -892,6 +903,7 @@ impl RunnerRegistry {
             }
             None => {
                 let run = ShellRunRequest {
+                    login: false,
                     client_id: client_id.clone(),
                     cwd: normalized_job_cwd.clone(),
                     command: command.clone(),
@@ -1019,6 +1031,7 @@ impl RunnerRegistry {
                     cwd: normalized_job_cwd.clone(),
                     command: command.clone(),
                     shell: explicit_shell,
+                    login,
                     timeout_secs,
                     context: job_context,
                 })
@@ -1066,6 +1079,15 @@ impl RunnerRegistry {
                 "capability_unavailable: runner {client_id} does not support explicit_shell_selection"
             ));
         }
+        if login
+            && !runner
+                .runner_features
+                .supports(RunnerFeature::BashLoginShell)
+        {
+            return Err(format!(
+                "capability_unavailable: runner {client_id} does not support bash_login_shell"
+            ));
+        }
         if structured_metadata.is_some()
             && !runner
                 .runner_features
@@ -1091,6 +1113,15 @@ impl RunnerRegistry {
         {
             return Err(format!(
                 "capability_unavailable: runner {client_id} does not support structured_script_typescript"
+            ));
+        }
+        if python_script_request
+            && !runner
+                .runner_features
+                .supports(RunnerFeature::StructuredScriptPython)
+        {
+            return Err(format!(
+                "capability_unavailable: runner {client_id} does not support structured_script_python"
             ));
         }
         if skill_resource_request

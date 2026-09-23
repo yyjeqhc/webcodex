@@ -187,6 +187,7 @@ async fn seed_retained_terminal_validation_job(
         .runner_registry
         .start_job_with_metadata(
             ShellJobOpRequest {
+                login: false,
                 op: "start".to_string(),
                 client_id: Some(client_id.to_string()),
                 cwd: Some("/tmp/agent-proj".to_string()),

@@ -222,6 +222,7 @@ async fn list_projects_batch_job_counts_join_exact_projects_and_skip_empty_selec
             .runner_registry
             .start_job_with_metadata(
                 crate::runner_protocol::ShellJobOpRequest {
+                    login: false,
                     op: "start".into(),
                     client_id: Some("batch".into()),
                     cwd: None,

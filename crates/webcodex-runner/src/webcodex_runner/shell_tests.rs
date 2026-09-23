@@ -689,6 +689,7 @@ fn pre_spawn_rejection_is_not_started() {
         None,
         "exit 0",
         None,
+        false,
         None,
         10,
         None,
@@ -710,6 +711,7 @@ fn terminal_process_result_is_completed() {
         None,
         "exit 7",
         None,
+        false,
         None,
         10,
         None,
@@ -732,6 +734,7 @@ fn known_process_timeout_is_timed_out() {
         None,
         "sleep 2",
         None,
+        false,
         None,
         1,
         None,
@@ -774,7 +777,7 @@ fn explicit_bash_uses_resolved_interpreter_instead_of_configured_powershell() {
     let body = "printf '%s\\n' explicit-shell-ok";
 
     let command =
-        configured_explicit_shell_command(&shell, None, ExecutionShell::Bash, body).unwrap();
+        configured_explicit_shell_command(&shell, None, ExecutionShell::Bash, false, body).unwrap();
 
     assert_eq!(Path::new(command.get_program()), fake_bash.as_path());
     let args = command
@@ -1749,6 +1752,112 @@ fn javascript_temp_file_uses_mjs_and_exact_script_bytes() {
 }
 
 #[test]
+fn python_script_uses_runner_resolved_interpreter_and_py_file() {
+    use std::ffi::OsStr;
+    let temp = tempfile::tempdir().unwrap();
+    let candidate = if cfg!(windows) { "python" } else { "python3" };
+    let interpreter = temp
+        .path()
+        .join(format!("{candidate}{}", std::env::consts::EXE_SUFFIX));
+    create_fake_native_executable(&interpreter);
+    let mut shell = ShellConfig::default();
+    shell.program = "unrelated-shell".to_string();
+    shell.env.insert(
+        "PATH".to_string(),
+        temp.path().to_string_lossy().into_owned(),
+    );
+    let plan = configured_script_runtime_plan(
+        &shell,
+        None,
+        ShellScriptLanguage::Python,
+        temp.path(),
+        None,
+    )
+    .unwrap();
+    assert_eq!(PathBuf::from(&plan.program), interpreter);
+    assert!(plan.prefix_args.is_empty());
+    let payload = ShellScriptPayload {
+        language: ShellScriptLanguage::Python,
+        script: "print('雪')\n".to_string(),
+        args: vec!["two words".to_string(), "$(literal)".to_string()],
+    };
+    let (temporary_path, _original, absolute) = create_temporary_script(&payload).unwrap();
+    assert_eq!(
+        absolute.extension().and_then(|value| value.to_str()),
+        Some("py")
+    );
+    assert_eq!(std::fs::read(&absolute).unwrap(), payload.script.as_bytes());
+    let command = build_script_command(&plan, &absolute, &payload.args);
+    let argv = command.get_args().collect::<Vec<_>>();
+    assert_eq!(
+        argv,
+        vec![
+            absolute.as_os_str(),
+            OsStr::new("two words"),
+            OsStr::new("$(literal)")
+        ]
+    );
+    temporary_path.close().unwrap();
+}
+
+#[test]
+fn python_script_rejects_missing_interpreter_before_start() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut shell = ShellConfig::default();
+    shell.program = "unrelated-shell".to_string();
+    shell.env.insert(
+        "PATH".to_string(),
+        temp.path().to_string_lossy().into_owned(),
+    );
+    let error = configured_script_runtime_plan(
+        &shell,
+        None,
+        ShellScriptLanguage::Python,
+        temp.path(),
+        None,
+    )
+    .unwrap_err();
+    assert!(error.contains("interpreter_unavailable: python"));
+    assert!(error.contains("command was not started"));
+}
+
+#[cfg(unix)]
+#[test]
+fn explicit_bash_login_reads_isolated_profile() {
+    let temp = tempfile::tempdir().unwrap();
+    std::fs::write(
+        temp.path().join(".bash_profile"),
+        "export WEBCODEX_LOGIN_FIXTURE=loaded\n",
+    )
+    .unwrap();
+    let mut shell = ShellConfig::default();
+    shell.env.insert(
+        "HOME".to_string(),
+        temp.path().to_string_lossy().into_owned(),
+    );
+    for (login, expected) in [(false, "absent"), (true, "loaded")] {
+        let mut command = configured_explicit_shell_command(
+            &shell,
+            None,
+            ExecutionShell::Bash,
+            login,
+            "printf '%s' \"${WEBCODEX_LOGIN_FIXTURE:-absent}\"; shopt -q login_shell",
+        )
+        .unwrap();
+        let output = command
+            .current_dir(temp.path())
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        assert_eq!(output.status.success(), login);
+        assert_eq!(String::from_utf8(output.stdout).unwrap(), expected);
+    }
+    assert!(
+        configured_explicit_shell_command(&shell, None, ExecutionShell::Sh, true, "true").is_err()
+    );
+}
+
+#[test]
 fn typescript_temp_file_uses_mts_and_exact_script_bytes() {
     let payload = ShellScriptPayload {
         language: ShellScriptLanguage::Typescript,
@@ -2029,6 +2138,7 @@ fn phase_f_windows_powershell_shell_and_param_script_keep_semantics() {
         Some(cwd.path().to_string_lossy().as_ref()),
         "[Console]::Out.WriteLine('shell 中文 🙂'); [Console]::Error.WriteLine('error 中文 🙂'); exit 19",
         None,
+        false,
         None,
         10,
         None,

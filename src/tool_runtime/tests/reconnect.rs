@@ -206,6 +206,7 @@ async fn runner_disconnect_and_reconnect_change_layers_independently() {
             runtime
                 .dispatch_with_auth(
                     ToolCall::RunShell {
+                        login: false,
                         project,
                         command: "echo back".to_string(),
                         session_id: None,
@@ -512,6 +513,7 @@ async fn agent_job_lost_on_disconnect_stays_terminal_after_reconnect() {
         .runner_registry
         .start_job(
             ShellJobOpRequest {
+                login: false,
                 op: "start".to_string(),
                 client_id: Some("job-agent".to_string()),
                 cwd: None,

@@ -26,6 +26,7 @@ async fn reconcile_disconnect_marks_running_jobs_lost() {
     let job = registry
         .start_job(
             ShellJobOpRequest {
+                login: false,
                 op: "start".to_string(),
                 client_id: Some("oe".to_string()),
                 cwd: None,
@@ -86,6 +87,7 @@ async fn reconcile_disconnect_fails_pending_sync_requests_fast() {
     let (_request_id, rx) = registry
         .enqueue_run(
             ShellRunRequest {
+                login: false,
                 client_id: "oe".to_string(),
                 cwd: Some("/tmp".to_string()),
                 command: "echo hi".to_string(),

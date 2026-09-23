@@ -1210,6 +1210,7 @@ impl ToolRuntime {
             .runner_registry
             .start_job_with_metadata_for_access(
                 ShellJobOpRequest {
+                    login: false,
                     op: "start".to_string(),
                     client_id: Some(client_id),
                     cwd: Some(effective_cwd),

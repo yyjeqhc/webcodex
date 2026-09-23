@@ -51,6 +51,7 @@ pub struct RunnerShellOperation {
     pub cwd: Option<String>,
     pub command: String,
     pub shell: Option<crate::workflow_session_contract::ExecutionShell>,
+    pub login: bool,
     pub stdin: Option<String>,
     /// Historical V2 `run_shell.max_bytes`, consumed by the external-search
     /// provider route as a per-request output cap. Native raw shell ignores it.
@@ -89,6 +90,7 @@ pub struct RunnerJobShellOperation {
     pub cwd: Option<String>,
     pub command: String,
     pub shell: Option<crate::workflow_session_contract::ExecutionShell>,
+    pub login: bool,
     pub timeout_secs: u64,
     pub context: ShellJobContext,
 }
@@ -775,6 +777,7 @@ fn empty_wire(metadata: RunnerInvocationMetadata, kind: &str, timeout_secs: u64)
         create_dirs: false,
         command: String::new(),
         shell: None,
+        login: false,
         process: None,
         script: None,
         stdin: None,
@@ -800,9 +803,15 @@ fn encode_operation(
     match operation {
         RunnerOperation::RunShell(operation) => {
             validate_raw_shell_wire_command(&operation.command)?;
+            if operation.login
+                && operation.shell != Some(crate::workflow_session_contract::ExecutionShell::Bash)
+            {
+                return Err("bash login mode requires shell=bash".to_string());
+            }
             wire.cwd = operation.cwd;
             wire.command = operation.command;
             wire.shell = operation.shell;
+            wire.login = operation.login;
             wire.stdin = operation.stdin;
             wire.max_bytes = operation.max_bytes;
             wire.timeout_secs = operation.timeout_secs;
@@ -993,11 +1002,17 @@ fn encode_job_operation(
     match operation {
         RunnerJobOperation::StartShell(operation) => {
             validate_raw_shell_wire_command(&operation.command)?;
+            if operation.login
+                && operation.shell != Some(crate::workflow_session_contract::ExecutionShell::Bash)
+            {
+                return Err("bash login mode requires shell=bash".to_string());
+            }
             validate_job_context_coherence(operation.cwd.as_deref(), &operation.context)?;
             wire.job_id = Some(operation.job_id);
             wire.cwd = operation.cwd;
             wire.command = operation.command;
             wire.shell = operation.shell;
+            wire.login = operation.login;
             wire.timeout_secs = operation.timeout_secs;
             wire.job_context = Some(operation.context);
         }
@@ -1084,6 +1099,12 @@ fn encode_job_operation(
 }
 
 fn decode_operation(wire: &RunnerRequest) -> Result<RunnerOperation, String> {
+    if wire.login
+        && (!matches!(wire.kind.as_str(), "run_shell" | "start_job")
+            || wire.shell != Some(crate::workflow_session_contract::ExecutionShell::Bash))
+    {
+        return Err("bash login mode requires raw shell=bash".to_string());
+    }
     if wire.shell.is_some() && !matches!(wire.kind.as_str(), "run_shell" | "start_job") {
         return Err(format!(
             "{} does not accept the raw-shell selector",
@@ -1106,6 +1127,7 @@ fn decode_operation(wire: &RunnerRequest) -> Result<RunnerOperation, String> {
                 cwd: wire.cwd.clone(),
                 command: wire.command.clone(),
                 shell: wire.shell,
+                login: wire.login,
                 stdin: wire.stdin.clone(),
                 max_bytes: wire.max_bytes,
                 timeout_secs: wire.timeout_secs,
@@ -1466,6 +1488,7 @@ fn decode_job_operation(wire: &RunnerRequest) -> Result<RunnerJobOperation, Stri
                 cwd: wire.cwd.clone(),
                 command: wire.command.clone(),
                 shell: wire.shell,
+                login: wire.login,
                 timeout_secs: wire.timeout_secs,
                 context,
             }))
@@ -1985,6 +2008,7 @@ mod tests {
         RunnerRequest::from_operation(
             metadata(),
             RunnerOperation::RunShell(RunnerShellOperation {
+                login: false,
                 cwd: Some("/tmp".to_string()),
                 command: "printf ok".to_string(),
                 shell: None,
@@ -1998,10 +2022,33 @@ mod tests {
     }
 
     #[test]
+    fn bash_login_wire_is_explicit_and_shell_bound() {
+        let mut wire = shell_wire();
+        wire.shell = Some(crate::workflow_session_contract::ExecutionShell::Bash);
+        wire.login = true;
+        let RunnerOperation::RunShell(decoded) = wire.decode_operation().unwrap() else {
+            panic!("expected shell operation");
+        };
+        assert!(decoded.login);
+        assert_eq!(
+            decoded.shell,
+            Some(crate::workflow_session_contract::ExecutionShell::Bash)
+        );
+        wire.shell = Some(crate::workflow_session_contract::ExecutionShell::Sh);
+        assert!(wire
+            .decode_operation()
+            .unwrap_err()
+            .contains("bash login mode"));
+        wire.kind = "run_process".to_string();
+        assert!(wire.decode_operation().is_err());
+    }
+
+    #[test]
     fn raw_shell_selector_round_trips_on_dedicated_wire_field() {
         let wire = RunnerRequest::from_operation(
             metadata(),
             RunnerOperation::RunShell(RunnerShellOperation {
+                login: false,
                 cwd: None,
                 command: "printf ok".to_string(),
                 shell: Some(crate::workflow_session_contract::ExecutionShell::Bash),
@@ -2411,6 +2458,7 @@ mod tests {
         validation_context.validation_steps = vec!["check".to_string()];
         let mut operations = vec![
             RunnerOperation::RunShell(RunnerShellOperation {
+                login: false,
                 cwd: Some("/repo".to_string()),
                 command: "printf ok".to_string(),
                 shell: None,
@@ -2450,6 +2498,7 @@ mod tests {
                 timeout_secs: 30,
             }),
             RunnerOperation::Job(RunnerJobOperation::StartShell(RunnerJobShellOperation {
+                login: false,
                 job_id: "job-shell".to_string(),
                 cwd: Some("/repo".to_string()),
                 command: "printf job".to_string(),
@@ -2753,6 +2802,7 @@ mod tests {
         let shell = serde_json::to_value(round_trip_kind(RunnerOperation::RunShell(
             RunnerShellOperation {
                 cwd: Some("/repo".to_string()),
+                login: false,
                 command: "printf ok".to_string(),
                 shell: None,
                 stdin: None,
@@ -2855,6 +2905,7 @@ mod tests {
         );
         assert_field(
             RunnerOperation::Job(RunnerJobOperation::StartShell(RunnerJobShellOperation {
+                login: false,
                 job_id: "job-shell-json".to_string(),
                 cwd: Some("/repo".to_string()),
                 command: "printf job".to_string(),

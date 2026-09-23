@@ -265,6 +265,7 @@ impl ToolRuntime {
             self.runner_registry
                 .enqueue_run(
                     ShellRunRequest {
+                        login: false,
                         client_id,
                         cwd: effective_cwd,
                         command,
@@ -435,6 +436,7 @@ impl ToolRuntime {
             cwd,
             purpose,
             shell,
+            false,
             None,
             None,
             None,
@@ -452,10 +454,18 @@ impl ToolRuntime {
         cwd: Option<String>,
         purpose: Option<ExecutionPurpose>,
         shell: Option<ExecutionShell>,
+        login: bool,
         ssh_resource: Option<&str>,
         session_id: Option<&str>,
         auth: Option<&AuthContext>,
     ) -> ToolResult {
+        if login && (shell != Some(ExecutionShell::Bash) || ssh_resource.is_some()) {
+            return Self::run_shell_tool_failure_result(
+                "run_shell login=true requires local shell=bash".to_string(),
+                "invalid_arguments",
+                ShellCommandExecutionState::NotStarted,
+            );
+        }
         if let Err(error) = validate_raw_shell_command_length(&command) {
             return Self::run_shell_tool_failure_result(
                 command_rejected_message(
@@ -563,13 +573,17 @@ impl ToolRuntime {
                 ShellCommandExecutionState::NotStarted,
             );
         }
-        let actual_shell = shell
-            .map(ExecutionShell::as_str)
-            .unwrap_or(if ssh_resource.is_some() {
-                "remote"
-            } else {
-                "configured"
-            });
+        let actual_shell = if login {
+            "bash_login"
+        } else {
+            shell
+                .map(ExecutionShell::as_str)
+                .unwrap_or(if ssh_resource.is_some() {
+                    "remote"
+                } else {
+                    "configured"
+                })
+        };
         let dispatched_command = match (ssh_resource, shell) {
             // Named SSH keeps the existing remote-login-shell compatibility
             // wrapper. Local explicit shells are selected structurally by the
@@ -661,6 +675,7 @@ impl ToolRuntime {
                         client_id: Some(client_id.clone()),
                         cwd: effective_cwd.clone(),
                         command: Some(dispatched_command.clone()),
+                        login,
                         timeout_secs: Some(timeout),
                         job_id: None,
                         since_stdout_line: None,
@@ -811,6 +826,7 @@ impl ToolRuntime {
                     client_id,
                     cwd: effective_cwd,
                     command: dispatched_command,
+                    login,
                     stdin: None,
                     timeout_secs: timeout,
                     wait_timeout_secs: wait_timeout,

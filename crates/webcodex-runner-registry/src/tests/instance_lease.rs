@@ -113,6 +113,7 @@ async fn lease_stale_instance_result_rejected() {
     let (request_id, mut rx) = registry
         .enqueue_run(
             ShellRunRequest {
+                login: false,
                 client_id: "oe".to_string(),
                 cwd: None,
                 command: "echo hi".to_string(),
@@ -205,6 +206,7 @@ async fn lease_stale_instance_job_update_rejected() {
     let job = registry
         .start_job(
             ShellJobOpRequest {
+                login: false,
                 op: "start".to_string(),
                 client_id: Some("oe".to_string()),
                 cwd: None,
@@ -349,6 +351,7 @@ async fn lease_reconcile_disconnect_stale_instance_is_noop() {
     let old_job = registry
         .start_job(
             ShellJobOpRequest {
+                login: false,
                 op: "start".to_string(),
                 client_id: Some("oe".to_string()),
                 cwd: None,
@@ -382,6 +385,7 @@ async fn lease_reconcile_disconnect_stale_instance_is_noop() {
     let b_job = registry
         .start_job(
             ShellJobOpRequest {
+                login: false,
                 op: "start".to_string(),
                 client_id: Some("oe".to_string()),
                 cwd: None,
@@ -573,6 +577,7 @@ async fn lease_replacement_transfers_exact_detached_inventory_to_new_instance() 
     let job = registry
         .start_job_with_metadata(
             ShellJobOpRequest {
+                login: false,
                 op: "start".to_string(),
                 client_id: Some("oe".to_string()),
                 cwd: Some("/tmp".to_string()),

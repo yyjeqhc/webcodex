@@ -579,6 +579,7 @@ mod tests {
         let capabilities = crate::test_support::current_runner_capabilities(RunnerCapabilities {
             shell: true,
             explicit_shell_selection: false,
+            bash_login_shell: false,
             file_read: true,
             file_write: true,
             artifact_export_chunk_read: false,
@@ -609,6 +610,7 @@ mod tests {
             structured_script_payload: false,
             structured_script_javascript: false,
             structured_script_typescript: false,
+            structured_script_python: false,
             internal_posix_script: false,
             structured_execution_jobs: false,
             detached_process_jobs: false,
@@ -1018,6 +1020,7 @@ mod tests {
         let (request_id, rx) = registry
             .enqueue_run(
                 ShellRunRequest {
+                    login: false,
                     client_id: "quic-gen2-rt".to_string(),
                     cwd: None,
                     command: "echo hi".to_string(),
@@ -1118,6 +1121,7 @@ mod tests {
         let job = registry
             .start_job(
                 ShellJobOpRequest {
+                    login: false,
                     op: "start".to_string(),
                     client_id: Some("quic-job".to_string()),
                     cwd: None,
@@ -1221,6 +1225,7 @@ mod tests {
         let job = registry
             .start_job(
                 ShellJobOpRequest {
+                    login: false,
                     op: "start".to_string(),
                     client_id: Some("quic-disc".to_string()),
                     cwd: None,
@@ -1271,6 +1276,7 @@ mod tests {
         let err = registry
             .enqueue_run(
                 ShellRunRequest {
+                    login: false,
                     client_id: "quic-disc".to_string(),
                     cwd: None,
                     command: "echo after".to_string(),
@@ -1637,6 +1643,7 @@ mod tests {
         let (request_id, _rx) = registry
             .enqueue_run(
                 ShellRunRequest {
+                    login: false,
                     client_id: "quic-steal".to_string(),
                     cwd: None,
                     command: "echo hi".to_string(),

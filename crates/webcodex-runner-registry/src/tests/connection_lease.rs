@@ -201,6 +201,7 @@ async fn stale_connection_poll_cannot_steal_new_request() {
     let job = registry
         .start_job(
             ShellJobOpRequest {
+                login: false,
                 op: "start".to_string(),
                 client_id: Some("oe".to_string()),
                 cwd: None,
@@ -529,6 +530,7 @@ async fn stale_connection_disconnect_cleanup_is_noop_for_current_lease() {
     let job = registry
         .start_job(
             ShellJobOpRequest {
+                login: false,
                 op: "start".to_string(),
                 client_id: Some("oe".to_string()),
                 cwd: None,
@@ -602,6 +604,7 @@ async fn late_result_on_stale_connection_is_accepted_without_refreshing_liveness
     let (request_id, rx) = registry
         .enqueue_run(
             ShellRunRequest {
+                login: false,
                 client_id: "oe".to_string(),
                 cwd: None,
                 command: "echo hi".to_string(),
@@ -670,6 +673,7 @@ async fn late_result_on_stale_connection_is_accepted_without_refreshing_liveness
     let (_new_request_id, _new_rx) = registry
         .enqueue_run(
             ShellRunRequest {
+                login: false,
                 client_id: "oe".to_string(),
                 cwd: None,
                 command: "echo two".to_string(),
@@ -722,6 +726,7 @@ async fn late_job_update_on_stale_connection_is_accepted_without_refreshing_live
     let job = registry
         .start_job(
             ShellJobOpRequest {
+                login: false,
                 op: "start".to_string(),
                 client_id: Some("oe".to_string()),
                 cwd: None,

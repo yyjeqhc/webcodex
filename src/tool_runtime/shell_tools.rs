@@ -103,6 +103,7 @@ impl ToolRuntime {
                 cwd,
                 purpose,
                 shell,
+                login,
             } => {
                 self.run_shell_with_contract_for_resource(
                     project,
@@ -112,6 +113,7 @@ impl ToolRuntime {
                     cwd,
                     purpose,
                     shell,
+                    login,
                     ssh_resource,
                     session_id.as_deref(),
                     auth,

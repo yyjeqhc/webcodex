@@ -40,6 +40,7 @@ use webcodex_core::runner_protocol::{
     JOB_INVENTORY_MAX_TERMINAL_JOBS, JOB_SNAPSHOT_STREAM_MAX_BYTES, JOB_TERMINAL_RETENTION_SECS,
     VALIDATION_STEP_SPAWN_FAILED_CODE, VALIDATION_TOOL_UNAVAILABLE_CODE,
 };
+use webcodex_core::workflow_session_contract::ExecutionShell;
 use webcodex_process::ManagedChild;
 // Existing process-I/O / execution helpers deliberately remain at their current
 // owner. Extracting those independent facilities is outside this refactor.
@@ -2558,35 +2559,54 @@ impl JobManager {
             operation,
             ..
         } = start;
-        let (job_id, cwd, raw_command, explicit_shell, steps, timeout_secs, context, validation) =
-            match &operation {
-                RunnerJobOperation::StartShell(request) => (
-                    request.job_id.clone(),
-                    request.cwd.clone(),
-                    Some(request.command.clone()),
-                    request.shell,
-                    Vec::new(),
-                    request.timeout_secs,
-                    request.context.clone(),
-                    false,
-                ),
-                RunnerJobOperation::StartValidation(request) => (
-                    request.job_id.clone(),
-                    request.cwd.clone(),
-                    None,
-                    None,
-                    request.steps.clone(),
-                    request.timeout_secs,
-                    request.context.clone(),
-                    true,
-                ),
-                _ => unreachable!("shell Job starter received non shell/validation operation"),
-            };
+        let (
+            job_id,
+            cwd,
+            raw_command,
+            explicit_shell,
+            login,
+            steps,
+            timeout_secs,
+            context,
+            validation,
+        ) = match &operation {
+            RunnerJobOperation::StartShell(request) => (
+                request.job_id.clone(),
+                request.cwd.clone(),
+                Some(request.command.clone()),
+                request.shell,
+                request.login,
+                Vec::new(),
+                request.timeout_secs,
+                request.context.clone(),
+                false,
+            ),
+            RunnerJobOperation::StartValidation(request) => (
+                request.job_id.clone(),
+                request.cwd.clone(),
+                None,
+                None,
+                false,
+                request.steps.clone(),
+                request.timeout_secs,
+                request.context.clone(),
+                true,
+            ),
+            _ => unreachable!("shell Job starter received non shell/validation operation"),
+        };
         let capture_cargo_test_count = context.validation.as_ref().is_some_and(|metadata| {
             metadata.tool == "cargo_test"
                 && metadata.kind == "test"
                 && metadata.no_run != Some(true)
         });
+        if login && explicit_shell != Some(ExecutionShell::Bash) {
+            self.fail_job(
+                &operation,
+                "bash login mode requires shell=bash".to_string(),
+                None,
+            );
+            return;
+        }
         if !policy.allow_raw_shell {
             self.fail_job(
                 &operation,
@@ -2664,6 +2684,7 @@ impl JobManager {
                         &shell,
                         prepared_profile.as_deref(),
                         selection,
+                        login,
                         raw_command,
                     ),
                     None => match prepared_profile.as_deref() {

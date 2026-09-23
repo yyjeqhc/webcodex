@@ -54,6 +54,7 @@ async fn shared_key_offline_ttl_prunes_only_expired_clients_and_all_associated_s
     let job = registry
         .start_job(
             ShellJobOpRequest {
+                login: false,
                 op: "start".to_string(),
                 client_id: Some("ttl-expired".to_string()),
                 cwd: None,
@@ -73,6 +74,7 @@ async fn shared_key_offline_ttl_prunes_only_expired_clients_and_all_associated_s
     let (sync_request_id, sync_rx) = registry
         .enqueue_run(
             ShellRunRequest {
+                login: false,
                 client_id: "ttl-expired".to_string(),
                 cwd: None,
                 command: "echo pending".to_string(),

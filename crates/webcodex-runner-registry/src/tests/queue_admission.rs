@@ -30,6 +30,7 @@ async fn registry_rejects_enqueue_when_queue_full() {
         registry
             .enqueue_run(
                 ShellRunRequest {
+                    login: false,
                     client_id: "full".to_string(),
                     cwd: None,
                     command: "echo hi".to_string(),
@@ -47,6 +48,7 @@ async fn registry_rejects_enqueue_when_queue_full() {
     let err = registry
         .enqueue_run(
             ShellRunRequest {
+                login: false,
                 client_id: "full".to_string(),
                 cwd: None,
                 command: "echo hi".to_string(),
@@ -99,6 +101,7 @@ async fn registry_rejects_enqueue_when_client_offline() {
     let err = registry
         .enqueue_run(
             ShellRunRequest {
+                login: false,
                 client_id: "stale".to_string(),
                 cwd: None,
                 command: "echo hi".to_string(),

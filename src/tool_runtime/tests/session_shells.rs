@@ -1072,6 +1072,7 @@ async fn named_ssh_run_shell_rejects_unsupported_long_lifetime_before_dispatch()
     let result = runtime
         .dispatch_with_auth(
             ToolCall::RunShell {
+                login: false,
                 project,
                 command: "printf remote-long".to_string(),
                 session_id: Some(session.session_id.clone()),
@@ -1103,6 +1104,7 @@ async fn named_ssh_run_shell_rejects_sync_wait_before_dispatch() {
     let result = runtime
         .dispatch_with_auth(
             ToolCall::RunShell {
+                login: false,
                 project,
                 command: "printf remote".to_string(),
                 session_id: Some(session.session_id.clone()),
@@ -1137,6 +1139,7 @@ async fn ssh_persistent_shell_enqueues_with_bound_resource_and_routes_by_record(
     let one_shot = runtime
         .dispatch_with_auth(
             ToolCall::RunShell {
+                login: false,
                 project: project.clone(),
                 command: "printf one-shot".to_string(),
                 session_id: Some(session.session_id.clone()),

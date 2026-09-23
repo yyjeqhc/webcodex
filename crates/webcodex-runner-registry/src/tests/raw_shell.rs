@@ -3,6 +3,7 @@ use super::*;
 #[test]
 fn validate_run_request_uses_the_internal_raw_shell_wire_bound() {
     let exact = ShellRunRequest {
+        login: false,
         client_id: "client-1".to_string(),
         cwd: None,
         command: "x".repeat(crate::runner_protocol::RAW_SHELL_WIRE_MAX_BYTES),
@@ -21,6 +22,7 @@ fn validate_run_request_uses_the_internal_raw_shell_wire_bound() {
 #[test]
 fn validate_run_request_allows_bounded_stdin_beyond_command_limit() {
     let body = ShellRunRequest {
+        login: false,
         client_id: "client-1".to_string(),
         cwd: None,
         command: "cat >/dev/null".to_string(),
@@ -34,6 +36,7 @@ fn validate_run_request_allows_bounded_stdin_beyond_command_limit() {
 #[test]
 fn validate_run_request_rejects_oversized_stdin() {
     let body = ShellRunRequest {
+        login: false,
         client_id: "client-1".to_string(),
         cwd: None,
         command: "cat >/dev/null".to_string(),

@@ -1674,6 +1674,7 @@ impl ToolRuntime {
             .runner_registry
             .enqueue_run(
                 ShellRunRequest {
+                    login: false,
                     client_id,
                     cwd: Some(proj.path.clone()),
                     command: format!("{EXTERNAL_SEARCH_REQUEST_PREFIX}\n{cmd}"),

@@ -1267,6 +1267,7 @@ impl RunnerRegistry {
         let normalized_cwd = cwd.map(|cwd| cwd.trim().to_string());
         let requires_javascript = script.language == ShellScriptLanguage::Javascript;
         let requires_typescript = script.language == ShellScriptLanguage::Typescript;
+        let requires_python = script.language == ShellScriptLanguage::Python;
         let request_id = next_request_id();
         let (tx, rx) = oneshot::channel();
         let request = encode_runner_operation(
@@ -1309,6 +1310,15 @@ impl RunnerRegistry {
             return Err(format!(
                 "capability_unavailable: runner {client_id} does not support {}",
                 webcodex_core::runner_protocol::RUNNER_CAPABILITY_STRUCTURED_SCRIPT_TYPESCRIPT
+            ));
+        }
+        if requires_python
+            && !runner
+                .runner_features
+                .supports(RunnerFeature::StructuredScriptPython)
+        {
+            return Err(format!(
+                "capability_unavailable: runner {client_id} does not support structured_script_python"
             ));
         }
         enqueue_pending_request_locked(
@@ -1446,6 +1456,9 @@ impl RunnerRegistry {
             .as_ref()
             .is_some_and(|context| context.ssh_resource.is_some());
         let has_explicit_shell = explicit_shell.is_some() && !has_ssh_context;
+        if body.login && (has_ssh_context || explicit_shell != Some(ExecutionShell::Bash)) {
+            return Err("bash login mode requires local shell=bash".to_string());
+        }
         let request = encode_runner_operation(
             &request_id,
             &body.client_id,
@@ -1454,6 +1467,7 @@ impl RunnerRegistry {
                 cwd: normalized_cwd,
                 command: body.command.clone(),
                 shell: explicit_shell.filter(|_| !has_ssh_context),
+                login: body.login,
                 stdin: body.stdin.clone(),
                 max_bytes: None,
                 timeout_secs: body.timeout_secs,
@@ -1461,7 +1475,7 @@ impl RunnerRegistry {
             }),
         )?;
         let mut inner = self.inner.lock().await;
-        if has_ssh_context || has_explicit_shell {
+        if has_ssh_context || has_explicit_shell || body.login {
             let Some(runner) = inner.runners.get(&body.client_id) else {
                 return Err(format!("unknown shell client: {}", body.client_id));
             };
@@ -1479,6 +1493,16 @@ impl RunnerRegistry {
                 return Err(format!(
                     "capability_unavailable: runner {} does not support {}",
                     body.client_id, RUNNER_CAPABILITY_EXPLICIT_SHELL_SELECTION
+                ));
+            }
+            if body.login
+                && !runner
+                    .runner_features
+                    .supports(RunnerFeature::BashLoginShell)
+            {
+                return Err(format!(
+                    "capability_unavailable: runner {} does not support bash_login_shell",
+                    body.client_id
                 ));
             }
         }

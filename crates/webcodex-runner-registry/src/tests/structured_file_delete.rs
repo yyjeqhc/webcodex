@@ -276,6 +276,7 @@ async fn instance_replacement_keeps_job_reconciliation_contract_unchanged() {
     let job = registry
         .start_job(
             ShellJobOpRequest {
+                login: false,
                 op: "start".to_string(),
                 client_id: Some("replace-job-sync".to_string()),
                 cwd: None,

@@ -98,6 +98,7 @@ async fn queue_wait_and_round_trip_use_server_monotonic_time_and_dispatch_transp
     let (request_id, waiter) = registry
         .enqueue_run(
             ShellRunRequest {
+                login: false,
                 client_id: "metric-runner".to_string(),
                 cwd: None,
                 command: "echo metric".to_string(),
@@ -171,6 +172,7 @@ async fn undispatched_request_emits_no_latency_samples_instead_of_zero() {
     let (request_id, _waiter) = registry
         .enqueue_run(
             ShellRunRequest {
+                login: false,
                 client_id: "metric-unavailable".to_string(),
                 cwd: None,
                 command: "echo unavailable".to_string(),

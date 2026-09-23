@@ -2,6 +2,7 @@ use super::*;
 
 fn request(kind: &str, payload: &str) -> RunnerRequest {
     RunnerRequest {
+        login: false,
         shell: None,
         request_id: "computer-test".to_string(),
         client_id: "runner".to_string(),

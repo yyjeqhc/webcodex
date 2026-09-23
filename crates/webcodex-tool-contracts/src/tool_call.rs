@@ -2113,7 +2113,8 @@ pub enum ToolCall {
     RunScript {
         /// Configured project id.
         project: String,
-        /// Required semantic script language. JavaScript uses Runner-resolved Node.js with fixed .mjs ESM
+        /// Required semantic script language: sh, bash, PowerShell, Python, JavaScript, or TypeScript.
+        /// Python uses a Runner-resolved interpreter and a temporary .py file. JavaScript uses Runner-resolved Node.js with fixed .mjs ESM
         /// semantics. TypeScript uses Runner-resolved Node.js native erasable type stripping from a fixed
         /// .mts ESM file and requires Node.js 22.6.0 or newer. The Runner owns any runtime compatibility
         /// flags; callers cannot provide a runtime path or runtime flags. Session default_shell never
@@ -2206,6 +2207,10 @@ pub enum ToolCall {
         /// uses the remote login shell. The response always records the actual selection.
         #[serde(default)]
         shell: Option<ExecutionShell>,
+        /// Bash login mode. `true` requires `shell="bash"` and executes exactly
+        /// `bash -lc <command>` using the Runner-resolved Bash program.
+        #[serde(default)]
+        login: bool,
     },
 
     /// Open one explicit command-oriented persistent shell for this Workflow
@@ -5225,8 +5230,48 @@ fn canonicalize_cargo_check_packages(name: &str, arguments: &mut Value) -> Resul
     Ok(())
 }
 
+/// Only explicitly documented, lossless model-input spellings belong here.
+/// Business ToolCall variants and Runner payloads retain `args` alone.
+fn canonicalize_process_argv_alias(name: &str, arguments: &mut Value) -> Result<bool, String> {
+    if !matches!(name, "run_process" | "run_detached_process") {
+        return Ok(false);
+    }
+    let Some(object) = arguments.as_object_mut() else {
+        return Ok(false);
+    };
+    let Some(alias) = object.remove("argv") else {
+        return Ok(false);
+    };
+    if let Some(canonical) = object.get("args") {
+        if canonical != &alias {
+            return Err("ambiguous compatibility alias: args and argv differ".to_string());
+        }
+    } else {
+        object.insert("args".to_string(), alias);
+    }
+    Ok(true)
+}
+
+fn validate_run_shell_login(name: &str, arguments: &Value) -> Result<(), String> {
+    if name == "run_shell"
+        && arguments.get("login").and_then(Value::as_bool) == Some(true)
+        && arguments.get("shell").and_then(Value::as_str) != Some("bash")
+    {
+        return Err("run_shell login=true requires shell=bash".to_string());
+    }
+    Ok(())
+}
+
 impl ToolCall {
     pub fn from_tool_name(name: &str, arguments: Value) -> Result<Self, String> {
+        Self::from_tool_name_with_normalization(name, arguments).map(|(call, _)| call)
+    }
+
+    /// Returns a stable code only when a documented compatibility alias was used.
+    pub fn from_tool_name_with_normalization(
+        name: &str,
+        arguments: Value,
+    ) -> Result<(Self, Option<&'static str>), String> {
         validate_model_facing_assertion_name(name, &arguments)?;
         validate_model_facing_result_expectation(name, &arguments)?;
         if name == "create_project"
@@ -5276,6 +5321,9 @@ impl ToolCall {
             );
         }
         let mut arguments = strip_tool_call_expectation_metadata(arguments);
+        validate_run_shell_login(name, &arguments)?;
+        let normalization =
+            canonicalize_process_argv_alias(name, &mut arguments)?.then_some("argv_to_args");
         canonicalize_cargo_check_packages(name, &mut arguments)?;
         if name == "tool_manifest" {
             if let Some(object) = arguments.as_object_mut() {
@@ -5374,7 +5422,7 @@ impl ToolCall {
                 .validate()
                 .map_err(|error| format!("invalid arguments for tool '{}': {}", name, error))?;
         }
-        Ok(call)
+        Ok((call, normalization))
     }
 
     /// Raw command text for shell-like calls. Consumed only by the workspace

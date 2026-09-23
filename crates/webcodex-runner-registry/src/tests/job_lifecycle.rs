@@ -45,6 +45,7 @@ async fn terminal_observed_poll_complete_and_log() {
     let job = registry
         .start_job(
             ShellJobOpRequest {
+                login: false,
                 op: "start".to_string(),
                 client_id: Some("oe".to_string()),
                 cwd: Some("/tmp".to_string()),
@@ -163,6 +164,7 @@ async fn job_update_rejects_mismatched_request_id_without_mutating_target_job() 
         .unwrap();
 
     let start = |command: &str| ShellJobOpRequest {
+        login: false,
         op: "start".to_string(),
         client_id: Some("oe".to_string()),
         cwd: None,
@@ -253,6 +255,7 @@ async fn terminal_observed_queued_stop_records_server_time() {
     let job = registry
         .start_job(
             ShellJobOpRequest {
+                login: false,
                 op: "start".to_string(),
                 client_id: Some("oe".to_string()),
                 cwd: None,
@@ -316,6 +319,7 @@ async fn registry_shell_job_stop_running_delivers_stop_to_client() {
     let job = registry
         .start_job(
             ShellJobOpRequest {
+                login: false,
                 op: "start".to_string(),
                 client_id: Some("oe".to_string()),
                 cwd: None,
@@ -401,6 +405,7 @@ async fn registry_marks_running_job_lost_when_client_stale() {
     let job = registry
         .start_job(
             ShellJobOpRequest {
+                login: false,
                 op: "start".to_string(),
                 client_id: Some("oe".to_string()),
                 cwd: None,

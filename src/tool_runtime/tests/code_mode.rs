@@ -17,6 +17,7 @@ use tokio::task::JoinHandle;
 
 #[derive(Debug)]
 struct ObservedRunnerRequest {
+    login: bool,
     client_id: String,
     cwd: Option<String>,
 }
@@ -136,6 +137,7 @@ async fn call_code_mode_with_local_runners(
             };
             made_progress = true;
             observed.push(ObservedRunnerRequest {
+                login: false,
                 client_id: (*client_id).to_string(),
                 cwd: request.cwd.clone(),
             });

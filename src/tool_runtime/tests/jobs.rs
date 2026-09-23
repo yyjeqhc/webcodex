@@ -173,6 +173,7 @@ async fn run_shell_session_events_record_exit_without_stdio_bodies() {
             runtime
                 .dispatch_with_auth(
                     ToolCall::RunShell {
+                        login: false,
                         project,
                         command: "printf success-output".to_string(),
                         session_id: Some(session_id),
@@ -216,6 +217,7 @@ async fn run_shell_session_events_record_exit_without_stdio_bodies() {
             runtime
                 .dispatch_with_auth(
                     ToolCall::RunShell {
+                        login: false,
                         project,
                         command: "printf failure-output; exit 7".to_string(),
                         session_id: Some(session_id),
@@ -525,6 +527,7 @@ async fn long_run_shell_hands_off_same_job_once_and_status_log_stop_observe_it()
             runtime
                 .dispatch_with_auth(
                     ToolCall::RunShell {
+                        login: false,
                         project,
                         command: "printf durable-shell; sleep 30".to_string(),
                         session_id: Some(session_id),
@@ -845,6 +848,7 @@ async fn long_run_shell_async_job_capability_does_not_bypass_shell_authority() {
     let result = runtime
         .dispatch_with_auth(
             ToolCall::RunShell {
+                login: false,
                 project,
                 command: "printf denied".to_string(),
                 session_id: None,
@@ -1714,6 +1718,7 @@ pub(super) async fn register_job_agent_for_auth_with_reconciliation(
     let caps = crate::test_support::current_runner_capabilities(RunnerCapabilities {
         async_shell_jobs: true,
         explicit_shell_selection: true,
+        bash_login_shell: true,
         job_state_reconciliation: reconciliation,
         ..Default::default()
     });

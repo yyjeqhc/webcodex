@@ -900,6 +900,134 @@ fn from_tool_name_parses_structured_run_process_boundaries() {
 }
 
 #[test]
+fn process_argv_alias_is_exact_and_canonical() {
+    for name in ["run_process", "run_detached_process"] {
+        let mut base = json!({"project":"demo", "executable":"git"});
+        if name == "run_detached_process" {
+            base["idempotency_key"] = json!("exact-key");
+        }
+        let mut alias = base.clone();
+        alias["argv"] = json!(["status"]);
+        let (call, code) =
+            ToolCall::from_tool_name_with_normalization(name, alias.clone()).unwrap();
+        assert_eq!(code, Some("argv_to_args"));
+        assert_eq!(
+            serde_json::to_value(&call).unwrap()["params"]["args"],
+            json!(["status"])
+        );
+        assert!(serde_json::to_string(&call).unwrap().find("argv").is_none());
+
+        let mut canonical = base.clone();
+        canonical["args"] = json!(["status"]);
+        assert_eq!(
+            ToolCall::from_tool_name_with_normalization(name, canonical.clone())
+                .unwrap()
+                .1,
+            None
+        );
+        alias["args"] = json!(["status"]);
+        assert_eq!(
+            ToolCall::from_tool_name_with_normalization(name, alias.clone())
+                .unwrap()
+                .1,
+            Some("argv_to_args")
+        );
+        alias["args"] = json!(["different"]);
+        assert_eq!(
+            ToolCall::from_tool_name(name, alias).unwrap_err(),
+            "ambiguous compatibility alias: args and argv differ"
+        );
+        for (field, value) in [("argv", json!("status")), ("arguments", json!(["status"]))] {
+            let mut invalid = base.clone();
+            invalid[field] = value;
+            assert!(
+                ToolCall::from_tool_name(name, invalid).is_err(),
+                "{name}: {field}"
+            );
+        }
+        for field in ["timeout", "workdir", "arg", "command_args", "params"] {
+            let mut invalid = base.clone();
+            invalid[field] = json!("value");
+            assert!(
+                ToolCall::from_tool_name(name, invalid).is_err(),
+                "{name}: {field}"
+            );
+        }
+    }
+}
+
+#[test]
+fn python_is_semantic_script_language_without_interpreter_alias() {
+    let (call, code) = ToolCall::from_tool_name_with_normalization(
+        "run_script",
+        json!({
+            "project":"demo", "language":"python", "script":"print('雪')"
+        }),
+    )
+    .unwrap();
+    assert_eq!(code, None);
+    assert!(matches!(
+        call,
+        ToolCall::RunScript {
+            language: webcodex_core::runner_protocol::ShellScriptLanguage::Python,
+            ..
+        }
+    ));
+    assert!(ToolCall::from_tool_name(
+        "run_script",
+        json!({
+            "project":"demo", "language":"python3", "script":"print('x')"
+        })
+    )
+    .is_err());
+    for field in ["python_path", "interpreter", "runtime_flags"] {
+        let mut request = json!({"project":"demo", "language":"python", "script":"print('x')"});
+        request[field] = json!("--unsafe");
+        assert!(
+            ToolCall::from_tool_name("run_script", request).is_err(),
+            "{field}"
+        );
+    }
+    assert!(ToolCall::from_tool_name(
+        "run_script",
+        json!({
+            "project":"demo", "language":"python", "script":"print('x')", "command":"print('x')"
+        })
+    )
+    .is_err());
+}
+
+#[test]
+fn bash_login_requires_explicit_bash_selection() {
+    let call = ToolCall::from_tool_name(
+        "run_shell",
+        json!({
+            "project":"demo", "shell":"bash", "login":true, "command":"printf ok"
+        }),
+    )
+    .unwrap();
+    assert!(matches!(call, ToolCall::RunShell { login: true, .. }));
+    for shell in [None, Some("sh")] {
+        let mut request = json!({"project":"demo", "login":true, "command":"printf ok"});
+        if let Some(shell) = shell {
+            request["shell"] = json!(shell);
+        }
+        assert_eq!(
+            ToolCall::from_tool_name("run_shell", request).unwrap_err(),
+            "run_shell login=true requires shell=bash"
+        );
+    }
+    let default = ToolCall::from_tool_name(
+        "run_shell",
+        json!({
+            "project":"demo", "shell":"bash", "command":"printf ok"
+        }),
+    )
+    .unwrap();
+    assert!(matches!(default, ToolCall::RunShell { login: false, .. }));
+}
+
+#[test]
 fn from_tool_name_rejects_retired_job_status_and_job_log() {
     for (name, args) in [
         ("job_status", json!({"job_id": "abc"})),

@@ -9,6 +9,7 @@ async fn job_handoff_promotion_is_authorized_atomic_and_never_replaces_execution
         let job = registry
             .start_job_with_metadata(
                 ShellJobOpRequest {
+                    login: false,
                     op: "start".into(),
                     client_id: Some("handoff-fixture".into()),
                     cwd: None,

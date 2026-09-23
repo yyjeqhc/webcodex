@@ -177,6 +177,8 @@ pub struct ShellJobOpRequest {
     pub cwd: Option<String>,
     #[serde(default)]
     pub command: Option<String>,
+    #[serde(default, skip_serializing_if = "super::is_false")]
+    pub login: bool,
     #[serde(default)]
     pub timeout_secs: Option<u64>,
     #[serde(default)]

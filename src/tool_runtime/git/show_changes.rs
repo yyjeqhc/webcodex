@@ -2433,6 +2433,7 @@ impl ToolRuntime {
             .runner_registry
             .enqueue_run(
                 ShellRunRequest {
+                    login: false,
                     client_id,
                     cwd: Some(proj.path.clone()),
                     command: "git status --porcelain".to_string(),

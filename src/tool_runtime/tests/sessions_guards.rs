@@ -796,6 +796,7 @@ async fn read_only_session_rejects_run_shell_before_agent_enqueue() {
     let result = runtime
         .dispatch_with_auth(
             ToolCall::RunShell {
+                login: false,
                 project,
                 command: "echo should-not-run".to_string(),
                 session_id: Some(session.session_id.clone()),
@@ -922,6 +923,7 @@ async fn deny_write_only_allows_read_and_shell_tools() {
             runtime
                 .dispatch_with_auth(
                     ToolCall::RunShell {
+                        login: false,
                         project,
                         command: "exit 0".to_string(),
                         session_id: Some(session_id),
@@ -970,6 +972,7 @@ async fn deny_shell_only_allows_write_tools() {
     let denied = runtime
         .dispatch_with_auth(
             ToolCall::RunShell {
+                login: false,
                 project: project.clone(),
                 command: "echo blocked".to_string(),
                 session_id: Some(session.session_id.clone()),

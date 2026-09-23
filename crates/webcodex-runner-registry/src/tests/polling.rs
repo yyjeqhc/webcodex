@@ -28,6 +28,7 @@ async fn registry_enqueues_polls_and_completes_shell_request() {
     let (request_id, rx) = registry
         .enqueue_run(
             ShellRunRequest {
+                login: false,
                 client_id: "xrh".to_string(),
                 cwd: Some("/tmp".to_string()),
                 command: "echo hello".to_string(),
@@ -100,6 +101,7 @@ async fn rejected_cross_client_result_does_not_consume_pending_request() {
     let (request_id, waiter) = registry
         .enqueue_run(
             ShellRunRequest {
+                login: false,
                 client_id: "owner".to_string(),
                 cwd: None,
                 command: "echo owner".to_string(),
@@ -184,6 +186,7 @@ async fn polling_out_of_order_results_resolve_only_their_original_waiters() {
     let (request_a, waiter_a) = registry
         .enqueue_run(
             ShellRunRequest {
+                login: false,
                 client_id: "ordered".to_string(),
                 cwd: None,
                 command: "slow-a".to_string(),
@@ -198,6 +201,7 @@ async fn polling_out_of_order_results_resolve_only_their_original_waiters() {
     let (request_b, waiter_b) = registry
         .enqueue_run(
             ShellRunRequest {
+                login: false,
                 client_id: "ordered".to_string(),
                 cwd: None,
                 command: "fast-b".to_string(),

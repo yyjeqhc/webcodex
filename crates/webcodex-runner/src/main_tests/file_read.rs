@@ -8,6 +8,7 @@ fn file_read_request(
     max_bytes: Option<usize>,
 ) -> RunnerRequest {
     RunnerRequest {
+        login: false,
         shell: None,
         request_id: "req-file-read".to_string(),
         client_id: "agent-1".to_string(),

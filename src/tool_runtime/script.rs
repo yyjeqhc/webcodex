@@ -151,6 +151,7 @@ impl ToolRuntime {
                 .runner_registry
                 .start_job_with_metadata_for_access(
                     ShellJobOpRequest {
+                        login: false,
                         op: "start".to_string(),
                         client_id: Some(client_id),
                         cwd: Some(effective_cwd),
@@ -329,6 +330,7 @@ impl ToolRuntime {
                         match language {
                             ShellScriptLanguage::Javascript => "confirm the Runner is connected and advertises structured_script_payload plus structured_script_javascript, then retry only if target state proves no script started.",
                             ShellScriptLanguage::Typescript => "confirm the Runner is connected and advertises structured_script_payload plus structured_script_typescript, then retry only if target state proves no script started.",
+                            ShellScriptLanguage::Python => "confirm the Runner is connected and advertises structured_script_payload plus structured_script_python, then retry only if target state proves no script started.",
                             _ => "confirm the Runner is connected and advertises structured_script_payload, then retry only if target state proves no script started.",
                         },
                     ),

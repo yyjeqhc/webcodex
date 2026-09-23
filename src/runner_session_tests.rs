@@ -42,6 +42,7 @@ fn streaming_registration(client_id: &str, runner_instance_id: &str) -> RunnerRe
 
 fn start_job_request(client_id: &str) -> ShellJobOpRequest {
     ShellJobOpRequest {
+        login: false,
         op: "start".to_string(),
         client_id: Some(client_id.to_string()),
         cwd: None,

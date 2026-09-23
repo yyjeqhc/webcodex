@@ -81,6 +81,7 @@ async fn start_wait_job(registry: &RunnerRegistry) -> crate::runner_protocol::Sh
     registry
         .start_job(
             ShellJobOpRequest {
+                login: false,
                 op: "start".to_string(),
                 client_id: Some("oe".to_string()),
                 cwd: Some("/tmp".to_string()),
@@ -204,6 +205,7 @@ async fn job_log_wait_resets_cross_job_and_rejects_malformed_tokens() {
     let second = registry
         .start_job(
             ShellJobOpRequest {
+                login: false,
                 op: "start".into(),
                 client_id: Some("oe".into()),
                 cwd: Some("/tmp".into()),
@@ -521,6 +523,7 @@ async fn job_log_wait_unsequenced_update_between_calls_and_noop_update() {
     let job = registry
         .start_job(
             ShellJobOpRequest {
+                login: false,
                 op: "start".to_string(),
                 client_id: Some("legacy".to_string()),
                 cwd: Some("/tmp".to_string()),
@@ -619,6 +622,7 @@ async fn job_log_wait_activity_only_legacy_transition_advances_revision_and_wake
     let job = registry
         .start_job(
             ShellJobOpRequest {
+                login: false,
                 op: "start".into(),
                 client_id: Some("activity-legacy".into()),
                 cwd: Some("/tmp".into()),

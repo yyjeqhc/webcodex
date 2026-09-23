@@ -1533,7 +1533,7 @@ impl ToolRuntime {
         } else {
             None
         };
-        let session_contract = super::sessions::session_tool_contract(call.tool_name());
+        let mut session_contract = super::sessions::session_tool_contract(call.tool_name());
         let session_project_mismatch = session_id.as_deref().and_then(|session_id| {
             match (
                 self.sessions.session_project(session_id),
@@ -1612,6 +1612,64 @@ impl ToolRuntime {
                     call = call.with_session_execution_context(&execution_context);
                 }
             }
+        }
+        // Recovery is admitted only after the existing helper proves an exact
+        // canonical shell call. Re-enter all later guards with RunShell as the
+        // authoritative tool identity; RunProcess never dispatches shell text.
+        let mut shell_normalization = None;
+        if let Some(recovery) = self
+            .process_shell_recovery_call(
+                &call,
+                &recorder_metadata.expectation,
+                ssh_resource.as_deref(),
+                resolved_project,
+            )
+            .await
+        {
+            let arguments = recovery["arguments"].clone();
+            let login = arguments["login"] == true;
+            if let Err(error) = super::kernel::check_runtime_tool_scope(auth, "run_shell") {
+                let detail = match error {
+                    super::kernel::ToolCallErrorStatus::InsufficientScope {
+                        description, ..
+                    } => description,
+                    super::kernel::ToolCallErrorStatus::InvalidArguments { message } => message,
+                };
+                return ToolResult::err_with_output(
+                    detail,
+                    serde_json::json!({
+                        "failure_kind": "insufficient_scope", "execution_state": "not_started",
+                        "command_started": false, "requested_surface": "run_process",
+                        "execution_source": "run_shell"
+                    }),
+                );
+            }
+            call = ToolCall::from_tool_name("run_shell", arguments)
+                .expect("recovery helper validated canonical run_shell");
+            if let Some(session_id) = session_id.as_deref() {
+                if let Err(mut denial) = self
+                    .authorize_session_target(session_id, "run_shell", auth)
+                    .await
+                {
+                    decorate_structured_execution_prestart_denial(
+                        "run_shell",
+                        &mut denial,
+                        "session_authority_denied",
+                    );
+                    return denial;
+                }
+            }
+            session_contract = super::sessions::session_tool_contract("run_shell");
+            shell_normalization = Some(if login {
+                "run_process_bash_lc_to_login_run_shell"
+            } else {
+                match &call {
+                    ToolCall::RunShell {
+                        shell: Some(shell), ..
+                    } if shell.as_str() == "sh" => "run_process_sh_c_to_run_shell",
+                    _ => "run_process_bash_c_to_run_shell",
+                }
+            });
         }
         if let Some(session_id) = session_id.as_deref() {
             // Lifecycle denial is orthogonal to mode/guards and wins first.
@@ -1777,16 +1835,6 @@ impl ToolRuntime {
             .recording_session_authorized
             .then(|| recorder_metadata.recording_session_project.as_deref())
             .flatten();
-        let shell_recovery = self
-            .process_shell_recovery_call(
-                &call,
-                &recorder_metadata.expectation,
-                ssh_resource.as_deref(),
-                project_resolution
-                    .as_ref()
-                    .and_then(|resolved| resolved.as_ref().ok()),
-            )
-            .await;
         let source_mutation = if super::validation_source::observes_potential_mutation(&call) {
             activity_project
                 .as_deref()
@@ -1844,16 +1892,19 @@ impl ToolRuntime {
         if let Some(observation) = source_mutation {
             observation.finish(&result);
         }
-        if !result.success
-            && result.output["command_started"] == false
-            && result.output["execution_state"] == "not_started"
-            && result.output["failure_kind"] == "invalid_arguments"
-            && result.error.as_deref().is_some_and(|error| {
-                error.contains("run_process does not accept shell command modes")
-            })
-        {
-            if let Some(suggested_call) = shell_recovery {
-                result.output["suggested_call"] = suggested_call;
+        if let Some(code) = shell_normalization {
+            result.output["requested_surface"] = serde_json::json!("run_process");
+            result.output["execution_source"] = serde_json::json!("run_shell");
+            if result.success {
+                let hint = match code {
+                    "run_process_bash_lc_to_login_run_shell" => {
+                        "normalized run_process bash -lc → run_shell(login=true)"
+                    }
+                    "run_process_sh_c_to_run_shell" => "normalized run_process sh -c → run_shell",
+                    _ => "normalized run_process bash -c → run_shell",
+                };
+                result.output["input_normalization"] =
+                    serde_json::json!({"code": code, "hint": hint});
             }
         }
         let permission = permission.filter(|_| {
@@ -3204,6 +3255,7 @@ mod structured_execution_sparse_projection_tests {
     #[test]
     fn project_execution_binding_preserves_specialized_selector_semantics() {
         let mut shell = ToolCall::RunShell {
+            login: false,
             project: "~p7".to_string(),
             command: "true".to_string(),
             session_id: None,

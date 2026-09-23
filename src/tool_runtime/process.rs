@@ -315,10 +315,10 @@ fn decorate(
 }
 
 impl ToolRuntime {
-    /// Advisory conversion only, before execution. Recovery requires a Runner
-    /// that explicitly supports semantic shell selection and reports the target
-    /// sh/bash interpreter as resolvable. No target, stdin, expectation,
-    /// login-shell or positional-argv semantics may be guessed.
+    /// Build a canonical shell call only for exact, lossless process forms.
+    /// The caller re-enters shell authorization and policy before dispatch.
+    /// Runner capabilities must advertise explicit shell selection and, for
+    /// Bash login mode, support for that exact mode.
     pub(super) async fn process_shell_recovery_call(
         &self,
         call: &super::ToolCall,
@@ -340,9 +340,10 @@ impl ToolRuntime {
         else {
             return None;
         };
+        let login = executable == "bash" && args.first().is_some_and(|flag| flag == "-lc");
         if !matches!(executable.as_str(), "sh" | "bash")
             || args.len() != 2
-            || args[0] != "-c"
+            || !(args[0] == "-c" || login)
             || stdin.is_some()
             || cwd
                 .as_ref()
@@ -372,11 +373,15 @@ impl ToolRuntime {
             return None;
         }
         let resolved = resolved?;
+        resolve_runner_cwd(&resolved.config, cwd.as_deref()).ok()?;
         let runner = self
             .runner_registry
             .get_runner_view(&resolved.config.client_id)
             .await?;
         if !runner.capabilities.explicit_shell_selection {
+            return None;
+        }
+        if login && !runner.capabilities.bash_login_shell {
             return None;
         }
         let policy = runner.policy.as_ref()?;
@@ -391,7 +396,8 @@ impl ToolRuntime {
         if !available.iter().any(|dialect| dialect == executable) {
             return None;
         }
-        let mut arguments = json!({"project": project, "shell": executable, "command": args[1]});
+        let mut arguments =
+            json!({"project": project, "shell": executable, "login": login, "command": args[1]});
         for (name, value) in [
             ("session_id", json!(session_id)),
             ("cwd", json!(cwd)),
@@ -606,6 +612,7 @@ impl ToolRuntime {
             .runner_registry
             .start_job_with_metadata_for_access(
                 ShellJobOpRequest {
+                    login: false,
                     op: "start".to_string(),
                     client_id: Some(client_id),
                     cwd: Some(effective_cwd),
@@ -911,6 +918,7 @@ impl ToolRuntime {
                 .runner_registry
                 .start_job_with_metadata_for_access(
                     ShellJobOpRequest {
+                        login: false,
                         op: "start".to_string(),
                         client_id: Some(client_id),
                         cwd: Some(effective_cwd),

@@ -57,36 +57,23 @@ fn job_terminal_host_binding_schema() -> Value {
     })
 }
 
-fn run_process_shell_recovery_arguments_schema() -> Value {
-    fn scrub_exact_tool_name(value: &mut Value) {
-        match value {
-            Value::Object(object) => {
-                if let Some(Value::String(description)) = object.get_mut("description") {
-                    *description = description.replace("run_shell", "shell execution");
-                }
-                for child in object.values_mut() {
-                    scrub_exact_tool_name(child);
-                }
-            }
-            Value::Array(items) => {
-                for child in items {
-                    scrub_exact_tool_name(child);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    let mut schema = crate::input_schema_for_tool("run_shell");
-    scrub_exact_tool_name(&mut schema);
-    schema
-}
-
 fn process_execution_state_schema() -> Value {
     json!({
         "type": "string",
         "enum": ["not_started", "outcome_unknown", "completed", "timed_out", "queued", "running"],
         "description": "Canonical lifecycle when explicit: not_started means no command dispatch; outcome_unknown means effects may have occurred and must be reconciled before retry; timed_out is terminal; queued/running appear only for durable Job handoff. Ordinary synchronous success omits this field because outer success already implies completed. Only explicit not_started is structurally safe to retry without first inspecting target state."
+    })
+}
+
+fn input_normalization_schema() -> Value {
+    json!({
+        "type": "object", "additionalProperties": false,
+        "description": "Present only after a successful, explicitly known lossless model-input normalization. No raw payload is repeated.",
+        "properties": {
+            "code": {"type": "string", "enum": ["argv_to_args", "run_process_sh_c_to_run_shell", "run_process_bash_c_to_run_shell", "run_process_bash_lc_to_login_run_shell"]},
+            "hint": {"type": "string", "maxLength": 80}
+        },
+        "required": ["code", "hint"]
     })
 }
 
@@ -864,6 +851,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 ("status", schema_type("string", "Current detached Job status at admission.")),
                 ("project", schema_type("string", "Configured project id.")),
                 ("execution_source", schema_type("string", "Always run_detached_process on successful admission.")),
+                ("input_normalization", input_normalization_schema()),
                 ("purpose", schema_type("string", "Declared execution purpose.")),
                 ("process_summary", schema_type("string", "Bounded body-free detached process summary.")),
                 ("cwd", schema_type("string", "Resolved project-relative cwd.")),
@@ -1011,8 +999,10 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 })),
                 (
                     "execution_source",
-                    schema_type("string", "Canonical source is run_process. Diagnostic telemetry: omitted on ordinary synchronous terminal success when canonical and from the default model-facing failure projection."),
+                    schema_type("string", "Canonical executed surface; may differ from the requested surface after proven exact shell-input recovery."),
                 ),
+                ("requested_surface", schema_type("string", "Original requested tool name when an exact shell form was normalized.")),
+                ("input_normalization", input_normalization_schema()),
                 (
                     "execution_state",
                     process_execution_state_schema(),
@@ -1027,15 +1017,10 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ];
             properties.extend(structured_continuation_properties());
             let mut schema = wrapped_output_schema(properties);
-            schema["properties"]["output"]["properties"]["suggested_call"] = json!({"anyOf": [
-                list_jobs_recovery_call_schema(true),
-                suggested_tool_call_schema(
-                    "run_shell", run_process_shell_recovery_arguments_schema(),
-                    "Failure-only advisory conversion proven lossless and rejected before process start. Never retry authority after execution may have started."
-                )
-            ]});
-            schema["properties"]["output"]["properties"]["execution_source"]["const"] =
-                json!("run_process");
+            schema["properties"]["output"]["properties"]["suggested_call"] =
+                list_jobs_recovery_call_schema(true);
+            schema["properties"]["output"]["properties"]["execution_source"]["enum"] =
+                json!(["run_process", "run_shell"]);
             schema["properties"]["output"]["allOf"] =
                 structured_execution_lifecycle_constraints("run_process");
             schema["allOf"] = json!([{
@@ -1146,7 +1131,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             properties.extend(structured_continuation_properties());
             let mut schema = wrapped_output_schema(properties);
             schema["properties"]["output"]["properties"]["language"]["enum"] =
-                json!(["sh", "bash", "powershell", "javascript", "typescript"]);
+                json!(["sh", "bash", "powershell", "python", "javascript", "typescript"]);
             schema["properties"]["output"]["properties"]["execution_source"]["const"] =
                 json!("run_script");
             schema["properties"]["output"]["allOf"] =
@@ -1235,7 +1220,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                     "shell",
                     schema_type(
                         "string",
-                        "Actual selected shell, configured executor shell, or remote SSH executor.",
+                        "Actual selected shell (bash_login for explicit login mode), configured executor shell, or remote SSH executor.",
                     ),
                 ),
                 ("executor", json!({

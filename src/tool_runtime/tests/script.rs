@@ -64,6 +64,7 @@ async fn register_script_agent(
         structured_script_payload,
         structured_script_javascript: structured_script_payload,
         structured_script_typescript: structured_script_payload,
+        structured_script_python: structured_script_payload,
         ..Default::default()
     };
     register_agent_with_projects(
@@ -91,6 +92,7 @@ async fn register_script_job_agent(
         structured_script_payload: true,
         structured_script_javascript: true,
         structured_script_typescript: true,
+        structured_script_python: true,
         structured_execution_jobs: true,
         ..Default::default()
     };
@@ -245,6 +247,104 @@ async fn run_script_wire_is_typed_body_free_command_and_supports_more_than_32_ki
             result.output
         );
     }
+}
+
+#[tokio::test]
+async fn python_script_preserves_typed_body_argv_stdin_cwd_and_nonzero_exit() {
+    let temp = tempfile::tempdir().unwrap();
+    std::fs::create_dir(temp.path().join("sub")).unwrap();
+    let runtime = test_runtime();
+    let project = register_script_agent(&runtime, "python-typed", temp.path(), true).await;
+    let body = "from pathlib import Path\nprint('雪')\n";
+    let call = ToolCall::RunScript {
+        project,
+        language: ShellScriptLanguage::Python,
+        script: body.to_string(),
+        args: vec!["two words".to_string(), "$(literal)".to_string()],
+        stdin: Some("输入\n".to_string()),
+        session_id: None,
+        timeout_secs: Some(30),
+        sync_wait_secs: Some(30),
+        cwd: Some("sub".to_string()),
+        purpose: Some(ExecutionPurpose::Operation),
+    };
+    let runtime_copy = runtime.clone();
+    let task = tokio::spawn(async move {
+        runtime_copy
+            .dispatch_with_auth(call, Some(&auth_context(None, true)))
+            .await
+    });
+    let request = wait_for_patch_agent_request(&runtime, "python-typed").await;
+    assert_eq!(request.kind, "run_script");
+    assert_eq!(request.command, "");
+    assert!(request.process.is_none());
+    assert_eq!(
+        request.script.as_ref().unwrap().language,
+        ShellScriptLanguage::Python
+    );
+    assert_eq!(request.script.as_ref().unwrap().script, body);
+    assert_eq!(
+        request.script.as_ref().unwrap().args,
+        ["two words", "$(literal)"]
+    );
+    assert_eq!(request.stdin.as_deref(), Some("输入\n"));
+    assert!(request.cwd.as_deref().unwrap().ends_with("sub"));
+    complete_script_lifecycle(
+        &runtime,
+        "python-typed",
+        request.request_id,
+        ShellCommandExecutionState::Completed,
+        Some(7),
+        "雪\n",
+        "",
+        None,
+    )
+    .await;
+    let result = task.await.unwrap();
+    assert!(!result.success);
+    assert_eq!(result.output["language"], "python");
+    assert_eq!(result.output["exit_code"], 7);
+    assert_eq!(result.output["failure_kind"], "command_exit_nonzero");
+}
+
+#[tokio::test]
+async fn python_script_timeout_is_terminal_without_redispatch() {
+    let temp = tempfile::tempdir().unwrap();
+    let runtime = test_runtime();
+    let project = register_script_agent(&runtime, "python-timeout", temp.path(), true).await;
+    let runtime_copy = runtime.clone();
+    let task = tokio::spawn(async move {
+        runtime_copy
+            .dispatch_with_auth(
+                script_sync_call(
+                    project,
+                    None,
+                    ShellScriptLanguage::Python,
+                    "import time; time.sleep(99)",
+                ),
+                Some(&auth_context(None, true)),
+            )
+            .await
+    });
+    let request = wait_for_patch_agent_request(&runtime, "python-timeout").await;
+    assert_eq!(request.kind, "run_script");
+    complete_script_lifecycle(
+        &runtime,
+        "python-timeout",
+        request.request_id,
+        ShellCommandExecutionState::TimedOut,
+        None,
+        "",
+        "",
+        None,
+    )
+    .await;
+    let result = task.await.unwrap();
+    assert!(!result.success);
+    assert_eq!(result.output["execution_state"], "timed_out");
+    assert!(probe_patch_agent_request(&runtime, "python-timeout")
+        .await
+        .is_none());
 }
 
 #[tokio::test]
@@ -694,6 +794,77 @@ async fn run_script_slow_handoff_keeps_typed_payload_ephemeral_and_safe_metadata
         Some(ShellCommandExecutionState::Completed)
     );
     assert!(probe_patch_agent_request(&runtime, "script-slow-job")
+        .await
+        .is_none());
+}
+
+#[tokio::test]
+async fn python_script_handoff_keeps_one_job_and_redacts_payload() {
+    let temp = tempfile::tempdir().unwrap();
+    let runtime = test_runtime().with_structured_execution_sync_wait(Duration::from_millis(40));
+    let project = register_script_job_agent(&runtime, "python-handoff", temp.path()).await;
+    let body = format!("print('secret-{}')\n", uuid::Uuid::new_v4());
+    let argument = format!("private-{}", uuid::Uuid::new_v4());
+    let stdin = format!("input-{}", uuid::Uuid::new_v4());
+    let mut call = script_call(project, None, ShellScriptLanguage::Python, body.clone());
+    if let ToolCall::RunScript {
+        args, stdin: input, ..
+    } = &mut call
+    {
+        *args = vec![argument.clone()];
+        *input = Some(stdin.clone());
+    }
+    let runtime_copy = runtime.clone();
+    let task = tokio::spawn(async move {
+        runtime_copy
+            .dispatch_with_auth(call, Some(&auth_context(None, true)))
+            .await
+    });
+    let request = wait_for_patch_agent_request(&runtime, "python-handoff").await;
+    assert_eq!(request.kind, "start_script_job");
+    assert_eq!(
+        request.script.as_ref().unwrap().language,
+        ShellScriptLanguage::Python
+    );
+    update_script_job(
+        &runtime,
+        "python-handoff",
+        &request,
+        "running",
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await;
+    let result = task.await.unwrap();
+    assert!(result.success, "{result:?}");
+    assert_observe_job_continuation(&result.output);
+    let job_id = result.output["job_id"].as_str().unwrap();
+    assert_eq!(request.job_id.as_deref(), Some(job_id));
+    let job = runtime.runner_registry.get_job(job_id).await.unwrap();
+    assert_eq!(
+        job.structured_execution.as_ref().unwrap().language,
+        Some(ShellScriptLanguage::Python)
+    );
+    let durable = serde_json::to_string(&job).unwrap();
+    for raw in [&body, &argument, &stdin] {
+        assert!(!durable.contains(raw));
+    }
+    update_script_job(
+        &runtime,
+        "python-handoff",
+        &request,
+        "completed",
+        Some(ShellCommandExecutionState::Completed),
+        Some(0),
+        Some("done\n"),
+        None,
+        None,
+    )
+    .await;
+    assert!(probe_patch_agent_request(&runtime, "python-handoff")
         .await
         .is_none());
 }

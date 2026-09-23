@@ -1221,6 +1221,7 @@ async fn mutating_dispatch_feeds_the_activity_recorder() {
             runtime
                 .dispatch_with_auth(
                     ToolCall::RunShell {
+                        login: false,
                         project,
                         command: "echo activity-probe".to_string(),
                         session_id: None,
@@ -1251,6 +1252,7 @@ async fn mutating_dispatch_feeds_the_activity_recorder() {
             runtime
                 .dispatch_with_auth(
                     ToolCall::RunShell {
+                        login: false,
                         project: "agent-proj".to_string(),
                         command: "echo activity-alias".to_string(),
                         session_id: None,

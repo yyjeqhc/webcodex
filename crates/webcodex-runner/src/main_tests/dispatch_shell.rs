@@ -19,6 +19,7 @@ fn dispatch_request_run_shell_sends_result_over_sink() {
     ] {
         let (sink, mut rx) = make_sink(client_id);
         let request = RunnerRequest {
+            login: false,
             shell: None,
             request_id: format!("req-{label}"),
             client_id: client_id.to_string(),
@@ -89,6 +90,7 @@ fn dispatch_request_detached_process_job_enters_job_manager_without_generic_resu
     );
     let (sink, mut rx) = ws_sink("ws-client");
     let request = RunnerRequest {
+        login: false,
         shell: None,
         request_id: "req-detached-dispatch".to_string(),
         client_id: "ws-client".to_string(),
@@ -172,6 +174,7 @@ fn dispatch_request_internal_search_uses_posix_runtime_not_configured_shell_pars
     let (sink, mut rx) = ws_sink("ws-client");
     let marker = r#"{"webcodex_search":{"backend":"grep","feature_unavailable":false}}"#;
     let request = RunnerRequest {
+        login: false,
         shell: None,
         request_id: "req-internal-search".to_string(),
         client_id: "ws-client".to_string(),
@@ -251,6 +254,7 @@ fn dispatch_request_internal_posix_script_ignores_configured_shell_parser() {
     );
     let (sink, mut rx) = ws_sink("ws-client");
     let request = RunnerRequest {
+        login: false,
         shell: None,
         request_id: "req-internal-posix".to_string(),
         client_id: "ws-client".to_string(),
@@ -325,6 +329,7 @@ fn dispatch_request_run_shell_rejects_oversized_wire_command_before_start() {
     );
     let (sink, mut rx) = ws_sink("ws-client");
     let request = RunnerRequest {
+        login: false,
         shell: None,
         request_id: "req-oversized-shell".to_string(),
         client_id: "ws-client".to_string(),
@@ -422,6 +427,7 @@ fn dispatch_request_structured_process_uses_typed_argv_and_never_shell_fallback(
 
     let (sink, mut rx) = ws_sink("ws-client");
     let request = RunnerRequest {
+        login: false,
         shell: None,
         request_id: "req-structured-process".to_string(),
         client_id: "ws-client".to_string(),
@@ -487,6 +493,7 @@ fn dispatch_request_structured_process_uses_typed_argv_and_never_shell_fallback(
     let shell_fallback_marker = tmp.path().join("shell-fallback-marker");
     let (sink, mut rx) = ws_sink("ws-client");
     let malformed = RunnerRequest {
+        login: false,
         shell: None,
         request_id: "req-structured-process-malformed".to_string(),
         client_id: "ws-client".to_string(),
@@ -557,6 +564,7 @@ fn dispatch_request_structured_script_uses_typed_file_and_never_shell_fallback()
     let shell_fallback_marker = tmp.path().join("shell-fallback-marker");
 
     let request = RunnerRequest {
+        login: false,
         shell: None,
         request_id: "req-structured-script".to_string(),
         client_id: "ws-client".to_string(),

@@ -13,6 +13,7 @@ async fn project_active_job_batch_preserves_visibility_lifecycle_and_bounds() {
         let job = registry
             .start_job_with_metadata(
                 ShellJobOpRequest {
+                    login: false,
                     op: "start".into(),
                     client_id: Some("oe".into()),
                     cwd: None,
@@ -109,6 +110,7 @@ async fn filtered_job_inventory_refreshes_only_authorized_static_candidates() {
     let registry = RunnerRegistry::default();
     register_with_instance(&registry, "oe", "filtered-inst").await;
     let request = |command: &str| ShellJobOpRequest {
+        login: false,
         op: "start".to_string(),
         client_id: Some("oe".to_string()),
         cwd: None,
@@ -172,6 +174,7 @@ async fn project_active_job_query_is_not_truncated_and_unregister_fences_starts(
     let registry = RunnerRegistry::default();
     register_with_instance(&registry, "oe", "inst-jobs").await;
     let request = |command: &str| ShellJobOpRequest {
+        login: false,
         op: "start".to_string(),
         client_id: Some("oe".to_string()),
         cwd: None,

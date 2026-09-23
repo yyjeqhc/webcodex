@@ -413,6 +413,7 @@ async fn project_instructions_context_projection_is_authorized_scoped_and_bounde
     let cross_project = runtime
         .dispatch_with_auth_transport_options_and_metadata_with_recording_mode_and_context(
             ToolCall::RunShell {
+                login: false,
                 project: bravo,
                 command: "pwd".to_string(),
                 session_id: Some(session.session_id),

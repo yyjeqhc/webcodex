@@ -94,6 +94,9 @@ python3 scripts/prepare_desktop_bundle_macos.py \
 # bundle output so the candidate selection below is unambiguous.
 rm -rf "$TAURI_TARGET/release/bundle/dmg"
 export APPLE_SIGNING_IDENTITY="-"
+# Match CI/release create-dmg behavior: skip Finder AppleScript decoration in
+# non-interactive local packaging as well.
+export CI="true"
 export CARGO_TARGET_DIR="$TAURI_TARGET"
 
 (

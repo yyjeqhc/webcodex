@@ -249,6 +249,12 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertNotIn("packages: write", workflow)
         self.assertNotIn("push: true", workflow)
 
+    def test_local_macos_desktop_builder_matches_ci_dmg_mode(self) -> None:
+        local = Path("scripts/build_desktop_macos_local.sh").read_text(encoding="utf-8")
+        self.assertIn('export CI="true"', local)
+        self.assertIn('export APPLE_SIGNING_IDENTITY="-"', local)
+        self.assertIn("--bundles dmg", local)
+
     def test_daily_ci_avoids_rare_native_runners_and_keeps_path_aware_gates(self) -> None:
         workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
         extended = Path(".github/workflows/extended-native.yml").read_text(encoding="utf-8")

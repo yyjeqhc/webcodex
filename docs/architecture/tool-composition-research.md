@@ -428,6 +428,7 @@ The first-version mutation contract is intentionally narrow:
 
 - one E2b cell may cross the canonical mutation boundary at most once, counted by canonical `ToolEffect::Mutate` rather than a tool-name registry;
 - the one mutation may still use `apply_text_edits`' existing transactional multi-file batch and `read_revision` guards;
+- a guarded `replace_exact` may state `expected_match_count` for repetitive exact text, with optional `line_scope`; dry-run match evidence is bounded and does not authorize the later actual request;
 - a second mutation attempt is rejected before canonical business dispatch and cannot reach the Runner;
 - same-Project E2b mutations are serialized by the process-local Project fence described above; different Projects may proceed independently;
 - direct writes are unchanged and are not silently serialized against the experimental fence;

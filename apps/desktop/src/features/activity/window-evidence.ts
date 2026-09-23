@@ -6,7 +6,7 @@ export function recentMeaningfulCalls(detail: WindowDetail): WindowCall[] {
 }
 export function executionLabel(status?: string): string {
   if (status === "success" || status === "succeeded" || status === "completed") return "Completed";
-  if (status === "failed" || status === "error" || status === "timeout") return "Failed";
+  if (status === "failed" || status === "error") return "Failed";
   if (status === "cancelled") return "Cancelled";
   return "Unknown";
 }

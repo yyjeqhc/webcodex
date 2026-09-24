@@ -69,8 +69,9 @@ pub(crate) fn builtin_coding_workflow_projection(profile: CodingGuidanceProfile)
             "Verify Project/branch/HEAD/changes/nested rules. Recovery/compaction/exact Session resume is continuation: reuse still-current Git/read/validation/Job facts; revalidate changed snapshots/HEAD/worktree/instructions.",
             "Preserve unrelated work; push/publish/deploy/restart need explicit action/target. If a user answer/Job/validation/result is not a dependency, continue independent work; wait only on real dependencies.",
             "Ordinary implementation is default: map cross-layer changes end to end; use compiler/schema/exhaustiveness failures for gaps; minimize concepts, avoid speculative redesign.",
-            "Validation failure is evidence, not queue cleanliness. Fix dependent blockers; continue otherwise. Reuse assertion_name; outcome_unknown fails closed. After Rust stabilizes, format once; rerun only after later Rust edits. Require sufficient fresh validation.",
-            "Keep one execution/Job and exact continuation. Blocked: use wait_for_job_terminal with a real Host carrier; no short polling. observe_jobs for details, stop_job(confirm=true) for control; list_jobs is identity recovery."
+            "Validation failure is evidence, not queue cleanliness. Fix dependent blockers; continue otherwise. Reuse assertion_name; outcome_unknown fails closed. After Rust stabilizes, format once. Development validation may overlap independent work; covered-source edits make it stale for final evidence.",
+            "For closeout evidence, freeze source covered by final validation. Continue read-only review/docs/external inspection; if covered source must change, invalidate that evidence and rerun the appropriate final validation.",
+            "Keep one execution/Job and exact continuation. After handoff continue independent work; passive Job attention may surface transitions. observe_jobs is for logs/details/recovery; list_jobs is identity recovery. Use wait_for_job_terminal only when terminal outcome is a true dependency and no independent work remains."
         ],
         "tool_strategy": {
             "profile": profile,
@@ -106,17 +107,20 @@ pub(crate) fn builtin_coding_workflow_projection(profile: CodingGuidanceProfile)
 fn tool_strategy_guidance(profile: CodingGuidanceProfile) -> &'static [&'static str] {
     match profile {
         CodingGuidanceProfile::Direct => &[
-            "Use the simplest sufficient primitive: native commands and structured tools are first-class; bounded deterministic Python/run_shell for coherent edits.",
+            "Project source mutation: prefer canonical structured editors—apply_text_edits for exact transactional edits, expected_match_count=N for bounded repetitive exact replacement, and apply_patch for patch-shaped changes.",
+            "Use run_script/Python for computation, inspection, generation, non-source transforms, or when structured editing cannot express the change; never use it to bypass revision/SHA fences, rollback, or sensitive-path policy.",
+            "Coalesce known work: read_files(items), search_project_texts(queries), search_and_read for search→source inspection, cargo_check(packages), and one apply_text_edits batch. Keep result-dependent operations sequential; avoid ritual model turns.",
             "Simple observation: direct primitive. Batch predetermined independent observations; adaptive follow-ups stay sequential across model calls.",
             "Known target: bounded targeted reads. Broad discovery: small files/count search then targeted reads. Avoid ritual turns.",
         ],
         CodingGuidanceProfile::HostCodeMode => &[
-            "Host-native Code Mode is model guidance only; use it when the Host actually provides orchestration. It grants no WebCodex capability or authority and does not require WebCodex nested Code Mode.",
-            "One simple observation: use a direct primitive. For known independent inputs of the same kind, prefer canonical batches such as read_files(items), search_project_texts(queries), and multi-package Cargo; do not mechanically Promise.all micro-calls.",
-            "For search followed by inspecting hits and reading source, prefer search_and_read. Keep dependent cross-tool search, inspect, read, branch, and compact projection in one Host cell when useful; use Promise.all only for independent observations from different tools.",
-            "Keep raw ToolResults inside the Host cell and return only compact evidence needed for the next model decision; avoid text(JSON.stringify(fullToolResult)) and text(results).",
-            "Start a long Job once, retain its job_id and continuation identity, continue independent work, and use passive Job attention and durable state. Call observe_jobs for actual details; do not poll mechanically.",
-            "Validation running during covered source edits is stale as final evidence. Continue independent work, then rerun appropriate validation against the latest source revision.",
+            "Host-native Code Mode is model guidance only; use it when the Host provides orchestration. It grants no WebCodex capability or authority and does not require WebCodex nested Code Mode.",
+            "Coalesce known independent work with native batches: read_files(items), search_project_texts(queries), cargo_check(packages), and one apply_text_edits batch when mutation is already determined; do not Promise.all same-kind micro-calls.",
+            "For search followed by immediate source inspection, prefer search_and_read. Keep dependent cross-tool search/read/branch steps in one Host cell when useful; Promise.all only independent observations.",
+            "Keep full ToolResults in the Host cell when possible. Return only facts needed for the next decision, failures, identities/revisions/continuations needed later, and bounded evidence.",
+            "Preserve job_id, observation_ref, read_revision, and exact failure/recovery fields when relevant. Avoid text(JSON.stringify(fullResult)) or raw result dumps unless the complete result is itself needed for the next decision.",
+            "After Job handoff retain exact identity, continue independent work, and let passive Job attention surface transitions. Call observe_jobs only for logs/details/recovery; wait_for_job_terminal only when terminal outcome blocks progress and no independent work remains.",
+            "Development validation may overlap independent work, but covered-source edits make it stale. For final evidence freeze covered source; if it must change, invalidate that evidence and rerun the appropriate final validation.",
             "Do not wrap Host-native orchestration in WebCodex nested Code Mode by default; use nested Code Mode only when its own scenario has a clear benefit. Host capability is supplied by the Host, not verified by WebCodex.",
         ],
         #[cfg(feature = "experimental-code-mode")]

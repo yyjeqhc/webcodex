@@ -208,12 +208,19 @@ fn apply_text_edits_composition_guidance_and_union_stay_unambiguous() {
     let specs = registered_tool_specs();
     let spec = spec_named(&specs, "apply_text_edits");
     for phrase in [
-        "use ONE change with multiple entries in edits",
-        "Never repeat a source or destination path in changes",
-        "same original source snapshot",
-        "cannot be combined automatically",
-        "Shorthand path + old_text + new_text is only for one simple exact replacement",
-        "put occurrence/line_scope inside each edit, not on the change",
+        "transactional structured option",
+        "use ONE change per file",
+        "expected_match_count=N",
+        "explicit bounded file",
+        "exact cardinality is known",
+        "optional dry_run",
+        "dry_run is not ritual",
+        "change_summary",
+        "mechanical scope",
+        "not semantic review",
+        "show_changes",
+        "git_diff_hunks",
+        "git_review_summary",
     ] {
         assert!(
             spec.description.contains(phrase),

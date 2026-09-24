@@ -137,7 +137,7 @@ impl ContinuationSemantics {
 }
 
 pub const BUILTIN_CODING_WORKFLOW_CONTRACT: &str = "webcodex.coding_workflow";
-pub const BUILTIN_CODING_WORKFLOW_VERSION: u64 = 18;
+pub const BUILTIN_CODING_WORKFLOW_VERSION: u64 = 19;
 pub const BUILTIN_CODING_WORKFLOW_MAX_GUIDANCE_ITEMS: usize = 8;
 
 /// Validate a Runner project path without applying host-local filesystem semantics.

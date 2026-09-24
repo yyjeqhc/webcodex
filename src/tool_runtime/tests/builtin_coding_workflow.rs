@@ -82,15 +82,19 @@ fn builtin_coding_workflow_defaults_cover_unnamed_tasks_without_granting_authori
         "Validation failure is evidence, not queue cleanliness",
         "Reuse assertion_name",
         "outcome_unknown fails closed",
+        "Development validation may overlap independent work",
+        "covered-source edits make it stale for final evidence",
+        "For closeout evidence, freeze source covered by final validation",
+        "invalidate that evidence",
+        "rerun the appropriate final validation",
         "one execution/Job",
         "exact continuation",
-        "wait_for_job_terminal with a real Host carrier",
-        "no short polling",
-        "stop_job(confirm=true)",
+        "passive Job attention",
+        "observe_jobs is for logs/details/recovery",
         "list_jobs is identity recovery",
-        "sufficient fresh validation",
+        "wait_for_job_terminal only when terminal outcome is a true dependency",
+        "no independent work remains",
         "After Rust stabilizes, format once",
-        "rerun only after later Rust edits",
     ] {
         assert!(defaults.contains(boundary), "missing guidance: {boundary}");
     }
@@ -148,20 +152,28 @@ fn strategy_text(workflow: &Value) -> String {
 }
 
 #[test]
-fn direct_strategy_keeps_ordinary_observations_without_code_mode_instructions() {
+fn direct_strategy_prefers_structured_edits_and_coalesces_known_work() {
     let workflow = builtin_coding_workflow_projection(Default::default());
     assert_eq!(workflow["tool_strategy"]["profile"], "direct");
     let strategy = strategy_text(&workflow);
     for phrase in [
+        "canonical structured editors",
+        "apply_text_edits for exact transactional edits",
+        "expected_match_count=N",
+        "apply_patch for patch-shaped changes",
+        "run_script/Python for computation",
+        "never use it to bypass revision/SHA fences",
+        "read_files(items)",
+        "search_project_texts(queries)",
+        "search_and_read",
+        "cargo_check(packages)",
+        "one apply_text_edits batch",
+        "result-dependent operations sequential",
         "direct primitive",
-        "simplest sufficient primitive",
-        "native commands and structured tools are first-class",
         "predetermined independent observations",
-        "adaptive follow-ups stay sequential across model calls",
         "bounded targeted reads",
         "small files/count search",
         "Avoid ritual",
-        "bounded deterministic Python/run_shell",
     ] {
         assert!(strategy.contains(phrase), "{phrase}");
         assert!(
@@ -187,13 +199,23 @@ fn host_code_mode_strategy_is_bounded_guidance_only() {
         "model guidance only",
         "read_files(items)",
         "search_project_texts(queries)",
-        "multi-package Cargo",
+        "cargo_check(packages)",
+        "one apply_text_edits batch",
         "search_and_read",
-        "Promise.all only for independent",
-        "compact evidence",
+        "Promise.all only independent",
+        "full ToolResults in the Host cell",
+        "facts needed for the next decision",
+        "identities/revisions/continuations",
+        "job_id",
+        "observation_ref",
+        "read_revision",
+        "failure/recovery fields",
+        "text(JSON.stringify(fullResult))",
         "passive Job attention",
-        "do not poll mechanically",
-        "latest source revision",
+        "observe_jobs only for logs/details/recovery",
+        "wait_for_job_terminal",
+        "final evidence freeze covered source",
+        "invalidate that evidence",
         "does not require WebCodex nested Code Mode",
         "not verified by WebCodex",
     ] {

@@ -16,6 +16,10 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+function Resolve-InputPath([string]$Path) {
+    return $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path)
+}
+
 if ($Version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$') {
     throw "invalid Desktop bundle version '$Version'"
 }
@@ -26,8 +30,8 @@ if ($BuiltAt -le 0) {
     throw "BuiltAt must be a positive Unix timestamp"
 }
 
-$BinDir = [System.IO.Path]::GetFullPath($BinDir)
-$OutputDir = [System.IO.Path]::GetFullPath($OutputDir)
+$BinDir = Resolve-InputPath $BinDir
+$OutputDir = Resolve-InputPath $OutputDir
 if (Test-Path -LiteralPath $OutputDir) {
     throw "Desktop bundle output already exists: $OutputDir"
 }

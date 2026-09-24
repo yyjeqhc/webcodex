@@ -41,6 +41,10 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+function Resolve-InputPath([string]$Path) {
+    return $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path)
+}
+
 $Root = Split-Path -Parent $PSScriptRoot
 if (-not $BinDir) {
     $BinDir = if ($env:WEBCODEX_RELEASE_BIN_DIR) {
@@ -79,8 +83,8 @@ if ($Platform -notin @("win32-x64", "win32-arm64")) {
     throw "invalid Windows release platform '$Platform'"
 }
 
-$BinDir = [System.IO.Path]::GetFullPath($BinDir)
-$OutDir = [System.IO.Path]::GetFullPath($OutDir)
+$BinDir = Resolve-InputPath $BinDir
+$OutDir = Resolve-InputPath $OutDir
 
 $BinaryNames = @("webcodex", "webcodex-server", "webcodex-runner")
 $ArchiveName = "webcodex-v$Version-$Platform.tar.gz"

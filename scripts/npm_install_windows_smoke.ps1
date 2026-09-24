@@ -38,6 +38,10 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+function Resolve-InputPath([string]$Path) {
+    return $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path)
+}
+
 function Get-BoundedShareLogTail {
     param(
         [string]$Path,
@@ -100,7 +104,7 @@ if (-not $BinDir) {
         throw "cargo build failed with exit code $LASTEXITCODE"
     }
 }
-$BinDir = [System.IO.Path]::GetFullPath($BinDir)
+$BinDir = Resolve-InputPath $BinDir
 
 # ---------------------------------------------------------------------------
 # Isolate everything under one smoke root; the registry is pinned to a

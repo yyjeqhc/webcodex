@@ -12,7 +12,11 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$Installer = [System.IO.Path]::GetFullPath($Installer)
+
+function Resolve-InputPath([string]$Path) {
+    return $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path)
+}
+$Installer = Resolve-InputPath $Installer
 if (-not (Test-Path -LiteralPath $Installer -PathType Leaf)) {
     throw "Desktop installer does not exist: $Installer"
 }
@@ -24,7 +28,7 @@ if ($BuiltAt -le 0) {
 }
 $requestedInstallDir = $null
 if ($InstallDir) {
-    $requestedInstallDir = [System.IO.Path]::GetFullPath($InstallDir).TrimEnd('\')
+    $requestedInstallDir = (Resolve-InputPath $InstallDir).TrimEnd('\')
     if (Test-Path -LiteralPath $requestedInstallDir) {
         throw "refusing custom-directory smoke because the requested install directory already exists: $requestedInstallDir"
     }

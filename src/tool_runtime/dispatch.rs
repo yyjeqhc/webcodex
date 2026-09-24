@@ -2098,12 +2098,35 @@ impl ToolRuntime {
             ToolCall::PresentWorkResult {
                 project,
                 session_id,
-            } => self.present_work_result(project, session_id, auth).await,
+            } => {
+                self.present_work_result_for_window(project, session_id, auth, window)
+                    .await
+            }
 
             ToolCall::WorkResultState {
                 project,
                 session_id,
-            } => self.work_result_state(project, session_id, auth).await,
+            } => {
+                self.work_result_state_for_window(project, session_id, auth, window)
+                    .await
+            }
+
+            ToolCall::WorkResultSendMessage {
+                project,
+                session_id,
+                message,
+                delivery_key,
+            } => {
+                self.work_result_send_message(
+                    project,
+                    session_id,
+                    message,
+                    delivery_key,
+                    auth,
+                    window,
+                )
+                .await
+            }
 
             ToolCall::ChangesFileDiff {
                 project,

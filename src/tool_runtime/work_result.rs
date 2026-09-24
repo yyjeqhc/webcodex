@@ -1,7 +1,8 @@
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 
-use crate::auth::AuthContext;
+use crate::auth::{AuthContext, SCOPE_SESSION_COLLABORATE};
+use crate::client_window::ClientWindow;
 use crate::json_digest::update_sha256_with_json;
 
 use super::handoff::review_evidence_summary_for_session;
@@ -12,6 +13,10 @@ use super::validation_events::{
     current_validation_evidence_for_session, validation_summary_from_events,
 };
 use super::{ToolResult, ToolRuntime};
+use webcodex_workflow_session::{
+    ListSessionMessagesFilter, SessionMessageKind, SessionMessagePriority, SessionMessageStatus,
+    SessionSummary,
+};
 
 const WORK_RESULT_SESSION_EVENT_LIMIT: usize = 200;
 const WORK_RESULT_VALIDATION_LIMIT: usize = 20;
@@ -20,68 +25,128 @@ const MAX_WORK_RESULT_PATH_CHARS: usize = 512;
 const MAX_WORK_RESULT_BRANCH_CHARS: usize = 160;
 const MAX_WORK_RESULT_REVIEW_TOOLS: usize = 12;
 const MAX_WORK_RESULT_TOOL_CHARS: usize = 64;
+const MAX_WORK_RESULT_MESSAGES: usize = 6;
+const MAX_WORK_RESULT_MESSAGE_CHARS: usize = 800;
 
 impl ToolRuntime {
+    #[cfg(test)]
     pub(crate) async fn present_work_result(
         &self,
         project: String,
         session_id: String,
         auth: Option<&AuthContext>,
     ) -> ToolResult {
-        self.exact_work_result(project, session_id, "present_work_result", auth)
+        self.present_work_result_for_window(project, session_id, auth, None)
             .await
     }
 
+    pub(crate) async fn present_work_result_for_window(
+        &self,
+        project: String,
+        session_id: String,
+        auth: Option<&AuthContext>,
+        window: Option<&ClientWindow>,
+    ) -> ToolResult {
+        self.exact_work_result(project, session_id, "present_work_result", auth, window)
+            .await
+    }
+
+    #[cfg(test)]
     pub(crate) async fn work_result_state(
         &self,
         project: String,
         session_id: String,
         auth: Option<&AuthContext>,
     ) -> ToolResult {
-        self.exact_work_result(project, session_id, "work_result_state", auth)
+        self.work_result_state_for_window(project, session_id, auth, None)
             .await
     }
 
-    /// Project/Session authority is shared by initial presentation and explicit
-    /// live refresh. Neither path writes the target Session. Once the current
-    /// coding attempt has a successful closeout, either path may seal or reuse
-    /// one process-local final-changes snapshot for that exact attempt.
-    async fn exact_work_result(
+    pub(crate) async fn work_result_state_for_window(
         &self,
         project: String,
         session_id: String,
-        tool_name: &'static str,
         auth: Option<&AuthContext>,
+        window: Option<&ClientWindow>,
     ) -> ToolResult {
-        // Session authority is checked first from the exact business identity;
-        // possession of an iframe/project string never grants Session access.
+        self.exact_work_result(project, session_id, "work_result_state", auth, window)
+            .await
+    }
+
+    pub(crate) async fn work_result_send_message(
+        &self,
+        project: String,
+        session_id: String,
+        message: String,
+        delivery_key: String,
+        auth: Option<&AuthContext>,
+        window: Option<&ClientWindow>,
+    ) -> ToolResult {
         if let Err(result) = self
-            .authorize_session_target(&session_id, tool_name, auth)
+            .authorize_work_result_target(&project, &session_id, "work_result_send_message", auth)
             .await
         {
             return result;
         }
-        // Independently resolve and authorize the caller-supplied Project on
-        // every read rather than trusting the Session's stored project string.
-        let resolved = match self.resolve_project_input_for_auth(&project, auth).await {
-            Ok(resolved) => resolved,
-            Err(error) => return error.into_tool_result(),
-        };
+        let result = self
+            .post_session_message_tool(
+                session_id.clone(),
+                SessionMessageKind::Guidance,
+                message,
+                Vec::new(),
+                None,
+                SessionMessagePriority::Normal,
+                true,
+                Some(delivery_key),
+                auth,
+                window,
+                None,
+            )
+            .await;
+        if !result.success {
+            return result;
+        }
+        ToolResult::ok(json!({
+            "success": true,
+            "session_id": session_id,
+            "message_id": result.output.get("message_id").cloned().unwrap_or(Value::Null),
+            "replayed": result.output.get("replayed").cloned().unwrap_or(json!(false)),
+            "state_changed": result.output.get("state_changed").cloned().unwrap_or(json!(false)),
+        }))
+    }
+
+    async fn authorize_work_result_target(
+        &self,
+        project: &str,
+        session_id: &str,
+        tool_name: &'static str,
+        auth: Option<&AuthContext>,
+    ) -> Result<(String, SessionSummary), ToolResult> {
+        if let Err(result) = self
+            .authorize_session_target(session_id, tool_name, auth)
+            .await
+        {
+            return Err(result);
+        }
+        let resolved = self
+            .resolve_project_input_for_auth(project, auth)
+            .await
+            .map_err(|error| error.into_tool_result())?;
         if project.trim() != resolved.resolved_id {
-            return ToolResult::err_with_output(
-                "Work Result presentation requires the exact complete runtime project id",
+            return Err(ToolResult::err_with_output(
+                "Work Result requires the exact complete runtime project id",
                 json!({
                     "error_kind": "work_result_project_not_exact",
                     "failure_kind": "invalid_arguments",
                     "state_changed": false,
                 }),
-            );
+            ));
         }
         let Some(summary) = self
             .sessions
-            .summary(&session_id, Some(WORK_RESULT_SESSION_EVENT_LIMIT))
+            .summary(session_id, Some(WORK_RESULT_SESSION_EVENT_LIMIT))
         else {
-            return unknown_session_result(&session_id);
+            return Err(unknown_session_result(session_id));
         };
         if summary.project.as_deref() != Some(resolved.resolved_id.as_str()) {
             let mismatch = SessionProjectMismatch {
@@ -91,19 +156,40 @@ impl ToolRuntime {
                     .unwrap_or_else(|| "<unscoped>".to_string()),
                 request_project: resolved.resolved_id.clone(),
             };
-            return session_project_mismatch_result(&session_id, tool_name, &mismatch);
+            return Err(session_project_mismatch_result(
+                session_id, tool_name, &mismatch,
+            ));
         }
+        Ok((resolved.resolved_id, summary))
+    }
+
+    /// Project/Session authority is shared by initial presentation and explicit
+    /// live refresh. Neither read path writes the target Session. Collaboration
+    /// is a separate explicit App-only mutation through the canonical Session
+    /// message store. A successful coding closeout may expose one sealed final
+    /// changes snapshot for this exact attempt.
+    async fn exact_work_result(
+        &self,
+        project: String,
+        session_id: String,
+        tool_name: &'static str,
+        auth: Option<&AuthContext>,
+        window: Option<&ClientWindow>,
+    ) -> ToolResult {
+        let (resolved_project, summary) = match self
+            .authorize_work_result_target(&project, &session_id, tool_name, auth)
+            .await
+        {
+            Ok(value) => value,
+            Err(result) => return result,
+        };
 
         // Deliberately omit business session_id here. This is a live Project
         // read, not Session evidence, and an explicit App refresh must never
         // append to the target Session merely because the card requested it.
         let workspace_result = self
-            .show_changes_for_presentation(resolved.resolved_id.clone())
+            .show_changes_for_presentation(resolved_project.clone())
             .await;
-        // Work Result refresh is read-only, but source freshness is live
-        // process-local observation state. Re-observe persisted validation fences
-        // in memory so a later canonical mutation can strengthen unproven ->
-        // stale without materializing Jobs or writing the target Session.
         let projection_summary = self.refresh_validation_source_summary(&summary);
         let validation = validation_summary_from_events(
             &projection_summary.events,
@@ -117,7 +203,7 @@ impl ToolRuntime {
         let review = review_evidence_summary_for_session(&projection_summary);
         let history_partial = summary.events_truncated;
         let mut projection = build_work_result_projection(
-            &resolved.resolved_id,
+            &resolved_project,
             &session_id,
             workspace_result.success,
             &workspace_result.output,
@@ -127,16 +213,144 @@ impl ToolRuntime {
             history_partial,
         );
         projection["session"] = work_result_session(&summary);
-        // state_version covers live domains only. A sealed final snapshot has its
-        // own immutable identity and may appear later without pretending that a
-        // live workspace/validation/review field changed.
+        projection["activity"] = self.work_result_activity(window, auth, &summary).await;
+        projection["collaboration"] = self.work_result_collaboration(&summary, auth);
+        // state_version covers live domains only. Wall-clock inactivity is
+        // derived in the View from stable timestamps so passive time does not
+        // manufacture state changes or defeat refresh backoff.
         projection["state_version"] = json!(work_result_state_version(&projection));
-        match self.sealed_work_result_changes(&resolved.resolved_id, &summary, auth) {
+        match self.sealed_work_result_changes(&resolved_project, &summary, auth) {
             Ok(Some(changes)) => projection["final_changes"] = changes,
             Ok(None) => {}
             Err(result) => return result,
         }
         ToolResult::ok(json!({"work_result": projection}))
+    }
+
+    async fn work_result_activity(
+        &self,
+        window: Option<&ClientWindow>,
+        auth: Option<&AuthContext>,
+        summary: &SessionSummary,
+    ) -> Value {
+        let fallback = session_activity_fallback(summary);
+        let Some(window) = window else {
+            return fallback;
+        };
+        let observed = self
+            .current_window_activity(Some(window), auth, Some(20), false)
+            .await;
+        if !observed.success
+            || observed.output.get("status").and_then(Value::as_str) != Some("available")
+        {
+            return fallback;
+        }
+
+        let current = observed
+            .output
+            .get("active_requests")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|request| {
+                let tool = request.get("tool_name")?.as_str()?;
+                let semantics = webcodex_tool_contracts::runtime_tool_activity_semantics(tool);
+                if !semantics.interaction.is_meaningful() {
+                    return None;
+                }
+                Some((
+                    request
+                        .get("started_at_ms")
+                        .and_then(Value::as_i64)
+                        .unwrap_or(0),
+                    json!({
+                        "label": semantic_activity_label(tool, true),
+                        "kind": semantics.kind.as_str(),
+                        "started_at_ms": request.get("started_at_ms").and_then(Value::as_i64),
+                    }),
+                ))
+            })
+            .max_by_key(|(started, _)| *started)
+            .map(|(_, value)| value);
+
+        let last = observed
+            .output
+            .get("events")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter(|event| event.get("meaningful").and_then(Value::as_bool) == Some(true))
+            .filter_map(|event| {
+                let at = event.get("ended_at_ms").and_then(Value::as_i64)?;
+                let tool = event.get("tool_name").and_then(Value::as_str).unwrap_or("");
+                Some((
+                    at,
+                    json!({
+                        "label": semantic_activity_label(tool, false),
+                        "kind": event.get("activity_kind").and_then(Value::as_str),
+                        "at_ms": at,
+                    }),
+                ))
+            })
+            .max_by_key(|(at, _)| *at);
+
+        let (last_at, last_value) = last
+            .map(|(at, value)| (Some(at), Some(value)))
+            .unwrap_or_else(|| {
+                let at = fallback
+                    .get("last_meaningful_activity_at_ms")
+                    .and_then(Value::as_i64);
+                let value = fallback
+                    .get("last")
+                    .cloned()
+                    .filter(|value| !value.is_null());
+                (at, value)
+            });
+
+        json!({
+            "available": true,
+            "scope": "window",
+            "active": current.is_some(),
+            "current": current,
+            "last": last_value,
+            "last_meaningful_activity_at_ms": last_at,
+            "coverage_partial": observed.output.get("truncated").and_then(Value::as_bool).unwrap_or(false),
+        })
+    }
+
+    fn work_result_collaboration(
+        &self,
+        summary: &SessionSummary,
+        auth: Option<&AuthContext>,
+    ) -> Value {
+        let available = auth.is_some_and(|auth| auth.has_scope(SCOPE_SESSION_COLLABORATE));
+        if !available {
+            return json!({
+                "available": false,
+                "can_send": false,
+                "messages": [],
+            });
+        }
+        let messages = self
+            .sessions
+            .list_messages(
+                &summary.session_id,
+                ListSessionMessagesFilter {
+                    limit: Some(MAX_WORK_RESULT_MESSAGES),
+                    ..Default::default()
+                },
+            )
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|message| message.closure_kind.is_none())
+            .into_iter()
+            .map(work_result_message)
+            .collect::<Vec<_>>();
+        json!({
+            "available": true,
+            "can_send": summary.lifecycle.allows_mutation(),
+            "messages": messages,
+        })
     }
 }
 
@@ -197,7 +411,7 @@ pub(crate) fn work_result_state_version(projection: &Value) -> String {
         // serialization failure hashes an empty byte sequence, never a partial one.
         hasher = Sha256::new();
     }
-    format!("wr1_{:x}", hasher.finalize())
+    format!("wr2_{:x}", hasher.finalize())
 }
 
 pub(crate) fn build_work_result_projection(
@@ -211,13 +425,139 @@ pub(crate) fn build_work_result_projection(
     history_partial: bool,
 ) -> Value {
     json!({
-        "version": 1,
+        "version": 2,
         "project": project,
         "session_id": session_id,
         "workspace": work_result_workspace(workspace_call_succeeded, workspace_source),
         "validation": work_result_validation(validation_source, current_validation_source, history_partial),
         "review": work_result_review(review_source, history_partial),
     })
+}
+
+fn semantic_activity_label(tool: &str, current: bool) -> &'static str {
+    match webcodex_tool_contracts::runtime_tool_activity_semantics(tool)
+        .kind
+        .as_str()
+    {
+        Some("read") => {
+            if current {
+                "Reading project files"
+            } else {
+                "Read project files"
+            }
+        }
+        Some("search") => {
+            if current {
+                "Searching the codebase"
+            } else {
+                "Searched the codebase"
+            }
+        }
+        Some("navigate") => {
+            if current {
+                "Inspecting code"
+            } else {
+                "Inspected code"
+            }
+        }
+        Some("edit") => {
+            if current {
+                "Editing code"
+            } else {
+                "Edited code"
+            }
+        }
+        Some("run") => {
+            if current {
+                "Running a command"
+            } else {
+                "Ran a command"
+            }
+        }
+        Some("test") => {
+            if current {
+                "Running checks"
+            } else {
+                "Ran checks"
+            }
+        }
+        Some("review") => {
+            if current {
+                "Reviewing changes"
+            } else {
+                "Reviewed changes"
+            }
+        }
+        _ => {
+            if current {
+                "Working"
+            } else {
+                "Work updated"
+            }
+        }
+    }
+}
+
+fn session_activity_fallback(summary: &SessionSummary) -> Value {
+    let latest = summary.events.iter().rev().find(|event| {
+        webcodex_tool_contracts::runtime_tool_activity_interaction(&event.tool_name).is_meaningful()
+    });
+    let last_at = latest.map(|event| event.timestamp.saturating_mul(1000));
+    let last = latest.map(|event| {
+        let semantics = webcodex_tool_contracts::runtime_tool_activity_semantics(&event.tool_name);
+        json!({
+            "label": semantic_activity_label(&event.tool_name, false),
+            "kind": semantics.kind.as_str(),
+            "at_ms": event.timestamp.saturating_mul(1000),
+        })
+    });
+    json!({
+        "available": false,
+        "scope": "session",
+        "active": false,
+        "current": Value::Null,
+        "last": last,
+        "last_meaningful_activity_at_ms": last_at,
+        "coverage_partial": summary.events_truncated,
+    })
+}
+
+fn work_result_message(message: webcodex_workflow_session::SessionMessage) -> Value {
+    let handled = message.status == SessionMessageStatus::Resolved;
+    let seen = message.first_ack_observed_at.is_some();
+    let state = if handled {
+        "handled"
+    } else if seen {
+        "acknowledged"
+    } else {
+        "sent"
+    };
+    let text = truncate_plain_text(&message.message, MAX_WORK_RESULT_MESSAGE_CHARS);
+    let resolution = message
+        .resolution
+        .as_deref()
+        .map(|value| truncate_plain_text(value, MAX_WORK_RESULT_MESSAGE_CHARS));
+    json!({
+        "message_id": message.message_id,
+        "created_at": message.created_at,
+        "kind": message.kind.as_str(),
+        "message": text,
+        "author": if message.author_session_id.is_some() { "agent" } else { "user" },
+        "state": state,
+        "requires_ack": message.requires_ack,
+        "first_seen_at": message.first_ack_observed_at,
+        "handled_at": message.resolved_at,
+        "resolution": resolution,
+    })
+}
+
+fn truncate_plain_text(value: &str, max_chars: usize) -> String {
+    let mut chars = value.chars();
+    let mut text = chars.by_ref().take(max_chars).collect::<String>();
+    if chars.next().is_some() {
+        text.push('…');
+    }
+    text
 }
 
 fn work_result_workspace(call_succeeded: bool, source: &Value) -> Value {

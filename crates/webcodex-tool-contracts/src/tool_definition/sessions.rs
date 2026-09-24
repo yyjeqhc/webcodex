@@ -172,7 +172,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 super::ToolActivityPresentation::Transport,
                 super::ToolActivityInteraction::NonMeaningful,
             ),
-            "Present one exact coding Workflow Session as a persistent read-only WebCodex Progress MCP App card. For substantial coding, call at most once after the Session becomes materially stateful so the user can watch bounded app-only live reads of Session activity, workspace, validation, and review without model-visible polling. Tiny/read-only work does not need a card. A non-blocking finish_coding_task closeout seals eligible final changes in the presentation cache; the mounted card then discovers that immutable snapshot on App refresh for lazy in-card diff reads. If no card exists, closeout may suggest one presentation. Requires explicit project + session_id, creates no work, runs no validation/review, changes no Session lifecycle, and grants no authority. Presentation is UX only, never a correctness requirement; repeated explicit presentation may create another Host card.",
+            "Present one exact coding Workflow Session as the persistent user-facing WebCodex task card. For substantial coding, call once after the Session becomes materially stateful. The card app-only refreshes semantic activity and last-active timing, compact checks/review, shared Session collaboration Acknowledged/Handled state, and closeout result without model polling. Its composer uses the same Session message store as WebUI through a separate App-only tool; present_work_result stays read-only. Live per-file workspace details stay hidden; non-blocking finish_coding_task seals final changes for lazy per-file inspection. Tiny/read-only work skips it. Requires exact project + session_id; creates no work, validation, review, lifecycle change, or authority. Repeated presentation may create another Host card.",
         ))
         .with_gpt_action_unsupported(),
         155,
@@ -201,6 +201,37 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         false,
         false,
         super::ToolSessionEvidencePolicy::NONE,
+    )
+    .with_activity(
+        super::ToolActivityPresentation::Transport,
+        super::ToolActivityInteraction::NonMeaningful,
+    ),
+    def(
+        "work_result_send_message",
+        super::ToolAuditPolicy::typed_fields(&[
+            super::ToolAuditResultField::value("success"),
+            super::ToolAuditResultField::value("session_id"),
+            super::ToolAuditResultField::value("message_id"),
+            super::ToolAuditResultField::value("replayed"),
+            super::ToolAuditResultField::value("state_changed"),
+            super::ToolAuditResultField::value("error_kind"),
+        ]),
+        ModelHidden,
+        "workflow",
+        None,
+        TOOL_PROVIDER_CONTROL,
+        super::ToolSemanticContract {
+            effect: super::ToolEffect::Mutate,
+            risk: super::ToolRisk::SessionCollaborate,
+            approval: super::ToolApprovalPolicy::None,
+            idempotency: super::ToolIdempotency::Keyed,
+        },
+        Some(SESSION_COLLABORATE),
+        true,
+        NoPath,
+        false,
+        false,
+        super::ToolSessionEvidencePolicy::NONE.lifecycle(super::ToolSessionLifecycleEffect::Mutation),
     )
     .with_activity(
         super::ToolActivityPresentation::Transport,

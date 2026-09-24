@@ -14,7 +14,11 @@ use super::session_context::{
 };
 use super::{ToolResult, ToolRuntime};
 
-const CHANGES_SNAPSHOT_TTL: Duration = Duration::from_secs(5 * 60);
+// Work Result is the primary task card and users commonly inspect the final
+// result well after closeout. Snapshot metadata is tightly bounded below, so keep
+// the immutable per-file view alive for a full day instead of the former 5-minute
+// transient presentation window.
+const CHANGES_SNAPSHOT_TTL: Duration = Duration::from_secs(24 * 60 * 60);
 const MAX_CHANGES_SNAPSHOTS: usize = 32;
 const MAX_CHANGES_SNAPSHOTS_PER_CALLER: usize = 8;
 const MAX_CHANGES_FILES: usize = 24;

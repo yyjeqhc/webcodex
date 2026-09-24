@@ -1502,6 +1502,18 @@ pub enum ToolCall {
     /// recording so an explicit App refresh cannot mutate the observed ledger.
     WorkResultState { project: String, session_id: String },
 
+    /// Work Result App-only collaboration write. The App fixes the business kind
+    /// to guidance + requires_ack and supplies one bounded replay key so uncertain
+    /// Host delivery can be retried without duplicating the retained message.
+    WorkResultSendMessage {
+        project: String,
+        session_id: String,
+        #[schemars(length(min = 1, max = 8000))]
+        message: String,
+        #[schemars(length(min = 1, max = 128))]
+        delivery_key: String,
+    },
+
     /// Work Result App-only lazy read from one opaque frozen final-changes snapshot.
     /// Business session identity is deliberately excluded from generic Session
     /// recording so user expansion clicks cannot become Session work events.
@@ -5458,6 +5470,7 @@ impl ToolCall {
             Self::FinishCodingTask { .. } => "finish_coding_task",
             Self::PresentWorkResult { .. } => "present_work_result",
             Self::WorkResultState { .. } => "work_result_state",
+            Self::WorkResultSendMessage { .. } => "work_result_send_message",
             Self::ChangesFileDiff { .. } => "changes_file_diff",
             Self::SessionSummary { .. } => "session_summary",
             Self::UpdateSessionContext { .. } => "update_session_context",
@@ -5720,6 +5733,7 @@ impl ToolCall {
             // Session through this generic recorder projection: each re-authorizes
             // and reads the exact target inside its runtime method.
             Self::WorkResultState { .. }
+            | Self::WorkResultSendMessage { .. }
             | Self::ChangesFileDiff { .. }
             | Self::SessionHandoffState { .. } => None,
             Self::ImportConversationFilesToProject { session_id, .. } => session_id.as_deref(),
@@ -5870,6 +5884,7 @@ impl ToolCall {
             Self::FinishCodingTask { project, .. }
             | Self::PresentWorkResult { project, .. }
             | Self::WorkResultState { project, .. }
+            | Self::WorkResultSendMessage { project, .. }
             | Self::ChangesFileDiff { project, .. } => Some(project.as_str()),
             Self::UpdateSessionContext { project, .. }
             | Self::ValidationSummary { project, .. } => Some(project.as_str()),

@@ -37,13 +37,18 @@ pub fn goal_plan_app_tool_specs() -> Vec<ToolSpec> {
     )]
 }
 
-/// Read-only Work Result App primitives. Canonical definitions stay ModelHidden;
-/// only the MCP Apps adapter projects live refresh, closeout sealing, and frozen lazy diff reads.
+/// Work Result App primitives. Canonical definitions stay ModelHidden; only the
+/// MCP Apps adapter projects live refresh, bounded Session collaboration, closeout
+/// sealing, and frozen lazy diff reads.
 pub fn work_result_app_tool_specs() -> Vec<ToolSpec> {
     vec![
         tool_spec(
             "work_result_state",
-            "App-only exact live Work Result refresh. Re-authorizes project + session_id and never records into the target Session. It returns live progress domains plus any retained immutable final-changes snapshot already sealed by a non-blocking finish_coding_task closeout; the refresh never creates or replaces that snapshot.",
+            "App-only exact live Work Result refresh. Re-authorizes project + session_id and never records into the target Session. It returns user-facing activity and collaboration state plus any retained immutable final-changes snapshot already sealed by a non-blocking finish_coding_task closeout; the refresh never creates or replaces that snapshot.",
+        ),
+        tool_spec(
+            "work_result_send_message",
+            "Work Result App-only bounded collaboration write for the exact card Project + Workflow Session. It reuses the canonical Session message store and session:collaborate checks, fixes user input to guidance + requires_ack, and requires a replay key so an uncertain Host call can be retried without duplicating the message.",
         ),
         tool_spec(
             "changes_file_diff",

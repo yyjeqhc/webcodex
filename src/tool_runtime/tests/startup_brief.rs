@@ -222,11 +222,14 @@ fn assert_builtin_workflow(output: &Value) {
         "substantial coding",
         "present_work_result(project, session_id) once",
         "materially stateful",
-        "Do not repeat it",
-        "Tiny/read-only work skips it",
+        "primary task card",
+        "semantic activity/last-active time",
+        "Session collaboration with WebUI",
+        "session_attention/ACK flow",
         "non-blocking finish_coding_task",
-        "seals eligible final changes",
-        "mounted card to discover on refresh",
+        "per-file changes",
+        "Do not repeat or model-poll it",
+        "Tiny/read-only work skips it",
     ] {
         assert!(work_result_guidance.contains(phrase), "{phrase}");
     }

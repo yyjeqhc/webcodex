@@ -384,12 +384,16 @@ impl ToolRuntime {
                 correlation: Default::default(),
             };
         }
-        if request.tool_name == "work_result_state" && !capabilities.work_result_app {
+        if matches!(
+            request.tool_name.as_str(),
+            "work_result_state" | "work_result_send_message"
+        ) && !capabilities.work_result_app
+        {
             return ToolCallOutcome {
                 success: false,
                 result: None,
                 error_status: Some(ToolCallErrorStatus::InvalidArguments {
-                    message: "Work Result App state is available only on Stateless MCP 2026 requests with Work Result App capability"
+                    message: "Work Result App operations are available only on Stateless MCP 2026 requests with Work Result App capability"
                         .to_string(),
                 }),
                 project: None,

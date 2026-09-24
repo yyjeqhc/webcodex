@@ -333,6 +333,7 @@ fn tool_definitions_are_activity_semantics_ssot() {
         "bootstrap_agent_conversation",
         "consume_agent_wake",
         "work_result_state",
+        "work_result_send_message",
         "session_handoff_state",
         "agent_wait_state",
         "agent_continuation_bind",

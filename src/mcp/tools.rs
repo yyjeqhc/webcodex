@@ -2050,6 +2050,8 @@ pub(super) async fn handle_call(
     let job_terminal_continuation_app_admitted = server_mcp_apps_enabled && stateless_2026;
     let app_only_goal_plan_sync = goal_plan_app_admitted && params.name == "goal_plan_sync";
     let app_only_work_result_state = work_result_app_admitted && params.name == "work_result_state";
+    let app_only_work_result_send_message =
+        work_result_app_admitted && params.name == "work_result_send_message";
     let app_only_changes_file_diff = work_result_app_admitted && params.name == "changes_file_diff";
     let app_only_agent_continuation =
         agent_continuation_app_admitted && is_agent_continuation_app_tool_name(&params.name);
@@ -2061,6 +2063,7 @@ pub(super) async fn handle_call(
             .any(|spec| spec.name == params.name);
     let direct_denied = !app_only_goal_plan_sync
         && !app_only_work_result_state
+        && !app_only_work_result_send_message
         && !app_only_changes_file_diff
         && !app_only_agent_continuation
         && !app_only_job_terminal_continuation
@@ -2139,7 +2142,7 @@ pub(super) async fn handle_call(
     // recording_session_id before the kernel sees any of these calls.
     if matches!(
         params.name.as_str(),
-        "goal_plan_sync" | "work_result_state" | "changes_file_diff"
+        "goal_plan_sync" | "work_result_state" | "work_result_send_message" | "changes_file_diff"
     ) {
         session_id = None;
     }

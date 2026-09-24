@@ -5758,6 +5758,17 @@ impl ToolCallAuditProjection for ToolCall {
                 "project": project,
                 "session_id": session_id,
             }),
+            Self::WorkResultSendMessage {
+                project,
+                session_id,
+                message,
+                delivery_key,
+            } => serde_json::json!({
+                "project": project,
+                "session_id": session_id,
+                "message_chars": message.chars().count(),
+                "delivery_key_present": !delivery_key.is_empty(),
+            }),
             Self::ChangesFileDiff {
                 project,
                 session_id,

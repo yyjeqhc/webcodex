@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>WebCodex Progress</title>
+<title>WebCodex</title>
 <style>
 :root {
   color-scheme: light dark;
@@ -151,6 +151,27 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
 .diff-line.deleted { background: color-mix(in srgb, var(--danger) 13%, transparent); }
 .diff-line.hunk { color: var(--accent); background: color-mix(in srgb, var(--accent) 7%, transparent); }
 .app-footer { display: flex; align-items: center; gap: 7px; min-height: 34px; padding: 8px 13px; border-top: 1px solid var(--divider); background: var(--card-header); }
+.activity-line { display: grid; gap: 3px; }
+.activity-current { font-size: 15px; font-weight: 650; }
+.activity-age { font-size: 12px; color: var(--muted); }
+.conversation { display: grid; gap: 7px; }
+.message { display: grid; gap: 4px; max-width: 92%; padding: 8px 10px; border: 1px solid var(--divider); border-radius: 10px; background: var(--surface); }
+.message.user { justify-self: end; background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 18%, var(--divider)); }
+.message.agent { justify-self: start; }
+.message-copy { white-space: pre-wrap; overflow-wrap: anywhere; }
+.message-meta { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 10px; }
+.message-state.acknowledged, .message-state.handled { color: var(--success); }
+.message-resolution { padding-top: 4px; border-top: 1px solid var(--divider); color: var(--muted); font-size: 11px; }
+.composer { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px; align-items: end; }
+.composer textarea { width: 100%; min-height: 58px; max-height: 140px; resize: vertical; border: 1px solid var(--card-border); border-radius: 9px; padding: 8px 9px; color: CanvasText; background: var(--surface); font: inherit; }
+.composer textarea:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 72%, transparent); outline-offset: 1px; }
+.details { border: 1px solid var(--divider); border-radius: 10px; overflow: hidden; }
+.details > summary { padding: 9px 11px; cursor: pointer; color: var(--muted); font-weight: 600; }
+.detail-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; padding: 0 11px 11px; }
+.detail-item { display: grid; gap: 3px; min-width: 0; padding: 8px; border-radius: 8px; background: var(--surface); }
+.detail-item span { color: var(--muted); font-size: 10px; text-transform: uppercase; }
+.detail-item strong { overflow-wrap: anywhere; font-size: 11px; }
+
 .live-dot { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 999px; background: var(--success); box-shadow: 0 0 0 3px var(--success-soft); }
 @media (max-width: 620px) {
   .app-header { align-items: flex-start; }
@@ -166,46 +187,52 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
   <header class="app-header">
     <div class="brand">
       <span class="brand-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="6" cy="6" r="3"></circle><circle cx="18" cy="6" r="3"></circle><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="18" r="3"></circle><path d="M8.6 7.5 15.4 16.5M15.4 7.5 8.6 16.5"></path></svg></span>
-      <div class="brand-copy"><h1>WebCodex Progress</h1><span id="branch" class="brand-subtitle">Workflow session</span></div>
+      <div class="brand-copy"><h1 id="taskTitle">WebCodex</h1><span id="branch" class="brand-subtitle">Task</span></div>
     </div>
     <div class="actions"><button id="refresh" class="refresh" type="button" disabled>Refresh</button><span id="badge" class="badge">Loading</span></div>
   </header>
   <div class="content">
     <section class="section progress-section">
-      <div class="section-head"><h2>Progress</h2><span id="progressMeta" class="secondary"></span></div>
-      <div id="progressStatus" class="primary">Waiting for Session activity…</div>
+      <div class="section-head"><h2>Current activity</h2><span id="activityAge" class="secondary"></span></div>
+      <div class="activity-line">
+        <div id="activityStatus" class="activity-current">Waiting for activity…</div>
+        <div id="activityDetail" class="activity-age"></div>
+      </div>
     </section>
     <section class="section">
-      <div class="section-head"><h2>Workspace</h2><span id="changesStats" class="stats-inline"></span></div>
-      <div id="changesTitle" class="primary">Waiting for Work state…</div>
-      <pre id="files" class="files" hidden></pre>
+      <div class="section-head"><h2>Messages</h2><span id="collaborationMeta" class="secondary"></span></div>
+      <div id="messages" class="conversation"></div>
+      <form id="composer" class="composer">
+        <textarea id="messageInput" maxlength="8000" placeholder="Send an instruction or follow-up…" aria-label="Message WebCodex"></textarea>
+        <button id="sendMessage" class="refresh" type="submit">Send</button>
+      </form>
+      <div id="composerState" class="secondary"></div>
     </section>
-    <div class="status-grid">
-      <section class="section">
-        <div class="section-head"><h2>Validation</h2><span id="validationMeta" class="secondary"></span></div>
-        <div id="validationStatus" class="status-value">Unknown</div>
-      </section>
-      <section class="section">
-        <div class="section-head"><h2>Review</h2><span id="reviewMeta" class="secondary"></span></div>
-        <div id="reviewStatus" class="primary">No recorded review evidence</div>
-      </section>
-    </div>
     <section id="finalChanges" class="section" hidden>
-      <div class="section-head"><h2>Final changes</h2><span id="frozenStats" class="stats-inline"></span></div>
+      <div class="section-head"><h2>What changed</h2><span id="frozenStats" class="stats-inline"></span></div>
       <div id="frozenSummary" class="primary"></div>
       <div id="frozenFiles"></div>
       <button id="frozenMore" class="refresh" type="button" hidden></button>
       <div id="frozenFooter" class="secondary"></div>
     </section>
+    <details class="details">
+      <summary>Details</summary>
+      <div class="detail-grid">
+        <div class="detail-item"><span>Checks</span><strong id="validationStatus">Waiting</strong><small id="validationMeta" class="secondary"></small></div>
+        <div class="detail-item"><span>Review</span><strong id="reviewStatus">Waiting</strong><small id="reviewMeta" class="secondary"></small></div>
+        <div class="detail-item"><span>Changes</span><strong id="workspaceStatus">Waiting</strong><small id="workspaceMeta" class="secondary"></small></div>
+      </div>
+    </details>
   </div>
-  <footer class="app-footer"><span class="live-dot" aria-hidden="true"></span><div id="status" class="status">App active · initializing Host</div></footer>
+  <footer class="app-footer"><span class="live-dot" aria-hidden="true"></span><div id="status" class="status">Connecting…</div></footer>
 </main>
 <script>
 (() => {
   "use strict";
   const APP_PROTOCOL = "2026-01-26";
   const SESSION_ID = /^wc_sess_([A-Za-z0-9_-]{16}|[0-9a-f]{32})$/;
-  const STATE_VERSION = /^wr1_[0-9a-f]{64}$/;
+  const STATE_VERSION = /^wr2_[0-9a-f]{64}$/;
+  const MESSAGE_ID = /^wc_msg_[A-Za-z0-9_-]+$/;
   const CALL_TIMEOUT_MS = 10000;
   const VISIBLE_REFRESH_MS = 2500;
   const HIDDEN_REFRESH_MS = 12000;
@@ -226,7 +253,7 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
   let hasRefreshed = false;
   const diffCache = new Map();
   const diffInFlight = new Set();
-  const VALIDATION = new Set(["not_run", "passed", "failed", "mixed", "expected", "inconclusive", "stale", "unknown"]);
+  const VALIDATION = new Set(["not_run", "unproven", "passed", "failed", "mixed", "expected", "inconclusive", "stale", "unknown"]);
   let nextId = 1;
   let identity = null;
   let lastStateVersion = null;
@@ -235,6 +262,9 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
   let refreshTimer = null;
   let sessionLifecycle = null;
   let lastStateChangeAt = null;
+  let lastRenderedState = null;
+  let sendInFlight = false;
+  let pendingSend = null;
   let tornDown = false;
   const pending = new Map();
   const el = id => document.getElementById(id);
@@ -268,10 +298,10 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     return validProject(project) && validSession(session_id) ? { project, session_id } : null;
   }
 
-  function failClosed(message) {
+  function failClosed(_message) {
     teardown();
     el("badge").textContent = "Unavailable";
-    el("status").textContent = message;
+    el("status").textContent = "This task card is unavailable";
     el("finalChanges").hidden = true;
     el("frozenFiles").replaceChildren();
     diffCache.clear();
@@ -350,12 +380,45 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     if (latest.status !== undefined && (typeof latest.status !== "string" || latest.status.length > 32)) return false;
     return latest.duration_ms === undefined || safeCount(latest.duration_ms);
   }
+  function validActivityItem(value, timestampKey) {
+    if (value === null) return true;
+    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+    if (typeof value.label !== "string" || value.label.length < 1 || value.label.length > 120) return false;
+    if (!(value.kind === null || value.kind === undefined || ["read", "search", "navigate", "edit", "run", "test", "review"].includes(value.kind))) return false;
+    const timestamp = value[timestampKey];
+    return timestamp === null || timestamp === undefined || (Number.isSafeInteger(timestamp) && timestamp >= 0);
+  }
+
+  function validActivity(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+    if (typeof value.available !== "boolean" || !["window", "session"].includes(value.scope) || typeof value.active !== "boolean") return false;
+    if (typeof value.coverage_partial !== "boolean") return false;
+    if (!validActivityItem(value.current, "started_at_ms") || !validActivityItem(value.last, "at_ms")) return false;
+    return value.last_meaningful_activity_at_ms === null
+      || (Number.isSafeInteger(value.last_meaningful_activity_at_ms) && value.last_meaningful_activity_at_ms >= 0);
+  }
+
+  function validCollaborationMessage(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value) || !MESSAGE_ID.test(value.message_id)) return false;
+    if (!Number.isSafeInteger(value.created_at) || typeof value.message !== "string" || Array.from(value.message).length > 801) return false;
+    if (!["user", "agent"].includes(value.author) || !["sent", "acknowledged", "handled"].includes(value.state)) return false;
+    if (typeof value.kind !== "string" || value.kind.length < 1 || value.kind.length > 32 || typeof value.requires_ack !== "boolean") return false;
+    for (const key of ["first_seen_at", "handled_at"]) if (!(value[key] === null || (Number.isSafeInteger(value[key]) && value[key] >= 0))) return false;
+    return value.resolution === null || (typeof value.resolution === "string" && Array.from(value.resolution).length <= 801);
+  }
+
+  function validCollaboration(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value) || typeof value.available !== "boolean" || typeof value.can_send !== "boolean") return false;
+    if (!Array.isArray(value.messages) || value.messages.length > 6 || !value.messages.every(validCollaborationMessage)) return false;
+    return value.available || (!value.can_send && value.messages.length === 0);
+  }
 
   function validState(value) {
-    if (!value || typeof value !== "object" || Array.isArray(value) || value.version !== 1) return null;
+    if (!value || typeof value !== "object" || Array.isArray(value) || value.version !== 2) return null;
     const candidate = pair(value.project, value.session_id);
     if (!candidate || typeof value.state_version !== "string" || !STATE_VERSION.test(value.state_version)) return null;
-    if (!validWorkspace(value.workspace) || !validValidation(value.validation) || !validReview(value.review) || !validSessionState(value.session)) return null;
+    if (!validWorkspace(value.workspace) || !validValidation(value.validation) || !validReview(value.review)
+      || !validSessionState(value.session) || !validActivity(value.activity) || !validCollaboration(value.collaboration)) return null;
     if (value.final_changes !== undefined && !validFrozen(value.final_changes)) return null;
     return value;
   }
@@ -449,8 +512,8 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
   }
 
   function renderFrozenDiff(state, pre, diff) {
-    state.textContent = `${diff.binary ? "Binary file · frozen metadata" : "Frozen diff"}${diff.truncated
-      ? ` · truncated (${diff.bytes_returned}/${diff.bytes_total} bytes, ${diff.lines_returned}/${diff.lines_total} lines)` : ""}`;
+    state.textContent = `${diff.binary ? "Binary file" : "File changes"}${diff.truncated
+      ? ` · partial (${diff.lines_returned}/${diff.lines_total} lines)` : ""}`;
     pre.replaceChildren();
     for (const text of diff.diff.split("\n")) {
       const line = document.createElement("span");
@@ -467,19 +530,19 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     if (diffCache.has(file.path)) { renderFrozenDiff(state, pre, diffCache.get(file.path)); return; }
     if (diffInFlight.has(file.path)) return;
     diffInFlight.add(file.path);
-    state.textContent = "Loading frozen diff…";
+    state.textContent = "Loading changes…";
     try {
       const response = await send("tools/call", { name: "changes_file_diff", arguments: {
         project: identity.project, session_id: identity.session_id, snapshot_id: snapshot.snapshot_id, path: file.path,
       } });
       if (tornDown) return;
-      if (toolSuccess(response) === false) { state.textContent = "Frozen diff unavailable · snapshot may have expired"; return; }
+      if (toolSuccess(response) === false) { state.textContent = "Changes unavailable · refresh the card"; return; }
       const diff = extractFrozenDiff(response, file);
-      if (!diff) { failClosed("Invalid frozen diff identity or bounded content"); return; }
+      if (!diff) { failClosed("Invalid file changes"); return; }
       diffCache.set(file.path, diff);
       renderFrozenDiff(state, pre, diff);
     } catch (_) {
-      if (!tornDown) state.textContent = "Frozen diff unavailable · collapse and expand to retry";
+      if (!tornDown) state.textContent = "Changes unavailable · collapse and expand to retry";
     } finally {
       diffInFlight.delete(file.path);
     }
@@ -512,8 +575,8 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     while (visibleCount < end) el("frozenFiles").appendChild(frozenFileNode(snapshot.files[visibleCount++]));
     el("frozenMore").hidden = visibleCount >= snapshot.files.length;
     el("frozenMore").textContent = `Show ${snapshot.files.length - visibleCount} more files`;
-    el("frozenFooter").textContent = `Sealed at coding closeout · live progress no longer changes this final snapshot${snapshot.files_truncated
-      ? ` · metadata truncated (${snapshot.files.length}/${snapshot.files_total} files advertised)` : ""}`;
+    el("frozenFooter").textContent = `Final result · select a file to inspect its changes${snapshot.files_truncated
+      ? ` · showing ${snapshot.files.length} of ${snapshot.files_total} files` : ""}`;
   }
 
   function changeCode(file) {
@@ -528,106 +591,202 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     return "?";
   }
 
-  function renderChanges(workspace) {
-    el("branch").textContent = workspace.branch || "Workflow session";
+  function formatAge(timestampMs) {
+    if (!Number.isSafeInteger(timestampMs) || timestampMs < 0) return "";
+    const elapsed = Math.max(0, Date.now() - timestampMs);
+    if (elapsed < 5000) return "now";
+    if (elapsed < 60000) return `${Math.floor(elapsed / 1000)}s ago`;
+    const minutes = Math.floor(elapsed / 60000);
+    if (minutes < 60) return `${minutes}m ago`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours}h ${minutes % 60}m ago`;
+    return `${Math.floor(hours / 24)}d ago`;
+  }
+
+  function renderWorkspace(workspace, hasFinalChanges) {
+    el("branch").textContent = workspace.branch || "Task";
     if (!workspace.git_available) {
-      el("badge").className = "badge tone-unavailable";
-      el("badge").textContent = "Unavailable";
-      el("changesTitle").textContent = workspace.reason_code === "non_git_project" ? "Not a Git worktree" : "Git state unavailable";
-      el("changesStats").replaceChildren();
-      el("files").textContent = "";
-      el("files").hidden = true;
+      el("workspaceStatus").textContent = "Change status unavailable";
+      el("workspaceMeta").textContent = "";
+      return;
+    }
+    if (hasFinalChanges) {
+      el("workspaceStatus").textContent = "Final result available";
+      el("workspaceMeta").textContent = "Open What changed above";
       return;
     }
     if (workspace.clean) {
-      el("badge").className = "badge tone-clean";
-      el("badge").textContent = "Clean";
-      el("changesTitle").textContent = "Workspace clean";
-      renderLineStats(el("changesStats"), 0, 0);
-      el("files").textContent = "";
-      el("files").hidden = true;
+      el("workspaceStatus").textContent = "No pending changes";
+      el("workspaceMeta").textContent = "";
       return;
     }
-    el("badge").className = "badge tone-changed";
-    el("badge").textContent = "Changed";
-    el("changesTitle").textContent = `Changed ${workspace.files_total} ${workspace.files_total === 1 ? "file" : "files"}`;
-    if (safeCount(workspace.additions) && safeCount(workspace.deletions)) {
-      renderLineStats(el("changesStats"), workspace.additions, workspace.deletions, workspace.line_stats_partial ? "partial" : "");
-    } else {
-      el("changesStats").textContent = workspace.line_stats_partial ? "line stats partial" : "";
-    }
-    el("files").textContent = workspace.files.map(file => {
-      const stats = safeCount(file.additions) && safeCount(file.deletions) ? `  +${file.additions} −${file.deletions}` : "";
-      return `${changeCode(file)} ${file.path}${stats}`;
-    }).join("\n");
-    el("files").hidden = workspace.files.length === 0;
+    el("workspaceStatus").textContent = "Changes in progress";
+    el("workspaceMeta").textContent = workspace.files_total > 0
+      ? `${workspace.files_total} ${workspace.files_total === 1 ? "file" : "files"} currently touched`
+      : "";
   }
 
-  function validationLabel(status) {
-    if (status === "passed") return "Passed";
-    if (status === "failed") return "Failed";
-    if (status === "mixed") return "Mixed";
-    if (status === "stale") return "Stale";
-    if (status === "not_run") return "Not run";
-    if (status === "expected") return "Expected result recorded";
-    if (status === "inconclusive") return "Inconclusive";
-    return "Unknown";
+  function validationLabel(validation) {
+    if (validation.unresolved_failures > 0 || validation.current_status === "failed") return "Checks need attention";
+    if (validation.current_status === "passed") return "Checks passed";
+    if (validation.current_status === "stale") return "Checks are out of date";
+    if (validation.current_status === "not_run" || validation.current_status === "unproven") return "Checks not run";
+    if (validation.current_status === "expected") return "Expected result recorded";
+    if (validation.current_status === "inconclusive") return "Checks inconclusive";
+    return "Check status unavailable";
   }
 
   function renderValidation(validation) {
-    el("validationStatus").textContent = validationLabel(validation.current_status);
-    const validationTone = validation.current_status === "passed" ? "passed" : validation.current_status === "failed" ? "failed" : validation.current_status === "stale" || validation.current_status === "inconclusive" ? "warning" : "active";
-    el("validationStatus").className = `status-value tone-${validationTone}`;
+    el("validationStatus").textContent = validationLabel(validation);
     const pieces = [];
-    if (safeCount(validation.successes)) pieces.push(`${validation.successes} validations`);
+    if (safeCount(validation.successes) && validation.successes > 0) pieces.push(`${validation.successes} passed`);
     if (validation.unresolved_failures > 0) pieces.push(`${validation.unresolved_failures} unresolved`);
-    else if (safeCount(validation.failures) && validation.failures > 0) pieces.push(`${validation.failures} historical failures`);
-    if (validation.evidence_gaps > 0) pieces.push(`${validation.evidence_gaps} evidence gaps`);
-    if (validation.history_partial) pieces.push("history partial");
+    if (validation.history_partial) pieces.push("limited history");
     el("validationMeta").textContent = pieces.join(" · ");
   }
 
   function renderReview(review) {
-    if (review.total === 0) {
-      if (review.history_partial) {
-        el("reviewStatus").textContent = "Review history partial";
-        el("reviewMeta").textContent = "Earlier review evidence may be outside the bounded window";
-      } else {
-        el("reviewStatus").textContent = "No recorded review evidence";
-        el("reviewMeta").textContent = "";
-      }
-      return;
+    if (review.total > 0) {
+      el("reviewStatus").textContent = "Review complete";
+      el("reviewMeta").textContent = review.history_partial ? "Recent review activity available" : "";
+    } else if (review.history_partial) {
+      el("reviewStatus").textContent = "Review status incomplete";
+      el("reviewMeta").textContent = "Earlier activity is outside the retained history";
+    } else {
+      el("reviewStatus").textContent = "Review not recorded";
+      el("reviewMeta").textContent = "";
     }
-    const labels = [];
-    if (review.workspace_review_count > 0) labels.push("Workspace reviewed");
-    if (review.diff_review_count > 0) labels.push("Diff inspected");
-    if (review.tools.includes("git_review_summary")) labels.push("Committed range mapped");
-    if (review.hygiene_review_count > 0) labels.push("Hygiene inspected");
-    if (labels.length === 0) labels.push("Review evidence recorded");
-    el("reviewStatus").textContent = labels.join(" · ");
-    el("reviewMeta").textContent = `${review.total} review ${review.total === 1 ? "event" : "events"}${review.history_partial ? " · history partial" : ""}`;
   }
 
-  function renderProgress(session) {
-    const latest = session.latest_activity;
-    if (latest) {
-      const status = latest.status ? ` · ${latest.status}` : "";
-      el("progressStatus").textContent = `${latest.tool}${status}`;
-    } else {
-      el("progressStatus").textContent = session.lifecycle === "closed" ? "Session closed" : "Session active";
+  function renderActivity(activity, session, hasFinalChanges) {
+    if (hasFinalChanges || session.lifecycle === "closed") {
+      el("activityStatus").textContent = "Work completed";
+      el("activityDetail").textContent = activity.last?.label || "";
+      el("activityAge").textContent = activity.last_meaningful_activity_at_ms === null ? "" : `Finished ${formatAge(activity.last_meaningful_activity_at_ms)}`;
+      return;
     }
-    const pieces = [`${session.events_total} session events`];
-    if (session.history_partial) pieces.push("history partial");
-    pieces.push(session.lifecycle === "closed" ? "closed" : "live");
-    el("progressMeta").textContent = pieces.join(" · ");
+    if (activity.active && activity.current) {
+      el("activityStatus").textContent = activity.current.label;
+      el("activityDetail").textContent = activity.scope === "window" ? "This chat is active" : "WebCodex is working on this task";
+      el("activityAge").textContent = activity.scope === "window" ? "This chat · Active now" : "Active now";
+      return;
+    }
+    if (activity.last) {
+      el("activityStatus").textContent = activity.last.label;
+      el("activityDetail").textContent = activity.scope === "window" ? "Waiting for the next activity in this chat" : "Waiting for the next task activity";
+      const prefix = activity.scope === "window" ? "This chat · Last active " : "Task · Last active ";
+      el("activityAge").textContent = prefix + formatAge(activity.last_meaningful_activity_at_ms);
+      return;
+    }
+    el("activityStatus").textContent = "Waiting for activity";
+    el("activityDetail").textContent = activity.coverage_partial ? "Current activity is not fully observable" : "";
+    el("activityAge").textContent = "";
+  }
+
+  function renderMessages(collaboration) {
+    const root = el("messages");
+    root.replaceChildren();
+    el("collaborationMeta").textContent = collaboration.available ? "Shared with WebUI" : "Unavailable";
+    const rows = [...collaboration.messages].reverse();
+    for (const message of rows) {
+      const article = document.createElement("article");
+      article.className = `message ${message.author}`;
+      const copy = document.createElement("div"); copy.className = "message-copy"; copy.textContent = message.message;
+      const meta = document.createElement("div"); meta.className = "message-meta";
+      const author = document.createElement("strong"); author.textContent = message.author === "user" ? "You" : "WebCodex";
+      const time = document.createElement("span"); time.textContent = formatAge(message.created_at * 1000);
+      meta.append(author, time);
+      if (message.author === "user") {
+        const state = document.createElement("span"); state.className = `message-state ${message.state}`;
+        state.textContent = message.state === "handled" ? "Handled" : message.state === "acknowledged" ? "Acknowledged" : "Sent";
+        meta.append(state);
+      }
+      article.append(copy, meta);
+      if (message.resolution) {
+        const resolution = document.createElement("div"); resolution.className = "message-resolution";
+        resolution.textContent = message.resolution;
+        article.append(resolution);
+      }
+      root.append(article);
+    }
+    if (!rows.length) {
+      const empty = document.createElement("div"); empty.className = "secondary";
+      empty.textContent = collaboration.available ? "No messages yet." : "Messaging is not available with this access.";
+      root.append(empty);
+    }
+    updateComposerControl(collaboration);
+  }
+
+  function updateComposerControl(collaboration = lastRenderedState?.collaboration) {
+    const enabled = !!collaboration?.available && !!collaboration?.can_send && hostInitialized && !tornDown && !sendInFlight;
+    el("messageInput").disabled = !enabled;
+    el("sendMessage").disabled = !enabled || !String(el("messageInput").value || "").trim();
+    el("sendMessage").textContent = sendInFlight ? "Sending…" : "Send";
+    if (collaboration && !collaboration.can_send) el("composerState").textContent = collaboration.available ? "This task is closed for new messages." : "";
   }
 
   function render(state) {
     if (tornDown) return;
-    renderProgress(state.session);
-    renderChanges(state.workspace);
+    lastRenderedState = state;
+    const hasFinalChanges = snapshot !== null || state.final_changes !== undefined;
+    el("taskTitle").textContent = state.session.title || "WebCodex";
+    renderActivity(state.activity, state.session, hasFinalChanges);
+    renderMessages(state.collaboration);
+    renderWorkspace(state.workspace, hasFinalChanges);
     renderValidation(state.validation);
     renderReview(state.review);
+
+    if (hasFinalChanges || state.session.lifecycle === "closed") {
+      el("badge").className = "badge tone-clean";
+      el("badge").textContent = "Completed";
+    } else if (state.activity.active) {
+      el("badge").className = "badge tone-changed";
+      el("badge").textContent = "Working";
+    } else if (state.validation.unresolved_failures > 0 || state.validation.current_status === "failed") {
+      el("badge").className = "badge tone-unavailable";
+      el("badge").textContent = "Needs attention";
+    } else {
+      el("badge").className = "badge";
+      el("badge").textContent = "Waiting";
+    }
+  }
+
+  function newDeliveryKey() {
+    const bytes = new Uint8Array(16);
+    crypto.getRandomValues(bytes);
+    return "wrc_" + Array.from(bytes, byte => byte.toString(16).padStart(2, "0")).join("");
+  }
+
+  async function sendMessageFromCard() {
+    if (tornDown || !hostInitialized || !identity || sendInFlight || !lastRenderedState?.collaboration?.can_send) return;
+    const text = String(el("messageInput").value || "").trim();
+    if (!text) return;
+    if (!pendingSend || pendingSend.message !== text) pendingSend = { message: text, delivery_key: newDeliveryKey() };
+    sendInFlight = true;
+    el("composerState").textContent = "Sending…";
+    updateComposerControl();
+    try {
+      const response = await send("tools/call", { name: "work_result_send_message", arguments: {
+        project: identity.project,
+        session_id: identity.session_id,
+        message: pendingSend.message,
+        delivery_key: pendingSend.delivery_key,
+      } });
+      if (tornDown) return;
+      if (toolSuccess(response) !== true) {
+        el("composerState").textContent = "Send failed · retry";
+        return;
+      }
+      el("messageInput").value = "";
+      pendingSend = null;
+      el("composerState").textContent = "Sent";
+      await refresh(false);
+    } catch (_) {
+      if (!tornDown) el("composerState").textContent = "Send status unknown · retry";
+    } finally {
+      sendInFlight = false;
+      updateComposerControl();
+    }
   }
 
   function updateRefreshControl() {
@@ -647,7 +806,7 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     refreshTimer = null;
     if (tornDown || !hostInitialized || !identity || lastStateVersion === null || sessionLifecycle === "closed") return;
     if (lastStateChangeAt !== null && Date.now() - lastStateChangeAt >= AUTO_REFRESH_IDLE_PAUSE_MS) {
-      if (!refreshInFlight) el("status").textContent = "Live · auto refresh paused";
+      if (!refreshInFlight) el("status").textContent = "Updates paused · Refresh to check";
       return;
     }
     refreshTimer = setTimeout(() => {
@@ -671,27 +830,27 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
       }
       const state = extractState(response);
       if (!state || !acceptIdentity(pair(state.project, state.session_id))) {
-        if (!tornDown) failClosed("Invalid authoritative Work state");
+        if (!tornDown) failClosed("Task state unavailable");
         return;
       }
       const hadFrozen = snapshot !== null;
       if (!acceptFrozen(state.final_changes)) return;
-      const sealedNow = !hadFrozen && snapshot !== null;
+      const completedNow = !hadFrozen && snapshot !== null;
       hasRefreshed = true;
       sessionLifecycle = state.session.lifecycle;
-      if (state.state_version !== lastStateVersion) {
+      const changed = state.state_version !== lastStateVersion;
+      if (changed) {
         lastStateVersion = state.state_version;
         lastStateChangeAt = Date.now();
-        render(state);
-        el("status").textContent = sealedNow ? "Final changes sealed · live progress retained" : sessionLifecycle === "closed"
-          ? (automatic ? "Closed · updated" : "Updated · closed")
-          : (automatic ? "Live · updated" : "Updated");
-      } else {
-        if (!automatic || sealedNow) lastStateChangeAt = Date.now();
-        el("status").textContent = sealedNow ? "Final changes sealed" : sessionLifecycle === "closed"
-          ? (automatic ? "Closed" : "Up to date · closed")
-          : (automatic ? "Live" : "Up to date");
       }
+      // Re-render even when authoritative state is unchanged so the View can
+      // update human-friendly "last active" time from the stable timestamp.
+      render(state);
+      if (!changed && !automatic) lastStateChangeAt = Date.now();
+      el("status").textContent = completedNow ? "Completed · final result ready"
+        : sessionLifecycle === "closed" ? "Completed"
+        : changed ? (automatic ? "Live · updated" : "Updated")
+        : (automatic ? "Live" : "Up to date");
     } catch (_) {
       if (!tornDown && !automatic) el("status").textContent = hadSnapshot ? "Refresh unavailable · showing last snapshot" : "Refresh unavailable · retry";
     } finally {
@@ -710,17 +869,25 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     if (tornDown) return;
     const state = extractState(result);
     if (toolSuccess(result) === false || !state || !acceptIdentity(pair(state.project, state.session_id))) {
-      if (!tornDown) failClosed("Invalid Work Result state");
+      if (!tornDown) failClosed("Task state unavailable");
       return;
     }
+    const hadFrozen = snapshot !== null;
     if (!acceptFrozen(state.final_changes)) return;
+    const adoptedFinal = !hadFrozen && snapshot !== null;
     sessionLifecycle = state.session.lifecycle;
     if (!hasRefreshed && state.state_version !== lastStateVersion) {
       lastStateVersion = state.state_version;
       lastStateChangeAt = Date.now();
       render(state);
+    } else if (adoptedFinal && lastRenderedState) {
+      // A delayed initial ToolResult may carry the immutable closeout snapshot
+      // after a fresher live refresh. Adopt only that frozen domain and re-render
+      // the fresher live state as completed; never roll workspace/activity back.
+      render(lastRenderedState);
     }
-    el("status").textContent = sessionLifecycle === "closed" ? "Closed · manual Refresh available" : "Live";
+    el("status").textContent = adoptedFinal ? "Completed · final result ready"
+      : sessionLifecycle === "closed" ? "Completed" : "Live";
     updateRefreshControl();
     scheduleRefresh(500);
   }
@@ -767,6 +934,12 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
 
   el("refresh").onclick = () => { void refresh(false); };
   el("frozenMore").onclick = () => { if (snapshot) appendFrozenFiles(snapshot.files.length); };
+  el("composer").onsubmit = event => { event.preventDefault(); void sendMessageFromCard(); };
+  el("messageInput").oninput = () => {
+    if (pendingSend && pendingSend.message !== String(el("messageInput").value || "").trim()) pendingSend = null;
+    if (el("composerState").textContent !== "Sending…") el("composerState").textContent = "";
+    updateComposerControl();
+  };
   addEventListener("visibilitychange", () => {
     if (!tornDown && hostInitialized && identity && lastStateVersion !== null) {
       scheduleRefresh(document.hidden ? HIDDEN_REFRESH_MS : 250);
@@ -776,18 +949,19 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
   addEventListener("pagehide", teardown, { once: true });
   addEventListener("beforeunload", teardown, { once: true });
 
-  send("ui/initialize", { protocolVersion: APP_PROTOCOL, appInfo: { name: "webcodex-work-result-app", title: "WebCodex Progress", version: "1.2.0" }, appCapabilities: {} })
+  send("ui/initialize", { protocolVersion: APP_PROTOCOL, appInfo: { name: "webcodex-work-result-app", title: "WebCodex", version: "2.0.0" }, appCapabilities: {} })
     .then(() => {
       if (tornDown) return;
       hostInitialized = true;
       el("status").textContent = lastStateVersion !== null
-        ? (sessionLifecycle === "closed" ? "Closed · manual Refresh available" : "Live")
-        : identity ? "Waiting for Work snapshot" : "Host initialized · waiting for exact tool identity";
+        ? (sessionLifecycle === "closed" ? "Completed" : "Live")
+        : identity ? "Waiting for task status" : "Ready";
       notify("ui/notifications/initialized", {});
       updateRefreshControl();
+      updateComposerControl();
       scheduleRefresh();
     })
-    .catch(() => { if (!tornDown) el("status").textContent = "Host initialization unavailable"; });
+    .catch(() => { if (!tornDown) el("status").textContent = "Task card unavailable"; });
 })();
 </script>
 </body>

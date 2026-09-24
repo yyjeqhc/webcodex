@@ -2200,10 +2200,9 @@ async fn mcp_tools_list_stateless_serialized_size_budget() {
                 } else {
                     0
                 };
-                // Goal Plan exposes one App-only sync primitive. The G4
-                // recheck tool was retired when state + recheck converged into
-                // goal_plan_sync, returning the App-only inventory delta to 16.
-                let count_budget = max_tools + if app_enabled { 16 } else { 0 } + feature_tools;
+                // Work Result v3 adds one bounded App-only collaboration adapter
+                // alongside the existing Goal Plan/continuation/read helpers.
+                let count_budget = max_tools + if app_enabled { 17 } else { 0 } + feature_tools;
                 let byte_budget =
                     max_bytes + if app_enabled { 18_000 } else { 0 } + feature_tools * 4096;
                 if feature_tools == 0 {

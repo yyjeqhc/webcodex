@@ -153,7 +153,7 @@ fn work_result_state_version_matches_buffered_projection_hash() {
         true,
     );
     let expected = format!(
-        "wr1_{:x}",
+        "wr2_{:x}",
         Sha256::digest(serde_json::to_vec(&projection).unwrap())
     );
     assert_eq!(work_result_state_version(&projection), expected);
@@ -731,6 +731,129 @@ async fn work_result_state_fails_closed_for_foreign_session_authority() {
     );
 }
 
+#[tokio::test]
+async fn work_result_collaboration_reuses_session_store_and_ack_resolution_state() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    commit_file(tmp.path(), "README.md", "hello\n", "initial");
+    let runtime = test_runtime();
+    let project =
+        register_runner_project_at_path(&runtime, "work-result-collab", "demo", tmp.path()).await;
+    let auth = auth_context(None, true);
+    let session = runtime.sessions.start_session(
+        Some(project.clone()),
+        Some("Collaborative Work Result".to_string()),
+    );
+
+    let send = runtime
+        .work_result_send_message(
+            project.clone(),
+            session.session_id.clone(),
+            "Please keep the existing retry mechanism.".to_string(),
+            "card-message-1".to_string(),
+            Some(&auth),
+            None,
+        )
+        .await;
+    assert!(send.success, "{:?}", send.error);
+    let message_id = send.output["message_id"].as_str().unwrap().to_string();
+    assert_eq!(send.output["replayed"], false);
+    assert_eq!(send.output["state_changed"], true);
+
+    let retained = runtime
+        .sessions
+        .list_messages(
+            &session.session_id,
+            webcodex_workflow_session::ListSessionMessagesFilter {
+                limit: Some(10),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(retained.len(), 1);
+    assert_eq!(
+        retained[0].kind,
+        webcodex_workflow_session::SessionMessageKind::Guidance
+    );
+    assert!(retained[0].requires_ack);
+    assert!(retained[0].first_ack_observed_at.is_none());
+
+    let sent = refresh_once(
+        &runtime,
+        "work-result-collab",
+        &project,
+        &session.session_id,
+        &auth,
+    )
+    .await;
+    assert!(sent.success, "{:?}", sent.error);
+    assert_eq!(
+        sent.output["work_result"]["collaboration"]["messages"][0]["message_id"],
+        message_id
+    );
+    assert_eq!(
+        sent.output["work_result"]["collaboration"]["messages"][0]["state"],
+        "sent"
+    );
+
+    let ack = runtime
+        .sessions
+        .observe_message_acks(&session.session_id, std::slice::from_ref(&message_id));
+    assert_eq!(ack.accepted_count, 1);
+    let seen = refresh_once(
+        &runtime,
+        "work-result-collab",
+        &project,
+        &session.session_id,
+        &auth,
+    )
+    .await;
+    assert_eq!(
+        seen.output["work_result"]["collaboration"]["messages"][0]["state"],
+        "acknowledged"
+    );
+
+    runtime
+        .sessions
+        .resolve_message(
+            &session.session_id,
+            &message_id,
+            Some("Applied the requested constraint.".to_string()),
+        )
+        .unwrap();
+    let handled = refresh_once(
+        &runtime,
+        "work-result-collab",
+        &project,
+        &session.session_id,
+        &auth,
+    )
+    .await;
+    assert_eq!(
+        handled.output["work_result"]["collaboration"]["messages"][0]["state"],
+        "handled"
+    );
+    assert_eq!(
+        handled.output["work_result"]["collaboration"]["messages"][0]["resolution"],
+        "Applied the requested constraint."
+    );
+
+    let replay = runtime
+        .work_result_send_message(
+            project,
+            session.session_id,
+            "Please keep the existing retry mechanism.".to_string(),
+            "card-message-1".to_string(),
+            Some(&auth),
+            None,
+        )
+        .await;
+    assert!(replay.success, "{:?}", replay.error);
+    assert_eq!(replay.output["message_id"], message_id);
+    assert_eq!(replay.output["replayed"], true);
+    assert_eq!(replay.output["state_changed"], false);
+}
+
 #[test]
 fn work_result_tool_contract_requires_exact_project_and_session() {
     assert!(
@@ -760,6 +883,32 @@ fn work_result_tool_contract_requires_exact_project_and_session() {
         .unwrap();
         assert_eq!(call.tool_name(), name);
     }
+
+    for incomplete in [
+        json!({
+            "project": "agent:x:y",
+            "session_id": format!("wc_sess_{}", "1".repeat(32)),
+            "delivery_key": "card-send-1"
+        }),
+        json!({
+            "project": "agent:x:y",
+            "session_id": format!("wc_sess_{}", "1".repeat(32)),
+            "message": "hello"
+        }),
+    ] {
+        assert!(ToolCall::from_tool_name("work_result_send_message", incomplete).is_err());
+    }
+    let send = ToolCall::from_tool_name(
+        "work_result_send_message",
+        json!({
+            "project": "agent:x:y",
+            "session_id": format!("wc_sess_{}", "1".repeat(32)),
+            "message": "hello",
+            "delivery_key": "card-send-1"
+        }),
+    )
+    .unwrap();
+    assert_eq!(send.tool_name(), "work_result_send_message");
 }
 
 #[path = "work_result/frozen_changes.rs"]

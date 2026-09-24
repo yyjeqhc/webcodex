@@ -279,6 +279,8 @@ class WorkflowContractTests(unittest.TestCase):
         for helper in (windows_stage, windows_smoke):
             self.assertIn("[bool]$GitDirty = $false", helper)
             self.assertIn("dirty=$dirtyText", helper)
+        self.assertIn("function Remove-FileEventually", windows_smoke)
+        self.assertIn('Remove-FileEventually $uninstaller 30 "Desktop uninstaller remained locked after silent uninstall', windows_smoke)
         for helper in (windows_stage, windows_smoke, windows_npm_smoke, windows_package):
             self.assertIn("GetUnresolvedProviderPathFromPSPath", helper)
 

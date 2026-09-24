@@ -129,6 +129,25 @@ function Wait-Until([scriptblock]$Condition, [int]$Seconds, [string]$Failure) {
     throw $Failure
 }
 
+function Remove-FileEventually([string]$Path, [int]$Seconds, [string]$Failure) {
+    $deadline = [DateTime]::UtcNow.AddSeconds($Seconds)
+    do {
+        if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return }
+        try {
+            Remove-Item -LiteralPath $Path -Force -ErrorAction Stop
+        } catch {
+            if ([DateTime]::UtcNow -ge $deadline) {
+                throw "$Failure Last error: $($_.Exception.Message)"
+            }
+            Start-Sleep -Milliseconds 250
+            continue
+        }
+        if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return }
+        Start-Sleep -Milliseconds 250
+    } while ([DateTime]::UtcNow -lt $deadline)
+    throw $Failure
+}
+
 if (Get-WebCodexUninstallEntry) {
     throw "refusing Desktop installer smoke because WebCodex Desktop is already installed for this user"
 }
@@ -210,8 +229,9 @@ try {
             }
             # NSIS normally copies the uninstaller to a temporary directory and exits the
             # original process. `_?=$INSTDIR` keeps the real uninstall in this process so
-            # `-Wait` is authoritative; the harness then removes only the now-unlocked
-            # uninstaller that this NSIS wait mode intentionally cannot self-delete.
+            # `-Wait` is authoritative for process exit. Windows can still release the
+            # executable image handle slightly later, so the final uninstaller unlink is
+            # retried for a bounded interval below.
             $uninstallProcess = Start-Process -FilePath $uninstaller -ArgumentList "/S _?=$installedDir" -Wait -PassThru
             if ($uninstallProcess.ExitCode -ne 0) {
                 throw "Desktop silent uninstall failed with exit code $($uninstallProcess.ExitCode)"
@@ -234,7 +254,7 @@ try {
                     throw "Desktop installer-owned files remained after silent uninstall: $($remaining.Name -join ', ')"
                 }
                 if (Test-Path -LiteralPath $uninstaller -PathType Leaf) {
-                    Remove-Item -LiteralPath $uninstaller -Force
+                    Remove-FileEventually $uninstaller 30 "Desktop uninstaller remained locked after silent uninstall: $uninstaller"
                 }
                 Remove-Item -LiteralPath $installedDir -Force
             }

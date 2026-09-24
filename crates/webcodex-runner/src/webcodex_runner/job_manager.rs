@@ -1164,6 +1164,7 @@ fn validate_runner_job_context_operation(
             shell,
             "sh" | "bash"
                 | "powershell"
+                | "python"
                 | "javascript"
                 | "typescript"
                 | "configured"

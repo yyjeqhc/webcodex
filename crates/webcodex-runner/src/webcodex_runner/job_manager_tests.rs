@@ -5099,6 +5099,60 @@ fn runner_recovery_context_accepts_javascript_script_job() {
 }
 
 #[test]
+fn runner_recovery_context_accepts_python_script_job() {
+    let temp = tempfile::tempdir().unwrap();
+    let script = runner_protocol::ShellScriptPayload {
+        language: runner_protocol::ShellScriptLanguage::Python,
+        script: "print('recovered')\n".to_string(),
+        args: vec!["literal arg".to_string()],
+    };
+    let mut request = shell_job_request(temp.path(), "");
+    request.kind = "start_script_job".to_string();
+    request.timeout_secs = 60;
+    request.script = Some(script.clone());
+    let context = request.job_context.as_mut().unwrap();
+    context.shell = Some("python".to_string());
+    context.command_preview = format!(
+        "python script ({} bytes, {} args)",
+        script.script.len(),
+        script.args.len()
+    );
+    context.structured_execution = Some(runner_protocol::ShellJobStructuredExecutionMetadata {
+        execution_source: "run_script".to_string(),
+        language: Some(runner_protocol::ShellScriptLanguage::Python),
+        script_bytes: Some(script.script.len()),
+        arg_count: script.args.len(),
+        stdin_present: false,
+        validation_identity: None,
+        validation_tool: None,
+        assertion_name: None,
+    });
+    let context = context.clone();
+
+    validate_runner_job_context(&context, &request, "ws-client").unwrap();
+    assert_eq!(context.shell.as_deref(), Some("python"));
+    assert_eq!(
+        context.structured_execution.as_ref().unwrap().language,
+        Some(runner_protocol::ShellScriptLanguage::Python)
+    );
+    assert_eq!(
+        context
+            .structured_execution
+            .as_ref()
+            .unwrap()
+            .execution_source,
+        "run_script"
+    );
+
+    for concrete_runtime in ["python3", "python.exe"] {
+        let mut invalid = context.clone();
+        invalid.shell = Some(concrete_runtime.to_string());
+        let error = validate_runner_job_context(&invalid, &request, "ws-client").unwrap_err();
+        assert!(error.contains("shell is invalid"), "{error}");
+    }
+}
+
+#[test]
 fn runner_recovery_context_accepts_typescript_semantic_identity_only() {
     let temp = tempfile::tempdir().unwrap();
     let script = runner_protocol::ShellScriptPayload {

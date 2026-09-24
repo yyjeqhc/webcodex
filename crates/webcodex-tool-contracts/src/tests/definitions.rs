@@ -850,6 +850,129 @@ fn adaptive_runtime_direct_declarations_are_visible_ranked_and_unique() {
 }
 
 #[test]
+fn turn_economy_descriptors_stay_converged_and_bounded() {
+    let specs = registered_tool_specs();
+
+    for name in ["run_process", "run_script", "run_shell"] {
+        let spec = spec_named(&specs, name);
+        for phrase in [
+            "continue independent work",
+            "observe_jobs only for",
+            "wait_for_job_terminal only when",
+        ] {
+            assert!(spec.description.contains(phrase), "{name}: {phrase}");
+        }
+        assert!(
+            !spec.description.contains("Use observe_jobs later"),
+            "{name}"
+        );
+        let action = lookup_tool_definition(name)
+            .unwrap()
+            .gpt_action_description()
+            .expect("execution action description");
+        assert!(!action.contains("Use observe_jobs later"), "{name}");
+    }
+
+    for name in ["cargo_check", "cargo_test"] {
+        let spec = spec_named(&specs, name);
+        for phrase in [
+            "continue independent work",
+            "do not poll",
+            "covered source",
+            "final evidence freeze covered source",
+        ] {
+            assert!(spec.description.contains(phrase), "{name}: {phrase}");
+        }
+    }
+    let cargo_fmt = spec_named(&specs, "cargo_fmt");
+    for phrase in [
+        "continue independent work",
+        "do not poll",
+        "evidence is stale",
+        "freeze covered source",
+    ] {
+        assert!(
+            cargo_fmt.description.contains(phrase),
+            "cargo_fmt: {phrase}"
+        );
+    }
+
+    let observe = spec_named(&specs, "observe_jobs");
+    for phrase in [
+        "logs/details/recovery",
+        "not the default Job-handoff step",
+        "Never launches, retries",
+    ] {
+        assert!(
+            observe.description.contains(phrase),
+            "observe_jobs: {phrase}"
+        );
+    }
+    let wait = spec_named(&specs, "wait_for_job_terminal");
+    assert!(wait
+        .description
+        .contains("only when no independent work remains"));
+    assert!(wait
+        .description
+        .contains("explicit logs/details or recovery"));
+    let list = spec_named(&specs, "list_jobs");
+    assert!(list
+        .description
+        .contains("Recovery and inventory primitive"));
+    assert!(list
+        .description
+        .contains("not the normal continuation step"));
+
+    let edits = spec_named(&specs, "apply_text_edits");
+    for phrase in [
+        "expected_match_count=N",
+        "exact cardinality is known",
+        "optional dry_run",
+        "dry_run is not ritual",
+        "change_summary",
+        "mechanical scope",
+        "not semantic review",
+        "show_changes",
+        "git_diff_hunks",
+        "git_review_summary",
+    ] {
+        assert!(
+            edits.description.contains(phrase),
+            "apply_text_edits: {phrase}"
+        );
+    }
+    assert!(spec_named(&specs, "cargo_check")
+        .description
+        .contains("packages for a known set"));
+
+    for name in [
+        "run_process",
+        "run_script",
+        "run_shell",
+        "observe_jobs",
+        "wait_for_job_terminal",
+        "list_jobs",
+        "cargo_check",
+        "cargo_test",
+        "apply_text_edits",
+    ] {
+        let spec = spec_named(&specs, name);
+        assert!(
+            spec.description.chars().count() <= MODEL_TOOL_DESCRIPTION_MAX_CHARS,
+            "{name} canonical description budget"
+        );
+        let action = lookup_tool_definition(name)
+            .unwrap()
+            .gpt_action_description()
+            .expect("model-facing action description");
+        assert!(
+            action.chars().count() <= GPT_ACTION_DESCRIPTION_MAX_CHARS,
+            "{name} GPT Action description budget"
+        );
+    }
+}
+
+#[test]
 fn tool_definitions_drive_metadata_visibility_and_categories() {
     for definition in tool_definitions() {
         let metadata = definition.metadata();

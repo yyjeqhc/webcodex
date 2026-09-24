@@ -187,12 +187,17 @@ fn assert_builtin_workflow(output: &Value) {
         "Validation failure is evidence, not queue cleanliness",
         "Reuse assertion_name",
         "outcome_unknown fails closed",
+        "Development validation may overlap independent work",
+        "covered-source edits make it stale for final evidence",
+        "freeze source covered by final validation",
+        "invalidate that evidence",
+        "rerun the appropriate final validation",
         "exact continuation",
-        "wait_for_job_terminal with a real Host carrier",
-        "no short polling",
-        "stop_job(confirm=true)",
+        "passive Job attention",
+        "observe_jobs is for logs/details/recovery",
         "list_jobs is identity recovery",
-        "sufficient fresh validation",
+        "wait_for_job_terminal only when terminal outcome is a true dependency",
+        "no independent work remains",
     ] {
         assert!(defaults.contains(phrase), "workflow guidance: {phrase}");
     }

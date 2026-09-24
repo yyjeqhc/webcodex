@@ -35,6 +35,7 @@ enum WorkOnProjectMode {
 #[serde(rename_all = "snake_case")]
 enum WorkOnProjectGuidanceProfile {
     Direct,
+    HostCodeMode,
     CodeMode,
     Invalid,
 }
@@ -251,7 +252,7 @@ impl ModelErgonomicsCompletion {
         let edit = edit_facts(self.tool_name, success, output);
         let edit_uncertain = edit.outcome.as_deref() == Some("uncertain");
         ModelErgonomicsRecord {
-            schema_version: 8,
+            schema_version: 9,
             tool_name: self.tool_name,
             tool_category: self.tool_category,
             success,
@@ -350,6 +351,9 @@ fn work_on_project_facts(
     let guidance_profile = match object.get("guidance_profile") {
         None => WorkOnProjectGuidanceProfile::Direct,
         Some(Value::String(profile)) if profile == "direct" => WorkOnProjectGuidanceProfile::Direct,
+        Some(Value::String(profile)) if profile == "host_code_mode" => {
+            WorkOnProjectGuidanceProfile::HostCodeMode
+        }
         Some(Value::String(profile))
             if cfg!(feature = "experimental-code-mode") && profile == "code_mode" =>
         {
@@ -581,7 +585,7 @@ mod tests {
         let record = completion("tool_manifest", 0)
             .record_for_tool_result(&ToolResult::ok(json!({})))
             .unwrap();
-        assert_eq!(record.schema_version, 8);
+        assert_eq!(record.schema_version, 9);
         assert_eq!(record.work_on_project, None);
         assert!(!serde_json::to_string(&record)
             .unwrap()
@@ -621,6 +625,21 @@ mod tests {
         assert!(facts.guidance_profile_explicit);
         assert_eq!(facts.include_extension_catalog, Some(false));
         assert!(facts.include_extension_catalog_explicit);
+    }
+
+    #[test]
+    fn work_on_project_host_code_mode_profile_is_not_feature_gated() {
+        let record = work_on_project_record(json!({
+            "project": "agent:private:project",
+            "instruction": "private instruction",
+            "guidance_profile": "host_code_mode"
+        }));
+        let facts = record.work_on_project.expect("work_on_project facts");
+        assert_eq!(
+            facts.guidance_profile,
+            WorkOnProjectGuidanceProfile::HostCodeMode
+        );
+        assert!(facts.guidance_profile_explicit);
     }
 
     #[test]
@@ -873,7 +892,7 @@ mod tests {
             let record = completion("apply_text_edits", 0)
                 .record_for_tool_result(&result)
                 .unwrap();
-            assert_eq!(record.schema_version, 8);
+            assert_eq!(record.schema_version, 9);
             assert_eq!(record.edit_surface.as_deref(), Some("structured_or_patch"));
             assert_eq!(record.edit_outcome.as_deref(), outcome);
             assert_eq!(record.edit_conflict_kind.as_deref(), conflict_kind);
@@ -981,7 +1000,7 @@ mod tests {
                     .finish_after(Duration::ZERO)
                     .record_for_tool_result(&ToolResult::ok(json!({"private_body": "do-not-copy"})))
                     .unwrap();
-            assert_eq!(record.schema_version, 8);
+            assert_eq!(record.schema_version, 9);
             assert_eq!(record.finish_summary_only, Some(expected));
             assert!(record.serialized_result_bytes.is_some());
             let serialized = serde_json::to_string(&record).unwrap();

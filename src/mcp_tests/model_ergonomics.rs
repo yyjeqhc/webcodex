@@ -299,6 +299,7 @@ async fn http_mcp_work_on_project_preferences_persist_without_private_request_va
                     "base_ref": private_base_ref,
                     "instruction": private_instruction,
                     "session_id": private_session,
+                    "guidance_profile": "host_code_mode",
                     "include_extension_catalog": false
                 }
             }
@@ -319,15 +320,15 @@ async fn http_mcp_work_on_project_preferences_persist_without_private_request_va
     assert_eq!(events[0].operation.as_deref(), Some("work_on_project"));
     let summary: Value = serde_json::from_str(&events[0].summary_json).unwrap();
     let telemetry = &summary["model_ergonomics"];
-    assert_eq!(telemetry["schema_version"], 8);
+    assert_eq!(telemetry["schema_version"], 9);
     let facts = &telemetry["work_on_project"];
     assert_eq!(facts["resume_requested"], true);
     assert_eq!(facts["source"], "invalid");
     assert_eq!(facts["mode"], "worktree");
     assert_eq!(facts["mode_explicit"], true);
     assert_eq!(facts["base_ref_present"], true);
-    assert_eq!(facts["guidance_profile"], "direct");
-    assert_eq!(facts["guidance_profile_explicit"], false);
+    assert_eq!(facts["guidance_profile"], "host_code_mode");
+    assert_eq!(facts["guidance_profile_explicit"], true);
     assert_eq!(facts["include_extension_catalog"], false);
     assert_eq!(facts["include_extension_catalog_explicit"], true);
     let persisted = serde_json::to_string(&summary).unwrap();

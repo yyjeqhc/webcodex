@@ -633,7 +633,7 @@ mcp_tool_present() {
 
 adaptive_present=1
 for tname in work_on_project runtime_status tool_manifest \
-    search_project_texts read_files apply_text_edits run_process run_shell observe_jobs list_jobs \
+    search_project_texts read_files apply_text_edits run_process run_script run_shell observe_jobs list_jobs \
     cargo_check cargo_test git_review_summary git_diff_hunks \
     show_changes call_runtime_tool; do
     if ! mcp_tool_present "$tname"; then
@@ -642,7 +642,7 @@ for tname in work_on_project runtime_status tool_manifest \
     fi
 done
 for tname in list_tools list_projects workspace_hygiene_check finish_coding_task \
-    project_overview apply_patch run_script apply_unified_diff go_test validation_summary git_status \
+    project_overview apply_patch apply_unified_diff go_test validation_summary git_status \
     goto_definition computer_observe computer_control computer_save_snapshot post_session_message \
     coding_agent_start artifact_upload_begin; do
     if mcp_tool_present "$tname"; then

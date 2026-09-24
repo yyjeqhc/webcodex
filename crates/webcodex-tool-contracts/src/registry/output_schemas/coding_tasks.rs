@@ -510,83 +510,97 @@ fn startup_workspace_schema() -> Value {
 #[cfg(any(test, feature = "root-test-support"))]
 fn startup_workflow_schema() -> Value {
     json!({
-        "type": "object",
-        "description": "WebCodex-owned shared workflow, selected tool strategy and optional review role. Separate from project instructions and Session authority.",
-        "properties": {
-            "contract": {"type": "string", "const": BUILTIN_CODING_WORKFLOW_CONTRACT},
-            "version": {"type": "integer", "const": BUILTIN_CODING_WORKFLOW_VERSION},
-            "authority": {"type": "string", "const": "model_guidance_only"},
-            "role_selection": {"type": "string", "maxLength": 240},
-            "guidance": {
-                "type": "array",
-                "description": "Default behavior for every coding/review task, including tasks without a named role. Guidance never grants authority.",
-                "minItems": 1,
-                "maxItems": BUILTIN_CODING_WORKFLOW_MAX_GUIDANCE_ITEMS,
-                "items": {"type": "string", "maxLength": 320}
-            },
-            "tool_strategy": {
-                "type": "object",
-                "description": "Only the selected request-local tool strategy. Model guidance, never tool admission, authority, or durable Session state.",
-                "properties": {
-                    "profile": crate::schema_generation::typed_host_schema::<crate::tool_inputs::CodingGuidanceProfile>(),
-                    "guidance": {
-                        "type": "array",
-                        "minItems": 1,
-                        "maxItems": BUILTIN_CODING_WORKFLOW_MAX_GUIDANCE_ITEMS,
-                        "items": {"type": "string", "maxLength": 320}
-                    }
+            "type": "object",
+            "description": "WebCodex-owned shared workflow, selected tool strategy and optional review role. Separate from project instructions and Session authority.",
+            "properties": {
+                "contract": {"type": "string", "const": BUILTIN_CODING_WORKFLOW_CONTRACT},
+                "version": {"type": "integer", "const": BUILTIN_CODING_WORKFLOW_VERSION},
+                "authority": {"type": "string", "const": "model_guidance_only"},
+                "role_selection": {"type": "string", "maxLength": 240},
+                "guidance": {
+                    "type": "array",
+                    "description": "Default behavior for every coding/review task, including tasks without a named role. Guidance never grants authority.",
+                    "minItems": 1,
+                    "maxItems": BUILTIN_CODING_WORKFLOW_MAX_GUIDANCE_ITEMS,
+                    "items": {"type": "string", "maxLength": 320}
                 },
-                "required": ["profile", "guidance"],
-                "additionalProperties": false
-            },
-            "model_protocol": {
-                "type": "object",
-                "description": "Shared model-invocation guidance. It is not Session state, authority, or execution policy.",
-                "properties": {
-                    "handoff_recovery": {"type": "string", "maxLength": 720},
-                    "session_recording": {"type": "string", "maxLength": 720},
-                    "session_message_ack": {"type": "string", "maxLength": 720},
-                    "session_message_resolution": {"type": "string", "maxLength": 480},
-                    "context_sidecar": {"type": "string", "maxLength": 320},
-                    "control_sidecars": {"type": "string", "maxLength": 640},
-                    "runner_targeting": {"type": "string", "maxLength": 320},
-                    "persistent_shell": {"type": "string", "maxLength": 320},
-                    "goal_workflow": {"type": "string", "maxLength": 720},
-                    "goal_continuation": {"type": "string", "maxLength": 720},
-                    "goal_checkpoint": {"type": "string", "maxLength": 480},
-                    "work_result_presentation": {"type": "string", "maxLength": 640},
-                    "normal_closeout": {"type": "string", "maxLength": 480}
+                "tool_strategy": {
+                    "type": "object",
+                    "description": "Only the selected request-local tool strategy. Model guidance, never tool admission, authority, or durable Session state.",
+                    "properties": {
+                        "profile": crate::schema_generation::typed_host_schema::<crate::tool_inputs::CodingGuidanceProfile>(),
+                        "guidance": {
+                            "type": "array",
+                            "minItems": 1,
+                            "maxItems": BUILTIN_CODING_WORKFLOW_MAX_GUIDANCE_ITEMS,
+                            "items": {"type": "string", "maxLength": 320}
+                        }
+    ,
+                        "host_orchestration": {
+                            "type": "object",
+                            "description": "Host-native orchestration catalog derived from ToolDefinition guidance hints; present only for host_code_mode and never authority.",
+                            "additionalProperties": false,
+                            "properties": {
+                                "guidance_only": {"type": "boolean", "const": true},
+                                "native_batch_first": {"type":"array","maxItems":16,"uniqueItems":true,"items":{"type":"string","maxLength":128}},
+                                "independent_parallel_reads": {"type":"array","maxItems":16,"uniqueItems":true,"items":{"type":"string","maxLength":128}},
+                                "compound_preferred": {"type":"array","maxItems":16,"uniqueItems":true,"items":{"type":"string","maxLength":128}},
+                                "sequential": {"type":"array","maxItems":16,"uniqueItems":true,"items":{"type":"string","maxLength":128}}
+                            },
+                            "required": ["guidance_only","native_batch_first","independent_parallel_reads","compound_preferred","sequential"]
+                        }
+                    },
+                    "required": ["profile", "guidance"],
+                    "additionalProperties": false
                 },
-                "required": [
-                    "handoff_recovery",
-                    "session_recording",
-                    "session_message_ack",
-                    "session_message_resolution",
-                    "context_sidecar",
-                    "control_sidecars",
-                    "runner_targeting",
-                    "persistent_shell",
-                    "goal_workflow",
-                    "goal_continuation",
-                    "goal_checkpoint",
-                    "work_result_presentation",
-                    "normal_closeout"
-                ],
-                "additionalProperties": false
-            },
-            "roles": {
-                "type": "object",
-                "description": "Optional named review behavior. Ordinary implementation uses shared guidance and the selected tool strategy.",
-                "properties": {
-                    "independent_review": startup_workflow_role_schema()
+                "model_protocol": {
+                    "type": "object",
+                    "description": "Shared model-invocation guidance. It is not Session state, authority, or execution policy.",
+                    "properties": {
+                        "handoff_recovery": {"type": "string", "maxLength": 720},
+                        "session_recording": {"type": "string", "maxLength": 720},
+                        "session_message_ack": {"type": "string", "maxLength": 720},
+                        "session_message_resolution": {"type": "string", "maxLength": 480},
+                        "context_sidecar": {"type": "string", "maxLength": 320},
+                        "control_sidecars": {"type": "string", "maxLength": 640},
+                        "runner_targeting": {"type": "string", "maxLength": 320},
+                        "persistent_shell": {"type": "string", "maxLength": 320},
+                        "goal_workflow": {"type": "string", "maxLength": 720},
+                        "goal_continuation": {"type": "string", "maxLength": 720},
+                        "goal_checkpoint": {"type": "string", "maxLength": 480},
+                        "work_result_presentation": {"type": "string", "maxLength": 640},
+                        "normal_closeout": {"type": "string", "maxLength": 480}
+                    },
+                    "required": [
+                        "handoff_recovery",
+                        "session_recording",
+                        "session_message_ack",
+                        "session_message_resolution",
+                        "context_sidecar",
+                        "control_sidecars",
+                        "runner_targeting",
+                        "persistent_shell",
+                        "goal_workflow",
+                        "goal_continuation",
+                        "goal_checkpoint",
+                        "work_result_presentation",
+                        "normal_closeout"
+                    ],
+                    "additionalProperties": false
                 },
-                "required": ["independent_review"],
-                "additionalProperties": false
-            }
-        },
-        "required": ["contract", "version", "authority", "role_selection", "guidance", "tool_strategy", "model_protocol", "roles"],
-        "additionalProperties": false
-    })
+                "roles": {
+                    "type": "object",
+                    "description": "Optional named review behavior. Ordinary implementation uses shared guidance and the selected tool strategy.",
+                    "properties": {
+                        "independent_review": startup_workflow_role_schema()
+                    },
+                    "required": ["independent_review"],
+                    "additionalProperties": false
+                }
+            },
+            "required": ["contract", "version", "authority", "role_selection", "guidance", "tool_strategy", "model_protocol", "roles"],
+            "additionalProperties": false
+        })
 }
 
 #[cfg(any(test, feature = "root-test-support"))]

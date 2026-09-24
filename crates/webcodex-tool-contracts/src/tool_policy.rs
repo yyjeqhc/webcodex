@@ -7,10 +7,11 @@ use super::tool_definition::{
     tool_definitions, RunnerCapabilityRequirement, ToolActivityInteraction, ToolActivityKind,
     ToolActivityPresentation, ToolActivitySemantics, ToolAuditPolicy, ToolCompositionPolicy,
     ToolDefinition, ToolDiffReviewEvidence, ToolEffectAnnotations, ToolExecutionContract,
-    ToolExecutionForm, ToolExplorationEvidence, ToolGptActionExposure, ToolOperatorExtensionFamily,
-    ToolReviewEvidence, ToolSessionEvidencePolicy, ToolValidationIdentityKind,
-    PERMISSION_RISK_ARTIFACT_WRITE, PERMISSION_RISK_DESTRUCTIVE, PERMISSION_RISK_PATCH,
-    PERMISSION_RISK_SHELL, PERMISSION_RISK_VALIDATION, PERMISSION_RISK_WRITE, TOOL_CATEGORY_JOB,
+    ToolExecutionForm, ToolExplorationEvidence, ToolGptActionExposure, ToolHostOrchestrationHint,
+    ToolOperatorExtensionFamily, ToolReviewEvidence, ToolSessionEvidencePolicy,
+    ToolValidationIdentityKind, PERMISSION_RISK_ARTIFACT_WRITE, PERMISSION_RISK_DESTRUCTIVE,
+    PERMISSION_RISK_PATCH, PERMISSION_RISK_SHELL, PERMISSION_RISK_VALIDATION,
+    PERMISSION_RISK_WRITE, TOOL_CATEGORY_JOB,
 };
 
 impl ToolDefinition {
@@ -235,6 +236,12 @@ pub fn runtime_tool_composition_policy(name: &str) -> ToolCompositionPolicy {
     lookup_tool_definition(name)
         .map(|definition| definition.composition)
         .unwrap_or(ToolCompositionPolicy::Denied)
+}
+
+pub fn runtime_tool_host_orchestration_hint(name: &str) -> ToolHostOrchestrationHint {
+    lookup_tool_definition(name)
+        .map(|definition| definition.host_orchestration)
+        .unwrap_or(ToolHostOrchestrationHint::UNSPECIFIED)
 }
 
 pub fn runtime_tool_session_evidence_policy(name: &str) -> ToolSessionEvidencePolicy {

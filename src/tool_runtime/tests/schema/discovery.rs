@@ -2118,6 +2118,100 @@ async fn tool_manifest_exact_tool_returns_input_contract_without_output_schema()
 }
 
 #[tokio::test]
+async fn exact_tool_manifest_projects_bounded_host_orchestration_from_tool_definition_only() {
+    let runtime = test_runtime();
+    let cases = [
+        (
+            "read_files",
+            json!({
+                "guidance_only": true,
+                "concurrency": "independent_parallel_read",
+                "native_batch_field": "items",
+                "compound_preferred": false,
+            }),
+        ),
+        (
+            "search_and_read",
+            json!({
+                "guidance_only": true,
+                "concurrency": "independent_parallel_read",
+                "native_batch_field": "queries",
+                "compound_preferred": true,
+            }),
+        ),
+        (
+            "cargo_check",
+            json!({
+                "guidance_only": true,
+                "concurrency": "sequential",
+                "native_batch_field": "packages",
+                "compound_preferred": false,
+            }),
+        ),
+    ];
+
+    for (tool_name, expected) in cases {
+        let result = runtime
+            .dispatch(ToolCall::ToolManifest {
+                tool_name: Some(tool_name.to_string()),
+                category: None,
+                intent: None,
+                include_recommended_flows: false,
+                include_risk_summary: false,
+            })
+            .await;
+        assert!(result.success, "{tool_name}: {:?}", result.error);
+        assert_eq!(result.output["host_orchestration"], expected, "{tool_name}");
+        assert_no_response_too_large(tool_name, &result.output);
+
+        let definition =
+            crate::tool_runtime::tool_definition::lookup_tool_definition(tool_name).unwrap();
+        assert_eq!(
+            result.output["host_orchestration"]["concurrency"],
+            definition.host_orchestration.concurrency.as_str(),
+            "{tool_name}"
+        );
+    }
+
+    let no_hint = runtime
+        .dispatch(ToolCall::ToolManifest {
+            tool_name: Some("run_shell".to_string()),
+            category: None,
+            intent: None,
+            include_recommended_flows: false,
+            include_risk_summary: false,
+        })
+        .await;
+    assert!(no_hint.success, "{:?}", no_hint.error);
+    assert!(no_hint.output.get("host_orchestration").is_none());
+
+    let specs = registered_tool_specs();
+    let manifest_spec = spec_named(&specs, "tool_manifest");
+    let output_properties = output_schema_properties(manifest_spec);
+    let schema = &output_properties["host_orchestration"];
+    assert_eq!(schema["additionalProperties"], false);
+    assert_eq!(
+        schema["properties"]["concurrency"]["enum"],
+        json!(["unspecified", "independent_parallel_read", "sequential"])
+    );
+
+    let specs = registered_tool_specs();
+    for tool_name in [
+        "read_files",
+        "search_project_texts",
+        "search_and_read",
+        "cargo_check",
+        "apply_text_edits",
+    ] {
+        let serialized = serde_json::to_string(spec_named(&specs, tool_name)).unwrap();
+        assert!(
+            !serialized.contains("host_orchestration"),
+            "{tool_name} default ToolSpec must not carry Host orchestration metadata"
+        );
+    }
+}
+
+#[tokio::test]
 async fn tool_manifest_projects_canonical_execution_selection_for_exact_and_filtered_views() {
     let runtime = test_runtime();
     let expected = json!({

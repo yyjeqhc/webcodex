@@ -170,6 +170,16 @@ async fn current_window_activity_is_scoped_sanitized_and_reports_observed_timing
         result.output["summary"]["max_observed_next_call_gap_ms"],
         3000
     );
+    assert_eq!(result.output["summary"]["observed_next_call_gap_count"], 1);
+    assert_eq!(result.output["summary"]["gaps_lt_1s"], 0);
+    assert_eq!(result.output["summary"]["gaps_lt_2s"], 0);
+    assert_eq!(result.output["summary"]["gaps_lt_5s"], 1);
+    assert_eq!(result.output["summary"]["gaps_ge_5s"], 0);
+    assert_eq!(
+        result.output["summary"]["total_positive_observed_next_call_gap_ms"],
+        3000
+    );
+    assert_eq!(result.output["summary"]["total_service_ms"], 26);
     let serialized = serde_json::to_string(&result.output).unwrap();
     for forbidden in [
         "SECRET_ARGUMENT",
@@ -292,6 +302,123 @@ async fn current_window_activity_clamps_rows_and_has_deterministic_bounded_summa
     assert!(hidden["events"].as_array().unwrap().is_empty());
     assert_eq!(hidden["summary"]["events_scanned"], 0);
     assert_eq!(hidden["truncated"], false);
+}
+
+#[tokio::test]
+async fn current_window_activity_gap_buckets_use_exact_observed_boundaries() {
+    let temp = tempfile::tempdir().unwrap();
+    let db = Arc::new(crate::Database::open(&temp.path().join("gap-buckets.db")).unwrap());
+    let runtime = ToolRuntime::new_for_tests().with_window_activity_database(db.clone());
+    let auth = shared_key_auth_context("gap-buckets-owner");
+    register_job_agent_for_auth(&runtime, "gap-buckets-runner", "repo", &auth).await;
+    let project = "agent:gap-buckets-runner:repo";
+    let window = ClientWindow::for_test("gap-buckets-window");
+    let gaps = [
+        999_i64, 1000, 1999, 2000, 4999, 5000, 9999, 10_000, 30_000, 120_000,
+    ];
+
+    let mut at = 1000_i64;
+    record_event(
+        &db,
+        &auth,
+        &window,
+        project,
+        "wc_sess_gap_buckets",
+        "read_files",
+        at,
+        at + 10,
+        true,
+    );
+    for gap in gaps {
+        at += 10 + gap;
+        record_event(
+            &db,
+            &auth,
+            &window,
+            project,
+            "wc_sess_gap_buckets",
+            "read_files",
+            at,
+            at + 10,
+            true,
+        );
+    }
+
+    let output = runtime
+        .current_window_activity(Some(&window), Some(&auth), Some(50), false)
+        .await
+        .output;
+    let summary = &output["summary"];
+    assert_eq!(summary["observed_next_call_gap_count"], 10);
+    assert_eq!(summary["gaps_lt_1s"], 1);
+    assert_eq!(summary["gaps_lt_2s"], 3);
+    assert_eq!(summary["gaps_lt_5s"], 5);
+    assert_eq!(summary["gaps_ge_5s"], 5);
+    assert_eq!(summary["gaps_ge_10s"], 3);
+    assert_eq!(summary["gaps_ge_30s"], 2);
+    assert_eq!(summary["gaps_ge_120s"], 1);
+    assert_eq!(
+        summary["total_positive_observed_next_call_gap_ms"],
+        gaps.into_iter().sum::<i64>()
+    );
+    assert_eq!(summary["total_service_ms"], 110);
+    assert_eq!(summary["max_service_ms"], 10);
+    assert_eq!(summary["max_observed_next_call_gap_ms"], 120_000);
+}
+
+#[tokio::test]
+async fn current_window_activity_never_infers_overlap_from_a_short_gap() {
+    let temp = tempfile::tempdir().unwrap();
+    let db = Arc::new(crate::Database::open(&temp.path().join("overlap-facts.db")).unwrap());
+    let runtime = ToolRuntime::new_for_tests().with_window_activity_database(db.clone());
+    let auth = shared_key_auth_context("overlap-facts-owner");
+    register_job_agent_for_auth(&runtime, "overlap-facts-runner", "repo", &auth).await;
+    let project = "agent:overlap-facts-runner:repo";
+    let window = ClientWindow::for_test("overlap-facts-window");
+
+    record_event(
+        &db,
+        &auth,
+        &window,
+        project,
+        "wc_sess_overlap_facts",
+        "git_status",
+        1000,
+        1010,
+        true,
+    );
+    record_event(
+        &db,
+        &auth,
+        &window,
+        project,
+        "wc_sess_overlap_facts",
+        "runtime_status",
+        1110,
+        1120,
+        true,
+    );
+    db.conn_for_tests()
+        .execute(
+            "UPDATE action_events SET window_transition_kind = 'overlap' WHERE server_trace_id = 'trace-1110'",
+            [],
+        )
+        .unwrap();
+
+    let output = runtime
+        .current_window_activity(Some(&window), Some(&auth), None, false)
+        .await
+        .output;
+    let summary = &output["summary"];
+    assert_eq!(summary["overlapping_call_count"], 1);
+    assert_eq!(summary["serial_call_count"], 0);
+    assert_eq!(summary["observed_next_call_gap_count"], 0);
+    assert_eq!(summary["gaps_lt_1s"], 0);
+    assert!(output["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|event| event["next_call_gap_ms"].is_null()));
 }
 
 #[tokio::test]

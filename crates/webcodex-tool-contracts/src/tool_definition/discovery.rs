@@ -168,6 +168,9 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             .with_activity(
                 super::ToolActivityPresentation::Support,
                 super::ToolActivityInteraction::NonMeaningful,
+            )
+            .with_host_orchestration_hint(
+                super::ToolHostOrchestrationHint::independent_parallel_read(),
             ),
             "Read runtime status; pass exact client_id for one Runner deployment/source alignment, omit for fleet-wide. Reports shared Job concurrency; global mode includes bounded host_context advisory metadata, never authority.",
         ),

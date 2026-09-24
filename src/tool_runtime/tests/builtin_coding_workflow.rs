@@ -201,20 +201,31 @@ fn host_code_mode_strategy_is_bounded_guidance_only() {
         "search_project_texts(queries)",
         "cargo_check(packages)",
         "one apply_text_edits batch",
+        "do not Promise.all same-kind micro-calls",
+        "Known independent cross-tool read-only observations",
+        "Host Promise.all",
         "search_and_read",
-        "Promise.all only independent",
+        "one Host cell",
+        "Do not return to the model merely because one child ToolResult arrived",
+        "mechanically determined",
+        "Natural model-turn boundaries",
+        "semantic choice",
+        "ambiguous result",
+        "new user decision",
+        "authority/permission",
+        "outcome_unknown",
+        "competing recovery",
+        "unresolved mutation intent",
         "full ToolResults in the Host cell",
-        "facts needed for the next decision",
-        "identities/revisions/continuations",
         "job_id",
         "observation_ref",
         "read_revision",
         "failure/recovery fields",
         "text(JSON.stringify(fullResult))",
         "passive Job attention",
-        "observe_jobs only for logs/details/recovery",
-        "wait_for_job_terminal",
-        "final evidence freeze covered source",
+        "observe_jobs is only for logs/details/recovery",
+        "wait_for_job_terminal only after independent work is exhausted",
+        "freeze covered source",
         "invalidate that evidence",
         "does not require WebCodex nested Code Mode",
         "not verified by WebCodex",
@@ -224,6 +235,58 @@ fn host_code_mode_strategy_is_bounded_guidance_only() {
     direct.as_object_mut().unwrap().remove("tool_strategy");
     host.as_object_mut().unwrap().remove("tool_strategy");
     assert_eq!(direct, host);
+}
+
+#[test]
+fn host_code_mode_catalog_is_derived_from_tool_definition_hints_only() {
+    use crate::tool_runtime::tool_definition::{
+        model_visible_tool_definitions, ToolHostConcurrencyHint,
+    };
+    use crate::tool_runtime::tool_inputs::CodingGuidanceProfile;
+
+    let direct = builtin_coding_workflow_projection(CodingGuidanceProfile::Direct);
+    assert!(direct["tool_strategy"].get("host_orchestration").is_none());
+
+    let host = builtin_coding_workflow_projection(CodingGuidanceProfile::HostCodeMode);
+    let catalog = &host["tool_strategy"]["host_orchestration"];
+    assert_eq!(catalog["guidance_only"], true);
+
+    let mut native_batch_first = Vec::new();
+    let mut independent_parallel_reads = Vec::new();
+    let mut compound_preferred = Vec::new();
+    let mut sequential = Vec::new();
+    for definition in model_visible_tool_definitions() {
+        let hint = definition.host_orchestration;
+        if hint.native_batch_field.is_some() {
+            native_batch_first.push(definition.name);
+        }
+        match hint.concurrency {
+            ToolHostConcurrencyHint::IndependentParallelRead => {
+                independent_parallel_reads.push(definition.name)
+            }
+            ToolHostConcurrencyHint::Sequential => sequential.push(definition.name),
+            ToolHostConcurrencyHint::Unspecified => {}
+        }
+        if hint.compound_preferred {
+            compound_preferred.push(definition.name);
+        }
+    }
+    for values in [
+        &mut native_batch_first,
+        &mut independent_parallel_reads,
+        &mut compound_preferred,
+        &mut sequential,
+    ] {
+        values.sort_unstable();
+    }
+
+    assert_eq!(catalog["native_batch_first"], json!(native_batch_first));
+    assert_eq!(
+        catalog["independent_parallel_reads"],
+        json!(independent_parallel_reads)
+    );
+    assert_eq!(catalog["compound_preferred"], json!(compound_preferred));
+    assert_eq!(catalog["sequential"], json!(sequential));
 }
 
 #[cfg(feature = "experimental-code-mode")]

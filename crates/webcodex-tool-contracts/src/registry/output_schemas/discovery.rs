@@ -22,7 +22,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 "server_trace_id":{"type":"string"},"workflow_sessions":{"type":"array","items":{"type":"object","additionalProperties":false,"properties":{"workflow_session_id":{"type":"string"},"project":{"type":"string"},"relation":{"type":"string"}},"required":["workflow_session_id","relation"]}},
                 "code_mode_composition":open_object_schema("Validated bounded nested WebCodex Code Mode composition when available.")
             },"required":["started_at_ms","ended_at_ms","duration_ms","method","status","meaningful","workflow_sessions"]}})),
-            ("summary", open_object_schema("Descriptive counts over the bounded visible event scan. Ratio denominator is explicit; no Host/model-state attribution.")),
+            ("summary", current_window_activity_summary_schema()),
             ("active_requests", json!({"type":"array","maxItems":8,"items":{"type":"object","additionalProperties":false,"properties":{"server_trace_id":{"type":"string"},"tool_name":{"type":["string","null"]},"started_at_ms":{"type":"integer"}},"required":["server_trace_id","tool_name","started_at_ms"]}})),
             ("truncated", schema_type("boolean", "Visible events from the bounded recent scan were omitted by the presentation or serialized byte bound; this is not a lifetime-history completeness claim.")),
         ])),
@@ -306,6 +306,10 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 execution_selection_schema(),
             ),
             (
+                "host_orchestration",
+                host_orchestration_schema(),
+            ),
+            (
                 "schema_version",
                 schema_type("integer", "Manifest schema version."),
             ),
@@ -489,6 +493,62 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
     }
 }
 
+fn current_window_activity_summary_schema() -> Value {
+    json!({
+        "type": "object",
+        "description": "Descriptive factual metrics over the bounded visible event scan. Gap fields are WebCodex-observed serial request timing only; they do not identify Host cells, model turns, thinking time, frontend delay, network delay, or user delay.",
+        "additionalProperties": false,
+        "properties": {
+            "events_scanned": {"type":"integer"},
+            "meaningful_call_count": {"type":"integer"},
+            "observe_jobs_count": {"type":"integer"},
+            "observe_jobs_ratio_denominator": {"type":"integer"},
+            "observe_jobs_ratio": {"type":["number","null"]},
+            "handler_returned_count": {"type":"integer"},
+            "missing_handoff_count": {"type":"integer"},
+            "overlapping_call_count": {"type":"integer","description":"Count of persisted window_transition_kind=overlap facts; never inferred from a short gap."},
+            "serial_call_count": {"type":"integer"},
+            "observed_next_call_gap_count": {"type":"integer"},
+            "gaps_lt_1s": {"type":"integer"},
+            "gaps_lt_2s": {"type":"integer"},
+            "gaps_lt_5s": {"type":"integer"},
+            "gaps_ge_5s": {"type":"integer"},
+            "gaps_ge_10s": {"type":"integer"},
+            "gaps_ge_30s": {"type":"integer"},
+            "gaps_ge_120s": {"type":"integer"},
+            "total_service_ms": {"type":"integer"},
+            "total_positive_observed_next_call_gap_ms": {"type":"integer"},
+            "max_service_ms": {"type":["integer","null"]},
+            "max_observed_next_call_gap_ms": {"type":["integer","null"]},
+            "returned_nested_code_mode_child_count": {"type":"integer"}
+        },
+        "required": [
+            "events_scanned",
+            "meaningful_call_count",
+            "observe_jobs_count",
+            "observe_jobs_ratio_denominator",
+            "observe_jobs_ratio",
+            "handler_returned_count",
+            "missing_handoff_count",
+            "overlapping_call_count",
+            "serial_call_count",
+            "observed_next_call_gap_count",
+            "gaps_lt_1s",
+            "gaps_lt_2s",
+            "gaps_lt_5s",
+            "gaps_ge_5s",
+            "gaps_ge_10s",
+            "gaps_ge_30s",
+            "gaps_ge_120s",
+            "total_service_ms",
+            "total_positive_observed_next_call_gap_ms",
+            "max_service_ms",
+            "max_observed_next_call_gap_ms",
+            "returned_nested_code_mode_child_count"
+        ]
+    })
+}
+
 fn tool_manifest_invocation_route_schema() -> Value {
     json!({
         "type": "object",
@@ -557,6 +617,34 @@ fn tool_manifest_invocation_route_schema() -> Value {
             "fallback",
             "tool_manifest_registers_host_tool",
             "discovery_effect"
+        ]
+    })
+}
+
+fn host_orchestration_schema() -> Value {
+    json!({
+        "type": "object",
+        "description": "Static guidance-only Host-native orchestration hints derived from ToolDefinition. They grant no authority and do not change ToolCompositionPolicy, effects, permissions, retry, idempotency, or runtime scheduling.",
+        "additionalProperties": false,
+        "properties": {
+            "guidance_only": {"type": "boolean", "const": true},
+            "concurrency": {
+                "type": "string",
+                "enum": ["unspecified", "independent_parallel_read", "sequential"]
+            },
+            "native_batch_field": {
+                "anyOf": [
+                    {"type": "string", "maxLength": 64},
+                    {"type": "null"}
+                ]
+            },
+            "compound_preferred": {"type": "boolean"}
+        },
+        "required": [
+            "guidance_only",
+            "concurrency",
+            "native_batch_field",
+            "compound_preferred"
         ]
     })
 }

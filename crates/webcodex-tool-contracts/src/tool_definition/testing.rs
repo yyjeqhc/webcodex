@@ -61,7 +61,12 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 false,
                 false,
                 super::ToolSessionEvidencePolicy::NONE.validation_identity(super::ToolValidationIdentityKind::CargoCheck),
-            ).with_composition_policy(super::ToolCompositionPolicy::Sequential),
+            )
+            .with_composition_policy(super::ToolCompositionPolicy::Sequential)
+            .with_host_orchestration_hint(
+                super::ToolHostOrchestrationHint::sequential()
+                    .with_native_batch_field("packages"),
+            ),
             "Structured cargo check (default --all-targets) for common supported validation with parsed diagnostics, validation identity, and same execution Job handoff. Use package for one workspace package or packages for a known set; packages runs one Cargo invocation with repeated -p after deterministic sort/dedup. After handoff retain exact Job identity, continue independent work, and passive Job attention may surface transitions; observe only for logs/details/recovery and do not poll. Development validation can overlap independent work, but edits to covered source make it stale. For final evidence freeze covered source; if it changes, rerun the appropriate check. sync_wait_secs changes only handoff grace, never timeout or retry.",
         ).with_gpt_action_description("Run structured cargo check; use packages=[...] for a known package set in one Cargo process. On Job handoff keep exact identity, continue independent work, and do not poll; observe only for details/recovery. Covered-source edits stale the run; freeze covered source for final evidence or rerun.")
         .with_execution(super::ToolExecutionContract::new(
@@ -94,7 +99,9 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 false,
                 false,
                 super::ToolSessionEvidencePolicy::NONE.validation_identity(super::ToolValidationIdentityKind::CargoTest),
-            ).with_composition_policy(super::ToolCompositionPolicy::Sequential),
+            )
+            .with_composition_policy(super::ToolCompositionPolicy::Sequential)
+            .with_host_orchestration_hint(super::ToolHostOrchestrationHint::sequential()),
             "Structured cargo test for common supported validation with bounded output, executed-test evidence, min_tests/require_tests, validation identity, and same execution Job handoff. lib=true selects Cargo --lib; filter is one Rust substring for cargo test FILTER, not Cargo/libtest flags such as --exact or --nocapture; zero-test results are not validation proof and return recovery guidance. Normal execution requires non-zero executed-test evidence; require_tests=false opts out when min_tests is absent, while require_tests=true/min_tests enforce a proven minimum. no_run=true is compile-only. After handoff retain exact Job identity, continue independent work, and passive Job attention may surface transitions; observe only for logs/details/recovery and do not poll. Development validation can overlap independent work, but edits to covered source make it stale. For final evidence freeze covered source; if it changes, rerun the appropriate test.",
         ).with_gpt_action_description("Run structured cargo tests with bounded executed-test evidence. On Job handoff keep exact identity, continue independent work, and do not poll; observe only for details/recovery. Covered-source edits stale the run; freeze covered source for final evidence or rerun.")
         .with_execution(super::ToolExecutionContract::new(

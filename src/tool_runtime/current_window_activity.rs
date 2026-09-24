@@ -27,8 +27,16 @@ struct ActivitySummary {
     missing_handoff_count: usize,
     overlapping_call_count: usize,
     serial_call_count: usize,
+    observed_next_call_gap_count: usize,
+    gaps_lt_1s: usize,
+    gaps_lt_2s: usize,
+    gaps_lt_5s: usize,
+    gaps_ge_5s: usize,
+    gaps_ge_10s: usize,
     gaps_ge_30s: usize,
     gaps_ge_120s: usize,
+    total_service_ms: i64,
+    total_positive_observed_next_call_gap_ms: i64,
     max_service_ms: Option<i64>,
     max_observed_next_call_gap_ms: Option<i64>,
     returned_nested_code_mode_child_count: usize,
@@ -119,16 +127,38 @@ impl ToolRuntime {
                 }
             }
             if let Some(gap) = timing.next_call_gap_ms {
+                summary.observed_next_call_gap_count += 1;
+                if gap < 1_000 {
+                    summary.gaps_lt_1s += 1;
+                }
+                if gap < 2_000 {
+                    summary.gaps_lt_2s += 1;
+                }
+                if gap < 5_000 {
+                    summary.gaps_lt_5s += 1;
+                }
+                if gap >= 5_000 {
+                    summary.gaps_ge_5s += 1;
+                }
+                if gap >= 10_000 {
+                    summary.gaps_ge_10s += 1;
+                }
                 if gap >= 30_000 {
                     summary.gaps_ge_30s += 1;
                 }
                 if gap >= 120_000 {
                     summary.gaps_ge_120s += 1;
                 }
+                if gap > 0 {
+                    summary.total_positive_observed_next_call_gap_ms = summary
+                        .total_positive_observed_next_call_gap_ms
+                        .saturating_add(gap);
+                }
                 summary.max_observed_next_call_gap_ms =
                     Some(summary.max_observed_next_call_gap_ms.unwrap_or(0).max(gap));
             }
             if let Some(service) = timing.service_ms {
+                summary.total_service_ms = summary.total_service_ms.saturating_add(service);
                 summary.max_service_ms = Some(summary.max_service_ms.unwrap_or(0).max(service));
             }
             if !include_nonmeaningful && !event.meaningful {

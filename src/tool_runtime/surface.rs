@@ -16,11 +16,11 @@ use super::registry::{registered_tool_specs, stateless_operator_extension_tool_s
 use super::runtime::ToolRuntime;
 use super::tool_definition::{
     available_tool_manifest_intent_names, is_model_visible_tool_name, resolve_tool_manifest_intent,
-    runtime_tool_category, runtime_tool_execution_contract, runtime_tool_metadata,
-    runtime_tool_operator_extension_family, ToolExecutionContract, ToolManifestIntent,
-    ToolOperatorExtensionFamily, TOOL_CATEGORY_ARTIFACT, TOOL_CATEGORY_EDIT, TOOL_CATEGORY_GIT,
-    TOOL_CATEGORY_PATCH, TOOL_CATEGORY_RUNTIME, TOOL_CATEGORY_SESSION, TOOL_CATEGORY_VALIDATION,
-    TOOL_DISCOVERY_GROUPS, TOOL_RECOMMENDED_FLOWS,
+    runtime_tool_category, runtime_tool_execution_contract, runtime_tool_host_orchestration_hint,
+    runtime_tool_metadata, runtime_tool_operator_extension_family, ToolExecutionContract,
+    ToolManifestIntent, ToolOperatorExtensionFamily, TOOL_CATEGORY_ARTIFACT, TOOL_CATEGORY_EDIT,
+    TOOL_CATEGORY_GIT, TOOL_CATEGORY_PATCH, TOOL_CATEGORY_RUNTIME, TOOL_CATEGORY_SESSION,
+    TOOL_CATEGORY_VALIDATION, TOOL_DISCOVERY_GROUPS, TOOL_RECOMMENDED_FLOWS,
 };
 use super::tool_inputs::ListToolsOptions;
 use super::tool_result::ToolResult;
@@ -484,6 +484,19 @@ fn tool_manifest_invocation_route(spec: &ToolSpec) -> Value {
     })
 }
 
+fn manifest_host_orchestration_projection(tool_name: &str) -> Option<Value> {
+    let hint = runtime_tool_host_orchestration_hint(tool_name);
+    if hint.is_unspecified() {
+        return None;
+    }
+    Some(json!({
+        "guidance_only": true,
+        "concurrency": hint.concurrency.as_str(),
+        "native_batch_field": hint.native_batch_field,
+        "compound_preferred": hint.compound_preferred,
+    }))
+}
+
 impl ToolRuntime {
     pub(crate) const LIST_TOOLS_MAX_LIMIT: usize = 256;
 
@@ -666,6 +679,10 @@ impl ToolRuntime {
         });
         if let Some(execution) = runtime_tool_execution_contract(spec.name.as_str()) {
             output["contract"]["execution"] = manifest_execution_projection(execution);
+        }
+        if let Some(host_orchestration) = manifest_host_orchestration_projection(spec.name.as_str())
+        {
+            output["host_orchestration"] = host_orchestration;
         }
         if include_risk_summary {
             output["risk_summary"] = build_risk_summary(&[spec]);

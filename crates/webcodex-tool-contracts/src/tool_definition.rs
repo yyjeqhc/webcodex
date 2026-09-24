@@ -61,10 +61,10 @@ pub use super::tool_policy::{
     runtime_tool_activity_interaction, runtime_tool_activity_semantics,
     runtime_tool_approval_policy, runtime_tool_captures_validation_output, runtime_tool_category,
     runtime_tool_effect_annotations, runtime_tool_execution_contract,
-    runtime_tool_is_change_summary_like, runtime_tool_is_git_like, runtime_tool_is_read_like,
-    runtime_tool_is_shell_like, runtime_tool_is_write_like, runtime_tool_metadata,
-    runtime_tool_operator_extension_family, runtime_tool_permission_risk,
-    runtime_tool_requires_permission, runtime_tool_runner_capability,
+    runtime_tool_host_orchestration_hint, runtime_tool_is_change_summary_like,
+    runtime_tool_is_git_like, runtime_tool_is_read_like, runtime_tool_is_shell_like,
+    runtime_tool_is_write_like, runtime_tool_metadata, runtime_tool_operator_extension_family,
+    runtime_tool_permission_risk, runtime_tool_requires_permission, runtime_tool_runner_capability,
     runtime_tool_session_evidence_policy, runtime_tool_session_risk_class,
 };
 #[cfg(any(test, feature = "root-test-support"))]
@@ -928,6 +928,68 @@ pub enum ToolCompositionPolicy {
     Parallel,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolHostConcurrencyHint {
+    Unspecified,
+    IndependentParallelRead,
+    Sequential,
+}
+
+impl ToolHostConcurrencyHint {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Unspecified => "unspecified",
+            Self::IndependentParallelRead => "independent_parallel_read",
+            Self::Sequential => "sequential",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ToolHostOrchestrationHint {
+    pub concurrency: ToolHostConcurrencyHint,
+    pub native_batch_field: Option<&'static str>,
+    pub compound_preferred: bool,
+}
+
+impl ToolHostOrchestrationHint {
+    pub const UNSPECIFIED: Self = Self {
+        concurrency: ToolHostConcurrencyHint::Unspecified,
+        native_batch_field: None,
+        compound_preferred: false,
+    };
+
+    pub const fn independent_parallel_read() -> Self {
+        Self {
+            concurrency: ToolHostConcurrencyHint::IndependentParallelRead,
+            ..Self::UNSPECIFIED
+        }
+    }
+
+    pub const fn sequential() -> Self {
+        Self {
+            concurrency: ToolHostConcurrencyHint::Sequential,
+            ..Self::UNSPECIFIED
+        }
+    }
+
+    pub const fn with_native_batch_field(mut self, field: &'static str) -> Self {
+        self.native_batch_field = Some(field);
+        self
+    }
+
+    pub const fn with_compound_preferred(mut self) -> Self {
+        self.compound_preferred = true;
+        self
+    }
+
+    pub const fn is_unspecified(self) -> bool {
+        matches!(self.concurrency, ToolHostConcurrencyHint::Unspecified)
+            && self.native_batch_field.is_none()
+            && !self.compound_preferred
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct ToolDefinition {
     pub name: &'static str,
@@ -947,6 +1009,10 @@ pub struct ToolDefinition {
     /// Canonical scheduling policy for nested orchestration. This grants no
     /// authority; orchestration frontends retain their own explicit admission.
     pub composition: ToolCompositionPolicy,
+    /// Static guidance for Host-native orchestration. This never changes
+    /// admission, authority, effects, permission, retry, idempotency, or the
+    /// nested WebCodex composition scheduler.
+    pub host_orchestration: ToolHostOrchestrationHint,
     pub visibility: ToolVisibility,
     pub category: &'static str,
     pub metadata: ToolMetadata,
@@ -975,6 +1041,11 @@ impl ToolDefinition {
 
     pub const fn with_composition_policy(mut self, policy: ToolCompositionPolicy) -> Self {
         self.composition = policy;
+        self
+    }
+
+    pub const fn with_host_orchestration_hint(mut self, hint: ToolHostOrchestrationHint) -> Self {
+        self.host_orchestration = hint;
         self
     }
 
@@ -1126,6 +1197,7 @@ const fn def(
         operator_extension_family: None,
         execution: None,
         composition: ToolCompositionPolicy::Denied,
+        host_orchestration: ToolHostOrchestrationHint::UNSPECIFIED,
         visibility,
         category,
         metadata: make_tool_metadata(

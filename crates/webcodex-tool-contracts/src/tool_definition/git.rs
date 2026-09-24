@@ -45,7 +45,11 @@ pub(super) const SUMMARY_DEFINITIONS: &[ToolDefinition] = &[
                 false,
                 false,
                 super::ToolSessionEvidencePolicy::NONE.review(super::ToolReviewEvidence::ReadOnlyInspection),
-            ).with_composition_policy(super::ToolCompositionPolicy::Parallel),
+            )
+            .with_composition_policy(super::ToolCompositionPolicy::Parallel)
+            .with_host_orchestration_hint(
+                super::ToolHostOrchestrationHint::independent_parallel_read(),
+            ),
             "Deterministic bounded committed-range review map for broad or unknown ranges when a file/change map helps choose targeted git_diff_hunks/read_files. Small bounded understood committed diffs may use native Git directly. Does not judge correctness and never mutates the repository.",
         ))),
         120,
@@ -134,7 +138,11 @@ pub(super) const DETAIL_DEFINITIONS: &[ToolDefinition] = &[
             false,
             false,
             super::ToolSessionEvidencePolicy::NONE.review(super::ToolReviewEvidence::WorkspaceReview),
-        ).with_composition_policy(super::ToolCompositionPolicy::Parallel),
+        )
+        .with_composition_policy(super::ToolCompositionPolicy::Parallel)
+        .with_host_orchestration_hint(
+            super::ToolHostOrchestrationHint::independent_parallel_read(),
+        ),
         "Run git status --porcelain for a project.",
     )),
     adaptive_runtime_direct(
@@ -173,7 +181,11 @@ pub(super) const DETAIL_DEFINITIONS: &[ToolDefinition] = &[
                 false,
                 false,
                 super::ToolSessionEvidencePolicy::NONE.review(super::ToolReviewEvidence::DiffReview).diff_review(super::ToolDiffReviewEvidence::Always),
-            ).with_composition_policy(super::ToolCompositionPolicy::Parallel),
+            )
+            .with_composition_policy(super::ToolCompositionPolicy::Parallel)
+            .with_host_orchestration_hint(
+                super::ToolHostOrchestrationHint::independent_parallel_read(),
+            ),
             "Targeted/paged diff review with scope/fence-bound opaque continuation for worktree/cached or exact base/head ranges; use when safe bounded traversal matters. max_page_bytes controls the raw producer page and defaults to the input-schema shared safe producer maximum; it is separate from the 512 KiB final model-facing result ceiling. Copy continuation only through the returned parser-ready next_call. recovery.later_hunks.next_call means the next logical diff record, never an intra-hunk cursor. recovery.current_hunk.next_call is current-hunk-only: bounded refinement when independently proven, or the existing exact hunk-fragment token at the next complete diff line. Line-budget and page-byte-budget truncation may both use that fragment only with proven positive complete-line progress; otherwise fixed ceilings advertise no recovery when safe forward progress is not proven. Read-only.",
         ).with_gpt_action_description("Read bounded diff hunks for worktree/cached or exact base/head ranges. Follow recovery.later_hunks only for the next logical record; use recovery.current_hunk for returned exact complete-line hunk continuation when proven safe. Never guess offsets."))),
         125,

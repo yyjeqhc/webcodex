@@ -452,6 +452,101 @@ fn execution_selection_contract_is_canonical_closed_and_sparse() {
 }
 
 #[test]
+fn host_orchestration_hints_are_static_guidance_independent_from_nested_composition() {
+    use ToolCompositionPolicy::{Denied, Parallel, Sequential};
+    use ToolHostConcurrencyHint::{IndependentParallelRead, Sequential as HostSequential};
+
+    let cases = [
+        (
+            "read_files",
+            Parallel,
+            IndependentParallelRead,
+            Some("items"),
+            false,
+        ),
+        (
+            "search_project_texts",
+            Parallel,
+            IndependentParallelRead,
+            Some("queries"),
+            false,
+        ),
+        (
+            "search_and_read",
+            Denied,
+            IndependentParallelRead,
+            Some("queries"),
+            true,
+        ),
+        ("git_status", Parallel, IndependentParallelRead, None, false),
+        (
+            "git_diff_hunks",
+            Parallel,
+            IndependentParallelRead,
+            None,
+            false,
+        ),
+        (
+            "git_review_summary",
+            Parallel,
+            IndependentParallelRead,
+            None,
+            false,
+        ),
+        (
+            "runtime_status",
+            Denied,
+            IndependentParallelRead,
+            None,
+            false,
+        ),
+        (
+            "cargo_check",
+            Sequential,
+            HostSequential,
+            Some("packages"),
+            false,
+        ),
+        ("cargo_test", Sequential, HostSequential, None, false),
+        (
+            "apply_text_edits",
+            Sequential,
+            HostSequential,
+            Some("changes"),
+            false,
+        ),
+        ("observe_jobs", Denied, HostSequential, Some("items"), false),
+    ];
+
+    for (name, composition, concurrency, native_batch_field, compound_preferred) in cases {
+        let definition = lookup_tool_definition(name).unwrap_or_else(|| panic!("missing {name}"));
+        assert_eq!(definition.composition, composition, "{name}");
+        assert_eq!(
+            definition.host_orchestration.concurrency, concurrency,
+            "{name}"
+        );
+        assert_eq!(
+            definition.host_orchestration.native_batch_field, native_batch_field,
+            "{name}"
+        );
+        assert_eq!(
+            definition.host_orchestration.compound_preferred, compound_preferred,
+            "{name}"
+        );
+        assert_eq!(
+            runtime_tool_host_orchestration_hint(name),
+            definition.host_orchestration,
+            "{name}"
+        );
+    }
+
+    assert_eq!(
+        runtime_tool_host_orchestration_hint("unknown_tool"),
+        ToolHostOrchestrationHint::UNSPECIFIED
+    );
+}
+
+#[test]
 fn every_runtime_tool_has_an_explicit_fail_closed_audit_contract() {
     for definition in tool_definitions() {
         assert_eq!(

@@ -73,10 +73,7 @@ pub(crate) fn builtin_coding_workflow_projection(profile: CodingGuidanceProfile)
             "For closeout evidence, freeze source covered by final validation. Continue read-only review/docs/external inspection; if covered source must change, invalidate that evidence and rerun the appropriate final validation.",
             "Keep one execution/Job and exact continuation. After handoff continue independent work; passive Job attention may surface transitions. observe_jobs is for logs/details/recovery; list_jobs is identity recovery. Use wait_for_job_terminal only when terminal outcome is a true dependency and no independent work remains."
         ],
-        "tool_strategy": {
-            "profile": profile,
-            "guidance": tool_strategy_guidance(profile),
-        },
+        "tool_strategy": tool_strategy_projection(profile),
         "model_protocol": {
             "goal_workflow": "On exact Session re-entry, honor work_on_project.goal_context: reuse one exact active Goal with get_goal/present_goal_plan; choose explicitly among multiple candidates; never infer from Project/Window/title/recency. For ordinary new substantial multi-step/cross-turn work with no reusable Goal, call prepare_goal_workflow with the exact current Workflow Session, bounded completion_conditions/steps, and optional explicit controller Agent, then present_goal_plan. available=false never proves no Goal. Host continuation setup/readiness remains separate. Low-level create_goal and associate_goal_workflow_session remain available. Tiny one-step lookups/trivial edits need no Goal. This applies independently of AGENTS.md.",
             "goal_continuation": "Automatic continuation needs an exact explicit durable controller Agent and the existing production Host carrier. Reuse the same Agent already made callable by explicit setup or exact Wake context; never infer Agent identity from a Window or create a second Goal-only identity. An Agent may be both Task assignee and Goal controller: Tasks/Attempts own execution, the controller routes next reasoning only. Goal Plan detects; the separate Agent Continuation card carries turns. Stalled is not offline; dispatch acceptance is not resume. An exact stall Wake requires bootstrap, immediate consume, get_goal and exact Session handoff recovery; never retry an uncertain prior effect.",
@@ -104,6 +101,60 @@ pub(crate) fn builtin_coding_workflow_projection(profile: CodingGuidanceProfile)
     })
 }
 
+fn tool_strategy_projection(profile: CodingGuidanceProfile) -> Value {
+    let mut strategy = json!({
+        "profile": profile,
+        "guidance": tool_strategy_guidance(profile),
+    });
+    if profile == CodingGuidanceProfile::HostCodeMode {
+        strategy["host_orchestration"] = host_orchestration_catalog();
+    }
+    strategy
+}
+
+fn host_orchestration_catalog() -> Value {
+    let mut native_batch_first = Vec::new();
+    let mut independent_parallel_reads = Vec::new();
+    let mut compound_preferred = Vec::new();
+    let mut sequential = Vec::new();
+
+    for definition in super::tool_definition::model_visible_tool_definitions() {
+        let hint = definition.host_orchestration;
+        if hint.native_batch_field.is_some() {
+            native_batch_first.push(definition.name);
+        }
+        match hint.concurrency {
+            super::tool_definition::ToolHostConcurrencyHint::IndependentParallelRead => {
+                independent_parallel_reads.push(definition.name);
+            }
+            super::tool_definition::ToolHostConcurrencyHint::Sequential => {
+                sequential.push(definition.name);
+            }
+            super::tool_definition::ToolHostConcurrencyHint::Unspecified => {}
+        }
+        if hint.compound_preferred {
+            compound_preferred.push(definition.name);
+        }
+    }
+
+    for list in [
+        &mut native_batch_first,
+        &mut independent_parallel_reads,
+        &mut compound_preferred,
+        &mut sequential,
+    ] {
+        list.sort_unstable();
+    }
+
+    json!({
+        "guidance_only": true,
+        "native_batch_first": native_batch_first,
+        "independent_parallel_reads": independent_parallel_reads,
+        "compound_preferred": compound_preferred,
+        "sequential": sequential,
+    })
+}
+
 fn tool_strategy_guidance(profile: CodingGuidanceProfile) -> &'static [&'static str] {
     match profile {
         CodingGuidanceProfile::Direct => &[
@@ -114,14 +165,14 @@ fn tool_strategy_guidance(profile: CodingGuidanceProfile) -> &'static [&'static 
             "Known target: bounded targeted reads. Broad discovery: small files/count search then targeted reads. Avoid ritual turns.",
         ],
         CodingGuidanceProfile::HostCodeMode => &[
-            "Host-native Code Mode is model guidance only; use it when the Host provides orchestration. It grants no WebCodex capability or authority and does not require WebCodex nested Code Mode.",
-            "Coalesce known independent work with native batches: read_files(items), search_project_texts(queries), cargo_check(packages), and one apply_text_edits batch when mutation is already determined; do not Promise.all same-kind micro-calls.",
-            "For search followed by immediate source inspection, prefer search_and_read. Keep dependent cross-tool search/read/branch steps in one Host cell when useful; Promise.all only independent observations.",
-            "Keep full ToolResults in the Host cell when possible. Return only facts needed for the next decision, failures, identities/revisions/continuations needed later, and bounded evidence.",
-            "Preserve job_id, observation_ref, read_revision, and exact failure/recovery fields when relevant. Avoid text(JSON.stringify(fullResult)) or raw result dumps unless the complete result is itself needed for the next decision.",
-            "After Job handoff retain exact identity, continue independent work, and let passive Job attention surface transitions. Call observe_jobs only for logs/details/recovery; wait_for_job_terminal only when terminal outcome blocks progress and no independent work remains.",
-            "Development validation may overlap independent work, but covered-source edits make it stale. For final evidence freeze covered source; if it must change, invalidate that evidence and rerun the appropriate final validation.",
-            "Do not wrap Host-native orchestration in WebCodex nested Code Mode by default; use nested Code Mode only when its own scenario has a clear benefit. Host capability is supplied by the Host, not verified by WebCodex.",
+            "Host-native Code Mode is model guidance only. It grants no WebCodex capability/authority, changes no effects/retry/idempotency, and does not require WebCodex nested Code Mode.",
+            "Known same-kind inputs: prefer native batches such as read_files(items), search_project_texts(queries), cargo_check(packages), or one apply_text_edits batch; do not Promise.all same-kind micro-calls.",
+            "Known independent cross-tool read-only observations may use Host Promise.all. Prefer search_and_read for search→read; keep result-dependent search/read/branch chains in one Host cell when useful.",
+            "Do not return to the model merely because one child ToolResult arrived. If the next call is mechanically determined with no unresolved semantic choice/uncertainty/authority need, stay in the Host cell and return compact evidence for the next decision.",
+            "Natural model-turn boundaries are semantic choice, ambiguous result, new user decision, authority/permission, outcome_unknown or competing recovery, or unresolved mutation intent—not child-call completion.",
+            "Keep full ToolResults in the Host cell when possible; preserve identities/revisions/continuations such as job_id, observation_ref, read_revision and failure/recovery fields. Avoid text(JSON.stringify(fullResult)) dumps.",
+            "After Job handoff save exact identity, continue independent work in the same Host context, and use passive Job attention. observe_jobs is only for logs/details/recovery; wait_for_job_terminal only after independent work is exhausted and terminal outcome is required.",
+            "Development validation may overlap independent work. For final evidence freeze covered source; covered-source edits invalidate that evidence and require rerun. Host support is supplied by the Host, not verified by WebCodex.",
         ],
         #[cfg(feature = "experimental-code-mode")]
         CodingGuidanceProfile::CodeMode => &[

@@ -268,6 +268,7 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
 (() => {
   "use strict";
   const APP_PROTOCOL = "2026-01-26";
+  const WORK_RESULT_META_KEY = "webcodex/workResult";
   const SESSION_ID = /^wc_sess_([A-Za-z0-9_-]{16}|[0-9a-f]{32})$/;
   const STATE_VERSION = /^wr2_[0-9a-f]{64}$/;
   const MESSAGE_ID = /^wc_msg_[A-Za-z0-9_-]+$/;
@@ -305,6 +306,7 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
   let sendInFlight = false;
   let pendingSend = null;
   let tornDown = false;
+  let initialResultTransportMissing = false;
   let selectedPane = "Workflow";
   let selectedStage = "all";
   const pending = new Map();
@@ -476,16 +478,55 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     return value;
   }
 
-  function toolSuccess(result) {
-    const structured = result && (result.structuredContent || result.structured_content || result);
-    return structured && typeof structured === "object" && !Array.isArray(structured) && typeof structured.success === "boolean"
-      ? structured.success
+  function callToolResultOf(result) {
+    if (!result || typeof result !== "object" || Array.isArray(result)) return result;
+    const nested = result.result;
+    if (nested && typeof nested === "object" && !Array.isArray(nested)
+      && (nested.structuredContent || nested.structured_content || Array.isArray(nested.content)
+        || nested._meta || typeof nested.success === "boolean")) return nested;
+    return result;
+  }
+
+  function canonicalStructuredEnvelope(value) {
+    return !!(value && typeof value === "object" && !Array.isArray(value)
+      && typeof value.success === "boolean"
+      && (Object.prototype.hasOwnProperty.call(value, "output")
+        || Object.prototype.hasOwnProperty.call(value, "error")));
+  }
+
+  function standardContentEnvelopeOf(callResult) {
+    const blocks = Array.isArray(callResult && callResult.content) ? callResult.content : [];
+    for (const block of blocks) {
+      if (!block || block.type !== "text" || typeof block.text !== "string") continue;
+      try {
+        const parsed = JSON.parse(block.text);
+        if (canonicalStructuredEnvelope(parsed)) return parsed;
+      } catch (_) {}
+    }
+    return null;
+  }
+
+  function structuredOf(result) {
+    const callResult = callToolResultOf(result);
+    if (!callResult || typeof callResult !== "object" || Array.isArray(callResult)) return null;
+    if (canonicalStructuredEnvelope(callResult)) return callResult;
+    const meta = callResult._meta && typeof callResult._meta === "object" && !Array.isArray(callResult._meta)
+      ? callResult._meta[WORK_RESULT_META_KEY]
       : null;
+    if (canonicalStructuredEnvelope(meta)) return meta;
+    const standard = standardContentEnvelopeOf(callResult);
+    if (standard) return standard;
+    const direct = callResult.structuredContent || callResult.structured_content;
+    return canonicalStructuredEnvelope(direct) ? direct : null;
+  }
+
+  function toolSuccess(result) {
+    return structuredOf(result)?.success ?? null;
   }
 
   function extractState(result) {
-    const structured = result && (result.structuredContent || result.structured_content || result);
-    const output = structured && (structured.output || structured);
+    const structured = structuredOf(result);
+    const output = structured && structured.output;
     return validState(output && output.work_result);
   }
 
@@ -547,8 +588,8 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
   }
 
   function extractFrozenDiff(result, file) {
-    const structured = result && (result.structuredContent || result.structured_content || result);
-    const value = structured && (structured.output || structured).changes_file_diff;
+    const structured = structuredOf(result);
+    const value = structured && structured.output && structured.output.changes_file_diff;
     if (!value || value.version !== 1 || value.project !== identity.project || value.session_id !== identity.session_id
       || value.snapshot_id !== snapshot.snapshot_id || value.path !== file.path || value.kind !== file.kind
       || (value.previous_path ?? null) !== (file.previous_path ?? null)) return null;
@@ -589,8 +630,10 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
         project: identity.project, session_id: identity.session_id, snapshot_id: snapshot.snapshot_id, path: file.path,
       } });
       if (tornDown) return;
-      if (toolSuccess(response) === false) { state.textContent = "Changes unavailable · refresh the card"; return; }
-      const diff = extractFrozenDiff(response, file);
+      const structured = structuredOf(response);
+      if (!structured) { state.textContent = "Changes unavailable · collapse and expand to retry"; return; }
+      if (structured.success === false) { state.textContent = "Changes unavailable · refresh the card"; return; }
+      const diff = extractFrozenDiff(structured, file);
       if (!diff) { failClosed("Invalid file changes"); return; }
       diffCache.set(file.path, diff);
       renderFrozenDiff(state, pre, diff);
@@ -961,11 +1004,16 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     try {
       const response = await send("tools/call", { name: "work_result_state", arguments: { project: identity.project, session_id: identity.session_id } });
       if (tornDown) return;
-      if (toolSuccess(response) === false) {
+      const structured = structuredOf(response);
+      if (!structured) {
         if (!automatic) el("status").textContent = hadSnapshot ? "Refresh unavailable · showing last snapshot" : "Refresh unavailable · retry";
         return;
       }
-      const state = extractState(response);
+      if (structured.success === false) {
+        if (!automatic) el("status").textContent = hadSnapshot ? "Refresh unavailable · showing last snapshot" : "Refresh unavailable · retry";
+        return;
+      }
+      const state = extractState(structured);
       if (!state || !acceptIdentity(pair(state.project, state.session_id))) {
         if (!tornDown) failClosed("Task state unavailable");
         return;
@@ -974,6 +1022,7 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
       if (!acceptFrozen(state.final_changes)) return;
       const completedNow = !hadFrozen && snapshot !== null;
       hasRefreshed = true;
+      initialResultTransportMissing = false;
       sessionLifecycle = state.session.lifecycle;
       const changed = state.state_version !== lastStateVersion;
       if (changed) {
@@ -999,16 +1048,27 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
 
   function acceptToolInput(params) {
     const args = params && params.arguments;
-    acceptIdentity(pair(args && !Array.isArray(args) && args.project, args && !Array.isArray(args) && args.session_id));
+    if (!acceptIdentity(pair(args && !Array.isArray(args) && args.project, args && !Array.isArray(args) && args.session_id))) return;
+    if (initialResultTransportMissing && hostInitialized && lastStateVersion === null) void refresh(false);
   }
 
   function acceptToolResult(result) {
     if (tornDown) return;
-    const state = extractState(result);
-    if (toolSuccess(result) === false || !state || !acceptIdentity(pair(state.project, state.session_id))) {
+    const structured = structuredOf(result);
+    if (!structured) {
+      // Production Hosts may omit structuredContent from a ToolResult delivered
+      // to the View. Preserve exact identity from tool-input and recover once
+      // through the app-only state read instead of permanently disabling the card.
+      initialResultTransportMissing = true;
+      if (identity && hostInitialized && lastStateVersion === null) void refresh(false);
+      return;
+    }
+    const state = extractState(structured);
+    if (structured.success === false || !state || !acceptIdentity(pair(state.project, state.session_id))) {
       if (!tornDown) failClosed("Task state unavailable");
       return;
     }
+    initialResultTransportMissing = false;
     const hadFrozen = snapshot !== null;
     if (!acceptFrozen(state.final_changes)) return;
     const adoptedFinal = !hadFrozen && snapshot !== null;
@@ -1112,7 +1172,8 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
       notify("ui/notifications/initialized", {});
       updateRefreshControl();
       updateComposerControl();
-      scheduleRefresh();
+      if (initialResultTransportMissing && identity && lastStateVersion === null) void refresh(false);
+      else scheduleRefresh();
     })
     .catch(() => { if (!tornDown) el("status").textContent = "Task card unavailable"; });
 })();

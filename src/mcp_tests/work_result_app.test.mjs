@@ -94,6 +94,42 @@ const nextState = {
   },
 };
 
+function contentOnly(result) {
+  return { content: [{ type: "text", text: JSON.stringify(result.structuredContent) }] };
+}
+
+function privateOnly(result) {
+  return { _meta: { "webcodex/workResult": result.structuredContent } };
+}
+
+test("initial private Work Result fallback renders when Host omits structuredContent", async () => {
+  const view = app("mcp_work_result_app.html");
+  view.toolInput(input);
+  await view.initialize();
+  view.notification("ui/notifications/tool-result", privateOnly(toolResult({ work_result: baseState })));
+  await flush();
+  assert.equal(view.nodes.taskTitle.textContent, "Work Result test");
+  assert.equal(view.nodes.badge.textContent, "Waiting");
+  assert.equal(view.nodes.refresh.disabled, false);
+  assert.equal(view.calls("work_result_state").length, 0);
+});
+
+test("missing initial machine result recovers once through app-only content fallback", async () => {
+  const view = app("mcp_work_result_app.html");
+  view.toolInput(input);
+  await view.initialize();
+  view.notification("ui/notifications/tool-result", {
+    content: [{ type: "text", text: "WebCodex tool completed successfully." }],
+  });
+  await flush();
+  assert.notEqual(view.nodes.status.textContent, "This task card is unavailable");
+  assert.equal(view.calls("work_result_state").length, 1);
+  await view.reply(view.calls("work_result_state")[0], contentOnly(toolResult({ work_result: baseState })));
+  assert.equal(view.nodes.taskTitle.textContent, "Work Result test");
+  assert.equal(view.nodes.refresh.disabled, false);
+  assert.match(view.nodes.status.textContent, /Updated|Up to date|Live/);
+});
+
 test("primary task card hides raw tool and live file details while keeping semantic activity", async () => {
   const view = app("mcp_work_result_app.html");
   view.toolResult({ work_result: baseState });
@@ -250,13 +286,13 @@ test("card composer retries uncertain delivery with the same key and refreshes s
   const second = view.calls("work_result_send_message")[1];
   assert.equal(second.params.arguments.delivery_key, first.params.arguments.delivery_key);
 
-  await view.reply(second, toolResult({
+  await view.reply(second, contentOnly(toolResult({
     success: true,
     session_id,
     message_id: "wc_msg_card",
     replayed: true,
     state_changed: false,
-  }));
+  })));
   assert.equal(view.calls("work_result_state").length, 1);
   const refreshed = {
     ...baseState,
@@ -269,7 +305,7 @@ test("card composer retries uncertain delivery with the same key and refreshes s
       ],
     },
   };
-  await view.reply(view.calls("work_result_state")[0], toolResult({ work_result: refreshed }));
+  await view.reply(view.calls("work_result_state")[0], contentOnly(toolResult({ work_result: refreshed })));
   assert.equal(view.nodes.messageInput.value, "");
   assert.equal(view.nodes.messages.children[0].children[1].children.at(-1).textContent, "Sent");
 });
@@ -610,7 +646,7 @@ test("frozen expansion reads the exact four-part identity once and re-expansion 
   await flush();
   assert.equal(view.calls("changes_file_diff").length, 1);
   assert.deepEqual({ ...view.calls("changes_file_diff")[0].params.arguments }, { project, session_id, snapshot_id, path: "src/file_0.rs" });
-  await view.reply(view.calls("changes_file_diff")[0], frozenDiff());
+  await view.reply(view.calls("changes_file_diff")[0], contentOnly(frozenDiff()));
   assert.equal(nodes.state.textContent, "File changes");
   assert.equal(nodes.pre.children.some(line => line.textContent === "+new" && line.className.includes("added")), true);
   assert.equal(nodes.pre.children.some(line => line.textContent === "-old" && line.className.includes("deleted")), true);

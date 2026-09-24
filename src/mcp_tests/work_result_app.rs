@@ -36,9 +36,10 @@ async fn handle_with_server_apps_enabled(
 async fn work_result_descriptor_is_explicit_sparse_app_only_and_resource_backed() {
     assert_eq!(
         MCP_WORK_RESULT_UI_RESOURCE_URI,
-        "ui://webcodex/work-result/v5"
+        "ui://webcodex/work-result/v6"
     );
     assert!(MCP_WORK_RESULT_UI_RESOURCE_LEGACY_URIS.contains(&"ui://webcodex/work-result/v4"));
+    assert!(MCP_WORK_RESULT_UI_RESOURCE_LEGACY_URIS.contains(&"ui://webcodex/work-result/v5"));
     let runtime = test_runtime();
 
     let ui = handle_with_server_apps_enabled(
@@ -200,6 +201,41 @@ async fn work_result_descriptor_is_explicit_sparse_app_only_and_resource_backed(
 }
 
 #[tokio::test]
+async fn present_work_result_keeps_model_text_compact_and_private_view_envelope() {
+    let runtime = test_runtime();
+    let outcome = handle_with_server_apps_enabled(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(5105)),
+            mcp_2026_ui_params(json!({
+                "name": "present_work_result",
+                "arguments": {
+                    "project": "agent:missing:project",
+                    "session_id": format!("wc_sess_{}", "1".repeat(32))
+                }
+            })),
+        ),
+        None,
+        true,
+    )
+    .await;
+    let McpOutcome::Ok(outcome) = outcome else {
+        panic!("present_work_result should return a canonical ToolResult");
+    };
+    let result = &outcome["result"];
+    assert_eq!(
+        result["_meta"][super::super::tools::WORK_RESULT_APP_RESULT_META_KEY],
+        result["structuredContent"]
+    );
+    let text = result["content"][0]["text"].as_str().unwrap();
+    assert!(
+        !text.trim_start().starts_with('{'),
+        "model-visible presentation text must stay compact"
+    );
+}
+
+#[tokio::test]
 async fn work_result_resource_is_canonical_while_changes_resources_are_hidden_compatibility() {
     const PUBLIC_URL: &str = "https://self-host.example";
     let runtime = test_runtime_with_public_url(PUBLIC_URL);
@@ -309,6 +345,13 @@ async fn work_result_state_call_requires_app_protocol_capability() {
         panic!("App-only state call should reach runtime under App capability");
     };
     assert_eq!(app["result"]["structuredContent"]["success"], false);
+    let fallback: Value = serde_json::from_str(
+        app["result"]["content"][0]["text"]
+            .as_str()
+            .expect("Work Result state content fallback"),
+    )
+    .unwrap();
+    assert_eq!(fallback, app["result"]["structuredContent"]);
 
     for params in [mcp_2026_params(args.clone()), mcp_2026_ui_params(args)] {
         let outcome = handle_with_server_apps_enabled(
@@ -349,6 +392,13 @@ async fn work_result_send_message_requires_app_protocol_capability() {
         panic!("App-only collaboration call should reach runtime under App capability");
     };
     assert_eq!(app["result"]["structuredContent"]["success"], false);
+    let fallback: Value = serde_json::from_str(
+        app["result"]["content"][0]["text"]
+            .as_str()
+            .expect("Work Result message content fallback"),
+    )
+    .unwrap();
+    assert_eq!(fallback, app["result"]["structuredContent"]);
 
     for params in [mcp_2026_params(args.clone()), mcp_2026_ui_params(args)] {
         let outcome = handle_with_server_apps_enabled(
@@ -481,6 +531,13 @@ async fn changes_file_diff_call_requires_app_protocol_capability() {
         panic!("App-only diff call should reach runtime under App capability");
     };
     assert_eq!(app["result"]["structuredContent"]["success"], false);
+    let fallback: Value = serde_json::from_str(
+        app["result"]["content"][0]["text"]
+            .as_str()
+            .expect("Work Result diff content fallback"),
+    )
+    .unwrap();
+    assert_eq!(fallback, app["result"]["structuredContent"]);
 
     for params in [mcp_2026_params(args.clone()), mcp_2026_ui_params(args)] {
         let outcome = handle_with_server_apps_enabled(

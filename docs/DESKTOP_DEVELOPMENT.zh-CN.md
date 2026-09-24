@@ -135,6 +135,27 @@ Desktop runtime。只要修改涉及 Tauri IPC、native command、process lifecy
 
 当前 Windows 分发格式是 current-user NSIS installer，项目正式构建目前也是 unsigned。
 
+普通本地 dogfood 建议直接在仓库根目录使用完整 helper：
+
+```powershell
+.\scripts\build_desktop_windows_local.ps1
+```
+
+它要求 clean 且已提交的 worktree，会自动安装共享 frontend 与 Desktop 两套 npm
+dependency、构建三个 dogfood runtime、stage 精确 runtime，复用
+`target\desktop-local-tauri\` 作为 Tauri 编译缓存，生成 unsigned NSIS installer，并把
+installer 与 SHA-256 文件统一放到 `target\desktop-local-dist\`。
+
+helper 默认**不会**真正安装这个包，因此日常已经安装 WebCodex Desktop 的 dogfood
+机器也可以直接构建。如果还要执行会安装并随后卸载测试包的 native smoke，请在
+disposable VM / 测试用户或当前没有安装 WebCodex Desktop 的 Windows 用户下显式运行：
+
+```powershell
+.\scripts\build_desktop_windows_local.ps1 -Smoke
+```
+
+下面继续保留等价手工步骤，主要用于定位某一个打包阶段的问题。
+
 ### 1. 使用干净、已提交的源码
 
 Desktop staging helper 会验证精确 build provenance，并要求三个 embedded runtime
@@ -175,8 +196,12 @@ helper 会验证三个 executable，把它们 byte-for-byte 复制到生成的
 ### 4. 构建 NSIS
 
 ```powershell
-$targetDir = Join-Path $PWD "target\desktop-local-tauri-$PID"
+$targetDir = Join-Path $PWD "target\desktop-local-tauri"
 $env:CARGO_TARGET_DIR = $targetDir
+$bundleDir = Join-Path $targetDir "release\bundle\nsis"
+if (Test-Path -LiteralPath $bundleDir) {
+  Remove-Item -LiteralPath $bundleDir -Recurse -Force
+}
 
 Push-Location apps\desktop
 try {
@@ -190,7 +215,7 @@ try {
 installer 位于：
 
 ```text
-target\desktop-local-tauri-<pid>\release\bundle\nsis\
+target\desktop-local-tauri\release\bundle\nsis\
 ```
 
 native host 与 smoke/release platform 对应关系：
@@ -239,7 +264,7 @@ smoke 会真正走 native installer，并验证包内 runtime identity。Windows
 bash scripts/build_desktop_macos_local.sh
 ```
 
-它要求 clean worktree，会自动安装 Desktop npm dependency、构建 dogfood runtime、完成 staging、生成 native ad-hoc signed DMG、运行 macOS smoke，并把最终文件放到 `target/desktop-local-dist/`。下面继续保留等价手工流程，方便理解或排查某一个阶段。
+它要求 clean worktree，会自动安装共享 frontend 与 Desktop 两套 npm dependency、构建 dogfood runtime、完成 staging、生成 native ad-hoc signed DMG、运行 macOS smoke，并把最终文件放到 `target/desktop-local-dist/`。下面继续保留等价手工流程，方便理解或排查某一个阶段。
 
 ### 1. 使用干净、已提交的源码
 
@@ -404,6 +429,7 @@ lifecycle、tray/menu、autostart 或 bundled runtime resources。
 - [extended native validation](../.github/workflows/extended-native.yml)；
 - [release candidate build](../.github/workflows/release-build.yml)；
 - `scripts/prepare_desktop_bundle.ps1`；
+- `scripts/build_desktop_windows_local.ps1`；
 - `scripts/build_desktop_macos_local.sh`；
 - `scripts/prepare_desktop_bundle_macos.py`；
 - `scripts/desktop_install_windows_smoke.ps1`；

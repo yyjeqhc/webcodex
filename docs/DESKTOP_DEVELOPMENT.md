@@ -142,6 +142,30 @@ dialogs, autostart, or bundled runtime behavior.
 The current Windows distribution format is a per-user NSIS installer. The
 official project build is unsigned.
 
+For normal local dogfood, use the complete helper from the repository root:
+
+```powershell
+.\scripts\build_desktop_windows_local.ps1
+```
+
+It requires a clean committed worktree, installs both shared frontend and Desktop npm
+dependencies, builds the three dogfood runtime binaries, stages the exact runtime,
+reuses `target\desktop-local-tauri\` as the Tauri compilation cache, creates the
+unsigned NSIS installer, and writes the installer plus SHA-256 file under
+`target\desktop-local-dist\`.
+
+The helper deliberately does **not** install the package by default, so it is safe to
+use on a daily dogfood machine that already has WebCodex Desktop installed. To run
+the destructive native install/uninstall smoke as well, use a disposable VM/test user
+or a Windows user with no existing WebCodex Desktop installation:
+
+```powershell
+.\scripts\build_desktop_windows_local.ps1 -Smoke
+```
+
+The manual steps below are equivalent diagnostic stages when you need to inspect one
+part of the pipeline.
+
 ### 1. Use a clean committed source state
 
 The Desktop staging helper verifies exact build provenance and expects
@@ -184,8 +208,12 @@ generated `webcodex-runtime` resource tree, and creates the Tauri config overlay
 ### 4. Build NSIS
 
 ```powershell
-$targetDir = Join-Path $PWD "target\desktop-local-tauri-$PID"
+$targetDir = Join-Path $PWD "target\desktop-local-tauri"
 $env:CARGO_TARGET_DIR = $targetDir
+$bundleDir = Join-Path $targetDir "release\bundle\nsis"
+if (Test-Path -LiteralPath $bundleDir) {
+  Remove-Item -LiteralPath $bundleDir -Recurse -Force
+}
 
 Push-Location apps\desktop
 try {
@@ -199,7 +227,7 @@ try {
 The installer is under:
 
 ```text
-target\desktop-local-tauri-<pid>\release\bundle\nsis\
+target\desktop-local-tauri\release\bundle\nsis\
 ```
 
 Use the native host that matches the package:
@@ -250,7 +278,7 @@ For the normal local path, the repository already provides a complete helper:
 bash scripts/build_desktop_macos_local.sh
 ```
 
-It requires a clean worktree, installs Desktop npm dependencies, builds the dogfood runtime, stages it, creates the native ad-hoc signed DMG, runs the macOS smoke validation, and writes the final file under `target/desktop-local-dist/`. The steps below are the equivalent manual flow for understanding or diagnosing a build.
+It requires a clean worktree, installs both shared frontend and Desktop npm dependencies, builds the dogfood runtime, stages it, creates the native ad-hoc signed DMG, runs the macOS smoke validation, and writes the final file under `target/desktop-local-dist/`. The steps below are the equivalent manual flow for understanding or diagnosing a build.
 
 ### 1. Use a clean committed source state
 
@@ -417,6 +445,7 @@ change:
 - [extended native validation](../.github/workflows/extended-native.yml);
 - [release candidate build](../.github/workflows/release-build.yml);
 - `scripts/prepare_desktop_bundle.ps1`;
+- `scripts/build_desktop_windows_local.ps1`;
 - `scripts/build_desktop_macos_local.sh`;
 - `scripts/prepare_desktop_bundle_macos.py`;
 - `scripts/desktop_install_windows_smoke.ps1`;

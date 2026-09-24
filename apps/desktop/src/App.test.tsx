@@ -371,10 +371,15 @@ beforeEach(() => {
   });
 
   it("saves a selected profile with write-only credentials through one backend mutation", async () => {
-    api.getState.mockResolvedValue(readyState);
+    let observed = readyState;
+    api.getState.mockImplementation(async () => observed);
     const saved = { ...readyState, connections: connectionSnapshot(connectionFixture({ tunnel_id: "tunnel_saved", revision: 2 })) };
     const submitted: unknown[] = [];
-    api.saveTunnelProfile.mockImplementation(async request => { submitted.push(structuredClone(request)); return saved; });
+    api.saveTunnelProfile.mockImplementation(async request => {
+      submitted.push(structuredClone(request));
+      observed = saved;
+      return saved;
+    });
     renderApp(); await editTunnel();
     fireEvent.change(screen.getByLabelText("Tunnel ID"), { target: { value: "tunnel_saved" } });
     const key = screen.getByLabelText("API Key"); expect(key).toHaveAttribute("type", "password");

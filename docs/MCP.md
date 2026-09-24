@@ -294,6 +294,15 @@ read revisions, or snapshot-bound continuations.
 
 Long-running commands and validations use the canonical WebCodex Job lifecycle. Observe the exact Job returned by the initiating call with `observe_jobs` (or recover it with `list_jobs` when identity was genuinely lost) instead of starting another copy. Jobs are not wrapped as MCP Tasks; WebCodex does not advertise the former Connector-specific MCP Tasks extension.
 
+The ChatGPT/model turn and one MCP observation request do not own the Job lifetime.
+A Host-side `Thinking stopped` / `Thinking failed`, request timeout, or dropped
+observation therefore does not by itself prove that the Job stopped. Resume the same
+conversation and re-observe the existing Job; recover Job inventory before any retry
+when identity was lost. Do not redispatch solely because the model turn ended.
+Eligible terminal waits may expose best-effort Host continuation, but Host acceptance
+does not guarantee that a new model turn actually ran. See
+[Troubleshooting](TROUBLESHOOTING.md#chatgpt-reports-thinking-stopped--thinking-failed-during-a-long-job).
+
 ## First safe prompt
 
 ```text

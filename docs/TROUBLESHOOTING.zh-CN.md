@@ -104,6 +104,35 @@ Runner。
 不要公开 access token、OAuth secret、`Authorization` header、完整 env file、完整
 `runner.toml`，也不要未经检查/脱敏直接贴 full raw trace。
 
+### 长任务期间 ChatGPT 显示 `Thinking stopped` / `Thinking failed`
+
+ChatGPT/model turn 停止或失败，**不等于**底层 WebCodex Job 或 Runner child process
+已经失败。Host/model turn、一次 MCP/HTTP observation request 与 canonical WebCodex Job
+具有彼此独立的生命周期。[Issue #658](https://github.com/yyjeqhc/webcodex/issues/658)
+这类实测中，ChatGPT turn 停止后，本地长时间 Job 仍然继续正常运行。
+
+不要立即重新启动同一个 command。原 Job 如果仍在运行，重复 dispatch 可能造成重复训练、
+重复构建、重复下载、端口冲突或其他副作用。
+
+建议按下面顺序恢复：
+
+1. 优先回到**原 ChatGPT 会话**发送“继续”，并明确要求检查先前已经启动的 Job，
+   而不是重新执行原 command。
+2. 如果 exact `job_id` 仍然保留，继续观察同一个 Job。一次 observation request
+   中断或失败，不代表执行本身停止。
+3. 如果 Job identity 确实丢失，先恢复当前可见 Job inventory，识别原来的 execution，
+   再考虑是否需要 retry。
+4. 只有 authoritative Job state 明确表明原 execution 已经不再运行，而且该 command
+   可以安全重试时，才重新 dispatch。
+
+WebCodex 对符合条件的 Job terminal wait 也提供 Host continuation 能力，但它属于
+best-effort 的交互辅助，而不是 correctness guarantee。Host 接受 continuation request
+并不能证明新的 model turn 已经实际运行，因此手动“继续”仍然是 fallback。
+
+不要根据一次观测到的持续时间推断固定的 ChatGPT timeout（例如“必定两小时超时”）。
+排障时真正有意义的是：WebCodex Job 是否仍在运行，以及失败的 ChatGPT attempt
+是否实际到达 WebCodex。
+
 ## 常见问题
 
 ### `webcodex connect` 无法完成

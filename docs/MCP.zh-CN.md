@@ -239,6 +239,14 @@ Adaptive Runtime 可以把常用工具直接暴露，把 long-tail 工具通过 
 
 长时间 command 与 validation 使用 canonical WebCodex Job。发起调用返回 exact Job 后，用 `observe_jobs` 观察同一个 Job；只有 Job identity 确实丢失时才用 `list_jobs` 恢复，不要重复启动。Jobs 不再包装成 MCP Tasks，WebCodex 也不再 advertise 原 Connector-specific MCP Tasks extension。
 
+ChatGPT/model turn 与一次 MCP observation request 都不拥有 Job 的生命周期。因此 Host 侧
+出现 `Thinking stopped` / `Thinking failed`、request timeout 或 observation 中断，
+本身不能证明 Job 已经停止。优先在原会话继续并重新观察已有 Job；identity 丢失时先恢复
+Job inventory，再考虑 retry。不要仅仅因为 model turn 结束就重复 dispatch。符合条件的
+terminal wait 可以提供 best-effort Host continuation，但 Host 接受 continuation 并不保证
+新的 model turn 已经实际运行。详见
+[Troubleshooting](TROUBLESHOOTING.zh-CN.md#长任务期间-chatgpt-显示-thinking-stopped--thinking-failed)。
+
 ## 第一个安全 prompt
 
 ```text

@@ -44,7 +44,7 @@ pub fn work_result_app_tool_specs() -> Vec<ToolSpec> {
     vec![
         tool_spec(
             "work_result_state",
-            "App-only exact live Work Result refresh. Re-authorizes project + session_id and never records into the target Session. It returns user-facing activity and collaboration state plus any retained immutable final-changes snapshot already sealed by a non-blocking finish_coding_task closeout; the refresh never creates or replaces that snapshot.",
+            "App-only exact live Work Result refresh. Re-authorizes project + session_id and never records into the target Session. It returns bounded exact-Session workflow stages/activity, independent Window activity and collaboration state plus any retained immutable final-changes snapshot already sealed by a non-blocking finish_coding_task closeout; the refresh never creates or replaces that snapshot.",
         ),
         tool_spec(
             "work_result_send_message",

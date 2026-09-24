@@ -282,7 +282,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
         "validation_summary" => Some(validation_summary_tool_output_schema()),
         "present_work_result" | "work_result_state" => Some(wrapped_output_schema(vec![(
             "work_result",
-            open_object_schema("Bounded Work Result for one exact project-scoped Workflow Session. Presentation and explicit App reads expose semantic activity, shared Session collaboration state, and compact diagnostic summaries; after a non-blocking current-attempt finish_coding_task closeout they may also expose the retained sealed final_changes snapshot for lazy per-file inspection."),
+            open_object_schema("Bounded Work Result for one exact project-scoped Workflow Session. Presentation and explicit App reads expose bounded exact-Session workflow activity, semantic Window activity, shared Session collaboration state, and compact diagnostic summaries; after a non-blocking current-attempt finish_coding_task closeout they may also expose the retained sealed final_changes snapshot for lazy per-file inspection."),
         )])),        "work_result_send_message" => Some(wrapped_output_schema(vec![
             ("success", schema_type("boolean", "Always true on success.")),
             ("session_id", schema_type("string", "Exact Workflow Session updated by the card.")),

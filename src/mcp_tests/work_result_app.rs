@@ -36,7 +36,7 @@ async fn handle_with_server_apps_enabled(
 async fn work_result_descriptor_is_explicit_sparse_app_only_and_resource_backed() {
     assert_eq!(
         MCP_WORK_RESULT_UI_RESOURCE_URI,
-        "ui://webcodex/work-result/v3"
+        "ui://webcodex/work-result/v4"
     );
     let runtime = test_runtime();
 

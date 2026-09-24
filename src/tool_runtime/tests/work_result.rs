@@ -482,6 +482,19 @@ async fn work_result_progress_uses_latest_meaningful_session_activity() {
         state.output["work_result"]["session"]["latest_activity"]["tool"], "show_changes",
         "presentation-only Session events must not masquerade as work progress"
     );
+    let workflow = &state.output["work_result"]["workflow"];
+    let activity = workflow["activity"].as_array().unwrap();
+    assert_eq!(
+        activity.len(),
+        1,
+        "paired calls appear once; presentation calls are excluded"
+    );
+    assert_eq!(activity[0]["stage"], "review");
+    assert_eq!(activity[0]["label"], "Reviewed changes");
+    assert_eq!(activity[0]["state"], "succeeded");
+    assert!(activity[0].get("tool").is_none());
+    assert!(activity[0].get("paths").is_none());
+    assert_eq!(workflow["history_partial"], false);
     assert_eq!(
         state.output["work_result"]["session"]["latest_activity"]["kind"],
         "tool_call_finished"

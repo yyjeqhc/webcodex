@@ -205,7 +205,7 @@ for (const first of ["input", "result"]) {
     assert.equal(view.calls("work_result_state").length, 0);
     assert.equal(view.nodes.workspaceStatus.textContent, "Changes in progress");
     assert.equal(view.nodes.validationStatus.textContent, "Checks passed");
-    assert.equal(view.nodes.reviewStatus.textContent, "Review complete");
+    assert.equal(view.nodes.reviewStatus.textContent, "Review recorded");
     assert.equal(view.nodes.refresh.disabled, false);
   });
 }
@@ -322,7 +322,7 @@ test("user Refresh performs one exact state read and updates the snapshot", asyn
   await view.reply(view.calls("work_result_state")[0], toolResult({ work_result: nextState }));
   assert.equal(view.nodes.workspaceStatus.textContent, "No pending changes");
   assert.equal(view.nodes.validationStatus.textContent, "Checks need attention");
-  assert.equal(view.nodes.reviewStatus.textContent, "Review complete");
+  assert.equal(view.nodes.reviewStatus.textContent, "Review recorded");
   assert.equal(view.nodes.status.textContent, "Updated");
   assert.equal(view.nodes.refresh.disabled, false);
 });
@@ -701,3 +701,50 @@ for (const method of ["ui/resource-teardown", "pagehide", "beforeunload"]) {
     assert.equal(view.timers.size, 0);
   });
 }
+
+
+test("workflow stages filter exact Session evidence without fetching or sending, and tabs preserve drafts", async () => {
+  const view = app("mcp_work_result_app.html");
+  const workflow = { history_partial: true, activity: [
+    { label: "Read project files", stage: "explore", state: "succeeded", started_at: 1789811990, finished_at: 1789811991, duration_ms: 1000, count: 2 },
+    { label: "Ran checks", stage: "check", state: "failed", started_at: 1789812000, finished_at: 1789812001, duration_ms: 1000, count: 1 },
+  ] };
+  view.toolResult({ work_result: { ...baseState, workflow } });
+  await view.initialize();
+  assert.equal(view.nodes.projectIdentity.textContent, project);
+  assert.equal(view.nodes.sessionIdentity.textContent, session_id);
+  assert.equal(view.nodes.workflowActivity.children.length, 2);
+  assert.equal(view.nodes.workflowActivity.children[0].children[0].children[0].textContent, "Ran checks");
+  assert.equal(view.nodes.workflowCoverage.textContent, "Recent retained activity");
+  const explore = view.nodes.workflowStages.children[1];
+  explore.onclick();
+  assert.equal(view.nodes.workflowActivity.children.length, 1);
+  assert.equal(explore.getAttribute("aria-pressed"), "true");
+  view.nodes.messageInput.value = "Keep my draft";
+  view.nodes.tabChecks.onclick();
+  assert.equal(view.nodes.panelChecks.hidden, false);
+  assert.equal(view.nodes.panelWorkflow.hidden, true);
+  view.nodes.askChecks.onclick();
+  assert.equal(view.nodes.panelMessages.hidden, false);
+  assert.equal(view.nodes.messageInput.value, "Keep my draft");
+  assert.equal(view.calls("work_result_send_message").length, 0);
+  assert.equal(view.calls("work_result_state").length, 0);
+  view.nodes.tabMessages.onkeydown({ key: "ArrowLeft", preventDefault() {} });
+  assert.equal(view.nodes.tabChecks.getAttribute("aria-selected"), "true");
+  view.nodes.refresh.onclick(); await flush();
+  await view.reply(view.calls("work_result_state")[0], toolResult({ work_result: { ...baseState, workflow } }));
+  assert.equal(view.nodes.panelChecks.hidden, false);
+  assert.equal(view.nodes.workflowStages.children[1], explore);
+  assert.equal(view.nodes.messageInput.value, "Keep my draft");
+});
+
+for (const workflow of [
+  { history_partial: false, activity: Array.from({ length: 25 }, () => ({})) },
+  { history_partial: false, activity: [{ label: "Untrusted", stage: "invented", state: "success", started_at: 1, finished_at: 2, duration_ms: 1, count: 1 }] },
+]) test("invalid or oversized workflow cannot enter the task card", async () => {
+  const view = app("mcp_work_result_app.html");
+  view.toolResult({ work_result: { ...baseState, workflow } });
+  await view.initialize();
+  assert.equal(view.nodes.badge.textContent, "Unavailable");
+  assert.equal(view.calls("work_result_state").length, 0);
+});

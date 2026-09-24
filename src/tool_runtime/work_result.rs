@@ -20,6 +20,7 @@ use webcodex_workflow_session::{
 
 const WORK_RESULT_SESSION_EVENT_LIMIT: usize = 200;
 const WORK_RESULT_VALIDATION_LIMIT: usize = 20;
+const WORK_RESULT_ACTIVITY_LIMIT: usize = 24;
 pub(crate) const MAX_WORK_RESULT_FILES: usize = 8;
 const MAX_WORK_RESULT_PATH_CHARS: usize = 512;
 const MAX_WORK_RESULT_BRANCH_CHARS: usize = 160;
@@ -215,6 +216,49 @@ impl ToolRuntime {
         projection["session"] = work_result_session(&summary);
         projection["activity"] = self.work_result_activity(window, auth, &summary).await;
         projection["collaboration"] = self.work_result_collaboration(&summary, auth);
+        // Reuse the exact Session's paired/deduplicated Console evidence. Window
+        // activity is a separate observation and never supplies this timeline.
+        if let Some(detail) = self.workflow_session_console_detail(
+            &resolved_project,
+            &session_id,
+            Some(WORK_RESULT_ACTIVITY_LIMIT),
+        ) {
+            let activity: Vec<Value> = detail
+                .activity
+                .iter()
+                .map(|item| {
+                    json!({
+                        "label": match item.kind.as_str() {
+                            "Read" => "Read project files",
+                            "Searched" => "Searched the project",
+                            "Navigated" | "Explored" => "Explored the project",
+                            "Edited" => "Edited code",
+                            "Tested" => "Ran checks",
+                            "Reviewed" => "Reviewed changes",
+                            "Ran" => "Ran a command",
+                            _ => "Task activity",
+                        },
+                        "stage": match item.kind.as_str() {
+                            "Read" | "Searched" | "Navigated" | "Explored" => "explore",
+                            "Edited" => "edit",
+                            "Tested" => "check",
+                            "Reviewed" => "review",
+                            "Ran" => "run",
+                            _ => "other",
+                        },
+                        "state": item.state,
+                        "started_at": item.started_at,
+                        "finished_at": item.finished_at,
+                        "duration_ms": item.duration_ms,
+                        "count": item.group_count.unwrap_or(1),
+                    })
+                })
+                .collect();
+            projection["workflow"] = json!({
+                "activity": activity,
+                "history_partial": detail.activity_truncated || summary.retention_truncated,
+            });
+        }
         // state_version covers live domains only. Wall-clock inactivity is
         // derived in the View from stable timestamps so passive time does not
         // manufacture state changes or defeat refresh backoff.

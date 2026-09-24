@@ -180,6 +180,22 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
   .brand-icon { width: 36px; height: 36px; }
 }
 [hidden] { display: none !important; }
+[hidden] { display: none !important; }
+.task-context { display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 9px 13px; color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+.card-tabs { display: flex; padding: 0 11px; border-bottom: 1px solid var(--divider); }
+.card-tabs button { flex: 1; min-width: 0; min-height: 40px; padding: 7px 4px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--muted); cursor: pointer; }
+.card-tabs button[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); font-weight: 650; }
+.card-tabs button:focus-visible, .workflow-stages button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.card-panel { display: grid; min-width: 0; gap: 10px; }
+.workflow-stages { display: flex; flex-wrap: wrap; gap: 6px; }
+.workflow-stages button { padding: 6px 9px; border: 1px solid var(--divider); border-radius: 9px; color: CanvasText; background: var(--surface); cursor: pointer; }
+.workflow-stages button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+.workflow-activity { display: grid; max-height: 320px; overflow: auto; }
+.workflow-row { display: grid; gap: 4px; padding: 10px 0; border-bottom: 1px solid var(--divider); }
+.workflow-row header { display: flex; gap: 8px; justify-content: space-between; }
+.workflow-row strong { overflow-wrap: anywhere; }
+.workflow-row time { color: var(--muted); font-size: 11px; }
+.section p { margin: 0; }
 </style>
 </head>
 <body>
@@ -191,7 +207,15 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     </div>
     <div class="actions"><button id="refresh" class="refresh" type="button" disabled>Refresh</button><span id="badge" class="badge">Loading</span></div>
   </header>
+  <div class="task-context"><span id="projectIdentity"></span><span id="sessionIdentity"></span></div>
+  <nav class="card-tabs" role="tablist" aria-label="Task views">
+    <button id="tabWorkflow" type="button" role="tab" aria-selected="true" aria-controls="panelWorkflow">Workflow</button>
+    <button id="tabChecks" type="button" role="tab" aria-selected="false" aria-controls="panelChecks" tabindex="-1">Checks</button>
+    <button id="tabMessages" type="button" role="tab" aria-selected="false" aria-controls="panelMessages" tabindex="-1">Messages</button>
+    <button id="tabResult" type="button" role="tab" aria-selected="false" aria-controls="panelResult" tabindex="-1">Result</button>
+  </nav>
   <div class="content">
+    <div id="panelWorkflow" class="card-panel" role="tabpanel" aria-labelledby="tabWorkflow">
     <section class="section progress-section">
       <div class="section-head"><h2>Current activity</h2><span id="activityAge" class="secondary"></span></div>
       <div class="activity-line">
@@ -199,6 +223,15 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
         <div id="activityDetail" class="activity-age"></div>
       </div>
     </section>
+    <section class="section">
+      <div class="section-head"><h2>Task workflow</h2><span id="workflowCoverage" class="secondary"></span></div>
+      <p class="secondary">Recorded steps for this Session, newest first. Stages are filters, not a prescribed plan.</p>
+      <div id="workflowStages" class="workflow-stages" role="group" aria-label="Filter workflow stages"></div>
+      <div id="workflowActivity" class="workflow-activity"></div>
+      <button id="askWorkflow" class="refresh" type="button">Send an instruction</button>
+    </section>
+    </div>
+    <div id="panelMessages" class="card-panel" role="tabpanel" aria-labelledby="tabMessages" hidden>
     <section class="section">
       <div class="section-head"><h2>Messages</h2><span id="collaborationMeta" class="secondary"></span></div>
       <div id="messages" class="conversation"></div>
@@ -208,6 +241,9 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
       </form>
       <div id="composerState" class="secondary"></div>
     </section>
+    </div>
+    <div id="panelResult" class="card-panel" role="tabpanel" aria-labelledby="tabResult" hidden>
+    <p id="resultPending" class="secondary">Final changes appear here after the task is closed out. Live workspace changes are not a final result.</p>
     <section id="finalChanges" class="section" hidden>
       <div class="section-head"><h2>What changed</h2><span id="frozenStats" class="stats-inline"></span></div>
       <div id="frozenSummary" class="primary"></div>
@@ -215,14 +251,16 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
       <button id="frozenMore" class="refresh" type="button" hidden></button>
       <div id="frozenFooter" class="secondary"></div>
     </section>
-    <details class="details">
-      <summary>Details</summary>
+    </div>
+    <section id="panelChecks" class="section card-panel" role="tabpanel" aria-labelledby="tabChecks" hidden>
+      <div class="section-head"><h2>Checks and review</h2></div>
       <div class="detail-grid">
         <div class="detail-item"><span>Checks</span><strong id="validationStatus">Waiting</strong><small id="validationMeta" class="secondary"></small></div>
         <div class="detail-item"><span>Review</span><strong id="reviewStatus">Waiting</strong><small id="reviewMeta" class="secondary"></small></div>
         <div class="detail-item"><span>Changes</span><strong id="workspaceStatus">Waiting</strong><small id="workspaceMeta" class="secondary"></small></div>
       </div>
-    </details>
+      <button id="askChecks" class="refresh" type="button">Ask about checks</button>
+    </section>
   </div>
   <footer class="app-footer"><span class="live-dot" aria-hidden="true"></span><div id="status" class="status">Connecting…</div></footer>
 </main>
@@ -266,6 +304,8 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
   let sendInFlight = false;
   let pendingSend = null;
   let tornDown = false;
+  let selectedPane = "Workflow";
+  let selectedStage = "all";
   const pending = new Map();
   const el = id => document.getElementById(id);
 
@@ -413,12 +453,24 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     return value.available || (!value.can_send && value.messages.length === 0);
   }
 
+  function validWorkflow(value) {
+    if (value === undefined) return true; // Cached pre-workflow presentations remain readable.
+    return value && typeof value.history_partial === "boolean" && Array.isArray(value.activity)
+      && value.activity.length <= 24 && value.activity.every(row => row
+        && typeof row.label === "string" && row.label.length <= 120
+        && ["explore", "edit", "run", "check", "review", "other"].includes(row.stage)
+        && typeof row.state === "string" && row.state.length <= 64
+        && Number.isSafeInteger(row.started_at) && row.started_at >= 0
+        && (row.finished_at === null || (Number.isSafeInteger(row.finished_at) && row.finished_at >= 0))
+        && (row.duration_ms === null || safeCount(row.duration_ms)) && safeCount(row.count) && row.count > 0);
+  }
+
   function validState(value) {
     if (!value || typeof value !== "object" || Array.isArray(value) || value.version !== 2) return null;
     const candidate = pair(value.project, value.session_id);
     if (!candidate || typeof value.state_version !== "string" || !STATE_VERSION.test(value.state_version)) return null;
     if (!validWorkspace(value.workspace) || !validValidation(value.validation) || !validReview(value.review)
-      || !validSessionState(value.session) || !validActivity(value.activity) || !validCollaboration(value.collaboration)) return null;
+      || !validSessionState(value.session) || !validActivity(value.activity) || !validCollaboration(value.collaboration) || !validWorkflow(value.workflow)) return null;
     if (value.final_changes !== undefined && !validFrozen(value.final_changes)) return null;
     return value;
   }
@@ -647,7 +699,7 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
 
   function renderReview(review) {
     if (review.total > 0) {
-      el("reviewStatus").textContent = "Review complete";
+      el("reviewStatus").textContent = "Review recorded";
       el("reviewMeta").textContent = review.history_partial ? "Recent review activity available" : "";
     } else if (review.history_partial) {
       el("reviewStatus").textContent = "Review status incomplete";
@@ -725,9 +777,59 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     if (collaboration && !collaboration.can_send) el("composerState").textContent = collaboration.available ? "This task is closed for new messages." : "";
   }
 
+  const panes = ["Workflow", "Checks", "Messages", "Result"];
+  function selectPane(name, focus = false) {
+    if (!panes.includes(name)) return;
+    selectedPane = name;
+    for (const pane of panes) {
+      el("panel" + pane).hidden = pane !== name;
+      el("tab" + pane).setAttribute("aria-selected", String(pane === name));
+      el("tab" + pane).setAttribute("tabindex", pane === name ? "0" : "-1");
+    }
+    if (focus) el("tab" + name).focus?.();
+  }
+
+  function renderWorkflow(workflow) {
+    const rows = workflow?.activity || [];
+    const stages = [["all", "All"], ["explore", "Explore"], ["edit", "Edit"], ["run", "Run"], ["check", "Checks"], ["review", "Review"], ["other", "Other"]];
+    el("workflowCoverage").textContent = !workflow ? "Unavailable" : workflow.history_partial ? "Recent retained activity" : "Retained activity";
+    const filters = el("workflowStages");
+    // Keep focused filter buttons mounted while polling refreshes their counts.
+    if (!filters.children.length) for (const [stage, label] of stages) {
+      const button = document.createElement("button"); button.type = "button";
+      button.onclick = () => { selectedStage = stage; renderWorkflow(lastRenderedState?.workflow); };
+      button.setAttribute("aria-label", label); filters.append(button);
+    }
+    stages.forEach(([stage, label], index) => {
+      const count = rows.filter(row => stage === "all" || row.stage === stage).reduce((total, row) => total + row.count, 0);
+      filters.children[index].textContent = `${label} · ${count}`;
+      filters.children[index].setAttribute("aria-pressed", String(stage === selectedStage));
+    });
+    const root = el("workflowActivity"); root.replaceChildren();
+    for (const row of [...rows].reverse().filter(row => selectedStage === "all" || row.stage === selectedStage)) {
+      const article = document.createElement("article"); article.className = "workflow-row";
+      const header = document.createElement("header");
+      const label = document.createElement("strong"); label.textContent = row.label + (row.count > 1 ? ` · ${row.count}` : "");
+      const status = document.createElement("span"); status.className = "secondary";
+      status.textContent = ({ started: "Started · outcome not recorded", running: "Started · completion not recorded", queued: "Queued", outcome_unknown: "Outcome unknown", timed_out: "Timed out", cancelled: "Cancelled", not_started: "Not started", success: "Succeeded", succeeded: "Succeeded", completed: "Completed", failed: "Failed", info: "Reported progress" })[row.state] || row.state;
+      header.append(label, status);
+      const time = document.createElement("time");
+      time.textContent = new Date(row.started_at * 1000).toLocaleString() + (row.duration_ms === null ? "" : ` · ${row.duration_ms < 1000 ? row.duration_ms + "ms" : (row.duration_ms / 1000).toFixed(1) + "s"}`);
+      article.append(header, time); root.append(article);
+    }
+    if (!root.children.length) {
+      const empty = document.createElement("p"); empty.className = "secondary";
+      empty.textContent = workflow ? "No recorded activity in this stage." : "Workflow history is unavailable in this snapshot. Refresh to check.";
+      root.append(empty);
+    }
+  }
+
   function render(state) {
     if (tornDown) return;
     lastRenderedState = state;
+    el("projectIdentity").textContent = state.project;
+    el("sessionIdentity").textContent = state.session_id;
+    renderWorkflow(state.workflow);
     const hasFinalChanges = snapshot !== null || state.final_changes !== undefined;
     el("taskTitle").textContent = state.session.title || "WebCodex";
     renderActivity(state.activity, state.session, hasFinalChanges);
@@ -735,6 +837,9 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     renderWorkspace(state.workspace, hasFinalChanges);
     renderValidation(state.validation);
     renderReview(state.review);
+    el("resultPending").hidden = hasFinalChanges;
+    el("tabResult").textContent = hasFinalChanges ? "Result · Ready" : "Result";
+    el("tabChecks").textContent = state.validation.unresolved_failures > 0 ? "Checks · !" : "Checks";
 
     if (hasFinalChanges || state.session.lifecycle === "closed") {
       el("badge").className = "badge tone-clean";
@@ -932,6 +1037,22 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     }
   });
 
+  for (const pane of panes) {
+    el("tab" + pane).onclick = () => selectPane(pane);
+    el("tab" + pane).onkeydown = event => {
+      const index = panes.indexOf(selectedPane);
+      const next = event.key === "ArrowRight" ? panes[(index + 1) % panes.length]
+        : event.key === "ArrowLeft" ? panes[(index + panes.length - 1) % panes.length]
+        : event.key === "Home" ? panes[0] : event.key === "End" ? panes.at(-1) : null;
+      if (next) { event.preventDefault(); selectPane(next, true); }
+    };
+  }
+  el("askWorkflow").onclick = () => { selectPane("Messages"); el("messageInput").focus?.(); };
+  el("askChecks").onclick = () => {
+    if (!el("messageInput").value) el("messageInput").value = "Please explain the current checks and any remaining issues.";
+    selectPane("Messages"); updateComposerControl(); el("messageInput").focus?.();
+  };
+  selectPane("Workflow");
   el("refresh").onclick = () => { void refresh(false); };
   el("frozenMore").onclick = () => { if (snapshot) appendFrozenFiles(snapshot.files.length); };
   el("composer").onsubmit = event => { event.preventDefault(); void sendMessageFromCard(); };

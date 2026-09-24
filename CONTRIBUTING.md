@@ -76,6 +76,30 @@ Never include tokens, authorization headers, private keys, cookies, passwords,
 private file contents, or other secrets. For security-sensitive reports, use
 [SECURITY.md](SECURITY.md) instead of a public issue.
 
+## Fixing a problem yourself
+
+Maintainer availability may vary. You do not need to wait for a maintainer to
+implement a reported bug before preparing a focused fix.
+
+A useful self-service workflow is:
+
+1. Update to current `main` and confirm the problem still reproduces.
+2. Capture the smallest safe reproduction and exact error evidence.
+3. Create a focused fix branch.
+4. Inspect the relevant implementation and tests. Using WebCodex itself or another
+   coding agent for this work is welcome.
+5. Make the smallest coherent fix and add a regression test when practical.
+6. Run the smallest relevant validation, then dogfood the real affected workflow
+   when local testing is practical.
+7. Review the final diff for unrelated changes, generated files, credentials, and
+   machine-private data.
+8. Open a pull request and link the issue when one exists.
+
+For the basic Rust/source toolchain and dogfood build, see
+[Build from source](README.md#build-from-source). Desktop fixes should follow
+[Desktop development and local packaging](docs/DESKTOP_DEVELOPMENT.md), including
+the native installer/DMG helpers where relevant.
+
 ## Development workflow
 
 1. Start from the current `main` branch and create a focused branch for the

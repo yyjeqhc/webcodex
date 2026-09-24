@@ -43,6 +43,27 @@ Agent 创建的 issue 还应：
 
 不要提交 token、Authorization header、private key、cookie、password、私有文件内容或其他 secret。安全相关问题请按照 [SECURITY.md](SECURITY.md) 处理，不要创建公开 issue。
 
+## 自己修复问题
+
+维护者响应时间可能有所变化。已经报告的 bug 不需要等待维护者先实现，也欢迎直接准备
+focused fix。
+
+推荐的自助修复流程：
+
+1. 更新到最新 `main`，确认问题仍然可以复现。
+2. 保留最小、安全的复现步骤和准确错误证据。
+3. 创建 focused fix branch。
+4. 检查相关实现与测试；欢迎直接使用 WebCodex 本身或其他 coding agent 辅助完成。
+5. 做最小完整修复，并在适合时补充 regression test。
+6. 运行最小但足够的验证；条件允许时，再对真实受影响工作流进行本地 dogfood。
+7. 提交前检查最终 diff，排除无关修改、生成文件、credential 与机器私有数据。
+8. 创建 pull request；如果已有 issue，请进行关联。
+
+基础 Rust/source 工具链与 dogfood 构建见 README 的
+[从源码构建](README.zh-CN.md#从源码构建)。Desktop 修复请按照
+[Desktop 开发与本地打包](docs/DESKTOP_DEVELOPMENT.zh-CN.md) 操作，并在相关时使用
+native installer/DMG helper 做实际验证。
+
 ## 开发流程
 
 1. 从当前 `main` 创建 focused branch。

@@ -6,7 +6,7 @@
 
 <p align="center"><strong>让云端 AI Agent 使用你自己机器上的真实开发环境。</strong></p>
 <p align="center">把 ChatGPT、Claude 等 MCP 客户端连接到你已有的仓库、Git 工作区和开发工具。</p>
-<p align="center"><a href="#只想先试几分钟临时分享">快速试用</a> · <a href="#下载发行版">下载</a> · <a href="docs/PERSONAL_SETUP.zh-CN.md">完整配置</a> · <a href="#文档">文档</a> · <a href="SECURITY.md">安全说明</a></p>
+<p align="center"><a href="#只想先试几分钟临时分享">快速试用</a> · <a href="#下载发行版">下载</a> · <a href="docs/PERSONAL_SETUP.zh-CN.md">完整配置</a> · <a href="#文档">文档</a> · <a href="https://github.com/yyjeqhc/webcodex/issues">Issues</a> · <a href="CONTRIBUTING.zh-CN.md">参与贡献</a> · <a href="SECURITY.md">安全说明</a></p>
 
 <p align="center">
   <a href="docs/MCP.zh-CN.md"><img src="https://img.shields.io/badge/protocol-MCP-2563EB?labelColor=1E40AF&amp;style=flat-square" alt="MCP 协议"></a>
@@ -139,16 +139,48 @@ WebCodex 能在配置的项目范围内读取和修改文件、执行命令。�
 
 ## 从源码构建
 
+如果已发布版本遇到问题，不必只能等待维护者发布新版本。欢迎先在最新 `main`
+复现问题，在本地构建并验证 focused fix，然后直接提交 pull request。
+
+CLI / Server / Runner 开发需要先安装 [Git](https://git-scm.com/) 和通过
+[rustup](https://rustup.rs/) 安装的 stable Rust toolchain，然后使用日常 dogfood
+profile 构建：
+
 ```bash
-cargo build --release --workspace --bins
-export PATH="$PWD/target/release:$PATH"
+cargo build --locked --profile dogfood --workspace --bins
 ```
 
-Desktop UI/Tauri 开发以及 Windows/macOS 本地打包请看 [Desktop 开发与打包](docs/DESKTOP_DEVELOPMENT.zh-CN.md)，不要把 raw Tauri bundle 当成完整 WebCodex Desktop 包。
+产物位于 `target/dogfood/`。如果修改 Desktop/frontend，还需要 Node.js 22 + npm
+以及对应平台的 native toolchain。Windows Desktop 开发需要 MSVC / Windows SDK
+环境；macOS 需要 Xcode Command Line Tools。完整 prerequisites、源码运行和打包流程见
+[Desktop 开发与打包](docs/DESKTOP_DEVELOPMENT.zh-CN.md)。
+
+本地验证 Desktop installer 时请使用仓库 helper，而不是直接执行 raw Tauri bundle：
+
+```powershell
+# Windows：clean 且已提交的源码
+.\scripts\build_desktop_windows_local.ps1
+
+# Windows：显式把未提交修改打成 dirty dogfood installer
+.\scripts\build_desktop_windows_local.ps1 -AllowDirty
+```
+
+```bash
+# macOS
+bash scripts/build_desktop_macos_local.sh
+```
+
+这些属于开发/dogfood 构建，不是正式 Release artifact。
 
 ## 参与贡献
 
-欢迎提交贡献，也欢迎使用 WebCodex 或其他 coding agent 辅助开发。Bug 报告、开发流程与 PR 说明见 [CONTRIBUTING.zh-CN.md](CONTRIBUTING.zh-CN.md)。
+欢迎提交 Issue，也非常欢迎 focused pull request。维护者响应时间可能有所变化，因此如果
+能够在最新 `main` 复现问题，尤其欢迎直接排查、在本地构建验证修复并提交 PR，而不必
+等待维护者先实现。可以使用 WebCodex 本身、Codex、ChatGPT、Claude 或其他 coding
+agent 辅助阅读、修改和验证仓库。
+
+Bug 报告需要提供哪些信息、自助修复流程、验证要求与 PR 说明见
+[CONTRIBUTING.zh-CN.md](CONTRIBUTING.zh-CN.md)。
 
 ## 致谢
 

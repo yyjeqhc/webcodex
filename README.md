@@ -6,7 +6,7 @@
 
 <p align="center"><strong>Give cloud AI agents a real development environment on your own machines.</strong></p>
 <p align="center">Connect ChatGPT, Claude, and other MCP clients to the repositories, Git checkout, and tools you already use.</p>
-<p align="center"><a href="#just-trying-it-for-a-few-minutes-temporary-share">Quick Trial</a> · <a href="#download-a-release">Downloads</a> · <a href="docs/PERSONAL_SETUP.md">Full Setup</a> · <a href="#documentation">Documentation</a> · <a href="SECURITY.md">Security</a></p>
+<p align="center"><a href="#just-trying-it-for-a-few-minutes-temporary-share">Quick Trial</a> · <a href="#download-a-release">Downloads</a> · <a href="docs/PERSONAL_SETUP.md">Full Setup</a> · <a href="#documentation">Documentation</a> · <a href="https://github.com/yyjeqhc/webcodex/issues">Issues</a> · <a href="CONTRIBUTING.md">Contribute</a> · <a href="SECURITY.md">Security</a></p>
 
 <p align="center">
   <a href="docs/MCP.md"><img src="https://img.shields.io/badge/protocol-MCP-2563EB?labelColor=1E40AF&amp;style=flat-square" alt="MCP protocol"></a>
@@ -139,16 +139,52 @@ WebCodex can read and modify files and execute commands inside configured projec
 
 ## Build from source
 
+If a release has a problem, you do not need to wait for a maintainer to produce a
+new build. Reproducing the issue on current `main`, testing a focused fix locally,
+and submitting the result as a pull request are all welcome.
+
+For CLI / Server / Runner development, install [Git](https://git-scm.com/) and the
+stable Rust toolchain through [rustup](https://rustup.rs/), then build the normal
+dogfood profile:
+
 ```bash
-cargo build --release --workspace --bins
-export PATH="$PWD/target/release:$PATH"
+cargo build --locked --profile dogfood --workspace --bins
 ```
 
-For Desktop UI/Tauri development and local Windows/macOS packaging, use the [Desktop development guide](docs/DESKTOP_DEVELOPMENT.md) instead of a raw Tauri bundle command.
+The binaries are written under `target/dogfood/`. For Desktop/frontend work, also
+install Node.js 22 + npm and the native platform toolchain. Windows Desktop
+development needs an MSVC/Windows SDK environment; macOS development needs Xcode
+Command Line Tools. The complete prerequisites and source-build workflow are in the
+[Desktop development guide](docs/DESKTOP_DEVELOPMENT.md).
+
+For local Desktop installer testing, use the repository helpers rather than a raw
+Tauri bundle command:
+
+```powershell
+# Windows: clean committed source
+.\scripts\build_desktop_windows_local.ps1
+
+# Windows: explicitly package uncommitted local work as dirty dogfood
+.\scripts\build_desktop_windows_local.ps1 -AllowDirty
+```
+
+```bash
+# macOS
+bash scripts/build_desktop_macos_local.sh
+```
+
+These are development/dogfood builds, not public release artifacts.
 
 ## Contributing
 
-Contributions are welcome, including contributions created with WebCodex itself or other coding agents. For bug reports, development workflow, and pull request guidance, see [CONTRIBUTING.md](CONTRIBUTING.md).
+Issues and focused pull requests are welcome. Maintainer response time may vary, so
+users who can reproduce a problem on current `main` are especially encouraged to
+investigate it, build and test a fix locally, and submit a PR rather than waiting for
+the fix to be implemented upstream. WebCodex itself, Codex, ChatGPT, Claude, or other
+coding agents may be used to help inspect, edit, and validate the repository.
+
+For what to include in a bug report, the self-service fix workflow, validation
+expectations, and pull request guidance, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Acknowledgements
 

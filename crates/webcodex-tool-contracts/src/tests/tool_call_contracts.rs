@@ -2194,6 +2194,23 @@ fn current_window_activity_has_no_model_supplied_window_selector() {
     );
 }
 
+#[test]
+fn current_window_activity_description_keeps_timing_factual_and_overlap_explicit() {
+    let spec = registered_tool_specs()
+        .into_iter()
+        .find(|spec| spec.name == "current_window_activity")
+        .expect("current_window_activity ToolSpec");
+    let description = spec.description.as_str();
+    for phrase in [
+        "WebCodex-observed request timing only",
+        "short gaps never prove Host cells",
+        "window_transition_kind=overlap",
+        "never inferred from gap duration",
+    ] {
+        assert!(description.contains(phrase), "{phrase}: {description}");
+    }
+}
+
 #[cfg(not(feature = "experimental-code-mode"))]
 #[test]
 fn guidance_profile_code_mode_fails_closed_when_feature_is_unavailable() {

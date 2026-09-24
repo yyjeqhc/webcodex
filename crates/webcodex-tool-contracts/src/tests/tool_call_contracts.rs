@@ -2203,6 +2203,7 @@ fn current_window_activity_description_keeps_timing_factual_and_overlap_explicit
     let description = spec.description.as_str();
     for phrase in [
         "WebCodex-observed request timing only",
+        "gap threshold counts are cumulative",
         "short gaps never prove Host cells",
         "window_transition_kind=overlap",
         "never inferred from gap duration",

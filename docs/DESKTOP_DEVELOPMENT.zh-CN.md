@@ -205,7 +205,7 @@ if (Test-Path -LiteralPath $bundleDir) {
 
 Push-Location apps\desktop
 try {
-  npm exec tauri -- build --bundles nsis --config $config --ci --no-sign -- --locked
+  node node_modules/@tauri-apps/cli/tauri.js build --bundles nsis --config $config --ci --no-sign -- --locked
   if ($LASTEXITCODE -ne 0) { throw "Tauri NSIS build failed" }
 } finally {
   Pop-Location

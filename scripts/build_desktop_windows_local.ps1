@@ -114,7 +114,7 @@ try {
     $env:CARGO_TARGET_DIR = $TauriTarget
     Push-Location (Join-Path $Root "apps\desktop")
     try {
-        & npm exec tauri -- build --bundles nsis --config $Config --ci --no-sign -- --locked
+        & node node_modules/@tauri-apps/cli/tauri.js build --bundles nsis --config $Config --ci --no-sign -- --locked
         if ($LASTEXITCODE -ne 0) { Fail "Tauri NSIS build failed" }
     } finally {
         Pop-Location

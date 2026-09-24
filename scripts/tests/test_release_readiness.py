@@ -264,6 +264,7 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("target\\desktop-local-tauri", windows)
         self.assertIn("prepare_desktop_bundle.ps1", windows)
         self.assertIn("--bundles nsis", windows)
+        self.assertIn("node node_modules/@tauri-apps/cli/tauri.js build", windows)
         self.assertIn("--no-sign -- --locked", windows)
         self.assertIn("if ($Smoke)", windows)
         self.assertIn("desktop_install_windows_smoke.ps1", windows)

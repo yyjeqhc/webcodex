@@ -44,8 +44,8 @@ const baseState = {
   },
   activity: {
     available: true, scope: "window", active: false, current: null,
-    last: { label: "Reviewed changes", kind: "review", at_ms: 1789812000000 },
-    last_meaningful_activity_at_ms: 1789812000000, coverage_partial: false,
+    last: { label: "Reviewed changes", kind: "review", at_ms: 1_999_999_990_000 },
+    last_meaningful_activity_at_ms: 1_999_999_990_000, coverage_partial: false,
   },
   collaboration: { available: true, can_send: true, messages: [] },
 };
@@ -106,20 +106,102 @@ test("primary task card hides raw tool and live file details while keeping seman
   assert.equal(view.nodes.collaborationMeta.textContent, "Shared with WebUI");
 });
 
-test("last-active copy is derived from a stable Window activity timestamp", async () => {
+test("recent inactive work keeps the lightweight last-active state before the idle threshold", async () => {
   const quietState = {
     ...baseState,
     state_version: `wr2_${"c".repeat(64)}`,
     activity: {
       ...baseState.activity,
-      last: { label: "Edited code", kind: "edit", at_ms: 1_999_999_940_000 },
-      last_meaningful_activity_at_ms: 1_999_999_940_000,
+      last: { label: "Edited code", kind: "edit", at_ms: 1_999_999_990_000 },
+      last_meaningful_activity_at_ms: 1_999_999_990_000,
     },
   };
   const view = app("mcp_work_result_app.html");
   view.toolResult({ work_result: quietState });
   await view.initialize();
-  assert.equal(view.nodes.activityAge.textContent, "This chat · Last active 1m ago");
+  assert.equal(view.nodes.activityStatus.textContent, "Edited code");
+  assert.equal(view.nodes.activityAge.textContent, "This chat · Last active 10s ago");
+  assert.equal(view.nodes.badge.textContent, "Waiting");
+});
+
+test("inactive work becomes explicitly idle from local wall-clock time while preserving the last semantic activity", async () => {
+  const idleState = {
+    ...baseState,
+    state_version: `wr2_${"f".repeat(64)}`,
+    activity: {
+      ...baseState.activity,
+      last: { label: "Ran checks", kind: "test", at_ms: 1_999_999_820_000 },
+      last_meaningful_activity_at_ms: 1_999_999_820_000,
+    },
+  };
+  const view = app("mcp_work_result_app.html");
+  view.toolResult({ work_result: idleState });
+  await view.initialize();
+  assert.equal(view.nodes.badge.textContent, "Idle");
+  assert.equal(view.nodes.activityStatus.textContent, "No WebCodex activity");
+  assert.equal(view.nodes.activityDetail.textContent, "Last work: Ran checks");
+  assert.equal(view.nodes.activityAge.textContent, "Idle for 3m");
+});
+
+test("missing meaningful activity time waits without inventing an idle age", async () => {
+  const view = app("mcp_work_result_app.html");
+  view.toolResult({ work_result: {
+    ...baseState,
+    activity: { ...baseState.activity, last: null, last_meaningful_activity_at_ms: null },
+  } });
+  await view.initialize();
+  assert.equal(view.nodes.badge.textContent, "Waiting");
+  assert.equal(view.nodes.activityStatus.textContent, "Waiting for WebCodex activity");
+  assert.equal(view.nodes.activityAge.textContent, "");
+});
+
+test("validation failure and completed state both outrank local idle presentation", async () => {
+  const idleActivity = {
+    ...baseState.activity,
+    last: { label: "Ran checks", kind: "test", at_ms: 1_999_999_820_000 },
+    last_meaningful_activity_at_ms: 1_999_999_820_000,
+  };
+  const attention = app("mcp_work_result_app.html");
+  attention.toolResult({ work_result: {
+    ...baseState,
+    activity: idleActivity,
+    validation: { ...baseState.validation, current_status: "failed", unresolved_failures: 1, failures: 1 },
+  } });
+  await attention.initialize();
+  assert.equal(attention.nodes.badge.textContent, "Needs attention");
+
+  const completed = app("mcp_work_result_app.html");
+  completed.toolResult({ work_result: {
+    ...baseState,
+    activity: idleActivity,
+    session: { ...baseState.session, lifecycle: "closed" },
+  } });
+  await completed.initialize();
+  assert.equal(completed.nodes.badge.textContent, "Completed");
+  assert.equal(completed.nodes.activityStatus.textContent, "Work completed");
+});
+
+test("unchanged state_version refresh still advances wall-clock idle copy without server mutation", async () => {
+  const recent = {
+    ...baseState,
+    activity: {
+      ...baseState.activity,
+      last: { label: "Reviewed changes", kind: "review", at_ms: 1_999_999_950_000 },
+      last_meaningful_activity_at_ms: 1_999_999_950_000,
+    },
+  };
+  const view = app("mcp_work_result_app.html");
+  view.toolInput(input);
+  view.toolResult({ work_result: recent });
+  await view.initialize();
+  assert.equal(view.nodes.badge.textContent, "Waiting");
+  view.advanceTime(20_000);
+  view.nodes.refresh.onclick();
+  await flush();
+  await view.reply(view.calls("work_result_state")[0], toolResult({ work_result: recent }));
+  assert.equal(view.nodes.badge.textContent, "Idle");
+  assert.equal(view.nodes.activityStatus.textContent, "No WebCodex activity");
+  assert.equal(view.nodes.activityAge.textContent, "Idle for 1m");
 });
 
 test("shared Session messages render user-facing Sent, Acknowledged, and Handled states", async () => {

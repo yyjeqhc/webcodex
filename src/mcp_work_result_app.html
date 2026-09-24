@@ -277,6 +277,7 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
   const VISIBLE_IDLE_REFRESH_MS = 10000;
   const HIDDEN_IDLE_REFRESH_MS = 30000;
   const IDLE_BACKOFF_AFTER_MS = 60000;
+  const ACTIVITY_IDLE_AFTER_MS = 60000;
   const AUTO_REFRESH_IDLE_PAUSE_MS = 30 * 60 * 1000;
   const MAX_PROJECT = 512;
   const MAX_PATH = 512;
@@ -655,6 +656,20 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     return `${Math.floor(hours / 24)}d ago`;
   }
 
+  function activityIdleElapsed(activity) {
+    if (activity.active || activity.last_meaningful_activity_at_ms === null) return null;
+    return Math.max(0, Date.now() - activity.last_meaningful_activity_at_ms);
+  }
+
+  function formatDuration(elapsedMs) {
+    const minutes = Math.floor(Math.max(0, elapsedMs) / 60000);
+    if (minutes < 60) return `${minutes}m`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours}h ${minutes % 60}m`;
+    const days = Math.floor(hours / 24);
+    return `${days}d ${hours % 24}h`;
+  }
+
   function renderWorkspace(workspace, hasFinalChanges) {
     el("branch").textContent = workspace.branch || "Task";
     if (!workspace.git_available) {
@@ -723,6 +738,20 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
       el("activityAge").textContent = activity.scope === "window" ? "This chat · Active now" : "Active now";
       return;
     }
+    const idleElapsed = activityIdleElapsed(activity);
+    if (idleElapsed !== null && idleElapsed >= ACTIVITY_IDLE_AFTER_MS) {
+      el("activityStatus").textContent = "No WebCodex activity";
+      el("activityDetail").textContent = activity.last ? `Last work: ${activity.last.label}`
+        : activity.coverage_partial ? "Earlier activity is not fully observable" : "";
+      el("activityAge").textContent = `Idle for ${formatDuration(idleElapsed)}`;
+      return;
+    }
+    if (activity.last_meaningful_activity_at_ms === null) {
+      el("activityStatus").textContent = "Waiting for WebCodex activity";
+      el("activityDetail").textContent = activity.last?.label || (activity.coverage_partial ? "Current activity is not fully observable" : "");
+      el("activityAge").textContent = "";
+      return;
+    }
     if (activity.last) {
       el("activityStatus").textContent = activity.last.label;
       el("activityDetail").textContent = activity.scope === "window" ? "Waiting for the next activity in this chat" : "Waiting for the next task activity";
@@ -730,7 +759,7 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
       el("activityAge").textContent = prefix + formatAge(activity.last_meaningful_activity_at_ms);
       return;
     }
-    el("activityStatus").textContent = "Waiting for activity";
+    el("activityStatus").textContent = "Waiting for WebCodex activity";
     el("activityDetail").textContent = activity.coverage_partial ? "Current activity is not fully observable" : "";
     el("activityAge").textContent = "";
   }
@@ -850,6 +879,9 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     } else if (state.validation.unresolved_failures > 0 || state.validation.current_status === "failed") {
       el("badge").className = "badge tone-unavailable";
       el("badge").textContent = "Needs attention";
+    } else if ((activityIdleElapsed(state.activity) ?? -1) >= ACTIVITY_IDLE_AFTER_MS) {
+      el("badge").className = "badge";
+      el("badge").textContent = "Idle";
     } else {
       el("badge").className = "badge";
       el("badge").textContent = "Waiting";

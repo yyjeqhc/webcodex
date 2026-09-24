@@ -18,3 +18,5 @@ createRoot(root).render(
     <UiProvider><App /></UiProvider>
   </StrictMode>,
 );
+
+import "./styles-workflow.css";

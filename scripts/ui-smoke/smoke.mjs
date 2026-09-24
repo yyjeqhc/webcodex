@@ -366,7 +366,8 @@ try {
   for (const width of [1440, 1280, 1024, 768, 390]) {
     const context = await prepare('/runtime/', width, width === 390 ? 844 : 900);
     await page.locator('.work-surface-control').waitFor();
-    assert.equal(await page.getByRole('radio', { name: /Goals/ }).isChecked(), true);
+    assert.equal(await page.getByRole('radio', { name: /Sessions/ }).isChecked(), true);
+    await page.locator('.work-surface-control label').filter({ hasText: 'Goals' }).click();
     await page.getByRole('progressbar', { name: 'Plan' }).waitFor();
     assert.equal(await page.locator('.goal-plan-stepper .mantine-Stepper-step').count(), 3, `Runtime ${width}: Goal plan must use three Mantine steps`);
     assert.equal(await page.locator('.goal-plan-stepper .mantine-Stepper-step[data-progress]').count(), 1, `Runtime ${width}: current Goal step must be distinct`);
@@ -467,6 +468,7 @@ try {
     await screenshot(`runtime-dark-${width}`);
     await page.locator(nav).filter({ hasText: 'Work' }).click();
     await page.locator('.work-surface-control').waitFor();
+    await page.locator('.work-surface-control label').filter({ hasText: 'Goals' }).click();
     if (width === 1440 || width === 390) await inspectProjectPicker('.goal-list-filters', `Runtime dark ${width}`, true);
     if (width === 1440) {
       const identityBackground = await page.locator('.goal-inspector .fact-list > div').first().evaluate(el => getComputedStyle(el).backgroundColor);
@@ -515,6 +517,7 @@ try {
   }
   {
     const context = await prepare('/runtime/', 2560, 1229);
+    await page.locator('.work-surface-control label').filter({ hasText: 'Goals' }).click();
     await page.getByRole('progressbar', { name: 'Plan' }).waitFor();
     await screenshot('runtime-goals-2560');
     await page.locator('.work-surface-control label').filter({ hasText: 'Sessions' }).click();

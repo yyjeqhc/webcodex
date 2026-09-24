@@ -22,3 +22,9 @@ Screenshots and `report.json` are regenerated in `artifacts/liquid-glass-ui/` (i
 For interactive Browser Use, run `npm --prefix scripts/ui-smoke run serve` and use the printed loopback URL. Routes are `/runtime/`, `/desktop/`, `/admin/`, `/desktop/?state=disconnected`, and `/desktop/?permissions`. The server expires after 30 minutes. Stop only its exact owned process when finished.
 
 This is not a substitute for native permission, installer, real Tunnel, or Windows platform testing. Native Rust tests independently cover configuration preservation, stale-target rejection, process ownership, project inventory, and Server/Runner PID preservation on failed Tunnel replacement.
+
+For focused Runtime workflow layout checks after building `frontend`, run
+`node scripts/ui-smoke/runtime-workflow.mjs`. This checks visible running calls,
+Project attribution, expanded Session activity, and horizontal overflow at 1440,
+1024, and 390 pixels in both themes. Fixture screenshots and the report go to
+`artifacts/liquid-glass-ui/runtime-workflow/`.

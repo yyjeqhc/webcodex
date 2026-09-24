@@ -142,8 +142,17 @@ export function useSessionWorkspace(
     if (!enabled || !location || !detail) return;
     const shouldPoll = detail.lifecycle === "active" || detail.running_call || detail.running_jobs > 0;
     if (!shouldPoll) return;
-    const timer = window.setInterval(refresh, 5_000);
-    return () => window.clearInterval(timer);
+    const refreshVisible = () => {
+      if (document.visibilityState !== "hidden" && !detailRequest.current && !messageRequest.current) refresh();
+    };
+    const timer = window.setInterval(refreshVisible, 5_000);
+    document.addEventListener("visibilitychange", refreshVisible);
+    window.addEventListener("focus", refreshVisible);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", refreshVisible);
+      window.removeEventListener("focus", refreshVisible);
+    };
   }, [detail, enabled, location, refresh]);
 
   const send = useCallback(async (input: { message: string; kind?: string; priority?: string; requiresAck?: boolean; replyTo?: string }) => {

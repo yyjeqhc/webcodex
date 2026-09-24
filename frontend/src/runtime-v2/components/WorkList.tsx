@@ -1,7 +1,7 @@
 import { ActionIcon, TextInput } from "@mantine/core";
 import { ArrowUpRight, Search } from "lucide-react";
 import { motion } from "motion/react";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { relativeTime } from "../model/format.js";
 import type { WorkBucket, WorkItem } from "../model/work.js";
 import type { RuntimeLanguage } from "../../runtime_i18n.js";
@@ -44,14 +44,17 @@ export function WorkList({
   onSelect,
 }: Props) {
   const t = (value: string) => translate(value, language);
+  const [projectFilter, setProjectFilter] = useState("");
+  const projectOptions = [...new Map(items.map((item) => [item.projectId, item.projectName])).entries()];
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
-    if (!query || /^wc_sess_[A-Za-z0-9_-]+$/.test(query)) return items;
-    return items.filter((item) =>
+    const scoped = items.filter((item) => !projectFilter || item.projectId === projectFilter);
+    if (!query || /^wc_sess_[A-Za-z0-9_-]+$/.test(query)) return scoped;
+    return scoped.filter((item) =>
       [item.title, item.projectName, item.projectId, item.runner, item.phase, item.sessionId]
         .some((value) => value.toLowerCase().includes(query))
     );
-  }, [items, search]);
+  }, [items, search, projectFilter]);
   const groups = useMemo(
     () => BUCKET_ORDER.map((bucket) => ({
       bucket,
@@ -66,7 +69,15 @@ export function WorkList({
         <div><span className="eyebrow">{t("Workspace")}</span><h1>{t("Work")}</h1></div>
         <WorkSurfaceSwitch surface={surface} onSurfaceChange={onSurfaceChange} language={language} />
       </div>
-      <TextInput className="work-search-field" type="search" leftSection={<Search size={15} />}
+      <div className="work-list-filters">
+        <label className="activity-project-filter">
+          <span>{t("Project filter")}</span>
+          <select value={projectFilter} onChange={(event) => setProjectFilter(event.target.value)}>
+            <option value="">{t("All Projects")}</option>
+            {projectOptions.map(([id, name]) => <option key={id} value={id}>{name} · {id}</option>)}
+          </select>
+        </label>
+        <TextInput className="work-search-field" type="search" leftSection={<Search size={15} />}
           aria-label={t("Search Sessions")}
           placeholder={t("Search work or paste a Session ID…")}
           value={search}
@@ -79,6 +90,7 @@ export function WorkList({
             <ArrowUpRight size={14} />
           </ActionIcon> : null}
         />
+      </div>
       <div className="work-list-scroll">
         {inventoryIncomplete && (
           <div className="inventory-note">{t("Recent Session inventory is bounded. Paste an exact Session ID to locate omitted work.")}</div>

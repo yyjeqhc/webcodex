@@ -78,7 +78,7 @@ describe("Runtime v2 navigation", () => {
 
   it("keeps Work / Projects / Runtime as the only primary destinations", async () => {
     render(<App />);
-    expect(await screen.findByRole("heading", { name: "Runtime V2 Goal Workbench" })).toBeTruthy();
+    expect(await screen.findByRole("searchbox", { name: "Search Sessions" })).toBeTruthy();
 
     const primary = screen.getAllByRole("navigation", { name: "Workspace views" })[0];
     expect(primary.textContent).toContain("Work");
@@ -86,7 +86,7 @@ describe("Runtime v2 navigation", () => {
     expect(primary.textContent).toContain("Runtime");
     expect(primary.textContent).not.toContain("Workflow Sessions");
     expect(primary.textContent).not.toContain("Window Activity");
-    expect((screen.getByRole("radio", { name: /Goals/ }) as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByRole("radio", { name: /Sessions/ }) as HTMLInputElement).checked).toBe(true);
     expect(screen.getByRole("radio", { name: /Sessions/ })).toBeTruthy();
 
     fireEvent.click(screen.getAllByRole("button", { name: /Projects/ })[0]);
@@ -114,7 +114,7 @@ describe("Runtime v2 navigation", () => {
     const pendingLocate = new Promise<Response>((resolve) => { resolveLocate = resolve; });
     installFetch(() => pendingLocate);
     render(<App />);
-    expect(await screen.findByRole("heading", { name: "Runtime V2 Goal Workbench" })).toBeTruthy();
+    expect(await screen.findByRole("searchbox", { name: "Search Sessions" })).toBeTruthy();
     fireEvent.click(screen.getByRole("radio", { name: /Sessions/ }));
 
     const exact = "wc_sess_abcdef0123456789";

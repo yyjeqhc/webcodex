@@ -5,6 +5,17 @@ export type RuntimeLanguage = "en" | "zh-CN";
 export const LANGUAGE_STORAGE_KEY = "webcodex.runtime.language.v1";
 
 export const RUNTIME_ZH_TEXT: Record<string, string> = {
+  "Observation scope": "观测范围",
+  "Window activity refresh failed; showing previous observations.": "窗口活动刷新失败，正在显示之前的观测记录。",
+  "Last Project": "最近项目",
+  "Outside WebCodex": "WebCodex 外部间隔",
+  "Technical details": "技术详情",
+  "Elapsed": "已运行",
+  "No explicit Session link": "未明确关联工作会话",
+  "No Project evidence": "未观察到项目归属",
+  "All Projects in this Window": "此窗口的所有项目",
+  "Newest first. Project, Session and timing stay visible.": "最新调用在前，项目、会话和时间直接可见。",
+  "Tool activity": "工具调用",
   "Protocol compatibility": "协议兼容性",
   "Build alignment": "构建一致性",
   "Build revisions are diagnostic identity, not compatibility gates.": "构建修订仅用于诊断，不决定功能兼容性。",

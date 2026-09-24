@@ -147,7 +147,7 @@ export function WorkView({
           </div>
         </main>
       ) : selectedItem && selected ? (
-        <SessionExecution item={selectedItem} location={selected} session={session} language={language} />
+        <SessionExecution item={selectedItem} location={selected} session={session} language={language} onOpenWindow={onOpenWindow} />
       ) : (
         <main className="session-main ui-workbench-surface">
           <div className="empty-work">

@@ -5,6 +5,7 @@ import type { RuntimeV2Client } from "../src/runtime-v2/api/client.js";
 import { workItemFromRecent } from "../src/runtime-v2/model/work.js";
 import { ProjectsView } from "../src/runtime-v2/views/ProjectsView.js";
 import { RuntimeView } from "../src/runtime-v2/views/RuntimeView.js";
+import { WindowActivityFeed } from "../src/runtime-v2/components/WindowActivityFeed.js";
 import { WorkView } from "../src/runtime-v2/views/WorkView.js";
 import { UiProvider } from "../src/ui/UiProvider.js";
 import { recentSession, runtimeOverview, sessionDetail, sessionItem, windowDetail } from "./fixtures.js";
@@ -213,18 +214,20 @@ describe("Project / Session / Window relationships", () => {
 
     expect(await screen.findByText("Read Runtime source")).toBeTruthy();
     expect(screen.getByTestId("window-project-tag").textContent).toBe("WebCodex");
-    const workflowStep = screen.getByText("Read Runtime source").closest("details") as HTMLDetailsElement;
-    expect(workflowStep.open).toBe(false);
-    fireEvent.click(screen.getByText("Read Runtime source").closest("summary")!);
-    expect(workflowStep.open).toBe(true);
+    const workflowStep = screen.getByTestId("window-workflow-step");
+    expect(workflowStep.tagName).toBe("ARTICLE");
+    expect(within(workflowStep).getByText("WebCodex")).toBeTruthy();
+    expect(within(workflowStep).getByText("120ms")).toBeTruthy();
+    fireEvent.click(within(workflowStep).getByText("Technical details"));
     expect(screen.getByText("tools/call")).toBeTruthy();
     expect(screen.getByText(/recording · wc_sess_/)).toBeTruthy();
 
-    fireEvent.click(screen.getByText("Linked Sessions").closest("summary")!);
+    expect((screen.getByText("Linked Sessions").closest("details") as HTMLDetailsElement).open).toBe(true);
     expect(screen.getByText("Runtime E2E hardening")).toBeTruthy();
     expect(screen.getByText("WebUI v2 rewrite")).toBeTruthy();
     expect(screen.getByText("recording")).toBeTruthy();
     expect(screen.getByText("work_on_project")).toBeTruthy();
+    expect((client.post as ReturnType<typeof vi.fn>).mock.calls.some(([path]) => path === "workflow-session")).toBe(false);
     expect(screen.getAllByText(/observation evidence/i).length).toBeGreaterThan(0);
     expect(screen.getByTestId("window-scope-note").textContent).toContain("observation principal");
 
@@ -290,8 +293,8 @@ describe("Project / Session / Window relationships", () => {
     const rendered = render(<WorkView {...props} />);
     expect(await screen.findByText("/root/git/webcodex")).toBeTruthy();
     fireEvent.click(await screen.findByRole("tab", { name: "Evidence" }));
-    expect(await screen.findByText(/Window 1111111111/)).toBeTruthy();
-    expect(screen.getByText(/Window 2222222222/)).toBeTruthy();
+    expect(within(screen.getByRole("complementary", { name: "Session context" })).getByText(/Window 1111111111/)).toBeTruthy();
+    expect(within(screen.getByRole("complementary", { name: "Session context" })).getByText(/Window 2222222222/)).toBeTruthy();
     expect(screen.getAllByText(/A very long Session title A very long Session title/).length).toBeGreaterThan(0);
 
     rendered.unmount();
@@ -374,8 +377,8 @@ describe("Project / Session / Window relationships", () => {
     expect(screen.getAllByText("tool-0").length).toBeGreaterThan(0);
     const steps = screen.getAllByTestId("window-workflow-step");
     expect(steps).toHaveLength(205);
-    expect(steps[0].textContent).toContain("tool-0");
-    expect(steps.at(-1)?.textContent).toContain("tool-204");
+    expect(steps[0].textContent).toContain("tool-204");
+    expect(steps.at(-1)?.textContent).toContain("tool-0");
     expect(screen.queryByRole("button", { name: /Show more activity/ })).toBeNull();
     expect(screen.getByText("Server activity history is bounded; older Window activity is not loaded.")).toBeTruthy();
   });
@@ -407,4 +410,31 @@ describe("Project / Session / Window relationships", () => {
     expect(screen.getByText("This Session is no longer visible to the current credential.")).toBeTruthy();
     expect(screen.queryByRole("textbox", { name: "Send a message to this work session…" })).toBeNull();
   });
+});
+
+
+it("shows running calls and filters exact per-call Projects without inventing Session links", () => {
+  const first = runtimeOverview().projects[0];
+  const second = { ...first, id: "agent:special:second", name: "Second Project" };
+  const openSession = vi.fn();
+  const base = { started_at_ms: 1_790_000_100_000, ended_at_ms: 1_790_000_100_120, duration_ms: 120, method: "tools/call", status: "success", meaningful: true, workflow_sessions: [] };
+  render(<WindowActivityFeed language="en" projects={[first, second]} onOpenSession={openSession} detail={windowDetail({
+    active_requests: [{ server_trace_id: "running", method: "tools/call", tool_name: "run_process", project: second.id, started_at_ms: base.started_at_ms, elapsed_ms: 4200 }],
+    activity: [
+      { ...base, tool_name: "read_files", project: first.id, workflow_sessions: [{ workflow_session_id: "wc_sess_1111111111111111", project: first.id, relation: "recording" }] },
+      { ...base, tool_name: "apply_patch", project: second.id },
+      { ...base, tool_name: "runtime_info" },
+    ],
+  })} />);
+  expect(screen.getByText("run_process")).toBeTruthy();
+  expect(screen.getByText("4s")).toBeTruthy();
+  expect(screen.getByText("No Project evidence")).toBeTruthy();
+  fireEvent.click(screen.getByTitle("wc_sess_1111111111111111"));
+  expect(openSession).toHaveBeenCalledWith(expect.objectContaining({ projectId: first.id, sessionId: "wc_sess_1111111111111111" }));
+  fireEvent.change(screen.getByRole("combobox", { name: "Project filter" }), { target: { value: second.id } });
+  expect(screen.queryByText("read_files")).toBeNull();
+  expect(screen.queryByText("runtime_info")).toBeNull();
+  expect(screen.getByText("run_process")).toBeTruthy();
+  expect(screen.getByText("apply_patch")).toBeTruthy();
+  expect(screen.getByText("No explicit Session link")).toBeTruthy();
 });

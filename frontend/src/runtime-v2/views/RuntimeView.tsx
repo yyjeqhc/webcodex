@@ -14,12 +14,12 @@ import { useEffect, useState } from "react";
 import type { RuntimeLanguage } from "../../runtime_i18n.js";
 import { translate } from "../../runtime_i18n.js";
 import type { RuntimeV2Client } from "../api/client.js";
-import { absoluteTime, durationText, projectDisplayName, relativeTime, shortId } from "../model/format.js";
+import { absoluteTime, relativeTime, shortId } from "../model/format.js";
 import type { Availability, ProjectRow, RuntimeOverview } from "../model/types.js";
 import { useAgentInventory } from "../state/useAgentInventory.js";
+import { WindowActivityFeed } from "../components/WindowActivityFeed.js";
 import { AgentsPanel } from "../components/AgentsPanel.js";
 import { PageHeader } from "../components/ui/PageHeader.js";
-import { useLinkedSessionWindowCounts } from "../state/useLinkedSessionWindowCounts.js";
 import type { SessionLocation } from "../state/useSessionWorkspace.js";
 import { useWindowWorkspace } from "../state/useWindowWorkspace.js";
 
@@ -57,10 +57,6 @@ export function RuntimeView({
     loadDetail: mode === "windows",
   });
   const agents = useAgentInventory(client, mode === "overview");
-  const observedBy = useLinkedSessionWindowCounts(client, mode === "windows", windows.detail?.linked_sessions || []);
-  const chronologicalActivity = windows.detail
-    ? windows.detail.activity.slice().sort((a, b) => a.ended_at_ms - b.ended_at_ms || a.started_at_ms - b.started_at_ms)
-    : [];
   const latestWindowActivityAt = windows.detail
     ? (windows.detail.last_meaningful_activity_at_ms || windows.detail.last_tool_call_at_ms || windows.detail.last_seen_at_ms)
     : undefined;
@@ -216,16 +212,17 @@ export function RuntimeView({
               <span className="count-badge">{windows.windows.length}</span>
             </div>
             {(windows.availability === "available" || windows.availability === "stale") && (
-              <div className={"window-scope-note " + windows.scope} data-testid="window-scope-note">
+              <details className={"window-scope-note " + windows.scope} data-testid="window-scope-note">
+                <summary>{t("Observation scope")}</summary>
                 {windows.scope === "global"
                   ? t("Global Runtime scope. Only observed WebCodex requests appear here; no Project selection is required.")
                   : t("This credential sees only its observation principal's Windows within currently authorized Projects. Global Window observation requires an administrator Runtime credential.")}
-              </div>
+              </details>
             )}
             {(windows.availability === "available" || windows.availability === "stale") && windows.truncated && (
               <div className="inventory-note">{t("Window inventory is bounded; not all observed Windows are loaded.")}</div>
             )}
-            {windows.windows.map((window) => {
+            {windows.windows.slice().sort((a, b) => Number(b.active_count > 0) - Number(a.active_count > 0) || (b.last_meaningful_activity_at_ms || b.last_seen_at_ms) - (a.last_meaningful_activity_at_ms || a.last_seen_at_ms)).map((window) => {
               const project = projectFor(window.last_project);
               return (
                 <button
@@ -237,20 +234,25 @@ export function RuntimeView({
                 >
                   <span className="window-icon"><Monitor size={16} /></span>
                   <span className="window-row-main">
-                    <strong>Window {shortId(window.client_window_key)}</strong>
+                    <strong title={window.client_window_key}>Window {shortId(window.client_window_key)}</strong>
                     <small>{window.source} · {project?.client_id || t("Runner not observed")}</small>
-                    <small>{project?.name || window.last_project || t("No current Project evidence")}</small>
+                    <small title={window.last_project}>{t("Last Project")}: {project?.name || window.last_project || t("No current Project evidence")}</small>
+                    <small>{window.linked_session_count} {t("linked Sessions")} · {window.active_count} {t("active requests")}</small>
                   </span>
-                  <time>{relativeTime(window.last_meaningful_activity_at_ms || window.last_seen_at_ms)}</time>
+                  <time title={absoluteTime(window.last_meaningful_activity_at_ms || window.last_seen_at_ms)}>{relativeTime(window.last_meaningful_activity_at_ms || window.last_seen_at_ms)}</time>
                 </button>
               );
             })}
+            {windows.availability === "stale" && <div className="inventory-note" role="status">{t("Window activity refresh failed; showing previous observations.")}</div>}
+            {windows.availability === "error" && <div className="empty-inline" role="status">{t("Window activity unavailable")}</div>}
             {windows.availability === "loading" && <div className="empty-inline">{t("Loading Window activity…")}</div>}
             {windows.availability === "denied" && <div className="empty-inline">{t("Window activity unavailable")}</div>}
             {windows.availability === "available" && !windows.windows.length && <div className="empty-inline">{t("No Window activity observed yet.")}</div>}
           </aside>
 
           <section className="window-detail">
+            {windows.detailAvailability === "stale" && <div className="inventory-note" role="status">{t("Window activity refresh failed; showing previous observations.")}</div>}
+            {windows.detailAvailability === "error" && <div className="inventory-note" role="status">{t("Window activity unavailable")}</div>}
             {windows.detail ? (
               <>
                 <header className="window-detail-head">
@@ -261,11 +263,6 @@ export function RuntimeView({
                   </div>
                   <span className="quiet-pill">{windows.detail.active_count} {t("active requests")}</span>
                 </header>
-
-                <section className="window-relation-note">
-                  <Monitor size={16} />
-                  <p>{t("This Window is observation evidence. Linked Sessions remain Project-scoped resources and may be observed by other Windows too.")}</p>
-                </section>
 
                 <section className="window-activity-semantics" aria-label={t("Activity signals")}>
                   <div data-testid="window-signal-window">
@@ -278,29 +275,17 @@ export function RuntimeView({
                     <strong>{latestSessionLinkAt === undefined ? t("Not observed") : latestWindowActivityAt && latestWindowActivityAt > latestSessionLinkAt ? t("Sparse activity") : t("Last linked activity")}</strong>
                     <small>{latestSessionLinkAt !== undefined ? absoluteTime(latestSessionLinkAt) : t("No explicit Session-linked activity is loaded.")}</small>
                   </div>
-                  <div>
-                    <span className="activity-source-badge workspace">{t("Workspace")}</span>
-                    <strong>{t("Unavailable")}</strong>
-                    <small>{t("Workspace activity is shown on the exact Work / Project context, not inferred from Window calls.")}</small>
-                  </div>
-                  <div>
-                    <span className="activity-source-badge job">{t("Job")}</span>
-                    <strong>{t("Unavailable")}</strong>
-                    <small>{t("Job lifecycle is independent; observe_jobs calls do not imply Job state.")}</small>
-                  </div>
                 </section>
 
-                <details className="window-relations-disclosure">
+                <details className="window-relations-disclosure" open>
                   <summary>
                     <span><Monitor size={15} /><strong>{t("Linked Sessions")}</strong></span>
                     <span className="count-badge">{windows.detail.sessions_returned}</span>
                     <ChevronDown size={15} />
                   </summary>
-                  <p>{t("Relations describe how this Window observed each Session; they are not ownership.")}</p>
                   <div className="linked-session-list">
                     {windows.detail.linked_sessions.map((session) => {
                       const project = projectFor(session.project);
-                      const count = observedBy.get(session.workflow_session_id);
                       const canOpen = Boolean(session.project && project);
                       return (
                         <button
@@ -324,9 +309,6 @@ export function RuntimeView({
                             <small>{project?.name || session.project || t("Project not exposed in relation")}</small>
                           </span>
                           <span className="relation-kind">{session.relations.join(" · ") || t("linked")}</span>
-                          <span className="project-session-windows">
-                            <Monitor size={13} /> {count === undefined ? "…" : count === null ? "—" : count} {t("Windows")}
-                          </span>
                           <time>{relativeTime(session.last_linked_at_ms)}</time>
                           {canOpen && <ArrowUpRight size={14} />}
                         </button>
@@ -339,62 +321,7 @@ export function RuntimeView({
                   </div>
                 </details>
 
-                <section className="window-detail-section window-workflow-section">
-                  <div className="section-heading">
-                    <div><h2>{t("Observed workflow")}</h2><p>{t("Each observed action is collapsed by default. Project and status stay visible; expand for bounded low-level evidence.")}</p></div>
-                    <span className="quiet-pill">{chronologicalActivity.length}</span>
-                  </div>
-                  <div className="window-workflow-list">
-                    {chronologicalActivity.map((activity, index) => {
-                      const projectId = activity.project || activity.workflow_sessions.find((session) => session.project)?.project;
-                      const project = projectFor(projectId);
-                      return (
-                        <details className="window-workflow-step" data-testid="window-workflow-step" key={String(activity.started_at_ms) + "-" + index}>
-                          <summary>
-                            <span className="activity-glyph"><Activity size={15} /></span>
-                            <span className="window-workflow-title">
-                              <strong>{activity.activity_presentation || activity.tool_name || activity.method}</strong>
-                              <small>{activity.tool_name || activity.activity_kind || activity.method}</small>
-                            </span>
-                            <span className="activity-source-badge window">{t("Window")}</span>
-                            {projectId && <span className="window-project-tag" data-testid="window-project-tag" title={projectId}>{projectDisplayName(project?.name, projectId)}</span>}
-                            <span className={"status-pill " + (activity.status === "ok" || activity.status === "success" ? "good" : "")}>{activity.status}</span>
-                            <time>{absoluteTime(activity.ended_at_ms)}</time>
-                            <ChevronDown size={15} />
-                          </summary>
-                          <div className="window-workflow-detail">
-                            <div className="evidence-chip-row">
-                              {activity.tool_name && <code>{activity.tool_name}</code>}
-                              {activity.activity_kind && <code>{activity.activity_kind}</code>}
-                              <code>{activity.method}</code>
-                            </div>
-                            <dl>
-                              <div><dt>{t("Started")}</dt><dd>{absoluteTime(activity.started_at_ms)}</dd></div>
-                              <div><dt>{t("Duration")}</dt><dd>{durationText(activity.duration_ms)}</dd></div>
-                              {activity.service_ms !== undefined && <div><dt>{t("Service time")}</dt><dd>{durationText(activity.service_ms)}</dd></div>}
-                              {activity.cycle_ms !== undefined && <div><dt>{t("Cycle")}</dt><dd>{durationText(activity.cycle_ms)}</dd></div>}
-                              {projectId && <div><dt>{t("Project")}</dt><dd><code>{projectId}</code></dd></div>}
-                            </dl>
-                            {!!activity.workflow_sessions.length && (
-                              <div className="window-workflow-relations">
-                                {activity.workflow_sessions.map((relation) => (
-                                  <span key={relation.workflow_session_id + ":" + relation.relation}>
-                                    {t("Session")} · {relation.relation} · {shortId(relation.workflow_session_id)}
-                                  </span>
-                                ))}
-                              </div>
-                            )}
-                            {activity.server_trace_id && <code className="trace-id" title={activity.server_trace_id}>trace {shortId(activity.server_trace_id)}</code>}
-                          </div>
-                        </details>
-                      );
-                    })}
-                    {!windows.detail.activity.length && <div className="empty-inline">{t("No activity observed yet")}</div>}
-                    {windows.detail.activity_truncated && (
-                      <div className="inventory-note">{t("Server activity history is bounded; older Window activity is not loaded.")}</div>
-                    )}
-                  </div>
-                </section>
+                <WindowActivityFeed key={windows.detail.client_window_key} detail={windows.detail} projects={projects} language={language} onOpenSession={onOpenSession} />
               </>
             ) : (
               <div className="empty-work">

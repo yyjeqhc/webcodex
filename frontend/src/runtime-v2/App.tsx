@@ -81,7 +81,7 @@ export function App() {
   const [token, setToken] = useState(initialToken);
   const [view, setViewState] = useState<PrimaryView>(initialView);
   const [selected, setSelected] = useState<SessionLocation | null>(null);
-  const [workSurface, setWorkSurface] = useState<WorkSurface>("goals");
+  const [workSurface, setWorkSurface] = useState<WorkSurface>("sessions");
   const [runtimeTarget, setRuntimeTarget] = useState<RuntimeTarget | null>(null);
   const [language, setLanguage] = useState<RuntimeLanguage>(loadLanguagePreference);
   const [appearance, setAppearance] = useState<AppearancePreference>(loadAppearancePreference);
@@ -144,7 +144,6 @@ export function App() {
   }, [setView]);
 
   const openWork = useCallback(() => {
-    setWorkSurface("goals");
     setView("work");
   }, [setView]);
 

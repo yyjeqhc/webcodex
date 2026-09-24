@@ -266,7 +266,8 @@ export function groupRecentProgress(detail: SessionDetail | null): ProgressGroup
       previous.source === group.source &&
       previous.intent === group.intent &&
       previous.state === group.state &&
-      previous.tools.join("\u0000") === group.tools.join("\u0000")
+      previous.tools.join("\u0000") === group.tools.join("\u0000") &&
+      (previous.provenance || []).join("\u0000") === (group.provenance || []).join("\u0000")
     ) {
       previous.count += group.count;
       previous.latestAt = Math.max(previous.latestAt, group.latestAt);

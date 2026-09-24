@@ -20,11 +20,11 @@ export function ProgressCluster({ group, language }: { group: ProgressGroup; lan
     <TerminalSquare size={16} />;
 
   return (
-    <details className={"tool-cluster " + (group.state === "success" ? "good" : "")}>
+    <details open className={"tool-cluster " + (group.state === "success" ? "good" : "")}>
       <summary>
         <span className="tool-cluster-icon">{icon}</span>
         <span className="tool-cluster-title">
-          <strong>{group.label}{group.count > 1 ? " · " + group.count : ""}</strong>
+          <strong>{t(group.label)}{group.count > 1 ? " · " + group.count : ""}</strong>
           <small>{group.latestSummary || group.tools.join(" · ") || group.state}</small>
         </span>
         <span className={"activity-source-badge " + group.source}>{t(SOURCE_LABEL[group.source])}</span>

@@ -1,0 +1,41 @@
+/* Workflow context remains readable at every size and uses the shared theme. */
+.work-list-filters { min-width: 0; display: grid; gap: 8px; padding: 0 12px 12px; }
+.work-list-filters .work-search-field { margin: 0; }
+.activity-project-filter { display: grid; gap: 5px; min-width: 0; color: var(--muted); font-size: 12px; }
+.activity-project-filter select { width: 100%; min-width: 0; max-width: 340px; min-height: 36px; border: 1px solid var(--line); border-radius: var(--ui-radius-sm); padding: 6px 10px; color: var(--text); background: var(--surface); font: inherit; }
+.activity-feed-heading { align-items: end; flex-wrap: wrap; gap: 12px; }
+.window-call-card { padding: 16px 0; display: grid; gap: 10px; border-bottom: 1px solid var(--line); min-width: 0; }
+.window-call-card.running { padding: 16px; margin-top: 10px; border: 1px solid var(--accent); border-radius: var(--ui-radius-sm); background: var(--ui-accent-soft); }
+.window-call-card header { display: flex; align-items: start; justify-content: space-between; gap: 12px; }
+.window-call-card header > div { min-width: 0; display: grid; gap: 4px; }
+.window-call-card header strong { font-size: 14px; overflow-wrap: anywhere; }
+.window-call-card header code { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.window-call-context, .window-call-timing, .session-work-context { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; }
+.window-call-context .window-project-tag { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.window-call-timing { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.window-call-timing strong, .window-call-timing time { color: var(--text); font-weight: 500; }
+.window-call-sessions { display: grid; gap: 5px; font-size: 12px; }
+.window-call-sessions button { justify-content: start; text-align: left; flex-wrap: wrap; overflow-wrap: anywhere; }
+.window-call-sessions small { color: var(--muted); }
+.window-call-evidence { min-width: 0; color: var(--muted); font-size: 12px; }
+.window-call-evidence summary { cursor: pointer; width: fit-content; padding: 4px 0; }
+.window-call-evidence .evidence-chip-row { margin-top: 8px; }
+.session-work-context { padding: 12px 0; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.session-work-context button { text-align: left; }
+.runtime-page .window-row time { font-size: 12px; color: var(--muted); }
+@media (max-width: 1100px) {
+  .runtime-page .windows-workbench { grid-template-columns: 260px minmax(0, 1fr); }
+  .runtime-page .window-detail { padding: 16px; }
+}
+@media (max-width: 700px) {
+  .runtime-page .windows-workbench { display: block; }
+  .activity-feed-heading .activity-project-filter { width: 100%; }
+  .activity-project-filter select { max-width: 100%; }
+  .window-call-card header { flex-wrap: wrap; }
+  .window-call-timing { gap: 6px 12px; }
+}
+/* The Window relation already names its Session; no per-Session count fetch. */
+.runtime-page .linked-session-row { grid-template-columns: 9px minmax(0,1fr) auto auto 14px; }
+@media (max-width: 700px) {
+  .runtime-page .linked-session-row { grid-template-columns: 9px minmax(0,1fr) 14px; }
+}

@@ -32,13 +32,20 @@ export function useWindowWorkspace(
   const [scope, setScope] = useState<"global" | "principal">("principal");
   const [selectedKey, setSelectedKey] = useState("");
   const [detail, setDetail] = useState<WindowDetail | null>(null);
-  const [revision, setRevision] = useState(0);
+  const [listRevision, setListRevision] = useState(0);
+  const [detailRevision, setDetailRevision] = useState(0);
   const listRequest = useRef<AbortController | null>(null);
   const detailRequest = useRef<AbortController | null>(null);
-  const refresh = useCallback(() => setRevision((value) => value + 1), []);
+  const refresh = useCallback(() => {
+    // Poll each resource independently. A slow response must survive the next
+    // tick, and a slow detail must not prevent discovery of new Windows.
+    if (!listRequest.current) setListRevision((value) => value + 1);
+    if (!detailRequest.current) setDetailRevision((value) => value + 1);
+  }, []);
 
   useEffect(() => {
     listRequest.current?.abort();
+    listRequest.current = null;
     if (!enabled) {
       setAvailability("idle");
       return;
@@ -47,7 +54,7 @@ export function useWindowWorkspace(
     listRequest.current = controller;
     setAvailability((value) => (value === "idle" ? "loading" : value));
     void fetchWindows(client, undefined, controller.signal).then((response) => {
-      if (listRequest.current !== controller || !response) return;
+      if (listRequest.current !== controller || controller.signal.aborted || !response) return;
       listRequest.current = null;
       if (response.status === 401) {
         onUnauthorized();
@@ -77,21 +84,25 @@ export function useWindowWorkspace(
         ? current
         : String(rows[0]?.client_window_key || ""));
     });
-    return () => controller.abort();
-  }, [client, enabled, onUnauthorized, revision]);
+    return () => {
+      controller.abort();
+      if (listRequest.current === controller) listRequest.current = null;
+    };
+  }, [client, enabled, onUnauthorized, listRevision]);
 
   useEffect(() => {
     detailRequest.current?.abort();
+    detailRequest.current = null;
     if (!enabled || !loadDetail || !selectedKey) {
       setDetail(null);
-      setDetailAvailability(selectedKey ? "idle" : "idle");
+      setDetailAvailability("idle");
       return;
     }
     const controller = new AbortController();
     detailRequest.current = controller;
     setDetailAvailability((value) => (value === "idle" ? "loading" : value));
     void fetchWindowDetail(client, selectedKey, controller.signal).then((response) => {
-      if (detailRequest.current !== controller || !response) return;
+      if (detailRequest.current !== controller || controller.signal.aborted || !response) return;
       detailRequest.current = null;
       if (response.status === 401) {
         onUnauthorized();
@@ -116,13 +127,24 @@ export function useWindowWorkspace(
       setDetail(response.data);
       setDetailAvailability("available");
     });
-    return () => controller.abort();
-  }, [client, enabled, loadDetail, onUnauthorized, revision, selectedKey]);
+    return () => {
+      controller.abort();
+      if (detailRequest.current === controller) detailRequest.current = null;
+    };
+  }, [client, enabled, loadDetail, onUnauthorized, detailRevision, selectedKey]);
 
   useEffect(() => {
     if (!enabled) return;
-    const timer = window.setInterval(refresh, refreshMs);
-    return () => window.clearInterval(timer);
+    const refreshVisible = () => { if (document.visibilityState !== "hidden") refresh(); };
+    const timer = window.setInterval(refreshVisible, refreshMs);
+    document.addEventListener("visibilitychange", refreshVisible);
+    window.addEventListener("focus", refreshVisible);
+    refreshVisible();
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", refreshVisible);
+      window.removeEventListener("focus", refreshVisible);
+    };
   }, [enabled, refresh, refreshMs]);
 
   return {
@@ -133,7 +155,7 @@ export function useWindowWorkspace(
     truncated,
     scope,
     selectedKey,
-    detail,
+    detail: enabled && loadDetail && detail?.client_window_key === selectedKey ? detail : null,
     select: setSelectedKey,
     refresh,
   };

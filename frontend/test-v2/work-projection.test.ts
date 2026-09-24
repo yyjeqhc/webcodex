@@ -191,3 +191,16 @@ describe("Work projection", () => {
     expect(groups.some((group) => group.latestSummary === "activity 19")).toBe(true);
   });
 });
+
+it("keeps otherwise identical Window calls separate when their Project provenance differs", () => {
+  const base = { started_at_ms: 1_790_000_001_000, ended_at_ms: 1_790_000_002_000, duration_ms: 1000, method: "tools/call", tool_name: "read_files", status: "success", meaningful: true, workflow_sessions: [] };
+  const groups = groupRecentProgress(sessionDetail({
+    activity: [],
+    window_activity_after_last_session_record: [
+      { ...base, project: "agent:special:one" },
+      { ...base, project: "agent:special:two" },
+    ],
+  })).filter(group => group.source === "window");
+  expect(groups).toHaveLength(2);
+  expect(groups.map(group => group.count)).toEqual([1, 1]);
+});

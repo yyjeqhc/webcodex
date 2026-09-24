@@ -24,9 +24,10 @@ type Props = {
   location: SessionLocation;
   session: SessionWorkspaceState;
   language: RuntimeLanguage;
+  onOpenWindow?: (windowKey: string) => void;
 };
 
-export function SessionExecution({ item, location, session, language }: Props) {
+export function SessionExecution({ item, location, session, language, onOpenWindow }: Props) {
   const t = (value: string) => translate(value, language);
   const progress = groupRecentProgress(session.detail);
   const signals = activitySignals(session.detail, item);
@@ -93,6 +94,14 @@ export function SessionExecution({ item, location, session, language }: Props) {
       >
         <div className="timeline-measure">
           <div className="task-run">
+            <div className="session-work-context">
+              <span title={location.projectId}>{t("Project")}: {location.projectName}</span>
+              <code title={location.sessionId}>{shortId(location.sessionId)}</code>
+              <span title={absoluteTime(item.updatedAt)}>{t("Updated")}: {absoluteTime(item.updatedAt)}</span>
+              {session.detail?.linked_windows.map((row) => <button className="text-button" type="button" key={row.client_window_key} disabled={!onOpenWindow} onClick={() => onOpenWindow?.(row.client_window_key)} title={row.client_window_key}>
+                <Monitor size={14} /> {t("Window")} {shortId(row.client_window_key)} · {relativeTime(row.last_seen_at_ms)}
+              </button>)}
+            </div>
             <section className="task-prompt">
               <div className="task-prompt-label"><MessageSquare size={14} /> {t("Task")}</div>
               <p>{item.title}</p>

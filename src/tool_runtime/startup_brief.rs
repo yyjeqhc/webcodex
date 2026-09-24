@@ -167,11 +167,11 @@ fn tool_strategy_guidance(profile: CodingGuidanceProfile) -> &'static [&'static 
         CodingGuidanceProfile::HostCodeMode => &[
             "Host-native Code Mode is model guidance only. It grants no WebCodex capability/authority, changes no effects/retry/idempotency, and does not require WebCodex nested Code Mode.",
             "Known same-kind inputs: prefer native batches such as read_files(items), search_project_texts(queries), cargo_check(packages), or one apply_text_edits batch; do not Promise.all same-kind micro-calls.",
-            "Known independent cross-tool read-only observations may use Host Promise.all. Prefer search_and_read for search→read; keep result-dependent search/read/branch chains in one Host cell when useful.",
+            "Known independent cross-tool read-only observations: native batches first. For remaining fan-out, use Host Promise.allSettled when partial evidence is useful; use Promise.all only for true all-or-nothing. Prefer search_and_read for search→read; keep result-dependent chains in one Host cell when mechanically determined.",
             "Do not return to the model merely because one child ToolResult arrived. If the next call is mechanically determined with no unresolved semantic choice/uncertainty/authority need, stay in the Host cell and return compact evidence for the next decision.",
             "Natural model-turn boundaries are semantic choice, ambiguous result, new user decision, authority/permission, outcome_unknown or competing recovery, or unresolved mutation intent—not child-call completion.",
             "Keep full ToolResults in the Host cell when possible; preserve identities/revisions/continuations such as job_id, observation_ref, read_revision and failure/recovery fields. Avoid text(JSON.stringify(fullResult)) dumps.",
-            "After Job handoff save exact identity, continue independent work in the same Host context, and use passive Job attention. observe_jobs is only for logs/details/recovery; wait_for_job_terminal only after independent work is exhausted and terminal outcome is required.",
+            "Host cells are short dependency DAGs, not long Job lifetimes. After handoff save exact identity; finish independent work. If only waiting remains, end the cell and resume continuation. Passive Job attention; observe_jobs only for logs/details/recovery; wait_for_job_terminal only after independent work is exhausted.",
             "Development validation may overlap independent work. For final evidence freeze covered source; covered-source edits invalidate that evidence and require rerun. Host support is supplied by the Host, not verified by WebCodex.",
         ],
         #[cfg(feature = "experimental-code-mode")]

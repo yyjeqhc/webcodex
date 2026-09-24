@@ -77,13 +77,18 @@ workflow sidecar uses that call's `guidance_profile`; unrelated tools that reque
 - `host_code_mode`: use Host-native orchestration when the Host provides it. Prefer a
   tool's native batch for predetermined same-kind inputs before Host concurrency.
   Predetermined independent cross-tool read-only observations may run in parallel;
-  result-dependent search/read/branch chains should stay in one Host cell when the
-  next call is mechanically determined. A child ToolResult arriving is not itself a
+  after native batches, prefer `Promise.allSettled` when partial evidence remains useful
+  and `Promise.all` only for true all-or-nothing fan-out. Result-dependent
+  search/read/branch chains should stay in one Host cell when the next call is
+  mechanically determined. A child ToolResult arriving is not itself a
   model-turn boundary: return to the model for semantic choices, ambiguity, new user
   decisions, authority/permission requirements, uncertain outcomes, competing
   recovery choices, or unresolved mutation intent. Keep full ToolResults in the Host
-  cell and return compact decision evidence. Job handoff should retain exact identity,
-  continue independent work, and avoid mechanical `observe_jobs` polling. The
+  cell and return compact decision evidence. Treat each Host cell as a short dependency
+  DAG, not a long-running Job lifetime. After Job handoff, retain exact identity and
+  continue already-known independent work; if the remaining work is primarily waiting,
+  end the cell and resume from the exact continuation instead of holding it open. Avoid
+  mechanical `observe_jobs` polling. The
   startup `tool_strategy.host_orchestration` catalog and exact
   `tool_manifest(tool_name=...)` hint are both derived from canonical
   `ToolDefinition` metadata. They are guidance only and do not alter

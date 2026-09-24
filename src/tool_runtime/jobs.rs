@@ -190,6 +190,14 @@ pub(crate) fn detected_job_summary_with_activity(
         detected["zero_tests_run"] = json!(metadata.zero_tests_run);
         detected["tests_passed"] = json!(metadata.tests_passed);
         detected["tests_failed"] = json!(metadata.tests_failed);
+        if cargo_test
+            && outcome == "passed"
+            && metadata.tests_detected
+            && metadata.tests_run_count == Some(0)
+            && metadata.zero_tests_run == Some(true)
+        {
+            detected["outcome"] = json!("inconclusive");
+        }
         if cargo_test {
             let diagnostics = webcodex_core::validation_evidence::parse_cargo_test_diagnostics(
                 stdout,
@@ -276,6 +284,64 @@ mod detected_summary_tests {
             );
             assert!(detected.get("failed_test_details").is_none());
         }
+    }
+
+    #[test]
+    fn generic_cargo_test_zero_tests_are_inconclusive_without_changing_process_success() {
+        let zero = detected_job_summary(
+            Some("cargo test --lib __webcodex_no_such_test_filter__"),
+            Some("test"),
+            "completed",
+            Some(0),
+            "running 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.00s\n",
+            "",
+        );
+        assert_eq!(zero["tests_detected"], true);
+        assert_eq!(zero["tests_run_count"], 0);
+        assert_eq!(zero["zero_tests_run"], true);
+        assert_eq!(zero["outcome"], "inconclusive");
+
+        let passed = detected_job_summary(
+            Some("cargo test --lib focused"),
+            Some("test"),
+            "completed",
+            Some(0),
+            "running 1 test\ntest focused ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n",
+            "",
+        );
+        assert_eq!(passed["tests_run_count"], 1);
+        assert_eq!(passed["zero_tests_run"], false);
+        assert_eq!(passed["outcome"], "passed");
+
+        let failed = detected_job_summary(
+            Some("cargo test --lib focused"),
+            Some("test"),
+            "failed",
+            Some(101),
+            "running 1 test\ntest focused ... FAILED\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n",
+            "",
+        );
+        assert_eq!(failed["outcome"], "failed");
+
+        let timed_out = detected_job_summary(
+            Some("cargo test --lib focused"),
+            Some("test"),
+            "timed_out",
+            None,
+            "running 0 tests\n",
+            "",
+        );
+        assert_eq!(timed_out["outcome"], "timed_out");
+
+        let cancelled = detected_job_summary(
+            Some("cargo test --lib focused"),
+            Some("test"),
+            "cancelled",
+            None,
+            "running 0 tests\n",
+            "",
+        );
+        assert_eq!(cancelled["outcome"], "cancelled");
     }
 
     #[test]

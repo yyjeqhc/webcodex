@@ -839,7 +839,10 @@ fn adaptive_runtime_direct_declarations_are_visible_ranked_and_unique() {
         .contains("Recovery and inventory primitive"));
     assert!(list_jobs
         .description
-        .contains("continue that Job with observe_jobs"));
+        .contains("retain that identity and continue independent work"));
+    assert!(list_jobs
+        .description
+        .contains("using observe_jobs only when logs/details/recovery are needed"));
 
     let git_review = registered_tool_specs()
         .into_iter()
@@ -871,6 +874,11 @@ fn turn_economy_descriptors_stay_converged_and_bounded() {
             .gpt_action_description()
             .expect("execution action description");
         assert!(!action.contains("Use observe_jobs later"), "{name}");
+        assert!(
+            spec.description
+                .contains("passive Job attention may surface transitions"),
+            "{name}"
+        );
     }
 
     for name in ["cargo_check", "cargo_test"] {
@@ -922,6 +930,12 @@ fn turn_economy_descriptors_stay_converged_and_bounded() {
     assert!(list
         .description
         .contains("not the normal continuation step"));
+    assert!(list
+        .description
+        .contains("retain that identity and continue independent work"));
+    assert!(list
+        .description
+        .contains("observe_jobs only when logs/details/recovery are needed"));
 
     let edits = spec_named(&specs, "apply_text_edits");
     for phrase in [

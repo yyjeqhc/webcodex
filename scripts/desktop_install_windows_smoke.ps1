@@ -7,6 +7,7 @@ param(
     [Parameter(Mandatory = $true)][string]$SourceSha,
     [Parameter(Mandatory = $true)][Int64]$BuiltAt,
     [Parameter(Mandatory = $true)][ValidateSet("win32-x64", "win32-arm64")][string]$Platform,
+    [bool]$GitDirty = $false,
     [string]$InstallDir
 )
 
@@ -178,13 +179,14 @@ try {
     }
 
     $shortSource = $SourceSha.Substring(0, 12).ToLowerInvariant()
+    $dirtyText = if ($GitDirty) { "true" } else { "false" }
     foreach ($name in @("webcodex", "webcodex-server", "webcodex-runner")) {
         $binary = Join-Path $runtimeDir "$name.exe"
         if (-not (Test-Path -LiteralPath $binary -PathType Leaf)) {
             throw "installed bundled binary is missing: $binary"
         }
         $line = Get-VersionLine $binary $name
-        $expected = "$name $Version (commit $shortSource, dirty=false, built_at=$BuiltAt)"
+        $expected = "$name $Version (commit $shortSource, dirty=$dirtyText, built_at=$BuiltAt)"
         if ($line -ne $expected) {
             throw "unexpected installed $name.exe identity: '$line' (expected '$expected')"
         }

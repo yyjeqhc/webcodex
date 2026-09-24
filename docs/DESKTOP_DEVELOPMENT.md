@@ -148,11 +148,22 @@ For normal local dogfood, use the complete helper from the repository root:
 .\scripts\build_desktop_windows_local.ps1
 ```
 
-It requires a clean committed worktree, installs both shared frontend and Desktop npm
-dependencies, builds the three dogfood runtime binaries, stages the exact runtime,
-reuses `target\desktop-local-tauri\` as the Tauri compilation cache, creates the
-unsigned NSIS installer, and writes the installer plus SHA-256 file under
-`target\desktop-local-dist\`.
+By default it requires a clean committed worktree. It installs both shared frontend
+and Desktop npm dependencies, builds the three dogfood runtime binaries, stages the
+verified runtime, reuses `target\desktop-local-tauri\` as the Tauri compilation
+cache, creates the unsigned NSIS installer, and writes the installer plus SHA-256 file
+under `target\desktop-local-dist\`.
+
+To build an installer from uncommitted work for local testing, opt in explicitly:
+
+```powershell
+.\scripts\build_desktop_windows_local.ps1 -AllowDirty
+```
+
+This does not disguise the source state: bundled runtime identity remains
+`dirty=true`, staging verifies that exact identity, and the output filename contains
+`dirty-<commit>`. Such an installer is local dogfood evidence only and must not be
+published as a release artifact.
 
 The helper deliberately does **not** install the package by default, so it is safe to
 use on a daily dogfood machine that already has WebCodex Desktop installed. To run
@@ -168,8 +179,10 @@ part of the pipeline.
 
 ### 1. Use a clean committed source state
 
-The Desktop staging helper verifies exact build provenance and expects
-`dirty=false` in every embedded runtime binary.
+The manual flow below describes the clean path. The Desktop staging helper verifies the
+explicit expected dirty state; ordinary CI/release and this manual clean path expect
+`dirty=false` in every embedded runtime binary. Use the one-command `-AllowDirty`
+path above when intentionally packaging uncommitted local work.
 
 ```powershell
 git status --short

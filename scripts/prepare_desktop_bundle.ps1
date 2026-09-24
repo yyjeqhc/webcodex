@@ -10,7 +10,8 @@ param(
     [Parameter(Mandatory = $true)][string]$Version,
     [Parameter(Mandatory = $true)][string]$SourceSha,
     [Parameter(Mandatory = $true)][Int64]$BuiltAt,
-    [Parameter(Mandatory = $true)][string]$OutputDir
+    [Parameter(Mandatory = $true)][string]$OutputDir,
+    [bool]$GitDirty = $false
 )
 
 $ErrorActionPreference = "Stop"
@@ -34,6 +35,7 @@ if (Test-Path -LiteralPath $OutputDir) {
 $runtimeDir = Join-Path $OutputDir "resources\webcodex-runtime"
 New-Item -ItemType Directory -Force -Path $runtimeDir | Out-Null
 $shortSource = $SourceSha.Substring(0, 12).ToLowerInvariant()
+$dirtyText = if ($GitDirty) { "true" } else { "false" }
 $binaryNames = @("webcodex", "webcodex-server", "webcodex-runner")
 $resourceMap = [ordered]@{}
 $fileMetadata = [ordered]@{}
@@ -60,7 +62,7 @@ try {
             throw "$name.exe --version failed while staging Desktop resources (exit code $exitCode)"
         }
         $line = $line[0].TrimEnd()
-        $expected = "$name $Version (commit $shortSource, dirty=false, built_at=$BuiltAt)"
+        $expected = "$name $Version (commit $shortSource, dirty=$dirtyText, built_at=$BuiltAt)"
         if ($line -ne $expected) {
             throw "unexpected $name.exe identity: '$line' (expected '$expected')"
         }
@@ -110,7 +112,7 @@ try {
     $metadataPath = Join-Path $OutputDir "desktop-bundle.json"
     [System.IO.File]::WriteAllText($metadataPath, ($metadata | ConvertTo-Json -Depth 8) + "`n", $utf8)
 
-    Write-Output "Desktop runtime staged from exact source $($SourceSha.ToLowerInvariant())"
+    Write-Output "Desktop runtime staged from source $($SourceSha.ToLowerInvariant()) dirty=$dirtyText"
     Write-Output "Tauri config overlay: $overlayPath"
     Write-Output "Runtime resources: $runtimeDir"
 } catch {

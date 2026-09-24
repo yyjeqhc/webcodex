@@ -141,10 +141,20 @@ Desktop runtime。只要修改涉及 Tauri IPC、native command、process lifecy
 .\scripts\build_desktop_windows_local.ps1
 ```
 
-它要求 clean 且已提交的 worktree，会自动安装共享 frontend 与 Desktop 两套 npm
-dependency、构建三个 dogfood runtime、stage 精确 runtime，复用
+默认情况下它要求 clean 且已提交的 worktree。它会自动安装共享 frontend 与 Desktop
+两套 npm dependency、构建三个 dogfood runtime、stage 经过验证的 runtime，复用
 `target\desktop-local-tauri\` 作为 Tauri 编译缓存，生成 unsigned NSIS installer，并把
 installer 与 SHA-256 文件统一放到 `target\desktop-local-dist\`。
+
+如果只是希望把尚未提交的修改打成 installer 做本地验证，可以显式 opt-in：
+
+```powershell
+.\scripts\build_desktop_windows_local.ps1 -AllowDirty
+```
+
+这不会伪装源码状态：包内 runtime 仍然报告 `dirty=true`，staging 会按这个精确状态
+验证，产物文件名也会包含 `dirty-<commit>`。这种 installer 只属于本地 dogfood
+evidence，不能作为正式 Release artifact 发布。
 
 helper 默认**不会**真正安装这个包，因此日常已经安装 WebCodex Desktop 的 dogfood
 机器也可以直接构建。如果还要执行会安装并随后卸载测试包的 native smoke，请在
@@ -158,8 +168,9 @@ disposable VM / 测试用户或当前没有安装 WebCodex Desktop 的 Windows �
 
 ### 1. 使用干净、已提交的源码
 
-Desktop staging helper 会验证精确 build provenance，并要求三个 embedded runtime
-都报告 `dirty=false`。
+下面的手工流程描述 clean path。Desktop staging helper 会验证显式传入的 dirty 状态；
+普通 CI/release 与这条手工 clean path 都要求三个 embedded runtime 报告 `dirty=false`。
+如果要打包尚未提交的本地修改，应使用上面的一键 `-AllowDirty` 路径。
 
 ```powershell
 git status --short

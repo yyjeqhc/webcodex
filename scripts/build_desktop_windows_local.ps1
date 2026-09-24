@@ -6,7 +6,8 @@
 # install/uninstall smoke.
 [CmdletBinding()]
 param(
-    [switch]$Smoke
+    [switch]$Smoke,
+    [switch]$AllowDirty
 )
 
 $ErrorActionPreference = "Stop"
@@ -45,8 +46,9 @@ try {
     if ($LASTEXITCODE -ne 0) {
         Fail "git status failed"
     }
-    if ($status.Count -ne 0) {
-        Fail "worktree must be clean so bundled runtime identity is exact; commit or stash local changes first"
+    $GitDirty = $status.Count -ne 0
+    if ($GitDirty -and -not $AllowDirty) {
+        Fail "worktree has uncommitted changes; commit/stash them or rerun with -AllowDirty for local dogfood"
     }
 
     $SourceSha = ([string](& git rev-parse HEAD)).Trim()
@@ -83,6 +85,7 @@ try {
     Write-Host "  source:   $SourceSha"
     Write-Host "  version:  $Version"
     Write-Host "  platform: $Platform"
+    Write-Host "  dirty:    $GitDirty"
     Write-Host "  smoke:    $Smoke"
 
     & npm ci --prefix frontend
@@ -98,7 +101,8 @@ try {
         -Version $Version `
         -SourceSha $SourceSha `
         -BuiltAt $BuiltAt `
-        -OutputDir $StageDir
+        -OutputDir $StageDir `
+        -GitDirty $GitDirty
 
     $Config = Join-Path $StageDir "tauri.bundle.conf.json"
     if (-not (Test-Path -LiteralPath $Config -PathType Leaf)) {
@@ -125,7 +129,8 @@ try {
         Fail "expected exactly one NSIS installer, found $($Installers.Count) in $BundleDir"
     }
 
-    $OutputInstaller = Join-Path $OutputDir "webcodex-desktop-local-$ShortSource-v$Version-$Platform-setup.exe"
+    $SourceLabel = if ($GitDirty) { "dirty-$ShortSource" } else { $ShortSource }
+    $OutputInstaller = Join-Path $OutputDir "webcodex-desktop-local-$SourceLabel-v$Version-$Platform-setup.exe"
     Copy-Item -LiteralPath $Installers[0].FullName -Destination $OutputInstaller -Force
 
     $Hash = (Get-FileHash -LiteralPath $OutputInstaller -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -142,13 +147,17 @@ try {
             -Version $Version `
             -SourceSha $SourceSha `
             -BuiltAt $BuiltAt `
-            -Platform $Platform
+            -Platform $Platform `
+            -GitDirty $GitDirty
     }
 
     Write-Host ""
     Write-Host "Local Desktop installer ready:"
     Write-Host "  $OutputInstaller"
     Write-Host "SHA-256: $Hash"
+    if ($GitDirty) {
+        Write-Warning "This installer was built from an uncommitted worktree and is intentionally marked dirty; do not publish it as a release artifact."
+    }
     if (-not $Smoke) {
         Write-Host "Native install/uninstall smoke was skipped. Re-run with -Smoke on a test user/host with no existing WebCodex Desktop installation."
     }

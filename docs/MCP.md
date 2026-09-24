@@ -301,7 +301,7 @@ conversation and re-observe the existing Job; recover Job inventory before any r
 when identity was lost. Do not redispatch solely because the model turn ended.
 Eligible terminal waits may expose best-effort Host continuation, but Host acceptance
 does not guarantee that a new model turn actually ran. See
-[Troubleshooting](TROUBLESHOOTING.md#chatgpt-reports-thinking-stopped--thinking-failed-during-a-long-job).
+[Troubleshooting](TROUBLESHOOTING.md#chatgpt-reports-thinking-stopped--thinking-failed-during-long-running-work).
 
 ## First safe prompt
 

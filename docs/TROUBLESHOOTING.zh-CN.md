@@ -106,32 +106,24 @@ Runner。
 
 ### 长任务期间 ChatGPT 显示 `Thinking stopped` / `Thinking failed`
 
-ChatGPT/model turn 停止或失败，**不等于**底层 WebCodex Job 或 Runner child process
-已经失败。Host/model turn、一次 MCP/HTTP observation request 与 canonical WebCodex Job
-具有彼此独立的生命周期。[Issue #658](https://github.com/yyjeqhc/webcodex/issues/658)
-这类实测中，ChatGPT turn 停止后，本地长时间 Job 仍然继续正常运行。
+WebCodex 的长任务 Job 不依赖单个 ChatGPT/model turn 一直保持打开。命令或验证超过
+同步等待窗口后，会继续作为同一个 Job 运行，并保留稳定的 `job_id`。因此，ChatGPT
+界面在长任务期间出现 `Thinking stopped` 或 `Thinking failed`，**本身不能说明**
+本地进程或 WebCodex Job 已经失败，也不能据此判断存在某个固定的 Host/server 超时。
 
-不要立即重新启动同一个 command。原 Job 如果仍在运行，重复 dispatch 可能造成重复训练、
-重复构建、重复下载、端口冲突或其他副作用。
+遇到这种情况时：
 
-建议按下面顺序恢复：
+1. **不要立即重新执行同一个任务。** 如果手头还有 `job_id`，先观察这个 Job；
+   如果 Job 身份确实丢失，再用 Job 列表恢复身份。
+2. 如果原 Job 仍处于 running、queued 或 recovering 状态，继续观察它，或先处理
+   不依赖终态结果的其他工作。不要仅因为 ChatGPT turn 结束就启动第二个副本。
+3. 如果当前 ChatGPT 会话还能继续，在原会话发送“继续”，并让它重新检查已有 Job
+   后从先前进度继续。开始一个新的 model turn 不要求重新启动底层 Job。
+4. 只有确认原 Job 已经终止、丢失，且重试本身安全时，才考虑重新执行。状态不确定时，
+   应先重新观察/核对现有 Job，避免产生重复进程、重复副作用或资源冲突。
 
-1. 优先回到**原 ChatGPT 会话**发送“继续”，并明确要求检查先前已经启动的 Job，
-   而不是重新执行原 command。
-2. 如果 exact `job_id` 仍然保留，继续观察同一个 Job。一次 observation request
-   中断或失败，不代表执行本身停止。
-3. 如果 Job identity 确实丢失，先恢复当前可见 Job inventory，识别原来的 execution，
-   再考虑是否需要 retry。
-4. 只有 authoritative Job state 明确表明原 execution 已经不再运行，而且该 command
-   可以安全重试时，才重新 dispatch。
-
-WebCodex 对符合条件的 Job terminal wait 也提供 Host continuation 能力，但它属于
-best-effort 的交互辅助，而不是 correctness guarantee。Host 接受 continuation request
-并不能证明新的 model turn 已经实际运行，因此手动“继续”仍然是 fallback。
-
-不要根据一次观测到的持续时间推断固定的 ChatGPT timeout（例如“必定两小时超时”）。
-排障时真正有意义的是：WebCodex Job 是否仍在运行，以及失败的 ChatGPT attempt
-是否实际到达 WebCodex。
+更多 Job 行为见 [Coding workflow：Long-running work](CODING_WORKFLOW.md#long-running-work)
+和 [Runner：Jobs and concurrency](RUNNER.md#jobs-and-concurrency)。
 
 ## 常见问题
 

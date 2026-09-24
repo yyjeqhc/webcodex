@@ -111,37 +111,34 @@ When reporting this class of issue, include only safe evidence:
 Do **not** publish access tokens, OAuth secrets, `Authorization` headers,
 complete env files, complete `runner.toml`, or an unreviewed raw full trace.
 
-### ChatGPT reports `Thinking stopped` / `Thinking failed` during a long Job
+### ChatGPT reports `Thinking stopped` / `Thinking failed` during long-running work
 
-A stopped or failed ChatGPT/model turn does **not** by itself mean that the
-underlying WebCodex Job or Runner child process failed. The Host/model-turn
-lifetime, one MCP/HTTP observation request, and the canonical WebCodex Job have
-separate lifetimes. Reports such as [Issue #658](https://github.com/yyjeqhc/webcodex/issues/658)
-show long-running Jobs continuing normally after the ChatGPT turn stopped.
+A long-running WebCodex Job does not depend on one ChatGPT/model turn remaining
+open. When a command or validation outlives the synchronous grace period, it
+continues as the same Job with a stable `job_id`. Therefore, `Thinking stopped`
+or `Thinking failed` in the ChatGPT UI during long-running work does **not by
+itself** mean that the local process or WebCodex Job failed, and it does not
+establish that a fixed Host/server timeout was reached.
 
-Do not immediately start the same command again. If the original Job is still
-running, redispatch can duplicate training, builds, downloads, port listeners, or
-other side effects.
+When this happens:
 
-Use this recovery order:
+1. **Do not immediately run the same task again.** If you still have the
+   `job_id`, observe that Job first. Use the Job list only when its identity was
+   genuinely lost.
+2. If the existing Job is still running, queued, or recovering, keep observing
+   it or continue independent work. Do not start a second copy merely because
+   the ChatGPT turn ended.
+3. If the same ChatGPT conversation can continue, send “continue” and ask it to
+   re-observe the existing Job before resuming from the previous progress. A new
+   model turn does not require restarting the underlying Job.
+4. Start a replacement only after the original Job is confirmed terminal or
+   lost and retrying is safe. If its state is uncertain, re-observe/reconcile
+   the existing Job first to avoid duplicate processes, duplicate side effects,
+   or resource conflicts.
 
-1. Resume the **same ChatGPT conversation** (for example, send "continue") and
-   ask it to inspect the previously started Job rather than rerun the command.
-2. If the exact `job_id` is still retained, observe that same Job. A failed or
-   dropped observation request is not evidence that execution stopped.
-3. If Job identity was genuinely lost, recover visible Job inventory first and
-   identify the original execution before considering any retry.
-4. Redispatch only after authoritative Job state shows that the original
-   execution is no longer running and retry is safe for that command.
-
-WebCodex also has Host-continuation support for eligible Job terminal waits, but
-that is a best-effort interaction aid rather than a correctness guarantee.
-Host acceptance of a continuation request does not prove that a new model turn
-actually ran, so manual continuation remains the fallback.
-
-Do not infer a fixed ChatGPT timeout (for example, a two-hour limit) from one
-observed duration. The useful diagnostic fact is whether the WebCodex Job
-continued and whether the interrupted ChatGPT attempt reached WebCodex.
+See [Coding workflow: Long-running work](CODING_WORKFLOW.md#long-running-work)
+and [Runner: Jobs and concurrency](RUNNER.md#jobs-and-concurrency) for the Job
+lifecycle details.
 
 ## Common issues
 

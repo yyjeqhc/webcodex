@@ -13,15 +13,16 @@ export function AboutPanel({ state, updates }: { state: DesktopState; updates?: 
     void Promise.resolve().then(() => desktopApi.runtimeSettings()).then(value => { if (alive) setRuntime(value); }).catch(() => undefined);
     return () => { alive = false; };
   }, [state.binaries?.directory, state.binaries?.git_commit]);
-  const link = (kind: "documentation" | "github" | "report_issue") => { setLinkError(false); void desktopApi.openDiagnosticResource(kind).catch(() => setLinkError(true)); };
+  const link = (kind: "documentation" | "github" | "report_issue" | "contributing" | "desktop_development") => { setLinkError(false); void desktopApi.openDiagnosticResource(kind).catch(() => setLinkError(true)); };
   return <section className="settings-section" aria-labelledby="about-webcodex-title"><h2 id="about-webcodex-title">{s("About WebCodex")}</h2>
     <dl className="runtime-facts"><div><dt>{s("Desktop version")}</dt><dd>{desktop?.version ?? s("Unknown")}</dd></div><div><dt>{s("Desktop revision")}</dt><dd><code>{desktop?.git_commit ?? s("Unknown")}</code>{desktop?.git_dirty ? ` · ${s("Dirty build")}` : ""}</dd></div>
       <div><dt>{s("Runtime versions")}</dt><dd>{runtime?.selected?.binaries.map(binary => `${binary.name} ${binary.metadata?.version ?? "—"}`).join(" · ") || state.binaries?.version || s("Unknown")}</dd></div>
       <div><dt>{s("Compatibility")}</dt><dd>{s(runtime?.selected?.compatibility === "compatible" ? "Compatible" : runtime?.selected?.compatibility === "incompatible" ? "Incompatible" : "Unknown")}</dd></div></dl>
     <p className="field-help">{s("Updates are notifications only; nothing is installed automatically.")}</p>
+    <p className="field-help">{s("Found a problem? Issues and pull requests are welcome. You can build current main from source and test a fix locally.")}</p>
     {updates && <><p role="status">{s(updates.checking ? "Checking for updates…" : updates.manualError ? "Update check unavailable; Runtime is unaffected." : updates.status?.update_available ? "A new stable WebCodex release is available." : updates.status?.state === "up_to_date" ? "Up to date" : "Update status unknown")}{updates.status?.latest ? ` · ${updates.status.latest.version}` : ""}</p>
       <button type="button" className="secondary-button" disabled={updates.checking} onClick={() => void updates.check()}>{s("Check for updates")}</button></>}
-    <div className="shell-actions"><button type="button" className="text-button" onClick={() => link("documentation")}>{s("Documentation")}</button><button type="button" className="text-button" onClick={() => link("github")}>{s("GitHub")}</button><button type="button" className="text-button" onClick={() => link("report_issue")}>{s("Report issue")}</button></div>
+    <div className="shell-actions"><button type="button" className="text-button" onClick={() => link("documentation")}>{s("Documentation")}</button><button type="button" className="text-button" onClick={() => link("report_issue")}>{s("Report issue")}</button><button type="button" className="text-button" onClick={() => link("desktop_development")}>{s("Build from source")}</button><button type="button" className="text-button" onClick={() => link("contributing")}>{s("Contribute")}</button><button type="button" className="text-button" onClick={() => link("github")}>{s("GitHub")}</button></div>
     {linkError && <p role="status">{s("Unable to open this location.")}</p>}
   </section>;
 }

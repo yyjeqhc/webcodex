@@ -77,6 +77,8 @@ pub enum ResourceKind {
     Documentation,
     Github,
     ReportIssue,
+    Contributing,
+    DesktopDevelopment,
 }
 
 #[derive(Debug, Clone, Serialize)]

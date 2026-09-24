@@ -29,7 +29,7 @@ export interface TraceSettings {
   can_restart: boolean; error_code: string | null;
 }
 export interface TraceUpdate { mode: TraceMode; expected_revision: string; confirm_full: boolean; restart: boolean; confirm_interrupt: boolean }
-export type DiagnosticResource = "app_data" | "server_configuration" | "trace_directory" | "runtime_directory" | "runtime_console" | "documentation" | "github" | "report_issue";
+export type DiagnosticResource = "app_data" | "server_configuration" | "trace_directory" | "runtime_directory" | "runtime_console" | "documentation" | "github" | "report_issue" | "contributing" | "desktop_development";
 export interface ContinuationSummary {
   tool_name: string | null; execution: string; response_handoff: "not_confirmed" | "stream_started" | "handler_returned";
   request_observed_at_ms: number | null; response_handed_at_ms: number | null; service_ms: number | null;

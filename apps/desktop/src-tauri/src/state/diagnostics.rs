@@ -303,6 +303,18 @@ impl AppState {
                     "https://github.com/yyjeqhc/webcodex/issues/new",
                 );
             }
+            ResourceKind::Contributing => {
+                drop(slot);
+                return crate::platform::opener::url(
+                    "https://github.com/yyjeqhc/webcodex/blob/main/CONTRIBUTING.md",
+                );
+            }
+            ResourceKind::DesktopDevelopment => {
+                drop(slot);
+                return crate::platform::opener::url(
+                    "https://github.com/yyjeqhc/webcodex/blob/main/docs/DESKTOP_DEVELOPMENT.md",
+                );
+            }
             ResourceKind::AppData => core.data_dir.clone(),
             ResourceKind::ServerConfiguration => core
                 .managed_server_environment()?

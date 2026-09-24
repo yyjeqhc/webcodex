@@ -11,7 +11,7 @@ import { ContinuationFacts } from "./activity/ContinuationFacts";
 import { continuationFromWindow } from "./activity/window-evidence";
 import { AccentPicker } from "../components/AccentPicker";
 import { useRuntimeUpdates } from "../hooks/useRuntimeUpdates";
-import { UpdateBanner } from "./settings/AboutPanel";
+import { AboutPanel, UpdateBanner } from "./settings/AboutPanel";
 import type { DesktopState } from "../models/topology";
 import type { DiagnosticSnapshot, RuntimeSettings, RuntimeCandidate } from "../models/runtime-shell";
 import type { WindowDetail } from "../models/workspace";
@@ -41,6 +41,7 @@ beforeEach(() => {
   api.switchRuntime.mockResolvedValue({ outcome: "activated", reason_code: null, rollback_reason_code: null, selection_revision: 4, restart_required: false });
   api.diagnostics.mockResolvedValue(structuredClone(diagnostic)); api.setToolRequestTracing.mockResolvedValue({ ...diagnostic.trace, mode: "full", restart_required: true });
   api.computerPermissions.mockResolvedValue({ supported: true, foreground: true, desktop_accessibility: true, desktop_screen_recording: true });
+  api.openDiagnosticResource.mockResolvedValue(undefined);
   api.getLaunchAtLogin.mockResolvedValue(false); api.desktopBuildInfo.mockResolvedValue(build("webcodex-desktop"));
   dialog.open.mockResolvedValue("/fixture/custom"); dialog.save.mockResolvedValue(null);
 });
@@ -90,6 +91,19 @@ describe("Runtime candidate and ownership semantics", () => {
     expect(await screen.findByText("Previous Runtime restored")).toBeInTheDocument();
     expect(screen.queryByText("Runtime activated")).not.toBeInTheDocument();
   });
+});
+
+it("links users from About to issues, source builds, and contribution guidance", async () => {
+  render(wrap(<AboutPanel state={state} />));
+  expect(await screen.findByText("Found a problem? Issues and pull requests are welcome. You can build current main from source and test a fix locally.")).toBeInTheDocument();
+  for (const [label, resource] of [
+    ["Report issue", "report_issue"],
+    ["Build from source", "desktop_development"],
+    ["Contribute", "contributing"],
+  ] as const) {
+    fireEvent.click(screen.getByRole("button", { name: label }));
+    await waitFor(() => expect(api.openDiagnosticResource).toHaveBeenCalledWith(resource));
+  }
 });
 
 describe("Diagnostics are explicit and secret-free", () => {

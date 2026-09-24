@@ -27,16 +27,26 @@ Bootstrap 或 discovery 返回 `project_ref` 后，普通 Project-scoped tool ca
 
 ## 工具策略 guidance
 
-`work_on_project` 的 `guidance_profile` 默认是 `direct`。Workflow contract v18
+`work_on_project` 的 `guidance_profile` 默认是 `direct`。Workflow contract v20
 保持共享的 `guidance`、`model_protocol` 和 review `roles`，并在显式
 `context_request=["webcodex.workflow"]` 时通过
-`tool_strategy: {profile, guidance}` 返回本次请求选中的策略。
+`tool_strategy` 返回本次请求选中的策略。
 
 - `direct`：简单 observation 直接调用最合适的 primitive；预先确定且独立的
   observations 可以批量执行，模型根据结果顺序决定 adaptive follow-up。
-- `host_code_mode`：Host 确实提供 native orchestration 时使用。简单单步 observation
-  仍直接调用；同类独立输入优先 canonical batch；有依赖的 search/read follow-up
-  适合时留在同一个 Host cell，并只返回下一步需要的紧凑证据而不是 raw ToolResult。
+- `host_code_mode`：Host 确实提供 native orchestration 时使用。预先确定的同类输入
+  首先使用工具自己的 canonical batch，不要拆成同类 micro-call 并发；预先确定、互相
+  独立的 cross-tool read-only observation 才适合 Host 并行。对于 result-dependent
+  search/read/branch chain，只要下一调用由结果机械确定且没有新的语义判断，就继续留在
+  同一个 Host cell。单个 child ToolResult 返回本身不是 model-turn boundary；需要 semantic
+  choice、ambiguous result、新用户决策、authority/permission、uncertain outcome、竞争性
+  recovery 或 mutation intent 尚未确定时才自然回到模型。完整 ToolResult 尽量留在 Host
+  cell，只返回下一次决策需要的紧凑证据。Job handoff 保存精确 identity 后先继续独立工作，
+  不要因为 Job 存在就机械 `observe_jobs`。startup
+  `tool_strategy.host_orchestration` catalog 与 exact
+  `tool_manifest(tool_name=...)` hint 都从 canonical `ToolDefinition` metadata 派生；
+  它们只提供 guidance，不改变 `ToolCompositionPolicy`、authority、effect、permission、
+  retry、idempotency 或 runtime scheduling，默认/broad ToolSpec 也不携带这批 metadata。
   该 profile 不授予任何 WebCodex capability/authority，也不要求 nested WebCodex Code Mode。
 - `code_mode`：简单单步 observation 仍直接调用；相关 search/read、跨文件定位或
   综合调查能减少外层模型往返时，优先 read-only Code Mode。在同一个 cell 内顺序

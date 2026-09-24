@@ -62,8 +62,8 @@ When bootstrap or discovery returns `project_ref`, reuse it as the `project` sel
 ## Tool strategy guidance
 
 `work_on_project` accepts `guidance_profile`, defaulting to `direct`. Workflow
-contract v18 returns shared `guidance`, `model_protocol` and review `roles`, plus
-only the selected `tool_strategy: {profile, guidance}`, when explicitly requested
+contract v20 returns shared `guidance`, `model_protocol` and review `roles`, plus
+only the selected `tool_strategy`, when explicitly requested
 through `context_request=["webcodex.workflow"]`. The selection is request-local:
 choose again on exact resume without changing Session identity or business state.
 It is never inferred from a Window, Session or past tool use, and grants no tools,
@@ -74,11 +74,22 @@ workflow sidecar uses that call's `guidance_profile`; unrelated tools that reque
 
 - `direct`: use the simplest sufficient primitive; batch predetermined independent
   observations and let the model inspect results before adaptive follow-up calls.
-- `host_code_mode`: use Host-native orchestration when the Host provides it. Keep one
-  simple observation direct, prefer canonical same-kind batches, keep dependent
-  search/read follow-ups in one Host cell when useful, and return compact evidence
-  rather than raw ToolResults. This profile grants no WebCodex capability or authority
-  and does not require nested WebCodex Code Mode.
+- `host_code_mode`: use Host-native orchestration when the Host provides it. Prefer a
+  tool's native batch for predetermined same-kind inputs before Host concurrency.
+  Predetermined independent cross-tool read-only observations may run in parallel;
+  result-dependent search/read/branch chains should stay in one Host cell when the
+  next call is mechanically determined. A child ToolResult arriving is not itself a
+  model-turn boundary: return to the model for semantic choices, ambiguity, new user
+  decisions, authority/permission requirements, uncertain outcomes, competing
+  recovery choices, or unresolved mutation intent. Keep full ToolResults in the Host
+  cell and return compact decision evidence. Job handoff should retain exact identity,
+  continue independent work, and avoid mechanical `observe_jobs` polling. The
+  startup `tool_strategy.host_orchestration` catalog and exact
+  `tool_manifest(tool_name=...)` hint are both derived from canonical
+  `ToolDefinition` metadata. They are guidance only and do not alter
+  `ToolCompositionPolicy`, authority, effects, permissions, retry, idempotency, or
+  runtime scheduling; broad/default ToolSpecs do not carry them. This profile grants
+  no WebCodex capability or authority and does not require nested WebCodex Code Mode.
 - `code_mode`: still use a direct primitive for one simple observation. Prefer
   read-only orchestration when related search/read work, cross-file investigation
   or synthesis saves outer model turns. Keep dependent follow-ups sequential inside

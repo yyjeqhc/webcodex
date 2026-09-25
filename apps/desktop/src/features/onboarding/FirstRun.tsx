@@ -1,3 +1,4 @@
+import { displayProjectPath } from "../../../../../frontend/src/ui/projectPresentation";
 import { useMemo, useState } from "react";
 import { FolderOpen, Globe2, Share2 } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -176,7 +177,7 @@ export function FirstRun({ state, onState, chooseModeFirst = false, onComplete }
       <div className="project-picker-card">
         <div>
           <span className="section-kicker">{t("setup.project")}</span>
-          <strong>{project ? project.path : t("setup.chooseProject")}</strong>
+          <strong>{project ? displayProjectPath(project.path) : t("setup.chooseProject")}</strong>
           {mode === "local" && !project && (
             <span className="project-meta">{t("setup.projectRequired")}</span>
           )}

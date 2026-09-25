@@ -6,22 +6,38 @@ import type { RunnerOverview, WindowSummary, WorkspaceProject, WorkspaceRequest,
 export function workspaceQuery<T>(request: WorkspaceRequest): Promise<T> {
   return invoke<T>("workspace_query", { request });
 }
+// UI fallback only; authoritative runtime IDs take precedence.
 export function sameProjectPath(a?: string, b?: string): boolean {
   if (!a || !b) return false;
   const normalize = (value: string) => {
     const windows = /^[A-Za-z]:[\\/]/.test(value) || value.startsWith("\\\\");
-    const path = value.replace(/[\\/]+$/, "") || "/";
-    return windows ? path.replace(/\\/g, "/").toLowerCase() : path;
+    if (windows) {
+      value = value.replace(/^\\\\\?\\UNC\\/i, "\\\\").replace(/^\\\\\?\\(?=[a-z]:\\)/i, "");
+      return value.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+    }
+    return value.replace(/\/+$/, "") || "/";
   };
   return normalize(a) === normalize(b);
+}
+export function sameProject(row: WorkspaceProject, saved: { runtime_project_id?: string | null; path?: string }): boolean {
+  return row.id && saved.runtime_project_id
+    ? row.id === saved.runtime_project_id
+    : sameProjectPath(row.path, saved.path);
+}
+export function mergeProjects(runner: WorkspaceProject[], saved: { runtime_project_id?: string | null; path: string }[]): WorkspaceProject[] {
+  const rows = [...runner];
+  for (const project of saved) {
+    if (!rows.some(row => sameProject(row, project))) rows.push({
+      id: project.runtime_project_id || "", path: project.path, connected: false,
+    });
+  }
+  return rows.sort((a, b) => (b.sessions?.latest_updated_at || 0) - (a.sessions?.latest_updated_at || 0));
 }
 export function sessionTitle(value: string): string {
   const title = value.trim().split(/\r?\n/).find(Boolean) || "Workflow Session";
   return title.length > 110 ? title.slice(0, 109) + "…" : title;
 }
-export function projectName(project: { name?: string; path?: string; id?: string }): string {
-  return project.name || project.path?.split(/[\\/]/).filter(Boolean).pop() || project.id || "Project";
-}
+export { projectPresentationName as projectName, displayProjectPath } from "../../../../../frontend/src/ui/projectPresentation";
 interface WorkspaceValue {
   state: DesktopState; runner: RunnerOverview | null; projects: WorkspaceProject[]; windows: WindowSummary[];
   sessions: WorkflowSession[]; loading: boolean; error: boolean; windowsError: boolean; refresh: () => void; revision: number;
@@ -38,9 +54,9 @@ export function WorkspaceProvider({ state, children }: { state: DesktopState; ch
   const [selection, setSelection] = useState<WorkspaceValue["selection"]>(null);
   const refresh = useCallback(() => setRevision(value => value + 1), []);
   const busy = Boolean(state.current_operation);
-  const ready = state.readiness.runtime_ready;
+  const ready = state.readiness.server === "ready" && state.readiness.runner === "ready";
   useEffect(() => {
-    if (!ready || busy || !projectKey) return;
+    if (!ready || busy) return;
     let disposed = false;
     let timer: number | undefined;
     const poll = async () => {
@@ -67,15 +83,9 @@ export function WorkspaceProvider({ state, children }: { state: DesktopState; ch
   }, [key, projectKey, ready, busy, revision, refresh]);
   useEffect(() => { setSelection(null); }, [key]);
   const current = snapshot?.key === key ? snapshot : null;
-  const projects = useMemo(() => {
-    const rows = [...(current?.runner?.projects || [])];
-    for (const saved of state.saved_projects || (state.project ? [state.project] : [])) {
-      if (!rows.some(row => sameProjectPath(row.path, saved.path))) rows.push({
-        id: saved.runtime_project_id || "", path: saved.path, connected: false,
-      });
-    }
-    return rows.sort((a, b) => (b.sessions?.latest_updated_at || 0) - (a.sessions?.latest_updated_at || 0));
-  }, [current?.runner, state.saved_projects, state.project]);
+  const projects = useMemo(() => mergeProjects(current?.runner?.projects || [],
+    state.saved_projects || (state.project ? [state.project] : [])),
+  [current?.runner, state.saved_projects, state.project]);
   const ids = new Set(projects.map(project => project.id));
   return <WorkspaceContext.Provider value={{ state, runner: current?.runner || null, projects,
     windows: (current?.windows || []).filter(row => !row.last_project || ids.has(row.last_project)),

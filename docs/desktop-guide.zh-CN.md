@@ -6,6 +6,15 @@ Desktop 负责准备本机项目和管理连接；你在 ChatGPT 等 AI 客户�
 
 贡献者如果要做 frontend/Tauri 开发、从源码加载 runtime、构建 NSIS/DMG 或运行原生安装 smoke，请看 [Desktop 开发与打包](DESKTOP_DEVELOPMENT.zh-CN.md)。
 
+
+## Runner 项目清单
+
+“项目”页列出此 Runner 的项目、Git 分支、活跃 Session 和最近活动。多个项目可以同时使用；模型使用 exact runtime Project ID，不需要先在 Desktop 切换项目。首页的主要展示项目只是 Desktop 的内部默认展示。
+
+“添加项目”保留目录选择与注册流程。Windows 盘符、UNC 和 extended-length 路径的不同写法不会产生重复项目行；用户界面显示普通路径，注册 ID 和 canonical path 不变。
+
+“取消注册”需要确认具体项目，只移除 Runner 注册及对应 Desktop 保存记录，不删除目录或 Git 文件，不撤销或扩大 allowed roots。运行中的 Job 会由服务端拒绝此操作。失败或结果不确定时不会自动重试；先刷新 inventory 再检查。取消首页默认项目后，Desktop 不会自动激活另一个项目；添加目录仍可通过设置流程完成。
+
 ## 第一次使用
 
 1. 在欢迎页选择 **在此电脑使用 WebCodex**。这是普通个人使用的推荐入口。

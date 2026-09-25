@@ -6,6 +6,15 @@ Desktop prepares local projects and manages connections. You ask for work in Cha
 
 For contributor workflows—frontend/Tauri development, source runtime resolution, NSIS/DMG packaging, and native smoke tests—see [Desktop development](DESKTOP_DEVELOPMENT.md).
 
+
+## Runner project inventory
+
+Projects lists this Runner’s projects, Git branches, active Sessions and recent activity. Multiple projects can be used concurrently; models select an exact runtime Project ID and do not require a Desktop project switch. The home page’s primary project is an internal display default.
+
+Add Project retains folder selection and registration. Windows drive, UNC and extended-length spellings deduplicate without changing registered IDs or canonical paths; the UI presents ordinary user paths.
+
+Unregister requires confirmation of the exact project. It removes the Runner registration and matching Desktop saved entries, preserving the directory, Git files and allowed roots. The Server rejects removal when active Jobs conflict. Failures or uncertain outcomes are never automatically retried; refresh and inspect the inventory first. Removing the home page’s default does not activate another project; adding a folder remains available through setup.
+
 ## First use
 
 1. Choose **Use WebCodex on this computer** on the welcome page, the recommended personal setup.

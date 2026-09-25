@@ -126,7 +126,6 @@ function DesktopApp() {
             onRefresh={() => void refresh()}
             onResumeRuntime={() => void resumeRuntime()}
             onChooseProject={() => void chooseLocalProject()}
-            onOpenProject={(path) => void runStateOperation(() => desktopApi.activateLocalProject(path))}
             onChangeSetup={openSetup}
             onNavigate={setNavigation}
             onStopQuickShare={() => void runStateOperation(desktopApi.stopQuickShare)}
@@ -134,7 +133,7 @@ function DesktopApp() {
           />
         ))}
         {navigation === "projects" && (
-          <ProjectsPanel state={state} onChooseProject={() => void chooseLocalProject()} onSelectProject={(path) => void runStateOperation(() => desktopApi.activateLocalProject(path))} />
+          <ProjectsPanel state={state} onState={commitState} onChooseProject={() => void chooseLocalProject()} />
         )}
         {navigation === "connection" && <ConnectionPanel state={state} onState={commitState} />}
         {navigation === "activity" && <ActivityPanel activity={activity} />}

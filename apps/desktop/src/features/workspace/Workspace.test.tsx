@@ -6,17 +6,17 @@ import { PRODUCT_LOCALES, PRODUCT_MESSAGES, productText } from "../../i18n/produ
 import { ProjectsPanel } from "../projects/ProjectsPanel";
 import { ActivityPanel } from "../activity/ActivityPanel";
 import { ExtensionsPanel } from "../extensions/ExtensionsPanel";
-import { WorkspaceProvider, sameProjectPath, sessionTitle } from "./WorkspaceContext";
+import { WorkspaceProvider, sameProjectPath, sameProject, mergeProjects, sessionTitle, projectName, displayProjectPath } from "./WorkspaceContext";
 import { ChatgptObservation, observationTime } from "./WorkspaceStatus";
 import { DesktopMantineProvider } from "../../components/DesktopMantineProvider";
 
 const native = vi.hoisted(() => ({ invoke: vi.fn() }));
-const api = vi.hoisted(() => ({ runnerSettings: vi.fn(), updateRunnerSettings: vi.fn(), restartOwnedRunner: vi.fn(), addRunnerPlugin: vi.fn() }));
+const api = vi.hoisted(() => ({ prepareProjectUnregister: vi.fn(), unregisterProject: vi.fn(), runnerSettings: vi.fn(), updateRunnerSettings: vi.fn(), restartOwnedRunner: vi.fn(), addRunnerPlugin: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: native.invoke }));
 vi.mock("../../lib/desktop-api", () => ({ desktopApi: api }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn() }));
-const alpha = { id: "agent:mini:alpha", path: "C:\\work\\alpha", name: "alpha", connected: true, sessions: { active_sessions: 2, latest_updated_at: 100 } };
-const beta = { id: "agent:mini:beta", path: "C:\\work\\beta", name: "beta", connected: true, sessions: { active_sessions: 0, latest_updated_at: 90 } };
+const alpha = { id: "agent:mini:alpha", path: "C:\\work\\alpha", name: "alpha", connected: true, sessions: { running_sessions: 0, active_sessions: 2, latest_updated_at: 100 } };
+const beta = { id: "agent:mini:beta", path: "C:\\work\\beta", name: "beta", connected: true, sessions: { running_sessions: 0, active_sessions: 0, latest_updated_at: 90 } };
 const session = { project_id: alpha.id, project_name: "alpha", session_id: "wc_sess_1234567890123456", title: "Fix export workflow", lifecycle: "active", updated_at: 100, running_call: false, running_jobs: 1, running_jobs_complete: true,
   overview: { attention: { open_todos: 2, open_questions: 1, open_risks: 0 }, reported_progress: { text: "Review the export changes", reported_at: 90 } }, last_activity: { kind: "Edited", state: "succeeded", summary: "Updated export handler" },
 };
@@ -57,19 +57,79 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("product workspace task flows", () => {
-  it("shows every project with branch/activity and keeps other projects when switching current", async () => {
-    const open = vi.fn(); const add = vi.fn();
-    const view = render(wrap(<ProjectsPanel state={state} onChooseProject={add} onSelectProject={open} />));
+  it("shows a read-only Runner inventory and retains Add Project", async () => {
+    const add = vi.fn();
+    render(wrap(<ProjectsPanel onState={vi.fn()} state={state} onChooseProject={add} />));
     await screen.findByLabelText("2 active sessions"); expect(await screen.findAllByText("feat/export")).toHaveLength(2);
     expect(screen.getAllByRole("row")).toHaveLength(3);
-    fireEvent.click(screen.getByRole("button", { name: "Use project beta" })); expect(open).toHaveBeenCalledWith(beta.path);
-    const switched = { ...state, project: { ...state.project!, path: beta.path, runtime_project_id: beta.id } };
-    view.rerender(wrap(<ProjectsPanel state={switched} onChooseProject={add} onSelectProject={open} />, switched));
-    await waitFor(() => expect(within(screen.getByRole("row", { name: "beta" })).getByText("Current")).toBeInTheDocument());
-    expect(screen.getAllByRole("row")).toHaveLength(3);
+    for (const row of screen.getAllByRole("row")) expect(within(row).queryByRole("button", { name: /Use project|Select project/ })).not.toBeInTheDocument();
+    expect(screen.queryByText("Current")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Add Project" })); expect(add).toHaveBeenCalledTimes(1);
     fireEvent.change(screen.getByRole("searchbox", { name: "Search projects" }), { target: { value: "ALPHA" } });
     expect(screen.getAllByRole("row")).toHaveLength(2);
+  });
+  it.each([
+    ["agent:msi:foo", "\\\\?\\D:\\repo", "D:\\repo"],
+    [undefined, "\\\\?\\D:\\repo", "D:\\repo"],
+    [undefined, "\\\\?\\UNC\\SERVER\\Share\\Repo", "\\\\server\\share\\repo\\"],
+  ])("keeps Runner activity and Git identity with saved ID %s, path %s", async (savedId, runnerPath, savedPath) => {
+    const runner = { ...alpha, id: "agent:msi:foo", name: "repo", path: runnerPath, sessions: { running_sessions: 0, active_sessions: 2, latest_updated_at: (Date.now() - 120_000) / 1000 } };
+    const saved = { ...state.project!, runtime_project_id: savedId, path: savedPath };
+    const selected = { ...state, project: saved, saved_projects: [saved] };
+    const normal = native.invoke.getMockImplementation()!;
+    native.invoke.mockImplementation((name, value) => value.request.kind === "overview"
+      ? Promise.resolve({ ...overview, projects: [runner] }) : value.request.kind === "project_git" && !savedId
+        ? Promise.reject(new Error("Git metadata unavailable")) : normal(name, value));
+    render(wrap(<ProjectsPanel onState={vi.fn()} state={selected} onChooseProject={vi.fn()} />, selected));
+    await screen.findByLabelText("2 active sessions");
+    const row = screen.getByRole("row", { name: "repo" });
+    expect(screen.getAllByRole("row")).toHaveLength(2);
+    expect(within(row).getByText(observationTime(runner.sessions.latest_updated_at * 1000, "en-US"))).toBeInTheDocument();
+    expect(row).not.toHaveTextContent(productText("en-US", "noActivity"));
+    expect(row).not.toHaveTextContent("\\\\?\\");
+    await waitFor(() => expect(native.invoke).toHaveBeenCalledWith("workspace_query", { request: { kind: "project_git", project: runner.id } }));
+    const rows = mergeProjects([runner], [saved]);
+    expect(rows).toHaveLength(1); expect(rows[0]).toBe(runner);
+    expect(sameProject(rows[0], saved)).toBe(true);
+  });
+  it("confirms exact registration removal and never activates a row", async () => {
+    const onState = vi.fn();
+    const observed = { target: { config_path: "fixture.toml", client_id: "mini", server_url: "http://localhost" }, project: beta.id, expected_revision: "sha256:" + "a".repeat(64), path: beta.path };
+    api.prepareProjectUnregister.mockResolvedValue(observed);
+    api.unregisterProject.mockResolvedValue(state);
+    render(wrap(<ProjectsPanel state={state} onChooseProject={vi.fn()} onState={onState} />));
+    await screen.findByLabelText("2 active sessions");
+    fireEvent.click(screen.getByRole("button", { name: "Unregister project beta" }));
+    const dialog = await screen.findByRole("dialog", { name: "Unregister project" });
+    expect(dialog).toHaveTextContent("Your folder and Git files are kept");
+    expect(dialog).toHaveTextContent(beta.id);
+    expect(api.unregisterProject).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(api.unregisterProject).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Unregister project beta" }));
+    const confirmed = await screen.findByRole("dialog", { name: "Unregister project" });
+    fireEvent.click(within(confirmed).getByRole("button", { name: "Unregister project" }));
+    await waitFor(() => expect(onState).toHaveBeenCalledWith(state));
+    expect(api.unregisterProject).toHaveBeenCalledExactlyOnceWith(observed);
+  });
+  it("reports an uncertain unregister without retrying or hiding the row", async () => {
+    api.prepareProjectUnregister.mockResolvedValue({ project: beta.id, path: beta.path });
+    api.unregisterProject.mockRejectedValue({ code: "project_unregister_uncertain" });
+    const onState = vi.fn();
+    render(wrap(<ProjectsPanel state={state} onChooseProject={vi.fn()} onState={onState} />));
+    await screen.findByLabelText("2 active sessions");
+    fireEvent.click(screen.getByRole("button", { name: "Unregister project beta" }));
+    const dialog = await screen.findByRole("dialog", { name: "Unregister project" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Unregister project" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Unregister was not confirmed");
+    expect(api.unregisterProject).toHaveBeenCalledTimes(1); expect(onState).not.toHaveBeenCalled();
+    expect(screen.getByRole("row", { name: "beta" })).toBeInTheDocument();
+  });
+  it("keeps the Runner inventory observable without a Desktop default project", async () => {
+    const emptyDefault = { ...state, project: null, saved_projects: [], readiness: { ...state.readiness, project: "none" as const, runtime_ready: false } };
+    render(wrap(<ProjectsPanel state={emptyDefault} onChooseProject={vi.fn()} onState={vi.fn()} />, emptyDefault));
+    await screen.findByLabelText("2 active sessions");
+    expect(screen.getAllByRole("row")).toHaveLength(3);
   });
   it("opens a Window's associated Workflow Session and presents product activity rather than a ledger", async () => {
     render(wrap(<ActivityPanel activity={[]} />));
@@ -110,14 +170,14 @@ describe("product workspace task flows", () => {
     const delayed = new Promise(resolve => { complete = resolve; }); const normal = native.invoke.getMockImplementation()!;
     let overviewCalls = 0;
     native.invoke.mockImplementation((name, value) => value.request.kind === "overview" && overviewCalls++ === 0 ? delayed : normal(name, value));
-    const view = render(wrap(<ProjectsPanel state={state} onChooseProject={vi.fn()} onSelectProject={vi.fn()} />));
+    const view = render(wrap(<ProjectsPanel onState={vi.fn()} state={state} onChooseProject={vi.fn()} />));
     await waitFor(() => expect(overviewCalls).toBe(1));
     const switched = { ...state, project: { ...state.project!, path: beta.path, runtime_project_id: beta.id } };
-    view.rerender(wrap(<ProjectsPanel state={switched} onChooseProject={vi.fn()} onSelectProject={vi.fn()} />, switched));
+    view.rerender(wrap(<ProjectsPanel onState={vi.fn()} state={switched} onChooseProject={vi.fn()} />, switched));
     await screen.findByLabelText("2 active sessions");
     await act(async () => { complete({ ...overview, projects: [{ ...alpha, id: "agent:old:other", name: "Stale project", path: "/old" }] }); });
     expect(screen.queryByText("Stale project")).not.toBeInTheDocument();
-    expect(within(screen.getByRole("row", { name: "beta" })).getByText("Current")).toBeInTheDocument();
+    expect(screen.getByRole("row", { name: "beta" })).toBeInTheDocument();
   });
   it("uses timestamps, never inferred ChatGPT presence", () => {
     const view = render(<LocaleProvider><ChatgptObservation state={state} /></LocaleProvider>);
@@ -144,5 +204,33 @@ describe("cross-platform product vocabulary", () => {
     expect(sessionTitle("A short title\n\nLong root instruction")).toBe("A short title");
     expect(sessionTitle("x".repeat(4000)).length).toBe(110);
     expect(observationTime(60_000, "en-US", 120_000)).toBe("1 minute ago");
+  });
+});
+
+describe("Windows project identity and presentation", () => {
+  it.each([
+    [String.raw`C:\Work\Repo`, "c:/work/repo/"],
+    [String.raw`C:\Work\Repo`, String.raw`\\?\C:\Work\Repo`],
+    ["C:\\", "\\\\?\\C:\\"], ["D:\\", "\\\\?\\D:\\"],
+    [String.raw`\\SERVER\Share\Repo`, "\\\\?\\UNC\\server\\share\\repo\\"],
+    [String.raw`\\server\share`, "\\\\?\\UNC\\SERVER\\Share\\"],
+  ])("matches %s and %s", (a, b) => expect(sameProjectPath(a, b)).toBe(true));
+  it("never replaces distinct authoritative IDs with path identity", () => {
+    expect(mergeProjects([alpha], [{ path: alpha.path, runtime_project_id: "agent:other:alpha" }])).toHaveLength(2);
+    expect(mergeProjects([alpha], [{ path: "D:\\different", runtime_project_id: alpha.id }])[0]).toBe(alpha);
+    expect(mergeProjects([{ ...alpha, id: "" }], [{ path: alpha.path, runtime_project_id: alpha.id }])).toHaveLength(1);
+  });
+  it.each([
+    [String.raw`\\?\C:\foo`, String.raw`C:\foo`],
+    [String.raw`\\?\UNC\server\share`, String.raw`\\server\share`],
+    ["/work/A", "/work/A"],
+  ])("displays %s as %s", (path, expected) => expect(displayProjectPath(path)).toBe(expected));
+  it.each([
+    ["C:\\", "C:"], ["D:\\", "D:"], ["\\\\?\\C:\\", "C:"], ["\\\\?\\D:\\", "D:"],
+    [String.raw`\\?\UNC\server\share`, "share"],
+    [String.raw`\\server\share\repo`, "repo"],
+  ])("gives %s a useful name", (path, expected) => {
+    expect(projectName({ path })).toBe(expected);
+    if (expected !== "repo") expect(projectName({ path, name: "Project" })).toBe(expected);
   });
 });

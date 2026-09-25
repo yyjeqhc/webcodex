@@ -12,7 +12,7 @@ import type { DesktopState, RunnerSettings } from "../../models/topology";
 import type { ExtensionsSnapshot, InstructionSummary } from "../../models/workspace";
 import { useLocale } from "../../i18n/locale";
 import { useProduct } from "../../i18n/product";
-import { projectName, useWorkspace, workspaceQuery } from "../workspace/WorkspaceContext";
+import { displayProjectPath, projectName, useWorkspace, workspaceQuery } from "../workspace/WorkspaceContext";
 import { WorkspaceDialog } from "../workspace/WorkspaceDialog";
 import { ProjectPicker } from "../../../../../frontend/src/ui/ProjectPicker";
 import { WorkspaceEmptyState } from "../../components/WorkspaceEmptyState";
@@ -80,7 +80,7 @@ export function ExtensionsPanel({ state, onState }: { state: DesktopState; onSta
   const skills = catalog?.skills.catalog?.skills || [];
   return <div className="page-section workspace-page" data-webcodex-page="extensions">
     <header className="page-heading-row"><h1 id="extensions-title">{t("extensions.title")}</h1>{(projectTab || tab === "mcpProviders") && <button className="secondary-button" onClick={refresh} disabled={disabled || loading}>{p("refresh")}</button>}</header>
-    {projectTab && <div className="activity-project-filter"><span className="filter-label">{p("projects")}</span><ProjectPicker label={p("projects")} emptyLabel={p("noMatches")} searchLabel={p("search")} value={project} onChange={setProject} disabled={disabled} options={workspace.projects.filter(row => row.id).map(row => ({ value: row.id, label: projectName(row), detail: row.path }))} /></div>}
+    {projectTab && <div className="activity-project-filter"><span className="filter-label">{p("projects")}</span><ProjectPicker label={p("projects")} emptyLabel={p("noMatches")} searchLabel={p("search")} value={project} onChange={setProject} disabled={disabled} options={workspace.projects.filter(row => row.id).map(row => ({ value: row.id, label: projectName(row), detail: displayProjectPath(row.path) }))} /></div>}
     <div className="workspace-tabs" role="tablist" aria-label={t("extensions.title")}>
       {TABS.map(value => <button type="button" role="tab" key={value} id={`extension-tab-${value}`} aria-controls={`extension-view-${value}`} aria-selected={tab === value} tabIndex={tab === value ? 0 : -1} onClick={() => setTab(value)} onKeyDown={event => {
         if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;

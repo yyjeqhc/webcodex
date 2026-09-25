@@ -3,6 +3,8 @@ mod connections;
 mod diagnostics;
 mod mcp_providers;
 #[cfg(test)]
+mod projectless_tests;
+#[cfg(test)]
 mod reconfiguration_tests;
 mod runner_capability_grant;
 mod runtime_shell;
@@ -28,7 +30,8 @@ use crate::operation::{
 use crate::process::{MachineEventReceiver, ProcessKey, ProcessPhase, ProcessSupervisor};
 use crate::tunnel_config::{TunnelConfig, TunnelConfigRequest};
 use crate::webcodex::{
-    inspect_project_path, ProjectRuntimeIdentity, QuickShareReadyEvent, WebCodexAdapter,
+    inspect_project_path, ProjectRuntimeIdentity, QuickShareReadyEvent, RunnerRuntimeIdentity,
+    WebCodexAdapter,
 };
 pub use connections::ConnectionAction;
 use serde_json::Value;
@@ -602,6 +605,7 @@ pub struct DesktopCore {
     coding_agents_applied_revision: Option<u64>,
     connections: ConnectionRuntimes,
     snapshot: DesktopStateSnapshot,
+    inventory_persistence_pending: bool,
     adapter: WebCodexAdapter,
     supervisor: SharedSupervisor,
     activity: ActivityLog,
@@ -679,6 +683,7 @@ impl DesktopCore {
             coding_agents_applied_revision: None,
             connections: ConnectionRuntimes::default(),
             snapshot,
+            inventory_persistence_pending: false,
             adapter,
             supervisor,
             activity,
@@ -762,7 +767,7 @@ impl DesktopCore {
             return self.get_state().await;
         }
 
-        let Some(identity) = identity_from_config(&self.config) else {
+        let Some(identity) = runner_identity_from_config(&self.config) else {
             self.snapshot.chatgpt_activity = None;
             self.snapshot.topology = self.config.topology.clone();
             self.snapshot.project = project_snapshot(&self.config);
@@ -809,15 +814,29 @@ impl DesktopCore {
             Err(_) => RunnerReadiness::Unknown,
         };
         cancellation.check()?;
-        let project = match self.adapter.project_ready(&identity, cancellation).await {
-            Ok(true) => ProjectReadiness::Ready,
-            Ok(false) => ProjectReadiness::ReloadRequired,
-            Err(_) => ProjectReadiness::Unknown,
+        let project_identity = identity_from_config(&self.config);
+        let project = if let Some(identity) = project_identity.as_ref() {
+            match self.adapter.project_ready(identity, cancellation).await {
+                Ok(true) => ProjectReadiness::Ready,
+                Ok(false) => ProjectReadiness::ReloadRequired,
+                Err(_) => ProjectReadiness::Unknown,
+            }
+        } else if self.config.project.is_some() {
+            ProjectReadiness::Configured
+        } else {
+            ProjectReadiness::None
         };
         cancellation.check()?;
         self.snapshot.chatgpt_activity =
             if server == ServerReadiness::Ready && project == ProjectReadiness::Ready {
-                match self.adapter.chatgpt_activity(&identity, cancellation).await {
+                match self
+                    .adapter
+                    .chatgpt_activity(
+                        project_identity.as_ref().expect("ready project"),
+                        cancellation,
+                    )
+                    .await
+                {
                     Ok(last_meaningful_activity_at_ms) => Some(ChatGptActivitySnapshot {
                         observed: last_meaningful_activity_at_ms.is_some(),
                         last_meaningful_activity_at_ms,
@@ -964,28 +983,83 @@ impl DesktopCore {
         if topology.experience != Experience::Full {
             return self.get_state().await;
         }
-        let project_path = self
-            .config
-            .project
-            .as_ref()
-            .map(|project| project.path.clone());
-        match topology.server {
-            ServerTopology::Local => {
-                self.configure_local_setup(project_path.as_deref(), cancellation)
-                    .await
-            }
-            ServerTopology::Remote { url } => {
-                let project_path = project_path.ok_or_else(|| {
-                    DesktopError::new(
-                        "project_not_ready",
-                        "The saved remote Desktop runtime no longer has a project selection",
-                        "Choose a project or change the Desktop runtime setup.",
-                    )
+        let identity = runner_identity_from_config(&self.config).ok_or_else(|| {
+            DesktopError::new(
+                "runtime_not_ready",
+                "The saved Runtime identity is incomplete",
+                "Restore the saved Runner configuration and credentials.",
+            )
+        })?;
+        let runtime = self.config.runtime.clone().expect("validated runtime");
+        self.adapter.ensure_binaries(cancellation).await?;
+        crate::runtime_selection::verify_resolved_files(self.adapter.binaries()?).await?;
+        let deadline = Deadline::after(SERVER_READY_TIMEOUT);
+        let reachable = self
+            .adapter
+            .server_status_until(
+                Some(&identity.server_url),
+                runtime.server_env_file.as_deref(),
+                Some(&identity.user_token_file),
+                cancellation,
+                deadline,
+            )
+            .await
+            .is_ok_and(|status| status.http_reachable);
+        let mut server_started = false;
+        if !reachable
+            && matches!(topology.server, ServerTopology::Local)
+            && !process_is_active(self.process_snapshot(ProcessKey::LocalServer).await)
+        {
+            let env = runtime
+                .server_env_file
+                .as_deref()
+                .filter(|path| path.is_file())
+                .ok_or_else(|| {
+                    desktop_state_unavailable("The saved Server configuration is unavailable")
                 })?;
-                self.configure_remote_setup(&url, "", &project_path, cancellation)
-                    .await
-            }
+            let command = self.adapter.local_server_command(env)?;
+            self.spawn_owned(ProcessKey::LocalServer, command, false, cancellation)
+                .await?;
+            server_started = true;
         }
+        self.wait_for_server(
+            &identity.server_url,
+            runtime.server_env_file.as_deref(),
+            Some(&identity.user_token_file),
+            cancellation,
+            deadline,
+            server_started,
+        )
+        .await?;
+        let deadline = Deadline::after(RUNNER_READY_TIMEOUT);
+        let observation = self
+            .adapter
+            .observe_runner_connection(
+                &identity,
+                stored_runner_client_id(&self.config).as_deref(),
+                cancellation,
+            )
+            .await?;
+        let runner_started = !observation.online
+            && !process_is_active(self.process_snapshot(ProcessKey::LocalRunner).await);
+        if runner_started {
+            self.spawn_configured_runner(&identity, cancellation)
+                .await?;
+        }
+        self.wait_for_runner(&identity, cancellation, deadline, runner_started)
+            .await?;
+        if let Ok(overview) =
+            crate::workspace::query(&runtime, crate::workspace::WorkspaceRequest::Overview {}).await
+        {
+            self.reconcile_inventory(&overview).await;
+        }
+        cancellation.check()?;
+        self.config.runtime_autostart = Some(true);
+        self.save_config().await?;
+        // Observe only: never activate a saved display Project during recovery.
+        self.refresh_runtime_status(cancellation).await?;
+        self.autostart_connections(cancellation).await?;
+        self.get_state().await
     }
 
     pub async fn update_tunnel_proxy(
@@ -1031,7 +1105,7 @@ impl DesktopCore {
 
         let project = self.adapter.inspect_project(project_path).await?;
         cancellation.check()?;
-        let identity = identity_from_config(&self.config).ok_or_else(|| {
+        let identity = runner_identity_from_config(&self.config).ok_or_else(|| {
             DesktopError::new(
                 "runtime_not_ready",
                 "The saved local Runner identity is incomplete",
@@ -2122,7 +2196,7 @@ impl DesktopCore {
 
     async fn wait_for_runner(
         &mut self,
-        identity: &ProjectRuntimeIdentity,
+        identity: &RunnerRuntimeIdentity,
         cancellation: &CancellationContext,
         deadline: Deadline,
         cleanup_owned_process: bool,
@@ -2468,6 +2542,22 @@ fn stored_runner_client_id(config: &StoredDesktopConfig) -> Option<String> {
         .map(str::to_string)
 }
 
+fn runner_identity_from_config(config: &StoredDesktopConfig) -> Option<RunnerRuntimeIdentity> {
+    let runtime = config.runtime.as_ref()?;
+    let client_id = stored_runner_client_id(config)?;
+    let runner_config = runtime.runner_config.clone()?;
+    let user_token_file = runtime.user_token_file.clone()?;
+    if !runner_config.is_file() || !user_token_file.is_file() {
+        return None;
+    }
+    Some(RunnerRuntimeIdentity {
+        client_id,
+        runner_config,
+        user_token_file,
+        server_url: runtime.server_url.clone(),
+    })
+}
+
 fn identity_from_config(config: &StoredDesktopConfig) -> Option<ProjectRuntimeIdentity> {
     let runtime = config.runtime.as_ref()?;
     let project = config.project.as_ref()?;
@@ -2486,9 +2576,12 @@ fn identity_from_config(config: &StoredDesktopConfig) -> Option<ProjectRuntimeId
         project_id,
         runtime_project_id,
         project_path: project.path.clone(),
-        runner_config,
-        user_token_file,
-        server_url: runtime.server_url.clone(),
+        runner: RunnerRuntimeIdentity {
+            client_id: stored_runner_client_id(config)?,
+            runner_config,
+            user_token_file,
+            server_url: runtime.server_url.clone(),
+        },
     })
 }
 
@@ -3067,6 +3160,10 @@ fn preferred_connection(config: &StoredDesktopConfig) -> RegularConnectionPrefer
 }
 
 fn apply_config_projection(snapshot: &mut DesktopStateSnapshot, config: &StoredDesktopConfig) {
+    snapshot.workspace_runner = config
+        .runtime
+        .as_ref()
+        .and_then(|runtime| crate::webcodex::settings::target(runtime).ok());
     snapshot.saved_projects = config
         .saved_projects
         .iter()

@@ -17,7 +17,8 @@ impl AppState {
                     .runtime
                     .clone()
                     .ok_or_else(crate::workspace::unavailable)?,
-                identity_from_config(&core.config).ok_or_else(crate::workspace::unavailable)?,
+                runner_identity_from_config(&core.config)
+                    .ok_or_else(crate::workspace::unavailable)?,
             )
         };
         // Serialize observations/mutations, but never hold the Desktop state
@@ -29,7 +30,7 @@ impl AppState {
             || self.operations.current().is_some()
             || slot
                 .as_ref()
-                .and_then(|core| identity_from_config(&core.config))
+                .and_then(|core| runner_identity_from_config(&core.config))
                 .as_ref()
                 != Some(&identity)
         {

@@ -118,6 +118,10 @@ pub(crate) struct OperationController {
 }
 
 impl OperationController {
+    pub(crate) fn generation(&self) -> u64 {
+        self.next_id.load(Ordering::Relaxed)
+    }
+
     pub(crate) fn new(activity: ActivityLog) -> Self {
         Self {
             active: Mutex::new(None),

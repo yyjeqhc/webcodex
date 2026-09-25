@@ -47,7 +47,7 @@ impl AppState {
 impl DesktopCore {
     pub(super) async fn prepare_runner_command(
         &mut self,
-        identity: &ProjectRuntimeIdentity,
+        identity: &RunnerRuntimeIdentity,
     ) -> DesktopResult<std::process::Command> {
         let store = self.mcp_providers.clone();
         let coding_agents = self.coding_agents.clone();
@@ -55,22 +55,14 @@ impl DesktopCore {
             || store.snapshot(None).config_error
             || coding_agents.needs_reconciliation()
         {
-            let suffix = format!(":{}", identity.project_id);
-            let client_id = identity
-                .runtime_project_id
-                .strip_prefix("agent:")
-                .and_then(|id| id.strip_suffix(&suffix))
-                .filter(|id| !id.is_empty())
-                .ok_or_else(crate::mcp_providers::invalid)?
-                .to_string();
             let runtime = StoredRuntime {
                 server_url: identity.server_url.clone(),
                 server_env_file: None,
                 runner_config: Some(identity.runner_config.clone()),
                 user_token_file: Some(identity.user_token_file.clone()),
-                runner_client_id: Some(client_id),
-                project_id: Some(identity.project_id.clone()),
-                runtime_project_id: Some(identity.runtime_project_id.clone()),
+                runner_client_id: Some(identity.client_id.clone()),
+                project_id: None,
+                runtime_project_id: None,
             };
             tokio::task::spawn_blocking(move || {
                 // Detect ACP ownership conflicts before changing any capability.
@@ -88,7 +80,7 @@ impl DesktopCore {
 
     pub(super) async fn spawn_configured_runner(
         &mut self,
-        identity: &ProjectRuntimeIdentity,
+        identity: &RunnerRuntimeIdentity,
         cancellation: &CancellationContext,
     ) -> DesktopResult<()> {
         let command = self.prepare_runner_command(identity).await?;

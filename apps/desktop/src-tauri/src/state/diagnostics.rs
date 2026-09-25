@@ -427,7 +427,7 @@ impl DesktopCore {
         &mut self,
         cancellation: &CancellationContext,
     ) -> DesktopResult<()> {
-        let identity = identity_from_config(&self.config)
+        let identity = runner_identity_from_config(&self.config)
             .ok_or_else(|| diagnostics::diagnostic_error("runtime_identity_unavailable"))?;
         self.adapter.ensure_binaries(cancellation).await?;
         runtime_selection::verify_resolved_files(self.adapter.binaries()?).await?;

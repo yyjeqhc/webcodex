@@ -68,7 +68,7 @@ impl AppState {
                     "Restart the Runner using its actual process owner.",
                 ));
             }
-            let identity = identity_from_config(&core.config)
+            let identity = runner_identity_from_config(&core.config)
                 .ok_or_else(|| desktop_state_unavailable("Runner identity unavailable"))?;
             let runtime = core
                 .config

@@ -149,9 +149,7 @@ pub fn aggregate_readiness(
     exposure: ExposureReadiness,
     project: ProjectReadiness,
 ) -> ReadinessSnapshot {
-    let runtime_ready = server == ServerReadiness::Ready
-        && runner == RunnerReadiness::Ready
-        && project == ProjectReadiness::Ready;
+    let runtime_ready = server == ServerReadiness::Ready && runner == RunnerReadiness::Ready;
     let ready_for_chatgpt = runtime_ready && exposure == ExposureReadiness::RemoteReady;
     let (summary_kind, next_action_kind, summary, next_action) = if ready_for_chatgpt {
         (
@@ -190,7 +188,7 @@ pub fn aggregate_readiness(
             "Runner is not connected".to_string(),
             Some("Start the Runner and wait for it to connect.".to_string()),
         )
-    } else if project != ProjectReadiness::Ready {
+    } else if !matches!(project, ProjectReadiness::Ready | ProjectReadiness::None) {
         (
             ReadinessSummaryKind::ProjectNotReady,
             Some(ReadinessNextActionKind::AddOrReloadProject),
@@ -394,6 +392,7 @@ pub struct ChatGptActivitySnapshot {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DesktopStateSnapshot {
+    pub workspace_runner: Option<crate::webcodex::settings::SettingsTarget>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub configuration_issue: Option<String>,
     pub saved_projects: Vec<ProjectSelection>,
@@ -425,6 +424,7 @@ pub struct DesktopStateSnapshot {
 impl Default for DesktopStateSnapshot {
     fn default() -> Self {
         Self {
+            workspace_runner: None,
             configuration_issue: None,
             saved_projects: Vec::new(),
             topology: None,
@@ -604,8 +604,8 @@ mod tests {
             ExposureReadiness::RemoteReady,
             ProjectReadiness::None,
         );
-        assert!(!missing_project.runtime_ready);
-        assert!(!missing_project.ready_for_chatgpt);
+        assert!(missing_project.runtime_ready);
+        assert!(missing_project.ready_for_chatgpt);
 
         let local_only = aggregate_readiness(
             ServerReadiness::Ready,

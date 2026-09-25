@@ -21,7 +21,7 @@ pub struct RunnerPaths {
     pub skill_roots: Vec<String>,
 }
 
-#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct SettingsTarget {
     pub config_path: std::path::PathBuf,

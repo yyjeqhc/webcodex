@@ -8,7 +8,7 @@ use std::{path::Path, time::Duration};
 
 #[cfg(test)]
 #[path = "project_inventory/tests.rs"]
-mod tests;
+pub(crate) mod tests;
 
 #[derive(Serialize)]
 pub struct UnregisterObservation {
@@ -116,6 +116,19 @@ pub async fn unregister(
     {
         return Err(uncertain());
     }
+    if output.get("outcome").and_then(Value::as_str) == Some("already_unregistered") {
+        let overview =
+            crate::workspace::query(runtime, crate::workspace::WorkspaceRequest::Overview {})
+                .await
+                .map_err(|_| uncertain())?;
+        let rows = complete_inventory(runtime, &overview).ok_or_else(uncertain)?;
+        if rows
+            .iter()
+            .any(|row| row.get("id").and_then(Value::as_str) == Some(&request.project))
+        {
+            return Err(uncertain());
+        }
+    }
     Ok(observation.path)
 }
 
@@ -135,4 +148,73 @@ pub fn forget(config: &mut StoredDesktopConfig, project: &str, path: &str) {
         runtime.project_id = None;
         runtime.runtime_project_id = None;
     }
+}
+
+/// A bounded, complete observation of this exact Runner is the only negative
+/// evidence allowed to retire saved registration history.
+fn complete_inventory<'a>(runtime: &StoredRuntime, overview: &'a Value) -> Option<&'a Vec<Value>> {
+    let Some(client_id) = runtime.runner_client_id.as_deref() else {
+        return None;
+    };
+    let Some(rows) = overview.get("projects").and_then(Value::as_array) else {
+        return None;
+    };
+    if overview.get("client_id").and_then(Value::as_str) != Some(client_id)
+        || overview.get("connected").and_then(Value::as_bool) != Some(true)
+        || overview.get("projects_available").and_then(Value::as_bool) != Some(true)
+        || overview.get("projects_truncated").and_then(Value::as_bool) != Some(false)
+        || overview
+            .get("visible_project_count")
+            .and_then(Value::as_u64)
+            != Some(rows.len() as u64)
+        || rows.len() > 32
+        || rows.iter().any(|row| {
+            !row.get("id")
+                .and_then(Value::as_str)
+                .is_some_and(|id| id.starts_with(&format!("agent:{client_id}:")))
+                || row.get("path").and_then(Value::as_str).is_none()
+        })
+    {
+        return None;
+    }
+    Some(rows)
+}
+
+pub fn reconcile(config: &mut StoredDesktopConfig, overview: &Value) -> bool {
+    let Some(runtime) = config.runtime.as_ref() else {
+        return false;
+    };
+    let Some(scope) = runtime.runner_config.as_ref() else {
+        return false;
+    };
+    let Some(rows) = complete_inventory(runtime, overview) else {
+        return false;
+    };
+    let present = |saved: &ProjectSelection| {
+        rows.iter()
+            .any(|row| match saved.runtime_project_id.as_deref() {
+                Some(id) => row.get("id").and_then(Value::as_str) == Some(id),
+                None => row.get("path").and_then(Value::as_str).is_some_and(|path| {
+                    webcodex_runner_config::paths::paths_equal(
+                        Path::new(path),
+                        Path::new(&saved.path),
+                    )
+                }),
+            })
+    };
+    let before = config.saved_projects.len();
+    config
+        .saved_projects
+        .retain(|saved| &saved.runner_config != scope || present(&saved.project));
+    let stale_default = config
+        .project
+        .as_ref()
+        .is_some_and(|project| !present(project));
+    if stale_default {
+        config.project = None;
+        let runtime = config.runtime.as_mut().expect("scoped runtime");
+        runtime.project_id = None;
+        runtime.runtime_project_id = None;
+    }
+    before != config.saved_projects.len() || stale_default
 }

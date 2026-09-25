@@ -668,7 +668,7 @@ impl WebCodexAdapter {
 
     pub async fn legacy_register_project(
         &mut self,
-        identity: &ProjectRuntimeIdentity,
+        identity: &RunnerRuntimeIdentity,
         client_id: &str,
         project: &ProjectSelection,
         cancellation: &CancellationContext,

@@ -150,7 +150,9 @@ pub fn aggregate_readiness(
     project: ProjectReadiness,
 ) -> ReadinessSnapshot {
     let runtime_ready = server == ServerReadiness::Ready && runner == RunnerReadiness::Ready;
-    let ready_for_chatgpt = runtime_ready && exposure == ExposureReadiness::RemoteReady;
+    let project_usable = matches!(project, ProjectReadiness::Ready | ProjectReadiness::None);
+    let ready_for_chatgpt =
+        runtime_ready && project_usable && exposure == ExposureReadiness::RemoteReady;
     let (summary_kind, next_action_kind, summary, next_action) = if ready_for_chatgpt {
         (
             ReadinessSummaryKind::ReadyForChatGpt,
@@ -606,6 +608,19 @@ mod tests {
         );
         assert!(missing_project.runtime_ready);
         assert!(missing_project.ready_for_chatgpt);
+
+        let stale_project = aggregate_readiness(
+            ServerReadiness::Ready,
+            RunnerReadiness::Ready,
+            ExposureReadiness::RemoteReady,
+            ProjectReadiness::ReloadRequired,
+        );
+        assert!(stale_project.runtime_ready);
+        assert!(!stale_project.ready_for_chatgpt);
+        assert_eq!(
+            stale_project.summary_kind,
+            ReadinessSummaryKind::ProjectNotReady
+        );
 
         let local_only = aggregate_readiness(
             ServerReadiness::Ready,

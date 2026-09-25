@@ -261,7 +261,7 @@ describe("inventory convergence", () => {
     expect(screen.getByRole("row", { name: "beta" })).toBeInTheDocument();
     expect(api.unregisterProject).toHaveBeenCalledOnce();
   });
-  it.each([{ projects_truncated: true }, { connected: false }, { projects_available: false }])("retains history on incomplete observation %s", async flags => {
+  it.each([{ projects_truncated: true }, { connected: false }, { projects_available: false }, { visible_project_count: 1 }])("retains history on incomplete observation %s", async flags => {
     native.invoke.mockResolvedValue({ ...overview, ...flags, projects: [], windows: [] });
     render(wrap(<ProjectsPanel state={state} onChooseProject={vi.fn()} onState={vi.fn()} />));
     await waitFor(() => expect(native.invoke).toHaveBeenCalled());

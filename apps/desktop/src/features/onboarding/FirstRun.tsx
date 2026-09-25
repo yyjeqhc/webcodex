@@ -52,7 +52,7 @@ export function FirstRun({ state, onState, chooseModeFirst = false, onComplete }
   const canReuseRemoteEnrollment = Boolean(
     mode === "remote" &&
       !remoteEnrollmentNeedsRefresh &&
-      state.project?.runtime_project_id &&
+      (state.workspace_runner?.client_id || state.project?.runtime_project_id) &&
       state.topology?.experience === "full" &&
       state.topology.server.kind === "remote" &&
       sameServerOrigin(serverUrl, state.topology.server.url),

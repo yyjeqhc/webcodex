@@ -491,6 +491,51 @@ beforeEach(() => {
     expect(api.configureLocal).not.toHaveBeenCalled();
   });
 
+  it("reuses a saved remote Runner when adding a project after the default was removed", async () => {
+    const serverUrl = "https://server.example.test";
+    const projectlessRemote: DesktopState = {
+      ...readyState,
+      workspace_runner: { config_path: "C:/fixture/runner.toml", client_id: "desktop", server_url: serverUrl },
+      topology: {
+        experience: "full",
+        server: { kind: "remote", url: serverUrl },
+        runner: { kind: "local" },
+        exposure: { kind: "existing_https", url: serverUrl },
+        enrollment: { kind: "managed_pairing" },
+      },
+      project: null,
+      saved_projects: [],
+      readiness: { ...readyState.readiness, project: "none" },
+    };
+    const projectB = {
+      path: "C:\\fixture\\project-b",
+      allowed_root: "C:\\fixture\\project-b",
+      is_git_repository: true,
+      runtime_project_id: null,
+    };
+    api.getState.mockResolvedValue(projectlessRemote);
+    api.observeChatgptActivity.mockResolvedValue(projectlessRemote);
+    api.inspectProject.mockResolvedValue(projectB);
+    api.configureRemote.mockResolvedValue({
+      ...projectlessRemote,
+      project: { ...projectB, runtime_project_id: "agent:desktop:project-b" },
+      readiness: { ...projectlessRemote.readiness, project: "ready" },
+    });
+    vi.mocked(open).mockResolvedValue(projectB.path);
+
+    renderApp();
+    await screen.findByRole("heading", { level: 1, name: "WebCodex" });
+    await changeServerConnection();
+    fireEvent.click(screen.getByRole("button", { name: /连接现有 Server/ }));
+    expect(screen.getByText("将复用现有连接")).toBeInTheDocument();
+    expect(screen.queryByLabelText("一次性登录码")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "选择文件夹" }));
+    await waitFor(() => expect(api.inspectProject).toHaveBeenCalledWith(projectB.path));
+    fireEvent.click(screen.getByRole("button", { name: "重新连接电脑" }));
+    await waitFor(() => expect(api.configureRemote).toHaveBeenCalledWith(serverUrl, "", projectB.path));
+  });
+
   it("reports a legacy Runner restart requirement without implicitly restarting any process", async () => {
     const tunneledState: DesktopState = {
       ...readyState,

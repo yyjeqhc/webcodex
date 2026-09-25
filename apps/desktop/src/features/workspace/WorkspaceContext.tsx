@@ -33,6 +33,10 @@ export function mergeProjects(runner: WorkspaceProject[], saved: { runtime_proje
   }
   return rows.sort((a, b) => (b.sessions?.latest_updated_at || 0) - (a.sessions?.latest_updated_at || 0));
 }
+export function runnerInventoryComplete(runner: RunnerOverview | null | undefined): boolean {
+  return Boolean(runner?.connected && runner.projects_available && !runner.projects_truncated
+    && runner.visible_project_count === runner.projects.length);
+}
 export function sessionTitle(value: string): string {
   const title = value.trim().split(/\r?\n/).find(Boolean) || "Workflow Session";
   return title.length > 110 ? title.slice(0, 109) + "…" : title;
@@ -77,7 +81,7 @@ export function WorkspaceProvider({ state, children }: { state: DesktopState; ch
         windows: windows.status === "fulfilled" ? windows.value.windows : old?.key === key ? old.windows : [],
         error: runner.status === "rejected", windowsError: windows.status === "rejected",
       }));
-      if (runner.status === "fulfilled" && runner.value.connected && runner.value.projects_available && !runner.value.projects_truncated) {
+      if (runner.status === "fulfilled" && runnerInventoryComplete(runner.value)) {
         setRemoved(ids => ids.filter(id => runner.value.projects.some(project => project.id === id)));
       }
       setLoading(false);
@@ -91,7 +95,7 @@ export function WorkspaceProvider({ state, children }: { state: DesktopState; ch
   useEffect(() => { setSelection(null); setRemoved([]); }, [key]);
   const current = snapshot?.key === key ? snapshot : null;
   const projects = useMemo(() => mergeProjects(current?.runner?.projects || [],
-    state.saved_projects || (state.project ? [state.project] : []), Boolean(current?.runner?.connected && current.runner.projects_available && !current.runner.projects_truncated))
+    state.saved_projects || (state.project ? [state.project] : []), runnerInventoryComplete(current?.runner))
     .filter(project => !removed.includes(project.id)),
   [current?.runner, state.saved_projects, state.project, removed]);
   useEffect(() => {

@@ -1610,6 +1610,19 @@ mod git_index_tests {
 mod validation_tests {
     use super::*;
 
+    fn init_git_index(root: &std::path::Path) {
+        // Staging is sufficient for git ls-files and avoids shell/platform and
+        // user-identity dependencies in validation fixtures.
+        for args in [["init", "-q"].as_slice(), ["add", "-A"].as_slice()] {
+            assert!(std::process::Command::new("git")
+                .args(args)
+                .current_dir(root)
+                .status()
+                .unwrap()
+                .success());
+        }
+    }
+
     fn valid_root_payload() -> Value {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path();
@@ -1625,14 +1638,7 @@ mod validation_tests {
             touch(root, path);
         }
         // Initialize a git index so tracked-file detection covers every entry.
-        for cmd in ["git init -q", "git add -A", "git commit -q -m seed"] {
-            std::process::Command::new("sh")
-                .arg("-c")
-                .arg(cmd)
-                .current_dir(root)
-                .status()
-                .unwrap();
-        }
+        init_git_index(root);
         build_project_overview(root, "", Some(2), Some(120)).unwrap()
     }
 
@@ -1688,14 +1694,7 @@ mod validation_tests {
         for path in ["Cargo.toml", "package.json", "pyproject.toml", "src/lib.rs"] {
             touch(root, path);
         }
-        for cmd in ["git init -q", "git add -A", "git commit -q -m seed"] {
-            std::process::Command::new("sh")
-                .arg("-c")
-                .arg(cmd)
-                .current_dir(root)
-                .status()
-                .unwrap();
-        }
+        init_git_index(root);
         build_project_overview(root, "", Some(2), Some(120)).unwrap()
     }
 
@@ -1811,14 +1810,7 @@ mod validation_tests {
         for path in ["Cargo.toml", "sub/README.md", "other/lib.rs"] {
             touch(temp.path(), path);
         }
-        for cmd in ["git init -q", "git add -A", "git commit -q -m seed"] {
-            std::process::Command::new("sh")
-                .arg("-c")
-                .arg(cmd)
-                .current_dir(temp.path())
-                .status()
-                .unwrap();
-        }
+        init_git_index(temp.path());
         let payload = build_project_overview(temp.path(), "sub", Some(2), Some(120)).unwrap();
         let mut malformed = payload.clone();
         malformed["top_level"]

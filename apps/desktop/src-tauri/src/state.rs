@@ -1326,7 +1326,7 @@ impl DesktopCore {
                 );
             }
         }
-        let reusable_identity = identity_from_config(&self.config)
+        let reusable_identity = runner_identity_from_config(&self.config)
             .filter(|identity| same_server(&identity.server_url, &server_url));
         let saved_runner_client_id = stored_runner_client_id(&self.config);
         cancellation.check()?;
@@ -1369,7 +1369,7 @@ impl DesktopCore {
                 .ok(),
             None => None,
         };
-        let (mut identity, identity_replaced, runner_client_id) =
+        let (identity, identity_replaced, runner_client_id) =
             match (reusable_identity, reusable_observation) {
                 (Some(identity), Some(observation)) => (identity, false, observation.client_id),
                 _ => {
@@ -1380,7 +1380,7 @@ impl DesktopCore {
                         .adapter
                         .create_local_pairing(&server_url, &env_file, cancellation)
                         .await?;
-                    let identity = self
+                    let project_identity = self
                         .adapter
                         .login_with_pairing(
                             &server_url,
@@ -1394,16 +1394,16 @@ impl DesktopCore {
                     cancellation.check()?;
                     let observation = self
                         .adapter
-                        .observe_runner_connection(&identity, None, cancellation)
+                        .observe_runner_connection(&project_identity, None, cancellation)
                         .await?;
-                    (identity, true, observation.client_id)
+                    (project_identity.runner, true, observation.client_id)
                 }
             };
 
         let replacing_owned_runner = identity_replaced
             && process_is_active(self.process_snapshot(ProcessKey::LocalRunner).await);
         let runner_deadline = Deadline::after(RUNNER_READY_TIMEOUT);
-        let activation: DesktopResult<bool> = async {
+        let activation: DesktopResult<(bool, ProjectRuntimeIdentity)> = async {
             if replacing_owned_runner {
                 // A Desktop-owned Runner can only serve the exact config it was
                 // started with. Replace that owned process transactionally while
@@ -1451,7 +1451,7 @@ impl DesktopCore {
                 .await?;
             self.snapshot.readiness.runner = RunnerReadiness::Ready;
             self.publish_snapshot();
-            identity = match self
+            let project_identity = match self
                 .adapter
                 .activate_project(&identity, &runner_client_id, &project, cancellation)
                 .await
@@ -1500,13 +1500,13 @@ impl DesktopCore {
                 }
                 Err(error) => return Err(error),
             };
-            self.wait_for_project(&identity, cancellation).await?;
+            self.wait_for_project(&project_identity, cancellation).await?;
             cancellation.check()?;
-            Ok(runner_started)
+            Ok((runner_started, project_identity))
         }
         .await;
-        let runner_started = match activation {
-            Ok(runner_started) => runner_started,
+        let (runner_started, identity) = match activation {
+            Ok(result) => result,
             Err(error) => {
                 if replacing_owned_runner {
                     self.stop_process_until(
@@ -1659,7 +1659,7 @@ impl DesktopCore {
         );
         self.publish_snapshot();
 
-        let reusable_identity = identity_from_config(&self.config)
+        let reusable_identity = runner_identity_from_config(&self.config)
             .filter(|identity| same_server(&identity.server_url, &server_url));
         let saved_runner_client_id = stored_runner_client_id(&self.config);
         let reusable_observation = match reusable_identity.as_ref() {
@@ -1674,7 +1674,7 @@ impl DesktopCore {
                 .ok(),
             None => None,
         };
-        let (mut identity, identity_replaced, runner_client_id) = match (
+        let (identity, identity_replaced, runner_client_id) = match (
             reusable_identity,
             reusable_observation,
         ) {
@@ -1687,7 +1687,7 @@ impl DesktopCore {
                             "Refresh this Runner connection with a new wc_pair_… code.",
                         ));
                 }
-                let identity = self
+                let project_identity = self
                     .adapter
                     .login_with_pairing(
                         &server_url,
@@ -1699,7 +1699,7 @@ impl DesktopCore {
                     .await?;
                 let observation = self
                     .adapter
-                    .observe_runner_connection(&identity, None, cancellation)
+                    .observe_runner_connection(&project_identity, None, cancellation)
                     .await?;
                 // A remote pairing code is one-shot. Publish the newly
                 // validated connection identity before Runner/project
@@ -1708,13 +1708,13 @@ impl DesktopCore {
                 self.config.topology = Some(topology.clone());
                 self.store_identity(
                     &project,
-                    &identity,
+                    &project_identity,
                     None,
                     Some(observation.client_id.clone()),
                 )
                 .await?;
                 cancellation.check()?;
-                (identity, true, observation.client_id)
+                (project_identity.runner, true, observation.client_id)
             }
         };
 
@@ -1784,7 +1784,7 @@ impl DesktopCore {
         };
         self.wait_for_runner(&identity, cancellation, runner_deadline, runner_started)
             .await?;
-        identity = match self
+        let identity = match self
             .adapter
             .activate_project(&identity, &runner_client_id, &project, cancellation)
             .await

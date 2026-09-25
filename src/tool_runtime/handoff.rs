@@ -344,7 +344,6 @@ impl ToolRuntime {
             warnings.extend(job_warnings.iter().cloned());
         }
 
-        let session_ref = self.session_reference_for_id(&summary.session_id, auth);
         let mut output = json!({
             "session_id": summary.session_id,
             "project": summary.project,
@@ -376,10 +375,6 @@ impl ToolRuntime {
             "jobs": jobs,
             "warnings": warnings,
         });
-
-        if let Some(session_ref) = session_ref.as_deref() {
-            output["session_ref"] = json!(session_ref);
-        }
 
         // --- optional workspace summary ---
         let has_project = project
@@ -514,9 +509,6 @@ impl ToolRuntime {
                 "project": output["project"],
                 "handoff_brief": output["handoff_brief"],
             });
-            if let Some(session_ref) = output.get("session_ref") {
-                handoff["session_ref"] = session_ref.clone();
-            }
             if let Some(workspace_continuity) = output.get("workspace_continuity") {
                 handoff["workspace_continuity"] = workspace_continuity.clone();
             }

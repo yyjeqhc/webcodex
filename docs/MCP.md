@@ -365,12 +365,10 @@ are model-visible gateway tools; review/coding catalogs still recommend them.
 `outputSchema` and projects shorter MCP-specific tool/input descriptions for
 selection: purpose, nearby tool distinctions, and essential continuation guidance.
 Repeated Session/context wrapper and audited common-argument copy is shortened
-too. Compact discovery omits the repeated `ack_ref` description while preserving
-its exact field and length bound; the full manifest retains the complete Session-only
-ACK-set contract. It also omits only the exact opaque-ID regexes on
+too. Compact discovery omits only the exact opaque-ID regexes on
 `recording_session_id`, `ack_session_message_ids.items`, and
 `session_message_resolution.message_id`; their existing parent descriptions keep
-the `wc_sess_*` / `wc_msg_*` type hints. Copy the exact returned values.
+the `wc_sess_*` / `wc_msg_*` type hints. Copy the exact returned IDs.
 Business-ID, hash/Git fence and resource-path patterns, all bounds, field names,
 required fields, enums, object/union shape, annotations, and MCP App/file metadata
 are preserved. This is discovery presentation only; runtime argument validation

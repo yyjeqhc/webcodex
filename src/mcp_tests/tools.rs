@@ -651,7 +651,6 @@ fn stateless_workflow_recorder_metadata_adds_protocol_projection() {
             );
         }
         assert!(input.get("ack_session_message_ids").is_some());
-        assert!(input.get("ack_ref").is_some());
     }
     assert!(!read_files_output.contains("session_continuity"));
     assert!(!read_files_output.contains("session_recovery"));
@@ -674,9 +673,6 @@ fn stateless_workflow_recorder_metadata_adds_protocol_projection() {
         .contains_key(crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD));
     assert!(!generic_properties
         .contains_key(crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_MESSAGE_IDS_FIELD));
-    assert!(
-        !generic_properties.contains_key(crate::tool_runtime::sessions::TOOL_CALL_ACK_REF_FIELD)
-    );
     assert!(!generic_properties
         .contains_key(crate::tool_runtime::sessions::TOOL_CALL_SESSION_MESSAGE_RESOLUTION_FIELD));
     assert!(!generic_properties.contains_key("ack_session_context_revision"));
@@ -719,31 +715,6 @@ fn stateless_ack_wrapper_normalizes_and_is_removed_before_concrete_tool_parsing(
                 .collect::<Vec<_>>()
     });
     assert!(strip_stateless_ack_session_message_ids(&mut oversized).is_err());
-}
-
-#[test]
-fn stateless_ack_ref_wrapper_is_bounded_and_removed_before_concrete_parsing() {
-    let mut arguments = json!({
-        crate::tool_runtime::sessions::TOOL_CALL_ACK_REF_FIELD: "  wc_ack1_example  "
-    });
-    let ack_ref = strip_stateless_ack_ref(&mut arguments).unwrap();
-    assert_eq!(ack_ref.as_deref(), Some("wc_ack1_example"));
-    assert!(arguments
-        .get(crate::tool_runtime::sessions::TOOL_CALL_ACK_REF_FIELD)
-        .is_none());
-    crate::tool_runtime::ToolCall::from_tool_name("list_tools", arguments)
-        .expect("ACK ref wrapper metadata must be gone before concrete parsing");
-
-    let mut wrong_type = json!({
-        crate::tool_runtime::sessions::TOOL_CALL_ACK_REF_FIELD: ["wc_ack1_example"]
-    });
-    assert!(strip_stateless_ack_ref(&mut wrong_type).is_err());
-
-    let mut oversized = json!({
-        crate::tool_runtime::sessions::TOOL_CALL_ACK_REF_FIELD:
-            "x".repeat(crate::tool_runtime::sessions::MAX_TOOL_CALL_ACK_REF_CHARS + 1)
-    });
-    assert!(strip_stateless_ack_ref(&mut oversized).is_err());
 }
 
 #[test]
@@ -836,7 +807,6 @@ fn stateless_invocation_metadata_stays_typed_and_business_arguments_stay_clean()
         "items": [{"path": "src/lib.rs"}],
         crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD: "wc_sess_adapter",
         crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_MESSAGE_IDS_FIELD: ["wc_msg_abcd-efgh_ijklmn"],
-        crate::tool_runtime::sessions::TOOL_CALL_ACK_REF_FIELD: "wc_ack1_fixture",
         crate::tool_runtime::sessions::TOOL_CALL_SESSION_MESSAGE_RESOLUTION_FIELD: {
             "message_id": "wc_msg_abcd-efgh_ijklmn",
             "resolution": "handled"
@@ -845,14 +815,12 @@ fn stateless_invocation_metadata_stays_typed_and_business_arguments_stay_clean()
     });
     let recording_session_id = strip_recording_session_id(&mut arguments).unwrap();
     let ack_session_message_ids = strip_stateless_ack_session_message_ids(&mut arguments).unwrap();
-    let ack_ref = strip_stateless_ack_ref(&mut arguments).unwrap();
     let session_message_resolution =
         strip_stateless_session_message_resolution(&mut arguments).unwrap();
     let context_request = strip_stateless_context_request(&mut arguments).unwrap();
     let metadata = crate::tool_runtime::kernel::ToolInvocationMetadata {
         control: None,
         ack_session_message_ids,
-        ack_ref,
         session_message_resolution,
         context_request,
     };
@@ -862,13 +830,11 @@ fn stateless_invocation_metadata_stays_typed_and_business_arguments_stay_clean()
         metadata.ack_session_message_ids,
         vec!["wc_msg_abcd-efgh_ijklmn"]
     );
-    assert_eq!(metadata.ack_ref.as_deref(), Some("wc_ack1_fixture"));
     assert_eq!(metadata.context_request, vec!["webcodex.workflow"]);
     assert!(metadata.session_message_resolution.is_some());
     for field in [
         crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD,
         crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_MESSAGE_IDS_FIELD,
-        crate::tool_runtime::sessions::TOOL_CALL_ACK_REF_FIELD,
         crate::tool_runtime::sessions::TOOL_CALL_SESSION_MESSAGE_RESOLUTION_FIELD,
         crate::tool_runtime::context_projection::TOOL_CALL_CONTEXT_REQUEST_FIELD,
     ] {
@@ -1675,7 +1641,7 @@ fn assert_compact_tool_diff(full: &Value, compact: &Value) {
     for (pointer, pattern) in [
         (
             "/properties/recording_session_id",
-            "^(~s[1-9][0-9]{0,19}|wc_sess_([A-Za-z0-9_-]{16}|[0-9a-f]{32}))$",
+            "^wc_sess_([A-Za-z0-9_-]{16}|[0-9a-f]{32})$",
         ),
         (
             "/properties/ack_session_message_ids/items",
@@ -1817,7 +1783,7 @@ async fn mcp_compact_preserves_safety_patterns_and_wrapper_bounds() {
 #[test]
 fn mcp_compact_opaque_patterns_require_exact_wrapper_location_and_format() {
     use crate::mcp::discovery::compact_tool;
-    let session_pattern = "^(~s[1-9][0-9]{0,19}|wc_sess_([A-Za-z0-9_-]{16}|[0-9a-f]{32}))$";
+    let session_pattern = "^wc_sess_([A-Za-z0-9_-]{16}|[0-9a-f]{32})$";
     // Even at a known path, a future/different format must not silently vanish.
     for pattern in [
         "^wc_sess_[A-Za-z0-9_-]{16}$",
@@ -1852,34 +1818,6 @@ fn mcp_compact_opaque_patterns_require_exact_wrapper_location_and_format() {
         tool, once,
         "wrapper annotation projection must be idempotent"
     );
-}
-
-#[tokio::test]
-async fn mcp_recording_session_ref_fails_closed_when_malformed() {
-    let runtime = test_runtime();
-    let outcome = handle_mcp_request(
-        &runtime,
-        rpc(
-            "tools/call",
-            Some(json!(1)),
-            mcp_2026_params(adaptive_runtime_gateway_params(
-                "list_projects",
-                json!({
-                    crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD: "~s01"
-                }),
-            )),
-        ),
-        None,
-    )
-    .await;
-    let value = match outcome {
-        McpOutcome::BadRequest(value) => value,
-        other => panic!("expected malformed recorder ref BadRequest, got {other:?}"),
-    };
-    assert_eq!(value["error"]["code"], -32602);
-    assert!(value["error"]["message"]
-        .as_str()
-        .is_some_and(|message| message.contains("unknown_session_ref")));
 }
 
 #[allow(clippy::await_holding_lock)]
@@ -2818,27 +2756,8 @@ async fn mcp_tools_call_rejects_legacy_session_alias_even_with_canonical_recorde
 
 #[tokio::test]
 async fn mcp_tools_call_records_event_with_recording_session_id() {
-    let tmp = tempfile::tempdir().unwrap();
-    let runtime = test_runtime().with_project_reference_database(std::sync::Arc::new(
-        crate::Database::open(&tmp.path().join("recorder-refs.db")).unwrap(),
-    ));
-    let authority = crate::tool_runtime::workflow_session_authority_fingerprint(None)
-        .expect("local test principal should have stable authority");
-    let session = runtime
-        .sessions
-        .start_session_with_options(
-            crate::tool_runtime::SessionCreateOptions::new(
-                None,
-                Some("short recorder".to_string()),
-                crate::tool_runtime::SessionMode::Normal,
-                crate::tool_runtime::SessionGuards::default(),
-            )
-            .with_owner_authority_fingerprint(Some(authority)),
-        )
-        .unwrap();
-    let session_ref = runtime
-        .session_reference_for_id(&session.session_id, None)
-        .expect("test runtime should issue Session refs");
+    let runtime = test_runtime();
+    let session = runtime.sessions.start_session(None, None);
     let outcome = handle_mcp_request(
         &runtime,
         rpc(
@@ -2847,7 +2766,7 @@ async fn mcp_tools_call_records_event_with_recording_session_id() {
             mcp_2026_params(adaptive_runtime_gateway_params(
                 "list_projects",
                 json!({
-                    crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD: session_ref
+                    crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD: &session.session_id
                 }),
             )),
         ),

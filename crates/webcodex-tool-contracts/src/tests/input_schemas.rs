@@ -969,7 +969,6 @@ fn code_mode_exec_schema_keeps_authority_outer_bound_and_source_bounded() {
             "recording_session_id",
             "ack_session_context_revision",
             "ack_session_message_ids",
-            "ack_ref",
             "context_request",
             "session_message_resolution",
         ]
@@ -1005,7 +1004,6 @@ fn code_mode_effectful_schema_keeps_authority_outer_bound_and_deadline_explicit(
             "recording_session_id",
             "ack_session_context_revision",
             "ack_session_message_ids",
-            "ack_ref",
             "context_request",
             "session_message_resolution",
         ]
@@ -1035,7 +1033,6 @@ fn code_mode_mutating_schema_keeps_authority_outer_bound_and_mutation_scope_narr
             "recording_session_id",
             "ack_session_context_revision",
             "ack_session_message_ids",
-            "ack_ref",
             "context_request",
             "session_message_resolution",
             "state_changed",

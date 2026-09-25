@@ -23,7 +23,21 @@ from typing import BinaryIO
 DEFAULT_REPO = "yyjeqhc/webcodex"
 PLATFORMS = ("linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64", "win32-x64", "win32-arm64")
 BINARIES = ("webcodex", "webcodex-server", "webcodex-runner")
-DESKTOP_PLATFORMS = ("darwin-x64", "darwin-arm64", "win32-x64", "win32-arm64")
+DESKTOP_PLATFORMS = ("darwin-arm64", "win32-x64", "win32-arm64")
+SUPPLEMENTAL_DESKTOP_PLATFORMS = ("darwin-x64",)
+ALL_DESKTOP_PLATFORMS = ("darwin-x64", *DESKTOP_PLATFORMS)
+SUPPLEMENTAL_DESKTOP_FIRST_VERSION = (0, 4, 3)
+
+
+def primary_desktop_platforms_for_version(version: str) -> tuple[str, ...]:
+    core_text = version.split("+", 1)[0].split("-", 1)[0]
+    try:
+        core = tuple(int(part) for part in core_text.split("."))
+    except ValueError as exc:
+        raise CollectionError(f"invalid release version: {version!r}") from exc
+    if len(core) != 3:
+        raise CollectionError(f"invalid release version: {version!r}")
+    return DESKTOP_PLATFORMS if core >= SUPPLEMENTAL_DESKTOP_FIRST_VERSION else ALL_DESKTOP_PLATFORMS
 RELEASE_WORKFLOW_PATH = ".github/workflows/release-build.yml"
 API_VERSION = "2022-11-28"
 USER_AGENT = "webcodex-release-bundle-collector/1"
@@ -72,7 +86,7 @@ def desktop_artifact_filename(
     tag: str,
     source_sha: str,
 ) -> str:
-    if platform not in DESKTOP_PLATFORMS:
+    if platform not in ALL_DESKTOP_PLATFORMS:
         raise CollectionError(f"unsupported Desktop platform: {platform!r}")
     suffix = "-setup.exe" if platform.startswith("win32-") else ".dmg"
     if build_kind == "release":
@@ -590,11 +604,15 @@ def verify_bundle_directory(
         artifact_hashes[platform] = digest
 
     desktop_artifacts = release_build.get("desktop_artifacts")
-    if not isinstance(desktop_artifacts, dict) or set(desktop_artifacts) != set(DESKTOP_PLATFORMS):
-        raise CollectionError("release-build.json must contain exactly the supported Desktop artifacts")
+    desktop_platforms = primary_desktop_platforms_for_version(version)
+    if not isinstance(desktop_artifacts, dict) or set(desktop_artifacts) != set(desktop_platforms):
+        raise CollectionError(
+            f"release-build.json Desktop artifact set mismatch for {version}: "
+            f"expected={sorted(desktop_platforms)}"
+        )
     desktop_files: dict[str, str] = {}
     desktop_hashes: dict[str, str] = {}
-    for platform in DESKTOP_PLATFORMS:
+    for platform in desktop_platforms:
         item = desktop_artifacts.get(platform)
         if not isinstance(item, dict) or set(item) != {"filename", "sha256"}:
             raise CollectionError(f"release-build.json Desktop artifact entry is malformed: {platform}")
@@ -670,7 +688,7 @@ def verify_bundle_directory(
             raise CollectionError(f"assembled archive SHA-256 mismatch: {platform}")
         _verify_archive_members(path, platform)
 
-    for platform in DESKTOP_PLATFORMS:
+    for platform in desktop_platforms:
         filename = desktop_files[platform]
         path = root / filename
         try:
@@ -707,7 +725,7 @@ def verify_bundle_directory(
         **({"runtime_manifest": runtime_manifest} if runtime_manifest is not None else {}),
         "desktop_artifacts": {
             platform: {"filename": desktop_files[platform], "sha256": desktop_hashes[platform]}
-            for platform in DESKTOP_PLATFORMS
+            for platform in desktop_platforms
         },
     }
 

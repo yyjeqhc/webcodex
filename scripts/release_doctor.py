@@ -30,7 +30,8 @@ EXPECTED_PLATFORMS = (
     "win32-x64",
     "win32-arm64",
 )
-EXPECTED_DESKTOP_PLATFORMS = ("darwin-x64", "darwin-arm64", "win32-x64", "win32-arm64")
+EXPECTED_DESKTOP_PLATFORMS = ("darwin-arm64", "win32-x64", "win32-arm64")
+EXPECTED_SUPPLEMENTAL_DESKTOP_PLATFORMS = ("darwin-x64",)
 REQUIRED_TOOLS = ("git", "gh", "npm", "node", "python3", "bash")
 
 
@@ -61,7 +62,12 @@ def _platform_contract(root: Path) -> str:
         )
     if tuple(collector.DESKTOP_PLATFORMS) != EXPECTED_DESKTOP_PLATFORMS:
         raise DoctorError(
-            f"Desktop release platform contract drift: actual={tuple(collector.DESKTOP_PLATFORMS)}"
+            f"primary Desktop release platform contract drift: actual={tuple(collector.DESKTOP_PLATFORMS)}"
+        )
+    if tuple(collector.SUPPLEMENTAL_DESKTOP_PLATFORMS) != EXPECTED_SUPPLEMENTAL_DESKTOP_PLATFORMS:
+        raise DoctorError(
+            "supplemental Desktop release platform contract drift: "
+            f"actual={tuple(collector.SUPPLEMENTAL_DESKTOP_PLATFORMS)}"
         )
     manifest_path = root / "npm/webcodex/manifest.example.json"
     try:
@@ -74,8 +80,9 @@ def _platform_contract(root: Path) -> str:
             f"npm manifest platform contract drift: expected={EXPECTED_PLATFORMS} actual={tuple(artifacts) if isinstance(artifacts, dict) else None}"
         )
     return (
-        "six-platform npm runtime contract plus Desktop "
-        f"{', '.join(EXPECTED_DESKTOP_PLATFORMS)}: {', '.join(EXPECTED_PLATFORMS)}"
+        "six-platform npm runtime contract plus primary Desktop "
+        f"{', '.join(EXPECTED_DESKTOP_PLATFORMS)} and supplemental Desktop "
+        f"{', '.join(EXPECTED_SUPPLEMENTAL_DESKTOP_PLATFORMS)}: {', '.join(EXPECTED_PLATFORMS)}"
     )
 
 
@@ -93,6 +100,7 @@ def _workflow_contract(root: Path) -> str:
     extended = (root / ".github/workflows/extended-native.yml").read_text(encoding="utf-8")
     readiness_workflow = (root / ".github/workflows/release-readiness.yml").read_text(encoding="utf-8")
     build = (root / ".github/workflows/release-build.yml").read_text(encoding="utf-8")
+    intel_desktop = (root / ".github/workflows/release-desktop-darwin-x64.yml").read_text(encoding="utf-8")
     required = {
         "ci.yml": (
             ("apps/desktop/package-lock.json", ci),
@@ -148,6 +156,16 @@ def _workflow_contract(root: Path) -> str:
             ("signing_mode=adhoc", build),
             ('export APPLE_SIGNING_IDENTITY="-"', build),
         ),
+        "release-desktop-darwin-x64.yml": (
+            ("types: [published]", intel_desktop),
+            ("workflow_dispatch:", intel_desktop),
+            ("macos-15-intel", intel_desktop),
+            ("contents: write", intel_desktop),
+            ("webcodex-v$VERSION-$PLATFORM.tar.gz", intel_desktop),
+            ("SHA256SUMS", intel_desktop),
+            ("gh release upload", intel_desktop),
+            ("desktop_install_macos_smoke.sh", intel_desktop),
+        ),
     }
     missing = []
     for filename, tokens in required.items():
@@ -198,6 +216,7 @@ def _actionlint(root: Path) -> str:
             str(root / ".github/workflows/release-readiness.yml"),
             str(root / ".github/workflows/release-build.yml"),
             str(root / ".github/workflows/release-image.yml"),
+            str(root / ".github/workflows/release-desktop-darwin-x64.yml"),
         ],
         cwd=root,
         stdout=subprocess.PIPE,

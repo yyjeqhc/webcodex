@@ -15,7 +15,7 @@ from scripts import collect_release_bundle as collector
 
 SOURCE_SHA = "a" * 40
 RUN_ID = 123456
-VERSION = "0.4.0"
+VERSION = "0.4.3"
 
 
 def _archive_bytes(platform: str) -> bytes:
@@ -49,7 +49,7 @@ def _write_bundle(root: Path, tag: str, build_kind: str) -> tuple[str, dict[str,
         checksum_lines.append(f"{digest}  {filename}")
 
     desktop_artifacts: dict[str, dict[str, str]] = {}
-    for platform in collector.DESKTOP_PLATFORMS:
+    for platform in collector.primary_desktop_platforms_for_version(VERSION):
         desktop_name = collector.desktop_artifact_filename(
             VERSION,
             platform,
@@ -181,10 +181,7 @@ class BundleTests(unittest.TestCase):
             )
             self.assertEqual(summary["artifacts"], hashes)
             self.assertEqual(summary["build_kind"], "release")
-            self.assertEqual(
-                summary["desktop_artifacts"]["darwin-x64"]["filename"],
-                f"webcodex-desktop-v{VERSION}-darwin-x64.dmg",
-            )
+            self.assertNotIn("darwin-x64", summary["desktop_artifacts"])
             self.assertEqual(
                 summary["desktop_artifacts"]["darwin-arm64"]["filename"],
                 f"webcodex-desktop-v{VERSION}-darwin-arm64.dmg",
@@ -220,7 +217,7 @@ class BundleTests(unittest.TestCase):
             root = Path(temp)
             stem, _hashes = _write_bundle(root, f"v{VERSION}", "release")
             metadata = json.loads((root / "release-build.json").read_text(encoding="utf-8"))
-            desktop_name = metadata["desktop_artifacts"]["darwin-x64"]["filename"]
+            desktop_name = metadata["desktop_artifacts"]["darwin-arm64"]["filename"]
             (root / desktop_name).write_bytes(b"drifted-dmg")
             with self.assertRaises(collector.CollectionError):
                 collector.verify_bundle_directory(
@@ -238,9 +235,9 @@ class BundleTests(unittest.TestCase):
             stem, _hashes = _write_bundle(root, f"v{VERSION}", "release")
             metadata_path = root / "release-build.json"
             metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-            item = metadata["desktop_artifacts"]["darwin-x64"]
+            item = metadata["desktop_artifacts"]["darwin-arm64"]
             old_name = item["filename"]
-            bad_name = "webcodex-desktop-v0.4.0-macos-x64.dmg"
+            bad_name = f"webcodex-desktop-v{VERSION}-macos-arm64.dmg"
             (root / old_name).rename(root / bad_name)
             item["filename"] = bad_name
             metadata_path.write_text(json.dumps(metadata) + "\n", encoding="utf-8")

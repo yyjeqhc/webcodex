@@ -217,6 +217,13 @@ if bash scripts/test_python_tooling.sh \
     && grep -Fq 'prepare_desktop_bundle.ps1' .github/workflows/release-build.yml \
     && grep -Fq 'win32-arm64-setup.exe' .github/workflows/release-build.yml \
     && grep -Fq 'prepare_desktop_bundle_macos.py' .github/workflows/release-build.yml \
+    && grep -Fq 'desktop_darwin_x64_supplemental' .github/workflows/release-build.yml \
+    && test -f .github/workflows/release-desktop-darwin-x64.yml \
+    && grep -Fq 'types: [published]' .github/workflows/release-desktop-darwin-x64.yml \
+    && grep -Fq 'macos-15-intel' .github/workflows/release-desktop-darwin-x64.yml \
+    && grep -Fq 'webcodex-v$VERSION-$PLATFORM.tar.gz' .github/workflows/release-desktop-darwin-x64.yml \
+    && grep -Fq 'gh release upload' .github/workflows/release-desktop-darwin-x64.yml \
+    && grep -Fq 'desktop_install_macos_smoke.sh' .github/workflows/release-desktop-darwin-x64.yml \
     && python3 scripts/check_markdown_links.py \
     && bash scripts/tests/test_npm_package_smoke_existing_binaries.sh; then
     ok "release verification tooling self-tests"

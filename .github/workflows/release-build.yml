@@ -38,6 +38,7 @@ jobs:
       built_at: ${{ steps.metadata.outputs.built_at }}
       build_kind: ${{ steps.metadata.outputs.build_kind }}
       archive_stem: ${{ steps.metadata.outputs.archive_stem }}
+      desktop_darwin_x64_supplemental: ${{ steps.metadata.outputs.desktop_darwin_x64_supplemental }}
     steps:
       - name: Require the reviewed workflow from main
         shell: bash
@@ -126,6 +127,14 @@ jobs:
             version="$package_version"
           fi
 
+          desktop_darwin_x64_supplemental="$(python3 - "$version" <<'PY'
+          import sys
+          version = sys.argv[1].split('+', 1)[0].split('-', 1)[0]
+          core = tuple(int(part) for part in version.split('.'))
+          print('true' if core >= (0, 4, 3) else 'false')
+          PY
+          )"
+
           short_source="${source_sha:0:12}"
           if [ "$build_kind" = release ]; then
             archive_stem="webcodex-v$version"
@@ -148,6 +157,7 @@ jobs:
             echo "built_at=$built_at"
             echo "build_kind=$build_kind"
             echo "archive_stem=$archive_stem"
+            echo "desktop_darwin_x64_supplemental=$desktop_darwin_x64_supplemental"
           } >> "$GITHUB_OUTPUT"
           {
             echo "### Release build source"
@@ -156,6 +166,7 @@ jobs:
             echo "- commit: \`$source_sha\`"
             echo "- built_at: \`$built_at\`"
             echo "- archive stem: \`$archive_stem\`"
+            echo "- macOS Intel Desktop supplemental: \`$desktop_darwin_x64_supplemental\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
   linux:
@@ -373,6 +384,7 @@ jobs:
         with:
           shared-key: release-${{ matrix.platform }}
       - uses: actions/setup-node@v4
+        if: matrix.platform == 'darwin-arm64' || needs.prepare.outputs.desktop_darwin_x64_supplemental != 'true'
         with:
           node-version: 22
           cache: npm
@@ -432,11 +444,14 @@ jobs:
           printf '%s  %s\n' "$digest" "$(basename "$archive")" > "$archive.sha256"
 
       - name: Install shared frontend dependencies
+        if: matrix.platform == 'darwin-arm64' || needs.prepare.outputs.desktop_darwin_x64_supplemental != 'true'
         run: npm ci --prefix frontend
       - name: Install macOS Desktop dependencies
+        if: matrix.platform == 'darwin-arm64' || needs.prepare.outputs.desktop_darwin_x64_supplemental != 'true'
         run: npm ci --prefix apps/desktop
 
       - name: Stage exact native runtime for macOS Desktop
+        if: matrix.platform == 'darwin-arm64' || needs.prepare.outputs.desktop_darwin_x64_supplemental != 'true'
         id: desktop_bundle
         shell: bash
         env:
@@ -466,6 +481,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Build ad-hoc signed native macOS Desktop DMG
+        if: matrix.platform == 'darwin-arm64' || needs.prepare.outputs.desktop_darwin_x64_supplemental != 'true'
         id: desktop_dmg
         working-directory: apps/desktop
         shell: bash
@@ -496,6 +512,7 @@ jobs:
           echo "path=$desktop" >> "$GITHUB_OUTPUT"
 
       - name: Smoke native macOS Desktop DMG and signing evidence
+        if: matrix.platform == 'darwin-arm64' || needs.prepare.outputs.desktop_darwin_x64_supplemental != 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -750,6 +767,7 @@ jobs:
       BUILD_KIND: ${{ needs.prepare.outputs.build_kind }}
       ARCHIVE_STEM: ${{ needs.prepare.outputs.archive_stem }}
       INPUT_TAG: ${{ inputs.tag }}
+      DESKTOP_DARWIN_X64_SUPPLEMENTAL: ${{ needs.prepare.outputs.desktop_darwin_x64_supplemental }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -800,9 +818,6 @@ jobs:
             "$ARCHIVE_STEM-win32-x64.tar.gz.sha256"
             "$ARCHIVE_STEM-win32-arm64.tar.gz"
             "$ARCHIVE_STEM-win32-arm64.tar.gz.sha256"
-            "$desktop_darwin_x64"
-            "$desktop_darwin_x64.sha256"
-            "$desktop_darwin_x64.evidence.json"
             "$desktop_darwin_arm64"
             "$desktop_darwin_arm64.sha256"
             "$desktop_darwin_arm64.evidence.json"
@@ -811,6 +826,13 @@ jobs:
             "$desktop_win32_arm64"
             "$desktop_win32_arm64.sha256"
           )
+          if [ "$DESKTOP_DARWIN_X64_SUPPLEMENTAL" != true ]; then
+            expected+=(
+              "$desktop_darwin_x64"
+              "$desktop_darwin_x64.sha256"
+              "$desktop_darwin_x64.evidence.json"
+            )
+          fi
           mapfile -t expected_sorted < <(printf '%s\n' "${expected[@]}" | sort)
           if find candidate-input -mindepth 1 ! -type f -print -quit | grep -q .; then
             echo "same-run release candidate download contains a non-regular or nested entry" >&2
@@ -827,7 +849,11 @@ jobs:
           for platform in "${platforms[@]}"; do
             (cd candidate-input && sha256sum -c "$ARCHIVE_STEM-$platform.tar.gz.sha256")
           done
-          for desktop_filename in "$desktop_darwin_x64" "$desktop_darwin_arm64" "$desktop_win32_x64" "$desktop_win32_arm64"; do
+          desktop_filenames=("$desktop_darwin_arm64" "$desktop_win32_x64" "$desktop_win32_arm64")
+          if [ "$DESKTOP_DARWIN_X64_SUPPLEMENTAL" != true ]; then
+            desktop_filenames=("$desktop_darwin_x64" "${desktop_filenames[@]}")
+          fi
+          for desktop_filename in "${desktop_filenames[@]}"; do
             (cd candidate-input && sha256sum -c "$desktop_filename.sha256")
           done
 
@@ -841,10 +867,9 @@ jobs:
           root = Path("candidate-input")
           expected_signing = "adhoc"
           expected_notarized = False
-          pairs = (
-              ("darwin-x64", os.environ["DESKTOP_DARWIN_X64_FILENAME"]),
-              ("darwin-arm64", os.environ["DESKTOP_DARWIN_ARM64_FILENAME"]),
-          )
+          pairs = [("darwin-arm64", os.environ["DESKTOP_DARWIN_ARM64_FILENAME"])]
+          if os.environ["DESKTOP_DARWIN_X64_SUPPLEMENTAL"] != "true":
+              pairs.insert(0, ("darwin-x64", os.environ["DESKTOP_DARWIN_X64_FILENAME"]))
           for platform, filename in pairs:
               evidence_path = root / f"{filename}.evidence.json"
               evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
@@ -871,7 +896,9 @@ jobs:
           for platform in "${platforms[@]}"; do
             cp "candidate-input/$ARCHIVE_STEM-$platform.tar.gz" release-bundle/
           done
-          cp "candidate-input/$desktop_darwin_x64" release-bundle/
+          if [ "$DESKTOP_DARWIN_X64_SUPPLEMENTAL" != true ]; then
+            cp "candidate-input/$desktop_darwin_x64" release-bundle/
+          fi
           cp "candidate-input/$desktop_darwin_arm64" release-bundle/
           cp "candidate-input/$desktop_win32_x64" release-bundle/
           cp "candidate-input/$desktop_win32_arm64" release-bundle/
@@ -888,7 +915,9 @@ jobs:
               for platform in "${platforms[@]}"; do
                 cat "candidate-input/$ARCHIVE_STEM-$platform.tar.gz.sha256"
               done
-              cat "candidate-input/$desktop_darwin_x64.sha256"
+              if [ "$DESKTOP_DARWIN_X64_SUPPLEMENTAL" != true ]; then
+                cat "candidate-input/$desktop_darwin_x64.sha256"
+              fi
               cat "candidate-input/$desktop_darwin_arm64.sha256"
               cat "candidate-input/$desktop_win32_x64.sha256"
               cat "candidate-input/$desktop_win32_arm64.sha256"
@@ -910,11 +939,12 @@ jobs:
               digest = hashlib.sha256((source / filename).read_bytes()).hexdigest()
               artifacts[platform] = {"filename": filename, "sha256": digest}
           desktop_files = {
-              "darwin-x64": os.environ["DESKTOP_DARWIN_X64_FILENAME"],
               "darwin-arm64": os.environ["DESKTOP_DARWIN_ARM64_FILENAME"],
               "win32-x64": os.environ["DESKTOP_WIN32_X64_FILENAME"],
               "win32-arm64": os.environ["DESKTOP_WIN32_ARM64_FILENAME"],
           }
+          if os.environ["DESKTOP_DARWIN_X64_SUPPLEMENTAL"] != "true":
+              desktop_files["darwin-x64"] = os.environ["DESKTOP_DARWIN_X64_FILENAME"]
           desktop_artifacts = {}
           for platform, filename in desktop_files.items():
               desktop_artifacts[platform] = {
@@ -949,6 +979,11 @@ jobs:
             echo "- workflow run: \`$GITHUB_RUN_ID\`"
             echo "- build kind: \`$BUILD_KIND\`"
             echo "- bundle artifact: \`$ARCHIVE_STEM-bundle\`"
+            if [ "$DESKTOP_DARWIN_X64_SUPPLEMENTAL" = true ]; then
+              echo "- macOS Intel Desktop: supplemental post-publication asset; the darwin-x64 runtime archive remains in this primary bundle"
+            else
+              echo "- macOS Intel Desktop: retained in the historical primary bundle contract"
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload assembled candidate set

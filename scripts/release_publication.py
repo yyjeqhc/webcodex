@@ -1007,9 +1007,10 @@ def verify_draft_assets(*, repo: str, bundle_dir: Path, timeout: float) -> dict:
         expected_files.add("webcodex-release-manifest.json")
     expected_files.update(f"{summary['archive_stem']}-{platform}.tar.gz" for platform in collector.PLATFORMS)
     desktop_artifacts = summary.get("desktop_artifacts")
-    if not isinstance(desktop_artifacts, dict) or set(desktop_artifacts) != set(collector.DESKTOP_PLATFORMS):
+    desktop_platforms = collector.primary_desktop_platforms_for_version(str(summary["version"]))
+    if not isinstance(desktop_artifacts, dict) or set(desktop_artifacts) != set(desktop_platforms):
         raise PublicationError("retained bundle Desktop artifact summary is invalid")
-    for platform in collector.DESKTOP_PLATFORMS:
+    for platform in desktop_platforms:
         item = desktop_artifacts.get(platform)
         if not isinstance(item, dict) or not isinstance(item.get("filename"), str):
             raise PublicationError(f"retained bundle Desktop artifact is invalid: {platform}")

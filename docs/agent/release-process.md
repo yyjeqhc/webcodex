@@ -122,50 +122,23 @@ runtime/Desktop build and install smoke before tagging. Readiness then runs rele
 WebSocket/polling E2E plus coding-loop compare eval; after both pass, native `linux/amd64` and
 `linux/arm64` disposable Server-image jobs verify build/runtime/health/non-root behavior and
 digest-pinned bootstrap generation. These jobs do not log in to a registry, upload artifacts,
-push packages, or produce formal release candidates. Six-platform native release-profile/ABI/package
-validation and the formal Windows x64/ARM64 plus macOS Intel/Apple-Silicon Desktop artifacts remain
-owned by the single authoritative `release-build.yml` run after immutable tagging.
+push packages, or produce formal release candidates. Six-platform native release-profile/ABI/package validation remains owned by the authoritative
+`release-build.yml` run after immutable tagging. Starting with `v0.4.3`, that primary build also owns
+the macOS Apple-Silicon plus Windows x64/ARM64 Desktop candidates, while the already-validated macOS
+Intel Desktop distribution moves to a post-publication supplemental workflow so its slow DMG build does
+not delay the primary Release. The `darwin-x64` runtime archive itself remains part of the primary six-platform bundle.
 Product-documentation consistency and allowed legacy-term matches remain part of the
 release-prep review rather than being guessed by an automated semantic checker.
 
-The normal release topology deliberately separates roles. The release control host first
-runs `release_operator.py preflight`, then GitHub Actions validates the exact pre-tag
-source in the durable readiness workflow. After explicit authorization creates the
-immutable tag, `release_operator.py build-start` / `build-status` bind one durable
-`rb_*` request to the reviewed release-build workflow; GitHub Actions builds and assembles
 For normal human operation, prefer `release_operator.py doctor` before the release window and one durable high-level `release-init` / `release-resume` plan during the release. The plan composes the same low-level readiness/build/collect/stage/verify primitives without weakening their exact-source correlation. It automatically advances only recoverable phases and returns explicit `needs_authorization` states before immutable tag creation, draft creation, and public GitHub/npm publication; it returns `needs_reconciliation` instead of deleting/repeating local outputs whose completion is uncertain. `release-status` is read-only, and every low-level operator command remains available for diagnosis or bounded recovery.
 
-The lower-level release topology deliberately separates roles. The release control host first
-runs `release_operator.py preflight`, then GitHub Actions validates the exact pre-tag
-source in the durable readiness workflow. After explicit authorization creates the
-immutable tag, `release_operator.py build-start` / `build-status` bind one durable
-`rb_*` request to the reviewed release-build workflow; GitHub Actions builds and assembles
-one same-run native candidate bundle containing the six runtime archives and the four Desktop
-distribution artifacts (Windows x64/ARM64, macOS Intel, and macOS Apple Silicon). Each Mac lane reuses the
-same unsigned runtime build input for its archive and `.app`, then records the bundled post-signing
-digests separately. Verification and formal GitHub Release builds are ad-hoc signed and intentionally
-not notarized, so the release pipeline does not depend on paid Apple Developer Program credentials.
-Native macOS smoke still verifies the code signature and exact bundled runtime evidence. The release control host collects that exact bundle
-with `release_operator.py collect` (locked run id, source SHA, and tag; GitHub artifact
-REST download, no `gh run download`) and stages npm with `stage-npm` using the retained
-CI binaries without Cargo. After draft assets are uploaded, `verify-draft` compares the
-GitHub asset SHA-256 digests and sizes against the retained bytes instead of downloading
-the same ~100 MiB again. The privileged actions themselves—creating the immutable tag,
-making the GitHub Release public, and `npm publish`—remain explicit human-authorized
-steps rather than one opaque command. Publishing the GitHub Release then authorizes the
-reviewed `release-image.yml` adapter to build the server-only `linux/amd64` +
-`linux/arm64` image from that exact immutable tag, publish/reconcile it in GHCR, and
-attach its immutable digest record plus a self-contained, digest-pinned clone-free
-bootstrap asset to the same Release; the bootstrap is generated from the reviewed
-publication-workflow source so guarded backfills do not depend on new tooling existing in
-an older application tag. `release-build.yml` remains a read-only candidate producer with
-no package-write authority. One well-connected Linux host performs the single full public-byte
-verifier for npm, native Release archives, and all four bounded Desktop distribution bytes after publication; it hashes macOS DMGs but does not replace native macOS ad-hoc signing evidence. The image workflow
-independently requires anonymous GHCR availability and verifies the public deployment-asset
-hashes. Do not fan release downloads or rebuilds out to per-platform development
-machines merely to prove that a foreign archive is downloadable. Native
-execution/architecture evidence belongs to the reviewed release-build matrix; the
-public verifier checks the published bytes without executing foreign binaries.
+The lower-level topology deliberately separates roles. The release control host first runs `release_operator.py preflight`, then GitHub Actions validates the exact pre-tag source in the durable readiness workflow. After explicit authorization creates the immutable tag, `release_operator.py build-start` / `build-status` bind one durable `rb_*` request to `release-build.yml`. That workflow always builds the six native runtime archives from the exact tag. For `v0.4.3+`, its primary same-run bundle contains the macOS Apple-Silicon and Windows x64/ARM64 Desktop distributions; the historical `v0.4.2`-and-earlier contract retains macOS Intel in that bundle. The macOS Apple-Silicon lane reuses its already-built runtime as the Desktop input and records post-signing evidence. Formal macOS distributions remain ad-hoc signed and intentionally not notarized, so the release path does not depend on paid Apple Developer Program credentials.
+
+The release control host collects the exact primary bundle with `release_operator.py collect` (locked run id, source SHA, and tag; GitHub artifact REST download, no `gh run download`) and stages npm from the retained runtime bytes without Cargo. Draft verification compares GitHub-provided asset digests and sizes against those retained bytes. Creating the immutable tag, making the GitHub Release public, and `npm publish` remain explicit human-authorized steps.
+
+Publishing a `v0.4.3+` GitHub Release independently activates two post-publication adapters. `release-image.yml` publishes/reconciles the server-only multi-arch GHCR image and its digest-pinned bootstrap assets. `release-desktop-darwin-x64.yml` runs on the native Intel runner, downloads and verifies the already-published immutable `darwin-x64` runtime archive against the primary `SHA256SUMS`, builds and smokes the ad-hoc signed Intel DMG, and attaches the DMG plus its dedicated `.sha256` sidecar to the same Release. It never rewrites the primary `SHA256SUMS`; reruns reconcile each existing supplemental byte-for-byte and upload only a missing counterpart, so an uncertain partial upload can be recovered without replacing an immutable asset. The Intel Desktop adapter is intentionally outside the primary Release critical path and can also be manually backfilled from reviewed `main` for the exact public tag.
+
+One well-connected Linux host performs the full public-byte verifier for npm, the six native Release archives, and the primary Desktop distributions. For `v0.4.3+`, Intel Desktop publication is explicitly outside that core acceptance boundary: no supplemental bytes is valid, a one-file intermediate state is reported as publication in progress without failing the core Release, and a complete DMG/checksum pair is verified independently. Native macOS readiness/smoke owns code-signature evidence; the Linux verifier hashes published DMGs but does not substitute for `codesign` validation. Do not fan release downloads or rebuilds out to per-platform development machines merely to prove that a foreign archive is downloadable.
 
 ---
 

@@ -1,6 +1,7 @@
 import { useLocale } from "./locale";
 
 const zh: Record<string, string> = {
+  "No default project": "无默认展示项目",
   "Restart Tunnel": "重启 Tunnel",
   "Gap from preceding response": "距前次响应交付的间隔",
   "Selected": "已选中",

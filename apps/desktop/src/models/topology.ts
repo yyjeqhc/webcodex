@@ -171,6 +171,7 @@ export interface ChatGptActivitySnapshot {
 }
 
 export interface DesktopState {
+  workspace_runner?: SettingsTarget | null;
   configuration_issue?: string | null;
   saved_projects?: ProjectSelection[];
   topology?: RuntimeTopology | null;

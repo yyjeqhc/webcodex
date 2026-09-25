@@ -28,6 +28,7 @@ export function useDesktopWorkspace() {
   const hasLoadedState = Boolean(state);
   const shouldObserveChatgptActivity = Boolean(
     state?.readiness.runtime_ready
+      && state?.project?.runtime_project_id
       && !hasCurrentOperation
       && !refreshing
       && windowFocused,
@@ -230,7 +231,6 @@ export function useDesktopWorkspace() {
       !topology ||
       topology.experience !== "full" ||
       topology.server.kind !== "local" ||
-      !state.project ||
       !state.readiness.runtime_ready
     ) {
       openSetup();

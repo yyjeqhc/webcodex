@@ -24,9 +24,9 @@ export function sameProject(row: WorkspaceProject, saved: { runtime_project_id?:
     ? row.id === saved.runtime_project_id
     : sameProjectPath(row.path, saved.path);
 }
-export function mergeProjects(runner: WorkspaceProject[], saved: { runtime_project_id?: string | null; path: string }[]): WorkspaceProject[] {
+export function mergeProjects(runner: WorkspaceProject[], saved: { runtime_project_id?: string | null; path: string }[], complete = false): WorkspaceProject[] {
   const rows = [...runner];
-  for (const project of saved) {
+  for (const project of complete ? [] : saved) {
     if (!rows.some(row => sameProject(row, project))) rows.push({
       id: project.runtime_project_id || "", path: project.path, connected: false,
     });
@@ -40,18 +40,22 @@ export function sessionTitle(value: string): string {
 export { projectPresentationName as projectName, displayProjectPath } from "../../../../../frontend/src/ui/projectPresentation";
 interface WorkspaceValue {
   state: DesktopState; runner: RunnerOverview | null; projects: WorkspaceProject[]; windows: WindowSummary[];
-  sessions: WorkflowSession[]; loading: boolean; error: boolean; windowsError: boolean; refresh: () => void; revision: number;
+  sessions: WorkflowSession[]; loading: boolean; error: boolean; windowsError: boolean; refresh: () => void; removeProject: (id: string) => void; revision: number;
   selection: { kind: "session"; project: string; id: string } | { kind: "window"; id: string } | null;
   setSelection: (value: WorkspaceValue["selection"]) => void;
 }
 const WorkspaceContext = createContext<WorkspaceValue | null>(null);
 export function WorkspaceProvider({ state, children }: { state: DesktopState; children: ReactNode }) {
-  const projectKey = state.project?.runtime_project_id || state.project?.path || "";
-  const key = JSON.stringify([state.topology?.server, projectKey]);
+  const key = JSON.stringify([state.topology?.server, state.workspace_runner]);
   const [snapshot, setSnapshot] = useState<{ key: string; runner: RunnerOverview | null; windows: WindowSummary[]; error: boolean; windowsError: boolean } | null>(null);
   const [loading, setLoading] = useState(false);
   const [revision, setRevision] = useState(0);
   const [selection, setSelection] = useState<WorkspaceValue["selection"]>(null);
+  const [removed, setRemoved] = useState<string[]>([]);
+  const removeProject = useCallback((id: string) => {
+    setRemoved(ids => [...ids, id]);
+    setSelection(current => current?.kind === "session" && current.project === id ? null : current);
+  }, []);
   const refresh = useCallback(() => setRevision(value => value + 1), []);
   const busy = Boolean(state.current_operation);
   const ready = state.readiness.server === "ready" && state.readiness.runner === "ready";
@@ -73,6 +77,9 @@ export function WorkspaceProvider({ state, children }: { state: DesktopState; ch
         windows: windows.status === "fulfilled" ? windows.value.windows : old?.key === key ? old.windows : [],
         error: runner.status === "rejected", windowsError: windows.status === "rejected",
       }));
+      if (runner.status === "fulfilled" && runner.value.connected && runner.value.projects_available && !runner.value.projects_truncated) {
+        setRemoved(ids => ids.filter(id => runner.value.projects.some(project => project.id === id)));
+      }
       setLoading(false);
       timer = window.setTimeout(() => { if (document.visibilityState === "visible") void poll(); }, 15_000);
     };
@@ -80,17 +87,21 @@ export function WorkspaceProvider({ state, children }: { state: DesktopState; ch
     document.addEventListener("visibilitychange", visible);
     void poll();
     return () => { disposed = true; if (timer) window.clearTimeout(timer); document.removeEventListener("visibilitychange", visible); };
-  }, [key, projectKey, ready, busy, revision, refresh]);
-  useEffect(() => { setSelection(null); }, [key]);
+  }, [key, ready, busy, revision, refresh]);
+  useEffect(() => { setSelection(null); setRemoved([]); }, [key]);
   const current = snapshot?.key === key ? snapshot : null;
   const projects = useMemo(() => mergeProjects(current?.runner?.projects || [],
-    state.saved_projects || (state.project ? [state.project] : [])),
-  [current?.runner, state.saved_projects, state.project]);
+    state.saved_projects || (state.project ? [state.project] : []), Boolean(current?.runner?.connected && current.runner.projects_available && !current.runner.projects_truncated))
+    .filter(project => !removed.includes(project.id)),
+  [current?.runner, state.saved_projects, state.project, removed]);
+  useEffect(() => {
+    setSelection(current => current?.kind === "session" && !projects.some(project => project.id === current.project) ? null : current);
+  }, [projects]);
   const ids = new Set(projects.map(project => project.id));
   return <WorkspaceContext.Provider value={{ state, runner: current?.runner || null, projects,
     windows: (current?.windows || []).filter(row => !row.last_project || ids.has(row.last_project)),
-    sessions: current?.runner?.recent_sessions?.sessions || [], loading: ready && !busy && (loading || !current),
-    error: Boolean(current?.error), windowsError: Boolean(current?.windowsError), refresh, revision, selection, setSelection,
+    sessions: (current?.runner?.recent_sessions?.sessions || []).filter(session => !session.project_id || ids.has(session.project_id)), loading: ready && !busy && (loading || !current),
+    error: Boolean(current?.error), windowsError: Boolean(current?.windowsError), refresh, removeProject, revision, selection, setSelection,
   }}>{children}</WorkspaceContext.Provider>;
 }
 export function useWorkspace(): WorkspaceValue {

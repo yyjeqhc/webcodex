@@ -10,8 +10,9 @@ export function ReadinessBanner({ state, onState, onDiagnostics, onRuntime, onCo
   const stopped = state.readiness.server === "stopped" && state.readiness.runner === "stopped";
   const runtimeReady = state.readiness.runtime_ready;
   const projectReady = state.readiness.project === "ready";
+  const noProject = state.readiness.project === "none";
   const connectionProblem = (state.connections?.needs_attention ?? 0) > 0 || ["error", "degraded"].includes(state.readiness.exposure);
-  const healthy = runtimeReady && projectReady && !connectionProblem && !state.configuration_issue;
+  const healthy = runtimeReady && (projectReady || noProject) && !connectionProblem && !state.configuration_issue;
   const title = state.configuration_issue ? "Configuration could not be migrated" : healthy ? "WebCodex Ready" : starting ? "Runtime is starting" : stopped ? "Runtime is stopped" : "Needs attention";
   const run = async (action: () => Promise<DesktopState>) => {
     if (busy || state.current_operation) return; setBusy(true); setError(null);
@@ -27,7 +28,7 @@ export function ReadinessBanner({ state, onState, onDiagnostics, onRuntime, onCo
   });
   return <section className={`readiness-banner ${healthy ? "ready" : "attention"}`} aria-label={s("WebCodex Ready")}>
     <div><h2>{s(title)}</h2><dl className="runtime-facts"><div><dt>{s("Runtime")}</dt><dd>{runtimeReady ? s("Compatible") : s(starting ? "Runtime is starting" : stopped ? "Runtime is stopped" : "Runtime unavailable")}</dd></div>
-      <div><dt>{s("Project")}</dt><dd>{projectReady ? s("Ready") : s("Needs attention")}</dd></div>
+      <div><dt>{s("Project")}</dt><dd>{noProject ? s("No default project") : projectReady ? s("Ready") : s("Needs attention")}</dd></div>
       <div><dt>{s("ChatGPT connection")}</dt><dd>{state.chatgpt_activity?.observed ? s("Observed") : s("Not observed")}</dd></div></dl></div>
     {!healthy && <div className="shell-actions">
       {!runtimeReady && stopped && !state.configuration_issue && <button type="button" className="primary-button" disabled={disabled} onClick={() => void run(desktopApi.resumeSavedRuntime)}>{s("Start Runtime")}</button>}

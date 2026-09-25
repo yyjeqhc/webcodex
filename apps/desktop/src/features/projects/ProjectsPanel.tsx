@@ -22,7 +22,7 @@ export function ProjectsPanel({ state, onChooseProject, onState }: { state: Desk
   const unregister = async () => {
     if (!removal || busy || state.current_operation) return;
     setBusy(true); setError(false);
-    try { onState(await desktopApi.unregisterProject(removal)); }
+    try { onState(await desktopApi.unregisterProject(removal)); workspace.removeProject(removal.project); }
     catch { setError(true); }
     finally { setRemoval(null); setBusy(false); workspace.refresh(); }
   };

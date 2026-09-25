@@ -35,7 +35,7 @@ export function ExtensionsPanel({ state, onState }: { state: DesktopState; onSta
   const [document, setDocument] = useState<InstructionSummary | null>(null);
   const alive = useRef(true);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
-  useEffect(() => { setProject(state.project?.runtime_project_id || ""); }, [state.project?.runtime_project_id]);
+  useEffect(() => { if (project && !workspace.projects.some(row => row.id === project)) { setProject(""); setDocument(null); } }, [workspace.projects, project]);
   useEffect(() => {
     let cancelled = false;
     setCatalog(null); setSettings(null); setFailed(false); setLoading(true); setDocument(null);

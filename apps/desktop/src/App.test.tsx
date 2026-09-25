@@ -475,8 +475,10 @@ beforeEach(() => {
     expect(api.startRegularTunnel).not.toHaveBeenCalled();
   });
 
-  it("uses full setup when no saved local project identity exists", async () => {
-    const noProject: DesktopState = { ...readyState, project: null };
+  it("adds a project to a ready projectless Runtime without opening setup", async () => {
+    const noProject: DesktopState = { ...readyState, project: null, readiness: { ...readyState.readiness, project: "none" } };
+    vi.mocked(open).mockResolvedValue("/tmp/new-project");
+    api.activateLocalProject.mockResolvedValue(readyState);
     api.getState.mockResolvedValue(noProject);
     api.observeChatgptActivity.mockResolvedValue(noProject);
 
@@ -484,8 +486,8 @@ beforeEach(() => {
     fireEvent.click(await screen.findByRole("button", { name: "项目" }));
     fireEvent.click(screen.getByRole("button", { name: /添加项目/ }));
 
-    expect(await screen.findByRole("button", { name: /在此电脑使用 WebCodex/ })).toBeInTheDocument();
-    expect(api.activateLocalProject).not.toHaveBeenCalled();
+    await waitFor(() => expect(api.activateLocalProject).toHaveBeenCalledWith("/tmp/new-project"));
+    expect(screen.queryByRole("button", { name: /在此电脑使用 WebCodex/ })).not.toBeInTheDocument();
     expect(api.configureLocal).not.toHaveBeenCalled();
   });
 

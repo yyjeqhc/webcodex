@@ -51,6 +51,7 @@ export function ActivityPanel({ activity }: { activity: ActivityEntry[] }) {
   const visible = windows.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
   const previews = useWindowPreviews(visible, tab === "windows" && !workspace.state.current_operation, workspace.revision);
   useEffect(() => { setPage(0); }, [project, tab]);
+  useEffect(() => { if (project && !workspace.projects.some(row => row.id === project)) setProject(""); }, [workspace.projects, project]);
   useEffect(() => { if (page * PAGE_SIZE >= windows.length && page > 0) setPage(0); }, [windows.length, page]);
   const projectLabel = (id?: string) => projectName(workspace.projects.find(row => row.id === id) || { id: id || "—" });
   const labels: Record<Tab, string> = { windows: s("ChatGPT calls"), sessions: s("Workflow Sessions"), system: s("System events") };

@@ -16,6 +16,7 @@ export interface WorkspaceProject {
   sessions?: { active_sessions: number; running_sessions: number; latest_updated_at?: number; sessions_truncated?: boolean };
 }
 export interface RunnerOverview {
+  projects_available?: boolean;
   client_id: string; connected: boolean; status?: string; visible_project_count: number;
   projects: WorkspaceProject[]; projects_truncated: boolean;
   recent_sessions?: { sessions: WorkflowSession[]; truncated: boolean; scan_truncated: boolean };

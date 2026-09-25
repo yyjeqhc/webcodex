@@ -62,7 +62,7 @@ export const PRODUCT_MESSAGES = {
   noActivity: ["No activity observed yet", "尚未观察到活动", "Noch keine Aktivität beobachtet", "Aucune activité observée", "まだアクティビティはありません", "아직 관찰된 활동 없음"],
   noChatgpt: ["No ChatGPT activity observed yet", "尚未观察到 ChatGPT 活动", "Noch keine ChatGPT-Aktivität beobachtet", "Aucune activité ChatGPT observée", "ChatGPT のアクティビティはまだ観測されていません", "아직 관찰된 ChatGPT 활동 없음"],
   lastChatgpt: ["Last ChatGPT activity", "最近 ChatGPT 活动", "Letzte ChatGPT-Aktivität", "Dernière activité ChatGPT", "最新の ChatGPT アクティビティ", "최근 ChatGPT 활동"],
-  noProjects: ["No projects yet", "尚无项目", "Noch keine Projekte", "Aucun projet", "プロジェクトはまだありません", "아직 프로젝트 없음"],
+  noProjects: ["This Runner has no projects yet", "此 Runner 尚未添加项目", "Noch keine Projekte", "Aucun projet", "プロジェクトはまだありません", "아직 프로젝트 없음"],
   noSessions: ["No Workflow Sessions yet", "尚无工作会话", "Noch keine Workflow-Sitzungen", "Aucune session de travail", "ワークフローセッションはまだありません", "아직 워크플로 세션 없음"],
   noWindows: ["No Window activity observed yet", "尚未观察到窗口活动", "Noch keine Fensteraktivität beobachtet", "Aucune activité de fenêtre observée", "ウィンドウのアクティビティはまだありません", "아직 관찰된 창 활동 없음"],
   lastUsed: ["Last used", "最近使用", "Zuletzt verwendet", "Dernière utilisation", "最終使用", "최근 사용"],

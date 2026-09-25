@@ -28,7 +28,7 @@ const state = {
   topology: { server: { kind: "local" }, runner: { kind: "local" }, experience: "full" },
   current_operation: null, chatgpt_activity: { observed: false, last_meaningful_activity_at_ms: null },
 } as unknown as DesktopState;
-const overview = { client_id: "mini", connected: true, projects: [alpha, beta], visible_project_count: 2, projects_truncated: false, recent_sessions: { sessions: [session], truncated: false, scan_truncated: false } };
+const overview = { projects_available: true, client_id: "mini", connected: true, projects: [alpha, beta], visible_project_count: 2, projects_truncated: false, recent_sessions: { sessions: [session], truncated: false, scan_truncated: false } };
 const wrap = (children: React.ReactNode, selected = state) => <DesktopMantineProvider><LocaleProvider><WorkspaceProvider state={selected}>{children}</WorkspaceProvider></LocaleProvider></DesktopMantineProvider>;
 
 beforeEach(() => {
@@ -165,14 +165,14 @@ describe("product workspace task flows", () => {
     await waitFor(() => expect(native.invoke).toHaveBeenCalledWith("workspace_query", { request: { kind: "plugin_reload", project: alpha.id, plugin: "sample" } }));
     expect(api.restartOwnedRunner).not.toHaveBeenCalled();
   });
-  it("rejects an older workspace result after a project switch", async () => {
+  it("rejects an older workspace result after a Runner identity change", async () => {
     let complete!: (value: unknown) => void;
     const delayed = new Promise(resolve => { complete = resolve; }); const normal = native.invoke.getMockImplementation()!;
     let overviewCalls = 0;
     native.invoke.mockImplementation((name, value) => value.request.kind === "overview" && overviewCalls++ === 0 ? delayed : normal(name, value));
     const view = render(wrap(<ProjectsPanel onState={vi.fn()} state={state} onChooseProject={vi.fn()} />));
     await waitFor(() => expect(overviewCalls).toBe(1));
-    const switched = { ...state, project: { ...state.project!, path: beta.path, runtime_project_id: beta.id } };
+    const switched = { ...state, workspace_runner: { client_id: "mini", server_url: "http://localhost", config_path: "new-runner.toml" } };
     view.rerender(wrap(<ProjectsPanel onState={vi.fn()} state={switched} onChooseProject={vi.fn()} />, switched));
     await screen.findByLabelText("2 active sessions");
     await act(async () => { complete({ ...overview, projects: [{ ...alpha, id: "agent:old:other", name: "Stale project", path: "/old" }] }); });
@@ -233,4 +233,48 @@ describe("Windows project identity and presentation", () => {
     expect(projectName({ path })).toBe(expected);
     if (expected !== "repo") expect(projectName({ path, name: "Project" })).toBe(expected);
   });
+});
+
+describe("inventory convergence", () => {
+  it.each([false, true])("hides stale saved rows after complete inventory (empty=%s)", async empty => {
+    const normal = native.invoke.getMockImplementation()!;
+    native.invoke.mockImplementation((command, value) => value.request.kind === "overview"
+      ? Promise.resolve({ ...overview, projects: empty ? [] : [beta], visible_project_count: empty ? 0 : 1 }) : normal(command, value));
+    const selected = { ...state, project: null };
+    const add = vi.fn();
+    render(wrap(<ProjectsPanel state={selected} onChooseProject={add} onState={vi.fn()} />, selected));
+    await waitFor(() => expect(screen.queryByRole("row", { name: "alpha" })).not.toBeInTheDocument());
+    if (empty) expect(screen.getByText("This Runner has no projects yet")).toBeInTheDocument();
+    else expect(screen.getByRole("row", { name: "beta" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Add Project" })); expect(add).toHaveBeenCalledOnce();
+  });
+  it("removes the confirmed row immediately while refresh is pending", async () => {
+    api.prepareProjectUnregister.mockResolvedValue({ project: alpha.id, path: alpha.path });
+    api.unregisterProject.mockResolvedValue({ ...state, project: null, saved_projects: [state.saved_projects![1]] });
+    render(wrap(<ProjectsPanel state={state} onChooseProject={vi.fn()} onState={vi.fn()} />));
+    await screen.findByLabelText("2 active sessions");
+    fireEvent.click(screen.getByRole("button", { name: "Unregister project alpha" }));
+    const dialog = await screen.findByRole("dialog");
+    native.invoke.mockImplementation(() => new Promise(() => {}));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Unregister project" }));
+    await waitFor(() => expect(screen.queryByRole("row", { name: "alpha" })).not.toBeInTheDocument());
+    expect(screen.getByRole("row", { name: "beta" })).toBeInTheDocument();
+    expect(api.unregisterProject).toHaveBeenCalledOnce();
+  });
+  it.each([{ projects_truncated: true }, { connected: false }, { projects_available: false }])("retains history on incomplete observation %s", async flags => {
+    native.invoke.mockResolvedValue({ ...overview, ...flags, projects: [], windows: [] });
+    render(wrap(<ProjectsPanel state={state} onChooseProject={vi.fn()} onState={vi.fn()} />));
+    await waitFor(() => expect(native.invoke).toHaveBeenCalled());
+    expect(screen.getByRole("row", { name: "alpha" })).toBeInTheDocument();
+  });
+});
+
+it("keeps Runner overview when only the default display Project disappears", async () => {
+  const view = render(wrap(<ProjectsPanel state={state} onChooseProject={vi.fn()} onState={vi.fn()} />));
+  await screen.findByLabelText("2 active sessions");
+  const calls = native.invoke.mock.calls.filter(([, value]) => value.request.kind === "overview").length;
+  const projectless = { ...state, project: null, saved_projects: [] };
+  view.rerender(wrap(<ProjectsPanel state={projectless} onChooseProject={vi.fn()} onState={vi.fn()} />, projectless));
+  expect(screen.getByRole("row", { name: "beta" })).toBeInTheDocument();
+  expect(native.invoke.mock.calls.filter(([, value]) => value.request.kind === "overview")).toHaveLength(calls);
 });

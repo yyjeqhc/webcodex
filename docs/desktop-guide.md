@@ -88,3 +88,20 @@ Closing the window hides it in the menu bar or system tray; the runtime continue
 Use **⌘ + 1–6** on macOS or **Ctrl + 1–6** on Windows to switch between Home, Projects, Connection, Extensions, Activity, and Settings. Navigation shortcuts also work inside inputs and language selectors; ordinary typing and text-editing shortcuts remain available. Use Tab to focus controls and Enter to activate them; diagnostic disclosure controls also support the keyboard.
 
 Runtime controls on Home and technical diagnostics in Settings are collapsed by default. An explicit stop displays Stopped with a Start action. Activity prioritizes results; enable Show process details for routine process events. Configure Tunnel ID and credentials on Connection; API keys are never displayed.
+
+### Runtime after unregistering a project
+
+A Full Runtime consists of the Server, Runner, and its project inventory. The
+Desktop default/display project is optional. Unregistering that project (including
+the last project) leaves the Runtime available, clears its project-specific ChatGPT
+observation, and does not select a replacement. Add Project remains available.
+Desktop restart resumes the saved Server/Runner identity and Connections without
+logging in again or registering saved projects.
+
+A complete, online Runner inventory is authoritative. Desktop reconciles stale
+saved registration history only within the same Runner configuration and client
+identity; offline, inaccessible, truncated, or failed observations do not prune
+history. Late responses from before a Desktop operation are rejected. Local state
+is written only when reconciliation changes history or a confirmed unregister's
+previous write needs retrying. Unregister remains registry-only: project folders,
+Git files, allowed roots, and running Server/Runner processes are preserved.

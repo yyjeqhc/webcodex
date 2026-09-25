@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::fs::File;
-use std::io::{Read, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -182,6 +182,42 @@ fn upload_scan_skips_directory(name: &str) -> bool {
     )
 }
 
+fn upload_scan_ignores_entry_error(error: &std::io::Error) -> bool {
+    matches!(
+        error.kind(),
+        ErrorKind::NotFound | ErrorKind::PermissionDenied
+    )
+}
+
+fn upload_scan_ignores_directory_error(
+    root: &Path,
+    directory: &Path,
+    error: &std::io::Error,
+) -> bool {
+    directory != root && upload_scan_ignores_entry_error(error)
+}
+
+#[cfg(test)]
+mod scan_tests {
+    use super::*;
+
+    #[test]
+    fn upload_scan_skips_inaccessible_descendants_but_not_the_project_root() {
+        let root = Path::new("project");
+        let child = root.join("protected");
+        let denied = std::io::Error::from(ErrorKind::PermissionDenied);
+        let missing = std::io::Error::from(ErrorKind::NotFound);
+        let other = std::io::Error::from(ErrorKind::Other);
+
+        assert!(upload_scan_ignores_directory_error(root, &child, &denied));
+        assert!(upload_scan_ignores_directory_error(root, &child, &missing));
+        assert!(!upload_scan_ignores_directory_error(root, root, &denied));
+        assert!(!upload_scan_ignores_directory_error(root, &child, &other));
+        assert!(upload_scan_ignores_entry_error(&denied));
+        assert!(!upload_scan_ignores_entry_error(&other));
+    }
+}
+
 pub(super) fn sweep_artifact_upload_project(
     root: &Path,
     now: SystemTime,
@@ -192,8 +228,13 @@ pub(super) fn sweep_artifact_upload_project(
     let mut scanned_entries = 0usize;
 
     while let Some(directory) = directories.pop() {
-        let entries =
-            std::fs::read_dir(&directory).map_err(|e| format!("upload cleanup failed: {e}"))?;
+        let entries = match std::fs::read_dir(&directory) {
+            Ok(entries) => entries,
+            Err(error) if upload_scan_ignores_directory_error(root, &directory, &error) => {
+                continue;
+            }
+            Err(error) => return Err(format!("upload cleanup failed: {error}")),
+        };
         let mut uploads: BTreeMap<String, ArtifactUploadTempFiles> = BTreeMap::new();
         for entry in entries {
             scanned_entries = scanned_entries
@@ -204,7 +245,11 @@ pub(super) fn sweep_artifact_upload_project(
                     "artifact upload project has more than {MAX_ARTIFACT_UPLOAD_PROJECT_SCAN_ENTRIES} entries; refusing unbounded resource scan"
                 ));
             }
-            let entry = entry.map_err(|e| format!("upload cleanup failed: {e}"))?;
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(error) if upload_scan_ignores_entry_error(&error) => continue,
+                Err(error) => return Err(format!("upload cleanup failed: {error}")),
+            };
             let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
                 continue;
             };
@@ -216,9 +261,11 @@ pub(super) fn sweep_artifact_upload_project(
                 uploads.entry(upload_id).or_default().sidecar = Some(entry.path());
                 continue;
             }
-            let file_type = entry
-                .file_type()
-                .map_err(|e| format!("upload cleanup failed: {e}"))?;
+            let file_type = match entry.file_type() {
+                Ok(file_type) => file_type,
+                Err(error) if upload_scan_ignores_entry_error(&error) => continue,
+                Err(error) => return Err(format!("upload cleanup failed: {error}")),
+            };
             if file_type.is_dir() && !upload_scan_skips_directory(&name) {
                 directories.push(entry.path());
             }

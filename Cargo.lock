@@ -5361,7 +5361,7 @@ dependencies = [
 
 [[package]]
 name = "webcodex"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "anyhow",
  "base64",
@@ -5408,7 +5408,7 @@ dependencies = [
 
 [[package]]
 name = "webcodex-admin"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "reqwest 0.12.28",
  "serde_json",
@@ -5418,7 +5418,7 @@ dependencies = [
 
 [[package]]
 name = "webcodex-browser"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "base64",
  "reqwest 0.12.28",
@@ -5434,7 +5434,7 @@ dependencies = [
 
 [[package]]
 name = "webcodex-cli"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "chrono",
  "fs2",
@@ -5460,7 +5460,7 @@ dependencies = [
 
 [[package]]
 name = "webcodex-code-mode"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "deno_core_icudata",
  "serde",
@@ -5471,7 +5471,7 @@ dependencies = [
 
 [[package]]
 name = "webcodex-computer"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "base64",
  "block2",
@@ -5494,7 +5494,7 @@ dependencies = [
 
 [[package]]
 name = "webcodex-core"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "base64",
  "getrandom 0.3.4",
@@ -5508,7 +5508,7 @@ dependencies = [
 
 [[package]]
 name = "webcodex-lsp"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "libc",
  "serde_json",
@@ -5524,7 +5524,7 @@ dependencies = [
 
 [[package]]
 name = "webcodex-persistent-shell"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "base64",
  "libc",
@@ -5536,7 +5536,7 @@ dependencies = [
 
 [[package]]
 name = "webcodex-process"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "libc",
  "tempfile",
@@ -5545,7 +5545,7 @@ dependencies = [
 
 [[package]]
 name = "webcodex-runner"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "agent-client-protocol-schema",
  "base64",
@@ -5584,7 +5584,7 @@ dependencies = [
 
 [[package]]
 name = "webcodex-runner-config"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "serde",
  "toml 0.8.23",
@@ -5593,7 +5593,7 @@ dependencies = [
 
 [[package]]
 name = "webcodex-runner-registry"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "chrono",
  "serde_json",
@@ -5606,7 +5606,7 @@ dependencies = [
 
 [[package]]
 name = "webcodex-store"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "anyhow",
  "chrono",
@@ -5623,7 +5623,7 @@ dependencies = [
 
 [[package]]
 name = "webcodex-tool-contracts"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "regex",
  "schemars 1.2.2",
@@ -5634,7 +5634,7 @@ dependencies = [
 
 [[package]]
 name = "webcodex-tool-runtime-contracts"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "serde",
  "serde_json",
@@ -5646,7 +5646,7 @@ dependencies = [
 
 [[package]]
 name = "webcodex-validation"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "serde",
  "serde_json",
@@ -5661,7 +5661,7 @@ dependencies = [
 
 [[package]]
 name = "webcodex-workflow-session"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "base64",
  "chrono",
@@ -5678,7 +5678,7 @@ dependencies = [
 
 [[package]]
 name = "webcodex-workspace"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "serde",
  "serde_json",

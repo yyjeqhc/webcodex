@@ -5003,7 +5003,7 @@ dependencies = [
 
 [[package]]
 name = "webcodex-core"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "base64 0.22.1",
  "getrandom 0.3.4",
@@ -5017,7 +5017,7 @@ dependencies = [
 
 [[package]]
 name = "webcodex-desktop"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "libc",
  "reqwest 0.12.28",
@@ -5045,7 +5045,7 @@ dependencies = [
 
 [[package]]
 name = "webcodex-process"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
@@ -5053,7 +5053,7 @@ dependencies = [
 
 [[package]]
 name = "webcodex-runner-config"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "serde",
  "toml 0.8.2",

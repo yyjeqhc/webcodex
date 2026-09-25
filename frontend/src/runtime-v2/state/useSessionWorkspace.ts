@@ -34,12 +34,18 @@ function sessionLocationIdentity(location: SessionLocation): string {
   return `${location.projectId}\u0000${location.sessionId}`;
 }
 
+export type SessionWorkspaceOptions = {
+  loadMessages?: boolean;
+};
+
 export function useSessionWorkspace(
   client: RuntimeV2Client,
   enabled: boolean,
   location: SessionLocation | null,
   onUnauthorized: () => void,
+  options: SessionWorkspaceOptions = {},
 ): SessionWorkspaceState {
+  const loadMessages = options.loadMessages ?? true;
   const [detailAvailability, setDetailAvailability] = useState<Availability>("idle");
   const [messagesAvailability, setMessagesAvailability] = useState<Availability>("idle");
   const [detail, setDetail] = useState<SessionDetail | null>(null);
@@ -77,17 +83,22 @@ export function useSessionWorkspace(
       setDetail(null);
       setMessages(null);
       setDetailAvailability("loading");
-      setMessagesAvailability("loading");
+      setMessagesAvailability(loadMessages ? "loading" : "idle");
       setMutationNotice("");
       setMutationAllowed(null);
       setSending(false);
     } else {
       setDetailAvailability((value) => (value === "idle" ? "loading" : value));
-      setMessagesAvailability((value) => (value === "idle" ? "loading" : value));
+      if (loadMessages) {
+        setMessagesAvailability((value) => (value === "idle" ? "loading" : value));
+      } else {
+        setMessages(null);
+        setMessagesAvailability("idle");
+      }
     }
 
     const detailController = new AbortController();
-    const messageController = new AbortController();
+    const messageController = loadMessages ? new AbortController() : null;
     detailRequest.current = detailController;
     messageRequest.current = messageController;
 
@@ -111,32 +122,34 @@ export function useSessionWorkspace(
       setDetailAvailability("available");
     });
 
-    void fetchSessionMessages(client, location.projectId, location.sessionId, messageController.signal).then((response) => {
-      if (messageRequest.current !== messageController || !response) return;
-      messageRequest.current = null;
-      if (response.status === 401) {
-        onUnauthorized();
-        return;
-      }
-      if (response.status === 403 || response.status === 404) {
-        setMessages(null);
-        setMessagesAvailability("denied");
-        return;
-      }
-      if (!response.ok || !response.data || response.data.session_id !== location.sessionId) {
-        setMessagesAvailability((current) => current === "available" || current === "stale" ? "stale" : "error");
-        return;
-      }
-      setMessages(response.data);
-      setMessagesAvailability("available");
-      setMutationNotice("");
-    });
+    if (messageController) {
+      void fetchSessionMessages(client, location.projectId, location.sessionId, messageController.signal).then((response) => {
+        if (messageRequest.current !== messageController || !response) return;
+        messageRequest.current = null;
+        if (response.status === 401) {
+          onUnauthorized();
+          return;
+        }
+        if (response.status === 403 || response.status === 404) {
+          setMessages(null);
+          setMessagesAvailability("denied");
+          return;
+        }
+        if (!response.ok || !response.data || response.data.session_id !== location.sessionId) {
+          setMessagesAvailability((current) => current === "available" || current === "stale" ? "stale" : "error");
+          return;
+        }
+        setMessages(response.data);
+        setMessagesAvailability("available");
+        setMutationNotice("");
+      });
+    }
 
     return () => {
       detailController.abort();
-      messageController.abort();
+      messageController?.abort();
     };
-  }, [client, enabled, location?.projectId, location?.sessionId, onUnauthorized, revision]);
+  }, [client, enabled, loadMessages, location?.projectId, location?.sessionId, onUnauthorized, revision]);
 
   useEffect(() => {
     if (!enabled || !location || !detail) return;

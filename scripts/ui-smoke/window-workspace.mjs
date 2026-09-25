@@ -45,13 +45,19 @@ try {
         assert.equal(await calls.nth(2).getByTestId('window-project-tag').textContent(), '/fixture/alpha');
         assert(await calls.nth(2).getByText(zh ? '失败' : 'Failed', { exact: true }).isVisible());
         assert(await calls.nth(0).getByText(zh ? '成功' : 'Succeeded', { exact: true }).isVisible());
-        assert.equal(await page.locator('.window-work-main details, .window-work-main select, .window-work-inspector').count(), 0);
+        const centerTabs = page.locator('.window-center-tabs [role="tab"]');
+        assert.equal(await centerTabs.count(), 3);
+        const tabLabels = (await centerTabs.allTextContents()).map(value => value.replace(/\s+/g, ' ').trim());
+        assert(tabLabels[0].includes(zh ? '窗口' : 'Window'), JSON.stringify(tabLabels));
+        assert(tabLabels[1].includes(zh ? '工作会话' : 'Work Sessions'), JSON.stringify(tabLabels));
+        assert(tabLabels[2].includes(zh ? '协作' : 'Collaboration'), JSON.stringify(tabLabels));
+        assert.equal(await page.locator('#window-activity-panel details, #window-activity-panel select, .window-work-inspector').count(), 0);
         assert.equal(await calls.locator('time[datetime]').count(), 4);
         assert.equal(await calls.locator('.window-call-timing strong').count(), 4);
         const bounds = await page.evaluate(() => ({ width: innerWidth, body: document.body.scrollWidth, root: document.documentElement.scrollWidth }));
         assert(bounds.body <= width + 1 && bounds.root <= width + 1, JSON.stringify(bounds));
         await page.screenshot({ path: new URL(`calls-${width}-${theme}-${language}.png`, output).pathname, fullPage: true });
-        checks.push({ width, theme, language, overflow: false, individualCalls: 4, chronological: true });
+        checks.push({ width, theme, language, overflow: false, individualCalls: 4, chronological: true, centerTabs: 3 });
         await page.close();
       }
     }

@@ -1044,6 +1044,28 @@ Object.assign(RUNTIME_ZH_TEXT, {
   "Choose a window to see its tool calls.": "选择左侧窗口，查看逐条工具调用。",
 });
 
+Object.assign(RUNTIME_ZH_TEXT, {
+  "Window views": "窗口视图",
+  "Work Sessions": "工作会话",
+  "Sessions in this Window": "此窗口中的工作会话",
+  "Work Session": "工作会话",
+  "No linked work Sessions": "没有关联工作会话",
+  "This Window has not recorded an explicit Workflow Session relation yet.": "这个窗口尚未记录明确的 Workflow Session 关联。",
+  "Session relations are bounded; older linked Sessions may be omitted.": "会话关联记录受范围上限约束，更早的关联会话可能未展示。",
+  "The selected Session project is not available to this workspace.": "当前工作区无法访问所选会话对应的项目。",
+  "Window relation": "窗口关联",
+  "Window link": "窗口关联",
+  "Recorded in this Window": "记录于此窗口",
+  "Last linked": "最近关联",
+  "Session activity": "会话活动",
+  "Complete retained evidence for the selected Workflow Session.": "展示所选 Workflow Session 的完整保留活动证据。",
+  "Loading Session activity…": "正在加载会话活动…",
+  "Session activity unavailable": "会话活动不可用",
+  "Linked Windows": "关联窗口",
+  "Collaboration": "协作",
+  "Reserved for the next Window-level collaboration design.": "此位置保留给下一步的窗口级协作设计。"
+});
+
 export function translate(source: string, language: RuntimeLanguage = "en"): string {
   return language === "zh-CN" ? (RUNTIME_ZH_TEXT[source] || source) : source;
 }

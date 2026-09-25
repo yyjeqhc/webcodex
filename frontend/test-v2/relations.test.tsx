@@ -446,7 +446,7 @@ describe("Project / Session / Window relationships", () => {
 });
 
 
-it("shows individual calls in order, with exact Project paths and no Session-derived tags", () => {
+it("shows individual calls in order with exact Project paths and authoritative Session tags", () => {
   const first = runtimeOverview().projects[0];
   const second = { ...first, id: "agent:special:second", path: "/worktrees/second" };
   const base = { started_at_ms: 1_790_000_100_000, ended_at_ms: 1_790_000_100_120, duration_ms: 120, method: "tools/call", status: "success", meaningful: false, workflow_sessions: [] };
@@ -472,6 +472,8 @@ it("shows individual calls in order, with exact Project paths and no Session-der
   expect(within(calls[3]).getByText("4s")).toBeTruthy();
   expect(calls.every((call) => call.querySelector("time[datetime]"))).toBe(true);
   expect(container.querySelector("details")).toBeNull();
-  expect(screen.queryByText("hidden-session")).toBeNull();
+  const sessionTag = screen.getByTestId("window-session-tag");
+  expect(sessionTag.textContent).toBe("hidden-session");
+  expect(sessionTag.getAttribute("data-session-tone")).toBe("0");
   expect(screen.queryByText("Inspect runtime")).toBeNull();
 });

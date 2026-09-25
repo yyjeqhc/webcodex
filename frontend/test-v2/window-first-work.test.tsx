@@ -7,7 +7,7 @@ import type { ProjectRow } from "../src/runtime-v2/model/types.js";
 import { ProjectsView } from "../src/runtime-v2/views/ProjectsView.js";
 import { WorkView } from "../src/runtime-v2/views/WorkView.js";
 import { UiProvider } from "../src/ui/UiProvider.js";
-import { runtimeOverview, windowDetail } from "./fixtures.js";
+import { runtimeOverview, sessionDetail, windowDetail } from "./fixtures.js";
 
 const render = (ui: ReactElement) => testingRender(<UiProvider>{ui}</UiProvider>);
 
@@ -152,6 +152,162 @@ it("shows active Window work without any Workflow Session and keeps observe call
   fireEvent.change(search, { target: { value: "runtime_status" } });
   expect(screen.queryByTestId("work-window-row-" + activeKey)).toBeNull();
   expect(screen.getByTestId("work-window-row-" + observeKey)).toBeTruthy();
+});
+
+it("links Window tool calls to colored work Sessions and opens the selected Session view", async () => {
+  const [source, worktree] = projectFamily();
+  const windowKey = "d".repeat(64);
+  const sessionA = "wc_sess_aaaaaaaaaaaaaaaa";
+  const sessionB = "wc_sess_bbbbbbbbbbbbbbbb";
+  const client = fakeClient((path, payload) => {
+    if (path === "windows") return ok({
+      windows: [{
+        client_window_key: windowKey,
+        last_project: worktree.id,
+        source: "openai-session",
+        last_seen_at_ms: 1_790_000_200_000,
+        last_activity_name: "apply_text_edits",
+        last_activity_status: "success",
+        last_activity_meaningful: true,
+        active_count: 0,
+        linked_session_count: 2,
+        recorder_gap_count: 0,
+      }],
+      returned: 1,
+      total: 1,
+      truncated: false,
+      visibility: { scope: "principal" },
+    });
+    if (path === "window") return ok(windowDetail({
+      client_window_key: windowKey,
+      last_seen_at_ms: 1_790_000_200_000,
+      linked_sessions: [
+        {
+          workflow_session_id: sessionA,
+          project: worktree.id,
+          first_linked_at_ms: 1_790_000_100_000,
+          last_linked_at_ms: 1_790_000_150_000,
+          relations: ["recording"],
+          relation_count: 2,
+          title: "Implement Window tabs",
+          lifecycle: "active",
+        },
+
+      ],
+      sessions_returned: 1,
+      sessions_truncated: true,
+      activity: [
+        {
+          started_at_ms: 1_790_000_100_000,
+          ended_at_ms: 1_790_000_101_000,
+          duration_ms: 1000,
+          method: "tools/call",
+          tool_name: "read_files",
+          project: worktree.id,
+          status: "success",
+          meaningful: true,
+          server_trace_id: "trace-session-a",
+          workflow_sessions: [{
+            workflow_session_id: sessionA,
+            project: worktree.id,
+            relation: "recording",
+          }],
+        },
+        {
+          started_at_ms: 1_790_000_180_000,
+          ended_at_ms: 1_790_000_181_000,
+          duration_ms: 1000,
+          method: "tools/call",
+          tool_name: "apply_text_edits",
+          project: worktree.id,
+          status: "success",
+          meaningful: true,
+          server_trace_id: "trace-session-b",
+          workflow_sessions: [
+            { workflow_session_id: sessionA, project: worktree.id, relation: "recording" },
+            { workflow_session_id: sessionB, project: worktree.id, relation: "work_on_project" },
+          ],
+        },
+      ],
+      activity_returned: 2,
+    }));
+    if (path === "workflow-session") {
+      return ok(sessionDetail({
+        session_id: payload.session_id,
+        title: payload.session_id === sessionB ? "Review Session mapping" : "Implement Window tabs",
+        linked_windows: [{
+          client_window_key: windowKey,
+          source: "openai-session",
+          first_linked_at_ms: 1_790_000_100_000,
+          last_linked_at_ms: 1_790_000_190_000,
+          last_seen_at_ms: 1_790_000_200_000,
+          active_count: 0,
+          relations: ["recording"],
+          relation_count: 1,
+          recorder_gap_count: 0,
+        }],
+      }));
+    }
+    if (path === "workflow-session-messages") return ok({ session_id: payload.session_id, messages: [] });
+    throw new Error("unexpected path " + path);
+  });
+
+  render(
+    <WorkView
+      client={client}
+      items={[]}
+      selected={null}
+      projects={[source, worktree]}
+      language="en"
+      inventoryIncomplete={false}
+      onOpenSession={vi.fn()}
+      onLocateSession={vi.fn(async () => false)}
+      onUnauthorized={vi.fn()}
+    />,
+  );
+
+  expect(await screen.findByRole("tab", { name: /Window/ })).toBeTruthy();
+  expect(screen.getByRole("tab", { name: /Work Sessions/ })).toBeTruthy();
+  expect(screen.getByRole("tab", { name: "Collaboration" })).toBeTruthy();
+
+  const tags = await screen.findAllByTestId("window-session-tag");
+  expect(tags).toHaveLength(3);
+  expect(tags[0].getAttribute("data-session-tone")).toBe("0");
+  expect(tags[2].getAttribute("data-session-tone")).toBe("1");
+
+  fireEvent.click(tags[2]);
+  expect((screen.getByRole("tab", { name: /Work Sessions/ }) as HTMLElement).getAttribute("aria-selected")).toBe("true");
+
+  const switcher = screen.getByRole("tablist", { name: "Sessions in this Window" });
+  const sessionTabs = within(switcher).getAllByRole("tab");
+  expect(sessionTabs).toHaveLength(2);
+  expect(sessionTabs[0].getAttribute("data-session-tone")).toBe("0");
+  expect(sessionTabs[1].getAttribute("data-session-tone")).toBe("1");
+  expect(sessionTabs[1].getAttribute("aria-selected")).toBe("true");
+
+  fireEvent.click(screen.getByRole("tab", { name: /^Window/ }));
+  const calls = screen.getAllByTestId("window-workflow-step");
+  fireEvent.click(calls[0]);
+  expect(screen.getByRole("tab", { name: /Work Sessions/ }).getAttribute("aria-selected")).toBe("true");
+  expect(sessionTabs[0].getAttribute("aria-selected")).toBe("true");
+
+  fireEvent.click(screen.getByRole("tab", { name: /^Window/ }));
+  fireEvent.click(tags[2]);
+  expect(sessionTabs[1].getAttribute("aria-selected")).toBe("true");
+
+  await waitFor(() => {
+    expect((client.post as unknown as ReturnType<typeof vi.fn>).mock.calls.some(([path, payload]) =>
+      path === "workflow-session" && payload.session_id === sessionB
+    )).toBe(true);
+  });
+  expect((client.post as unknown as ReturnType<typeof vi.fn>).mock.calls.some(([path]) =>
+    path === "workflow-session-messages"
+  )).toBe(false);
+  expect((await screen.findAllByText("Review Session mapping")).length).toBeGreaterThanOrEqual(2);
+  expect(screen.getAllByText(sessionB).length).toBeGreaterThanOrEqual(2);
+
+  fireEvent.click(sessionTabs[0]);
+  await waitFor(() => expect(sessionTabs[0].getAttribute("aria-selected")).toBe("true"));
 });
 
 it("groups a managed worktree under one human Project and exposes Window activity at the family level", async () => {

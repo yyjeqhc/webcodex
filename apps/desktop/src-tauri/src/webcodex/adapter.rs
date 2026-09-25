@@ -1009,17 +1009,12 @@ fn same_server(left: &str, right: &str) -> bool {
 fn same_existing_file(left: &Path, right: &Path) -> bool {
     match (left.canonicalize(), right.canonicalize()) {
         (Ok(left), Ok(right)) => left == right,
-        _ if cfg!(windows) => display_path(left).eq_ignore_ascii_case(&display_path(right)),
-        _ => left == right,
+        _ => webcodex_runner_config::paths::paths_equal(left, right),
     }
 }
 
 fn same_path(left: &str, right: &str) -> bool {
-    if cfg!(windows) {
-        display_path(Path::new(left)).eq_ignore_ascii_case(&display_path(Path::new(right)))
-    } else {
-        left == right
-    }
+    webcodex_runner_config::paths::paths_equal(Path::new(left), Path::new(right))
 }
 
 fn display_path(path: &Path) -> String {
@@ -1345,10 +1340,16 @@ mod tests {
     #[test]
     fn windows_extended_and_display_paths_match_the_same_project() {
         if cfg!(windows) {
-            assert!(same_path(
-                r"\\?\C:\Users\example\repo",
-                r"C:\Users\example\repo"
-            ));
+            for (left, right) in [
+                (r"\\?\C:\Users\example\repo", r"c:/users/example/repo/"),
+                (r"C:\", r"\\?\C:\"),
+                (r"D:\", r"\\?\D:\"),
+                (r"\\SERVER\Share\Repo", r"\\?\UNC\server\share\repo\"),
+                (r"\\server\share", r"\\?\UNC\SERVER\Share\"),
+            ] {
+                assert!(same_path(left, right), "{left} != {right}");
+            }
+            assert!(!same_path(r"C:\repo", r"D:\repo"));
         }
     }
 

@@ -1,3 +1,4 @@
+import { displayProjectPath } from "../../ui/projectPresentation.js";
 import { AlertTriangle, CircleDot, GitBranch, Monitor } from "lucide-react";
 import { useState } from "react";
 import { absoluteTime, projectDisplayName, relativeTime, shortId } from "../model/format.js";
@@ -69,10 +70,10 @@ export function SessionInspector({
           <section className="inspector-section">
             <h3>{t("Current work")}</h3>
             <div className="fact-list">
-              <div><span>{t("Project")}</span><strong>{projectDisplayName(project?.name, location.projectId)}</strong></div>
+              <div><span>{t("Project")}</span><strong>{projectDisplayName(project?.name, location.projectId, project?.path)}</strong></div>
               <div><span>{t("Runner")}</span><strong>{location.runner}</strong></div>
               <div><span>{t("Branch")}</span><strong><GitBranch size={13} /> {branch || t("Not checked")}</strong></div>
-              <div className="fact-path"><span>{t("Path")}</span><strong><code title={project?.path}>{project?.path || "—"}</code></strong></div>
+              <div className="fact-path"><span>{t("Path")}</span><strong><code title={displayProjectPath(project?.path)}>{displayProjectPath(project?.path) || "—"}</code></strong></div>
               {signals.map((signal) => (
                 <div className={"fact-activity " + signal.tone} data-testid={"inspector-activity-" + signal.source} key={signal.source}>
                   <span>{t(signal.label)}</span>
@@ -140,7 +141,7 @@ export function SessionInspector({
             <h3>{t("Workspace")}</h3>
             <dl>
               <div><dt>{t("Project")}</dt><dd><code title={location.projectId}>{project?.project_ref || location.projectId}</code></dd></div>
-              <div><dt>{t("Path")}</dt><dd><code title={project?.path}>{project?.path || "—"}</code></dd></div>
+              <div><dt>{t("Path")}</dt><dd><code title={displayProjectPath(project?.path)}>{displayProjectPath(project?.path) || "—"}</code></dd></div>
             </dl>
           </section>
 

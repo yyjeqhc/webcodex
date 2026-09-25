@@ -1,3 +1,5 @@
+import { projectPresentationName } from "../../ui/projectPresentation.js";
+
 export function shortId(value: string, head = 10, tail = 5): string {
   if (!value || value.length <= head + tail + 1) return value;
   return `${value.slice(0, head)}…${value.slice(-tail)}`;
@@ -30,6 +32,6 @@ export function durationText(milliseconds: number | undefined): string {
   return remainder ? `${minutes}m ${remainder}s` : `${minutes}m`;
 }
 
-export function projectDisplayName(name: string | undefined, id: string): string {
-  return name?.trim() || id;
+export function projectDisplayName(name: string | undefined, id: string, path?: string): string {
+  return projectPresentationName({ name, id, path });
 }

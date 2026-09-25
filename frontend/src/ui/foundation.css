@@ -2,7 +2,7 @@
    these semantic values; the content layer remains opaque and calm. */
 :root {
   color-scheme: light;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", ui-sans-serif, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI Variable", "Segoe UI", "Microsoft YaHei UI", ui-sans-serif, sans-serif;
   font-synthesis: none;
 
   --ui-background: #f5f5f7;
@@ -135,16 +135,16 @@
 .ui-entity-row > * { min-width: 0; }
 .ui-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-variant-numeric: tabular-nums; }
 .ui-numeric { font-variant-numeric: tabular-nums; letter-spacing: -.03em; }
-.ui-mantine-button { min-height: 38px; font-weight: 630; letter-spacing: -.01em; transition: background var(--ui-motion-fast) var(--ui-ease), border-color var(--ui-motion-fast) var(--ui-ease), box-shadow var(--ui-motion-fast) var(--ui-ease), transform var(--ui-motion-fast) var(--ui-ease); }
+.ui-mantine-button { min-height: 38px; font-weight: 600; letter-spacing: -.01em; transition: background var(--ui-motion-fast) var(--ui-ease), border-color var(--ui-motion-fast) var(--ui-ease), box-shadow var(--ui-motion-fast) var(--ui-ease), transform var(--ui-motion-fast) var(--ui-ease); }
 .ui-mantine-button:active:not(:disabled) { transform: scale(.985); }
 .ui-mantine-button[data-variant="default"] { border-color: var(--ui-border); background: var(--ui-content); color: var(--ui-text-primary); }
 .ui-mantine-button[data-variant="default"]:hover { background: var(--ui-surface-secondary); }
 .ui-mantine-input { min-height: var(--ui-control-height); border-color: var(--ui-border); background: var(--ui-content); color: var(--ui-text-primary); }
 .ui-mantine-input:focus { border-color: var(--ui-accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ui-accent) 15%, transparent); }
-.ui-mantine-label { margin-bottom: 6px; color: var(--ui-text-secondary); font-size: var(--ui-font-label); font-weight: 630; }
+.ui-mantine-label { margin-bottom: 6px; color: var(--ui-text-secondary); font-size: var(--ui-font-label); font-weight: 600; }
 .ui-mantine-modal-content { border: 1px solid var(--ui-border); border-radius: var(--ui-radius-lg); background: var(--ui-content); color: var(--ui-text-primary); box-shadow: var(--ui-shadow-floating); }
 .ui-mantine-modal-header { border-bottom: 1px solid var(--ui-border-subtle); background: var(--ui-content); }
-.ui-mantine-modal-title { font-size: var(--ui-font-section); font-weight: 680; }
+.ui-mantine-modal-title { font-size: var(--ui-font-section); font-weight: 700; }
 .ui-mantine-alert { border-color: var(--ui-border-subtle); border-radius: var(--ui-radius-md); }
 .ui-mantine-segments { border: 1px solid var(--ui-border); background: var(--ui-surface-secondary); }
 .ui-mantine-segment-indicator { box-shadow: var(--ui-shadow-surface); }

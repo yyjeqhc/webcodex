@@ -18,7 +18,7 @@ export function DesktopMantineProvider({ children }: { children: ReactNode }) {
     primaryShade: { light: 6, dark: 6 },
     colors: { brand: colorsTuple(accentTokens(accent, colorScheme).accent) },
     variantColorResolver: accentVariantResolver(accent, colorScheme),
-    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", ui-sans-serif, sans-serif',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI Variable", "Segoe UI", "Microsoft YaHei UI", ui-sans-serif, sans-serif',
     fontSizes: { xs: "12px", sm: "13px", md: "14px", lg: "16px", xl: "20px" },
     spacing: { xs: "4px", sm: "8px", md: "12px", lg: "16px", xl: "24px" },
     radius: { xs: "4px", sm: "8px", md: "12px", lg: "16px", xl: "20px" },

@@ -1,3 +1,4 @@
+import { displayProjectPath, projectPresentationName } from "../ui/projectPresentation.js";
 import { Alert, Badge, Button, Checkbox, Menu, Modal, PasswordInput, Switch, Table, TextInput } from "@mantine/core";
 import { Activity, AlertTriangle, Ellipsis, Folder, LayoutDashboard, LockKeyhole, MoonStar, Plus, RefreshCw, Sun, Users } from "lucide-react";
 import { motion, useReducedMotion } from "motion/react";
@@ -363,7 +364,7 @@ export function AdminApp() {
           actions={<div className="section-actions"><Button variant="default" onClick={(event) => openCreate("register", event.currentTarget)}>Register</Button>
             <Button className="admin-primary" leftSection={<Plus size={15} />} onClick={(event) => openCreate("create", event.currentTarget)}>Create project</Button></div>}>
           <DataTable label="Projects" empty="No projects registered." headings={["Runtime project", "Name", "Client", "Path", "Lifecycle", "Jobs", "Git", "Patch", "Shell profile", "Protocol", "Build alignment", "Console", "Actions"]}
-            rows={dashboard.projects.map((project) => [<code>{display(project.id)}</code>, display(project.name), display(project.client_id), <code title={String(project.path || "")}>{display(project.path)}</code>,
+            rows={dashboard.projects.map((project) => [<code>{display(project.id)}</code>, projectPresentationName({ name: String(project.name || ""), path: String(project.path || ""), id: String(project.id || "") }), display(project.client_id), <code title={displayProjectPath(String(project.path || ""))}>{display(displayProjectPath(String(project.path || "")))}</code>,
               <Status value={project.lifecycle_status || project.readiness} />, display(project.active_jobs), <Status value={project.git_available} />,
               <Status value={project.allow_patch} />, <Status value={project.shell_profile_status} />, <Status value={project.protocol_compatibility || project.compatibility} />, <span title="Build identity is diagnostic, not functional compatibility">{display(project.build_alignment)}</span>,
               display(project.console_hint), <ProjectActionMenu project={project} onAction={openAction} />])} />

@@ -1,3 +1,4 @@
+import { displayProjectPath } from "../../ui/projectPresentation.js";
 import {
   ArrowUpRight,
   Folder,
@@ -143,8 +144,8 @@ export function ProjectsView({ client, language, runners, onOpenSession, onUnaut
               <div className="project-card-head">
                 <span className="project-icon"><Folder size={18} /></span>
                 <span>
-                  <strong title={project.id}>{projectDisplayName(project.name, project.id)}</strong>
-                  <small title={project.path || project.id}>{project.path || project.client_id}</small>
+                  <strong title={project.id}>{projectDisplayName(project.name, project.id, project.path)}</strong>
+                  <small title={displayProjectPath(project.path) || project.id}>{displayProjectPath(project.path) || project.client_id}</small>
                 </span>
                 <span className={"status-pill " + (project.connected ? "good" : "warn")}>
                   {project.connected ? t("online") : t("offline")}
@@ -171,7 +172,7 @@ export function ProjectsView({ client, language, runners, onOpenSession, onUnaut
         <section className="project-sessions" data-testid="project-active-sessions" ref={sessionsSection}>
           <div className="section-heading">
             <div>
-              <h2>{projectDisplayName(selectedProject.name, selectedProject.id)} · {t("Sessions")}</h2>
+              <h2>{projectDisplayName(selectedProject.name, selectedProject.id, selectedProject.path)} · {t("Sessions")}</h2>
             </div>
             <span className="quiet-pill">{sessionsState.total} {t("Sessions")}</span>
           </div>
@@ -186,7 +187,7 @@ export function ProjectsView({ client, language, runners, onOpenSession, onUnaut
                   type="button"
                   onClick={() => onOpenSession({
                     projectId: selectedProject.id,
-                    projectName: projectDisplayName(selectedProject.name, selectedProject.id),
+                    projectName: projectDisplayName(selectedProject.name, selectedProject.id, selectedProject.path),
                     runner: selectedProject.client_id,
                     sessionId: session.session_id,
                   })}

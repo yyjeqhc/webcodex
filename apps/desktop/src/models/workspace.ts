@@ -58,3 +58,10 @@ export interface WindowCall {
   service_ms?: number; next_call_gap_ms?: number; window_transition_kind?: string; response_streaming?: boolean;
   activity_presentation?: string; activity_kind?: string;
 }
+
+export interface UnregisterObservation {
+  target: import("./topology").SettingsTarget;
+  project: string;
+  expected_revision: string;
+  path: string;
+}

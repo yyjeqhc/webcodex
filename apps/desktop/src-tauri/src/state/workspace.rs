@@ -8,7 +8,7 @@ impl AppState {
         if self.shutdown_signal.is_cancelled() || self.operations.current().is_some() {
             return Err(crate::workspace::unavailable());
         }
-        let (runtime, identity) = {
+        let runtime = {
             let slot = self.core.lock().await;
             let core = slot.as_ref().ok_or_else(crate::workspace::unavailable)?;
             let runtime = core
@@ -16,9 +16,7 @@ impl AppState {
                 .runtime
                 .clone()
                 .ok_or_else(crate::workspace::unavailable)?;
-            let identity =
-                identity_from_config(&core.config).ok_or_else(crate::workspace::unavailable)?;
-            (runtime, identity)
+            runtime
         };
         // Never keep the state mutex across an HTTP request.
         let value = crate::workspace::query(&runtime, request).await?;
@@ -26,10 +24,69 @@ impl AppState {
         let core = slot.as_ref().ok_or_else(crate::workspace::unavailable)?;
         if self.shutdown_signal.is_cancelled()
             || self.operations.current().is_some()
-            || identity_from_config(&core.config).as_ref() != Some(&identity)
+            || core.config.runtime.as_ref() != Some(&runtime)
         {
             return Err(crate::workspace::unavailable());
         }
         Ok(value)
+    }
+}
+
+impl AppState {
+    pub async fn prepare_project_unregister(
+        &self,
+        project: &str,
+    ) -> DesktopResult<crate::project_inventory::UnregisterObservation> {
+        if self.operations.current().is_some() || self.shutdown_signal.is_cancelled() {
+            return Err(crate::workspace::unavailable());
+        }
+        let runtime = {
+            let slot = self.core.lock().await;
+            slot.as_ref()
+                .and_then(|core| core.config.runtime.clone())
+                .ok_or_else(crate::workspace::unavailable)?
+        };
+        let observation = crate::project_inventory::observe(&runtime, project).await?;
+        let slot = self.core.lock().await;
+        if self.operations.current().is_some()
+            || self.shutdown_signal.is_cancelled()
+            || slot.as_ref().and_then(|core| core.config.runtime.as_ref()) != Some(&runtime)
+        {
+            return Err(crate::workspace::unavailable());
+        }
+        Ok(observation)
+    }
+
+    pub async fn unregister_project(
+        &self,
+        request: crate::project_inventory::UnregisterRequest,
+    ) -> DesktopResult<DesktopStateSnapshot> {
+        let (operation, cancellation, mut core, baseline) = self
+            .begin_operation(DesktopOperationKind::ProjectUnregister, false)
+            .await?;
+        let result = async {
+            let runtime = core
+                .config
+                .runtime
+                .clone()
+                .ok_or_else(crate::workspace::unavailable)?;
+            let path = crate::project_inventory::unregister(&runtime, &request).await?;
+            crate::project_inventory::forget(&mut core.config, &request.project, &path);
+            // Remote removal is already confirmed. Never roll it back or redispatch on a local persistence failure.
+            if core.config.project.is_none() {
+                core.snapshot.chatgpt_activity = None;
+                core.snapshot.readiness = aggregate_readiness(
+                    core.snapshot.readiness.server.clone(),
+                    core.snapshot.readiness.runner.clone(),
+                    core.snapshot.readiness.exposure.clone(),
+                    ProjectReadiness::None,
+                );
+            }
+            core.save_config().await?;
+            core.get_state().await
+        }
+        .await;
+        self.finish_operation(operation, cancellation, core, baseline, result)
+            .await
     }
 }

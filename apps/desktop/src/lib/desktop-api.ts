@@ -16,6 +16,8 @@ import type { McpProviderRequest, TunnelProfileAction, TunnelProfileRequest } fr
 import type { CodingAgentRequest, SshRegisterRequest, SshResourcesSnapshot, SshMutationResult, RunnerCapabilityAuthorizationSnapshot } from "../models/runner-capabilities";
 
 export const desktopApi = {
+  prepareProjectUnregister: (project: string) => invoke<import("../models/workspace").UnregisterObservation>("prepare_project_unregister", { project }),
+  unregisterProject: ({ target, project, expected_revision }: import("../models/workspace").UnregisterObservation) => invoke<DesktopState>("unregister_project", { request: { target, project, expected_revision, confirmed: true } }),
   desktopBuildInfo: () => invoke<MachineBuildInfo>("get_desktop_build_info"),
   runtimeSettings: () => invoke<RuntimeSettings>("get_runtime_settings"),
   probeRuntime: (source: RuntimeSource) => invoke<RuntimeSettings>("probe_runtime", { source }),

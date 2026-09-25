@@ -113,6 +113,22 @@ pub async fn query(runtime: &StoredRuntime, request: WorkspaceRequest) -> Deskto
         .as_deref()
         .ok_or_else(unavailable)?;
     let (route, body) = request_body(request, runner)?;
+    post(
+        runtime,
+        &format!("/api/runtime-console/{route}"),
+        body,
+        Duration::from_secs(12),
+    )
+    .await
+}
+
+// Native callers choose fixed routes and schemas; never expose a generic WebView dispatch.
+pub(crate) async fn post(
+    runtime: &StoredRuntime,
+    route: &str,
+    body: Value,
+    timeout: Duration,
+) -> DesktopResult<Value> {
     let mut url = url::Url::parse(&runtime.server_url).map_err(|_| unavailable())?;
     if !matches!(url.scheme(), "http" | "https")
         || url.host_str().is_none()
@@ -121,12 +137,12 @@ pub async fn query(runtime: &StoredRuntime, request: WorkspaceRequest) -> Deskto
     {
         return Err(unavailable());
     }
-    url.set_path(&format!("/api/runtime-console/{route}"));
+    url.set_path(route);
     url.set_query(None);
     url.set_fragment(None);
     let mut builder = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
-        .timeout(Duration::from_secs(12));
+        .timeout(timeout);
     if matches!(
         url.host_str(),
         Some("localhost" | "127.0.0.1" | "[::1]" | "::1")

@@ -257,6 +257,7 @@ pub struct QuickShareState {
 pub enum DesktopOperationKind {
     LocalSetup,
     LocalProjectActivate,
+    ProjectUnregister,
     RemoteSetup,
     QuickShareStart,
     QuickShareStop,
@@ -280,6 +281,7 @@ impl DesktopOperationKind {
         match self {
             Self::LocalSetup => "local_setup",
             Self::LocalProjectActivate => "local_project_activate",
+            Self::ProjectUnregister => "project_unregister",
             Self::RemoteSetup => "remote_setup",
             Self::QuickShareStart => "quick_share_start",
             Self::QuickShareStop => "quick_share_stop",

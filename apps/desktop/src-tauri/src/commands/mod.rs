@@ -540,3 +540,20 @@ pub fn get_desktop_build_info() -> webcodex_core::desktop_runtime_contract::Mach
     info.version = env!("CARGO_PKG_VERSION").to_string();
     info
 }
+
+#[tauri::command]
+pub async fn prepare_project_unregister(
+    project: String,
+    state: State<'_, AppState>,
+) -> Result<crate::project_inventory::UnregisterObservation, DesktopError> {
+    state.prepare_project_unregister(&project).await
+}
+
+#[tauri::command]
+pub async fn unregister_project(
+    request: crate::project_inventory::UnregisterRequest,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<DesktopStateSnapshot, DesktopError> {
+    project_state_result(&app, state.unregister_project(request).await)
+}

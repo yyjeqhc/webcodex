@@ -257,6 +257,7 @@ const operationKeys: Record<DesktopOperationKind, MessageKey> = {
   configuration_restore: "operation.configurationRestore",
   local_setup: "operation.localSetup",
   local_project_activate: "operation.localProjectActivate",
+  project_unregister: "operation.projectUnregister",
   remote_setup: "operation.remoteSetup",
   quick_share_start: "operation.quickShareStart",
   quick_share_stop: "operation.quickShareStop",

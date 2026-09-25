@@ -12,6 +12,7 @@ mod models;
 mod operation;
 mod platform;
 mod process;
+mod project_inventory;
 mod runner_capability_grant;
 mod runtime_selection;
 mod ssh_resources;
@@ -100,6 +101,8 @@ pub fn run() {
             commands::inspect_project,
             commands::configure_local_setup,
             commands::activate_local_project,
+            commands::prepare_project_unregister,
+            commands::unregister_project,
             commands::configure_remote_setup,
             commands::start_quick_share,
             commands::stop_quick_share,

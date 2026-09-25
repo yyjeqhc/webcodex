@@ -138,7 +138,8 @@ it("shows active Window work without any Workflow Session and keeps observe call
   expect(activeRow.textContent).toContain("webcodex-activity-fix");
   expect(activeRow.textContent).toContain("1 active");
 
-  expect(await screen.findByText("Each call is shown separately, from first to last.")).toBeTruthy();
+  expect(screen.queryByText("Each call is shown separately, from first to last.")).toBeNull();
+  expect(screen.queryByRole("heading", { name: "Tool calls" })).toBeNull();
   expect(screen.getAllByText("runtime_status").length).toBeGreaterThan(0);
   expect(screen.queryByText("Inspect Runtime status")).toBeNull();
   expect(screen.queryByText("Observe")).toBeNull();
@@ -278,22 +279,18 @@ it("links Window tool calls to colored work Sessions and opens the selected Sess
   fireEvent.click(tags[2]);
   expect((screen.getByRole("tab", { name: /Work Sessions/ }) as HTMLElement).getAttribute("aria-selected")).toBe("true");
 
-  const switcher = screen.getByRole("tablist", { name: "Sessions in this Window" });
-  const sessionTabs = within(switcher).getAllByRole("tab");
-  expect(sessionTabs).toHaveLength(2);
-  expect(sessionTabs[0].getAttribute("data-session-tone")).toBe("0");
-  expect(sessionTabs[1].getAttribute("data-session-tone")).toBe("1");
-  expect(sessionTabs[1].getAttribute("aria-selected")).toBe("true");
+  const selector = screen.getByRole("combobox", { name: "Work Session" }) as HTMLInputElement;
+  expect(selector.value).toContain(sessionB);
 
   fireEvent.click(screen.getByRole("tab", { name: /^Window/ }));
   const calls = screen.getAllByTestId("window-workflow-step");
   fireEvent.click(calls[0]);
   expect(screen.getByRole("tab", { name: /Work Sessions/ }).getAttribute("aria-selected")).toBe("true");
-  expect(sessionTabs[0].getAttribute("aria-selected")).toBe("true");
+  await waitFor(() => expect(selector.value).toContain("Implement Window tabs"));
 
   fireEvent.click(screen.getByRole("tab", { name: /^Window/ }));
   fireEvent.click(tags[2]);
-  expect(sessionTabs[1].getAttribute("aria-selected")).toBe("true");
+  await waitFor(() => expect(selector.value).toContain(sessionB));
 
   await waitFor(() => {
     expect((client.post as unknown as ReturnType<typeof vi.fn>).mock.calls.some(([path, payload]) =>
@@ -303,11 +300,8 @@ it("links Window tool calls to colored work Sessions and opens the selected Sess
   expect((client.post as unknown as ReturnType<typeof vi.fn>).mock.calls.some(([path]) =>
     path === "workflow-session-messages"
   )).toBe(false);
-  expect((await screen.findAllByText("Review Session mapping")).length).toBeGreaterThanOrEqual(2);
-  expect(screen.getAllByText(sessionB).length).toBeGreaterThanOrEqual(2);
-
-  fireEvent.click(sessionTabs[0]);
-  await waitFor(() => expect(sessionTabs[0].getAttribute("aria-selected")).toBe("true"));
+  await waitFor(() => expect(selector.value).toContain("Review Session mapping"));
+  expect(screen.getByText(sessionB)).toBeTruthy();
 });
 
 it("groups a managed worktree under one human Project and exposes Window activity at the family level", async () => {

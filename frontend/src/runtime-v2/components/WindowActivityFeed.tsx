@@ -48,9 +48,6 @@ export function WindowActivityFeed({ detail, projects, language, onOpenSession }
 
   return (
     <section className="window-detail-section window-workflow-section" aria-label={t("Window activity")}>
-      <div className="section-heading activity-feed-heading">
-        <div><h2>{t("Tool calls")}</h2><p>{t("Each call is shown separately, from first to last.")}</p></div>
-      </div>
       {detail.activity_truncated && <div className="inventory-note">{t("Earlier calls are not available in this view. Showing retained activity from oldest to newest.")}</div>}
       <div className="window-workflow-list">
         {calls.map((call) => {

@@ -32,6 +32,18 @@ try {
             { ...base, server_trace_id: 'observe-1', tool_name: 'runtime_status', meaningful: false, project: undefined },
           ];
           data.activity_returned = 3;
+          const firstSession = data.linked_sessions[0];
+          data.linked_sessions = [
+            firstSession,
+            ...Array.from({ length: 11 }, (_, index) => ({
+              ...firstSession,
+              workflow_session_id: `wc_sess_fixture_${String(index + 2).padStart(2, '0')}`,
+              first_linked_at_ms: firstSession.first_linked_at_ms + (index + 1) * 1000,
+              last_linked_at_ms: firstSession.last_linked_at_ms + (index + 1) * 1000,
+              title: `Fixture work Session ${index + 2}`,
+            })),
+          ];
+          data.sessions_returned = data.linked_sessions.length;
           await route.fulfill({ response, json: data });
         });
         await page.goto(fixture.url + '/runtime/');
@@ -57,7 +69,37 @@ try {
         const bounds = await page.evaluate(() => ({ width: innerWidth, body: document.body.scrollWidth, root: document.documentElement.scrollWidth }));
         assert(bounds.body <= width + 1 && bounds.root <= width + 1, JSON.stringify(bounds));
         await page.screenshot({ path: new URL(`calls-${width}-${theme}-${language}.png`, output).pathname, fullPage: true });
-        checks.push({ width, theme, language, overflow: false, individualCalls: 4, chronological: true, centerTabs: 3 });
+        await centerTabs.nth(1).click();
+        const sessionSelector = page.getByRole('combobox', { name: zh ? '工作会话' : 'Work Session' });
+        await sessionSelector.waitFor();
+        assert.equal(await page.locator('.window-session-switcher').count(), 0);
+        assert.equal(await page.locator('.window-session-summary').count(), 0);
+        assert.equal(await page.locator('.window-session-select').count(), 1);
+
+        await sessionSelector.click();
+        const sessionOptions = page.getByRole('option');
+        assert.equal(await sessionOptions.count(), 12);
+        await page.keyboard.press('Escape');
+
+        const sessionLayout = await page.evaluate(() => {
+          const context = document.querySelector('.window-session-context')?.getBoundingClientRect();
+          const activity = document.querySelector('.window-session-activity')?.getBoundingClientRect();
+          const cluster = document.querySelector('.window-session-activity .tool-cluster')?.getBoundingClientRect();
+          return {
+            contextX: context?.x ?? null,
+            activityX: activity?.x ?? null,
+            clusterX: cluster?.x ?? null,
+            body: document.body.scrollWidth,
+            root: document.documentElement.scrollWidth,
+            width: innerWidth,
+          };
+        });
+        assert(sessionLayout.contextX !== null && sessionLayout.activityX !== null && sessionLayout.clusterX !== null, JSON.stringify(sessionLayout));
+        assert(Math.abs(sessionLayout.contextX - sessionLayout.activityX) <= 1, JSON.stringify(sessionLayout));
+        assert(Math.abs(sessionLayout.activityX - sessionLayout.clusterX) <= 1, JSON.stringify(sessionLayout));
+        assert(sessionLayout.body <= width + 1 && sessionLayout.root <= width + 1, JSON.stringify(sessionLayout));
+        await page.screenshot({ path: new URL(`sessions-${width}-${theme}-${language}.png`, output).pathname, fullPage: true });
+        checks.push({ width, theme, language, overflow: false, individualCalls: 4, chronological: true, centerTabs: 3, sessionSelector: true, sessionOptions: 12, sessionAligned: true });
         await page.close();
       }
     }

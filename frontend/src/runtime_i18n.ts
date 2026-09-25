@@ -978,6 +978,7 @@ Object.assign(RUNTIME_ZH_TEXT, {
   "Window activity refresh failed; showing previous observations.": "窗口活动刷新失败，正在显示上一次观察结果。",
   "Window activity unavailable": "窗口活动不可用",
   "No matching Windows": "没有匹配的窗口",
+  "No matching work Sessions": "没有匹配的工作会话",
   "Window inventory is bounded; not all observed Windows are loaded.": "窗口清单受返回范围限制，部分已观察窗口尚未加载。",
   "Observed Window": "已观察窗口",
   "WebCodex request active now": "当前有 WebCodex 请求正在执行",

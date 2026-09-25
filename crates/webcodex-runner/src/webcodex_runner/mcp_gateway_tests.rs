@@ -101,6 +101,9 @@ impl Fixture {
         let marker = temp.path().join("marker.log");
         let fake = fake_binary();
         let mut args = vec![scenario.to_string(), marker.to_string_lossy().to_string()];
+        if scenario == "oversized_message" {
+            args.push((MCP_GATEWAY_MAX_PROVIDER_MESSAGE_BYTES + 1).to_string());
+        }
         if let Some(cwd) = cwd.as_ref() {
             args.push(cwd.clone());
         }

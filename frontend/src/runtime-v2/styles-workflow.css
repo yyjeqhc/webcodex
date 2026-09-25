@@ -6,20 +6,13 @@
 .activity-feed-heading { align-items: end; flex-wrap: wrap; gap: 12px; }
 .window-call-card { padding: 16px 0; display: grid; gap: 10px; border-bottom: 1px solid var(--line); min-width: 0; }
 .window-call-card.running { padding: 16px; margin-top: 10px; border: 1px solid var(--accent); border-radius: var(--ui-radius-sm); background: var(--ui-accent-soft); }
+.window-call-card.running .window-project-tag { background: var(--surface); }
 .window-call-card header { display: flex; align-items: start; justify-content: space-between; gap: 12px; }
-.window-call-card header > div { min-width: 0; display: grid; gap: 4px; }
 .window-call-card header strong { font-size: 14px; overflow-wrap: anywhere; }
-.window-call-card header code { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
 .window-call-context, .window-call-timing, .session-work-context { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; }
 .window-call-context .window-project-tag { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 .window-call-timing { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 .window-call-timing strong, .window-call-timing time { color: var(--text); font-weight: 500; }
-.window-call-sessions { display: grid; gap: 5px; font-size: 12px; }
-.window-call-sessions button { justify-content: start; text-align: left; flex-wrap: wrap; overflow-wrap: anywhere; }
-.window-call-sessions small { color: var(--muted); }
-.window-call-evidence { min-width: 0; color: var(--muted); font-size: 12px; }
-.window-call-evidence summary { cursor: pointer; width: fit-content; padding: 4px 0; }
-.window-call-evidence .evidence-chip-row { margin-top: 8px; }
 .session-work-context { padding: 12px 0; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
 .session-work-context button { text-align: left; }
 .runtime-page .window-row time { font-size: 12px; color: var(--muted); }
@@ -34,29 +27,12 @@
   .window-call-card header { flex-wrap: wrap; }
   .window-call-timing { gap: 6px 12px; }
 }
-/* The Window relation already names its Session; no per-Session count fetch. */
-.runtime-page .linked-session-row { grid-template-columns: 9px minmax(0,1fr) auto auto 14px; }
-@media (max-width: 700px) {
-  .runtime-page .linked-session-row { grid-template-columns: 9px minmax(0,1fr) 14px; }
-}
-
 /* Window work has one list and one workspace; context belongs with the activity. */
 .work-layout.window-primary-workbench { grid-template-columns: 278px minmax(0, 1fr); }
-.window-work-main { grid-template-rows: auto auto minmax(0, 1fr); background: var(--surface); overflow: hidden; }
-.window-work-main > [hidden] { display: none; }
-.window-work-main .session-view-tabs { background: transparent; }
+.window-work-main { grid-template-rows: auto minmax(0, 1fr); background: var(--surface); overflow: hidden; }
 .window-work-scroll { min-width: 0; }
-.window-work-location { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 0 18px 18px; color: var(--muted); font-size: 12px; }
-.window-work-location span { min-width: 0; overflow-wrap: anywhere; }
 .window-work-row:hover { background: var(--surface-soft); }
 .window-work-row.selected { background: var(--accent-soft); }
-.window-collaboration-pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: auto; }
-.window-collaboration-heading { padding: 18px 24px; border-bottom: 1px solid var(--line); }
-.window-collaboration-heading h2 { margin: 0; font-size: 16px; }
-.window-collaboration-heading p { color: var(--muted); font-size: 13px; line-height: 1.6; }
-.window-collaboration-heading .text-button { margin-top: 12px; }
-.window-collaboration-pane .collaboration-message-scroll { flex: 1; min-height: 160px; }
-.window-call-sessions:empty, .window-call-context:empty { display: none; }
 @media (max-width: 1100px) {
   .work-layout.window-primary-workbench { grid-template-columns: 252px minmax(0, 1fr); }
 }
@@ -65,5 +41,4 @@
   .window-work-main { min-height: 58dvh; }
   .window-work-header { padding: 14px 18px; gap: 10px; }
   .window-work-scroll { max-height: 75dvh; }
-  .window-collaboration-pane { max-height: 85dvh; }
 }

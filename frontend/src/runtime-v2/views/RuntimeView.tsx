@@ -3,7 +3,6 @@ import {
   ArrowUpRight,
   Bot,
   Check,
-  ChevronDown,
   HardDrive,
   Monitor,
   Play,
@@ -20,7 +19,6 @@ import { useAgentInventory } from "../state/useAgentInventory.js";
 import { WindowActivityFeed } from "../components/WindowActivityFeed.js";
 import { AgentsPanel } from "../components/AgentsPanel.js";
 import { PageHeader } from "../components/ui/PageHeader.js";
-import type { SessionLocation } from "../state/useSessionWorkspace.js";
 import { useWindowWorkspace } from "../state/useWindowWorkspace.js";
 
 type RuntimeMode = "overview" | "windows" | "agents";
@@ -48,7 +46,6 @@ type Props = {
   overview: RuntimeOverview | null;
   overviewAvailability: Availability;
   projects: ProjectRow[];
-  onOpenSession: (location: SessionLocation) => void;
   target?: { mode: "windows"; windowKey: string } | { mode: "agents"; agentId: string } | null;
   onTargetConsumed?: () => void;
   onUnauthorized: () => void;
@@ -60,7 +57,6 @@ export function RuntimeView({
   overview,
   overviewAvailability,
   projects,
-  onOpenSession,
   target,
   onTargetConsumed,
   onUnauthorized,
@@ -76,9 +72,6 @@ export function RuntimeView({
   const agents = useAgentInventory(client, mode === "overview");
   const latestWindowActivityAt = windows.detail
     ? (windows.detail.last_meaningful_activity_at_ms || windows.detail.last_tool_call_at_ms || windows.detail.last_seen_at_ms)
-    : undefined;
-  const latestSessionLinkAt = windows.detail?.linked_sessions.length
-    ? Math.max(...windows.detail.linked_sessions.map((session) => session.last_linked_at_ms))
     : undefined;
   useEffect(() => {
     if (!target) return;
@@ -254,7 +247,7 @@ export function RuntimeView({
                     <strong title={window.client_window_key}>Window {shortId(window.client_window_key)}</strong>
                     <small>{window.source} · {project?.client_id || t("Runner not observed")}</small>
                     <small title={window.last_project}>{t("Last Project")}: {project?.name || window.last_project || t("No current Project evidence")}</small>
-                    <small>{window.linked_session_count} {t("linked Sessions")} · {window.active_count} {t("active requests")}</small>
+                    <small>{window.active_count} {t("active requests")}</small>
                   </span>
                   <time title={absoluteTime(window.last_meaningful_activity_at_ms || window.last_seen_at_ms)}>{relativeTime(window.last_meaningful_activity_at_ms || window.last_seen_at_ms)}</time>
                 </button>
@@ -287,64 +280,15 @@ export function RuntimeView({
                     <strong>{windows.detail.active_count > 0 ? t("Active") : latestWindowActivityAt ? t("Last WebCodex call") : t("Not observed")}</strong>
                     <small>{latestWindowActivityAt ? absoluteTime(latestWindowActivityAt) : t("No Window-scoped WebCodex activity is loaded.")}</small>
                   </div>
-                  <div data-testid="window-signal-session">
-                    <span className="activity-source-badge session">{t("Session")}</span>
-                    <strong>{latestSessionLinkAt === undefined ? t("Not observed") : latestWindowActivityAt && latestWindowActivityAt > latestSessionLinkAt ? t("Sparse activity") : t("Last linked activity")}</strong>
-                    <small>{latestSessionLinkAt !== undefined ? absoluteTime(latestSessionLinkAt) : t("No explicit Session-linked activity is loaded.")}</small>
-                  </div>
                 </section>
 
-                <details className="window-relations-disclosure" open>
-                  <summary>
-                    <span><Monitor size={15} /><strong>{t("Linked Sessions")}</strong></span>
-                    <span className="count-badge">{windows.detail.sessions_returned}</span>
-                    <ChevronDown size={15} />
-                  </summary>
-                  <div className="linked-session-list">
-                    {windows.detail.linked_sessions.map((session) => {
-                      const project = projectFor(session.project);
-                      const canOpen = Boolean(session.project && project);
-                      return (
-                        <button
-                          type="button"
-                          className="linked-session-row"
-                          key={session.workflow_session_id}
-                          disabled={!canOpen}
-                          onClick={() => {
-                            if (!session.project || !project) return;
-                            onOpenSession({
-                              projectId: session.project,
-                              projectName: project.name || project.id,
-                              runner: project.client_id,
-                              sessionId: session.workflow_session_id,
-                            });
-                          }}
-                        >
-                          <span className="session-relation-dot" />
-                          <span className="project-session-main">
-                            <strong>{session.title || session.workflow_session_id}</strong>
-                            <small>{project?.name || session.project || t("Project not exposed in relation")}</small>
-                          </span>
-                          <span className="relation-kind">{session.relations.join(" · ") || t("linked")}</span>
-                          <time>{relativeTime(session.last_linked_at_ms)}</time>
-                          {canOpen && <ArrowUpRight size={14} />}
-                        </button>
-                      );
-                    })}
-                    {!windows.detail.linked_sessions.length && <div className="empty-inline">{t("Window with no current Session")}</div>}
-                    {windows.detail.sessions_truncated && (
-                      <div className="inventory-note">{t("Linked Session inventory is bounded; additional relations are not loaded.")}</div>
-                    )}
-                  </div>
-                </details>
-
-                <WindowActivityFeed key={windows.detail.client_window_key} detail={windows.detail} projects={projects} language={language} onOpenSession={onOpenSession} />
+                <WindowActivityFeed key={windows.detail.client_window_key} detail={windows.detail} projects={projects} language={language} />
               </>
             ) : (
               <div className="empty-work">
                 <Monitor size={22} />
                 <h2>{t("Select an observed Window")}</h2>
-                <p>{windows.detailAvailability === "denied" ? t("This Window is no longer visible to the current credential. Refresh to check available activity.") : t("Open a Window to see its project and Workflow Sessions.")}</p>
+                <p>{windows.detailAvailability === "denied" ? t("This Window is no longer visible to the current credential. Refresh to check available activity.") : t("Choose a window to see its tool calls.")}</p>
               </div>
             )}
           </section>

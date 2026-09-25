@@ -7,8 +7,7 @@ import type { ProjectRow } from "../src/runtime-v2/model/types.js";
 import { ProjectsView } from "../src/runtime-v2/views/ProjectsView.js";
 import { WorkView } from "../src/runtime-v2/views/WorkView.js";
 import { UiProvider } from "../src/ui/UiProvider.js";
-import { WindowCollaboration } from "../src/runtime-v2/components/WindowCollaboration.js";
-import { runtimeOverview, sessionDetail, windowDetail } from "./fixtures.js";
+import { runtimeOverview, windowDetail } from "./fixtures.js";
 
 const render = (ui: ReactElement) => testingRender(<UiProvider>{ui}</UiProvider>);
 
@@ -139,15 +138,14 @@ it("shows active Window work without any Workflow Session and keeps observe call
   expect(activeRow.textContent).toContain("webcodex-activity-fix");
   expect(activeRow.textContent).toContain("1 active");
 
-  expect(await screen.findByText("Running now and recent activity, newest first.")).toBeTruthy();
-  expect(screen.getByText("Inspect Runtime status")).toBeTruthy();
+  expect(await screen.findByText("Each call is shown separately, from first to last.")).toBeTruthy();
+  expect(screen.getAllByText("runtime_status").length).toBeGreaterThan(0);
+  expect(screen.queryByText("Inspect Runtime status")).toBeNull();
   expect(screen.queryByText("Observe")).toBeNull();
   expect(screen.queryByText("No explicit Session link")).toBeNull();
   expect(screen.queryByRole("complementary", { name: "Window context" })).toBeNull();
-  fireEvent.click(screen.getByRole("tab", { name: "Window collaboration" }));
-  expect(screen.getByRole("tabpanel", { name: "Window collaboration" }).textContent).toContain("This window has no linked sessions yet.");
-  expect(screen.queryByRole("tabpanel", { name: "Window activity" })).toBeNull();
-  fireEvent.click(screen.getByRole("tab", { name: "Window activity" }));
+  expect(screen.queryByRole("tab", { name: "Window collaboration" })).toBeNull();
+  expect(screen.queryByText("Technical details")).toBeNull();
   expect(screen.getAllByTitle(absoluteTime(observeStarted)).length).toBeGreaterThan(0);
 
   const search = screen.getByRole("searchbox", { name: "Search Windows" });
@@ -209,46 +207,4 @@ it("groups a managed worktree under one human Project and exposes Window activit
   expect(activity.textContent).toContain("webcodex-activity-fix");
   fireEvent.click(activity);
   expect(openWindow).toHaveBeenCalledWith(key);
-});
-
-
-it("requires a linked Session choice and keeps collaboration bound to that exact Session", async () => {
-  const project = runtimeOverview().projects[0];
-  const firstId = "wc_sess_first";
-  const secondId = "wc_sess_second";
-  const detail = windowDetail({
-    linked_sessions: [firstId, secondId].map((id) => ({
-      workflow_session_id: id, project: project.id, title: id,
-      first_linked_at_ms: 1, last_linked_at_ms: 1, relations: ["recording"], relation_count: 1,
-    })),
-    sessions_returned: 2,
-  });
-  const client = fakeClient((path, payload) => {
-    if (path === "workflow-session") return ok(sessionDetail({ session_id: payload.session_id }));
-    if (path === "workflow-session-messages") return ok({ session_id: payload.session_id, messages: [{
-      message_id: "message-" + payload.session_id, kind: "note", status: "open", priority: "normal",
-      message: "Message for " + payload.session_id, created_at: 1, requires_ack: false,
-    }] });
-    if (path === "workflow-session-post-message") return ok({});
-    throw new Error("unexpected path " + path);
-  });
-  const props = { client, detail, projects: [project], language: "en" as const, onUnauthorized: vi.fn(), onOpenSession: vi.fn() };
-  const view = render(<WindowCollaboration {...props} />);
-  expect(client.post).not.toHaveBeenCalled();
-  fireEvent.change(screen.getByRole("combobox", { name: "Session", exact: true }), { target: { value: firstId } });
-  expect(await screen.findByText("Message for " + firstId)).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: "Reply", exact: true }));
-  fireEvent.change(screen.getByRole("textbox"), { target: { value: "Reply to first" } });
-  fireEvent.click(screen.getByRole("button", { name: "Send", exact: true }));
-  await waitFor(() => expect(client.post).toHaveBeenCalledWith("workflow-session-post-message", expect.objectContaining({
-    project: project.id, session_id: firstId, reply_to: "message-" + firstId, message: "Reply to first",
-  }), undefined));
-  fireEvent.change(screen.getByRole("combobox", { name: "Session", exact: true }), { target: { value: secondId } });
-  expect(screen.queryByText("Message for " + firstId)).toBeNull();
-  expect(await screen.findByText("Message for " + secondId)).toBeTruthy();
-  expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe("");
-  // Removing the authorized project also removes the loaded collaboration surface.
-  view.rerender(<UiProvider><WindowCollaboration {...props} projects={[]} /></UiProvider>);
-  expect(screen.queryByRole("textbox")).toBeNull();
-  expect(screen.queryByText("Message for " + secondId)).toBeNull();
 });

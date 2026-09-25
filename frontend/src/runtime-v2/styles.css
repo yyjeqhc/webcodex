@@ -112,7 +112,6 @@ code, kbd { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospac
 .window-work-header p { margin: 5px 0 0; color: var(--muted); font-size: 12px; }
 .window-work-scroll { min-height: 0; overflow: auto; padding: 18px 0 54px; scrollbar-width: thin; }
 .window-relation-note { margin: 8px 2px 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
-.window-call-state { display: inline-flex; gap: 5px; align-items: center; justify-content: end; }
 
 
 

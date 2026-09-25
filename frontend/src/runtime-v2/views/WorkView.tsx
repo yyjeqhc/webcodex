@@ -79,7 +79,6 @@ export function WorkView({
         projects={projects}
         surface={surface}
         onSurfaceChange={onSurfaceChange}
-        onOpenSession={onOpenSession}
         onUnauthorized={onUnauthorized}
         requestedWindowKey={requestedWindowKey}
         onRequestedWindowConsumed={onRequestedWindowConsumed}

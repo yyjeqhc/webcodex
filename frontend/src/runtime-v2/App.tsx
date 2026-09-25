@@ -370,7 +370,6 @@ export function App() {
             overview={overview}
             overviewAvailability={overviewState.availability}
             projects={overview?.projects || []}
-            onOpenSession={openSession}
             onUnauthorized={handleUnauthorized}
             target={runtimeTarget}
             onTargetConsumed={() => setRuntimeTarget(null)}

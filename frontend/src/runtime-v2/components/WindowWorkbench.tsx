@@ -6,7 +6,6 @@ import {
 import { TextInput } from "@mantine/core";
 import { useEffect, useMemo, useState } from "react";
 import {
-  displayProjectPath,
   projectFamilyId,
   projectFamilyName,
   projectVariantLabel,
@@ -18,10 +17,8 @@ import { translate } from "../../runtime_i18n.js";
 import type { RuntimeV2Client } from "../api/client.js";
 import { absoluteTime, relativeTime, shortId } from "../model/format.js";
 import type { ProjectRow, WindowSummary } from "../model/types.js";
-import type { SessionLocation } from "../state/useSessionWorkspace.js";
 import { useWindowWorkspace } from "../state/useWindowWorkspace.js";
 import { WorkSurfaceSwitch, type WorkSurface } from "./GoalWorkbench.js";
-import { WindowCollaboration } from "./WindowCollaboration.js";
 import { WindowActivityFeed } from "./WindowActivityFeed.js";
 
 type Props = {
@@ -30,7 +27,6 @@ type Props = {
   projects: ProjectRow[];
   surface: WorkSurface;
   onSurfaceChange: (surface: WorkSurface) => void;
-  onOpenSession: (location: SessionLocation) => void;
   onUnauthorized: () => void;
   requestedWindowKey?: string;
   onRequestedWindowConsumed?: () => void;
@@ -81,14 +77,12 @@ export function WindowWorkbench({
   projects,
   surface,
   onSurfaceChange,
-  onOpenSession,
   onUnauthorized,
   requestedWindowKey,
   onRequestedWindowConsumed,
 }: Props) {
   const t = (value: string) => translate(value, language);
   const windows = useWindowWorkspace(client, true, onUnauthorized, { refreshMs: 3_000, loadDetail: true });
-  const [tab, setTab] = useState<"activity" | "collaboration">("activity");
   const [search, setSearch] = useState("");
   const [projectFamily, setProjectFamily] = useState("");
   const families = useMemo(() => buildProjectFamilies(projects), [projects]);
@@ -140,7 +134,6 @@ export function WindowWorkbench({
   const sourceProject = currentProject ? projectFor(projects, sourceProjectRuntimeId(currentProject)) : undefined;
   const currentActivity = activeRequest?.tool_name ||
     selectedSummary?.last_activity_name ||
-    detail?.activity[0]?.activity_presentation ||
     detail?.activity[0]?.tool_name ||
     detail?.activity[0]?.method;
   const lastObservedAt = detail?.last_seen_at_ms || selectedSummary?.last_seen_at_ms;
@@ -232,39 +225,21 @@ export function WindowWorkbench({
               </span>
             </header>
 
-            <div className="session-view-tabs" role="tablist" aria-label={t("Work view")}>
-              {(["activity", "collaboration"] as const).map((value) => (
-                <button key={value} type="button" role="tab" id={"window-" + value + "-tab"}
-                  aria-selected={tab === value} aria-controls={"window-" + value + "-panel"}
-                  className={tab === value ? "active" : ""} onClick={() => setTab(value)}>
-                  {t(value === "activity" ? "Window activity" : "Window collaboration")}
-                </button>
-              ))}
-            </div>
-            <div className="window-work-scroll" role="tabpanel" id="window-activity-panel" aria-labelledby="window-activity-tab" hidden={tab !== "activity"}>
+            <div className="window-work-scroll">
               {windows.detailAvailability === "stale" && <div className="inventory-note">{t("Window activity refresh failed; showing previous observations.")}</div>}
-              {currentProject && <div className="window-work-location">
-                <span>{t(projectVariantLabel(currentProject))}</span>
-                <span>{currentProject.client_id}</span>
-                <span title={displayProjectPath(currentProject.path)}>{displayProjectPath(currentProject.path)}</span>
-              </div>}
               <WindowActivityFeed
                 key={detail.client_window_key}
                 detail={detail}
                 projects={projects}
                 language={language}
-                onOpenSession={onOpenSession}
               />
             </div>
-            <section className="window-collaboration-pane" role="tabpanel" id="window-collaboration-panel" aria-labelledby="window-collaboration-tab" hidden={tab !== "collaboration"}>
-              <WindowCollaboration key={detail.client_window_key} client={client} detail={detail} projects={projects} language={language} onUnauthorized={onUnauthorized} onOpenSession={onOpenSession} />
-            </section>
           </>
         ) : (
           <div className="empty-work">
             <Monitor size={22} />
             <h2>{t(windows.detailAvailability === "loading" ? "Loading Window activity…" : windows.detailAvailability === "error" || windows.detailAvailability === "denied" ? "Window activity unavailable" : "Select a window")}</h2>
-            <p>{t("Choose a window to see its activity and collaboration.")}</p>
+            <p>{t("Choose a window to see its tool calls.")}</p>
           </div>
         )}
       </main>

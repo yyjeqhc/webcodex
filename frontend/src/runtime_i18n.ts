@@ -1029,17 +1029,19 @@ Object.assign(RUNTIME_ZH_TEXT, {
 Object.assign(RUNTIME_ZH_TEXT, {
   "Project information unavailable": "暂无项目信息",
   "Completed": "已完成",
-  "Showing recent linked sessions only.": "当前仅显示最近关联的会话。",
   "Runner unavailable": "执行端信息暂不可用",
   "Search windows or projects…": "搜索窗口或项目…",
   "Select a window": "选择一个窗口",
-  "Choose a window to see its activity and collaboration.": "选择左侧窗口，查看活动与协作。",
-  "Running now and recent activity, newest first.": "查看正在执行的操作和最近活动，最新活动在前。",
-  "Choose a linked session to read messages and reply.": "选择关联的工作会话，查看协作消息或回复。",
-  "Choose a session…": "选择工作会话…",
-  "This window has no linked sessions yet. Its activity is available in the activity tab.": "此窗口暂未关联工作会话，可在「窗口活动」中查看操作进展。",
-  "Open session activity": "查看会话活动",
-  "Showing recent activity only.": "当前仅显示最近的活动。",
+});
+
+Object.assign(RUNTIME_ZH_TEXT, {
+  "Tool calls": "工具调用",
+  "Each call is shown separately, from first to last.": "按执行顺序逐条展示，从第一条到最近一条。",
+  "Earlier calls are not available in this view. Showing retained activity from oldest to newest.": "更早的调用已不在当前展示范围内，以下按时间顺序展示保留的记录。",
+  "Succeeded": "成功",
+  "Failed": "失败",
+  "No tool calls yet": "暂无工具调用",
+  "Choose a window to see its tool calls.": "选择左侧窗口，查看逐条工具调用。",
 });
 
 export function translate(source: string, language: RuntimeLanguage = "en"): string {

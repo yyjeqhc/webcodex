@@ -3,6 +3,13 @@ use super::*;
 
 #[test]
 fn external_observations_rest_to_mcp_roundtrip_preserves_untrusted_provenance() {
+    // This test asserts the auth-required unknown-bearer path. Shared-key and
+    // open-anonymous modes are process-global env switches used by other tests,
+    // so pin them off under the canonical test env lock for the whole spawned
+    // roundtrip.
+    let mut env = crate::test_support::TestEnvGuard::new();
+    env.remove("WEBCODEX_SHARED_KEY_ENABLED");
+    env.remove("WEBCODEX_ALLOW_ANONYMOUS");
     std::thread::Builder::new()
         .stack_size(8 * 1024 * 1024)
         .spawn(|| {

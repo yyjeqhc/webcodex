@@ -43,7 +43,7 @@ fi
 #  12. static: no sensitive files tracked or staged by git
 #
 # Final pre-tag acceptance is orchestrated by .github/workflows/release-readiness.yml.
-# The release operator first binds one successful exact-source main-push CI run;
+# The release operator first binds one successful exact-source source-branch CI run;
 # that CI already owns the deterministic release/static contract, complete Linux
 # Rust coverage and path-aware frontend, macOS Apple-Silicon, Windows x64,
 # Desktop, and amd64 Server-image checks. Readiness revalidates that exact CI
@@ -53,8 +53,8 @@ fi
 #   - EVAL_MODE=compare bash scripts/eval_coding_loop.sh with prebuilt debug fixtures
 #   - disposable linux/amd64 + linux/arm64 Server-image/runtime/bootstrap validation
 # Six-platform release-profile/ABI/package candidates plus the Windows x64/ARM64 and
-# both native macOS Desktop artifacts are built exactly once after immutable tagging
-# by release-build.yml.
+# primary macOS Apple-Silicon Desktop artifacts are built exactly once after immutable
+# tagging by release-build.yml; macOS Intel Desktop is a post-publication supplement.
 #
 # Usage:
 #   bash scripts/release_check.sh
@@ -199,6 +199,10 @@ if bash scripts/test_python_tooling.sh \
     && python3 scripts/release_operator.py collect --help >/dev/null \
     && python3 scripts/release_operator.py stage-npm --help >/dev/null \
     && python3 scripts/release_operator.py verify-draft --help >/dev/null \
+    && python3 scripts/release_operator.py doctor --help >/dev/null \
+    && python3 scripts/release_operator.py release-init --help >/dev/null \
+    && python3 scripts/release_operator.py release-resume --help >/dev/null \
+    && python3 scripts/release_operator.py release-status --help >/dev/null \
     && test -f scripts/prepare_desktop_bundle.ps1 \
     && test -f scripts/desktop_install_windows_smoke.ps1 \
     && test -f scripts/prepare_desktop_bundle_macos.py \
@@ -213,6 +217,10 @@ if bash scripts/test_python_tooling.sh \
     && grep -Fq 'windows-11-arm' .github/workflows/extended-native.yml \
     && ! grep -Fq 'macos-15-intel' .github/workflows/ci.yml \
     && ! grep -Fq 'windows-11-arm' .github/workflows/ci.yml \
+    && grep -Fq -- "      - 'release/**'" .github/workflows/ci.yml \
+    && grep -Fq 'source_ref:' .github/workflows/release-readiness.yml \
+    && grep -Fq 'refs/heads/$INPUT_SOURCE_REF' .github/workflows/release-readiness.yml \
+    && grep -Fq 'refs/tags/$tag' .github/workflows/release-build.yml \
     && grep -Fq 'desktop_artifacts' .github/workflows/release-build.yml \
     && grep -Fq 'prepare_desktop_bundle.ps1' .github/workflows/release-build.yml \
     && grep -Fq 'win32-arm64-setup.exe' .github/workflows/release-build.yml \
@@ -323,7 +331,7 @@ fi
 printf '\n[release] ===== all stages passed =====\n'
 if [ "$MODE" = full ]; then
     ok "workspace boundaries, fmt, check --all-targets, focused metadata/schema/openapi/mcp tests, bash syntax, release tooling self-tests, harness contracts, static checks"
-    log "final pre-tag acceptance: use exact-main CI evidence plus the release-readiness workflow (see docs/RELEASE_CHECKLIST.md)"
+    log "final pre-tag acceptance: use exact-source CI evidence plus the release-readiness workflow (see docs/RELEASE_CHECKLIST.md)"
     log "release readiness local check PASSED"
 else
     ok "bash syntax, release tooling self-tests, harness contracts, static checks"

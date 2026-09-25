@@ -2,14 +2,16 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      - 'release/**'
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
   merge_group:
     types: [checks_requested]
 
-# PR runs coalesce by PR number. Merge-group candidates and main pushes use the
-# exact candidate SHA as the group key so each integration candidate keeps its evidence.
+# PR runs coalesce by PR number. Merge-group candidates plus main/release pushes use
+# the exact candidate SHA as the group key so each integration candidate keeps its evidence.
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: true

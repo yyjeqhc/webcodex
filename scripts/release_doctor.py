@@ -114,6 +114,7 @@ def _workflow_contract(root: Path) -> str:
             ("test-docker-server:", ci),
             ("needs_docker", ci),
             ("linux/amd64", ci),
+            ("'release/**'", ci),
         ),
         "extended-native.yml": (
             ("workflow_call:", extended),
@@ -130,6 +131,8 @@ def _workflow_contract(root: Path) -> str:
         ),
         "release-readiness.yml": (
             ("ci_run_id", readiness_workflow),
+            ("source_ref:", readiness_workflow),
+            ('refs/heads/$INPUT_SOURCE_REF', readiness_workflow),
             ("uses: ./.github/workflows/extended-native.yml", readiness_workflow),
             ("linux/amd64", readiness_workflow),
             ("linux/arm64", readiness_workflow),
@@ -144,6 +147,7 @@ def _workflow_contract(root: Path) -> str:
             ("prepare_desktop_bundle_macos.py", build),
             ("desktop_install_macos_smoke.sh", build),
             ("desktop_artifacts", build),
+            ('refs/tags/$tag', build),
             ("webcodex-desktop-v$env:VERSION-$env:WEBCODEX_RELEASE_PLATFORM-setup.exe", build),
             ("webcodex-desktop-v$VERSION-$WEBCODEX_RELEASE_PLATFORM.dmg", build),
             ('desktop_dist="$GITHUB_WORKSPACE/dist"', build),
@@ -184,7 +188,7 @@ def _workflow_contract(root: Path) -> str:
         raise DoctorError("release-readiness gained Desktop candidate build responsibility")
     if "secrets.APPLE_" in build:
         raise DoctorError("release-build unexpectedly depends on paid Apple signing credentials")
-    return "daily CI, extended-native readiness, and authoritative build workflow contracts are consistent"
+    return "main/release-branch CI, extended-native readiness, and tag-bound authoritative build contracts are consistent"
 
 
 def _compile_verifiers(root: Path) -> str:
@@ -236,12 +240,14 @@ def run_doctor(
     repo: str,
     version: str,
     source_sha: str,
+    source_ref: str = "main",
     root: Path,
     timeout: float,
 ) -> dict:
     source_root = root.absolute()
     source = collector.normalize_source_sha(source_sha)
     release_version = publication.normalize_version(version)
+    release_source_ref = publication.normalize_release_source_ref(source_ref, release_version)
     checks: list[dict] = []
 
     _record(checks, "required-tools", _require_tools)
@@ -259,6 +265,7 @@ def run_doctor(
             repo=repo,
             version=release_version,
             source_sha=source,
+            source_ref=release_source_ref,
             root=source_root,
             timeout=timeout,
         )
@@ -271,10 +278,13 @@ def run_doctor(
     def ci_check() -> str:
         nonlocal ci_result
         client = collector.GitHubClient(repo, collector.resolve_github_token(), timeout)
-        ci_result = readiness._successful_main_ci_run(client, source)
-        return f"exact-main CI run {ci_result['id']} attempt {ci_result['run_attempt']} is successful"
+        ci_result = readiness._successful_source_ci_run(client, source, release_source_ref)
+        return (
+            f"exact-source CI run {ci_result['id']} attempt {ci_result['run_attempt']} "
+            f"is successful for {release_source_ref}"
+        )
 
-    _record(checks, "exact-main-ci", ci_check)
+    _record(checks, "exact-source-ci", ci_check)
 
     def release_list_check() -> str:
         client = collector.GitHubClient(repo, collector.resolve_github_token(), timeout)
@@ -288,11 +298,12 @@ def run_doctor(
         "status": "passed" if not failures else "failed",
         "repo": repo,
         "version": release_version,
+        "source_ref": release_source_ref,
         "source_sha": source,
         "checks": checks,
         "failed_checks": [check["name"] for check in failures],
         "preflight": preflight_result,
-        "main_ci": (
+        "source_ci": (
             {"run_id": ci_result["id"], "run_attempt": ci_result["run_attempt"], "url": ci_result["html_url"]}
             if ci_result is not None
             else None

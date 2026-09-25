@@ -448,6 +448,15 @@ fn agent_identity_listing_readiness_schema_is_sparse_and_non_authoritative() {
         .unwrap()
         .iter()
         .any(|field| field == "production_auto_resume_available"));
+    assert!(agent["required"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|field| field == "agent_continuation_ref"));
+    assert_eq!(
+        properties["agent_continuation_ref"]["anyOf"][0]["pattern"],
+        crate::AGENT_CONTINUATION_REF_PATTERN
+    );
     for forbidden in [
         "client_window",
         "client_window_key",

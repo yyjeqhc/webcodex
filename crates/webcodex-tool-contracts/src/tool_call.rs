@@ -44,6 +44,10 @@ pub const TOOL_CALL_TOOL_FIELD: &str = "tool";
 pub const TOOL_CALL_PARAMS_FIELD: &str = "params";
 pub const TOOL_CALL_WRAPPER_FIELDS: &[&str] = &[TOOL_CALL_TOOL_FIELD, TOOL_CALL_PARAMS_FIELD];
 
+/// Compact model-facing form of one exact Agent continuation tuple.
+/// The server stores the mapping. This text is not a credential.
+pub const AGENT_CONTINUATION_REF_PATTERN: &str = "^~ac[1-9][0-9]{0,18}$";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PluginToolAction {
@@ -3525,16 +3529,28 @@ pub enum ToolCall {
     },
 
     /// Present one exact Agent/Endpoint continuation controller card. Never infers a target.
+    /// Pass agent_continuation_ref, or the explicit tuple. Do not pass both.
     PresentAgentContinuation {
-        /// Exact durable Agent id; no current/recent Agent fallback is permitted.
+        /// Server-issued ~ac selector for one exact Agent, Endpoint, and generation. Not a credential.
+        /// Omit it when passing the explicit tuple.
+        #[schemars(regex(pattern = "^~ac[1-9][0-9]{0,18}$"))]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        agent_continuation_ref: Option<String>,
+        /// Exact durable Agent id. Required with endpoint_id and expected_controller_generation when
+        /// agent_continuation_ref is omitted. No current or recent Agent fallback.
         #[schemars(regex(pattern = "^wc_dagent_[A-Za-z0-9_-]{16}$"))]
-        agent_id: String,
-        /// Exact current Agent Endpoint id.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        agent_id: Option<String>,
+        /// Exact Agent Endpoint id. Required with the explicit tuple. Omit it when using
+        /// agent_continuation_ref.
         #[schemars(regex(pattern = "^wc_endpoint_[A-Za-z0-9_-]{16}$"))]
-        endpoint_id: String,
-        /// Exact Server-assigned current Endpoint generation. Stale generations fail closed.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        endpoint_id: Option<String>,
+        /// Exact Server-assigned Endpoint generation. Required with the explicit tuple. Stale
+        /// generations fail closed and the selector never follows a newer generation.
         #[schemars(range(min = 1))]
-        expected_controller_generation: i64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expected_controller_generation: Option<i64>,
     },
 
     /// App-only bind of one live Host View to an exact freshly attached Endpoint generation.

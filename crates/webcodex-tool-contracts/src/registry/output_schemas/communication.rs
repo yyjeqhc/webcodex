@@ -15,6 +15,20 @@ fn nullable_string(description: &str) -> Value {
     })
 }
 
+fn agent_continuation_ref_schema() -> Value {
+    json!({
+        "anyOf": [
+            {
+                "type": "string",
+                "pattern": crate::AGENT_CONTINUATION_REF_PATTERN,
+                "description": "Server-issued selector pinned to one exact Agent, Endpoint, and controller generation."
+            },
+            {"type": "null"}
+        ],
+        "description": "Selector for the exact Endpoint generation named by this result, or null when this result does not issue one. Not a credential or execution authority. An older selector never follows a newer generation."
+    })
+}
+
 fn agent_schema() -> Value {
     json!({
         "type": "object",
@@ -50,10 +64,12 @@ fn listed_agent_schema() -> Value {
         "boolean",
         "True only when this listed Agent snapshot has a current unexpired generation-matching wake-capable Endpoint and the current Server process has a production Host carrier for that exact generation. This is continuation readiness only: it does not mean idle, reserve capacity, grant execution authority, or guarantee immediate Host scheduling.",
     );
-    schema["required"]
+    schema["properties"]["agent_continuation_ref"] = agent_continuation_ref_schema();
+    let required = schema["required"]
         .as_array_mut()
-        .expect("agent schema required fields")
-        .push(json!("production_auto_resume_available"));
+        .expect("agent schema required fields");
+    required.push(json!("production_auto_resume_available"));
+    required.push(json!("agent_continuation_ref"));
     schema
 }
 
@@ -369,6 +385,7 @@ pub fn output_schema_for_tool(name: &str) -> Option<Value> {
             ("state_changed", schema_type("boolean", "True only when this call created the replacement Endpoint.")),
         ]),
         "rotate_agent_continuation_endpoint" | "attach_agent_endpoint" | "detach_agent_endpoint" => wrapped_output_schema(vec![
+            ("agent_continuation_ref", agent_continuation_ref_schema()),
             ("endpoint", endpoint_schema()),
             (
                 "created",

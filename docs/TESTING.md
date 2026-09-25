@@ -132,9 +132,10 @@ The lanes above define test semantics; workflows decide when to run them.
   `test-windows`, and `test-native` aggregates always resolve and verify each child
   lane is `success` when required or `skipped` when not required, avoiding a skipped
   required-check context that could leave branch protection pending.
-  The stable `test` and `test-native` contexts are therefore emitted for `merge_group`
-  as well as PR events, which is the repository-side prerequisite for enabling GitHub
-  Merge Queue without repeatedly rebasing already-green PRs onto each newly merged tip.
+  The stable `test` and `test-native` contexts are also emitted for `merge_group`.
+  GitHub currently exposes Merge Queue only for eligible organization-owned repositories,
+  so this path remains dormant in this personal repository; it is retained as migration-ready
+  CI support if the repository later moves to an eligible organization.
 - MCP dated-revision evidence has its own bounded `mcp-conformance` lane. It pins
   and freshly builds the upstream referee, runs the `2026-07-28` and `2025-11-25`
   server requirements against a test-only loopback WebCodex endpoint, validates

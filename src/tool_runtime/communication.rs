@@ -17,6 +17,44 @@ struct AgentIdentityReadinessProjection {
     #[serde(flatten)]
     agent: crate::db::DurableAgentIdentity,
     production_auto_resume_available: bool,
+    agent_continuation_ref: Option<String>,
+}
+
+#[derive(Serialize)]
+struct EndpointMutationProjection {
+    #[serde(flatten)]
+    mutation: crate::db::AgentEndpointMutation,
+    agent_continuation_ref: Option<String>,
+}
+
+const AGENT_CONTINUATION_REF_PREFIX: &str = "~ac";
+
+fn format_agent_continuation_ref(index: u64) -> String {
+    format!("{AGENT_CONTINUATION_REF_PREFIX}{index}")
+}
+
+fn parse_agent_continuation_ref(raw: &str) -> Option<u64> {
+    let digits = raw.strip_prefix(AGENT_CONTINUATION_REF_PREFIX)?;
+    if digits.is_empty()
+        || digits.len() > 19
+        || !digits.bytes().all(|byte| byte.is_ascii_digit())
+        || (digits.len() > 1 && digits.starts_with('0'))
+    {
+        return None;
+    }
+    let index = digits.parse::<u64>().ok()?;
+    (index > 0).then_some(index)
+}
+
+fn selector_input_error(error_kind: &str, message: &str) -> ToolResult {
+    ToolResult::err_with_output(
+        message,
+        json!({
+            "error_kind": error_kind,
+            "state_changed": false,
+        }),
+    )
+    .with_recovery(RecoveryKind::FixInput)
 }
 
 #[derive(Serialize)]
@@ -312,9 +350,12 @@ impl ToolRuntime {
                                     agent.current_controller_generation,
                                 )
                             });
+                        let agent_continuation_ref =
+                            self.listed_agent_continuation_ref(&principal, &agent);
                         AgentIdentityReadinessProjection {
                             agent,
                             production_auto_resume_available,
+                            agent_continuation_ref,
                         }
                     })
                     .collect();
@@ -403,7 +444,16 @@ impl ToolRuntime {
                         );
                     }
                 }
-                serialized_success(result)
+                let agent_continuation_ref = self.issue_agent_continuation_ref(
+                    &principal,
+                    &result.endpoint.agent_id,
+                    &result.endpoint.endpoint_id,
+                    result.endpoint.controller_generation,
+                );
+                serialized_success(EndpointMutationProjection {
+                    mutation: result,
+                    agent_continuation_ref,
+                })
             }
             Err(error) => communication_error(error, RecoveryKind::RetrySame),
         }
@@ -493,6 +543,137 @@ impl ToolRuntime {
             })),
             Err(error) => communication_error(error, RecoveryKind::Reconcile),
         }
+    }
+
+    fn issue_agent_continuation_ref(
+        &self,
+        principal: &crate::db::CommunicationPrincipal,
+        agent_id: &str,
+        endpoint_id: &str,
+        controller_generation: i64,
+    ) -> Option<String> {
+        let db = self.communication_db.as_ref()?;
+        match db.get_or_create_agent_continuation_reference(
+            principal,
+            agent_id,
+            endpoint_id,
+            controller_generation,
+            chrono::Utc::now().timestamp_millis(),
+        ) {
+            Ok(record) => Some(format_agent_continuation_ref(record.ref_index)),
+            Err(error) => {
+                tracing::warn!(
+                    error_kind = error.code(),
+                    "agent continuation ref was not issued"
+                );
+                None
+            }
+        }
+    }
+
+    fn listed_agent_continuation_ref(
+        &self,
+        principal: &crate::db::CommunicationPrincipal,
+        agent: &crate::db::DurableAgentIdentity,
+    ) -> Option<String> {
+        if agent.active_endpoint_count != 1 || agent.current_controller_generation < 1 {
+            return None;
+        }
+        let db = self.communication_db.as_ref()?;
+        let live = match db.current_live_continuation_endpoint(principal, &agent.agent_id) {
+            Ok(live) => live,
+            Err(error) => {
+                tracing::warn!(
+                    error_kind = error.code(),
+                    "agent continuation ref was not issued for the listed Agent"
+                );
+                return None;
+            }
+        };
+        let (endpoint_id, generation) = live?;
+        if generation != agent.current_controller_generation {
+            return None;
+        }
+        self.issue_agent_continuation_ref(principal, &agent.agent_id, &endpoint_id, generation)
+    }
+
+    fn resolve_agent_continuation_selector(
+        &self,
+        auth: Option<&AuthContext>,
+        agent_continuation_ref: Option<String>,
+        agent_id: Option<String>,
+        endpoint_id: Option<String>,
+        expected_controller_generation: Option<i64>,
+    ) -> Result<(String, String, i64), ToolResult> {
+        let tuple_supplied =
+            agent_id.is_some() || endpoint_id.is_some() || expected_controller_generation.is_some();
+        if let Some(agent_continuation_ref) = agent_continuation_ref {
+            if tuple_supplied {
+                return Err(selector_input_error(
+                    "ambiguous_agent_continuation_selector",
+                    "Pass agent_continuation_ref or the exact agent_id, endpoint_id, and expected_controller_generation, not both.",
+                ));
+            }
+            let ref_index = parse_agent_continuation_ref(&agent_continuation_ref)
+                .ok_or_else(|| {
+                    selector_input_error(
+                        "invalid_agent_continuation_ref",
+                        "agent_continuation_ref must be a server-issued ~ac selector from rotate_agent_continuation_endpoint or list_agent_identities.",
+                    )
+                })?;
+            let principal = communication_principal(auth)?;
+            let Some(db) = self.communication_db.as_ref() else {
+                return Err(communication_store_unavailable());
+            };
+            let record = match db.lookup_agent_continuation_reference(&principal, ref_index) {
+                Ok(record) => record,
+                Err(error) => {
+                    return Err(communication_error(error, RecoveryKind::UserAction));
+                }
+            };
+            let Some(record) = record else {
+                return Err(selector_input_error(
+                    "unknown_agent_continuation_ref",
+                    "agent_continuation_ref does not name a continuation for this caller. Read list_agent_identities or rotate_agent_continuation_endpoint again.",
+                ));
+            };
+            return Ok((
+                record.agent_id,
+                record.endpoint_id,
+                record.controller_generation,
+            ));
+        }
+        match (agent_id, endpoint_id, expected_controller_generation) {
+            (Some(agent_id), Some(endpoint_id), Some(expected_controller_generation)) => {
+                Ok((agent_id, endpoint_id, expected_controller_generation))
+            }
+            _ => Err(selector_input_error(
+                "incomplete_agent_continuation_selector",
+                "Pass agent_continuation_ref or all of agent_id, endpoint_id, and expected_controller_generation.",
+            )),
+        }
+    }
+
+    pub(crate) fn present_agent_continuation_with_selector(
+        &self,
+        auth: Option<&AuthContext>,
+        agent_continuation_ref: Option<String>,
+        agent_id: Option<String>,
+        endpoint_id: Option<String>,
+        expected_controller_generation: Option<i64>,
+    ) -> ToolResult {
+        let (agent_id, endpoint_id, expected_controller_generation) = match self
+            .resolve_agent_continuation_selector(
+                auth,
+                agent_continuation_ref,
+                agent_id,
+                endpoint_id,
+                expected_controller_generation,
+            ) {
+            Ok(tuple) => tuple,
+            Err(result) => return result,
+        };
+        self.present_agent_continuation(auth, agent_id, endpoint_id, expected_controller_generation)
     }
 
     pub(crate) fn present_agent_continuation(
@@ -1117,7 +1298,10 @@ impl ToolRuntime {
                         result.endpoint.controller_generation,
                     );
                 }
-                serialized_success(result)
+                serialized_success(EndpointMutationProjection {
+                    mutation: result,
+                    agent_continuation_ref: None,
+                })
             }
             Err(error) => communication_error(error, RecoveryKind::RetrySame),
         }

@@ -2833,11 +2833,13 @@ impl ToolRuntime {
             ),
 
             ToolCall::PresentAgentContinuation {
+                agent_continuation_ref,
                 agent_id,
                 endpoint_id,
                 expected_controller_generation,
-            } => self.present_agent_continuation(
+            } => self.present_agent_continuation_with_selector(
                 auth,
+                agent_continuation_ref,
                 agent_id,
                 endpoint_id,
                 expected_controller_generation,

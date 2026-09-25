@@ -4720,11 +4720,17 @@ impl ToolCallAuditProjection for ToolCall {
                 }),
             ),
             Self::PresentAgentContinuation {
+                agent_continuation_ref,
                 agent_id,
                 endpoint_id,
                 expected_controller_generation,
-            }
-            | Self::AgentContinuationBind {
+            } => serde_json::json!({
+                "agent_continuation_ref": agent_continuation_ref,
+                "agent_id": agent_id,
+                "endpoint_id": endpoint_id,
+                "expected_controller_generation": expected_controller_generation,
+            }),
+            Self::AgentContinuationBind {
                 agent_id,
                 endpoint_id,
                 expected_controller_generation,

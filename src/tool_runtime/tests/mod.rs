@@ -2,6 +2,7 @@
 
 mod support;
 
+mod agent_continuation_refs;
 mod agent_tasks;
 mod agent_waits;
 mod apply_text_edits;

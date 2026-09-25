@@ -25,6 +25,7 @@ mod external_observations_tests;
 pub use external_observations::{
     ExternalObservation, ExternalObservationError, MAX_EXTERNAL_OBSERVATIONS_PER_SESSION,
 };
+mod agent_continuation_reference;
 mod goal;
 mod goal_plan;
 #[cfg(test)]
@@ -45,6 +46,7 @@ mod server_instance;
 mod window_activity;
 
 pub use self::admin_project_lifecycle::{AdminProjectAudit, AdminProjectIdempotencyRecord};
+pub use self::agent_continuation_reference::AgentContinuationReferenceRecord;
 pub use self::agent_task::{
     AgentTaskAttemptCompletionMutation, AgentTaskAttemptHeartbeatMutation, AgentTaskAttemptRecord,
     AgentTaskAttemptStartMutation, AgentTaskAttemptState, AgentTaskCodingRunBindingIntent,
@@ -167,6 +169,8 @@ impl Database {
 
 #[cfg(test)]
 mod agent_attention_tests;
+#[cfg(test)]
+mod agent_continuation_reference_tests;
 #[cfg(test)]
 mod agent_task_tests;
 #[cfg(test)]

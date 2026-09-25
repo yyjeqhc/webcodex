@@ -608,6 +608,22 @@ impl Database {
             );
             CREATE INDEX IF NOT EXISTS idx_wc_communication_idempotency_created
                 ON wc_communication_idempotency(created_at_unix_ms DESC);
+
+            -- Model-facing selector only. Rows are immutable: a newer Endpoint
+            -- generation inserts a new index and never rewrites an older one.
+            CREATE TABLE IF NOT EXISTS wc_agent_continuation_references (
+                principal_kind TEXT NOT NULL,
+                principal_digest TEXT NOT NULL,
+                ref_index INTEGER NOT NULL CHECK(ref_index >= 1),
+                agent_id TEXT NOT NULL,
+                endpoint_id TEXT NOT NULL,
+                controller_generation INTEGER NOT NULL CHECK(controller_generation >= 1),
+                created_at_unix_ms INTEGER NOT NULL,
+                PRIMARY KEY(principal_kind, principal_digest, ref_index),
+                UNIQUE(
+                    principal_kind, principal_digest, agent_id, endpoint_id, controller_generation
+                )
+            );
             ",
         )?;
         let has_recovery_fingerprint: i64 = transaction.query_row(
@@ -835,6 +851,33 @@ impl Database {
             next_offset,
             agents,
         })
+    }
+
+    /// The single attached Endpoint whose generation matches the Agent and whose
+    /// lease is still running. More than one row is a store failure, not a choice.
+    pub fn current_live_continuation_endpoint(
+        &self,
+        principal: &CommunicationPrincipal,
+        agent_id: &str,
+    ) -> Result<Option<(String, i64)>, CommunicationStoreError> {
+        validate_communication_principal(principal)?;
+        validate_id(agent_id, DURABLE_AGENT_ID_PREFIX, "invalid_agent_id")?;
+        let conn = self.lock_connection(crate::StoreDomain::Communication);
+        conn.query_row(
+            "SELECT e.endpoint_id, e.controller_generation
+             FROM wc_agent_endpoints e
+             JOIN wc_agent_identities a ON a.agent_id = e.agent_id
+             WHERE a.agent_id = ?1
+               AND a.owner_principal_kind = ?2
+               AND a.owner_principal_digest = ?3
+               AND e.lifecycle = 'attached'
+               AND e.controller_generation = a.current_controller_generation
+               AND e.lease_expires_at_unix_ms > ?4",
+            params![agent_id, principal.kind, principal.digest, now_unix_ms()],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(store_error)
     }
 
     pub fn update_agent_identity(
@@ -3195,7 +3238,7 @@ pub(super) fn record_idempotent_resource(
     Ok(())
 }
 
-pub(super) fn validate_communication_principal(
+pub(crate) fn validate_communication_principal(
     principal: &CommunicationPrincipal,
 ) -> Result<(), CommunicationStoreError> {
     let kind = principal.kind.trim();
@@ -3444,7 +3487,7 @@ fn bounded_limit(limit: usize) -> Result<usize, CommunicationStoreError> {
     Ok(limit)
 }
 
-pub(super) fn validate_id(
+pub(crate) fn validate_id(
     value: &str,
     prefix: &str,
     code: &'static str,

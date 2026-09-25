@@ -13,6 +13,7 @@ from scripts import release_publication as publication
 SOURCE = "a" * 40
 VERSION = "0.4.0"
 TAG = f"v{VERSION}"
+SOURCE_REF = f"release/v{VERSION}"
 
 
 def _state(root: Path, *, phase: str) -> dict:
@@ -25,6 +26,7 @@ def _state(root: Path, *, phase: str) -> dict:
         "repo": "yyjeqhc/webcodex",
         "version": VERSION,
         "tag": TAG,
+        "source_ref": SOURCE_REF,
         "source_sha": SOURCE,
         "root": str(root.absolute()),
         "work_dir": str(work.absolute()),
@@ -43,12 +45,14 @@ def _state(root: Path, *, phase: str) -> dict:
 
 class ReleasePlanStateTests(unittest.TestCase):
     def test_state_round_trip_is_mode_0600_and_rejects_symlink(self) -> None:
+        # Current state schema carries the exact release source branch.
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             state_path = root / "state.json"
             plan._write_state(state_path, _state(root, phase=plan.PHASE_PREFLIGHT))
             loaded = plan._load_state(state_path)
             self.assertEqual(loaded["phase"], plan.PHASE_PREFLIGHT)
+            self.assertEqual(loaded["source_ref"], SOURCE_REF)
             if os.name != "nt":
                 self.assertEqual(stat.S_IMODE(state_path.stat().st_mode), 0o600)
             state_path.unlink()
@@ -57,6 +61,18 @@ class ReleasePlanStateTests(unittest.TestCase):
             state_path.symlink_to(target)
             with self.assertRaises(plan.ReleasePlanError):
                 plan._load_state(state_path)
+
+    def test_legacy_state_migrates_to_main_source_ref(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            state = _state(root, phase=plan.PHASE_PREFLIGHT)
+            state["schema_version"] = plan.LEGACY_STATE_SCHEMA_VERSION
+            state.pop("source_ref")
+            state_path = root / "legacy.json"
+            plan._write_state(state_path, state)
+            loaded = plan._load_state(state_path)
+            self.assertEqual(loaded["schema_version"], plan.STATE_SCHEMA_VERSION)
+            self.assertEqual(loaded["source_ref"], "main")
 
     def test_init_runs_preflight_once_and_records_paths(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -68,6 +84,7 @@ class ReleasePlanStateTests(unittest.TestCase):
                     repo="yyjeqhc/webcodex",
                     version=VERSION,
                     source_sha=SOURCE,
+                    source_ref=SOURCE_REF,
                     root=root,
                     state_file=state_path,
                     work_dir=work,
@@ -78,6 +95,8 @@ class ReleasePlanStateTests(unittest.TestCase):
             self.assertEqual(loaded["phase"], plan.PHASE_PREFLIGHT)
             self.assertEqual(Path(loaded["work_dir"]), work.absolute())
             self.assertEqual(summary["status"], "ready")
+            self.assertEqual(summary["source_ref"], SOURCE_REF)
+            self.assertEqual(preflight.call_args.kwargs["source_ref"], SOURCE_REF)
 
 
 class ReleasePlanStatusTests(unittest.TestCase):

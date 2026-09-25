@@ -2072,6 +2072,71 @@ fn retired_start_coding_task_is_a_canonical_unknown_tool() {
 }
 
 #[test]
+fn present_agent_continuation_parses_ref_or_explicit_tuple_without_session() {
+    let spec = registered_tool_specs()
+        .into_iter()
+        .find(|spec| spec.name == "present_agent_continuation")
+        .unwrap();
+    let properties = spec.input_schema["properties"].as_object().unwrap();
+    assert!(properties.contains_key("agent_continuation_ref"));
+    assert!(properties.contains_key("agent_id"));
+    if let Some(fields) = spec.input_schema["required"].as_array() {
+        for field in fields {
+            assert!(
+                field != "agent_id"
+                    && field != "endpoint_id"
+                    && field != "expected_controller_generation"
+                    && field != "agent_continuation_ref",
+                "present_agent_continuation must accept either selector form"
+            );
+        }
+    }
+    let schema_text = spec.input_schema.to_string();
+    assert!(schema_text.contains(crate::AGENT_CONTINUATION_REF_PATTERN));
+
+    let by_ref = ToolCall::from_tool_name(
+        "present_agent_continuation",
+        json!({"agent_continuation_ref": "~ac1"}),
+    )
+    .unwrap();
+    assert!(matches!(
+        by_ref,
+        ToolCall::PresentAgentContinuation {
+            agent_continuation_ref: Some(ref selector),
+            agent_id: None,
+            endpoint_id: None,
+            expected_controller_generation: None,
+        } if selector == "~ac1"
+    ));
+    let by_tuple = ToolCall::from_tool_name(
+        "present_agent_continuation",
+        json!({
+            "agent_id": "wc_dagent_qqqqqqqqqqqqqqqq",
+            "endpoint_id": "wc_endpoint_u7u7u7u7u7u7u7u7",
+            "expected_controller_generation": 1
+        }),
+    )
+    .unwrap();
+    assert!(matches!(
+        by_tuple,
+        ToolCall::PresentAgentContinuation {
+            agent_continuation_ref: None,
+            agent_id: Some(_),
+            endpoint_id: Some(_),
+            expected_controller_generation: Some(1),
+        }
+    ));
+    assert!(ToolCall::from_tool_name(
+        "present_agent_continuation",
+        json!({
+            "agent_continuation_ref": "~ac1",
+            "session_id": "wc_sess_0123456789abcdef0123456789abcdef"
+        }),
+    )
+    .is_err());
+}
+
+#[test]
 fn agent_continuation_bind_requires_view_fence() {
     let binding_id = format!("wc_host_binding_{}", "a0".repeat(16));
     let mut args = json!({

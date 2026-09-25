@@ -312,6 +312,7 @@ struct RuntimeConsoleOverview {
     source_mismatched_runners: usize,
     mixed_builds_present: bool,
     active_jobs: usize,
+    active_windows: usize,
     projects_available: bool,
     visible_projects: usize,
     projects_truncated: bool,
@@ -353,6 +354,12 @@ struct RuntimeConsoleWindowSummary {
     last_tool_call_at_ms: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     last_meaningful_activity_at_ms: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_activity_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_activity_status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_activity_meaningful: Option<bool>,
     active_count: usize,
     linked_session_count: usize,
     recorder_gap_count: usize,
@@ -648,11 +655,24 @@ struct RuntimeConsoleProject {
     name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    registration_source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    lineage: Option<RuntimeConsoleProjectLineage>,
     connected: bool,
     #[serde(rename = "agent_status", skip_serializing_if = "Option::is_none")]
     runner_status: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     sessions: Option<WorkflowSessionConsoleAggregate>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum RuntimeConsoleProjectLineage {
+    ManagedWorktreeSource {
+        source_project_id: String,
+        base_sha: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1272,6 +1292,19 @@ async fn exact_console_project_for_auth(
         .ok_or(RuntimeConsoleError::NotFound)
 }
 
+fn project_lineage(value: &Value) -> Option<RuntimeConsoleProjectLineage> {
+    let lineage = value.get("lineage")?;
+    if lineage.get("kind")?.as_str()? != "managed_worktree_source" {
+        return None;
+    }
+    let source_project_id = bounded_text(lineage.get("source_project_id")?, MAX_PROJECT_ID_CHARS)?;
+    let base_sha = bounded_text(lineage.get("base_sha")?, 64)?;
+    Some(RuntimeConsoleProjectLineage::ManagedWorktreeSource {
+        source_project_id,
+        base_sha,
+    })
+}
+
 fn project_selector_row(value: &Value) -> Option<RuntimeConsoleProject> {
     let id = bounded_text(value.get("id")?, MAX_PROJECT_ID_CHARS)?;
     if !valid_project_id(&id) {
@@ -1288,6 +1321,10 @@ fn project_selector_row(value: &Value) -> Option<RuntimeConsoleProject> {
             .get("name")
             .and_then(|value| bounded_text(value, MAX_PROJECT_NAME_CHARS)),
         path: value.get("path").and_then(bounded_project_path),
+        registration_source: value
+            .get("registration_source")
+            .and_then(|value| bounded_text(value, MAX_STATUS_CHARS)),
+        lineage: project_lineage(value),
         connected: value
             .get("connected")
             .and_then(Value::as_bool)
@@ -1771,6 +1808,11 @@ async fn visible_window_summary_for_auth(
     let mut recorder_gap_count = 0usize;
     let mut last_project = None;
     let mut project_observed_at = i64::MIN;
+    let mut last_activity_name = None;
+    let mut last_activity_status = None;
+    let mut last_activity_meaningful = None;
+    let mut last_activity_observed_at = i64::MIN;
+    let mut latest_active_started_at = i64::MIN;
     for event in events {
         if !console_window_event_visible_cached(
             runtime,
@@ -1794,9 +1836,18 @@ async fn visible_window_summary_for_auth(
                     .max(event.ended_at_ms),
             );
         }
-        if event.meaningful && event.project.is_some() && event.ended_at_ms > project_observed_at {
+        if event.project.is_some() && event.ended_at_ms > project_observed_at {
             last_project = event.project.clone();
             project_observed_at = event.ended_at_ms;
+        }
+        if event.ended_at_ms > last_activity_observed_at {
+            last_activity_name = event
+                .operation
+                .clone()
+                .or_else(|| Some(event.action_name.clone()));
+            last_activity_status = Some(event.status.clone());
+            last_activity_meaningful = Some(event.meaningful);
+            last_activity_observed_at = event.ended_at_ms;
         }
         if event.meaningful {
             last_meaningful_activity_at_ms = Some(
@@ -1859,9 +1910,17 @@ async fn visible_window_summary_for_auth(
                 .unwrap_or(i64::MIN)
                 .max(request.started_at_ms),
         );
-        if request.project.is_some() && request.started_at_ms > project_observed_at {
-            last_project = request.project.clone();
-            project_observed_at = request.started_at_ms;
+        if request.started_at_ms >= latest_active_started_at {
+            if request.project.is_some() {
+                last_project = request.project.clone();
+            }
+            last_activity_name = request
+                .tool_name
+                .clone()
+                .or_else(|| Some(request.method.clone()));
+            last_activity_status = Some("running".to_string());
+            last_activity_meaningful = Some(request.is_meaningful());
+            latest_active_started_at = request.started_at_ms;
         }
         active_count = active_count.saturating_add(1);
     }
@@ -1876,6 +1935,9 @@ async fn visible_window_summary_for_auth(
         last_seen_at_ms,
         last_tool_call_at_ms,
         last_meaningful_activity_at_ms,
+        last_activity_name,
+        last_activity_status,
+        last_activity_meaningful,
         active_count,
         linked_session_count,
         recorder_gap_count,
@@ -1922,6 +1984,9 @@ async fn windows_for_auth(
                     last_seen_at_ms: summary.last_seen_at_ms,
                     last_tool_call_at_ms: summary.last_tool_call_at_ms,
                     last_meaningful_activity_at_ms: summary.last_meaningful_activity_at_ms,
+                    last_activity_name: None,
+                    last_activity_status: None,
+                    last_activity_meaningful: None,
                     active_count: 0,
                     linked_session_count: summary.linked_session_count,
                     recorder_gap_count: summary.recorder_gap_count,
@@ -1948,6 +2013,9 @@ async fn windows_for_auth(
                         last_seen_at_ms: summary.last_seen_at_ms.max(live.last_started_at_ms),
                         last_tool_call_at_ms: summary.last_tool_call_at_ms,
                         last_meaningful_activity_at_ms: summary.last_meaningful_activity_at_ms,
+                        last_activity_name: None,
+                        last_activity_status: None,
+                        last_activity_meaningful: None,
                         active_count: live.active_count,
                         linked_session_count: summary.linked_session_count,
                         recorder_gap_count: summary.recorder_gap_count,
@@ -1964,6 +2032,9 @@ async fn windows_for_auth(
                         last_seen_at_ms: live.last_started_at_ms,
                         last_tool_call_at_ms: None,
                         last_meaningful_activity_at_ms: None,
+                        last_activity_name: None,
+                        last_activity_status: Some("running".to_string()),
+                        last_activity_meaningful: None,
                         active_count: live.active_count,
                         linked_session_count: 0,
                         recorder_gap_count: 0,
@@ -2033,6 +2104,11 @@ async fn windows_for_auth(
             .await?
             {
                 row.last_project = observed.last_project;
+                row.last_activity_name = observed.last_activity_name;
+                row.last_activity_status = observed.last_activity_status;
+                row.last_activity_meaningful = observed.last_activity_meaningful;
+                row.active_count = observed.active_count;
+                row.last_seen_at_ms = observed.last_seen_at_ms;
             }
         }
     }
@@ -2050,6 +2126,48 @@ async fn windows_for_auth(
         windows: window_rows,
         visibility,
     })
+}
+
+async fn active_window_count_for_auth(
+    runtime: &ToolRuntime,
+    auth: &AuthContext,
+) -> Result<usize, RuntimeConsoleError> {
+    let principal = window_principal_filter(auth)?;
+    let principal_ref = window_principal_ref(&principal);
+    let caller_principal = if principal.is_none() && !auth.is_admin_caller() {
+        crate::tool_runtime::runtime_observation_principal(Some(auth)).ok()
+    } else {
+        None
+    };
+    let caller_principal_ref = window_principal_ref(&caller_principal);
+    let mut visibility_cache = HashMap::new();
+    let mut visible_windows = 0usize;
+
+    for active_window in runtime.window_activity.active_windows(principal_ref) {
+        let mut visible = false;
+        for request in runtime
+            .window_activity
+            .list_for_window(&active_window.client_window_key, principal_ref)
+        {
+            if console_active_window_request_visible_cached(
+                runtime,
+                auth,
+                principal_ref,
+                caller_principal_ref,
+                &mut visibility_cache,
+                &request,
+            )
+            .await
+            {
+                visible = true;
+                break;
+            }
+        }
+        if visible {
+            visible_windows = visible_windows.saturating_add(1);
+        }
+    }
+    Ok(visible_windows)
 }
 
 async fn window_for_auth(
@@ -2512,6 +2630,7 @@ async fn overview_for_auth(
     let online = safe_usize(summary.get("online"));
     let stale = safe_usize(summary.get("stale"));
     let unavailable = runner_count.saturating_sub(online.saturating_add(stale));
+    let active_windows = active_window_count_for_auth(runtime, auth).await?;
     Ok(RuntimeConsoleOverview {
         service: safe_string(status.get("service"), 80),
         version: safe_string(status.get("version"), 80),
@@ -2528,6 +2647,7 @@ async fn overview_for_auth(
                 .get("jobs")
                 .and_then(|value| value.get("active_count")),
         ),
+        active_windows,
         projects_available: project_access,
         visible_projects: visible.as_ref().map_or(0, |value| value.total),
         projects_truncated: home.project_scan_truncated,
@@ -3659,6 +3779,8 @@ mod tests {
                     project_ref: None,
                     name: Some(format!("Project {index}")),
                     path: None,
+                    registration_source: None,
+                    lineage: None,
                     connected: true,
                     runner_status: Some("online".to_string()),
                     sessions: None,
@@ -3705,6 +3827,8 @@ mod tests {
                 project_ref: None,
                 name: Some("Busy".to_string()),
                 path: Some("/root/git/busy".to_string()),
+                registration_source: None,
+                lineage: None,
                 connected: true,
                 runner_status: Some("online".to_string()),
                 sessions: None,
@@ -4266,11 +4390,26 @@ mod tests {
             "project_ref": "~p118",
             "name": "WebCodex",
             "path": "/root/git/webcodex",
+            "registration_source": "auto_registered",
+            "lineage": {
+                "kind": "managed_worktree_source",
+                "source_project_id": "webcodex-source",
+                "base_sha": "0123456789abcdef0123456789abcdef01234567"
+            },
             "connected": true,
             "agent_status": "online"
         }))
         .unwrap();
         assert_eq!(row.project_ref.as_deref(), Some("~p118"));
+        assert_eq!(row.registration_source.as_deref(), Some("auto_registered"));
+        assert!(matches!(
+            row.lineage,
+            Some(RuntimeConsoleProjectLineage::ManagedWorktreeSource {
+                ref source_project_id,
+                ref base_sha,
+            }) if source_project_id == "webcodex-source"
+                && base_sha == "0123456789abcdef0123456789abcdef01234567"
+        ));
         assert!(serde_json::to_string(&row)
             .unwrap()
             .contains("\"project_ref\":\"~p118\""));
@@ -4628,6 +4767,18 @@ mod tests {
         );
         let list = windows_for_auth(&runtime, &auth, None, None).await.unwrap();
         assert_eq!(list.windows[0].active_count, detail.active_count);
+        assert_eq!(
+            list.windows[0].last_activity_name.as_deref(),
+            Some("tools/list")
+        );
+        assert_eq!(
+            list.windows[0].last_activity_status.as_deref(),
+            Some("running")
+        );
+        assert_eq!(
+            active_window_count_for_auth(&runtime, &auth).await.unwrap(),
+            1
+        );
     }
 
     #[tokio::test]

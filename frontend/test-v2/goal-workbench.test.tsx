@@ -107,8 +107,8 @@ describe("Goal Workbench", () => {
     expect(onOpenAgent).toHaveBeenCalledWith(controllerId);
     fireEvent.click(screen.getByText(/Window aaaaaaaaaa/));
     expect(onOpenWindow).toHaveBeenCalledWith(windowKey);
-    fireEvent.click(screen.getByRole("radio", { name: /Sessions/ }));
-    expect(onSurfaceChange).toHaveBeenCalledWith("sessions");
+    fireEvent.click(screen.getByRole("radio", { name: /Activity/ }));
+    expect(onSurfaceChange).toHaveBeenCalledWith("windows");
   });
 
   it("keeps Goal list and detail read-only", async () => {

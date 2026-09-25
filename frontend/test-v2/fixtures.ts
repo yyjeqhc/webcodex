@@ -208,6 +208,7 @@ export function runtimeOverview(overrides: Partial<RuntimeOverview> = {}): Runti
     source_mismatched_runners: 0,
     mixed_builds_present: false,
     active_jobs: 0,
+    active_windows: 1,
     projects_available: true,
     visible_projects: 1,
     projects_truncated: false,

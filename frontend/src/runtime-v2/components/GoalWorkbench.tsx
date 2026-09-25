@@ -30,7 +30,8 @@ import { useGoalWorkspace } from "../state/useGoalWorkspace.js";
 import { IconButton } from "./ui/IconButton.js";
 import type { SessionLocation } from "../state/useSessionWorkspace.js";
 
-export type WorkSurface = "goals" | "sessions";
+export type WorkSurface = "goals" | "windows" | "session";
+type WorkSurfaceTab = "goals" | "windows";
 
 type Props = {
   client: RuntimeV2Client;
@@ -70,14 +71,14 @@ function WorkSurfaceSwitch({
   language: RuntimeLanguage;
 }) {
   const t = (value: string) => translate(value, language);
-  return <SegmentedControl<WorkSurface>
+  return <SegmentedControl<WorkSurfaceTab>
     className="work-surface-control"
     aria-label={t("Work level")}
-    value={surface}
-    onChange={onSurfaceChange}
+    value={surface === "goals" ? "goals" : "windows"}
+    onChange={(value) => onSurfaceChange(value)}
     data={[
       { value: "goals", label: <span className="work-surface-label"><Flag size={13} />{t("Goals")}</span> },
-      { value: "sessions", label: <span className="work-surface-label"><Activity size={13} />{t("Sessions")}</span> },
+      { value: "windows", label: <span className="work-surface-label"><Activity size={13} />{t("Activity")}</span> },
     ]}
     fullWidth
     size="xs"

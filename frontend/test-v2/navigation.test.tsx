@@ -15,7 +15,7 @@ function json(data: unknown, status = 200): Response {
   });
 }
 
-function installFetch(locateResponse?: () => Promise<Response>) {
+function installFetch(locateResponse?: () => Promise<Response>, windowResponse?: () => Promise<Response>) {
   const overview = runtimeOverview();
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
@@ -63,6 +63,7 @@ function installFetch(locateResponse?: () => Promise<Response>) {
       truncated: false,
       visibility: { scope: "principal" },
     });
+    if (url.endsWith("/api/runtime-console/window") && windowResponse) return await windowResponse();
     if (url.endsWith("/api/runtime-console/window")) return json(windowDetail({ client_window_key: body.client_window_key }));
     if (url.endsWith("/api/runtime-console/communication/agents")) return json({ agents: [], total: 0, returned: 0 });
     if (url.endsWith("/api/runtime-console/communication/conversations")) return json({ conversations: [], total: 0, returned: 0 });
@@ -78,7 +79,7 @@ describe("Runtime v2 navigation", () => {
 
   it("keeps Work / Projects / Runtime as the only primary destinations", async () => {
     render(<App />);
-    expect(await screen.findByRole("searchbox", { name: "Search Sessions" })).toBeTruthy();
+    expect(await screen.findByRole("searchbox", { name: "Search Windows" })).toBeTruthy();
 
     const primary = screen.getAllByRole("navigation", { name: "Workspace views" })[0];
     expect(primary.textContent).toContain("Work");
@@ -86,8 +87,9 @@ describe("Runtime v2 navigation", () => {
     expect(primary.textContent).toContain("Runtime");
     expect(primary.textContent).not.toContain("Workflow Sessions");
     expect(primary.textContent).not.toContain("Window Activity");
-    expect((screen.getByRole("radio", { name: /Sessions/ }) as HTMLInputElement).checked).toBe(true);
-    expect(screen.getByRole("radio", { name: /Sessions/ })).toBeTruthy();
+    expect((screen.getByRole("radio", { name: /Activity/ }) as HTMLInputElement).checked).toBe(true);
+    expect(screen.getByRole("radio", { name: /Goals/ })).toBeTruthy();
+    expect(screen.queryByRole("radio", { name: /Sessions/ })).toBeNull();
 
     fireEvent.click(screen.getAllByRole("button", { name: /Projects/ })[0]);
     expect(await screen.findByRole("heading", { name: "Projects" })).toBeTruthy();
@@ -109,31 +111,32 @@ describe("Runtime v2 navigation", () => {
     expect(mobile.textContent).toContain("Runtime");
   });
 
-  it("cannot apply a delayed exact Session lookup after the workspace is locked", async () => {
-    let resolveLocate!: (response: Response) => void;
-    const pendingLocate = new Promise<Response>((resolve) => { resolveLocate = resolve; });
-    installFetch(() => pendingLocate);
+  it("cannot apply delayed Window detail after the workspace is locked", async () => {
+    let resolveWindow!: (response: Response) => void;
+    const pendingWindow = new Promise<Response>((resolve) => { resolveWindow = resolve; });
+    installFetch(undefined, () => pendingWindow);
     render(<App />);
-    expect(await screen.findByRole("searchbox", { name: "Search Sessions" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("radio", { name: /Sessions/ }));
-
-    const exact = "wc_sess_abcdef0123456789";
-    const search = screen.getByRole("searchbox", { name: "Search Sessions" });
-    fireEvent.change(search, { target: { value: exact } });
-    fireEvent.keyDown(search, { key: "Enter" });
-    await waitFor(() => expect((fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.some(([url]) => String(url).endsWith("/api/runtime-console/workflow-session-locate"))).toBe(true));
+    expect(await screen.findByRole("searchbox", { name: "Search Windows" })).toBeTruthy();
+    await waitFor(() => expect((fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.some(([url]) => String(url).endsWith("/api/runtime-console/window"))).toBe(true));
 
     fireEvent.click(screen.getByRole("button", { name: "Lock" }));
     expect(await screen.findByRole("heading", { name: "Connect to your workspace" })).toBeTruthy();
 
-    resolveLocate(json({
-      ...sessionDetail({ session_id: exact, title: "stale credential Session" }),
-      client_id: "special",
-      project_id: "agent:special:stale",
-      project_name: "Stale project",
-    }));
+    resolveWindow(json(windowDetail({
+      activity: [{
+        started_at_ms: 1_790_000_000_000,
+        ended_at_ms: 1_790_000_000_100,
+        duration_ms: 100,
+        method: "tools/call",
+        tool_name: "stale-window-call",
+        status: "success",
+        meaningful: true,
+        workflow_sessions: [],
+      }],
+      activity_returned: 1,
+    })));
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(screen.queryByText("stale credential Session")).toBeNull();
+    expect(screen.queryByText("stale-window-call")).toBeNull();
     expect(screen.getByRole("heading", { name: "Connect to your workspace" })).toBeTruthy();
   });
 });

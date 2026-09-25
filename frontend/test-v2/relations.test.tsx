@@ -34,6 +34,7 @@ describe("Project / Session / Window relationships", () => {
       if (path === "projects") return ok({ projects: overview.projects, total: 1, truncated: false });
       if (path === "project-git") return ok({ branch: "prototype/runtime-webui-v2", clean: false, git_available: true });
       if (path === "workflow-sessions") return ok({ sessions, total: 2, returned: 2, truncated: false });
+      if (path === "windows") return ok({ windows: [], returned: 0, total: 0, truncated: false, visibility: { scope: "principal" } });
       if (path === "workflow-session") {
         const count = payload.session_id.endsWith("1111111111111111") ? 2 : 1;
         return ok(sessionDetail({
@@ -59,6 +60,7 @@ describe("Project / Session / Window relationships", () => {
         language="en"
         runners={overview.runners}
         onOpenSession={vi.fn()}
+        onOpenWindow={vi.fn()}
         onUnauthorized={vi.fn()}
       />,
     );
@@ -67,7 +69,7 @@ describe("Project / Session / Window relationships", () => {
     expect(screen.getByText("WebUI v2 rewrite")).toBeTruthy();
     await waitFor(() => expect(screen.getByText(/2 Windows/)).toBeTruthy());
     expect(screen.getByText(/1 Windows/)).toBeTruthy();
-    expect(screen.getByText("View Sessions")).toBeTruthy();
+    expect(screen.getByText("View workspaces and activity")).toBeTruthy();
   });
 
   it("loads the selected Project's retained Sessions when its card is opened", async () => {
@@ -83,13 +85,14 @@ describe("Project / Session / Window relationships", () => {
         const sessions = payload.project === second.id ? [secondSession] : [firstSession];
         return ok({ sessions, total: 1, returned: 1, truncated: false });
       }
+      if (path === "windows") return ok({ windows: [], returned: 0, total: 0, truncated: false, visibility: { scope: "principal" } });
       if (path === "workflow-session") return ok(sessionDetail({ session_id: payload.session_id, linked_windows: [] }));
       throw new Error("unexpected path " + path);
     });
     const client = fakeClient(handler);
 
     render(
-      <ProjectsView client={client} language="en" runners={overview.runners} onOpenSession={vi.fn()} onUnauthorized={vi.fn()} />,
+      <ProjectsView client={client} language="en" runners={overview.runners} onOpenSession={vi.fn()} onOpenWindow={vi.fn()} onUnauthorized={vi.fn()} />,
     );
     expect(await screen.findByText("First project Session")).toBeTruthy();
 
@@ -104,13 +107,14 @@ describe("Project / Session / Window relationships", () => {
       if (path === "projects") return ok({ projects: overview.projects, total: 1, truncated: false });
       if (path === "project-git") return ok({ branch: "main" });
       if (path === "workflow-sessions") return ok({ sessions: [], total: 0, returned: 0, truncated: false });
+      if (path === "windows") return ok({ windows: [], returned: 0, total: 0, truncated: false, visibility: { scope: "principal" } });
       if (path === "/api/projects/resolve-or-register") return { ok: false, status: 0, data: null };
       throw new Error("unexpected path " + path);
     });
     const client = fakeClient(handler);
 
     render(
-      <ProjectsView client={client} language="en" runners={overview.runners} onOpenSession={vi.fn()} onUnauthorized={vi.fn()} />,
+      <ProjectsView client={client} language="en" runners={overview.runners} onOpenSession={vi.fn()} onOpenWindow={vi.fn()} onUnauthorized={vi.fn()} />,
     );
     fireEvent.click(await screen.findByRole("button", { name: "Add Project" }));
     fireEvent.change(await screen.findByPlaceholderText("Absolute folder path on the selected Runner"), {
@@ -286,6 +290,8 @@ describe("Project / Session / Window relationships", () => {
       projects: overview.projects,
       language: "en" as const,
       inventoryIncomplete: false,
+      surface: "session" as const,
+      onSurfaceChange: vi.fn(),
       onOpenSession: vi.fn(),
       onLocateSession: vi.fn(async () => false),
       onUnauthorized: vi.fn(),
@@ -436,6 +442,8 @@ describe("Project / Session / Window relationships", () => {
         projects={overview.projects}
         language="en"
         inventoryIncomplete={false}
+        surface="session"
+        onSurfaceChange={vi.fn()}
         onOpenSession={vi.fn()}
         onLocateSession={vi.fn(async () => false)}
         onUnauthorized={vi.fn()}

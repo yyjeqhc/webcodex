@@ -7,6 +7,7 @@ import { SessionExecution } from "../components/SessionExecution.js";
 import { GoalWorkbench, type WorkSurface } from "../components/GoalWorkbench.js";
 import { SessionInspector } from "../components/SessionInspector.js";
 import { WorkList } from "../components/WorkList.js";
+import { WindowWorkbench } from "../components/WindowWorkbench.js";
 import { selectedWorkFromDetail, workBucket, type WorkItem } from "../model/work.js";
 import type { ProjectRow } from "../model/types.js";
 import { useProjectGit } from "../state/useProjectGit.js";
@@ -26,6 +27,8 @@ type Props = {
   onOpenSession: (location: SessionLocation) => void;
   onLocateSession: (sessionId: string) => Promise<boolean>;
   onUnauthorized: () => void;
+  requestedWindowKey?: string;
+  onRequestedWindowConsumed?: () => void;
 };
 
 export function WorkView({
@@ -35,20 +38,22 @@ export function WorkView({
   projects,
   language,
   inventoryIncomplete,
-  surface = "sessions",
+  surface = "windows",
   onSurfaceChange = () => {},
   onOpenAgent = () => {},
   onOpenWindow = () => {},
   onOpenSession,
   onLocateSession,
   onUnauthorized,
+  requestedWindowKey,
+  onRequestedWindowConsumed,
 }: Props) {
   const t = (value: string) => translate(value, language);
   const [search, setSearch] = useState("");
   const [locating, setLocating] = useState(false);
-  const session = useSessionWorkspace(client, Boolean(selected && surface === "sessions"), selected, onUnauthorized);
+  const session = useSessionWorkspace(client, Boolean(selected && surface === "session"), selected, onUnauthorized);
   const project = selected ? projects.find((row) => row.id === selected.projectId) : undefined;
-  const git = useProjectGit(client, Boolean(selected && surface === "sessions"), selected?.projectId || "");
+  const git = useProjectGit(client, Boolean(selected && surface === "session"), selected?.projectId || "");
 
   if (surface === "goals") {
     return (
@@ -62,6 +67,22 @@ export function WorkView({
         onOpenAgent={onOpenAgent}
         onOpenWindow={onOpenWindow}
         onUnauthorized={onUnauthorized}
+      />
+    );
+  }
+
+  if (surface === "windows") {
+    return (
+      <WindowWorkbench
+        client={client}
+        language={language}
+        projects={projects}
+        surface={surface}
+        onSurfaceChange={onSurfaceChange}
+        onOpenSession={onOpenSession}
+        onUnauthorized={onUnauthorized}
+        requestedWindowKey={requestedWindowKey}
+        onRequestedWindowConsumed={onRequestedWindowConsumed}
       />
     );
   }

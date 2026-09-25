@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { projectFamilyName, projectVariantLabel } from "../../ui/projectPresentation.js";
 import type { RuntimeLanguage } from "../../runtime_i18n.js";
 import { translate } from "../../runtime_i18n.js";
 import { absoluteTime, durationText, projectDisplayName, relativeTime, shortId } from "../model/format.js";
@@ -25,7 +26,12 @@ export function WindowActivityFeed({ detail, projects, language, onOpenSession }
     ...detail.activity.flatMap(activityProjects),
     ...detail.active_requests.flatMap((row) => row.project ? [row.project] : []),
   ])].sort();
-  const projectName = (id: string) => projectDisplayName(projects.find((row) => row.id === id)?.name, id);
+  const projectName = (id: string) => {
+    const project = projects.find((row) => row.id === id);
+    if (!project) return projectDisplayName(undefined, id);
+    const family = projectFamilyName(project, projects);
+    return project.lineage ? family + " · " + projectVariantLabel(project) : family;
+  };
   const activity = detail.activity.filter((row) => !projectFilter || activityProjects(row).includes(projectFilter))
     .slice().sort((a, b) => b.started_at_ms - a.started_at_ms || b.ended_at_ms - a.ended_at_ms);
   const running = detail.active_requests.filter((row) => !projectFilter || row.project === projectFilter);
@@ -37,12 +43,12 @@ export function WindowActivityFeed({ detail, projects, language, onOpenSession }
   return (
     <section className="window-detail-section window-workflow-section">
       <div className="section-heading activity-feed-heading">
-        <div><h2>{t("Tool activity")}</h2><p>{t("Newest first. Project, Session and timing stay visible.")}</p></div>
+        <div><h2>{t("Window activity")}</h2><p>{t("Every observed WebCodex request is shown, including observe and diagnostic actions.")}</p></div>
         <label className="activity-project-filter">
           <span>{t("Project filter")}</span>
           <select value={projectFilter} onChange={(event) => setProjectFilter(event.target.value)}>
             <option value="">{t("All Projects in this Window")}</option>
-            {projectIds.map((id) => <option key={id} value={id}>{projectName(id)} · {id}</option>)}
+            {projectIds.map((id) => <option key={id} value={id}>{projectName(id)}</option>)}
           </select>
         </label>
       </div>
@@ -58,7 +64,10 @@ export function WindowActivityFeed({ detail, projects, language, onOpenSession }
           <article className="window-call-card" data-testid="window-workflow-step" key={row.server_trace_id || `${row.started_at_ms}-${index}`}>
             <header>
               <div><strong>{row.activity_presentation || row.tool_name || row.method}</strong>{row.tool_name && row.activity_presentation && row.activity_presentation !== row.tool_name && <code>{row.tool_name}</code>}</div>
-              <span className={"status-pill " + (["ok", "success"].includes(row.status) ? "good" : "warn")}>{t(row.status)}</span>
+              <span className="window-call-state">
+                {!row.meaningful && <span className="status-pill">{t("Observe")}</span>}
+                <span className={"status-pill " + (["ok", "success"].includes(row.status) ? "good" : "warn")}>{t(row.status)}</span>
+              </span>
             </header>
             <div className="window-call-context">{projectTags(activityProjects(row))}</div>
             <div className="window-call-sessions">

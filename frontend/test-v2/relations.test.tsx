@@ -470,7 +470,9 @@ it("shows individual calls in order with exact Project paths and authoritative S
   expect(within(calls[0]).getByText("Succeeded")).toBeTruthy();
   expect(within(calls[3]).getByText("Running")).toBeTruthy();
   expect(within(calls[3]).getByText("4s")).toBeTruthy();
-  expect(calls.every((call) => call.querySelector("time[datetime]"))).toBe(true);
+  expect(calls.slice(0, 3).every((call) => call.querySelector("time[datetime]"))).toBe(true);
+  expect(calls[3].querySelector("time[datetime]")).toBeNull();
+  expect(calls[3].querySelector(".window-call-live-time")?.textContent).toBe("Running · 4s");
   expect(container.querySelector("details")).toBeNull();
   const sessionTag = screen.getByTestId("window-session-tag");
   expect(sessionTag.textContent).toBe("hidden-session");

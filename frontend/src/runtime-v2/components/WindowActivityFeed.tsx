@@ -1,7 +1,7 @@
 import { displayProjectPath } from "../../ui/projectPresentation.js";
 import type { RuntimeLanguage } from "../../runtime_i18n.js";
 import { translate } from "../../runtime_i18n.js";
-import { absoluteTime, durationText, shortId } from "../model/format.js";
+import { absoluteTime, clockTime, durationText, shortId } from "../model/format.js";
 import type { ProjectRow, WindowDetail } from "../model/types.js";
 import {
   focusedWindowCallKeys,
@@ -137,8 +137,15 @@ export function WindowActivityFeed({
                 </div>
               )}
               <div className="window-call-timing">
-                <span>{t("Started")} <time dateTime={new Date(call.startedAt).toISOString()} title={absoluteTime(call.startedAt)}>{absoluteTime(call.startedAt)}</time></span>
-                <span>{t(call.running ? "Elapsed" : "Duration")} <strong>{durationText(call.duration)}</strong></span>
+                {call.running ? (
+                  <span className="window-call-live-time">{t("Running")} · <strong>{durationText(call.duration)}</strong></span>
+                ) : (
+                  <span>
+                    <time dateTime={new Date(call.startedAt).toISOString()} title={absoluteTime(call.startedAt)}>{clockTime(call.startedAt)}</time>
+                    <span aria-hidden="true"> · </span>
+                    <strong>{durationText(call.duration)}</strong>
+                  </span>
+                )}
               </div>
             </article>
           );

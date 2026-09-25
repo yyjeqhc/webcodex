@@ -40,6 +40,70 @@
 .window-call-card.session-linked:hover { background: var(--surface-soft); }
 .window-call-card.session-linked:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .window-call-context { gap: 7px; }
+.window-session-focus {
+  width: min(1040px, calc(100% - 36px));
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin: 0 auto;
+  border-bottom: 1px solid var(--line);
+  padding: 12px 0;
+}
+.window-session-focus > span {
+  flex: 0 0 auto;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+}
+.window-session-focus > small {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.window-session-focus-select {
+  --session-hue: 220;
+  position: relative;
+  min-width: 0;
+  flex: 1 1 360px;
+  max-width: 620px;
+}
+.window-session-focus-select .window-session-color-dot {
+  position: absolute;
+  z-index: 2;
+  top: 50%;
+  left: 12px;
+  transform: translateY(-50%);
+}
+.window-session-focus-select:not([data-active="true"]) .window-session-color-dot {
+  background: var(--quiet);
+}
+.window-session-focus-select select {
+  width: 100%;
+  min-width: 0;
+  height: 36px;
+  appearance: none;
+  border: 1px solid color-mix(in srgb, var(--text) 22%, var(--line));
+  border-radius: 9px;
+  padding: 0 32px 0 29px;
+  background:
+    linear-gradient(45deg, transparent 50%, var(--muted) 50%) calc(100% - 15px) 15px / 5px 5px no-repeat,
+    linear-gradient(135deg, var(--muted) 50%, transparent 50%) calc(100% - 10px) 15px / 5px 5px no-repeat,
+    var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 650;
+}
+.window-session-focus-select[data-active="true"] select {
+  border-color: color-mix(in srgb, hsl(var(--session-hue) 65% 44%) 58%, var(--line));
+  background-color: color-mix(in srgb, hsl(var(--session-hue) 70% 52%) 7%, var(--surface));
+}
+.window-session-focus-select select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
 .window-session-tag {
   --session-hue: 220;
 }
@@ -65,6 +129,11 @@
   cursor: pointer;
 }
 .window-session-tag:hover:not(:disabled) { background: var(--surface-soft); color: var(--text); }
+.window-session-tag.selected {
+  border-color: color-mix(in srgb, hsl(var(--session-hue) 64% 45%) 55%, var(--line));
+  background: color-mix(in srgb, hsl(var(--session-hue) 70% 52%) 10%, var(--surface));
+  color: var(--text);
+}
 .window-session-tag:disabled { cursor: default; opacity: .72; }
 .window-session-color-dot {
   width: 7px;
@@ -74,71 +143,6 @@
   background: hsl(var(--session-hue) 68% 48%);
 }
 .window-session-panel { min-height: 100%; }
-.window-session-toolbar,
-.window-session-content,
-.window-session-bound {
-  width: min(1040px, calc(100% - 36px));
-  margin-left: auto;
-  margin-right: auto;
-}
-.window-session-toolbar {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  flex-wrap: wrap;
-  border-bottom: 1px solid var(--line);
-  padding: 14px 0;
-}
-.window-session-toolbar > span {
-  flex: 0 0 auto;
-  color: var(--muted);
-  font-size: 12px;
-  white-space: nowrap;
-}
-.window-session-select {
-  flex: 1 1 320px;
-  width: auto;
-  min-width: 0;
-  max-width: 560px;
-}
-.window-session-select input { font-size: 12.5px; }
-.window-session-bound { margin-top: 8px; }
-.window-session-scroll { min-height: 0; }
-.window-session-content {
-  display: grid;
-  gap: 14px;
-  padding: 14px 0 54px;
-}
-.window-session-context {
-  display: flex;
-  gap: 7px 14px;
-  align-items: center;
-  flex-wrap: wrap;
-  min-width: 0;
-  color: var(--muted);
-  font-size: 12px;
-}
-.window-session-context code {
-  max-width: 100%;
-  overflow: hidden;
-  color: var(--text);
-  font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.window-session-context span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.window-session-activity .timeline-clusters {
-  margin-left: 0;
-  border-top: 1px solid var(--line);
-}
-.window-session-activity .progress-heading {
-  min-height: 32px;
-}
 .window-collaboration-placeholder { min-height: 420px; }
 
 @media (max-width: 1100px) {
@@ -146,6 +150,16 @@
 }
 @media (max-width: 700px) {
   .window-primary-list { height: auto; max-height: 42dvh; min-height: 250px; }
+  .window-session-focus {
+    width: calc(100% - 24px);
+    align-items: stretch;
+    flex-wrap: wrap;
+  }
+  .window-session-focus > span { width: 100%; }
+  .window-session-focus-select {
+    flex-basis: 100%;
+    max-width: none;
+  }
   .window-work-main { min-height: 58dvh; }
   .window-work-header { padding: 14px 18px; gap: 10px; }
   .window-work-scroll { max-height: 75dvh; }

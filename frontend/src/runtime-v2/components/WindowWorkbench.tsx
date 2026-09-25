@@ -3,7 +3,6 @@ import {
   MessageSquare,
   Monitor,
   Search,
-  Workflow,
 } from "lucide-react";
 import { TextInput } from "@mantine/core";
 import { useEffect, useMemo, useState } from "react";
@@ -19,11 +18,11 @@ import { translate } from "../../runtime_i18n.js";
 import type { RuntimeV2Client } from "../api/client.js";
 import { absoluteTime, relativeTime, shortId } from "../model/format.js";
 import type { ProjectRow, WindowSummary } from "../model/types.js";
-import { windowSessionCatalog } from "../model/windowSessions.js";
+
 import { useWindowWorkspace } from "../state/useWindowWorkspace.js";
 import { WorkSurfaceSwitch, type WorkSurface } from "./GoalWorkbench.js";
 import { WindowActivityFeed } from "./WindowActivityFeed.js";
-import { WindowSessionPanel } from "./WindowSessionPanel.js";
+
 
 type Props = {
   client: RuntimeV2Client;
@@ -89,7 +88,7 @@ export function WindowWorkbench({
   const windows = useWindowWorkspace(client, true, onUnauthorized, { refreshMs: 3_000, loadDetail: true });
   const [search, setSearch] = useState("");
   const [projectFamily, setProjectFamily] = useState("");
-  const [centerTab, setCenterTab] = useState<"window" | "sessions" | "collaboration">("window");
+  const [centerTab, setCenterTab] = useState<"window" | "collaboration">("window");
   const [selectedSessionId, setSelectedSessionId] = useState("");
   const families = useMemo(() => buildProjectFamilies(projects), [projects]);
 
@@ -133,28 +132,11 @@ export function WindowWorkbench({
   }, [families, projectFamily, projects, search, windows.windows]);
 
   const detail = windows.detail;
-  const sessionCatalog = useMemo(() => detail ? windowSessionCatalog(detail) : [], [detail]);
   useEffect(() => {
     if (!detail) return;
-    const firstSession = sessionCatalog[0];
     setCenterTab("window");
-    setSelectedSessionId(firstSession?.workflow_session_id || "");
+    setSelectedSessionId("");
   }, [detail?.client_window_key]);
-
-  useEffect(() => {
-    if (!sessionCatalog.length) {
-      if (selectedSessionId) setSelectedSessionId("");
-      return;
-    }
-    if (!sessionCatalog.some((session) => session.workflow_session_id === selectedSessionId)) {
-      setSelectedSessionId(sessionCatalog[0].workflow_session_id);
-    }
-  }, [sessionCatalog, selectedSessionId]);
-
-  const openSessionFromWindow = (sessionId: string) => {
-    setSelectedSessionId(sessionId);
-    setCenterTab("sessions");
-  };
   const selectedSummary = windows.windows.find((row) => row.client_window_key === windows.selectedKey);
   const activeRequest = detail?.active_requests.slice().sort((a, b) => b.started_at_ms - a.started_at_ms)[0];
   const currentProjectId = activeRequest?.project || selectedSummary?.last_project || detail?.activity[0]?.project;
@@ -268,19 +250,6 @@ export function WindowWorkbench({
                 <span>{detail.activity_returned + detail.active_count}</span>
               </button>
               <button
-                id="window-sessions-tab"
-                role="tab"
-                aria-selected={centerTab === "sessions"}
-                aria-controls="window-sessions-panel"
-                className={centerTab === "sessions" ? "active" : ""}
-                type="button"
-                onClick={() => setCenterTab("sessions")}
-              >
-                <Workflow size={14} />
-                {t("Work Sessions")}
-                <span>{sessionCatalog.length}</span>
-              </button>
-              <button
                 id="window-collaboration-tab"
                 role="tab"
                 aria-selected={centerTab === "collaboration"}
@@ -307,25 +276,8 @@ export function WindowWorkbench({
                 detail={detail}
                 projects={projects}
                 language={language}
-                onOpenSession={openSessionFromWindow}
-              />
-            </div>
-
-            <div
-              id="window-sessions-panel"
-              className="window-work-scroll session-center-pane"
-              role="tabpanel"
-              aria-labelledby="window-sessions-tab"
-              hidden={centerTab !== "sessions"}
-            >
-              <WindowSessionPanel
-                client={client}
-                detail={detail}
-                projects={projects}
-                language={language}
                 selectedSessionId={selectedSessionId}
                 onSelectSession={setSelectedSessionId}
-                onUnauthorized={onUnauthorized}
               />
             </div>
 

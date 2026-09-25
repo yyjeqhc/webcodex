@@ -26,12 +26,6 @@ try {
           const response = await route.fetch();
           const data = await response.json();
           const base = data.activity[0];
-          data.activity = [
-            { ...base, server_trace_id: 'failed-call', tool_name: 'apply_text_edits', status: 'error', started_at_ms: base.started_at_ms + 200 },
-            { ...base, server_trace_id: 'observe-2', tool_name: 'runtime_status', meaningful: false, project: undefined, started_at_ms: base.started_at_ms + 100 },
-            { ...base, server_trace_id: 'observe-1', tool_name: 'runtime_status', meaningful: false, project: undefined },
-          ];
-          data.activity_returned = 3;
           const firstSession = data.linked_sessions[0];
           data.linked_sessions = [
             firstSession,
@@ -44,62 +38,55 @@ try {
             })),
           ];
           data.sessions_returned = data.linked_sessions.length;
+          const taggedCalls = data.linked_sessions.map((session, index) => ({
+            ...base,
+            server_trace_id: `session-call-${index}`,
+            tool_name: index % 3 === 0 ? 'read_files' : index % 3 === 1 ? 'run_shell' : 'apply_text_edits',
+            status: index === 2 ? 'error' : 'success',
+            started_at_ms: base.started_at_ms + index * 50,
+            ended_at_ms: base.ended_at_ms + index * 50,
+            workflow_sessions: [{ workflow_session_id: session.workflow_session_id, project: base.project, relation: 'recording' }],
+          }));
+          data.activity = [
+            { ...base, server_trace_id: 'observe-1', tool_name: 'runtime_status', meaningful: false, project: undefined, workflow_sessions: [] },
+            ...taggedCalls,
+          ];
+          data.activity_returned = data.activity.length;
           await route.fulfill({ response, json: data });
         });
         await page.goto(fixture.url + '/runtime/');
         const zh = language === 'zh-CN';
         await page.locator('.window-call-card.running').waitFor();
         const calls = page.getByTestId('window-workflow-step');
-        assert.equal(await calls.count(), 4);
-        assert.deepEqual(await calls.locator('header strong').allTextContents(), ['runtime_status', 'runtime_status', 'apply_text_edits', 'run_process']);
+        assert.equal(await calls.count(), 14);
+        assert.equal((await calls.locator('header strong').allTextContents())[0], 'runtime_status');
+        assert.equal((await calls.locator('header strong').allTextContents()).at(-1), 'run_process');
         assert.equal(await calls.nth(0).getByTestId('window-project-tag').count(), 0);
-        assert.equal(await calls.nth(1).getByTestId('window-project-tag').count(), 0);
-        assert.equal(await calls.nth(2).getByTestId('window-project-tag').textContent(), '/fixture/alpha');
-        assert(await calls.nth(2).getByText(zh ? '失败' : 'Failed', { exact: true }).isVisible());
-        assert(await calls.nth(0).getByText(zh ? '成功' : 'Succeeded', { exact: true }).isVisible());
+        assert(await page.getByText(zh ? '失败' : 'Failed', { exact: true }).first().isVisible());
         const centerTabs = page.locator('.window-center-tabs [role="tab"]');
-        assert.equal(await centerTabs.count(), 3);
+        assert.equal(await centerTabs.count(), 2);
         const tabLabels = (await centerTabs.allTextContents()).map(value => value.replace(/\s+/g, ' ').trim());
         assert(tabLabels[0].includes(zh ? '窗口' : 'Window'), JSON.stringify(tabLabels));
-        assert(tabLabels[1].includes(zh ? '工作会话' : 'Work Sessions'), JSON.stringify(tabLabels));
-        assert(tabLabels[2].includes(zh ? '协作' : 'Collaboration'), JSON.stringify(tabLabels));
-        assert.equal(await page.locator('#window-activity-panel details, #window-activity-panel select, .window-work-inspector').count(), 0);
-        assert.equal(await calls.locator('time[datetime]').count(), 4);
-        assert.equal(await calls.locator('.window-call-timing strong').count(), 4);
-        const bounds = await page.evaluate(() => ({ width: innerWidth, body: document.body.scrollWidth, root: document.documentElement.scrollWidth }));
-        assert(bounds.body <= width + 1 && bounds.root <= width + 1, JSON.stringify(bounds));
-        await page.screenshot({ path: new URL(`calls-${width}-${theme}-${language}.png`, output).pathname, fullPage: true });
-        await centerTabs.nth(1).click();
-        const sessionSelector = page.getByRole('combobox', { name: zh ? '工作会话' : 'Work Session' });
-        await sessionSelector.waitFor();
-        assert.equal(await page.locator('.window-session-switcher').count(), 0);
-        assert.equal(await page.locator('.window-session-summary').count(), 0);
-        assert.equal(await page.locator('.window-session-select').count(), 1);
+        assert(tabLabels[1].includes(zh ? '协作' : 'Collaboration'), JSON.stringify(tabLabels));
+        assert.equal(await page.getByRole('tab', { name: /Work Sessions|工作会话/ }).count(), 0);
 
-        await sessionSelector.click();
-        const sessionOptions = page.getByRole('option');
-        assert.equal(await sessionOptions.count(), 12);
-        await page.keyboard.press('Escape');
+        const sessionFilter = page.getByRole('combobox', { name: zh ? '会话筛选' : 'Session filter' });
+        await sessionFilter.waitFor();
+        assert.equal(await sessionFilter.locator('option').count(), 13);
+        assert.equal(await sessionFilter.inputValue(), '');
+        await sessionFilter.selectOption('wc_sess_fixture_02');
+        assert.equal(await calls.count(), 1);
+        await sessionFilter.selectOption('');
+        assert.equal(await calls.count(), 14);
 
-        const sessionLayout = await page.evaluate(() => {
-          const context = document.querySelector('.window-session-context')?.getBoundingClientRect();
-          const activity = document.querySelector('.window-session-activity')?.getBoundingClientRect();
-          const cluster = document.querySelector('.window-session-activity .tool-cluster')?.getBoundingClientRect();
-          return {
-            contextX: context?.x ?? null,
-            activityX: activity?.x ?? null,
-            clusterX: cluster?.x ?? null,
-            body: document.body.scrollWidth,
-            root: document.documentElement.scrollWidth,
-            width: innerWidth,
-          };
+        const bounds = await page.evaluate(() => {
+          const filter = document.querySelector('.window-session-focus')?.getBoundingClientRect();
+          return { width: innerWidth, body: document.body.scrollWidth, root: document.documentElement.scrollWidth, filterRight: filter?.right ?? null };
         });
-        assert(sessionLayout.contextX !== null && sessionLayout.activityX !== null && sessionLayout.clusterX !== null, JSON.stringify(sessionLayout));
-        assert(Math.abs(sessionLayout.contextX - sessionLayout.activityX) <= 1, JSON.stringify(sessionLayout));
-        assert(Math.abs(sessionLayout.activityX - sessionLayout.clusterX) <= 1, JSON.stringify(sessionLayout));
-        assert(sessionLayout.body <= width + 1 && sessionLayout.root <= width + 1, JSON.stringify(sessionLayout));
-        await page.screenshot({ path: new URL(`sessions-${width}-${theme}-${language}.png`, output).pathname, fullPage: true });
-        checks.push({ width, theme, language, overflow: false, individualCalls: 4, chronological: true, centerTabs: 3, sessionSelector: true, sessionOptions: 12, sessionAligned: true });
+        assert(bounds.body <= width + 1 && bounds.root <= width + 1, JSON.stringify(bounds));
+        assert(bounds.filterRight !== null && bounds.filterRight <= width + 1, JSON.stringify(bounds));
+        await page.screenshot({ path: new URL(`calls-${width}-${theme}-${language}.png`, output).pathname, fullPage: true });
+        checks.push({ width, theme, language, overflow: false, individualCalls: 14, centerTabs: 2, sessionFilter: true, sessionOptions: 13 });
         await page.close();
       }
     }

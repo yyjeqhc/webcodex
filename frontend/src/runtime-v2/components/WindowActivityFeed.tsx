@@ -3,20 +3,33 @@ import type { RuntimeLanguage } from "../../runtime_i18n.js";
 import { translate } from "../../runtime_i18n.js";
 import { absoluteTime, durationText, shortId } from "../model/format.js";
 import type { ProjectRow, WindowDetail } from "../model/types.js";
-import { windowSessionCatalog } from "../model/windowSessions.js";
+import {
+  focusedWindowCallKeys,
+  windowSessionCatalog,
+  windowSessionsWithCallEvidence,
+} from "../model/windowSessions.js";
 
 type Props = {
   detail: WindowDetail;
   projects: ProjectRow[];
   language: RuntimeLanguage;
-  onOpenSession?: (sessionId: string) => void;
+  selectedSessionId?: string;
+  onSelectSession?: (sessionId: string) => void;
 };
 
-export function WindowActivityFeed({ detail, projects, language, onOpenSession }: Props) {
+export function WindowActivityFeed({
+  detail,
+  projects,
+  language,
+  selectedSessionId = "",
+  onSelectSession,
+}: Props) {
   const t = (value: string) => translate(value, language);
   const orderedSessions = windowSessionCatalog(detail);
   const sessionOrder = new Map(orderedSessions.map((session, index) => [session.workflow_session_id, index]));
   const sessionMeta = new Map(orderedSessions.map((session) => [session.workflow_session_id, session]));
+  const callEvidenceSessions = new Set(windowSessionsWithCallEvidence(detail));
+  const filterSessions = orderedSessions.filter((session) => callEvidenceSessions.has(session.workflow_session_id));
   // Keep each invocation, including repeated observation calls. The trace only
   // reconciles a completed call with the same call in the live snapshot.
   const completedTraces = new Set(detail.activity.map((row) => row.server_trace_id).filter(Boolean));
@@ -45,25 +58,50 @@ export function WindowActivityFeed({ detail, projects, language, onOpenSession }
       running: true,
     })),
   ].sort((a, b) => a.startedAt - b.startedAt);
+  const activeSessionId = callEvidenceSessions.has(selectedSessionId) ? selectedSessionId : "";
+  const focusedKeys = focusedWindowCallKeys(calls, activeSessionId);
+  const visibleCalls = activeSessionId ? calls.filter((call) => focusedKeys.has(call.key)) : calls;
+  const selectedTone = activeSessionId ? (sessionOrder.get(activeSessionId) ?? 0) % 8 : 0;
 
   return (
     <section className="window-detail-section window-workflow-section" aria-label={t("Window activity")}>
+      {filterSessions.length > 0 && (
+        <div className="window-session-focus">
+          <span>{t("Session")}</span>
+          <div className="window-session-focus-select" data-session-tone={selectedTone} data-active={Boolean(activeSessionId)}>
+            <span className="window-session-color-dot" />
+            <select
+              aria-label={t("Session filter")}
+              value={activeSessionId}
+              onChange={(event) => onSelectSession?.(event.currentTarget.value)}
+            >
+              <option value="">{t("All calls")}</option>
+              {filterSessions.map((session, index) => (
+                <option key={session.workflow_session_id} value={session.workflow_session_id}>
+                  {(session.title || t("Work Session") + " " + (index + 1)) + " · " + shortId(session.workflow_session_id, 14, 6)}
+                </option>
+              ))}
+            </select>
+          </div>
+          <small>{visibleCalls.length}/{calls.length}</small>
+        </div>
+      )}
       {detail.activity_truncated && <div className="inventory-note">{t("Earlier calls are not available in this view. Showing retained activity from oldest to newest.")}</div>}
       <div className="window-workflow-list">
-        {calls.map((call) => {
+        {visibleCalls.map((call) => {
           const project = projects.find((row) => row.id === call.project);
           const path = project?.path ? displayProjectPath(project.path) : undefined;
           const success = ["ok", "success", "succeeded"].includes(call.status);
           const failed = ["error", "failed", "failure"].includes(call.status);
           const status = call.running ? "Running" : success ? "Succeeded" : failed ? "Failed" : call.status;
           const primarySession = call.sessions.find((sessionId) => sessionMeta.has(sessionId));
-          const selectable = Boolean(primarySession && onOpenSession);
+          const selectable = Boolean(primarySession && onSelectSession);
           return (
             <article
               className={"window-call-card" + (call.running ? " running" : "") + (selectable ? " session-linked" : "")}
               data-testid="window-workflow-step"
               key={call.key}
-              onClick={() => primarySession && onOpenSession?.(primarySession)}
+              onClick={() => primarySession && onSelectSession?.(primarySession)}
             >
               <header>
                 <strong>{call.tool}</strong>
@@ -75,10 +113,11 @@ export function WindowActivityFeed({ detail, projects, language, onOpenSession }
                   {call.sessions.map((sessionId) => {
                     const linked = sessionMeta.get(sessionId);
                     const tone = (sessionOrder.get(sessionId) ?? 0) % 8;
-                    const tagSelectable = Boolean(linked && onOpenSession);
+                    const tagSelectable = Boolean(linked && onSelectSession);
+                    const selected = activeSessionId === sessionId;
                     return (
                       <button
-                        className="window-session-tag"
+                        className={"window-session-tag" + (selected ? " selected" : "")}
                         data-session-tone={tone}
                         data-testid="window-session-tag"
                         key={sessionId}
@@ -87,7 +126,7 @@ export function WindowActivityFeed({ detail, projects, language, onOpenSession }
                         title={(linked?.title ? linked.title + " · " : "") + sessionId}
                         onClick={(event) => {
                           event.stopPropagation();
-                          if (tagSelectable) onOpenSession?.(sessionId);
+                          if (tagSelectable) onSelectSession?.(selected ? "" : sessionId);
                         }}
                       >
                         <span className="window-session-color-dot" />
@@ -104,7 +143,7 @@ export function WindowActivityFeed({ detail, projects, language, onOpenSession }
             </article>
           );
         })}
-        {!calls.length && <div className="empty-inline">{t("No tool calls yet")}</div>}
+        {!visibleCalls.length && <div className="empty-inline">{t(activeSessionId ? "No calls in this Session" : "No tool calls yet")}</div>}
       </div>
     </section>
   );

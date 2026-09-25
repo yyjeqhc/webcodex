@@ -49,3 +49,45 @@ export function windowSessionCatalog(detail: WindowDetail): WindowLinkedSession[
     left.first_linked_at_ms - right.first_linked_at_ms ||
     left.workflow_session_id.localeCompare(right.workflow_session_id));
 }
+
+export type WindowSessionFocusableCall = {
+  key: string;
+  sessions: string[];
+};
+
+/**
+ * Focus one Session without pretending every untagged call has an exact Session.
+ * An explicit selected-Session call opens a segment; following untagged calls stay
+ * in that segment until an explicit different Session takes over. If the selected
+ * Session appears again later, a new segment opens.
+ */
+export function focusedWindowCallKeys(
+  calls: WindowSessionFocusableCall[],
+  sessionId: string,
+): Set<string> {
+  if (!sessionId) return new Set(calls.map((call) => call.key));
+
+  const focused = new Set<string>();
+  let insideSelectedSegment = false;
+
+  for (const call of calls) {
+    if (call.sessions.length > 0) {
+      insideSelectedSegment = call.sessions.includes(sessionId);
+      if (insideSelectedSegment) focused.add(call.key);
+      continue;
+    }
+    if (insideSelectedSegment) focused.add(call.key);
+  }
+
+  return focused;
+}
+
+export function windowSessionsWithCallEvidence(detail: WindowDetail): string[] {
+  const seen = new Set<string>();
+  for (const activity of detail.activity) {
+    for (const link of activity.workflow_sessions) {
+      seen.add(link.workflow_session_id);
+    }
+  }
+  return [...seen];
+}

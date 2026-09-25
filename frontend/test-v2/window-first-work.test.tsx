@@ -7,7 +7,7 @@ import type { ProjectRow } from "../src/runtime-v2/model/types.js";
 import { ProjectsView } from "../src/runtime-v2/views/ProjectsView.js";
 import { WorkView } from "../src/runtime-v2/views/WorkView.js";
 import { UiProvider } from "../src/ui/UiProvider.js";
-import { runtimeOverview, sessionDetail, windowDetail } from "./fixtures.js";
+import { runtimeOverview, windowDetail } from "./fixtures.js";
 
 const render = (ui: ReactElement) => testingRender(<UiProvider>{ui}</UiProvider>);
 
@@ -155,7 +155,7 @@ it("shows active Window work without any Workflow Session and keeps observe call
   expect(screen.getByTestId("work-window-row-" + observeKey)).toBeTruthy();
 });
 
-it("links Window tool calls to colored work Sessions and opens the selected Session view", async () => {
+it("uses exact Session tags to focus contiguous Window call segments", async () => {
   const [source, worktree] = projectFamily();
   const windowKey = "d".repeat(64);
   const sessionA = "wc_sess_aaaaaaaaaaaaaaaa";
@@ -207,7 +207,7 @@ it("links Window tool calls to colored work Sessions and opens the selected Sess
           project: worktree.id,
           status: "success",
           meaningful: true,
-          server_trace_id: "trace-session-a",
+          server_trace_id: "trace-session-a-1",
           workflow_sessions: [{
             workflow_session_id: sessionA,
             project: worktree.id,
@@ -215,8 +215,20 @@ it("links Window tool calls to colored work Sessions and opens the selected Sess
           }],
         },
         {
-          started_at_ms: 1_790_000_180_000,
-          ended_at_ms: 1_790_000_181_000,
+          started_at_ms: 1_790_000_120_000,
+          ended_at_ms: 1_790_000_121_000,
+          duration_ms: 1000,
+          method: "tools/call",
+          tool_name: "run_shell",
+          project: worktree.id,
+          status: "success",
+          meaningful: true,
+          server_trace_id: "trace-session-a-context",
+          workflow_sessions: [],
+        },
+        {
+          started_at_ms: 1_790_000_140_000,
+          ended_at_ms: 1_790_000_141_000,
           duration_ms: 1000,
           method: "tools/call",
           tool_name: "apply_text_edits",
@@ -224,32 +236,43 @@ it("links Window tool calls to colored work Sessions and opens the selected Sess
           status: "success",
           meaningful: true,
           server_trace_id: "trace-session-b",
-          workflow_sessions: [
-            { workflow_session_id: sessionA, project: worktree.id, relation: "recording" },
-            { workflow_session_id: sessionB, project: worktree.id, relation: "work_on_project" },
-          ],
+          workflow_sessions: [{
+            workflow_session_id: sessionB,
+            project: worktree.id,
+            relation: "work_on_project",
+          }],
+        },
+        {
+          started_at_ms: 1_790_000_160_000,
+          ended_at_ms: 1_790_000_161_000,
+          duration_ms: 1000,
+          method: "tools/call",
+          tool_name: "runtime_status",
+          project: worktree.id,
+          status: "success",
+          meaningful: false,
+          server_trace_id: "trace-session-b-context",
+          workflow_sessions: [],
+        },
+        {
+          started_at_ms: 1_790_000_180_000,
+          ended_at_ms: 1_790_000_181_000,
+          duration_ms: 1000,
+          method: "tools/call",
+          tool_name: "read_files",
+          project: worktree.id,
+          status: "success",
+          meaningful: true,
+          server_trace_id: "trace-session-a-2",
+          workflow_sessions: [{
+            workflow_session_id: sessionA,
+            project: worktree.id,
+            relation: "recording",
+          }],
         },
       ],
-      activity_returned: 2,
+      activity_returned: 5,
     }));
-    if (path === "workflow-session") {
-      return ok(sessionDetail({
-        session_id: payload.session_id,
-        title: payload.session_id === sessionB ? "Review Session mapping" : "Implement Window tabs",
-        linked_windows: [{
-          client_window_key: windowKey,
-          source: "openai-session",
-          first_linked_at_ms: 1_790_000_100_000,
-          last_linked_at_ms: 1_790_000_190_000,
-          last_seen_at_ms: 1_790_000_200_000,
-          active_count: 0,
-          relations: ["recording"],
-          relation_count: 1,
-          recorder_gap_count: 0,
-        }],
-      }));
-    }
-    if (path === "workflow-session-messages") return ok({ session_id: payload.session_id, messages: [] });
     throw new Error("unexpected path " + path);
   });
 
@@ -267,41 +290,42 @@ it("links Window tool calls to colored work Sessions and opens the selected Sess
     />,
   );
 
-  expect(await screen.findByRole("tab", { name: /Window/ })).toBeTruthy();
-  expect(screen.getByRole("tab", { name: /Work Sessions/ })).toBeTruthy();
+  expect(await screen.findByRole("tab", { name: /^Window/ })).toBeTruthy();
+  expect(screen.queryByRole("tab", { name: /Work Sessions/ })).toBeNull();
   expect(screen.getByRole("tab", { name: "Collaboration" })).toBeTruthy();
+
+  const selector = screen.getByRole("combobox", { name: "Session filter" }) as HTMLSelectElement;
+  expect(selector.value).toBe("");
+  expect(screen.getAllByTestId("window-workflow-step")).toHaveLength(5);
 
   const tags = await screen.findAllByTestId("window-session-tag");
   expect(tags).toHaveLength(3);
   expect(tags[0].getAttribute("data-session-tone")).toBe("0");
-  expect(tags[2].getAttribute("data-session-tone")).toBe("1");
+  expect(tags[1].getAttribute("data-session-tone")).toBe("1");
+  expect(tags[2].getAttribute("data-session-tone")).toBe("0");
 
-  fireEvent.click(tags[2]);
-  expect((screen.getByRole("tab", { name: /Work Sessions/ }) as HTMLElement).getAttribute("aria-selected")).toBe("true");
+  fireEvent.click(tags[1]);
+  expect(selector.value).toBe(sessionB);
+  let focusedCalls = screen.getAllByTestId("window-workflow-step");
+  expect(focusedCalls).toHaveLength(2);
+  expect(focusedCalls.map((call) => call.querySelector("header strong")?.textContent)).toEqual(["apply_text_edits", "runtime_status"]);
 
-  const selector = screen.getByRole("combobox", { name: "Work Session" }) as HTMLInputElement;
-  expect(selector.value).toContain(sessionB);
+  fireEvent.change(selector, { target: { value: "" } });
+  expect(screen.getAllByTestId("window-workflow-step")).toHaveLength(5);
 
-  fireEvent.click(screen.getByRole("tab", { name: /^Window/ }));
-  const calls = screen.getAllByTestId("window-workflow-step");
-  fireEvent.click(calls[0]);
-  expect(screen.getByRole("tab", { name: /Work Sessions/ }).getAttribute("aria-selected")).toBe("true");
-  await waitFor(() => expect(selector.value).toContain("Implement Window tabs"));
+  const allCalls = screen.getAllByTestId("window-workflow-step");
+  fireEvent.click(allCalls[0]);
+  expect(selector.value).toBe(sessionA);
+  focusedCalls = screen.getAllByTestId("window-workflow-step");
+  expect(focusedCalls).toHaveLength(3);
+  expect(focusedCalls.map((call) => call.querySelector("header strong")?.textContent)).toEqual(["read_files", "run_shell", "read_files"]);
 
-  fireEvent.click(screen.getByRole("tab", { name: /^Window/ }));
-  fireEvent.click(tags[2]);
-  await waitFor(() => expect(selector.value).toContain(sessionB));
-
-  await waitFor(() => {
-    expect((client.post as unknown as ReturnType<typeof vi.fn>).mock.calls.some(([path, payload]) =>
-      path === "workflow-session" && payload.session_id === sessionB
-    )).toBe(true);
-  });
+  fireEvent.change(selector, { target: { value: sessionB } });
+  focusedCalls = screen.getAllByTestId("window-workflow-step");
+  expect(focusedCalls).toHaveLength(2);
   expect((client.post as unknown as ReturnType<typeof vi.fn>).mock.calls.some(([path]) =>
-    path === "workflow-session-messages"
+    path === "workflow-session" || path === "workflow-session-messages"
   )).toBe(false);
-  await waitFor(() => expect(selector.value).toContain("Review Session mapping"));
-  expect(screen.getByText(sessionB)).toBeTruthy();
 });
 
 it("groups a managed worktree under one human Project and exposes Window activity at the family level", async () => {

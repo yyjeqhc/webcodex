@@ -25,6 +25,23 @@ import { useWindowWorkspace } from "../state/useWindowWorkspace.js";
 
 type RuntimeMode = "overview" | "windows" | "agents";
 
+function buildAlignmentLabel(value: string | undefined, t: (source: string) => string): string {
+  switch (value) {
+    case "exact":
+    case "aligned":
+      return t("Build matches");
+    case "different_version":
+      return t("Different version");
+    case "different_commit":
+    case "different":
+      return t("Different revision");
+    case "dirty":
+      return t("Local development build");
+    default:
+      return t("unknown");
+  }
+}
+
 type Props = {
   client: RuntimeV2Client;
   language: RuntimeLanguage;
@@ -144,23 +161,23 @@ export function RuntimeView({
             {overview?.runners.map((runner) => (
               <div className="runtime-row" key={runner.client_id}>
                 <span className="runner-icon"><Monitor size={17} /></span>
-                <span>
+                <span className="runtime-row-primary">
                   <strong>{runner.client_id}</strong>
                   <small>
                     {runner.connected ? t("Runner online") : t("Runner unavailable")}
                     {runner.version ? " · " + runner.version : ""}
                   </small>
                 </span>
-                <span className="runtime-row-meta">
+                <span className="runtime-row-meta runtime-row-jobs">
                   {runner.jobs_running} {t("jobs running")} · {runner.projects_scanned} {t("projects")}
                 </span>
-                <span className={"status-pill " + (runner.protocol_compatibility === "compatible" ? "good" : "warn")} title={t("Protocol compatibility")}>
+                <span className={"status-pill runtime-row-compat " + (runner.protocol_compatibility === "compatible" ? "good" : "warn")} title={t("Protocol compatibility")}>
                   {runner.protocol_compatibility === "compatible" ? <Check size={12} /> : <HardDrive size={12} />}
                   {t(runner.protocol_compatibility || "unknown")}
                 </span>
-                <span className="runtime-row-meta" title={t("Build revisions are diagnostic identity, not compatibility gates.")}>
-                  {t("Build alignment")}: {runner.build_alignment || runner.source_alignment || t("unknown")}
-                  {runner.build_git_commit ? ` · ${runner.build_git_commit}` : ""}
+                <span className="runtime-row-meta runtime-row-build" title={`${t("Build revisions are diagnostic identity, not compatibility gates.")}${runner.build_git_commit ? ` · ${runner.build_git_commit}` : ""}`}>
+                  {t("Build alignment")}: {buildAlignmentLabel(runner.build_alignment || runner.source_alignment, t)}
+                  {runner.build_git_commit ? ` · ${shortId(runner.build_git_commit, 8, 4)}` : ""}
                 </span>
               </div>
             ))}

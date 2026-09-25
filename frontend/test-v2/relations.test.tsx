@@ -304,6 +304,42 @@ describe("Project / Session / Window relationships", () => {
     expect(await screen.findByText("No linked Windows in retained evidence.")).toBeTruthy();
   });
 
+  it("keeps Runner build metadata in a dedicated cell with product-facing alignment text", () => {
+    const base = runtimeOverview();
+    const overview = runtimeOverview({
+      runners: [{
+        ...base.runners[0],
+        version: "0.4.1",
+        build_alignment: "different_version",
+        build_git_commit: "f080c8f3ea700000000000000000000000000000",
+        protocol_compatibility: "compatible",
+      }],
+    });
+    const client = fakeClient((path) => {
+      if (path === "windows") return { ok: false, status: 403, data: null };
+      if (path === "communication/agents") return { ok: false, status: 403, data: null };
+      throw new Error("unexpected path " + path);
+    });
+
+    const { container } = render(
+      <RuntimeView
+        client={client}
+        language="en"
+        overview={overview}
+        overviewAvailability="available"
+        projects={overview.projects}
+        onOpenSession={vi.fn()}
+        onUnauthorized={vi.fn()}
+      />,
+    );
+
+    const build = container.querySelector(".runtime-row-build");
+    expect(build).toBeTruthy();
+    expect(build?.textContent).toContain("Build alignment: Different version");
+    expect(build?.textContent).toContain("f080c8f3…0000");
+    expect(build?.textContent).not.toContain("different_version");
+  });
+
   it("surfaces Runtime availability truth instead of presenting denied state as connected", () => {
     const overview = runtimeOverview();
     const client = fakeClient((path) => {

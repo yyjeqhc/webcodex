@@ -225,10 +225,13 @@ code, kbd { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospac
 .section-heading { display: flex; justify-content: space-between; align-items: end; margin-bottom: 9px; }
 .section-heading h2 { margin: 0; font-size: 13px; font-weight: 650; }
 .section-heading p { margin: 3px 0 0; color: var(--muted); font-size:12px; }
-.runtime-row { min-height: 57px; display: grid; grid-template-columns: 34px minmax(0,1fr) auto auto; gap: 10px; align-items: center; border-top: 1px solid var(--line); padding: 8px 6px; }
+.runtime-row { min-height: 57px; display: grid; grid-template-areas: "icon primary jobs compat build"; grid-template-columns: 34px minmax(0,1fr) auto auto minmax(180px,260px); gap: 10px; align-items: center; border-top: 1px solid var(--line); padding: 8px 6px; }
 .runtime-row:last-child { border-bottom: 1px solid var(--line); }
-.runner-icon { width: 34px; height: 34px; }
-.runtime-row > span:nth-child(2) { min-width: 0; display: grid; gap: 2px; }
+.runner-icon { grid-area: icon; width: 34px; height: 34px; }
+.runtime-row-primary { grid-area: primary; min-width: 0; display: grid; gap: 2px; }
+.runtime-row-jobs { grid-area: jobs; white-space: nowrap; }
+.runtime-row-compat { grid-area: compat; white-space: nowrap; }
+.runtime-row-build { grid-area: build; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .runtime-row strong { font-size:12px; }
 .runtime-row small, .runtime-row-meta { color: var(--muted); font-size:12px; }
 .runtime-row-meta { padding-right: 15px; }
@@ -347,6 +350,8 @@ code, kbd { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospac
 }
 
 @media (max-width: 920px) {
+  .runtime-row { grid-template-areas: "icon primary compat" "icon jobs jobs" "icon build build"; grid-template-columns: 34px minmax(0,1fr) auto; row-gap: 3px; }
+  .runtime-row-build, .runtime-row-jobs { padding-right: 0; }
   .app-shell { grid-template-columns: 64px minmax(0,1fr); }
   .app-nav { padding-inline: 9px; }
   .brand { justify-content: center; padding-inline: 0; }

@@ -70,12 +70,16 @@ Workflow Session lifecycle is independent from the durable `wc_goal_*` Goal doma
 
 | Aspect | Contract |
 |---|---|
-| ID form | `wc_sess_*` (`SESSION_ID_PREFIX`) |
-| Business field | `session_id` on tools that take a workflow session as input |
+| ID form | Canonical `wc_sess_*` (`SESSION_ID_PREFIX`); model-facing bootstrap/discovery/handoff may additionally issue principal-scoped `session_ref` values such as `~s1` |
+| Business field | `session_id` on tools that take a workflow session as input; model-facing business calls may pass either the canonical id or a Server-issued `session_ref` |
 | Coding resume field | `session_id` on canonical external `work_on_project`; the internal startup primitive's `resume_session_id` is not a wire/API field |
-| Recorder field | `recording_session_id` on generic wrappers, including the stateless MCP 2026 tool-argument projection (metadata only; stripped before concrete tool dispatch) |
+| Recorder field | `recording_session_id` on generic wrappers, including the stateless MCP 2026 tool-argument projection (metadata only; canonical `wc_sess_*` only and stripped before concrete tool dispatch) |
 
 ### Storage and ownership
+
+A `session_ref` is only a short model selector. The Server owns a durable mapping scoped to the authenticated principal and pins the ref to one exact canonical Workflow Session incarnation. Resolving it produces the canonical `wc_sess_*` before business authorization/dispatch; the ordinary Project visibility, Session authority, lifecycle, and guard checks then run unchanged. The ref is not a credential, bearer capability, recorder identity, or "current/recent Session" inference. If the pinned Session disappears or its exact incarnation cannot be proven, the old ref fails closed and is never recycled or silently retargeted. Canonical Session ids remain authoritative for persistence, audit, diagnostics, internal joins, and explicit API/CLI consumers.
+
+`recording_session_id` remains a separate provenance contract. A `session_ref` never creates sticky recorder context and is not accepted as an implicit recorder selector.
 
 Stateless MCP 2026 never derives a Workflow Session recorder identity from transport/window continuity. ChatGPT may supply `_meta["openai/session"]` as a hashed `ClientWindow`, but that identity is intentionally not a Workflow Session selector or trusted provenance source. Its `tools/list` schema therefore projects `recording_session_id` as explicit wrapper metadata for runtime tools. A call may carry `recording_session_id=W` while the concrete tool body carries business `session_id=C`; the MCP adapter removes the recorder field before concrete parsing and the kernel independently authorizes `W` before it can record evidence or supply trusted collaboration provenance. This does not revive legacy `mcp-session-id`, grant target authority, or infer a recorder from credentials, project identity, connection state, or `ClientWindow`.
 

@@ -279,7 +279,8 @@ impl ToolRuntime {
                 return invalid_execution_context_result(error);
             }
         };
-        ToolResult::ok(json!({
+        let session_ref = self.session_reference_for_id(&summary.session_id, auth);
+        let mut output = json!({
             "success": true,
             "session_id": summary.session_id,
             "project": summary.project,
@@ -292,7 +293,11 @@ impl ToolRuntime {
             "lifecycle": summary.lifecycle,
             "created_at": summary.created_at,
             "project_instructions": project_instructions,
-        }))
+        });
+        if let Some(session_ref) = session_ref {
+            output["session_ref"] = json!(session_ref);
+        }
+        ToolResult::ok(output)
     }
 
     pub(crate) async fn update_session_context_tool(
@@ -394,10 +399,15 @@ impl ToolRuntime {
             return result;
         }
         match self.sessions.summary(&session_id, limit) {
-            Some(summary) => ToolResult::ok(
-                serde_json::to_value(summary)
-                    .unwrap_or_else(|_| json!({"session_id": session_id, "events": []})),
-            ),
+            Some(summary) => {
+                let session_ref = self.session_reference_for_id(&session_id, auth);
+                let mut output = serde_json::to_value(summary)
+                    .unwrap_or_else(|_| json!({"session_id": session_id, "events": []}));
+                if let Some(session_ref) = session_ref {
+                    output["session_ref"] = json!(session_ref);
+                }
+                ToolResult::ok(output)
+            }
             None => unknown_session_result(&session_id),
         }
     }

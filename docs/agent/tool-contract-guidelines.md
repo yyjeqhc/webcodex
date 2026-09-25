@@ -181,6 +181,8 @@ Runtime Project identity remains canonical as `agent:<client_id>:<project_id>`. 
 
 Resolving a `project_ref` must always look up the pinned canonical identity and then run the ordinary current Project resolution/authorization path again. The ref is not a credential, bearer token or capability. If the canonical Project disappears, becomes invisible, loses stable identity, or the same canonical address is later registered for a different root, the old ref fails closed. Never recycle or silently retarget an issued ref. Discovery/bootstrap may expose both `project_ref` and canonical identity; ordinary hot-path results should not repeat them when no model decision depends on that duplication.
 
+The same typed durable-reference layer may issue a principal-scoped `session_ref` such as `~s1` for one exact Workflow Session incarnation. Canonical `wc_sess_*` remains authoritative for Session persistence, audit, diagnostics and internal joins. Business `session_id` inputs may use the short selector, but Runtime canonicalizes it before Session-aware authorization/dispatch and then reruns the ordinary Project visibility, Session authority, lifecycle and guard checks. `recording_session_id` is a separate recorder-provenance contract and remains canonical-only; a Session ref never creates ambient or sticky recorder state. Bootstrap, discovery and handoff may expose both identities, while ordinary hot-path results should avoid redundant duplication.
+
 ### Model-projection deletion test
 
 A model-facing result field should normally survive only when it can change at

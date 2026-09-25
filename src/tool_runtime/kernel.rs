@@ -556,7 +556,8 @@ impl ToolRuntime {
             }
             return outcome;
         }
-        let concrete_arguments = strip_tool_call_expectation_metadata(request.arguments.clone());
+        let mut concrete_arguments =
+            strip_tool_call_expectation_metadata(request.arguments.clone());
         let context_request = if capabilities.context_sidecar {
             invocation_metadata.context_request
         } else {
@@ -622,6 +623,19 @@ impl ToolRuntime {
                 correlation: Default::default(),
             };
         }
+        if let Err(message) =
+            self.canonicalize_session_reference_argument(&mut concrete_arguments, context.auth)
+        {
+            return ToolCallOutcome {
+                success: false,
+                result: None,
+                error_status: Some(ToolCallErrorStatus::InvalidArguments { message }),
+                project: None,
+                model_ergonomics: None,
+                correlation: Default::default(),
+            };
+        }
+
         let outer_ack_observation = context.session_id.map(|recorder_session_id| {
             session_context::observe_session_attention_acks(
                 &self.sessions,

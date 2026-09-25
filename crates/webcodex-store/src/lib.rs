@@ -35,6 +35,7 @@ mod job_terminal_wait;
 #[cfg(test)]
 mod job_terminal_wait_tests;
 mod memory;
+mod model_reference;
 pub mod models;
 mod oauth;
 mod peer_collaboration;
@@ -111,6 +112,7 @@ pub use self::memory::{
     memory_definition_hash, memory_state_revision, validate_memory_body, validate_memory_key,
     validate_memory_summary, MAX_MEMORIES_PER_PROJECT, MEMORY_SCOPE_IDENTITY_ATTRIBUTED,
 };
+pub use self::model_reference::{ModelReferenceRecord, ModelReferenceStoreError};
 pub use self::oauth::RotateResult;
 pub use self::peer_collaboration::{
     NewPeerMessage, PeerAttentionBatch, PeerMessageDelivery, PeerMessageDeliveryOutcome,
@@ -181,6 +183,8 @@ mod db_tests;
 mod goal_tests;
 #[cfg(test)]
 mod memory_tests;
+#[cfg(test)]
+mod model_reference_tests;
 #[cfg(test)]
 mod project_reference_tests;
 

@@ -23,6 +23,7 @@ pub(crate) enum StoreDomain {
     JobReceipts,
     JobTerminalWait,
     Memory,
+    ModelReference,
     OAuth,
     ProjectReference,
     Schema,
@@ -31,7 +32,7 @@ pub(crate) enum StoreDomain {
 
 impl StoreDomain {
     #[cfg(test)]
-    pub(crate) const ALL: [Self; 17] = [
+    pub(crate) const ALL: [Self; 18] = [
         Self::Accounts,
         Self::Activity,
         Self::AdminProjectLifecycle,
@@ -45,6 +46,7 @@ impl StoreDomain {
         Self::JobReceipts,
         Self::JobTerminalWait,
         Self::Memory,
+        Self::ModelReference,
         Self::OAuth,
         Self::ProjectReference,
         Self::Schema,
@@ -66,6 +68,7 @@ impl StoreDomain {
             Self::JobReceipts => "job_receipts",
             Self::JobTerminalWait => "job_terminal_wait",
             Self::Memory => "memory",
+            Self::ModelReference => "model_reference",
             Self::OAuth => "oauth",
             Self::ProjectReference => "project_reference",
             Self::Schema => "schema",

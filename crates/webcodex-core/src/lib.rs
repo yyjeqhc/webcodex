@@ -15,6 +15,7 @@ pub mod job_observation;
 pub mod lsp_bridge;
 pub mod mcp_gateway;
 pub mod memory_contract;
+pub mod model_reference;
 pub mod plugin;
 pub mod project_context_contract;
 pub mod project_instructions;

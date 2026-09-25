@@ -1182,6 +1182,7 @@ fn work_on_project_schema_and_registration() {
         .unwrap();
     for field in [
         "session_id",
+        "session_ref",
         "project",
         "resolved_project",
         "project_ref",
@@ -1675,6 +1676,19 @@ fn work_on_project_projection_fails_closed_when_required_field_is_missing() {
     assert!(result.output["detail"]
         .as_str()
         .is_some_and(|detail| detail.contains("session_id")));
+}
+
+#[test]
+fn work_on_project_projection_preserves_session_ref() {
+    let mut output = valid_work_on_project_projection_input();
+    output["session"]["session_ref"] = json!("~s12");
+
+    let result = crate::tool_runtime::coding_task::project_work_on_project_output(
+        SAMPLE_PROJECT.to_string(),
+        output,
+    );
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["session_ref"], "~s12");
 }
 
 #[test]
@@ -2683,10 +2697,28 @@ async fn workflow_resume_context_is_window_principal_scoped_bounded_and_non_auth
     let window_db = std::sync::Arc::new(
         crate::Database::open(&audit_root.path().join("workflow-resume.db")).unwrap(),
     );
-    let runtime = ToolRuntime::new_for_tests().with_window_activity_database(window_db.clone());
+    let runtime = ToolRuntime::new_for_tests()
+        .with_window_activity_database(window_db.clone())
+        .with_project_reference_database(window_db.clone());
     let project =
         register_runner_project_at_path(&runtime, "workflow-resume", "demo", root.path()).await;
     let auth = auth_context(None, true);
+    let owner_authority = crate::tool_runtime::workflow_session_authority_fingerprint(Some(&auth))
+        .expect("test auth has stable Workflow Session authority");
+    let start_owned_session = |project: Option<String>, title: Option<String>| {
+        runtime
+            .sessions
+            .start_session_with_options(
+                crate::tool_runtime::sessions::SessionCreateOptions::new(
+                    project,
+                    title,
+                    SessionMode::Normal,
+                    SessionGuards::default(),
+                )
+                .with_owner_authority_fingerprint(Some(owner_authority.clone())),
+            )
+            .unwrap()
+    };
     let window_id = "workflow-resume-window";
     let window = crate::client_window::ClientWindow::for_test(window_id);
 
@@ -2705,7 +2737,7 @@ async fn workflow_resume_context_is_window_principal_scoped_bounded_and_non_auth
     assert_eq!(empty["count"], 0);
     assert!(empty.get("suggested_call").is_none());
 
-    let first = runtime.sessions.start_session(
+    let first = start_owned_session(
         Some(project.clone()),
         Some("implementation recovery candidate".to_string()),
     );
@@ -2729,9 +2761,13 @@ async fn workflow_resume_context_is_window_principal_scoped_bounded_and_non_auth
         .unwrap();
     assert_eq!(single["count"], 1);
     assert_eq!(single["candidates"][0]["session_id"], first.session_id);
+    let first_ref = single["candidates"][0]["session_ref"]
+        .as_str()
+        .expect("authorized discovery candidate should expose a short Session selector");
+    assert!(first_ref.starts_with("~s"));
     assert_eq!(
         single["suggested_call"]["arguments"]["session_id"],
-        first.session_id
+        first_ref
     );
 
     let other_window = crate::client_window::ClientWindow::for_test("workflow-resume-other");
@@ -2749,7 +2785,7 @@ async fn workflow_resume_context_is_window_principal_scoped_bounded_and_non_auth
     assert_eq!(hidden_by_principal["count"], 0);
 
     let inaccessible_project = "agent:missing:workflow-resume";
-    let inaccessible = runtime.sessions.start_session(
+    let inaccessible = start_owned_session(
         Some(inaccessible_project.to_string()),
         Some("must-not-leak-secret-title".to_string()),
     );
@@ -2775,7 +2811,7 @@ async fn workflow_resume_context_is_window_principal_scoped_bounded_and_non_auth
     assert!(!hidden_json.contains(&inaccessible.session_id));
     assert!(!hidden_json.contains("must-not-leak-secret-title"));
 
-    let second = runtime.sessions.start_session(
+    let second = start_owned_session(
         Some(project.clone()),
         Some("independent review recovery candidate".to_string()),
     );
@@ -2810,14 +2846,17 @@ async fn workflow_resume_context_is_window_principal_scoped_bounded_and_non_auth
         active_only["candidates"][0]["session_id"],
         second.session_id
     );
+    let second_ref = active_only["candidates"][0]["session_ref"]
+        .as_str()
+        .expect("remaining authorized candidate should keep its short selector");
     assert_eq!(
         active_only["suggested_call"]["arguments"]["session_id"],
-        second.session_id
+        second_ref
     );
 
     let mut newest_session_id = String::new();
     for index in 0..8 {
-        let extra = runtime.sessions.start_session(
+        let extra = start_owned_session(
             Some(project.clone()),
             Some(format!("bounded recovery candidate {index}")),
         );

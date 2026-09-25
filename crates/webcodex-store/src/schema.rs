@@ -393,6 +393,10 @@ impl Database {
             ",
         )?;
 
+        // Additive typed model-reference storage. The released Project-ref
+        // table and its indices remain unchanged.
+        Self::ensure_model_reference_schema(&mut conn)?;
+
         // Preserve the authority of previously issued enrollment codes. Only a
         // newly issued explicit admin grant adds ACP/SSH scopes; old codes stay 0.
         {

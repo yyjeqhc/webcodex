@@ -59,6 +59,8 @@ that the current model retained either material.
 
 When bootstrap or discovery returns `project_ref`, reuse it as the `project` selector on ordinary Project-scoped calls. The canonical `agent:<client_id>:<project_id>` identity remains visible for diagnostics and explicit addressing, but the model does not need to mechanically repeat it. A short ref is Server-owned, durable and principal-scoped, carries no authority, and is reauthorized against its pinned canonical Project/root identity on every call.
 
+When `work_on_project`, `start_session`, `session_summary`, or an explicit handoff returns `session_ref`, prefer that short selector for later business `session_id` inputs. The canonical `wc_sess_*` identity remains valid and authoritative. The ref is principal-scoped convenience only: every use resolves the pinned exact Session and reruns the normal Project/Session authorization, lifecycle and guard checks. It does not apply to `recording_session_id` and never creates sticky recorder context.
+
 ## Tool strategy guidance
 
 `work_on_project` accepts `guidance_profile`, defaulting to `direct`. Workflow

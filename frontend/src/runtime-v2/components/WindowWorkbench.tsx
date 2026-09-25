@@ -1,8 +1,5 @@
 import {
-  Activity,
-  ArrowUpRight,
   CircleDot,
-  Clock3,
   Monitor,
   Search,
 } from "lucide-react";
@@ -19,11 +16,12 @@ import { ProjectPicker } from "../../ui/ProjectPicker.js";
 import type { RuntimeLanguage } from "../../runtime_i18n.js";
 import { translate } from "../../runtime_i18n.js";
 import type { RuntimeV2Client } from "../api/client.js";
-import { absoluteTime, projectDisplayName, relativeTime, shortId } from "../model/format.js";
+import { absoluteTime, relativeTime, shortId } from "../model/format.js";
 import type { ProjectRow, WindowSummary } from "../model/types.js";
 import type { SessionLocation } from "../state/useSessionWorkspace.js";
 import { useWindowWorkspace } from "../state/useWindowWorkspace.js";
 import { WorkSurfaceSwitch, type WorkSurface } from "./GoalWorkbench.js";
+import { WindowCollaboration } from "./WindowCollaboration.js";
 import { WindowActivityFeed } from "./WindowActivityFeed.js";
 
 type Props = {
@@ -90,6 +88,7 @@ export function WindowWorkbench({
 }: Props) {
   const t = (value: string) => translate(value, language);
   const windows = useWindowWorkspace(client, true, onUnauthorized, { refreshMs: 3_000, loadDetail: true });
+  const [tab, setTab] = useState<"activity" | "collaboration">("activity");
   const [search, setSearch] = useState("");
   const [projectFamily, setProjectFamily] = useState("");
   const families = useMemo(() => buildProjectFamilies(projects), [projects]);
@@ -170,7 +169,7 @@ export function WindowWorkbench({
             leftSection={<Search size={14} />}
             value={search}
             onChange={(event) => setSearch(event.currentTarget.value)}
-            placeholder={t("Search active tool, Project, Runner, or Window ID…")}
+            placeholder={t("Search windows or projects…")}
           />
         </div>
         <div className="work-list-scroll">
@@ -181,11 +180,11 @@ export function WindowWorkbench({
           {filtered.map((window) => {
             const project = projectFor(projects, window.last_project);
             const source = project ? projectFor(projects, sourceProjectRuntimeId(project)) : undefined;
-            const title = window.last_activity_name || t("Observed activity");
+            const title = window.last_activity_name || t("Window");
             const observedAt = windowObservedAt(window);
             const projectLabel = project
               ? projectFamilyName(source || project, projects)
-              : window.last_project || t("No Project evidence");
+              : window.last_project || t("Project information unavailable");
             return (
               <button
                 type="button"
@@ -198,13 +197,12 @@ export function WindowWorkbench({
                 <span className="window-work-row-main">
                   <strong>{title}</strong>
                   <small>{projectLabel}{project?.lineage ? " · " + projectVariantLabel(project) : ""}</small>
-                  <small>{project?.client_id || t("Runner not observed")} · Window {shortId(window.client_window_key)}</small>
+                  <small>{project?.client_id || t("Runner unavailable")} · {t("Window")} {shortId(window.client_window_key)}</small>
                 </span>
                 <span className="window-work-row-side">
                   {window.active_count > 0
                     ? <em>{window.active_count} {t("active")}</em>
                     : <time title={absoluteTime(observedAt)}>{relativeTime(observedAt)}</time>}
-                  {!window.last_activity_meaningful && window.last_activity_name && <small>{t("observe")}</small>}
                 </span>
               </button>
             );
@@ -218,16 +216,15 @@ export function WindowWorkbench({
       </aside>
 
       <main className="window-work-main ui-workbench-surface">
-        {windows.detailAvailability === "stale" && <div className="inventory-note">{t("Window activity refresh failed; showing previous observations.")}</div>}
         {detail ? (
           <>
             <header className="window-work-header">
               <div>
                 <div className="breadcrumbs"><span>{t("Window")}</span><span>/</span><span title={detail.client_window_key}>{shortId(detail.client_window_key)}</span></div>
-                <h2>{currentActivity || t("Observed Window")}</h2>
+                <h2>{currentActivity || t("Window")}</h2>
                 <p>
-                  {isActive ? t("WebCodex request active now") : t("Inactive for") + " " + relativeTime(lastObservedAt)}
-                  {" · "}{t("last observed")} {absoluteTime(lastObservedAt)}
+                  {currentProject ? projectFamilyName(sourceProject || currentProject, projects) : t("Project information unavailable")}
+                  {" · "}{t("Last activity")} {absoluteTime(lastObservedAt)}
                 </p>
               </div>
               <span className={"quiet-pill " + (isActive ? "running" : "")}>
@@ -235,13 +232,22 @@ export function WindowWorkbench({
               </span>
             </header>
 
-            <div className="window-work-scroll">
-              <section className="window-summary-strip" aria-label={t("Window summary")}>
-                <div><span>{t("Project")}</span><strong>{currentProject ? projectFamilyName(sourceProject || currentProject, projects) : t("No Project evidence")}</strong><small>{currentProject?.lineage ? projectVariantLabel(currentProject) : currentProject ? t("Primary workspace") : "—"}</small></div>
-                <div><span>{t("Runner")}</span><strong>{currentProject?.client_id || "—"}</strong><small>{currentProject ? displayProjectPath(currentProject.path) : t("Not observed")}</small></div>
-                <div><span>{t("Window activity")}</span><strong>{isActive ? t("Active") : relativeTime(lastObservedAt)}</strong><small>{absoluteTime(lastObservedAt)}</small></div>
-              </section>
-
+            <div className="session-view-tabs" role="tablist" aria-label={t("Work view")}>
+              {(["activity", "collaboration"] as const).map((value) => (
+                <button key={value} type="button" role="tab" id={"window-" + value + "-tab"}
+                  aria-selected={tab === value} aria-controls={"window-" + value + "-panel"}
+                  className={tab === value ? "active" : ""} onClick={() => setTab(value)}>
+                  {t(value === "activity" ? "Window activity" : "Window collaboration")}
+                </button>
+              ))}
+            </div>
+            <div className="window-work-scroll" role="tabpanel" id="window-activity-panel" aria-labelledby="window-activity-tab" hidden={tab !== "activity"}>
+              {windows.detailAvailability === "stale" && <div className="inventory-note">{t("Window activity refresh failed; showing previous observations.")}</div>}
+              {currentProject && <div className="window-work-location">
+                <span>{t(projectVariantLabel(currentProject))}</span>
+                <span>{currentProject.client_id}</span>
+                <span title={displayProjectPath(currentProject.path)}>{displayProjectPath(currentProject.path)}</span>
+              </div>}
               <WindowActivityFeed
                 key={detail.client_window_key}
                 detail={detail}
@@ -249,90 +255,19 @@ export function WindowWorkbench({
                 language={language}
                 onOpenSession={onOpenSession}
               />
-
-              <details className="window-relations-disclosure window-linked-evidence">
-                <summary>
-                  <span><Activity size={15} /><strong>{t("Linked Session evidence")}</strong></span>
-                  <span className="count-badge">{detail.sessions_returned}</span>
-                </summary>
-                <div className="linked-session-list">
-                  {detail.linked_sessions.map((session) => {
-                    const project = projectFor(projects, session.project);
-                    return (
-                      <button
-                        type="button"
-                        className="linked-session-row"
-                        key={session.workflow_session_id}
-                        disabled={!project}
-                        onClick={() => project && onOpenSession({
-                          projectId: project.id,
-                          projectName: projectDisplayName(project.name, project.id, project.path),
-                          runner: project.client_id,
-                          sessionId: session.workflow_session_id,
-                        })}
-                      >
-                        <span className="session-relation-dot" />
-                        <span className="project-session-main"><strong>{session.title || shortId(session.workflow_session_id)}</strong><small>{project?.name || session.project || t("Project not exposed in relation")}</small></span>
-                        <span className="relation-kind">{session.relations.join(" · ") || t("linked")}</span>
-                        <time>{absoluteTime(session.last_linked_at_ms)}</time>
-                        {project && <ArrowUpRight size={14} />}
-                      </button>
-                    );
-                  })}
-                  {!detail.linked_sessions.length && <div className="empty-inline">{t("No explicit Session link")}</div>}
-                </div>
-              </details>
             </div>
+            <section className="window-collaboration-pane" role="tabpanel" id="window-collaboration-panel" aria-labelledby="window-collaboration-tab" hidden={tab !== "collaboration"}>
+              <WindowCollaboration key={detail.client_window_key} client={client} detail={detail} projects={projects} language={language} onUnauthorized={onUnauthorized} onOpenSession={onOpenSession} />
+            </section>
           </>
         ) : (
           <div className="empty-work">
             <Monitor size={22} />
-            <h2>{t("Select an observed Window")}</h2>
-            <p>{t("Window activity is shown even when no Workflow Session exists.")}</p>
+            <h2>{t(windows.detailAvailability === "loading" ? "Loading Window activity…" : windows.detailAvailability === "error" || windows.detailAvailability === "denied" ? "Window activity unavailable" : "Select a window")}</h2>
+            <p>{t("Choose a window to see its activity and collaboration.")}</p>
           </div>
         )}
       </main>
-
-      <aside className="inspector window-work-inspector" aria-label={t("Window context")}>
-        <div className="inspector-header"><div><strong>{t("Window context")}</strong></div></div>
-        <div className="inspector-content">
-          {detail && (
-            <>
-              <div className="context-hero">
-                <div className={"context-kicker " + (isActive ? "active" : "")}><Clock3 size={13} />{isActive ? t("ACTIVE") : t("IDLE")}</div>
-                <strong>{currentActivity || t("Observed Window")}</strong>
-                <p>{isActive ? t("A WebCodex request is currently executing in this Window.") : t("No WebCodex request for") + " " + relativeTime(lastObservedAt) + "."}</p>
-              </div>
-              <section className="inspector-section">
-                <h3>{t("Current work")}</h3>
-                <div className="fact-list">
-                  <div><span>{t("Window")}</span><strong title={detail.client_window_key}>{shortId(detail.client_window_key)}</strong></div>
-                  <div><span>{t("Project")}</span><strong>{currentProject ? projectFamilyName(sourceProject || currentProject, projects) : "—"}</strong></div>
-                  <div><span>{t("Workspace")}</span><strong title={currentProject ? displayProjectPath(currentProject.path) : ""}>{currentProject ? projectVariantLabel(currentProject) : "—"}</strong></div>
-                  <div><span>{t("Runner")}</span><strong>{currentProject?.client_id || "—"}</strong></div>
-                  <div><span>{t("Active")}</span><strong>{detail.active_count}</strong></div>
-                  <div><span>{t("Last activity")}</span><strong>{absoluteTime(lastObservedAt)}</strong></div>
-                </div>
-              </section>
-              <section className="inspector-section">
-                <h3>{t("Window collaboration")}</h3>
-                <div className="fact-list">
-                  <div><span>{t("Peer identity")}</span><strong title={peerId(detail.client_window_key)}>{shortId(peerId(detail.client_window_key), 12, 6)}</strong></div>
-                </div>
-                <p className="window-relation-note">{t("Peer identity belongs to this Window directly and does not require a Workflow Session.")}</p>
-              </section>
-              <section className="inspector-section">
-                <h3>{t("Relations")}</h3>
-                <div className="fact-list">
-                  <div><span>{t("Sessions")}</span><strong>{detail.sessions_returned}</strong></div>
-                  <div><span>{t("Source")}</span><strong>{detail.source}</strong></div>
-                </div>
-                <p className="window-relation-note">{t("Session links are optional evidence. Window activity remains visible without them.")}</p>
-              </section>
-            </>
-          )}
-        </div>
-      </aside>
     </div>
   );
 }

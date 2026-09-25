@@ -422,7 +422,7 @@ describe("Project / Session / Window relationships", () => {
     expect(steps[0].textContent).toContain("tool-204");
     expect(steps.at(-1)?.textContent).toContain("tool-0");
     expect(screen.queryByRole("button", { name: /Show more activity/ })).toBeNull();
-    expect(screen.getByText("Server activity history is bounded; older Window activity is not loaded.")).toBeTruthy();
+    expect(screen.getByText("Showing recent activity only.")).toBeTruthy();
   });
 
   it("stops presenting stale Session detail as current after authority is denied", async () => {
@@ -472,7 +472,7 @@ it("shows running calls and filters exact per-call Projects without inventing Se
   })} />);
   expect(screen.getByText("run_process")).toBeTruthy();
   expect(screen.getByText("4s")).toBeTruthy();
-  expect(screen.getByText("No Project evidence")).toBeTruthy();
+  expect(screen.queryByText("No Project evidence")).toBeNull();
   fireEvent.click(screen.getByTitle("wc_sess_1111111111111111"));
   expect(openSession).toHaveBeenCalledWith(expect.objectContaining({ projectId: first.id, sessionId: "wc_sess_1111111111111111" }));
   fireEvent.change(screen.getByRole("combobox", { name: "Project filter" }), { target: { value: second.id } });
@@ -480,5 +480,5 @@ it("shows running calls and filters exact per-call Projects without inventing Se
   expect(screen.queryByText("runtime_info")).toBeNull();
   expect(screen.getByText("run_process")).toBeTruthy();
   expect(screen.getByText("apply_patch")).toBeTruthy();
-  expect(screen.getByText("No explicit Session link")).toBeTruthy();
+  expect(screen.queryByText("No explicit Session link")).toBeNull();
 });

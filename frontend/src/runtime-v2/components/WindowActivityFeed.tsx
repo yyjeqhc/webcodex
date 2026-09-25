@@ -2,7 +2,7 @@ import { useState } from "react";
 import { projectFamilyName, projectVariantLabel } from "../../ui/projectPresentation.js";
 import type { RuntimeLanguage } from "../../runtime_i18n.js";
 import { translate } from "../../runtime_i18n.js";
-import { absoluteTime, durationText, projectDisplayName, relativeTime, shortId } from "../model/format.js";
+import { absoluteTime, durationText, projectDisplayName, shortId } from "../model/format.js";
 import type { ProjectRow, WindowActivity, WindowDetail } from "../model/types.js";
 import type { SessionLocation } from "../state/useSessionWorkspace.js";
 
@@ -38,12 +38,12 @@ export function WindowActivityFeed({ detail, projects, language, onOpenSession }
 
   const projectTags = (ids: string[]) => ids.length
     ? ids.map((id) => <span className="window-project-tag" data-testid="window-project-tag" key={id} title={id}>{projectName(id)}</span>)
-    : <span className="muted-copy">{t("No Project evidence")}</span>;
+    : null;
 
   return (
     <section className="window-detail-section window-workflow-section">
       <div className="section-heading activity-feed-heading">
-        <div><h2>{t("Window activity")}</h2><p>{t("Every observed WebCodex request is shown, including observe and diagnostic actions.")}</p></div>
+        <div><h2>{t("Window activity")}</h2><p>{t("Running now and recent activity, newest first.")}</p></div>
         <label className="activity-project-filter">
           <span>{t("Project filter")}</span>
           <select value={projectFilter} onChange={(event) => setProjectFilter(event.target.value)}>
@@ -63,10 +63,9 @@ export function WindowActivityFeed({ detail, projects, language, onOpenSession }
         {activity.map((row, index) => (
           <article className="window-call-card" data-testid="window-workflow-step" key={row.server_trace_id || `${row.started_at_ms}-${index}`}>
             <header>
-              <div><strong>{row.activity_presentation || row.tool_name || row.method}</strong>{row.tool_name && row.activity_presentation && row.activity_presentation !== row.tool_name && <code>{row.tool_name}</code>}</div>
+              <div><strong>{row.activity_presentation || row.tool_name || row.method}</strong></div>
               <span className="window-call-state">
-                {!row.meaningful && <span className="status-pill">{t("Observe")}</span>}
-                <span className={"status-pill " + (["ok", "success"].includes(row.status) ? "good" : "warn")}>{t(row.status)}</span>
+                <span className={"status-pill " + (["ok", "success"].includes(row.status) ? "good" : "warn")}>{t(["ok", "success"].includes(row.status) ? "Completed" : row.status)}</span>
               </span>
             </header>
             <div className="window-call-context">{projectTags(activityProjects(row))}</div>
@@ -77,18 +76,18 @@ export function WindowActivityFeed({ detail, projects, language, onOpenSession }
                 return <button className="text-button" type="button" key={relation.workflow_session_id + ":" + relation.relation}
                   disabled={!project} title={relation.workflow_session_id}
                   onClick={() => project && onOpenSession({ projectId: project.id, projectName: project.name || project.id, runner: project.client_id, sessionId: relation.workflow_session_id })}>
-                  {t("Session")} · {linked?.title || shortId(relation.workflow_session_id)} <small>{relation.relation} · {shortId(relation.workflow_session_id)}</small>
+                  {t("Session")} · {linked?.title || shortId(relation.workflow_session_id)}
                 </button>;
-              }) : <span className="muted-copy">{t("No explicit Session link")}</span>}
+              }) : null}
             </div>
             <div className="window-call-timing">
               <span>{t("Started")} <time title={absoluteTime(row.started_at_ms)}>{absoluteTime(row.started_at_ms)}</time></span>
               <span>{t("Duration")} <strong>{durationText(row.duration_ms)}</strong></span>
-              <span title={absoluteTime(row.ended_at_ms)}>{t("Finished")} {relativeTime(row.ended_at_ms)}</span>
             </div>
             <details className="window-call-evidence">
               <summary>{t("Technical details")}</summary>
-              <div className="evidence-chip-row"><code>{row.method}</code>{row.activity_kind && <code>{row.activity_kind}</code>}</div>
+              <div className="evidence-chip-row">{row.tool_name && row.activity_presentation && row.tool_name !== row.activity_presentation && <code>{row.tool_name}</code>}<code>{row.method}</code>{row.activity_kind && <code>{row.activity_kind}</code>}</div>
+              {row.workflow_sessions.map((relation) => <p key={relation.workflow_session_id + ":" + relation.relation}>{relation.relation} · {relation.workflow_session_id}</p>)}
               {row.service_ms !== undefined && <p>{t("Service time")}: {durationText(row.service_ms)}</p>}
               {row.next_call_gap_ms !== undefined && <p>{t("Outside WebCodex")}: {durationText(row.next_call_gap_ms)}</p>}
               {row.cycle_ms !== undefined && <p>{t("Cycle")}: {durationText(row.cycle_ms)}</p>}
@@ -97,7 +96,7 @@ export function WindowActivityFeed({ detail, projects, language, onOpenSession }
           </article>
         ))}
         {!activity.length && !running.length && <div className="empty-inline">{t("No activity observed yet")}</div>}
-        {detail.activity_truncated && <div className="inventory-note">{t("Server activity history is bounded; older Window activity is not loaded.")}</div>}
+        {detail.activity_truncated && <div className="inventory-note">{t("Showing recent activity only.")}</div>}
       </div>
     </section>
   );

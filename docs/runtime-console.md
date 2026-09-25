@@ -2,12 +2,17 @@
 
 Open `/runtime` and connect with an existing runtime credential.
 
-The default **Work** page opens **Sessions**. Filter the loaded Session inventory
-by Project, or search by title, Project, Runner, and Session identity. Running Jobs
-and attention requests stay first. The selected Session keeps its Project,
-Session id, update time, and linked Window shortcuts visible above the workflow.
-Activity groups start expanded, including tool names, paths, and provenance.
-Window observations with different Project/Session provenance stay separate.
+The default **Work** page opens **Activity**, with a Window list and a single
+workspace. Filter by Project or search by activity, Project, Runner, or Window
+identity. **Window activity** and **Window collaboration** are sibling tabs;
+there is no separate Window context sidebar. Project and workspace information
+appear alongside the activity instead of being repeated in a third column.
+
+The collaboration tab lists explicitly linked Sessions. Choose a Session to read
+and reply to its messages, or open its activity. No Session is inferred from the
+Window's current Project. Windows without linked Sessions still show their tool
+activity. Switching tabs retains the selected Session and message draft; switching
+Windows clears the selection. Session messaging permissions remain unchanged.
 **Goals** remains available in the Work switch; returning from another destination
 preserves the chosen Work surface.
 
@@ -24,12 +29,13 @@ The selected Window shows linked Sessions expanded and a tool activity feed:
 
 - Currently observed requests appear first with tool, Project, start time, and
   elapsed time from the server snapshot.
-- Retained calls appear newest first with Project evidence, explicit Session
-  links, status, start time, duration, and completion recency. Session links open
-  the exact Project/Session. Calls without a link say so explicitly.
+- Retained calls appear newest first with Project, available Session links, status,
+  start time, and duration. Session links open the exact Project/Session. Missing
+  links do not add repeated empty-state labels to each call.
 - A Project filter applies to loaded calls within this Window, including active
   requests. It does not infer a call's Project from the Window's last Project.
-- Only technical details (trace, method, service and cycle timing) are collapsed.
+- Technical details (tool identifier, relation kinds, trace, method, service and
+  cycle timing) are collapsed.
   Failed refreshes identify previous observations as stale; bounded history is
   labeled. Switching Windows never displays the prior Window's detail as the
   newly selected Window.

@@ -111,12 +111,6 @@ code, kbd { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospac
 .window-work-header h2 { margin: 4px 0 0; overflow: hidden; font-size: 16px; font-weight: 650; letter-spacing: -.02em; text-overflow: ellipsis; white-space: nowrap; }
 .window-work-header p { margin: 5px 0 0; color: var(--muted); font-size: 12px; }
 .window-work-scroll { min-height: 0; overflow: auto; padding: 18px 0 54px; scrollbar-width: thin; }
-.window-summary-strip { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 8px; padding: 0 18px 18px; }
-.window-summary-strip > div { min-width: 0; display: grid; gap: 4px; border: 1px solid var(--line); border-radius: 10px; padding: 10px 11px; background: var(--surface-soft); }
-.window-summary-strip span, .window-summary-strip small { overflow: hidden; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
-.window-summary-strip strong { overflow: hidden; font-size: 12px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
-.window-linked-evidence { margin-inline: 18px; }
-.window-work-inspector .context-kicker.active { color: var(--accent-strong); }
 .window-relation-note { margin: 8px 2px 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
 .window-call-state { display: inline-flex; gap: 5px; align-items: center; justify-content: end; }
 
@@ -420,7 +414,6 @@ code, kbd { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospac
   .composer-row { padding-inline: 12px; }
   .project-grid, .runtime-metrics { grid-template-columns: 1fr; }
   .project-card-body { grid-template-columns: 1fr; }
-  .window-summary-strip { grid-template-columns: 1fr; }
   .window-work-header { padding-inline: 14px; }
   .project-window-row { grid-template-columns: 9px minmax(0,1fr) auto 15px; }
   .project-window-row time { display: none; }

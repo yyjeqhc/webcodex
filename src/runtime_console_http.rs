@@ -512,7 +512,7 @@ struct RuntimeConsoleRunnerSummary {
     connected: bool,
     status: Option<String>,
     transport: Option<String>,
-    #[serde(rename = "runner_protocol_generation")]
+    #[serde(rename = "agent_protocol_generation")]
     runner_protocol_generation: Option<u64>,
     last_seen_age_secs: Option<i64>,
     version: Option<String>,
@@ -535,7 +535,7 @@ struct RuntimeConsoleRunnerSummary {
 struct RuntimeConsoleRunner {
     server: Value,
     tool_request_trace_mode: Option<String>,
-    runner_protocol_generation: Option<u64>,
+    agent_protocol_generation: Option<u64>,
     capabilities: Value,
     client_id: String,
     connected: bool,
@@ -1144,7 +1144,7 @@ fn runner_fleet_rows(
     scan: &RuntimeConsoleHomeScan,
 ) -> Vec<RuntimeConsoleRunnerSummary> {
     let mut rows = runners
-        .get("runners")
+        .get("agents")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
@@ -1179,7 +1179,7 @@ fn runner_fleet_rows(
                 status: safe_string(runner_value.get("status"), MAX_STATUS_CHARS),
                 transport: safe_string(runner_value.get("transport"), MAX_STATUS_CHARS),
                 runner_protocol_generation: runner_value
-                    .get("runner_protocol_generation")
+                    .get("agent_protocol_generation")
                     .and_then(Value::as_u64),
                 last_seen_age_secs: runner_value
                     .get("last_seen_age_secs")
@@ -2460,7 +2460,7 @@ async fn overview_for_auth(
     let summary = runners_value.get("summary").unwrap_or(&Value::Null);
     let build = status.get("build").unwrap_or(&Value::Null);
     let status_clients = status
-        .get("runners")
+        .get("agents")
         .and_then(|value| value.get("clients"))
         .and_then(Value::as_array)
         .cloned()
@@ -2554,7 +2554,7 @@ async fn runner_for_auth(
     }
     let runners = list_runners_value(runtime, auth, Some(client_id.to_string())).await?;
     let runner_value = runners
-        .get("runners")
+        .get("agents")
         .and_then(Value::as_array)
         .and_then(|values| values.first())
         .ok_or(RuntimeConsoleError::NotFound)?;
@@ -2625,8 +2625,8 @@ async fn runner_for_auth(
             status.pointer("/effective_config/tool_request_trace_mode"),
             16,
         ),
-        runner_protocol_generation: runner_value
-            .get("runner_protocol_generation")
+        agent_protocol_generation: runner_value
+            .get("agent_protocol_generation")
             .and_then(Value::as_u64),
         capabilities: runner_value
             .get("capabilities")
@@ -3677,7 +3677,7 @@ mod tests {
         assert!(scan.recent_sessions.scan_truncated);
 
         let rows = runner_fleet_rows(
-            &serde_json::json!({"runners": [{"client_id": "runner", "connected": true}]}),
+            &serde_json::json!({"agents": [{"client_id": "runner", "connected": true}]}),
             &[],
             &scan,
         );
@@ -3726,7 +3726,7 @@ mod tests {
         assert!(!project_sessions.sessions_truncated);
 
         let rows = runner_fleet_rows(
-            &serde_json::json!({"runners": [{"client_id": "runner", "connected": true}]}),
+            &serde_json::json!({"agents": [{"client_id": "runner", "connected": true}]}),
             &[],
             &scan,
         );
@@ -3751,12 +3751,12 @@ mod tests {
             project_scan_truncated: false,
         };
         let runners = serde_json::json!({
-            "runners": [{
+            "agents": [{
                 "client_id": "runner-a",
                 "connected": true,
                 "status": "online",
                 "transport": "websocket",
-                "runner_protocol_generation": 2,
+                "agent_protocol_generation": 2,
                 "last_seen_age_secs": 2,
                 "active_jobs": 3,
                 "job_concurrency": {"limit": 8, "running": 2, "queued": 1},

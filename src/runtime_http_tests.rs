@@ -508,12 +508,12 @@ async fn http_runtime_status_correct_bearer_returns_summary() {
     assert_eq!(out["projects"]["agent_registered"]["online_count"], 1);
     assert_eq!(out["projects"]["effective"]["count"], 1);
     assert_eq!(out["projects"]["effective"]["status"], "ok");
-    assert!(out["runners"]["count"].is_i64());
+    assert!(out["agents"]["count"].is_i64());
     assert!(out["jobs"]["active_count"].is_i64());
     assert!(out["jobs"]["running_count"].is_i64());
     assert!(out["jobs"]["queued_count"].is_i64());
     assert_eq!(
-        out["runners"]["clients"][0]["job_concurrency"],
+        out["agents"]["clients"][0]["job_concurrency"],
         json!({"limit": null, "running": 0, "queued": 0})
     );
     assert!(out["tools"]["count"].is_i64());
@@ -661,21 +661,21 @@ fn http_runtime_status_after_runner_registration_fits_default_worker_stack() {
             assert_eq!(effective_status(&status), StatusCode::OK);
             let body: Value = status.take_json().await.unwrap();
             assert_eq!(body["success"], true);
-            assert_eq!(body["output"]["runners"]["count"], 1);
+            assert_eq!(body["output"]["agents"]["count"], 1);
             assert_eq!(
-                body["output"]["runners"]["clients"][0]["client_id"],
+                body["output"]["agents"]["clients"][0]["client_id"],
                 "status-stack-runner"
             );
             assert_eq!(
-                body["output"]["runners"]["clients"][0]["build"]["built_at"],
+                body["output"]["agents"]["clients"][0]["build"]["built_at"],
                 "100"
             );
             assert_eq!(
-                body["output"]["runners"]["clients"][0]["build"]["target"],
+                body["output"]["agents"]["clients"][0]["build"]["target"],
                 "x86_64-unknown-linux-gnu"
             );
             assert_eq!(
-                body["output"]["runners"]["clients"][0]["build"]["architecture"],
+                body["output"]["agents"]["clients"][0]["build"]["architecture"],
                 "x86_64"
             );
         })

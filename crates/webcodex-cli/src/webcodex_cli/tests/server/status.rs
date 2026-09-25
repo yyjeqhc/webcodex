@@ -165,7 +165,7 @@ async fn server_status_parses_env_token_posts_and_does_not_print_token() {
         let n = stream.read(&mut buf).unwrap();
         let request = String::from_utf8_lossy(&buf[..n]).to_string();
         tx.send(request.clone()).unwrap();
-        let body = r#"{"success":true,"output":{"service":"webcodex","auth_enabled":true,"configured_public_url":"https://example.test","tools":{"count":12},"runners":{"online_count":2}}}"#;
+        let body = r#"{"success":true,"output":{"service":"webcodex","auth_enabled":true,"configured_public_url":"https://example.test","tools":{"count":12},"agents":{"online_count":2}}}"#;
         write!(
             stream,
             "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
@@ -215,7 +215,7 @@ async fn server_status_token_file_takes_priority_over_env_file() {
         let n = stream.read(&mut buf).unwrap();
         tx.send(String::from_utf8_lossy(&buf[..n]).to_string())
             .unwrap();
-        let body = r#"{"success":true,"output":{"auth_enabled":true,"configured_public_url":null,"tools":{"count":0},"runners":{"online_count":0}}}"#;
+        let body = r#"{"success":true,"output":{"auth_enabled":true,"configured_public_url":null,"tools":{"count":0},"agents":{"online_count":0}}}"#;
         write!(
             stream,
             "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",

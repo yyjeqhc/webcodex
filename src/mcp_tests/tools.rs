@@ -3243,7 +3243,7 @@ async fn project_grant_authority_is_identical_for_project_credential_and_share_o
             )
             .await;
         assert!(runners.success, "{label}: {:?}", runners.error);
-        let runner_ids = runners.output["runners"]
+        let runner_ids = runners.output["agents"]
             .as_array()
             .unwrap()
             .iter()

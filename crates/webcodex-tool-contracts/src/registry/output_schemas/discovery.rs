@@ -94,7 +94,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 open_object_schema("Project counts from the Runner registry. Prefer projects.effective for model-facing status."),
             ),
             (
-                "runners",
+                "agents",
                 open_object_schema("Runner counts and client summaries. Per-client host_context is bounded Runner-configured advisory data, not observed truth or authority. job_concurrency contains the static Runner limit plus caller-visible running and queued counts. Canonical top-level counts are count, online_count, and stale_count in full, compact, and summary_only output."),
             ),
             (
@@ -151,10 +151,14 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
         ])),
         "list_runners" => Some(wrapped_output_schema(vec![
             (
-                "runners",
-                array_schema(open_object_schema("Runner summary including bounded Runner-configured host_context advisory data, never authority or proof of current state, plus job_concurrency limit/running/queued facts."), "Canonical Runner summaries."),
+                "agents",
+                array_schema(open_object_schema("Runner summary including bounded Runner-configured host_context advisory data, never authority or proof of current state, plus job_concurrency limit/running/queued facts."), "Legacy compatibility key containing Runner summaries."),
             ),
-            ("count", schema_type("integer", "Runner count.")),
+            (
+                "clients",
+                array_schema(open_object_schema("Runner client summary including job_concurrency limit/running/queued facts."), "Runner client summaries."),
+            ),
+            ("count", schema_type("integer", "Runner/client count.")),
         ])),
         "list_tools" => Some(wrapped_output_schema(vec![
             (

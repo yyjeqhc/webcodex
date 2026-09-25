@@ -1627,14 +1627,14 @@ async fn project_path_registration_capability_is_projected_safely() {
     let listed = runtime.dispatch(list_runners_call()).await;
     assert!(listed.success, "{:?}", listed.error);
     assert_eq!(
-        listed.output["runners"][0]["capabilities"]["project_path_registration"],
+        listed.output["agents"][0]["capabilities"]["project_path_registration"],
         true
     );
 
     let status = runtime.dispatch(runtime_status_call()).await;
     assert!(status.success, "{:?}", status.error);
     assert_eq!(
-        status.output["runners"]["clients"][0]["capabilities"]["project_path_registration"],
+        status.output["agents"]["clients"][0]["capabilities"]["project_path_registration"],
         true
     );
     assert!(
@@ -1704,7 +1704,7 @@ async fn runtime_status_shell_profiles_summary_is_sanitized() {
     let runtime = ToolRuntime::new(registry, Arc::new(RuntimeInfo::default()));
     let result = runtime.dispatch(runtime_status_call()).await;
     assert!(result.success);
-    let client = &result.output["runners"]["clients"][0];
+    let client = &result.output["agents"]["clients"][0];
     let sp = &client["shell_profiles"];
     assert_eq!(sp["default_profile"], "rust");
     assert_eq!(sp["configured_count"], 1);
@@ -1968,7 +1968,7 @@ fn runtime_status_input_schema_exposes_compact_flags() {
     );
 
     let output_schema = crate::tool_runtime::registry::output_schema_for_tool("runtime_status");
-    let agents_description = output_schema["properties"]["output"]["properties"]["runners"]
+    let agents_description = output_schema["properties"]["output"]["properties"]["agents"]
         ["description"]
         .as_str()
         .expect("runtime_status agents output description");
@@ -2551,10 +2551,10 @@ async fn runtime_status_compact_and_summary_only_return_sanitized_summary() {
             "/build/git_dirty",
             "/tools/count",
             "/jobs/active_count",
-            "/runners/count",
-            "/runners/online_count",
-            "/runners/stale_count",
-            "/runners/summary/online",
+            "/agents/count",
+            "/agents/online_count",
+            "/agents/stale_count",
+            "/agents/summary/online",
             "/projects/effective/status",
             "/projects/effective/count",
             "/projects/agent_registered/count",
@@ -2572,28 +2572,24 @@ async fn runtime_status_compact_and_summary_only_return_sanitized_summary() {
         }
         assert_eq!(summary["service"], "webcodex");
         assert_eq!(summary["version"], env!("CARGO_PKG_VERSION"));
-        assert_eq!(summary["runners"]["summary"]["count"], 1);
-        assert_eq!(summary["runners"]["summary"]["online"], 1);
-        assert_eq!(summary["runners"]["count"], 1);
-        assert_eq!(summary["runners"]["online_count"], 1);
-        assert_eq!(summary["runners"]["stale_count"], 0);
-        assert!(summary["runners"].get("offline_count").is_none());
-        assert!(
-            summary.get("agents").is_none(),
-            "compact runtime_status must not reintroduce the legacy agents alias"
-        );
+        assert_eq!(summary["agents"]["summary"]["count"], 1);
+        assert_eq!(summary["agents"]["summary"]["online"], 1);
+        assert_eq!(summary["agents"]["count"], 1);
+        assert_eq!(summary["agents"]["online_count"], 1);
+        assert_eq!(summary["agents"]["stale_count"], 0);
+        assert!(summary["agents"].get("offline_count").is_none());
         assert_eq!(summary["projects"]["effective"]["count"], 1);
         assert_eq!(summary["projects"]["effective"]["status"], "ok");
         assert!(summary["tools"].get("names").is_none());
         assert!(
             summary
-                .pointer("/runners/clients/0/policy/allowed_roots")
+                .pointer("/agents/clients/0/policy/allowed_roots")
                 .is_none(),
             "compact runtime_status must not include full client policy"
         );
         assert!(
             summary
-                .pointer("/runners/clients/0/shell_profiles")
+                .pointer("/agents/clients/0/shell_profiles")
                 .is_none(),
             "compact runtime_status must not include shell profile details"
         );
@@ -2809,7 +2805,7 @@ async fn runtime_status_agent_summary_includes_protocol_version() {
     let runtime = ToolRuntime::new(registry, Arc::new(RuntimeInfo::default()));
     let result = runtime.dispatch(runtime_status_call()).await;
     assert!(result.success);
-    let agents = &result.output["runners"];
+    let agents = &result.output["agents"];
     assert_eq!(agents["count"], 1);
     assert_eq!(agents["online_count"], 1);
     assert_eq!(agents["stale_count"], 0);
@@ -2821,7 +2817,7 @@ async fn runtime_status_agent_summary_includes_protocol_version() {
     assert_eq!(clients.len(), 1);
     assert_eq!(clients[0]["client_id"], "agent-1");
     assert_eq!(
-        clients[0]["runner_protocol_generation"],
+        clients[0]["agent_protocol_generation"],
         RUNNER_PROTOCOL_GENERATION_V2.get()
     );
     assert_eq!(clients[0]["transport"], "polling");
@@ -2931,7 +2927,7 @@ async fn runtime_status_includes_sanitized_policy_summary() {
     let runtime = ToolRuntime::new(registry, Arc::new(RuntimeInfo::default()));
     let result = runtime.dispatch(runtime_status_call()).await;
     assert!(result.success);
-    let clients = result.output["runners"]["clients"].as_array().unwrap();
+    let clients = result.output["agents"]["clients"].as_array().unwrap();
     let policy = &clients[0]["policy"];
     assert_eq!(policy["allow_raw_shell"], true);
     assert_eq!(policy["allow_cwd_anywhere"], false);
@@ -2962,7 +2958,7 @@ async fn runtime_status_includes_sanitized_policy_summary() {
 
     let listed = runtime.dispatch(list_runners_call()).await;
     assert_eq!(
-        listed.output["runners"][0]["tool_providers"]["claude_code"]["last_call"]["fallback_used"],
+        listed.output["agents"][0]["tool_providers"]["claude_code"]["last_call"]["fallback_used"],
         false
     );
 }
@@ -3069,7 +3065,7 @@ async fn runtime_status_policy_summary_is_null_for_older_agents() {
     let runtime = ToolRuntime::new(registry, Arc::new(RuntimeInfo::default()));
     let result = runtime.dispatch(runtime_status_call()).await;
     assert!(result.success);
-    let clients = result.output["runners"]["clients"].as_array().unwrap();
+    let clients = result.output["agents"]["clients"].as_array().unwrap();
     // Older/minimal payload -> policy is null, not a fatal error.
     assert!(clients[0]["policy"].is_null());
     assert_eq!(
@@ -3356,7 +3352,7 @@ async fn list_runners_includes_sanitized_policy_summary() {
         health_clients[0]["job_concurrency"],
         json!({"limit": 8, "running": 0, "queued": 0})
     );
-    let agents = result.output["runners"].as_array().unwrap();
+    let agents = result.output["agents"].as_array().unwrap();
     assert_eq!(agents.len(), 1);
     assert_eq!(agents[0]["projects_count"], 0);
     assert!(agents[0]["last_seen_age_secs"].is_i64());
@@ -3396,7 +3392,7 @@ async fn runtime_status_distinguishes_stale_registration_from_transport_connecti
     let runtime = ToolRuntime::new(registry, Arc::new(RuntimeInfo::default()));
     let result = runtime.dispatch(runtime_status_call()).await;
     assert!(result.success);
-    let agents = &result.output["runners"];
+    let agents = &result.output["agents"];
     assert_eq!(agents["count"], 1);
     assert_eq!(agents["online_count"], 0);
     assert_eq!(agents["stale_count"], 1);
@@ -3437,7 +3433,7 @@ async fn runtime_status_reflects_websocket_transport_label() {
 
     let result = runtime.dispatch(runtime_status_call()).await;
     assert!(result.success);
-    let clients = &result.output["runners"]["clients"];
+    let clients = &result.output["agents"]["clients"];
     let entry = clients
         .as_array()
         .unwrap()
@@ -3446,7 +3442,7 @@ async fn runtime_status_reflects_websocket_transport_label() {
         .expect("ws-agent present");
     assert_eq!(entry["transport"], "websocket");
     assert_eq!(
-        entry["runner_protocol_generation"],
+        entry["agent_protocol_generation"],
         RUNNER_PROTOCOL_GENERATION_V2.get()
     );
 }

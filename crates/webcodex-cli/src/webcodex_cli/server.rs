@@ -558,7 +558,7 @@ pub(crate) async fn run_server_status(opts: ServerStatusOptions) -> Result<Strin
         .and_then(|v| v.pointer("/tools/count"))
         .and_then(Value::as_u64);
     let agents_online_count = output
-        .and_then(|v| v.pointer("/runners/online_count"))
+        .and_then(|v| v.pointer("/agents/online_count"))
         .and_then(Value::as_u64);
     let server_build = runtime_build_metadata(output);
     let local_build = local_cli_build_metadata();
@@ -591,7 +591,7 @@ pub(crate) async fn run_server_status(opts: ServerStatusOptions) -> Result<Strin
             "tools": {
                 "count": tools_count,
             },
-            "runners": {
+            "agents": {
                 "online_count": agents_online_count,
             },
             "server_build": {

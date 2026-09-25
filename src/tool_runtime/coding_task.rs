@@ -3251,7 +3251,7 @@ pub(crate) fn project_coding_agent_providers(
     runtime_status: &Value,
 ) -> Vec<webcodex_core::coding_agent::CodingAgentProviderSummary> {
     runtime_status
-        .pointer("/runners/clients")
+        .pointer("/agents/clients")
         .and_then(Value::as_array)
         .and_then(|clients| {
             clients.iter().find(|client| {
@@ -3282,7 +3282,7 @@ fn owning_runner_available(
     }
     Some(
         runtime_status
-            .pointer("/runners/summary/clients")
+            .pointer("/agents/summary/clients")
             .and_then(Value::as_array)
             .and_then(|clients| {
                 clients.iter().find(|client| {
@@ -3612,7 +3612,7 @@ mod startup_runner_tests {
     #[test]
     fn missing_target_runner_is_unavailable_even_when_a_peer_is_online() {
         let runtime_status = json!({
-            "runners": {
+            "agents": {
                 "summary": {
                     "clients": [{"client_id": "peer", "status": "online"}]
                 }
@@ -3627,7 +3627,7 @@ mod startup_runner_tests {
     #[test]
     fn target_runner_online_is_available_even_when_a_peer_is_stale() {
         let runtime_status = json!({
-            "runners": {
+            "agents": {
                 "summary": {
                     "clients": [
                         {"client_id": "peer", "status": "stale"},

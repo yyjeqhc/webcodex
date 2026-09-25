@@ -8,7 +8,7 @@ use base64::{engine::general_purpose, Engine as _};
 use serde_json::{json, Value};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 #[cfg(test)]
 use std::time::{Duration, SystemTime};
 use std::time::{Instant, UNIX_EPOCH};
@@ -28,21 +28,25 @@ use inspection::{
 #[cfg(test)]
 use upload::{
     commit_artifact_upload_part, enforce_artifact_upload_begin_admission, read_upload_state,
-    read_upload_state_file, sweep_artifact_upload_project, upload_paths, write_upload_state,
+    read_upload_state_file, sweep_artifact_upload_directory, upload_paths, write_upload_state,
     ArtifactUploadProjectUsage, ArtifactUploadState, MAX_ACTIVE_ARTIFACT_UPLOADS_PER_PROJECT,
     MAX_ARTIFACT_UPLOAD_BYTES, MAX_ARTIFACT_UPLOAD_CHUNK_BYTES,
     MAX_ARTIFACT_UPLOAD_RESERVED_BYTES_PER_PROJECT, MAX_ARTIFACT_UPLOAD_STATE_BYTES,
 };
 use upload::{
     handle_artifact_upload_abort, handle_artifact_upload_begin, handle_artifact_upload_chunk,
-    handle_artifact_upload_finish, upload_error,
+    handle_artifact_upload_finish, upload_error, ArtifactUploadRuntimeState,
 };
 
 const DEFAULT_MAX_ARTIFACT_BYTES: usize = 10 * 1024 * 1024;
 const MAX_ARTIFACT_EXPORT_BYTES: usize = 256 * 1024 * 1024;
 const DEFAULT_ARTIFACT_READ_LENGTH: usize = 32 * 1024;
 const MAX_ARTIFACT_EXPORT_CHUNK_BYTES: usize = 1024 * 1024;
-static ARTIFACT_UPLOAD_STATE_LOCK: Mutex<()> = Mutex::new(());
+static ARTIFACT_UPLOAD_STATE: OnceLock<Mutex<ArtifactUploadRuntimeState>> = OnceLock::new();
+
+fn artifact_upload_state() -> &'static Mutex<ArtifactUploadRuntimeState> {
+    ARTIFACT_UPLOAD_STATE.get_or_init(|| Mutex::new(ArtifactUploadRuntimeState::new()))
+}
 
 #[cfg(test)]
 pub(crate) fn is_artifact_request_kind(kind: &str) -> bool {
@@ -330,8 +334,8 @@ pub(crate) fn handle_artifact_file_operation(
         | RunnerFileOperation::ArtifactUploadChunk(_)
         | RunnerFileOperation::ArtifactUploadFinish(_)
         | RunnerFileOperation::ArtifactUploadAbort(_) => {
-            let _upload_guard = match ARTIFACT_UPLOAD_STATE_LOCK.lock() {
-                Ok(guard) => guard,
+            let mut upload_state = match artifact_upload_state().lock() {
+                Ok(state) => state,
                 Err(_) => {
                     return line_edit_stdout(
                         upload_error(
@@ -345,16 +349,16 @@ pub(crate) fn handle_artifact_file_operation(
             };
             match operation {
                 RunnerFileOperation::ArtifactUploadBegin(_) => {
-                    handle_artifact_upload_begin(request, resolved, start)
+                    handle_artifact_upload_begin(request, resolved, start, &mut upload_state)
                 }
                 RunnerFileOperation::ArtifactUploadChunk(_) => {
-                    handle_artifact_upload_chunk(request, resolved, start)
+                    handle_artifact_upload_chunk(request, resolved, start, &mut upload_state)
                 }
                 RunnerFileOperation::ArtifactUploadFinish(_) => {
-                    handle_artifact_upload_finish(request, resolved, start)
+                    handle_artifact_upload_finish(request, resolved, start, &mut upload_state)
                 }
                 RunnerFileOperation::ArtifactUploadAbort(_) => {
-                    handle_artifact_upload_abort(request, resolved, start)
+                    handle_artifact_upload_abort(request, resolved, start, &mut upload_state)
                 }
                 _ => unreachable!("upload operation already typed"),
             }
@@ -1078,49 +1082,52 @@ mod tests {
     }
 
     #[test]
-    fn artifact_upload_project_sweep_cleans_orphans_and_stale_pairs() {
+    fn artifact_upload_directory_sweep_cleans_orphans_and_stale_pairs() {
         let tmp = tempfile::tempdir().unwrap();
-        let active_parent = tmp.path().join("artifacts/active");
-        let orphan_parent = tmp.path().join("artifacts/orphans");
-        std::fs::create_dir_all(&active_parent).unwrap();
-        std::fs::create_dir_all(&orphan_parent).unwrap();
+        let parent = tmp.path().join("artifacts");
+        std::fs::create_dir_all(&parent).unwrap();
         let active_id = "wc_upload_active";
-        write_test_upload_pair(
-            &active_parent,
-            active_id,
-            "artifacts/active/active.bin",
-            b"abc",
-        );
+        write_test_upload_pair(&parent, active_id, "artifacts/active.bin", b"abc");
 
-        let (orphan_part, _) = upload_paths(&orphan_parent, "wc_upload_orphan_part");
+        let (orphan_part, _) = upload_paths(&parent, "wc_upload_orphan_part");
         std::fs::write(&orphan_part, b"orphan").unwrap();
-        let (_, orphan_sidecar) = upload_paths(&orphan_parent, "wc_upload_orphan_sidecar");
-        write_upload_state(
-            &orphan_sidecar,
-            &test_upload_state("artifacts/orphans/orphan.bin"),
-        )
-        .unwrap();
+        let (_, orphan_sidecar) = upload_paths(&parent, "wc_upload_orphan_sidecar");
+        write_upload_state(&orphan_sidecar, &test_upload_state("artifacts/orphan.bin")).unwrap();
 
         let now = SystemTime::now();
-        let usage =
-            sweep_artifact_upload_project(tmp.path(), now, Duration::from_secs(60)).unwrap();
+        let active =
+            sweep_artifact_upload_directory(&parent, now, Duration::from_secs(60)).unwrap();
         assert_eq!(
-            usage,
-            ArtifactUploadProjectUsage {
-                active_uploads: 1,
-                reserved_bytes: MAX_ARTIFACT_UPLOAD_BYTES,
-            }
+            active,
+            vec![(active_id.to_string(), MAX_ARTIFACT_UPLOAD_BYTES)]
         );
         assert!(!orphan_part.exists());
         assert!(!orphan_sidecar.exists());
 
         let future = now + Duration::from_secs(61);
         let expired =
-            sweep_artifact_upload_project(tmp.path(), future, Duration::from_secs(60)).unwrap();
-        assert_eq!(expired, ArtifactUploadProjectUsage::default());
-        let (part, sidecar) = upload_paths(&active_parent, active_id);
+            sweep_artifact_upload_directory(&parent, future, Duration::from_secs(60)).unwrap();
+        assert!(expired.is_empty());
+        let (part, sidecar) = upload_paths(&parent, active_id);
         assert!(!part.exists());
         assert!(!sidecar.exists());
+    }
+
+    #[test]
+    fn artifact_upload_directory_sweep_does_not_recurse_into_project_children() {
+        let tmp = tempfile::tempdir().unwrap();
+        let child = tmp.path().join("large-project/subdir");
+        std::fs::create_dir_all(&child).unwrap();
+        let upload_id = "wc_upload_nested";
+        write_test_upload_pair(&child, upload_id, "large-project/subdir/file.bin", b"abc");
+
+        let active =
+            sweep_artifact_upload_directory(tmp.path(), SystemTime::now(), Duration::from_secs(60))
+                .unwrap();
+        assert!(active.is_empty());
+        let (part, sidecar) = upload_paths(&child, upload_id);
+        assert!(part.exists());
+        assert!(sidecar.exists());
     }
 
     #[test]
@@ -1257,16 +1264,23 @@ mod tests {
     #[test]
     fn artifact_upload_begin_rejects_project_active_upload_limit_across_directories() {
         let tmp = tempfile::tempdir().unwrap();
+        let mut uploads = Vec::new();
         for index in 0..MAX_ACTIVE_ARTIFACT_UPLOADS_PER_PROJECT {
-            let parent = tmp.path().join(format!("artifacts/set-{index}"));
-            std::fs::create_dir_all(&parent).unwrap();
-            let upload_id = format!("wc_upload_limit_{index}");
-            write_test_upload_pair(
-                &parent,
-                &upload_id,
-                &format!("artifacts/set-{index}/existing.bin"),
-                b"",
+            let path = format!("artifacts/set-{index}/existing.bin");
+            let output = run_artifact_request(
+                tmp.path(),
+                "file_artifact_upload_begin",
+                &path,
+                json!({
+                    "path": path,
+                    "expected_bytes": null,
+                    "expected_sha256": null,
+                    "mime_type": null,
+                    "overwrite": false,
+                    "max_bytes": 1,
+                }),
             );
+            uploads.push((path, output["upload_id"].as_str().unwrap().to_string()));
         }
 
         let path = "artifacts/imports/new.bin";
@@ -1280,28 +1294,45 @@ mod tests {
                 "expected_sha256": null,
                 "mime_type": null,
                 "overwrite": false,
-                "max_bytes": DEFAULT_MAX_ARTIFACT_BYTES,
+                "max_bytes": 1,
             }),
         );
         assert!(output["error"]
             .as_str()
             .unwrap()
             .contains("active upload limit"));
+
+        for (path, upload_id) in uploads {
+            let aborted = run_artifact_request(
+                tmp.path(),
+                "file_artifact_upload_abort",
+                &path,
+                json!({"path": path, "upload_id": upload_id}),
+            );
+            assert_eq!(aborted["aborted"], true);
+        }
     }
 
     #[test]
     fn artifact_upload_begin_rejects_project_reserved_byte_quota() {
         let tmp = tempfile::tempdir().unwrap();
+        let mut uploads = Vec::new();
         for index in 0..2 {
-            let parent = tmp.path().join(format!("artifacts/quota-{index}"));
-            std::fs::create_dir_all(&parent).unwrap();
-            let upload_id = format!("wc_upload_quota_{index}");
-            write_test_upload_pair(
-                &parent,
-                &upload_id,
-                &format!("artifacts/quota-{index}/existing.bin"),
-                b"",
+            let path = format!("artifacts/quota-{index}/existing.bin");
+            let output = run_artifact_request(
+                tmp.path(),
+                "file_artifact_upload_begin",
+                &path,
+                json!({
+                    "path": path,
+                    "expected_bytes": null,
+                    "expected_sha256": null,
+                    "mime_type": null,
+                    "overwrite": false,
+                    "max_bytes": MAX_ARTIFACT_UPLOAD_BYTES,
+                }),
             );
+            uploads.push((path, output["upload_id"].as_str().unwrap().to_string()));
         }
 
         let path = "artifacts/imports/new.bin";
@@ -1315,13 +1346,23 @@ mod tests {
                 "expected_sha256": null,
                 "mime_type": null,
                 "overwrite": false,
-                "max_bytes": DEFAULT_MAX_ARTIFACT_BYTES,
+                "max_bytes": 1,
             }),
         );
         assert!(output["error"]
             .as_str()
             .unwrap()
             .contains("reserved byte quota exceeded"));
+
+        for (path, upload_id) in uploads {
+            let aborted = run_artifact_request(
+                tmp.path(),
+                "file_artifact_upload_abort",
+                &path,
+                json!({"path": path, "upload_id": upload_id}),
+            );
+            assert_eq!(aborted["aborted"], true);
+        }
     }
 
     #[test]

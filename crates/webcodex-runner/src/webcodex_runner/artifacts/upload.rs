@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::io::{ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
@@ -24,7 +24,6 @@ pub(super) const MAX_ARTIFACT_UPLOAD_CHUNK_BYTES: usize = 1024 * 1024;
 const ARTIFACT_UPLOAD_IDLE_TTL_SECS: u64 = 24 * 60 * 60;
 pub(super) const MAX_ACTIVE_ARTIFACT_UPLOADS_PER_PROJECT: usize = 32;
 pub(super) const MAX_ARTIFACT_UPLOAD_RESERVED_BYTES_PER_PROJECT: usize = 512 * 1024 * 1024;
-const MAX_ARTIFACT_UPLOAD_PROJECT_SCAN_ENTRIES: usize = 100_000;
 pub(super) const MAX_ARTIFACT_UPLOAD_STATE_BYTES: usize = 4 * 1024;
 
 pub(super) fn commit_artifact_upload_part(
@@ -175,13 +174,6 @@ fn upload_pair_is_stale(
         .is_some_and(|age| age >= idle_ttl)
 }
 
-fn upload_scan_skips_directory(name: &str) -> bool {
-    matches!(
-        name.to_ascii_lowercase().as_str(),
-        ".git" | "target" | "node_modules" | "secrets" | "tokens"
-    )
-}
-
 fn upload_scan_ignores_entry_error(error: &std::io::Error) -> bool {
     matches!(
         error.kind(),
@@ -189,155 +181,154 @@ fn upload_scan_ignores_entry_error(error: &std::io::Error) -> bool {
     )
 }
 
-fn upload_scan_ignores_directory_error(
-    root: &Path,
+pub(super) fn sweep_artifact_upload_directory(
     directory: &Path,
-    error: &std::io::Error,
-) -> bool {
-    directory != root && upload_scan_ignores_entry_error(error)
-}
-
-#[cfg(test)]
-mod scan_tests {
-    use super::*;
-
-    #[test]
-    fn upload_scan_skips_inaccessible_descendants_but_not_the_project_root() {
-        let root = Path::new("project");
-        let child = root.join("protected");
-        let denied = std::io::Error::from(ErrorKind::PermissionDenied);
-        let missing = std::io::Error::from(ErrorKind::NotFound);
-        let other = std::io::Error::from(ErrorKind::Other);
-
-        assert!(upload_scan_ignores_directory_error(root, &child, &denied));
-        assert!(upload_scan_ignores_directory_error(root, &child, &missing));
-        assert!(!upload_scan_ignores_directory_error(root, root, &denied));
-        assert!(!upload_scan_ignores_directory_error(root, &child, &other));
-        assert!(upload_scan_ignores_entry_error(&denied));
-        assert!(!upload_scan_ignores_entry_error(&other));
-    }
-}
-
-pub(super) fn sweep_artifact_upload_project(
-    root: &Path,
     now: SystemTime,
     idle_ttl: Duration,
-) -> Result<ArtifactUploadProjectUsage, String> {
-    let mut usage = ArtifactUploadProjectUsage::default();
-    let mut directories = vec![root.to_path_buf()];
-    let mut scanned_entries = 0usize;
-
-    while let Some(directory) = directories.pop() {
-        let entries = match std::fs::read_dir(&directory) {
-            Ok(entries) => entries,
-            Err(error) if upload_scan_ignores_directory_error(root, &directory, &error) => {
-                continue;
-            }
+) -> Result<Vec<(String, usize)>, String> {
+    let entries =
+        std::fs::read_dir(directory).map_err(|error| format!("upload cleanup failed: {error}"))?;
+    let mut uploads: BTreeMap<String, ArtifactUploadTempFiles> = BTreeMap::new();
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) if upload_scan_ignores_entry_error(&error) => continue,
             Err(error) => return Err(format!("upload cleanup failed: {error}")),
         };
-        let mut uploads: BTreeMap<String, ArtifactUploadTempFiles> = BTreeMap::new();
-        for entry in entries {
-            scanned_entries = scanned_entries
-                .checked_add(1)
-                .ok_or_else(|| "artifact upload project scan count overflow".to_string())?;
-            if scanned_entries > MAX_ARTIFACT_UPLOAD_PROJECT_SCAN_ENTRIES {
-                return Err(format!(
-                    "artifact upload project has more than {MAX_ARTIFACT_UPLOAD_PROJECT_SCAN_ENTRIES} entries; refusing unbounded resource scan"
-                ));
-            }
-            let entry = match entry {
-                Ok(entry) => entry,
-                Err(error) if upload_scan_ignores_entry_error(&error) => continue,
-                Err(error) => return Err(format!("upload cleanup failed: {error}")),
-            };
-            let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
-                continue;
-            };
-            if let Some(upload_id) = upload_temp_id(&name, ".part") {
-                uploads.entry(upload_id).or_default().part = Some(entry.path());
-                continue;
-            }
-            if let Some(upload_id) = upload_temp_id(&name, ".json") {
-                uploads.entry(upload_id).or_default().sidecar = Some(entry.path());
-                continue;
-            }
-            let file_type = match entry.file_type() {
-                Ok(file_type) => file_type,
-                Err(error) if upload_scan_ignores_entry_error(&error) => continue,
-                Err(error) => return Err(format!("upload cleanup failed: {error}")),
-            };
-            if file_type.is_dir() && !upload_scan_skips_directory(&name) {
-                directories.push(entry.path());
-            }
+        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        if let Some(upload_id) = upload_temp_id(&name, ".part") {
+            uploads.entry(upload_id).or_default().part = Some(entry.path());
+            continue;
         }
+        if let Some(upload_id) = upload_temp_id(&name, ".json") {
+            uploads.entry(upload_id).or_default().sidecar = Some(entry.path());
+        }
+    }
 
-        let mut cleaned = false;
-        for files in uploads.into_values() {
-            match (files.part, files.sidecar) {
-                (Some(part), Some(sidecar)) => {
-                    let part_metadata = match std::fs::metadata(&part) {
-                        Ok(metadata) => metadata,
-                        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                            cleaned |= remove_upload_temp_file(&sidecar)?;
-                            continue;
-                        }
-                        Err(e) => return Err(format!("upload cleanup failed: {e}")),
-                    };
-                    let sidecar_metadata = match std::fs::metadata(&sidecar) {
-                        Ok(metadata) => metadata,
-                        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                            cleaned |= remove_upload_temp_file(&part)?;
-                            continue;
-                        }
-                        Err(e) => return Err(format!("upload cleanup failed: {e}")),
-                    };
-                    if upload_pair_is_stale(&part_metadata, &sidecar_metadata, now, idle_ttl) {
+    let mut active = Vec::new();
+    let mut cleaned = false;
+    for (upload_id, files) in uploads {
+        match (files.part, files.sidecar) {
+            (Some(part), Some(sidecar)) => {
+                let part_metadata = match std::fs::metadata(&part) {
+                    Ok(metadata) => metadata,
+                    Err(e) if e.kind() == ErrorKind::NotFound => {
+                        cleaned |= remove_upload_temp_file(&sidecar)?;
+                        continue;
+                    }
+                    Err(e) => return Err(format!("upload cleanup failed: {e}")),
+                };
+                let sidecar_metadata = match std::fs::metadata(&sidecar) {
+                    Ok(metadata) => metadata,
+                    Err(e) if e.kind() == ErrorKind::NotFound => {
+                        cleaned |= remove_upload_temp_file(&part)?;
+                        continue;
+                    }
+                    Err(e) => return Err(format!("upload cleanup failed: {e}")),
+                };
+                if upload_pair_is_stale(&part_metadata, &sidecar_metadata, now, idle_ttl) {
+                    cleaned |= remove_upload_temp_file(&part)?;
+                    cleaned |= remove_upload_temp_file(&sidecar)?;
+                    continue;
+                }
+                let state = match read_upload_state_file(&sidecar) {
+                    Ok(state) => state,
+                    Err(_) => {
                         cleaned |= remove_upload_temp_file(&part)?;
                         cleaned |= remove_upload_temp_file(&sidecar)?;
                         continue;
                     }
-                    let state = match read_upload_state_file(&sidecar) {
-                        Ok(state) => state,
-                        Err(_) => {
-                            cleaned |= remove_upload_temp_file(&part)?;
-                            cleaned |= remove_upload_temp_file(&sidecar)?;
-                            continue;
-                        }
-                    };
-                    usage.reserved_bytes = usage
-                        .reserved_bytes
-                        .checked_add(state.max_bytes)
-                        .ok_or_else(|| {
-                            "artifact upload reserved byte count overflow".to_string()
-                        })?;
-                    usage.active_uploads = usage
-                        .active_uploads
-                        .checked_add(1)
-                        .ok_or_else(|| "artifact upload count overflow".to_string())?;
-                }
-                (Some(part), None) => cleaned |= remove_upload_temp_file(&part)?,
-                (None, Some(sidecar)) => cleaned |= remove_upload_temp_file(&sidecar)?,
-                (None, None) => {}
+                };
+                active.push((upload_id, state.max_bytes));
             }
+            (Some(part), None) => cleaned |= remove_upload_temp_file(&part)?,
+            (None, Some(sidecar)) => cleaned |= remove_upload_temp_file(&sidecar)?,
+            (None, None) => {}
         }
-        if cleaned {
-            if let Ok(dir) = std::fs::File::open(&directory) {
-                let _ = dir.sync_all();
-            }
+    }
+    if cleaned {
+        if let Ok(dir) = std::fs::File::open(directory) {
+            let _ = dir.sync_all();
+        }
+    }
+    Ok(active)
+}
+
+// Keep quota accounting proportional to active uploads instead of recursively scanning the
+// entire Project on every begin. Each target directory is swept at most once per Runner process
+// to adopt non-stale persisted upload pairs after restart; chunk/finish/abort also adopt a
+// resumed upload before mutating it.
+#[derive(Debug, Default)]
+pub(super) struct ArtifactUploadRuntimeState {
+    active_by_project: BTreeMap<PathBuf, BTreeMap<String, usize>>,
+    scanned_directories: BTreeSet<(PathBuf, PathBuf)>,
+}
+
+impl ArtifactUploadRuntimeState {
+    pub(super) fn new() -> Self {
+        Self::default()
+    }
+
+    fn project_usage(&self, root: &Path) -> Result<ArtifactUploadProjectUsage, String> {
+        let mut usage = ArtifactUploadProjectUsage::default();
+        let Some(active) = self.active_by_project.get(root) else {
+            return Ok(usage);
+        };
+        usage.active_uploads = active.len();
+        for max_bytes in active.values() {
+            usage.reserved_bytes = usage
+                .reserved_bytes
+                .checked_add(*max_bytes)
+                .ok_or_else(|| "artifact upload reserved byte count overflow".to_string())?;
+        }
+        Ok(usage)
+    }
+
+    fn track_existing(&mut self, root: &Path, upload_id: &str, max_bytes: usize) {
+        self.active_by_project
+            .entry(root.to_path_buf())
+            .or_default()
+            .entry(upload_id.to_string())
+            .or_insert(max_bytes);
+    }
+
+    fn release(&mut self, root: &Path, upload_id: &str) {
+        let remove_project = self
+            .active_by_project
+            .get_mut(root)
+            .map(|active| {
+                active.remove(upload_id);
+                active.is_empty()
+            })
+            .unwrap_or(false);
+        if remove_project {
+            self.active_by_project.remove(root);
         }
     }
 
-    Ok(usage)
-}
+    fn prepare_directory(&mut self, root: &Path, directory: &Path) -> Result<(), String> {
+        let key = (root.to_path_buf(), directory.to_path_buf());
+        if self.scanned_directories.contains(&key) {
+            return Ok(());
+        }
+        let active = sweep_artifact_upload_directory(
+            directory,
+            SystemTime::now(),
+            Duration::from_secs(ARTIFACT_UPLOAD_IDLE_TTL_SECS),
+        )?;
+        for (upload_id, max_bytes) in active {
+            self.track_existing(root, &upload_id, max_bytes);
+        }
+        self.scanned_directories.insert(key);
+        Ok(())
+    }
 
-fn current_artifact_upload_project_usage(
-    root: &Path,
-) -> Result<ArtifactUploadProjectUsage, String> {
-    sweep_artifact_upload_project(
-        root,
-        SystemTime::now(),
-        Duration::from_secs(ARTIFACT_UPLOAD_IDLE_TTL_SECS),
-    )
+    fn check_begin_admission(&self, root: &Path, max_bytes: usize) -> Result<(), String> {
+        let usage = self.project_usage(root)?;
+        enforce_artifact_upload_begin_admission(&usage, max_bytes)
+    }
 }
 
 pub(super) fn enforce_artifact_upload_begin_admission(
@@ -384,6 +375,7 @@ pub(super) fn handle_artifact_upload_begin(
     request: &RunnerFilePayload,
     resolved: &Path,
     start: Instant,
+    runtime: &mut ArtifactUploadRuntimeState,
 ) -> CommandResult {
     let path = request.path.as_str();
     let payload = match parse_json_payload(request) {
@@ -499,11 +491,10 @@ pub(super) fn handle_artifact_upload_begin(
             )
         }
     };
-    let usage = match current_artifact_upload_project_usage(&root) {
-        Ok(usage) => usage,
-        Err(e) => return line_edit_stdout(upload_error(Some(path), None, e), start),
-    };
-    if let Err(e) = enforce_artifact_upload_begin_admission(&usage, max_bytes) {
+    if let Err(e) = runtime.prepare_directory(&root, parent) {
+        return line_edit_stdout(upload_error(Some(path), None, e), start);
+    }
+    if let Err(e) = runtime.check_begin_admission(&root, max_bytes) {
         return line_edit_stdout(upload_error(Some(path), None, e), start);
     }
     let state = ArtifactUploadState {
@@ -543,6 +534,7 @@ pub(super) fn handle_artifact_upload_begin(
                     let _ = std::fs::remove_file(&part);
                     return line_edit_stdout(upload_error(Some(path), Some(&upload_id), e), start);
                 }
+                runtime.track_existing(&root, &upload_id, state.max_bytes);
                 if let Ok(dir) = std::fs::File::open(parent) {
                     let _ = dir.sync_all();
                 }
@@ -587,6 +579,7 @@ pub(super) fn handle_artifact_upload_chunk(
     request: &RunnerFilePayload,
     resolved: &Path,
     start: Instant,
+    runtime: &mut ArtifactUploadRuntimeState,
 ) -> CommandResult {
     let path = request.path.as_str();
     let payload = match parse_json_payload(request) {
@@ -711,6 +704,7 @@ pub(super) fn handle_artifact_upload_chunk(
             start,
         );
     }
+    runtime.track_existing(&root, &upload_id, state.max_bytes);
     let received_bytes = match std::fs::metadata(&part) {
         Ok(metadata) => metadata.len() as usize,
         Err(e) => {
@@ -809,6 +803,7 @@ pub(super) fn handle_artifact_upload_finish(
     request: &RunnerFilePayload,
     resolved: &Path,
     start: Instant,
+    runtime: &mut ArtifactUploadRuntimeState,
 ) -> CommandResult {
     let path = request.path.as_str();
     let payload = match parse_json_payload(request) {
@@ -850,6 +845,7 @@ pub(super) fn handle_artifact_upload_finish(
         Ok(state) => state,
         Err(e) => return line_edit_stdout(upload_error(Some(path), Some(&upload_id), e), start),
     };
+    runtime.track_existing(&root, &upload_id, state.max_bytes);
     let (bytes, sha256) = match verify_upload_file(&part, state.max_bytes) {
         Ok(verification) => verification,
         Err(e) => return line_edit_stdout(upload_error(Some(path), Some(&upload_id), e), start),
@@ -943,6 +939,7 @@ pub(super) fn handle_artifact_upload_finish(
         let _ = dir.sync_all();
     }
     let _ = std::fs::remove_file(&sidecar);
+    runtime.release(&root, &upload_id);
     line_edit_stdout(
         json!({
             "path": path,
@@ -963,6 +960,7 @@ pub(super) fn handle_artifact_upload_abort(
     request: &RunnerFilePayload,
     resolved: &Path,
     start: Instant,
+    runtime: &mut ArtifactUploadRuntimeState,
 ) -> CommandResult {
     let path = request.path.as_str();
     let payload = match parse_json_payload(request) {
@@ -1004,11 +1002,13 @@ pub(super) fn handle_artifact_upload_abort(
         Ok(state) => state,
         Err(e) => return line_edit_stdout(upload_error(Some(path), Some(&upload_id), e), start),
     };
+    runtime.track_existing(&root, &upload_id, state.max_bytes);
     let received_bytes = std::fs::metadata(&part)
         .map(|metadata| metadata.len() as usize)
         .unwrap_or(0);
     let temp_file_removed = std::fs::remove_file(&part).is_ok();
     let sidecar_removed = std::fs::remove_file(&sidecar).is_ok();
+    runtime.release(&root, &upload_id);
     if let Ok(dir) = std::fs::File::open(parent) {
         let _ = dir.sync_all();
     }

@@ -24,6 +24,7 @@ pub(super) const MAX_ARTIFACT_UPLOAD_CHUNK_BYTES: usize = 1024 * 1024;
 const ARTIFACT_UPLOAD_IDLE_TTL_SECS: u64 = 24 * 60 * 60;
 pub(super) const MAX_ACTIVE_ARTIFACT_UPLOADS_PER_PROJECT: usize = 32;
 pub(super) const MAX_ARTIFACT_UPLOAD_RESERVED_BYTES_PER_PROJECT: usize = 512 * 1024 * 1024;
+const MAX_ARTIFACT_UPLOAD_PROJECT_SCAN_ENTRIES: usize = 100_000;
 pub(super) const MAX_ARTIFACT_UPLOAD_STATE_BYTES: usize = 4 * 1024;
 
 pub(super) fn commit_artifact_upload_part(
@@ -181,6 +182,21 @@ fn upload_scan_ignores_entry_error(error: &std::io::Error) -> bool {
     )
 }
 
+fn upload_scan_skips_directory(name: &str) -> bool {
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        ".git" | "target" | "node_modules" | "secrets" | "tokens"
+    )
+}
+
+fn upload_scan_ignores_directory_error(
+    root: &Path,
+    directory: &Path,
+    error: &std::io::Error,
+) -> bool {
+    directory != root && upload_scan_ignores_entry_error(error)
+}
+
 pub(super) fn sweep_artifact_upload_directory(
     directory: &Path,
     now: SystemTime,
@@ -256,13 +272,68 @@ pub(super) fn sweep_artifact_upload_directory(
     Ok(active)
 }
 
-// Keep quota accounting proportional to active uploads instead of recursively scanning the
-// entire Project on every begin. Each target directory is swept at most once per Runner process
-// to adopt non-stale persisted upload pairs after restart; chunk/finish/abort also adopt a
+fn sweep_artifact_upload_project_once(
+    root: &Path,
+    now: SystemTime,
+    idle_ttl: Duration,
+) -> Result<Vec<(String, usize)>, String> {
+    let mut active = Vec::new();
+    let mut directories = vec![root.to_path_buf()];
+    let mut scanned_entries = 0usize;
+
+    while let Some(directory) = directories.pop() {
+        let entries = match std::fs::read_dir(&directory) {
+            Ok(entries) => entries,
+            Err(error) if upload_scan_ignores_directory_error(root, &directory, &error) => {
+                continue;
+            }
+            Err(error) => return Err(format!("upload cleanup failed: {error}")),
+        };
+        for entry in entries {
+            scanned_entries = scanned_entries
+                .checked_add(1)
+                .ok_or_else(|| "artifact upload project scan count overflow".to_string())?;
+            if scanned_entries > MAX_ARTIFACT_UPLOAD_PROJECT_SCAN_ENTRIES {
+                return Err(format!(
+                    "artifact upload project has more than {MAX_ARTIFACT_UPLOAD_PROJECT_SCAN_ENTRIES} entries; refusing unbounded resource scan"
+                ));
+            }
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(error) if upload_scan_ignores_entry_error(&error) => continue,
+                Err(error) => return Err(format!("upload cleanup failed: {error}")),
+            };
+            let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+                continue;
+            };
+            if upload_temp_id(&name, ".part").is_some() || upload_temp_id(&name, ".json").is_some()
+            {
+                continue;
+            }
+            let file_type = match entry.file_type() {
+                Ok(file_type) => file_type,
+                Err(error) if upload_scan_ignores_entry_error(&error) => continue,
+                Err(error) => return Err(format!("upload cleanup failed: {error}")),
+            };
+            if file_type.is_dir() && !upload_scan_skips_directory(&name) {
+                directories.push(entry.path());
+            }
+        }
+        active.extend(sweep_artifact_upload_directory(&directory, now, idle_ttl)?);
+    }
+
+    Ok(active)
+}
+
+// Keep steady-state quota accounting proportional to active uploads instead of recursively
+// scanning the entire Project on every begin. A bounded recursive adoption runs once per Project
+// per Runner process so persisted reservations in different directories still count after a
+// restart. Later target directories are swept at most once, while chunk/finish/abort also adopt a
 // resumed upload before mutating it.
 #[derive(Debug, Default)]
 pub(super) struct ArtifactUploadRuntimeState {
     active_by_project: BTreeMap<PathBuf, BTreeMap<String, usize>>,
+    scanned_projects: BTreeSet<PathBuf>,
     scanned_directories: BTreeSet<(PathBuf, PathBuf)>,
 }
 
@@ -309,7 +380,21 @@ impl ArtifactUploadRuntimeState {
     }
 
     fn prepare_directory(&mut self, root: &Path, directory: &Path) -> Result<(), String> {
-        let key = (root.to_path_buf(), directory.to_path_buf());
+        let root_key = root.to_path_buf();
+        let key = (root_key.clone(), directory.to_path_buf());
+        if !self.scanned_projects.contains(&root_key) {
+            let active = sweep_artifact_upload_project_once(
+                root,
+                SystemTime::now(),
+                Duration::from_secs(ARTIFACT_UPLOAD_IDLE_TTL_SECS),
+            )?;
+            for (upload_id, max_bytes) in active {
+                self.track_existing(root, &upload_id, max_bytes);
+            }
+            self.scanned_projects.insert(root_key);
+            self.scanned_directories.insert(key);
+            return Ok(());
+        }
         if self.scanned_directories.contains(&key) {
             return Ok(());
         }
@@ -328,6 +413,67 @@ impl ArtifactUploadRuntimeState {
     fn check_begin_admission(&self, root: &Path, max_bytes: usize) -> Result<(), String> {
         let usage = self.project_usage(root)?;
         enforce_artifact_upload_begin_admission(&usage, max_bytes)
+    }
+}
+
+#[cfg(test)]
+mod runtime_state_tests {
+    use super::*;
+
+    fn write_active_upload(directory: &Path, upload_id: &str, max_bytes: usize) {
+        std::fs::create_dir_all(directory).unwrap();
+        let (part, sidecar) = upload_paths(directory, upload_id);
+        std::fs::write(part, b"").unwrap();
+        write_upload_state(
+            &sidecar,
+            &ArtifactUploadState {
+                path: format!("artifacts/{upload_id}.bin"),
+                expected_bytes: None,
+                expected_sha256: None,
+                mime_type: None,
+                overwrite: false,
+                max_bytes,
+            },
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn restart_adopts_cross_directory_active_upload_limit_before_new_begin() {
+        let tmp = tempfile::tempdir().unwrap();
+        for index in 0..MAX_ACTIVE_ARTIFACT_UPLOADS_PER_PROJECT {
+            write_active_upload(
+                &tmp.path().join(format!("artifacts/set-{index}")),
+                &format!("wc_upload_restart_count_{index}"),
+                1,
+            );
+        }
+        let target = tmp.path().join("artifacts/new");
+        std::fs::create_dir_all(&target).unwrap();
+
+        let mut runtime = ArtifactUploadRuntimeState::new();
+        runtime.prepare_directory(tmp.path(), &target).unwrap();
+        let error = runtime.check_begin_admission(tmp.path(), 1).unwrap_err();
+        assert!(error.contains("active upload limit"), "{error}");
+    }
+
+    #[test]
+    fn restart_adopts_cross_directory_reserved_byte_quota_before_new_begin() {
+        let tmp = tempfile::tempdir().unwrap();
+        for index in 0..2 {
+            write_active_upload(
+                &tmp.path().join(format!("artifacts/quota-{index}")),
+                &format!("wc_upload_restart_quota_{index}"),
+                MAX_ARTIFACT_UPLOAD_BYTES,
+            );
+        }
+        let target = tmp.path().join("artifacts/new");
+        std::fs::create_dir_all(&target).unwrap();
+
+        let mut runtime = ArtifactUploadRuntimeState::new();
+        runtime.prepare_directory(tmp.path(), &target).unwrap();
+        let error = runtime.check_begin_admission(tmp.path(), 1).unwrap_err();
+        assert!(error.contains("reserved byte quota exceeded"), "{error}");
     }
 }
 

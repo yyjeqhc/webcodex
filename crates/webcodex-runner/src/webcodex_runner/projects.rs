@@ -25,12 +25,10 @@ mod registration;
 
 pub(crate) use catalog::{
     find_project_shell_context, find_project_shell_context_by_id,
-    load_runner_project_summaries_from_dir,
+    load_runner_project_summaries_from_dir, project_root_fingerprint,
 };
 #[cfg(test)]
-pub(crate) use catalog::{
-    parse_runner_project_toml, project_root_fingerprint, runner_project_summary,
-};
+pub(crate) use catalog::{parse_runner_project_toml, runner_project_summary};
 
 pub(crate) use lifecycle::{handle_project_lifecycle_operation, handle_project_operation};
 

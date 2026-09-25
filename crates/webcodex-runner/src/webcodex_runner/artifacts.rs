@@ -311,10 +311,20 @@ fn read_snapshot_changed(path: &str, expected_sha256: &str, actual_sha256: &str)
     output
 }
 
+#[cfg(test)]
 pub(crate) fn handle_artifact_file_operation(
     operation: &RunnerFileOperation,
     resolved: &Path,
     start: Instant,
+) -> CommandResult {
+    handle_artifact_file_operation_with_store(operation, resolved, start, None)
+}
+
+pub(crate) fn handle_artifact_file_operation_with_store(
+    operation: &RunnerFileOperation,
+    resolved: &Path,
+    start: Instant,
+    store_root: Option<&Path>,
 ) -> CommandResult {
     let request = operation.payload();
     match operation {
@@ -348,18 +358,34 @@ pub(crate) fn handle_artifact_file_operation(
                 }
             };
             match operation {
-                RunnerFileOperation::ArtifactUploadBegin(_) => {
-                    handle_artifact_upload_begin(request, resolved, start, &mut upload_state)
-                }
-                RunnerFileOperation::ArtifactUploadChunk(_) => {
-                    handle_artifact_upload_chunk(request, resolved, start, &mut upload_state)
-                }
-                RunnerFileOperation::ArtifactUploadFinish(_) => {
-                    handle_artifact_upload_finish(request, resolved, start, &mut upload_state)
-                }
-                RunnerFileOperation::ArtifactUploadAbort(_) => {
-                    handle_artifact_upload_abort(request, resolved, start, &mut upload_state)
-                }
+                RunnerFileOperation::ArtifactUploadBegin(_) => handle_artifact_upload_begin(
+                    request,
+                    resolved,
+                    start,
+                    &mut upload_state,
+                    store_root,
+                ),
+                RunnerFileOperation::ArtifactUploadChunk(_) => handle_artifact_upload_chunk(
+                    request,
+                    resolved,
+                    start,
+                    &mut upload_state,
+                    store_root,
+                ),
+                RunnerFileOperation::ArtifactUploadFinish(_) => handle_artifact_upload_finish(
+                    request,
+                    resolved,
+                    start,
+                    &mut upload_state,
+                    store_root,
+                ),
+                RunnerFileOperation::ArtifactUploadAbort(_) => handle_artifact_upload_abort(
+                    request,
+                    resolved,
+                    start,
+                    &mut upload_state,
+                    store_root,
+                ),
                 _ => unreachable!("upload operation already typed"),
             }
         }
@@ -1048,6 +1074,40 @@ mod tests {
         ))
     }
 
+    fn run_artifact_request_with_store(
+        root: &Path,
+        store_root: &Path,
+        kind: &str,
+        path: &str,
+        payload: Value,
+    ) -> Value {
+        let request = artifact_request(root, kind, path, payload);
+        let resolved = root.join(path);
+        let operation = match request.decode_operation().unwrap() {
+            RunnerOperation::File(operation) => operation,
+            _ => panic!("expected file operation"),
+        };
+        artifact_output(handle_artifact_file_operation_with_store(
+            &operation,
+            &resolved,
+            Instant::now(),
+            Some(store_root),
+        ))
+    }
+
+    fn reservation_file_count(store_root: &Path) -> usize {
+        let root = store_root.join(".artifact-upload-reservations");
+        let Ok(projects) = std::fs::read_dir(root) else {
+            return 0;
+        };
+        projects
+            .flatten()
+            .filter_map(|project| std::fs::read_dir(project.path()).ok())
+            .flat_map(|entries| entries.flatten())
+            .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
+            .count()
+    }
+
     fn test_upload_state(path: &str) -> ArtifactUploadState {
         ArtifactUploadState {
             path: path.to_string(),
@@ -1063,6 +1123,42 @@ mod tests {
         let (part, sidecar) = upload_paths(parent, upload_id);
         std::fs::write(&part, bytes).unwrap();
         write_upload_state(&sidecar, &test_upload_state(path)).unwrap();
+    }
+
+    #[test]
+    fn artifact_upload_store_tracks_begin_and_cleans_abort() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("project");
+        let store_root = tmp.path().join("registry");
+        std::fs::create_dir_all(&root).unwrap();
+        let path = "artifacts/imports/persisted.bin";
+
+        let begin = run_artifact_request_with_store(
+            &root,
+            &store_root,
+            "file_artifact_upload_begin",
+            path,
+            json!({
+                "path": path,
+                "expected_bytes": null,
+                "expected_sha256": null,
+                "mime_type": null,
+                "overwrite": false,
+                "max_bytes": 32,
+            }),
+        );
+        let upload_id = begin["upload_id"].as_str().unwrap().to_string();
+        assert_eq!(reservation_file_count(&store_root), 1);
+
+        let aborted = run_artifact_request_with_store(
+            &root,
+            &store_root,
+            "file_artifact_upload_abort",
+            path,
+            json!({"path": path, "upload_id": upload_id}),
+        );
+        assert_eq!(aborted["aborted"], true);
+        assert_eq!(reservation_file_count(&store_root), 0);
     }
 
     #[test]

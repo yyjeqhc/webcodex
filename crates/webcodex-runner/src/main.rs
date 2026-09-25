@@ -67,7 +67,7 @@ use webcodex_runner::{
 use webcodex_runner::{
     client_profile_runner_config, configured_validation_job_command, default_config_path,
     dispatch_request_with_outcome, err_cmd, handle_apply_patch_file_request,
-    handle_apply_text_edits_file_request, handle_artifact_file_operation,
+    handle_apply_text_edits_file_request, handle_artifact_file_operation_with_store,
     handle_basic_file_request, handle_write_project_file_request, hostname, load_config,
     max_concurrent_jobs, ok_cmd, project_registry_dir, resolve_requested_path, run_runner,
     validate_client_profile, validate_structured_edit_runner_path, CommandResult, HotRunnerConfig,
@@ -1866,7 +1866,16 @@ fn is_file_request_kind(kind: &str) -> bool {
         || is_artifact_request_kind(kind)
 }
 
+#[cfg(test)]
 fn handle_file_operation(policy: &RunnerPolicy, operation: &RunnerFileOperation) -> CommandResult {
+    handle_file_operation_with_artifact_store(policy, operation, None)
+}
+
+fn handle_file_operation_with_artifact_store(
+    policy: &RunnerPolicy,
+    operation: &RunnerFileOperation,
+    artifact_store_root: Option<&Path>,
+) -> CommandResult {
     let request = operation.payload();
     let path = request.path.as_str();
     let start = Instant::now();
@@ -1915,9 +1924,12 @@ fn handle_file_operation(policy: &RunnerPolicy, operation: &RunnerFileOperation)
         | RunnerFileOperation::ArtifactUploadBegin(_)
         | RunnerFileOperation::ArtifactUploadChunk(_)
         | RunnerFileOperation::ArtifactUploadFinish(_)
-        | RunnerFileOperation::ArtifactUploadAbort(_) => {
-            handle_artifact_file_operation(operation, &resolved, start)
-        }
+        | RunnerFileOperation::ArtifactUploadAbort(_) => handle_artifact_file_operation_with_store(
+            operation,
+            &resolved,
+            start,
+            artifact_store_root,
+        ),
         #[cfg(feature = "workspace-checkpoints")]
         RunnerFileOperation::CheckpointCreate(_) | RunnerFileOperation::CheckpointRestore(_) => {
             handle_checkpoint_file_request(operation, &resolved, start)

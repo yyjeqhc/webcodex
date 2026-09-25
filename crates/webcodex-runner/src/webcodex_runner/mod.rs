@@ -42,7 +42,7 @@ pub(crate) mod util {
 }
 pub(crate) mod validation;
 
-pub(crate) use artifacts::handle_artifact_file_operation;
+pub(crate) use artifacts::handle_artifact_file_operation_with_store;
 #[cfg(test)]
 pub(crate) use artifacts::is_artifact_request_kind;
 pub(crate) use browser::handle_browser_operation;

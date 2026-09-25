@@ -2463,7 +2463,8 @@ mod tests {
             "wc_sess_external_login",
             "cd /tmp",
         );
-        assert_eq!(changed.cwd, PathBuf::from("/tmp"));
+        let physical_tmp = Path::new("/tmp").canonicalize().unwrap();
+        assert_eq!(changed.cwd, physical_tmp);
 
         let status = manager
             .status(
@@ -2472,7 +2473,7 @@ mod tests {
                 "agent:oe:test",
             )
             .unwrap();
-        assert_eq!(status.cwd, PathBuf::from("/tmp"));
+        assert_eq!(status.cwd, physical_tmp);
         assert_eq!(status.initial_cwd, login_cwd);
 
         let closed = manager
@@ -2530,7 +2531,7 @@ mod tests {
                 "agent:oe:test",
             )
             .unwrap();
-        assert_eq!(status.cwd, PathBuf::from("/tmp"));
+        assert_eq!(status.cwd, Path::new("/tmp").canonicalize().unwrap());
         assert_eq!(status.initial_cwd, physical);
     }
 
@@ -2543,7 +2544,7 @@ mod tests {
         let opened = manager.open(spec).unwrap();
 
         assert_eq!(opened.initial_cwd, temp.path());
-        assert_eq!(opened.cwd, PathBuf::from("/tmp"));
+        assert_eq!(opened.cwd, Path::new("/tmp").canonicalize().unwrap());
     }
 
     #[test]
@@ -2565,7 +2566,10 @@ mod tests {
             "wc_sess_state",
             "PWD=/; pwd() { printf /; }",
         );
-        assert_eq!(spoofed.cwd, temp.path().join("nested"));
+        assert_eq!(
+            spoofed.cwd,
+            temp.path().join("nested").canonicalize().unwrap()
+        );
         exec(
             &manager,
             "wc_shell_state",

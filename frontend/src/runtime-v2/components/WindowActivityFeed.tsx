@@ -28,6 +28,7 @@ export function WindowActivityFeed({
   const orderedSessions = windowSessionCatalog(detail);
   const sessionOrder = new Map(orderedSessions.map((session, index) => [session.workflow_session_id, index]));
   const sessionMeta = new Map(orderedSessions.map((session) => [session.workflow_session_id, session]));
+  const jobsById = new Map((detail.jobs || []).map((job) => [job.job_id, job]));
   const callEvidenceSessions = new Set(windowSessionsWithCallEvidence(detail));
   const filterSessions = orderedSessions.filter((session) => callEvidenceSessions.has(session.workflow_session_id));
   // Keep each invocation, including repeated observation calls. The trace only
@@ -45,6 +46,8 @@ export function WindowActivityFeed({
         .map((link) => link.workflow_session_id)
         .filter((sessionId, index, values) => values.indexOf(sessionId) === index)
         .sort((left, right) => (sessionOrder.get(left) ?? Number.MAX_SAFE_INTEGER) - (sessionOrder.get(right) ?? Number.MAX_SAFE_INTEGER)),
+      asyncJobId: row.async_job_id,
+      observedJobIds: row.observed_job_ids || [],
       running: false,
     })),
     ...detail.active_requests.filter((row) => !completedTraces.has(row.server_trace_id)).map((row) => ({
@@ -56,6 +59,8 @@ export function WindowActivityFeed({
       status: "running",
       sessions: [] as string[],
       running: true,
+      asyncJobId: undefined as string | undefined,
+      observedJobIds: [] as string[],
     })),
   ].sort((a, b) => a.startedAt - b.startedAt);
   const activeSessionId = callEvidenceSessions.has(selectedSessionId) ? selectedSessionId : "";
@@ -96,6 +101,19 @@ export function WindowActivityFeed({
           const status = call.running ? "Running" : success ? "Succeeded" : failed ? "Failed" : call.status;
           const primarySession = call.sessions.find((sessionId) => sessionMeta.has(sessionId));
           const selectable = Boolean(primarySession && onSelectSession);
+          const asyncJob = call.asyncJobId ? jobsById.get(call.asyncJobId) : undefined;
+          const asyncJobLabel = asyncJob
+            ? asyncJob.active
+              ? t("Background running")
+              : asyncJob.status === "completed"
+                ? t("Completed")
+                : t(asyncJob.status)
+            : t("Background job");
+          const asyncJobDuration = asyncJob?.active && asyncJob.elapsed_secs !== undefined
+            ? durationText(asyncJob.elapsed_secs * 1000)
+            : asyncJob?.duration_ms !== undefined
+              ? durationText(asyncJob.duration_ms)
+              : "";
           return (
             <article
               className={"window-call-card" + (call.running ? " running" : "") + (selectable ? " session-linked" : "")}
@@ -107,7 +125,7 @@ export function WindowActivityFeed({
                 <strong>{call.tool}</strong>
                 <span className={"status-pill " + (call.running ? "" : success ? "good" : "warn")}>{t(status)}</span>
               </header>
-              {(path || call.sessions.length > 0) && (
+              {(path || call.sessions.length > 0 || call.asyncJobId || call.observedJobIds.length > 0) && (
                 <div className="window-call-context">
                   {path && <span className="window-project-tag" data-testid="window-project-tag" title={path}>{path}</span>}
                   {call.sessions.map((sessionId) => {
@@ -134,6 +152,19 @@ export function WindowActivityFeed({
                       </button>
                     );
                   })}
+                  {call.asyncJobId && (
+                    <span className={"window-job-tag" + (asyncJob?.active ? " active" : "")} title={call.asyncJobId}>
+                      <span className="window-job-dot" />
+                      {asyncJobLabel} · {shortId(call.asyncJobId, 14, 6)}
+                      {asyncJobDuration && <small> · {asyncJobDuration}</small>}
+                    </span>
+                  )}
+                  {call.observedJobIds.map((jobId) => (
+                    <span className="window-job-tag observe" title={jobId} key={jobId}>
+                      <span className="window-job-dot" />
+                      {t("Observing")} · {shortId(jobId, 14, 6)}
+                    </span>
+                  ))}
                 </div>
               )}
               <div className="window-call-timing">

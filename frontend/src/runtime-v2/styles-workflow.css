@@ -137,6 +137,35 @@
   color: var(--text);
 }
 .window-session-tag:disabled { cursor: default; opacity: .72; }
+.window-job-tag {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  max-width: 260px;
+  border-radius: 999px;
+  padding: 4px 8px;
+  background: var(--surface-muted);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.window-job-tag.active {
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  color: var(--text);
+}
+.window-job-tag.observe { background: var(--surface-soft); }
+.window-job-tag small { color: inherit; font-size: inherit; font-weight: 500; }
+.window-job-dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--quiet);
+}
+.window-job-tag.active .window-job-dot { background: var(--accent); }
+.window-job-tag.observe .window-job-dot { background: var(--muted); }
+
 .window-session-color-dot {
   width: 7px;
   height: 7px;

@@ -5,6 +5,7 @@ use crate::models::{
 use crate::Database;
 use rusqlite::{params, Connection};
 use std::collections::BTreeSet;
+use webcodex_core::workflow_session_contract::is_safe_job_id;
 
 // Window history is already bounded by ActionAudit retention. Keep the human
 // console able to inspect the retained set instead of imposing tiny UI-only caps.
@@ -168,7 +169,7 @@ impl Database {
                     e.principal_correlation_kind, e.principal_correlation_id,
                     e.request_observed_at_ms, e.response_handed_at_ms,
                     e.window_transition_kind, e.response_streaming,
-                    e.window_continuity_eligible, e.http_status
+                    e.window_continuity_eligible, e.http_status, e.ids_json
              FROM action_events e
              WHERE e.client_window_key = ?1
                AND e.window_started_at_ms IS NOT NULL
@@ -230,7 +231,8 @@ impl Database {
                     e.window_meaningful, e.recorder_gap_session_id,
                     e.principal_correlation_kind, e.principal_correlation_id,
                     e.request_observed_at_ms, e.response_handed_at_ms,
-                    e.window_transition_kind, e.response_streaming, e.window_continuity_eligible, e.http_status
+                    e.window_transition_kind, e.response_streaming, e.window_continuity_eligible, e.http_status,
+                    e.ids_json
              FROM action_events e JOIN selected s ON s.event_id = e.event_id
              ORDER BY e.window_ended_at_ms DESC, e.event_id DESC",
         )?;
@@ -266,7 +268,7 @@ impl Database {
                     e.principal_correlation_kind, e.principal_correlation_id,
                     e.request_observed_at_ms, e.response_handed_at_ms,
                     e.window_transition_kind, e.response_streaming,
-                    e.window_continuity_eligible, e.http_status, e.summary_json
+                    e.window_continuity_eligible, e.http_status, e.ids_json, e.summary_json
              FROM action_events e
              WHERE e.client_window_key = ?1
                AND e.window_started_at_ms IS NOT NULL
@@ -284,11 +286,11 @@ impl Database {
                 drop(stmt);
                 let mut stmt = conn.prepare(&sql)?;
                 let records =
-                    collect_window_events(&conn, &mut stmt, params![window_key, limit], Some(21))?;
+                    collect_window_events(&conn, &mut stmt, params![window_key, limit], Some(22))?;
                 return Ok(records);
             }
         };
-        collect_window_event_rows(&conn, &mut rows, Some(21))
+        collect_window_event_rows(&conn, &mut rows, Some(22))
     }
 
     /// Latest authoritative Window/Session relation for diagnostic continuity.
@@ -477,6 +479,40 @@ fn collect_window_events<P: rusqlite::Params>(
     collect_window_event_rows(conn, &mut rows, code_mode_summary_column)
 }
 
+fn window_job_correlation_from_ids_json(ids_json: Option<String>) -> (Option<String>, Vec<String>) {
+    let Some(value) = ids_json
+        .as_deref()
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
+    else {
+        return (None, Vec::new());
+    };
+    let async_job_id = value
+        .get("async_job_id")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|job_id| is_safe_job_id(job_id))
+        .map(str::to_string);
+    let mut observed_job_ids = Vec::new();
+    if let Some(items) = value
+        .get("observed_job_ids")
+        .and_then(serde_json::Value::as_array)
+    {
+        for item in items.iter().take(8) {
+            let Some(job_id) = item
+                .as_str()
+                .map(str::trim)
+                .filter(|job_id| is_safe_job_id(job_id))
+            else {
+                continue;
+            };
+            if !observed_job_ids.iter().any(|existing| existing == job_id) {
+                observed_job_ids.push(job_id.to_string());
+            }
+        }
+    }
+    (async_job_id, observed_job_ids)
+}
+
 fn collect_window_event_rows(
     conn: &Connection,
     rows: &mut rusqlite::Rows<'_>,
@@ -485,6 +521,7 @@ fn collect_window_event_rows(
     let mut out = Vec::new();
     while let Some(row) = rows.next()? {
         let event_id: String = row.get(0)?;
+        let (async_job_id, observed_job_ids) = window_job_correlation_from_ids_json(row.get(21)?);
         out.push(WindowActivityEventRecord {
             event_id: event_id.clone(),
             client_window_key: row.get(1)?,
@@ -498,6 +535,8 @@ fn collect_window_event_rows(
             project: row.get(9)?,
             status: row.get(10)?,
             meaningful: row.get(11)?,
+            async_job_id,
+            observed_job_ids,
             recorder_gap_session_id: row.get(12)?,
             workflow_links: workflow_links_for_event(conn, &event_id)?,
             principal_correlation_kind: row.get(13)?,
@@ -671,6 +710,38 @@ mod tests {
             .collect::<Vec<_>>();
         db.append_action_event_and_update_session(&event, &records, 1, 0, 0, 0, 1, 0, 0)
             .unwrap();
+    }
+
+    #[test]
+    fn window_activity_projects_safe_job_identity_from_audit_ids() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Database::open(&tmp.path().join("window-jobs.db")).unwrap();
+        seed_session(&db);
+        let mut item = event("job-a", "wj", "alice", "agent:r:p", 1_000);
+        item.ids_json = serde_json::json!({
+            "async_job_id": "wc_job_background_123",
+            "observed_job_ids": [
+                "wc_job_observed_456",
+                "../unsafe",
+                "wc_job_observed_456"
+            ],
+            "observation_token": "must-not-project"
+        })
+        .to_string();
+        append(&db, item, &[]);
+
+        let rows = db
+            .list_window_activity_events("wj", Some(("username", "alice")), 20)
+            .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            rows[0].async_job_id.as_deref(),
+            Some("wc_job_background_123")
+        );
+        assert_eq!(
+            rows[0].observed_job_ids,
+            vec!["wc_job_observed_456".to_string()]
+        );
     }
 
     #[test]

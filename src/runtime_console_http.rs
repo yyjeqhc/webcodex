@@ -23,7 +23,7 @@ use crate::tool_runtime::{ToolCall, ToolRuntime};
 use salvo::prelude::*;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 use webcodex_core::runner_job_lifecycle::RunnerJobLifecycle;
 
@@ -64,6 +64,7 @@ const DEFAULT_WINDOW_ACTIVITY_LIMIT: usize = 2_000;
 const MAX_WINDOW_ACTIVITY_LIMIT: usize = 2_000;
 const DEFAULT_WINDOW_SESSION_LIMIT: usize = DEFAULT_MAX_SESSIONS;
 const MAX_WINDOW_SESSION_LIMIT: usize = DEFAULT_MAX_SESSIONS;
+const MAX_WINDOW_JOB_LIMIT: usize = 32;
 const MAX_WINDOW_KEY_CHARS: usize = 128;
 
 pub(crate) fn routes() -> Router {
@@ -382,6 +383,8 @@ struct RuntimeConsoleWindowDetail {
     activity: Vec<RuntimeConsoleWindowActivity>,
     activity_returned: usize,
     activity_truncated: bool,
+    jobs: Vec<RuntimeConsoleWindowJob>,
+    jobs_truncated: bool,
     visibility: RuntimeConsoleWindowVisibility,
 }
 
@@ -395,6 +398,22 @@ struct RuntimeConsoleActiveWindowRequest {
     project: Option<String>,
     started_at_ms: i64,
     elapsed_ms: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct RuntimeConsoleWindowJob {
+    job_id: String,
+    status: String,
+    active: bool,
+    terminal: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    started_at: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ended_at: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    duration_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    elapsed_secs: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -2170,6 +2189,53 @@ async fn active_window_count_for_auth(
     Ok(visible_windows)
 }
 
+async fn window_jobs_for_auth(
+    runtime: &ToolRuntime,
+    auth: &AuthContext,
+    activity: &[RuntimeConsoleWindowActivity],
+) -> (Vec<RuntimeConsoleWindowJob>, bool) {
+    let mut seen = HashSet::new();
+    let mut job_ids = Vec::new();
+    for event in activity {
+        for job_id in event
+            .async_job_id
+            .iter()
+            .chain(event.observed_job_ids.iter())
+        {
+            if seen.insert(job_id.clone()) {
+                job_ids.push(job_id.clone());
+            }
+        }
+    }
+    let truncated = job_ids.len() > MAX_WINDOW_JOB_LIMIT;
+    job_ids.truncate(MAX_WINDOW_JOB_LIMIT);
+
+    let access = crate::runner_http::runner_access_from_auth(Some(auth));
+    let mut jobs = Vec::new();
+    for job_id in job_ids {
+        let Ok(job) = runtime
+            .runner_registry
+            .get_job_for_auth(access.as_ref(), &job_id)
+            .await
+        else {
+            continue;
+        };
+        let terminal =
+            RunnerJobLifecycle::from_wire(&job.status).is_ok_and(RunnerJobLifecycle::is_terminal);
+        jobs.push(RuntimeConsoleWindowJob {
+            job_id: job.job_id,
+            status: job.status.clone(),
+            active: webcodex_runner_registry::job_status_is_active(&job.status),
+            terminal,
+            started_at: job.started_at,
+            ended_at: job.ended_at,
+            duration_ms: job.duration_ms,
+            elapsed_secs: job.elapsed_secs,
+        });
+    }
+    (jobs, truncated)
+}
+
 async fn window_for_auth(
     runtime: &ToolRuntime,
     auth: &AuthContext,
@@ -2296,6 +2362,8 @@ async fn window_for_auth(
     let activity_truncated = activity.len() > activity_limit || raw_activity_at_cap;
     activity.truncate(activity_limit);
 
+    let (jobs, jobs_truncated) = window_jobs_for_auth(runtime, auth, &activity).await;
+
     let session_scan_limit = if auth.is_admin_caller() {
         session_limit
             .saturating_add(1)
@@ -2374,6 +2442,8 @@ async fn window_for_auth(
         linked_sessions,
         activity_returned: activity.len(),
         activity_truncated,
+        jobs,
+        jobs_truncated,
         activity,
         visibility: RuntimeConsoleWindowVisibility {
             scope: if principal.is_none() {

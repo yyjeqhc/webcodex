@@ -281,6 +281,8 @@ export type WindowActivity = {
   project?: string;
   status: string;
   meaningful: boolean;
+  async_job_id?: string;
+  observed_job_ids?: string[];
   recorder_gap_session_id?: string;
   server_trace_id?: string;
   workflow_sessions: WindowActivitySession[];
@@ -295,6 +297,17 @@ export type WindowLinkedSession = {
   relation_count: number;
   title?: string;
   lifecycle?: string;
+};
+
+export type WindowJob = {
+  job_id: string;
+  status: string;
+  active: boolean;
+  terminal: boolean;
+  started_at?: number;
+  ended_at?: number;
+  duration_ms?: number;
+  elapsed_secs?: number;
 };
 
 export type WindowDetail = {
@@ -318,6 +331,8 @@ export type WindowDetail = {
   activity: WindowActivity[];
   activity_returned: number;
   activity_truncated: boolean;
+  jobs?: WindowJob[];
+  jobs_truncated?: boolean;
   visibility: { scope: "global" | "principal" };
 };
 

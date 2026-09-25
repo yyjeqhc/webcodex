@@ -40,6 +40,10 @@ pub(crate) struct RuntimeConsoleWindowActivity {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) http_status: Option<i64>,
     pub(crate) meaningful: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) async_job_id: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) observed_job_ids: Vec<String>,
     #[cfg(feature = "experimental-code-mode")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) code_mode_composition: Option<RuntimeConsoleCodeModeComposition>,
@@ -241,6 +245,8 @@ pub(crate) async fn project_visible_window_activity(
         // Persisted event-time truth: never recompute historical meaningfulness
         // from the current ToolDefinition activity policy.
         meaningful: event.meaningful,
+        async_job_id: event.async_job_id,
+        observed_job_ids: event.observed_job_ids,
         #[cfg(feature = "experimental-code-mode")]
         code_mode_composition,
         recorder_gap_session_id: event.recorder_gap_session_id,

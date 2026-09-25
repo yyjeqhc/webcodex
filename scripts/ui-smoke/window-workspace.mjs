@@ -47,6 +47,17 @@ try {
             ended_at_ms: base.ended_at_ms + index * 50,
             workflow_sessions: [{ workflow_session_id: session.workflow_session_id, project: base.project, relation: 'recording' }],
           }));
+          const fixtureJobId = 'wc_job_fixture_background_123';
+          taggedCalls[0] = { ...taggedCalls[0], tool_name: 'cargo_test', async_job_id: fixtureJobId };
+          taggedCalls[1] = { ...taggedCalls[1], tool_name: 'observe_jobs', observed_job_ids: [fixtureJobId] };
+          data.jobs = [{
+            job_id: fixtureJobId,
+            status: 'running',
+            active: true,
+            terminal: false,
+            elapsed_secs: 95,
+          }];
+          data.jobs_truncated = false;
           data.activity = [
             { ...base, server_trace_id: 'observe-1', tool_name: 'runtime_status', meaningful: false, project: undefined, workflow_sessions: [] },
             ...taggedCalls,
@@ -74,6 +85,11 @@ try {
         await sessionFilter.waitFor();
         assert.equal(await sessionFilter.locator('option').count(), 13);
         assert.equal(await sessionFilter.inputValue(), '');
+        const jobTags = page.locator('.window-job-tag');
+        assert.equal(await jobTags.count(), 2);
+        assert((await jobTags.nth(0).textContent()).includes(zh ? '后台运行' : 'Background running'));
+        assert((await jobTags.nth(0).textContent()).includes('1m 35s'));
+        assert((await jobTags.nth(1).textContent()).includes(zh ? '观察' : 'Observing'));
         await sessionFilter.selectOption('wc_sess_fixture_02');
         assert.equal(await calls.count(), 1);
         await sessionFilter.selectOption('');
@@ -86,7 +102,7 @@ try {
         assert(bounds.body <= width + 1 && bounds.root <= width + 1, JSON.stringify(bounds));
         assert(bounds.filterRight !== null && bounds.filterRight <= width + 1, JSON.stringify(bounds));
         await page.screenshot({ path: new URL(`calls-${width}-${theme}-${language}.png`, output).pathname, fullPage: true });
-        checks.push({ width, theme, language, overflow: false, individualCalls: 14, centerTabs: 2, sessionFilter: true, sessionOptions: 13 });
+        checks.push({ width, theme, language, overflow: false, individualCalls: 14, centerTabs: 2, sessionFilter: true, sessionOptions: 13, jobLinks: 2 });
         await page.close();
       }
     }

@@ -316,10 +316,66 @@ pub async fn mcp_info(req: &mut Request, depot: &mut Depot, res: &mut Response) 
     })));
 }
 
+#[derive(Debug, Default)]
+struct McpToolJobAuditCorrelation {
+    async_job_id: Option<String>,
+    observed_job_ids: Vec<String>,
+}
+
+fn safe_audit_job_id(value: Option<&Value>) -> Option<String> {
+    value
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|job_id| webcodex_core::workflow_session_contract::is_safe_job_id(job_id))
+        .map(str::to_string)
+}
+
+fn mcp_tool_job_audit_correlation(
+    tool_name: Option<&str>,
+    body: &Value,
+) -> McpToolJobAuditCorrelation {
+    let Some(output) = body.pointer("/result/structuredContent/output") else {
+        return McpToolJobAuditCorrelation::default();
+    };
+    if tool_name == Some("observe_jobs") {
+        let mut observed_job_ids = Vec::new();
+        if let Some(items) = output.get("items").and_then(Value::as_array) {
+            for item in items.iter().take(8) {
+                let job_id = safe_audit_job_id(
+                    item.get("job_id")
+                        .or_else(|| item.get("output").and_then(|output| output.get("job_id"))),
+                );
+                if let Some(job_id) = job_id {
+                    if !observed_job_ids.contains(&job_id) {
+                        observed_job_ids.push(job_id);
+                    }
+                }
+            }
+        }
+        return McpToolJobAuditCorrelation {
+            async_job_id: None,
+            observed_job_ids,
+        };
+    }
+
+    let promoted = output
+        .get("promoted_to_job")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if !promoted && tool_name != Some("run_job") {
+        return McpToolJobAuditCorrelation::default();
+    }
+    McpToolJobAuditCorrelation {
+        async_job_id: safe_audit_job_id(output.get("job_id")),
+        observed_job_ids: Vec::new(),
+    }
+}
+
 fn mcp_tool_action_audit_ids(
     success: bool,
     observed_goal_plan_id: Option<&str>,
     correlation: &crate::tool_runtime::ToolCallCorrelation,
+    jobs: Option<&McpToolJobAuditCorrelation>,
 ) -> Option<Value> {
     if !success {
         return None;
@@ -333,6 +389,26 @@ fn mcp_tool_action_audit_ids(
             "business_session_id".to_string(),
             Value::String(session_id.to_string()),
         );
+    }
+    if let Some(jobs) = jobs {
+        if let Some(job_id) = jobs.async_job_id.as_deref() {
+            ids.insert(
+                "async_job_id".to_string(),
+                Value::String(job_id.to_string()),
+            );
+        }
+        if !jobs.observed_job_ids.is_empty() {
+            ids.insert(
+                "observed_job_ids".to_string(),
+                Value::Array(
+                    jobs.observed_job_ids
+                        .iter()
+                        .cloned()
+                        .map(Value::String)
+                        .collect(),
+                ),
+            );
+        }
     }
     (!ids.is_empty()).then_some(Value::Object(ids))
 }
@@ -552,7 +628,8 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
                              status: StatusCode,
                              error: Option<String>,
                              model_ergonomics: Option<&ModelErgonomicsRecord>,
-                             correlation: &crate::tool_runtime::ToolCallCorrelation|
+                             correlation: &crate::tool_runtime::ToolCallCorrelation,
+                             jobs: Option<&McpToolJobAuditCorrelation>|
      -> Option<(
         ActionAuditRecord,
         crate::action_audit::ActionAuditRecordTiming,
@@ -575,9 +652,12 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
                         .is_meaningful(),
                 )
                 .recorder_gap(correlation.recorder_gap_session_id.clone());
-            if let Some(ids) =
-                mcp_tool_action_audit_ids(success, observed_goal_plan_id.as_deref(), correlation)
-            {
+            if let Some(ids) = mcp_tool_action_audit_ids(
+                success,
+                observed_goal_plan_id.as_deref(),
+                correlation,
+                jobs,
+            ) {
                 event = event.ids(ids);
             }
             event.project = correlation
@@ -698,6 +778,7 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
                 Some("mcp dispatch hard timeout".to_string()),
                 timeout_model_ergonomics.as_ref(),
                 &tool_correlation,
+                None,
             );
             guard.capture_payload("final_response", &body);
             let estimated = estimate_json_bytes(&body);
@@ -806,6 +887,7 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
                 .and_then(|s| s.get("success").or_else(|| s.get("ok")))
                 .and_then(|v| v.as_bool());
             let audit_success = tool_success.unwrap_or(true);
+            let job_correlation = mcp_tool_job_audit_correlation(tool_name.as_deref(), &body);
             let audit_event = build_audit_event(
                 audit_success,
                 StatusCode::OK,
@@ -818,6 +900,7 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
                 },
                 model_ergonomics.as_ref(),
                 &tool_correlation,
+                Some(&job_correlation),
             );
             guard.capture_payload("final_response", &body);
             let estimated = estimate_json_bytes(&body);
@@ -838,7 +921,7 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
         }
         McpOutcome::ArtifactExportStream { id, plan } => {
             let audit_event =
-                build_audit_event(true, StatusCode::OK, None, None, &tool_correlation);
+                build_audit_event(true, StatusCode::OK, None, None, &tool_correlation, None);
             guard.response_serialized(200, None, Some(true), None, "artifact_export_stream");
             res.status_code(StatusCode::OK);
             let _ = res.add_header("content-type", "application/json", true);
@@ -869,6 +952,7 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
                 body["error"]["message"].as_str().map(str::to_string),
                 model_ergonomics.as_ref(),
                 &tool_correlation,
+                None,
             );
             guard.capture_payload("final_response", &body);
             let estimated = estimate_json_bytes(&body);
@@ -895,6 +979,7 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
                 body["error"]["message"].as_str().map(str::to_string),
                 model_ergonomics.as_ref(),
                 &tool_correlation,
+                None,
             );
             guard.capture_payload("final_response", &body);
             let estimated = estimate_json_bytes(&body);
@@ -927,6 +1012,7 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
                 )),
                 model_ergonomics.as_ref(),
                 &tool_correlation,
+                None,
             );
             guard.capture_payload("final_response", &body);
             let estimated = estimate_json_bytes(&body);

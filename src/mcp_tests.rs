@@ -33,21 +33,82 @@ fn mcp_gateway_tool_call_params_do_not_retain_outer_meta() {
 fn mcp_tool_action_audit_ids_keep_successful_business_session_internal_and_bounded() {
     let mut correlation = crate::tool_runtime::ToolCallCorrelation::default();
     correlation.business_session_id = Some("wc_sess_AAAAAAAAAAAAAAAA".to_string());
-    let ids = mcp_tool_action_audit_ids(true, Some("wc_goal_BBBBBBBBBBBBBBBB"), &correlation)
+    let ids = mcp_tool_action_audit_ids(true, Some("wc_goal_BBBBBBBBBBBBBBBB"), &correlation, None)
         .expect("successful bounded ids");
     assert_eq!(ids["business_session_id"], "wc_sess_AAAAAAAAAAAAAAAA");
     assert_eq!(ids["goal_id"], "wc_goal_BBBBBBBBBBBBBBBB");
     assert_eq!(ids.as_object().unwrap().len(), 2);
     assert!(
-        mcp_tool_action_audit_ids(false, Some("wc_goal_BBBBBBBBBBBBBBBB"), &correlation).is_none()
+        mcp_tool_action_audit_ids(false, Some("wc_goal_BBBBBBBBBBBBBBBB"), &correlation, None,)
+            .is_none()
     );
 
     correlation.business_session_id = None;
     assert_eq!(
-        mcp_tool_action_audit_ids(true, Some("wc_goal_BBBBBBBBBBBBBBBB"), &correlation),
+        mcp_tool_action_audit_ids(true, Some("wc_goal_BBBBBBBBBBBBBBBB"), &correlation, None,),
         Some(json!({"goal_id": "wc_goal_BBBBBBBBBBBBBBBB"}))
     );
-    assert!(mcp_tool_action_audit_ids(true, None, &correlation).is_none());
+    assert!(mcp_tool_action_audit_ids(true, None, &correlation, None).is_none());
+}
+
+#[test]
+fn mcp_job_audit_correlation_keeps_only_stable_job_identity() {
+    let handoff = json!({
+        "result": {
+            "structuredContent": {
+                "success": true,
+                "output": {
+                    "promoted_to_job": true,
+                    "job_id": "wc_job_background_123",
+                    "observation_token": "opaque-token-must-not-be-recorded"
+                }
+            }
+        }
+    });
+    let correlated = mcp_tool_job_audit_correlation(Some("cargo_test"), &handoff);
+    assert_eq!(
+        correlated.async_job_id.as_deref(),
+        Some("wc_job_background_123")
+    );
+    assert!(correlated.observed_job_ids.is_empty());
+
+    let observed = json!({
+        "result": {
+            "structuredContent": {
+                "success": true,
+                "output": {
+                    "items": [
+                        {"job_id": "wc_job_background_123", "observation_token": "one"},
+                        {"job_id": "wc_job_second_456", "observation_token": "two"},
+                        {"job_id": "wc_job_background_123", "observation_token": "duplicate"},
+                        {"job_id": "../unsafe"}
+                    ]
+                }
+            }
+        }
+    });
+    let correlated = mcp_tool_job_audit_correlation(Some("observe_jobs"), &observed);
+    assert_eq!(
+        correlated.observed_job_ids,
+        vec![
+            "wc_job_background_123".to_string(),
+            "wc_job_second_456".to_string()
+        ]
+    );
+    assert!(correlated.async_job_id.is_none());
+
+    let ids = mcp_tool_action_audit_ids(
+        true,
+        None,
+        &crate::tool_runtime::ToolCallCorrelation::default(),
+        Some(&correlated),
+    )
+    .unwrap();
+    assert_eq!(
+        ids,
+        json!({"observed_job_ids":["wc_job_background_123","wc_job_second_456"]})
+    );
+    assert!(!ids.to_string().contains("token"));
 }
 
 #[test]

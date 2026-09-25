@@ -1070,6 +1070,22 @@ Object.assign(RUNTIME_ZH_TEXT, {
   "Reserved for the next Window-level collaboration design.": "此位置保留给下一步的窗口级协作设计。"
 });
 
+Object.assign(RUNTIME_ZH_TEXT, {
+  "Background job": "后台任务",
+  "Background running": "后台运行",
+  "Observing": "观察",
+  "completed": "已完成",
+  "failed": "失败",
+  "stopped": "已停止",
+  "lost": "已丢失",
+  "timeout": "超时",
+  "timed_out": "超时",
+  "cancelled": "已取消",
+  "recovering": "恢复中",
+  "queued": "排队中",
+  "running": "运行中"
+});
+
 export function translate(source: string, language: RuntimeLanguage = "en"): string {
   return language === "zh-CN" ? (RUNTIME_ZH_TEXT[source] || source) : source;
 }

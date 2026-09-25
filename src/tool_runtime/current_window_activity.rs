@@ -11,9 +11,9 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 
 const DEFAULT_LIMIT: usize = 20;
-const MAX_LIMIT: usize = 50;
-const SCAN_LIMIT: usize = 200;
-const MAX_OUTPUT_BYTES: usize = 24 * 1024;
+const MAX_LIMIT: usize = 200;
+const SCAN_LIMIT: usize = 2_000;
+const MAX_OUTPUT_BYTES: usize = 96 * 1024;
 const MAX_ACTIVE_REQUESTS: usize = 8;
 
 #[derive(Default, Serialize)]

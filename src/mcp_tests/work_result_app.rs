@@ -36,10 +36,11 @@ async fn handle_with_server_apps_enabled(
 async fn work_result_descriptor_is_explicit_sparse_app_only_and_resource_backed() {
     assert_eq!(
         MCP_WORK_RESULT_UI_RESOURCE_URI,
-        "ui://webcodex/work-result/v6"
+        "ui://webcodex/work-result/v7"
     );
     assert!(MCP_WORK_RESULT_UI_RESOURCE_LEGACY_URIS.contains(&"ui://webcodex/work-result/v4"));
     assert!(MCP_WORK_RESULT_UI_RESOURCE_LEGACY_URIS.contains(&"ui://webcodex/work-result/v5"));
+    assert!(MCP_WORK_RESULT_UI_RESOURCE_LEGACY_URIS.contains(&"ui://webcodex/work-result/v6"));
     let runtime = test_runtime();
 
     let ui = handle_with_server_apps_enabled(
@@ -79,13 +80,11 @@ async fn work_result_descriptor_is_explicit_sparse_app_only_and_resource_backed(
         Some(&json!(MCP_WORK_RESULT_UI_RESOURCE_URI))
     );
     assert!(present.pointer("/_meta/ui/visibility").is_none());
+    assert_eq!(present["inputSchema"]["required"], json!(["project"]));
     let state = tool(&ui["result"], "work_result_state").expect("app-only work_result_state");
     assert_eq!(state.pointer("/_meta/ui/visibility"), Some(&json!(["app"])));
     assert!(state.pointer("/_meta/ui/resourceUri").is_none());
-    assert_eq!(
-        state["inputSchema"]["required"],
-        json!(["project", "session_id"])
-    );
+    assert_eq!(state["inputSchema"]["required"], json!(["project"]));
     let send =
         tool(&ui["result"], "work_result_send_message").expect("app-only work_result_send_message");
     assert_eq!(send.pointer("/_meta/ui/visibility"), Some(&json!(["app"])));
@@ -262,10 +261,10 @@ async fn work_result_resource_is_canonical_while_changes_resources_are_hidden_co
         .find(|resource| resource["uri"] == MCP_WORK_RESULT_UI_RESOURCE_URI)
         .expect("canonical Work Result resource");
     let work_description = work_resource["description"].as_str().unwrap();
-    assert!(work_description.contains("user-facing task card"));
-    assert!(work_description.contains("app-only refreshes"));
-    assert!(work_description.contains("seal one immutable final-changes snapshot"));
-    assert!(work_description.contains("same Session message store as WebUI"));
+    assert!(work_description.contains("client Window"));
+    assert!(work_description.contains("Window ActionAudit activity"));
+    assert!(work_description.contains("observe/diagnostic"));
+    assert!(work_description.contains("optional linked evidence"));
     assert!(!resources
         .iter()
         .any(|resource| resource["uri"] == MCP_RESULT_UI_RESOURCE_URI));
@@ -458,9 +457,12 @@ fn work_result_html_is_bounded_live_progress_ui() {
         "changes_file_diff",
         "work_result_send_message",
         "wc_changes_snapshot_",
-        "What changed",
+        "Window activity",
+        "Activity",
+        "Collaboration",
+        "Final changes",
         "Message WebCodex",
-        "Shared with WebUI",
+        "Linked work conversation",
         "Acknowledged",
         "Handled",
         "ui/notifications/tool-input",
@@ -475,6 +477,7 @@ fn work_result_html_is_bounded_live_progress_ui() {
         "visibilitychange",
         "VISIBLE_REFRESH_MS",
         "HIDDEN_REFRESH_MS",
+        "Observe · ",
     ] {
         assert!(
             MCP_WORK_RESULT_APP_HTML.contains(required),
@@ -482,6 +485,9 @@ fn work_result_html_is_bounded_live_progress_ui() {
         );
     }
     for forbidden in [
+        "Task workflow",
+        "Checks and review",
+        "Result · Ready",
         "setInterval",
         "clearInterval",
         "POLL_MS",

@@ -21,6 +21,7 @@ use webcodex_workflow_session::{
 const WORK_RESULT_SESSION_EVENT_LIMIT: usize = 200;
 const WORK_RESULT_VALIDATION_LIMIT: usize = 20;
 const WORK_RESULT_ACTIVITY_LIMIT: usize = 24;
+const WORK_RESULT_WINDOW_ACTIVITY_LIMIT: usize = 200;
 pub(crate) const MAX_WORK_RESULT_FILES: usize = 8;
 const MAX_WORK_RESULT_PATH_CHARS: usize = 512;
 const MAX_WORK_RESULT_BRANCH_CHARS: usize = 160;
@@ -37,14 +38,14 @@ impl ToolRuntime {
         session_id: String,
         auth: Option<&AuthContext>,
     ) -> ToolResult {
-        self.present_work_result_for_window(project, session_id, auth, None)
+        self.present_work_result_for_window(project, Some(session_id), auth, None)
             .await
     }
 
     pub(crate) async fn present_work_result_for_window(
         &self,
         project: String,
-        session_id: String,
+        session_id: Option<String>,
         auth: Option<&AuthContext>,
         window: Option<&ClientWindow>,
     ) -> ToolResult {
@@ -59,14 +60,14 @@ impl ToolRuntime {
         session_id: String,
         auth: Option<&AuthContext>,
     ) -> ToolResult {
-        self.work_result_state_for_window(project, session_id, auth, None)
+        self.work_result_state_for_window(project, Some(session_id), auth, None)
             .await
     }
 
     pub(crate) async fn work_result_state_for_window(
         &self,
         project: String,
-        session_id: String,
+        session_id: Option<String>,
         auth: Option<&AuthContext>,
         window: Option<&ClientWindow>,
     ) -> ToolResult {
@@ -116,19 +117,11 @@ impl ToolRuntime {
         }))
     }
 
-    async fn authorize_work_result_target(
+    async fn authorize_work_result_project(
         &self,
         project: &str,
-        session_id: &str,
-        tool_name: &'static str,
         auth: Option<&AuthContext>,
-    ) -> Result<(String, SessionSummary), ToolResult> {
-        if let Err(result) = self
-            .authorize_session_target(session_id, tool_name, auth)
-            .await
-        {
-            return Err(result);
-        }
+    ) -> Result<String, ToolResult> {
         let resolved = self
             .resolve_project_input_for_auth(project, auth)
             .await
@@ -143,223 +136,190 @@ impl ToolRuntime {
                 }),
             ));
         }
+        Ok(resolved.resolved_id)
+    }
+
+    async fn authorize_work_result_target(
+        &self,
+        project: &str,
+        session_id: &str,
+        tool_name: &'static str,
+        auth: Option<&AuthContext>,
+    ) -> Result<(String, SessionSummary), ToolResult> {
+        if let Err(result) = self
+            .authorize_session_target(session_id, tool_name, auth)
+            .await
+        {
+            return Err(result);
+        }
+        let resolved_project = self.authorize_work_result_project(project, auth).await?;
         let Some(summary) = self
             .sessions
             .summary(session_id, Some(WORK_RESULT_SESSION_EVENT_LIMIT))
         else {
             return Err(unknown_session_result(session_id));
         };
-        if summary.project.as_deref() != Some(resolved.resolved_id.as_str()) {
+        if summary.project.as_deref() != Some(resolved_project.as_str()) {
             let mismatch = SessionProjectMismatch {
                 session_project: summary
                     .project
                     .clone()
                     .unwrap_or_else(|| "<unscoped>".to_string()),
-                request_project: resolved.resolved_id.clone(),
+                request_project: resolved_project.clone(),
             };
             return Err(session_project_mismatch_result(
                 session_id, tool_name, &mismatch,
             ));
         }
-        Ok((resolved.resolved_id, summary))
+        Ok((resolved_project, summary))
     }
 
-    /// Project/Session authority is shared by initial presentation and explicit
-    /// live refresh. Neither read path writes the target Session. Collaboration
-    /// is a separate explicit App-only mutation through the canonical Session
-    /// message store. A successful coding closeout may expose one sealed final
-    /// changes snapshot for this exact attempt.
+    /// The persistent card is Window-first. Project authorization is mandatory;
+    /// Workflow Session evidence is optional and may appear later in the same Window.
     async fn exact_work_result(
         &self,
         project: String,
-        session_id: String,
+        session_id: Option<String>,
         tool_name: &'static str,
         auth: Option<&AuthContext>,
         window: Option<&ClientWindow>,
     ) -> ToolResult {
-        let (resolved_project, summary) = match self
-            .authorize_work_result_target(&project, &session_id, tool_name, auth)
-            .await
-        {
-            Ok(value) => value,
+        let resolved_project = match self.authorize_work_result_project(&project, auth).await {
+            Ok(project) => project,
             Err(result) => return result,
         };
 
-        // Deliberately omit business session_id here. This is a live Project
-        // read, not Session evidence, and an explicit App refresh must never
-        // append to the target Session merely because the card requested it.
+        // Read the same Window ActionAudit truth used by Runtime WebUI. The App's own
+        // hidden refresh tools are excluded from Window correlation at MCP ingress.
+        let observed = match window {
+            Some(window) => {
+                self.current_window_activity(
+                    Some(window),
+                    auth,
+                    Some(WORK_RESULT_WINDOW_ACTIVITY_LIMIT),
+                    true,
+                )
+                .await
+                .output
+            }
+            None => json!({"status":"unavailable","reason_code":"window_identity_unavailable"}),
+        };
+
+        let summary = if let Some(session_id) = session_id.as_deref() {
+            match self
+                .authorize_work_result_target(&resolved_project, session_id, tool_name, auth)
+                .await
+            {
+                Ok((_, summary)) => Some(summary),
+                Err(result) => return result,
+            }
+        } else if let Some(discovered) = work_result_linked_session_id(&observed, &resolved_project)
+        {
+            self.authorize_work_result_target(&resolved_project, &discovered, tool_name, auth)
+                .await
+                .ok()
+                .map(|(_, summary)| summary)
+        } else {
+            None
+        };
+
+        // Keep legacy compact workspace/check/review fields when a Session is linked so
+        // already-cached v6 cards remain readable. v7 does not use them as navigation.
         let workspace_result = self
             .show_changes_for_presentation(resolved_project.clone())
             .await;
-        let projection_summary = self.refresh_validation_source_summary(&summary);
-        let validation = validation_summary_from_events(
-            &projection_summary.events,
-            WORK_RESULT_VALIDATION_LIMIT,
-        );
-        let current_validation = current_validation_evidence_for_session(
-            &projection_summary,
-            WORK_RESULT_VALIDATION_LIMIT,
-        )
-        .evidence;
-        let review = review_evidence_summary_for_session(&projection_summary);
-        let history_partial = summary.events_truncated;
-        let mut projection = build_work_result_projection(
-            &resolved_project,
-            &session_id,
-            workspace_result.success,
-            &workspace_result.output,
-            &validation,
-            &current_validation,
-            &review,
-            history_partial,
-        );
-        projection["session"] = work_result_session(&summary);
-        projection["activity"] = self.work_result_activity(window, auth, &summary).await;
-        projection["collaboration"] = self.work_result_collaboration(&summary, auth);
-        // Reuse the exact Session's paired/deduplicated Console evidence. Window
-        // activity is a separate observation and never supplies this timeline.
-        if let Some(detail) = self.workflow_session_console_detail(
-            &resolved_project,
-            &session_id,
-            Some(WORK_RESULT_ACTIVITY_LIMIT),
-        ) {
-            let activity: Vec<Value> = detail
-                .activity
-                .iter()
-                .map(|item| {
-                    json!({
-                        "label": match item.kind.as_str() {
-                            "Read" => "Read project files",
-                            "Searched" => "Searched the project",
-                            "Navigated" | "Explored" => "Explored the project",
-                            "Edited" => "Edited code",
-                            "Tested" => "Ran checks",
-                            "Reviewed" => "Reviewed changes",
-                            "Ran" => "Ran a command",
-                            _ => "Task activity",
-                        },
-                        "stage": match item.kind.as_str() {
-                            "Read" | "Searched" | "Navigated" | "Explored" => "explore",
-                            "Edited" => "edit",
-                            "Tested" => "check",
-                            "Reviewed" => "review",
-                            "Ran" => "run",
-                            _ => "other",
-                        },
-                        "state": item.state,
-                        "started_at": item.started_at,
-                        "finished_at": item.finished_at,
-                        "duration_ms": item.duration_ms,
-                        "count": item.group_count.unwrap_or(1),
-                    })
-                })
-                .collect();
-            projection["workflow"] = json!({
-                "activity": activity,
-                "history_partial": detail.activity_truncated || summary.retention_truncated,
-            });
-        }
-        // state_version covers live domains only. Wall-clock inactivity is
-        // derived in the View from stable timestamps so passive time does not
-        // manufacture state changes or defeat refresh backoff.
+        let mut projection = if let Some(summary) = summary.as_ref() {
+            let projection_summary = self.refresh_validation_source_summary(summary);
+            let validation = validation_summary_from_events(
+                &projection_summary.events,
+                WORK_RESULT_VALIDATION_LIMIT,
+            );
+            let current_validation = current_validation_evidence_for_session(
+                &projection_summary,
+                WORK_RESULT_VALIDATION_LIMIT,
+            )
+            .evidence;
+            let review = review_evidence_summary_for_session(&projection_summary);
+            let mut projection = build_work_result_projection(
+                &resolved_project,
+                &summary.session_id,
+                workspace_result.success,
+                &workspace_result.output,
+                &validation,
+                &current_validation,
+                &review,
+                summary.events_truncated,
+            );
+            projection["session"] = work_result_session(summary);
+            projection["session_id"] = json!(summary.session_id);
+            projection["collaboration"] = self.work_result_collaboration(summary, auth);
+            if let Some(detail) = self.workflow_session_console_detail(
+                &resolved_project,
+                &summary.session_id,
+                Some(WORK_RESULT_ACTIVITY_LIMIT),
+            ) {
+                projection["workflow"] = json!({
+                    "activity": detail.activity.iter().map(|item| {
+                        json!({
+                            "label": match item.kind.as_str() {
+                                "Read" => "Read project files",
+                                "Searched" => "Searched the project",
+                                "Navigated" | "Explored" => "Explored the project",
+                                "Edited" => "Edited code",
+                                "Tested" => "Ran checks",
+                                "Reviewed" => "Reviewed changes",
+                                "Ran" => "Ran a command",
+                                _ => "Task activity",
+                            },
+                            "stage": match item.kind.as_str() {
+                                "Read" | "Searched" | "Navigated" | "Explored" => "explore",
+                                "Edited" => "edit",
+                                "Tested" => "check",
+                                "Reviewed" => "review",
+                                "Ran" => "run",
+                                _ => "other",
+                            },
+                            "state": item.state,
+                            "started_at": item.started_at,
+                            "finished_at": item.finished_at,
+                            "duration_ms": item.duration_ms,
+                            "count": item.group_count.unwrap_or(1),
+                        })
+                    }).collect::<Vec<_>>(),
+                    "history_partial": detail.activity_truncated || summary.retention_truncated,
+                });
+            }
+            projection
+        } else {
+            json!({
+                "version": 2,
+                "project": resolved_project,
+                "workspace": work_result_workspace(
+                    workspace_result.success,
+                    &workspace_result.output,
+                ),
+                "validation": empty_work_result_validation(),
+                "review": empty_work_result_review(),
+                "collaboration": {
+                    "available": false,
+                    "can_send": false,
+                    "messages": [],
+                },
+            })
+        };
+
+        projection["window_activity"] = work_result_window_activity_projection(&observed);
+        projection["activity"] = work_result_activity_projection(&observed, summary.as_ref());
         projection["state_version"] = json!(work_result_state_version(&projection));
-        match self.sealed_work_result_changes(&resolved_project, &summary, auth) {
-            Ok(Some(changes)) => projection["final_changes"] = changes,
-            Ok(None) => {}
-            Err(result) => return result,
+
+        if let Some(summary) = summary.as_ref() {
+            match self.sealed_work_result_changes(&resolved_project, summary, auth) {
+                Ok(Some(changes)) => projection["final_changes"] = changes,
+                Ok(None) => {}
+                Err(result) => return result,
+            }
         }
         ToolResult::ok(json!({"work_result": projection}))
-    }
-
-    async fn work_result_activity(
-        &self,
-        window: Option<&ClientWindow>,
-        auth: Option<&AuthContext>,
-        summary: &SessionSummary,
-    ) -> Value {
-        let fallback = session_activity_fallback(summary);
-        let Some(window) = window else {
-            return fallback;
-        };
-        let observed = self
-            .current_window_activity(Some(window), auth, Some(20), false)
-            .await;
-        if !observed.success
-            || observed.output.get("status").and_then(Value::as_str) != Some("available")
-        {
-            return fallback;
-        }
-
-        let current = observed
-            .output
-            .get("active_requests")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(|request| {
-                let tool = request.get("tool_name")?.as_str()?;
-                let semantics = webcodex_tool_contracts::runtime_tool_activity_semantics(tool);
-                if !semantics.interaction.is_meaningful() {
-                    return None;
-                }
-                Some((
-                    request
-                        .get("started_at_ms")
-                        .and_then(Value::as_i64)
-                        .unwrap_or(0),
-                    json!({
-                        "label": semantic_activity_label(tool, true),
-                        "kind": semantics.kind.as_str(),
-                        "started_at_ms": request.get("started_at_ms").and_then(Value::as_i64),
-                    }),
-                ))
-            })
-            .max_by_key(|(started, _)| *started)
-            .map(|(_, value)| value);
-
-        let last = observed
-            .output
-            .get("events")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter(|event| event.get("meaningful").and_then(Value::as_bool) == Some(true))
-            .filter_map(|event| {
-                let at = event.get("ended_at_ms").and_then(Value::as_i64)?;
-                let tool = event.get("tool_name").and_then(Value::as_str).unwrap_or("");
-                Some((
-                    at,
-                    json!({
-                        "label": semantic_activity_label(tool, false),
-                        "kind": event.get("activity_kind").and_then(Value::as_str),
-                        "at_ms": at,
-                    }),
-                ))
-            })
-            .max_by_key(|(at, _)| *at);
-
-        let (last_at, last_value) = last
-            .map(|(at, value)| (Some(at), Some(value)))
-            .unwrap_or_else(|| {
-                let at = fallback
-                    .get("last_meaningful_activity_at_ms")
-                    .and_then(Value::as_i64);
-                let value = fallback
-                    .get("last")
-                    .cloned()
-                    .filter(|value| !value.is_null());
-                (at, value)
-            });
-
-        json!({
-            "available": true,
-            "scope": "window",
-            "active": current.is_some(),
-            "current": current,
-            "last": last_value,
-            "last_meaningful_activity_at_ms": last_at,
-            "coverage_partial": observed.output.get("truncated").and_then(Value::as_bool).unwrap_or(false),
-        })
     }
 
     fn work_result_collaboration(
@@ -475,6 +435,255 @@ pub(crate) fn build_work_result_projection(
         "workspace": work_result_workspace(workspace_call_succeeded, workspace_source),
         "validation": work_result_validation(validation_source, current_validation_source, history_partial),
         "review": work_result_review(review_source, history_partial),
+    })
+}
+
+fn empty_work_result_validation() -> Value {
+    json!({
+        "status": "unknown",
+        "latest_status": "unknown",
+        "current_status": "unknown",
+        "history_partial": false,
+        "successes": 0,
+        "failures": 0,
+        "unresolved_failures": 0,
+        "evidence_gaps": 0,
+    })
+}
+
+fn empty_work_result_review() -> Value {
+    json!({
+        "available": false,
+        "history_partial": false,
+        "total": 0,
+        "read_only_inspection_count": 0,
+        "search_count": 0,
+        "diff_review_count": 0,
+        "workspace_review_count": 0,
+        "hygiene_review_count": 0,
+        "tools": [],
+    })
+}
+
+fn work_result_linked_session_id(observed: &Value, project: &str) -> Option<String> {
+    observed
+        .get("events")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .flat_map(|event| {
+            let at = event
+                .get("ended_at_ms")
+                .and_then(Value::as_i64)
+                .unwrap_or(0);
+            event
+                .get("workflow_sessions")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(move |link| {
+                    let linked_project = link.get("project").and_then(Value::as_str);
+                    if linked_project.is_some() && linked_project != Some(project) {
+                        return None;
+                    }
+                    let session_id = link.get("workflow_session_id")?.as_str()?.to_string();
+                    Some((at, session_id))
+                })
+        })
+        .max_by_key(|(at, _)| *at)
+        .map(|(_, session_id)| session_id)
+}
+
+fn work_result_observed_label(tool: &str, current: bool, meaningful: bool) -> &'static str {
+    if meaningful {
+        return semantic_activity_label(tool, current);
+    }
+    match tool {
+        "observe_jobs" => "Observed job progress",
+        "runtime_status" => "Observed Runtime status",
+        "current_window_activity" => "Observed Window activity",
+        "list_jobs" => "Observed Jobs",
+        _ => "Observed WebCodex activity",
+    }
+}
+
+fn work_result_window_activity_projection(observed: &Value) -> Value {
+    if observed.get("status").and_then(Value::as_str) != Some("available") {
+        return json!({
+            "available": false,
+            "active": false,
+            "active_requests": [],
+            "events": [],
+            "events_returned": 0,
+            "events_observed": 0,
+            "truncated": false,
+            "last_activity_at_ms": Value::Null,
+        });
+    }
+
+    let active_requests = observed
+        .get("active_requests")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|request| {
+            let tool = request
+                .get("tool_name")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            let started_at_ms = request.get("started_at_ms").and_then(Value::as_i64)?;
+            let semantics = webcodex_tool_contracts::runtime_tool_activity_semantics(tool);
+            Some(json!({
+                "label": work_result_observed_label(
+                    tool,
+                    true,
+                    semantics.interaction.is_meaningful(),
+                ),
+                "kind": semantics.kind.as_str(),
+                "started_at_ms": started_at_ms,
+            }))
+        })
+        .collect::<Vec<_>>();
+
+    let events = observed
+        .get("events")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|event| {
+            let started_at_ms = event.get("started_at_ms").and_then(Value::as_i64)?;
+            let ended_at_ms = event.get("ended_at_ms").and_then(Value::as_i64)?;
+            let tool = event.get("tool_name").and_then(Value::as_str).unwrap_or("");
+            let meaningful = event
+                .get("meaningful")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let semantics = webcodex_tool_contracts::runtime_tool_activity_semantics(tool);
+            Some(json!({
+                "label": work_result_observed_label(tool, false, meaningful),
+                "kind": semantics.kind.as_str(),
+                "status": event.get("status").and_then(Value::as_str).unwrap_or("unknown"),
+                "meaningful": meaningful,
+                "started_at_ms": started_at_ms,
+                "ended_at_ms": ended_at_ms,
+                "duration_ms": event.get("duration_ms").and_then(Value::as_i64),
+            }))
+        })
+        .collect::<Vec<_>>();
+
+    let last_event = events
+        .iter()
+        .filter_map(|event| event.get("ended_at_ms").and_then(Value::as_i64))
+        .max();
+    let last_active = active_requests
+        .iter()
+        .filter_map(|request| request.get("started_at_ms").and_then(Value::as_i64))
+        .max();
+    let last_activity_at_ms = last_event.into_iter().chain(last_active).max();
+    let events_observed = observed
+        .pointer("/summary/events_scanned")
+        .and_then(Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+        .unwrap_or(events.len());
+
+    json!({
+        "available": true,
+        "active": !active_requests.is_empty(),
+        "active_requests": active_requests,
+        "events_returned": events.len(),
+        "events_observed": events_observed,
+        "events": events,
+        "truncated": observed.get("truncated").and_then(Value::as_bool).unwrap_or(false),
+        "last_activity_at_ms": last_activity_at_ms,
+    })
+}
+
+fn work_result_activity_projection(observed: &Value, summary: Option<&SessionSummary>) -> Value {
+    if observed.get("status").and_then(Value::as_str) != Some("available") {
+        return summary.map(session_activity_fallback).unwrap_or_else(|| {
+            json!({
+                "available": false,
+                "scope": "window",
+                "active": false,
+                "current": Value::Null,
+                "last": Value::Null,
+                "last_activity_at_ms": Value::Null,
+                "last_meaningful_activity_at_ms": Value::Null,
+                "coverage_partial": false,
+            })
+        });
+    }
+
+    let current = observed
+        .get("active_requests")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|request| {
+            let tool = request
+                .get("tool_name")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            let started = request.get("started_at_ms").and_then(Value::as_i64)?;
+            let semantics = webcodex_tool_contracts::runtime_tool_activity_semantics(tool);
+            Some((
+                started,
+                json!({
+                    "label": work_result_observed_label(
+                        tool,
+                        true,
+                        semantics.interaction.is_meaningful(),
+                    ),
+                    "kind": semantics.kind.as_str(),
+                    "started_at_ms": started,
+                }),
+            ))
+        })
+        .max_by_key(|(started, _)| *started)
+        .map(|(_, value)| value);
+
+    let last = observed
+        .get("events")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|event| {
+            let at = event.get("ended_at_ms").and_then(Value::as_i64)?;
+            let tool = event.get("tool_name").and_then(Value::as_str).unwrap_or("");
+            let meaningful = event
+                .get("meaningful")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            Some((
+                at,
+                json!({
+                    "label": work_result_observed_label(tool, false, meaningful),
+                    "kind": event.get("activity_kind").and_then(Value::as_str),
+                    "at_ms": at,
+                }),
+            ))
+        })
+        .max_by_key(|(at, _)| *at);
+
+    let last_active = current
+        .as_ref()
+        .and_then(|value| value.get("started_at_ms"))
+        .and_then(Value::as_i64);
+    let last_completed = last.as_ref().map(|(at, _)| *at);
+    let last_activity_at_ms = last_active.into_iter().chain(last_completed).max();
+    let last_value = last.map(|(_, value)| value);
+
+    json!({
+        "available": true,
+        "scope": "window",
+        "active": current.is_some(),
+        "current": current,
+        "last": last_value,
+        "last_activity_at_ms": last_activity_at_ms,
+        // Legacy v6 field name; use the same Window-wide timestamp so cached cards
+        // no longer disagree with Runtime WebUI about the last observed activity.
+        "last_meaningful_activity_at_ms": last_activity_at_ms,
+        "coverage_partial": observed.get("truncated").and_then(Value::as_bool).unwrap_or(false),
     })
 }
 

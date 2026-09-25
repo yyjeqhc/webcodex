@@ -285,12 +285,13 @@ async fn current_window_activity_clamps_rows_and_has_deterministic_bounded_summa
         .current_window_activity(Some(&window), Some(&auth), Some(200), false)
         .await
         .output;
-    assert!(first["events"].as_array().unwrap().len() <= 50);
-    assert!(!first["events"].as_array().unwrap().is_empty());
+    let returned = first["events"].as_array().unwrap().len();
+    assert!(returned > 50);
+    assert!(returned <= 200);
     assert_eq!(first["summary"], second["summary"]);
-    assert_eq!(first["summary"]["events_scanned"], 200);
+    assert_eq!(first["summary"]["events_scanned"], 210);
     assert_eq!(first["truncated"], true);
-    assert!(serde_json::to_vec(&first).unwrap().len() <= 24 * 1024);
+    assert!(serde_json::to_vec(&first).unwrap().len() <= 96 * 1024);
     let mut revoked = auth.clone();
     revoked
         .scopes

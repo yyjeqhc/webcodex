@@ -1508,7 +1508,6 @@ async fn finish_coding_task_emits_one_parser_ready_changes_presentation_in_full_
                 "tool": "present_work_result",
                 "arguments": {
                     "project": project,
-                    "session_id": session_id,
                 }
             })
         );

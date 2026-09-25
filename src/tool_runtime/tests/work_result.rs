@@ -250,6 +250,86 @@ fn work_result_projection_marks_bounded_history_partial_without_inventing_absenc
     }
 }
 
+fn record_work_result_window_event(
+    db: &std::sync::Arc<crate::Database>,
+    auth: &crate::auth::AuthContext,
+    window: &crate::client_window::ClientWindow,
+    project: &str,
+    operation: &str,
+    at_ms: i64,
+    meaningful: bool,
+) {
+    let (principal_kind, principal_id) =
+        crate::tool_runtime::runtime_observation_principal(Some(auth)).unwrap();
+    crate::action_audit_sessions::record_action_event(
+        db,
+        crate::action_audit_sessions::ActionAuditEventInput {
+            explicit_session_id: None,
+            session_title: None,
+            endpoint: "/mcp".to_string(),
+            action_name: "toolsCall".to_string(),
+            operation: Some(operation.to_string()),
+            project: Some(project.to_string()),
+            principal_kind: None,
+            principal_user_id: None,
+            oauth_client_id: None,
+            status: "success".to_string(),
+            http_status: Some(200),
+            started_at: at_ms / 1000,
+            ended_at: at_ms / 1000,
+            duration_ms: 10,
+            error_summary: None,
+            warning_summary: None,
+            changed_files: Vec::new(),
+            ids: json!({}),
+            summary: json!({}),
+            request_bytes: None,
+            response_bytes: None,
+            client_window_key: Some(window.key().to_string()),
+            client_window_source: Some(window.source().to_string()),
+            server_trace_id: Some(format!("work-result-{at_ms}")),
+            principal_correlation_kind: Some(principal_kind),
+            principal_correlation_id: Some(principal_id),
+            window_started_at_ms: Some(at_ms),
+            window_ended_at_ms: Some(at_ms + 10),
+            request_observed_at_ms: Some(at_ms),
+            response_handed_at_ms: Some(at_ms + 10),
+            window_transition_kind: Some(
+                if meaningful { "serial" } else { "unavailable" }.to_string(),
+            ),
+            response_streaming: Some(false),
+            window_continuity_eligible: Some(meaningful),
+            window_meaningful: meaningful,
+            recorder_gap_session_id: None,
+            workflow_links: Vec::new(),
+        },
+    );
+}
+
+async fn present_window_once(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    project: &str,
+    auth: &crate::auth::AuthContext,
+    window: &crate::client_window::ClientWindow,
+) -> ToolResult {
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.to_string();
+        let auth = auth.clone();
+        let window = window.clone();
+        async move {
+            runtime
+                .present_work_result_for_window(project, None, Some(&auth), Some(&window))
+                .await
+        }
+    });
+    let request = wait_for_patch_agent_request(runtime, client_id).await;
+    assert_eq!(request.kind, "run_internal_posix_script");
+    complete_agent_request_by_running_locally(runtime, client_id, request).await;
+    task.await.unwrap()
+}
+
 async fn refresh_once(
     runtime: &ToolRuntime,
     client_id: &str,
@@ -267,7 +347,7 @@ async fn refresh_once(
                 .dispatch_with_auth(
                     ToolCall::WorkResultState {
                         project,
-                        session_id,
+                        session_id: Some(session_id),
                     },
                     Some(&auth),
                 )
@@ -278,6 +358,72 @@ async fn refresh_once(
     assert_eq!(request.kind, "run_internal_posix_script");
     complete_agent_request_by_running_locally(runtime, client_id, request).await;
     task.await.unwrap()
+}
+
+#[tokio::test]
+async fn work_result_window_card_needs_no_session_and_uses_all_window_activity() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    commit_file(tmp.path(), "README.md", "hello\n", "initial");
+    let audit = tempfile::tempdir().unwrap();
+    let db = std::sync::Arc::new(
+        crate::Database::open(&audit.path().join("work-result-window.db")).unwrap(),
+    );
+    let runtime = test_runtime().with_window_activity_database(db.clone());
+    let project =
+        register_runner_project_at_path(&runtime, "work-result-window", "demo", tmp.path()).await;
+    let other_tmp = tempfile::tempdir().unwrap();
+    init_git_repo(other_tmp.path());
+    commit_file(other_tmp.path(), "README.md", "other\n", "initial");
+    let other_project = register_runner_project_at_path(
+        &runtime,
+        "work-result-window-other",
+        "other",
+        other_tmp.path(),
+    )
+    .await;
+    let auth = auth_context(None, true);
+    let window = crate::client_window::ClientWindow::for_test("work-result-window-card");
+
+    record_work_result_window_event(&db, &auth, &window, &project, "read_files", 1_000, true);
+    record_work_result_window_event(
+        &db,
+        &auth,
+        &window,
+        &project,
+        "runtime_status",
+        2_000,
+        false,
+    );
+    record_work_result_window_event(
+        &db,
+        &auth,
+        &window,
+        &other_project,
+        "read_files",
+        3_000,
+        true,
+    );
+
+    let result =
+        present_window_once(&runtime, "work-result-window", &project, &auth, &window).await;
+    assert!(result.success, "{:?}", result.error);
+    let work = &result.output["work_result"];
+    assert_eq!(work["project"], project);
+    assert!(work.get("session_id").is_none());
+    assert!(work.get("session").is_none());
+    assert_eq!(work["collaboration"]["available"], false);
+    assert_eq!(work["window_activity"]["events_observed"], 3);
+    assert_eq!(work["window_activity"]["events_returned"], 3);
+    let events = work["window_activity"]["events"].as_array().unwrap();
+    assert!(events
+        .iter()
+        .any(|event| event["meaningful"] == false && event["label"] == "Observed Runtime status"));
+    assert!(events
+        .iter()
+        .any(|event| event["meaningful"] == true && event["ended_at_ms"] == 3_010));
+    assert_eq!(work["activity"]["last_activity_at_ms"], 3_010);
+    assert_eq!(work["activity"]["last"]["label"], "Read project files");
 }
 
 #[tokio::test]
@@ -355,7 +501,7 @@ async fn work_result_state_reauthorizes_exact_identity_and_refresh_does_not_reco
         .dispatch_with_auth(
             ToolCall::WorkResultState {
                 project: "demo".to_string(),
-                session_id: session.session_id.clone(),
+                session_id: Some(session.session_id.clone()),
             },
             Some(&auth),
         )
@@ -379,7 +525,7 @@ async fn work_result_state_reauthorizes_exact_identity_and_refresh_does_not_reco
     assert_eq!(
         ToolCall::WorkResultState {
             project: project.clone(),
-            session_id: session.session_id.clone()
+            session_id: Some(session.session_id.clone())
         }
         .session_id(),
         None
@@ -387,10 +533,10 @@ async fn work_result_state_reauthorizes_exact_identity_and_refresh_does_not_reco
     assert_eq!(
         ToolCall::PresentWorkResult {
             project: project.clone(),
-            session_id: session.session_id.clone()
+            session_id: Some(session.session_id.clone())
         }
         .session_id(),
-        Some(session.session_id.as_str())
+        None
     );
 
     let other_tmp = tempfile::tempdir().unwrap();
@@ -868,7 +1014,7 @@ async fn work_result_collaboration_reuses_session_store_and_ack_resolution_state
 }
 
 #[test]
-fn work_result_tool_contract_requires_exact_project_and_session() {
+fn work_result_tool_contract_requires_project_and_accepts_optional_session() {
     assert!(
         ToolCall::from_tool_name(
             "present_changes",
@@ -880,13 +1026,14 @@ fn work_result_tool_contract_requires_exact_project_and_session() {
         "the retired presentation must not parse as a compatibility alias"
     );
     for name in ["present_work_result", "work_result_state"] {
-        assert!(ToolCall::from_tool_name(name, json!({"project": "agent:x:y"})).is_err());
+        let project_only = ToolCall::from_tool_name(name, json!({"project": "agent:x:y"})).unwrap();
+        assert_eq!(project_only.tool_name(), name);
         assert!(ToolCall::from_tool_name(
             name,
             json!({"session_id": format!("wc_sess_{}", "1".repeat(32))})
         )
         .is_err());
-        let call = ToolCall::from_tool_name(
+        let linked = ToolCall::from_tool_name(
             name,
             json!({
                 "project": "agent:x:y",
@@ -894,7 +1041,7 @@ fn work_result_tool_contract_requires_exact_project_and_session() {
             }),
         )
         .unwrap();
-        assert_eq!(call.tool_name(), name);
+        assert_eq!(linked.tool_name(), name);
     }
 
     for incomplete in [

@@ -226,17 +226,18 @@ fn assert_builtin_workflow(output: &Value) {
         .as_str()
         .expect("work result presentation guidance");
     for phrase in [
-        "substantial coding",
-        "present_work_result(project, session_id) once",
-        "materially stateful",
-        "primary task card",
-        "semantic activity/last-active time",
-        "Session collaboration with WebUI",
-        "session_attention/ACK flow",
-        "non-blocking finish_coding_task",
-        "per-file changes",
-        "Do not repeat or model-poll it",
-        "Tiny/read-only work skips it",
+        "substantial Project work",
+        "stable client Window",
+        "present_work_result(project) exactly once",
+        "first successful project-scoped WebCodex action",
+        "Do not wait for work_on_project",
+        "same Window ActionAudit activity as WebUI",
+        "observe/diagnostic actions",
+        "optional linked Session collaboration",
+        "final changes may appear later",
+        "Never repeat presentation or model-poll it",
+        "Tiny one-step/read-only lookups may skip it",
+        "fallback if no card was presented",
     ] {
         assert!(work_result_guidance.contains(phrase), "{phrase}");
     }

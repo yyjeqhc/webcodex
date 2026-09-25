@@ -1694,7 +1694,6 @@ impl ToolRuntime {
                     "tool": "present_work_result",
                     "arguments": {
                         "project": resolved.resolved_id.clone(),
-                        "session_id": session_id.clone(),
                     }
                 }
             })),

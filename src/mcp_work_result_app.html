@@ -208,59 +208,44 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     <div class="actions"><button id="refresh" class="refresh" type="button" disabled>Refresh</button><span id="badge" class="badge">Loading</span></div>
   </header>
   <div class="task-context"><span id="projectIdentity"></span><span id="sessionIdentity"></span></div>
-  <nav class="card-tabs" role="tablist" aria-label="Task views">
-    <button id="tabWorkflow" type="button" role="tab" aria-selected="true" aria-controls="panelWorkflow">Workflow</button>
-    <button id="tabChecks" type="button" role="tab" aria-selected="false" aria-controls="panelChecks" tabindex="-1">Checks</button>
-    <button id="tabMessages" type="button" role="tab" aria-selected="false" aria-controls="panelMessages" tabindex="-1">Messages</button>
-    <button id="tabResult" type="button" role="tab" aria-selected="false" aria-controls="panelResult" tabindex="-1">Result</button>
+  <nav class="card-tabs" role="tablist" aria-label="Window views">
+    <button id="tabActivity" type="button" role="tab" aria-selected="true" aria-controls="panelActivity">Activity</button>
+    <button id="tabCollaboration" type="button" role="tab" aria-selected="false" aria-controls="panelCollaboration" tabindex="-1">Collaboration</button>
   </nav>
   <div class="content">
-    <div id="panelWorkflow" class="card-panel" role="tabpanel" aria-labelledby="tabWorkflow">
-    <section class="section progress-section">
-      <div class="section-head"><h2>Current activity</h2><span id="activityAge" class="secondary"></span></div>
-      <div class="activity-line">
-        <div id="activityStatus" class="activity-current">Waiting for activity…</div>
-        <div id="activityDetail" class="activity-age"></div>
-      </div>
-    </section>
-    <section class="section">
-      <div class="section-head"><h2>Task workflow</h2><span id="workflowCoverage" class="secondary"></span></div>
-      <p class="secondary">Recorded steps for this Session, newest first. Stages are filters, not a prescribed plan.</p>
-      <div id="workflowStages" class="workflow-stages" role="group" aria-label="Filter workflow stages"></div>
-      <div id="workflowActivity" class="workflow-activity"></div>
-      <button id="askWorkflow" class="refresh" type="button">Send an instruction</button>
-    </section>
+    <div id="panelActivity" class="card-panel" role="tabpanel" aria-labelledby="tabActivity">
+      <section class="section progress-section">
+        <div class="section-head"><h2>Current activity</h2><span id="activityAge" class="secondary"></span></div>
+        <div class="activity-line">
+          <div id="activityStatus" class="activity-current">Waiting for activity…</div>
+          <div id="activityDetail" class="activity-age"></div>
+        </div>
+      </section>
+      <section class="section">
+        <div class="section-head"><h2>Window activity</h2><span id="windowCoverage" class="secondary"></span></div>
+        <p class="secondary">The same Window activity observed by WebUI, newest first. Observe and diagnostic actions remain visible.</p>
+        <div id="windowActivity" class="workflow-activity"></div>
+        <button id="askActivity" class="refresh" type="button">Send an instruction</button>
+      </section>
+      <section id="finalChanges" class="section" hidden>
+        <div class="section-head"><h2>Final changes</h2><span id="frozenStats" class="stats-inline"></span></div>
+        <div id="frozenSummary" class="primary"></div>
+        <div id="frozenFiles"></div>
+        <button id="frozenMore" class="refresh" type="button" hidden></button>
+        <div id="frozenFooter" class="secondary"></div>
+      </section>
     </div>
-    <div id="panelMessages" class="card-panel" role="tabpanel" aria-labelledby="tabMessages" hidden>
-    <section class="section">
-      <div class="section-head"><h2>Messages</h2><span id="collaborationMeta" class="secondary"></span></div>
-      <div id="messages" class="conversation"></div>
-      <form id="composer" class="composer">
-        <textarea id="messageInput" maxlength="8000" placeholder="Send an instruction or follow-up…" aria-label="Message WebCodex"></textarea>
-        <button id="sendMessage" class="refresh" type="submit">Send</button>
-      </form>
-      <div id="composerState" class="secondary"></div>
-    </section>
+    <div id="panelCollaboration" class="card-panel" role="tabpanel" aria-labelledby="tabCollaboration" hidden>
+      <section class="section">
+        <div class="section-head"><h2>Collaboration</h2><span id="collaborationMeta" class="secondary"></span></div>
+        <div id="messages" class="conversation"></div>
+        <form id="composer" class="composer">
+          <textarea id="messageInput" maxlength="8000" placeholder="Send an instruction or follow-up…" aria-label="Message WebCodex"></textarea>
+          <button id="sendMessage" class="refresh" type="submit">Send</button>
+        </form>
+        <div id="composerState" class="secondary"></div>
+      </section>
     </div>
-    <div id="panelResult" class="card-panel" role="tabpanel" aria-labelledby="tabResult" hidden>
-    <p id="resultPending" class="secondary">Final changes appear here after the task is closed out. Live workspace changes are not a final result.</p>
-    <section id="finalChanges" class="section" hidden>
-      <div class="section-head"><h2>What changed</h2><span id="frozenStats" class="stats-inline"></span></div>
-      <div id="frozenSummary" class="primary"></div>
-      <div id="frozenFiles"></div>
-      <button id="frozenMore" class="refresh" type="button" hidden></button>
-      <div id="frozenFooter" class="secondary"></div>
-    </section>
-    </div>
-    <section id="panelChecks" class="section card-panel" role="tabpanel" aria-labelledby="tabChecks" hidden>
-      <div class="section-head"><h2>Checks and review</h2></div>
-      <div class="detail-grid">
-        <div class="detail-item"><span>Checks</span><strong id="validationStatus">Waiting</strong><small id="validationMeta" class="secondary"></small></div>
-        <div class="detail-item"><span>Review</span><strong id="reviewStatus">Waiting</strong><small id="reviewMeta" class="secondary"></small></div>
-        <div class="detail-item"><span>Changes</span><strong id="workspaceStatus">Waiting</strong><small id="workspaceMeta" class="secondary"></small></div>
-      </div>
-      <button id="askChecks" class="refresh" type="button">Ask about checks</button>
-    </section>
   </div>
   <footer class="app-footer"><span class="live-dot" aria-hidden="true"></span><div id="status" class="status">Connecting…</div></footer>
 </main>
@@ -300,15 +285,13 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
   let hostInitialized = false;
   let refreshInFlight = false;
   let refreshTimer = null;
-  let sessionLifecycle = null;
   let lastStateChangeAt = null;
   let lastRenderedState = null;
   let sendInFlight = false;
   let pendingSend = null;
   let tornDown = false;
   let initialResultTransportMissing = false;
-  let selectedPane = "Workflow";
-  let selectedStage = "all";
+  let selectedPane = "Activity";
   const pending = new Map();
   const el = id => document.getElementById(id);
 
@@ -337,8 +320,8 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     return typeof value === "string" && SESSION_ID.test(value);
   }
 
-  function pair(project, session_id) {
-    return validProject(project) && validSession(session_id) ? { project, session_id } : null;
+  function target(project) {
+    return validProject(project) ? { project } : null;
   }
 
   function failClosed(_message) {
@@ -352,7 +335,7 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
 
   function acceptIdentity(candidate) {
     if (tornDown) return false;
-    if (!candidate || (identity && (identity.project !== candidate.project || identity.session_id !== candidate.session_id))) {
+    if (!candidate || (identity && identity.project !== candidate.project)) {
       failClosed("Invalid or conflicting Work identity");
       return false;
     }
@@ -437,8 +420,31 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     if (typeof value.available !== "boolean" || !["window", "session"].includes(value.scope) || typeof value.active !== "boolean") return false;
     if (typeof value.coverage_partial !== "boolean") return false;
     if (!validActivityItem(value.current, "started_at_ms") || !validActivityItem(value.last, "at_ms")) return false;
-    return value.last_meaningful_activity_at_ms === null
-      || (Number.isSafeInteger(value.last_meaningful_activity_at_ms) && value.last_meaningful_activity_at_ms >= 0);
+    for (const key of ["last_activity_at_ms", "last_meaningful_activity_at_ms"]) {
+      if (!(value[key] === null || value[key] === undefined || (Number.isSafeInteger(value[key]) && value[key] >= 0))) return false;
+    }
+    return true;
+  }
+
+  function validWindowActivityRow(value, active = false) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+    if (typeof value.label !== "string" || value.label.length < 1 || value.label.length > 120) return false;
+    if (!(value.kind === null || value.kind === undefined || ["read", "search", "navigate", "edit", "run", "test", "review"].includes(value.kind))) return false;
+    if (!Number.isSafeInteger(value.started_at_ms) || value.started_at_ms < 0) return false;
+    if (active) return true;
+    return Number.isSafeInteger(value.ended_at_ms) && value.ended_at_ms >= value.started_at_ms
+      && (value.duration_ms === null || safeCount(value.duration_ms))
+      && typeof value.status === "string" && value.status.length <= 32
+      && typeof value.meaningful === "boolean";
+  }
+
+  function validWindowActivity(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value) || typeof value.available !== "boolean" || typeof value.active !== "boolean") return false;
+    if (!safeCount(value.events_returned) || !safeCount(value.events_observed) || typeof value.truncated !== "boolean") return false;
+    if (!Array.isArray(value.events) || value.events.length > 200 || value.events.length !== value.events_returned || !value.events.every(row => validWindowActivityRow(row, false))) return false;
+    if (!Array.isArray(value.active_requests) || value.active_requests.length > 8 || !value.active_requests.every(row => validWindowActivityRow(row, true))) return false;
+    return value.last_activity_at_ms === null
+      || (Number.isSafeInteger(value.last_activity_at_ms) && value.last_activity_at_ms >= 0);
   }
 
   function validCollaborationMessage(value) {
@@ -470,11 +476,14 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
 
   function validState(value) {
     if (!value || typeof value !== "object" || Array.isArray(value) || value.version !== 2) return null;
-    const candidate = pair(value.project, value.session_id);
-    if (!candidate || typeof value.state_version !== "string" || !STATE_VERSION.test(value.state_version)) return null;
-    if (!validWorkspace(value.workspace) || !validValidation(value.validation) || !validReview(value.review)
-      || !validSessionState(value.session) || !validActivity(value.activity) || !validCollaboration(value.collaboration) || !validWorkflow(value.workflow)) return null;
-    if (value.final_changes !== undefined && !validFrozen(value.final_changes)) return null;
+    if (!validProject(value.project) || typeof value.state_version !== "string" || !STATE_VERSION.test(value.state_version)) return null;
+    if (value.session_id !== undefined && !validSession(value.session_id)) return null;
+    if (!validWorkspace(value.workspace) || !validActivity(value.activity) || !validWindowActivity(value.window_activity) || !validCollaboration(value.collaboration)) return null;
+    if (value.validation !== undefined && !validValidation(value.validation)) return null;
+    if (value.review !== undefined && !validReview(value.review)) return null;
+    if (value.session !== undefined && !validSessionState(value.session)) return null;
+    if (value.workflow !== undefined && !validWorkflow(value.workflow)) return null;
+    if (value.final_changes !== undefined && (!validSession(value.session_id) || !validFrozen(value.final_changes))) return null;
     return value;
   }
 
@@ -590,7 +599,7 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
   function extractFrozenDiff(result, file) {
     const structured = structuredOf(result);
     const value = structured && structured.output && structured.output.changes_file_diff;
-    if (!value || value.version !== 1 || value.project !== identity.project || value.session_id !== identity.session_id
+    if (!value || value.version !== 1 || value.project !== identity.project || value.session_id !== lastRenderedState?.session_id
       || value.snapshot_id !== snapshot.snapshot_id || value.path !== file.path || value.kind !== file.kind
       || (value.previous_path ?? null) !== (file.previous_path ?? null)) return null;
     if (value.binary !== null && typeof value.binary !== "boolean") return null;
@@ -627,7 +636,7 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     state.textContent = "Loading changes…";
     try {
       const response = await send("tools/call", { name: "changes_file_diff", arguments: {
-        project: identity.project, session_id: identity.session_id, snapshot_id: snapshot.snapshot_id, path: file.path,
+        project: identity.project, session_id: lastRenderedState.session_id, snapshot_id: snapshot.snapshot_id, path: file.path,
       } });
       if (tornDown) return;
       const structured = structuredOf(response);
@@ -700,8 +709,9 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
   }
 
   function activityIdleElapsed(activity) {
-    if (activity.active || activity.last_meaningful_activity_at_ms === null) return null;
-    return Math.max(0, Date.now() - activity.last_meaningful_activity_at_ms);
+    const last = activity.last_activity_at_ms ?? activity.last_meaningful_activity_at_ms;
+    if (activity.active || last === null || last === undefined) return null;
+    return Math.max(0, Date.now() - last);
   }
 
   function formatDuration(elapsedMs) {
@@ -713,27 +723,8 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     return `${days}d ${hours % 24}h`;
   }
 
-  function renderWorkspace(workspace, hasFinalChanges) {
-    el("branch").textContent = workspace.branch || "Task";
-    if (!workspace.git_available) {
-      el("workspaceStatus").textContent = "Change status unavailable";
-      el("workspaceMeta").textContent = "";
-      return;
-    }
-    if (hasFinalChanges) {
-      el("workspaceStatus").textContent = "Final result available";
-      el("workspaceMeta").textContent = "Open What changed above";
-      return;
-    }
-    if (workspace.clean) {
-      el("workspaceStatus").textContent = "No pending changes";
-      el("workspaceMeta").textContent = "";
-      return;
-    }
-    el("workspaceStatus").textContent = "Changes in progress";
-    el("workspaceMeta").textContent = workspace.files_total > 0
-      ? `${workspace.files_total} ${workspace.files_total === 1 ? "file" : "files"} currently touched`
-      : "";
+  function renderWorkspace(workspace) {
+    el("branch").textContent = workspace.branch || "Window activity";
   }
 
   function validationLabel(validation) {
@@ -810,7 +801,7 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
   function renderMessages(collaboration) {
     const root = el("messages");
     root.replaceChildren();
-    el("collaborationMeta").textContent = collaboration.available ? "Shared with WebUI" : "Unavailable";
+    el("collaborationMeta").textContent = collaboration.available ? "Linked work conversation" : "No linked work conversation";
     const rows = [...collaboration.messages].reverse();
     for (const message of rows) {
       const article = document.createElement("article");
@@ -835,21 +826,76 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     }
     if (!rows.length) {
       const empty = document.createElement("div"); empty.className = "secondary";
-      empty.textContent = collaboration.available ? "No messages yet." : "Messaging is not available with this access.";
+      empty.textContent = collaboration.available ? "No messages yet." : "A linked Workflow Session has not appeared in this Window yet.";
       root.append(empty);
     }
     updateComposerControl(collaboration);
   }
 
   function updateComposerControl(collaboration = lastRenderedState?.collaboration) {
-    const enabled = !!collaboration?.available && !!collaboration?.can_send && hostInitialized && !tornDown && !sendInFlight;
+    const enabled = !!collaboration?.available && !!collaboration?.can_send && !!lastRenderedState?.session_id && hostInitialized && !tornDown && !sendInFlight;
     el("messageInput").disabled = !enabled;
     el("sendMessage").disabled = !enabled || !String(el("messageInput").value || "").trim();
     el("sendMessage").textContent = sendInFlight ? "Sending…" : "Send";
     if (collaboration && !collaboration.can_send) el("composerState").textContent = collaboration.available ? "This task is closed for new messages." : "";
   }
 
-  const panes = ["Workflow", "Checks", "Messages", "Result"];
+  function renderWindowCurrentActivity(activity) {
+    const lastAt = activity.last_activity_at_ms ?? activity.last_meaningful_activity_at_ms;
+    if (activity.active && activity.current) {
+      el("activityStatus").textContent = activity.current.label;
+      el("activityDetail").textContent = "This Window is active";
+      el("activityAge").textContent = "Active now";
+      return;
+    }
+    const idleElapsed = activityIdleElapsed(activity);
+    if (idleElapsed !== null && idleElapsed >= ACTIVITY_IDLE_AFTER_MS) {
+      el("activityStatus").textContent = "No WebCodex activity";
+      el("activityDetail").textContent = activity.last ? "Last activity: " + activity.last.label
+        : activity.coverage_partial ? "Earlier activity is not fully observable" : "";
+      el("activityAge").textContent = "Idle for " + formatDuration(idleElapsed);
+      return;
+    }
+    if (activity.last) {
+      el("activityStatus").textContent = activity.last.label;
+      el("activityDetail").textContent = "Waiting for the next Window activity";
+      el("activityAge").textContent = lastAt === null || lastAt === undefined ? "" : "Last active " + formatAge(lastAt);
+      return;
+    }
+    el("activityStatus").textContent = "Waiting for WebCodex activity";
+    el("activityDetail").textContent = activity.coverage_partial ? "Current activity is not fully observable" : "";
+    el("activityAge").textContent = "";
+  }
+
+  function renderWindowActivity(windowActivity) {
+    const root = el("windowActivity"); root.replaceChildren();
+    const observed = windowActivity.events_observed;
+    const returned = windowActivity.events_returned;
+    el("windowCoverage").textContent = windowActivity.truncated || observed > returned
+      ? "Showing " + returned + " of " + observed + " observed events"
+      : observed + " observed " + (observed === 1 ? "event" : "events");
+    const rows = [...windowActivity.events].sort((a, b) => b.ended_at_ms - a.ended_at_ms);
+    for (const row of rows) {
+      const article = document.createElement("article"); article.className = "workflow-row";
+      const header = document.createElement("header");
+      const label = document.createElement("strong"); label.textContent = row.label;
+      const status = document.createElement("span"); status.className = "secondary";
+      const outcome = ({ success: "Succeeded", succeeded: "Succeeded", completed: "Completed", failed: "Failed", timeout: "Timed out", unknown: "Outcome unknown" })[row.status] || row.status;
+      status.textContent = row.meaningful ? outcome : "Observe · " + outcome;
+      header.append(label, status);
+      const time = document.createElement("time");
+      const duration = row.duration_ms === null ? "" : " · " + (row.duration_ms < 1000 ? row.duration_ms + "ms" : (row.duration_ms / 1000).toFixed(1) + "s");
+      time.textContent = new Date(row.ended_at_ms).toLocaleString() + duration;
+      article.append(header, time); root.append(article);
+    }
+    if (!root.children.length) {
+      const empty = document.createElement("p"); empty.className = "secondary";
+      empty.textContent = windowActivity.available ? "No completed Window activity yet." : "Window activity is unavailable.";
+      root.append(empty);
+    }
+  }
+
+  const panes = ["Activity", "Collaboration"];
   function selectPane(name, focus = false) {
     if (!panes.includes(name)) return;
     selectedPane = name;
@@ -899,29 +945,19 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
   function render(state) {
     if (tornDown) return;
     lastRenderedState = state;
-    el("projectIdentity").textContent = state.project;
-    el("sessionIdentity").textContent = state.session_id;
-    renderWorkflow(state.workflow);
+    el("projectIdentity").textContent = "Window activity";
+    el("sessionIdentity").textContent = state.session_id ? "Collaboration linked" : "";
     const hasFinalChanges = snapshot !== null || state.final_changes !== undefined;
-    el("taskTitle").textContent = state.session.title || "WebCodex";
-    renderActivity(state.activity, state.session, hasFinalChanges);
+    el("taskTitle").textContent = state.session?.title || "WebCodex activity";
+    renderWindowCurrentActivity(state.activity);
+    renderWindowActivity(state.window_activity);
     renderMessages(state.collaboration);
-    renderWorkspace(state.workspace, hasFinalChanges);
-    renderValidation(state.validation);
-    renderReview(state.review);
-    el("resultPending").hidden = hasFinalChanges;
-    el("tabResult").textContent = hasFinalChanges ? "Result · Ready" : "Result";
-    el("tabChecks").textContent = state.validation.unresolved_failures > 0 ? "Checks · !" : "Checks";
+    renderWorkspace(state.workspace);
+    el("finalChanges").hidden = !hasFinalChanges;
 
-    if (hasFinalChanges || state.session.lifecycle === "closed") {
-      el("badge").className = "badge tone-clean";
-      el("badge").textContent = "Completed";
-    } else if (state.activity.active) {
+    if (state.activity.active) {
       el("badge").className = "badge tone-changed";
       el("badge").textContent = "Working";
-    } else if (state.validation.unresolved_failures > 0 || state.validation.current_status === "failed") {
-      el("badge").className = "badge tone-unavailable";
-      el("badge").textContent = "Needs attention";
     } else if ((activityIdleElapsed(state.activity) ?? -1) >= ACTIVITY_IDLE_AFTER_MS) {
       el("badge").className = "badge";
       el("badge").textContent = "Idle";
@@ -948,7 +984,7 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     try {
       const response = await send("tools/call", { name: "work_result_send_message", arguments: {
         project: identity.project,
-        session_id: identity.session_id,
+        session_id: lastRenderedState.session_id,
         message: pendingSend.message,
         delivery_key: pendingSend.delivery_key,
       } });
@@ -984,7 +1020,7 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
   function scheduleRefresh(delay) {
     if (refreshTimer !== null) clearTimeout(refreshTimer);
     refreshTimer = null;
-    if (tornDown || !hostInitialized || !identity || lastStateVersion === null || sessionLifecycle === "closed") return;
+    if (tornDown || !hostInitialized || !identity || lastStateVersion === null) return;
     if (lastStateChangeAt !== null && Date.now() - lastStateChangeAt >= AUTO_REFRESH_IDLE_PAUSE_MS) {
       if (!refreshInFlight) el("status").textContent = "Updates paused · Refresh to check";
       return;
@@ -1002,7 +1038,7 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     updateRefreshControl();
     if (!automatic) el("status").textContent = "Refreshing…";
     try {
-      const response = await send("tools/call", { name: "work_result_state", arguments: { project: identity.project, session_id: identity.session_id } });
+      const response = await send("tools/call", { name: "work_result_state", arguments: { project: identity.project } });
       if (tornDown) return;
       const structured = structuredOf(response);
       if (!structured) {
@@ -1014,7 +1050,7 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
         return;
       }
       const state = extractState(structured);
-      if (!state || !acceptIdentity(pair(state.project, state.session_id))) {
+      if (!state || !acceptIdentity(target(state.project))) {
         if (!tornDown) failClosed("Task state unavailable");
         return;
       }
@@ -1023,7 +1059,6 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
       const completedNow = !hadFrozen && snapshot !== null;
       hasRefreshed = true;
       initialResultTransportMissing = false;
-      sessionLifecycle = state.session.lifecycle;
       const changed = state.state_version !== lastStateVersion;
       if (changed) {
         lastStateVersion = state.state_version;
@@ -1033,8 +1068,7 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
       // update human-friendly "last active" time from the stable timestamp.
       render(state);
       if (!changed && !automatic) lastStateChangeAt = Date.now();
-      el("status").textContent = completedNow ? "Completed · final result ready"
-        : sessionLifecycle === "closed" ? "Completed"
+      el("status").textContent = completedNow ? "Live · final changes available"
         : changed ? (automatic ? "Live · updated" : "Updated")
         : (automatic ? "Live" : "Up to date");
     } catch (_) {
@@ -1048,7 +1082,7 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
 
   function acceptToolInput(params) {
     const args = params && params.arguments;
-    if (!acceptIdentity(pair(args && !Array.isArray(args) && args.project, args && !Array.isArray(args) && args.session_id))) return;
+    if (!acceptIdentity(target(args && !Array.isArray(args) && args.project))) return;
     if (initialResultTransportMissing && hostInitialized && lastStateVersion === null) void refresh(false);
   }
 
@@ -1064,7 +1098,7 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
       return;
     }
     const state = extractState(structured);
-    if (structured.success === false || !state || !acceptIdentity(pair(state.project, state.session_id))) {
+    if (structured.success === false || !state || !acceptIdentity(target(state.project))) {
       if (!tornDown) failClosed("Task state unavailable");
       return;
     }
@@ -1072,7 +1106,6 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     const hadFrozen = snapshot !== null;
     if (!acceptFrozen(state.final_changes)) return;
     const adoptedFinal = !hadFrozen && snapshot !== null;
-    sessionLifecycle = state.session.lifecycle;
     if (!hasRefreshed && state.state_version !== lastStateVersion) {
       lastStateVersion = state.state_version;
       lastStateChangeAt = Date.now();
@@ -1083,8 +1116,7 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
       // the fresher live state as completed; never roll workspace/activity back.
       render(lastRenderedState);
     }
-    el("status").textContent = adoptedFinal ? "Completed · final result ready"
-      : sessionLifecycle === "closed" ? "Completed" : "Live";
+    el("status").textContent = adoptedFinal ? "Live · final changes available" : "Live";
     updateRefreshControl();
     scheduleRefresh(500);
   }
@@ -1139,12 +1171,8 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
       if (next) { event.preventDefault(); selectPane(next, true); }
     };
   }
-  el("askWorkflow").onclick = () => { selectPane("Messages"); el("messageInput").focus?.(); };
-  el("askChecks").onclick = () => {
-    if (!el("messageInput").value) el("messageInput").value = "Please explain the current checks and any remaining issues.";
-    selectPane("Messages"); updateComposerControl(); el("messageInput").focus?.();
-  };
-  selectPane("Workflow");
+  el("askActivity").onclick = () => { selectPane("Collaboration"); el("messageInput").focus?.(); };
+  selectPane("Activity");
   el("refresh").onclick = () => { void refresh(false); };
   el("frozenMore").onclick = () => { if (snapshot) appendFrozenFiles(snapshot.files.length); };
   el("composer").onsubmit = event => { event.preventDefault(); void sendMessageFromCard(); };
@@ -1162,13 +1190,13 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
   addEventListener("pagehide", teardown, { once: true });
   addEventListener("beforeunload", teardown, { once: true });
 
-  send("ui/initialize", { protocolVersion: APP_PROTOCOL, appInfo: { name: "webcodex-work-result-app", title: "WebCodex", version: "2.0.0" }, appCapabilities: {} })
+  send("ui/initialize", { protocolVersion: APP_PROTOCOL, appInfo: { name: "webcodex-work-result-app", title: "WebCodex", version: "3.0.0" }, appCapabilities: {} })
     .then(() => {
       if (tornDown) return;
       hostInitialized = true;
       el("status").textContent = lastStateVersion !== null
-        ? (sessionLifecycle === "closed" ? "Completed" : "Live")
-        : identity ? "Waiting for task status" : "Ready";
+        ? "Live"
+        : identity ? "Waiting for Window activity" : "Ready";
       notify("ui/notifications/initialized", {});
       updateRefreshControl();
       updateComposerControl();

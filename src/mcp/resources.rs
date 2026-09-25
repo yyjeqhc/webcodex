@@ -60,7 +60,7 @@ pub(super) const MCP_RESULT_UI_RESOURCE_LEGACY_URIS: &[&str] = &[
     "ui://webcodex/result/v2",
     "ui://webcodex/result/v3",
 ];
-pub(super) const MCP_WORK_RESULT_UI_RESOURCE_URI: &str = "ui://webcodex/work-result/v6";
+pub(super) const MCP_WORK_RESULT_UI_RESOURCE_URI: &str = "ui://webcodex/work-result/v7";
 // Hosts can retain previously shipped Work Result / Changes resources across
 // deploys. Keep those URIs readable with the current safe template, but only the
 // canonical v6 descriptor admits a new card. Legacy payloads are never promoted
@@ -70,6 +70,7 @@ pub(super) const MCP_WORK_RESULT_UI_RESOURCE_LEGACY_URIS: &[&str] = &[
     "ui://webcodex/work-result/v2",
     "ui://webcodex/work-result/v3",
     "ui://webcodex/work-result/v4",
+    "ui://webcodex/work-result/v6",
     "ui://webcodex/work-result/v5",
     "ui://webcodex/changes/v3",
 ];
@@ -150,7 +151,7 @@ pub(super) fn mcp_app_resources_list(domain: Option<&str>) -> Value {
         .push(json!({
             "uri": MCP_WORK_RESULT_UI_RESOURCE_URI,
             "name": "WebCodex",
-            "description": "Persistent user-facing task card for one explicitly presented project-scoped Workflow Session. The mounted App performs bounded app-only refreshes for current activity, last-active timing, shared Session collaboration Acknowledged/Handled state, and closeout result. It reuses the same Session message store as WebUI. Live workspace details stay hidden; a non-blocking current-attempt finish_coding_task closeout may seal one immutable final-changes snapshot that the card discovers and lazily expands per file.",
+            "description": "Persistent user-facing card for one client Window and Project. Present it once near the start of substantial work; the mounted App refreshes the same bounded Window ActionAudit activity used by WebUI, including observe/diagnostic actions, without creating extra cards. Workflow Session collaboration and immutable final changes are optional linked evidence that may appear later; live internal checks/review state is not the primary UI.",
             "mimeType": MCP_UI_RESOURCE_MIME_TYPE,
             "_meta": mcp_app_resource_meta(domain)
         }));

@@ -50,6 +50,27 @@ fn mcp_tool_action_audit_ids_keep_successful_business_session_internal_and_bound
     assert!(mcp_tool_action_audit_ids(true, None, &correlation).is_none());
 }
 
+#[test]
+fn work_result_app_internal_tools_do_not_become_window_activity() {
+    for tool in [
+        "present_work_result",
+        "work_result_state",
+        "work_result_send_message",
+        "changes_file_diff",
+    ] {
+        assert!(work_result_app_internal_tool(Some(tool)), "{tool}");
+    }
+    for tool in [
+        "runtime_status",
+        "current_window_activity",
+        "observe_jobs",
+        "read_files",
+    ] {
+        assert!(!work_result_app_internal_tool(Some(tool)), "{tool}");
+    }
+    assert!(!work_result_app_internal_tool(None));
+}
+
 fn test_runtime() -> ToolRuntime {
     ToolRuntime::new_for_tests()
 }

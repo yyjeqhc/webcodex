@@ -3341,7 +3341,7 @@ mod structured_execution_sparse_projection_tests {
 
         let mut work_result = ToolCall::WorkResultState {
             project: "demo".to_string(),
-            session_id: "wc_sess_x".to_string(),
+            session_id: Some("wc_sess_x".to_string()),
         };
         assert!(canonical_execution_project_binding(&mut work_result).is_none());
         assert_eq!(work_result.project(), Some("demo"));

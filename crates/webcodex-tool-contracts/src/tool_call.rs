@@ -1489,22 +1489,27 @@ pub enum ToolCall {
         include_validation_summary: Option<bool>,
     },
 
-    /// Explicitly present the current bounded Work Result for one exact coding Session.
+    /// Explicitly present one persistent card for the current client Window.
+    /// Project authority is re-checked on every refresh; Workflow Session linkage is optional evidence.
     PresentWorkResult {
-        /// Required exact runtime Project input. It is independently resolved and authorized on every call
-        /// and must match the project scoped to session_id.
+        /// Required exact runtime Project input. It is independently resolved and authorized on every call.
         #[schemars(length(min = 1, max = 512))]
         project: String,
-        /// Required exact project-scoped Workflow Session id. Identity is never inferred from
-        /// current/recent Session, Window, transport, or credential context.
+        /// Optional exact project-scoped Workflow Session association for compatibility.
+        /// Omit it when the Window has not created or resumed a Workflow Session.
+        #[serde(default)]
         #[schemars(regex(pattern = "^wc_sess_([A-Za-z0-9_-]{16}|[0-9a-f]{32})$"))]
-        session_id: String,
+        session_id: Option<String>,
     },
 
-    /// App-only exact read of the same bounded Work Result projection. This
-    /// business session identity is deliberately excluded from generic Session
-    /// recording so an explicit App refresh cannot mutate the observed ledger.
-    WorkResultState { project: String, session_id: String },
+    /// App-only read of the same Window card projection. Optional Session identity
+    /// is association evidence only and is deliberately excluded from generic recording.
+    WorkResultState {
+        project: String,
+        #[serde(default)]
+        #[schemars(regex(pattern = "^wc_sess_([A-Za-z0-9_-]{16}|[0-9a-f]{32})$"))]
+        session_id: Option<String>,
+    },
 
     /// Work Result App-only collaboration write. The App fixes the business kind
     /// to guidance + requires_ack and supplies one bounded replay key so uncertain
@@ -5744,11 +5749,10 @@ impl ToolCall {
             | Self::WorkspaceCheckpointRestore { session_id, .. }
             | Self::WorkspaceCheckpointDelete { session_id, .. } => session_id.as_deref(),
             Self::SessionHandoffSummary { session_id, .. } => Some(session_id.as_str()),
-            Self::PresentWorkResult { session_id, .. } => Some(session_id.as_str()),
-            // App-only presentation reads intentionally do not expose their business
-            // Session through this generic recorder projection: each re-authorizes
-            // and reads the exact target inside its runtime method.
-            Self::WorkResultState { .. }
+            // Window-card presentation/refresh never becomes generic Session recorder
+            // evidence. An optional Session selector is association evidence only.
+            Self::PresentWorkResult { .. }
+            | Self::WorkResultState { .. }
             | Self::WorkResultSendMessage { .. }
             | Self::ChangesFileDiff { .. }
             | Self::SessionHandoffState { .. } => None,

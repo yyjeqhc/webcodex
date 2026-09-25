@@ -165,7 +165,7 @@ async fn result_app_descriptor_and_resource_exposure_require_ui_operator_capabil
     assert_eq!(MCP_RESULT_UI_RESOURCE_URI, "ui://webcodex/changes/v2");
     assert_eq!(
         MCP_WORK_RESULT_UI_RESOURCE_URI,
-        "ui://webcodex/work-result/v6"
+        "ui://webcodex/work-result/v7"
     );
     assert!(MCP_RESULT_UI_RESOURCE_LEGACY_URIS.contains(&"ui://webcodex/changes/v1"));
     assert!(MCP_RESULT_UI_RESOURCE_LEGACY_URIS.contains(&"ui://webcodex/result/v1"));
@@ -175,6 +175,7 @@ async fn result_app_descriptor_and_resource_exposure_require_ui_operator_capabil
     assert!(MCP_WORK_RESULT_UI_RESOURCE_LEGACY_URIS.contains(&"ui://webcodex/work-result/v2"));
     assert!(MCP_WORK_RESULT_UI_RESOURCE_LEGACY_URIS.contains(&"ui://webcodex/work-result/v4"));
     assert!(MCP_WORK_RESULT_UI_RESOURCE_LEGACY_URIS.contains(&"ui://webcodex/work-result/v5"));
+    assert!(MCP_WORK_RESULT_UI_RESOURCE_LEGACY_URIS.contains(&"ui://webcodex/work-result/v6"));
     assert!(mcp_result_app_resource_meta(None)["ui"]
         .get("domain")
         .is_none());

@@ -141,7 +141,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         "Return an optional deterministic evidence snapshot for model review, including workspace, validation, jobs, and recorded tool events. The result is advisory: it does not decide task completion, replace direct diff or test review, or generate the user-facing final report.",
     )),
     adaptive_runtime_direct(
-        requires_explicit_business_session(model_spec(
+        model_spec(
             def(
                 "present_work_result",
                 super::ToolAuditPolicy::typed_fields(&[
@@ -172,8 +172,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 super::ToolActivityPresentation::Transport,
                 super::ToolActivityInteraction::NonMeaningful,
             ),
-            "Present one exact coding Workflow Session as the persistent user-facing WebCodex task card. For substantial coding, call once after the Session becomes materially stateful. The card provides interactive Workflow, Checks, Messages and Result views. Its recorded workflow stages filter bounded exact-Session activity, not an inferred plan. It app-only refreshes semantic Window activity and last-active timing, compact checks/review, shared Session collaboration Acknowledged/Handled state, and closeout result without model polling. Its composer uses the same Session message store as WebUI through a separate App-only tool; present_work_result stays read-only. Live per-file workspace details stay hidden; non-blocking finish_coding_task seals final changes for lazy per-file inspection. Tiny/read-only work skips it. Requires exact project + session_id; creates no work, validation, review, lifecycle change, or authority. Repeated presentation may create another Host card.",
-        ))
+            "Present one persistent user-facing WebCodex card for the current client Window. For substantial Project work, call it once immediately after the first successful project-scoped WebCodex action so the card stays near the beginning of the chat; do not wait for Workflow Session creation, mutation, validation, or closeout. project is required; session_id is optional compatibility evidence and may be omitted. The card self-refreshes the same bounded Window ActionAudit activity used by WebUI, including observe/diagnostic actions, and may surface linked Session collaboration or sealed final changes only when those later exist. It creates no work, Session, validation, review, lifecycle change, or authority. Never repeat presentation in the same Window because another invocation may create another Host card.",
+        )
         .with_gpt_action_unsupported(),
         155,
     ),

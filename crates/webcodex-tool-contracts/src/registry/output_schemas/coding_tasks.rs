@@ -142,7 +142,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ),
             (
                 "presentation",
-                open_object_schema("Optional parser-ready presentation follow-up. Present only when this exact Workflow Session has a startup Git baseline, durable successful first-class Edit evidence, and the current final workspace still differs from that baseline; contains exactly one present_work_result suggested_call and is preserved in full and summary_only closeout."),
+                open_object_schema("Optional parser-ready presentation fallback. Normal substantial work should already have presented the current Window card near the first successful project-scoped action; closeout may suggest exactly one present_work_result call only when no card was mounted earlier."),
             ),
             (
                 "suggested_next_actions",

@@ -97,6 +97,18 @@ fn goal_plan_observation_id(tool_name: Option<&str>, params: &Value) -> Option<S
     .then(|| id.to_string())
 }
 
+fn work_result_app_internal_tool(tool_name: Option<&str>) -> bool {
+    matches!(
+        tool_name,
+        Some(
+            "present_work_result"
+                | "work_result_state"
+                | "work_result_send_message"
+                | "changes_file_diff"
+        )
+    )
+}
+
 fn finalize_mcp_tool_observability(
     runtime: &ToolRuntime,
     audit: Option<&ActionAudit>,
@@ -494,23 +506,26 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
     let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
     let live_principal = crate::tool_runtime::runtime_observation_principal(auth.as_ref()).ok();
     let window_registry = runtime.window_activity_registry();
-    let mut live_window_request =
-        if request.id.is_some() && matches!(request.method.as_str(), "tools/call" | "tools/list") {
-            window.identity.as_ref().map(|identity| {
-                window_registry.start_observed(
-                    identity,
-                    &server_trace_id,
-                    &request.method,
-                    tool_name.as_deref(),
-                    live_principal
-                        .as_ref()
-                        .map(|(kind, id)| (kind.as_str(), id.as_str())),
-                    guard.request_observed_at_ms(),
-                )
-            })
-        } else {
-            None
-        };
+    let window_activity_visible = !work_result_app_internal_tool(tool_name.as_deref());
+    let mut live_window_request = if window_activity_visible
+        && request.id.is_some()
+        && matches!(request.method.as_str(), "tools/call" | "tools/list")
+    {
+        window.identity.as_ref().map(|identity| {
+            window_registry.start_observed(
+                identity,
+                &server_trace_id,
+                &request.method,
+                tool_name.as_deref(),
+                live_principal
+                    .as_ref()
+                    .map(|(kind, id)| (kind.as_str(), id.as_str())),
+                guard.request_observed_at_ms(),
+            )
+        })
+    } else {
+        None
+    };
 
     // Chat-window MCP tool calls must land in the action audit exactly like
     // the REST surface (they were previously invisible there). Summary-level
@@ -518,9 +533,14 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
     // notifications are acknowledged but never dispatched, so they must not be
     // represented as executed actions.
     let audit = if request.method == "tools/call" && request.id.is_some() {
+        let audit = ActionAudit::start(req, depot, "/mcp", "toolsCall");
+        let audit = if window_activity_visible {
+            audit.with_window(window.identity.as_ref(), Some(&server_trace_id))
+        } else {
+            audit
+        };
         Some((
-            ActionAudit::start(req, depot, "/mcp", "toolsCall")
-                .with_window(window.identity.as_ref(), Some(&server_trace_id)),
+            audit,
             tool_name.clone().unwrap_or_else(|| "unknown".to_string()),
             tools::project_from_tool_call_params(&request.params),
         ))

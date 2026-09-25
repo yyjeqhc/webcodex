@@ -190,7 +190,7 @@ export type RunnerSummary = {
   connected: boolean;
   status?: string;
   transport?: string;
-  agent_protocol_generation?: number;
+  runner_protocol_generation?: number;
   last_seen_age_secs?: number;
   version?: string;
   build_git_commit?: string;

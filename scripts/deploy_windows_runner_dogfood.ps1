@@ -110,7 +110,7 @@ $null = Assert-PreReplacementRunnerObservation `
     -ExpectedClientId $operatorProfile.ClientId `
     -ExpectedBuild $previousBuild `
     -AllowVersionMismatch:$AllowVersionMismatch
-$oldAgentInstanceId = [string]$preObservation.agent_instance_id
+$oldRunnerInstanceId = [string]$preObservation.runner_instance_id
 
 # Copy first so the source may be a build directory, network path, or even the
 # current RunnerPath. The staged image is fully verified before the old process
@@ -188,9 +188,9 @@ try {
             -TokenFile $operatorProfile.TokenFile `
             -ClientId $operatorProfile.ClientId `
             -RequestTimeoutMilliseconds $RequestTimeoutMilliseconds
-        $instanceId = [string]$observation.agent_instance_id
+        $instanceId = [string]$observation.runner_instance_id
         if (-not [string]::IsNullOrWhiteSpace($instanceId) -and
-            $instanceId -ne $oldAgentInstanceId -and
+            $instanceId -ne $oldRunnerInstanceId -and
             $script:candidateObservedInstanceIds -notcontains $instanceId) {
             $script:candidateObservedInstanceIds += $instanceId
         }
@@ -201,7 +201,7 @@ try {
         -ExpectedClientId $operatorProfile.ClientId `
         -ExpectedBuild $candidateBuild `
         -DeadlineUtc ([DateTime]::UtcNow.AddSeconds($ReadinessTimeoutSecs)) `
-        -DisallowedAgentInstanceIds @($oldAgentInstanceId) `
+        -DisallowedRunnerInstanceIds @($oldRunnerInstanceId) `
         -FailOnBuildMismatch `
         -AllowVersionMismatch:$AllowVersionMismatch
     $candidateReadyObservation = $candidateReady.Observation
@@ -220,8 +220,8 @@ try {
 
     Write-Output "Windows Runner dogfood replacement readiness succeeded."
     Write-Output "  client_id:             $($operatorProfile.ClientId)"
-    Write-Output "  old_agent_instance_id: $oldAgentInstanceId"
-    Write-Output "  new_agent_instance_id: $($candidateReadyObservation.agent_instance_id)"
+    Write-Output "  old_runner_instance_id: $oldRunnerInstanceId"
+    Write-Output "  new_runner_instance_id: $($candidateReadyObservation.runner_instance_id)"
     Write-Output "  readiness_reason:      $($candidateReady.Decision.Reason)"
     Write-Output "  expected_build:        commit=$($candidateBuild.GitCommit) dirty=$($candidateBuild.GitDirty)"
     Write-Output "  observed_build:        commit=$($candidateReadyObservation.build.git_commit) dirty=$($candidateReadyObservation.build.git_dirty)"
@@ -259,9 +259,9 @@ try {
                 -TokenFile $operatorProfile.TokenFile `
                 -ClientId $operatorProfile.ClientId `
                 -RequestTimeoutMilliseconds ([Math]::Min(2000, $ReadinessTimeoutSecs * 1000))
-            $beforeRollbackInstanceId = [string]$beforeRollback.agent_instance_id
+            $beforeRollbackInstanceId = [string]$beforeRollback.runner_instance_id
             if (-not [string]::IsNullOrWhiteSpace($beforeRollbackInstanceId) -and
-                $beforeRollbackInstanceId -ne $oldAgentInstanceId -and
+                $beforeRollbackInstanceId -ne $oldRunnerInstanceId -and
                 $script:candidateObservedInstanceIds -notcontains $beforeRollbackInstanceId) {
                 $script:candidateObservedInstanceIds += $beforeRollbackInstanceId
             }
@@ -321,13 +321,13 @@ try {
                 -ClientId $operatorProfile.ClientId `
                 -RequestTimeoutMilliseconds $RequestTimeoutMilliseconds
         }
-        $rollbackDisallowedIds = @($oldAgentInstanceId) + @($candidateObservedInstanceIds)
+        $rollbackDisallowedIds = @($oldRunnerInstanceId) + @($candidateObservedInstanceIds)
         $rollbackReady = Wait-RunnerControlPlaneReadiness `
             -Observe $rollbackObserve `
             -ExpectedClientId $operatorProfile.ClientId `
             -ExpectedBuild $previousBuild `
             -DeadlineUtc ([DateTime]::UtcNow.AddSeconds($ReadinessTimeoutSecs)) `
-            -DisallowedAgentInstanceIds $rollbackDisallowedIds `
+            -DisallowedRunnerInstanceIds $rollbackDisallowedIds `
             -AllowVersionMismatch:$AllowVersionMismatch
         $rollbackReadyObservation = $rollbackReady.Observation
         $null = Assert-CapturedPrimaryRunnerIdentity -Identity $rollbackPrimary
@@ -339,7 +339,7 @@ try {
     if ($rollbackFailure) {
         throw "Deployment failed: $($deploymentError.Exception.Message). Rollback outcome uncertain / rollback readiness failed: $rollbackFailure"
     }
-    Write-Warning "Deployment failed, but rollback readiness was proven for agent_instance_id=$($rollbackReadyObservation.agent_instance_id) commit=$($rollbackReadyObservation.build.git_commit) dirty=$($rollbackReadyObservation.build.git_dirty) reason=$($rollbackReady.Decision.Reason)"
+    Write-Warning "Deployment failed, but rollback readiness was proven for runner_instance_id=$($rollbackReadyObservation.runner_instance_id) commit=$($rollbackReadyObservation.build.git_commit) dirty=$($rollbackReadyObservation.build.git_dirty) reason=$($rollbackReady.Decision.Reason)"
     throw $deploymentError
 } finally {
     if (Test-Path -LiteralPath $stagedPath) {

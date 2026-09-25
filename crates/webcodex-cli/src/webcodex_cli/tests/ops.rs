@@ -434,8 +434,8 @@ fn ops_strict_exit_code_follows_report_status() {
     assert_eq!(ops_exit_code(true, warn.verdict.status), 0);
 
     let mut fail_runtime = runtime_status_fixture();
-    fail_runtime["agents"]["online_count"] = json!(0);
-    fail_runtime["agents"]["summary"]["online"] = json!(0);
+    fail_runtime["runners"]["online_count"] = json!(0);
+    fail_runtime["runners"]["summary"]["online"] = json!(0);
     let fail = ops_status_report("https://ops.example.test", &Some(fail_runtime));
     assert_eq!(fail.verdict.status, "fail");
     assert_eq!(ops_exit_code(true, fail.verdict.status), 2);
@@ -474,25 +474,19 @@ fn runtime_status_fixture() -> Value {
         "jobs": {
             "active_count": 0
         },
-        "agents": {
+        "runners": {
             "online_count": 1,
             "stale_count": 0,
-            "summary": {
-                "online": 1,
-                "offline": 0,
-                "stale": 0,
-                "clients": [
-                    {
-                        "client_id": "ops-agent",
-                        "status": "online",
-                        "transport": "websocket",
-                        "projects_count": 1,
-                        "active_jobs": 0,
-                        "pending_requests": 0,
-                        "last_seen_age_secs": 2
-                    }
-                ]
-            }
+            "summary": {"online": 1, "offline": 0, "stale": 0},
+            "clients": [{
+                "client_id": "ops-agent",
+                "status": "online",
+                "transport": "websocket",
+                "projects_count": 1,
+                "active_jobs": 0,
+                "pending_requests": 0,
+                "last_seen_age_secs": 2
+            }]
         },
         "projects": {
             "effective": {
@@ -501,6 +495,41 @@ fn runtime_status_fixture() -> Value {
             }
         }
     })
+}
+
+#[test]
+fn ops_reports_emit_only_runner_keys_from_canonical_input() {
+    let runtime = Some(runtime_status_fixture());
+    let status = ops_status_report("http://runtime.example", &runtime);
+    assert_eq!(
+        status.summary["runners"]["clients"][0]["client_id"],
+        "ops-agent"
+    );
+    assert!(status.summary.get("agents").is_none());
+    assert!(render_ops_status(&status, false)
+        .unwrap()
+        .contains("ops-agent"));
+    let runners = ops_runners_report("http://runtime.example", &runtime);
+    assert_eq!(runners.summary["runners"][0]["projects_count"], 1);
+    assert!(runners.summary.get("agents").is_none());
+    let missing = ops_runners_report("http://runtime.example", &None);
+    assert_eq!(missing.summary["runners"], json!([]));
+    assert!(missing.summary.get("agents").is_none());
+    let mut empty = runtime_status_fixture();
+    empty["runners"] = json!({"online_count":0,"stale_count":0,"clients":[],"summary":{"online":0,"offline":0,"stale":0}});
+    let empty = ops_runners_report("http://runtime.example", &Some(empty));
+    assert_eq!(empty.summary["runners"], json!([]));
+    assert!(empty.summary.get("agents").is_none());
+    let focused = ops_runner_report(
+        "http://runtime.example",
+        "msi",
+        &Some(runner_runtime_status_fixture()),
+    );
+    assert_eq!(focused.summary["runner_instance_id"], "instance-new");
+    assert!(focused.summary.get("agent_instance_id").is_none());
+    assert!(render_ops_runner(&focused, false)
+        .unwrap()
+        .contains("instance-new"));
 }
 
 fn runner_runtime_status_fixture() -> Value {
@@ -514,7 +543,7 @@ fn runner_runtime_status_fixture() -> Value {
             "client_id": "msi",
             "connected": true,
             "status": "online",
-            "agent_instance_id": "instance-new",
+            "runner_instance_id": "instance-new",
             "build": {
                 "version": "0.3.8",
                 "git_commit": "candidate1234",
@@ -930,11 +959,11 @@ fn ops_status_tool_inventory_rejects_missing_empty_or_inconsistent_data() {
 #[test]
 fn ops_status_no_online_agents_fails() {
     let mut runtime = runtime_status_fixture();
-    runtime["agents"]["online_count"] = json!(0);
-    runtime["agents"]["stale_count"] = json!(1);
-    runtime["agents"]["summary"]["online"] = json!(0);
-    runtime["agents"]["summary"]["stale"] = json!(1);
-    runtime["agents"]["summary"]["clients"][0]["status"] = json!("stale");
+    runtime["runners"]["online_count"] = json!(0);
+    runtime["runners"]["stale_count"] = json!(1);
+    runtime["runners"]["summary"]["online"] = json!(0);
+    runtime["runners"]["summary"]["stale"] = json!(1);
+    runtime["runners"]["clients"][0]["status"] = json!("stale");
     let report = ops_status_report("https://ops.example.test", &Some(runtime));
     assert_eq!(report.verdict.status, "fail");
     assert!(report
@@ -958,11 +987,11 @@ fn ops_status_active_jobs_warns() {
 #[test]
 fn ops_runners_maps_online_stale_and_jobs() {
     let mut runtime = runtime_status_fixture();
-    runtime["agents"]["online_count"] = json!(1);
-    runtime["agents"]["stale_count"] = json!(1);
-    runtime["agents"]["summary"]["online"] = json!(1);
-    runtime["agents"]["summary"]["stale"] = json!(1);
-    runtime["agents"]["summary"]["clients"] = json!([
+    runtime["runners"]["online_count"] = json!(1);
+    runtime["runners"]["stale_count"] = json!(1);
+    runtime["runners"]["summary"]["online"] = json!(1);
+    runtime["runners"]["summary"]["stale"] = json!(1);
+    runtime["runners"]["clients"] = json!([
         {
             "client_id": "online",
             "status": "online",
@@ -1000,7 +1029,7 @@ fn ops_runner_projects_only_exact_safe_runtime_identity() {
     assert_eq!(report.verdict.status, "pass");
     assert_eq!(report.summary["client_id"], "msi");
     assert_eq!(report.summary["connected"], true);
-    assert_eq!(report.summary["agent_instance_id"], "instance-new");
+    assert_eq!(report.summary["runner_instance_id"], "instance-new");
     assert_eq!(report.summary["build"]["git_commit"], "candidate1234");
     assert_eq!(report.summary["build"]["git_dirty"], false);
     assert_eq!(report.summary["source_alignment"]["status"], "different");
@@ -1216,7 +1245,7 @@ fn ops_smoke_preflight_online_non_recommended_project_warns() {
 fn ops_json_and_human_outputs_do_not_contain_secret_values() {
     let secret = "secret-token-value";
     let mut runtime = runtime_status_fixture();
-    runtime["agents"]["summary"]["clients"][0]["client_id"] = json!("safe-agent");
+    runtime["runners"]["clients"][0]["client_id"] = json!("safe-agent");
     let report = ops_status_report("https://ops.example.test", &Some(runtime));
     let json_output = render_ops_status(&report, true).unwrap();
     let human_output = render_ops_status(&report, false).unwrap();

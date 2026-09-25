@@ -1307,9 +1307,7 @@ async fn startup_runner_health_uses_the_exact_project_client() {
 
     let status = runtime.runtime_status(None).await;
     assert!(status.success);
-    let clients = status.output["agents"]["summary"]["clients"]
-        .as_array()
-        .unwrap();
+    let clients = status.output["runners"]["clients"].as_array().unwrap();
     assert!(clients
         .iter()
         .any(|client| client["client_id"] == "startup-peer" && client["status"] == "online"));

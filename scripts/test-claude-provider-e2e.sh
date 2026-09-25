@@ -113,7 +113,7 @@ agent_registered() {
     printf '%s' "$body" | python3 -c '
 import json, sys
 d = json.load(sys.stdin)
-clients = d["output"]["agents"]["clients"]
+clients = d["output"]["runners"]["clients"]
 assert any(c["client_id"] == sys.argv[1] and c["connected"] for c in clients)
 ' "$CLIENT_ID" >/dev/null 2>&1
 }
@@ -138,7 +138,7 @@ provider_status_matches() {
     printf '%s' "$body" | python3 -c '
 import json, sys
 d = json.load(sys.stdin)
-client = next(c for c in d["output"]["agents"]["clients"] if c["client_id"] == sys.argv[1])
+client = next(c for c in d["output"]["runners"]["clients"] if c["client_id"] == sys.argv[1])
 claude = client["tool_providers"]["claude_code"]
 call = claude["last_call"]
 assert call["capability"] == "search_project_text"
@@ -315,7 +315,7 @@ assert d["success"] and item["success"] and "before" in item["output"]["text"]
 api_post /api/runtime/status '{}' | python3 -c '
 import json, sys
 d = json.load(sys.stdin)
-c = next(x for x in d["output"]["agents"]["clients"] if x["client_id"] == sys.argv[1])
+c = next(x for x in d["output"]["runners"]["clients"] if x["client_id"] == sys.argv[1])
 claude = c["tool_providers"]["claude_code"]
 assert claude["process_state"] == "not_started"
 assert claude.get("last_call") is None

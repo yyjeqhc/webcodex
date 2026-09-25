@@ -954,7 +954,7 @@ fn project_projection_reconcile_required(
             "reason_code": reason_code,
             "state_changed": state_changed,
             "client_id": client_id,
-            "agent_instance_id": runner_instance_id,
+            "runner_instance_id": runner_instance_id,
             "agent_project_id": project_id.clone(),
             "revision": revision.clone(),
             "authoritative_outcome": result.get("outcome").cloned().unwrap_or(Value::Null),

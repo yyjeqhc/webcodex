@@ -134,7 +134,7 @@ def wait_agent_online(port: int, proc: subprocess.Popen[bytes], timeout: float =
             raise RuntimeError(f"runner exited before online with code {proc.returncode}")
         try:
             status, body = api_post_json(port, "/api/runtime/status", {}, 1.0)
-            online = body.get("output", {}).get("agents", {}).get("online_count") if status == 200 else None
+            online = body.get("output", {}).get("runners", {}).get("online_count") if status == 200 else None
             last = f"status={status} online={online!r}"
             if online == 1:
                 return

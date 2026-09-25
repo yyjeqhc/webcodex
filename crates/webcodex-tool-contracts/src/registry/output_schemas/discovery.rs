@@ -94,8 +94,8 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 open_object_schema("Project counts from the Runner registry. Prefer projects.effective for model-facing status."),
             ),
             (
-                "agents",
-                open_object_schema("Runner counts and client summaries. Per-client host_context is bounded Runner-configured advisory data, not observed truth or authority. job_concurrency contains the static Runner limit plus caller-visible running and queued counts. Canonical top-level counts are count, online_count, and stale_count in full, compact, and summary_only output."),
+                "runners",
+                open_object_schema("Runner counts and a single clients collection using runner_instance_id and runner_protocol_generation; summary contains only aggregate counts. Omitted in focused compact/summary mode. Per-client host_context is bounded Runner-configured advisory data, not observed truth or authority. job_concurrency contains the static Runner limit plus caller-visible running and queued counts. Canonical top-level counts are count, online_count, and stale_count in full, compact, and summary_only output."),
             ),
             (
                 "jobs",
@@ -151,12 +151,12 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
         ])),
         "list_runners" => Some(wrapped_output_schema(vec![
             (
-                "agents",
-                array_schema(open_object_schema("Runner summary including bounded Runner-configured host_context advisory data, never authority or proof of current state, plus job_concurrency limit/running/queued facts."), "Legacy compatibility key containing Runner summaries."),
+                "runners",
+                array_schema(open_object_schema("Runner summary including bounded Runner-configured host_context advisory data, never authority or proof of current state, plus job_concurrency limit/running/queued facts."), "Canonical Runner collection; per-Runner identity uses runner_instance_id and runner_protocol_generation."),
             ),
             (
-                "clients",
-                array_schema(open_object_schema("Runner client summary including job_concurrency limit/running/queued facts."), "Runner client summaries."),
+                "summary",
+                open_object_schema("Aggregate count, online, offline, and stale counts; Runner entries appear only in runners."),
             ),
             ("count", schema_type("integer", "Runner/client count.")),
         ])),

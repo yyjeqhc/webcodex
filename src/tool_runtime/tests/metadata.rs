@@ -20,6 +20,99 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+#[tokio::test]
+async fn runner_observability_has_one_collection_and_preserves_health_across_modes() {
+    let registry = Arc::new(RunnerRegistry::default());
+    let mut registration = metadata_agent_registration("projection-runner");
+    registration.runner_instance_id = "projection-instance".into();
+    registration.owner = Some("projection-owner".into());
+    registration.job_concurrency_limit = Some(4);
+    registry.register(registration).await.unwrap();
+    let runtime = ToolRuntime::new(registry, Arc::new(RuntimeInfo::default()));
+    let full = runtime.dispatch(runtime_status_call()).await;
+    assert!(full.success, "{:?}", full.error);
+    let expected = &full.output["runners"]["clients"][0];
+    assert_eq!(expected["runner_instance_id"], "projection-instance");
+    assert_eq!(
+        expected["runner_protocol_generation"],
+        RUNNER_PROTOCOL_GENERATION_V2.get()
+    );
+    assert_eq!(expected["owner"], "projection-owner");
+    for arguments in [
+        json!({}),
+        json!({"compact": true}),
+        json!({"summary_only": true}),
+        json!({"client_id": "projection-runner"}),
+    ] {
+        let result = runtime
+            .dispatch(ToolCall::from_tool_name("runtime_status", arguments.clone()).unwrap())
+            .await;
+        assert!(result.success, "{:?}", result.error);
+        assert!(result.output.get("agents").is_none());
+        assert!(result.output["runners"]["summary"].get("clients").is_none());
+        let clients = result.output["runners"]["clients"].as_array().unwrap();
+        assert_eq!(clients.len(), 1);
+        for key in [
+            "client_id",
+            "runner_instance_id",
+            "status",
+            "transport",
+            "projects_count",
+            "project_inventory",
+            "pending_requests",
+            "active_jobs",
+            "job_concurrency",
+        ] {
+            assert_eq!(clients[0][key], expected[key], "{arguments}: {key}");
+        }
+        assert!(clients[0].get("agent_instance_id").is_none());
+        assert!(clients[0].get("agent_protocol_generation").is_none());
+        if arguments.get("compact").is_some() || arguments.get("summary_only").is_some() {
+            assert!(clients[0].get("owner").is_none());
+            assert!(clients[0].get("policy").is_none());
+        }
+    }
+    for arguments in [
+        json!({"client_id":"projection-runner", "compact":true}),
+        json!({"client_id":"projection-runner", "summary_only":true}),
+    ] {
+        let result = runtime
+            .dispatch(ToolCall::from_tool_name("runtime_status", arguments).unwrap())
+            .await;
+        assert!(result.success);
+        assert!(result.output.get("runners").is_none());
+        assert!(result.output.get("agents").is_none());
+        assert_eq!(
+            result.output["focus"]["runner_instance_id"],
+            "projection-instance"
+        );
+        assert!(result.output["focus"].get("agent_instance_id").is_none());
+    }
+    for arguments in [
+        json!({}),
+        json!({"summary_only":true}),
+        json!({"include_projects":false}),
+    ] {
+        let result = runtime
+            .dispatch(ToolCall::from_tool_name("list_runners", arguments.clone()).unwrap())
+            .await;
+        assert!(result.success);
+        assert!(result.output.get("agents").is_none());
+        assert!(result.output.get("clients").is_none());
+        assert!(result.output["summary"].get("clients").is_none());
+        let runners = result.output["runners"].as_array().unwrap();
+        assert_eq!(runners.len(), 1);
+        assert_eq!(runners[0]["runner_instance_id"], "projection-instance");
+        assert_eq!(runners[0]["job_concurrency"]["limit"], 4);
+        if arguments.get("summary_only").is_none() {
+            assert_eq!(runners[0]["owner"], "projection-owner");
+        }
+        if arguments.get("include_projects") == Some(&json!(false)) {
+            assert!(runners[0].get("projects").is_none());
+        }
+    }
+}
+
 fn shared_key_auth(hash: &str) -> crate::auth::AuthContext {
     crate::auth::AuthContext {
         kind: crate::auth::AuthKind::SharedKey,
@@ -1627,14 +1720,14 @@ async fn project_path_registration_capability_is_projected_safely() {
     let listed = runtime.dispatch(list_runners_call()).await;
     assert!(listed.success, "{:?}", listed.error);
     assert_eq!(
-        listed.output["agents"][0]["capabilities"]["project_path_registration"],
+        listed.output["runners"][0]["capabilities"]["project_path_registration"],
         true
     );
 
     let status = runtime.dispatch(runtime_status_call()).await;
     assert!(status.success, "{:?}", status.error);
     assert_eq!(
-        status.output["agents"]["clients"][0]["capabilities"]["project_path_registration"],
+        status.output["runners"]["clients"][0]["capabilities"]["project_path_registration"],
         true
     );
     assert!(
@@ -1704,7 +1797,7 @@ async fn runtime_status_shell_profiles_summary_is_sanitized() {
     let runtime = ToolRuntime::new(registry, Arc::new(RuntimeInfo::default()));
     let result = runtime.dispatch(runtime_status_call()).await;
     assert!(result.success);
-    let client = &result.output["agents"]["clients"][0];
+    let client = &result.output["runners"]["clients"][0];
     let sp = &client["shell_profiles"];
     assert_eq!(sp["default_profile"], "rust");
     assert_eq!(sp["configured_count"], 1);
@@ -1968,7 +2061,7 @@ fn runtime_status_input_schema_exposes_compact_flags() {
     );
 
     let output_schema = crate::tool_runtime::registry::output_schema_for_tool("runtime_status");
-    let agents_description = output_schema["properties"]["output"]["properties"]["agents"]
+    let agents_description = output_schema["properties"]["output"]["properties"]["runners"]
         ["description"]
         .as_str()
         .expect("runtime_status agents output description");
@@ -2337,14 +2430,14 @@ async fn runtime_status_with_no_projects_returns_configured_false() {
     assert!(out["pid"].is_i64());
     assert_eq!(out["authority"]["mode"], "trusted_agent");
     assert_eq!(out["authority"]["human_approval_required"], false);
-    assert_eq!(out["projects"]["mode"], "agent_registered");
+    assert_eq!(out["projects"]["mode"], "runner_registered");
     assert_eq!(out["projects"]["count"], 0);
     assert!(out["projects"].get("configured").is_none());
     assert!(out["projects"].get("config_path").is_none());
     assert!(out["projects"].get("load_error").is_none());
     assert!(out["projects"].get("server_static").is_none());
-    assert_eq!(out["projects"]["agent_registered"]["count"], 0);
-    assert_eq!(out["projects"]["agent_registered"]["online_count"], 0);
+    assert_eq!(out["projects"]["runner_registered"]["count"], 0);
+    assert_eq!(out["projects"]["runner_registered"]["online_count"], 0);
     assert_eq!(out["projects"]["effective"]["count"], 0);
     assert_eq!(out["projects"]["effective"]["status"], "no_projects");
 }
@@ -2373,13 +2466,13 @@ async fn runtime_status_uses_agent_projects_as_effective() {
     let result = runtime.dispatch(runtime_status_call()).await;
     assert!(result.success, "{:?}", result.error);
     let projects = &result.output["projects"];
-    assert_eq!(projects["mode"], "agent_registered");
+    assert_eq!(projects["mode"], "runner_registered");
     assert!(projects.get("server_static").is_none());
     assert!(projects.get("configured").is_none());
     assert!(projects.get("config_path").is_none());
     assert!(projects.get("load_error").is_none());
-    assert_eq!(projects["agent_registered"]["count"], 1);
-    assert_eq!(projects["agent_registered"]["online_count"], 1);
+    assert_eq!(projects["runner_registered"]["count"], 1);
+    assert_eq!(projects["runner_registered"]["online_count"], 1);
     assert_eq!(projects["effective"]["count"], 1);
     assert_eq!(projects["effective"]["status"], "ok");
     assert_eq!(projects["count"], 1);
@@ -2551,14 +2644,14 @@ async fn runtime_status_compact_and_summary_only_return_sanitized_summary() {
             "/build/git_dirty",
             "/tools/count",
             "/jobs/active_count",
-            "/agents/count",
-            "/agents/online_count",
-            "/agents/stale_count",
-            "/agents/summary/online",
+            "/runners/count",
+            "/runners/online_count",
+            "/runners/stale_count",
+            "/runners/summary/online",
             "/projects/effective/status",
             "/projects/effective/count",
-            "/projects/agent_registered/count",
-            "/projects/agent_registered/online_count",
+            "/projects/runner_registered/count",
+            "/projects/runner_registered/online_count",
             "/connection_layers/runner_process/status",
             "/connection_layers/server_transport/status",
             "/connection_layers/server_registration/status",
@@ -2572,24 +2665,24 @@ async fn runtime_status_compact_and_summary_only_return_sanitized_summary() {
         }
         assert_eq!(summary["service"], "webcodex");
         assert_eq!(summary["version"], env!("CARGO_PKG_VERSION"));
-        assert_eq!(summary["agents"]["summary"]["count"], 1);
-        assert_eq!(summary["agents"]["summary"]["online"], 1);
-        assert_eq!(summary["agents"]["count"], 1);
-        assert_eq!(summary["agents"]["online_count"], 1);
-        assert_eq!(summary["agents"]["stale_count"], 0);
-        assert!(summary["agents"].get("offline_count").is_none());
+        assert_eq!(summary["runners"]["summary"]["count"], 1);
+        assert_eq!(summary["runners"]["summary"]["online"], 1);
+        assert_eq!(summary["runners"]["count"], 1);
+        assert_eq!(summary["runners"]["online_count"], 1);
+        assert_eq!(summary["runners"]["stale_count"], 0);
+        assert!(summary["runners"].get("offline_count").is_none());
         assert_eq!(summary["projects"]["effective"]["count"], 1);
         assert_eq!(summary["projects"]["effective"]["status"], "ok");
         assert!(summary["tools"].get("names").is_none());
         assert!(
             summary
-                .pointer("/agents/clients/0/policy/allowed_roots")
+                .pointer("/runners/clients/0/policy/allowed_roots")
                 .is_none(),
             "compact runtime_status must not include full client policy"
         );
         assert!(
             summary
-                .pointer("/agents/clients/0/shell_profiles")
+                .pointer("/runners/clients/0/shell_profiles")
                 .is_none(),
             "compact runtime_status must not include shell profile details"
         );
@@ -2805,7 +2898,7 @@ async fn runtime_status_agent_summary_includes_protocol_version() {
     let runtime = ToolRuntime::new(registry, Arc::new(RuntimeInfo::default()));
     let result = runtime.dispatch(runtime_status_call()).await;
     assert!(result.success);
-    let agents = &result.output["agents"];
+    let agents = &result.output["runners"];
     assert_eq!(agents["count"], 1);
     assert_eq!(agents["online_count"], 1);
     assert_eq!(agents["stale_count"], 0);
@@ -2817,7 +2910,7 @@ async fn runtime_status_agent_summary_includes_protocol_version() {
     assert_eq!(clients.len(), 1);
     assert_eq!(clients[0]["client_id"], "agent-1");
     assert_eq!(
-        clients[0]["agent_protocol_generation"],
+        clients[0]["runner_protocol_generation"],
         RUNNER_PROTOCOL_GENERATION_V2.get()
     );
     assert_eq!(clients[0]["transport"], "polling");
@@ -2831,7 +2924,7 @@ async fn runtime_status_agent_summary_includes_protocol_version() {
         clients[0]["job_concurrency"],
         json!({"limit": 4, "running": 0, "queued": 0})
     );
-    let health_clients = agents["summary"]["clients"].as_array().unwrap();
+    let health_clients = agents["clients"].as_array().unwrap();
     assert_eq!(health_clients.len(), 1);
     assert_eq!(health_clients[0]["client_id"], "agent-1");
     assert_eq!(health_clients[0]["status"], "online");
@@ -2927,7 +3020,7 @@ async fn runtime_status_includes_sanitized_policy_summary() {
     let runtime = ToolRuntime::new(registry, Arc::new(RuntimeInfo::default()));
     let result = runtime.dispatch(runtime_status_call()).await;
     assert!(result.success);
-    let clients = result.output["agents"]["clients"].as_array().unwrap();
+    let clients = result.output["runners"]["clients"].as_array().unwrap();
     let policy = &clients[0]["policy"];
     assert_eq!(policy["allow_raw_shell"], true);
     assert_eq!(policy["allow_cwd_anywhere"], false);
@@ -2958,7 +3051,7 @@ async fn runtime_status_includes_sanitized_policy_summary() {
 
     let listed = runtime.dispatch(list_runners_call()).await;
     assert_eq!(
-        listed.output["agents"][0]["tool_providers"]["claude_code"]["last_call"]["fallback_used"],
+        listed.output["runners"][0]["tool_providers"]["claude_code"]["last_call"]["fallback_used"],
         false
     );
 }
@@ -3065,7 +3158,7 @@ async fn runtime_status_policy_summary_is_null_for_older_agents() {
     let runtime = ToolRuntime::new(registry, Arc::new(RuntimeInfo::default()));
     let result = runtime.dispatch(runtime_status_call()).await;
     assert!(result.success);
-    let clients = result.output["agents"]["clients"].as_array().unwrap();
+    let clients = result.output["runners"]["clients"].as_array().unwrap();
     // Older/minimal payload -> policy is null, not a fatal error.
     assert!(clients[0]["policy"].is_null());
     assert_eq!(
@@ -3342,7 +3435,7 @@ async fn list_runners_includes_sanitized_policy_summary() {
     assert_eq!(result.output["summary"]["online"], 1);
     assert_eq!(result.output["summary"]["offline"], 0);
     assert_eq!(result.output["summary"]["stale"], 0);
-    let health_clients = result.output["summary"]["clients"].as_array().unwrap();
+    let health_clients = result.output["runners"].as_array().unwrap();
     assert_eq!(health_clients.len(), 1);
     assert_eq!(health_clients[0]["client_id"], "list-policy-agent");
     assert_eq!(health_clients[0]["transport"], "polling");
@@ -3352,7 +3445,7 @@ async fn list_runners_includes_sanitized_policy_summary() {
         health_clients[0]["job_concurrency"],
         json!({"limit": 8, "running": 0, "queued": 0})
     );
-    let agents = result.output["agents"].as_array().unwrap();
+    let agents = result.output["runners"].as_array().unwrap();
     assert_eq!(agents.len(), 1);
     assert_eq!(agents[0]["projects_count"], 0);
     assert!(agents[0]["last_seen_age_secs"].is_i64());
@@ -3392,7 +3485,7 @@ async fn runtime_status_distinguishes_stale_registration_from_transport_connecti
     let runtime = ToolRuntime::new(registry, Arc::new(RuntimeInfo::default()));
     let result = runtime.dispatch(runtime_status_call()).await;
     assert!(result.success);
-    let agents = &result.output["agents"];
+    let agents = &result.output["runners"];
     assert_eq!(agents["count"], 1);
     assert_eq!(agents["online_count"], 0);
     assert_eq!(agents["stale_count"], 1);
@@ -3433,7 +3526,7 @@ async fn runtime_status_reflects_websocket_transport_label() {
 
     let result = runtime.dispatch(runtime_status_call()).await;
     assert!(result.success);
-    let clients = &result.output["agents"]["clients"];
+    let clients = &result.output["runners"]["clients"];
     let entry = clients
         .as_array()
         .unwrap()
@@ -3442,7 +3535,7 @@ async fn runtime_status_reflects_websocket_transport_label() {
         .expect("ws-agent present");
     assert_eq!(entry["transport"], "websocket");
     assert_eq!(
-        entry["agent_protocol_generation"],
+        entry["runner_protocol_generation"],
         RUNNER_PROTOCOL_GENERATION_V2.get()
     );
 }

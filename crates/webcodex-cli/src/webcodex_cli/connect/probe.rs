@@ -45,7 +45,7 @@ pub(super) async fn preflight_shared_key(
 
 pub(super) fn runtime_client_online(output: &JsonValue, client_id: &str) -> bool {
     output
-        .pointer("/agents/clients")
+        .pointer("/runners/clients")
         .and_then(JsonValue::as_array)
         .into_iter()
         .flatten()

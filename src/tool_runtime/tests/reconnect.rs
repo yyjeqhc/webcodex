@@ -597,14 +597,14 @@ async fn runtime_status_keeps_generation_independent_from_transport() {
     let runners = status.output["version_compatibility"]["runners"]
         .as_array()
         .unwrap();
-    let clients = status.output["agents"]["clients"].as_array().unwrap();
+    let clients = status.output["runners"]["clients"].as_array().unwrap();
     for (client_id, _, transport) in cases {
         let runner = runners
             .iter()
             .find(|runner| runner["client_id"] == client_id)
             .unwrap_or_else(|| panic!("runner {client_id} missing"));
         assert_eq!(
-            runner["agent_protocol_generation"],
+            runner["runner_protocol_generation"],
             RUNNER_PROTOCOL_GENERATION_V2.get()
         );
         assert_eq!(runner["status"], "compatible");
@@ -615,7 +615,7 @@ async fn runtime_status_keeps_generation_independent_from_transport() {
             .unwrap_or_else(|| panic!("client {client_id} missing"));
         assert_eq!(client["transport"], transport);
         assert_eq!(
-            client["agent_protocol_generation"],
+            client["runner_protocol_generation"],
             RUNNER_PROTOCOL_GENERATION_V2.get()
         );
         assert_eq!(client["project_inventory"]["sync_state"], "pending");
@@ -722,7 +722,7 @@ async fn version_compatibility_reports_stable_mismatch_facts() {
     assert!(by_id("old-build")["reason_code"].is_null());
     assert!(by_id("old-build")["action"].is_null());
     let compact = crate::tool_runtime::runtime_info::compact_runtime_status(&status.output);
-    let compact_runner = compact["agents"]["clients"]
+    let compact_runner = compact["runners"]["clients"]
         .as_array()
         .unwrap()
         .iter()
@@ -757,7 +757,7 @@ async fn runner_host_context_projects_to_full_list_and_compact_runtime() {
 
     let status = runtime.runtime_status(None).await;
     assert!(status.success);
-    let full = status.output["agents"]["clients"]
+    let full = status.output["runners"]["clients"]
         .as_array()
         .unwrap()
         .iter()
@@ -771,20 +771,20 @@ async fn runner_host_context_projects_to_full_list_and_compact_runtime() {
     );
 
     let compact = crate::tool_runtime::runtime_info::compact_runtime_status(&status.output);
-    let compact_sf = compact["agents"]["clients"]
+    let compact_sf = compact["runners"]["clients"]
         .as_array()
         .unwrap()
         .iter()
         .find(|client| client["client_id"] == "sf")
         .unwrap();
-    assert_eq!(compact_sf["agent_instance_id"], "inst-host-context");
+    assert_eq!(compact_sf["runner_instance_id"], "inst-host-context");
     assert_eq!(compact_sf["host_context"]["role"], "server_host");
     assert!(compact_sf.get("capabilities").is_none());
     assert!(compact_sf.get("policy").is_none());
 
     let listed = runtime.list_runners(None).await;
     assert!(listed.success);
-    let listed_sf = listed.output["agents"]
+    let listed_sf = listed.output["runners"]
         .as_array()
         .unwrap()
         .iter()
@@ -803,7 +803,7 @@ async fn runner_host_context_projects_to_full_list_and_compact_runtime() {
     });
     runtime.runner_registry.register(reconnect).await.unwrap();
     let after_reconnect = runtime.runtime_status(None).await;
-    let sf = after_reconnect.output["agents"]["clients"]
+    let sf = after_reconnect.output["runners"]["clients"]
         .as_array()
         .unwrap()
         .iter()

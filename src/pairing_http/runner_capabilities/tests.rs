@@ -5,6 +5,65 @@ use salvo::test::{ResponseExt, TestClient};
 use salvo::{Router, Service};
 
 #[tokio::test]
+async fn operator_grant_reads_canonical_runner_owner_and_rejects_wrong_or_offline_target() {
+    use std::sync::Arc;
+    for (owner, online, target, expected) in [
+        ("alice", true, "target", StatusCode::OK),
+        ("bob", true, "target", StatusCode::FORBIDDEN),
+        ("alice", false, "target", StatusCode::CONFLICT),
+        ("alice", true, "missing", StatusCode::CONFLICT),
+    ] {
+        let (_dir, db, mut key) = fixture();
+        key.id = "live-key".into();
+        key.expires_at = None;
+        let hash = hash_token("live-fixture-token");
+        db.insert_api_key(&key, &hash).unwrap();
+        let registry = Arc::new(crate::runner_http::RunnerRegistry::default());
+        for (client_id, runner_owner) in [("target", owner), ("peer", "alice")] {
+            // These are registration wire keys, deliberately unchanged by #579.
+            let registration = serde_json::from_value(json!({
+                "client_id":client_id, "agent_instance_id":"inst",
+                "agent_protocol_generation":2, "owner":runner_owner,
+                "capabilities":{"shell":true}
+            }))
+            .unwrap();
+            registry
+                .register(crate::test_support::current_runner_registration(
+                    registration,
+                ))
+                .await
+                .unwrap();
+        }
+        if !online {
+            registry.reconcile_disconnect("target", "inst").await;
+        }
+        let runtime = Arc::new(crate::tool_runtime::ToolRuntime::new(
+            registry,
+            Arc::new(crate::tool_runtime::RuntimeInfo::default()),
+        ));
+        let mut auth = AuthContext::new(AuthKind::Bootstrap);
+        auth.is_bootstrap = true;
+        auth.scopes = vec![crate::auth::SCOPE_ADMIN.into()];
+        let service = Service::new(
+            Router::new()
+                .hoop(affix_state::inject(auth))
+                .hoop(affix_state::inject(Arc::new(db)))
+                .hoop(affix_state::inject(runtime))
+                .push(Router::with_path("grant").post(grant_runner_capabilities)),
+        );
+        let mut response = TestClient::post("http://localhost/grant")
+            .json(&json!({"client_id":target,"user_token_hash":hash}))
+            .send(&service)
+            .await;
+        assert_eq!(response.status_code.unwrap_or(StatusCode::OK), expected);
+        if expected == StatusCode::OK {
+            let body: Value = response.take_json().await.unwrap();
+            assert_eq!(body["changed"], true);
+        }
+    }
+}
+
+#[tokio::test]
 async fn capability_status_observes_scopes_without_runner_or_ssh_inventory_or_grant() {
     for (coding, ssh) in [(false, false), (true, false), (false, true), (true, true)] {
         let mut auth = AuthContext::new(AuthKind::ApiToken);

@@ -27236,8 +27236,8 @@ function IL() {
       `${$e(me.build_commit)} · ${$e(me.authority_mode)}`
     ],
     [
-      "Agents",
-      `${$e(me.agents_online || 0)} / ${$e(me.agents_total || 0)}`,
+      "Runners",
+      `${$e(me.runners_online || 0)} / ${$e(me.runners_total || 0)}`,
       "online now"
     ],
     [
@@ -27273,7 +27273,7 @@ function IL() {
               ],
               [
                 "devices-section",
-                "Agents",
+                "Runners",
                 CL
               ],
               [
@@ -27411,11 +27411,11 @@ function IL() {
           /* @__PURE__ */ (0, x.jsx)(al, {
             id: "devices-section",
             eyebrow: "Connected fleet",
-            title: "Agents",
+            title: "Runners",
             error: se("devices"),
             children: /* @__PURE__ */ (0, x.jsx)(cx, {
-              label: "Devices and Agents",
-              empty: "No devices observed.",
+              label: "Connected Runners",
+              empty: "No Runners observed.",
               headings: [
                 "Name",
                 "Client",

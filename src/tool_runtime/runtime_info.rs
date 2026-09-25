@@ -180,11 +180,11 @@ impl ToolRuntime {
                 .map(|client| {
                     json!({
                         "client_id": client.client_id,
-                        "agent_instance_id": client.runner_instance_id,
+                        "runner_instance_id": client.runner_instance_id,
                         "display_name": client.display_name,
                         "status": client.status,
                         "connected": client.connected,
-                        "agent_protocol_generation": client.runner_protocol_generation.get(),
+                        "runner_protocol_generation": client.runner_protocol_generation.get(),
                         "transport": client.transport,
                         "last_seen_age_secs": last_seen_age_secs(client, now),
                         "pending_requests": client.pending_requests,
@@ -203,14 +203,14 @@ impl ToolRuntime {
                 .map(|client| {
                     let mut value = json!({
                         "client_id": client.client_id,
-                        "agent_instance_id": client.runner_instance_id,
+                        "runner_instance_id": client.runner_instance_id,
                         "display_name": client.display_name,
                         "owner": client.owner,
                         "hostname": client.hostname,
                         "host_context": host_context_projection(client.host_context.as_ref()),
                         "status": client.status,
                         "connected": client.connected,
-                        "agent_protocol_generation": client.runner_protocol_generation.get(),
+                        "runner_protocol_generation": client.runner_protocol_generation.get(),
                         "transport": client.transport,
                         "last_seen": client.last_seen,
                         "last_seen_age_secs": last_seen_age_secs(client, now),
@@ -242,8 +242,8 @@ impl ToolRuntime {
                 .filter(|client| client.status == "stale")
                 .count();
             return ToolResult::ok(json!({
-                // Runtime Console, admin/ops, and status projections consume this established key.
-                "agents": runners,
+                // One canonical Runner collection for Console, admin/ops, and model consumers.
+                "runners": runners,
                 "summary": {
                     "count": clients.len(),
                     "online": online,
@@ -254,10 +254,9 @@ impl ToolRuntime {
             }));
         }
         ToolResult::ok(json!({
-            // Runtime Console, admin/ops, and status projections consume this established key.
-            "agents": runners,
-            "clients": runner_health_clients(&clients, &runner_jobs, now),
-            "summary": runner_health_summary(&clients, &runner_jobs, now),
+            // One canonical Runner collection for Console, admin/ops, and model consumers.
+            "runners": runners,
+            "summary": runner_health_summary(&clients),
             "count": clients.len(),
         }))
     }
@@ -313,9 +312,9 @@ impl ToolRuntime {
             "no_projects"
         };
         let projects = json!({
-            // Stable pre-0.4 runtime_status compatibility identities.
-            "mode": "agent_registered",
-            "agent_registered": {
+            // Observation naming is separate from list_projects.source provenance.
+            "mode": "runner_registered",
+            "runner_registered": {
                 "count": runner_registered_count,
                 "online_count": runner_registered_online_count,
             },
@@ -353,7 +352,7 @@ impl ToolRuntime {
             online_count,
             stale_count,
             clients_summary,
-            runner_health_summary(&clients, &runner_jobs, now),
+            runner_health_summary(&clients),
         );
         let connection_layers = connection_layers(
             &clients,
@@ -470,7 +469,7 @@ impl ToolRuntime {
         );
         output.insert("projects".to_string(), projects);
         // Runtime Console, admin HTTP, and CLI ops consume this established key.
-        output.insert("agents".to_string(), runners);
+        output.insert("runners".to_string(), runners);
         output.insert("connection_layers".to_string(), connection_layers);
         output.insert(
             "protocol_compatibility".to_string(),
@@ -570,11 +569,11 @@ impl ToolRuntime {
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default();
-        let mismatched_agents_count = fleet_runners
+        let mismatched_runners_count = fleet_runners
             .iter()
             .filter(|runner| runner.get("status").and_then(Value::as_str) != Some("compatible"))
             .count();
-        let source_mismatched_agents_count = fleet_runners
+        let source_mismatched_runners_count = fleet_runners
             .iter()
             .filter(|runner| {
                 runner
@@ -618,8 +617,8 @@ impl ToolRuntime {
             })
             .count();
         let projects = json!({
-            "mode": "agent_registered",
-            "agent_registered": {
+            "mode": "runner_registered",
+            "runner_registered": {
                 "count": project_count,
                 "online_count": online_project_count,
             },
@@ -635,11 +634,11 @@ impl ToolRuntime {
             "stale_count": usize::from(!client.connected),
             "clients": [{
                 "client_id": client.client_id,
-                "agent_instance_id": client.runner_instance_id,
+                "runner_instance_id": client.runner_instance_id,
                 "display_name": client.display_name,
                 "status": client.status,
                 "connected": client.connected,
-                "agent_protocol_generation": client.runner_protocol_generation.get(),
+                "runner_protocol_generation": client.runner_protocol_generation.get(),
                 "transport": client.transport,
                 "last_seen": client.last_seen,
                 "last_seen_age_secs": last_seen_age_secs(&client, now),
@@ -647,10 +646,11 @@ impl ToolRuntime {
                 "active_jobs": active_jobs_for_client(&selected_jobs, &client.client_id),
                 "job_concurrency": job_concurrency_for_client(&client, &selected_jobs),
                 "projects_count": project_count,
+                "project_inventory": client.project_inventory,
                 "build": client.build,
                 "coding_agent_providers": safe_provider_inventory(client.coding_agent_providers.as_deref()),
             }],
-            "summary": runner_health_summary(&clients, &selected_jobs, now),
+            "summary": runner_health_summary(&clients),
         });
         let jobs = json!({
             "count": selected_jobs.len(),
@@ -673,7 +673,7 @@ impl ToolRuntime {
             "client_id": client.client_id,
             "connected": client.connected,
             "status": client.status,
-            "agent_instance_id": client.runner_instance_id,
+            "runner_instance_id": client.runner_instance_id,
             "build": client.build,
             "coding_agent_providers": safe_provider_inventory(client.coding_agent_providers.as_deref()),
             "project_count": project_count,
@@ -682,7 +682,7 @@ impl ToolRuntime {
             "compatibility_status": target_runner.get("status").cloned().unwrap_or(Value::Null),
             "protocol_compatibility": target_runner.get("protocol_compatibility").cloned().unwrap_or(Value::Null),
             "build_alignment": target_runner.get("build_alignment").cloned().unwrap_or(Value::Null),
-            "agent_protocol_generation": client.runner_protocol_generation.get(),
+            "runner_protocol_generation": client.runner_protocol_generation.get(),
             "capabilities": client.capabilities,
             "source_alignment": source_alignment,
         });
@@ -693,9 +693,9 @@ impl ToolRuntime {
         });
         let fleet_summary = json!({
             "visible_runner_count": visible_clients.len(),
-            "mismatched_agents_count": mismatched_agents_count,
-            "source_mismatched_agents_count": source_mismatched_agents_count,
-            "mixed_builds_present": mismatched_agents_count > 0 || source_mismatched_agents_count > 0,
+            "mismatched_runners_count": mismatched_runners_count,
+            "source_mismatched_runners_count": source_mismatched_runners_count,
+            "mixed_builds_present": mismatched_runners_count > 0 || source_mismatched_runners_count > 0,
         });
         // As above, avoid one large `json!` in this async poll frame so focused
         // status requests retain the same bounded worker-stack behavior.
@@ -731,7 +731,7 @@ impl ToolRuntime {
         output.insert("server".to_string(), server);
         output.insert("fleet_summary".to_string(), fleet_summary);
         output.insert("projects".to_string(), projects);
-        output.insert("agents".to_string(), runners);
+        output.insert("runners".to_string(), runners);
         output.insert(
             "protocol_compatibility".to_string(),
             target_compatibility["protocol_compatibility"].clone(),
@@ -769,7 +769,7 @@ pub(crate) fn compact_runtime_status(status: &Value) -> Value {
             "fleet_summary": status.get("fleet_summary").cloned().unwrap_or(Value::Null),
             "projects": {
                 "effective": status.pointer("/projects/effective").cloned().unwrap_or(Value::Null),
-                "agent_registered": status.pointer("/projects/agent_registered").cloned().unwrap_or(Value::Null),
+                "runner_registered": status.pointer("/projects/runner_registered").cloned().unwrap_or(Value::Null),
             },
             "jobs": {
                 "active_count": status.pointer("/jobs/active_count").cloned().unwrap_or(Value::Null),
@@ -809,17 +809,16 @@ pub(crate) fn compact_runtime_status(status: &Value) -> Value {
             "running_count": status.pointer("/jobs/running_count").cloned().unwrap_or(Value::Null),
             "queued_count": status.pointer("/jobs/queued_count").cloned().unwrap_or(Value::Null),
         },
-        "agents": {
-            "count": status.pointer("/agents/count").cloned().unwrap_or_else(|| json!(0)),
-            "online_count": status.pointer("/agents/online_count").cloned().unwrap_or_else(|| json!(0)),
-            "stale_count": status.pointer("/agents/stale_count").cloned().unwrap_or_else(|| json!(0)),
+        "runners": {
+            "count": status.pointer("/runners/count").cloned().unwrap_or_else(|| json!(0)),
+            "online_count": status.pointer("/runners/online_count").cloned().unwrap_or_else(|| json!(0)),
+            "stale_count": status.pointer("/runners/stale_count").cloned().unwrap_or_else(|| json!(0)),
             "clients": compact_runner_clients(status),
-            "summary": status.pointer("/agents/summary").cloned().unwrap_or_else(|| json!({
+            "summary": status.pointer("/runners/summary").cloned().unwrap_or_else(|| json!({
                 "count": 0,
                 "online": 0,
                 "offline": 0,
                 "stale": 0,
-                "clients": [],
             })),
         },
         "projects": {
@@ -827,11 +826,11 @@ pub(crate) fn compact_runtime_status(status: &Value) -> Value {
                 "count": 0,
                 "status": "unknown",
             })),
-            "agent_registered": status.pointer("/projects/agent_registered").cloned().unwrap_or_else(|| json!({
+            "runner_registered": status.pointer("/projects/runner_registered").cloned().unwrap_or_else(|| json!({
                 "count": 0,
                 "online_count": 0,
             })),
-            "mode": status.pointer("/projects/mode").cloned().unwrap_or_else(|| json!("agent_registered")),
+            "mode": status.pointer("/projects/mode").cloned().unwrap_or_else(|| json!("runner_registered")),
         },
         "connection_layers": status.get("connection_layers").cloned().unwrap_or_else(|| json!({
             "runner_process": {"status": "not_observed"},
@@ -858,7 +857,7 @@ pub(crate) fn compact_runtime_status(status: &Value) -> Value {
 
 fn compact_runner_clients(status: &Value) -> Vec<Value> {
     let runners = status
-        .pointer("/agents/clients")
+        .pointer("/runners/clients")
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
@@ -877,7 +876,7 @@ fn compact_runner_clients(status: &Value) -> Vec<Value> {
                 .find(|candidate| candidate.get("client_id").and_then(Value::as_str) == Some(client_id));
             let mut compact = json!({
                 "client_id": client_id,
-                "agent_instance_id": runner.get("agent_instance_id").cloned().unwrap_or(Value::Null),
+                "runner_instance_id": runner.get("runner_instance_id").cloned().unwrap_or(Value::Null),
                 "coding_agent_providers": runner.get("coding_agent_providers").cloned().unwrap_or_else(|| json!([])),
                 "status": runner.get("status").cloned().unwrap_or(Value::Null),
                 "transport": runner.get("transport").cloned().unwrap_or(Value::Null),
@@ -891,6 +890,12 @@ fn compact_runner_clients(status: &Value) -> Vec<Value> {
                 "build_alignment": compat.and_then(|value| value.get("build_alignment")).cloned().unwrap_or_else(|| json!("unknown")),
                 "source_alignment": compat.and_then(|value| value.get("source_alignment")).cloned().unwrap_or_else(|| json!({"status": "unknown"})),
             });
+            // Preserve the health facts formerly repeated in summary.clients.
+            // Copy only this mode's existing allowlist, never the full Runner.
+            for field in ["last_seen_age_secs", "projects_count", "project_inventory",
+                "pending_requests", "active_jobs", "job_concurrency"] {
+                compact[field] = runner.get(field).cloned().unwrap_or(Value::Null);
+            }
             if status.get("focus").is_none() {
                 compact["host_context"] = runner.get("host_context").cloned().unwrap_or(Value::Null);
             }
@@ -978,7 +983,7 @@ fn connection_layers(
                 now,
                 json!({
                     "client_id": client.client_id,
-                    "agent_instance_id": client.runner_instance_id,
+                    "runner_instance_id": client.runner_instance_id,
                     "process_started_at": client.process_started_at,
                 }),
             )
@@ -992,7 +997,7 @@ fn connection_layers(
             now,
             json!({
                 "client_id": client.client_id,
-                "agent_instance_id": client.runner_instance_id,
+                "runner_instance_id": client.runner_instance_id,
                 "process_started_at": client.process_started_at,
             }),
         ),
@@ -1280,7 +1285,7 @@ fn version_compatibility_against(
             );
             json!({
                 "client_id": client.client_id,
-                "agent_protocol_generation": client.runner_protocol_generation.get(),
+                "runner_protocol_generation": client.runner_protocol_generation.get(),
                 "build_version": build_version,
                 "build_git_commit": build_git_commit,
                 "build_git_dirty": build_git_dirty,
@@ -1415,30 +1420,7 @@ fn job_concurrency_for_client(client: &RunnerView, runner_jobs: &[ShellJobInfo])
     })
 }
 
-fn runner_health_clients(
-    clients: &[RunnerView],
-    runner_jobs: &[ShellJobInfo],
-    now: i64,
-) -> Vec<Value> {
-    clients
-        .iter()
-        .map(|client| {
-            json!({
-                "client_id": client.client_id,
-                "status": client.status,
-                "transport": client.transport,
-                "last_seen_age_secs": last_seen_age_secs(client, now),
-                "projects_count": enabled_projects_count(client),
-                "project_inventory": client.project_inventory,
-                "pending_requests": client.pending_requests,
-                "active_jobs": active_jobs_for_client(runner_jobs, &client.client_id),
-                "job_concurrency": job_concurrency_for_client(client, runner_jobs),
-            })
-        })
-        .collect()
-}
-
-fn runner_health_summary(clients: &[RunnerView], runner_jobs: &[ShellJobInfo], now: i64) -> Value {
+fn runner_health_summary(clients: &[RunnerView]) -> Value {
     let online = clients.iter().filter(|client| client.connected).count();
     let stale = clients
         .iter()
@@ -1450,7 +1432,6 @@ fn runner_health_summary(clients: &[RunnerView], runner_jobs: &[ShellJobInfo], n
         "online": online,
         "offline": offline,
         "stale": stale,
-        "clients": runner_health_clients(clients, runner_jobs, now),
     })
 }
 
@@ -1466,7 +1447,7 @@ fn runtime_status_client_summary(
     let mut value = serde_json::Map::with_capacity(22);
     value.insert("client_id".to_string(), json!(client.client_id));
     value.insert(
-        "agent_instance_id".to_string(),
+        "runner_instance_id".to_string(),
         json!(client.runner_instance_id),
     );
     value.insert("display_name".to_string(), json!(client.display_name));
@@ -1478,7 +1459,7 @@ fn runtime_status_client_summary(
     );
     value.insert("connected".to_string(), json!(client.connected));
     value.insert(
-        "agent_protocol_generation".to_string(),
+        "runner_protocol_generation".to_string(),
         json!(client.runner_protocol_generation.get()),
     );
     value.insert("transport".to_string(), json!(client.transport));

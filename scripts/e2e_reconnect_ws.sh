@@ -246,7 +246,7 @@ wait_for_agent_online() {
     for _ in $(seq 1 60); do
         check_deadline
         local body; body="$(runtime_status || true)"
-        if [ "$(json_get "$body" output.agents.online_count)" = "1" ]; then
+        if [ "$(json_get "$body" output.runners.online_count)" = "1" ]; then
             echo "$body"
             return 0
         fi
@@ -259,7 +259,7 @@ wait_for_agent_offline() {
     for _ in $(seq 1 90); do
         check_deadline
         local body; body="$(runtime_status || true)"
-        if [ "$(json_get "$body" output.agents.online_count)" = "0" ]; then
+        if [ "$(json_get "$body" output.runners.online_count)" = "0" ]; then
             echo "$body"
             return 0
         fi
@@ -299,7 +299,7 @@ assert_eq "authority mode default trusted_agent" \
     "$(json_get "$BODY" output.authority.mode)" "trusted_agent"
 assert_eq "authority source default" "$(json_get "$BODY" output.authority.source)" "default"
 
-SHELL_DIALECT="$(json_get "$BODY" output.agents.clients.0.shell_profiles.default_dialect)"
+SHELL_DIALECT="$(json_get "$BODY" output.runners.clients.0.shell_profiles.default_dialect)"
 assert_nonempty "runner-reported shell default_dialect" "$SHELL_DIALECT"
 
 # ----------------------------------------------------------------------------

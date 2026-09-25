@@ -8,7 +8,7 @@ function populated() {
       overview: { status: "ok" }, devices: { status: "ok" },
       projects: { status: "ok" }, activity: { status: "ok" },
     },
-    overview: { version: "1", agents_online: 2 },
+    overview: { version: "1", runners_online: 2 },
     diagnostics: { server_transport: "ready" },
     devices: [{ client_id: "a", capabilities: { shell: true, patch: false, git: true } }],
     projects: [{ id: "agent:a:p", compatibility: "compatible" }],

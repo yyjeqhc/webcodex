@@ -1129,7 +1129,7 @@ EOF
     for _ in $(seq 1 90); do
         check_deadline
         body="$(api_post /api/runtime/status '{}' || true)"
-        if [ "$(json_get "$body" output.agents.count)" = "1" ]; then
+        if [ "$(json_get "$body" output.runners.count)" = "1" ]; then
             registered=1
             break
         fi

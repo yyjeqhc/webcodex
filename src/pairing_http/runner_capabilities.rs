@@ -109,7 +109,7 @@ pub(crate) async fn grant_runner_capabilities(
     let observed = runtime.list_runners(Some(&auth)).await;
     let owner = observed
         .output
-        .get("agents")
+        .get("runners")
         .and_then(Value::as_array)
         .and_then(|runners| {
             runners.iter().find(|runner| {

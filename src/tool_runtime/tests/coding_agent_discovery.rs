@@ -92,7 +92,7 @@ async fn coding_agent_discovery_survives_all_status_and_list_projections() {
             .runtime_status_with_options(None, compact, false, None)
             .await;
         assert!(all.success);
-        assert_safe_inventory(&all.output["agents"]["clients"][0]["coding_agent_providers"]);
+        assert_safe_inventory(&all.output["runners"]["clients"][0]["coding_agent_providers"]);
         let focused = runtime
             .runtime_status_with_options(None, compact, false, Some("mini".into()))
             .await;
@@ -111,7 +111,7 @@ async fn coding_agent_discovery_survives_all_status_and_list_projections() {
             )
             .await;
         assert!(result.success);
-        assert_safe_inventory(&result.output["agents"][0]["coding_agent_providers"]);
+        assert_safe_inventory(&result.output["runners"][0]["coding_agent_providers"]);
     }
 }
 
@@ -138,11 +138,14 @@ async fn coding_agent_discovery_keeps_old_runners_compatible_and_other_owners_pr
             .runtime_status_with_options(Some(&alice), compact, false, None)
             .await;
         assert_eq!(
-            result.output["agents"]["clients"].as_array().unwrap().len(),
+            result.output["runners"]["clients"]
+                .as_array()
+                .unwrap()
+                .len(),
             1
         );
         assert_eq!(
-            result.output["agents"]["clients"][0]["coding_agent_providers"],
+            result.output["runners"]["clients"][0]["coding_agent_providers"],
             json!([])
         );
         assert!(!result.output.to_string().contains("private-bob"));
@@ -154,7 +157,7 @@ async fn coding_agent_discovery_keeps_old_runners_compatible_and_other_owners_pr
         );
     }
     let list = runtime.list_runners(Some(&alice)).await;
-    assert_eq!(list.output["agents"].as_array().unwrap().len(), 1);
+    assert_eq!(list.output["runners"].as_array().unwrap().len(), 1);
     assert!(!list.output.to_string().contains("private-bob"));
     register(&runtime, "empty", Some(vec![]), None).await;
     let focused = runtime
@@ -179,7 +182,7 @@ async fn coding_agent_discovery_bootstrap_selects_only_the_online_project_owner(
         crate::tool_runtime::coding_task::project_coding_agent_providers("missing", &status)
             .is_empty()
     );
-    let offline = json!({"agents":{"clients":[{"client_id":"mini","connected":false,"coding_agent_providers":[{"provider_id":"pi","name":"Pi"}]}]}});
+    let offline = json!({"runners":{"clients":[{"client_id":"mini","connected":false,"coding_agent_providers":[{"provider_id":"pi","name":"Pi"}]}]}});
     assert!(
         crate::tool_runtime::coding_task::project_coding_agent_providers("mini", &offline)
             .is_empty()

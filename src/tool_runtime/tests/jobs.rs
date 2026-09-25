@@ -1992,7 +1992,7 @@ async fn managed_user_job_inventory_and_counts_do_not_cross_owner() {
         )
         .await;
     assert!(alice_status.success, "{:?}", alice_status.error);
-    assert_eq!(alice_status.output["agents"]["count"], 1);
+    assert_eq!(alice_status.output["runners"]["count"], 1);
     assert_eq!(alice_status.output["jobs"]["active_count"], 1);
     assert!(!alice_status.output.to_string().contains("bob-runner"));
     assert!(!alice_status.output.to_string().contains(&bob_job));
@@ -2484,13 +2484,13 @@ async fn runtime_status_and_list_runners_filter_concurrency_counts_by_auth_group
     assert_eq!(status_a.output["jobs"]["running_count"], 1);
     assert_eq!(status_a.output["jobs"]["queued_count"], 1);
     assert_eq!(
-        status_a.output["agents"]["clients"][0]["job_concurrency"],
+        status_a.output["runners"]["clients"][0]["job_concurrency"],
         json!({"limit": 4, "running": 1, "queued": 1})
     );
-    assert!(status_a.output["agents"]["clients"][0]
+    assert!(status_a.output["runners"]["clients"][0]
         .get("available_slots")
         .is_none());
-    assert!(status_a.output["agents"]["clients"][0]
+    assert!(status_a.output["runners"]["clients"][0]
         .get("saturated")
         .is_none());
 
@@ -2507,16 +2507,14 @@ async fn runtime_status_and_list_runners_filter_concurrency_counts_by_auth_group
         .await;
     assert!(agents_a.success, "{:?}", agents_a.error);
     assert_eq!(agents_a.output["count"], 1);
-    assert_eq!(agents_a.output["agents"][0]["client_id"], "status-a");
+    assert_eq!(agents_a.output["runners"][0]["client_id"], "status-a");
     assert_eq!(
-        agents_a.output["agents"][0]["job_concurrency"],
+        agents_a.output["runners"][0]["job_concurrency"],
         json!({"limit": 4, "running": 1, "queued": 1})
     );
-    assert_eq!(
-        agents_a.output["clients"][0]["job_concurrency"],
-        json!({"limit": 4, "running": 1, "queued": 1})
-    );
-    let new_observability = agents_a.output["agents"][0]["job_concurrency"]
+    assert!(agents_a.output.get("clients").is_none());
+    assert!(agents_a.output["summary"].get("clients").is_none());
+    let new_observability = agents_a.output["runners"][0]["job_concurrency"]
         .as_object()
         .unwrap();
     assert_eq!(new_observability.len(), 3);
@@ -2564,7 +2562,7 @@ async fn runtime_status_and_list_runners_filter_concurrency_counts_by_auth_group
     assert_eq!(status_bootstrap.output["jobs"]["active_count"], 5);
     assert_eq!(status_bootstrap.output["jobs"]["running_count"], 2);
     assert_eq!(status_bootstrap.output["jobs"]["queued_count"], 3);
-    assert_eq!(status_bootstrap.output["agents"]["count"], 3);
+    assert_eq!(status_bootstrap.output["runners"]["count"], 3);
 
     let compact_a = runtime
         .dispatch_with_auth(
@@ -2606,7 +2604,7 @@ async fn runtime_concurrency_counts_cover_all_visible_jobs_beyond_list_paginatio
     assert_eq!(status.output["jobs"]["running_count"], 0);
     assert_eq!(status.output["jobs"]["queued_count"], 21);
     assert_eq!(
-        status.output["agents"]["clients"][0]["job_concurrency"],
+        status.output["runners"]["clients"][0]["job_concurrency"],
         json!({"limit": 4, "running": 0, "queued": 21})
     );
 }

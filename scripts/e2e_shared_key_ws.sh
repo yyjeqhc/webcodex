@@ -255,7 +255,7 @@ KEY_B_PROJECTS="$(post "$SHARED_KEY_B" /api/tools/call '{"tool":"list_projects",
 [ "$(printf '%s' "$KEY_B_PROJECTS" | json_field output.count)" = "0" ] \
     || die "Key B discovered Key A project"
 KEY_B_AGENTS="$(post "$SHARED_KEY_B" /api/runtime/status '{}')"
-[ "$(printf '%s' "$KEY_B_AGENTS" | json_field output.agents.count)" = "0" ] \
+[ "$(printf '%s' "$KEY_B_AGENTS" | json_field output.runners.count)" = "0" ] \
     || die "Key B discovered Key A Runner"
 
 GUESSED_RESPONSE="$(post "$SHARED_KEY_B" /api/tools/call \
@@ -278,13 +278,13 @@ wait "$SHARED_PID" 2>/dev/null || true
 SHARED_PID=""
 for _ in $(seq 1 40); do
     STATUS="$(post "$SHARED_KEY_A" /api/runtime/status '{}' 2>/dev/null || true)"
-    if [ "$(printf '%s' "$STATUS" | json_field output.agents.clients.0.connected)" = "False" ]; then
+    if [ "$(printf '%s' "$STATUS" | json_field output.runners.clients.0.connected)" = "False" ]; then
         log "Runner disconnect state verified"
         break
     fi
     sleep 0.25
 done
-[ "$(printf '%s' "$STATUS" | json_field output.agents.clients.0.connected)" = "False" ] \
+[ "$(printf '%s' "$STATUS" | json_field output.runners.clients.0.connected)" = "False" ] \
     || die "disconnected Runner stayed online"
 
 log "PASS"

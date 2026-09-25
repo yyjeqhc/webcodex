@@ -1054,7 +1054,7 @@ async fn runner_status_detects_current_client_online_and_runner_token_boundary()
             let request = String::from_utf8_lossy(&buf[..n]).to_string();
             tx.send(request.clone()).unwrap();
             if i == 0 {
-                let body = r#"{"success":true,"output":{"agents":{"clients":[{"client_id":"alice-laptop","connected":true,"status":"online"}]}}}"#;
+                let body = r#"{"success":true,"output":{"runners":{"clients":[{"client_id":"alice-laptop","connected":true,"status":"online"}]}}}"#;
                 write!(
                     stream,
                     "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",

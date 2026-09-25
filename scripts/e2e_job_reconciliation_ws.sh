@@ -317,7 +317,7 @@ wait_for_agent_online() {
     for _ in $(seq 1 60); do
         check_deadline
         local body; body="$(runtime_status || true)"
-        if [ "$(json_get "$body" output.agents.online_count)" = "1" ]; then
+        if [ "$(json_get "$body" output.runners.online_count)" = "1" ]; then
             echo "$body"
             return 0
         fi
@@ -332,7 +332,7 @@ wait_for_reconciliation_capability() {
     for _ in $(seq 1 60); do
         check_deadline
         local body; body="$(runtime_status || true)"
-        local cap; cap="$(json_get "$body" output.agents.clients.0.capabilities.job_state_reconciliation)"
+        local cap; cap="$(json_get "$body" output.runners.clients.0.capabilities.job_state_reconciliation)"
         if [ "$cap" = "True" ]; then
             echo "$body"; return 0
         fi

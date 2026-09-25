@@ -29,7 +29,7 @@ function New-RunnerObservation {
         client_id = "msi"
         connected = $Connected
         status = if ($Connected) { "online" } else { "stale" }
-        agent_instance_id = $InstanceId
+        runner_instance_id = $InstanceId
         build = [pscustomobject]@{
             version = "0.3.8"
             git_commit = $Commit
@@ -54,21 +54,21 @@ $decision = Get-RunnerReadinessDecision `
     -Observation (New-RunnerObservation -InstanceId $oldInstanceId -Commit $candidateBuild.GitCommit) `
     -ExpectedClientId "msi" `
     -ExpectedBuild $candidateBuild `
-    -DisallowedAgentInstanceIds @($oldInstanceId)
-Assert-Equal "not_ready" $decision.State "old agent_instance_id was accepted"
-Assert-Equal "stale_agent_instance_id" $decision.Reason "old instance diagnostic changed"
+    -DisallowedRunnerInstanceIds @($oldInstanceId)
+Assert-Equal "not_ready" $decision.State "old runner_instance_id was accepted"
+Assert-Equal "stale_runner_instance_id" $decision.Reason "old instance diagnostic changed"
 $decision = Get-RunnerReadinessDecision `
     -Observation (New-RunnerObservation -InstanceId $oldInstanceId -Commit $candidateBuild.GitCommit -Compatibility "version_mismatch") `
     -ExpectedClientId "msi" `
     -ExpectedBuild $candidateBuild `
-    -DisallowedAgentInstanceIds @($oldInstanceId) `
+    -DisallowedRunnerInstanceIds @($oldInstanceId) `
     -AllowVersionMismatch
 Assert-Equal "not_ready" $decision.State "version override weakened stale instance fencing"
-Assert-Equal "stale_agent_instance_id" $decision.Reason "stale instance override diagnostic changed"
+Assert-Equal "stale_runner_instance_id" $decision.Reason "stale instance override diagnostic changed"
 
 # Fresh exact candidate is Ready even when source differs from Server.
 $freshCandidate = New-RunnerObservation -InstanceId "instance-new" -Commit $candidateBuild.GitCommit
-$decision = Get-RunnerReadinessDecision -Observation $freshCandidate -ExpectedClientId "msi" -ExpectedBuild $candidateBuild -DisallowedAgentInstanceIds @($oldInstanceId)
+$decision = Get-RunnerReadinessDecision -Observation $freshCandidate -ExpectedClientId "msi" -ExpectedBuild $candidateBuild -DisallowedRunnerInstanceIds @($oldInstanceId)
 Assert-Equal "ready" $decision.State "fresh exact candidate was not Ready"
 Assert-Equal "exact_fresh_build_ready" $decision.Reason "compatible readiness reason changed"
 
@@ -93,10 +93,10 @@ Assert-Equal "mismatch" $decision.State "unknown compatibility status was accept
 Assert-Equal "runner_compatibility_status_unknown" $decision.Reason "unknown compatibility diagnostic changed"
 
 # Fresh wrong source identities must never become Ready.
-$decision = Get-RunnerReadinessDecision -Observation (New-RunnerObservation -InstanceId "instance-wrong-commit" -Commit "wrong1234567") -ExpectedClientId "msi" -ExpectedBuild $candidateBuild -DisallowedAgentInstanceIds @($oldInstanceId)
+$decision = Get-RunnerReadinessDecision -Observation (New-RunnerObservation -InstanceId "instance-wrong-commit" -Commit "wrong1234567") -ExpectedClientId "msi" -ExpectedBuild $candidateBuild -DisallowedRunnerInstanceIds @($oldInstanceId)
 Assert-Equal "mismatch" $decision.State "wrong commit was accepted"
 Assert-Equal "unexpected_build_commit" $decision.Reason "wrong commit diagnostic changed"
-$decision = Get-RunnerReadinessDecision -Observation (New-RunnerObservation -InstanceId "instance-wrong-dirty" -Commit $candidateBuild.GitCommit -Dirty $true) -ExpectedClientId "msi" -ExpectedBuild $candidateBuild -DisallowedAgentInstanceIds @($oldInstanceId)
+$decision = Get-RunnerReadinessDecision -Observation (New-RunnerObservation -InstanceId "instance-wrong-dirty" -Commit $candidateBuild.GitCommit -Dirty $true) -ExpectedClientId "msi" -ExpectedBuild $candidateBuild -DisallowedRunnerInstanceIds @($oldInstanceId)
 Assert-Equal "mismatch" $decision.State "wrong dirty state was accepted"
 Assert-Equal "unexpected_build_dirty_state" $decision.Reason "wrong dirty diagnostic changed"
 $decision = Get-RunnerReadinessDecision -Observation (New-RunnerObservation -InstanceId "instance-wrong-commit-override" -Commit "wrong1234567" -Compatibility "version_mismatch") -ExpectedClientId "msi" -ExpectedBuild $candidateBuild -AllowVersionMismatch
@@ -123,7 +123,7 @@ $null = Assert-Throws {
     Assert-PreReplacementRunnerObservation -Observation $versionMismatch -ExpectedClientId "msi" -ExpectedBuild $candidateBuild
 } "Pre-replacement Runner build identity does not match"
 $acceptedPreReplacement = Assert-PreReplacementRunnerObservation -Observation $versionMismatch -ExpectedClientId "msi" -ExpectedBuild $candidateBuild -AllowVersionMismatch
-Assert-Equal "instance-version-mismatch" $acceptedPreReplacement.agent_instance_id "pre-replacement override did not reach readiness policy"
+Assert-Equal "instance-version-mismatch" $acceptedPreReplacement.runner_instance_id "pre-replacement override did not reach readiness policy"
 
 $waitStart = [DateTime]::Parse("2026-08-24T00:00:00Z").ToUniversalTime()
 $allowedWait = Wait-RunnerControlPlaneReadiness `
@@ -139,9 +139,9 @@ Assert-Equal "version_mismatch_allowed_for_rolling_upgrade" $allowedWait.Decisio
 # Rollback reconciliation uses rollback build, not candidate build, and excludes
 # both the pre-replacement and already-observed candidate instances.
 $rollbackObservation = New-RunnerObservation -InstanceId "instance-rollback" -Commit $rollbackBuild.GitCommit
-$decision = Get-RunnerReadinessDecision -Observation $rollbackObservation -ExpectedClientId "msi" -ExpectedBuild $rollbackBuild -DisallowedAgentInstanceIds @($oldInstanceId, "instance-new")
+$decision = Get-RunnerReadinessDecision -Observation $rollbackObservation -ExpectedClientId "msi" -ExpectedBuild $rollbackBuild -DisallowedRunnerInstanceIds @($oldInstanceId, "instance-new")
 Assert-Equal "ready" $decision.State "exact rollback build was not Ready"
-$decision = Get-RunnerReadinessDecision -Observation $rollbackObservation -ExpectedClientId "msi" -ExpectedBuild $candidateBuild -DisallowedAgentInstanceIds @($oldInstanceId, "instance-new")
+$decision = Get-RunnerReadinessDecision -Observation $rollbackObservation -ExpectedClientId "msi" -ExpectedBuild $candidateBuild -DisallowedRunnerInstanceIds @($oldInstanceId, "instance-new")
 Assert-Equal "mismatch" $decision.State "rollback build incorrectly satisfied candidate expectation"
 
 # Rollback stop tolerates only the exact captured identity exiting concurrently
@@ -187,7 +187,7 @@ $null = Assert-Throws {
         -ExpectedClientId "msi" `
         -ExpectedBuild $candidateBuild `
         -DeadlineUtc $deadline `
-        -DisallowedAgentInstanceIds @($oldInstanceId) `
+        -DisallowedRunnerInstanceIds @($oldInstanceId) `
         -PollIntervalMilliseconds 250 `
         -UtcNow $now `
         -Sleep $sleep

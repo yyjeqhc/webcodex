@@ -305,3 +305,14 @@ Do not add large ordinary test blocks to production facade files when one of
 these `tests/` module trees already exists. Exact full-suite pass counts should
 come from a fresh `cargo test -p webcodex --lib` run; this document should not be
 treated as the source of truth for exact counts.
+
+## Runner observability contract
+
+Run `python scripts/tests/test_runner_observability_contract.py` for the exact-name
+projection guard used by CI. It covers observation producers and readers while
+leaving Runner registration wire keys and durable Agent APIs unchanged. Behavior
+coverage lives in the `metadata`, `runtime_http`, `runtime_console_http`,
+`admin_http`, `runner_capabilities`, and `startup_runner_tests` Server filters,
+and the CLI `ops` and `server::status` filters. Run
+`pwsh -NoProfile -File scripts/test_windows_runner_readiness.ps1` for Windows
+readiness parsing. These checks do not replace Linux socket-activation E2E.

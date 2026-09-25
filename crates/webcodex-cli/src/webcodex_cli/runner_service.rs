@@ -329,7 +329,7 @@ fn allowed_roots_summary(roots: &[PathBuf]) -> String {
 
 fn runtime_client_entry<'a>(output: &'a Value, client_id: &str) -> Option<&'a Value> {
     output
-        .pointer("/agents/clients")
+        .pointer("/runners/clients")
         .and_then(Value::as_array)
         .and_then(|clients| {
             clients

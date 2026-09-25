@@ -57,7 +57,7 @@ diagnostics() {
 import json, sys
 try:
     d = json.load(open(sys.argv[1], encoding="utf-8"))
-    c = next(iter(d.get("output", {}).get("agents", {}).get("clients", [])), {})
+    c = next(iter(d.get("output", {}).get("runners", {}).get("clients", [])), {})
     safe = {k: c.get(k) for k in ("client_id", "connected", "display_name", "transport")}
     safe["tool_providers"] = c.get("tool_providers")
     print("[agent-reload-e2e][diagnostic] last_status=" + json.dumps(safe, sort_keys=True))
@@ -155,7 +155,7 @@ status_matches() {
         "$result" "$error" "$restart" "$fields" "$strategy" "$enabled" <<'PY' >/dev/null 2>&1
 import json, sys
 d = json.load(open(sys.argv[1], encoding="utf-8"))
-c = next(x for x in d["output"]["agents"]["clients"] if x["client_id"] == sys.argv[2])
+c = next(x for x in d["output"]["runners"]["clients"] if x["client_id"] == sys.argv[2])
 assert c["connected"] and c["display_name"] == sys.argv[3] and c["projects_count"] == 1
 p = c["tool_providers"]
 r = p["config_reload"]

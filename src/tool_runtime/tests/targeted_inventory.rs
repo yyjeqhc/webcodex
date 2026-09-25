@@ -609,7 +609,7 @@ async fn managed_users_discover_only_their_own_runner_project_metadata() {
         .dispatch_with_auth(runtime_status_call(None, true), Some(&alice))
         .await;
     assert!(alice_status.success, "{:?}", alice_status.error);
-    assert_eq!(alice_status.output["agents"]["count"], 2);
+    assert_eq!(alice_status.output["runners"]["count"], 2);
     assert!(!alice_status.output.to_string().contains("bob-runner"));
     let hidden_status = runtime
         .dispatch_with_auth(runtime_status_call(Some("bob-runner"), true), Some(&alice))
@@ -637,7 +637,7 @@ async fn managed_users_discover_only_their_own_runner_project_metadata() {
         .await;
     assert!(bob_agents.success, "{:?}", bob_agents.error);
     assert_eq!(bob_agents.output["count"], 1);
-    assert_eq!(bob_agents.output["agents"][0]["client_id"], "bob-runner");
+    assert_eq!(bob_agents.output["runners"][0]["client_id"], "bob-runner");
 
     let admin_agents = runtime
         .dispatch_with_auth(
@@ -689,7 +689,7 @@ async fn list_runners_supports_exact_batch_and_compact_projection() {
         .await;
     assert!(legacy.success);
     assert_eq!(legacy.output["count"], 3);
-    assert!(legacy.output["agents"][0].get("projects").is_some());
+    assert!(legacy.output["runners"][0].get("projects").is_some());
 
     let focused = runtime
         .dispatch(list_runners_call(Some("special"), None, Some(false), true))
@@ -697,7 +697,7 @@ async fn list_runners_supports_exact_batch_and_compact_projection() {
     assert!(focused.success, "{:?}", focused.error);
     assert_eq!(focused.output["count"], 1);
     assert!(focused.output.get("clients").is_none());
-    let agent = &focused.output["agents"][0];
+    let agent = &focused.output["runners"][0];
     assert_eq!(agent["client_id"], "special");
     assert_eq!(agent["projects_count"], 2);
     assert_eq!(agent["build"]["built_at"], "300");
@@ -725,14 +725,14 @@ async fn list_runners_supports_exact_batch_and_compact_projection() {
         ))
         .await;
     assert!(batch.success);
-    let ids = batch.output["agents"]
+    let ids = batch.output["runners"]
         .as_array()
         .unwrap()
         .iter()
         .map(|agent| agent["client_id"].as_str().unwrap())
         .collect::<Vec<_>>();
     assert_eq!(ids, vec!["mini", "special"]);
-    assert!(batch.output["agents"]
+    assert!(batch.output["runners"]
         .as_array()
         .unwrap()
         .iter()
@@ -869,7 +869,7 @@ async fn runtime_status_focus_is_not_polluted_by_unrelated_runner_mismatch() {
         global_special["source_alignment"]
     );
     assert_eq!(
-        special.output["fleet_summary"]["mismatched_agents_count"],
+        special.output["fleet_summary"]["mismatched_runners_count"],
         0
     );
     let serialized = special.output.to_string();
@@ -916,7 +916,7 @@ async fn runtime_status_focus_preserves_selected_stale_runner_truth() {
     assert!(focused.success, "{:?}", focused.error);
     assert_eq!(focused.output["focus"]["connected"], false);
     assert_eq!(focused.output["focus"]["status"], "stale");
-    assert_eq!(focused.output["agents"]["count"], 1);
+    assert_eq!(focused.output["runners"]["count"], 1);
 }
 
 #[test]

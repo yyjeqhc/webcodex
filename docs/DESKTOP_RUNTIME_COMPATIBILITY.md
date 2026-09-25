@@ -18,6 +18,12 @@ Desktop, CLI, Server, and Runner do **not** need the same Git commit or package 
 6. A missing feature capability disables that operation only. For example, Project Lifecycle still requires `RunnerFeature::ProjectLifecycle`; it must not disable otherwise-supported read, shell or Git operations.
 7. Custom source modifications are the operator's responsibility. Inspecting declared metadata is not code auditing, signature trust evaluation, or a filesystem sandbox.
 
+The #579 Runner observation migration keeps the management contract at `[1, 1]`.
+It changes raw `runtime_status` / `list_runners` projections and their first-party
+consumers, while preserving the management command fields Desktop deserializes.
+It does not require raw observation compatibility with older `/agents` clients.
+See [migration scope](agent/runner-observability.md#upgrade-status).
+
 ### Machine-readable build information
 
 All three binaries support the side-effect-free standalone flag:

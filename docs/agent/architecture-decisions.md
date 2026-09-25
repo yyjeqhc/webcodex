@@ -494,7 +494,10 @@ consumers and are therefore retained rather than cosmetically duplicated. In
 particular, `WEBCODEX_AGENT_TOKEN`, `wc_agent_*`, `agent_instance_id`, runtime
 project ids of the form `agent:<client_id>:<project_id>`, and established
 DB/wire `agent_*` fields keep their existing names. This local filename migration does not imply
-a Server/Runner protocol-generation or wire-identity rename.
+a Server/Runner protocol-generation or wire-identity rename. Public Runner
+observations now use `runner_instance_id`, `runner_protocol_generation`, and
+`runners`; the retained `agent_*` names above refer to wire/persisted contracts,
+not observation aliases. See [Runner observability](runner-observability.md).
 
 Compatibility never requires retaining a known authentication bypass, unsafe
 authority, ambiguous or stale identity, or weakened fail-closed validation. A

@@ -7,7 +7,7 @@ afterEach(() => vi.unstubAllGlobals());
 
 const dashboardFixture = {
   section_status: { overview: { status: "ok" }, devices: { status: "ok" }, projects: { status: "ok" }, activity: { status: "ok" } },
-  overview: { version: "0.4.2", build_commit: "fixture", agents_online: 1, agents_total: 1, projects_online: 1, projects_total: 1 },
+  overview: { version: "0.4.2", build_commit: "fixture", runners_online: 1, runners_total: 1, projects_online: 1, projects_total: 1 },
   diagnostics: { server_transport: "ready" }, devices: [{ client_id: "fixture-runner", status: "online" }],
   projects: [{ id: "agent:fixture:alpha", name: "Alpha", revision: "revision-1", actions: { enable: false, disable: true, unregister: true } }], activity: [],
 };

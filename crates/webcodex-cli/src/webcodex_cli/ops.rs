@@ -700,7 +700,7 @@ pub(crate) fn ops_status_report(server_url: &str, runtime: &Option<Value>) -> Op
         "jobs": {
             "active_count": active_jobs,
         },
-        "agents": {
+        "runners": {
             "online_count": online,
             "stale_count": stale,
             "clients": runner_clients(runtime),
@@ -728,7 +728,7 @@ pub(crate) fn ops_runners_report(server_url: &str, runtime: &Option<Value>) -> O
         );
         return OpsReport {
             verdict: verdict.finish(),
-            summary: json!({"runtime_reachable": false, "agents": []}),
+            summary: json!({"runtime_reachable": false, "runners": []}),
             source: source_json(server_url, None, "runtime_status"),
         };
     };
@@ -762,7 +762,7 @@ pub(crate) fn ops_runners_report(server_url: &str, runtime: &Option<Value>) -> O
         "online_count": online,
         "stale_count": stale,
         "active_jobs": active_jobs,
-        "agents": clients,
+        "runners": clients,
     });
     OpsReport {
         verdict: verdict.finish(),
@@ -818,7 +818,7 @@ pub(crate) fn ops_runner_report(
         "client_id": focus.get("client_id").cloned().unwrap_or(Value::Null),
         "connected": focus.get("connected").cloned().unwrap_or(Value::Null),
         "status": focus.get("status").cloned().unwrap_or(Value::Null),
-        "agent_instance_id": focus.get("agent_instance_id").cloned().unwrap_or(Value::Null),
+        "runner_instance_id": focus.get("runner_instance_id").cloned().unwrap_or(Value::Null),
         "build": focus.get("build").cloned().unwrap_or(Value::Null),
         "compatibility_status": focus.get("compatibility_status").cloned().unwrap_or(Value::Null),
         "source_alignment": focus.get("source_alignment").cloned().unwrap_or(Value::Null),
@@ -1089,10 +1089,10 @@ pub(crate) fn render_ops_status(report: &OpsReport, json_output: bool) -> Result
     out.push_str("Runners:\n");
     out.push_str(&format!(
         "  online/stale: {}/{}\n",
-        display_value(&report.summary["agents"]["online_count"]),
-        display_value(&report.summary["agents"]["stale_count"])
+        display_value(&report.summary["runners"]["online_count"]),
+        display_value(&report.summary["runners"]["stale_count"])
     ));
-    for client in report.summary["agents"]["clients"]
+    for client in report.summary["runners"]["clients"]
         .as_array()
         .into_iter()
         .flatten()
@@ -1128,7 +1128,7 @@ pub(crate) fn render_ops_runners(report: &OpsReport, json_output: bool) -> Resul
     out.push_str(&render_http_failure(report));
     out.push_str("Runners:\n");
     out.push_str("  client_id status transport projects_count active_jobs pending_requests last_seen_age_secs\n");
-    for client in report.summary["agents"].as_array().into_iter().flatten() {
+    for client in report.summary["runners"].as_array().into_iter().flatten() {
         out.push_str(&format!(
             "  {} {} {} {} {} {} {}\n",
             display_value(&client["client_id"]),
@@ -1155,7 +1155,7 @@ pub(crate) fn render_ops_runner(report: &OpsReport, json_output: bool) -> Result
         "client_id",
         "connected",
         "status",
-        "agent_instance_id",
+        "runner_instance_id",
         "compatibility_status",
     ] {
         out.push_str(&format!(
@@ -1386,23 +1386,22 @@ fn str_pointer(value: &Value, pointer: &str) -> Option<String> {
 }
 
 fn runner_count(runtime: &Value, field: &str, summary_field: &str) -> u64 {
-    // `/agents` remains the stable runtime_status JSON compatibility path.
+    // Read the canonical Runner observation; no legacy fleet aliases.
     runtime
-        .pointer(&format!("/agents/{field}"))
+        .pointer(&format!("/runners/{field}"))
         .and_then(Value::as_u64)
         .or_else(|| {
             runtime
-                .pointer(&format!("/agents/summary/{summary_field}"))
+                .pointer(&format!("/runners/summary/{summary_field}"))
                 .and_then(Value::as_u64)
         })
         .unwrap_or(0)
 }
 
 fn runner_clients(runtime: &Value) -> Vec<Value> {
-    // `/agents` remains the stable runtime_status JSON compatibility path.
+    // Read the canonical Runner observation; no legacy fleet aliases.
     let clients = runtime
-        .pointer("/agents/summary/clients")
-        .or_else(|| runtime.pointer("/agents/clients"))
+        .pointer("/runners/clients")
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();

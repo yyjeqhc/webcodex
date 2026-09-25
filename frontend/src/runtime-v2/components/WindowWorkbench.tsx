@@ -16,7 +16,7 @@ import { ProjectPicker } from "../../ui/ProjectPicker.js";
 import type { RuntimeLanguage } from "../../runtime_i18n.js";
 import { translate } from "../../runtime_i18n.js";
 import type { RuntimeV2Client } from "../api/client.js";
-import { absoluteTime, relativeTime, shortId } from "../model/format.js";
+import { absoluteTime, clockTime, relativeTime, shortId } from "../model/format.js";
 import type { ProjectRow, WindowSummary } from "../model/types.js";
 
 import { useWindowWorkspace } from "../state/useWindowWorkspace.js";
@@ -148,6 +148,12 @@ export function WindowWorkbench({
     detail?.activity[0]?.method;
   const lastObservedAt = detail?.last_seen_at_ms || selectedSummary?.last_seen_at_ms;
   const isActive = Boolean(detail?.active_count || selectedSummary?.active_count);
+  const currentProjectName = currentProject
+    ? projectFamilyName(sourceProject || currentProject, projects)
+    : undefined;
+  const currentWorkspaceName = currentProject?.lineage
+    ? projectVariantLabel(currentProject)
+    : currentProjectName;
 
   return (
     <div className="work-layout window-primary-workbench" data-testid="window-primary-workbench">
@@ -223,15 +229,26 @@ export function WindowWorkbench({
           <>
             <header className="window-work-header">
               <div>
-                <div className="breadcrumbs"><span>{t("Window")}</span><span>/</span><span title={detail.client_window_key}>{shortId(detail.client_window_key)}</span></div>
-                <h2>{currentActivity || t("Window")}</h2>
-                <p>
-                  {currentProject ? projectFamilyName(sourceProject || currentProject, projects) : t("Project information unavailable")}
-                  {" · "}{t("Last activity")} {absoluteTime(lastObservedAt)}
+                <div className="breadcrumbs">
+                  <span>{currentProjectName || t("Window")}</span>
+                  {currentProject?.lineage && <><span>/</span><span>{t("Workspace")}</span></>}
+                </div>
+                <h2>{currentWorkspaceName || currentActivity || t("Window")}</h2>
+                <p className="window-header-meta">
+                  {currentActivity && <span>{currentActivity}</span>}
+                  {lastObservedAt && (
+                    <time dateTime={new Date(lastObservedAt).toISOString()} title={absoluteTime(lastObservedAt)}>
+                      {clockTime(lastObservedAt)}
+                    </time>
+                  )}
+                  <span title={detail.client_window_key}>{t("Window")} {shortId(detail.client_window_key)}</span>
                 </p>
               </div>
               <span className={"quiet-pill " + (isActive ? "running" : "")}>
-                <CircleDot size={11} /> {isActive ? detail.active_count + " " + t("active") : t("Idle")}
+                <CircleDot size={11} />
+                {isActive
+                  ? detail.active_count + " " + t("active")
+                  : t("Idle") + " · " + relativeTime(lastObservedAt)}
               </span>
             </header>
 

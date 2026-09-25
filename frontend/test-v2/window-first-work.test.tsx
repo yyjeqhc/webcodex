@@ -137,6 +137,10 @@ it("shows active Window work without any Workflow Session and keeps observe call
   expect(activeRow.textContent).toContain("WebCodex");
   expect(activeRow.textContent).toContain("webcodex-activity-fix");
   expect(activeRow.textContent).toContain("1 active");
+  expect(await screen.findByRole("heading", { name: "webcodex-activity-fix" })).toBeTruthy();
+  const header = screen.getByRole("heading", { name: "webcodex-activity-fix" }).closest("header");
+  expect(header?.textContent).toContain("WebCodex");
+  expect(header?.textContent).toContain("apply_text_edits");
 
   expect(screen.queryByText("Each call is shown separately, from first to last.")).toBeNull();
   expect(screen.queryByRole("heading", { name: "Tool calls" })).toBeNull();

@@ -38,6 +38,19 @@
 
 .window-work-main { grid-template-rows: auto 42px minmax(0, 1fr); }
 .window-center-tabs { flex: 0 0 auto; }
+.window-header-meta {
+  display: flex;
+  gap: 6px 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.window-header-meta > * { display: inline-flex; align-items: center; }
+.window-header-meta > * + *::before {
+  content: "·";
+  margin-right: 10px;
+  color: var(--quiet);
+}
+.window-header-meta time { font-variant-numeric: tabular-nums; }
 .window-call-card.session-linked { cursor: pointer; }
 .window-call-card.session-linked:hover { background: var(--surface-soft); }
 .window-call-card.session-linked:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

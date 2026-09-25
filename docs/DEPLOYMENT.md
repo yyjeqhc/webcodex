@@ -456,11 +456,14 @@ curl -fsS -X POST https://your-domain.example/api/oauth/clients/create \
 ChatGPT MCP host-file import uses two trust tiers. An active authenticated OAuth client may import only from `files.oaiusercontent.com` or its subdomains; those URLs still require HTTPS, public DNS resolution with address pinning, port 443, no userinfo, no redirects, and the normal bounded download/write policy. Configure an exact server-generated OAuth client id in `WEBCODEX_OAUTH2_TRUSTED_MCP_FILE_CLIENT_IDS` only when that client must also import from arbitrary public HTTPS hosts under the same SSRF controls. Reprovisioning changes the client id but does not break ordinary OpenAI-host attachment import; update the setting to restore the broader Tier 1 trust. Client display names and redirect URIs never grant Tier 1 trust.
 
 A separate local-only exception exists for an operator-controlled Server that is
-bound to loopback and reached through OpenAI Secure Tunnel with a locally
-injected user API token. Set
+bound to loopback and reached through OpenAI Secure Tunnel. Set
 `WEBCODEX_MCP_TRUST_LOOPBACK_API_TOKEN_FILE_IMPORT=true` to trust ChatGPT
-host-file rewrites on that path. The flag is ignored for non-loopback binds and
-for non-user API credentials; leave it unset on network-accessible Servers.
+host-file rewrites only when that request is authenticated by an allowed local
+credential: a normal user API token, or the configured Server bootstrap credential
+used by the regular Desktop Tunnel. That Tunnel derives the credential from the local
+`WEBCODEX_TOKEN` configuration and injects it privately; do not copy or expose it.
+The flag is ignored for non-loopback binds and all other credential classes; leave it
+unset on network-accessible Servers.
 
 List and revoke clients with `POST /api/oauth/clients/list` and
 `POST /api/oauth/clients/revoke`. OAuth uses the authorization-code flow;

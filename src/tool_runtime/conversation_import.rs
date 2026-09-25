@@ -846,7 +846,7 @@ impl ToolRuntime {
             }
             (SessionTransport::Mcp, _) => {
                 return ToolResult::err(
-                    "import_conversation_files_to_project requires authenticated MCP OAuth host-file provenance",
+                    "import_conversation_files_to_project requires trusted MCP host-file provenance",
                 );
             }
             (SessionTransport::Api, _) => {

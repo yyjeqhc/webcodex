@@ -403,9 +403,10 @@ pub struct OAuth2Config {
     /// use the ChatGPT MCP host-file import path. Empty by default.
     pub trusted_mcp_file_client_ids: Vec<String>,
     /// Whether a loopback-bound Server may trust ChatGPT MCP host-file rewrites
-    /// authenticated with a normal user API token. This is intended for local
-    /// OpenAI Secure Tunnel setups where `tunnel-client` injects the API token.
-    /// Default `false`; non-loopback binds are never eligible.
+    /// authenticated with an explicitly allowed local tunnel credential: either
+    /// a normal user API token or the configured Server bootstrap credential used
+    /// by the regular OpenAI Secure Tunnel. Default `false`; non-loopback binds
+    /// are never eligible.
     pub trust_loopback_api_token_mcp_file_import: bool,
     /// Exact project grant active for a project-first OAuth share session.
     /// Unset on managed/self-hosted OAuth servers.

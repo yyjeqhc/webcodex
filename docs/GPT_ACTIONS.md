@@ -67,7 +67,7 @@ The Custom GPT importer also rejects OpenAPI schemas at 1 MB. WebCodex therefore
 
 `import_conversation_files_to_project` remains a direct generic Action when it is Adaptive Direct. ChatGPT supplies `openaiFileIdRefs`; the HTTP adapter converts the host's Action file-reference shape to the canonical internal shape and attaches private GPT Action host provenance. The model cannot set that provenance itself.
 
-MCP host-file import remains a separate trusted provenance path. Normal network-accessible Servers require the configured trusted OAuth MCP client; an explicitly opted-in loopback-only OpenAI Secure Tunnel deployment may instead trust its locally injected user API token. The Action and MCP provenance modes share canonical authorization but are not interchangeable.
+MCP host-file import remains a separate trusted provenance path. Normal network-accessible Servers require the configured trusted OAuth MCP client; an explicitly opted-in loopback-only OpenAI Secure Tunnel deployment may instead trust an allowed local tunnel credential (a normal user API token or the configured Server bootstrap credential used by the regular Desktop Tunnel). The Action and MCP provenance modes share canonical authorization but are not interchangeable.
 
 ## Project-scoped local `share` / `run`
 

@@ -562,6 +562,42 @@ fn mcp_file_import_trust_decision_reports_exact_failure_stage() {
         HostFileImportTrust::TrustedMcpHostFile
     );
 
+    let bootstrap_auth = crate::auth::AuthContext {
+        is_bootstrap: true,
+        ..crate::auth::AuthContext::new(crate::auth::AuthKind::Bootstrap)
+    };
+    let trusted_bootstrap = mcp_host_file_import_trust_decision_from_state(
+        &loopback_api_token_config,
+        &db,
+        Some(&bootstrap_auth),
+    );
+    assert_eq!(
+        trusted_bootstrap.reason,
+        HostFileImportTrustReason::TrustedLoopbackBootstrap
+    );
+    assert_eq!(
+        trusted_bootstrap.trust,
+        HostFileImportTrust::TrustedMcpHostFile
+    );
+
+    let mut bootstrap_flag_disabled_config = loopback_api_token_config.clone();
+    bootstrap_flag_disabled_config
+        .oauth2
+        .trust_loopback_api_token_mcp_file_import = false;
+    let bootstrap_flag_disabled = mcp_host_file_import_trust_decision_from_state(
+        &bootstrap_flag_disabled_config,
+        &db,
+        Some(&bootstrap_auth),
+    );
+    assert_eq!(
+        bootstrap_flag_disabled.reason,
+        HostFileImportTrustReason::NotOAuthToken
+    );
+    assert_eq!(
+        bootstrap_flag_disabled.trust,
+        HostFileImportTrust::Untrusted
+    );
+
     loopback_api_token_config.addr = "0.0.0.0:8080".to_string();
     let non_loopback = mcp_host_file_import_trust_decision_from_state(
         &loopback_api_token_config,
@@ -573,6 +609,46 @@ fn mcp_file_import_trust_decision_reports_exact_failure_stage() {
         HostFileImportTrustReason::LoopbackApiTokenTrustRequiresLoopback
     );
     assert_eq!(non_loopback.trust, HostFileImportTrust::Untrusted);
+
+    let bootstrap_non_loopback = mcp_host_file_import_trust_decision_from_state(
+        &loopback_api_token_config,
+        &db,
+        Some(&bootstrap_auth),
+    );
+    assert_eq!(
+        bootstrap_non_loopback.reason,
+        HostFileImportTrustReason::LoopbackBootstrapTrustRequiresLoopback
+    );
+    assert_eq!(bootstrap_non_loopback.trust, HostFileImportTrust::Untrusted);
+
+    let mut loopback_rejection_config = (*test_config(Some("secret"))).clone();
+    loopback_rejection_config
+        .oauth2
+        .trust_loopback_api_token_mcp_file_import = true;
+    for kind in [
+        crate::auth::AuthKind::SharedKey,
+        crate::auth::AuthKind::AgentToken,
+        crate::auth::AuthKind::AccountCredential,
+        crate::auth::AuthKind::ProjectCredential,
+        crate::auth::AuthKind::OpenAnonymous,
+    ] {
+        let auth = crate::auth::AuthContext::new(kind);
+        let decision = mcp_host_file_import_trust_decision_from_state(
+            &loopback_rejection_config,
+            &db,
+            Some(&auth),
+        );
+        assert_eq!(
+            decision.trust,
+            HostFileImportTrust::Untrusted,
+            "kind: {kind:?}"
+        );
+        assert_eq!(
+            decision.reason,
+            HostFileImportTrustReason::NotOAuthToken,
+            "kind: {kind:?}"
+        );
+    }
 
     let mut missing_id = mcp_import_oauth_auth(&client.client_id);
     missing_id.allowed_client_id = None;
@@ -911,6 +987,85 @@ async fn loopback_api_token_mcp_file_import_saves_pptx_when_explicitly_enabled_i
 }
 
 #[test]
+fn loopback_bootstrap_mcp_file_import_saves_pptx_when_explicitly_enabled() {
+    run_mcp_import_in_large_stack_test_thread(
+        loopback_bootstrap_mcp_file_import_saves_pptx_when_explicitly_enabled_impl,
+    );
+}
+
+async fn loopback_bootstrap_mcp_file_import_saves_pptx_when_explicitly_enabled_impl() {
+    use sha2::{Digest, Sha256};
+
+    let _lock = lock_mcp_import_test().await;
+    let pptx = b"trusted-loopback-bootstrap-pptx".to_vec();
+    let expected_sha256 = format!("{:x}", Sha256::digest(&pptx));
+    let server = start_mcp_import_mock_server(mcp_import_http_response(
+        "200 OK",
+        &[("Content-Length", pptx.len().to_string())],
+        &pptx,
+    ))
+    .await;
+    let _network = McpImportNetworkOverride::set(server.base_url.clone());
+
+    let (_db_tmp, db) = test_db();
+    let project_tmp = tempfile::tempdir().unwrap();
+    let (runtime, registry) = mcp_import_runtime(project_tmp.path(), None).await;
+    let mut config = (*test_config(Some("secret"))).clone();
+    config.oauth2.trust_loopback_api_token_mcp_file_import = true;
+    let service = Service::new(build_test_router(Arc::new(config), db, runtime));
+    let agent = tokio::spawn(complete_mcp_import_save(registry, pptx.clone()));
+    let temporary_url = "https://download.example/temporary-secret-token/bootstrap-import.pptx";
+
+    let (status, body, _) = oauth_mcp_request(
+        &service,
+        "secret",
+        "tools/call",
+        json!({
+            "name": "import_conversation_files_to_project",
+            "arguments": {
+                "project": "agent:importer:demo",
+                "openaiFileIdRefs": [{
+                    "download_url": temporary_url,
+                    "file_id": "file_loopback_bootstrap_host_rewritten",
+                    "mime_type": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                    "file_name": "source.pptx"
+                }],
+                "output_dir": "paper/export",
+                "targets": ["bootstrap-import.pptx"],
+                "overwrite": false
+            }
+        }),
+    )
+    .await;
+
+    let decision = take_last_mcp_host_file_import_trust_decision()
+        .expect("MCP import must evaluate bootstrap host-file trust after authentication");
+    assert_eq!(
+        decision.reason,
+        HostFileImportTrustReason::TrustedLoopbackBootstrap
+    );
+    assert_eq!(decision.trust, HostFileImportTrust::TrustedMcpHostFile);
+    tokio::time::timeout(std::time::Duration::from_secs(5), agent)
+        .await
+        .expect("save_project_artifact fixture timed out")
+        .unwrap();
+
+    assert_eq!(status, StatusCode::OK, "body: {body:?}");
+    assert_eq!(body["result"]["isError"], false, "body: {body:?}");
+    let imported = &body["result"]["structuredContent"]["output"]["imported"][0];
+    assert_eq!(imported["path"], "paper/export/bootstrap-import.pptx");
+    assert_eq!(imported["bytes_written"], pptx.len());
+    assert_eq!(imported["sha256"], expected_sha256);
+    assert_eq!(
+        crate::tool_runtime::conversation_import::import_test_dns_resolution_count(),
+        1
+    );
+    let serialized = serde_json::to_string(&body).unwrap();
+    assert!(!serialized.contains(temporary_url));
+    assert!(!serialized.contains("file_loopback_bootstrap_host_rewritten"));
+}
+
+#[test]
 fn oauth_mcp_file_import_unallowlisted_active_client_saves_openai_host_file() {
     run_mcp_import_in_large_stack_test_thread(
         oauth_mcp_file_import_unallowlisted_active_client_saves_openai_host_file_impl,
@@ -1232,11 +1387,11 @@ async fn mcp_file_import_unallowlisted_oauth_rejects_non_openai_host_before_dns_
     assert_eq!(body["result"]["isError"], true);
     assert!(serde_json::to_string(&body)
         .unwrap()
-        .contains("authenticated MCP OAuth host-file provenance"));
+        .contains("trusted MCP host-file provenance"));
     assert_eq!(
         crate::tool_runtime::conversation_import::import_test_dns_resolution_count(),
         0,
-        "raw/API-token MCP client must be rejected before DNS/network"
+        "bootstrap MCP client without the explicit local trust flag must be rejected before DNS/network"
     );
 }
 

@@ -78,13 +78,18 @@ Tunnel + No authentication; the temporary WebCodex Bearer stays local and is
 injected by the pinned verified OpenAI `tunnel-client`.
 
 For a long-lived **loopback-only** Server reached through OpenAI Secure Tunnel,
-ChatGPT host-file rewrites authenticated by the local user API token can be trusted by
-setting `WEBCODEX_MCP_TRUST_LOOPBACK_API_TOKEN_FILE_IMPORT=true`. Starting with
-v0.4.2, WebCodex Desktop writes this value by default for the local loopback Server it
-owns; an existing explicit value is never overwritten. The exception works only when
-`WEBCODEX_ADDR` resolves to loopback and the authenticated credential is a normal user
-API token. Independent/network-accessible Servers remain off by default and must not
-use this as a substitute for OAuth.
+ChatGPT host-file rewrites authenticated by the explicitly allowed local tunnel
+credential can be trusted by setting
+`WEBCODEX_MCP_TRUST_LOOPBACK_API_TOKEN_FILE_IMPORT=true`. Starting with v0.4.2,
+WebCodex Desktop writes this value by default for the local loopback Server it owns; an
+existing explicit value is never overwritten. The exception works only when
+`WEBCODEX_ADDR` resolves to loopback and the authenticated credential is either a
+normal user API token or the configured Server bootstrap credential used by the
+Desktop regular Tunnel. The regular Tunnel derives that credential from the local
+`WEBCODEX_TOKEN` configuration and injects it into its private tunnel-client
+authorization; users should not copy or expose that credential. Independent/network-
+accessible Servers remain off by default and must not use this as a substitute for
+OAuth.
 
 For a regular independent Windows Server + Runner reached through OpenAI Tunnel, or to troubleshoot a case where local `/readyz` is healthy but ChatGPT Connector creation still fails, see the [Windows + OpenAI Secure MCP Tunnel deep dive](WINDOWS_OPENAI_TUNNEL.md). It is advanced setup/troubleshooting material, not required reading for a first-time user.
 

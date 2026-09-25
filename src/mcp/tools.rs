@@ -1125,7 +1125,9 @@ pub(super) async fn handle_list(
 pub(super) enum HostFileImportTrustReason {
     Trusted,
     TrustedLoopbackApiToken,
+    TrustedLoopbackBootstrap,
     LoopbackApiTokenTrustRequiresLoopback,
+    LoopbackBootstrapTrustRequiresLoopback,
     MissingConfig,
     MissingDatabase,
     MissingAuth,
@@ -1142,8 +1144,12 @@ impl HostFileImportTrustReason {
         match self {
             Self::Trusted => "trusted",
             Self::TrustedLoopbackApiToken => "trusted_loopback_api_token",
+            Self::TrustedLoopbackBootstrap => "trusted_loopback_bootstrap",
             Self::LoopbackApiTokenTrustRequiresLoopback => {
                 "loopback_api_token_trust_requires_loopback"
+            }
+            Self::LoopbackBootstrapTrustRequiresLoopback => {
+                "loopback_bootstrap_trust_requires_loopback"
             }
             Self::MissingConfig => "missing_config",
             Self::MissingDatabase => "missing_database",
@@ -1231,21 +1237,41 @@ pub(super) fn mcp_host_file_import_trust_decision_from_state(
     let Some(auth) = auth else {
         return base;
     };
-    if auth.kind == crate::auth::AuthKind::ApiToken
-        && auth.token_kind.as_deref() == Some("user")
-        && config.oauth2.trust_loopback_api_token_mcp_file_import
-    {
-        if config.is_loopback_bound() {
+    if config.oauth2.trust_loopback_api_token_mcp_file_import {
+        let loopback_reasons = if auth.kind == crate::auth::AuthKind::ApiToken
+            && auth.token_kind.as_deref() == Some("user")
+        {
+            Some((
+                HostFileImportTrustReason::TrustedLoopbackApiToken,
+                HostFileImportTrustReason::LoopbackApiTokenTrustRequiresLoopback,
+            ))
+        } else if auth.kind == crate::auth::AuthKind::Bootstrap
+            && auth.is_bootstrap()
+            && config
+                .token
+                .as_deref()
+                .is_some_and(|token| !token.trim().is_empty())
+        {
+            Some((
+                HostFileImportTrustReason::TrustedLoopbackBootstrap,
+                HostFileImportTrustReason::LoopbackBootstrapTrustRequiresLoopback,
+            ))
+        } else {
+            None
+        };
+        if let Some((trusted_reason, non_loopback_reason)) = loopback_reasons {
+            if config.is_loopback_bound() {
+                return HostFileImportTrustDecision {
+                    trust: HostFileImportTrust::TrustedMcpHostFile,
+                    reason: trusted_reason,
+                    ..base
+                };
+            }
             return HostFileImportTrustDecision {
-                trust: HostFileImportTrust::TrustedMcpHostFile,
-                reason: HostFileImportTrustReason::TrustedLoopbackApiToken,
+                reason: non_loopback_reason,
                 ..base
             };
         }
-        return HostFileImportTrustDecision {
-            reason: HostFileImportTrustReason::LoopbackApiTokenTrustRequiresLoopback,
-            ..base
-        };
     }
     if !auth.is_oauth_token() {
         return HostFileImportTrustDecision {

@@ -401,7 +401,7 @@ curl -fsS -X POST https://your-domain.example/api/oauth/clients/create \
 
 ChatGPT MCP host-file import 采用两级 trust。正常 active authenticated OAuth client 只能从 `files.oaiusercontent.com` 或其子域导入；这些 URL 仍要求 HTTPS、public DNS resolution + address pinning、443 端口、无 userinfo、禁止 redirect，并继续受 bounded download 与 Project write policy 约束。只有当某个 client 还需要从任意 public HTTPS host 导入时，才把其精确 server-generated OAuth client id 配入 `WEBCODEX_OAUTH2_TRUSTED_MCP_FILE_CLIENT_IDS`，获得同样 SSRF 防护下的 Tier 1 扩展信任。重新创建 client 会生成新 id，但普通 OpenAI-host attachment import 不再因此失效；更新该设置只用于恢复更宽的 Tier 1 trust。Client display name 与 redirect URI 永远不能授予 Tier 1 trust。
 
-对于绑定到 loopback、并通过 OpenAI Secure Tunnel 以本机注入 user API token 访问的 operator-controlled Server，还有一个独立的 local-only 例外。设置 `WEBCODEX_MCP_TRUST_LOOPBACK_API_TOKEN_FILE_IMPORT=true` 后，可在该路径上信任 ChatGPT host-file rewrite。非 loopback bind 或非 user API credential 会忽略该 flag；network-accessible Server 应保持未设置。
+对于绑定到 loopback、并通过 OpenAI Secure Tunnel 访问的 operator-controlled Server，还有一个独立的 local-only 例外。设置 `WEBCODEX_MCP_TRUST_LOOPBACK_API_TOKEN_FILE_IMPORT=true` 后，仅当请求由允许的本地 credential 认证时才信任 ChatGPT host-file rewrite：普通 user API token，或 Desktop regular Tunnel 使用的已配置 Server bootstrap credential。该 Tunnel 从本机 `WEBCODEX_TOKEN` 配置派生 credential 并私下完成注入；不要复制或暴露它。非 loopback bind 和其它 credential class 都会忽略该 flag；network-accessible Server 应保持未设置。
 
 用 `POST /api/oauth/clients/list` 与 `POST /api/oauth/clients/revoke` 列出与
 撤销 client。OAuth 使用 authorization-code 流程；动态 client 注册、OIDC 与

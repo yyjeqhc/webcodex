@@ -667,6 +667,7 @@ mod tests {
             "session_id",
             "recording_session_id",
             "ack_session_message_ids",
+            "ack_ref",
             "context_request",
             "session_message_resolution",
             "_control",

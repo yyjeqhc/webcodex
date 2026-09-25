@@ -1246,6 +1246,107 @@ async fn collaboration_cross_project_recorder_fails_closed_before_completion() {
 }
 
 #[tokio::test]
+async fn ack_ref_accumulates_retained_and_newly_projected_session_attention() {
+    let runtime = test_runtime();
+    let auth = auth_context(None, true);
+    let session = start_authorized_unscoped_session(&runtime, "cumulative ACK ref", &auth);
+    let mut ids = Vec::new();
+    for index in 0..6 {
+        ids.push(
+            runtime
+                .sessions
+                .post_message_with_ack(
+                    PostSessionMessageInput {
+                        session_id: session.session_id.clone(),
+                        kind: SessionMessageKind::Guidance,
+                        message: format!("cumulative-guidance-{index}"),
+                        tags: Vec::new(),
+                        reply_to: None,
+                        priority: SessionMessagePriority::Normal,
+                    },
+                    true,
+                )
+                .unwrap()
+                .message_id,
+        );
+    }
+
+    let first = call_with_recorder(
+        &runtime,
+        "list_tools",
+        json!({}),
+        Some(&session.session_id),
+        &auth,
+        None,
+    )
+    .await;
+    assert!(first.success, "{:?}", first.error);
+    let first_messages = first.output["session_attention"]["messages"]
+        .as_array()
+        .unwrap();
+    assert_eq!(
+        first_messages.len(),
+        super::super::SESSION_ATTENTION_MAX_MESSAGES
+    );
+    let first_ref = first.output["session_attention"]["ack_ref"]
+        .as_str()
+        .expect("first bounded projection should mint ACK ref")
+        .to_string();
+
+    let second = call_with_recorder_metadata(
+        &runtime,
+        "list_tools",
+        json!({}),
+        Some(&session.session_id),
+        ToolInvocationMetadata {
+            ack_ref: Some(first_ref.clone()),
+            ..Default::default()
+        },
+        &auth,
+        None,
+    )
+    .await;
+    assert!(second.success, "{:?}", second.error);
+    assert_eq!(
+        second.output["session_attention"]["ack"]["accepted_count"],
+        3
+    );
+    let second_messages = second.output["session_attention"]["messages"]
+        .as_array()
+        .unwrap();
+    assert_eq!(second_messages.len(), 3);
+    let second_ref = second.output["session_attention"]["ack_ref"]
+        .as_str()
+        .expect("retained plus newly projected ACK set should mint replacement ref")
+        .to_string();
+    assert_ne!(second_ref, first_ref);
+
+    let third = call_with_recorder_metadata(
+        &runtime,
+        "list_tools",
+        json!({}),
+        Some(&session.session_id),
+        ToolInvocationMetadata {
+            ack_ref: Some(second_ref.clone()),
+            ..Default::default()
+        },
+        &auth,
+        None,
+    )
+    .await;
+    assert!(third.success, "{:?}", third.error);
+    assert_eq!(
+        third.output["session_attention"]["ack"]["accepted_count"],
+        ids.len()
+    );
+    assert!(third.output["session_attention"]["messages"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    assert_eq!(third.output["session_attention"]["ack_ref"], second_ref);
+}
+
+#[tokio::test]
 async fn foreign_recording_session_is_denied_before_ordinary_tool_recording() {
     let runtime = test_runtime();
     let alice = shared_key_auth_context("ordinary-recorder-alice");
@@ -1261,13 +1362,35 @@ async fn foreign_recording_session_is_denied_before_ordinary_tool_recording() {
     .await;
     assert!(started.success, "{:?}", started.error);
     let session_id = started.output["session_id"].as_str().unwrap().to_string();
+    let ack_message = runtime
+        .sessions
+        .post_message_with_ack(
+            PostSessionMessageInput {
+                session_id: session_id.clone(),
+                kind: SessionMessageKind::Guidance,
+                message: "Alice-only ACK evidence".to_string(),
+                tags: Vec::new(),
+                reply_to: None,
+                priority: SessionMessagePriority::High,
+            },
+            true,
+        )
+        .unwrap();
+    let ack_ref = runtime
+        .sessions
+        .issue_ack_ref(&session_id, std::slice::from_ref(&ack_message.message_id))
+        .expect("Alice Session ACK set should mint a ref");
     let before = runtime.sessions.summary(&session_id, Some(100)).unwrap();
 
-    let denied = call_with_recorder(
+    let denied = call_with_recorder_metadata(
         &runtime,
         "list_projects",
         json!({}),
         Some(&session_id),
+        ToolInvocationMetadata {
+            ack_ref: Some(ack_ref),
+            ..Default::default()
+        },
         &bob,
         None,
     )
@@ -1279,6 +1402,20 @@ async fn foreign_recording_session_is_denied_before_ordinary_tool_recording() {
     assert!(!tool_names(&runtime, &session_id)
         .iter()
         .any(|tool| tool == "list_projects"));
+    let message_after_denial = runtime
+        .sessions
+        .list_messages(
+            &session_id,
+            sessions::ListSessionMessagesFilter {
+                message_id: Some(ack_message.message_id),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert!(
+        message_after_denial[0].first_ack_observed_at.is_none(),
+        "foreign principal must not turn possession of ack_ref into ACK authority"
+    );
 
     let allowed = call_with_recorder(
         &runtime,

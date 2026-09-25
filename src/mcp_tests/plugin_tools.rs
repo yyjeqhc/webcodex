@@ -703,7 +703,10 @@ async fn plugin_operation_scopes_are_independent_and_fail_closed() {
 
 #[tokio::test]
 async fn read_only_session_allows_plugin_inspect_but_denies_call_before_provider_dispatch() {
-    let runtime = test_runtime();
+    let tmp = tempfile::tempdir().unwrap();
+    let runtime = test_runtime().with_project_reference_database(std::sync::Arc::new(
+        crate::Database::open(&tmp.path().join("plugin-recorder-refs.db")).unwrap(),
+    ));
     let auth = plugin_auth_with_scopes(&[
         crate::auth::SCOPE_PLUGIN_INSPECT,
         crate::auth::SCOPE_PLUGIN_INVOKE,
@@ -719,6 +722,9 @@ async fn read_only_session_allows_plugin_inspect_but_denies_call_before_provider
     .await;
     let session =
         start_authorized_test_session(&runtime, &auth, crate::tool_runtime::SessionMode::ReadOnly);
+    let recorder_ref = runtime
+        .session_reference_for_id(&session.session_id, Some(&auth))
+        .expect("authorized Plugin recorder should expose a Session ref");
 
     let inspect = handle_mcp_request(
         &runtime,
@@ -729,7 +735,7 @@ async fn read_only_session_allows_plugin_inspect_but_denies_call_before_provider
                 "name": crate::plugin_gateway::PLUGIN_TOOL_NAME,
                 "arguments": {
                     "action":"list",
-                    "recording_session_id":session.session_id
+                    "recording_session_id":recorder_ref
                 }
             }),
         ),
@@ -752,7 +758,7 @@ async fn read_only_session_allows_plugin_inspect_but_denies_call_before_provider
                     "action":"call",
                     "binding":"wc_pbind_ASNFZ4mrze8BI0VniavN7w",
                     "arguments":{"query":"must-not-run"},
-                    "recording_session_id":session.session_id
+                    "recording_session_id":recorder_ref
                 }
             }),
         ),

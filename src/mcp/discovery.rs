@@ -3,6 +3,8 @@
 
 use serde_json::Value;
 
+use super::tools::RECORDING_SESSION_SELECTOR_SCHEMA_PATTERN;
+
 // MCP discovery targets, independent of GPT Actions' importer limits. Keep
 // purpose, the nearest selection boundary, and essential continuation guidance.
 pub(super) const TOOL_DESCRIPTION_MAX_CHARS: usize = 420;
@@ -45,8 +47,9 @@ pub(super) fn compact_tool(tool: &mut Value) {
         // session_id keeps its own canonical-derived copy and requiredness.
         // Nested IDs/resolution have no description; keep their type hints here.
         for (pointer, description) in [
-            ("/properties/recording_session_id", "Optional explicit wc_sess_* recorder for one exact Workflow Session; never execution/business authority. If omitted, authorized same-Window affinity may still deliver and ACK Session collaboration without recording."),
-            ("/properties/ack_session_message_ids", "ACK-required wc_msg_* IDs retained in model context; Session ACK uses explicit recorder or authorized same-Window affinity; never resolves or authorizes."),
+            ("/properties/recording_session_id", "Optional explicit recorder for one exact Workflow Session (wc_sess_* or issued ~sN); never execution/business authority. Omission may still allow authorized same-Window attention without recording."),
+            ("/properties/ack_session_message_ids", "ACK-required wc_msg_* IDs retained in model context; Session uses recorder/window affinity; never resolves or authorizes."),
+            ("/properties/ack_ref", "Compact exact Session ACK-set evidence returned in session_attention; Session-only, request-scoped, non-authoritative, and never resolves messages."),
             ("/properties/session_message_resolution", "Resolve one handled non-todo recorder message by exact wc_msg_*; ACK separately if required. Independent of call success."),
             ("/properties/context_request", "Post-result sidecar keys; no authority: project.instructions, webcodex.workflow, jobs.attention, skills.catalog, plugins.catalog, memory.bootstrap."),
             ("/properties/context_request/items", "Context key; unsupported keys are nonfatal."),
@@ -57,6 +60,15 @@ pub(super) fn compact_tool(tool: &mut Value) {
             {
                 *copy = description.to_string();
             }
+        }
+        // ACK ref is echoed verbatim from session_attention. Repeating the
+        // explanation on every compact tool would dominate the token savings.
+        // Full discovery keeps the safety contract; compact keeps field/bound.
+        if let Some(property) = schema
+            .pointer_mut("/properties/ack_ref")
+            .and_then(Value::as_object_mut)
+        {
+            property.remove("description");
         }
         compact_discovery_validation_annotations(schema);
     }
@@ -87,7 +99,7 @@ fn compact_discovery_validation_annotations(schema: &mut Value) {
     for (pointer, pattern) in [
         (
             "/properties/recording_session_id",
-            "^wc_sess_([A-Za-z0-9_-]{16}|[0-9a-f]{32})$",
+            RECORDING_SESSION_SELECTOR_SCHEMA_PATTERN,
         ),
         (
             "/properties/ack_session_message_ids/items",

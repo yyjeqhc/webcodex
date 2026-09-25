@@ -372,6 +372,29 @@ pub(crate) fn observe_session_attention_acks(
     sessions.observe_message_acks(session_id, ack_message_ids)
 }
 
+pub(crate) fn session_ack_message_ids(
+    sessions: &sessions::SessionStore,
+    session_id: &str,
+    legacy_ids: &[String],
+    ack_ref: Option<&str>,
+) -> Vec<String> {
+    let mut ids = legacy_ids.to_vec();
+    if let Some(resolved) =
+        ack_ref.and_then(|ack_ref| sessions.resolve_ack_ref(session_id, ack_ref))
+    {
+        let mut seen = ids
+            .iter()
+            .cloned()
+            .collect::<std::collections::HashSet<_>>();
+        for message_id in resolved {
+            if seen.insert(message_id.clone()) {
+                ids.push(message_id);
+            }
+        }
+    }
+    ids
+}
+
 pub(crate) fn add_session_attention_projection(
     result: &mut ToolResult,
     sessions: &sessions::SessionStore,
@@ -384,6 +407,7 @@ pub(crate) fn add_session_attention_projection(
     let unsuppressed_count = attention.messages.len();
     let mut remaining_bytes = SESSION_ATTENTION_MAX_BODY_BYTES;
     let mut messages = Vec::new();
+    let mut projected_ids = Vec::new();
     let mut body_truncated = false;
     for message in attention
         .messages
@@ -396,6 +420,7 @@ pub(crate) fn add_session_attention_projection(
         let (body, truncated) = bound_utf8_bytes(&message.message, remaining_bytes);
         body_truncated |= truncated;
         remaining_bytes = remaining_bytes.saturating_sub(body.len());
+        projected_ids.push(message.message_id.clone());
         messages.push(json!({
             "message_id": message.message_id,
             "kind": message.kind.as_str(),
@@ -431,21 +456,25 @@ pub(crate) fn add_session_attention_projection(
             hint.remove("attention_instruction");
         }
     }
-    output.insert(
-        "session_attention".to_string(),
-        json!({
-            "session_id": session_id,
-            "source": source,
-            "requires_ack": attention.total_open_requires_ack > 0,
-            "messages": messages,
-            "omitted_count": omitted_count,
-            "truncated": omitted_count > 0,
-            "ack": {
-                "accepted_count": ack.accepted_count,
-                "ignored_count": ack.ignored_count,
-            }
-        }),
-    );
+    let mut retained_ack_ids = ack.accepted_ids.clone();
+    retained_ack_ids.extend(projected_ids);
+    let ack_ref = sessions.issue_ack_ref(session_id, &retained_ack_ids);
+    let mut projection = json!({
+        "session_id": session_id,
+        "source": source,
+        "requires_ack": attention.total_open_requires_ack > 0,
+        "messages": messages,
+        "omitted_count": omitted_count,
+        "truncated": omitted_count > 0,
+        "ack": {
+            "accepted_count": ack.accepted_count,
+            "ignored_count": ack.ignored_count,
+        }
+    });
+    if let Some(ack_ref) = ack_ref {
+        projection["ack_ref"] = json!(ack_ref);
+    }
+    output.insert("session_attention".to_string(), projection);
     result.output = Value::Object(output);
 }
 
@@ -542,6 +571,24 @@ pub(crate) fn workflow_session_authority_fingerprint(
         authority_kind,
         &authority_id,
     ))
+}
+
+pub(crate) fn workflow_session_incarnation_fingerprint(
+    session_id: &str,
+    created_at: i64,
+    project: Option<&str>,
+    owner_authority_fingerprint: &str,
+) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"webcodex.workflow-session-incarnation.v1\0");
+    hasher.update(session_id.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(created_at.to_string().as_bytes());
+    hasher.update(b"\0");
+    hasher.update(project.unwrap_or_default().as_bytes());
+    hasher.update(b"\0");
+    hasher.update(owner_authority_fingerprint.as_bytes());
+    format!("{:x}", hasher.finalize())
 }
 
 pub(crate) fn project_reference_principal_fingerprint(

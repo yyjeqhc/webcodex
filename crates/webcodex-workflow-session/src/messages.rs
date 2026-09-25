@@ -10,7 +10,8 @@ use super::model::{
     SessionDiscussionSummary, SessionInboxHint, SessionMessage, SessionMessageDelivery,
     SessionMessageDeliveryOutcome, SessionMessageError, SessionMessageObservationError,
     SessionMessageObservationOutcome, SessionMessageStatus, WithdrawSessionMessageOutcome,
-    DEFAULT_MESSAGE_LIST_LIMIT, MAX_MESSAGE_LIST_LIMIT, MAX_SESSION_MESSAGE_OBSERVATION_TOKEN_LEN,
+    DEFAULT_MAX_MESSAGES_PER_SESSION, DEFAULT_MESSAGE_LIST_LIMIT, MAX_MESSAGE_LIST_LIMIT,
+    MAX_SESSION_MESSAGE_OBSERVATION_TOKEN_LEN, MAX_TOOL_CALL_ACK_REF_CHARS,
 };
 use super::query::{build_discussion_summary, build_inbox_hint};
 use super::store::SessionStore;
@@ -141,6 +142,117 @@ impl SessionStore {
             self.notify_message_observation();
         }
         outcome
+    }
+
+    pub fn issue_ack_ref(&self, session_id: &str, retained_ids: &[String]) -> Option<String> {
+        if retained_ids.is_empty() {
+            return None;
+        }
+        self.with_record_for_query(session_id, |record, _| {
+            let open_ids = sorted_open_ack_message_ids(record);
+            let retained = retained_ids
+                .iter()
+                .map(String::as_str)
+                .collect::<std::collections::HashSet<_>>();
+            if retained.is_empty() {
+                return None;
+            }
+
+            let mut membership = vec![0_u8; open_ids.len().div_ceil(8)];
+            let mut matched = 0_usize;
+            for (index, message_id) in open_ids.iter().enumerate() {
+                if retained.contains(message_id.as_str()) {
+                    membership[index / 8] |= 1_u8 << (index % 8);
+                    matched += 1;
+                }
+            }
+            if matched != retained.len() {
+                return None;
+            }
+            while membership.last().is_some_and(|byte| *byte == 0) {
+                membership.pop();
+            }
+            if membership.is_empty() {
+                return None;
+            }
+
+            let tag = ack_set_digest(
+                session_id,
+                &record.owner_authority_fingerprint,
+                open_ids.iter().map(String::as_str),
+                &membership,
+            );
+            let mut payload = Vec::with_capacity(ACK_REF_TAG_BYTES + membership.len());
+            payload.extend_from_slice(&tag[..ACK_REF_TAG_BYTES]);
+            payload.extend_from_slice(&membership);
+            let token = format!(
+                "{ACK_REF_PREFIX}{}",
+                general_purpose::URL_SAFE_NO_PAD.encode(payload)
+            );
+            (token.len() <= MAX_TOOL_CALL_ACK_REF_CHARS).then_some(token)
+        })
+        .flatten()
+    }
+
+    pub fn resolve_ack_ref(&self, session_id: &str, ack_ref: &str) -> Option<Vec<String>> {
+        if ack_ref.len() > MAX_TOOL_CALL_ACK_REF_CHARS {
+            return None;
+        }
+        let encoded = ack_ref.strip_prefix(ACK_REF_PREFIX)?;
+        if encoded.is_empty() || !encoded.is_ascii() {
+            return None;
+        }
+        let payload = general_purpose::URL_SAFE_NO_PAD
+            .decode(encoded.as_bytes())
+            .ok()?;
+        if payload.len() <= ACK_REF_TAG_BYTES
+            || payload.len() > ACK_REF_TAG_BYTES + ACK_REF_MAX_MEMBERSHIP_BYTES
+        {
+            return None;
+        }
+        let (provided_tag, membership) = payload.split_at(ACK_REF_TAG_BYTES);
+        if membership.last().is_some_and(|byte| *byte == 0) {
+            return None;
+        }
+
+        self.with_record_for_query(session_id, |record, _| {
+            let open_ids = sorted_open_ack_message_ids(record);
+            let expected_tag = ack_set_digest(
+                session_id,
+                &record.owner_authority_fingerprint,
+                open_ids.iter().map(String::as_str),
+                membership,
+            );
+            if provided_tag != &expected_tag[..ACK_REF_TAG_BYTES] {
+                return None;
+            }
+
+            let max_membership_bytes = open_ids.len().div_ceil(8);
+            if membership.len() > max_membership_bytes {
+                return None;
+            }
+            if membership.len() == max_membership_bytes && !membership.is_empty() {
+                let used_bits = open_ids.len() % 8;
+                if used_bits != 0 {
+                    let allowed_mask = ((1_u16 << used_bits) - 1) as u8;
+                    if membership[membership.len() - 1] & !allowed_mask != 0 {
+                        return None;
+                    }
+                }
+            }
+
+            let mut resolved = Vec::new();
+            for (index, message_id) in open_ids.into_iter().enumerate() {
+                let Some(byte) = membership.get(index / 8) else {
+                    break;
+                };
+                if byte & (1_u8 << (index % 8)) != 0 {
+                    resolved.push(message_id);
+                }
+            }
+            (!resolved.is_empty()).then_some(resolved)
+        })
+        .flatten()
     }
 
     pub fn ack_required_messages(
@@ -482,6 +594,49 @@ fn observation_outcome(
         history_lost,
         has_more,
     })
+}
+
+const ACK_REF_PREFIX: &str = "wc_ack1_";
+const ACK_REF_TAG_BYTES: usize = 16;
+const ACK_REF_MAX_MEMBERSHIP_BYTES: usize = DEFAULT_MAX_MESSAGES_PER_SESSION.div_ceil(8);
+
+fn sorted_open_ack_message_ids(record: &super::model::SessionRecord) -> Vec<String> {
+    let mut messages = record
+        .messages
+        .iter()
+        .filter(|message| message.status == SessionMessageStatus::Open && message.requires_ack)
+        .map(|message| message.as_ref())
+        .collect::<Vec<_>>();
+    messages.sort_by(|left, right| {
+        left.created_at
+            .cmp(&right.created_at)
+            .then_with(|| left.message_id.cmp(&right.message_id))
+    });
+    messages
+        .into_iter()
+        .map(|message| message.message_id.clone())
+        .collect()
+}
+
+fn ack_set_digest<'a>(
+    session_id: &str,
+    owner_authority_fingerprint: &str,
+    message_ids: impl Iterator<Item = &'a str>,
+    membership: &[u8],
+) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(b"webcodex.session-message-ack-set.v1\0");
+    for value in [session_id, owner_authority_fingerprint] {
+        hasher.update((value.len() as u64).to_be_bytes());
+        hasher.update(value.as_bytes());
+    }
+    for message_id in message_ids {
+        hasher.update((message_id.len() as u64).to_be_bytes());
+        hasher.update(message_id.as_bytes());
+    }
+    hasher.update((membership.len() as u64).to_be_bytes());
+    hasher.update(membership);
+    hasher.finalize().into()
 }
 
 const MESSAGE_OBSERVATION_TOKEN_PREFIX: &str = "wsm2_";

@@ -59,6 +59,7 @@ pub(crate) struct ToolCallRequest {
 pub(crate) struct ToolInvocationMetadata {
     pub(crate) control: Option<super::control_sidecar::ControlSidecars>,
     pub(crate) ack_session_message_ids: Vec<String>,
+    pub(crate) ack_ref: Option<String>,
     pub(crate) session_message_resolution: Option<ToolCallSessionMessageResolution>,
     pub(crate) context_request: Vec<String>,
 }
@@ -345,6 +346,7 @@ impl ToolRuntime {
                 return outcome;
             }
         }
+        let ack_ref = invocation_metadata.ack_ref.clone();
         let mut recorder_metadata =
             ToolCallRecorderMetadata::from_business_arguments(&request.arguments);
         recorder_metadata.ack_session_message_ids = invocation_metadata.ack_session_message_ids;
@@ -537,6 +539,26 @@ impl ToolRuntime {
                 correlation: Default::default(),
             };
         }
+        let canonical_recording_session_id = match context.session_id {
+            Some(raw) => match self.canonicalize_explicit_session_selector(raw, context.auth) {
+                Ok(canonical) => Some(canonical),
+                Err(message) => {
+                    return ToolCallOutcome {
+                        success: false,
+                        result: None,
+                        error_status: Some(ToolCallErrorStatus::InvalidArguments { message }),
+                        project: None,
+                        model_ergonomics: None,
+                        correlation: Default::default(),
+                    };
+                }
+            },
+            None => None,
+        };
+        let context = ToolCallContext {
+            session_id: canonical_recording_session_id.as_deref(),
+            ..context
+        };
         // Action-dependent gateways resolve exact policy before the generic
         // static Session/permission lifecycle and own one specialized ledger.
         if let Some(mut outcome) =
@@ -556,7 +578,8 @@ impl ToolRuntime {
             }
             return outcome;
         }
-        let concrete_arguments = strip_tool_call_expectation_metadata(request.arguments.clone());
+        let mut concrete_arguments =
+            strip_tool_call_expectation_metadata(request.arguments.clone());
         let context_request = if capabilities.context_sidecar {
             invocation_metadata.context_request
         } else {
@@ -585,7 +608,16 @@ impl ToolRuntime {
                 };
             }
         }
-        let recorder_ack_requested = !recorder_metadata.ack_session_message_ids.is_empty();
+        let recorder_ack_requested =
+            !recorder_metadata.ack_session_message_ids.is_empty() || ack_ref.is_some();
+        let explicit_session_ack_ids = context.session_id.map(|recorder_session_id| {
+            session_context::session_ack_message_ids(
+                &self.sessions,
+                recorder_session_id,
+                &recorder_metadata.ack_session_message_ids,
+                ack_ref.as_deref(),
+            )
+        });
         if let Some(recorder_session_id) = context.session_id {
             recorder_metadata.recording_session_id = Some(recorder_session_id.to_string());
             recorder_metadata.recording_session_project = self
@@ -622,11 +654,26 @@ impl ToolRuntime {
                 correlation: Default::default(),
             };
         }
+        if let Err(message) =
+            self.canonicalize_session_reference_argument(&mut concrete_arguments, context.auth)
+        {
+            return ToolCallOutcome {
+                success: false,
+                result: None,
+                error_status: Some(ToolCallErrorStatus::InvalidArguments { message }),
+                project: None,
+                model_ergonomics: None,
+                correlation: Default::default(),
+            };
+        }
+
         let outer_ack_observation = context.session_id.map(|recorder_session_id| {
             session_context::observe_session_attention_acks(
                 &self.sessions,
                 recorder_session_id,
-                &recorder_metadata.ack_session_message_ids,
+                explicit_session_ack_ids
+                    .as_deref()
+                    .unwrap_or(&recorder_metadata.ack_session_message_ids),
             )
         });
         if collaboration_session_tool(&request.tool_name) {
@@ -1015,10 +1062,16 @@ impl ToolRuntime {
             // authorized active Session message board for request-scoped ACK and
             // delivery, but never becomes recorder, business input, execution
             // context, or durable resolution authority.
-            let ack = session_context::observe_session_attention_acks(
+            let session_ack_ids = session_context::session_ack_message_ids(
                 &self.sessions,
                 session_id,
                 &recorder_metadata.ack_session_message_ids,
+                ack_ref.as_deref(),
+            );
+            let ack = session_context::observe_session_attention_acks(
+                &self.sessions,
+                session_id,
+                &session_ack_ids,
             );
             session_context::add_session_attention_projection(
                 &mut result,

@@ -297,6 +297,7 @@ mod tests {
             for wrapper in [
                 "recording_session_id",
                 "ack_session_message_ids",
+                "ack_ref",
                 "context_request",
                 "session_message_resolution",
                 "_control",
@@ -307,6 +308,18 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn business_session_schema_documents_short_ref_without_leaking_recorder_wrapper() {
+        let summary = input_schema_for_tool("session_summary");
+        let session = &summary["properties"]["session_id"];
+        assert_eq!(session["type"], "string");
+        assert!(
+            session.get("pattern").is_none(),
+            "model-facing business session_id must remain an unconstrained string selector; Runtime owns canonical/session_ref validation"
+        );
+        assert!(summary["properties"].get("recording_session_id").is_none());
     }
 
     #[test]

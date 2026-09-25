@@ -52,7 +52,8 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                     "True after the in-memory Session context/event commit. JSON ledger persistence may still be pending in the background writer.",
                 ),
             ),
-            ("session_id", schema_type("string", "Opaque session id.")),
+            ("session_id", schema_type("string", "Canonical wc_sess_* Workflow Session id.")),
+            ("session_ref", schema_type("string", "Server-issued principal-scoped ~sN selector for this exact Workflow Session. Selector only; use re-runs ordinary authorization and lifecycle checks.")),
             (
                 "project",
                 nullable_schema("string", "Optional project associated with the task."),
@@ -102,7 +103,8 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ),
         ])),
         "session_summary" => Some(wrapped_output_schema(vec![
-            ("session_id", schema_type("string", "Opaque session id.")),
+            ("session_id", schema_type("string", "Canonical wc_sess_* Workflow Session id.")),
+            ("session_ref", schema_type("string", "Server-issued principal-scoped ~sN selector for this exact Workflow Session. Selector only; use re-runs ordinary authorization and lifecycle checks.")),
             (
                 "project",
                 nullable_schema("string", "Optional project associated with the task."),
@@ -474,6 +476,10 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             (
                 "session_id",
                 schema_type("string", "Business session id being handed off."),
+            ),
+            (
+                "session_ref",
+                schema_type("string", "Server-issued principal-scoped ~sN selector for the exact handed-off Session. It grants no authority and never retargets."),
             ),
             (
                 "project",

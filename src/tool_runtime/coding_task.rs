@@ -1121,6 +1121,7 @@ impl ToolRuntime {
                     > 0,
             )
             .await;
+        let session_ref = self.session_reference_for_id(&session_summary.session_id, auth);
         let mut output = json!({
             "detail": detail.as_str(),
             "project": project.clone(),
@@ -1170,6 +1171,9 @@ impl ToolRuntime {
             "llm_summary": false,
             "warnings": warnings,
         });
+        if let Some(session_ref) = session_ref.as_deref() {
+            output["session"]["session_ref"] = json!(session_ref);
+        }
         if let Some(tool_manifest) = tool_manifest {
             output["tool_manifest"] = tool_manifest;
         }
@@ -1203,7 +1207,7 @@ impl ToolRuntime {
         let project_resolution_value =
             serde_json::to_value(&project_resolution).unwrap_or_else(|_| json!({}));
         let project_ref = self.project_reference_for_resolved(&resolved, auth);
-        let startup_brief = build_startup_brief(StartupBriefInput {
+        let mut startup_brief = build_startup_brief(StartupBriefInput {
             guidance_profile: startup.guidance_profile,
             detail,
             requested_project: &project,
@@ -1230,6 +1234,9 @@ impl ToolRuntime {
             canonical_repository_root_matches,
             runtime_status_call_failed,
         });
+        if let Some(session_ref) = session_ref.as_deref() {
+            startup_brief["session"]["session_ref"] = json!(session_ref);
+        }
         let result = if detail == StartupDetail::Full {
             output["startup_brief"] = startup_brief;
             ToolResult::ok(output)
@@ -2334,6 +2341,8 @@ struct WorkOnProjectBriefProjection {
 #[derive(Deserialize)]
 struct WorkOnProjectSessionProjection {
     session_id: String,
+    #[serde(default)]
+    session_ref: Option<String>,
     continuation: String,
     execution_context: sessions::SessionExecutionContext,
 }
@@ -2731,6 +2740,9 @@ fn project_work_on_project_output_inner(
     }));
     if let Some(knowledge_association) = projection.project.knowledge_association {
         result.output["knowledge_association"] = knowledge_association;
+    }
+    if let Some(session_ref) = projection.session.session_ref {
+        result.output["session_ref"] = json!(session_ref);
     }
     if let Some(project_ref) = projection.project.project_ref {
         result.output["project_ref"] = json!(project_ref);

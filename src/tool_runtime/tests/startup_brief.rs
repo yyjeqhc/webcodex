@@ -132,6 +132,8 @@ fn assert_builtin_workflow(output: &Value) {
         .expect("Session recording guidance");
     assert!(recording_guidance.contains("work_on_project creates or resumes"));
     assert!(recording_guidance.contains("recording_session_id"));
+    assert!(recording_guidance.contains("prefer its returned session_ref"));
+    assert!(recording_guidance.contains("canonical wc_sess_* remains valid"));
     assert!(recording_guidance.contains("recorder provenance only"));
     assert!(recording_guidance.contains("business session_id may target another Session"));
     assert!(recording_guidance.contains("grants no authority"));

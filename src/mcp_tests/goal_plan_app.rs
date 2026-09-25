@@ -463,7 +463,7 @@ async fn goal_plan_sync_discards_unadvertised_recording_session_wrapper() {
                 "name": "goal_plan_sync",
                 "arguments": {
                     "goal_id": goal_id,
-                    "recording_session_id": session.session_id
+                    "recording_session_id": "~s01"
                 }
             })),
         ),

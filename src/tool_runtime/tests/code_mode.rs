@@ -1239,6 +1239,7 @@ async fn canonical_orchestration_host_rejects_server_owned_metadata_without_fron
         ("session_id", json!("wc_sess_0000000000000000")),
         ("recording_session_id", json!("wc_sess_0000000000000000")),
         ("ack_session_message_ids", json!([])),
+        ("ack_ref", json!("wc_ack1_fixture")),
         ("context_request", json!(["webcodex.workflow"])),
         (
             "session_message_resolution",

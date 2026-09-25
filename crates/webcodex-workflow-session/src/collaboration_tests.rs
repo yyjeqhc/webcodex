@@ -4,6 +4,7 @@ use super::model::{
     MESSAGE_COMPLETION_FINGERPRINT_HEX_CHARS,
 };
 use super::*;
+use base64::Engine;
 use serde_json::Value;
 
 fn completion_id(byte: char) -> String {
@@ -1309,4 +1310,252 @@ async fn observe_session_messages_duplicate_persisted_message_ids_fail_closed() 
         .unwrap();
     assert_eq!(delta.messages.len(), 1);
     assert_eq!(delta.messages[0].message_id, after_restore.message_id);
+}
+
+#[test]
+fn ack_ref_round_trips_exact_projected_subset_and_replays_after_ack_observation() {
+    let store = SessionStore::default();
+    let session = store.start_session(Some("proj".to_string()), None);
+    let mut ids = Vec::new();
+    for body in ["first", "second", "third", "fourth"] {
+        ids.push(
+            store
+                .post_message_with_ack(
+                    PostSessionMessageInput {
+                        session_id: session.session_id.clone(),
+                        kind: SessionMessageKind::Guidance,
+                        message: body.to_string(),
+                        tags: Vec::new(),
+                        reply_to: None,
+                        priority: SessionMessagePriority::Normal,
+                    },
+                    true,
+                )
+                .unwrap()
+                .message_id,
+        );
+    }
+
+    let attention = store.ack_required_messages(&session.session_id, &[]);
+    let projected = attention
+        .messages
+        .iter()
+        .skip(1)
+        .take(2)
+        .map(|message| message.message_id.clone())
+        .collect::<Vec<_>>();
+    let ack_ref = store
+        .issue_ack_ref(&session.session_id, &projected)
+        .expect("bounded projected ACK set should mint a ref");
+    assert!(ack_ref.starts_with("wc_ack1_"));
+    assert!(ack_ref.len() <= MAX_TOOL_CALL_ACK_REF_CHARS);
+    assert_eq!(
+        store.resolve_ack_ref(&session.session_id, &ack_ref),
+        Some(projected.clone())
+    );
+
+    let encoded = ack_ref.strip_prefix("wc_ack1_").unwrap();
+    let mut tampered_payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(encoded.as_bytes())
+        .unwrap();
+    *tampered_payload
+        .last_mut()
+        .expect("ACK ref must contain a membership byte") ^= 1;
+    let tampered_ref = format!(
+        "wc_ack1_{}",
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(tampered_payload)
+    );
+    assert_eq!(
+        store.resolve_ack_ref(&session.session_id, &tampered_ref),
+        None,
+        "membership bits are exact retained-context evidence and must be integrity protected"
+    );
+
+    let observed = store.observe_message_acks(&session.session_id, &projected);
+    assert_eq!(observed.accepted_ids, projected);
+    assert_eq!(observed.first_observed_count, 2);
+    assert_eq!(
+        store.resolve_ack_ref(&session.session_id, &ack_ref),
+        Some(observed.accepted_ids.clone()),
+        "ACK observability must not stale an otherwise unchanged open ACK set"
+    );
+}
+
+#[test]
+fn ack_ref_fails_closed_when_membership_changes_or_session_differs() {
+    let store = SessionStore::default();
+    let session = store.start_session(Some("proj".to_string()), None);
+    let foreign = store.start_session(Some("proj".to_string()), None);
+
+    let first = store
+        .post_message_with_ack(
+            PostSessionMessageInput {
+                session_id: session.session_id.clone(),
+                kind: SessionMessageKind::Guidance,
+                message: "first".to_string(),
+                tags: Vec::new(),
+                reply_to: None,
+                priority: SessionMessagePriority::Normal,
+            },
+            true,
+        )
+        .unwrap();
+    let initial = vec![first.message_id.clone()];
+    let ack_ref = store
+        .issue_ack_ref(&session.session_id, &initial)
+        .expect("initial ACK set should mint a ref");
+
+    assert_eq!(
+        store.resolve_ack_ref(&foreign.session_id, &ack_ref),
+        None,
+        "a Session-bound ref must not resolve in another Session"
+    );
+    assert_eq!(
+        store.resolve_ack_ref(&session.session_id, "wc_ack1_bad"),
+        None
+    );
+
+    store
+        .post_message_with_ack(
+            PostSessionMessageInput {
+                session_id: session.session_id.clone(),
+                kind: SessionMessageKind::Question,
+                message: "new membership".to_string(),
+                tags: Vec::new(),
+                reply_to: None,
+                priority: SessionMessagePriority::High,
+            },
+            true,
+        )
+        .unwrap();
+    assert_eq!(
+        store.resolve_ack_ref(&session.session_id, &ack_ref),
+        None,
+        "adding an ACK-required message must stale the old exact-set ref"
+    );
+
+    let current = store.ack_required_messages(&session.session_id, &[]);
+    let current_ids = current
+        .messages
+        .iter()
+        .map(|message| message.message_id.clone())
+        .collect::<Vec<_>>();
+    let current_ref = store
+        .issue_ack_ref(&session.session_id, &current_ids)
+        .expect("current set should mint a replacement ref");
+    assert_ne!(current_ref, ack_ref);
+
+    store
+        .resolve_message(
+            &session.session_id,
+            &first.message_id,
+            Some("handled".to_string()),
+        )
+        .unwrap();
+    assert_eq!(
+        store.resolve_ack_ref(&session.session_id, &current_ref),
+        None,
+        "removing an ACK-required open message must stale the prior ref"
+    );
+}
+
+#[test]
+fn ack_ref_canonicalizes_set_order_and_rejects_unknown_membership() {
+    let store = SessionStore::default();
+    let session = store.start_session(Some("proj".to_string()), None);
+    for index in 0..17 {
+        store
+            .post_message_with_ack(
+                PostSessionMessageInput {
+                    session_id: session.session_id.clone(),
+                    kind: SessionMessageKind::Guidance,
+                    message: format!("guidance-{index}"),
+                    tags: Vec::new(),
+                    reply_to: None,
+                    priority: SessionMessagePriority::Normal,
+                },
+                true,
+            )
+            .unwrap();
+    }
+    let attention = store.ack_required_messages(&session.session_id, &[]);
+    let ids = attention
+        .messages
+        .iter()
+        .map(|message| message.message_id.clone())
+        .collect::<Vec<_>>();
+    let canonical = vec![ids[0].clone(), ids[8].clone(), ids[16].clone()];
+    let reordered = vec![ids[16].clone(), ids[0].clone(), ids[8].clone()];
+
+    let canonical_ref = store
+        .issue_ack_ref(&session.session_id, &canonical)
+        .expect("canonical subset should mint an ACK ref");
+    let reordered_ref = store
+        .issue_ack_ref(&session.session_id, &reordered)
+        .expect("ACK set order must not affect identity");
+    assert_eq!(reordered_ref, canonical_ref);
+    assert_eq!(
+        store.resolve_ack_ref(&session.session_id, &canonical_ref),
+        Some(canonical)
+    );
+    assert!(store
+        .issue_ack_ref(&session.session_id, &["wc_msg_not-retained".to_string()])
+        .is_none());
+
+    let encoded = canonical_ref.strip_prefix("wc_ack1_").unwrap();
+    let mut payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(encoded.as_bytes())
+        .unwrap();
+    payload.push(0);
+    let noncanonical = format!(
+        "wc_ack1_{}",
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(payload)
+    );
+    assert_eq!(
+        store.resolve_ack_ref(&session.session_id, &noncanonical),
+        None,
+        "non-canonical trailing zero membership bytes must fail closed"
+    );
+}
+
+#[test]
+fn ack_ref_worst_case_retained_set_stays_within_model_facing_bound() {
+    let store = SessionStore::default();
+    let session = store.start_session(Some("proj".to_string()), None);
+    let mut ids = Vec::new();
+    for index in 0..DEFAULT_MAX_MESSAGES_PER_SESSION {
+        ids.push(
+            store
+                .post_message_with_ack(
+                    PostSessionMessageInput {
+                        session_id: session.session_id.clone(),
+                        kind: SessionMessageKind::Guidance,
+                        message: format!("guidance-{index}"),
+                        tags: Vec::new(),
+                        reply_to: None,
+                        priority: SessionMessagePriority::Normal,
+                    },
+                    true,
+                )
+                .unwrap()
+                .message_id,
+        );
+    }
+
+    let canonical_ids = store
+        .ack_required_messages(&session.session_id, &[])
+        .messages
+        .into_iter()
+        .map(|message| message.message_id)
+        .collect::<Vec<_>>();
+    let ack_ref = store
+        .issue_ack_ref(&session.session_id, &ids)
+        .expect("the full retained Session message bound should fit in one ACK ref");
+    assert!(ack_ref.len() <= MAX_TOOL_CALL_ACK_REF_CHARS);
+    assert_eq!(
+        store
+            .resolve_ack_ref(&session.session_id, &ack_ref)
+            .expect("full-set ACK ref should resolve"),
+        canonical_ids
+    );
 }

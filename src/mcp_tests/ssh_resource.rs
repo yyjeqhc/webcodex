@@ -394,11 +394,17 @@ async fn managed_ssh_invalid_post_dispatch_response_is_outcome_unknown_and_bindi
 
 #[tokio::test]
 async fn read_only_session_allows_ssh_inspect_but_denies_management_before_runner_dispatch() {
-    let runtime = Arc::new(test_runtime());
+    let tmp = tempfile::tempdir().unwrap();
+    let runtime = Arc::new(test_runtime().with_project_reference_database(Arc::new(
+        crate::Database::open(&tmp.path().join("ssh-recorder-refs.db")).unwrap(),
+    )));
     let auth = ssh_auth();
     register_managed_runner(&runtime, "instance-a").await;
     let session =
         start_authorized_test_session(&runtime, &auth, crate::tool_runtime::SessionMode::ReadOnly);
+    let recorder_ref = runtime
+        .session_reference_for_id(&session.session_id, Some(&auth))
+        .expect("authorized SSH recorder should expose a Session ref");
 
     let list_task = call_in_task(
         Arc::clone(&runtime),
@@ -406,7 +412,7 @@ async fn read_only_session_allows_ssh_inspect_but_denies_management_before_runne
         json!({
             "action":"list",
             "runner":"runner-a",
-            "recording_session_id":session.session_id
+            "recording_session_id":recorder_ref
         }),
         808,
     )
@@ -441,7 +447,7 @@ async fn read_only_session_allows_ssh_inspect_but_denies_management_before_runne
                     "binding":binding,
                     "name":"w10",
                     "target":"private-user@private-host",
-                    "recording_session_id":session.session_id
+                    "recording_session_id":recorder_ref
                 }),
             ),
         ),

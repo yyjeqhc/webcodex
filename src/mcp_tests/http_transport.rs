@@ -1183,11 +1183,15 @@ async fn http_mcp_2026_request_scoped_ack_redelivers_until_durable_resolution_bo
         first["session_attention"]["messages"][0]["message"],
         "Keep the exact request-scoped ACK contract."
     );
+    let first_ack_ref = first["session_attention"]["ack_ref"]
+        .as_str()
+        .expect("projected Session ACK set should expose ack_ref")
+        .to_string();
 
     let mut ack_args = with_mcp_recording_session(json!({}), &session_id);
     ack_args.as_object_mut().unwrap().insert(
-        crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_MESSAGE_IDS_FIELD.to_string(),
-        json!([message_id, message_id]),
+        crate::tool_runtime::sessions::TOOL_CALL_ACK_REF_FIELD.to_string(),
+        json!(first_ack_ref),
     );
     let (status, ack_body) =
         stateless_2026_tool_call(&service, "secret", 223, "list_tools", ack_args, None).await;
@@ -1279,6 +1283,30 @@ async fn http_mcp_2026_request_scoped_ack_redelivers_until_durable_resolution_bo
         .as_str()
         .unwrap()
         .to_string();
+
+    let mut stale_ref_args = with_mcp_recording_session(json!({}), &session_id);
+    stale_ref_args.as_object_mut().unwrap().insert(
+        crate::tool_runtime::sessions::TOOL_CALL_ACK_REF_FIELD.to_string(),
+        json!(first_ack_ref),
+    );
+    let (status, stale_ref_body) =
+        stateless_2026_tool_call(&service, "secret", 2271, "list_tools", stale_ref_args, None)
+            .await;
+    assert_eq!(status, StatusCode::OK, "{stale_ref_body}");
+    let stale_ref_output = stateless_tool_output(&stale_ref_body);
+    assert_eq!(
+        stale_ref_output["session_attention"]["ack"]["accepted_count"],
+        0
+    );
+    assert_eq!(
+        stale_ref_output["session_attention"]["messages"][0]["message_id"],
+        second_message_id
+    );
+    assert_ne!(
+        stale_ref_output["session_attention"]["ack_ref"], first_ack_ref,
+        "changed Session ACK membership must replace the old ref"
+    );
+
     let mut resolve_with_ack_args = json!({
         "session_id": session_id,
         "message_id": second_message_id,
@@ -1458,6 +1486,7 @@ async fn http_mcp_2026_request_scoped_ack_redelivers_until_durable_resolution_bo
     )
     .unwrap();
     assert!(!audit.contains("ack_session_message_ids"));
+    assert!(!audit.contains("ack_ref"));
     assert!(!audit.contains("__webcodex_stateless_ack_session_message_ids"));
     assert!(!audit.contains("__webcodex_stateless_session_message_resolution"));
     assert!(!audit.contains("handled through ordinary list_tools wrapper metadata"));

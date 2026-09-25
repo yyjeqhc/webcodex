@@ -410,6 +410,7 @@ fn startup_session_schema() -> Value {
         "type": "object",
         "properties": {
             "session_id": {"type": "string", "pattern": "^wc_sess_([A-Za-z0-9_-]{16}|[0-9a-f]{32})$"},
+            "session_ref": {"type": "string", "pattern": "^~s[1-9][0-9]*$"},
             "mode": {"type": "string", "enum": ["normal", "read_only"]},
             "execution_context": session_execution_context_schema(
                 "Persistent execution defaults currently stored for this Workflow Session."
@@ -1280,6 +1281,10 @@ fn work_on_project_output_schema() -> Value {
         (
             "session_id",
             schema_type("string", "Explicit Workflow Session id for exact continuation or recording on later calls."),
+        ),
+        (
+            "session_ref",
+            schema_type("string", "Server-issued principal-scoped short selector for the exact Workflow Session. Prefer it for ordinary business Session continuation; canonical session_id remains authoritative."),
         ),
         (
             "project",

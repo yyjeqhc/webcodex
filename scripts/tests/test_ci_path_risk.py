@@ -280,6 +280,52 @@ class InvocationOverrideFixtureTests(unittest.TestCase):
         )
         self.assertIsNone(forced)
 
+    def test_merge_group_uses_path_classifier(self) -> None:
+        forced = risk.forced_risk_for_invocation(
+            "merge_group", external_contributor=False, run_ci=False
+        )
+        self.assertIsNone(forced)
+
+    def test_merge_group_cli_accepts_exact_range(self) -> None:
+        expected = risk.Risk()
+        with mock.patch.object(risk, "classify_git_range", return_value=expected) as classify_range:
+            exit_code = risk.main(
+                [
+                    "--event-name",
+                    "merge_group",
+                    "--external-contributor",
+                    "false",
+                    "--run-ci",
+                    "false",
+                    "--base",
+                    "0" * 40,
+                    "--head",
+                    "1" * 40,
+                ]
+            )
+        self.assertEqual(exit_code, 0)
+        classify_range.assert_called_once_with("0" * 40, "1" * 40)
+
+    def test_merge_group_diff_failure_falls_back_to_full_native(self) -> None:
+        with mock.patch.object(
+            risk, "classify_git_range", side_effect=risk.GitDiffError("synthetic ref missing")
+        ):
+            exit_code = risk.main(
+                [
+                    "--event-name",
+                    "merge_group",
+                    "--external-contributor",
+                    "false",
+                    "--run-ci",
+                    "false",
+                    "--base",
+                    "0" * 40,
+                    "--head",
+                    "1" * 40,
+                ]
+            )
+        self.assertEqual(exit_code, 0)
+
     def test_external_contributor_preserves_full_native_policy(self) -> None:
         forced = risk.forced_risk_for_invocation(
             "pull_request", external_contributor=True, run_ci=False
@@ -294,6 +340,18 @@ class InvocationOverrideFixtureTests(unittest.TestCase):
                 "pull_request", external_contributor=False, run_ci=False
             )
         )
+
+
+class MergeGroupWorkflowContractTests(unittest.TestCase):
+    def test_ci_workflow_exposes_merge_queue_required_contexts(self) -> None:
+        workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+        self.assertIn("  merge_group:\n    types: [checks_requested]", workflow)
+        self.assertIn("github.event.merge_group.base_sha", workflow)
+        self.assertIn("github.event.merge_group.head_sha", workflow)
+        self.assertIn("MERGE_GROUP_HEAD_REF", workflow)
+        self.assertIn('if [ "$EVENT_NAME" = merge_group ]', workflow)
+        self.assertIn("  test:\n", workflow)
+        self.assertIn("  test-native:\n", workflow)
 
 
 class GitRangeIntegrationTests(unittest.TestCase):

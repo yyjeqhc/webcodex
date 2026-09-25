@@ -99,9 +99,9 @@ change is ready for review.
 The lanes above define test semantics; workflows decide when to run them.
 
 - `.github/workflows/ci.yml` is the ordinary repository gate. Its cheap `changes`
-  job classifies the exact PR base...head path set before native scheduling, while
-  the `contract` job remains mandatory for every configured pull request and every
-  push to `main`. The classifier is deterministic and local to Git: it does not use
+  job classifies the exact PR or merge-group base...head path set before native scheduling,
+  while the `contract` job remains mandatory for every configured pull request,
+  every merge-queue candidate, and every push to `main`. The classifier is deterministic and local to Git: it does not use
   commit messages or PR titles, and it emits frontend, per-platform, and package-lane
   requirements. For changed Rust/Cargo files it searches only bounded platform-marker
   lines from both the base and head file versions, so body-only changes inside an
@@ -115,12 +115,15 @@ The lanes above define test semantics; workflows decide when to run them.
   frontend dependency installation/type/test/build steps run only when the classifier
   selects their respective frontend surface; full-native invocations select both.
 - The heavy Linux Rust matrix `test-linux-rust` and Linux tooling lane
-  `test-linux-tooling` run for every pull request as well as every push to `main`,
-  including owner-authored PRs. They start in parallel with `contract` rather than
+  `test-linux-tooling` run for every pull request, every merge-queue candidate, and
+  every push to `main`, including owner-authored PRs. They start in parallel with `contract` rather than
   waiting for unrelated frontend/static work. Native child lanes likewise wait only
   for the cheap `changes` classifier, while the stable macOS/Windows/native aggregates
-  retain the mandatory `contract` gate. Pushes to `main`, external-contributor PRs,
-  and owner PRs carrying `run-ci` force the complete deterministic native matrix.
+  retain the mandatory `contract` gate. Merge-group candidates use the exact
+  GitHub-provided synthetic base/head range and fetch the synthetic head by ref when
+  needed; an unavailable merge-group diff fails closed to the complete native matrix.
+  Pushes to `main`, external-contributor PRs, and owner PRs carrying `run-ci` also
+  force the complete deterministic native matrix.
   Real-process and timing-sensitive ignored tests are deliberately outside ordinary
   CI, including full-native overrides: run them explicitly when changing their
   lifecycle boundary or investigating platform behavior. Computer, platform-specific,
@@ -129,6 +132,9 @@ The lanes above define test semantics; workflows decide when to run them.
   `test-windows`, and `test-native` aggregates always resolve and verify each child
   lane is `success` when required or `skipped` when not required, avoiding a skipped
   required-check context that could leave branch protection pending.
+  The stable `test` and `test-native` contexts are therefore emitted for `merge_group`
+  as well as PR events, which is the repository-side prerequisite for enabling GitHub
+  Merge Queue without repeatedly rebasing already-green PRs onto each newly merged tip.
 - MCP dated-revision evidence has its own bounded `mcp-conformance` lane. It pins
   and freshly builds the upstream referee, runs the `2026-07-28` and `2025-11-25`
   server requirements against a test-only loopback WebCodex endpoint, validates

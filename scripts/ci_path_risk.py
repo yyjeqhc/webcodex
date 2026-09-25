@@ -588,7 +588,9 @@ def _write_github_output(path: str, outputs: dict[str, str]) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--event-name", required=True, choices=("pull_request", "push"))
+    parser.add_argument(
+        "--event-name", required=True, choices=("pull_request", "push", "merge_group")
+    )
     parser.add_argument("--external-contributor", type=_parse_bool, required=True)
     parser.add_argument("--run-ci", type=_parse_bool, required=True)
     parser.add_argument("--base")
@@ -603,13 +605,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     if risk is None:
         if not args.base or not args.head:
-            parser.error("--base and --head are required for path-aware pull requests")
+            parser.error("--base and --head are required for path-aware CI events")
         try:
             risk = classify_git_range(args.base, args.head)
         except GitDiffError as exc:
-            if args.event_name == "push":
-                risk = Risk.full("push-diff-unavailable")
-                risk.categories.add("push-diff-fallback")
+            if args.event_name in {"push", "merge_group"}:
+                risk = Risk.full(f"{args.event_name}-diff-unavailable")
+                risk.categories.add(f"{args.event_name}-diff-fallback")
             else:
                 print(f"ci path risk classification failed: {exc}", file=sys.stderr)
                 return 2

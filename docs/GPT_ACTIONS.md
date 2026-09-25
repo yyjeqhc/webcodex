@@ -35,7 +35,7 @@ ToolDefinition
 
 A tool marked Adaptive Direct is automatically a direct GPT Action unless its canonical definition explicitly declares that GPT Actions cannot represent its protocol semantics. Adding, removing, or re-ranking Adaptive Direct tools therefore updates GPT Actions automatically; there is no separate GPT Action rank or operation list.
 
-Direct operations use canonical snake_case names and canonical input contracts. Examples include `work_on_project`, `runtime_status`, `tool_manifest`, `search_project_texts`, `read_files`, `apply_text_edits`, `run_process`, `run_detached_process`, `run_shell`, `observe_jobs`, `list_jobs`, `cargo_check`, `cargo_test`, `git_review_summary`, `git_diff_hunks`, `show_changes`, `workspace_hygiene_check`, and `finish_coding_task` when those tools are currently Adaptive Direct.
+Direct operations use canonical snake_case names and canonical input contracts. Examples include `work_on_project`, `runtime_status`, `tool_manifest`, `search_project_texts`, `read_files`, `apply_text_edits`, `run_process`, `run_script`, `run_detached_process`, `run_shell`, `observe_jobs`, `list_jobs`, `cargo_check`, `cargo_test`, `git_review_summary`, `git_diff_hunks`, and `show_changes` when those tools are currently Adaptive Direct; the closeout helpers `workspace_hygiene_check` and `finish_coding_task` are model-visible gateway tools.
 
 Long-tail model-visible tools use the single gateway:
 

@@ -12,7 +12,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 PLATFORMS = ("linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64", "win32-x64", "win32-arm64")
-DESKTOP_PLATFORMS = ("darwin-x64", "darwin-arm64", "win32-x64", "win32-arm64")
+PRIMARY_DESKTOP_PLATFORMS = ("darwin-arm64", "win32-x64", "win32-arm64")
+LEGACY_DESKTOP_PLATFORMS = ("darwin-x64", *PRIMARY_DESKTOP_PLATFORMS)
+SUPPLEMENTAL_DESKTOP_FIRST_VERSION = (0, 4, 3)
 BINARIES = ("webcodex", "webcodex-server", "webcodex-runner")
 
 
@@ -28,8 +30,19 @@ def archive_filename(version: str, platform: str) -> str:
     return f"webcodex-v{version}-{platform}.tar.gz"
 
 
+def desktop_platforms_for_version(version: str) -> tuple[str, ...]:
+    core_text = version.split("+", 1)[0].split("-", 1)[0]
+    try:
+        core = tuple(int(part) for part in core_text.split("."))
+    except ValueError as exc:
+        raise SystemExit(f"invalid release version: {version}") from exc
+    if len(core) != 3:
+        raise SystemExit(f"invalid release version: {version}")
+    return PRIMARY_DESKTOP_PLATFORMS if core >= SUPPLEMENTAL_DESKTOP_FIRST_VERSION else LEGACY_DESKTOP_PLATFORMS
+
+
 def desktop_filename(version: str, platform: str) -> str:
-    if platform not in DESKTOP_PLATFORMS:
+    if platform not in LEGACY_DESKTOP_PLATFORMS:
         raise SystemExit(f"unsupported Desktop platform: {platform}")
     suffix = "-setup.exe" if platform.startswith("win32-") else ".dmg"
     return f"webcodex-desktop-v{version}-{platform}{suffix}"
@@ -113,7 +126,7 @@ def main() -> int:
             "sha256": digest,
         }
 
-    for platform in DESKTOP_PLATFORMS:
+    for platform in desktop_platforms_for_version(version):
         desktop_name = desktop_filename(version, platform)
         desktop_path = args.artifact_dir / desktop_name
         if not desktop_path.is_file() or desktop_path.stat().st_size <= 0:

@@ -283,6 +283,42 @@ class DesktopReleaseTests(unittest.TestCase):
             self._release(version, desktop_platforms=verifier.DESKTOP_PLATFORMS), version
         )
 
+    def test_0_4_3_moves_intel_desktop_to_optional_supplemental_pair(self) -> None:
+        version = "0.4.3"
+        self.assertEqual(verifier.desktop_platforms_for_version(version), verifier.PRIMARY_DESKTOP_PLATFORMS)
+        self.assertEqual(
+            verifier.supplemental_desktop_platforms_for_version(version),
+            verifier.SUPPLEMENTAL_DESKTOP_PLATFORMS,
+        )
+        release = self._release(version, desktop_platforms=verifier.PRIMARY_DESKTOP_PLATFORMS)
+        validated = verifier.validate_github_assets(release, version)
+        intel_name = verifier.canonical_desktop_name(version, "darwin-x64")
+        checksum_name = verifier.canonical_desktop_checksum_name(version, "darwin-x64")
+        self.assertNotIn(intel_name, validated)
+
+        release["assets"].extend(
+            [
+                {
+                    "name": intel_name,
+                    "state": "uploaded",
+                    "browser_download_url": verifier.expected_desktop_url(version, "darwin-x64"),
+                },
+                {
+                    "name": checksum_name,
+                    "state": "uploaded",
+                    "browser_download_url": verifier.expected_desktop_checksum_url(version, "darwin-x64"),
+                },
+            ]
+        )
+        validated = verifier.validate_github_assets(release, version)
+        self.assertIn(intel_name, validated)
+        self.assertIn(checksum_name, validated)
+
+        release["assets"] = [asset for asset in release["assets"] if asset["name"] != checksum_name]
+        validated = verifier.validate_github_assets(release, version)
+        self.assertIn(intel_name, validated)
+        self.assertNotIn(checksum_name, validated)
+
     def test_0_4_0_missing_darwin_arm64_is_rejected(self) -> None:
         present = tuple(platform for platform in verifier.LEGACY_DESKTOP_PLATFORMS if platform != "darwin-arm64")
         with self.assertRaises(verifier.VerificationError):
@@ -300,12 +336,18 @@ class DesktopReleaseTests(unittest.TestCase):
         self.assertTrue(verifier.desktop_required("1.0.0"))
         self.assertEqual(verifier.desktop_platforms_for_version("0.4.1"), verifier.LEGACY_DESKTOP_PLATFORMS)
         self.assertEqual(verifier.desktop_platforms_for_version("0.4.2-rc.1"), verifier.DESKTOP_PLATFORMS)
+        self.assertEqual(verifier.desktop_platforms_for_version("0.4.3"), verifier.PRIMARY_DESKTOP_PLATFORMS)
+        self.assertEqual(
+            verifier.supplemental_desktop_platforms_for_version("0.4.3"),
+            verifier.SUPPLEMENTAL_DESKTOP_PLATFORMS,
+        )
 
     def test_sha256sums_uses_versioned_desktop_platform_contract(self) -> None:
         for version, desktop_platforms, expected_count in (
             ("0.4.0", verifier.LEGACY_DESKTOP_PLATFORMS, 9),
             ("0.4.1", verifier.LEGACY_DESKTOP_PLATFORMS, 9),
             ("0.4.2", verifier.DESKTOP_PLATFORMS, 10),
+            ("0.4.3", verifier.PRIMARY_DESKTOP_PLATFORMS, 9),
         ):
             archive_lines = [
                 f"{'a' * 64}  {verifier.canonical_archive_name(version, platform)}"
@@ -346,6 +388,39 @@ class DesktopReleaseTests(unittest.TestCase):
             return_value=(123, "a" * 64),
         ), self.assertRaises(verifier.VerificationError):
             verifier.verify_desktop_asset(version, platform, asset, sums, Path(temp), 5)
+
+    def test_supplemental_desktop_checksum_is_verified_independently(self) -> None:
+        version = "0.4.3"
+        platform = "darwin-x64"
+        desktop_name = verifier.canonical_desktop_name(version, platform)
+        checksum_name = verifier.canonical_desktop_checksum_name(version, platform)
+        digest = "a" * 64
+        checksum_bytes = f"{digest}  {desktop_name}\n".encode("ascii")
+        assets = {
+            desktop_name: {
+                "name": desktop_name,
+                "browser_download_url": verifier.expected_desktop_url(version, platform),
+                "digest": "sha256:" + digest,
+            },
+            checksum_name: {
+                "name": checksum_name,
+                "browser_download_url": verifier.expected_desktop_checksum_url(version, platform),
+                "digest": "sha256:" + hashlib.sha256(checksum_bytes).hexdigest(),
+            },
+        }
+        with tempfile.TemporaryDirectory() as temp, mock.patch.object(
+            verifier,
+            "fetch_bytes",
+            return_value=checksum_bytes,
+        ), mock.patch.object(
+            verifier,
+            "download_file",
+            return_value=(321, digest),
+        ):
+            self.assertEqual(
+                verifier.verify_supplemental_desktop_asset(version, platform, assets, Path(temp), 5),
+                (321, digest),
+            )
 
 
 class BinaryInspectionTests(unittest.TestCase):

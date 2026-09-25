@@ -16,7 +16,7 @@ from scripts import release_publication as publication
 SOURCE = "a" * 40
 REQUEST = "rb_" + "b" * 24
 RUN_ID = 123456
-VERSION = "0.4.0"
+VERSION = "0.4.3"
 TAG = f"v{VERSION}"
 
 
@@ -581,7 +581,7 @@ class DraftVerificationTests(unittest.TestCase):
                     timeout=5,
                 )
             self.assertTrue(summary["draft"])
-            self.assertEqual(len(summary["assets"]), 11)
+            self.assertEqual(len(summary["assets"]), 10)
 
             desktop_name = meta["desktop_artifacts"]["darwin-arm64"]["filename"]
             desktop_asset = next(asset for asset in release["assets"] if asset["name"] == desktop_name)

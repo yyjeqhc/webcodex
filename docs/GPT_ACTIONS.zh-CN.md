@@ -35,7 +35,7 @@ ToolDefinition
 
 一个工具被标记为 Adaptive Direct 后，默认会自动成为 direct GPT Action；只有 canonical definition 明确声明 GPT Actions 无法表达其协议语义时才排除。因此以后增删或重新排序 Adaptive Direct 工具时，GPT Actions 会自动跟随，不存在第二套 GPT Action rank 或 operation list。
 
-Direct operation 直接使用 canonical snake_case 名称和 canonical input contract。例如当前 Adaptive Direct 中的 `work_on_project`、`runtime_status`、`tool_manifest`、`search_project_texts`、`read_files`、`apply_text_edits`、`run_process`、`run_detached_process`、`run_shell`、`observe_jobs`、`list_jobs`、`cargo_check`、`cargo_test`、`git_review_summary`、`git_diff_hunks`、`show_changes`、`workspace_hygiene_check`、`finish_coding_task` 等会按当前定义自动投影。
+Direct operation 直接使用 canonical snake_case 名称和 canonical input contract。例如 `work_on_project`、`runtime_status`、`tool_manifest`、`search_project_texts`、`read_files`、`apply_text_edits`、`run_process`、`run_script`、`run_detached_process`、`run_shell`、`observe_jobs`、`list_jobs`、`cargo_check`、`cargo_test`、`git_review_summary`、`git_diff_hunks`、`show_changes` 等会按当前定义自动投影；收尾辅助工具 `workspace_hygiene_check` 与 `finish_coding_task` 是 model-visible long-tail 工具，统一通过 `call_runtime_tool` 调用。
 
 Long-tail model-visible 工具统一通过：
 

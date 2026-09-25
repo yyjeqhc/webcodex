@@ -18,7 +18,7 @@
 //! Polling remains a fully supported fallback transport.
 
 use crate::runner_http::{RunnerRegistry, RunnerTransport};
-use crate::runner_protocol::{RunnerEnvelope, RunnerRegisterRequest};
+use crate::runner_protocol::{RunnerEnvelope, RunnerRegisterRequest, RUNNER_ENVELOPE_MAX_BYTES};
 use futures_util::{SinkExt, StreamExt};
 use salvo::prelude::*;
 use salvo::websocket::{Message, WebSocket, WebSocketUpgrade};
@@ -27,10 +27,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, Notify};
 
-/// Maximum WebSocket text message size. Runner requests/results carry shell
-/// output which can be sizeable; 8 MiB matches the registry output cap head
-/// room while still bounding memory.
-const WS_MAX_MESSAGE_SIZE: usize = 8 * 1024 * 1024;
+/// Maximum WebSocket text message size. Keep it aligned with the shared
+/// transport-neutral Runner envelope budget.
+const WS_MAX_MESSAGE_SIZE: usize = RUNNER_ENVELOPE_MAX_BYTES;
 /// Deadline for the Runner to send its first `Register` envelope after the
 /// handshake. Prevents half-open connections from holding registry state.
 const REGISTER_TIMEOUT: Duration = Duration::from_secs(15);

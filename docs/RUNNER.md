@@ -327,7 +327,7 @@ The built-in Runner-to-provider gateway is intentionally a bounded stdio tool su
 - provider-side tool behavior is based on MCP `2025-06-18`;
 - `tools/list` and `tools/call` are supported;
 - callbacks, list pagination, and end-to-end progress forwarding are not supported;
-- tool results support text plus standard bounded image content blocks, preserving provider content order; image data must be standard Base64 with MIME `image/png`, `image/jpeg`, or `image/webp`, and all image blocks in one result share a 1 MiB decoded-data cap;
+- tool results support text plus standard bounded image content blocks, preserving provider content order; image data must be standard Base64 with MIME `image/png`, `image/jpeg`, or `image/webp`, and all image blocks in one result share a 4 MiB decoded-data cap;
 - bounded `structuredContent` is preserved independently of image content;
 - audio, resource, `resource_link`, and unknown content block types remain unsupported.
 

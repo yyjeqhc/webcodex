@@ -81,6 +81,60 @@ async fn polling_http_register_accepts_generation_two() {
 }
 
 #[tokio::test]
+async fn polling_http_result_accepts_runner_envelope_above_global_text_limit() {
+    use salvo::test::{ResponseExt, TestClient};
+    use salvo::Service;
+
+    let registry = Arc::new(RunnerRegistry::default());
+    registry
+        .register(runner_registration(
+            "polling-large-result",
+            "inst",
+            Vec::new(),
+        ))
+        .await
+        .unwrap();
+    let service = Service::new(
+        Router::new()
+            .hoop(affix_state::inject(registry))
+            .hoop(affix_state::inject(auth_context(None, true)))
+            .push(Router::with_path("api/shell/agent/result").post(runner_result)),
+    );
+    let payload = serde_json::to_string(&json!({
+        "client_id": "polling-large-result",
+        "agent_instance_id": "inst",
+        "request_id": "missing-large-result",
+        "exit_code": 0,
+        "stdout": "x".repeat(3 * 1024 * 1024),
+        "stderr": null,
+        "duration_ms": 1,
+        "error": null
+    }))
+    .unwrap();
+    assert!(payload.len() > 2 * 1024 * 1024);
+    assert!(payload.len() < RUNNER_ENVELOPE_MAX_BYTES);
+
+    let mut response = TestClient::post("http://localhost/api/shell/agent/result")
+        .add_header("content-type", "application/json", true)
+        .body(payload)
+        .send(&service)
+        .await;
+    assert_eq!(
+        response.status_code.unwrap_or(StatusCode::OK),
+        StatusCode::BAD_REQUEST
+    );
+    let body: serde_json::Value = response.take_json().await.unwrap();
+    assert_eq!(body["success"], false);
+    assert!(
+        !body["error"]
+            .as_str()
+            .unwrap_or_default()
+            .starts_with("Invalid JSON:"),
+        "{body:?}"
+    );
+}
+
+#[tokio::test]
 async fn polling_http_offline_releases_only_the_matching_active_instance() {
     use salvo::test::{ResponseExt, TestClient};
     use salvo::Service;

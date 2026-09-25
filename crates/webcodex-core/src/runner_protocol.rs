@@ -27,7 +27,7 @@ pub use job::{
 pub use transport::{
     encode_quic_frame, encode_quic_register_frame, read_quic_frame, read_quic_register_frame,
     write_quic_frame, write_quic_register_frame, QuicFrameError, QuicRegisterFrame, RunnerEnvelope,
-    QUIC_FRAME_MAX_BYTES,
+    QUIC_FRAME_MAX_BYTES, RUNNER_ENVELOPE_MAX_BYTES,
 };
 
 pub const EXTERNAL_SEARCH_REQUEST_PREFIX: &str = "# webcodex:search_project_text:v1";

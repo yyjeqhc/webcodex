@@ -1,6 +1,7 @@
 use super::*;
 use crate::runner_protocol::{
-    RUNNER_PROTOCOL_GENERATION_V2, RUNNER_PROTOCOL_GENERATION_V2_BASELINE_CAPABILITY_NAMES,
+    RUNNER_ENVELOPE_MAX_BYTES, RUNNER_PROTOCOL_GENERATION_V2,
+    RUNNER_PROTOCOL_GENERATION_V2_BASELINE_CAPABILITY_NAMES,
 };
 
 fn auth_context(username: Option<&str>, is_bootstrap: bool) -> crate::auth::AuthContext {

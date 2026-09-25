@@ -225,20 +225,21 @@ pub fn mime_is_compatible_with_path(mime: &str, path: &str) -> bool {
     path.to_ascii_lowercase().ends_with(required_extension)
 }
 
-/// Maximum decoded image size returned as one native MCP image content block.
+/// Maximum decoded image size returned as native MCP image content.
 ///
-/// The runner result is JSON/base64 encoded and polling submissions are still
-/// bounded by the server's existing 2 MiB text request limit. One decoded MiB
-/// leaves enough room for base64 expansion and the small artifact metadata
-/// envelope without broadening that global request limit.
-pub const MAX_MCP_IMAGE_BYTES: usize = 1024 * 1024;
+/// Native images are JSON/base64 encoded on the Runner path. Four decoded MiB
+/// remain comfortably inside the shared 8 MiB Runner transport envelope after
+/// base64 expansion plus bounded metadata. Polling result ingestion gets that
+/// same narrow Runner-only allowance without broadening the server's ordinary
+/// 2 MiB HTTP text/body limit.
+pub const MAX_MCP_IMAGE_BYTES: usize = 4 * 1024 * 1024;
 
 /// Maximum runner stdout retained for an MCP image artifact response.
 ///
-/// Normal runner output remains capped at 256 KiB. This narrowly larger cap is
-/// only selected for `file_read_project_artifact` requests carrying the
-/// server-generated `mcp_image` marker.
-pub const MAX_MCP_IMAGE_RESPONSE_BYTES: usize = 1536 * 1024;
+/// Normal runner output remains capped at 256 KiB. Six MiB covers a maximum
+/// native image's base64 plus its bounded artifact metadata while staying below
+/// the shared Runner transport envelope.
+pub const MAX_MCP_IMAGE_RESPONSE_BYTES: usize = 6 * 1024 * 1024;
 
 /// Maximum retained Runner stdout for one internal 1 MiB artifact transfer
 /// chunk encoded as base64 JSON. This is an internal transport envelope, not a

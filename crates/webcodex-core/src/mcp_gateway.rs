@@ -682,10 +682,16 @@ mod tests {
         assert_eq!(MCP_GATEWAY_MAX_RESULT_BYTES, 512 * 1024);
         assert_eq!(MCP_GATEWAY_MAX_JSON_STRING_BYTES, 512 * 1024);
         assert_eq!(MCP_GATEWAY_MAX_MESSAGE_BYTES, 1024 * 1024);
-        assert_eq!(MCP_GATEWAY_MAX_IMAGE_BYTES, 1024 * 1024);
-        assert_eq!(MCP_GATEWAY_MAX_IMAGE_BASE64_BYTES, 1_398_104);
-        assert!(MCP_GATEWAY_MAX_PROVIDER_MESSAGE_BYTES < 2 * 1024 * 1024);
-        assert!(MCP_GATEWAY_MAX_TOOL_RESULT_MESSAGE_BYTES < 2 * 1024 * 1024);
+        assert_eq!(MCP_GATEWAY_MAX_IMAGE_BYTES, 4 * 1024 * 1024);
+        assert_eq!(MCP_GATEWAY_MAX_IMAGE_BASE64_BYTES, 5_592_408);
+        assert!(
+            MCP_GATEWAY_MAX_PROVIDER_MESSAGE_BYTES
+                < crate::runner_protocol::RUNNER_ENVELOPE_MAX_BYTES
+        );
+        assert!(
+            MCP_GATEWAY_MAX_TOOL_RESULT_MESSAGE_BYTES
+                < crate::runner_protocol::RUNNER_ENVELOPE_MAX_BYTES
+        );
 
         let large_text = McpGatewayToolResult {
             content: vec![McpGatewayContent::Text {

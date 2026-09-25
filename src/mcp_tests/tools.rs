@@ -1160,10 +1160,10 @@ async fn project_artifact_image_call_returns_native_image_for_remote_agent_proje
     let mut auth = crate::auth::AuthContext::new(crate::auth::AuthKind::Bootstrap);
     auth.is_bootstrap = true;
 
-    // Larger than the ordinary 256 KiB runner stdout cap: this proves the
-    // narrowly widened MCP image result path carries a real screenshot-sized
-    // response without silently tail-truncating its JSON/base64.
-    let mut image_bytes = vec![0u8; 300 * 1024];
+    // Larger than the legacy 1 MiB image cap and the ordinary 256 KiB runner
+    // stdout cap: this proves the widened native-image path carries a real large
+    // image without silently tail-truncating its JSON/base64.
+    let mut image_bytes = vec![0u8; 2 * 1024 * 1024];
     image_bytes[..8].copy_from_slice(b"\x89PNG\r\n\x1a\n");
     let image_base64 = general_purpose::STANDARD.encode(&image_bytes);
     let sha256 = format!("{:x}", Sha256::digest(&image_bytes));

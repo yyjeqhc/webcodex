@@ -6,7 +6,7 @@ use crate::runner_protocol::{
     RunnerJobUpdateRequest, RunnerJobUpdateResponse, RunnerOfflineRequest, RunnerOfflineResponse,
     RunnerPersistentShellResultRequest, RunnerPersistentShellResultResponse, RunnerPollPayload,
     RunnerPollResponse, RunnerRegisterRequest, RunnerRegisterResponse, RunnerResultPayload,
-    RunnerResultResponse,
+    RunnerResultResponse, RUNNER_ENVELOPE_MAX_BYTES,
 };
 use salvo::prelude::*;
 
@@ -246,6 +246,14 @@ pub async fn runner_poll(req: &mut Request, depot: &mut Depot, res: &mut Respons
     }
 }
 
+async fn parse_runner_result_payload(req: &mut Request) -> Result<RunnerResultPayload, String> {
+    let bytes = req
+        .payload_with_max_size(RUNNER_ENVELOPE_MAX_BYTES)
+        .await
+        .map_err(|error| error.to_string())?;
+    serde_json::from_slice(bytes).map_err(|error| error.to_string())
+}
+
 #[handler]
 pub async fn runner_result(req: &mut Request, depot: &mut Depot, res: &mut Response) {
     let Some(registry) = get_registry(depot) else {
@@ -256,7 +264,7 @@ pub async fn runner_result(req: &mut Request, depot: &mut Depot, res: &mut Respo
         }));
         return;
     };
-    let body: RunnerResultPayload = match req.parse_json().await {
+    let body: RunnerResultPayload = match parse_runner_result_payload(req).await {
         Ok(body) => body,
         Err(e) => {
             res.status_code(StatusCode::BAD_REQUEST);

@@ -271,7 +271,7 @@ fn main() -> io::Result<()> {
                         ),
                     )?,
                     "max_image_result" => {
-                        let data = format!("iVBORw0KGgoA{}AA==", "AAAA".repeat(349_522));
+                        let data = format!("iVBORw0KGgoA{}AA==", "AAAA".repeat(1_398_098));
                         send(
                             &mut writer,
                             &format!(
@@ -280,7 +280,7 @@ fn main() -> io::Result<()> {
                         )?;
                     }
                     "oversized_image" => {
-                        let data = "AAAA".repeat(349_526);
+                        let data = "AAAA".repeat(1_398_102);
                         send(
                             &mut writer,
                             &format!(

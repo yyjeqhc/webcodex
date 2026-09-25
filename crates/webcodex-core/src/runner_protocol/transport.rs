@@ -192,9 +192,17 @@ impl QuicRegisterFrame {
 // This is a custom QUIC *stream* transport, NOT HTTP/3. It is transport-
 // neutral framing over a single QUIC bidirectional stream.
 
-/// Maximum frame body size. Matches the WebSocket `WS_MAX_MESSAGE_SIZE` head
-/// room and the registry output cap; bounds memory per peer.
-pub const QUIC_FRAME_MAX_BYTES: usize = 8 * 1024 * 1024;
+/// Shared upper bound for one serialized Runner transport envelope.
+///
+/// WebSocket and QUIC use this directly. Polling keeps the ordinary global HTTP
+/// body limit for other routes but gives the authenticated Runner result route
+/// this same bounded allowance so native image results do not depend on the
+/// smaller general-purpose text request budget.
+pub const RUNNER_ENVELOPE_MAX_BYTES: usize = 8 * 1024 * 1024;
+
+/// Maximum QUIC frame body size. Keep this identical to the shared Runner
+/// envelope bound so transport choice does not change result capacity.
+pub const QUIC_FRAME_MAX_BYTES: usize = RUNNER_ENVELOPE_MAX_BYTES;
 
 /// Errors produced by the QUIC frame codec.
 #[derive(Debug)]

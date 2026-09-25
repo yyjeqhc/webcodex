@@ -62,6 +62,20 @@ def normalize_version(value: str) -> str:
     return version
 
 
+def normalize_release_source_ref(value: str, version: str) -> str:
+    release_version = normalize_version(version)
+    try:
+        source_ref = collector.normalize_source_ref(value)
+    except collector.CollectionError as exc:
+        raise PublicationError(str(exc)) from exc
+    expected_release_ref = f"release/v{release_version}"
+    if source_ref not in {"main", expected_release_ref}:
+        raise PublicationError(
+            f"release source ref must be main or {expected_release_ref}: {source_ref!r}"
+        )
+    return source_ref
+
+
 def _run_capture(argv: list[str], *, cwd: Path | None = None, timeout: float = 30.0) -> str:
     try:
         result = subprocess.run(
@@ -223,15 +237,17 @@ def _fetch_public_json_optional(url: str, timeout: float) -> dict | None:
     return value
 
 
-def _github_main_sha(client: collector.GitHubClient) -> str:
-    payload = client.fetch_json("/branches/main")
+def _github_branch_sha(client: collector.GitHubClient, source_ref: str) -> str:
+    ref = collector.normalize_source_ref(source_ref)
+    encoded = urllib.parse.quote(ref, safe="")
+    payload = client.fetch_json(f"/branches/{encoded}")
     commit = payload.get("commit")
     if not isinstance(commit, dict):
-        raise PublicationError("GitHub main branch response is malformed")
+        raise PublicationError(f"GitHub source branch response is malformed: {ref}")
     try:
         return collector.normalize_source_sha(str(commit.get("sha", "")))
     except collector.CollectionError as exc:
-        raise PublicationError("GitHub main branch SHA is invalid") from exc
+        raise PublicationError(f"GitHub source branch SHA is invalid: {ref}") from exc
 
 
 def _require_origin_repo(root: Path, repo: str) -> str:
@@ -251,18 +267,20 @@ def _require_origin_repo(root: Path, repo: str) -> str:
     return origin
 
 
-def _remote_main_source(root: Path) -> str:
-    output = _run_capture(["git", "ls-remote", "origin", "refs/heads/main"], cwd=root, timeout=30.0)
+def _remote_branch_source(root: Path, source_ref: str) -> str:
+    ref = collector.normalize_source_ref(source_ref)
+    remote_ref = f"refs/heads/{ref}"
+    output = _run_capture(["git", "ls-remote", "origin", remote_ref], cwd=root, timeout=30.0)
     lines = output.splitlines()
     if len(lines) != 1:
-        raise PublicationError("could not resolve exactly one remote main ref")
+        raise PublicationError(f"could not resolve exactly one remote source ref: {ref}")
     fields = lines[0].split("\t", 1)
-    if len(fields) != 2 or fields[1] != "refs/heads/main":
-        raise PublicationError("git ls-remote returned malformed main ref output")
+    if len(fields) != 2 or fields[1] != remote_ref:
+        raise PublicationError(f"git ls-remote returned malformed source ref output: {ref}")
     try:
         return collector.normalize_source_sha(fields[0])
     except collector.CollectionError as exc:
-        raise PublicationError("remote main SHA is invalid") from exc
+        raise PublicationError(f"remote source ref SHA is invalid: {ref}") from exc
 
 
 def _remote_annotated_tag_identity(root: Path, tag: str) -> tuple[str, str] | None:
@@ -319,7 +337,6 @@ def _reclaim_build_history(*, repo: str, tag: str, timeout: float) -> list[dict]
         query = urllib.parse.urlencode(
             {
                 "event": "workflow_dispatch",
-                "branch": "main",
                 "per_page": MAX_RECLAIM_BUILD_RUNS_PER_PAGE,
                 "page": page,
             }
@@ -366,12 +383,14 @@ def reclaim_prepublication_tag(
     *,
     repo: str,
     version: str,
+    source_ref: str = "main",
     root: Path,
     confirm: str,
     timeout: float,
     allow_public_release_check: bool,
 ) -> dict:
     release_version = normalize_version(version)
+    release_source_ref = normalize_release_source_ref(source_ref, release_version)
     tag = f"v{release_version}"
     if confirm != tag:
         raise PublicationError(f"reclaim confirmation must exactly equal {tag}")
@@ -385,9 +404,12 @@ def reclaim_prepublication_tag(
         head = collector.normalize_source_sha(_git(source_root, "rev-parse", "HEAD"))
     except collector.CollectionError as exc:
         raise PublicationError("release recovery HEAD is invalid") from exc
-    remote_main = _remote_main_source(source_root)
-    if head != remote_main:
-        raise PublicationError(f"release recovery source is not exact remote main: head={head} main={remote_main}")
+    remote_source = _remote_branch_source(source_root, release_source_ref)
+    if head != remote_source:
+        raise PublicationError(
+            f"release recovery source is not exact remote {release_source_ref}: "
+            f"head={head} remote={remote_source}"
+        )
     _require_package_versions(source_root, release_version, context="release recovery")
 
     remote_identity = _remote_annotated_tag_identity(source_root, tag)
@@ -447,6 +469,7 @@ def reclaim_prepublication_tag(
     return {
         "version": release_version,
         "tag": tag,
+        "source_ref": release_source_ref,
         "old_tag_object_sha": tag_object_sha,
         "old_source_sha": old_source_sha,
         "github_release_absent": True,
@@ -463,19 +486,24 @@ def preflight_release(
     repo: str,
     version: str,
     source_sha: str,
+    source_ref: str = "main",
     root: Path,
     timeout: float,
 ) -> dict:
     release_version = normalize_version(version)
+    release_source_ref = normalize_release_source_ref(source_ref, release_version)
     source = collector.normalize_source_sha(source_sha)
     source_root = root.absolute()
     _require_exact_clean_root(source_root, source)
     _require_package_versions(source_root, release_version, context="release")
 
     client = collector.GitHubClient(repo, collector.resolve_github_token(), timeout)
-    main_sha = _github_main_sha(client)
-    if main_sha != source:
-        raise PublicationError(f"GitHub main source fence failed: expected={source} current={main_sha}")
+    source_ref_sha = _github_branch_sha(client, release_source_ref)
+    if source_ref_sha != source:
+        raise PublicationError(
+            f"GitHub source ref fence failed: ref={release_source_ref} "
+            f"expected={source} current={source_ref_sha}"
+        )
     tag = f"v{release_version}"
     if _git(source_root, "tag", "--list", tag):
         raise PublicationError(f"local Git tag already exists: {tag}")
@@ -505,8 +533,9 @@ def preflight_release(
     return {
         "version": release_version,
         "tag": tag,
+        "source_ref": release_source_ref,
         "source_sha": source,
-        "github_main_sha": main_sha,
+        "github_source_ref_sha": source_ref_sha,
         "github_user": github_user,
         "npm_user": npm_user,
         "tag_available": True,
@@ -641,7 +670,7 @@ def _remote_annotated_tag_source(client: collector.GitHubClient, tag: str) -> st
 def _post_build_dispatch(client: collector.GitHubClient, tag: str, request_id: str) -> None:
     url = client.api_url(f"/actions/workflows/{BUILD_WORKFLOW_FILE}/dispatches")
     data = json.dumps(
-        {"ref": "main", "inputs": {"tag": tag, "request_id": request_id}},
+        {"ref": tag, "inputs": {"tag": tag, "request_id": request_id}},
         separators=(",", ":"),
     ).encode("utf-8")
     request = client._request(url)
@@ -672,7 +701,6 @@ def _build_run_identity_matches(run: dict, state: dict) -> bool:
     return (
         run.get("path") == BUILD_WORKFLOW_PATH
         and run.get("event") == "workflow_dispatch"
-        and run.get("head_branch") == "main"
         and run.get("display_title") == state["run_name"]
     )
 
@@ -722,7 +750,7 @@ def _apply_build_run_snapshot(state: dict, run: dict) -> None:
 
 def _list_build_runs(client: collector.GitHubClient) -> dict:
     return client.fetch_json(
-        f"/actions/workflows/{BUILD_WORKFLOW_FILE}/runs?event=workflow_dispatch&branch=main&per_page={MAX_RUN_LIST}"
+        f"/actions/workflows/{BUILD_WORKFLOW_FILE}/runs?event=workflow_dispatch&per_page={MAX_RUN_LIST}"
     )
 
 
@@ -757,9 +785,6 @@ def start_build(
         raise PublicationError("resolve_secs must be within 0..120")
     state_path = _validate_state_path_for_create(state_file)
     client = collector.GitHubClient(repo, collector.resolve_github_token(), timeout)
-    main_sha = _github_main_sha(client)
-    if main_sha != source:
-        raise PublicationError(f"main source fence failed: expected={source} current={main_sha}")
     tag_source = _remote_annotated_tag_source(client, release_tag)
     if tag_source != source:
         raise PublicationError(f"remote tag source mismatch: expected={source} actual={tag_source}")

@@ -5,8 +5,12 @@ run-name: Release readiness ${{ inputs.request_id }} ${{ inputs.source_sha }}
 on:
   workflow_dispatch:
     inputs:
+      source_ref:
+        description: Exact release source branch (main or release/v<VERSION>)
+        required: true
+        type: string
       source_sha:
-        description: Exact 40-character main commit to validate before tagging
+        description: Exact 40-character release source commit to validate before tagging
         required: true
         type: string
       request_id:
@@ -14,16 +18,16 @@ on:
         required: true
         type: string
       ci_run_id:
-        description: Exact successful main-push CI run id bound by the release operator
+        description: Exact successful source-branch push CI run id bound by the release operator
         required: true
         type: string
       ci_run_attempt:
-        description: Exact successful main-push CI run attempt bound by the release operator
+        description: Exact successful source-branch push CI run attempt bound by the release operator
         required: true
         type: string
 
 # This workflow is a pre-tag, non-publication gate. The exact source's common
-# development correctness comes from its already-successful main-push CI run.
+# development correctness comes from its already-successful source-branch push CI run.
 # Readiness revalidates that immutable run attempt, invokes the expensive native
 # architectures through extended-native, then executes release-specific E2E/eval
 # and disposable Server-image validation. Formal release-profile candidates are
@@ -44,9 +48,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Fence exact source and successful main CI attempt
+      - name: Fence exact source ref and successful source CI attempt
         shell: bash
         env:
+          INPUT_SOURCE_REF: ${{ inputs.source_ref }}
           INPUT_SOURCE_SHA: ${{ inputs.source_sha }}
           INPUT_REQUEST_ID: ${{ inputs.request_id }}
           INPUT_CI_RUN_ID: ${{ inputs.ci_run_id }}
@@ -54,7 +59,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          test "$GITHUB_REF" = "refs/heads/main"
+          [[ "$INPUT_SOURCE_REF" == main || "$INPUT_SOURCE_REF" =~ ^release/v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]
+          test "$GITHUB_REF" = "refs/heads/$INPUT_SOURCE_REF"
           [[ "$INPUT_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
           [[ "$INPUT_REQUEST_ID" =~ ^rr_[0-9a-f]{24}$ ]]
           [[ "$INPUT_CI_RUN_ID" =~ ^[1-9][0-9]*$ ]]
@@ -67,6 +73,7 @@ jobs:
 
           repo = os.environ["GITHUB_REPOSITORY"]
           source = os.environ["INPUT_SOURCE_SHA"]
+          source_ref = os.environ["INPUT_SOURCE_REF"]
           run_id = int(os.environ["INPUT_CI_RUN_ID"])
           attempt = int(os.environ["INPUT_CI_RUN_ATTEMPT"])
           request = urllib.request.Request(
@@ -83,7 +90,7 @@ jobs:
           expected = {
               "path": ".github/workflows/ci.yml",
               "event": "push",
-              "head_branch": "main",
+              "head_branch": source_ref,
               "head_sha": source,
               "status": "completed",
               "conclusion": "success",
@@ -103,11 +110,12 @@ jobs:
                   "actual": head_repository.get("full_name") if isinstance(head_repository, dict) else None,
               }
           if mismatches:
-              raise SystemExit(f"exact-main CI proof mismatch: {json.dumps(mismatches, sort_keys=True)}")
-          print(f"verified exact-main CI run {run_id} attempt {attempt} for {source}")
+              raise SystemExit(f"exact-source CI proof mismatch: {json.dumps(mismatches, sort_keys=True)}")
+          print(f"verified exact-source CI run {run_id} attempt {attempt} for {source_ref}@{source}")
           PY
           {
-            echo "### Exact-main CI proof"
+            echo "### Exact-source CI proof"
+            echo "- source ref: \`$INPUT_SOURCE_REF\`"
             echo "- source: \`$INPUT_SOURCE_SHA\`"
             echo "- CI run: \`$INPUT_CI_RUN_ID\` attempt \`$INPUT_CI_RUN_ATTEMPT\`"
           } >> "$GITHUB_STEP_SUMMARY"
@@ -123,14 +131,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - name: Fence exact reviewed main source
+      - name: Fence exact reviewed release source
         shell: bash
         env:
+          INPUT_SOURCE_REF: ${{ inputs.source_ref }}
           INPUT_SOURCE_SHA: ${{ inputs.source_sha }}
           INPUT_REQUEST_ID: ${{ inputs.request_id }}
         run: |
           set -euo pipefail
-          test "$GITHUB_REF" = "refs/heads/main"
+          test "$GITHUB_REF" = "refs/heads/$INPUT_SOURCE_REF"
           [[ "$INPUT_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
           [[ "$INPUT_REQUEST_ID" =~ ^rr_[0-9a-f]{24}$ ]]
           test "$GITHUB_SHA" = "$INPUT_SOURCE_SHA"
@@ -186,14 +195,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - name: Fence exact reviewed main source
+      - name: Fence exact reviewed release source
         shell: bash
         env:
+          INPUT_SOURCE_REF: ${{ inputs.source_ref }}
           INPUT_SOURCE_SHA: ${{ inputs.source_sha }}
           INPUT_REQUEST_ID: ${{ inputs.request_id }}
         run: |
           set -euo pipefail
-          test "$GITHUB_REF" = "refs/heads/main"
+          test "$GITHUB_REF" = "refs/heads/$INPUT_SOURCE_REF"
           [[ "$INPUT_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
           [[ "$INPUT_REQUEST_ID" =~ ^rr_[0-9a-f]{24}$ ]]
           test "$GITHUB_SHA" = "$INPUT_SOURCE_SHA"
@@ -255,15 +265,16 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 75
     steps:
-      - name: Fence exact reviewed main source
+      - name: Fence exact reviewed release source
         shell: bash
         env:
+          INPUT_SOURCE_REF: ${{ inputs.source_ref }}
           INPUT_SOURCE_SHA: ${{ inputs.source_sha }}
           INPUT_REQUEST_ID: ${{ inputs.request_id }}
         run: |
           set -euo pipefail
-          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
-            echo "Release readiness must be dispatched from the main workflow definition." >&2
+          if [ "$GITHUB_REF" != "refs/heads/$INPUT_SOURCE_REF" ]; then
+            echo "Release readiness must be dispatched from the selected source branch." >&2
             exit 1
           fi
           if [[ ! "$INPUT_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
@@ -275,7 +286,7 @@ jobs:
             exit 1
           fi
           if [ "$GITHUB_SHA" != "$INPUT_SOURCE_SHA" ]; then
-            echo "main moved before readiness dispatch: requested=$INPUT_SOURCE_SHA run=$GITHUB_SHA" >&2
+            echo "release source moved before readiness dispatch: ref=$INPUT_SOURCE_REF requested=$INPUT_SOURCE_SHA run=$GITHUB_SHA" >&2
             exit 1
           fi
 
@@ -404,6 +415,7 @@ jobs:
       - name: Record readiness summary
         shell: bash
         env:
+          INPUT_SOURCE_REF: ${{ inputs.source_ref }}
           INPUT_SOURCE_SHA: ${{ inputs.source_sha }}
           INPUT_REQUEST_ID: ${{ inputs.request_id }}
           INPUT_CI_RUN_ID: ${{ inputs.ci_run_id }}
@@ -411,9 +423,10 @@ jobs:
         run: |
           {
             echo "### Release readiness passed"
+            echo "- source ref: \`$INPUT_SOURCE_REF\`"
             echo "- source: \`$INPUT_SOURCE_SHA\`"
             echo "- request: \`$INPUT_REQUEST_ID\`"
-            echo "- exact-main CI: run \`$INPUT_CI_RUN_ID\` attempt \`$INPUT_CI_RUN_ATTEMPT\` proved the common daily CI contract"
+            echo "- exact-source CI: run \`$INPUT_CI_RUN_ID\` attempt \`$INPUT_CI_RUN_ATTEMPT\` proved the common daily CI contract"
             echo "- extended native: Linux ARM64, macOS Intel Desktop, and Windows ARM64 Desktop validation passed"
             echo "- release-specific gates: WebSocket/polling E2E and coding-loop compare eval passed"
             echo "- disposable Server images: linux/amd64 and linux/arm64 build, runtime, health, and digest-pinned bootstrap generation passed"

@@ -18,6 +18,7 @@ REQUEST = "rb_" + "b" * 24
 RUN_ID = 123456
 VERSION = "0.4.3"
 TAG = f"v{VERSION}"
+SOURCE_REF = f"release/v{VERSION}"
 
 
 def _versions(**overrides: str) -> dict[str, str]:
@@ -60,7 +61,7 @@ def _run(run_id: int = RUN_ID, source: str = SOURCE) -> dict:
         "id": run_id,
         "path": publication.BUILD_WORKFLOW_PATH,
         "event": "workflow_dispatch",
-        "head_branch": "main",
+        "head_branch": TAG,
         "head_sha": source,
         "display_title": publication._build_run_name(TAG, REQUEST),
         "html_url": f"https://github.com/yyjeqhc/webcodex/actions/runs/{run_id}",
@@ -184,7 +185,7 @@ class PreflightTests(unittest.TestCase):
             publication, "_package_versions", return_value=_versions()
         ), mock.patch.object(publication.collector, "resolve_github_token", return_value="fake"), mock.patch.object(
             publication.collector, "GitHubClient", return_value=client
-        ), mock.patch.object(publication, "_github_main_sha", return_value=SOURCE), mock.patch.object(
+        ), mock.patch.object(publication, "_github_branch_sha", return_value=SOURCE), mock.patch.object(
             publication, "_github_optional_json", return_value=None
         ) as optional_json, mock.patch.object(
             publication, "_fetch_public_json_optional", return_value=None
@@ -195,12 +196,15 @@ class PreflightTests(unittest.TestCase):
                 repo=collector.DEFAULT_REPO,
                 version=VERSION,
                 source_sha=SOURCE,
+                source_ref=SOURCE_REF,
                 root=Path("/tmp/exact-release-source"),
                 timeout=5,
             )
         self.assertTrue(summary["tag_available"])
         self.assertTrue(summary["github_release_available"])
         self.assertTrue(summary["npm_version_available"])
+        self.assertEqual(summary["source_ref"], SOURCE_REF)
+        self.assertEqual(summary["github_source_ref_sha"], SOURCE)
         self.assertEqual(summary["github_user"], "publisher")
         self.assertEqual(summary["npm_user"], "npm-publisher")
         run_capture.assert_called_once_with(
@@ -215,13 +219,14 @@ class PreflightTests(unittest.TestCase):
             publication, "_package_versions", return_value=_versions()
         ), mock.patch.object(publication.collector, "resolve_github_token", return_value="fake"), mock.patch.object(
             publication.collector, "GitHubClient", return_value=client
-        ), mock.patch.object(publication, "_github_main_sha", return_value=SOURCE), mock.patch.object(
+        ), mock.patch.object(publication, "_github_branch_sha", return_value=SOURCE), mock.patch.object(
             publication, "_git", return_value=TAG
         ), self.assertRaises(publication.PublicationError):
             publication.preflight_release(
                 repo=collector.DEFAULT_REPO,
                 version=VERSION,
                 source_sha=SOURCE,
+                source_ref=SOURCE_REF,
                 root=Path("/tmp/exact-release-source"),
                 timeout=5,
             )
@@ -266,7 +271,7 @@ class ReclaimTagTests(unittest.TestCase):
     def test_reclaim_rejects_successful_authoritative_build(self) -> None:
         with mock.patch.object(Path, "is_dir", return_value=True), mock.patch.object(
             publication, "_git", side_effect=["", "https://github.com/yyjeqhc/webcodex.git", SOURCE, TAG, SOURCE]
-        ), mock.patch.object(publication, "_remote_main_source", return_value=SOURCE), mock.patch.object(
+        ), mock.patch.object(publication, "_remote_branch_source", return_value=SOURCE), mock.patch.object(
             publication, "_package_versions", return_value=_versions()
         ), mock.patch.object(
             publication, "_remote_annotated_tag_identity", return_value=("b" * 40, SOURCE)
@@ -295,7 +300,7 @@ class ReclaimTagTests(unittest.TestCase):
 
         with mock.patch.object(Path, "is_dir", return_value=True), mock.patch.object(
             publication, "_git", side_effect=["", "https://github.com/yyjeqhc/webcodex.git", SOURCE, TAG, SOURCE]
-        ), mock.patch.object(publication, "_remote_main_source", return_value=SOURCE), mock.patch.object(
+        ), mock.patch.object(publication, "_remote_branch_source", return_value=SOURCE), mock.patch.object(
             publication, "_package_versions", return_value=_versions()
         ), mock.patch.object(
             publication,
@@ -312,11 +317,13 @@ class ReclaimTagTests(unittest.TestCase):
                 repo=collector.DEFAULT_REPO,
                 version=VERSION,
                 root=root,
+                source_ref=SOURCE_REF,
                 confirm=TAG,
                 timeout=5,
                 allow_public_release_check=False,
             )
         self.assertTrue(summary["remote_tag_deleted"])
+        self.assertEqual(summary["source_ref"], SOURCE_REF)
         self.assertTrue(summary["local_tag_deleted"])
         self.assertEqual(
             calls[0][0],
@@ -343,7 +350,7 @@ class ReclaimTagTests(unittest.TestCase):
             publication,
             "_git",
             side_effect=["", "https://github.com/yyjeqhc/webcodex.git", SOURCE, ""],
-        ), mock.patch.object(publication, "_remote_main_source", return_value=SOURCE), mock.patch.object(
+        ), mock.patch.object(publication, "_remote_branch_source", return_value=SOURCE), mock.patch.object(
             publication, "_package_versions", return_value=_versions()
         ), mock.patch.object(
             publication,
@@ -430,8 +437,10 @@ class _Response:
 class _Opener:
     def __init__(self, outcome):
         self.outcome = outcome
+        self.requests = []
 
     def open(self, request, timeout):
+        self.requests.append((request, timeout))
         if isinstance(self.outcome, Exception):
             raise self.outcome
         return self.outcome
@@ -445,6 +454,10 @@ class BuildDispatchTests(unittest.TestCase):
         client = self._client()
         client.opener = _Opener(_Response())
         publication._post_build_dispatch(client, TAG, REQUEST)
+        request, _timeout = client.opener.requests[0]
+        payload = json.loads(request.data.decode("utf-8"))
+        self.assertEqual(payload["ref"], TAG)
+        self.assertEqual(payload["inputs"], {"tag": TAG, "request_id": REQUEST})
 
     def test_4xx_is_rejected_and_transport_is_unknown(self) -> None:
         client = self._client()

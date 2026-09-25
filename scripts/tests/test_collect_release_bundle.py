@@ -16,6 +16,7 @@ from scripts import collect_release_bundle as collector
 SOURCE_SHA = "a" * 40
 RUN_ID = 123456
 VERSION = "0.4.3"
+SOURCE_REF = f"release/v{VERSION}"
 
 
 def _archive_bytes(platform: str) -> bytes:
@@ -148,7 +149,7 @@ class ArtifactSelectionTests(unittest.TestCase):
         with self.assertRaises(collector.CollectionError):
             collector.select_bundle_artifact(expired, RUN_ID, SOURCE_SHA)
 
-    def test_run_requires_success_main_and_exact_source(self) -> None:
+    def test_run_requires_success_and_exact_source_independent_of_dispatch_ref(self) -> None:
         run = {
             "id": RUN_ID,
             "status": "completed",
@@ -156,14 +157,21 @@ class ArtifactSelectionTests(unittest.TestCase):
             "head_sha": SOURCE_SHA,
             "event": "workflow_dispatch",
             "path": collector.RELEASE_WORKFLOW_PATH,
-            "head_branch": "main",
+            "head_branch": f"v{VERSION}",
         }
         collector.validate_run(run, RUN_ID, SOURCE_SHA)
-        for key, bad in (("conclusion", "failure"), ("head_sha", "b" * 40), ("head_branch", "other")):
+        for key, bad in (("conclusion", "failure"), ("head_sha", "b" * 40)):
             changed = dict(run)
             changed[key] = bad
             with self.assertRaises(collector.CollectionError):
                 collector.validate_run(changed, RUN_ID, SOURCE_SHA)
+
+    def test_release_source_ref_validation(self) -> None:
+        self.assertEqual(collector.normalize_source_ref("main"), "main")
+        self.assertEqual(collector.normalize_source_ref(SOURCE_REF), SOURCE_REF)
+        for value in ("feature/x", "release/foo", "refs/heads/main", "release/v0.4.3/extra"):
+            with self.assertRaises(collector.CollectionError):
+                collector.normalize_source_ref(value)
 
 
 class BundleTests(unittest.TestCase):

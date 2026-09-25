@@ -54,6 +54,7 @@ SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 SOURCE_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 VERSION_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$")
 RELEASE_TAG_RE = re.compile(r"^v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$")
+SOURCE_REF_RE = re.compile(r"^(?:main|release/v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)$")
 VERIFY_TAG_RE = re.compile(r"^release-build-test-[0-9A-Za-z][0-9A-Za-z._-]*$")
 SAFE_NAME_RE = re.compile(r"^[0-9A-Za-z][0-9A-Za-z._+-]*$")
 
@@ -67,6 +68,13 @@ def normalize_source_sha(value: str) -> str:
     if not SOURCE_SHA_RE.fullmatch(source):
         raise CollectionError(f"invalid expected source SHA: {value!r}")
     return source
+
+
+def normalize_source_ref(value: str) -> str:
+    source_ref = value.strip()
+    if not SOURCE_REF_RE.fullmatch(source_ref):
+        raise CollectionError(f"invalid release source ref: {value!r}")
+    return source_ref
 
 
 def validate_expected_tag(value: str) -> str:
@@ -290,8 +298,6 @@ def validate_run(run: dict, run_id: int, expected_source_sha: str) -> None:
         raise CollectionError("release-build run was not started by workflow_dispatch")
     if run.get("path") != RELEASE_WORKFLOW_PATH:
         raise CollectionError(f"unexpected workflow path: {run.get('path')!r}")
-    if run.get("head_branch") != "main":
-        raise CollectionError(f"release-build run did not use main: {run.get('head_branch')!r}")
 
 
 def _artifact_digest(value: object) -> str:

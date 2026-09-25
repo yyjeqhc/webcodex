@@ -16,8 +16,8 @@ on:
         type: string
 
 # This workflow only produces candidate bytes and one same-run assembled bundle.
-# It has no release, package, deployment, or repository-write permission. OE
-# remains the publication control plane.
+# It has no release, package, deployment, or repository-write permission. A
+# trusted publication control host owns collection, staging, and publication.
 permissions:
   contents: read
 
@@ -40,17 +40,13 @@ jobs:
       archive_stem: ${{ steps.metadata.outputs.archive_stem }}
       desktop_darwin_x64_supplemental: ${{ steps.metadata.outputs.desktop_darwin_x64_supplemental }}
     steps:
-      - name: Require the reviewed workflow from main
+      - name: Require immutable tagged workflow source
         shell: bash
         env:
           INPUT_TAG: ${{ inputs.tag }}
           INPUT_REQUEST_ID: ${{ inputs.request_id }}
         run: |
           set -euo pipefail
-          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
-            echo "Release candidate builds must be dispatched from the main workflow definition." >&2
-            exit 1
-          fi
           tag="$INPUT_TAG"
           request_id="$INPUT_REQUEST_ID"
           if [ "$request_id" != "manual" ] && [[ ! "$request_id" =~ ^rb_[0-9a-f]{24}$ ]]; then
@@ -63,6 +59,10 @@ jobs:
             :
           else
             echo "Invalid release or verification tag: $tag" >&2
+            exit 1
+          fi
+          if [ "$GITHUB_REF" != "refs/tags/$tag" ]; then
+            echo "Release candidate builds must be dispatched from the exact immutable tag." >&2
             exit 1
           fi
 

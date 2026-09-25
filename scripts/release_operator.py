@@ -34,6 +34,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     preflight.add_argument("--version", required=True)
     preflight.add_argument("--source-sha", required=True)
+    preflight.add_argument("--source-ref", default="main", help="main or release/v<VERSION>")
     preflight.add_argument("--root", type=Path, default=Path.cwd())
     preflight.add_argument("--repo", default=collector.DEFAULT_REPO)
     preflight.add_argument("--timeout", type=float, default=30.0)
@@ -43,6 +44,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="delete an explicitly confirmed failed pre-publication version tag after bounded safety checks",
     )
     reclaim_tag.add_argument("--version", required=True)
+    reclaim_tag.add_argument("--source-ref", default="main", help="main or release/v<VERSION>")
     reclaim_tag.add_argument("--root", type=Path, default=Path.cwd())
     reclaim_tag.add_argument("--repo", default=collector.DEFAULT_REPO)
     reclaim_tag.add_argument("--confirm", required=True, help="must exactly equal v<VERSION>")
@@ -65,9 +67,10 @@ def build_parser() -> argparse.ArgumentParser:
     collect.add_argument("--timeout", type=float, default=120.0)
     readiness_start = subparsers.add_parser(
         "readiness-start",
-        help="dispatch exact-main pre-tag readiness and record durable correlation state",
+        help="dispatch exact-source pre-tag readiness and record durable correlation state",
     )
     readiness_start.add_argument("--source-sha", required=True)
+    readiness_start.add_argument("--source-ref", default="main", help="main or release/v<VERSION>")
     readiness_start.add_argument("--state-file", type=Path, required=True)
     readiness_start.add_argument("--repo", default=collector.DEFAULT_REPO)
     readiness_start.add_argument("--timeout", type=float, default=30.0)
@@ -122,6 +125,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     doctor_parser.add_argument("--version", required=True)
     doctor_parser.add_argument("--source-sha", required=True)
+    doctor_parser.add_argument("--source-ref", default="main", help="main or release/v<VERSION>")
     doctor_parser.add_argument("--root", type=Path, default=Path.cwd())
     doctor_parser.add_argument("--repo", default=collector.DEFAULT_REPO)
     doctor_parser.add_argument("--timeout", type=float, default=30.0)
@@ -132,6 +136,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     release_init.add_argument("--version", required=True)
     release_init.add_argument("--source-sha", required=True)
+    release_init.add_argument("--source-ref", default="main", help="main or release/v<VERSION>")
     release_init.add_argument("--root", type=Path, default=Path.cwd())
     release_init.add_argument("--state-file", type=Path, required=True)
     release_init.add_argument("--work-dir", type=Path, required=True)
@@ -163,6 +168,7 @@ def main(argv: list[str] | None = None) -> int:
                 repo=args.repo,
                 version=args.version,
                 source_sha=args.source_sha,
+                source_ref=args.source_ref,
                 root=args.root,
                 timeout=args.timeout,
             )
@@ -177,6 +183,7 @@ def main(argv: list[str] | None = None) -> int:
             summary = publication.reclaim_prepublication_tag(
                 repo=args.repo,
                 version=args.version,
+                source_ref=args.source_ref,
                 root=args.root,
                 confirm=args.confirm,
                 timeout=args.timeout,
@@ -209,6 +216,7 @@ def main(argv: list[str] | None = None) -> int:
             summary, exit_code = readiness.start_readiness(
                 repo=args.repo,
                 source_sha=args.source_sha,
+                source_ref=args.source_ref,
                 state_file=args.state_file,
                 timeout=args.timeout,
                 resolve_secs=args.resolve_secs,
@@ -294,6 +302,7 @@ def main(argv: list[str] | None = None) -> int:
                 repo=args.repo,
                 version=args.version,
                 source_sha=args.source_sha,
+                source_ref=args.source_ref,
                 root=args.root,
                 timeout=args.timeout,
             )
@@ -309,6 +318,7 @@ def main(argv: list[str] | None = None) -> int:
                 repo=args.repo,
                 version=args.version,
                 source_sha=args.source_sha,
+                source_ref=args.source_ref,
                 root=args.root,
                 state_file=args.state_file,
                 work_dir=args.work_dir,

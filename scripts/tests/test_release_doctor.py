@@ -9,6 +9,7 @@ from scripts import release_readiness as readiness
 
 SOURCE = "b" * 40
 VERSION = "0.4.0"
+SOURCE_REF = f"release/v{VERSION}"
 
 
 class ReleaseDoctorTests(unittest.TestCase):
@@ -48,7 +49,7 @@ class ReleaseDoctorTests(unittest.TestCase):
             mock.patch.object(doctor, "_compile_verifiers", return_value="python ok"),
             mock.patch.object(doctor, "_actionlint", return_value="actionlint ok"),
             mock.patch.object(publication, "preflight_release", return_value={"version": VERSION}) as preflight,
-            mock.patch.object(readiness, "_successful_main_ci_run", return_value=ci) as main_ci,
+            mock.patch.object(readiness, "_successful_source_ci_run", return_value=ci) as source_ci,
             mock.patch.object(doctor.collector, "resolve_github_token", return_value="token"),
             mock.patch.object(publication, "_github_json_array", return_value=[]),
         ):
@@ -56,15 +57,17 @@ class ReleaseDoctorTests(unittest.TestCase):
                 repo="yyjeqhc/webcodex",
                 version=VERSION,
                 source_sha=SOURCE,
+                source_ref=SOURCE_REF,
                 root=Path.cwd(),
                 timeout=30.0,
             )
         self.assertEqual(result["status"], "passed")
         self.assertFalse(result["mutations_performed"])
-        self.assertEqual(result["main_ci"]["run_id"], 123)
+        self.assertEqual(result["source_ref"], SOURCE_REF)
+        self.assertEqual(result["source_ci"]["run_id"], 123)
         self.assertEqual(result["failed_checks"], [])
         preflight.assert_called_once()
-        main_ci.assert_called_once()
+        source_ci.assert_called_once_with(mock.ANY, SOURCE, SOURCE_REF)
 
     def test_doctor_reports_failed_checks_without_running_mutations(self) -> None:
         with (
@@ -75,7 +78,7 @@ class ReleaseDoctorTests(unittest.TestCase):
             mock.patch.object(doctor, "_compile_verifiers", return_value="python ok"),
             mock.patch.object(doctor, "_actionlint", return_value="optional"),
             mock.patch.object(publication, "preflight_release", side_effect=publication.PublicationError("npm unavailable")),
-            mock.patch.object(readiness, "_successful_main_ci_run", side_effect=readiness.ReadinessError("CI missing")),
+            mock.patch.object(readiness, "_successful_source_ci_run", side_effect=readiness.ReadinessError("CI missing")),
             mock.patch.object(doctor.collector, "resolve_github_token", return_value="token"),
             mock.patch.object(publication, "_github_json_array", return_value=[]),
         ):
@@ -83,13 +86,14 @@ class ReleaseDoctorTests(unittest.TestCase):
                 repo="yyjeqhc/webcodex",
                 version=VERSION,
                 source_sha=SOURCE,
+                source_ref=SOURCE_REF,
                 root=Path.cwd(),
                 timeout=30.0,
             )
         self.assertEqual(result["status"], "failed")
         self.assertIn("required-tools", result["failed_checks"])
         self.assertIn("publication-preflight", result["failed_checks"])
-        self.assertIn("exact-main-ci", result["failed_checks"])
+        self.assertIn("exact-source-ci", result["failed_checks"])
         self.assertFalse(result["mutations_performed"])
 
 

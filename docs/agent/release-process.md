@@ -85,14 +85,14 @@ version and authorizes the destructive recovery, and all of these facts hold at 
 time of deletion:
 
 - the checkout is clean, its Cargo/npm/Desktop/Tauri versions are the requested version, and its
-  `HEAD` equals current remote `main`;
+  `HEAD` equals the selected remote release source ref (`main` or exactly `release/v<VERSION>`);
 - the remote tag is an annotated commit tag;
 - no GitHub Release exists for the tag and the npm version is absent;
 - every matching authoritative `release-build` run is terminal and none concluded
   successfully.
 
-Use `python3 scripts/release_operator.py reclaim-tag --version <VERSION> --confirm
-v<VERSION> --root <EXACT_MAIN_WORKTREE>` rather than a naked `git push --delete`.
+Use `python3 scripts/release_operator.py reclaim-tag --version <VERSION> --source-ref
+<SOURCE_REF> --confirm v<VERSION> --root <EXACT_SOURCE_WORKTREE>` rather than a naked `git push --delete`.
 The operator fences the repository/source/version, scans bounded release-build
 history, deletes the remote tag, reconciles the remote ref, and removes the matching
 local tag. Its normal GitHub Release check is authenticated so draft releases are
@@ -108,11 +108,14 @@ deleted or rewritten.
 ## 3. Operator checklist pointer
 
 Before tagging or publishing, follow sections in
-[`RELEASE_CHECKLIST.md`](../RELEASE_CHECKLIST.md). The final executable pre-tag gate is
+[`RELEASE_CHECKLIST.md`](../RELEASE_CHECKLIST.md). For normal releases, cut `release/v<VERSION>` from the reviewed `main` commit chosen for the release before release prep, then target version/release-metadata work at that branch. For a hotfix, the release branch may instead start at the previous immutable release tag and carry only the required fix plus release prep. Once the branch is cut, unrelated PRs may keep merging into `main`; only the selected release source branch must remain stable through readiness and tag creation. Product fixes unique to the release branch are forward-ported to `main` separately, while release-only version metadata need not be merged back.
+
+The final executable pre-tag gate is
 `.github/workflows/release-readiness.yml`, dispatched through
-`scripts/release_operator.py readiness-start` for one exact merged `main` SHA and
-observed through the same durable state with `readiness-status`. Before dispatch, the operator
-requires and records exactly one successful main-push daily CI run for that source. The workflow
+`scripts/release_operator.py readiness-start` for one exact source branch/SHA pair and
+observed through the same durable state with `readiness-status`. The source ref is either `main` or
+exactly `release/v<VERSION>`. Before dispatch, the operator requires and records exactly one successful
+push CI run for that source ref and source SHA. The workflow
 revalidates the exact CI run id/attempt with read-only Actions authority, then calls the reusable
 `extended-native.yml` workflow against the same exact source. Ordinary CI retains complete Linux
 Rust/tooling coverage plus path-aware Windows x64, macOS Apple-Silicon, Desktop, and amd64 Server-image
@@ -132,7 +135,7 @@ release-prep review rather than being guessed by an automated semantic checker.
 
 For normal human operation, prefer `release_operator.py doctor` before the release window and one durable high-level `release-init` / `release-resume` plan during the release. The plan composes the same low-level readiness/build/collect/stage/verify primitives without weakening their exact-source correlation. It automatically advances only recoverable phases and returns explicit `needs_authorization` states before immutable tag creation, draft creation, and public GitHub/npm publication; it returns `needs_reconciliation` instead of deleting/repeating local outputs whose completion is uncertain. `release-status` is read-only, and every low-level operator command remains available for diagnosis or bounded recovery.
 
-The lower-level topology deliberately separates roles. The release control host first runs `release_operator.py preflight`, then GitHub Actions validates the exact pre-tag source in the durable readiness workflow. After explicit authorization creates the immutable tag, `release_operator.py build-start` / `build-status` bind one durable `rb_*` request to `release-build.yml`. That workflow always builds the six native runtime archives from the exact tag. For `v0.4.3+`, its primary same-run bundle contains the macOS Apple-Silicon and Windows x64/ARM64 Desktop distributions; the historical `v0.4.2`-and-earlier contract retains macOS Intel in that bundle. The macOS Apple-Silicon lane reuses its already-built runtime as the Desktop input and records post-signing evidence. Formal macOS distributions remain ad-hoc signed and intentionally not notarized, so the release path does not depend on paid Apple Developer Program credentials.
+The lower-level topology deliberately separates roles. The release control host first runs `release_operator.py preflight` against the exact source ref/SHA, then GitHub Actions validates that pre-tag source in the durable readiness workflow. After explicit authorization creates the immutable tag, the tag becomes the release source authority: `release_operator.py build-start` / `build-status` bind one durable `rb_*` request to `release-build.yml` dispatched from that exact tag. `main` and the release branch may advance after tagging without invalidating the build or publication plan. The workflow always builds the six native runtime archives from the exact tag. For `v0.4.3+`, its primary same-run bundle contains the macOS Apple-Silicon and Windows x64/ARM64 Desktop distributions; the historical `v0.4.2`-and-earlier contract retains macOS Intel in that bundle. The macOS Apple-Silicon lane reuses its already-built runtime as the Desktop input and records post-signing evidence. Formal macOS distributions remain ad-hoc signed and intentionally not notarized, so the release path does not depend on paid Apple Developer Program credentials.
 
 The release control host collects the exact primary bundle with `release_operator.py collect` (locked run id, source SHA, and tag; GitHub artifact REST download, no `gh run download`) and stages npm from the retained runtime bytes without Cargo. Draft verification compares GitHub-provided asset digests and sizes against those retained bytes. Creating the immutable tag, making the GitHub Release public, and `npm publish` remain explicit human-authorized steps.
 

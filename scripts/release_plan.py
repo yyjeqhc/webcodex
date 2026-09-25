@@ -29,7 +29,8 @@ else:
     import release_readiness as readiness
 
 
-STATE_SCHEMA_VERSION = 1
+LEGACY_STATE_SCHEMA_VERSION = 1
+STATE_SCHEMA_VERSION = 2
 MAX_STATE_BYTES = 64 * 1024
 KIND = "release-plan"
 
@@ -113,7 +114,7 @@ def _load_state(path: Path) -> dict:
         raise ReleasePlanError("release plan state is invalid JSON") from exc
     if not isinstance(value, dict):
         raise ReleasePlanError("release plan state must be an object")
-    required = {
+    legacy_required = {
         "schema_version",
         "kind",
         "repo",
@@ -133,11 +134,19 @@ def _load_state(path: Path) -> dict:
         "build_run_id",
         "last_action",
     }
+    schema_version = value.get("schema_version")
+    if schema_version == LEGACY_STATE_SCHEMA_VERSION:
+        required = legacy_required
+    elif schema_version == STATE_SCHEMA_VERSION:
+        required = legacy_required | {"source_ref"}
+    else:
+        raise ReleasePlanError("unsupported release plan state schema")
     if set(value) != required:
         raise ReleasePlanError("release plan state fields do not match the supported schema")
-    if value.get("schema_version") != STATE_SCHEMA_VERSION or value.get("kind") != KIND:
-        raise ReleasePlanError("unsupported release plan state schema")
+    if value.get("kind") != KIND:
+        raise ReleasePlanError("unsupported release plan state kind")
     source = collector.normalize_source_sha(str(value.get("source_sha", "")))
+    source_ref = collector.normalize_source_ref(str(value.get("source_ref", "main")))
     version = publication.normalize_version(str(value.get("version", "")))
     tag = collector.validate_expected_tag(str(value.get("tag", "")))
     if tag != f"v{version}":
@@ -161,6 +170,8 @@ def _load_state(path: Path) -> dict:
         raise ReleasePlanError("release plan last_action is invalid")
     value["source_sha"] = source
     value["version"] = version
+    value["source_ref"] = source_ref
+    value["schema_version"] = STATE_SCHEMA_VERSION
     return value
 
 
@@ -184,6 +195,7 @@ def _summary(
         "phase": state["phase"],
         "version": state["version"],
         "tag": state["tag"],
+        "source_ref": state["source_ref"],
         "source_sha": state["source_sha"],
         "state_file": str(state_file) if state_file is not None else None,
         "readiness_run_id": state.get("readiness_run_id"),
@@ -202,6 +214,7 @@ def init_plan(
     repo: str,
     version: str,
     source_sha: str,
+    source_ref: str = "main",
     root: Path,
     state_file: Path,
     work_dir: Path,
@@ -210,6 +223,7 @@ def init_plan(
     state_path = _validate_new_state_path(state_file)
     source = collector.normalize_source_sha(source_sha)
     release_version = publication.normalize_version(version)
+    release_source_ref = publication.normalize_release_source_ref(source_ref, release_version)
     source_root = root.absolute()
     workspace = work_dir.absolute()
     if workspace.exists() and not workspace.is_dir():
@@ -221,6 +235,7 @@ def init_plan(
         repo=repo,
         version=release_version,
         source_sha=source,
+        source_ref=release_source_ref,
         root=source_root,
         timeout=timeout,
     )
@@ -231,6 +246,7 @@ def init_plan(
         "repo": repo,
         "version": release_version,
         "tag": f"v{release_version}",
+        "source_ref": release_source_ref,
         "source_sha": source,
         "root": str(source_root),
         "work_dir": str(workspace),
@@ -294,6 +310,7 @@ def resume_plan(*, state_file: Path, timeout: float, wait_secs: int) -> tuple[di
             summary, _ = readiness.start_readiness(
                 repo=state["repo"],
                 source_sha=state["source_sha"],
+                source_ref=state["source_ref"],
                 state_file=readiness_state,
                 timeout=timeout,
                 resolve_secs=min(wait_secs, 120),

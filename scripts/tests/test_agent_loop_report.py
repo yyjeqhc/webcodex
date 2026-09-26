@@ -1262,10 +1262,21 @@ class AgentLoopReportTests(unittest.TestCase):
             "variant": "code_mode",
             "case_fingerprint": "f" * 64,
         }
+        candidate["job_convergence"]["pending_followed_immediately_by_observe_count"] = 2
+        candidate["job_convergence"]["passive_terminal_delivery_count"] = 1
         comparison = report.compare_reports(baseline, candidate)
         self.assertEqual(
             comparison["case_compatibility"],
             {"comparable": True, "reason": None},
+        )
+        metrics = {item["metric"]: item for item in comparison["metrics"]}
+        self.assertEqual(
+            metrics["job_convergence.pending_followed_immediately_by_observe_count"]["delta"],
+            2,
+        )
+        self.assertEqual(
+            metrics["job_convergence.passive_terminal_delivery_count"]["delta"],
+            1,
         )
 
 

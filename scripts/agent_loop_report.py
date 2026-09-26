@@ -1405,6 +1405,18 @@ _COMPARISON_METRICS = [
     "timing.outside_webcodex_gap_ms.p50", "timing.outside_webcodex_gap_ms.p95",
     "timing.overlap_count", "results.serialized_tool_result_bytes.total",
     "jobs.handoffs", "jobs.terminal",
+    "job_convergence.pending_handoff_count",
+    "job_convergence.pending_followed_immediately_by_observe_count",
+    "job_convergence.pending_followup_known_count",
+    "job_convergence.passive_terminal_delivery_count",
+    "job_convergence.passive_failure_delivery_count",
+    "job_convergence.passive_terminal_before_explicit_observe_count",
+    "job_convergence.terminal_failure_followed_by_observe_count",
+    "job_convergence.wait_for_job_terminal_count",
+    "job_convergence.passive_validation_failure_delivery_count",
+    "job_convergence.terminal_validation_failure_followed_by_observe_count",
+    "job_convergence.pending_to_terminal_ms.p50",
+    "job_convergence.pending_to_terminal_ms.p95",
 ]
 
 

@@ -315,7 +315,7 @@ it("uses exact Session tags to focus contiguous Window call segments", async () 
   expect(screen.queryByRole("tab", { name: /Work Sessions/ })).toBeNull();
   expect(screen.getByRole("tab", { name: "Collaboration" })).toBeTruthy();
 
-  const selector = screen.getByRole("combobox", { name: "Session filter" }) as HTMLSelectElement;
+  const selector = await screen.findByRole("combobox", { name: "Session filter" }) as HTMLSelectElement;
   expect(selector.value).toBe("");
   expect(screen.getAllByTestId("window-workflow-step")).toHaveLength(5);
 
@@ -436,6 +436,119 @@ it("shows background Job identity on handoff calls and observe_jobs", async () =
   expect(jobTags[0].textContent).toContain("Background running");
   expect(jobTags[0].textContent).toContain("1m 30s");
   expect(jobTags[1].textContent).toContain("Observing");
+  expect(screen.getAllByTestId("window-workflow-step")).toHaveLength(2);
+});
+
+it("renders Window identity from inventory before recent activity and hydrates full history later", async () => {
+  const [source, worktree] = projectFamily();
+  const key = "f".repeat(64);
+  const startedAt = 1_790_000_400_000;
+  let resolvePrimary!: (value: ReturnType<typeof ok>) => void;
+  let resolveFull!: (value: ReturnType<typeof ok>) => void;
+  const primaryResponse = new Promise<ReturnType<typeof ok>>((resolve) => { resolvePrimary = resolve; });
+  const fullResponse = new Promise<ReturnType<typeof ok>>((resolve) => { resolveFull = resolve; });
+  const windowPayloads: any[] = [];
+
+  const recentActivity = {
+    started_at_ms: startedAt,
+    ended_at_ms: startedAt + 20,
+    duration_ms: 20,
+    method: "tools/call",
+    tool_name: "read_files",
+    project: worktree.id,
+    status: "success",
+    meaningful: true,
+    server_trace_id: "trace-progressive-recent",
+    workflow_sessions: [],
+  };
+  const olderActivity = {
+    ...recentActivity,
+    started_at_ms: startedAt - 10_000,
+    ended_at_ms: startedAt - 9_000,
+    duration_ms: 1000,
+    tool_name: "run_shell",
+    server_trace_id: "trace-progressive-old",
+  };
+
+  const client = fakeClient((path, payload) => {
+    if (path === "windows") return ok({
+      windows: [{
+        client_window_key: key,
+        last_project: worktree.id,
+        source: "openai-session",
+        last_seen_at_ms: startedAt,
+        last_activity_name: "read_files",
+        last_activity_status: "success",
+        last_activity_meaningful: true,
+        active_count: 0,
+        linked_session_count: 0,
+        recorder_gap_count: 0,
+      }],
+      returned: 1,
+      total: 1,
+      truncated: false,
+      visibility: { scope: "principal" },
+    });
+    if (path === "window") {
+      windowPayloads.push(payload);
+      return payload.detail_level === "primary" ? primaryResponse : fullResponse;
+    }
+    throw new Error("unexpected path " + path);
+  });
+
+  render(
+    <WorkView
+      client={client}
+      items={[]}
+      selected={null}
+      projects={[source, worktree]}
+      language="en"
+      inventoryIncomplete={false}
+      onOpenSession={vi.fn()}
+      onLocateSession={vi.fn(async () => false)}
+      onUnauthorized={vi.fn()}
+    />,
+  );
+
+  // Window inventory already carries enough human identity to make selection
+  // feel instant; the detail endpoint is still pending here.
+  expect(await screen.findByRole("heading", { name: "webcodex-activity-fix" })).toBeTruthy();
+  const header = screen.getByRole("heading", { name: "webcodex-activity-fix" }).closest("header");
+  expect(header?.textContent).toContain("special");
+  expect(header?.textContent).toContain("/root/.webcodex-managed-worktrees/webcodex-activity-fix");
+  expect(screen.getByText("Loading recent activity…")).toBeTruthy();
+  await waitFor(() => expect(windowPayloads).toHaveLength(1));
+  expect(windowPayloads[0]).toMatchObject({
+    client_window_key: key,
+    activity_limit: 80,
+    detail_level: "primary",
+  });
+
+  resolvePrimary(ok(windowDetail({
+    client_window_key: key,
+    detail_level: "primary",
+    last_seen_at_ms: startedAt + 20,
+    activity: [recentActivity],
+    activity_returned: 1,
+    activity_truncated: true,
+  })));
+
+  expect(await screen.findByText("read_files")).toBeTruthy();
+  expect(await screen.findByText("Loading history…")).toBeTruthy();
+  await waitFor(() => expect(windowPayloads).toHaveLength(2));
+  expect(windowPayloads[1]).toEqual({ client_window_key: key, activity_limit: 2_000 });
+
+  resolveFull(ok(windowDetail({
+    client_window_key: key,
+    detail_level: "full",
+    last_seen_at_ms: startedAt + 20,
+    activity: [recentActivity, olderActivity],
+    activity_returned: 2,
+    activity_truncated: false,
+  })));
+
+  expect(await screen.findByText("run_shell")).toBeTruthy();
+  await waitFor(() => expect(screen.queryByText("Loading history…")).toBeNull());
   expect(screen.getAllByTestId("window-workflow-step")).toHaveLength(2);
 });
 

@@ -10,7 +10,7 @@ import { RuntimeApiClient } from "../src/runtime_api.js";
 import type { RuntimeV2Client } from "../src/runtime-v2/api/client.js";
 import { fetchProjects } from "../src/runtime-v2/api/projects.js";
 import { fetchProjectSessions, fetchSessionDetail } from "../src/runtime-v2/api/sessions.js";
-import { fetchWindowDetail } from "../src/runtime-v2/api/windows.js";
+import { fetchWindowDetail, fetchWindowPrimaryDetail } from "../src/runtime-v2/api/windows.js";
 import { fetchRunner } from "../src/runtime-v2/api/runtime.js";
 
 describe("shared Runtime browser contracts", () => {
@@ -38,6 +38,7 @@ describe("shared Runtime browser contracts", () => {
     await fetchSessionDetail(client, "agent:special:webcodex", "wc_sess_1234567890abcdef");
     await fetchSessionDetail(client, "agent:special:webcodex", "wc_sess_1234567890abcdef", undefined, 1);
     await fetchWindowDetail(client, "a".repeat(64));
+    await fetchWindowPrimaryDetail(client, "a".repeat(64));
     await fetchRunner(client, "special");
 
     expect(post.mock.calls[0][1]).toEqual({});
@@ -45,7 +46,12 @@ describe("shared Runtime browser contracts", () => {
     expect(post.mock.calls[2][1]).toEqual({ project: "agent:special:webcodex", session_id: "wc_sess_1234567890abcdef" });
     expect(post.mock.calls[3][1]).toEqual({ project: "agent:special:webcodex", session_id: "wc_sess_1234567890abcdef", limit: 1 });
     expect(post.mock.calls[4][1]).toEqual({ client_window_key: "a".repeat(64), activity_limit: 2_000 });
-    expect(post.mock.calls[5][1]).toEqual({ client_id: "special" });
+    expect(post.mock.calls[5][1]).toEqual({
+      client_window_key: "a".repeat(64),
+      activity_limit: 80,
+      detail_level: "primary",
+    });
+    expect(post.mock.calls[6][1]).toEqual({ client_id: "special" });
   });
 
   it("sends bearer auth only to the configured API base and treats transport failure as status 0", async () => {

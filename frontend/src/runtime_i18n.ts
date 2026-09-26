@@ -1099,6 +1099,11 @@ Object.assign(RUNTIME_ZH_TEXT, {
   "Latest activity": "最近活动"
 });
 
+Object.assign(RUNTIME_ZH_TEXT, {
+  "Loading recent activity…": "正在加载最近活动…",
+  "Loading history…": "正在加载历史记录…"
+});
+
 export function translate(source: string, language: RuntimeLanguage = "en"): string {
   return language === "zh-CN" ? (RUNTIME_ZH_TEXT[source] || source) : source;
 }

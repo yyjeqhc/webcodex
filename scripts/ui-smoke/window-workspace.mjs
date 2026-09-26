@@ -25,6 +25,24 @@ try {
         await page.route('**/api/runtime-console/window', async route => {
           const response = await route.fetch();
           const data = await response.json();
+          const payload = route.request().postDataJSON();
+          if (payload.detail_level === 'primary') {
+            data.detail_level = 'primary';
+            data.linked_sessions = [];
+            data.sessions_returned = 0;
+            data.sessions_truncated = false;
+            data.jobs = [];
+            data.jobs_truncated = false;
+            data.activity = data.activity.slice(0, 1);
+            data.activity_returned = data.activity.length;
+            data.activity_truncated = true;
+            await route.fulfill({ response, json: data });
+            return;
+          }
+          data.detail_level = 'full';
+          // Deliberately keep full retained history slower than the primary view:
+          // the smoke must prove the Window shell/recent activity remain usable.
+          await new Promise(resolve => setTimeout(resolve, 500));
           const base = data.activity[0];
           const firstSession = data.linked_sessions[0];
           data.linked_sessions = [
@@ -79,8 +97,19 @@ try {
         });
         await page.goto(fixture.url + '/runtime/');
         const zh = language === 'zh-CN';
+        const header = page.locator('.window-work-header');
+        await header.waitFor();
+        const headerText = (await header.textContent()) || '';
+        assert(headerText.includes('fixture-runner'), headerText);
+        assert(headerText.includes('/fixture/alpha'), headerText);
+        assert(headerText.includes('agent:fixture-runner:alpha'), headerText);
+        assert(!headerText.includes('47004700'), headerText);
+        const selectedRowText = (await page.locator('.window-work-row.selected').textContent()) || '';
+        assert(!selectedRowText.includes('47004700'), selectedRowText);
+        await page.getByText(zh ? '正在加载历史记录…' : 'Loading history…', { exact: true }).waitFor();
         await page.locator('.window-call-card.running').waitFor();
         const calls = page.getByTestId('window-workflow-step');
+        await page.waitForFunction(() => document.querySelectorAll('[data-testid="window-workflow-step"]').length === 14);
         assert.equal(await calls.count(), 14);
         assert.equal((await calls.locator('header strong').allTextContents())[0], 'runtime_status');
         assert.equal((await calls.locator('header strong').allTextContents()).at(-1), 'run_process');
@@ -132,7 +161,7 @@ try {
         const collaborationBounds = await page.evaluate(() => ({ body: document.body.scrollWidth, root: document.documentElement.scrollWidth }));
         assert(collaborationBounds.body <= width + 1 && collaborationBounds.root <= width + 1, JSON.stringify(collaborationBounds));
         await page.screenshot({ path: new URL(`collaboration-${width}-${theme}-${language}.png`, output).pathname, fullPage: true });
-        checks.push({ width, theme, language, overflow: false, individualCalls: 14, centerTabs: 2, sessionFilter: true, sessionOptions: 13, jobLinks: 2, collaboration: true });
+        checks.push({ width, theme, language, overflow: false, individualCalls: 14, centerTabs: 2, sessionFilter: true, sessionOptions: 13, jobLinks: 2, collaboration: true, progressiveWindowLoad: true, humanWindowIdentity: true });
         await page.close();
       }
     }

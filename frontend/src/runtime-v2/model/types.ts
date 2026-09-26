@@ -312,6 +312,7 @@ export type WindowJob = {
 
 export type WindowDetail = {
   client_window_key: string;
+  detail_level?: "primary" | "full";
   source: string;
   last_seen_at_ms: number;
   last_tool_call_at_ms?: number;

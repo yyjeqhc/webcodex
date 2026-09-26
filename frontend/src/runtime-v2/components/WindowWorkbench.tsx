@@ -158,10 +158,10 @@ export function WindowWorkbench({
 
   const detail = windows.detail;
   useEffect(() => {
-    if (!detail) return;
+    if (!windows.selectedKey) return;
     setCenterTab("window");
     setSelectedSessionId("");
-  }, [detail?.client_window_key]);
+  }, [windows.selectedKey]);
   const selectedSummary = windows.windows.find((row) => row.client_window_key === windows.selectedKey);
   const activeRequest = detail?.active_requests.slice().sort((a, b) => b.started_at_ms - a.started_at_ms)[0];
   const currentProjectId = activeRequest?.project || selectedSummary?.last_project || detail?.activity[0]?.project;
@@ -182,6 +182,9 @@ export function WindowWorkbench({
   const currentMachine = currentProject?.client_id;
   const currentDirectory = displayProjectPath(currentProject?.path);
   const currentProjectAddress = currentProject?.id;
+  const hasSelectedWindow = Boolean(selectedSummary || detail);
+  const visibleActiveCount = detail?.active_count ?? selectedSummary?.active_count ?? 0;
+  const visibleActivityCount = (detail?.activity_returned || 0) + visibleActiveCount;
 
   return (
     <div className="work-layout window-primary-workbench" data-testid="window-primary-workbench">
@@ -269,7 +272,7 @@ export function WindowWorkbench({
       </aside>
 
       <main className="window-work-main ui-workbench-surface">
-        {detail ? (
+        {hasSelectedWindow ? (
           <>
             <header className="window-work-header">
               <div>
@@ -315,7 +318,7 @@ export function WindowWorkbench({
               <span className={"quiet-pill " + (isActive ? "running" : "")}>
                 <CircleDot size={11} />
                 {isActive
-                  ? detail.active_count + " " + t("active")
+                  ? visibleActiveCount + " " + t("active")
                   : t("Idle") + " · " + relativeTime(lastObservedAt)}
               </span>
             </header>
@@ -332,7 +335,7 @@ export function WindowWorkbench({
               >
                 <Monitor size={14} />
                 {t("Window")}
-                <span>{detail.activity_returned + detail.active_count}</span>
+                <span>{visibleActivityCount}</span>
               </button>
               <button
                 id="window-collaboration-tab"
@@ -356,14 +359,27 @@ export function WindowWorkbench({
               hidden={centerTab !== "window"}
             >
               {windows.detailAvailability === "stale" && <div className="inventory-note">{t("Window activity refresh failed; showing previous observations.")}</div>}
-              <WindowActivityFeed
-                key={detail.client_window_key}
-                detail={detail}
-                projects={projects}
-                language={language}
-                selectedSessionId={selectedSessionId}
-                onSelectSession={setSelectedSessionId}
-              />
+              {windows.detailHydrating && detail?.detail_level !== "full" && (
+                <div className="window-progressive-note">{t("Loading history…")}</div>
+              )}
+              {detail ? (
+                <WindowActivityFeed
+                  key={detail.client_window_key}
+                  detail={detail}
+                  projects={projects}
+                  language={language}
+                  selectedSessionId={selectedSessionId}
+                  onSelectSession={setSelectedSessionId}
+                />
+              ) : (
+                <div className="empty-inline">
+                  {t(
+                    windows.detailAvailability === "error" || windows.detailAvailability === "denied"
+                      ? "Window activity unavailable"
+                      : "Loading recent activity…",
+                  )}
+                </div>
+              )}
             </div>
 
             <div
@@ -373,8 +389,16 @@ export function WindowWorkbench({
               aria-labelledby="window-collaboration-tab"
               hidden={centerTab !== "collaboration"}
             >
-              <WindowCollaboration key={detail.client_window_key} client={client} windowKey={detail.client_window_key}
-                selectedSessionId={selectedSessionId} language={language} onUnauthorized={onUnauthorized} />
+              {windows.selectedKey && (
+                <WindowCollaboration
+                  key={windows.selectedKey}
+                  client={client}
+                  windowKey={windows.selectedKey}
+                  selectedSessionId={selectedSessionId}
+                  language={language}
+                  onUnauthorized={onUnauthorized}
+                />
+              )}
             </div>
           </>
         ) : (

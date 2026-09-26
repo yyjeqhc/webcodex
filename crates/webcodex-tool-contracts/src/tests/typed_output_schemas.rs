@@ -400,7 +400,7 @@ fn lsp_typed_fields_are_closed_while_intentional_projection_boundaries_stay_open
 
 #[test]
 fn apply_text_edits_success_match_ranges_require_occurrence_while_conflicts_keep_it_optional() {
-    let schema = output_schema_for_tool("apply_text_edits");
+    let schema = output_schema_for_tool("edit_project_files");
     let success_range = &schema["properties"]["output"]["properties"]["files"]["items"]
         ["properties"]["edits"]["items"]["properties"]["match_ranges"]["items"];
     assert_eq!(

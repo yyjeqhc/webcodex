@@ -205,7 +205,7 @@ async fn direct_edit(
     let args = json!({"project":project,"session_id":session,"changes":[{
         "path":"src/example.rs","old_text":old,"new_text":new
     }]});
-    let task = tokio::spawn(async move { canonical_call(&rt, "apply_text_edits", args).await });
+    let task = tokio::spawn(async move { canonical_call(&rt, "edit_project_files", args).await });
     assert_eq!(
         service_e2b_call(
             runtime,

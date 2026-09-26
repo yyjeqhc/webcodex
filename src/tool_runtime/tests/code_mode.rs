@@ -924,7 +924,7 @@ async fn e2a_denies_mutation_shell_recursion_and_invalid_validator_before_busine
     let (runtime, project, _) = e2a_validation_runtime(client_id).await;
     for (label, source) in [
         (
-            "apply_text_edits",
+            "edit_project_files",
             "await tools.apply_text_edits({changes: []});",
         ),
         (

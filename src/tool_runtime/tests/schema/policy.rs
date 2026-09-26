@@ -137,7 +137,7 @@ fn required_runner_capability_matches_metadata_risk_table() {
             RunnerCapabilityRequirement::FileWrite,
         ),
         (
-            "apply_text_edits",
+            "edit_project_files",
             ToolRisk::ProjectWrite,
             RunnerCapabilityRequirement::FileWrite,
         ),

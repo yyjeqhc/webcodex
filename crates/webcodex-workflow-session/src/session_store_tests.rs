@@ -26,7 +26,7 @@ fn session_tool_contract(tool_name: &str) -> SessionToolContract {
     let (read_like, write_like, shell_like, path_hint) = match tool_name {
         "read_file" => (true, false, false, SessionPathHint::SinglePath),
         "write_project_file" => (false, true, false, SessionPathHint::SinglePath),
-        "apply_text_edits" => (false, true, false, SessionPathHint::PathList),
+        "edit_project_files" => (false, true, false, SessionPathHint::PathList),
         "run_shell" | "session_shell_exec" | "cargo_check" => {
             (false, false, true, SessionPathHint::None)
         }
@@ -369,9 +369,9 @@ fn coding_git_baseline_and_repository_edit_fact_persist_resume_and_default_legac
         .record_tool_call_started(
             Some(&session_id),
             SessionTransport::Mcp,
-            "apply_text_edits",
+            "edit_project_files",
             &json!({"project": "agent:oe:private-drop", "path": "src/lib.rs"}),
-            session_tool_contract("apply_text_edits"),
+            session_tool_contract("edit_project_files"),
         )
         .unwrap();
     store

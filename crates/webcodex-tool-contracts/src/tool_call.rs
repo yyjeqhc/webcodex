@@ -4597,9 +4597,9 @@ pub enum ToolCall {
 
     /// Apply a bounded transactional batch of edit/create/delete/rename file
     /// changes via the owning Runner. Whole-file and positional changes carry
-    /// a model-facing read revision; globally unique local exact edits may omit
-    /// it. Every change is preflighted before the first mutation. `dry_run` computes the full plan without writing. Model/API
+    /// a model-facing read revision from read_files. Every change is preflighted before the first mutation. `dry_run` computes the full plan without writing. Model/API
     /// exposure is derived from the canonical ToolDefinition surface.
+    #[serde(rename = "edit_project_files")]
     ApplyTextEdits {
         /// Runner-registered project id.
         project: String,
@@ -5651,7 +5651,7 @@ impl ToolCall {
             Self::ArtifactUploadChunk { .. } => "artifact_upload_chunk",
             Self::ArtifactUploadFinish { .. } => "artifact_upload_finish",
             Self::ArtifactUploadAbort { .. } => "artifact_upload_abort",
-            Self::ApplyTextEdits { .. } => "apply_text_edits",
+            Self::ApplyTextEdits { .. } => "edit_project_files",
             Self::LspStatus { .. } => "lsp_status",
             Self::DocumentSymbols { .. } => "document_symbols",
             Self::DocumentDiagnostics { .. } => "document_diagnostics",

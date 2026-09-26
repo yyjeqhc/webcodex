@@ -359,7 +359,7 @@ async fn wait_for_failure_request(runtime: &ToolRuntime) -> crate::runner_protoc
 
 async fn complete_failure_request(runtime: &ToolRuntime, tool: &str) {
     let request = wait_for_failure_request(runtime).await;
-    let edit = tool == "apply_text_edits";
+    let edit = tool == "edit_project_files";
     assert_eq!(
         request.kind,
         if edit {
@@ -639,7 +639,7 @@ async fn http_apply_text_edits_and_process_failures_preserve_canonical_output() 
     ));
     for (tool, arguments) in [
         (
-            "apply_text_edits",
+            "edit_project_files",
             json!({"project": "agent:failure-runner:probe", "changes": [{"kind": "edit", "path": "probe.txt", "edits": [{"kind": "replace_exact", "old_text": "dup", "new_text": "replacement"}]}]}),
         ),
         (
@@ -661,7 +661,7 @@ async fn http_apply_text_edits_and_process_failures_preserve_canonical_output() 
             let (status, mut body) = response;
             assert_eq!(status, StatusCode::OK, "{body}");
             let output = assert_failure(&body, client != "openai-mcp");
-            if tool == "apply_text_edits" {
+            if tool == "edit_project_files" {
                 assert_eq!(output["error_kind"], "multiple_matches");
                 assert_eq!(output["state_changed"], false);
                 assert_eq!(output["execution_state"], "not_started");

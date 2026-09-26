@@ -366,7 +366,7 @@ mod tests {
     fn tool_metadata_write_tools_are_project_write() {
         for name in [
             "write_project_file",
-            "apply_text_edits",
+            "edit_project_files",
             "apply_patch",
             "apply_unified_diff",
             "delete_project_files",

@@ -422,7 +422,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ("recovery", apply_patch_recovery_schema()),
             ("retry_guidance", schema_type("string", "Bounded recovery guidance for deterministic no-mutation rejection.")),
         ])),
-        "apply_text_edits" => Some(wrapped_output_schema(vec![
+        "edit_project_files" => Some(wrapped_output_schema(vec![
             (
                 "dry_run",
                 schema_type("boolean", "Whether this was a dry-run (no write)."),

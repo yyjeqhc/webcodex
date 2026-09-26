@@ -103,8 +103,8 @@ async fn bulk_exact_old_runner_is_rejected_without_queueing() {
 #[test]
 fn apply_text_edits_occurrence_and_recovery_schemas_are_model_visible() {
     let specs = registered_tool_specs();
-    let spec = spec_named(&specs, "apply_text_edits");
-    let change_variants = spec.input_schema["properties"]["changes"]["items"]["anyOf"]
+    let spec = spec_named(&specs, "edit_project_files");
+    let change_variants = spec.input_schema["properties"]["changes"]["items"]["oneOf"]
         .as_array()
         .expect("apply_text_edits change wire union");
     let canonical = change_variants
@@ -231,10 +231,10 @@ fn apply_text_edits_occurrence_and_recovery_schemas_are_model_visible() {
     .unwrap_or_else(|error| panic!("compact conflict evidence must match output schema: {error}"));
 
     let openapi = crate::openapi::build_openapi_spec();
-    let action = &openapi["paths"]["/api/actions/apply_text_edits"]["post"];
-    assert_eq!(action["operationId"], "apply_text_edits");
+    let action = &openapi["paths"]["/api/actions/edit_project_files"]["post"];
+    assert_eq!(action["operationId"], "edit_project_files");
     let action_change_variants = action["requestBody"]["content"]["application/json"]["schema"]
-        ["properties"]["changes"]["items"]["anyOf"]
+        ["properties"]["changes"]["items"]["oneOf"]
         .as_array()
         .expect("Action apply_text_edits change wire union");
     let action_canonical = action_change_variants
@@ -702,7 +702,7 @@ fn apply_text_edits_stale_sha_still_rejects_before_occurrence() {
 }
 
 fn parsed_apply_text_edits_changes(arguments: Value) -> Vec<ApplyFileChangeInput> {
-    let call = ToolCall::from_tool_name("apply_text_edits", arguments).unwrap();
+    let call = ToolCall::from_tool_name("edit_project_files", arguments).unwrap();
     let ToolCall::ApplyTextEdits { changes, .. } = call else {
         panic!("expected apply_text_edits");
     };
@@ -851,7 +851,7 @@ async fn apply_text_edits_shorthand_positional_guards_match_canonical_rejection(
         serde_json::json!({"path":"src/lib.rs","old_text":"dup","new_text":"x","expected_read_revision":3817291045227_u64,"occurrence":2}),
     ] {
         let parsed = ToolCall::from_tool_name(
-            "apply_text_edits",
+            "edit_project_files",
             serde_json::json!({
                 "project": "agent:unused:unused",
                 "changes": [shorthand]
@@ -1142,7 +1142,7 @@ async fn apply_text_edits_success_mints_final_revisions_and_continues_without_re
     assert!(files[3]["read_revision"].is_null());
     assert_eq!(files[4]["read_revision"].as_u64(), Some(noop_revision));
     let audit = crate::tool_runtime::tool_audit::session_log_result_for_tool(
-        "apply_text_edits",
+        "edit_project_files",
         &result.output,
     );
     assert_eq!(audit["files"][0]["old_sha256"], edit_old);
@@ -1807,7 +1807,7 @@ async fn apply_text_edits_overlap_projects_bounded_resolved_ranges_without_bodie
         .error
         .as_deref()
         .is_some_and(|error| error.contains("planned exact edit ranges overlap")));
-    let output_schema = crate::tool_runtime::registry::output_schema_for_tool("apply_text_edits");
+    let output_schema = crate::tool_runtime::registry::output_schema_for_tool("edit_project_files");
     crate::tool_runtime::startup_brief::validate_schema_instance_for_test(
         &serde_json::to_value(&result).unwrap(),
         &output_schema,
@@ -1855,7 +1855,7 @@ async fn apply_text_edits_server_preflight_reports_exact_failed_edit() {
     assert_eq!(result.output["kind"], "replace_exact");
     assert_eq!(result.output["path"], "src/second.rs");
     assert!(result.output.get("retry_guidance").is_none());
-    let output_schema = crate::tool_runtime::registry::output_schema_for_tool("apply_text_edits");
+    let output_schema = crate::tool_runtime::registry::output_schema_for_tool("edit_project_files");
     let serialized = serde_json::to_value(&result).unwrap();
     crate::tool_runtime::startup_brief::validate_schema_instance_for_test(
         &serialized,
@@ -2155,7 +2155,7 @@ async fn apply_text_edits_read_only_session_rejected() {
         .unwrap();
     assert_eq!(summary.counts.failed, 1);
     assert_eq!(summary.counts.write_like, 1);
-    let event = finished_event(&summary, "apply_text_edits");
+    let event = finished_event(&summary, "edit_project_files");
     assert_eq!(event.status.as_deref(), Some("failed"));
     assert_eq!(event.error_kind.as_deref(), Some("session_guard_denied"));
 }
@@ -2253,7 +2253,7 @@ async fn apply_text_edits_session_event_summary() {
         .is_some());
     crate::tool_runtime::startup_brief::validate_schema_instance_for_test(
         &serde_json::to_value(&result).unwrap(),
-        &crate::tool_runtime::registry::output_schema_for_tool("apply_text_edits"),
+        &crate::tool_runtime::registry::output_schema_for_tool("edit_project_files"),
     )
     .unwrap();
 
@@ -2263,7 +2263,7 @@ async fn apply_text_edits_session_event_summary() {
         .unwrap();
     assert_eq!(summary.counts.succeeded, 1);
     assert_eq!(summary.counts.write_like, 1);
-    let event = finished_event(&summary, "apply_text_edits");
+    let event = finished_event(&summary, "edit_project_files");
     assert_eq!(event.status.as_deref(), Some("succeeded"));
     // changed_paths recorded from the input path.
     assert!(event.changed_paths.iter().any(|p| p == "src/lib.rs"));
@@ -2273,7 +2273,7 @@ async fn apply_text_edits_session_event_summary() {
         .events
         .iter()
         .rev()
-        .find(|e| e.kind == "tool_call_started" && e.tool_name == "apply_text_edits")
+        .find(|e| e.kind == "tool_call_started" && e.tool_name == "edit_project_files")
         .expect("started event for apply_text_edits");
     let input_summary = started
         .input_summary
@@ -2309,7 +2309,7 @@ fn assert_apply_text_edits_outcome_unknown(result: &ToolResult) {
     assert!(error.contains("Inspect current workspace state"), "{error}");
     assert!(!error.contains("No files were modified"), "{error}");
 
-    let schema = crate::tool_runtime::registry::output_schema_for_tool("apply_text_edits");
+    let schema = crate::tool_runtime::registry::output_schema_for_tool("edit_project_files");
     crate::tool_runtime::startup_brief::validate_schema_instance_for_test(
         &serde_json::to_value(result).unwrap(),
         &schema,
@@ -2456,7 +2456,7 @@ async fn apply_text_edits_host_structural_schema_accepts_but_runtime_rejects_ung
     .await;
     let project = agent_test_project_id(client);
     let specs = registered_tool_specs();
-    let schema = &spec_named(&specs, "apply_text_edits").input_schema;
+    let schema = &spec_named(&specs, "edit_project_files").input_schema;
     for selector in [
         serde_json::json!({"occurrence":2}),
         serde_json::json!({"line_scope":{"start_line":2,"end_line":2}}),
@@ -2552,7 +2552,7 @@ async fn apply_text_edits_path_overlap_identifies_first_and_current_changes() {
         }
         crate::tool_runtime::startup_brief::validate_schema_instance_for_test(
             &serde_json::to_value(&result).unwrap(),
-            &crate::tool_runtime::registry::output_schema_for_tool("apply_text_edits"),
+            &crate::tool_runtime::registry::output_schema_for_tool("edit_project_files"),
         )
         .unwrap();
     }

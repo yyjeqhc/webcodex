@@ -58,7 +58,7 @@ async fn adaptive_tools_list_exposes_ranked_direct_tools_and_gateway() {
         "read_files",
         "search_project_texts",
         "search_and_read",
-        "apply_text_edits",
+        "edit_project_files",
         "run_process",
         "run_script",
         "run_shell",

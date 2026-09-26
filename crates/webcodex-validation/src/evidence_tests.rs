@@ -3403,7 +3403,7 @@ fn current_evidence_failed_noop_mutation_does_not_reset() {
     record_finished_tool(
         &store,
         &session.session_id,
-        "apply_text_edits",
+        "edit_project_files",
         json!({"project": "agent:eval:demo", "changes": [{"kind": "edit", "path": "src/lib.rs"}]}),
         false,
         json!({"state_changed": false, "failure_kind": "stale_precondition"}),
@@ -3539,7 +3539,7 @@ fn record_content_mutation(store: &SessionStore, session_id: &str, proven: bool)
     record_finished_tool(
         store,
         session_id,
-        "apply_text_edits",
+        "edit_project_files",
         json!({"project": "agent:eval:demo", "changes": [{"kind": "edit", "path": "src/lib.rs"}]}),
         true,
         if proven {

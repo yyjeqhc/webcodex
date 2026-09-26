@@ -775,7 +775,7 @@ fn meaningful_tool_classification_excludes_status_and_manifest_queries() {
     }
     // Write / shell / git / validation tools do count.
     for name in [
-        "apply_text_edits",
+        "edit_project_files",
         "run_shell",
         "show_changes",
         "cargo_test",
@@ -897,12 +897,12 @@ fn record_write_for(runtime: &ToolRuntime, session_id: &str, project: &str, path
     let start = runtime.sessions.record_tool_call_started(
         Some(session_id),
         SessionTransport::Api,
-        "apply_text_edits",
+        "edit_project_files",
         &json!({
             "project": project,
             "changes": changes,
         }),
-        crate::tool_runtime::sessions::session_tool_contract("apply_text_edits"),
+        crate::tool_runtime::sessions::session_tool_contract("edit_project_files"),
     );
     runtime.sessions.record_tool_call_finished(
         start,

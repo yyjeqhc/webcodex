@@ -2372,7 +2372,7 @@ async fn tool_manifest_recommends_default_remote_coding_loop() {
         "import_conversation_files_to_project",
         "project_artifact",
         "show_changes",
-        "apply_text_edits",
+        "edit_project_files",
         "apply_unified_diff",
         "write_project_file",
         "cargo_check",

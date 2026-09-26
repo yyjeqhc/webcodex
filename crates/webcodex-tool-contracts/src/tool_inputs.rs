@@ -111,93 +111,75 @@ pub use webcodex_core::apply_edits_shared::{
     ApplyFileChangeKind, ApplyTextEditInput, ApplyTextEditKind, ApplyTextLineScope,
 };
 
-/// Canonical file change. For occurrence, line_scope, expected_match_count, or
-/// multiple edits use kind=edit with edits[]; selectors belong inside each edit.
-#[derive(Debug, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-struct ApplyFileChangeCanonicalInput {
-    kind: ApplyFileChangeKind,
-    #[schemars(length(min = 1))]
-    path: String,
-    #[schemars(length(min = 1))]
-    #[serde(default)]
-    to_path: Option<String>,
-    #[serde(default)]
-    content: Option<String>,
-    /// Independent edits to this file, all resolved against the same original source snapshot.
-    /// Use ONE change per file, not repeated changes. Put occurrence/line_scope on these entries.
-    #[schemars(length(max = 20))]
-    #[serde(default)]
-    edits: Vec<ApplyTextEditInput>,
-    #[serde(default)]
-    #[schemars(range(min = 1, max = 9007199254740991u64))]
-    expected_read_revision: Option<u64>,
-}
-
-/// Shorthand for ONE simple exact replacement only. For occurrence, line_scope, or
-/// multiple edits use canonical kind=edit with edits[] instead; do not mix the forms.
-#[derive(Debug, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-struct ApplyFileChangeExactReplaceInput {
-    #[schemars(length(min = 1))]
-    path: String,
-    #[schemars(length(min = 1))]
-    old_text: String,
-    new_text: String,
-    #[serde(default)]
-    #[schemars(range(min = 1, max = 9007199254740991u64))]
-    expected_read_revision: Option<u64>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-#[serde(untagged)]
+/// One closed file-change variant. Existing sources require the revision returned by read_files.
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 enum ApplyFileChangeWireInput {
-    Canonical(ApplyFileChangeCanonicalInput),
-    ExactReplace(ApplyFileChangeExactReplaceInput),
+    Edit {
+        #[schemars(length(min = 1))]
+        path: String,
+        #[schemars(range(min = 1, max = 9007199254740991u64))]
+        expected_read_revision: u64,
+        /// All edits resolve against the original read snapshot; use ONE change per file.
+        #[schemars(length(min = 1, max = 20))]
+        edits: Vec<ApplyTextEditInput>,
+    },
+    Create {
+        #[schemars(length(min = 1))]
+        path: String,
+        content: String,
+    },
+    Delete {
+        #[schemars(length(min = 1))]
+        path: String,
+        #[schemars(range(min = 1, max = 9007199254740991u64))]
+        expected_read_revision: u64,
+    },
+    Rename {
+        #[schemars(length(min = 1))]
+        path: String,
+        #[schemars(length(min = 1))]
+        to_path: String,
+        #[schemars(range(min = 1, max = 9007199254740991u64))]
+        expected_read_revision: u64,
+    },
 }
 
+// Runtime plan data. The model DTO above is the only accepted invocation shape;
+// the Runner wire guard remains a separate internal representation.
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 #[schemars(with = "ApplyFileChangeWireInput")]
 pub struct ApplyFileChangeInput {
     pub kind: ApplyFileChangeKind,
     pub path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub to_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub edits: Vec<ApplyTextEditInput>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub expected_read_revision: Option<u64>,
 }
 
 impl<'de> Deserialize<'de> for ApplyFileChangeInput {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
+    where D: Deserializer<'de>,
     {
-        Ok(match ApplyFileChangeWireInput::deserialize(deserializer)? {
-            ApplyFileChangeWireInput::Canonical(input) => Self {
-                kind: input.kind,
-                path: input.path,
-                to_path: input.to_path,
-                content: input.content,
-                edits: input.edits,
-                expected_read_revision: input.expected_read_revision,
-            },
-            ApplyFileChangeWireInput::ExactReplace(input) => Self {
-                kind: ApplyFileChangeKind::Edit,
-                path: input.path,
-                to_path: None,
-                content: None,
-                edits: vec![ApplyTextEditInput {
-                    kind: ApplyTextEditKind::ReplaceExact,
-                    old_text: Some(input.old_text),
-                    new_text: Some(input.new_text),
-                    anchor_text: None,
-                    occurrence: None,
-                    expected_match_count: None,
-                    line_scope: None,
-                }],
-                expected_read_revision: input.expected_read_revision,
-            },
-        })
+        let (kind, path, to_path, content, edits, revision) = match ApplyFileChangeWireInput::deserialize(deserializer)? {
+            ApplyFileChangeWireInput::Edit { path, expected_read_revision, edits } =>
+                (ApplyFileChangeKind::Edit, path, None, None, edits, Some(expected_read_revision)),
+            ApplyFileChangeWireInput::Create { path, content } =>
+                (ApplyFileChangeKind::Create, path, None, Some(content), vec![], None),
+            ApplyFileChangeWireInput::Delete { path, expected_read_revision } =>
+                (ApplyFileChangeKind::Delete, path, None, None, vec![], Some(expected_read_revision)),
+            ApplyFileChangeWireInput::Rename { path, to_path, expected_read_revision } =>
+                (ApplyFileChangeKind::Rename, path, Some(to_path), None, vec![], Some(expected_read_revision)),
+        };
+        if revision.is_some_and(|r| !(1..=9_007_199_254_740_991).contains(&r)) {
+            return Err(serde::de::Error::custom("expected_read_revision must be a positive JSON-safe integer"));
+        }
+        Ok(Self {kind, path, to_path, content, edits, expected_read_revision: revision})
     }
 }
 

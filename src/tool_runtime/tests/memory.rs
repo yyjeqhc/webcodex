@@ -1156,7 +1156,7 @@ async fn memory_surface_scopes_and_permission_are_independent_authority() {
     );
 
     let restricted = PermissionEvaluator::with_mode(AuthorityMode::Restricted)
-        .evaluate("apply_text_edits", None)
+        .evaluate("edit_project_files", None)
         .expect("mutation remains permission-bearing");
     assert!(!restricted.allows_execution());
 }

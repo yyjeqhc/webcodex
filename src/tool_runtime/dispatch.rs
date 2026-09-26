@@ -102,7 +102,7 @@ pub(super) fn decorate_structured_execution_prestart_denial(
         tool_name,
         "run_process" | "run_detached_process" | "run_script" | "run_skill_resource"
     );
-    let structured_mutation = tool_name == "apply_text_edits";
+    let structured_mutation = tool_name == "edit_project_files";
     if !structured_execution && !structured_mutation {
         return;
     }

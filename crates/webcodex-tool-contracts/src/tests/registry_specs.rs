@@ -362,22 +362,10 @@ fn tool_specs_describe_default_coding_loop_preferences() {
     }
     assert!(!apply_patch_desc.contains("prefer apply_patch"));
 
-    let apply_text_edits_desc = desc("apply_text_edits");
+    let apply_text_edits_desc = desc("edit_project_files");
     for phrase in [
-        "transactional structured option",
-        "small/local exact edits",
-        "globally unique",
-        "may omit expected_read_revision",
-        "occurrence or line_scope",
-        "requires expected_read_revision",
-        "revisions fence whole-file snapshots",
-        "model input never needs a digest",
-        "preflighted transactionally",
-        "conflicts fail closed",
-        "rechecks source before mutation",
-        "one parser-ready read_files recovery call",
-        "inspect the resulting diff",
-        "validate the final source",
+        "primary project editor", "read_files", "expected_read_revision", "global source order",
+        "preflighted transactionally", "conflicts fail closed", "outcome_unknown",
     ] {
         assert!(
             apply_text_edits_desc.contains(phrase),
@@ -793,7 +781,7 @@ fn edit_tool_surface_keeps_mutation_options_visible_and_schemas_stable() {
         specs.iter().map(|spec| spec.name.as_str()).collect();
 
     for required in [
-        "apply_text_edits",
+        "edit_project_files",
         "apply_patch",
         "apply_unified_diff",
         "write_project_file",
@@ -814,7 +802,7 @@ fn edit_tool_surface_keeps_mutation_options_visible_and_schemas_stable() {
     }
 
     // Parameter surface smoke checks (names only; not full-schema snapshots).
-    let text_edits = &spec_named(&specs, "apply_text_edits").input_schema["properties"];
+    let text_edits = &spec_named(&specs, "edit_project_files").input_schema["properties"];
     for field in ["project", "changes", "dry_run"] {
         assert!(
             text_edits.get(field).is_some(),
@@ -822,7 +810,7 @@ fn edit_tool_surface_keeps_mutation_options_visible_and_schemas_stable() {
         );
     }
     let text_edit_output =
-        &spec_named(&specs, "apply_text_edits").output_schema["properties"]["output"]["properties"];
+        &spec_named(&specs, "edit_project_files").output_schema["properties"]["output"]["properties"];
     let text_edit_file_properties = text_edit_output["files"]["items"]["properties"]
         .as_object()
         .expect("apply_text_edits file summary properties");

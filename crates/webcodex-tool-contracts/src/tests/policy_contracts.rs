@@ -187,7 +187,7 @@ fn tool_definitions_drive_session_and_permission_policy() {
     for (name, effect, risk) in [
         ("apply_patch", ToolEffect::Mutate, ToolRisk::ProjectWrite),
         (
-            "apply_text_edits",
+            "edit_project_files",
             ToolEffect::Mutate,
             ToolRisk::ProjectWrite,
         ),
@@ -504,7 +504,7 @@ fn tool_definitions_drive_session_and_permission_policy() {
         #[cfg(feature = "workspace-checkpoints")]
         ("workspace_checkpoint_restore", PERMISSION_RISK_PATCH),
         ("write_project_file", PERMISSION_RISK_WRITE),
-        ("apply_text_edits", PERMISSION_RISK_WRITE),
+        ("edit_project_files", PERMISSION_RISK_WRITE),
         ("assign_agent_task", PERMISSION_RISK_WRITE),
         ("reconcile_agent_task_coding_run", PERMISSION_RISK_WRITE),
         ("heartbeat_agent_task_attempt", PERMISSION_RISK_WRITE),
@@ -700,7 +700,7 @@ fn required_runner_capability_matches_metadata_risk_table() {
             RunnerCapabilityRequirement::FileWrite,
         ),
         (
-            "apply_text_edits",
+            "edit_project_files",
             ToolRisk::ProjectWrite,
             RunnerCapabilityRequirement::FileWrite,
         ),

@@ -21,7 +21,7 @@ mod e2c;
 const E2B_MUTATION_ONLY_POLICY: OrchestrationPolicy = OrchestrationPolicy {
     frontend: "code_mode_e2b_test",
     policy_name: "Code Mode E2b test",
-    admitted_tools: &["apply_text_edits"],
+    admitted_tools: &["edit_project_files"],
     denied_tools: &["code_mode_exec_mutating"],
     additional_forbidden_argument_fields: &[],
     child_return_timing: crate::tool_runtime::return_timing::ToolReturnTimingPolicy::unconstrained(
@@ -409,7 +409,7 @@ async fn e2b_read_guarded_edit_post_read_preserves_canonical_mutation_truth() {
     assert_eq!(receipt["consequential_calls"], 1);
     assert_eq!(receipt["known_results"], 1);
     assert_eq!(receipt["outcome_unknown"], 0);
-    assert_eq!(receipt["children"][0]["tool"], "apply_text_edits");
+    assert_eq!(receipt["children"][0]["tool"], "edit_project_files");
     assert_eq!(receipt["children"][0]["state_changed"], true);
     assert!(
         runtime
@@ -794,7 +794,7 @@ async fn e2b_same_project_mutation_fence_serializes_independent_hosts() {
         async move {
             host.invoke_tool(
                 1,
-                "apply_text_edits".to_string(),
+                "edit_project_files".to_string(),
                 json!({"changes":[{"kind":"edit","path":"src/example.rs","edits":[{"kind":"replace_exact","old_text":"one","new_text":"first"}]}]}),
             )
             .await
@@ -816,7 +816,7 @@ async fn e2b_same_project_mutation_fence_serializes_independent_hosts() {
         async move {
             host.invoke_tool(
                 1,
-                "apply_text_edits".to_string(),
+                "edit_project_files".to_string(),
                 json!({"changes":[{"kind":"edit","path":"src/example.rs","edits":[{"kind":"replace_exact","old_text":"first","new_text":"second"}]}]}),
             )
             .await
@@ -906,7 +906,7 @@ async fn e2b_mutation_fence_is_project_scoped_not_process_global() {
         async move {
             host.invoke_tool(
                 1,
-                "apply_text_edits".to_string(),
+                "edit_project_files".to_string(),
                 json!({"changes":[{"kind":"edit","path":"src/example.rs","edits":[{"kind":"replace_exact","old_text":"two","new_text":"changed"}]}]}),
             )
             .await
@@ -1547,7 +1547,7 @@ async fn e2b_child_permission_denial_is_canonical_and_non_effectful() {
     let nested = host
         .invoke_tool(
             1,
-            "apply_text_edits".to_string(),
+            "edit_project_files".to_string(),
             json!({"changes":[{"kind":"create","path":"blocked.txt","content":"x"}]}),
         )
         .await

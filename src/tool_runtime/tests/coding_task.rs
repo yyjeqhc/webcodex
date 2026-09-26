@@ -370,7 +370,7 @@ async fn coding_workflow_full_diagnostic_has_no_binding_projection() {
     let edit = result.output["recommended_flow"]["edit"]
         .as_array()
         .unwrap();
-    assert!(contains_string(edit, "apply_text_edits"));
+    assert!(contains_string(edit, "edit_project_files"));
     assert!(contains_string(edit, "apply_unified_diff"));
     assert!(contains_string(edit, "write_project_file"));
     assert!(!contains_string(edit, "replace_line_range"));
@@ -801,12 +801,12 @@ async fn work_on_project_non_git_startup_never_retroactively_acquires_baseline()
     let edit = runtime.sessions.record_tool_call_started(
         Some(&session_id),
         SessionTransport::Mcp,
-        "apply_text_edits",
+        "edit_project_files",
         &json!({
             "project": project,
             "changes": [{"kind": "create", "path": "README.md"}]
         }),
-        crate::tool_runtime::sessions::session_tool_contract("apply_text_edits"),
+        crate::tool_runtime::sessions::session_tool_contract("edit_project_files"),
     );
     runtime.sessions.record_tool_call_finished(
         edit,
@@ -1480,7 +1480,7 @@ async fn finish_coding_task_emits_one_parser_ready_changes_presentation_in_full_
     record_coding_task_tool_event(
         &runtime,
         &session_id,
-        "apply_text_edits",
+        "edit_project_files",
         json!({
             "project": project,
             "changes": [{"kind": "edit", "path": "README.md"}]
@@ -1580,7 +1580,7 @@ async fn finish_coding_task_blocking_closeout_does_not_seal_final_changes() {
     record_coding_task_tool_event(
         &runtime,
         &session_id,
-        "apply_text_edits",
+        "edit_project_files",
         json!({
             "project": project,
             "changes": [{"kind": "edit", "path": "README.md"}]
@@ -2010,7 +2010,7 @@ async fn finish_coding_task_historical_unresolved_current_pass_does_not_request_
     record_coding_task_tool_event(
         &fixture.runtime,
         &fixture.session_id,
-        "apply_text_edits",
+        "edit_project_files",
         json!({
             "project": fixture.project.clone(),
             "changes": [{"kind": "edit", "path": "src/lib.rs"}]
@@ -2437,7 +2437,7 @@ async fn finish_coding_task_combined_early_fmt_and_test_failures_resolve_without
     record_coding_task_tool_event(
         &fixture.runtime,
         &fixture.session_id,
-        "apply_text_edits",
+        "edit_project_files",
         json!({
             "project": fixture.project.clone(),
             "changes": [{"kind": "edit", "path": "src/lib.rs"}]
@@ -2482,7 +2482,7 @@ async fn finish_coding_task_combined_early_fmt_and_test_failures_resolve_without
     record_coding_task_tool_event(
         &fixture.runtime,
         &fixture.session_id,
-        "apply_text_edits",
+        "edit_project_files",
         json!({
             "project": fixture.project.clone(),
             "changes": [{"kind": "edit", "path": "src/lib.rs"}]
@@ -2663,7 +2663,7 @@ async fn finish_coding_task_resolved_history_keeps_real_tool_failure_blocking() 
     record_coding_task_tool_event(
         &fixture.runtime,
         &fixture.session_id,
-        "apply_text_edits",
+        "edit_project_files",
         json!({"project": fixture.project.clone(), "changes": []}),
         false,
         json!({"failure_kind": "stale_precondition"}),
@@ -2721,7 +2721,7 @@ async fn failure_history_fail_closed_attempts_do_not_block_clean_finish() {
     record_coding_task_tool_event(
         &fixture.runtime,
         &fixture.session_id,
-        "apply_text_edits",
+        "edit_project_files",
         json!({"project": fixture.project.clone(), "changes": []}),
         false,
         json!({
@@ -2966,7 +2966,7 @@ async fn failure_history_outcome_unknown_remains_actionable() {
     record_coding_task_tool_event(
         &fixture.runtime,
         &fixture.session_id,
-        "apply_text_edits",
+        "edit_project_files",
         json!({"project": fixture.project.clone(), "changes": []}),
         false,
         json!({
@@ -3010,7 +3010,7 @@ async fn failure_history_missing_effect_proof_remains_actionable() {
     record_coding_task_tool_event(
         &fixture.runtime,
         &fixture.session_id,
-        "apply_text_edits",
+        "edit_project_files",
         json!({"project": fixture.project.clone(), "changes": []}),
         false,
         json!({"failure_kind": "stale_precondition"}),
@@ -3023,7 +3023,7 @@ async fn failure_history_missing_effect_proof_remains_actionable() {
     let failed = summary
         .events
         .iter()
-        .find(|event| event.kind == "tool_call_finished" && event.tool_name == "apply_text_edits")
+        .find(|event| event.kind == "tool_call_finished" && event.tool_name == "edit_project_files")
         .expect("failed guarded mutation event");
     assert!(
         failed.effect_evidence.is_none(),

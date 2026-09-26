@@ -101,69 +101,10 @@ fn code_mode_exec_mutating_is_not_a_tool_call_without_feature() {
 }
 
 #[test]
-fn apply_text_edits_shorthand_normalizes_once_to_canonical_call() {
-    let revision = 3817291045227_u64;
-    let call = ToolCall::from_tool_name(
-        "apply_text_edits",
-        json!({
-            "project": "agent:special:demo",
-            "changes": [{
-                "path": "src/lib.rs",
-                "old_text": "old",
-                "new_text": "new",
-                "expected_read_revision": revision
-            }]
-        }),
-    )
-    .unwrap();
-    let ToolCall::ApplyTextEdits { changes, .. } = call else {
-        panic!("expected apply_text_edits");
-    };
-    assert_eq!(changes.len(), 1);
-    let change = &changes[0];
-    assert_eq!(change.kind, ApplyFileChangeKind::Edit);
-    assert_eq!(change.path, "src/lib.rs");
-    assert!(change.to_path.is_none());
-    assert!(change.content.is_none());
-    assert_eq!(change.expected_read_revision, Some(revision));
-    assert_eq!(change.edits.len(), 1);
-    let edit = &change.edits[0];
-    assert_eq!(edit.kind, ApplyTextEditKind::ReplaceExact);
-    assert_eq!(edit.old_text.as_deref(), Some("old"));
-    assert_eq!(edit.new_text.as_deref(), Some("new"));
-    assert!(edit.anchor_text.is_none());
-    assert!(edit.occurrence.is_none());
-    assert!(edit.line_scope.is_none());
-
-    let canonical = ToolCall::from_tool_name(
-        "apply_text_edits",
-        json!({
-            "project": "agent:special:demo",
-            "changes": [{
-                "kind": "edit",
-                "path": "src/lib.rs",
-                "edits": [{"kind": "replace_exact", "old_text": "old", "new_text": "new"}]
-            }]
-        }),
-    )
-    .unwrap();
-    let ToolCall::ApplyTextEdits { changes, .. } = canonical else {
-        panic!("expected canonical apply_text_edits");
-    };
-    assert_eq!(changes[0].kind, ApplyFileChangeKind::Edit);
-    assert_eq!(changes[0].edits[0].kind, ApplyTextEditKind::ReplaceExact);
-    assert_eq!(changes[0].edits[0].old_text.as_deref(), Some("old"));
-    assert_eq!(changes[0].edits[0].new_text.as_deref(), Some("new"));
-
-    for invalid in [
-        json!({"project":"agent:special:demo","changes":[{"path":"src/lib.rs","old_text":"old","new_text":"new","unknown":true}]}),
-        json!({"project":"agent:special:demo","changes":[{"path":"src/lib.rs","old_text":"old","new_text":"new","occurrence":2}]}),
-        json!({"project":"agent:special:demo","changes":[{"path":"src/lib.rs","old_text":"old","new_text":"new","expected_read_revision":revision,"line_scope":{"start_line":10,"end_line":20}}]}),
-        json!({"project":"agent:special:demo","changes":[{"kind":"edit","path":"src/lib.rs","old_text":"old","new_text":"new"}]}),
-        json!({"project":"agent:special:demo","changes":[{"path":"new.rs","content":"fn main() {}"}]}),
-    ] {
-        assert!(ToolCall::from_tool_name("apply_text_edits", invalid).is_err());
-    }
+fn edit_project_files_rejects_retired_shorthand() {
+    assert!(ToolCall::from_tool_name("edit_project_files", json!({
+        "project":"demo","changes":[{"path":"a","old_text":"old","new_text":"new","expected_read_revision":123}]
+    })).is_err());
 }
 
 #[test]

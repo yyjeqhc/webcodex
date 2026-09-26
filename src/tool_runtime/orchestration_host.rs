@@ -794,7 +794,7 @@ impl CanonicalOrchestrationHost {
                 }
                 if matches!(tool_name.as_str(), "cargo_check" | "cargo_test")
                     && !effects.children.values().any(|child| {
-                        child.tool == "apply_text_edits"
+                        child.tool == "edit_project_files"
                             && child.outcome == ConsequentialChildOutcome::KnownResult
                             && child.success == Some(true)
                             && child.state_changed.is_some()
@@ -933,7 +933,7 @@ mod receipt_tests {
     #[test]
     fn mutation_result_without_authoritative_state_changed_fails_closed() {
         let mut effects = OrchestrationEffectAccumulator::default();
-        effects.begin_if_consequential(1, "apply_text_edits");
+        effects.begin_if_consequential(1, "edit_project_files");
         effects.finish(
             1,
             &crate::tool_runtime::ToolResult::ok(serde_json::json!({

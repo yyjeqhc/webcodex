@@ -88,7 +88,7 @@ pub(crate) const E2C_NESTED_TOOLS: &[&str] = &[
     "git_diff_hunks",
     "git_review_summary",
     "show_changes",
-    "apply_text_edits",
+    "edit_project_files",
     "cargo_check",
     "cargo_test",
 ];
@@ -648,7 +648,7 @@ mod tests {
         );
         assert_eq!(
             &E2C_NESTED_TOOLS[READ_ONLY_NESTED_TOOLS.len()..],
-            ["apply_text_edits", "cargo_check", "cargo_test"]
+            ["edit_project_files", "cargo_check", "cargo_test"]
         );
         for stage in [
             CodeModeCallableStage::ReadOnly,

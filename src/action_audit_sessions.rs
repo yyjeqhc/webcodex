@@ -729,7 +729,7 @@ mod tests {
         }
 
         let stats = compute_stats(&[
-            action_event("apply_text_edits"),
+            action_event("edit_project_files"),
             action_event("run_shell"),
             action_event("import_conversation_files_to_project"),
             action_event("git_diff_hunks"),

@@ -180,7 +180,7 @@ impl ModelErgonomicsTimer {
                 .unwrap_or(false)
         });
         let work_on_project = work_on_project_facts(tool_name, arguments);
-        let bulk_exact_requested = tool_name == "apply_text_edits"
+        let bulk_exact_requested = tool_name == "edit_project_files"
             && arguments
                 .get("changes")
                 .and_then(Value::as_array)
@@ -464,7 +464,7 @@ fn edit_facts(tool_name: &str, success: bool, output: &Value) -> EditFacts {
     };
     match edit_tool_surface(tool_name) {
         Some(EditToolSurface::StructuredOrPatch)
-            if matches!(tool_name, "apply_text_edits" | "apply_patch") =>
+            if matches!(tool_name, "edit_project_files" | "apply_patch") =>
         {
             facts.conflict_kind = edit_conflict_kind(output);
             facts.outcome = if success {
@@ -587,7 +587,7 @@ mod tests {
     #[test]
     fn bulk_exact_metrics_record_only_bounded_counts_and_outcomes() {
         let args = json!({"changes":[{"path":"private.rs","edits":[{"kind":"replace_exact","old_text":"SECRET_OLD","new_text":"SECRET_NEW","expected_match_count":2}]}]});
-        let completion = ModelErgonomicsTimer::start_with_arguments("apply_text_edits", &args)
+        let completion = ModelErgonomicsTimer::start_with_arguments("edit_project_files", &args)
             .unwrap()
             .finish();
         let dry = completion
@@ -924,7 +924,7 @@ mod tests {
 
     #[test]
     fn structured_or_patch_edit_pre_result_hard_timeout_is_uncertain_not_rejected() {
-        for tool in ["apply_text_edits", "apply_patch", "apply_unified_diff"] {
+        for tool in ["edit_project_files", "apply_patch", "apply_unified_diff"] {
             let record = completion(tool, 0).record_for_pre_result_failure("dispatch_hard_timeout");
             assert!(!record.success);
             assert_eq!(record.error_kind.as_deref(), Some("dispatch_hard_timeout"));
@@ -937,7 +937,7 @@ mod tests {
 
         for error_kind in ["invalid_arguments", "insufficient_scope"] {
             let record =
-                completion("apply_text_edits", 0).record_for_pre_result_failure(error_kind);
+                completion("edit_project_files", 0).record_for_pre_result_failure(error_kind);
             assert!(!record.success);
             assert_eq!(record.error_kind.as_deref(), Some(error_kind));
             assert_eq!(record.outcome_class(), "failure");
@@ -1000,7 +1000,7 @@ mod tests {
             } else {
                 ToolResult::err_with_output("private", output)
             };
-            let record = completion("apply_text_edits", 0)
+            let record = completion("edit_project_files", 0)
                 .record_for_tool_result(&result)
                 .unwrap();
             assert_eq!(record.schema_version, 10);
@@ -1074,7 +1074,7 @@ mod tests {
                 "error": private
             }),
         );
-        let record = completion("apply_text_edits", 0)
+        let record = completion("edit_project_files", 0)
             .record_for_tool_result(&result)
             .unwrap();
         assert_eq!(record.edit_surface.as_deref(), Some("structured_or_patch"));

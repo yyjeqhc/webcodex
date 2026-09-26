@@ -2573,7 +2573,7 @@ async fn session_handoff_historical_mixed_current_pass_does_not_block_closeout()
     record_handoff_tool_event(
         &runtime,
         &sid,
-        "apply_text_edits",
+        "edit_project_files",
         json!({
             "project": project.clone(),
             "changes": [{"kind": "edit", "path": "src/lib.rs"}]
@@ -2670,7 +2670,7 @@ async fn session_handoff_stale_validation_after_content_change_warns_without_blo
     record_handoff_tool_event(
         &runtime,
         &sid,
-        "apply_text_edits",
+        "edit_project_files",
         json!({
             "project": project.clone(),
             "changes": [{"kind": "edit", "path": "src/lib.rs"}]
@@ -4433,9 +4433,9 @@ async fn handoff_marks_basis_incomplete_when_session_changes_during_workspace_re
             let start = runtime.sessions.record_tool_call_started(
                 Some(&sid),
                 SessionTransport::Mcp,
-                "apply_text_edits",
+                "edit_project_files",
                 &json!({"project": project}),
-                sessions::session_tool_contract("apply_text_edits"),
+                sessions::session_tool_contract("edit_project_files"),
             );
             runtime
                 .sessions
@@ -4643,7 +4643,7 @@ async fn session_handoff_workspace_continuity_uses_only_exact_session_history() 
     record_handoff_tool_event(
         &runtime,
         &session.session_id,
-        "apply_text_edits",
+        "edit_project_files",
         json!({
             "project": project,
             "changes": [{
@@ -4662,7 +4662,7 @@ async fn session_handoff_workspace_continuity_uses_only_exact_session_history() 
     record_handoff_tool_event(
         &runtime,
         &unrelated.session_id,
-        "apply_text_edits",
+        "edit_project_files",
         json!({
             "project": project,
             "changes": [{
@@ -4735,7 +4735,7 @@ async fn session_handoff_workspace_continuity_uses_full_retained_history_not_sum
     record_handoff_tool_event(
         &runtime,
         &session.session_id,
-        "apply_text_edits",
+        "edit_project_files",
         json!({
             "project": project,
             "changes": [{

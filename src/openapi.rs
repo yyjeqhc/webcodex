@@ -401,7 +401,7 @@ mod tests {
             .map(|name| webcodex_tool_contracts::runtime_tool_adaptive_direct_rank(name).unwrap())
             .collect::<Vec<_>>();
         assert!(ranks.windows(2).all(|pair| pair[0] < pair[1]));
-        assert!(actual.contains(&"apply_text_edits"));
+        assert!(actual.contains(&"edit_project_files"));
         assert!(!actual.contains(&"apply_patch"));
         #[cfg(feature = "experimental-code-mode")]
         for name in [

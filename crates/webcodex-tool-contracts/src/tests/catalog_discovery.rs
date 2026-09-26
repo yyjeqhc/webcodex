@@ -325,7 +325,7 @@ fn edit_recommended_flow_selects_mutation_by_shape_without_weakening_guards() {
         .find(|flow| flow.name == "edit")
         .expect("edit recommended flow");
     assert_eq!(flow.tools.first().copied(), Some("read_files"));
-    assert_eq!(flow.tools.get(1).copied(), Some("apply_text_edits"));
+    assert_eq!(flow.tools.get(1).copied(), Some("edit_project_files"));
     assert_eq!(flow.tools.get(2).copied(), Some("apply_patch"));
     let guidance = format!("{}\n{}", flow.summary, flow.manifest_purpose).to_lowercase();
     for phrase in [
@@ -476,7 +476,7 @@ fn tool_categories_and_recommended_flows_are_well_formed() {
     assert_eq!(
         edit_prefix,
         vec![
-            "apply_text_edits",
+            "edit_project_files",
             "apply_patch",
             "apply_unified_diff",
             "write_project_file",
@@ -722,7 +722,7 @@ fn tool_categories_include_edit_group() {
         .as_array()
         .expect("edit category present");
     for present in [
-        "apply_text_edits",
+        "edit_project_files",
         "apply_patch",
         "write_project_file",
         "apply_unified_diff",
@@ -863,7 +863,7 @@ fn coding_intent_has_independent_ordered_canonical_selection_surface() {
         "work_on_project",
         "search_project_texts",
         "read_files",
-        "apply_text_edits",
+        "edit_project_files",
         "run_process",
         "run_shell",
         "observe_jobs",
@@ -905,7 +905,7 @@ fn coding_intent_has_independent_ordered_canonical_selection_surface() {
     let apply_text_edits_position = coding
         .tools
         .iter()
-        .position(|tool| *tool == "apply_text_edits")
+        .position(|tool| *tool == "edit_project_files")
         .unwrap();
     let apply_patch_position = coding
         .tools

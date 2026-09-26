@@ -183,7 +183,7 @@ pub const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
     ToolDiscoveryGroup {
         name: TOOL_DISCOVERY_GROUP_EDIT,
         tools: &[
-            "apply_text_edits",
+            "edit_project_files",
             "apply_patch",
             "apply_unified_diff",
             "write_project_file",
@@ -442,7 +442,7 @@ pub const TOOL_RECOMMENDED_FLOWS: &[ToolRecommendedFlow] = &[
             "Choose the simplest reliable mutation for the edit shape. apply_text_edits is the strong transactional path for small/local exact edits; read_files first when read_revision, positional scope, or stale-context protection materially helps, but do not add a ritual read for globally unique exact edits that do not need it. Use write_project_file for intentional whole-file replacement. Bounded deterministic programmatic transforms through run_shell are first-class for repetitive mechanical rewrites; respect Project/path/permission policy, avoid unauthorized network, inspect the resulting diff, and validate final source. Use apply_patch only when naturally contextual or multi-hunk patch form is materially clearer. Repetitive patch targets need stable unique containing function/impl/type/test/module context. On matching_mode_rejected, never weaken the guard or switch to first_match; if patch form remains clearer, consume bounded read_files recovery and preserve unique/exact_unique. context_mismatch requires bounded reread and regeneration from current source, never blind retry. External raw diffs use apply_unified_diff.",
         tools: &[
             "read_files",
-            "apply_text_edits",
+            "edit_project_files",
             "apply_patch",
             "apply_unified_diff",
             "write_project_file",
@@ -563,7 +563,7 @@ pub const CODING_INTENT_TOOL_NAMES: &[&str] = &[
     "find_references",
     "call_hierarchy",
     // Canonical edit plus contextual/multi-hunk specialist.
-    "apply_text_edits",
+    "edit_project_files",
     "apply_patch",
     #[cfg(feature = "experimental-code-mode")]
     "code_mode_exec_mutating",

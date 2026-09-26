@@ -685,7 +685,7 @@ mod tests {
             assert_eq!(audit_class_for_path(path), Some(class), "{path}");
         }
         for (tool, class) in [
-            ("apply_text_edits", Edit),
+            ("edit_project_files", Edit),
             ("run_shell", Shell),
             ("import_conversation_files_to_project", Artifact),
             ("git_diff_hunks", Git),

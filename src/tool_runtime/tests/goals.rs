@@ -562,7 +562,7 @@ fn goal_schemas_are_bounded_private_and_existing_coding_tools_do_not_accept_goal
     for existing in [
         "work_on_project",
         "read_files",
-        "apply_text_edits",
+        "edit_project_files",
         "run_process",
         "run_shell",
         "finish_coding_task",

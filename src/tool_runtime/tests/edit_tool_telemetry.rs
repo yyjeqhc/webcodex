@@ -78,7 +78,7 @@ async fn dispatch_records_edit_tool_usage_without_sensitive_args() {
         "only edit tools should emit usage events: {events:?}"
     );
 
-    assert_eq!(events[0].tool_name, "apply_text_edits");
+    assert_eq!(events[0].tool_name, "edit_project_files");
     assert_eq!(events[0].edit_surface, EditToolSurface::StructuredOrPatch);
     assert_eq!(events[0].category, TELEMETRY_CATEGORY_EDIT);
     assert!(!events[0].success);
@@ -218,7 +218,7 @@ fn edit_surface_table_matches_mutation_form_contract() {
     // Keep the classification table aligned with the product contract used by
     // tool descriptions / discovery (mutation form only).
     assert_eq!(
-        edit_tool_surface("apply_text_edits"),
+        edit_tool_surface("edit_project_files"),
         Some(EditToolSurface::StructuredOrPatch)
     );
     assert_eq!(
@@ -256,7 +256,7 @@ fn sample_edit_tool_args_are_not_required_by_telemetry_module() {
     // synthesize args from its spec; telemetry classification is name-only and
     // is asserted via `edit_tool_surface` above, so no sample-args construction
     // is required beyond the canonical tools.
-    let _ = sample_tool_args("apply_text_edits");
+    let _ = sample_tool_args("edit_project_files");
     let _ = json!({"path": "ignored-by-telemetry"});
-    assert!(edit_tool_surface("apply_text_edits").is_some());
+    assert!(edit_tool_surface("edit_project_files").is_some());
 }

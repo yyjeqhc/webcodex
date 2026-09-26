@@ -163,7 +163,7 @@ impl CodeModeHost for CallableExampleHost {
                     "job_id": "wc_job_example",
                     "continuation": {"tool": "observe_jobs", "arguments": {}}
                 }),
-                "apply_text_edits" => json!({
+                "edit_project_files" => json!({
                     "state_changed": true,
                     "execution_state": "completed",
                     "error_kind": null,
@@ -1231,7 +1231,7 @@ async fn tool_manifest_intent_coding_returns_ranked_compact_tools() {
         "search_project_texts",
         "search_and_read",
         "read_files",
-        "apply_text_edits",
+        "edit_project_files",
         "run_process",
         "run_script",
         "run_shell",
@@ -1641,7 +1641,7 @@ async fn filtered_tool_manifest_recommended_flows_only_reference_returned_tools(
         .filter_map(|tool| tool["name"].as_str())
         .collect();
     assert!(
-        coding_names.contains(&"apply_text_edits"),
+        coding_names.contains(&"edit_project_files"),
         "coding intent tools should expose canonical precise edits: {coding_names:?}"
     );
     assert!(
@@ -2040,7 +2040,7 @@ async fn code_mode_callable_projection_preserves_key_input_constraints_and_outpu
         .unwrap();
     let edit = guarded_tools
         .iter()
-        .find(|tool| tool["tool"] == "apply_text_edits")
+        .find(|tool| tool["tool"] == "edit_project_files")
         .expect("apply_text_edits projection");
     assert_eq!(edit["input"]["properties"]["changes"]["maxItems"], 16);
     assert!(edit["input"]["properties"].get("project").is_none());
@@ -2221,7 +2221,7 @@ async fn exact_tool_manifest_projects_bounded_host_orchestration_from_tool_defin
         "search_project_texts",
         "search_and_read",
         "cargo_check",
-        "apply_text_edits",
+        "edit_project_files",
     ] {
         let serialized = serde_json::to_string(spec_named(&specs, tool_name)).unwrap();
         assert!(

@@ -91,7 +91,7 @@ fn tool_specs_annotations_are_canonical_semantic_projections() {
 
     for name in [
         "apply_patch",
-        "apply_text_edits",
+        "edit_project_files",
         "apply_unified_diff",
         "write_project_file",
         #[cfg(feature = "workspace-checkpoints")]

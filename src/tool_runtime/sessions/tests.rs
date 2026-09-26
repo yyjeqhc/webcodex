@@ -145,7 +145,7 @@ fn changed_paths_single_path_and_path_list_from_metadata() {
     );
     assert_eq!(
         changed_paths_for_tool(
-            "apply_text_edits",
+            "edit_project_files",
             &json!({
                 "project": "demo",
                 "changes": [
@@ -1086,7 +1086,7 @@ fn console_overview_counts_runtime_work_attention_and_sanitizes_reported_progres
             json!({"locations": [{"path": "src/lib.rs"}]}),
         ),
         (
-            "apply_text_edits",
+            "edit_project_files",
             json!({"project": project, "changes": [{"kind": "edit", "path": "src/lib.rs", "text": "SECRET_DIFF"}]}),
             json!({"changed_paths": ["src/lib.rs"]}),
         ),
@@ -1469,7 +1469,7 @@ fn console_projection_is_bounded_semantic_and_progress_is_informational() {
             single_search_batch_output(json!({"matches": [{"path": "src/lib.rs"}]})),
         ),
         (
-            "apply_text_edits",
+            "edit_project_files",
             json!({"project": project, "changes": [{"kind": "edit", "path": "src/lib.rs"}]}),
             json!({"changed_paths": ["src/lib.rs"]}),
         ),
@@ -2030,9 +2030,9 @@ fn console_exploration_grouping_is_ordered_bounded_and_stops_at_fact_barriers() 
     let edit = store.record_tool_call_started(
         Some(&session.session_id),
         SessionTransport::Api,
-        "apply_text_edits",
+        "edit_project_files",
         &json!({"project": project, "changes": [{"kind": "edit", "path": "src/a.rs"}]}),
-        crate::tool_runtime::sessions::session_tool_contract("apply_text_edits"),
+        crate::tool_runtime::sessions::session_tool_contract("edit_project_files"),
     );
     store.record_tool_call_finished(
         edit,
@@ -2385,9 +2385,9 @@ fn failure_history_legacy_event_without_effect_evidence_restores_conservatively(
     let start = store.record_tool_call_started(
         Some(&session.session_id),
         SessionTransport::Api,
-        "apply_text_edits",
+        "edit_project_files",
         &json!({"project": "agent:eval:demo", "changes": []}),
-        crate::tool_runtime::sessions::session_tool_contract("apply_text_edits"),
+        crate::tool_runtime::sessions::session_tool_contract("edit_project_files"),
     );
     store.record_tool_call_finished(
         start,

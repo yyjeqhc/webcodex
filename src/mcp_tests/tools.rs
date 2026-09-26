@@ -1636,9 +1636,9 @@ async fn mcp_compact_preserves_stateless_wrappers_app_metadata_and_exact_manifes
                         assert!(tool.get("outputSchema").is_none());
                         let properties = &tool["inputSchema"]["properties"];
                         for (field, hint) in [
-                            ("recording_session_id", "wc_sess_*"),
+                            ("recording_session_id", "Recorder Session"),
                             ("ack_session_message_ids", "wc_msg_*"),
-                            ("session_message_resolution", "wc_msg_*"),
+                            ("session_message_resolution", "recording_session_id"),
                             ("context_request", "jobs.attention"),
                         ] {
                             if let Some(property) = properties.get(field) {
@@ -2290,6 +2290,73 @@ fn mcp_compact_descriptions_preserve_selection_and_schema_literals() {
     assert_eq!(tool["inputSchema"], original_schema);
 }
 
+// Test-only deterministic attribution. Byte parts partition the actual descriptor:
+// business includes the schema envelope; residual includes names/annotations.
+const DISCOVERY_WRAPPERS: &[&str] = &[
+    "recording_session_id",
+    "ack_session_message_ids",
+    "ack_ref",
+    "session_message_resolution",
+    "context_request",
+    "window_reply",
+    "_control",
+];
+
+fn discovery_cost(tool: &Value) -> (usize, usize, usize, usize, usize) {
+    let bytes = |value: &Value| serde_json::to_vec(value).unwrap().len();
+    let mut business = tool["inputSchema"].clone();
+    if let Some(properties) = business["properties"].as_object_mut() {
+        for key in DISCOVERY_WRAPPERS {
+            properties.remove(*key);
+        }
+    }
+    let schema = bytes(&business);
+    let wrappers = bytes(&tool["inputSchema"]) - schema;
+    let mut rest = tool.clone();
+    rest.as_object_mut().unwrap().remove("description");
+    let description = bytes(tool) - bytes(&rest);
+    let before = bytes(&rest);
+    rest.as_object_mut().unwrap().remove("_meta");
+    let app = before - bytes(&rest);
+    (bytes(tool), description, schema, wrappers, app)
+}
+
+fn report_discovery_costs(tools: &[Value]) {
+    let mut ranked: Vec<_> = tools
+        .iter()
+        .map(|tool| (tool, discovery_cost(tool)))
+        .collect();
+    ranked.sort_by(|(a, ac), (b, bc)| {
+        bc.0.cmp(&ac.0)
+            .then_with(|| a["name"].as_str().cmp(&b["name"].as_str()))
+    });
+    for (tool, (total, description, business, wrappers, app)) in ranked.iter().take(10) {
+        assert!(*total >= description + business + wrappers + app);
+        eprintln!("MCP_TOP name={} total={total} description={description} business={business} wrappers={wrappers} app={app}", tool["name"]);
+    }
+    for name in [
+        "list_jobs",
+        "stop_job",
+        "run_detached_process",
+        "wait_for_job_terminal",
+        "transfer_project_artifact",
+        "import_conversation_files_to_project",
+        "session_discussion_summary",
+        "session_handoff_summary",
+        "rotate_agent_continuation_endpoint",
+        "wait_for_agent_events",
+    ] {
+        let definition = webcodex_tool_contracts::lookup_tool_definition(name).unwrap();
+        if let Some((_, cost)) = ranked.iter().find(|(tool, _)| tool["name"] == name) {
+            eprintln!(
+                "MCP_CANDIDATE {name} rank={:?} bytes={}",
+                definition.adaptive_runtime_direct_rank(),
+                cost.0
+            );
+        }
+    }
+}
+
 #[tokio::test]
 async fn mcp_tools_list_stateless_serialized_size_budget() {
     let mut scoped = crate::auth::shared_key_context("surface-size-test");
@@ -2300,14 +2367,13 @@ async fn mcp_tools_list_stateless_serialized_size_budget() {
     ]);
     let mut admin = scoped.clone();
     admin.scopes.push(crate::auth::SCOPE_ADMIN.to_string());
-    // Final Stateless result bytes (including wrappers/gateways, excluding the
-    // JSON-RPC envelope). With compact `_control`: 99,640 / 102,324 / 113,348
-    // bytes, plus 16,987 with Apps. Keep roughly 10% byte headroom rather than
-    // silently absorbing future advertised surface growth.
+    // Final Stateless result bytes include wrappers/gateways, not the RPC
+    // envelope. Wrapper compaction keeps the same admitted tool inventory and
+    // leaves about 91/93/103 KB. Keep small explicit growth headroom.
     for (label, auth, max_tools, max_bytes) in [
-        ("anonymous", None, 34, 110_000),
-        ("scoped", Some(&scoped), 35, 113_000),
-        ("admin", Some(&admin), 41, 125_000),
+        ("anonymous", None, 34, 93_000),
+        ("scoped", Some(&scoped), 35, 95_500),
+        ("admin", Some(&admin), 41, 106_000),
     ] {
         for app_enabled in [false, true] {
             let mut sizes = Vec::new();
@@ -2327,6 +2393,13 @@ async fn mcp_tools_list_stateless_serialized_size_budget() {
                 let count = result["tools"].as_array().unwrap().len();
                 let bytes = serde_json::to_vec(result).unwrap().len();
                 let tools = result["tools"].as_array().unwrap();
+                if compact {
+                    let wrappers: usize = tools.iter().map(|tool| discovery_cost(tool).3).sum();
+                    eprintln!("MCP_WRAPPERS {label} app={app_enabled} bytes={wrappers}");
+                    if label == "admin" && app_enabled {
+                        report_discovery_costs(tools);
+                    }
+                }
                 let top_chars: usize = tools
                     .iter()
                     .map(|tool| tool["description"].as_str().unwrap().chars().count())
@@ -2345,7 +2418,7 @@ async fn mcp_tools_list_stateless_serialized_size_budget() {
                 // alongside the existing Goal Plan/continuation/read helpers.
                 let count_budget = max_tools + if app_enabled { 17 } else { 0 } + feature_tools;
                 let byte_budget =
-                    max_bytes + if app_enabled { 18_000 } else { 0 } + feature_tools * 4096;
+                    max_bytes + if app_enabled { 19_000 } else { 0 } + feature_tools * 4096;
                 if feature_tools == 0 {
                     assert_eq!(
                         count, count_budget,

@@ -46,34 +46,40 @@ pub(super) fn compact_tool(tool: &mut Value) {
                 }
             }
         }
-        // Only these root properties are protocol wrappers. A business
-        // session_id keeps its own canonical-derived copy and requiredness.
-        // Nested IDs/resolution have no description; keep their type hints here.
-        for (pointer, description) in [
-            ("/properties/recording_session_id", "Optional explicit recorder for one exact Workflow Session (wc_sess_* or issued ~sN); never execution/business authority. Omission may still allow authorized same-Window attention without recording."),
-            ("/properties/ack_session_message_ids", "ACK-required wc_msg_* retained in model context; Session/Peer/Operator exact-ID ACK; never resolves or authorizes."),
-            ("/properties/ack_ref", "Compact exact Session ACK-set evidence returned in session_attention; Session-only, request-scoped, non-authoritative, and never resolves messages."),
-            ("/properties/session_message_resolution", "Resolve one handled non-todo recorder message by exact wc_msg_*; ACK separately if required. Independent of call success."),
-            ("/properties/context_request", "Post-result sidecar keys; no authority: project.instructions, webcodex.workflow, jobs.attention, skills.catalog, plugins.catalog, memory.bootstrap."),
-            ("/properties/context_request/items", "Context key; unsupported keys are nonfatal."),
+        // Only root protocol wrappers: never business session_id, paths, Job
+        // identities or fences. Preserve shapes/requiredness/bounds; remove only
+        // repeated copy. Full discovery and the canonical parser remain strict.
+        for (field, hint) in [
+            ("recording_session_id", "Recorder Session ID/ref; never business authority."),
+            ("ack_session_message_ids", "Retained wc_msg_* IDs to ACK; does not resolve."),
+            ("ack_ref", ""),
+            ("session_message_resolution", "Handled non-todo message; requires recording_session_id."),
+            ("context_request", "Sidecar keys: project.instructions, webcodex.workflow, jobs.attention, skills.catalog, plugins.catalog, memory.bootstrap."),
         ] {
-            if let Some(Value::String(copy)) = schema
-                .pointer_mut(pointer)
-                .and_then(|property| property.get_mut("description"))
-            {
-                *copy = description.to_string();
+            if let Some(property) = schema.pointer_mut(&format!("/properties/{field}")) {
+                let had_description = property.get("description").is_some();
+                strip_wrapper_descriptions(property);
+                if had_description && !hint.is_empty() {
+                    property["description"] = Value::String(hint.into());
+                }
             }
         }
-        // ACK ref is echoed verbatim from session_attention. Repeating the
-        // explanation on every compact tool would dominate the token savings.
-        // Full discovery keeps the safety contract; compact keeps field/bound.
-        if let Some(property) = schema
-            .pointer_mut("/properties/ack_ref")
-            .and_then(Value::as_object_mut)
-        {
-            property.remove("description");
-        }
         compact_discovery_validation_annotations(schema);
+    }
+}
+
+fn strip_wrapper_descriptions(schema: &mut Value) {
+    let Some(object) = schema.as_object_mut() else {
+        return;
+    };
+    object.remove("description");
+    if let Some(properties) = object.get_mut("properties").and_then(Value::as_object_mut) {
+        for property in properties.values_mut() {
+            strip_wrapper_descriptions(property);
+        }
+    }
+    if let Some(items) = object.get_mut("items") {
+        strip_wrapper_descriptions(items);
     }
 }
 
@@ -98,10 +104,7 @@ fn compact_control_sidecar(schema: &mut Value) {
     // Compact discovery is only a model-selection copy, so do not repeat those
     // large canonical payload schemas on every ordinary tool. Runtime stripping,
     // closed enum parsing, and canonical ToolCall parsing remain unchanged.
-    *control = serde_json::json!({
-        "type": "object",
-        "description": "Optional explicit control piggyback; exact payloads use the full MCP schema and canonical standalone-tool contracts."
-    });
+    *control = serde_json::json!({"type": "object"});
 }
 
 fn compact_discovery_validation_annotations(schema: &mut Value) {

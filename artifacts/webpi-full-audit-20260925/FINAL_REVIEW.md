@@ -53,11 +53,11 @@ Release-candidate handling:
 
 ### PR
 
-Authenticated GitHub CLI access exists, `yyjeqhc/webcodex` grants the current account READ only, and the configured `upstream` push URL is disabled. The user explicitly approved creating a fork and opening a Draft PR for this release-candidate snapshot.
+Authenticated GitHub CLI access exists, `yyjeqhc/webcodex` grants the current account READ only, and the configured `upstream` push URL is disabled. The user explicitly approved creating a fork and opening a Draft PR for this release-candidate snapshot. Fork `iydjjjjjj/webcodex` now exists and Draft PR `yyjeqhc/webcodex#689` tracks branch `release/webpi-first-release-20260926`.
 
 ### Deployment
 
-`deployment_preflight(client_id=webpi-local, operation=deploy)` is currently blocked because the active WebPi credential lacks `service:restart` and `service:deploy`. The user authorized temporary addition of those scopes, but the scope gate must be changed through a supported WebPi/admin credential-management path; no service-control bypass is permitted.
+The user authorized temporary addition of `service:restart` and `service:deploy`. Those scopes were added in place to the existing `webpi-action` PAT through the supported local standalone bootstrap/admin flow and `/api/tokens/update_scopes`; no plaintext credential was printed or rotated. `runtime_status` confirms both service capabilities are now authorized.
 
 ### Plugin migration
 

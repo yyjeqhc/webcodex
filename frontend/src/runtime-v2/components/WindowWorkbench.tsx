@@ -1,6 +1,7 @@
 import {
   Box,
   CircleDot,
+  Clock3,
   FolderOpen,
   MessageSquare,
   Monitor,
@@ -172,6 +173,7 @@ export function WindowWorkbench({
     detail?.activity[0]?.tool_name ||
     detail?.activity[0]?.method;
   const lastObservedAt = detail?.last_seen_at_ms || selectedSummary?.last_seen_at_ms;
+  const firstObservedAt = detail?.first_seen_at_ms || selectedSummary?.first_seen_at_ms;
   const isActive = Boolean(detail?.active_count || selectedSummary?.active_count);
   const currentProjectName = currentProject
     ? projectFamilyName(sourceProject || currentProject, projects)
@@ -306,6 +308,13 @@ export function WindowWorkbench({
                       <strong>{currentProjectAddress}</strong>
                     </span>
                   )}
+                  {firstObservedAt && (
+                    <span className="window-header-fact" title={absoluteTime(firstObservedAt)}>
+                      <Clock3 size={14} />
+                      <small>{t("First active")}</small>
+                      <strong>{absoluteTime(firstObservedAt)}</strong>
+                    </span>
+                  )}
                   {currentActivity && (
                     <span className="window-header-fact window-header-activity">
                       <CircleDot size={12} />
@@ -384,7 +393,7 @@ export function WindowWorkbench({
 
             <div
               id="window-collaboration-panel"
-              className="window-work-scroll session-center-pane"
+              className="window-work-scroll session-center-pane window-collaboration-pane"
               role="tabpanel"
               aria-labelledby="window-collaboration-tab"
               hidden={centerTab !== "collaboration"}

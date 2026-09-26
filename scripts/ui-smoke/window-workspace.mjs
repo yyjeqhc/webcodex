@@ -103,6 +103,7 @@ try {
         assert(headerText.includes('fixture-runner'), headerText);
         assert(headerText.includes('/fixture/alpha'), headerText);
         assert(headerText.includes('agent:fixture-runner:alpha'), headerText);
+        assert(headerText.includes(zh ? '首次活跃' : 'First active'), headerText);
         assert(!headerText.includes('47004700'), headerText);
         const selectedRowText = (await page.locator('.window-work-row.selected').textContent()) || '';
         assert(!selectedRowText.includes('47004700'), selectedRowText);
@@ -145,6 +146,8 @@ try {
         await page.screenshot({ path: new URL(`calls-${width}-${theme}-${language}.png`, output).pathname, fullPage: true });
         await centerTabs.nth(1).click();
         await page.getByText('Parser review complete.', { exact: true }).waitFor();
+        assert.equal(await page.locator('.window-collaboration-thread').count(), 1);
+        assert.equal(await page.locator('.window-collaboration-composer').count(), 1);
         const composer = page.getByRole('textbox', { name: zh ? '给这个窗口发消息' : 'Message this Window' });
         await composer.fill('Window message without context');
         await page.getByRole('button', { name: zh ? '发送' : 'Send', exact: true }).click();
@@ -161,7 +164,7 @@ try {
         const collaborationBounds = await page.evaluate(() => ({ body: document.body.scrollWidth, root: document.documentElement.scrollWidth }));
         assert(collaborationBounds.body <= width + 1 && collaborationBounds.root <= width + 1, JSON.stringify(collaborationBounds));
         await page.screenshot({ path: new URL(`collaboration-${width}-${theme}-${language}.png`, output).pathname, fullPage: true });
-        checks.push({ width, theme, language, overflow: false, individualCalls: 14, centerTabs: 2, sessionFilter: true, sessionOptions: 13, jobLinks: 2, collaboration: true, progressiveWindowLoad: true, humanWindowIdentity: true });
+        checks.push({ width, theme, language, overflow: false, individualCalls: 14, centerTabs: 2, sessionFilter: true, sessionOptions: 13, jobLinks: 2, collaboration: true, collaborationWorkspace: true, progressiveWindowLoad: true, humanWindowIdentity: true, firstActive: true });
         await page.close();
       }
     }

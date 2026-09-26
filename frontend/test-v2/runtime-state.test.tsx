@@ -146,6 +146,66 @@ it("lets slow Window polls finish and discovers new Windows independently of slo
 });
 
 
+it("keeps Window inventory fresh in the background and refreshes immediately on foreground return", async () => {
+  let visibility: DocumentVisibilityState = "hidden";
+  const visibilitySpy = vi.spyOn(document, "visibilityState", "get").mockImplementation(() => visibility);
+  const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+  try {
+    const key = "c".repeat(64);
+    let lists = 0;
+    const client = {
+      post: vi.fn(async (path: string) => {
+        if (path !== "windows") throw new Error("unexpected path " + path);
+        lists += 1;
+        return {
+          ok: true,
+          status: 200,
+          data: {
+            windows: [{
+              client_window_key: key,
+              source: "openai-session",
+              last_seen_at_ms: lists,
+              active_count: 0,
+              linked_session_count: 0,
+              recorder_gap_count: 0,
+            }],
+            returned: 1,
+            total: 1,
+            truncated: false,
+            visibility: { scope: "principal" },
+          },
+        };
+      }),
+    } as unknown as RuntimeV2Client;
+
+    const unauthorized = vi.fn();
+    const { unmount } = renderHook(() =>
+      useWindowWorkspace(client, true, unauthorized, {
+        loadDetail: false,
+        refreshMs: 20,
+        backgroundRefreshMs: 80,
+      }),
+    );
+
+    await waitFor(() => expect(lists).toBeGreaterThanOrEqual(1));
+    const initial = lists;
+    await sleep(35);
+    expect(lists).toBe(initial);
+
+    await waitFor(() => expect(lists).toBeGreaterThan(initial), { timeout: 500 });
+    const beforeForeground = lists;
+    visibility = "visible";
+    act(() => document.dispatchEvent(new Event("visibilitychange")));
+    await waitFor(() => expect(lists).toBeGreaterThan(beforeForeground), { timeout: 500 });
+
+    const afterForeground = lists;
+    await waitFor(() => expect(lists).toBeGreaterThan(afterForeground), { timeout: 500 });
+    unmount();
+  } finally {
+    visibilitySpy.mockRestore();
+  }
+});
+
 it("does not cancel a slow active Session refresh on the next five-second tick", async () => {
   vi.useFakeTimers();
   try {

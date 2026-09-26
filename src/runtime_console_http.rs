@@ -373,6 +373,8 @@ struct RuntimeConsoleWindowSummary {
     source: String,
     last_seen_at_ms: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
+    first_seen_at_ms: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     last_tool_call_at_ms: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     last_meaningful_activity_at_ms: Option<i64>,
@@ -393,6 +395,8 @@ struct RuntimeConsoleWindowDetail {
     detail_level: WindowDetailLevel,
     source: String,
     last_seen_at_ms: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    first_seen_at_ms: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     last_tool_call_at_ms: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1858,6 +1862,7 @@ async fn visible_window_summary_for_auth_bounded(
     let caller_principal_ref = window_principal_ref(&caller_principal);
     let mut source = None;
     let mut last_seen_at_ms = None;
+    let mut first_seen_at_ms = None;
     let mut last_tool_call_at_ms = None;
     let mut last_meaningful_activity_at_ms = None;
     let mut recorder_gap_count = 0usize;
@@ -1887,6 +1892,7 @@ async fn visible_window_summary_for_auth_bounded(
         }
         source = Some(event.client_window_source.clone());
         last_seen_at_ms = Some(last_seen_at_ms.unwrap_or(i64::MIN).max(event.ended_at_ms));
+        first_seen_at_ms = Some(first_seen_at_ms.unwrap_or(i64::MAX).min(event.ended_at_ms));
         if event.action_name == "toolsCall" {
             last_tool_call_at_ms = Some(
                 last_tool_call_at_ms
@@ -1973,6 +1979,11 @@ async fn visible_window_summary_for_auth_bounded(
                 .unwrap_or(i64::MIN)
                 .max(request.started_at_ms),
         );
+        first_seen_at_ms = Some(
+            first_seen_at_ms
+                .unwrap_or(i64::MAX)
+                .min(request.started_at_ms),
+        );
         if request.started_at_ms >= latest_active_started_at {
             if request.project.is_some() {
                 last_project = request.project.clone();
@@ -1996,6 +2007,11 @@ async fn visible_window_summary_for_auth_bounded(
         last_project,
         source: source.unwrap_or_default(),
         last_seen_at_ms,
+        first_seen_at_ms: if include_relation_count {
+            first_seen_at_ms
+        } else {
+            None
+        },
         last_tool_call_at_ms,
         last_meaningful_activity_at_ms,
         last_activity_name,
@@ -2073,6 +2089,7 @@ async fn windows_for_auth(
                     last_project: None,
                     source: summary.client_window_source,
                     last_seen_at_ms: summary.last_seen_at_ms,
+                    first_seen_at_ms: Some(summary.first_seen_at_ms),
                     last_tool_call_at_ms: summary.last_tool_call_at_ms,
                     last_meaningful_activity_at_ms: summary.last_meaningful_activity_at_ms,
                     last_activity_name: None,
@@ -2102,6 +2119,7 @@ async fn windows_for_auth(
                         last_project: None,
                         source: live.client_window_source,
                         last_seen_at_ms: summary.last_seen_at_ms.max(live.last_started_at_ms),
+                        first_seen_at_ms: Some(summary.first_seen_at_ms),
                         last_tool_call_at_ms: summary.last_tool_call_at_ms,
                         last_meaningful_activity_at_ms: summary.last_meaningful_activity_at_ms,
                         last_activity_name: None,
@@ -2121,6 +2139,7 @@ async fn windows_for_auth(
                         last_project: None,
                         source: live.client_window_source,
                         last_seen_at_ms: live.last_started_at_ms,
+                        first_seen_at_ms: Some(live.last_started_at_ms),
                         last_tool_call_at_ms: None,
                         last_meaningful_activity_at_ms: None,
                         last_activity_name: None,
@@ -2325,6 +2344,13 @@ async fn window_for_auth(
         .ok_or(RuntimeConsoleError::Internal)?;
     let principal = window_principal_filter(auth)?;
     let principal_ref = window_principal_ref(&principal);
+    let durable_first_seen_at_ms = if auth.is_admin_caller() {
+        db.get_window_activity_summary(&input.client_window_key, principal_ref)
+            .map_err(|_| RuntimeConsoleError::Internal)?
+            .map(|summary| summary.first_seen_at_ms)
+    } else {
+        None
+    };
     let caller_principal = if principal.is_none() && !auth.is_admin_caller() {
         crate::tool_runtime::runtime_observation_principal(Some(auth)).ok()
     } else {
@@ -2556,6 +2582,11 @@ async fn window_for_auth(
         detail_level,
         source,
         last_seen_at_ms,
+        first_seen_at_ms: durable_first_seen_at_ms.or_else(|| {
+            summary
+                .as_ref()
+                .and_then(|summary| summary.first_seen_at_ms)
+        }),
         last_tool_call_at_ms: summary
             .as_ref()
             .and_then(|summary| summary.last_tool_call_at_ms),
@@ -5057,6 +5088,7 @@ mod tests {
             .unwrap();
         assert_eq!(row.last_activity_name.as_deref(), Some("read_files"));
         assert_eq!(row.last_seen_at_ms, 1_001);
+        assert_eq!(row.first_seen_at_ms, Some(1_001));
         assert_eq!(row.last_tool_call_at_ms, Some(1_001));
         assert_eq!(row.last_project.as_deref(), Some(project));
     }
@@ -5143,6 +5175,7 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(full.detail_level, WindowDetailLevel::Full);
+        assert_eq!(full.first_seen_at_ms, Some(1_001));
         assert_eq!(full.activity.len(), 5);
         assert!(!full.activity_truncated);
         assert_eq!(full.linked_sessions.len(), 1);

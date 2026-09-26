@@ -158,6 +158,7 @@ pub struct WindowActivityEventRecord {
 pub struct WindowActivitySummaryRecord {
     pub client_window_key: String,
     pub client_window_source: String,
+    pub first_seen_at_ms: i64,
     pub last_seen_at_ms: i64,
     pub last_tool_call_at_ms: Option<i64>,
     pub last_meaningful_activity_at_ms: Option<i64>,

@@ -1104,6 +1104,10 @@ Object.assign(RUNTIME_ZH_TEXT, {
   "Loading history…": "正在加载历史记录…"
 });
 
+Object.assign(RUNTIME_ZH_TEXT, {
+  "First active": "首次活跃"
+});
+
 export function translate(source: string, language: RuntimeLanguage = "en"): string {
   return language === "zh-CN" ? (RUNTIME_ZH_TEXT[source] || source) : source;
 }

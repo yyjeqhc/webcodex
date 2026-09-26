@@ -121,9 +121,15 @@ export function useWindowWorkspace(
   client: RuntimeV2Client,
   enabled: boolean,
   onUnauthorized: () => void,
-  options: { refreshMs?: number; fullDetailRefreshMs?: number; loadDetail?: boolean } = {},
+  options: {
+    refreshMs?: number;
+    backgroundRefreshMs?: number;
+    fullDetailRefreshMs?: number;
+    loadDetail?: boolean;
+  } = {},
 ): WindowWorkspaceState {
   const refreshMs = options.refreshMs ?? 3_000;
+  const backgroundRefreshMs = options.backgroundRefreshMs ?? 15_000;
   const fullDetailRefreshMs = options.fullDetailRefreshMs ?? DEFAULT_FULL_DETAIL_REFRESH_MS;
   const loadDetail = options.loadDetail ?? true;
   const [availability, setAvailability] = useState<Availability>("idle");
@@ -319,19 +325,29 @@ export function useWindowWorkspace(
 
   useEffect(() => {
     if (!enabled) return;
-    const refreshVisible = () => {
-      if (document.visibilityState !== "hidden") refresh();
+    let timer: number | undefined;
+    const schedule = () => {
+      if (timer !== undefined) window.clearTimeout(timer);
+      const delay = document.visibilityState === "hidden" ? backgroundRefreshMs : refreshMs;
+      timer = window.setTimeout(() => {
+        refresh();
+        schedule();
+      }, delay);
     };
-    const timer = window.setInterval(refreshVisible, refreshMs);
-    document.addEventListener("visibilitychange", refreshVisible);
-    window.addEventListener("focus", refreshVisible);
-    refreshVisible();
+    const refreshNow = () => {
+      refresh();
+      schedule();
+    };
+    const onVisibilityChange = () => refreshNow();
+    refreshNow();
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    window.addEventListener("focus", refreshNow);
     return () => {
-      window.clearInterval(timer);
-      document.removeEventListener("visibilitychange", refreshVisible);
-      window.removeEventListener("focus", refreshVisible);
+      if (timer !== undefined) window.clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener("focus", refreshNow);
     };
-  }, [enabled, refresh, refreshMs]);
+  }, [backgroundRefreshMs, enabled, refresh, refreshMs]);
 
   return {
     availability,

@@ -249,6 +249,7 @@ export type WindowSummary = {
   last_project?: string;
   source: string;
   last_seen_at_ms: number;
+  first_seen_at_ms?: number;
   last_tool_call_at_ms?: number;
   last_meaningful_activity_at_ms?: number;
   last_activity_name?: string;
@@ -315,6 +316,7 @@ export type WindowDetail = {
   detail_level?: "primary" | "full";
   source: string;
   last_seen_at_ms: number;
+  first_seen_at_ms?: number;
   last_tool_call_at_ms?: number;
   last_meaningful_activity_at_ms?: number;
   active_count: number;

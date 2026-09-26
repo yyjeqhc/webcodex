@@ -16,8 +16,10 @@ describe("Window collaboration", () => {
     const onUnauthorized = vi.fn();
     const view = render(<WindowCollaboration client={client} windowKey="exact-window" selectedSessionId="" language="en" onUnauthorized={onUnauthorized} />);
     await screen.findByText("Review done");
-    expect(screen.getByText(/ · Sent$/)).toBeTruthy();
-    expect(screen.getByText(/ · Delivered$/)).toBeTruthy();
+    expect(screen.getByText("Sent")).toBeTruthy();
+    expect(screen.getByText("Delivered")).toBeTruthy();
+    expect(screen.getByText("3 messages")).toBeTruthy();
+    expect(screen.getByText("⌘/Ctrl + Enter to send")).toBeTruthy();
     const inboundPeer = screen.getByText("Review done").closest("article");
     expect(inboundPeer?.textContent).not.toMatch(/Sent|Delivered|Acknowledged/);
     fireEvent.change(screen.getByRole("textbox"), { target: { value: "No Session needed" } });

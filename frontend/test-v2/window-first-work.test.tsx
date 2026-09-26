@@ -477,6 +477,7 @@ it("renders Window identity from inventory before recent activity and hydrates f
         last_project: worktree.id,
         source: "openai-session",
         last_seen_at_ms: startedAt,
+        first_seen_at_ms: startedAt - 3_600_000,
         last_activity_name: "read_files",
         last_activity_status: "success",
         last_activity_meaningful: true,
@@ -516,6 +517,7 @@ it("renders Window identity from inventory before recent activity and hydrates f
   const header = screen.getByRole("heading", { name: "webcodex-activity-fix" }).closest("header");
   expect(header?.textContent).toContain("special");
   expect(header?.textContent).toContain("/root/.webcodex-managed-worktrees/webcodex-activity-fix");
+  expect(header?.textContent).toContain("First active");
   expect(screen.getByText("Loading recent activity…")).toBeTruthy();
   await waitFor(() => expect(windowPayloads).toHaveLength(1));
   expect(windowPayloads[0]).toMatchObject({

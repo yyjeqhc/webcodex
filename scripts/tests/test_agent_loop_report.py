@@ -1286,6 +1286,23 @@ class AgentLoopReportTests(unittest.TestCase):
         self.assertEqual(result["pending_followup_known_count"], 1)
         self.assertEqual(result["pending_to_terminal_ms"]["observed_total"], 900)
 
+    def test_job_convergence_loads_exact_unlinked_successor_after_selected_tail(self):
+        for trace, link in [(1, True), (2, True), (3, False)]:
+            self.insert_event(str(trace), trace_id=str(trace), started=trace * 1000,
+                              handed=trace * 1000 + 100, transition="serial" if trace > 1 else "unavailable", link=link)
+        pending = JobConvergenceTests.row(1, kind="pending_handoff")
+        terminal = JobConvergenceTests.row(2, 1, "passive_terminal", failure=True, terminal=2000)
+        terminal["summary"]["model_ergonomics"]["job_convergence"]["events"][0]["validation_failure"] = True
+        observe = JobConvergenceTests.row(3, 2, "explicit_observe", terminal=2000)
+        with sqlite3.connect(self.audit_db) as connection:
+            for row in [pending, terminal, observe]:
+                connection.execute("UPDATE action_events SET summary_json = ? WHERE event_id = ?",
+                                   (json.dumps(row["summary"]), row["event_id"]))
+        result = self.summarize()["job_convergence"]
+        self.assertEqual(result["passive_terminal_before_explicit_observe_count"], 1)
+        self.assertEqual(result["terminal_failure_followed_by_observe_count"], 1)
+        self.assertEqual(result["terminal_validation_failure_followed_by_observe_count"], 1)
+
 
 class JobConvergenceTests(unittest.TestCase):
     @staticmethod

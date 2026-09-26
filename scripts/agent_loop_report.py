@@ -473,6 +473,7 @@ def load_audit_continuity_events(
     last_started = max(event["request_observed_at_ms"] for event in keyed)
     connection = _open_sqlite_readonly(audit_db)
     rows: list[sqlite3.Row] = []
+    by_id = {event["event_id"]: event for event in selected_meaningful}
     try:
         for start in range(0, len(windows), 400):
             chunk = windows[start:start + 400]
@@ -489,21 +490,83 @@ def load_audit_continuity_events(
             rows.extend(
                 connection.execute(sql, [first_started, last_started, *chunk]).fetchall()
             )
+        for row in rows:
+            event = _row_to_continuity_event(row)
+            key = (
+                event.get("client_window_key"),
+                event.get("principal_correlation_kind"),
+                event.get("principal_correlation_id"),
+            )
+            if key in keys:
+                by_id[event["event_id"]] = event
+
+        # Workflow-session links describe business provenance, not every follow-up
+        # observation. An exact observe may therefore be the next meaningful call
+        # after the final linked row. Follow only the persisted exact predecessor
+        # relation from each selected tail; never widen by an arbitrary time window.
+        tails: dict[tuple[str, str, str], dict[str, Any]] = {}
+        for event in keyed:
+            key = (
+                event["client_window_key"],
+                event["principal_correlation_kind"],
+                event["principal_correlation_id"],
+            )
+            if key not in tails or event["request_observed_at_ms"] > tails[key]["request_observed_at_ms"]:
+                tails[key] = event
+        frontier = {
+            event["server_trace_id"]
+            for event in tails.values()
+            if isinstance(event.get("server_trace_id"), str) and event["server_trace_id"]
+        }
+        seen_traces = {
+            event.get("server_trace_id")
+            for event in by_id.values()
+            if isinstance(event.get("server_trace_id"), str) and event.get("server_trace_id")
+        }
+        # The summarizer bounds len(selected)+len(context), even though exact
+        # selected traces are deduplicated again by trace id. Stay within that
+        # public report bound here rather than filling the context to 100k alone.
+        remaining = max(0, 100_000 - len(selected_events) - len(by_id))
+        while frontier and remaining:
+            next_frontier: set[str] = set()
+            ordered = sorted(frontier)
+            frontier.clear()
+            for start in range(0, len(ordered), 400):
+                chunk = ordered[start:start + 400]
+                placeholders = ",".join("?" for _ in chunk)
+                sql = f"""
+                    SELECT {_CONTINUITY_COLUMNS}
+                    FROM action_events e
+                    WHERE e.action_name = 'toolsCall'
+                      AND e.window_meaningful = 1
+                      AND json_valid(e.summary_json)
+                      AND json_extract(e.summary_json, '$.previous_meaningful_call') IN ({placeholders})
+                    ORDER BY COALESCE(e.request_observed_at_ms, e.window_started_at_ms, e.started_at * 1000), e.event_id
+                """
+                for row in connection.execute(sql, chunk).fetchall():
+                    event = _row_to_continuity_event(row)
+                    key = (
+                        event.get("client_window_key"),
+                        event.get("principal_correlation_kind"),
+                        event.get("principal_correlation_id"),
+                    )
+                    trace = event.get("server_trace_id")
+                    if key not in keys or not isinstance(trace, str) or not trace or trace in seen_traces:
+                        continue
+                    by_id[event["event_id"]] = event
+                    seen_traces.add(trace)
+                    next_frontier.add(trace)
+                    remaining -= 1
+                    if remaining == 0:
+                        break
+                if remaining == 0:
+                    break
+            frontier = next_frontier
     except sqlite3.Error as exc:
         raise ReportError(f"could not query audit continuity context: {exc}") from exc
     finally:
         connection.close()
 
-    by_id = {event["event_id"]: event for event in selected_meaningful}
-    for row in rows:
-        event = _row_to_continuity_event(row)
-        key = (
-            event.get("client_window_key"),
-            event.get("principal_correlation_kind"),
-            event.get("principal_correlation_id"),
-        )
-        if key in keys:
-            by_id[event["event_id"]] = event
     return sorted(by_id.values(), key=_audit_sort_key)
 
 

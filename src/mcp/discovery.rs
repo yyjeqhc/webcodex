@@ -148,10 +148,6 @@ fn common_input_description(tool: &str, field: &str) -> Option<&'static str> {
             "Total runtime seconds; default 60, clamped to 3600.",
         ("cargo_check" | "cargo_test", "timeout_secs") =>
             "Total validation runtime seconds, clamped to 3600. Defaults vary per tool.",
-        ("run_process" | "run_script" | "run_skill_resource" | "cargo_check" | "cargo_test" | "go_test", "sync_wait_secs") =>
-            "Same-execution Job handoff grace; default 10s, clamped to 55s and timeout. Never extends runtime or retries.",
-        ("run_shell", "sync_wait_secs") =>
-            "Same-execution Job handoff grace; default 10s, clamped to 55s and timeout; controls return only. Named Session SSH unsupported.",
         ("run_process" | "run_shell", "assertion_name") =>
             "Validation label; reuse after a fix to correlate evidence. Inert unless execution is validation-like.",
         _ => return None,

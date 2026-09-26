@@ -119,7 +119,7 @@ Formatting 属于收尾，不是每次编辑后的 validation。普通循环是�
 
 检查一个 Cargo workspace package 时，`cargo_check` 接受 `package`；检查多个 package 时传入 `packages`。WebCodex 会对该集合排序并去重，然后在同一个 Cargo 进程中使用重复的 `-p` selector。两个 selector 互斥，显式空列表无效。
 
-如果一个确定需要执行的 validation 很可能明显超过 synchronous grace，同时还有真正独立的 read-only inspection，可以显式设置较短的 `sync_wait_secs`（通常可用 `1`），让已经启动的 validation 以**同一个 execution** 尽早 handoff 为 Job。随后只继续独立的源码读取、搜索、diff/architecture inspection 或 review，再观察该 Job；不要为了“并行”额外启动 CPU-heavy validation。如果运行中的 validation 所覆盖源码随后发生 mutation，那么其结果只能算 stale/cache-warmup evidence，不能证明 final workspace；最终源码仍需重新运行 task-appropriate validation。
+如果一个确定需要执行的 validation 超过 Server 管理的 synchronous grace，它会自动以**同一个 execution** handoff 为 Job，模型不需要调整 handoff timing。随后只继续独立的源码读取、搜索、diff/architecture inspection 或 review，再观察该 Job；不要为了“并行”额外启动 CPU-heavy validation。如果运行中的 validation 所覆盖源码随后发生 mutation，那么其结果只能算 stale/cache-warmup evidence，不能证明 final workspace；最终源码仍需重新运行 task-appropriate validation。
 
 如果某次 test invocation 必须证明“测试确实执行了”，使用 `require_tests: true` 或 `min_tests: N`。它们是本次调用的 evidence assertion，不会自动变成 Workflow Session 的持久要求。如果 validator execution 成功，但请求的 test 数量未满足或无法证明，closeout 会把这次调用保留为 evidence gap，而不是代码/测试 correctness failure。否则，exit-zero 但合法运行零个 test 只是 execution result，并不能证明 test coverage。
 
@@ -135,7 +135,7 @@ Formatting 属于收尾，不是每次编辑后的 validation。普通循环是�
 
 ## 长时间运行的工作
 
-命令或 validation 超过同步等待窗口时，会作为同一条 WebCodex Job 继续执行。保留其精确 Job identity 与 parser-ready continuation；如果仍有有用的独立工作，就先继续这些工作，之后再 observe，不要为了“保持可见”反复轮询 running Job。只有下一步真正依赖 terminal result 时，才使用返回的 host-safe `wait_secs=55, wake_on=terminal` continuation。Runtime 仍接受最长 100 秒的显式 observation wait，但更长的 model-facing wait 可能超过外层 MCP Host deadline。单个 Job 或任一 terminal result 即可推进时使用 `terminal`；预先确定的一组 Job 必须全部结束才能推进时使用 `all_terminal`。Recovery/continuation hint 不会授权对不确定 effect 做 retry。
+命令或 validation 超过同步等待窗口时，会作为同一条 WebCodex Job 继续执行。保留其精确 Job identity 与 parser-ready continuation；如果仍有有用的独立工作，就先继续这些工作，之后再 observe，不要为了“保持可见”反复轮询 running Job。只有下一步真正依赖 terminal result 时，才使用返回的 continuation；Server 会按照当前 MCP Host profile 对 observation wait 做有界适配。Runtime 内部仍保留 transport-neutral observation ceiling，而 MCP 等待会适配 Host budget。单个 Job 或任一 terminal result 即可推进时使用 `terminal`；预先确定的一组 Job 必须全部结束才能推进时使用 `all_terminal`。Recovery/continuation hint 不会授权对不确定 effect 做 retry。
 
 ## 手动多窗口协作
 

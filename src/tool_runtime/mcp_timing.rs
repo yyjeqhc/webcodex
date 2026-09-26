@@ -41,7 +41,7 @@ pub(super) fn normalize_result_timing(
     transport: SessionTransport,
     policy: McpHostRuntimePolicy,
 ) {
-    if !matches!(transport, SessionTransport::Mcp) || !result.success {
+    if !matches!(transport, SessionTransport::Mcp) {
         return;
     }
     let Some(continuation) = result.output.get_mut("continuation") else {
@@ -149,6 +149,36 @@ mod tests {
         let mut result = ToolResult::ok(serde_json::json!({"value": 1}));
         normalize_result_timing(&mut result, SessionTransport::Mcp, host_code_mode_policy());
         assert_eq!(result.output, serde_json::json!({"value": 1}));
+    }
+
+    #[test]
+    fn failed_handoff_recovery_continuation_is_still_host_bounded() {
+        let mut result = ToolResult::err_with_output(
+            "handoff observation failed".to_string(),
+            serde_json::json!({
+                "execution_state": "outcome_unknown",
+                "job_id": "job-123",
+                "continuation": {
+                    "tool": "observe_jobs",
+                    "arguments": {
+                        "items": [{
+                            "job_id": "job-123",
+                            "after_observation_token": "token-123"
+                        }],
+                        "wait_secs": 55,
+                        "wake_on": "terminal"
+                    }
+                }
+            }),
+        );
+        assert!(!result.success);
+        normalize_result_timing(&mut result, SessionTransport::Mcp, host_code_mode_policy());
+        assert_eq!(result.output["continuation"]["arguments"]["wait_secs"], 5);
+        assert_eq!(
+            result.output["continuation"]["arguments"]["items"][0]["job_id"],
+            "job-123"
+        );
+        assert_eq!(result.output["execution_state"], "outcome_unknown");
     }
 
     #[test]

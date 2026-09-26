@@ -502,6 +502,30 @@ impl Database {
                 ON action_events(client_window_key, window_ended_at_ms DESC, event_id DESC)
                 WHERE window_meaningful = 1 AND window_started_at_ms IS NOT NULL AND window_ended_at_ms IS NOT NULL;
 
+            CREATE TABLE IF NOT EXISTS window_operator_messages (
+                message_id TEXT PRIMARY KEY,
+                principal_kind TEXT NOT NULL,
+                principal_id TEXT NOT NULL,
+                recipient_window_key TEXT NOT NULL,
+                context_session_id TEXT,
+                context_project TEXT,
+                kind TEXT NOT NULL,
+                priority TEXT NOT NULL,
+                message TEXT NOT NULL,
+                tags_json TEXT NOT NULL,
+                requires_ack INTEGER NOT NULL CHECK(requires_ack IN (0, 1)),
+                created_at_ms INTEGER NOT NULL,
+                first_projected_at_ms INTEGER,
+                last_projected_at_ms INTEGER,
+                projection_count INTEGER NOT NULL DEFAULT 0,
+                first_ack_observed_at_ms INTEGER,
+                delivery_key_hash TEXT NOT NULL,
+                delivery_payload_hash TEXT NOT NULL,
+                UNIQUE(principal_kind, principal_id, delivery_key_hash)
+            );
+            CREATE INDEX IF NOT EXISTS idx_window_operator_messages_recipient
+                ON window_operator_messages(principal_kind, principal_id, recipient_window_key, created_at_ms);
+
             CREATE TABLE IF NOT EXISTS window_peer_messages (
                 message_id TEXT PRIMARY KEY,
                 principal_kind TEXT NOT NULL,

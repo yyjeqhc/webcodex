@@ -82,7 +82,7 @@ pub(crate) struct ToolProtocolCapabilities {
     /// This never replaces canonical communication/Goal authorization.
     pub(crate) goal_plan_app: bool,
     /// Protocol-surface support for Work Result App live refresh and frozen
-    /// lazy diff reads. Exact Project + Session authority is checked per call;
+    /// lazy diff reads. Exact Project and optional Session context are checked per call;
     /// lazy reads additionally fence caller, snapshot, and advertised path.
     pub(crate) work_result_app: bool,
     /// Protocol-surface support for ModelHidden MCP App Host-continuation
@@ -567,6 +567,14 @@ impl ToolRuntime {
             if super::tool_definition::is_model_visible_tool_name(&request.tool_name) {
                 let peer_project = outcome.project.clone();
                 if let Some(result) = outcome.result.as_mut() {
+                    if request.tool_name != "present_work_result" {
+                        self.add_window_operator_projection(
+                            result,
+                            context.auth,
+                            context.window,
+                            &recorder_metadata.ack_session_message_ids,
+                        );
+                    }
                     self.add_peer_collaboration_projection(
                         result,
                         context.auth,
@@ -1149,6 +1157,14 @@ impl ToolRuntime {
                 .resolved_project
                 .as_deref()
                 .or(recorder_metadata.recording_session_project.as_deref());
+            if request.tool_name != "present_work_result" {
+                self.add_window_operator_projection(
+                    &mut result,
+                    context.auth,
+                    context.window,
+                    &recorder_metadata.ack_session_message_ids,
+                );
+            }
             self.add_peer_collaboration_projection(
                 &mut result,
                 context.auth,

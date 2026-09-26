@@ -369,6 +369,7 @@ impl ToolRuntime {
                 output,
                 error,
             };
+            self.add_window_operator_projection(&mut result, auth, window, ack_message_ids);
             self.add_peer_collaboration_projection(
                 &mut result,
                 auth,
@@ -383,6 +384,7 @@ impl ToolRuntime {
 
         let output = Value::Object(std::mem::take(structured));
         let mut result = ToolResult::ok(output);
+        self.add_window_operator_projection(&mut result, auth, window, ack_message_ids);
         self.add_peer_collaboration_projection(&mut result, auth, window, project, ack_message_ids);
 
         if let Value::Object(output) = result.output {

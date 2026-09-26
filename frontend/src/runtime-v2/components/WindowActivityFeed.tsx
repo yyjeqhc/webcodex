@@ -94,6 +94,7 @@ export function WindowActivityFeed({
           <small>{visibleCalls.length}/{calls.length}</small>
         </div>
       )}
+      {detail.active_count > detail.active_requests.length && <div className="inventory-note">{t("Some running calls are not shown.")} {detail.active_requests.length}/{detail.active_count}</div>}
       {detail.activity_truncated && <div className="inventory-note">{t("Earlier calls are not available in this view. Showing retained activity from oldest to newest.")}</div>}
       <div className="window-workflow-list">
         {visibleCalls.map((call) => {

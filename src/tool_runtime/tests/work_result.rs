@@ -522,6 +522,19 @@ async fn work_result_window_card_needs_no_session_and_uses_all_window_activity()
     let events = work["window_activity"]["events"].as_array().unwrap();
     assert!(events
         .iter()
+        .all(|event| event["server_trace_id"].is_string()));
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event["tool_name"] == "read_files")
+            .count(),
+        2
+    );
+    assert!(events
+        .iter()
+        .any(|event| event["tool_name"] == "runtime_status"));
+    assert!(events
+        .iter()
         .any(|event| event["meaningful"] == false && event["label"] == "Observed Runtime status"));
     assert!(events
         .iter()

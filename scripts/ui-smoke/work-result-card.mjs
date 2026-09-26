@@ -16,6 +16,12 @@ try {
     page.on('pageerror', error => errors.push(error.message));
     await page.setContent('<style>body{margin:0}iframe{width:100%;height:980px;border:0}</style>');
     const state = structuredClone(baseState);
+    state.window_activity.active = true;
+    state.window_activity.active_requests = ["run_shell", "read_files"].map((tool, index) => ({
+      label: "Active call", tool_name: tool, server_trace_id: "active-" + index, started_at_ms: Date.now(),
+    }));
+    state.activity.active = true;
+    state.activity.current = { label: "Running tools", kind: "run", started_at_ms: Date.now() };
     state.collaboration.messages = [{ message_id: 'wc_msg_reading', created_at_ms: Date.now(), message: 'Please review the collaboration workflow before release.', source: 'operator', direction: 'inbound', requires_ack: true, first_projected_at_ms: null, first_ack_observed_at_ms: null }];
     await page.evaluate(({ html, state }) => {
       window.fixtureState = state;
@@ -40,6 +46,10 @@ try {
       document.body.append(frame);
     }, { html, state });
     const card = page.frameLocator('iframe');
+    await card.getByText('run_shell', { exact: true }).waitFor();
+    assert.equal(await card.getByText('Running', { exact: true }).count(), 2);
+    assert(await card.locator('body').evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
+    await page.screenshot({ path: new URL(`work-result-activity-${width}.png`, output).pathname, fullPage: true });
     await card.getByRole('tab', { name: 'Collaboration', exact: true }).click();
     await card.getByText('Saved', { exact: true }).waitFor();
     await card.locator('#messages .message-copy').evaluate(node => {

@@ -490,7 +490,7 @@ test("user Refresh performs one exact state read and updates the snapshot", asyn
   assert.equal(view.nodes.refresh.textContent, "Refreshing…");
   await view.reply(view.calls("work_result_state")[0], toolResult({ work_result: nextState }));
   assert.equal(view.nodes.windowCoverage.textContent, "3 observed events");
-  assert.equal(view.nodes.windowActivity.children.length, 3);
+  assert.equal(view.nodes.windowActivity.children.length, 4);
   assert.equal(view.nodes.status.textContent, "Updated");
   assert.equal(view.nodes.refresh.disabled, false);
 });
@@ -896,8 +896,8 @@ test("Activity and Collaboration tabs preserve Window activity and drafts across
   assert.equal(view.nodes.projectIdentity.textContent, "Window activity");
   assert.equal(view.nodes.sessionIdentity.textContent, "Context · " + session_id.slice(8, 14));
   assert.equal(view.nodes.windowActivity.children.length, 2);
-  assert.equal(view.nodes.windowActivity.children[0].children[0].children[0].textContent, "Reviewed changes");
-  assert.equal(view.nodes.windowActivity.children[1].children[0].children[1].textContent, "Observe · Succeeded");
+  assert.equal(view.nodes.windowActivity.children[1].children[0].children[0].textContent, "Reviewed changes");
+  assert.equal(view.nodes.windowActivity.children[0].children[0].children[1].textContent, "Observe · Succeeded");
   view.nodes.messageInput.value = "Keep my draft";
   view.nodes.tabCollaboration.onclick();
   assert.equal(view.nodes.panelCollaboration.hidden, false);
@@ -910,7 +910,7 @@ test("Activity and Collaboration tabs preserve Window activity and drafts across
   view.nodes.refresh.onclick(); await flush();
   await view.reply(view.calls("work_result_state")[0], toolResult({ work_result: nextState }));
   assert.equal(view.nodes.panelActivity.hidden, false);
-  assert.equal(view.nodes.windowActivity.children.length, 3);
+  assert.equal(view.nodes.windowActivity.children.length, 4);
   assert.equal(view.nodes.messageInput.value, "Keep my draft");
 });
 
@@ -981,3 +981,49 @@ for (const receipt of [{}, toolResult({}), toolResult({ message_id: 42 })]) {
     assert.deepEqual(view.calls("work_result_send_message")[1].params.arguments, first.params.arguments);
   });
 }
+
+test("card renders each concurrent call and reconciles completion by exact trace", async () => {
+  const completed = { ...baseState.window_activity.events[0], tool_name: "read_files", server_trace_id: "trace-completed" };
+  const state = { ...baseState, window_activity: { ...baseState.window_activity,
+    active: true, events: [completed], events_returned: 1, events_observed: 1,
+    active_requests: [
+      { label: "Read files", tool_name: "read_files", server_trace_id: "trace-completed", started_at_ms: completed.started_at_ms },
+      { label: "Read files", tool_name: "read_files", server_trace_id: "trace-2", started_at_ms: completed.started_at_ms },
+      { label: "Read files", tool_name: "read_files", server_trace_id: "trace-3", started_at_ms: completed.started_at_ms },
+    ],
+  } };
+  const view = app("mcp_work_result_app.html");
+  view.toolResult({ work_result: state }); await view.initialize();
+  const rows = view.nodes.windowActivity.children;
+  assert.equal(rows.length, 3);
+  assert(rows.every(row => row.children[0].children[0].textContent === "read_files"));
+  assert.equal(rows.filter(row => row.children[0].children[1].textContent === "Running").length, 2);
+});
+
+test("card keeps repeated fast calls as individual rows and exposes the active display bound", async () => {
+  const event = baseState.window_activity.events[0];
+  const state = { ...baseState, window_activity: { ...baseState.window_activity,
+    events: Array.from({ length: 200 }, (_, i) => ({ ...event, tool_name: "observe_jobs", server_trace_id: "trace-" + i })),
+    events_returned: 200, events_observed: 230, truncated: true,
+    active_requests: Array.from({ length: 8 }, (_, i) => ({ label: "Running", tool_name: "run_shell", server_trace_id: "active-" + i, started_at_ms: event.started_at_ms })),
+  } };
+  const view = app("mcp_work_result_app.html");
+  view.toolResult({ work_result: state }); await view.initialize();
+  assert.equal(view.nodes.windowActivity.children.length, 208);
+  assert.match(view.nodes.windowCoverage.textContent, /Showing 200 of 230/);
+  assert.match(view.nodes.windowCoverage.textContent, /up to 8 active/);
+});
+
+test("long-running calls keep polling and failed automatic reads identify stale snapshots", async () => {
+  const state = { ...baseState, window_activity: { ...baseState.window_activity, active: true,
+    active_requests: [{ label: "Running tests", tool_name: "run_shell", started_at_ms: 1_999_999_990_000 }],
+  } };
+  const view = app("mcp_work_result_app.html");
+  view.toolResult({ work_result: state }); await view.initialize();
+  view.advanceTime(31 * 60 * 1000);
+  await view.fireTimers(2500);
+  assert.equal(view.calls("work_result_state").length, 1);
+  await view.reject(view.calls("work_result_state")[0]);
+  assert.match(view.nodes.status.textContent, /Refresh unavailable.*last snapshot/);
+  assert([...view.timers.values()].some(timer => timer.delay === 2500));
+});

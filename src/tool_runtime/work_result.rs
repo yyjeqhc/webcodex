@@ -489,6 +489,8 @@ fn work_result_window_activity_projection(observed: &Value) -> Value {
                     true,
                     semantics.interaction.is_meaningful(),
                 ),
+                "tool_name": (!tool.is_empty()).then_some(tool),
+                "server_trace_id": request.get("server_trace_id"),
                 "kind": semantics.kind.as_str(),
                 "started_at_ms": started_at_ms,
             }))
@@ -511,6 +513,8 @@ fn work_result_window_activity_projection(observed: &Value) -> Value {
             let semantics = webcodex_tool_contracts::runtime_tool_activity_semantics(tool);
             Some(json!({
                 "label": work_result_observed_label(tool, false, meaningful),
+                "tool_name": (!tool.is_empty()).then_some(tool),
+                "server_trace_id": event.get("server_trace_id"),
                 "kind": semantics.kind.as_str(),
                 "status": event.get("status").and_then(Value::as_str).unwrap_or("unknown"),
                 "meaningful": meaningful,

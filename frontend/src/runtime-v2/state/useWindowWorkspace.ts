@@ -154,6 +154,8 @@ export function useWindowWorkspace(
   const fullDetailRequest = useRef<{ key: string; controller: AbortController } | null>(null);
   const fullDetailLoadedKey = useRef("");
   const fullDetailLoadedAt = useRef(0);
+  const lastPrimaryActivity = useRef<string | null>(null);
+  const fullDetailNeedsCatchup = useRef(false);
 
   const refresh = useCallback(() => {
     // Poll list + lightweight primary detail independently. Full history has a
@@ -215,6 +217,7 @@ export function useWindowWorkspace(
     if (!enabled || !loadDetail || !key || fullDetailRequest.current) return;
     const controller = new AbortController();
     fullDetailRequest.current = { key, controller };
+    fullDetailNeedsCatchup.current = false;
     setDetailHydrating(true);
     void fetchWindowDetail(client, key, controller.signal).then((response) => {
       if (
@@ -242,6 +245,7 @@ export function useWindowWorkspace(
       }
       if (!response.ok || !response.data || response.data.client_window_key !== key) {
         // Primary data remains usable. The next primary refresh can retry history.
+        fullDetailNeedsCatchup.current = true;
         return;
       }
       fullDetailLoadedKey.current = key;
@@ -256,6 +260,8 @@ export function useWindowWorkspace(
     fullDetailRequest.current = null;
     fullDetailLoadedKey.current = "";
     fullDetailLoadedAt.current = 0;
+    lastPrimaryActivity.current = null;
+    fullDetailNeedsCatchup.current = false;
     setDetailHydrating(false);
   }, [client, enabled, loadDetail, selectedKey]);
 
@@ -300,10 +306,16 @@ export function useWindowWorkspace(
           current === "available" || current === "stale" ? "stale" : "error");
         return;
       }
+      const recent = response.data.activity;
+      if (lastPrimaryActivity.current !== null && response.data.activity_truncated &&
+          !recent.some((row) => windowActivityIdentity(row) === lastPrimaryActivity.current)) {
+        fullDetailNeedsCatchup.current = true;
+      }
+      lastPrimaryActivity.current = recent[0] ? windowActivityIdentity(recent[0]) : "";
       setDetail((current) => mergePrimaryWindowDetail(current, response.data!));
       setDetailAvailability("available");
       const fullDetailDue =
-        fullDetailLoadedKey.current !== selectedKey ||
+        fullDetailNeedsCatchup.current || fullDetailLoadedKey.current !== selectedKey ||
         Date.now() - fullDetailLoadedAt.current >= fullDetailRefreshMs;
       if (fullDetailDue) hydrateFullDetail(selectedKey);
     });

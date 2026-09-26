@@ -5,6 +5,7 @@ export type RuntimeLanguage = "en" | "zh-CN";
 export const LANGUAGE_STORAGE_KEY = "webcodex.runtime.language.v1";
 
 export const RUNTIME_ZH_TEXT: Record<string, string> = {
+  "Some running calls are not shown.": "运行中调用仅显示部分记录。",
   "Conversation refresh failed; previous messages retained.": "对话刷新失败，保留上次加载的消息。",
   "Messages unavailable. Refresh to retry.": "消息暂不可用，请刷新重试。",
   "Connected in this browser": "已在此浏览器连接",

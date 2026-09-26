@@ -224,7 +224,7 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
       </section>
       <section class="section">
         <div class="section-head"><h2>Window activity</h2><span id="windowCoverage" class="secondary"></span></div>
-        <p class="secondary">The same Window activity observed by WebUI, newest first. Observe and diagnostic actions remain visible.</p>
+        <p class="secondary">Window calls in start-time order, oldest first. Observe and diagnostic actions remain visible.</p>
         <div id="windowActivity" class="workflow-activity"></div>
         <button id="askActivity" class="refresh" type="button">Send an instruction</button>
       </section>
@@ -433,6 +433,9 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     if (typeof value.label !== "string" || value.label.length < 1 || value.label.length > 120) return false;
     if (!(value.kind === null || value.kind === undefined || ["read", "search", "navigate", "edit", "run", "test", "review"].includes(value.kind))) return false;
     if (!Number.isSafeInteger(value.started_at_ms) || value.started_at_ms < 0) return false;
+    for (const key of ["tool_name", "server_trace_id"]) {
+      if (value[key] != null && (typeof value[key] !== "string" || !value[key].length || value[key].length > 128)) return false;
+    }
     if (active) return true;
     return Number.isSafeInteger(value.ended_at_ms) && value.ended_at_ms >= value.started_at_ms
       && (value.duration_ms === null || safeCount(value.duration_ms))
@@ -913,18 +916,25 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     el("windowCoverage").textContent = windowActivity.truncated || observed > returned
       ? "Showing " + returned + " of " + observed + " observed events"
       : observed + " observed " + (observed === 1 ? "event" : "events");
-    const rows = [...windowActivity.events].sort((a, b) => b.ended_at_ms - a.ended_at_ms);
+    if (windowActivity.active_requests.length >= 8) el("windowCoverage").textContent += " · Showing up to 8 active calls";
+    const completed = new Set(windowActivity.events.map(row => row.server_trace_id).filter(Boolean));
+    const rows = [
+      ...windowActivity.events.map(row => ({ ...row, running: false })),
+      ...windowActivity.active_requests.filter(row => !row.server_trace_id || !completed.has(row.server_trace_id))
+        .map(row => ({ ...row, running: true })),
+    ].sort((a, b) => a.started_at_ms - b.started_at_ms);
     for (const row of rows) {
       const article = document.createElement("article"); article.className = "workflow-row";
       const header = document.createElement("header");
-      const label = document.createElement("strong"); label.textContent = row.label;
+      const label = document.createElement("strong"); label.textContent = row.tool_name || row.label;
       const status = document.createElement("span"); status.className = "secondary";
       const outcome = ({ success: "Succeeded", succeeded: "Succeeded", completed: "Completed", failed: "Failed", timeout: "Timed out", unknown: "Outcome unknown" })[row.status] || row.status;
-      status.textContent = row.meaningful ? outcome : "Observe · " + outcome;
+      status.textContent = row.running ? "Running" : row.meaningful ? outcome : "Observe · " + outcome;
       header.append(label, status);
       const time = document.createElement("time");
-      const duration = row.duration_ms === null ? "" : " · " + (row.duration_ms < 1000 ? row.duration_ms + "ms" : (row.duration_ms / 1000).toFixed(1) + "s");
-      time.textContent = new Date(row.ended_at_ms).toLocaleString() + duration;
+      const elapsed = row.running ? Math.max(0, Date.now() - row.started_at_ms) : row.duration_ms;
+      const duration = elapsed == null ? "" : " · " + (elapsed < 1000 ? elapsed + "ms" : (elapsed / 1000).toFixed(1) + "s");
+      time.textContent = new Date(row.started_at_ms).toLocaleString() + duration;
       article.append(header, time); root.append(article);
     }
     if (!root.children.length) {
@@ -1074,7 +1084,7 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
 
   function automaticRefreshDelay() {
     const idleMs = lastStateChangeAt === null ? 0 : Math.max(0, Date.now() - lastStateChangeAt);
-    if (idleMs < IDLE_BACKOFF_AFTER_MS) return document.hidden ? HIDDEN_REFRESH_MS : VISIBLE_REFRESH_MS;
+    if (lastRenderedState?.window_activity.active || idleMs < IDLE_BACKOFF_AFTER_MS) return document.hidden ? HIDDEN_REFRESH_MS : VISIBLE_REFRESH_MS;
     return document.hidden ? HIDDEN_IDLE_REFRESH_MS : VISIBLE_IDLE_REFRESH_MS;
   }
 
@@ -1082,7 +1092,7 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     if (refreshTimer !== null) clearTimeout(refreshTimer);
     refreshTimer = null;
     if (tornDown || !hostInitialized || !identity || lastStateVersion === null) return;
-    if (lastStateChangeAt !== null && Date.now() - lastStateChangeAt >= AUTO_REFRESH_IDLE_PAUSE_MS) {
+    if (!lastRenderedState?.window_activity.active && lastStateChangeAt !== null && Date.now() - lastStateChangeAt >= AUTO_REFRESH_IDLE_PAUSE_MS) {
       if (!refreshInFlight) el("status").textContent = "Updates paused · Refresh to check";
       return;
     }
@@ -1103,11 +1113,11 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
       if (tornDown) return;
       const structured = structuredOf(response);
       if (!structured) {
-        if (!automatic) el("status").textContent = hadSnapshot ? "Refresh unavailable · showing last snapshot" : "Refresh unavailable · retry";
+        el("status").textContent = hadSnapshot ? "Refresh unavailable · showing last snapshot" : "Refresh unavailable · retry";
         return;
       }
       if (structured.success === false) {
-        if (!automatic) el("status").textContent = hadSnapshot ? "Refresh unavailable · showing last snapshot" : "Refresh unavailable · retry";
+        el("status").textContent = hadSnapshot ? "Refresh unavailable · showing last snapshot" : "Refresh unavailable · retry";
         return;
       }
       const state = extractState(structured);
@@ -1133,7 +1143,7 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
         : changed ? (automatic ? "Live · updated" : "Updated")
         : (automatic ? "Live" : "Up to date");
     } catch (_) {
-      if (!tornDown && !automatic) el("status").textContent = hadSnapshot ? "Refresh unavailable · showing last snapshot" : "Refresh unavailable · retry";
+      if (!tornDown) el("status").textContent = hadSnapshot ? "Refresh unavailable · showing last snapshot" : "Refresh unavailable · retry";
     } finally {
       refreshInFlight = false;
       updateRefreshControl();

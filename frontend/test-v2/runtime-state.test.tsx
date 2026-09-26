@@ -307,3 +307,63 @@ it("does not retarget an explicit Window when its detail is unavailable or inven
   expect(result.current.detail).toBeNull();
   expect(vi.mocked(client.post).mock.calls.filter(([path]) => path === "window").every(([, payload]) => (payload as any).client_window_key === key)).toBe(true);
 });
+
+it.each([0, 1])("immediately catches up a burst after %i previously observed calls", async (previousCount) => {
+  const activity = Array.from({ length: 161 }, (_, i) => ({
+    started_at_ms: 1000 + i, ended_at_ms: 1001 + i, duration_ms: 1,
+    method: "tools/call", tool_name: "read_files", status: "success", meaningful: true,
+    server_trace_id: "burst-" + i, workflow_sessions: [],
+  })).reverse();
+  let burst = false;
+  let fullCalls = 0;
+  const detail = windowDetail();
+  const client = { post: vi.fn(async (path, payload) => {
+    if (path === "windows") return { ok: true, status: 200, data: { windows: [{ client_window_key: detail.client_window_key }], total: 1 } };
+    const primary = payload.detail_level === "primary";
+    if (!primary) fullCalls++;
+    const rows = burst ? primary ? activity.slice(0, 80) : activity : previousCount ? activity.slice(-1) : [];
+    return { ok: true, status: 200, data: { ...detail, detail_level: primary ? "primary" : "full", activity: rows, activity_returned: rows.length, activity_truncated: burst && primary } };
+  }) } as unknown as RuntimeV2Client;
+  const unauthorized = vi.fn();
+  const { result } = renderHook(() => useWindowWorkspace(client, true, unauthorized));
+  await waitFor(() => expect(result.current.detail?.detail_level).toBe("full"));
+  expect(fullCalls).toBe(1);
+  burst = true;
+  act(() => result.current.refresh());
+  await waitFor(() => expect(result.current.detail?.activity).toHaveLength(161));
+  expect(fullCalls).toBe(2);
+  act(() => result.current.refresh());
+  await waitFor(() => expect(result.current.detailAvailability).toBe("available"));
+  expect(fullCalls).toBe(2);
+});
+
+it("retains a history catch-up request when a burst arrives during initial hydration", async () => {
+  let resolveHistory!: (response: ResponseShape) => void;
+  const pendingHistory = new Promise<ResponseShape>(resolve => { resolveHistory = resolve; });
+  const detail = windowDetail();
+  const rows = Array.from({ length: 161 }, (_, i) => ({
+    started_at_ms: 1000 + i, ended_at_ms: 1001 + i, duration_ms: 1,
+    method: "tools/call", tool_name: "read_files", status: "success", meaningful: true,
+    server_trace_id: "inflight-" + i, workflow_sessions: [],
+  })).reverse();
+  let burst = false;
+  let fullCalls = 0;
+  const client = { post: vi.fn(async (path, payload) => {
+    if (path === "windows") return { ok: true, status: 200, data: { windows: [{ client_window_key: detail.client_window_key }], total: 1 } };
+    const primary = payload.detail_level === "primary";
+    if (!primary && ++fullCalls === 1) return pendingHistory;
+    const activity = burst ? primary ? rows.slice(0, 80) : rows : rows.slice(-1);
+    return { ok: true, status: 200, data: { ...detail, detail_level: primary ? "primary" : "full", activity, activity_returned: activity.length, activity_truncated: burst && primary } };
+  }) } as unknown as RuntimeV2Client;
+  const unauthorized = vi.fn();
+  const { result } = renderHook(() => useWindowWorkspace(client, true, unauthorized));
+  await waitFor(() => expect(result.current.detailHydrating).toBe(true));
+  burst = true;
+  act(() => result.current.refresh());
+  await waitFor(() => expect(result.current.detail?.activity).toHaveLength(80));
+  expect(fullCalls).toBe(1);
+  await act(async () => resolveHistory({ ok: true, status: 200, data: { ...detail, detail_level: "full", activity: rows.slice(-1), activity_returned: 1, activity_truncated: false } }));
+  act(() => result.current.refresh());
+  await waitFor(() => expect(result.current.detail?.activity).toHaveLength(161));
+  expect(fullCalls).toBe(2);
+});

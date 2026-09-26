@@ -112,6 +112,27 @@ requests immediately. Active Session refreshes likewise preserve slow requests.
 Window relations use the returned evidence directly instead of fetching each
 linked Session solely to enrich a Window count.
 
+These are bounded polling views, not lossless real-time event subscriptions. The
+WebUI reads the latest 80 calls every 3 seconds in the foreground (15 seconds in
+the background), and hydrates up to 2,000 retained calls at entry and every
+30 seconds. If a new primary page no longer overlaps the previous page, history
+catch-up starts immediately; an in-flight history request is allowed to finish
+before the next catch-up. Truncated history and omitted running calls are marked.
+A Session filter deliberately shows only related calls; choose **All calls** for
+the whole Window.
+
+The MCP Work Result card displays up to 200 completed calls and 8 active calls,
+individually, in start-time order. Exact tool names identify calls; trace IDs only
+reconcile a running call with its completed record. Foreground polling is normally
+2.5 seconds and background polling 12 seconds. After one minute without changes,
+idle polling backs off to 10/30 seconds; after 30 idle minutes it pauses until
+**Refresh**. Observed active calls keep polling, including long-running calls.
+Failed polling visibly marks the snapshot as stale. Host suspension, network
+latency, retention/response bounds, and bursts larger than a retained page can
+still prevent every invocation from being displayed. App-internal refresh calls
+are intentionally excluded, and Code Mode nested calls remain composition
+summaries rather than separate Window calls.
+
 The Session board is not a mirrored host chat transcript. An observed ACK records
 an explicit model-context acknowledgement, not a reply, read receipt, or completed
 work. Model replies appear only when explicitly posted to the Session; reported

@@ -55,6 +55,7 @@ mod job_tools;
 mod jobs;
 pub(crate) mod kernel;
 mod lsp_tools;
+mod mcp_timing;
 pub(crate) use lsp_tools::runner_local_project_id;
 pub(crate) mod memory;
 pub(crate) mod model_ergonomics_telemetry;

@@ -298,7 +298,7 @@ fn list_project_files_paging_schema_keeps_cardinality_bounded() {
 }
 
 #[test]
-fn sync_validation_and_run_shell_timeout_schema_defers_upper_bounds_to_runtime() {
+fn execution_timeout_schemas_keep_runtime_bounds_and_hide_sync_wait_tuning() {
     let specs = registered_tool_specs();
     for (name, default) in [
         ("cargo_check", 600),
@@ -313,53 +313,36 @@ fn sync_validation_and_run_shell_timeout_schema_defers_upper_bounds_to_runtime()
         assert_eq!(timeout["default"], default, "{name}");
         let desc = timeout["description"].as_str().unwrap_or("");
         assert!(desc.contains("3600") && desc.to_ascii_lowercase().contains("job"));
-
-        let sync_wait = &spec.input_schema["properties"]["sync_wait_secs"];
-        assert_eq!(sync_wait["type"], "integer", "{name}");
-        assert_eq!(sync_wait["minimum"], 1, "{name}");
-        assert!(sync_wait.get("maximum").is_none(), "{name}");
-        assert!(sync_wait.get("default").is_none(), "{name}");
-        let desc = sync_wait["description"].as_str().unwrap_or("");
-        assert!(desc.contains("same execution"), "{name}: {desc}");
         assert!(
-            desc.contains("Runtime early-handoff default"),
-            "{name}: {desc}"
-        );
-        assert!(
-            desc.contains("never extends timeout_secs"),
-            "{name}: {desc}"
+            spec.input_schema["properties"]
+                .get("sync_wait_secs")
+                .is_none(),
+            "{name} must hide sync_wait_secs from model discovery"
         );
     }
+
     let cargo_fmt = spec_named(&specs, "cargo_fmt");
     let timeout = &cargo_fmt.input_schema["properties"]["timeout_secs"];
     assert_eq!(timeout["type"], "integer");
     assert_eq!(timeout["minimum"], 1);
     assert!(timeout.get("maximum").is_none());
     assert_eq!(timeout["default"], 120);
-    let sync_wait = &cargo_fmt.input_schema["properties"]["sync_wait_secs"];
-    assert_eq!(sync_wait["type"], "integer");
-    assert_eq!(sync_wait["minimum"], 1);
-    assert!(sync_wait.get("maximum").is_none());
-    assert!(sync_wait.get("default").is_none());
-    let sync_wait_desc = sync_wait["description"].as_str().unwrap_or("");
-    assert!(
-        sync_wait_desc.contains("Runtime early-handoff default"),
-        "cargo_fmt: {sync_wait_desc}"
-    );
-    for valid in [
-        serde_json::json!({"project": "agent:demo:repo", "check": false, "sync_wait_secs": 1}),
-        serde_json::json!({"project": "agent:demo:repo", "sync_wait_secs": 60}),
+    assert!(cargo_fmt.input_schema["properties"]
+        .get("sync_wait_secs")
+        .is_none());
+
+    for name in [
+        "run_process",
+        "run_script",
+        "run_shell",
+        "run_skill_resource",
     ] {
-        test_support::validate_schema_instance(&valid, &cargo_fmt.input_schema)
-            .unwrap_or_else(|error| panic!("valid ensure-format input rejected: {valid}: {error}"));
-    }
-    for invalid in [
-        serde_json::json!({"project": "agent:demo:repo", "check": false, "sync_wait_secs": 0}),
-        serde_json::json!({"project": "agent:demo:repo", "sync_wait_secs": 0}),
-    ] {
+        let spec = spec_named(&specs, name);
         assert!(
-            test_support::validate_schema_instance(&invalid, &cargo_fmt.input_schema).is_err(),
-            "invalid ensure-format sync_wait_secs passed schema: {invalid}"
+            spec.input_schema["properties"]
+                .get("sync_wait_secs")
+                .is_none(),
+            "{name} must hide sync_wait_secs from model discovery"
         );
     }
 
@@ -372,14 +355,6 @@ fn sync_validation_and_run_shell_timeout_schema_defers_upper_bounds_to_runtime()
     let timeout_desc = timeout["description"].as_str().unwrap_or_default();
     assert!(timeout_desc.contains("shared structured-execution ceiling"));
     assert!(!timeout_desc.contains("120 are accepted and clamped"));
-    let sync_wait = &run_shell.input_schema["properties"]["sync_wait_secs"];
-    assert_eq!(sync_wait["type"], "integer");
-    assert_eq!(sync_wait["minimum"], 1);
-    assert!(sync_wait.get("maximum").is_none());
-    assert!(sync_wait.get("default").is_none());
-    let sync_desc = sync_wait["description"].as_str().unwrap_or_default();
-    assert!(sync_desc.contains("same-execution durable Job handoff"));
-    assert!(sync_desc.contains("not when the command is killed"));
 
     let search = spec_named(&specs, "search_project_texts");
     assert!(
@@ -641,17 +616,8 @@ fn cargo_fmt_conditional_timeout_schema_matches_contract() {
     assert!(validates(
         &json!({"project": "demo", "check": true, "timeout_secs": 3600})
     ));
-    assert!(validates(
-        &json!({"project": "demo", "check": true, "timeout_secs": 3600, "sync_wait_secs": 1})
-    ));
-    assert!(validates(
-        &json!({"project": "demo", "check": true, "timeout_secs": 3600, "sync_wait_secs": 60})
-    ));
     assert!(!validates(
-        &json!({"project": "demo", "check": true, "timeout_secs": 3600, "sync_wait_secs": 0})
-    ));
-    assert!(validates(
-        &json!({"project": "demo", "check": true, "timeout_secs": 3600, "sync_wait_secs": 61})
+        &json!({"project": "demo", "check": true, "timeout_secs": 3600, "sync_wait_secs": 1})
     ));
     assert!(validates(
         &json!({"project": "demo", "check": true, "timeout_secs": 3601})
@@ -659,17 +625,11 @@ fn cargo_fmt_conditional_timeout_schema_matches_contract() {
     assert!(validates(
         &json!({"project": "demo", "check": false, "timeout_secs": 120})
     ));
-    assert!(validates(
+    assert!(!validates(
         &json!({"project": "demo", "check": false, "timeout_secs": 120, "sync_wait_secs": 1})
     ));
-    assert!(validates(
+    assert!(!validates(
         &json!({"project": "demo", "timeout_secs": 120, "sync_wait_secs": 1})
-    ));
-    assert!(!validates(
-        &json!({"project": "demo", "check": false, "timeout_secs": 120, "sync_wait_secs": 0})
-    ));
-    assert!(!validates(
-        &json!({"project": "demo", "timeout_secs": 120, "sync_wait_secs": 0})
     ));
     assert!(validates(
         &json!({"project": "demo", "check": false, "timeout_secs": 121})

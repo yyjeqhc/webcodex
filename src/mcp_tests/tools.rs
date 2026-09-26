@@ -1887,9 +1887,11 @@ async fn mcp_compact_preserves_safety_patterns_and_wrapper_bounds() {
         properties["context_request"]["items"]["maxLength"],
         crate::tool_runtime::context_projection::MAX_CONTEXT_REQUEST_KEY_CHARS
     );
-    for field in ["timeout_secs", "sync_wait_secs"] {
-        assert_eq!(properties[field]["minimum"], 1, "{field}");
-    }
+    assert_eq!(properties["timeout_secs"]["minimum"], 1);
+    assert!(
+        properties.get("sync_wait_secs").is_none(),
+        "legacy sync_wait_secs must stay hidden from MCP discovery"
+    );
 }
 
 #[test]
@@ -2068,16 +2070,6 @@ fn mcp_compact_common_copy_respects_tool_and_argument_boundaries() {
             "run_detached_process",
             "timeout_secs",
             vec!["Total runtime", "604800"],
-        ),
-        (
-            "cargo_check",
-            "sync_wait_secs",
-            vec!["Same-execution", "10s", "55s", "timeout", "Never"],
-        ),
-        (
-            "run_shell",
-            "sync_wait_secs",
-            vec!["10s", "55s", "timeout", "return"],
         ),
         (
             "run_shell",

@@ -225,7 +225,6 @@ pub fn observe_job_continuation_schema() -> Value {
                 },
                 "wait_secs": {
                     "type": "integer",
-                    "const": webcodex_core::runtime_contract::MODEL_JOB_CONTINUATION_WAIT_SECS,
                     "minimum": 1,
                     "maximum": webcodex_core::runtime_contract::MAX_JOB_OBSERVATION_WAIT_SECS
                 },

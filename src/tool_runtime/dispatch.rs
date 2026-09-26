@@ -1255,6 +1255,7 @@ impl ToolRuntime {
                 &mut result_projection,
             )
             .await;
+        super::mcp_timing::normalize_result_timing(&mut result, transport, self.mcp_host_policy);
         // Early project/session/auth failures can return before the normal
         add_run_process_expectation_projection(
             immediate_tool_name,
@@ -1401,6 +1402,7 @@ impl ToolRuntime {
     ) -> ToolResult {
         call = call
             .with_coding_agent_recording_session_id(recorder_metadata.recording_session_id.clone());
+        super::mcp_timing::normalize_call_timing(&mut call, transport, self.mcp_host_policy);
         if let ToolCall::PluginTool(plugin) = call {
             return match crate::plugin_gateway::invoke(
                 self,

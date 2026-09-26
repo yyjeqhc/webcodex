@@ -927,6 +927,10 @@ pub struct ShellJobInfo {
     pub shell: Option<String>,
     pub command_preview: String,
     pub status: String,
+    /// Cross-domain lifecycle projection shared with durable service operations.
+    /// Older payloads may omit it; current Servers always populate it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operation_phase: Option<crate::operation_phase::OperationPhase>,
     pub created_at: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub started_at: Option<i64>,

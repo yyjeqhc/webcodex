@@ -1157,9 +1157,11 @@ fn observe_runtime_metric_fail_open(observe: impl FnOnce()) {
     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(observe));
 }
 
+// Keep high-frequency per-envelope transport metrics out of normal INFO logs.
+// Operational lifecycle/recovery messages retain their explicit INFO/WARN level.
 macro_rules! runtime_metric_info {
     ($($fields:tt)*) => {
-        observe_runtime_metric_fail_open(|| tracing::info!($($fields)*))
+        observe_runtime_metric_fail_open(|| tracing::debug!($($fields)*))
     };
 }
 

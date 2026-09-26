@@ -80,7 +80,7 @@ pub(crate) async fn run_regular_server_tunnel(
     let encoded = serde_json::to_string(&ready).map_err(|_| {
         ProductError::new(
             "machine_output_failed",
-            "WebCodex could not encode regular Tunnel readiness",
+            "WebPi could not encode regular Tunnel readiness",
             Some("Retry the OpenAI Secure Tunnel."),
         )
     })?;
@@ -182,8 +182,8 @@ fn validate_local_server_url(value: &str) -> Result<String, ProductError> {
     let parsed = url::Url::parse(value).map_err(|_| {
         ProductError::new(
             "unsupported_topology",
-            "Regular OpenAI Tunnel requires a valid local WebCodex Server URL",
-            Some("Start the local WebCodex runtime before starting the Tunnel."),
+            "Regular OpenAI Tunnel requires a valid local WebPi Server URL",
+            Some("Start the local WebPi runtime before starting the Tunnel."),
         )
     })?;
     let host = parsed.host_str().unwrap_or("");
@@ -197,7 +197,7 @@ fn validate_local_server_url(value: &str) -> Result<String, ProductError> {
     {
         return Err(ProductError::new(
             "unsupported_topology",
-            "Regular OpenAI Tunnel only exposes a loopback local WebCodex Server",
+            "Regular OpenAI Tunnel only exposes a loopback local WebPi Server",
             Some("Use this command with Local Full Runtime; remote Server exposure is managed remotely."),
         ));
     }
@@ -214,7 +214,7 @@ async fn wait_for_regular_tunnel_stop_signal() {
 async fn wait_for_stdin_eof() {
     let (tx, rx) = tokio::sync::oneshot::channel();
     let _ = std::thread::Builder::new()
-        .name("webcodex-server-tunnel-stdin".to_string())
+        .name("webpi-server-tunnel-stdin".to_string())
         .spawn(move || {
             let mut stdin = std::io::stdin().lock();
             let mut buffer = [0_u8; 256];

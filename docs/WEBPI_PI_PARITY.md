@@ -21,7 +21,7 @@ This is not a claim that a browser harness should emulate Pi's terminal UI or ta
 | Skills | native | Pi resource loader + native skill metadata/content |
 | Prompt templates | native | Pi prompt-template parser/substitution behavior |
 | AGENTS/context | native | Pi project context discovery; bounded snapshots are exposed to the web agent |
-| Pi packages | native + stricter | Web-agent and local-admin install/list/update/remove call Pi `DefaultPackageManager`; web mutations require explicit lifecycle-script confirmation, while resolved extension imports still require exact WebPi fingerprint approval |
+| Pi packages | native + stricter | `pi_package_inspect` performs read-only npm registry metadata preflight without downloading tarballs or running lifecycle scripts; install/list/update/remove then call Pi `DefaultPackageManager`; web mutations require explicit lifecycle-script confirmation, while resolved extension imports still require exact WebPi fingerprint approval |
 | Project trust | native + stricter | Pi `ProjectTrustStore`; executable extension code additionally requires WebPi hash approval |
 | Hot reload | native + guarded | Pi cache reset and lifecycle events; failed reload leaves execution unavailable instead of retaining a stale callable runner. This is not automatic side-effect rollback. |
 | Text/image read | native + guarded | Pi read uses a bounded, physically checked file snapshot; image content is preserved within plugin wire limits. |
@@ -70,7 +70,7 @@ For a project that uses Pi resources, a practical bootstrap is:
 
 1. call `pi_capability_report` when capability compatibility matters;
 2. call `pi_resource_inventory` to see extensions, skills, prompts, context, themes, and packages;
-3. use `pi_package_list/install/update/remove` for native Pi package lifecycle when expansion is required;
+3. use `pi_package_inspect` first for npm metadata/lifecycle-script preflight, then `pi_package_list/install/update/remove` for native Pi package lifecycle when expansion is required;
 4. call `pi_extension_candidate_status`, inspect the exact SHA-256, and use `pi_extension_approve` only for the intended candidate;
 5. call `pi_resource_reload`, then `pi_extension_tool_list` → `pi_extension_tool_describe` → `pi_extension_tool_call`; parse the returned `parametersJson` before constructing arguments;
 6. read relevant skills with `pi_skill_read` and expand prompts with `pi_prompt_expand`;

@@ -1,8 +1,8 @@
 # Runner
 
 The Runner is the component that executes the actual work. The executable is
-`webcodex-runner`; the CLI namespace that manages it is `webcodex runner ...`.
-`webcodex` and `webcodex-runner` are separate executables. Operator lifecycle
+`webpi-runner`; the CLI namespace that manages it is `webpi runner ...`.
+`webpi` and `webpi-runner` are separate executables. Operator lifecycle
 commands use the `runner` namespace; historical `agent` terminology remains only
 where it is part of a compatibility-facing token, storage, identity, project-id,
 or wire contract. This page explains what the Runner does, how it connects, how it
@@ -15,7 +15,7 @@ commands that manage the Runner, see [CLI](CLI.md#runner-lifecycle).
 ## What the Runner does
 
 The Runner runs on the machine that owns the repositories. It connects out to
-a WebCodex Server, registers the projects it is allowed to serve, and executes
+a WebPi Server, registers the projects it is allowed to serve, and executes
 bounded operations — file reads and edits, Git inspection, structured
 validation, shell commands, and long-running Jobs — inside those project
 boundaries.
@@ -29,17 +29,17 @@ shell state.
 | Term | Meaning |
 | --- | --- |
 | **Server** | Authenticates callers, stores shared runtime state, and routes work. |
-| **CLI** | The `webcodex` operator/developer command. |
-| **Runner** | The `webcodex-runner` process that executes repository work. |
+| **CLI** | The `webpi` operator/developer command. |
+| **Runner** | The `webpi-runner` process that executes repository work. |
 | **profile** | A named local Runner/client configuration. |
 | **client_id** | Stable logical name for one Runner/device. |
 | **Project** | A repository/workspace registered by that Runner. |
 
-Some compatibility-facing values still use the historical word `agent`, including the `wc_agent_*` Runner-token prefix and `agent:<client_id>:<project_id>` runtime Project address. They do not refer to WebCodex's separate Durable Agent domain, and ordinary users do not need the process-level lease identifiers behind Runner recovery.
+Some compatibility-facing values still use the historical word `agent`, including the `wc_agent_*` Runner-token prefix and `agent:<client_id>:<project_id>` runtime Project address. They do not refer to WebPi's separate Durable Agent domain, and ordinary users do not need the process-level lease identifiers behind Runner recovery.
 
 ### Runner config filename compatibility
 
-`runner.toml` is the canonical config filename. A legacy directory containing only `agent.toml` remains readable for compatibility; if both names exist in the same config directory WebCodex fails closed and asks the operator to resolve the ambiguity. `WEBCODEX_RUNNER_CONFIG` is the current path override; the old `WEBCODEX_AGENT_CONFIG` remains a compatibility alias.
+`runner.toml` is the canonical config filename. A legacy directory containing only `agent.toml` remains readable for compatibility; if both names exist in the same config directory WebPi fails closed and asks the operator to resolve the ambiguity. `WEBPI_RUNNER_CONFIG` is the current path override; the old `WEBPI_AGENT_CONFIG` remains a compatibility alias.
 
 ## Connecting to the Server
 
@@ -80,7 +80,7 @@ Each registered project is a one-file-per-project TOML file in the Runner's
 ```toml
 id = "webcodex"
 path = "/srv/webcodex/projects/webcodex"
-name = "WebCodex"
+name = "WebPi"
 kind = "repo"
 allow_patch = true
 ```
@@ -90,7 +90,7 @@ The registry directory is storage for Project records, not a workspace root.
 
 New configurations use `project-registry/` and `project_registry_dir`. A legacy
 installation that has only `projects.d/` / `projects_dir` remains readable. If
-both old and new locations/fields are configured, WebCodex fails closed instead
+both old and new locations/fields are configured, WebPi fails closed instead
 of merging or guessing precedence. Use `--project-registry-dir` in new CLI
 commands.
 
@@ -125,7 +125,7 @@ lifecycle models:
 | Source | Location / owner | Trust | Version semantics |
 | --- | --- | --- | --- |
 | Project Skills | `<project>/.agents/skills/<package>/SKILL.md` | `project_content` | Live project content; no package revision. |
-| Configured live Runner Skill roots | Operator-selected absolute directories on the Runner host | `operator_configured_guidance` | Live filesystem content that WebCodex does not modify; supported scripts may execute through `run_skill_resource`; no install, activation, rollback, or package revision. |
+| Configured live Runner Skill roots | Operator-selected absolute directories on the Runner host | `operator_configured_guidance` | Live filesystem content that WebPi does not modify; supported scripts may execute through `run_skill_resource`; no install, activation, rollback, or package revision. |
 | Managed Runner Skill Store | Runner state under `runner-skills-v1` | `operator_installed_guidance` | Immutable package revisions with install, activation, removal, and rollback-oriented Store semantics. |
 
 Configured live roots are optional and have no implicit defaults. Each configured
@@ -153,7 +153,7 @@ roots = [
 
 A root has the form `<root>/<package>/SKILL.md`, with optional package resources
 such as `references/` and `scripts/`. These directories are read directly by the
-Runner. WebCodex does not modify files in configured roots or copy them into the
+Runner. WebPi does not modify files in configured roots or copy them into the
 managed Store; `skill_install`, `skill_activate`, and `skill_remove_revision`
 continue to mutate only that Store. This non-mutating behavior does not make the
 source non-executable: `run_skill_resource` may execute supported `scripts/*.py`
@@ -277,7 +277,7 @@ instead of discarding the entire material solely because global sources were add
 
 ## Local MCP providers
 
-The Runner can directly host persistent stdio MCP providers for WebCodex's built-in MCP gateway:
+The Runner can directly host persistent stdio MCP providers for WebPi's built-in MCP gateway:
 
 ```toml
 [mcp]
@@ -295,11 +295,11 @@ timeout_secs = 30
 
 `executable` and optional `cwd` must be absolute host-local operator configuration. Invalid paths fail closed. `[mcp]` participates in the normal generation-fenced Runner config reload transaction: unchanged providers keep their exact provider identity and live connection, changed providers receive a fresh provider identity, and added/removed providers update routing without restarting the Runner. Old exact provider identities fail closed and are never retargeted.
 
-Provider processes do not inherit the Runner environment wholesale. `env_from_env` copies only explicitly named variables, and WebCodex's own sensitive transport/account credential variables cannot be mapped. A missing configured source variable fails before provider start. On Windows, the Runner additionally supplies only the non-secret `SYSTEMROOT` OS bootstrap after clearing the environment, unless that destination is explicitly mapped; `PATH`, user-profile state, proxies, and credentials are still not inherited.
+Provider processes do not inherit the Runner environment wholesale. `env_from_env` copies only explicitly named variables, and WebPi's own sensitive transport/account credential variables cannot be mapped. A missing configured source variable fails before provider start. On Windows, the Runner additionally supplies only the non-secret `SYSTEMROOT` OS bootstrap after clearing the environment, unless that destination is explicitly mapped; `PATH`, user-profile state, proxies, and credentials are still not inherited.
 
-Mapping a credential delegates that credential to the configured provider process. The provider can use it according to its own implementation and can choose to return derived or raw values through normal tool results; WebCodex does not attempt to redact arbitrary provider output. Treat configured providers as credential recipients, use least-privilege provider credentials, and remember that any caller authorized for `mcp:local` can exercise the provider capabilities that those credentials enable.
+Mapping a credential delegates that credential to the configured provider process. The provider can use it according to its own implementation and can choose to return derived or raw values through normal tool results; WebPi does not attempt to redact arbitrary provider output. Treat configured providers as credential recipients, use least-privilege provider credentials, and remember that any caller authorized for `mcp:local` can exercise the provider capabilities that those credentials enable.
 
-A provider connection starts on first real interaction and is reused while healthy. A fatal stdio/protocol failure retires only that connection; WebCodex never replays the failed request. A later explicit request may start a fresh connection under the same logical provider identity, and an effectful `tools/call` re-lists and checks the bound tool schema before dispatch. The Server sees the logical provider `id`/`name`, not its executable path, environment values, PID, stderr, or Runner credential. `mcp_tool(action=list)` reports only routing resolvability. `mcp_tool(action=status, server=...)` is a passive Runner-side lifecycle observation that never starts, initializes, or pings a provider; it reports only `never_started`, `healthy`, `connection_retired`, or `busy`. Here `healthy` means the retained connection's child process is still running, not that an end-to-end MCP health probe was performed. `list(server=...)` and `describe` interact with the provider.
+A provider connection starts on first real interaction and is reused while healthy. A fatal stdio/protocol failure retires only that connection; WebPi never replays the failed request. A later explicit request may start a fresh connection under the same logical provider identity, and an effectful `tools/call` re-lists and checks the bound tool schema before dispatch. The Server sees the logical provider `id`/`name`, not its executable path, environment values, PID, stderr, or Runner credential. `mcp_tool(action=list)` reports only routing resolvability. `mcp_tool(action=status, server=...)` is a passive Runner-side lifecycle observation that never starts, initializes, or pings a provider; it reports only `never_started`, `healthy`, `connection_retired`, or `busy`. Here `healthy` means the retained connection's child process is still running, not that an end-to-end MCP health probe was performed. `list(server=...)` and `describe` interact with the provider.
 
 ### Provider-side gateway V1 compatibility
 
@@ -316,7 +316,7 @@ Unsupported protocol/content shapes fail closed instead of being silently transl
 
 Ordinary project shell/process execution defaults to `[shell] environment_mode =
 "inherit"`: PATH, HOME/USERPROFILE and toolchain variables come from the process
-that started the Runner. WebCodex transport/account credentials are filtered.
+that started the Runner. WebPi transport/account credentials are filtered.
 Shell `env` overrides inherited values; profile `env` overrides shell `env`.
 Profiles cache this environment per project/config generation. An explicit
 `init_script` can modify the snapshot; no startup script runs otherwise.
@@ -324,7 +324,7 @@ Profiles cache this environment per project/config generation. An explicit
 Set `environment_mode = "isolated"` for a minimal environment: `/usr/bin:/bin` on
 Unix, or SystemRoot and its System32 PATH on Windows, plus configured env and
 path_prepend. This is environment isolation, not a filesystem sandbox.
-WebCodex does not automatically source `~/.bashrc` or `~/.profile`.
+WebPi does not automatically source `~/.bashrc` or `~/.profile`.
 Configured MCP credential delegation remains explicit; this setting does not
 expand its `env_from_env` allowlist. Native Plugins continue to use the existing
 filtered shell/profile environment and native-only executable contract.
@@ -408,7 +408,7 @@ Security notes for profiles:
 ### Typed `run_script` languages
 
 `run_script` accepts `sh`, `bash`, `powershell`, `javascript`, and `typescript`.
-JavaScript and TypeScript are external Node.js execution on the Runner. WebCodex
+JavaScript and TypeScript are external Node.js execution on the Runner. WebPi
 resolves `node` from the prepared shell/profile PATH (or uses the configured
 shell/profile program when it is `node`/`node.exe`). JavaScript bodies are
 written to Runner-owned `.mjs` files and launched as
@@ -430,13 +430,13 @@ runtime semantics, the ordinary started-process lifecycle remains authoritative.
 
 The TypeScript contract covers syntax that Node can erase, including type
 annotations, interfaces/type aliases, generics, and ordinary JavaScript features
-such as async/await, ESM, and Node built-ins. WebCodex does not type-check, invoke
+such as async/await, ESM, and Node built-ins. WebPi does not type-check, invoke
 `tsc`, consume `tsconfig.json` as a build configuration, implement path aliases,
 or promise transform-required TypeScript syntax such as enums, parameter
-properties, runtime namespaces, or import aliases. WebCodex also does not use
+properties, runtime namespaces, or import aliases. WebPi also does not use
 `--experimental-transform-types`: that flag is not part of the stable runtime
 contract. On older Node versions that still mark type stripping experimental,
-Node's own `ExperimentalWarning` may appear on stderr. WebCodex does not suppress
+Node's own `ExperimentalWarning` may appear on stderr. WebPi does not suppress
 or filter that warning because doing so could also hide warnings emitted by the
 user script.
 
@@ -449,7 +449,7 @@ native argv values, stdin remains independent, and both languages use the same
 resolved project cwd, timeout/cancellation, Runner policy, and Job lifecycle as
 other typed scripts.
 
-WebCodex does not install or bootstrap npm dependencies, inject `node_modules`
+WebPi does not install or bootstrap npm dependencies, inject `node_modules`
 or `NODE_PATH`, select a package manager, or fall back to Bun, Deno, `tsx`,
 `npx`, or another runtime. Because the `.mjs`/`.mts` entry lives in a Runner-owned
 temporary directory, relative ESM imports resolve from that temporary module,
@@ -484,11 +484,11 @@ with the same `job_id` and reports `agent_queued`.
 Enable the QUIC listener on the Server and open the chosen UDP port:
 
 ```sh
-WEBCODEX_QUIC_ENABLED=true
-WEBCODEX_QUIC_LISTEN=0.0.0.0:8443
-WEBCODEX_QUIC_CERT=/etc/letsencrypt/live/<host>/fullchain.pem
-WEBCODEX_QUIC_KEY=/etc/letsencrypt/live/<host>/privkey.pem
-WEBCODEX_QUIC_ALPN=webcodex-runner/1
+WEBPI_QUIC_ENABLED=true
+WEBPI_QUIC_LISTEN=0.0.0.0:8443
+WEBPI_QUIC_CERT=/etc/letsencrypt/live/<host>/fullchain.pem
+WEBPI_QUIC_KEY=/etc/letsencrypt/live/<host>/privkey.pem
+WEBPI_QUIC_ALPN=webcodex-runner/1
 ```
 
 The certificate SAN must match the `server_name` configured on the Runner.
@@ -497,7 +497,7 @@ The certificate SAN must match the `server_name` configured on the Runner.
 `[quic].keepalive_interval_secs` controls Quinn's transport-level UDP/QUIC
 keepalive. It defaults to 20 seconds and accepts 1 through 25 seconds; values
 outside that range are rejected rather than clamped. This is separate from
-WebCodex application `Ping`/`Pong` liveness, which remains on its own 30-second
+WebPi application `Ping`/`Pong` liveness, which remains on its own 30-second
 cadence. QUIC connects directly over UDP and does not use the Runner's HTTP
 proxy settings.
 
@@ -546,13 +546,13 @@ other fatal errors stop the Runner rather than looping forever.
 
 ## Shutting down and restarting
 
-`webcodex-runner` stops cleanly on `SIGINT`/`SIGTERM`. It does not daemonize
-itself. For a supervised deployment, use `webcodex runner install --scope
+`webpi-runner` stops cleanly on `SIGINT`/`SIGTERM`. It does not daemonize
+itself. For a supervised deployment, use `webpi runner install --scope
 user|system` to install and supervise it as a user or system service, and keep
 the token in the service environment.
 
 After a machine reboot, a hosted `connect` profile is restarted by rerunning
-`webcodex connect` or `webcodex runner start --profile <profile>`. Automatic
+`webpi connect` or `webpi runner start --profile <profile>`. Automatic
 startup at logon is not implemented for hosted profiles.
 
 On Windows, each Runner process also writes one small bounded lifecycle record under
@@ -618,7 +618,7 @@ then `list` again before binding the resource into a Workflow Session. An
 idempotent operation already aligned with the frozen startup snapshot may
 return `restart_required=false`. Access is separately gated by the optional
 `ssh:local` permission; hosted OAuth clients opt in with
-`webcodex connect ... --oauth-local-ssh`.
+`webpi connect ... --oauth-local-ssh`.
 
 The managed target is still consumed by the existing SSH transport. In
 particular, registering a Windows OpenSSH destination does not imply that
@@ -648,8 +648,8 @@ They are read-only, project-bound, and constrained so that starting a language
 server never executes repository code or fetches dependencies. Paths are
 project-relative; external/dependency locations are omitted. Servers must be
 installed on the Runner machine or pointed to by env overrides such as
-`WEBCODEX_RUST_ANALYZER` and `WEBCODEX_GOPLS`. The gopls profile also forces
-module/toolchain network access off and uses `-mod=readonly`; WebCodex never
+`WEBPI_RUST_ANALYZER` and `WEBPI_GOPLS`. The gopls profile also forces
+module/toolchain network access off and uses `-mod=readonly`; WebPi never
 installs gopls or fetches missing Go dependencies for semantic navigation.
 
 Call hierarchy requires the separately advertised `lsp_call_hierarchy`
@@ -661,24 +661,24 @@ fails explicitly without grep, AST, shell, or reference fallback.
 Minimal commands:
 
 ```bash
-webcodex runner status --profile <profile>
-webcodex runner logs --profile <profile> --lines 100
-webcodex runner restart --profile <profile>
+webpi runner status --profile <profile>
+webpi runner logs --profile <profile> --lines 100
+webpi runner restart --profile <profile>
 ```
 
 For a user service:
 
 ```bash
-webcodex runner install --scope user --config <login-reported-runner-config>
-webcodex runner status --scope user --config <login-reported-runner-config>
+webpi runner install --scope user --config <login-reported-runner-config>
+webpi runner status --scope user --config <login-reported-runner-config>
 ```
 
 For an administrator-managed system service:
 
 ```bash
-sudo webcodex runner install --scope system --profile <profile> \
+sudo webpi runner install --scope system --profile <profile> \
   --user <runner-user> --working-directory /home/<runner-user>
-sudo webcodex runner status --scope system --profile <profile>
+sudo webpi runner status --scope system --profile <profile>
 ```
 
 Use the same `--scope` for install, status, start, stop, restart, logs, and

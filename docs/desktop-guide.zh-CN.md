@@ -2,6 +2,8 @@
 
 [English](desktop-guide.md) | [简体中文](desktop-guide.zh-CN.md)
 
+> **已退役的历史参考。** 当前 WebPi 源码树没有受支持的 Desktop 实现。本文描述的是已退役设计，并有意保留历史 WebCodex 名称；不要把它当作当前操作指南。
+
 Desktop 负责准备本机项目和管理连接；你在 ChatGPT 等 AI 客户端中发起工作。首次安装、Tunnel 配置和系统权限请看[安装与连接指南](desktop-install.zh-CN.md)。
 
 ## 第一次使用

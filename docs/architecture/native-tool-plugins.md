@@ -21,7 +21,7 @@ Plugin domain code
     -> webcodex-plugin-v1 over newline-delimited JSON-RPC stdio
     -> Runner-owned provider process and frozen catalog
     -> plugin_tool exact Runner/provider/tool binding
-    -> existing WebCodex permission, audit, and model surfaces
+    -> existing WebPi permission, audit, and model surfaces
 ```
 
 The TypeScript SDK is an authoring layer, not a second runtime authority. Native
@@ -281,8 +281,8 @@ The distribution gate is now satisfied: `@yyjeqhc/webcodex-plugin-sdk@0.1.0` is
 publicly distributed through npm. `webcodex plugin init <DIRECTORY> [--id PROVIDER_ID]`
 therefore creates a deterministic local TypeScript/ESM project that depends on that
 published package with an **exact `0.1.0` compatibility pin** and does not require a
-WebCodex source checkout. The scaffold compatibility version is intentionally a CLI
-choice; it is not required to equal either the WebCodex product version or every
+WebPi source checkout. The scaffold compatibility version is intentionally a CLI
+choice; it is not required to equal either the WebPi product version or every
 newer SDK version that may subsequently exist.
 
 `plugin init` is a local-only action, structurally separate from the network
@@ -308,7 +308,7 @@ before its repository-local dependency was switched to that local SDK source. Th
 preserves deterministic repository CI without making normal validation depend on npm
 registry availability.
 
-Do not make WebCodex product releases depend on SDK version equality. Native Plugin
+Do not make WebPi product releases depend on SDK version equality. Native Plugin
 protocol versioning, SDK package versioning, and the scaffold compatibility pin are
 distinct concerns.
 
@@ -321,7 +321,7 @@ not be added as SDK-only fields that the Runner does not understand.
 
 A higher-level TypeScript control/extension runtime, if later needed for Skills,
 Memory, orchestration, or integrations, is also a separate architectural layer.
-It may consume canonical WebCodex primitives, but Native Tool Plugins should not
+It may consume canonical WebPi primitives, but Native Tool Plugins should not
 silently evolve into that runtime.
 
 The Experimental Code Mode E1.x work now provides a concrete reason to preserve
@@ -381,7 +381,7 @@ Phase 1 is complete when all of the following are true:
 Phase 3 is complete when the local scaffold uses only the public SDK distribution,
 never overwrites existing user data, reuses canonical provider-id validation,
 performs no network/token/Runner/package-manager/generated-code action, and a fresh
-consumer outside the WebCodex checkout can `npm install`, typecheck/build, and run
+consumer outside the WebPi checkout can `npm install`, typecheck/build, and run
 the generated Plugin against `webcodex-plugin-v1` using the published exact SDK
 version.
 

@@ -246,7 +246,7 @@ test("Goal activity refreshes on the same authoritative revision in both directi
     activity: { ...plan.activity, active_meaningful_request_count: 1 },
   };
   await view.reply(view.calls("goal_plan_state").at(-1), toolResult({ goal_plan: running }));
-  assert.equal(view.nodes.activity.textContent, "Meaningful WebCodex work is currently running.");
+  assert.equal(view.nodes.activity.textContent, "Meaningful WebPi work is currently running.");
   assert.equal(view.nodes.revision.textContent, "1");
   assert.equal(view.timers.size, 1);
 });

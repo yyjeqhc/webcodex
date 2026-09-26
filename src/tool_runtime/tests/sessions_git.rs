@@ -92,8 +92,15 @@ async fn git_log_parses_commits() {
         }
     });
     let req = wait_for_patch_agent_request(&runtime, "git-log-parse").await;
-    assert!(req.command.contains("git log"));
-    assert!(req.command.contains("-n 21"));
+    assert_eq!(req.kind, "run_internal_posix_script");
+    assert!(req.command.is_empty());
+    let script = req
+        .script
+        .as_ref()
+        .expect("git_log must use a typed POSIX script");
+    assert_eq!(script.language.as_str(), "sh");
+    assert!(script.script.contains("git log"));
+    assert!(script.script.contains("-n 21"));
     complete_patch_agent_request(&runtime, "git-log-parse", &req.request_id, 0, &stdout, "").await;
     let result = task.await.unwrap();
 
@@ -155,8 +162,15 @@ async fn git_log_limit_and_skip_returns_second_recent_and_truncated() {
         }
     });
     let req = wait_for_patch_agent_request(&runtime, "git-log-page").await;
-    assert!(req.command.contains("-n 2"));
-    assert!(req.command.contains("--skip 1"));
+    assert_eq!(req.kind, "run_internal_posix_script");
+    assert!(req.command.is_empty());
+    let script = req
+        .script
+        .as_ref()
+        .expect("git_log must use a typed POSIX script");
+    assert_eq!(script.language.as_str(), "sh");
+    assert!(script.script.contains("-n 2"));
+    assert!(script.script.contains("--skip 1"));
     complete_patch_agent_request(&runtime, "git-log-page", &req.request_id, 0, &stdout, "").await;
     let result = task.await.unwrap();
 
@@ -216,8 +230,15 @@ async fn run_git_log_page_with_stdout(
         }
     });
     let request = wait_for_patch_agent_request(&runtime, client_id).await;
-    assert!(request.command.contains(&format!("-n {}", limit + 1)));
-    assert!(request.command.contains(&format!("--skip {skip}")));
+    assert_eq!(request.kind, "run_internal_posix_script");
+    assert!(request.command.is_empty());
+    let script = request
+        .script
+        .as_ref()
+        .expect("git_log must use a typed POSIX script");
+    assert_eq!(script.language.as_str(), "sh");
+    assert!(script.script.contains(&format!("-n {}", limit + 1)));
+    assert!(script.script.contains(&format!("--skip {skip}")));
     complete_patch_agent_request(&runtime, client_id, &request.request_id, 0, &stdout, "").await;
     task.await.unwrap()
 }
@@ -247,15 +268,18 @@ async fn run_git_log_tool_call_with_stdout(
         }
     });
     let request = wait_for_patch_agent_request(&runtime, client_id).await;
+    assert_eq!(request.kind, "run_internal_posix_script");
+    assert!(request.command.is_empty());
+    let script = request
+        .script
+        .as_ref()
+        .expect("git_log must use a typed POSIX script");
+    assert_eq!(script.language.as_str(), "sh");
+    assert!(script.script.contains(expected_head), "{}", script.script);
     assert!(
-        request.command.contains(expected_head),
+        !script.script.contains("HEAD^{commit}"),
         "{}",
-        request.command
-    );
-    assert!(
-        !request.command.contains("HEAD^{commit}"),
-        "{}",
-        request.command
+        script.script
     );
     complete_patch_agent_request(&runtime, client_id, &request.request_id, 0, &stdout, "").await;
     task.await.unwrap()
@@ -431,8 +455,15 @@ async fn git_log_missing_exact_snapshot_fails_closed_without_head_fallback() {
         }
     });
     let request = wait_for_patch_agent_request(&runtime, "git-log-missing-snapshot").await;
-    assert!(request.command.contains(&missing));
-    assert!(!request.command.contains("HEAD^{commit}"));
+    assert_eq!(request.kind, "run_internal_posix_script");
+    assert!(request.command.is_empty());
+    let script = request
+        .script
+        .as_ref()
+        .expect("git_log must use a typed POSIX script");
+    assert_eq!(script.language.as_str(), "sh");
+    assert!(script.script.contains(&missing));
+    assert!(!script.script.contains("HEAD^{commit}"));
     complete_patch_agent_request(
         &runtime,
         "git-log-missing-snapshot",

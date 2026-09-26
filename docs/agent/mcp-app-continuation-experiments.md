@@ -1,10 +1,10 @@
 # MCP App presentation and autonomous-continuation findings
 
-This note records durable findings from the September 11-12, 2026 MCP App presentation and continuation investigation. The experiments ran in a temporary `mcp-stream-probe` deployment rather than the production WebCodex runtime. They establish Host behavior and design constraints; they do **not** make the temporary probe state machine a production contract.
+This note records durable findings from the September 11-12, 2026 MCP App presentation and continuation investigation. The experiments ran in a temporary `mcp-stream-probe` deployment rather than the production WebPi runtime. They establish Host behavior and design constraints; they do **not** make the temporary probe state machine a production contract.
 
 ## Why this investigation existed
 
-WebCodex already exposes MCP App result cards, but a durable background agent needs stronger answers than "the card rendered":
+WebPi already exposes MCP App result cards, but a durable background agent needs stronger answers than "the card rendered":
 
 - whether successive App-bound tool results reuse one presentation or create multiple cards;
 - whether one original card can reflect later server-owned state without binding every later tool call to an App;
@@ -20,7 +20,7 @@ The probe deliberately separated four things that are easy to conflate: canonica
 
 Repeated calls using the same tool, the same MCP App resource URI, and the same logical `runId` created distinct custom cards. Reusing a resource URI or logical run identity did not cause ChatGPT to reuse an existing iframe.
 
-The Host's native tool card also remained present. A custom WebCodex MCP App card supplements native ChatGPT presentation; it does not replace or overwrite the Host's own tool card.
+The Host's native tool card also remained present. A custom WebPi MCP App card supplements native ChatGPT presentation; it does not replace or overwrite the Host's own tool card.
 
 **Design consequence:** do not bind a custom App to every high-frequency execution tool if the product wants one persistent workflow card. The App binding itself is a presentation-creation boundary.
 
@@ -59,7 +59,7 @@ The async handoff probe used this sequence:
 
 This worked with the View open. It also worked when the ChatGPT tab was closed before background completion: server-side work reached terminal state while no iframe existed, reopening the original conversation rebuilt the View, the App re-read authoritative state, and an automatic later model turn consumed the pending event.
 
-The temporary probe stored state in memory, so this test covered browser/View loss but intentionally did not claim Server-restart durability. A production implementation must use existing durable WebCodex state rather than copying the probe's in-memory map.
+The temporary probe stored state in memory, so this test covered browser/View loss but intentionally did not claim Server-restart durability. A production implementation must use existing durable WebPi state rather than copying the probe's in-memory map.
 
 ## Confirmed autonomous multi-turn continuation
 
@@ -138,13 +138,13 @@ The probe intentionally reused the same safety shape already explored by the dur
 - idempotent consumption/write handling;
 - stale or duplicate Views unable to retarget a continuation.
 
-The useful distinction is now empirical rather than hypothetical: these mechanisms protect WebCodex state, while Host acceptance and actual model-turn scheduling remain separate external events.
+The useful distinction is now empirical rather than hypothetical: these mechanisms protect WebPi state, while Host acceptance and actual model-turn scheduling remain separate external events.
 
 ## Product and architecture consequences
 
 The experiments support the following product rule:
 
-> ChatGPT is a checkpoint and milestone surface; WebCodex WebUI is the execution-trace surface.
+> ChatGPT is a checkpoint and milestone surface; WebPi WebUI is the execution-trace surface.
 
 A production workflow presentation should therefore prefer:
 
@@ -152,7 +152,7 @@ A production workflow presentation should therefore prefer:
 - ordinary coding/execution tools that keep their native ChatGPT tool cards and do not each bind another custom App;
 - server-owned durable Workflow Session / Job state as the authority;
 - an App-only bounded read path for presentation refresh;
-- high-level phases such as `Understand -> Implement -> Validate -> Review`, current status, a few salient facts, attention/failure state, and an "Open in WebCodex" path rather than full logs/diffs;
+- high-level phases such as `Understand -> Implement -> Validate -> Review`, current status, a few salient facts, attention/failure state, and an "Open in WebPi" path rather than full logs/diffs;
 - durable terminal/decision events for the few points that truly need another model turn;
 - exact continuation identity plus controller generation/lease/fence/consume semantics;
 - `dispatch accepted` rather than `model resumed` until the later turn exact-consumes the event.
@@ -250,7 +250,7 @@ The v4 production dogfood still produced three successful Server-side binds and 
 
 The v5 View therefore adds two narrowly validated bridge variants without weakening bind semantics: a one-level nested CallToolResult and the canonical `structuredContent` value returned directly. Both still require `success=true`, an exact valid Agent/Endpoint/generation projection, and `host_binding.bound=true`. Any other successful-but-unusable response remains fail-closed and now renders only a fixed response-shape class such as `empty-object`, `content-only`, or `other-object`; it never displays payload keys, identities, binding ids, Wake data, or continuation tokens. The canonical URI advances to `ui://webcodex/agent-continuation/v5`, with v1-v4 retained only as hidden read aliases.
 
-The v5 production dogfood again produced three successful Server-side binds and no state call. This makes a malformed successful result less persuasive than a Host-side View/tool association failure. The known-good resume-arbiter probe gives its app-only register/acquire descriptors both `ui.visibility=["app"]` and the same `ui.resourceUri` as their owning View, while WebCodex had deliberately omitted `resourceUri` from its six continuation coordination descriptors. v6 aligns the descriptors with that known-good shape: each app-only continuation tool remains model-hidden but is explicitly associated with the canonical continuation resource. The resource association is treated only as a Host compatibility hint, not as authorization or a correctness dependency; model invisibility still prevents these tools from becoming separate model-created cards.
+The v5 production dogfood again produced three successful Server-side binds and no state call. This makes a malformed successful result less persuasive than a Host-side View/tool association failure. The known-good resume-arbiter probe gives its app-only register/acquire descriptors both `ui.visibility=["app"]` and the same `ui.resourceUri` as their owning View, while WebPi had deliberately omitted `resourceUri` from its six continuation coordination descriptors. v6 aligns the descriptors with that known-good shape: each app-only continuation tool remains model-hidden but is explicitly associated with the canonical continuation resource. The resource association is treated only as a Host compatibility hint, not as authorization or a correctness dependency; model invisibility still prevents these tools from becoming separate model-created cards.
 
 The v6 production dogfood showed that the resource association was compatible but not sufficient: the Server still returned successful bind results while the View never reached `agent_continuation_state`. Switching tabs produced an explicit View unbind followed by fresh bind retries, and the durable Message remained queued, proving that teardown/recreation exposed the same bridge failure without consuming the Wake. Because the Server returned in milliseconds while retries followed the 3-second visible cadence rather than the 10-second View timeout, v7 treats an immediate Host JSON-RPC rejection as the primary diagnostic hypothesis rather than adding more result-envelope guesses.
 

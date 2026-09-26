@@ -118,8 +118,8 @@ pub(super) fn mcp_computer_app_resources_list(domain: Option<&str>) -> Value {
     json!({
         "resources": [{
             "uri": MCP_COMPUTER_UI_RESOURCE_URI,
-            "name": "WebCodex Computer",
-            "description": "Minimal read-only WebCodex Computer screenshot card that performs only the standard MCP Apps handshake and renders native images returned by computer_observe snapshot actions.",
+            "name": "WebPi Computer",
+            "description": "Minimal read-only WebPi Computer screenshot card that performs only the standard MCP Apps handshake and renders native images returned by computer_observe snapshot actions.",
             "mimeType": MCP_UI_RESOURCE_MIME_TYPE,
             "_meta": mcp_computer_app_resource_meta(domain)
         }]
@@ -137,7 +137,7 @@ pub(super) fn mcp_app_resources_list(domain: Option<&str>) -> Value {
         .expect("computer App resource list must be an array")
         .push(json!({
             "uri": MCP_WORK_RESULT_UI_RESOURCE_URI,
-            "name": "WebCodex Work",
+            "name": "WebPi Work",
             "description": "Persistent read-only coding Work Result for one explicitly presented project-scoped Workflow Session. The initial present_work_result ToolResult is the authoritative snapshot; the mounted App stays static until the user explicitly refreshes, then performs one exact bounded live state read without replacing its initial frozen final changes. File expansion reads only an advertised path from that frozen snapshot. Ordinary work tools keep native Host presentation. Legacy Changes resources remain hidden readable compatibility aliases.",
             "mimeType": MCP_UI_RESOURCE_MIME_TYPE,
             "_meta": mcp_app_resource_meta(domain)
@@ -147,7 +147,7 @@ pub(super) fn mcp_app_resources_list(domain: Option<&str>) -> Value {
         .expect("App resource list must be an array")
         .push(json!({
             "uri": MCP_GOAL_PLAN_UI_RESOURCE_URI,
-            "name": "WebCodex Goal Plan",
+            "name": "WebPi Goal Plan",
             "description": "Sparse read-only durable Goal presentation. One explicit present_goal_plan call creates the card; the View converges by app-only exact polling of authoritative Goal state and never owns execution or lifecycle state.",
             "mimeType": MCP_UI_RESOURCE_MIME_TYPE,
             "_meta": mcp_app_resource_meta(domain)
@@ -157,7 +157,7 @@ pub(super) fn mcp_app_resources_list(domain: Option<&str>) -> Value {
         .expect("App resource list must be an array")
         .push(json!({
             "uri": MCP_AGENT_CONTINUATION_UI_RESOURCE_URI,
-            "name": "WebCodex Agent Continuation",
+            "name": "WebPi Agent Continuation",
             "description": "Sparse Host controller for one explicit Durable Agent Endpoint generation. The View is a process-local carrier only: SQLite Wake/Wake Delivery Attempt remains authoritative, and Host dispatch is considered actually resumed only after exact consume_agent_wake.",
             "mimeType": MCP_UI_RESOURCE_MIME_TYPE,
             "_meta": mcp_app_resource_meta(domain)
@@ -167,7 +167,7 @@ pub(super) fn mcp_app_resources_list(domain: Option<&str>) -> Value {
         .expect("App resource list must be an array")
         .push(json!({
             "uri": MCP_JOB_TERMINAL_CONTINUATION_UI_RESOURCE_URI,
-            "name": "WebCodex Job Continuation",
+            "name": "WebPi Job Continuation",
             "description": "Job-native Host continuation carrier for one explicit caller-owned Job terminal wait. The View is routing-only: canonical Job terminal truth and the durable delivery fence remain in the existing Job terminal wait ledger, while the App performs bounded state polling and at most one prepared ui/message dispatch.",
             "mimeType": MCP_UI_RESOURCE_MIME_TYPE,
             "_meta": mcp_app_resource_meta(domain)
@@ -734,7 +734,7 @@ pub(super) fn mcp_artifact_export_tool_result(
             "uri": uri,
             "name": snapshot.name,
             "mimeType": snapshot.mime_type,
-            "description": "Short-lived authenticated WebCodex project artifact export. Read this URI with MCP resources/read to retrieve the complete bounded binary."
+            "description": "Short-lived authenticated WebPi project artifact export. Read this URI with MCP resources/read to retrieve the complete bounded binary."
         }],
         "structuredContent": {
             "success": true,
@@ -778,6 +778,14 @@ pub(super) fn mcp_runtime_tool_result_with_snapshot_resource(
     }
 
     mcp_runtime_tool_result_fallback(result)
+}
+
+struct McpSnapshotPreview {
+    data_base64: String,
+    mime_type: String,
+    file_bytes: usize,
+    width: u32,
+    height: u32,
 }
 
 pub(super) fn mcp_native_image_tool_result(
@@ -879,12 +887,70 @@ pub(super) fn mcp_native_image_tool_result(
         format!("Image {image_label}: {mime_type}, {file_bytes} bytes, sha256 {sha256}.")
     };
 
+    let snapshot_has_resource = snapshot_caller.is_some() && snapshot_kind.is_some();
+    let source_width = result
+        .output
+        .get("width")
+        .and_then(Value::as_u64)
+        .unwrap_or(0) as u32;
+    let source_height = result
+        .output
+        .get("height")
+        .and_then(Value::as_u64)
+        .unwrap_or(0) as u32;
+    let snapshot_preview = if snapshot_has_resource {
+        if decoded.len() <= crate::image_preview::MCP_INLINE_PREVIEW_MAX_BYTES {
+            Some(McpSnapshotPreview {
+                data_base64: data.clone(),
+                mime_type: mime_type.clone(),
+                file_bytes: decoded.len(),
+                width: source_width,
+                height: source_height,
+            })
+        } else {
+            match crate::image_preview::encode_bounded_preview(
+                &decoded,
+                crate::image_preview::MCP_INLINE_PREVIEW_MAX_BYTES,
+            ) {
+                Ok(preview) => Some(McpSnapshotPreview {
+                    data_base64: general_purpose::STANDARD.encode(&preview.bytes),
+                    mime_type: preview.mime_type.to_string(),
+                    file_bytes: preview.bytes.len(),
+                    width: preview.width,
+                    height: preview.height,
+                }),
+                Err(_) => {
+                    webcodex_core::runtime_diagnostics::record(
+                        webcodex_core::runtime_diagnostics::DiagnosticSeverity::Warn,
+                        "mcp_snapshot",
+                        "preview_encode_failed",
+                        None,
+                    );
+                    None
+                }
+            }
+        }
+    } else {
+        None
+    };
+
     let output = result
         .output
         .as_object_mut()
         .ok_or_else(|| "tool output is not an object".to_string())?;
     output.remove("content_base64");
-    output.insert("content_delivery".to_string(), json!("mcp_image"));
+    if snapshot_has_resource {
+        output.insert("content_delivery".to_string(), json!("mcp_image"));
+        output.insert("full_image_resource".to_string(), json!(true));
+        if let Some(preview) = snapshot_preview.as_ref() {
+            output.insert("preview_mime_type".to_string(), json!(preview.mime_type));
+            output.insert("preview_file_bytes".to_string(), json!(preview.file_bytes));
+            output.insert("preview_width".to_string(), json!(preview.width));
+            output.insert("preview_height".to_string(), json!(preview.height));
+        }
+    } else {
+        output.insert("content_delivery".to_string(), json!("mcp_image"));
+    }
     let structured_output = result.output.clone();
 
     let snapshot_link = snapshot_caller
@@ -919,15 +985,31 @@ pub(super) fn mcp_native_image_tool_result(
                 "name": name,
                 "mimeType": mime_type,
                 "size": file_bytes,
-                "description": "Short-lived authenticated WebCodex screenshot resource. No project artifact was created."
+                "description": "Short-lived authenticated WebPi screenshot resource. No project artifact was created."
             })
         });
-    let mut content = Vec::with_capacity(if snapshot_link.is_some() { 3 } else { 2 });
+    let has_snapshot_link = snapshot_link.is_some();
+    let mut content = Vec::with_capacity(if has_snapshot_link { 3 } else { 2 });
     if let Some(link) = snapshot_link {
         content.push(link);
     }
+    let metadata_text = if has_snapshot_link {
+        format!("{metadata_text} Full screenshot is available through the short-lived authenticated resource; inline image is a bounded preview.")
+    } else {
+        metadata_text
+    };
     content.push(json!({ "type": "text", "text": metadata_text }));
-    content.push(json!({ "type": "image", "data": data, "mimeType": mime_type }));
+    if has_snapshot_link {
+        if let Some(preview) = snapshot_preview {
+            content.push(json!({
+                "type": "image",
+                "data": preview.data_base64,
+                "mimeType": preview.mime_type,
+            }));
+        }
+    } else {
+        content.push(json!({ "type": "image", "data": data, "mimeType": mime_type }));
+    }
 
     Ok(json!({
         "content": content,

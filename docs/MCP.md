@@ -2,11 +2,11 @@
 
 [English](MCP.md) | [简体中文](MCP.zh-CN.md)
 
-WebCodex exposes an MCP endpoint so ChatGPT, Claude, and other MCP clients can work with repositories through the Runner that owns them. Ordinary users only need to choose between **full use** and a **temporary trial**; protocol surfaces, scopes, and credential taxonomy are reference material, not onboarding prerequisites.
+WebPi exposes an MCP endpoint so ChatGPT, Claude, and other MCP clients can work with repositories through the Runner that owns them. Ordinary users only need to choose between **full use** and a **temporary trial**; protocol surfaces, scopes, and credential taxonomy are reference material, not onboarding prerequisites.
 
 ## ChatGPT: recommended full setup
 
-For everyday use, run a regular Server + Runner. Follow the [Full Setup guide](PERSONAL_SETUP.md) for one-time login and project registration, and use `--print-mcp-config` during that same `webcodex login` to obtain regular HTTPS MCP connection values. Public HTTPS, Cloudflare Tunnel, and OpenAI Secure MCP Tunnel are reachability choices; they do not change the capabilities of this full development path.
+For everyday use, run a regular Server + Runner. Follow the [Full Setup guide](PERSONAL_SETUP.md) for one-time login and project registration, and use `--print-mcp-config` during that same `webpi login` to obtain regular HTTPS MCP connection values. Public HTTPS, Cloudflare Tunnel, and OpenAI Secure MCP Tunnel are reachability choices; they do not change the capabilities of this full development path.
 
 If you only want to try one repository temporarily, use the `share` path below.
 
@@ -14,15 +14,15 @@ If you only want to try one repository temporarily, use the `share` path below.
 
 Explicit `share` is supported on Linux, macOS, and Windows and owns a temporary single-project environment for that foreground run. Windows x64 can use the managed default Cloudflare Quick Tunnel; Windows ARM64 needs a trusted explicit/PATH `cloudflared` because the pinned Cloudflare release publishes no official ARM64 artifact. Managed OpenAI `tunnel-client` supports both Windows x64 and arm64.
 
-For the default temporary public path, WebCodex reuses an explicit/PATH `cloudflared` or downloads its pinned verified managed copy automatically, then run:
+For the default temporary public path, WebPi reuses an explicit/PATH `cloudflared` or downloads its pinned verified managed copy automatically, then run:
 
 ```bash
 npm install -g @yyjeqhc/webcodex
 cd /path/to/your/repository
-webcodex share
+webpi share
 ```
 
-When the CLI says **WebCodex ready**:
+When the CLI says **WebPi ready**:
 
 1. In ChatGPT Developer Mode, create a custom app using MCP.
 2. Paste the printed **MCP URL**.
@@ -32,37 +32,37 @@ When the CLI says **WebCodex ready**:
 6. Try: `Inspect this repository and summarize its structure. Do not make changes.`
 
 The command performs project setup itself. Hosted ChatGPT cannot reach a
-loopback-only `webcodex run`, so `setup`, `doctor`, and `run` are not required
+loopback-only `webpi run`, so `setup`, `doctor`, and `run` are not required
 steps before `share`. ChatGPT UI labels can vary by rollout; use the CLI output
 as the source of truth for URL and authentication. Developer Mode, custom MCP
 apps, and write/modify actions are controlled independently by the ChatGPT plan,
 workspace, and admin settings; those client-side permissions are not widened by
-WebCodex scopes.
+WebPi scopes.
 
 ## Claude and other MCP clients
 
 Use the same printed `/mcp` URL and authentication values. In Claude, add a
 custom connector and paste the MCP URL. Other MCP clients should be configured
 with the same endpoint and the authentication mechanism reported by the CLI.
-When a client cannot set a Bearer header, `webcodex share --auth query-token`
+When a client cannot set a Bearer header, `webpi share --auth query-token`
 provides an explicit temporary-share fallback: paste the printed sensitive
 `/mcp?token=...` URL and choose No authentication. The query accepts only the
 current share Project Credential; it is not a general PAT/OAuth/shared-key query
 auth mechanism. Treat the full URL as a secret because URL queries may be logged.
-For local-only clients, `webcodex share --tunnel none` exposes the loopback MCP
+For local-only clients, `webpi share --tunnel none` exposes the loopback MCP
 endpoint without `cloudflared`.
 
 For an OpenAI-only private transport, create/select a Secure MCP Tunnel, export
 `CONTROL_PLANE_TUNNEL_ID` plus a Restricted `CONTROL_PLANE_API_KEY` with Tunnels
-Read + Use, and run `webcodex share --tunnel openai`. ChatGPT uses Connection:
-Tunnel + No authentication; the temporary WebCodex Bearer stays local and is
+Read + Use, and run `webpi share --tunnel openai`. ChatGPT uses Connection:
+Tunnel + No authentication; the temporary WebPi Bearer stays local and is
 injected by the pinned verified OpenAI `tunnel-client`.
 
 For a long-lived **loopback-only** Server reached through OpenAI Secure Tunnel,
 operators may explicitly trust ChatGPT host-file rewrites authenticated by the
 local user API token by setting
-`WEBCODEX_MCP_TRUST_LOOPBACK_API_TOKEN_FILE_IMPORT=true`. This exception works
-only when `WEBCODEX_ADDR` resolves to loopback and the authenticated credential
+`WEBPI_MCP_TRUST_LOOPBACK_API_TOKEN_FILE_IMPORT=true`. This exception works
+only when `WEBPI_ADDR` resolves to loopback and the authenticated credential
 is a normal user API token. It remains off by default and must not be used as a
 substitute for OAuth on a network-accessible Server.
 
@@ -81,7 +81,7 @@ High-frequency calls such as `observe_jobs`, `cargo_check`, `cargo_test`, `go_te
 and `show_changes` intentionally keep the Host's native tool presentation instead
 of creating an extra custom App card for every call. Cards do not poll, retry, or
 invoke tools; the canonical tool result remains available independently.
-`WEBCODEX_MCP_APPS_ENABLED=false` disables App metadata and resources without
+`WEBPI_MCP_APPS_ENABLED=false` disables App metadata and resources without
 disabling the underlying tools.
 
 The current Result App is intentionally static. September 2026 Host experiments proved that a separately designed MCP App controller can poll server-owned state and request later ChatGPT model turns, including a bounded foreground autonomous multi-turn loop, but background-tab model-turn scheduling is not an immediate guarantee. Those findings and the production design constraints are recorded in [`agent/mcp-app-continuation-experiments.md`](agent/mcp-app-continuation-experiments.md); they do not change the current Result App contract.
@@ -92,13 +92,13 @@ For an existing hosted Server intentionally configured for shared-key clients,
 use the long-lived shared-key path with the credential supplied by its operator:
 
 ```bash
-webcodex connect https://webcodex.example --key-file /private/path/shared-key
+webpi connect https://webcodex.example --key-file /private/path/shared-key
 ```
 
 `connect` starts/reuses the local Runner and prints the MCP URL and credential
 source after the connection is verified. This is separate from fresh self-hosted
 Docker enrollment: keep the Docker Server bootstrap administrator token on the
-Server, create a short-lived pairing code there, and use `webcodex login` on the
+Server, create a short-lived pairing code there, and use `webpi login` on the
 repository machine. Self-hosting is documented in [Deployment](DEPLOYMENT.md).
 
 Bearer/shared-key authentication is the simplest path. When a client requires
@@ -116,7 +116,7 @@ There is one model-facing MCP runtime contract: **Adaptive Runtime**. Canonical 
 
 Machine-readable MCP tool results are returned in `structuredContent`; `content` is a concise human-readable/protocol-native fallback. Clients that need fields should consume `structuredContent` rather than parse text.
 
-Some MCP hosts do not expose `structuredContent` to the model. This has been observed with Claude Custom Connector even when WebCodex successfully executes the tool and returns the complete structured result. Operators serving such a host can explicitly set `WEBCODEX_MCP_TEXT_JSON_COMPAT=true`. Ordinary runtime tool results then keep `structuredContent` canonical while also serializing that same JSON value into `content[0].text`. The option is off by default because the duplicate representation increases response/model-context size; protocol-native image/resource framing and the existing App-only compatibility paths remain unchanged.
+Some MCP hosts do not expose `structuredContent` to the model. This has been observed with Claude Custom Connector even when WebPi successfully executes the tool and returns the complete structured result. Operators serving such a host can explicitly set `WEBPI_MCP_TEXT_JSON_COMPAT=true`. Ordinary runtime tool results then keep `structuredContent` canonical while also serializing that same JSON value into `content[0].text`. The option is off by default because the duplicate representation increases response/model-context size; protocol-native image/resource framing and the existing App-only compatibility paths remain unchanged.
 
 Recovery fields in a result describe the next safe **explicit** call. They never grant authority and never trigger a hidden retry. In particular, an uncertain outcome must be reconciled before repeating an effect.
 
@@ -124,7 +124,7 @@ Recovery fields in a result describe the next safe **explicit** call. They never
 
 A hosted Server can expose Runner-owned local stdio MCP providers through the same `/mcp` endpoint. Authorized callers use the single `mcp_tool` entry to list, describe, and call configured providers; provider process/instance identities and schema-revision state stay internal.
 
-Configure local providers on the Runner under `[mcp]`. Access requires the explicit `mcp:local` permission; hosted OAuth clients opt in with `webcodex connect ... --oauth-local-mcp`. See [Runner](RUNNER.md#provider-side-gateway-v1-compatibility) for provider compatibility details.
+Configure local providers on the Runner under `[mcp]`. Access requires the explicit `mcp:local` permission; hosted OAuth clients opt in with `webpi connect ... --oauth-local-mcp`. See [Runner](RUNNER.md#provider-side-gateway-v1-compatibility) for provider compatibility details.
 
 ### Managed SSH resource onboarding
 
@@ -139,7 +139,7 @@ Session.
 
 This surface requires the optional `ssh:local` permission. It is not part of the
 ordinary hosted OAuth baseline; opt in explicitly with
-`webcodex connect ... --oauth-local-ssh`. See
+`webpi connect ... --oauth-local-ssh`. See
 [Runner](RUNNER.md#ssh-session-resources-advanced) for static-vs-managed and
 PersistentShell details.
 
@@ -156,13 +156,13 @@ For the credential and scope model, see [Authentication](AUTH_MODEL.md#oauth2).
 ### Grok custom connector (OAuth)
 
 Grok supports custom MCP connectors and can complete the OAuth flow required by
-the MCP server. For a self-hosted WebCodex Server, first expose
+the MCP server. For a self-hosted WebPi Server, first expose
 `https://your-domain.example/mcp` over public HTTPS and enable OAuth:
 
 ```text
-WEBCODEX_OAUTH2_ENABLED=true
-WEBCODEX_OAUTH2_ISSUER=https://your-domain.example
-WEBCODEX_PUBLIC_URL=https://your-domain.example
+WEBPI_OAUTH2_ENABLED=true
+WEBPI_OAUTH2_ISSUER=https://your-domain.example
+WEBPI_PUBLIC_URL=https://your-domain.example
 ```
 
 For the current Grok web connector flow (verified in August 2026), register this
@@ -178,7 +178,7 @@ once:
 
 ```bash
 curl -fsS -X POST https://your-domain.example/api/oauth/clients/create \
-  -H "Authorization: Bearer $WEBCODEX_PAT" \
+  -H "Authorization: Bearer $WEBPI_PAT" \
   -H "Content-Type: application/json" \
   -d '{"name":"Grok MCP","redirect_uris":["https://grok.com/connectors-oauth-exchange-code/"],"allowed_scopes":["runtime:read","project:read","project:write","job:run"]}'
 ```
@@ -195,16 +195,16 @@ In Grok's **Custom Connector** form, use:
 | Scopes | `runtime:read`, `project:read`, `project:write`, `job:run`, `offline_access` |
 | Token Auth Method | `client_secret_post` |
 
-WebCodex advertises PKCE `S256`; Grok can use PKCE together with
-`client_secret_post`. Do not select `none (PKCE only)` for a WebCodex OAuth
+WebPi advertises PKCE `S256`; Grok can use PKCE together with
+`client_secret_post`. Do not select `none (PKCE only)` for a WebPi OAuth
 client that has a client secret. `offline_access` is a protocol-level scope for
 refresh tokens and is intentionally not stored in the OAuth client's
 `allowed_scopes` permission list. The MCP Protected Resource Metadata omits
 `scopes_supported` because pre-registered clients can have different scope
-ceilings. General-purpose MCP clients can therefore omit `scope` and let WebCodex
+ceilings. General-purpose MCP clients can therefore omit `scope` and let WebPi
 default the authorization request to that client's registered `allowed_scopes`.
 
-When the WebCodex authorization page opens, sign in with a current user PAT
+When the WebPi authorization page opens, sign in with a current user PAT
 (`wc_pat_*`) for the user whose authority Grok should receive. A Runner token
 (`wc_agent_*`) is not a user login token. The resulting OAuth access token is
 bound to that user and remains constrained by the registered/requested scopes.
@@ -214,9 +214,9 @@ Common setup failures:
 - **Save & Connect is disabled:** Grok requires a Client ID before it can start
   the OAuth flow.
 - **`invalid token`:** the PAT must authenticate against the same current
-  WebCodex Server database. Do not use a Runner token or a stale PAT left from
+  WebPi Server database. Do not use a Runner token or a stale PAT left from
   an older Server/database.
-- **`invalid scope`:** every requested WebCodex permission scope must be in the
+- **`invalid scope`:** every requested WebPi permission scope must be in the
   OAuth client's `allowed_scopes`. For normal Grok MCP use, do not request
   `account:manage`; `offline_access` is accepted separately as a protocol scope.
 - **redirect mismatch:** the redirect URI must match the registered value
@@ -227,7 +227,7 @@ current Grok Custom MCP UI and availability.
 
 ## Project-scoped ordinary runtime
 
-`webcodex run` and `webcodex share` bind one configured repository, start a local Server + Runner, and expose the ordinary Adaptive Runtime. The temporary or persistent Project Credential is an authentication/ProjectGrant boundary; it does not select a separate capability surface.
+`webpi run` and `webpi share` bind one configured repository, start a local Server + Runner, and expose the ordinary Adaptive Runtime. The temporary or persistent Project Credential is an authentication/ProjectGrant boundary; it does not select a separate capability surface.
 
 A typical coding flow is:
 
@@ -248,12 +248,12 @@ The removed ProjectConnector capability names (`task_start`, `files_read`, `edit
 
 ### Long work continues as Jobs
 
-Long-running commands and validations use the canonical WebCodex Job lifecycle. Observe the exact Job returned by the initiating call with `observe_jobs` (or recover it with `list_jobs` when identity was genuinely lost) instead of starting another copy. Jobs are not wrapped as MCP Tasks; WebCodex does not advertise the former Connector-specific MCP Tasks extension.
+Long-running commands and validations use the canonical WebPi Job lifecycle. Observe the exact Job returned by the initiating call with `observe_jobs` (or recover it with `list_jobs` when identity was genuinely lost) instead of starting another copy. Jobs are not wrapped as MCP Tasks; WebPi does not advertise the former Connector-specific MCP Tasks extension.
 
 ## First safe prompt
 
 ```text
-Use the configured WebCodex project. Inspect README.md and summarize the
+Use the configured WebPi project. Inspect README.md and summarize the
 project structure. Do not edit files or run commands.
 ```
 
@@ -286,11 +286,11 @@ prose.
 
 | Code | Meaning | Action |
 | --- | --- | --- |
-| `project_not_configured` | No canonical setup exists | Run `webcodex setup` |
+| `project_not_configured` | No canonical setup exists | Run `webpi setup` |
 | `project_credential_invalid` | Private Project Credential is missing or mismatched | Restore both matching private files or recreate the profile |
 | `project_credential_rejected` | The reachable server rejected the credential | Restore the server-matching credential |
 | `workspace_unavailable` | The configured Git workspace is unavailable | Restore the workspace, then run doctor |
-| `server_unreachable` / `agent_offline` | The project Runner/runtime is unavailable | Run `webcodex run` / `webcodex doctor` |
+| `server_unreachable` / `agent_offline` | The project Runner/runtime is unavailable | Run `webpi run` / `webpi doctor` |
 | `required_capability_unavailable` | The current Runner/runtime lacks a required coding capability | Upgrade all binaries |
 | `project_registry_scope_denied` | A project-scoped credential tried to expand or mutate the Project registry outside its granted visibility | Use an already-visible Project or `work_on_project(mode=worktree)` |
 
@@ -308,7 +308,7 @@ and execution keep the direct `skill_load` and `run_skill_resource` paths.
 The optional closeout helpers `workspace_hygiene_check` and `finish_coding_task`
 are model-visible gateway tools; review/coding catalogs still recommend them.
 
-`WEBCODEX_MCP_COMPACT_SCHEMAS` defaults to `true`. Compact `tools/list` omits
+`WEBPI_MCP_COMPACT_SCHEMAS` defaults to `true`. Compact `tools/list` omits
 `outputSchema` and projects shorter MCP-specific tool/input descriptions for
 selection: purpose, nearby tool distinctions, and essential continuation guidance.
 Repeated Session/context wrapper copy is shortened too. Field names, required
@@ -325,7 +325,7 @@ including Session wrappers, gateway tools, and optional App metadata/tools.
 
 ### ChatGPT file bridge
 
-When the connected MCP protocol/host admits the artifact capabilities, WebCodex supports
+When the connected MCP protocol/host admits the artifact capabilities, WebPi supports
 host-native file transfer in both directions without routing complete binary
 payloads through model text:
 
@@ -356,4 +356,4 @@ as DOCX/PPTX/XLSX and PDFs use the same underlying artifact transport and can
 therefore move between a project and a supporting ChatGPT host without a model
 manually carrying their Base64.
 
-Use [Coding Workflow](CODING_WORKFLOW.md) for the canonical `work_on_project` bootstrap, behavioral-role mental model, and validation/closeout guidance. See [Architecture](ARCHITECTURE.md) and the `webcodex` CLI for operator tooling.
+Use [Coding Workflow](CODING_WORKFLOW.md) for the canonical `work_on_project` bootstrap, behavioral-role mental model, and validation/closeout guidance. See [Architecture](ARCHITECTURE.md) and the `webpi` CLI for operator tooling.

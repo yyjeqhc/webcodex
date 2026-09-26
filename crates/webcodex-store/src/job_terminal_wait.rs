@@ -599,11 +599,15 @@ fn validate_terminal_fields(
     let a = status.is_some_and(|v| {
         matches!(
             v,
-            "completed" | "failed" | "timed_out" | "stopped" | "cancelled" | "lost"
+            "completed" | "failed" | "timeout" | "timed_out" | "stopped" | "cancelled" | "lost"
         )
     });
-    let b =
-        outcome.is_some_and(|v| matches!(v, "succeeded" | "failed" | "timed_out" | "cancelled"));
+    let b = outcome.is_some_and(|v| {
+        matches!(
+            v,
+            "succeeded" | "failed" | "timed_out" | "cancelled" | "outcome_unknown"
+        )
+    });
     if !a || !b || observed.is_none_or(|v| v <= 0) {
         return Err(invariant("invalid stored Job terminal fact"));
     }

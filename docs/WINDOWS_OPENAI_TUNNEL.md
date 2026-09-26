@@ -2,24 +2,24 @@
 
 [English](WINDOWS_OPENAI_TUNNEL.md) | [简体中文](WINDOWS_OPENAI_TUNNEL.zh-CN.md)
 
-This page is the current deep-dive guide for running an independent foreground WebCodex Server and Runner on Windows behind an OpenAI Secure MCP Tunnel. The stable setup and troubleshooting steps come first. A clearly separated [historical dogfood note](#historical-dogfood-note--2026-08-30) at the end preserves the real 2026-08-30 validation evidence without making that old version, machine, repository, or app name part of the current setup contract.
+This page is the current deep-dive guide for running an independent foreground WebPi Server and Runner on Windows behind an OpenAI Secure MCP Tunnel. The stable setup and troubleshooting steps come first. A clearly separated [historical dogfood note](#historical-dogfood-note--2026-08-30) at the end preserves the real 2026-08-30 validation evidence without making that old version, machine, repository, or app name part of the current setup contract.
 
 ## When to use this topology
 
-If your goal is simply **normal long-lived WebCodex use**, start with the [Full Setup guide](PERSONAL_SETUP.md). This page is a Windows + OpenAI Tunnel deep dive and troubleshooting record; continue here when you deliberately choose this private network path, need to reproduce the explicit topology, or are diagnosing Tunnel behavior.
+If your goal is simply **normal long-lived WebPi use**, start with the [Full Setup guide](PERSONAL_SETUP.md). This page is a Windows + OpenAI Tunnel deep dive and troubleshooting record; continue here when you deliberately choose this private network path, need to reproduce the explicit topology, or are diagnosing Tunnel behavior.
 
-Use this setup when the Windows machine should host the complete WebCodex runtime while keeping the Server private:
+Use this setup when the Windows machine should host the complete WebPi runtime while keeping the Server private:
 
-- WebCodex Server runs in the foreground on Windows;
-- an independent WebCodex Runner connects to that Server;
-- the Server stays loopback-only and exposes no public WebCodex port;
+- WebPi Server runs in the foreground on Windows;
+- an independent WebPi Runner connects to that Server;
+- the Server stays loopback-only and exposes no public WebPi port;
 - ChatGPT reaches `/mcp` through an OpenAI Secure MCP Tunnel;
 - the Runner can register and operate multiple local repositories exactly like a normal Runner connected to a hosted Server.
 
 For a temporary one-repository share, prefer the simpler product path:
 
 ```powershell
-webcodex share --tunnel openai
+webpi share --tunnel openai
 ```
 
 This document focuses on the lower-level independent Server + independent Runner topology for explicit lifecycle control and Tunnel troubleshooting on Windows.
@@ -30,26 +30,26 @@ This document focuses on the lower-level independent Server + independent Runner
 flowchart LR
     C[ChatGPT custom MCP app] -->|OpenAI Tunnel| CP[OpenAI control plane]
     CP --> TC[tunnel-client on Windows]
-    TC -->|HTTP streamable MCP\nBearer stays local| S[WebCodex Server\n127.0.0.1:18080]
-    R[WebCodex Runner] -->|WebSocket| S
+    TC -->|HTTP streamable MCP\nBearer stays local| S[WebPi Server\n127.0.0.1:18080]
+    R[WebPi Runner] -->|WebSocket| S
     R --> P[C:\\src\\your-repository]
 ```
 
 Two boundaries matter:
 
-1. ChatGPT selects **Connection: Tunnel** and never needs the local WebCodex Bearer.
-2. The Runner remains a standard WebCodex Runner. The Tunnel changes only the private ChatGPT-to-MCP transport; it does not change how the Runner connects to or operates projects through WebCodex.
+1. ChatGPT selects **Connection: Tunnel** and never needs the local WebPi Bearer.
+2. The Runner remains a standard WebPi Runner. The Tunnel changes only the private ChatGPT-to-MCP transport; it does not change how the Runner connects to or operates projects through WebPi.
 
 ## 1. Prerequisites
 
-### WebCodex
+### WebPi
 
-Install the current WebCodex build and make sure the CLI, Server, and Runner binaries come from the same version/commit:
+Install the current WebPi build and make sure the CLI, Server, and Runner binaries come from the same version/commit:
 
 ```powershell
-webcodex --version
-webcodex-server --version
-webcodex-runner --version
+webpi --version
+webpi-server --version
+webpi-runner --version
 ```
 
 Do not debug a transport problem with a mixed CLI/Server/Runner baseline. Align all three binaries first. The exact build used by the historical 2026-08-30 validation is recorded only in the historical section below.
@@ -65,19 +65,19 @@ CONTROL_PLANE_API_KEY
 
 Use a Restricted `CONTROL_PLANE_API_KEY` with only Tunnels **Read + Use** when possible.
 
-Never print or commit the Tunnel ID, API key, WebCodex Bearer, bootstrap token, or authorization-file contents.
+Never print or commit the Tunnel ID, API key, WebPi Bearer, bootstrap token, or authorization-file contents.
 
-WebCodex uses a pinned and verified OpenAI `tunnel-client`; the implementation can also resolve it from `WEBCODEX_TUNNEL_CLIENT_BIN` or `PATH`.
+WebPi uses a pinned and verified OpenAI `tunnel-client`; the implementation can also resolve it from `WEBPI_TUNNEL_CLIENT_BIN` or `PATH`.
 
 ## 2. Initialize a Windows foreground Server
 
-Use dedicated env/data paths so this topology does not overwrite another WebCodex runtime:
+Use dedicated env/data paths so this topology does not overwrite another WebPi runtime:
 
 ```powershell
-$envFile = Join-Path $HOME ".config\webcodex\openai-tunnel\webcodex.env"
-$dataDir = Join-Path $HOME ".local\share\webcodex-openai-tunnel"
+$envFile = Join-Path $HOME ".config\webpi\openai-tunnel\webpi.env"
+$dataDir = Join-Path $HOME ".local\share\webpi-openai-tunnel"
 
-webcodex server init `
+webpi server init `
   --listen 127.0.0.1:18080 `
   --data-dir $dataDir `
   --env-file $envFile `
@@ -89,7 +89,7 @@ webcodex server init `
 Keep one PowerShell terminal open for the Server:
 
 ```powershell
-webcodex server run --env-file $envFile
+webpi server run --env-file $envFile
 ```
 
 Confirm that the Server is listening on loopback and exposes the local MCP endpoint:
@@ -106,7 +106,7 @@ Windows currently supports the foreground Server runtime. Closing the terminal o
 Open a second PowerShell terminal and create a short-lived pairing code on the Server side:
 
 ```powershell
-webcodex pairing create `
+webpi pairing create `
   --server-url http://127.0.0.1:18080 `
   --env-file $envFile `
   --username windows-user `
@@ -117,7 +117,7 @@ webcodex pairing create `
 Redeem the code on the Runner side. Register the repository you want to use through the Connector now, and restrict the allowed root to its real parent directory when practical:
 
 ```powershell
-webcodex login http://127.0.0.1:18080 `
+webpi login http://127.0.0.1:18080 `
   --code <wc_pair_...> `
   --allowed-root C:\src `
   --project C:\src\your-repository `
@@ -127,10 +127,10 @@ webcodex login http://127.0.0.1:18080 `
 `login --json` reports a `runner_config` path without requiring the resulting credential to be pasted into ChatGPT. Start the Runner with that config:
 
 ```powershell
-webcodex runner run --config <login-reported-runner-config>
+webpi runner run --config <login-reported-runner-config>
 ```
 
-Check the returned config with `webcodex runner status --config <login-reported-runner-config>`. At this point the Server should see a normal independent Runner with `C:\src\your-repository` already registered. Add more projects later with the normal `webcodex project register --config ...` workflow when needed.
+Check the returned config with `webpi runner status --config <login-reported-runner-config>`. At this point the Server should see a normal independent Runner with `C:\src\your-repository` already registered. Add more projects later with the normal `webpi project register --config ...` workflow when needed.
 
 ## 4. Validate local MCP before exposing it through the Tunnel
 
@@ -140,9 +140,9 @@ The `tunnel-client` MCP target is the loopback endpoint:
 http://127.0.0.1:18080/mcp
 ```
 
-Keep the WebCodex Bearer local and inject it through a file-backed `Authorization` header. Do not paste that Bearer into ChatGPT.
+Keep the WebPi Bearer local and inject it through a file-backed `Authorization` header. Do not paste that Bearer into ChatGPT.
 
-Before starting the long-lived daemon, run `tunnel-client doctor`. Require it to validate the Tunnel ID, Restricted control-plane API key, local WebCodex MCP reachability, and local Bearer injection together.
+Before starting the long-lived daemon, run `tunnel-client doctor`. Require it to validate the Tunnel ID, Restricted control-plane API key, local WebPi MCP reachability, and local Bearer injection together.
 
 The runtime arguments are conceptually:
 
@@ -153,7 +153,7 @@ The runtime arguments are conceptually:
 --health.url-file <private-health-url-file>
 ```
 
-`webcodex share --tunnel openai` automates the same categories of setup, runs `doctor`, and waits for `/readyz`. Manual operation is intended for an explicit independent Server/Runner topology or deep troubleshooting.
+`webpi share --tunnel openai` automates the same categories of setup, runs `doctor`, and waits for `/readyz`. Manual operation is intended for an explicit independent Server/Runner topology or deep troubleshooting.
 
 ## 5. If `/readyz` is healthy but Connector creation fails
 
@@ -187,24 +187,24 @@ After changing the route, require both local readiness and healthy control-plane
 
 In ChatGPT Developer Mode, create a custom MCP app and use:
 
-1. any descriptive name, such as `WebCodex Windows`;
+1. any descriptive name, such as `WebPi Windows`;
 2. **Connection: Tunnel**;
-3. the selected WebCodex OpenAI Tunnel;
+3. the selected WebPi OpenAI Tunnel;
 4. **Authentication: No authentication**;
 5. acknowledge the custom MCP risk notice;
 6. create/scan the app tools.
 
-Why **No authentication**? The WebCodex Bearer for the local MCP hop is already injected locally by `tunnel-client`. ChatGPT should not receive or store it.
+Why **No authentication**? The WebPi Bearer for the local MCP hop is already injected locally by `tunnel-client`. ChatGPT should not receive or store it.
 
 ## 7. Validate end to end through the Connector
 
 After creating the Connector, refresh the ChatGPT window if the new tools do not appear in the current conversation. Then validate the path beyond UI setup:
 
-1. confirm the Project registered during `webcodex login --project ...` is visible;
+1. confirm the Project registered during `webpi login --project ...` is visible;
 2. select that registered Project and read a known file through the Connector;
 3. if write access is intentionally enabled, use a dedicated branch/safe change and review the resulting Git diff.
 
-The project handle returned by WebCodex is output, not setup input. Do not ask the user to invent a Runner/project runtime id.
+The project handle returned by WebPi is output, not setup input. Do not ask the user to invent a Runner/project runtime id.
 
 ## 8. Acceptance checklist
 
@@ -230,7 +230,7 @@ The last project/read/write checks are what prove parity with the normal hosted 
 
 Do not. Also require healthy OpenAI control-plane metadata/poll behavior.
 
-### Pasting the WebCodex Bearer into ChatGPT
+### Pasting the WebPi Bearer into ChatGPT
 
 Do not. OpenAI Secure MCP Tunnel mode uses **No authentication** in ChatGPT; the Bearer stays local.
 
@@ -240,7 +240,7 @@ It does not. Foreground Server and Runner operation is supported. The tradeoff i
 
 ### Assuming `share --tunnel openai` is unrelated to this topology
 
-The core transport is the same: local WebCodex MCP, local Bearer injection, and OpenAI `tunnel-client`. `share` owns a temporary Server/Runner/session automatically; this guide keeps the Server and Runner explicit so they can behave like a normal long-lived topology and be diagnosed independently.
+The core transport is the same: local WebPi MCP, local Bearer injection, and OpenAI `tunnel-client`. `share` owns a temporary Server/Runner/session automatically; this guide keeps the Server and Runner explicit so they can behave like a normal long-lived topology and be diagnosed independently.
 
 ## Historical dogfood note — 2026-08-30
 

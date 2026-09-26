@@ -5,6 +5,9 @@
 //! names and policy values consumed by auth, route metadata, and tool contracts.
 
 pub const SCOPE_RUNTIME_READ: &str = "runtime:read";
+/// Read the bounded secrets-safe runtime diagnostic ring. Kept separate from
+/// runtime:read because diagnostic history can reveal operational timing/correlation.
+pub const SCOPE_DIAGNOSTICS_READ: &str = "diagnostics:read";
 /// Consequential management of one exact caller-visible Runner process. This is
 /// deliberately independent from Project, Job, Plugin, and administrator scopes.
 pub const SCOPE_RUNNER_MANAGE: &str = "runner:manage";
@@ -17,6 +20,12 @@ pub const SCOPE_COMMUNICATION_READ: &str = "communication:read";
 pub const SCOPE_COMMUNICATION_MANAGE: &str = "communication:manage";
 pub const SCOPE_JOB_RUN: &str = "job:run";
 pub const SCOPE_JOB_DETACH: &str = "job:detach";
+/// Restart/drain control for the WebPi service lifecycle. This scope never grants
+/// arbitrary detached process execution or binary replacement by itself.
+pub const SCOPE_SERVICE_RESTART: &str = "service:restart";
+/// Deploy/rollback authority for a validated WebPi release candidate. Kept
+/// separate from service:restart so routine restarts do not imply binary writes.
+pub const SCOPE_SERVICE_DEPLOY: &str = "service:deploy";
 pub const SCOPE_BROWSER_READ: &str = "browser:read";
 pub const SCOPE_BROWSER_CONTROL: &str = "browser:control";
 pub const SCOPE_BROWSER_LAUNCH: &str = "browser:launch";
@@ -30,6 +39,9 @@ pub const SCOPE_COMPUTER_CLIPBOARD_WRITE: &str = "computer:clipboard_write";
 pub const SCOPE_MCP_LOCAL: &str = "mcp:local";
 pub const SCOPE_PLUGIN_INSPECT: &str = "plugin:inspect";
 pub const SCOPE_PLUGIN_INVOKE: &str = "plugin:invoke";
+/// Execute Plugin provider tools that may mutate state or whose annotations do not
+/// prove them read-only. This is deliberately separate from plugin:invoke.
+pub const SCOPE_PLUGIN_MUTATE: &str = "plugin:mutate";
 pub const SCOPE_PLUGIN_MANAGE: &str = "plugin:manage";
 pub const SCOPE_SSH_LOCAL: &str = "ssh:local";
 pub const SCOPE_CODING_AGENT_RUN: &str = "coding_agent:run";
@@ -117,6 +129,7 @@ pub const KNOWN_SCOPES: &[&str] = &[
     SCOPE_COMPUTER_CLIPBOARD_READ,
     SCOPE_COMPUTER_CLIPBOARD_WRITE,
     SCOPE_RUNTIME_READ,
+    SCOPE_DIAGNOSTICS_READ,
     SCOPE_RUNNER_MANAGE,
     SCOPE_SESSION_COLLABORATE,
     SCOPE_PROJECT_READ,
@@ -127,6 +140,8 @@ pub const KNOWN_SCOPES: &[&str] = &[
     SCOPE_COMMUNICATION_MANAGE,
     SCOPE_JOB_RUN,
     SCOPE_JOB_DETACH,
+    SCOPE_SERVICE_RESTART,
+    SCOPE_SERVICE_DEPLOY,
     SCOPE_COMPUTER_READ,
     SCOPE_COMPUTER_CONTROL,
     SCOPE_COMPUTER_LAUNCH,
@@ -134,6 +149,7 @@ pub const KNOWN_SCOPES: &[&str] = &[
     SCOPE_MCP_LOCAL,
     SCOPE_PLUGIN_INSPECT,
     SCOPE_PLUGIN_INVOKE,
+    SCOPE_PLUGIN_MUTATE,
     SCOPE_PLUGIN_MANAGE,
     SCOPE_SSH_LOCAL,
     SCOPE_CODING_AGENT_RUN,

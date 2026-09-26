@@ -78,6 +78,16 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         AuthMiddleware,
     ),
     route(
+        TokensUpdateScopes,
+        Post,
+        "/api/tokens/update_scopes",
+        Require(SCOPE_ACCOUNT_MANAGE),
+        AccountControl,
+        Hidden,
+        Other,
+        AuthMiddleware,
+    ),
+    route(
         TokensRevoke,
         Post,
         "/api/tokens/revoke",

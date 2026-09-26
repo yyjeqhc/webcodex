@@ -25,6 +25,7 @@ fn build_router(config: Arc<crate::Config>, db: Arc<crate::Database>) -> Router 
                 .push(Router::with_path("tokens/create").post(tokens_create))
                 .push(Router::with_path("tokens/register_hash").post(tokens_register_hash))
                 .push(Router::with_path("tokens/list").post(tokens_list))
+                .push(Router::with_path("tokens/update_scopes").post(tokens_update_scopes))
                 .push(Router::with_path("tokens/revoke").post(tokens_revoke))
                 .push(Router::with_path("runtime/status").post(echo_runtime_ok)),
         )
@@ -605,6 +606,264 @@ async fn http_tokens_create_rejects_unknown_scope() {
     let resp = TestClient::post("http://localhost/api/tokens/create")
         .bearer_auth("secret")
         .json(&json!({"username": "alice", "scopes": ["runtime:read", "bogus:scope"]}))
+        .send(&service)
+        .await;
+    assert_eq!(effective_status(&resp), StatusCode::BAD_REQUEST);
+}
+
+// =========================================================================
+// updateApiTokenScopes
+// =========================================================================
+
+#[tokio::test]
+async fn http_tokens_update_scopes_self_preserves_credential_identity_and_hash() {
+    let config = test_config(Some("secret"));
+    let (_tmp, db) = test_db();
+    seed_user(&db, "alice", "user");
+    let service = Service::new(build_router(config, db.clone()));
+
+    let mut resp = TestClient::post("http://localhost/api/tokens/create")
+        .bearer_auth("secret")
+        .json(&json!({
+            "username": "alice",
+            "name": "gpt-action",
+            "scopes": ["runtime:read", "account:manage"]
+        }))
+        .send(&service)
+        .await;
+    assert_eq!(effective_status(&resp), StatusCode::OK);
+    let created: Value = resp.take_json().await.unwrap();
+    let token = created["token"].as_str().unwrap().to_string();
+    let token_id = created["token_id"].as_str().unwrap().to_string();
+    let prefix = created["token_prefix"].as_str().unwrap().to_string();
+    let before = db.get_api_key_by_id(&token_id).unwrap().unwrap();
+    let before_created_at = before.created_at;
+    let before_expires_at = before.expires_at;
+
+    let mut resp = TestClient::post("http://localhost/api/tokens/update_scopes")
+        .bearer_auth(&token)
+        .json(&json!({
+            "username": "alice",
+            "token_id": token_id,
+            "scopes": ["runtime:read", "account:manage", "diagnostics:read"]
+        }))
+        .send(&service)
+        .await;
+    assert_eq!(effective_status(&resp), StatusCode::OK);
+    let body: Value = resp.take_json().await.unwrap();
+    assert_eq!(body["success"], true);
+    assert_eq!(body["changed"], true);
+    assert_eq!(body["token"]["id"], created["token_id"]);
+    assert_eq!(body["token"]["token_prefix"], prefix);
+    let scopes = body["token"]["scopes"].as_array().unwrap();
+    assert_eq!(
+        scopes
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect::<Vec<_>>(),
+        vec!["runtime:read", "account:manage", "diagnostics:read"]
+    );
+    let serialized = serde_json::to_string(&body).unwrap();
+    assert!(!serialized.contains(&token));
+    assert!(!serialized.contains("key_hash"));
+
+    let after = db
+        .get_api_key_by_id(created["token_id"].as_str().unwrap())
+        .unwrap()
+        .unwrap();
+    assert_eq!(after.key_prefix, prefix);
+    assert_eq!(after.name, "gpt-action");
+    assert_eq!(after.created_at, before_created_at);
+    assert_eq!(after.expires_at, before_expires_at);
+
+    let resp = TestClient::post("http://localhost/api/tokens/list")
+        .bearer_auth(&token)
+        .json(&json!({"username": "alice"}))
+        .send(&service)
+        .await;
+    assert_eq!(effective_status(&resp), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn http_tokens_update_scopes_same_set_is_noop() {
+    let config = test_config(Some("secret"));
+    let (_tmp, db) = test_db();
+    seed_user(&db, "alice", "user");
+    let service = Service::new(build_router(config, db));
+    let mut resp = TestClient::post("http://localhost/api/tokens/create")
+        .bearer_auth("secret")
+        .json(&json!({"username": "alice", "scopes": ["runtime:read"]}))
+        .send(&service)
+        .await;
+    let created: Value = resp.take_json().await.unwrap();
+    let mut resp = TestClient::post("http://localhost/api/tokens/update_scopes")
+        .bearer_auth("secret")
+        .json(&json!({
+            "username": "alice",
+            "token_id": created["token_id"],
+            "scopes": ["runtime:read"]
+        }))
+        .send(&service)
+        .await;
+    assert_eq!(effective_status(&resp), StatusCode::OK);
+    let body: Value = resp.take_json().await.unwrap();
+    assert_eq!(body["changed"], false);
+}
+
+#[tokio::test]
+async fn http_tokens_update_scopes_non_admin_cannot_grant_admin_or_target_other_user() {
+    let config = test_config(Some("secret"));
+    let (_tmp, db) = test_db();
+    seed_user(&db, "alice", "user");
+    seed_user(&db, "bob", "user");
+    let service = Service::new(build_router(config, db));
+
+    let mut resp = TestClient::post("http://localhost/api/tokens/create")
+        .bearer_auth("secret")
+        .json(&json!({"username": "alice", "scopes": ["runtime:read", "account:manage"]}))
+        .send(&service)
+        .await;
+    let alice: Value = resp.take_json().await.unwrap();
+    let alice_token = alice["token"].as_str().unwrap().to_string();
+    let alice_id = alice["token_id"].as_str().unwrap().to_string();
+
+    let mut resp = TestClient::post("http://localhost/api/tokens/create")
+        .bearer_auth("secret")
+        .json(&json!({"username": "bob", "scopes": ["runtime:read"]}))
+        .send(&service)
+        .await;
+    let bob: Value = resp.take_json().await.unwrap();
+
+    let resp = TestClient::post("http://localhost/api/tokens/update_scopes")
+        .bearer_auth(&alice_token)
+        .json(&json!({
+            "username": "alice",
+            "token_id": alice_id,
+            "scopes": ["runtime:read", "account:manage", "admin"]
+        }))
+        .send(&service)
+        .await;
+    assert_eq!(effective_status(&resp), StatusCode::FORBIDDEN);
+
+    let resp = TestClient::post("http://localhost/api/tokens/update_scopes")
+        .bearer_auth(&alice_token)
+        .json(&json!({
+            "username": "bob",
+            "token_id": bob["token_id"],
+            "scopes": ["runtime:read", "diagnostics:read"]
+        }))
+        .send(&service)
+        .await;
+    assert_eq!(effective_status(&resp), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn http_tokens_update_scopes_rejects_revoked_token() {
+    let config = test_config(Some("secret"));
+    let (_tmp, db) = test_db();
+    seed_user(&db, "alice", "user");
+    let service = Service::new(build_router(config, db.clone()));
+    let mut resp = TestClient::post("http://localhost/api/tokens/create")
+        .bearer_auth("secret")
+        .json(&json!({"username": "alice", "scopes": ["runtime:read"]}))
+        .send(&service)
+        .await;
+    let created: Value = resp.take_json().await.unwrap();
+    let token_id = created["token_id"].as_str().unwrap();
+    db.revoke_api_key(token_id, chrono::Utc::now().timestamp())
+        .unwrap();
+    let resp = TestClient::post("http://localhost/api/tokens/update_scopes")
+        .bearer_auth("secret")
+        .json(&json!({
+            "username": "alice",
+            "token_id": token_id,
+            "scopes": ["runtime:read", "diagnostics:read"]
+        }))
+        .send(&service)
+        .await;
+    assert_eq!(effective_status(&resp), StatusCode::CONFLICT);
+}
+
+#[tokio::test]
+async fn http_tokens_update_scopes_rejects_unknown_scope() {
+    let config = test_config(Some("secret"));
+    let (_tmp, db) = test_db();
+    seed_user(&db, "alice", "user");
+    let service = Service::new(build_router(config, db));
+    let mut resp = TestClient::post("http://localhost/api/tokens/create")
+        .bearer_auth("secret")
+        .json(&json!({"username": "alice", "scopes": ["runtime:read"]}))
+        .send(&service)
+        .await;
+    let created: Value = resp.take_json().await.unwrap();
+    let resp = TestClient::post("http://localhost/api/tokens/update_scopes")
+        .bearer_auth("secret")
+        .json(&json!({
+            "username": "alice",
+            "token_id": created["token_id"],
+            "scopes": ["runtime:read", "bogus:scope"]
+        }))
+        .send(&service)
+        .await;
+    assert_eq!(effective_status(&resp), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn http_tokens_update_scopes_rejects_expired_and_agent_tokens() {
+    let config = test_config(Some("secret"));
+    let (_tmp, db) = test_db();
+    seed_user(&db, "alice", "user");
+    let service = Service::new(build_router(config, db.clone()));
+
+    let mut resp = TestClient::post("http://localhost/api/tokens/create")
+        .bearer_auth("secret")
+        .json(&json!({"username": "alice", "scopes": ["runtime:read"]}))
+        .send(&service)
+        .await;
+    let expired: Value = resp.take_json().await.unwrap();
+    {
+        let conn = db.conn_for_tests();
+        conn.execute(
+            "UPDATE api_keys SET expires_at = ?2 WHERE id = ?1",
+            rusqlite::params![
+                expired["token_id"].as_str().unwrap(),
+                chrono::Utc::now().timestamp() - 1
+            ],
+        )
+        .unwrap();
+    }
+    let resp = TestClient::post("http://localhost/api/tokens/update_scopes")
+        .bearer_auth("secret")
+        .json(&json!({
+            "username": "alice",
+            "token_id": expired["token_id"],
+            "scopes": ["runtime:read", "diagnostics:read"]
+        }))
+        .send(&service)
+        .await;
+    assert_eq!(effective_status(&resp), StatusCode::CONFLICT);
+
+    let mut resp = TestClient::post("http://localhost/api/tokens/create")
+        .bearer_auth("secret")
+        .json(&json!({"username": "alice", "scopes": ["runtime:read"]}))
+        .send(&service)
+        .await;
+    let agent: Value = resp.take_json().await.unwrap();
+    {
+        let conn = db.conn_for_tests();
+        conn.execute(
+            "UPDATE api_keys SET kind = 'agent', allowed_client_id = 'shadow-agent' WHERE id = ?1",
+            rusqlite::params![agent["token_id"].as_str().unwrap()],
+        )
+        .unwrap();
+    }
+    let resp = TestClient::post("http://localhost/api/tokens/update_scopes")
+        .bearer_auth("secret")
+        .json(&json!({
+            "username": "alice",
+            "token_id": agent["token_id"],
+            "scopes": ["runtime:read", "diagnostics:read"]
+        }))
         .send(&service)
         .await;
     assert_eq!(effective_status(&resp), StatusCode::BAD_REQUEST);

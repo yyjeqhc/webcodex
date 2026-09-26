@@ -135,6 +135,16 @@ fn access(owner: Option<&str>, group: Option<RunnerAccessGroup>) -> RunnerAccess
     }
 }
 
+#[test]
+fn terminal_persistence_error_code_never_logs_unbounded_adapter_details() {
+    assert_eq!(
+        crate::receipts::terminal_persistence_error_code("job_terminal_wait_storage_invariant"),
+        "job_terminal_wait_storage_invariant"
+    );
+    assert_eq!(crate::receipts::terminal_persistence_error_code("database locked: C:\\secret\\db"), "unknown");
+    assert_eq!(crate::receipts::terminal_persistence_error_code(""), "unknown");
+}
+
 #[tokio::test]
 async fn terminal_events_emit_once_only_after_accepted_sequenced_terminal_truth() {
     let store = Arc::new(MemoryReceipts::default());
@@ -189,6 +199,25 @@ async fn terminal_events_emit_once_only_after_accepted_sequenced_terminal_truth(
     assert_eq!(events.rows.lock().unwrap().len(), 1);
 }
 
+
+#[tokio::test]
+async fn timeout_terminal_events_are_canonicalized_for_attention_persistence() {
+    let store = Arc::new(MemoryReceipts::default());
+    let events = Arc::new(MemoryTerminalEvents::default());
+    let registry = durable_with_events(&store, &events).await;
+    register(&registry, INSTANCE_A, empty_inventory()).await;
+    let (job, _) = start_and_take_over(&registry, INSTANCE_A).await;
+
+    registry
+        .update_job(update(INSTANCE_A, &job.job_id, 1, "timeout", None, true))
+        .await
+        .unwrap();
+
+    let rows = events.rows.lock().unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].status, "timed_out");
+    assert_eq!(rows[0].outcome, "timed_out");
+}
 
 #[tokio::test]
 async fn terminal_event_sink_failure_retries_after_cooldown_without_hot_looping() {

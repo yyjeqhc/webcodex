@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>WebCodex Work</title>
+<title>WebPi Work</title>
 <style>
 :root { color-scheme: light dark; font: 13px/1.45 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
 * { box-sizing: border-box; }
@@ -34,7 +34,7 @@ h2 { margin: 0; font-size: 12px; font-weight: 650; }
 </head>
 <body>
 <main class="card" aria-live="polite">
-  <div class="header"><h1>WebCodex Work</h1><div class="actions"><button id="refresh" class="refresh" type="button" disabled>Refresh</button><span id="badge" class="badge">Loading</span></div></div>
+  <div class="header"><h1>WebPi Work</h1><div class="actions"><button id="refresh" class="refresh" type="button" disabled>Refresh</button><span id="badge" class="badge">Loading</span></div></div>
   <section class="section">
     <div class="section-head"><h2>Workspace</h2><span id="changesStats" class="secondary"></span></div>
     <div id="changesTitle" class="primary">Waiting for Work state…</div>
@@ -538,7 +538,7 @@ h2 { margin: 0; font-size: 12px; font-weight: 650; }
   addEventListener("pagehide", teardown, { once: true });
   addEventListener("beforeunload", teardown, { once: true });
 
-  send("ui/initialize", { protocolVersion: APP_PROTOCOL, appInfo: { name: "webcodex-work-result-app", title: "WebCodex Work", version: "1.0.0" }, appCapabilities: {} })
+  send("ui/initialize", { protocolVersion: APP_PROTOCOL, appInfo: { name: "webpi-work-result-app", title: "WebPi Work", version: "1.0.0" }, appCapabilities: {} })
     .then(() => {
       if (tornDown) return;
       hostInitialized = true;

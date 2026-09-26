@@ -9,7 +9,22 @@ use super::{permissions, session_context, sessions, ToolCall, ToolResult, ToolRu
 use crate::auth::AuthContext;
 use crate::tool_runtime::project_resolution::{ProjectResolverError, ResolvedProject};
 use crate::tool_runtime::tool_audit::ToolCallAuditProjection;
+use crate::tool_runtime::tool_definition::runtime_tool_metadata;
 use serde_json::Value;
+
+fn service_drain_allows_tool(tool_name: &str) -> bool {
+    runtime_tool_metadata(tool_name).effect.read_only_hint()
+        || matches!(
+            tool_name,
+            "service_drain"
+                | "service_restart"
+                | "service_deploy"
+                | "service_rollback"
+                | "stop_job"
+                | "coding_agent_cancel"
+                | "cancel_agent_wait"
+        )
+}
 
 /// Add the Phase A lifecycle tuple to a definite pre-execution structured
 /// execution denial without changing generic denial helpers used by unrelated
@@ -1652,6 +1667,44 @@ impl ToolRuntime {
                 return result;
             }
         }
+        let lifecycle = self.service_lifecycle.snapshot();
+        if lifecycle.draining && !service_drain_allows_tool(call.tool_name()) {
+            let mut result = ToolResult::err_with_output(
+                "WebPi service is draining; new consequential tool calls are temporarily not admitted",
+                serde_json::json!({
+                    "error_kind": "service_draining",
+                    "state_changed": false,
+                    "service_lifecycle": lifecycle.as_json(),
+                }),
+            );
+            decorate_structured_execution_prestart_denial(
+                call.tool_name(),
+                &mut result,
+                "service_draining",
+            );
+            if let Some(decision) = permission.as_ref() {
+                if let Some(start) = session_start.as_mut() {
+                    self.sessions
+                        .record_permission_decision(start, decision.clone());
+                }
+                permissions::add_permission_to_result(&mut result, decision);
+            }
+            if let Some(session_id) = session_id.as_deref() {
+                self.record_dispatch_session_result(
+                    &mut result,
+                    session_id,
+                    session_start,
+                    call.tool_name(),
+                    Some("service_draining"),
+                    inner_model_facing_recording,
+                    inner_ack_observation.as_ref(),
+                    inner_ack_requested,
+                )
+                .await;
+            }
+            return result;
+        }
+
         let activity_context =
             Self::capture_workspace_activity_context(&call, activity_project.as_deref());
         let validation_assertion_name = recorder_metadata.expectation.assertion_name.as_deref();
@@ -1797,12 +1850,66 @@ impl ToolRuntime {
         match call {
             call @ (ToolCall::ListTools { .. }
             | ToolCall::ListRunners { .. }
+            | ToolCall::DeploymentPreflight { .. }
             | ToolCall::RuntimeStatus { .. }
+            | ToolCall::RuntimeDiagnostics { .. }
+            | ToolCall::PublicTunnelProbe { .. }
             | ToolCall::ReadToolTrace { .. }
             | ToolCall::ToolManifest { .. }) => {
                 self.dispatch_discovery_tool(call, auth, protocol_capabilities)
                     .await
             }
+
+            ToolCall::PrepareServiceDeployment {
+                client_id,
+                operation,
+                idempotency_key,
+                target_manifest,
+            } => {
+                self.prepare_service_deployment(
+                    auth,
+                    client_id,
+                    operation,
+                    idempotency_key,
+                    target_manifest,
+                )
+                .await
+            }
+            ToolCall::ReadDeploymentReceipt { receipt_id } => {
+                self.read_deployment_receipt(auth, receipt_id)
+            }
+
+            ToolCall::ServiceRollback {
+                receipt_id,
+                expected_revision,
+                expected_generation,
+            } => {
+                self.service_rollback(auth, receipt_id, expected_revision, expected_generation)
+                    .await
+            }
+
+            ToolCall::ServiceDeploy {
+                receipt_id,
+                expected_revision,
+                expected_generation,
+            } => {
+                self.service_deploy(auth, receipt_id, expected_revision, expected_generation)
+                    .await
+            }
+
+            ToolCall::ServiceRestart {
+                client_id,
+                idempotency_key,
+                expected_generation,
+            } => {
+                self.service_restart(auth, client_id, idempotency_key, expected_generation)
+                    .await
+            }
+
+            ToolCall::ServiceDrain {
+                draining,
+                expected_generation,
+            } => self.service_drain_tool(draining, expected_generation),
 
             call @ (ToolCall::RunnerConfigCheck { .. } | ToolCall::RunnerConfigReload { .. }) => {
                 self.dispatch_runner_config_tool(call, auth).await
@@ -3263,5 +3370,36 @@ mod sparse_read_projection_tests {
         assert!(result.output.get("requested_count").is_none());
         assert_eq!(result.output["items"][0]["output"]["read_revision"], 42);
         assert!(result.output["items"][0]["output"].get("sha256").is_none());
+    }
+
+    #[test]
+    fn service_drain_policy_allows_observation_cancellation_and_controlled_restart_only() {
+        for allowed in [
+            "runtime_status",
+            "deployment_preflight",
+            "read_deployment_receipt",
+            "service_drain",
+            "service_restart",
+            "stop_job",
+            "coding_agent_cancel",
+            "cancel_agent_wait",
+        ] {
+            assert!(
+                service_drain_allows_tool(allowed),
+                "{allowed} should remain available while draining"
+            );
+        }
+        for blocked in [
+            "run_process",
+            "run_shell",
+            "apply_patch",
+            "prepare_service_deployment",
+            "runner_config_reload",
+        ] {
+            assert!(
+                !service_drain_allows_tool(blocked),
+                "{blocked} must not admit new consequential work while draining"
+            );
+        }
     }
 }

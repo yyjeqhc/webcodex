@@ -264,7 +264,7 @@ async fn oauth_authorize_with_valid_session_shows_consent_page() {
         .await;
     assert_eq!(resp.status_code, Some(StatusCode::OK));
     let text = resp.take_string().await.unwrap_or_default();
-    assert!(text.contains("Authorize WebCodex client"), "consent title");
+    assert!(text.contains("Authorize WebPi client"), "consent title");
     assert!(text.contains("Allow"), "Allow button");
     assert!(text.contains("Deny"), "Deny button");
     assert!(text.contains(&client.name), "client name shown");
@@ -557,4 +557,24 @@ async fn oauth_authorize_return_to_rejects_absolute_url() {
         .send(&service)
         .await;
     assert_eq!(resp.status_code, Some(StatusCode::BAD_REQUEST));
+}
+
+#[tokio::test]
+async fn oauth_authorize_return_to_rejects_crlf_without_redirect_or_session_cookie() {
+    let config = test_config(oauth2_enabled());
+    let (_tmp, db) = test_db();
+    let user = seed_user(&db, "alice");
+    let token = seed_user_token(&db, &user);
+    let service = Service::new(build_router(config, db.clone()));
+
+    let body = form_body(&[
+        ("return_to", "/oauth/authorize?state=ok\r\nX-Injected: yes"),
+        ("token", token.as_str()),
+    ]);
+    let resp = post_form("http://localhost/oauth/authorize/login", body)
+        .send(&service)
+        .await;
+    assert_eq!(resp.status_code, Some(StatusCode::BAD_REQUEST));
+    assert_no_location(&resp);
+    assert!(set_cookie_value(&resp, AUTHORIZE_SESSION_COOKIE).is_none());
 }

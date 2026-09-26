@@ -223,22 +223,26 @@ pub(crate) fn parse_options(
     Ok(options)
 }
 
+fn managed_download_user_agent() -> String {
+    format!("webpi/{}", env!("CARGO_PKG_VERSION"))
+}
+
 pub(crate) fn usage() -> &'static str {
-    "Usage: webcodex share [--root PATH] [--profile NAME] [--state-dir PATH] [--json]\n\
+    "Usage: webpi share [--root PATH] [--profile NAME] [--state-dir PATH] [--json]\n\
                      [--tunnel cloudflare|openai|none] [--auth bearer|query-token|oauth]\n\
                      [--oauth-redirect-uri URL] [--public-url URL] [--no-copy-url]\n\
                      [--stop-on-stdin-eof]\n\
-       webcodex status [--root PATH] [--profile NAME] [--state-dir PATH] [--json]\n\
-       webcodex doctor [--root PATH] [--profile NAME] [--state-dir PATH] [--json]\n\
-       webcodex setup [--root PATH] [--profile NAME] [--state-dir PATH] [--json]\n\
-       webcodex run [--root PATH] [--profile NAME] [--state-dir PATH]\n\
+       webpi status [--root PATH] [--profile NAME] [--state-dir PATH] [--json]\n\
+       webpi doctor [--root PATH] [--profile NAME] [--state-dir PATH] [--json]\n\
+       webpi setup [--root PATH] [--profile NAME] [--state-dir PATH] [--json]\n\
+       webpi run [--root PATH] [--profile NAME] [--state-dir PATH]\n\
                               [--console-assets-dir ABSOLUTE_PATH]\n\n\
 `share` is the Quick Trial path: it temporarily shares this one project for ChatGPT/remote MCP,\n\
 starts a local Server + Runner for the foreground lifetime, and ends when the command exits.\n\
-For full daily use, configure the regular WebCodex Server + Runner flow instead. The default\n\
+For full daily use, configure the regular WebPi Server + Runner flow instead. The default\n\
 Cloudflare Quick Tunnel reuses or auto-manages a verified `cloudflared`. The opt-in\n\
 OpenAI Secure MCP Tunnel provider uses a pinned verified `tunnel-client` and keeps\n\
-the temporary WebCodex Bearer credential local. Public URL sharing best-effort\n\
+the temporary WebPi Bearer credential local. Public URL sharing best-effort\n\
 copies only the MCP URL by default; `--auth query-token` explicitly opts into a\n\
 single sensitive URL carrying the temporary share credential. Use `--no-copy-url`\n\
 to disable clipboard access. `--stop-on-stdin-eof` is a `--json` machine-integration\n\
@@ -248,7 +252,7 @@ starting services. `run` is the explicit foreground local runtime step. Its opti
 `--console-assets-dir` enables loopback-only development assets for that run.\n\
 `--auth query-token` is a temporary share-only convenience for MCP clients that\n\
 cannot configure a Bearer header; `--auth oauth` adds project-bound OAuth.\n\
-On Windows, explicit `webcodex share` is supported. Managed Cloudflare acquisition is available on Windows x64; Windows ARM64 requires a trusted explicit/PATH cloudflared because the pinned upstream release has no official ARM64 artifact. Managed OpenAI tunnel-client supports Windows x64/arm64.\n"
+On Windows, explicit `webpi share` is supported. Managed Cloudflare acquisition is available on Windows x64; Windows ARM64 requires a trusted explicit/PATH cloudflared because the pinned upstream release has no official ARM64 artifact. Managed OpenAI tunnel-client supports Windows x64/arm64.\n"
 }
 
 pub(crate) fn readiness_with_probe(
@@ -316,7 +320,7 @@ pub(crate) fn readiness_with_probe(
             .iter()
             .find(|finding| finding.status == ReadinessStatus::Fail)
             .and_then(|finding| finding.next_action.clone())
-            .or_else(|| Some("webcodex run".to_string()))
+            .or_else(|| Some("webpi run".to_string()))
     };
     ProjectReadiness {
         project,
@@ -333,15 +337,15 @@ pub(crate) fn runtime_readiness(project: Option<String>, probe: RemoteProbe) -> 
     let mut findings = vec![ReadinessFact::pass(
         "Connection",
         "server_reachable",
-        "WebCodex is reachable.",
+        "WebPi is reachable.",
     )];
     let (connection, runner_status, capabilities) = match probe {
         RemoteProbe::Unreachable => {
             findings[0] = ReadinessFact::fail(
                 "Connection",
                 "server_unreachable",
-                "WebCodex is not reachable.",
-                "Run webcodex run, then retry.",
+                "WebPi is not reachable.",
+                "Run webpi run, then retry.",
             );
             ("unreachable", "unknown", "not_ready")
         }
@@ -349,7 +353,7 @@ pub(crate) fn runtime_readiness(project: Option<String>, probe: RemoteProbe) -> 
             findings.push(ReadinessFact::fail(
                 "Authentication",
                 "project_credential_rejected",
-                "WebCodex rejected the configured project credential.",
+                "WebPi rejected the configured project credential.",
                 "Restore the matching private credential or explicitly rotate the project setup.",
             ));
             ("connected", "unknown", "not_ready")
@@ -359,7 +363,7 @@ pub(crate) fn runtime_readiness(project: Option<String>, probe: RemoteProbe) -> 
                 "Runner",
                 "agent_offline",
                 "The local Runner is offline.",
-                "Run webcodex run.",
+                "Run webpi run.",
             ));
             ("connected", "offline", "not_ready")
         }
@@ -368,7 +372,7 @@ pub(crate) fn runtime_readiness(project: Option<String>, probe: RemoteProbe) -> 
                 "Project",
                 "project_registration_invalid",
                 "The Runner registration does not contain this project.",
-                "Stop the Runner, run webcodex setup, then start it again.",
+                "Stop the Runner, run webpi setup, then start it again.",
             ));
             ("connected", "online", "not_ready")
         }
@@ -397,7 +401,7 @@ pub(crate) fn runtime_readiness(project: Option<String>, probe: RemoteProbe) -> 
         agent: runner_status.to_string(),
         capabilities: capabilities.to_string(),
         ready: probe == RemoteProbe::Ready,
-        next_action: (probe != RemoteProbe::Ready).then(|| "webcodex doctor".to_string()),
+        next_action: (probe != RemoteProbe::Ready).then(|| "webpi doctor".to_string()),
         findings,
     }
 }
@@ -447,7 +451,7 @@ fn gitignore_hygiene_fact(root: &Path) -> ReadinessFact {
                  workspace provenance validation.",
                 untracked_artifacts.join(", ")
             ),
-            "Add a .gitignore covering build artifacts (target/, __pycache__/, ...), then rerun webcodex doctor.",
+            "Add a .gitignore covering build artifacts (target/, __pycache__/, ...), then rerun webpi doctor.",
         )
     } else if !has_gitignore {
         ReadinessFact::warn(
@@ -597,7 +601,7 @@ pub(crate) fn render_setup_text(report: &SetupReport) -> String {
 
 pub(crate) fn render_doctor_text(readiness: &ProjectReadiness) -> String {
     let mut output = format!(
-        "WebCodex doctor — {}\n",
+        "WebPi doctor — {}\n",
         readiness.project.as_deref().unwrap_or("current project")
     );
     for finding in &readiness.findings {
@@ -682,7 +686,7 @@ impl Default for LocalRuntimeOptions {
             mcp_query_token_auth: false,
             project_share_oauth: None,
             child_environment_remove: Vec::new(),
-            port_conflict_action: "Stop the conflicting process, then run webcodex run.",
+            port_conflict_action: "Stop the conflicting process, then run webpi run.",
             readiness_deadline: None,
         }
     }
@@ -702,13 +706,13 @@ impl LocalRuntimeHandle {
         tokio::select! {
             status = self.server.wait() => Err(ProductError::new(
                 "server_unreachable",
-                format!("WebCodex stopped unexpectedly ({:?})", status.ok()),
-                Some("Run webcodex doctor."),
+                format!("WebPi stopped unexpectedly ({:?})", status.ok()),
+                Some("Run webpi doctor."),
             )),
             status = self.runner.wait() => Err(ProductError::new(
                 "agent_offline",
                 format!("the local Runner stopped unexpectedly ({:?})", status.ok()),
-                Some("Run webcodex doctor."),
+                Some("Run webpi doctor."),
             )),
         }
     }
@@ -729,7 +733,7 @@ fn configured_project(
         ProductError::new(
             "project_not_configured",
             "the current project has not been set up",
-            Some("Run webcodex setup."),
+            Some("Run webpi setup."),
         )
     })?;
     validate_product_config(&expected, &config)?;
@@ -768,8 +772,8 @@ pub(super) async fn start_local_runtime(
     let runner_binary = locate_runner_binary().ok_or_else(|| {
         ProductError::new(
             "required_capability_unavailable",
-            "the WebCodex Runner executable is unavailable",
-            Some("Install all WebCodex binaries, then run webcodex doctor."),
+            "the WebPi Runner executable is unavailable",
+            Some("Install all WebPi binaries, then run webpi doctor."),
         )
     })?;
     let bootstrap = read_private_value(&paths.bootstrap_key)?;
@@ -783,7 +787,7 @@ pub(super) async fn start_local_runtime(
         ProductError::new(
             "required_capability_unavailable",
             "the WebPi Server executable is unavailable in this installation",
-            Some("Install all WebCodex binaries, then run webcodex doctor."),
+            Some("Install all WebPi binaries, then run webpi doctor."),
         )
     })?;
     let local_url = config.server_url();
@@ -857,8 +861,8 @@ pub(super) async fn start_local_runtime(
     let mut server = server_command.spawn().map_err(|_| {
         ProductError::new(
             "server_unreachable",
-            "WebCodex could not start",
-            Some("Run webcodex doctor."),
+            "WebPi could not start",
+            Some("Run webpi doctor."),
         )
     })?;
     if let Err(error) = wait_for_server(
@@ -896,7 +900,7 @@ pub(super) async fn start_local_runtime(
             return Err(ProductError::new(
                 "agent_offline",
                 "the local Runner could not start",
-                Some("Run webcodex doctor."),
+                Some("Run webpi doctor."),
             ));
         }
     };
@@ -1042,7 +1046,7 @@ fn open_log(path: &Path) -> Result<File, ProductError> {
         .map_err(|_| {
             ProductError::new(
                 "workspace_unavailable",
-                "WebCodex could not open its local log",
+                "WebPi could not open its local log",
                 Some("Check local filesystem permissions, then retry."),
             )
         })
@@ -1056,7 +1060,7 @@ async fn stop_child(child: &mut Child) {
 fn io_error(_: std::io::Error) -> ProductError {
     ProductError::new(
         "workspace_unavailable",
-        "WebCodex could not prepare local process output",
+        "WebPi could not prepare local process output",
         Some("Check local filesystem permissions, then retry."),
     )
 }
@@ -1075,8 +1079,8 @@ async fn wait_for_server(
         .map_err(|_| {
             ProductError::new(
                 "server_unreachable",
-                "WebCodex readiness client could not start",
-                Some("Run webcodex doctor."),
+                "WebPi readiness client could not start",
+                Some("Run webpi doctor."),
             )
         })?;
     while Instant::now() < deadline {
@@ -1107,8 +1111,8 @@ async fn wait_for_server(
     }
     Err(ProductError::new(
         "server_unreachable",
-        "WebCodex did not become reachable",
-        Some("Run webcodex doctor."),
+        "WebPi did not become reachable",
+        Some("Run webpi doctor."),
     ))
 }
 
@@ -1124,15 +1128,15 @@ async fn wait_for_ready(
         if server.try_wait().ok().flatten().is_some() {
             return Err(ProductError::new(
                 "server_unreachable",
-                "WebCodex stopped during startup",
-                Some("Run webcodex doctor."),
+                "WebPi stopped during startup",
+                Some("Run webpi doctor."),
             ));
         }
         if runner.try_wait().ok().flatten().is_some() {
             return Err(ProductError::new(
                 "agent_offline",
                 "the local Runner stopped during startup",
-                Some("Run webcodex doctor."),
+                Some("Run webpi doctor."),
             ));
         }
         let remaining = deadline.saturating_duration_since(Instant::now());
@@ -1155,7 +1159,7 @@ async fn wait_for_ready(
     Err(ProductError::new(
         "agent_offline",
         "the local Runner did not become ready",
-        Some("Run webcodex doctor."),
+        Some("Run webpi doctor."),
     ))
 }
 

@@ -16,6 +16,21 @@ const GPT_ACTION_OPERATION_LIMIT: usize = 30;
 const GPT_ACTION_OPENAPI_IMPORT_BUDGET_BYTES: usize = 800_000;
 const GPT_ACTION_PATH_PREFIX: &str = "/api/actions/";
 
+fn record_openapi_diagnostic(code: &'static str, correlation_id: Option<&str>) {
+    webcodex_core::runtime_diagnostics::record(
+        webcodex_core::runtime_diagnostics::DiagnosticSeverity::Warn,
+        "openapi",
+        code,
+        correlation_id,
+    );
+}
+
+fn fallback_action_operation_description(tool_name: &str) -> String {
+    bound_schema_description(&format!(
+        "Use the `{tool_name}` WebPi action. Refer to the canonical ToolSpec for complete input, output, authority, and safety semantics."
+    ))
+}
+
 pub(crate) fn public_url() -> String {
     std::env::var("WEBPI_PUBLIC_URL")
         .ok()
@@ -34,21 +49,19 @@ pub(crate) fn build_openapi_spec() -> Value {
         .into_iter()
         .map(|spec| (spec.name.clone(), spec))
         .collect::<BTreeMap<_, _>>();
-    let direct = gpt_action_direct_tool_definitions();
-    let operation_count = direct.len() + 1;
-    assert!(
-        operation_count < GPT_ACTION_OPERATION_LIMIT,
-        "GPT Actions operation budget exceeded: {operation_count} >= {GPT_ACTION_OPERATION_LIMIT}; explicitly move a canonical Adaptive Direct tool behind the gateway or mark a protocol-incompatible tool unsupported"
-    );
+    let mut direct = gpt_action_direct_tool_definitions();
+    let max_direct = GPT_ACTION_OPERATION_LIMIT.saturating_sub(2);
+    if direct.len() > max_direct {
+        record_openapi_diagnostic("operation_budget_exceeded", None);
+        direct.truncate(max_direct);
+    }
 
     let mut paths = Map::new();
     for definition in direct {
-        let spec = specs.get(definition.name).unwrap_or_else(|| {
-            panic!(
-                "{} GPT Action direct tool is missing canonical ToolSpec",
-                definition.name
-            )
-        });
+        let Some(spec) = specs.get(definition.name) else {
+            record_openapi_diagnostic("direct_tool_missing_spec", Some(definition.name));
+            continue;
+        };
         paths.insert(
             format!("{GPT_ACTION_PATH_PREFIX}{}", definition.name),
             json!({"post": direct_operation(definition, spec)}),
@@ -59,7 +72,7 @@ pub(crate) fn build_openapi_spec() -> Value {
         json!({"post": gateway_operation()}),
     );
 
-    let spec = json!({
+    let mut spec = json!({
         "openapi": "3.1.0",
         "info": {
             "title": "WebPi GPT Actions",
@@ -84,7 +97,7 @@ pub(crate) fn build_openapi_spec() -> Value {
         },
         "security": [{"bearerAuth": []}]
     });
-    assert_all_descriptions_bounded(&spec);
+    project_schema_descriptions_in_place(&mut spec);
     spec
 }
 
@@ -200,18 +213,17 @@ fn standard_responses(success_schema: Value) -> Value {
 }
 
 fn action_operation_description(definition: &ToolDefinition, spec: &ToolSpec) -> String {
-    let model = definition
-        .model_spec
-        .expect("GPT Action tool must have canonical model spec");
+    let Some(model) = definition.model_spec else {
+        record_openapi_diagnostic("direct_tool_missing_model_spec", Some(definition.name));
+        return fallback_action_operation_description(definition.name);
+    };
     let description = model
         .gpt_action_description
         .unwrap_or(spec.description.as_str());
-    let chars = description.chars().count();
-    assert!(
-        chars <= GPT_ACTION_DESCRIPTION_MAX_CHARS,
-        "{} GPT Action operation description is {chars} chars; add an explicit with_gpt_action_description override instead of truncating canonical model copy",
-        definition.name
-    );
+    if description.chars().count() > GPT_ACTION_DESCRIPTION_MAX_CHARS {
+        record_openapi_diagnostic("operation_description_overflow", Some(definition.name));
+        return fallback_action_operation_description(definition.name);
+    }
     description.to_string()
 }
 
@@ -324,6 +336,7 @@ fn bound_schema_description(description: &str) -> String {
     format!("{base}...")
 }
 
+#[cfg(test)]
 fn assert_all_descriptions_bounded(value: &Value) {
     fn visit(value: &Value, path: &str) {
         match value {
@@ -444,6 +457,39 @@ mod tests {
         assert!(ids.contains(ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME));
         assert!(ids.len() < GPT_ACTION_OPERATION_LIMIT);
         assert_eq!(ids.len(), gpt_action_direct_tool_definitions().len() + 1);
+    }
+
+    #[test]
+    fn fallback_operation_description_is_bounded_and_tool_specific() {
+        let fallback = fallback_action_operation_description("plugin_tool");
+        assert!(fallback.chars().count() <= GPT_ACTION_DESCRIPTION_MAX_CHARS);
+        assert!(fallback.contains("plugin_tool"));
+        assert!(fallback.contains("canonical ToolSpec"));
+    }
+
+    #[test]
+    fn schema_description_projection_is_fail_safe_for_oversized_fixed_copy() {
+        let mut value = json!({
+            "description": "x".repeat(1_000),
+            "nested": {
+                "description": "y".repeat(1_000),
+                "items": [{"description": "z".repeat(1_000)}]
+            }
+        });
+        project_schema_descriptions_in_place(&mut value);
+        assert_all_descriptions_bounded(&value);
+        assert!(value["description"]
+            .as_str()
+            .expect("bounded root description")
+            .ends_with("..."));
+    }
+
+    #[test]
+    fn openapi_build_is_panic_free_and_all_descriptions_are_bounded() {
+        let spec = std::panic::catch_unwind(build_openapi_spec)
+            .expect("OpenAPI generation must fail safe instead of panicking");
+        assert_all_descriptions_bounded(&spec);
+        assert_eq!(spec["info"]["title"], "WebPi GPT Actions");
     }
 
     #[test]

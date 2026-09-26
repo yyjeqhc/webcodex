@@ -10,6 +10,591 @@ use webcodex_core::runner_job_lifecycle::RunnerJobLifecycle;
 const LIST_RUNNERS_MAX_CLIENT_IDS: usize = 8;
 const TARGET_CLIENT_ID_MAX_CHARS: usize = 128;
 
+fn runner_capability_negotiation(client: &RunnerView) -> Value {
+    let summary = webcodex_runner_registry::capability_negotiation_summary(&client.capabilities);
+    json!({
+        "mode": summary.mode,
+        "protocol_generation": client.runner_protocol_generation.get(),
+        "supported_feature_count": summary.supported_feature_count,
+        "generation_baseline_feature_count": summary.generation_baseline_feature_count,
+        "registration_required_supported": summary.registration_required_supported,
+        "critical_contracts": {
+            "job_state_reconciliation": summary.critical_contracts.job_state_reconciliation,
+            "native_tool_plugins": summary.critical_contracts.native_tool_plugins,
+            "detached_process_jobs": summary.critical_contracts.detached_process_jobs,
+            "runner_config_control": summary.critical_contracts.runner_config_control,
+            "managed_worktree": summary.critical_contracts.managed_worktree,
+            "skill_management": summary.critical_contracts.skill_management,
+        }
+    })
+}
+
+fn operation_phase_counts(jobs: &[ShellJobInfo]) -> Value {
+    const PHASES: [&str; 9] = [
+        "accepted",
+        "queued",
+        "running",
+        "waiting_external",
+        "recovering",
+        "succeeded",
+        "failed",
+        "rolled_back",
+        "outcome_unknown",
+    ];
+    let mut counts = serde_json::Map::new();
+    for phase in PHASES {
+        let count = jobs
+            .iter()
+            .filter(|job| {
+                job.operation_phase
+                    .is_some_and(|value| value.as_wire() == phase)
+            })
+            .count();
+        counts.insert(phase.to_string(), json!(count));
+    }
+    Value::Object(counts)
+}
+
+fn caller_authority_status(auth: Option<&AuthContext>) -> Value {
+    use webcodex_core::authority::{
+        SCOPE_DIAGNOSTICS_READ, SCOPE_JOB_DETACH, SCOPE_JOB_RUN, SCOPE_PLUGIN_MANAGE,
+        SCOPE_PLUGIN_MUTATE, SCOPE_PROJECT_WRITE, SCOPE_RUNNER_MANAGE, SCOPE_RUNTIME_READ,
+        SCOPE_SERVICE_DEPLOY, SCOPE_SERVICE_RESTART,
+    };
+
+    let has_scope = |scope: &str| auth.is_none_or(|context| context.has_scope(scope));
+    let job_run = has_scope(SCOPE_JOB_RUN);
+    let job_detach = has_scope(SCOPE_JOB_DETACH);
+    let detached_process = job_run && job_detach;
+    let service_restart = has_scope(SCOPE_SERVICE_RESTART);
+    let service_deploy = has_scope(SCOPE_SERVICE_DEPLOY);
+    let missing_detached_scopes: Vec<&str> = [SCOPE_JOB_RUN, SCOPE_JOB_DETACH]
+        .into_iter()
+        .filter(|scope| !has_scope(scope))
+        .collect();
+    let missing_service_restart_scopes: Vec<&str> = [SCOPE_SERVICE_RESTART]
+        .into_iter()
+        .filter(|scope| !has_scope(scope))
+        .collect();
+    let missing_service_deploy_scopes: Vec<&str> = [SCOPE_SERVICE_RESTART, SCOPE_SERVICE_DEPLOY]
+        .into_iter()
+        .filter(|scope| !has_scope(scope))
+        .collect();
+    let missing_diagnostics_scopes: Vec<&str> = [SCOPE_DIAGNOSTICS_READ]
+        .into_iter()
+        .filter(|scope| !has_scope(scope))
+        .collect();
+    let missing_plugin_mutate_scopes: Vec<&str> = [
+        webcodex_core::authority::SCOPE_PLUGIN_INVOKE,
+        SCOPE_PLUGIN_MUTATE,
+    ]
+    .into_iter()
+    .filter(|scope| !has_scope(scope))
+    .collect();
+
+    json!({
+        "principal_kind": auth.map(AuthContext::principal_kind).unwrap_or("internal"),
+        "credential_scope_gate": if auth.is_some() { "explicit" } else { "not_applicable" },
+        "capabilities": {
+            "runtime_read": has_scope(SCOPE_RUNTIME_READ),
+            "diagnostics_read": has_scope(SCOPE_DIAGNOSTICS_READ),
+            "project_write": has_scope(SCOPE_PROJECT_WRITE),
+            "job_run": job_run,
+            "detached_process": detached_process,
+            "runner_manage": has_scope(SCOPE_RUNNER_MANAGE),
+            "plugin_manage": has_scope(SCOPE_PLUGIN_MANAGE),
+            "plugin_mutate": has_scope(SCOPE_PLUGIN_MUTATE),
+            "service_restart": service_restart,
+            "service_deploy": service_deploy,
+        },
+        "requirements": {
+            "run_detached_process": {
+                "authorized": detached_process,
+                "required_scopes": [SCOPE_JOB_RUN, SCOPE_JOB_DETACH],
+                "missing_scopes": missing_detached_scopes,
+            },
+            "runtime_diagnostics": {
+                "authorized": has_scope(SCOPE_DIAGNOSTICS_READ),
+                "required_scopes": [SCOPE_DIAGNOSTICS_READ],
+                "missing_scopes": missing_diagnostics_scopes,
+            },
+            "plugin_mutating_call": {
+                "authorized": has_scope(webcodex_core::authority::SCOPE_PLUGIN_INVOKE)
+                    && has_scope(SCOPE_PLUGIN_MUTATE),
+                "required_scopes": [webcodex_core::authority::SCOPE_PLUGIN_INVOKE, SCOPE_PLUGIN_MUTATE],
+                "missing_scopes": missing_plugin_mutate_scopes,
+            },
+            "service_restart": {
+                "authorized": service_restart,
+                "required_scopes": [SCOPE_SERVICE_RESTART],
+                "missing_scopes": missing_service_restart_scopes,
+            },
+            "service_deploy": {
+                "authorized": service_deploy && service_restart,
+                "required_scopes": [SCOPE_SERVICE_RESTART, SCOPE_SERVICE_DEPLOY],
+                "missing_scopes": missing_service_deploy_scopes,
+            }
+        }
+    })
+}
+
+fn runtime_diagnostics_summary() -> Value {
+    let stats = webcodex_core::runtime_diagnostics::stats();
+    json!({
+        "buffered_count": stats.buffered_count,
+        "dropped_count": stats.dropped_count,
+        "info_count": stats.info_count,
+        "warn_count": stats.warn_count,
+        "error_count": stats.error_count,
+        "oldest_sequence": stats.oldest_sequence,
+        "newest_sequence": stats.newest_sequence,
+        "newest_warn_sequence": stats.newest_warn_sequence,
+        "newest_error_sequence": stats.newest_error_sequence,
+    })
+}
+
+fn runtime_diagnostics_health(summary: &Value) -> Value {
+    let info_count = summary
+        .get("info_count")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let warn_count = summary
+        .get("warn_count")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let error_count = summary
+        .get("error_count")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let dropped_count = summary
+        .get("dropped_count")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    json!({
+        "status": if warn_count > 0 || error_count > 0 || dropped_count > 0 {
+            "attention_required"
+        } else {
+            "ready"
+        },
+        "info_count": info_count,
+        "warn_count": warn_count,
+        "error_count": error_count,
+        "dropped_count": dropped_count,
+        "newest_warn_sequence": summary.get("newest_warn_sequence").cloned().unwrap_or(Value::Null),
+        "newest_error_sequence": summary.get("newest_error_sequence").cloned().unwrap_or(Value::Null),
+    })
+}
+
+fn runner_source_alignment_effective_ready(runner: &Value, server_git_dirty: Option<bool>) -> bool {
+    let source = runner.get("source_alignment").unwrap_or(&Value::Null);
+    let status = source
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    if matches!(status, "aligned" | "current") {
+        return true;
+    }
+    source.get("reason_code").and_then(Value::as_str)
+        == Some("dirty_build_prevents_exact_source_alignment")
+        && runner
+            .get("version_matches_server")
+            .and_then(Value::as_bool)
+            == Some(true)
+        && source
+            .get("git_commit_matches_server")
+            .and_then(Value::as_bool)
+            == Some(true)
+        && runner.get("build_git_dirty").and_then(Value::as_bool) == Some(true)
+        && server_git_dirty == Some(true)
+}
+
+fn source_alignment_effective_ready(compatibility: &Value) -> bool {
+    let overall = compatibility
+        .pointer("/source_alignment/status")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    if overall == "no_runners" {
+        return true;
+    }
+    let server_git_dirty = compatibility
+        .pointer("/server/build/git_dirty")
+        .and_then(Value::as_bool);
+    let Some(runners) = compatibility.get("runners").and_then(Value::as_array) else {
+        return false;
+    };
+    !runners.is_empty()
+        && runners
+            .iter()
+            .all(|runner| runner_source_alignment_effective_ready(runner, server_git_dirty))
+}
+
+fn structured_runtime_health(
+    runner_count: usize,
+    online_count: usize,
+    stale_count: usize,
+    recovering_count: usize,
+    outcome_unknown_count: usize,
+    compatibility_status: &str,
+    source_alignment_status: &str,
+    source_alignment_ready: bool,
+    service_draining: bool,
+    supervisor_available: bool,
+    deployment_store_available: bool,
+    public_url_configured: bool,
+    mcp_gateway: crate::gateway_circuit_breaker::GatewayCircuitBreakerStats,
+    plugin_gateway: crate::gateway_circuit_breaker::GatewayCircuitBreakerStats,
+) -> Value {
+    let mut degraded_reasons = Vec::new();
+    if runner_count == 0 {
+        degraded_reasons.push(json!({
+            "code": "no_runners_registered",
+            "component": "runner_registry",
+        }));
+    } else if online_count < runner_count || stale_count > 0 {
+        degraded_reasons.push(json!({
+            "code": "runner_offline_or_stale",
+            "component": "runner_registry",
+            "runner_count": runner_count,
+            "online_count": online_count,
+            "stale_count": stale_count,
+        }));
+    }
+    if recovering_count > 0 {
+        degraded_reasons.push(json!({
+            "code": "jobs_recovering",
+            "component": "jobs",
+            "count": recovering_count,
+        }));
+    }
+    if compatibility_status == "version_mismatch" {
+        degraded_reasons.push(json!({
+            "code": "runner_version_mismatch",
+            "component": "version_alignment",
+        }));
+    }
+    if !source_alignment_ready {
+        degraded_reasons.push(json!({
+            "code": "source_alignment_not_aligned",
+            "component": "version_alignment",
+            "status": source_alignment_status,
+        }));
+    }
+
+    let readiness_status = if !deployment_store_available {
+        "not_ready"
+    } else if !degraded_reasons.is_empty() {
+        "degraded"
+    } else if service_draining {
+        "draining"
+    } else {
+        "ready"
+    };
+
+    json!({
+        "liveness": {
+            "status": "live",
+        },
+        "readiness": {
+            "status": readiness_status,
+            "ready": deployment_store_available && degraded_reasons.is_empty() && !service_draining,
+            "accepting_consequential_work": deployment_store_available && degraded_reasons.is_empty() && !service_draining,
+        },
+        "degraded_reasons": degraded_reasons,
+        "components": {
+            "deployment_store": {
+                "status": if deployment_store_available { "ready" } else { "unavailable" },
+            },
+            "runner_registry": {
+                "status": if runner_count == 0 {
+                    "empty"
+                } else if online_count < runner_count || stale_count > 0 {
+                    "degraded"
+                } else {
+                    "ready"
+                },
+                "count": runner_count,
+                "online_count": online_count,
+                "stale_count": stale_count,
+            },
+            "jobs": {
+                "status": if recovering_count > 0 {
+                    "recovering"
+                } else if outcome_unknown_count > 0 {
+                    "attention_required"
+                } else {
+                    "ready"
+                },
+                "recovering_count": recovering_count,
+                "outcome_unknown_count": outcome_unknown_count,
+            },
+            "version_alignment": {
+                "compatibility_status": compatibility_status,
+                "source_alignment_status": source_alignment_status,
+                "source_alignment_effective_ready": source_alignment_ready,
+            },
+            "mcp_gateway": {
+                "status": if mcp_gateway.open_circuits > 0 || mcp_gateway.saturated_keys > 0 { "degraded" } else { "ready" },
+                "tracked_keys": mcp_gateway.tracked_keys,
+                "open_circuits": mcp_gateway.open_circuits,
+                "half_open_probes": mcp_gateway.half_open_probes,
+                "total_in_flight": mcp_gateway.total_in_flight,
+                "saturated_keys": mcp_gateway.saturated_keys,
+            },
+            "plugin_gateway": {
+                "status": if plugin_gateway.open_circuits > 0 || plugin_gateway.saturated_keys > 0 { "degraded" } else { "ready" },
+                "tracked_keys": plugin_gateway.tracked_keys,
+                "open_circuits": plugin_gateway.open_circuits,
+                "half_open_probes": plugin_gateway.half_open_probes,
+                "total_in_flight": plugin_gateway.total_in_flight,
+                "saturated_keys": plugin_gateway.saturated_keys,
+            },
+            "service_lifecycle": {
+                "status": if service_draining { "draining" } else { "serving" },
+            },
+            "service_supervisor": {
+                "status": if supervisor_available { "available" } else { "unavailable" },
+            },
+            "public_tunnel": {
+                "status": if public_url_configured { "configured_unverified" } else { "not_configured" },
+            },
+        },
+    })
+}
+
+fn deployment_preflight_payload(
+    runtime: &Value,
+    caller: Value,
+    client_id: &str,
+    operation: &str,
+) -> Value {
+    let server_service_control = runtime
+        .pointer("/authority/service_control")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let connected = runtime
+        .pointer("/focus/connected")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let alignment = runtime
+        .pointer("/focus/source_alignment/status")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let active_count = runtime
+        .pointer("/jobs/active_count")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let running_count = runtime
+        .pointer("/jobs/running_count")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let queued_count = runtime
+        .pointer("/jobs/queued_count")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let recovering_count = runtime
+        .pointer("/jobs/recovering_count")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let lifecycle = runtime
+        .get("service_lifecycle")
+        .cloned()
+        .unwrap_or_else(|| json!({"draining": false, "generation": 1, "changed_at": 0}));
+    let lifecycle_draining = lifecycle
+        .get("draining")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let restart_authorized = caller
+        .pointer("/capabilities/service_restart")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let deploy_authorized = caller
+        .pointer("/capabilities/service_deploy")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+
+    let mut blockers = Vec::new();
+    if !server_service_control {
+        blockers.push(json!({
+            "code": "service_control_disabled",
+            "message": "Server authority policy does not permit service lifecycle operations."
+        }));
+    }
+    if !restart_authorized {
+        blockers.push(json!({
+            "code": "missing_service_restart_scope",
+            "message": "Current credential is missing service:restart."
+        }));
+    }
+    let deploy_scope_required = matches!(operation, "deploy" | "rollback");
+    if deploy_scope_required && !deploy_authorized {
+        blockers.push(json!({
+            "code": "missing_service_deploy_scope",
+            "message": "Current credential is missing service:deploy for this operation."
+        }));
+    }
+    if !connected {
+        blockers.push(json!({
+            "code": "target_runner_offline",
+            "message": "Target Runner is not currently connected."
+        }));
+    }
+    if matches!(operation, "restart" | "deploy" | "rollback") {
+        if runtime
+            .pointer("/service_supervisor/available")
+            .and_then(Value::as_bool)
+            != Some(true)
+        {
+            blockers.push(json!({
+                "code": "service_supervisor_unavailable",
+                "message": "This Server is not running under a compatible standalone supervisor."
+            }));
+        } else if runtime
+            .pointer("/service_supervisor/managed_client_id")
+            .and_then(Value::as_str)
+            != Some(client_id)
+        {
+            blockers.push(json!({
+                "code": "service_supervisor_target_mismatch",
+                "message": "The standalone supervisor does not manage the requested Runner client_id."
+            }));
+        }
+    }
+    if recovering_count > 0 {
+        blockers.push(json!({
+            "code": "jobs_recovering",
+            "message": "At least one Job is still recovering; resolve recovery before deployment."
+        }));
+    }
+
+    let mut warnings = Vec::new();
+    if alignment != "aligned" {
+        warnings.push(json!({
+            "code": "source_alignment_not_aligned",
+            "message": "Target Runner source alignment is not currently aligned with the Server.",
+            "status": alignment,
+        }));
+    }
+    if runtime
+        .pointer("/fleet_summary/mixed_builds_present")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        warnings.push(json!({
+            "code": "mixed_builds_present",
+            "message": "The visible fleet currently contains mixed builds."
+        }));
+    }
+    match runtime
+        .pointer("/health/components/public_tunnel/status")
+        .and_then(Value::as_str)
+    {
+        Some("configured_unverified") => warnings.push(json!({
+            "code": "public_tunnel_unverified",
+            "message": "A public URL is configured but deployment preflight did not obtain recent verified public-origin evidence."
+        })),
+        Some("degraded") => warnings.push(json!({
+            "code": "public_tunnel_degraded",
+            "message": "The most recent preflight-managed public-origin probe did not verify the configured public tunnel."
+        })),
+        Some("stale") => warnings.push(json!({
+            "code": "public_tunnel_probe_stale",
+            "message": "Cached public-origin evidence is stale; deployment preflight refreshes it before readiness evaluation."
+        })),
+        _ => {}
+    }
+
+    let drain_required = !lifecycle_draining || active_count > 0;
+    let ready_to_begin = blockers.is_empty();
+    let ready_for_cutover = ready_to_begin && lifecycle_draining && active_count == 0;
+    let readiness = if !ready_to_begin {
+        "blocked"
+    } else if drain_required {
+        "drain_required"
+    } else {
+        "ready"
+    };
+
+    json!({
+        "readiness": readiness,
+        "ready_to_begin": ready_to_begin,
+        "ready_for_cutover": ready_for_cutover,
+        "drain_required": drain_required,
+        "service_lifecycle": lifecycle,
+        "state_changed": false,
+        "operation": operation,
+        "target": {
+            "client_id": client_id,
+            "connected": connected,
+            "source_alignment": alignment,
+        },
+        "jobs": {
+            "active_count": active_count,
+            "running_count": running_count,
+            "queued_count": queued_count,
+            "recovering_count": recovering_count,
+        },
+        "authority": {
+            "server_service_control": server_service_control,
+            "caller": caller,
+        },
+        "blockers": blockers,
+        "warnings": warnings,
+    })
+}
+
+impl ToolRuntime {
+    pub(crate) async fn deployment_preflight(
+        &self,
+        auth: Option<&AuthContext>,
+        client_id: String,
+        operation: String,
+    ) -> ToolResult {
+        let client_id = client_id.trim().to_string();
+        let operation = operation.trim().to_ascii_lowercase();
+        if !matches!(operation.as_str(), "deploy" | "restart" | "rollback") {
+            return ToolResult::err_with_output(
+                "operation must be one of deploy, restart, rollback",
+                json!({
+                    "error_kind": "invalid_deployment_operation",
+                    "state_changed": false,
+                }),
+            );
+        }
+        if client_id.is_empty() || client_id.chars().count() > TARGET_CLIENT_ID_MAX_CHARS {
+            return ToolResult::err_with_output(
+                "client_id must be 1..=128 characters",
+                json!({
+                    "error_kind": "invalid_client_id",
+                    "state_changed": false,
+                }),
+            );
+        }
+
+        // Refresh bounded public-ingress evidence inside preflight so release
+        // workflows do not need a separate model-visible probe turn. Fresh
+        // cached evidence is reused by PublicTunnelProbeState::probe.
+        let _ = self
+            .runtime_info
+            .public_tunnel_probe
+            .probe(self.runtime_info.configured_public_url.as_deref())
+            .await;
+
+        let status = self
+            .runtime_status_with_options(auth, false, false, Some(client_id.clone()))
+            .await;
+        if !status.success {
+            return status;
+        }
+
+        ToolResult::ok(deployment_preflight_payload(
+            &status.output,
+            caller_authority_status(auth),
+            &client_id,
+            &operation,
+        ))
+    }
+}
+
 #[derive(Debug, Default)]
 pub(crate) struct ListRunnersOptions {
     pub(crate) client_id: Option<String>,
@@ -29,6 +614,8 @@ pub(crate) struct ListRunnersOptions {
 pub struct RuntimeInfo {
     pub auth_enabled: bool,
     pub configured_public_url: Option<String>,
+    pub(crate) public_tunnel_probe:
+        std::sync::Arc<super::public_tunnel_probe::PublicTunnelProbeState>,
     pub oauth2_enabled: bool,
     pub oauth2_shared_key_bridge_enabled: bool,
     pub quic: Option<std::sync::Arc<std::sync::Mutex<crate::config::QuicRuntimeStatus>>>,
@@ -55,6 +642,9 @@ impl RuntimeInfo {
         Self {
             auth_enabled,
             configured_public_url,
+            public_tunnel_probe: std::sync::Arc::new(
+                super::public_tunnel_probe::PublicTunnelProbeState::default(),
+            ),
             oauth2_enabled: config.oauth2.enabled,
             oauth2_shared_key_bridge_enabled: config.oauth2.enabled
                 && config.oauth2.shared_key_bridge_enabled,
@@ -181,6 +771,7 @@ impl ToolRuntime {
                         "status": client.status,
                         "connected": client.connected,
                         "agent_protocol_generation": client.runner_protocol_generation.get(),
+                        "capability_negotiation": runner_capability_negotiation(client),
                         "transport": client.transport,
                         "last_seen_age_secs": last_seen_age_secs(client, now),
                         "pending_requests": client.pending_requests,
@@ -206,6 +797,7 @@ impl ToolRuntime {
                         "status": client.status,
                         "connected": client.connected,
                         "agent_protocol_generation": client.runner_protocol_generation.get(),
+                        "capability_negotiation": runner_capability_negotiation(client),
                         "transport": client.transport,
                         "last_seen": client.last_seen,
                         "last_seen_age_secs": last_seen_age_secs(client, now),
@@ -338,6 +930,7 @@ impl ToolRuntime {
                     "host_context": host_context_projection(c.host_context.as_ref()),
                     "connected": c.connected,
                     "agent_protocol_generation": c.runner_protocol_generation.get(),
+                    "capability_negotiation": runner_capability_negotiation(c),
                     "transport": c.transport,
                     "last_seen": c.last_seen,
                     "last_seen_age_secs": last_seen_age_secs(c, now),
@@ -410,6 +1003,11 @@ impl ToolRuntime {
                     )
             })
             .count();
+        let phase_counts = operation_phase_counts(&runner_jobs);
+        let outcome_unknown_count = phase_counts
+            .get("outcome_unknown")
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as usize;
         let jobs = json!({
             "count": runner_known_count,
             "active_count": active_count,
@@ -418,7 +1016,38 @@ impl ToolRuntime {
             "recovering_count": recovering_count,
             "reconciled_count": reconciled_count,
             "lost_after_reconcile_count": lost_after_reconcile_count,
+            "operation_phase_counts": phase_counts,
         });
+        let service_lifecycle = self.service_lifecycle.snapshot();
+        let supervisor_available = super::service_supervisor::available();
+        let diagnostics = runtime_diagnostics_summary();
+        let mut health = structured_runtime_health(
+            runner_count,
+            online_count,
+            stale_count,
+            recovering_count,
+            outcome_unknown_count,
+            version_compatibility
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown"),
+            version_compatibility
+                .pointer("/source_alignment/status")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown"),
+            source_alignment_effective_ready(&version_compatibility),
+            service_lifecycle.draining,
+            supervisor_available,
+            self.deployment_db.is_some(),
+            self.runtime_info.configured_public_url.is_some(),
+            self.mcp_gateway.breaker_stats(),
+            self.plugin_gateway.breaker_stats(),
+        );
+        health["components"]["diagnostics"] = runtime_diagnostics_health(&diagnostics);
+        health["components"]["public_tunnel"] = self
+            .runtime_info
+            .public_tunnel_probe
+            .health_projection(self.runtime_info.configured_public_url.is_some());
 
         // -- tools summary ----------------------------------------------------
         let specs = registered_tool_specs();
@@ -458,8 +1087,16 @@ impl ToolRuntime {
             "connection_layers": connection_layers,
             "version_compatibility": version_compatibility,
             "jobs": jobs,
+            "health": health,
+            "diagnostics": diagnostics,
             "tools": tools,
             "authority": permissions::authority_profile_payload(),
+            "caller_authority": caller_authority_status(auth),
+            "service_lifecycle": service_lifecycle.as_json(),
+            "service_supervisor": {
+                "available": supervisor_available,
+                "managed_client_id": super::service_supervisor::managed_client_id(),
+            },
             "session_store": self.sessions.status(),
         });
         if let Some(quic) = quic {
@@ -548,13 +1185,13 @@ impl ToolRuntime {
             .iter()
             .filter(|runner| runner.get("status").and_then(Value::as_str) != Some("compatible"))
             .count();
+        let fleet_server_git_dirty = fleet_compatibility
+            .pointer("/server/build/git_dirty")
+            .and_then(Value::as_bool);
         let source_mismatched_agents_count = fleet_runners
             .iter()
             .filter(|runner| {
-                runner
-                    .pointer("/source_alignment/status")
-                    .and_then(Value::as_str)
-                    == Some("different")
+                !runner_source_alignment_effective_ready(runner, fleet_server_git_dirty)
             })
             .count();
         let runner_active = selected_jobs
@@ -614,6 +1251,7 @@ impl ToolRuntime {
                 "status": client.status,
                 "connected": client.connected,
                 "agent_protocol_generation": client.runner_protocol_generation.get(),
+                "capability_negotiation": runner_capability_negotiation(&client),
                 "transport": client.transport,
                 "last_seen": client.last_seen,
                 "last_seen_age_secs": last_seen_age_secs(&client, now),
@@ -624,6 +1262,11 @@ impl ToolRuntime {
             }],
             "summary": runner_health_summary(&clients, &selected_jobs, now),
         });
+        let phase_counts = operation_phase_counts(&selected_jobs);
+        let outcome_unknown_count = phase_counts
+            .get("outcome_unknown")
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as usize;
         let jobs = json!({
             "count": selected_jobs.len(),
             "active_count": runner_active,
@@ -632,7 +1275,38 @@ impl ToolRuntime {
             "recovering_count": recovering_count,
             "reconciled_count": reconciled_count,
             "lost_after_reconcile_count": lost_after_reconcile_count,
+            "operation_phase_counts": phase_counts,
         });
+        let service_lifecycle = self.service_lifecycle.snapshot();
+        let supervisor_available = super::service_supervisor::available();
+        let diagnostics = runtime_diagnostics_summary();
+        let mut health = structured_runtime_health(
+            1,
+            usize::from(client.connected),
+            usize::from(client.status == "stale"),
+            recovering_count,
+            outcome_unknown_count,
+            target_runner
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown"),
+            source_alignment
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown"),
+            source_alignment_effective_ready(&target_compatibility),
+            service_lifecycle.draining,
+            supervisor_available,
+            self.deployment_db.is_some(),
+            self.runtime_info.configured_public_url.is_some(),
+            self.mcp_gateway.breaker_stats(),
+            self.plugin_gateway.breaker_stats(),
+        );
+        health["components"]["diagnostics"] = runtime_diagnostics_health(&diagnostics);
+        health["components"]["public_tunnel"] = self
+            .runtime_info
+            .public_tunnel_probe
+            .health_projection(self.runtime_info.configured_public_url.is_some());
         let specs = registered_tool_specs();
         let tools = json!({
             "count": specs.len(),
@@ -677,8 +1351,16 @@ impl ToolRuntime {
             "agents": runners,
             "version_compatibility": target_compatibility,
             "jobs": jobs,
+            "health": health,
+            "diagnostics": diagnostics,
             "tools": tools,
             "authority": permissions::authority_profile_payload(),
+            "caller_authority": caller_authority_status(auth),
+            "service_lifecycle": service_lifecycle.as_json(),
+            "service_supervisor": {
+                "available": supervisor_available,
+                "managed_client_id": super::service_supervisor::managed_client_id(),
+            },
         }))
     }
 }
@@ -688,6 +1370,8 @@ pub(crate) fn compact_runtime_status(status: &Value) -> Value {
         return json!({
             "compact": true,
             "service": status.get("service").cloned().unwrap_or_else(|| json!("webpi")),
+            "health": status.get("health").cloned().unwrap_or(Value::Null),
+            "diagnostics": status.get("diagnostics").cloned().unwrap_or(Value::Null),
             "mcp_compact_schemas": status.get("mcp_compact_schemas").cloned().unwrap_or_else(|| json!(false)),
             "effective_config": status.get("effective_config").cloned().unwrap_or(Value::Null),
             "auth_enabled": status.get("auth_enabled").cloned().unwrap_or_else(|| json!(false)),
@@ -704,16 +1388,32 @@ pub(crate) fn compact_runtime_status(status: &Value) -> Value {
                 "active_count": status.pointer("/jobs/active_count").cloned().unwrap_or(Value::Null),
                 "running_count": status.pointer("/jobs/running_count").cloned().unwrap_or(Value::Null),
                 "queued_count": status.pointer("/jobs/queued_count").cloned().unwrap_or(Value::Null),
+                "operation_phase_counts": status.pointer("/jobs/operation_phase_counts").cloned().unwrap_or_else(|| json!({
+                    "accepted": 0,
+                    "queued": 0,
+                    "running": 0,
+                    "waiting_external": 0,
+                    "recovering": 0,
+                    "succeeded": 0,
+                    "failed": 0,
+                    "rolled_back": 0,
+                    "outcome_unknown": 0,
+                })),
             },
             "version_compatibility": {
                 "status": status.pointer("/version_compatibility/status").cloned().unwrap_or_else(|| json!("unknown")),
                 "source_alignment": status.pointer("/version_compatibility/source_alignment").cloned().unwrap_or_else(|| json!({"status": "unknown"})),
             },
+            "caller_authority": status.get("caller_authority").cloned().unwrap_or(Value::Null),
+            "service_lifecycle": status.get("service_lifecycle").cloned().unwrap_or(Value::Null),
+            "service_supervisor": status.get("service_supervisor").cloned().unwrap_or(Value::Null),
         });
     }
     let mut compact = json!({
         "compact": true,
         "service": status.get("service").cloned().unwrap_or_else(|| json!("webpi")),
+        "health": status.get("health").cloned().unwrap_or(Value::Null),
+        "diagnostics": status.get("diagnostics").cloned().unwrap_or(Value::Null),
         "mcp_compact_schemas": status.get("mcp_compact_schemas").cloned().unwrap_or_else(|| json!(false)),
         "effective_config": status.get("effective_config").cloned().unwrap_or(Value::Null),
         "auth_enabled": status.get("auth_enabled").cloned().unwrap_or_else(|| json!(false)),
@@ -731,6 +1431,17 @@ pub(crate) fn compact_runtime_status(status: &Value) -> Value {
             "active_count": status.pointer("/jobs/active_count").cloned().unwrap_or(Value::Null),
             "running_count": status.pointer("/jobs/running_count").cloned().unwrap_or(Value::Null),
             "queued_count": status.pointer("/jobs/queued_count").cloned().unwrap_or(Value::Null),
+            "operation_phase_counts": status.pointer("/jobs/operation_phase_counts").cloned().unwrap_or_else(|| json!({
+                "accepted": 0,
+                "queued": 0,
+                "running": 0,
+                "waiting_external": 0,
+                "recovering": 0,
+                "succeeded": 0,
+                "failed": 0,
+                "rolled_back": 0,
+                "outcome_unknown": 0,
+            })),
         },
         "agents": {
             "count": status.pointer("/agents/count").cloned().unwrap_or_else(|| json!(0)),
@@ -768,6 +1479,9 @@ pub(crate) fn compact_runtime_status(status: &Value) -> Value {
             "source_alignment": status.pointer("/version_compatibility/source_alignment").cloned().unwrap_or_else(|| json!({"status": "unknown"})),
         },
         "authority": status.get("authority").cloned().unwrap_or(Value::Null),
+        "caller_authority": status.get("caller_authority").cloned().unwrap_or(Value::Null),
+        "service_lifecycle": status.get("service_lifecycle").cloned().unwrap_or(Value::Null),
+        "service_supervisor": status.get("service_supervisor").cloned().unwrap_or(Value::Null),
     });
     if let Some(object) = compact.as_object_mut() {
         for field in ["focus", "server", "fleet_summary"] {
@@ -1401,6 +2115,9 @@ impl Default for RuntimeInfo {
         Self {
             auth_enabled: false,
             configured_public_url: None,
+            public_tunnel_probe: std::sync::Arc::new(
+                super::public_tunnel_probe::PublicTunnelProbeState::default(),
+            ),
             oauth2_enabled: false,
             oauth2_shared_key_bridge_enabled: false,
             quic: Some(std::sync::Arc::new(std::sync::Mutex::new(
@@ -1457,6 +2174,7 @@ mod phase_e2_status_tests {
                 shell: None,
                 command_preview: "test".to_string(),
                 status: status.to_string(),
+                operation_phase: None,
                 created_at: 0,
                 started_at: None,
                 ended_at: None,
@@ -1538,13 +2256,515 @@ mod phase_e2_status_tests {
         );
     }
 
+    fn healthy_breaker_stats() -> crate::gateway_circuit_breaker::GatewayCircuitBreakerStats {
+        crate::gateway_circuit_breaker::GatewayCircuitBreakerStats::default()
+    }
+
+    #[test]
+    fn dirty_same_build_is_effectively_ready_without_rewriting_raw_alignment() {
+        let compatibility = json!({
+            "status": "compatible",
+            "source_alignment": {"status": "different"},
+            "server": {
+                "version": "0.4.1",
+                "build": {"git_commit": "abc", "git_dirty": true}
+            },
+            "runners": [{
+                "client_id": "runner-a",
+                "build_version": "0.4.1",
+                "build_git_commit": "abc",
+                "build_git_dirty": true,
+                "version_matches_server": true,
+                "status": "compatible",
+                "source_alignment": {
+                    "status": "different",
+                    "git_commit_matches_server": true,
+                    "source_matches_server": false,
+                    "reason_code": "dirty_build_prevents_exact_source_alignment"
+                }
+            }]
+        });
+        assert!(source_alignment_effective_ready(&compatibility));
+
+        let health = structured_runtime_health(
+            1,
+            1,
+            0,
+            0,
+            0,
+            "compatible",
+            "different",
+            true,
+            false,
+            true,
+            true,
+            false,
+            healthy_breaker_stats(),
+            healthy_breaker_stats(),
+        );
+        assert_eq!(health["readiness"]["status"], "ready");
+        assert_eq!(health["readiness"]["accepting_consequential_work"], true);
+        assert_eq!(
+            health["components"]["version_alignment"]["source_alignment_status"],
+            "different"
+        );
+        assert_eq!(
+            health["components"]["version_alignment"]["source_alignment_effective_ready"],
+            true
+        );
+        assert_eq!(health["degraded_reasons"], json!([]));
+    }
+
+    #[test]
+    fn dirty_build_identity_mismatch_remains_degraded() {
+        let compatibility = json!({
+            "status": "compatible",
+            "source_alignment": {"status": "different"},
+            "server": {"build": {"git_dirty": true}},
+            "runners": [{
+                "version_matches_server": true,
+                "build_git_dirty": true,
+                "source_alignment": {
+                    "status": "different",
+                    "git_commit_matches_server": false,
+                    "reason_code": "runner_git_commit_differs_from_server"
+                }
+            }]
+        });
+        assert!(!source_alignment_effective_ready(&compatibility));
+    }
+
+    #[test]
+    fn diagnostic_attention_is_component_scoped_not_global_readiness() {
+        let summary = json!({
+            "buffered_count": 4,
+            "dropped_count": 1,
+            "info_count": 1,
+            "warn_count": 2,
+            "error_count": 1,
+            "oldest_sequence": 2,
+            "newest_sequence": 5,
+            "newest_warn_sequence": 4,
+            "newest_error_sequence": 5,
+        });
+        let component = runtime_diagnostics_health(&summary);
+        assert_eq!(component["status"], "attention_required");
+        assert_eq!(component["warn_count"], 2);
+        assert_eq!(component["error_count"], 1);
+        assert_eq!(component["dropped_count"], 1);
+        assert_eq!(component["newest_warn_sequence"], 4);
+        assert_eq!(component["newest_error_sequence"], 5);
+
+        let health = structured_runtime_health(
+            1,
+            1,
+            0,
+            0,
+            0,
+            "compatible",
+            "aligned",
+            true,
+            false,
+            true,
+            true,
+            false,
+            healthy_breaker_stats(),
+            healthy_breaker_stats(),
+        );
+        assert_eq!(health["readiness"]["status"], "ready");
+        assert_eq!(health["degraded_reasons"], json!([]));
+    }
+
+    #[test]
+    fn outcome_unknown_requires_attention_without_degrading_runtime_readiness() {
+        let health = structured_runtime_health(
+            1,
+            1,
+            0,
+            0,
+            2,
+            "compatible",
+            "aligned",
+            true,
+            false,
+            true,
+            true,
+            false,
+            healthy_breaker_stats(),
+            healthy_breaker_stats(),
+        );
+        assert_eq!(health["readiness"]["status"], "ready");
+        assert_eq!(health["readiness"]["ready"], true);
+        assert_eq!(health["components"]["jobs"]["status"], "attention_required");
+        assert_eq!(health["components"]["jobs"]["outcome_unknown_count"], 2);
+        assert_eq!(health["degraded_reasons"], json!([]));
+    }
+
+    #[test]
+    fn recovering_jobs_take_priority_over_unknown_outcome_attention() {
+        let health = structured_runtime_health(
+            1,
+            1,
+            0,
+            1,
+            2,
+            "compatible",
+            "aligned",
+            true,
+            false,
+            true,
+            true,
+            false,
+            healthy_breaker_stats(),
+            healthy_breaker_stats(),
+        );
+        assert_eq!(health["readiness"]["status"], "degraded");
+        assert_eq!(health["components"]["jobs"]["status"], "recovering");
+        assert_eq!(health["components"]["jobs"]["recovering_count"], 1);
+        assert_eq!(health["components"]["jobs"]["outcome_unknown_count"], 2);
+    }
+
+    #[test]
+    fn gateway_breaker_degradation_is_component_scoped_not_global_readiness() {
+        let health = structured_runtime_health(
+            1,
+            1,
+            0,
+            0,
+            0,
+            "compatible",
+            "aligned",
+            true,
+            false,
+            true,
+            true,
+            false,
+            crate::gateway_circuit_breaker::GatewayCircuitBreakerStats {
+                tracked_keys: 2,
+                open_circuits: 1,
+                half_open_probes: 0,
+                total_in_flight: 3,
+                saturated_keys: 0,
+            },
+            crate::gateway_circuit_breaker::GatewayCircuitBreakerStats::default(),
+        );
+        assert_eq!(health["readiness"]["status"], "ready");
+        assert_eq!(health["readiness"]["ready"], true);
+        assert_eq!(health["components"]["mcp_gateway"]["status"], "degraded");
+        assert_eq!(health["components"]["mcp_gateway"]["open_circuits"], 1);
+        assert_eq!(health["components"]["plugin_gateway"]["status"], "ready");
+        assert_eq!(health["degraded_reasons"], json!([]));
+    }
+
+    #[test]
+    fn caller_authority_reports_missing_detached_scope_without_widening_authority() {
+        let mut auth = AuthContext::new(crate::auth::AuthKind::OAuth2Token);
+        auth.scopes = vec![webcodex_core::authority::SCOPE_JOB_RUN.to_string()];
+        let status = caller_authority_status(Some(&auth));
+        assert_eq!(status["principal_kind"], "oauth2");
+        assert_eq!(status["capabilities"]["job_run"], true);
+        assert_eq!(status["capabilities"]["detached_process"], false);
+        assert_eq!(
+            status["requirements"]["run_detached_process"]["missing_scopes"],
+            json!([webcodex_core::authority::SCOPE_JOB_DETACH])
+        );
+    }
+
+    #[test]
+    fn caller_authority_accepts_exact_detached_scope_pair() {
+        let mut auth = AuthContext::new(crate::auth::AuthKind::OAuth2Token);
+        auth.scopes = vec![
+            webcodex_core::authority::SCOPE_JOB_RUN.to_string(),
+            webcodex_core::authority::SCOPE_JOB_DETACH.to_string(),
+        ];
+        let status = caller_authority_status(Some(&auth));
+        assert_eq!(status["capabilities"]["detached_process"], true);
+        assert_eq!(
+            status["requirements"]["run_detached_process"]["missing_scopes"],
+            json!([])
+        );
+    }
+
+    #[test]
+    fn caller_authority_keeps_service_deploy_narrower_than_restart() {
+        let mut auth = AuthContext::new(crate::auth::AuthKind::OAuth2Token);
+        auth.scopes = vec![webcodex_core::authority::SCOPE_SERVICE_RESTART.to_string()];
+        let status = caller_authority_status(Some(&auth));
+        assert_eq!(status["capabilities"]["service_restart"], true);
+        assert_eq!(status["capabilities"]["service_deploy"], false);
+        assert_eq!(
+            status["requirements"]["service_deploy"]["missing_scopes"],
+            json!([webcodex_core::authority::SCOPE_SERVICE_DEPLOY])
+        );
+    }
+
+    #[test]
+    fn restart_preflight_does_not_require_service_deploy_scope() {
+        let runtime = json!({
+            "authority": {"service_control": true},
+            "focus": {"connected": true, "source_alignment": {"status": "aligned"}},
+            "service_lifecycle": {"draining": false, "generation": 1, "changed_at": 1},
+            "service_supervisor": {"available": true, "managed_client_id": "runner-a"},
+            "jobs": {"active_count": 0, "running_count": 0, "queued_count": 0, "recovering_count": 0},
+            "fleet_summary": {"mixed_builds_present": false}
+        });
+        let caller = json!({"capabilities": {"service_restart": true, "service_deploy": false}});
+        let preflight = deployment_preflight_payload(&runtime, caller, "runner-a", "restart");
+        let codes: Vec<&str> = preflight["blockers"]
+            .as_array()
+            .expect("blockers")
+            .iter()
+            .filter_map(|item| item["code"].as_str())
+            .collect();
+        assert!(!codes.contains(&"missing_service_deploy_scope"));
+        assert_eq!(preflight["ready_to_begin"], true);
+        assert_eq!(preflight["operation"], "restart");
+    }
+
+    #[test]
+    fn restart_preflight_blocks_supervisor_target_mismatch() {
+        let runtime = json!({
+            "authority": {"service_control": true},
+            "focus": {"connected": true, "source_alignment": {"status": "aligned"}},
+            "service_lifecycle": {"draining": true, "generation": 2, "changed_at": 1},
+            "service_supervisor": {"available": true, "managed_client_id": "runner-local"},
+            "jobs": {"active_count": 0, "running_count": 0, "queued_count": 0, "recovering_count": 0},
+            "fleet_summary": {"mixed_builds_present": false}
+        });
+        let caller = json!({"capabilities": {"service_restart": true, "service_deploy": false}});
+        let preflight = deployment_preflight_payload(&runtime, caller, "runner-remote", "restart");
+        let codes: Vec<&str> = preflight["blockers"]
+            .as_array()
+            .expect("blockers")
+            .iter()
+            .filter_map(|item| item["code"].as_str())
+            .collect();
+        assert!(codes.contains(&"service_supervisor_target_mismatch"));
+        assert_eq!(preflight["ready_to_begin"], false);
+        assert_eq!(preflight["ready_for_cutover"], false);
+    }
+
+    #[test]
+    fn deploy_preflight_blocks_supervisor_target_mismatch() {
+        let runtime = json!({
+            "authority": {"service_control": true},
+            "focus": {"connected": true, "source_alignment": {"status": "aligned"}},
+            "service_lifecycle": {"draining": true, "generation": 2, "changed_at": 1},
+            "service_supervisor": {"available": true, "managed_client_id": "runner-local"},
+            "jobs": {"active_count": 0, "running_count": 0, "queued_count": 0, "recovering_count": 0},
+            "fleet_summary": {"mixed_builds_present": false}
+        });
+        let caller = json!({"capabilities": {"service_restart": true, "service_deploy": true}});
+        let preflight = deployment_preflight_payload(&runtime, caller, "runner-remote", "deploy");
+        let codes: Vec<&str> = preflight["blockers"]
+            .as_array()
+            .expect("blockers")
+            .iter()
+            .filter_map(|item| item["code"].as_str())
+            .collect();
+        assert!(codes.contains(&"service_supervisor_target_mismatch"));
+        assert_eq!(preflight["ready_for_cutover"], false);
+    }
+
+    #[test]
+    fn deployment_preflight_requires_drain_for_active_jobs() {
+        let runtime = json!({
+            "authority": {"service_control": true},
+            "focus": {
+                "connected": true,
+                "source_alignment": {"status": "aligned"}
+            },
+            "service_supervisor": {"available": true, "managed_client_id": "runner-a"},
+            "jobs": {
+                "active_count": 2,
+                "running_count": 1,
+                "queued_count": 1,
+                "recovering_count": 0
+            },
+            "fleet_summary": {"mixed_builds_present": false}
+        });
+        let caller = json!({
+            "capabilities": {
+                "service_restart": true,
+                "service_deploy": true
+            }
+        });
+        let preflight = deployment_preflight_payload(&runtime, caller, "runner-a", "deploy");
+        assert_eq!(preflight["readiness"], "drain_required");
+        assert_eq!(preflight["ready_to_begin"], true);
+        assert_eq!(preflight["ready_for_cutover"], false);
+        assert_eq!(preflight["drain_required"], true);
+        assert_eq!(preflight["blockers"], json!([]));
+    }
+
+    #[test]
+    fn deployment_preflight_is_ready_only_after_drain_and_zero_active_jobs() {
+        let runtime = json!({
+            "authority": {"service_control": true},
+            "focus": {
+                "connected": true,
+                "source_alignment": {"status": "aligned"}
+            },
+            "service_lifecycle": {
+                "draining": true,
+                "generation": 2,
+                "changed_at": 123
+            },
+            "service_supervisor": {"available": true, "managed_client_id": "runner-a"},
+            "jobs": {
+                "active_count": 0,
+                "running_count": 0,
+                "queued_count": 0,
+                "recovering_count": 0
+            },
+            "fleet_summary": {"mixed_builds_present": false}
+        });
+        let caller = json!({
+            "capabilities": {
+                "service_restart": true,
+                "service_deploy": true
+            }
+        });
+        let preflight = deployment_preflight_payload(&runtime, caller, "runner-a", "deploy");
+        assert_eq!(preflight["readiness"], "ready");
+        assert_eq!(preflight["ready_to_begin"], true);
+        assert_eq!(preflight["ready_for_cutover"], true);
+        assert_eq!(preflight["drain_required"], false);
+        assert_eq!(preflight["service_lifecycle"]["generation"], 2);
+    }
+
+    #[test]
+    fn deployment_preflight_public_tunnel_evidence_is_warning_only() {
+        let caller = json!({
+            "capabilities": {
+                "service_restart": true,
+                "service_deploy": true
+            }
+        });
+        for (status, expected_code) in [
+            ("configured_unverified", "public_tunnel_unverified"),
+            ("degraded", "public_tunnel_degraded"),
+            ("stale", "public_tunnel_probe_stale"),
+        ] {
+            let runtime = json!({
+                "authority": {"service_control": true},
+                "focus": {
+                    "connected": true,
+                    "source_alignment": {"status": "aligned"}
+                },
+                "service_lifecycle": {
+                    "draining": true,
+                    "generation": 2,
+                    "changed_at": 123
+                },
+                "service_supervisor": {"available": true, "managed_client_id": "runner-a"},
+                "jobs": {
+                    "active_count": 0,
+                    "running_count": 0,
+                    "queued_count": 0,
+                    "recovering_count": 0
+                },
+                "fleet_summary": {"mixed_builds_present": false},
+                "health": {"components": {"public_tunnel": {"status": status}}}
+            });
+            let preflight =
+                deployment_preflight_payload(&runtime, caller.clone(), "runner-a", "deploy");
+            assert_eq!(preflight["readiness"], "ready", "{status}");
+            assert_eq!(preflight["ready_to_begin"], true, "{status}");
+            assert_eq!(preflight["ready_for_cutover"], true, "{status}");
+            assert_eq!(preflight["blockers"], json!([]), "{status}");
+            let codes: Vec<&str> = preflight["warnings"]
+                .as_array()
+                .expect("warnings")
+                .iter()
+                .filter_map(|item| item["code"].as_str())
+                .collect();
+            assert!(codes.contains(&expected_code), "{status}: {codes:?}");
+        }
+
+        let verified = json!({
+            "authority": {"service_control": true},
+            "focus": {"connected": true, "source_alignment": {"status": "aligned"}},
+            "service_lifecycle": {"draining": true, "generation": 2, "changed_at": 123},
+            "service_supervisor": {"available": true, "managed_client_id": "runner-a"},
+            "jobs": {"active_count": 0, "running_count": 0, "queued_count": 0, "recovering_count": 0},
+            "fleet_summary": {"mixed_builds_present": false},
+            "health": {"components": {"public_tunnel": {"status": "verified"}}}
+        });
+        let preflight = deployment_preflight_payload(&verified, caller, "runner-a", "deploy");
+        let codes: Vec<&str> = preflight["warnings"]
+            .as_array()
+            .expect("warnings")
+            .iter()
+            .filter_map(|item| item["code"].as_str())
+            .collect();
+        assert!(!codes.iter().any(|code| code.starts_with("public_tunnel_")));
+    }
+
+    #[test]
+    fn deployment_preflight_blocks_missing_service_scope_and_recovery() {
+        let runtime = json!({
+            "authority": {"service_control": true},
+            "focus": {
+                "connected": true,
+                "source_alignment": {"status": "aligned"}
+            },
+            "service_supervisor": {"available": true, "managed_client_id": "runner-a"},
+            "jobs": {
+                "active_count": 1,
+                "running_count": 0,
+                "queued_count": 0,
+                "recovering_count": 1
+            },
+            "fleet_summary": {"mixed_builds_present": false}
+        });
+        let caller = json!({
+            "capabilities": {
+                "service_restart": true,
+                "service_deploy": false
+            }
+        });
+        let preflight = deployment_preflight_payload(&runtime, caller, "runner-a", "deploy");
+        assert_eq!(preflight["readiness"], "blocked");
+        let codes: Vec<&str> = preflight["blockers"]
+            .as_array()
+            .expect("blockers")
+            .iter()
+            .filter_map(|item| item["code"].as_str())
+            .collect();
+        assert!(codes.contains(&"missing_service_deploy_scope"));
+        assert!(codes.contains(&"jobs_recovering"));
+    }
+
     #[test]
     fn compact_runtime_status_keeps_minimum_job_state_counts() {
         let compact = compact_runtime_status(&json!({
+            "diagnostics": {
+                "buffered_count": 4,
+                "dropped_count": 1,
+                "info_count": 1,
+                "warn_count": 2,
+                "error_count": 1,
+                "oldest_sequence": 2,
+                "newest_sequence": 5,
+                "newest_warn_sequence": 4,
+                "newest_error_sequence": 5
+            },
             "jobs": {
                 "active_count": 5,
                 "running_count": 2,
                 "queued_count": 1,
+                "operation_phase_counts": {
+                    "accepted": 0,
+                    "queued": 1,
+                    "running": 2,
+                    "waiting_external": 0,
+                    "recovering": 1,
+                    "succeeded": 1,
+                    "failed": 0,
+                    "rolled_back": 0,
+                    "outcome_unknown": 0,
+                }
             }
         }));
         assert_eq!(
@@ -1553,6 +2773,31 @@ mod phase_e2_status_tests {
                 "active_count": 5,
                 "running_count": 2,
                 "queued_count": 1,
+                "operation_phase_counts": {
+                    "accepted": 0,
+                    "queued": 1,
+                    "running": 2,
+                    "waiting_external": 0,
+                    "recovering": 1,
+                    "succeeded": 1,
+                    "failed": 0,
+                    "rolled_back": 0,
+                    "outcome_unknown": 0,
+                }
+            })
+        );
+        assert_eq!(
+            compact["diagnostics"],
+            json!({
+                "buffered_count": 4,
+                "dropped_count": 1,
+                "info_count": 1,
+                "warn_count": 2,
+                "error_count": 1,
+                "oldest_sequence": 2,
+                "newest_sequence": 5,
+                "newest_warn_sequence": 4,
+                "newest_error_sequence": 5
             })
         );
     }

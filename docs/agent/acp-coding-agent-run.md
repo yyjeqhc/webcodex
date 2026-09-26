@@ -1,17 +1,17 @@
 # ACP Coding Agent Run Contract
 
 This note defines the P0 architecture baseline for running an Agent Client
-Protocol (ACP) coding agent from WebCodex. It is deliberately narrower than a
+Protocol (ACP) coding agent from WebPi. It is deliberately narrower than a
 public implementation: the goal is to fix the execution, identity, lifecycle,
 configuration, permission, observation, and recovery semantics that P1 must
 preserve.
 
 The product model is a **protocol-aware detached Job**, but the product object is
-not a WebCodex Job. `CodingAgentRun` is a separate execution primitive whose
+not a WebPi Job. `CodingAgentRun` is a separate execution primitive whose
 payload is ACP protocol state and structured coding-agent activity rather than a
 shell command plus stdout/stderr.
 
-This contract is based on current WebCodex V1 architecture plus real dogfood of
+This contract is based on current WebPi V1 architecture plus real dogfood of
 the official `agentclientprotocol/codex-acp` adapter on 2026-08-23. The dogfood
 used `npx -y @agentclientprotocol/codex-acp`, package version **1.6.2**, without a
 global install or credential changes. Protocol details below describe that
@@ -77,7 +77,7 @@ The intended user flow is:
 ```text
 ChatGPT / API client
   -> coding_agent_start
-  -> exact WebCodex Project + Runner + configured ACP provider
+  -> exact WebPi Project + Runner + configured ACP provider
   -> CodingAgentRun R
   -> Runner-owned ACP child
   -> initialize
@@ -88,7 +88,7 @@ ChatGPT / API client
   -> correlated terminal prompt response
 ```
 
-WebCodex owns:
+WebPi owns:
 
 - exact Runner and registered Project routing;
 - provider identity and stale-provider fencing;
@@ -106,7 +106,7 @@ The ACP agent owns:
 - account, organization, model, and provider policy;
 - provider-specific coding behavior.
 
-WebCodex must not turn ACP into a second implementation of WebCodex file, shell,
+WebPi must not turn ACP into a second implementation of WebPi file, shell,
 or patch tools. The ACP child is a delegated local coding agent, not an MCP tool
 provider and not a raw JSON-RPC endpoint exposed to remote callers.
 
@@ -126,7 +126,7 @@ ACP session S             never model authority
       v
 Codex / future ACP agent
 
-WebCodex Job J             independent process-execution primitive
+WebPi Job J             independent process-execution primitive
 ```
 
 ### Workflow Session
@@ -141,8 +141,8 @@ caller/project/provider ownership on observe and cancel.
 
 ### CodingAgentRun
 
-`CodingAgentRun` is the WebCodex business identity for one admitted autonomous
-coding turn. The future public id should be opaque and WebCodex-owned, for
+`CodingAgentRun` is the WebPi business identity for one admitted autonomous
+coding turn. The future public id should be opaque and WebPi-owned, for
 example `wc_agent_run_*`. It is the only agent-execution identity a model needs
 to retain after successful admission.
 
@@ -166,7 +166,7 @@ P1 must not expose the ACP session id or rely on it as the product Run id.
 
 ### Job
 
-A WebCodex Job is stdout/stderr/process/exit oriented. A CodingAgentRun is
+A WebPi Job is stdout/stderr/process/exit oriented. A CodingAgentRun is
 agent-message/reasoning/tool/file/terminal/usage/permission oriented. Reusing the
 Job record would either discard ACP structure or overload Job semantics with a
 second event model.
@@ -207,8 +207,8 @@ and config options.
 
 The current official adapter source maps its advertised `agent` mode to Codex
 `approvalPolicy=on-request` with a workspace-write sandbox and network access
-disabled. This is adapter/provider behavior: WebCodex did not set those values in
-the P0 no-override probes. It is the concrete reason that "no WebCodex override"
+disabled. This is adapter/provider behavior: WebPi did not set those values in
+the P0 no-override probes. It is the concrete reason that "no WebPi override"
 must not be documented as "identical to bare Codex CLI defaults".
 
 ### Successful no-tool turn
@@ -252,7 +252,7 @@ P0 sent `session/cancel` during an active no-tool prompt. The correlated
 `session/prompt` response completed with `stopReason=cancelled`. The same ACP
 session subsequently accepted another prompt that completed with `end_turn`.
 
-For WebCodex, cancellation therefore means cancellation of the active Run/turn.
+For WebPi, cancellation therefore means cancellation of the active Run/turn.
 It must not be modeled as authority to destroy or expose the underlying ACP
 session object.
 
@@ -280,7 +280,7 @@ An invalid `session/set_config_option` id returned JSON-RPC error `-32602`
 (`Invalid params`). Setting the advertised `mode` option to the advertised
 `read-only` value succeeded and returned refreshed `configOptions`.
 
-These names and values are observations, not WebCodex enums. P1 must validate
+These names and values are observations, not WebPi enums. P1 must validate
 against the exact options advertised by the selected live provider session.
 
 ### Adapter process environment
@@ -312,9 +312,9 @@ Identity lifetime is intentionally asymmetric:
 | Identifier | P0 lifetime conclusion |
 |---|---|
 | JSON-RPC request id | Connection/process-local correlation only; never recovery or authority identity. |
-| ACP `sessionId` | Provider-private. Current Codex ACP can persist/load it across adapter processes, but that is a provider capability, not a universal ACP/WebCodex guarantee. |
-| ACP provider instance id | WebCodex Runner process/provider-instance fence; replacement makes old requests stale. |
-| `wc_agent_run_*` | Future WebCodex business identity, retained independently of one HTTP/MCP request and reconciled only from authoritative Runner Run state. |
+| ACP `sessionId` | Provider-private. Current Codex ACP can persist/load it across adapter processes, but that is a provider capability, not a universal ACP/WebPi guarantee. |
+| ACP provider instance id | WebPi Runner process/provider-instance fence; replacement makes old requests stale. |
+| `wc_agent_run_*` | Future WebPi business identity, retained independently of one HTTP/MCP request and reconciled only from authoritative Runner Run state. |
 | Workflow `wc_sess_*` | Independent evidence/collaboration identity; optional Run provenance only. |
 
 The Runner must own the JSON-RPC id space/correlation machinery. Remote callers
@@ -365,15 +365,15 @@ notification alone is not proof that cancellation took effect.
 
 ### Permission requests
 
-`session/request_permission` is an ACP agent-to-client request, not a WebCodex
+`session/request_permission` is an ACP agent-to-client request, not a WebPi
 runtime-tool permission evaluation. The client must implement it because the
 current Codex adapter can actually send it. It must never default to allow.
 
 Current `codex-acp` bridges Codex approval activity through this callback and
 fails closed when the ACP client's approval interaction fails or is cancelled.
-This reinforces the product boundary: WebCodex performs one admission decision
+This reinforces the product boundary: WebPi performs one admission decision
 for the Run, then the delegated agent owns its normal internal coding policy;
-WebCodex does not rerun `PermissionEvaluator` for every ACP tool action.
+WebPi does not rerun `PermissionEvaluator` for every ACP tool action.
 
 ### Error and process-exit semantics
 
@@ -383,14 +383,14 @@ process has a separate OS lifetime. Process exit is diagnostic/lifecycle input,
 not a substitute for a terminal prompt result.
 
 If the child exits after prompt dispatch without a correlated prompt response,
-WebCodex cannot infer success or failure from its exit code alone. The Run must
+WebPi cannot infer success or failure from its exit code alone. The Run must
 be treated as uncertain unless exact protocol recovery proves otherwise.
 
 ## 5. Configuration semantics
 
-### `config` omitted or `{}` means no WebCodex override
+### `config` omitted or `{}` means no WebPi override
 
-P0 corrects an important earlier assumption. For WebCodex:
+P0 corrects an important earlier assumption. For WebPi:
 
 ```text
 config omitted
@@ -403,11 +403,11 @@ means **send no `session/set_config_option` calls**.
 It does not mean "the ACP adapter behaves exactly like a bare local Codex CLI".
 The adapter itself may have defaults. In real dogfood, `codex-acp 1.6.2`
 advertised current `mode=agent`; that mode is adapter/provider policy, not a
-WebCodex override.
+WebPi override.
 
 Therefore the precise inheritance contract is:
 
-> WebCodex inherits the selected Runner-owned ACP provider's effective defaults
+> WebPi inherits the selected Runner-owned ACP provider's effective defaults
 > by abstaining from run-level ACP config overrides.
 
 The Run should record a bounded sanitized snapshot of the effective advertised
@@ -476,7 +476,7 @@ args = []
 HTTPS_PROXY = "HTTPS_PROXY"
 ```
 
-The exact executable example is operator-specific; WebCodex must not prescribe
+The exact executable example is operator-specific; WebPi must not prescribe
 `npx -y` as a production default or download packages at request time.
 
 P1 should make `[acp]` startup/restart-owned, following the simpler precedent of
@@ -522,7 +522,7 @@ than add queueing/scheduling states. Do not infer ACP capacity from
 
 ## 7. Project binding and confinement truth
 
-Project binding gives WebCodex three real guarantees:
+Project binding gives WebPi three real guarantees:
 
 1. the selected Run is routed to the exact Runner owning the registered Project;
 2. the Run records that exact Project identity;
@@ -534,30 +534,30 @@ That is not a filesystem sandbox.
 write only that tree. ACP itself is not a filesystem confinement mechanism.
 The selected coding agent may apply its own sandbox, OS policy, account/org
 policy, and approval mode; those controls can be stronger or weaker than
-WebCodex file-tool path rules and may evolve independently.
+WebPi file-tool path rules and may evolve independently.
 
 For the current Codex adapter, the effective mode influences Codex sandbox and
-approval behavior. WebCodex may report the provider's sanitized advertised
-configuration, but it must not translate that into a claim of WebCodex Project
-isolation unless WebCodex separately enforces such isolation.
+approval behavior. WebPi may report the provider's sanitized advertised
+configuration, but it must not translate that into a claim of WebPi Project
+isolation unless WebPi separately enforces such isolation.
 
 The P1 product description should therefore say **operator-configured delegated
-local coding agent**. It must not promise parity with WebCodex `read_files` /
+local coding agent**. It must not promise parity with WebPi `read_files` /
 `apply_text_edits` filesystem isolation.
 
 ## 8. Permission-request exceptional path
 
-The normal WebCodex authority decision happens once at `coding_agent_start`:
+The normal WebPi authority decision happens once at `coding_agent_start`:
 
 ```text
 caller auth + exact Project + provider fence + config override policy
-  -> WebCodex start admission decision
+  -> WebPi start admission decision
   -> ACP Run starts
   -> delegated agent applies its own coding policy
 ```
 
 An ACP `session/request_permission` callback is not fed back through the normal
-WebCodex `PermissionEvaluator`, because that would create a second per-action
+WebPi `PermissionEvaluator`, because that would create a second per-action
 policy layer over the agent's own approval system.
 
 P1 nevertheless must implement the callback. The minimum safe behavior is:
@@ -999,12 +999,12 @@ The P0 architecture baseline is therefore:
 1. `CodingAgentRun` is a separate protocol execution primitive, not a Job alias.
 2. Workflow Session is optional evidence provenance, never Run authority.
 3. Raw ACP session ids stay Runner-private.
-4. Default WebCodex config inheritance means **no ACP config override calls**;
+4. Default WebPi config inheritance means **no ACP config override calls**;
    effective behavior is whatever the configured provider advertises.
 5. Explicit config is validated against live advertised options and Runner policy
    before prompt dispatch.
 6. ACP permission callbacks are real and exceptional; never auto-allow them and
-   do not rerun WebCodex `PermissionEvaluator` per agent action.
+   do not rerun WebPi `PermissionEvaluator` per agent action.
 7. Project root selects initial cwd but is not a filesystem security boundary.
 8. Observation is a bounded normalized event delta with opaque Run-bound tokens,
    not a transcript replay or raw ACP stream.

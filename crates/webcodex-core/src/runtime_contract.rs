@@ -26,9 +26,10 @@ pub const DEFAULT_OBSERVE_JOBS_TAIL_LINES: usize = 40;
 /// This is intentionally separate from execution timeouts and initial
 /// synchronous handoff grace budgets.
 pub const MAX_JOB_OBSERVATION_WAIT_SECS: u64 = 100;
-/// Model-facing continuation wait kept below common MCP Host call deadlines.
-/// Runtime still accepts waits up to MAX_JOB_OBSERVATION_WAIT_SECS.
-pub const MODEL_JOB_CONTINUATION_WAIT_SECS: u64 = 55;
+/// Model-facing continuation wait kept comfortably below outer MCP Host call deadlines.
+/// Runtime still accepts waits up to MAX_JOB_OBSERVATION_WAIT_SECS; the shorter
+/// recommendation leaves room for network latency, serialization, and Host UI handling.
+pub const MODEL_JOB_CONTINUATION_WAIT_SECS: u64 = 20;
 pub const STRUCTURED_EXECUTION_SYNC_WAIT_MAX_SECS: u64 = 60;
 
 pub const MAX_SKILL_LIST_LIMIT: usize = 64;

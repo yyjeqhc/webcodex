@@ -266,6 +266,38 @@ mod tests {
         );
     }
 
+    fn assert_business_schema_excludes_adapter_wrapper_metadata(name: &str, schema: &Value) {
+        if let Some(branches) = schema.get("oneOf").and_then(Value::as_array) {
+            assert!(!branches.is_empty(), "{name}");
+            for branch in branches {
+                assert_business_schema_excludes_adapter_wrapper_metadata(name, branch);
+            }
+            return;
+        }
+        assert_eq!(
+            schema.get("type"),
+            Some(&Value::String("object".to_string())),
+            "{name} business schema must be an object"
+        );
+        let Some(properties) = schema.get("properties").and_then(Value::as_object) else {
+            // Schemars may omit `properties` for an empty closed object such as
+            // PublicTunnelProbe {}; there can be no adapter wrapper metadata in
+            // that shape.
+            return;
+        };
+        for wrapper in [
+            "recording_session_id",
+            "ack_session_message_ids",
+            "context_request",
+            "session_message_resolution",
+        ] {
+            assert!(
+                !properties.contains_key(wrapper),
+                "{name} leaked adapter wrapper field {wrapper} into canonical business schema"
+            );
+        }
+    }
+
     #[test]
     fn all_canonical_tool_schemas_are_closed_objects_or_closed_unions() {
         let schemas = tool_input_schemas();
@@ -282,21 +314,7 @@ mod tests {
     #[test]
     fn canonical_business_schemas_exclude_adapter_wrapper_metadata() {
         for (name, schema) in tool_input_schemas() {
-            let properties = schema
-                .get("properties")
-                .and_then(Value::as_object)
-                .unwrap_or_else(|| panic!("{name} business schema must expose object properties"));
-            for wrapper in [
-                "recording_session_id",
-                "ack_session_message_ids",
-                "context_request",
-                "session_message_resolution",
-            ] {
-                assert!(
-                    !properties.contains_key(wrapper),
-                    "{name} leaked adapter wrapper field {wrapper} into canonical business schema"
-                );
-            }
+            assert_business_schema_excludes_adapter_wrapper_metadata(name, schema);
         }
     }
 

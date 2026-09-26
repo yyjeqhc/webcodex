@@ -1,6 +1,6 @@
 # Agent Architecture Decisions
 
-Standing design context for agents working on WebCodex. **Executable constraints
+Standing design context for agents working on WebPi. **Executable constraints
 live in [`AGENTS.md`](../../AGENTS.md).** This file explains durable product
 structure so agents do not re-litigate settled shape during ordinary tasks.
 
@@ -12,7 +12,7 @@ Related product docs: [`ARCHITECTURE.md`](../ARCHITECTURE.md),
 
 ## 1. Session dual model (architecture, not an operation checklist)
 
-WebCodex has **two different "session" concepts**. They share a name in casual
+WebPi has **two different "session" concepts**. They share a name in casual
 speech but are **not interchangeable** and must not be merged by accident.
 Full naming, lifecycle, compatibility, and non-goals:
 [`session-model.md`](session-model.md).
@@ -60,7 +60,7 @@ this concrete Agent/Conversation model. Standing rules are:
 - **Goal** is an independent `wc_goal_*` high-level durable intent/control domain. It is not an Agent Task, Workflow Session, Job, Project selector, execution primitive, or scheduler; Goal identity/status/revision/correlation is never a bearer credential;
 - Goal selection is exact durable identity or explicit creation only. Never infer the current Goal from Project, ClientWindow, credential, MCP/OpenAI session data, Conversation membership, Workflow Session, or shared timing;
 - Goal lifecycle is currently closed to `active | completed | cancelled`. `finish_coding_task`, AgentTask/TaskAttempt completion, Job terminal state, or validation evidence do not automatically transition a Goal;
-- ClientWindow liveness may be projected only as soft observational evidence from an exact authorized Goal through explicit Workflow Session correlations and re-authorized Project visibility. `last_seen` and `last_meaningful_activity` are distinct; five minutes without visible meaningful WebCodex activity may request human attention but is not proof of model failure and never mutates Goal/Task/Attempt state or authority;
+- ClientWindow liveness may be projected only as soft observational evidence from an exact authorized Goal through explicit Workflow Session correlations and re-authorized Project visibility. `last_seen` and `last_meaningful_activity` are distinct; five minutes without visible meaningful WebPi activity may request human attention but is not proof of model failure and never mutates Goal/Task/Attempt state or authority;
 - the first durable **Attention Event** kind is narrowly `agent_task_terminal`. Event is a semantic terminal fact, not a generic bus, scheduler, authority snapshot, or copied business payload. Exact TaskAttempt terminalization commits the required per-active-Goal Event/Wake facts atomically with Task/Attempt completion and keyed replay;
 - `attention_event` Wake is distinct from A4b `agent_task_attempt` Wake: the former targets the completed Task's explicit assignee for Goal re-evaluation and never requires the terminal Attempt to heartbeat/hold a live lease; the latter still means execute one exact active fenced Attempt;
 - the resumed attention turn must independently re-read exact Goal and AgentTask truth through ordinary authorization and explicitly decide Goal progression. Neither terminal Task outcome nor Event/Wake consumption auto-completes/reopens a Goal or auto-creates a successor Task;
@@ -93,7 +93,7 @@ drive-by fix.
 
 ### One coding runtime (standing)
 
-WebCodex has one coding runtime: ordinary ToolRuntime over Runner-registered Projects, Workflow Sessions, canonical Jobs, and normal read/search/edit/Git/validation/process/shell tools. `webcodex share` and `webcodex run` are lifecycle/auth/reachability conveniences around that runtime; they do not define Task/Run/Execution/Result/Approval business objects or a second model-facing tool registry.
+WebPi has one coding runtime: ordinary ToolRuntime over Runner-registered Projects, Workflow Sessions, canonical Jobs, and normal read/search/edit/Git/validation/process/shell tools. `webcodex share` and `webcodex run` are lifecycle/auth/reachability conveniences around that runtime; they do not define Task/Run/Execution/Result/Approval business objects or a second model-facing tool registry.
 
 Project-scoped credentials and project-share OAuth authenticate to a `ProjectGrant`. Runner visibility, canonical Project resolution, OAuth scopes, and normal permission policy enforce that boundary. Direct Adaptive tools and `call_runtime_tool` gateway dispatch share the same authority path. A guessed Runner/Project id grants no visibility and must not become an existence oracle. Project Agent Tokens remain Runner-transport credentials only.
 
@@ -148,7 +148,7 @@ closed (see §6). Full contract: [`permission-model.md`](permission-model.md).
 
 ## 2. Runtime/tool contract evolution (background)
 
-WebCodex is an **internal / self-use** project. There are no supported external
+WebPi is an **internal / self-use** project. There are no supported external
 API consumers, public SDKs, or third-party stable clients of the model-facing
 runtime tool surface today.
 
@@ -383,7 +383,7 @@ The standing direction for model-facing execution is defined in
    Goal/AgentTask orchestration, but the card is never the trigger or continuation
    owner. For Agent-bound continuation, the Agent Wake / Wake Delivery Attempt
    domain owns that logical continuation; Host/controller state is adapter-local
-   delivery state rather than a second WebCodex continuation truth.
+   delivery state rather than a second WebPi continuation truth.
 6. **Transport fallback must preserve execution semantics.** Polling, WebSocket,
    and QUIC may differ in delivery behavior, but none may silently duplicate a
    command or turn a transport stall into a false pre-start rejection.
@@ -448,7 +448,7 @@ The same pre-`v0.4.0` normalization applies to the Runner-owned project
 registry: `project_registry_dir` and `project-registry/` are canonical for new
 state, while a sole legacy `projects_dir` field or `projects.d/` directory may
 continue to identify existing state in place. New and legacy fields together,
-or both default directory names together, fail closed; WebCodex does not merge,
+or both default directory names together, fail closed; WebPi does not merge,
 copy, rename, or choose between two registries implicitly. The registry remains
 a directory of Runner-owned project registration records, not a second workspace
 or project-root abstraction.
@@ -462,7 +462,7 @@ persists `registration_source = "auto_registered"` and does not persist a fake
 historical `kind = "auto_registered"` sentinel remains a compatibility fallback;
 a present new field is authoritative. This interpretation is kept separate from
 the raw record representation used for project revision/CAS hashing, so merely
-upgrading WebCodex does not change an unchanged legacy record's revision. During
+upgrading WebPi does not change an unchanged legacy record's revision. During
 rolling upgrades a new Runner may still project the historical sentinel on its
 inventory and path-operation wire results for a newly auto-registered project
 with no genuine kind so an old Server can classify it, while new Servers use the

@@ -132,6 +132,34 @@ function createFixturePackage(root) {
   return pkg;
 }
 
+test("WebPi local Pi admin exposes package-inspect without mutating package state", () => {
+  const root = tempRoot();
+  try {
+    const missing = spawnSync(process.execPath, [adminPath, "package-inspect"], {
+      cwd: root,
+      encoding: "utf8",
+      windowsHide: true,
+      shell: false,
+      timeout: 30_000,
+    });
+    assert.equal(missing.status, 1);
+    assert.match(missing.stderr, /package-inspect requires an explicit npm:/u);
+
+    const unsupported = spawnSync(process.execPath, [adminPath, "package-inspect", "git:github.com/example/repo"], {
+      cwd: root,
+      encoding: "utf8",
+      windowsHide: true,
+      shell: false,
+      timeout: 30_000,
+    });
+    assert.equal(unsupported.status, 1);
+    assert.match(unsupported.stderr, /only explicit npm:/u);
+    assert.equal(fs.existsSync(path.join(root, ".webpi-state", "pi-agent", "settings.json")), false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("WebPi local Pi admin reuses native Pi trust, package lifecycle, and extension approval", async () => {
   const root = tempRoot();
   try {

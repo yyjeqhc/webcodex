@@ -1,10 +1,10 @@
 # Model-facing tool contract guidelines
 
-Status: standing design guidance for current WebCodex development.
+Status: standing design guidance for current WebPi development.
 
-This document defines the default style for model-facing WebCodex tools. It is
+This document defines the default style for model-facing WebPi tools. It is
 about **turn economy without semantic shortcuts**: a model/tool round trip should
-pay for a real decision, effect, or observation that WebCodex cannot determine
+pay for a real decision, effect, or observation that WebPi cannot determine
 mechanically. It should not be spent correcting a harmless parameter that the
 runtime can normalize without changing meaning.
 
@@ -20,7 +20,7 @@ belongs so those boundaries do not leak into unrelated mechanical friction.
 ## 1. Spend turns on meaning, not syntax
 
 A tool should reject an input when the model must make a new semantic decision.
-If WebCodex already knows the only safe interpretation, prefer deterministic
+If WebPi already knows the only safe interpretation, prefer deterministic
 normalization and continue the requested work.
 
 The practical test is:
@@ -88,7 +88,7 @@ edits. None of these rules means “shell first” or weakens specialized semant
 
 ## 2. Mechanical repair should be server-owned
 
-Do not spend a model turn on a repair WebCodex can prove locally.
+Do not spend a model turn on a repair WebPi can prove locally.
 
 Prefer:
 
@@ -113,7 +113,7 @@ empty/no-op edits, and recovery metadata that already proves one exact direct
 retry. If the runtime cannot prove the repair, it must ask for a new observation
 or reject rather than guess.
 
-This rule never authorizes WebCodex to infer missing authority, invent a Workflow
+This rule never authorizes WebPi to infer missing authority, invent a Workflow
 Session, auto-ACK model context, choose a destructive target, or reinterpret an
 uncertain effect. Those are semantic decisions, not mechanical repair.
 

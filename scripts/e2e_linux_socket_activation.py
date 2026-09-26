@@ -2,10 +2,10 @@
 """Focused Linux socket-activation, listener-continuity, and graceful-drain proof.
 
 This deliberately does not require PID 1 systemd. It has three focused scenarios:
-1. systemd-socket-activate -> inherited fd 3 -> real webcodex-server -> HTTP.
+1. systemd-socket-activate -> inherited fd 3 -> real webpi-server -> HTTP.
 2. A parent-owned TCP listener survives Server A termination and is inherited by
    Server B while bounded client probes classify success/reset/timeout/refused.
-3. A real WebCodex run_process request is already executing on a real WebSocket
+3. A real WebPi run_process request is already executing on a real WebSocket
    Runner when Server A receives SIGTERM; the response completes before A exits,
    then Server B inherits the same listener and the Runner reconnects.
 
@@ -54,9 +54,9 @@ def server_env(port: int, data_dir: Path) -> Dict[str, str]:
     env = os.environ.copy()
     env.update(
         {
-            "WEBCODEX_ADDR": f"{HOST}:{port}",
-            "WEBCODEX_DATA": str(data_dir),
-            "WEBCODEX_TOKEN": TOKEN,
+            "WEBPI_ADDR": f"{HOST}:{port}",
+            "WEBPI_DATA": str(data_dir),
+            "WEBPI_TOKEN": TOKEN,
             "RUST_LOG": env.get("RUST_LOG", "warn"),
         }
     )
@@ -174,11 +174,11 @@ def run_systemd_smoke(binary: Path, systemd_socket_activate: Path) -> Dict[str, 
                     "--listen",
                     f"{HOST}:{port}",
                     "--setenv",
-                    f"WEBCODEX_ADDR={env['WEBCODEX_ADDR']}",
+                    f"WEBPI_ADDR={env['WEBPI_ADDR']}",
                     "--setenv",
-                    f"WEBCODEX_DATA={env['WEBCODEX_DATA']}",
+                    f"WEBPI_DATA={env['WEBPI_DATA']}",
                     "--setenv",
-                    f"WEBCODEX_TOKEN={env['WEBCODEX_TOKEN']}",
+                    f"WEBPI_TOKEN={env['WEBPI_TOKEN']}",
                     "--setenv",
                     f"RUST_LOG={env['RUST_LOG']}",
                     "--fdname",
@@ -501,8 +501,8 @@ def run_graceful_inflight(binary: Path, runner_binary: Path) -> Dict[str, object
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--server-bin", default="target/dogfood/webcodex-server")
-    parser.add_argument("--runner-bin", default="target/dogfood/webcodex-runner")
+    parser.add_argument("--server-bin", default="target/dogfood/webpi-server")
+    parser.add_argument("--runner-bin", default="target/dogfood/webpi-runner")
     parser.add_argument("--skip-systemd-smoke", action="store_true")
     parser.add_argument("--skip-continuity", action="store_true")
     parser.add_argument("--skip-graceful-inflight", action="store_true")

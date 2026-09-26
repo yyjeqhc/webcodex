@@ -2,6 +2,8 @@
 
 [English](desktop-install.md) | [简体中文](desktop-install.zh-CN.md)
 
+> **已退役的历史参考。** 当前 WebPi 源码树没有 `desktop/` 实现目录，也不提供受支持的 Desktop installer。下面的命令、Release 链接、凭据路径和产品推荐都不能作为当前安装指南；请使用[完整使用指南](PERSONAL_SETUP.zh-CN.md)或[快速试用](QUICK_START.zh-CN.md)。本文仅保留为设计/历史证据，因此继续保留历史 WebCodex 名称。
+
 对于普通 Windows / macOS 个人用户，**最推荐的路径是 WebCodex Desktop + 官方 OpenAI Secure Tunnel**。Server 和 Runner 都留在本机，ChatGPT 通过私有 Tunnel 连接；第一次使用不需要先配置反向代理、OAuth、系统 service 或公开的 WebCodex 地址。
 
 普通用户只需要按下面这条主链走，不需要理解 Runner registry、`runtime_project_id`、内部 MCP authorization 文件或 launchd 的实现细节：

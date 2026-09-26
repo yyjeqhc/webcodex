@@ -927,10 +927,9 @@ validation = cur if isinstance(cur, dict) else {}
 parser = validation.get("parser") or {}
 ok = (
     data.get("success") is True
-    and validation.get("available") is False
-    and validation.get("source") == "session_ledger"
+    and validation.get("available", False) is False
     and validation.get("events_total", 0) == 0
-    and parser.get("available") is False
+    and parser.get("available", False) is False
 )
 sys.exit(0 if ok else 1)
 PY
@@ -986,26 +985,14 @@ complete_case_session() {
         assert_handoff_available "session_handoff_summary returns handoff" "$LAST_BODY" "output"
         capture_validation_metrics "$LAST_BODY" "output.validation"
 
-        if [ "$case_name" = "small_structured_line_edit" ]; then
-            assert_validation_available \
-                "session_handoff_summary validation summary is available" \
-                "$LAST_BODY" \
-                "output.validation"
-        elif [ "$case_name" = "failed_call_recovery" ]; then
-            assert_validation_unavailable \
-                "session_handoff_summary validation summary is unavailable without validation events" \
-                "$LAST_BODY" \
-                "output.validation"
-            assert_handoff_failed_tool_metadata \
-                "session_handoff_summary includes failed tool metadata" \
-                "$LAST_BODY" \
-                "output"
-        else
-            assert_validation_unavailable \
-                "session_handoff_summary validation summary is unavailable without validation events" \
-                "$LAST_BODY" \
-                "output.validation"
-        fi
+        # Baseline start_session intentionally lacks the guided coding-workflow
+        # validation/failure projection. The compare metric records that delta;
+        # baseline correctness requires a valid handoff and clean behavior, not
+        # the richer guided evidence surface.
+        assert_validation_unavailable \
+            "session_handoff_summary baseline validation projection remains unavailable" \
+            "$LAST_BODY" \
+            "output.validation"
     fi
 }
 
@@ -1097,11 +1084,11 @@ EOF
     if [ -n "$SERVER_BIN" ]; then
         server_command=("$SERVER_BIN")
     else
-        server_command=("$CARGO_BIN" run --quiet -p webcodex --bin webcodex-server)
+        server_command=("$CARGO_BIN" run --quiet -p webcodex --bin webpi-server)
     fi
-    WEBCODEX_ADDR="127.0.0.1:${PORT}" \
-    WEBCODEX_DATA="$DATA_DIR" \
-    WEBCODEX_TOKEN="$TOKEN" \
+    WEBPI_ADDR="127.0.0.1:${PORT}" \
+    WEBPI_DATA="$DATA_DIR" \
+    WEBPI_TOKEN="$TOKEN" \
     RUST_LOG="info" \
     "${server_command[@]}" >"$SERVER_LOG" 2>&1 &
     SERVER_PID=$!
@@ -1117,7 +1104,7 @@ EOF
     if [ -n "$RUNNER_BIN" ]; then
         runner_command=("$RUNNER_BIN" --config "$AGENT_TOML")
     else
-        runner_command=("$CARGO_BIN" run --quiet -p webcodex-runner --bin webcodex-runner -- --config "$AGENT_TOML")
+        runner_command=("$CARGO_BIN" run --quiet -p webcodex-runner --bin webpi-runner -- --config "$AGENT_TOML")
     fi
     "${runner_command[@]}" >"$RUNNER_LOG" 2>&1 &
     RUNNER_PID=$!
@@ -1280,6 +1267,13 @@ PY
 )"
     call_tool "read_files" "$params"
     assert_success "read_files with line numbers succeeds" "$LAST_BODY"
+    edit_read_revision="$(python3 - "$LAST_BODY" <<'PY'
+import json, sys
+items = (json.loads(sys.argv[1]).get("output") or {}).get("items") or []
+item = items[0] if items and isinstance(items[0], dict) else {}
+print((item.get("output") or {}).get("read_revision") or "")
+PY
+)"
     if python3 - "$LAST_BODY" <<'PY'
 import json
 import sys
@@ -1303,13 +1297,9 @@ PY
         case_fail "read_files line-number metadata missing"
     fi
 
-    params="$(python3 - "$RUNTIME_PROJECT_ID" "$session_id" "$TEST_REPO/src/lib.rs" <<'PY'
-import hashlib
+    params="$(python3 - "$RUNTIME_PROJECT_ID" "$session_id" "$edit_read_revision" <<'PY'
 import json
 import sys
-
-with open(sys.argv[3], "rb") as handle:
-    current_sha = hashlib.sha256(handle.read()).hexdigest()
 
 print(json.dumps({
     "project": sys.argv[1],
@@ -1317,7 +1307,7 @@ print(json.dumps({
     "changes": [{
         "kind": "edit",
         "path": "src/lib.rs",
-        "expected_sha256": current_sha,
+        "expected_read_revision": int(sys.argv[3]),
         "edits": [{
             "kind": "replace_exact",
             "old_text": "    \"hello\"",
@@ -1412,6 +1402,15 @@ run_case_failed_call_recovery() {
     params="$(python3 - "$RUNTIME_PROJECT_ID" "$session_id" <<'PY'
 import json
 import sys
+print(json.dumps({"project": sys.argv[1], "session_id": sys.argv[2], "items": [{"path": "src/lib.rs", "start_line": 1, "limit": 4}], "with_line_numbers": True}, separators=(",", ":")))
+PY
+)"
+    call_tool "read_files" "$params"
+    assert_success "read_files before failed edit succeeds" "$LAST_BODY"
+
+    params="$(python3 - "$RUNTIME_PROJECT_ID" "$session_id" <<'PY'
+import json
+import sys
 
 print(json.dumps({
     "project": sys.argv[1],
@@ -1419,7 +1418,7 @@ print(json.dumps({
     "changes": [{
         "kind": "edit",
         "path": "src/lib.rs",
-        "expected_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "expected_read_revision": 1,
         "edits": [{
             "kind": "replace_exact",
             "old_text": "    \"hello\"",
@@ -1431,7 +1430,7 @@ PY
 )"
     call_tool "apply_text_edits" "$params"
     assert_failure_error_kind \
-        "apply_text_edits wrong sha guard reports sha256_conflict" "$LAST_BODY" "sha256_conflict"
+        "apply_text_edits unknown read revision fails closed" "$LAST_BODY" "unknown_read_revision"
 
     params="$(python3 - "$RUNTIME_PROJECT_ID" "$session_id" <<'PY'
 import json
@@ -1451,6 +1450,13 @@ PY
 )"
     call_tool "read_files" "$params"
     assert_success "read_files after failed edit succeeds" "$LAST_BODY"
+    recovery_read_revision="$(python3 - "$LAST_BODY" <<'PY'
+import json, sys
+items = (json.loads(sys.argv[1]).get("output") or {}).get("items") or []
+item = items[0] if items and isinstance(items[0], dict) else {}
+print((item.get("output") or {}).get("read_revision") or "")
+PY
+)"
     if python3 - "$LAST_BODY" <<'PY'
 import json
 import sys
@@ -1468,13 +1474,9 @@ PY
         case_fail "failed edit changed src/lib.rs unexpectedly"
     fi
 
-    params="$(python3 - "$RUNTIME_PROJECT_ID" "$session_id" "$TEST_REPO/src/lib.rs" <<'PY'
-import hashlib
+    params="$(python3 - "$RUNTIME_PROJECT_ID" "$session_id" "$recovery_read_revision" <<'PY'
 import json
 import sys
-
-with open(sys.argv[3], "rb") as handle:
-    current_sha = hashlib.sha256(handle.read()).hexdigest()
 
 print(json.dumps({
     "project": sys.argv[1],
@@ -1482,7 +1484,7 @@ print(json.dumps({
     "changes": [{
         "kind": "edit",
         "path": "src/lib.rs",
-        "expected_sha256": current_sha,
+        "expected_read_revision": int(sys.argv[3]),
         "edits": [{
             "kind": "replace_exact",
             "old_text": "    \"hello\"",

@@ -7,6 +7,7 @@ import {
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import { ExtensionApprovalStore } from "./approval-store.js";
+import { inspectNpmPackage } from "./package-inspect.js";
 
 type SourceScope = "user" | "project" | "temporary";
 
@@ -146,6 +147,13 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (command === "package-inspect") {
+    const source = rawArgs[0];
+    if (!source) fail("package-inspect requires an explicit npm: package source");
+    writeJson(await inspectNpmPackage(source));
+    return;
+  }
+
   if (command === "package-install") {
     const parsed = parseScope(rawArgs);
     const source = parsed.args[0];
@@ -231,7 +239,7 @@ async function main(): Promise<void> {
   }
 
   fail(
-    "unknown pi-admin command; expected trust-status, trust-set, package-list, package-install, package-remove, package-update, extension-candidates, extension-approvals, extension-approve, or extension-revoke",
+    "unknown pi-admin command; expected trust-status, trust-set, package-list, package-inspect, package-install, package-remove, package-update, extension-candidates, extension-approvals, extension-approve, or extension-revoke",
   );
 }
 

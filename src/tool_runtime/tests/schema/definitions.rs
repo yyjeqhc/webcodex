@@ -106,6 +106,7 @@ fn tool_call_parser_name_gate_matches_tool_definitions() {
         "job_terminal_continuation_finish",
         "job_terminal_continuation_unbind",
         "read_tool_trace",
+        "public_tunnel_probe",
         "skill_list",
         "skill_read_file",
         "skill_versions",

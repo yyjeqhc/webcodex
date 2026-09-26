@@ -231,7 +231,7 @@ fn state_directory_allows_absolute_and_relative_paths_outside_checkout() {
 }
 
 #[test]
-fn default_state_base_preserves_home_and_has_windows_localappdata_fallback() {
+fn default_state_base_uses_webpi_namespace_and_preserves_home() {
     use std::ffi::OsStr;
 
     assert_eq!(
@@ -241,7 +241,7 @@ fn default_state_base_preserves_home_and_has_windows_localappdata_fallback() {
             Some(OsStr::new("/local")),
         )
         .unwrap(),
-        PathBuf::from("/state/webcodex/projects")
+        PathBuf::from("/state/webpi/projects")
     );
     assert_eq!(
         setup_service::default_state_base_from(
@@ -254,9 +254,22 @@ fn default_state_base_preserves_home_and_has_windows_localappdata_fallback() {
     );
     assert_eq!(
         setup_service::default_state_base_from(None, None, Some(OsStr::new("/local"))).unwrap(),
-        PathBuf::from("/local/WebCodex/state/projects")
+        PathBuf::from("/local/webpi/state/projects")
     );
     assert!(setup_service::default_state_base_from(None, None, None).is_err());
+
+    assert_eq!(
+        setup_service::legacy_default_state_base_from(
+            Some(OsStr::new("/state")),
+            Some(OsStr::new("/home/user")),
+            Some(OsStr::new("/local")),
+        ),
+        Some(PathBuf::from("/state/webcodex/projects"))
+    );
+    assert_eq!(
+        setup_service::legacy_default_state_base_from(None, None, Some(OsStr::new("/local"))),
+        Some(PathBuf::from("/local/WebCodex/state/projects"))
+    );
 }
 
 #[cfg(unix)]
@@ -351,7 +364,7 @@ fn fresh_setup_is_minimal_idempotent_and_does_not_expose_internal_ids() {
             "default setup output leaked {forbidden}: {output}"
         );
     }
-    assert!(output.contains("Next:\n  webcodex doctor"));
+    assert!(output.contains("Next:\n  webpi doctor"));
 }
 
 #[test]
@@ -583,7 +596,7 @@ fn doctor_reports_not_setup_and_invalid_workspace_with_stable_actions() {
     assert_eq!(missing.connection, "not configured");
     let finding = fact(&missing, "project_not_configured");
     assert_eq!(finding.status, ReadinessStatus::Fail);
-    assert_eq!(finding.next_action.as_deref(), Some("webcodex setup"));
+    assert_eq!(finding.next_action.as_deref(), Some("webpi setup"));
 
     setup(&options).unwrap();
     fs::remove_dir_all(root).unwrap();

@@ -110,6 +110,9 @@ pub struct ToolRuntime {
     pub(crate) ssh_resource_gateway: Arc<crate::ssh_resource_gateway::SshResourceGatewayRuntime>,
     pub(crate) coding_agent_runs: Arc<super::coding_agent::CodingAgentServerState>,
     pub runtime_info: Arc<RuntimeInfo>,
+    /// Process-local admission state for controlled service drain/restart flows.
+    /// Clones share this state; a Server restart starts a fresh non-draining epoch.
+    pub(crate) service_lifecycle: Arc<super::service_lifecycle::ServiceLifecycleState>,
     #[cfg(feature = "workspace-checkpoints")]
     pub(crate) checkpoint_store: checkpoint::CheckpointStore,
     pub(crate) sessions: sessions::SessionStore,
@@ -174,6 +177,9 @@ pub struct ToolRuntime {
     /// the server from the existing webcodex.db handle; Runner-native project
     /// filesystems never own Memory v1 persistence.
     pub(crate) memory_db: Option<Arc<crate::Database>>,
+    /// Durable deployment receipts survive Server restart and bind idempotent
+    /// service lifecycle operations to exact caller/target/manifest requests.
+    pub(crate) deployment_db: Option<Arc<crate::Database>>,
     /// Optional Control-owned durable user-domain store. Durable Agent, Conversation,
     /// AgentTask, and Goal state share this Server SQLite handle while remaining
     /// independent tables, lifecycles, and authority domains.
@@ -204,6 +210,7 @@ impl ToolRuntime {
             ),
             coding_agent_runs: Arc::new(super::coding_agent::CodingAgentServerState::default()),
             runtime_info,
+            service_lifecycle: Arc::new(super::service_lifecycle::ServiceLifecycleState::default()),
             #[cfg(feature = "workspace-checkpoints")]
             checkpoint_store: checkpoint::CheckpointStore::default(),
             sessions: sessions::SessionStore::default(),
@@ -239,6 +246,7 @@ impl ToolRuntime {
             metrics: Arc::new(super::runtime_metrics::TracingRuntimeMetrics),
             window_activity_db: None,
             memory_db: None,
+            deployment_db: None,
             communication_db: None,
             job_terminal_db: None,
             job_terminal_continuations: None,
@@ -267,6 +275,11 @@ impl ToolRuntime {
 
     pub(crate) fn with_memory_database(mut self, db: Arc<crate::Database>) -> Self {
         self.memory_db = Some(db);
+        self
+    }
+
+    pub(crate) fn with_deployment_database(mut self, db: Arc<crate::Database>) -> Self {
+        self.deployment_db = Some(db);
         self
     }
 

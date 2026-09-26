@@ -343,17 +343,31 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
         guard.handler_returned(500, None, Some(false), None, "error_runtime_missing");
         return;
     };
-    let request: JsonRpcRequest = match req.parse_json().await {
-        Ok(request) => request,
-        Err(e) => {
+    let raw_request: Value = match req.parse_json().await {
+        Ok(value) => value,
+        Err(_) => {
             guard.set_jsonrpc_id("none");
             guard.parsed("parse_error");
-            let body = rpc_error(None, -32700, format!("Parse error: {}", e));
+            let body = rpc_error(None, -32700, "Parse error");
             let estimated = estimate_json_bytes(&body);
             guard.response_serialized(400, estimated, Some(false), None, "parse_error");
             res.status_code(StatusCode::BAD_REQUEST);
             res.render(Json(body));
             guard.handler_returned(400, estimated, Some(false), None, "parse_error");
+            return;
+        }
+    };
+    let request: JsonRpcRequest = match serde_json::from_value(raw_request) {
+        Ok(request) => request,
+        Err(_) => {
+            guard.set_jsonrpc_id("none");
+            guard.parsed("invalid_request");
+            let body = rpc_error(None, -32600, "Invalid Request");
+            let estimated = estimate_json_bytes(&body);
+            guard.response_serialized(400, estimated, Some(false), None, "invalid_request");
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(Json(body));
+            guard.handler_returned(400, estimated, Some(false), None, "invalid_request");
             return;
         }
     };

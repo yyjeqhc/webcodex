@@ -12,6 +12,7 @@ sys.path.insert(0, str(ROOT))
 
 from scripts.webpi.runtime_config import (
     TunnelConfigError,
+    build_non_tunnel_child_env,
     build_tunnel_child_env,
     inspect_tunnel_configuration,
     load_tunnel_credentials,
@@ -64,6 +65,19 @@ class TunnelCredentialIsolationTests(unittest.TestCase):
                 "WEBCODEX_TUNNEL_CLIENT_BIN",
             ):
                 self.assertNotIn(name, child)
+
+    def test_non_tunnel_children_never_inherit_supervisor_capability(self) -> None:
+        env = {
+            "WEBPI_SUPERVISOR_TOKEN": "ab" * 32,
+            "WEBPI_SUPERVISOR_CONTROL_DIR": r"C:\\private\\supervisor",
+            "WEBPI_SUPERVISOR_CLIENT_ID": "webpi-local",
+            "PATH": r"C:\\Windows\\System32",
+        }
+        child = build_non_tunnel_child_env(env)
+        self.assertEqual(child["PATH"], env["PATH"])
+        self.assertNotIn("WEBPI_SUPERVISOR_TOKEN", child)
+        self.assertNotIn("WEBPI_SUPERVISOR_CONTROL_DIR", child)
+        self.assertNotIn("WEBPI_SUPERVISOR_CLIENT_ID", child)
 
     def test_partial_webpi_environment_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as td:

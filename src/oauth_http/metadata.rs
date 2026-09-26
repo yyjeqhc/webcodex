@@ -32,7 +32,7 @@ pub(crate) async fn oauth_metadata(depot: &mut Depot, res: &mut Response) {
         "resource": resource,
         "authorization_servers": [issuer],
         "bearer_methods_supported": ["header"],
-        "resource_name": "WebCodex",
+        "resource_name": "WebPi",
     });
 
     res.render(Json(metadata));

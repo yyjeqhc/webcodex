@@ -496,7 +496,7 @@ fn startup_workspace_schema() -> Value {
 fn startup_workflow_schema() -> Value {
     json!({
         "type": "object",
-        "description": "WebCodex-owned shared workflow, selected tool strategy and optional review role. Separate from project instructions and Session authority.",
+        "description": "WebPi-owned shared workflow, selected tool strategy and optional review role. Separate from project instructions and Session authority.",
         "properties": {
             "contract": {"type": "string", "const": BUILTIN_CODING_WORKFLOW_CONTRACT},
             "version": {"type": "integer", "const": BUILTIN_CODING_WORKFLOW_VERSION},
@@ -585,7 +585,7 @@ fn startup_workflow_role_schema() -> Value {
 fn startup_instructions_schema() -> Value {
     json!({
         "type": "object",
-        "description": "Runner-configured instructions followed by project-local repository instructions. Both are model guidance only and are separate from the WebCodex built-in workflow.",
+        "description": "Runner-configured instructions followed by project-local repository instructions. Both are model guidance only and are separate from the WebPi built-in workflow.",
         "properties": {
             "status": {
                 "type": "string",
@@ -1160,7 +1160,7 @@ fn work_on_project_output_schema() -> Value {
     });
     let compact_instructions = json!({
         "type": "object",
-        "description": "Compact Runner-global plus project-local instruction projection, separate from the WebCodex built-in workflow. status reports Workflow Session delta; content_included reports this call's caller-explicit model-facing body projection. False/null/empty body-projection defaults are omitted.",
+        "description": "Compact Runner-global plus project-local instruction projection, separate from the WebPi built-in workflow. status reports Workflow Session delta; content_included reports this call's caller-explicit model-facing body projection. False/null/empty body-projection defaults are omitted.",
         "properties": {
             "status": {
                 "type": "string",

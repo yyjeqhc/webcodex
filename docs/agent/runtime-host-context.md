@@ -5,12 +5,12 @@ Status: implemented in the runtime/Runner contract; host-specific dogfood config
 This note defines the bounded Runner-registration host context that helps a
 model or operator choose the right execution path for a known machine.
 
-The need is practical rather than a new inventory system. WebCodex already knows
+The need is practical rather than a new inventory system. WebPi already knows
 which Runner is online, what it can do, which projects it owns, and its live
 build/process state. What it cannot currently express is stable local knowledge
 such as:
 
-- one Runner is running on the same host as the WebCodex Server, so Server
+- one Runner is running on the same host as the WebPi Server, so Server
   operations should normally use that Runner directly instead of first trying
   SSH back into the same machine;
 - one development host normally sends Internet traffic through its host proxy,
@@ -18,7 +18,7 @@ such as:
 - a host is primarily a high-performance development machine rather than a
   control/server machine;
 - service management on a host uses the ordinary host-local service mechanism
-  rather than a special WebCodex lifecycle.
+  rather than a special WebPi lifecycle.
 
 These statements are useful planning context, but none of them is execution
 truth or authority.
@@ -55,9 +55,9 @@ human-authored descriptions:
     "source": "runner_config",
     "role": "server_host",
     "runtime": "Prefer this Runner for operations on this host instead of SSHing back into the same host.",
-    "service": "WebCodex Server lifecycle uses the normal host-local service mechanism.",
+    "service": "WebPi Server lifecycle uses the normal host-local service mechanism.",
     "network": null,
-    "architecture": "This host is the WebCodex control/server host."
+    "architecture": "This host is the WebPi control/server host."
   }
 }
 ```
@@ -92,8 +92,8 @@ extension mechanism.
 [host_context]
 role = "server_host"
 runtime = "Prefer this Runner for Server-host operations instead of SSHing back into the same machine."
-service = "WebCodex Server lifecycle uses the ordinary host-local service mechanism."
-architecture = "This host runs the WebCodex Server/control plane."
+service = "WebPi Server lifecycle uses the ordinary host-local service mechanism."
+architecture = "This host runs the WebPi Server/control plane."
 ```
 
 The planning consequence is intentionally narrow: when the model needs to

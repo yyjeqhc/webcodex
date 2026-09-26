@@ -1,21 +1,13 @@
 use webcodex::{server_binary_action, ServerBinaryAction};
 
-// The default Tokio worker stack on macOS and Windows is too small for the
-// deepest Server request paths exercised by local/project runtimes. Keep this
-// explicit instead of requiring callers to set RUST_MIN_STACK for
-// `webcodex share` or packaged Server launches.
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+// The default Tokio worker stack is too small for the deepest Server request
+// paths exercised by local/project runtimes on supported desktop/server OSes.
+// Keep this explicit instead of requiring callers to set RUST_MIN_STACK for
+// `webpi share`, Linux/WSL deployments, or packaged Server launches.
 const SERVER_RUNTIME_STACK_SIZE: usize = 8 * 1024 * 1024;
 
 fn server_runtime_stack_size() -> Option<usize> {
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
-    {
-        Some(SERVER_RUNTIME_STACK_SIZE)
-    }
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    {
-        None
-    }
+    Some(SERVER_RUNTIME_STACK_SIZE)
 }
 
 fn build_server_runtime() -> std::io::Result<tokio::runtime::Runtime> {
@@ -57,7 +49,7 @@ mod tests {
 
     #[test]
     fn server_runtime_uses_large_worker_stack() {
-        let runtime = build_server_runtime().expect("build WebCodex Server runtime");
+        let runtime = build_server_runtime().expect("build WebPi Server runtime");
         let stack_size = runtime.block_on(async {
             tokio::spawn(async {
                 // SAFETY: pthread_self returns the current worker thread and
@@ -65,11 +57,11 @@ mod tests {
                 unsafe { libc::pthread_get_stacksize_np(libc::pthread_self()) }
             })
             .await
-            .expect("observe WebCodex Server worker")
+            .expect("observe WebPi Server worker")
         });
         assert!(
             stack_size >= SERVER_RUNTIME_STACK_SIZE,
-            "WebCodex Server worker stack was {stack_size} bytes; expected at least {SERVER_RUNTIME_STACK_SIZE}"
+            "WebPi Server worker stack was {stack_size} bytes; expected at least {SERVER_RUNTIME_STACK_SIZE}"
         );
     }
 }
@@ -80,6 +72,17 @@ mod windows_tests {
     #[test]
     fn server_runtime_uses_large_worker_stack_policy() {
         assert_eq!(server_runtime_stack_size(), Some(SERVER_RUNTIME_STACK_SIZE));
-        build_server_runtime().expect("build WebCodex Server runtime");
+        build_server_runtime().expect("build WebPi Server runtime");
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod linux_tests {
+    use super::*;
+
+    #[test]
+    fn server_runtime_uses_large_worker_stack_policy() {
+        assert_eq!(server_runtime_stack_size(), Some(SERVER_RUNTIME_STACK_SIZE));
+        build_server_runtime().expect("build WebPi Server runtime");
     }
 }

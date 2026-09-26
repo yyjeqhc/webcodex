@@ -629,10 +629,7 @@ async fn download_tunnel_client_asset(url: &str, destination: &Path) -> Result<(
         .map_err(|_| download_error("could not initialize the download client"))?;
     let mut response = client
         .get(url)
-        .header(
-            USER_AGENT,
-            format!("webcodex/{}", env!("CARGO_PKG_VERSION")),
-        )
+        .header(USER_AGENT, super::managed_download_user_agent())
         .send()
         .await
         .map_err(|error| {

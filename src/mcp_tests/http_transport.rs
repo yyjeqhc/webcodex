@@ -22,6 +22,54 @@ async fn legacy_mcp_jsonrpc(service: &Service, token: &str, body: Value) -> (Sta
     (status, body)
 }
 
+async fn legacy_mcp_raw_json(service: &Service, token: &str, body: &str) -> (StatusCode, Value) {
+    let mut response = TestClient::post("http://localhost/mcp")
+        .bearer_auth(token)
+        .add_header("content-type", "application/json", true)
+        .body(body.to_string())
+        .send(service)
+        .await;
+    let status = effective_status(&response);
+    let body = response.take_json::<Value>().await.unwrap();
+    (status, body)
+}
+
+#[tokio::test]
+async fn mcp_malformed_json_is_parse_error() {
+    let config = test_config(Some("secret"));
+    let (_tmp, db) = test_db();
+    let runtime = Arc::new(test_runtime());
+    let service = Service::new(build_test_router(config, db, runtime));
+
+    let (status, body) = legacy_mcp_raw_json(&service, "secret", "{").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["error"]["code"], -32700);
+    assert_eq!(body["error"]["message"], "Parse error");
+    assert!(body["id"].is_null());
+}
+
+#[tokio::test]
+async fn mcp_valid_json_with_invalid_request_shape_is_invalid_request() {
+    let config = test_config(Some("secret"));
+    let (_tmp, db) = test_db();
+    let runtime = Arc::new(test_runtime());
+    let service = Service::new(build_test_router(config, db, runtime));
+
+    for body in [
+        json!([]),
+        json!([{"jsonrpc":"2.0","id":1,"method":"ping"}]),
+        json!(42),
+        json!({"jsonrpc":"2.0","id":1,"params":{}}),
+        json!({"jsonrpc":"2.0","id":1,"method":7,"params":{}}),
+    ] {
+        let (status, response) = legacy_mcp_jsonrpc(&service, "secret", body).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(response["error"]["code"], -32600);
+        assert_eq!(response["error"]["message"], "Invalid Request");
+        assert!(response["id"].is_null());
+    }
+}
+
 async fn stateless_2026_jsonrpc(
     service: &Service,
     token: &str,

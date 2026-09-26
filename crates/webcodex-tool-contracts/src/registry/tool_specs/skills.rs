@@ -17,11 +17,11 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
         ),
         tool_spec(
             "run_skill_resource",
-            "Execute one supported scripts/*.py or scripts/*.sh resource from a trusted Runner-configured live Skill or Runner-installed managed Skill without exposing or retransmitting its source through model context. Configured Skills are live resources: expected_definition_revision fences the selected SKILL.md definition, but resource bytes are read at execution and are not package-revision-pinned; skill_sha256 reports the bytes actually executed. Managed installed Skills additionally require expected_package_revision to fence the immutable package. WebCodex selects the interpreter from the resource extension and callers supply only script arguments; project-content Skills are rejected.",
+            "Execute one supported scripts/*.py or scripts/*.sh resource from a trusted Runner-configured live Skill or Runner-installed managed Skill without exposing or retransmitting its source through model context. Configured Skills are live resources: expected_definition_revision fences the selected SKILL.md definition, but resource bytes are read at execution and are not package-revision-pinned; skill_sha256 reports the bytes actually executed. Managed installed Skills additionally require expected_package_revision to fence the immutable package. WebPi selects the interpreter from the resource extension and callers supply only script arguments; project-content Skills are rejected.",
         ),
         tool_spec(
             "skill_list",
-            "Fresh, bounded discovery of project-scoped Skills, configured live Skills on the Project's exact owning Runner, and active operator-installed immutable Skills. WebCodex does not modify configured Skill roots, but supported scripts from that operator-trusted source may execute through run_skill_resource. Returns lightweight descriptors only; bodies require skill_read_file. trust and package_revision distinguish live configured content from managed installed revisions, and same names across sources remain independently selectable by opaque skill_id.",
+            "Fresh, bounded discovery of project-scoped Skills, configured live Skills on the Project's exact owning Runner, and active operator-installed immutable Skills. WebPi does not modify configured Skill roots, but supported scripts from that operator-trusted source may execute through run_skill_resource. Returns lightweight descriptors only; bodies require skill_read_file. trust and package_revision distinguish live configured content from managed installed revisions, and same names across sources remain independently selectable by opaque skill_id.",
         ),
         tool_spec(
             "skill_read_file",

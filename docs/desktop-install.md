@@ -2,6 +2,8 @@
 
 [English](desktop-install.md) | [简体中文](desktop-install.zh-CN.md)
 
+> **Retired historical reference.** The current WebPi source tree does not ship a `desktop/` implementation or supported Desktop installer. Do not use the commands, release links, credentials paths, or product recommendations below as current installation guidance. Use [Full Setup](PERSONAL_SETUP.md) or [Quick Trial](QUICK_START.md). This page is retained only as design/history evidence and therefore preserves historical WebCodex names.
+
 For normal Windows or macOS personal use, **WebCodex Desktop + the official OpenAI Secure Tunnel is the recommended path**. It keeps the Server and Runner local, gives ChatGPT a private Tunnel connection, and avoids making first-time users configure reverse proxies, OAuth, system services, or a public WebCodex endpoint.
 
 The normal path is intentionally product-level; you do not need to understand the Runner registry, `runtime_project_id`, the internal MCP authorization file, or launchd internals:

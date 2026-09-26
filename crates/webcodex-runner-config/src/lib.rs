@@ -37,6 +37,10 @@ pub fn isolate_webpi_process_environment() {
 /// Desktop injects provider credentials under these private source names. Only
 /// explicit MCP env_from_env mappings may inherit them, not ordinary job children.
 pub const DESKTOP_MCP_ENV_PREFIX: &str = "WEBPI_DESKTOP_MCP_";
+/// Legacy Desktop MCP source prefix. It remains filtered from ambient job
+/// environments so an upgraded WebPi process cannot leak credentials/config
+/// inherited from an older installation.
+pub const LEGACY_DESKTOP_MCP_ENV_PREFIX: &str = "WEBCODEX_DESKTOP_MCP_";
 
 /// Default Runner project registry selected for a new system-level install.
 pub const DEFAULT_INIT_PROJECT_REGISTRY_DIR: &str = "/etc/webpi/project-registry";

@@ -1,10 +1,10 @@
 <div id="app" style="font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;padding:16px;border:1px solid var(--color-border-primary,rgba(127,127,127,.35));border-radius:12px;max-width:920px;color:var(--color-text-primary,inherit);background:var(--color-background-primary,transparent)">
   <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
-    <strong style="font-size:17px">WebCodex Computer</strong>
+    <strong style="font-size:17px">WebPi Computer</strong>
     <span id="state" style="font-size:12px">HTML loaded</span>
   </div>
   <div style="margin-top:12px;border:1px solid var(--color-border-secondary,rgba(127,127,127,.25));border-radius:10px;overflow:hidden;background:rgba(127,127,127,.08);min-height:180px;display:flex;align-items:center;justify-content:center">
-    <img id="screenshot" alt="WebCodex Computer screenshot" style="display:none;max-width:100%;max-height:min(72vh,900px);object-fit:contain" />
+    <img id="screenshot" alt="WebPi Computer screenshot" style="display:none;max-width:100%;max-height:min(72vh,900px);object-fit:contain" />
     <div id="empty" style="padding:28px;font-size:13px;text-align:center">Waiting for the computer_snapshot tool result…</div>
   </div>
   <div id="meta" style="margin-top:10px;font-size:12px">Minimal MCP Apps handshake · waiting for initialization</div>
@@ -130,7 +130,7 @@
     try {
       const result = await request("ui/initialize", {
         protocolVersion: APP_PROTOCOL,
-        appInfo: { name: "webcodex-computer-app", title: "WebCodex Computer", version: "1.0.0" },
+        appInfo: { name: "webpi-computer-app", title: "WebPi Computer", version: "1.0.0" },
         appCapabilities: {}
       });
       const protocol = result && typeof result === "object" && typeof result.protocolVersion === "string"

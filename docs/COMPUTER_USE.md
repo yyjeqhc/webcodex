@@ -1,6 +1,6 @@
 # Computer Use roadmap
 
-This page tracks the implementation order for WebCodex Computer Use. It is a roadmap, not a duplicate semantic or authorization specification. Current authority, scope, retry, and privacy contracts remain defined by [Authentication](AUTH_MODEL.md#computer-observation-and-control-authorization), the model-facing tool definitions, and the Runner implementation.
+This page tracks the implementation order for WebPi Computer Use. It is a roadmap, not a duplicate semantic or authorization specification. Current authority, scope, retry, and privacy contracts remain defined by [Authentication](AUTH_MODEL.md#computer-observation-and-control-authorization), the model-facing tool definitions, and the Runner implementation.
 
 ## Current substrate
 
@@ -24,7 +24,7 @@ Windows and macOS expose the same two narrow model-facing actions: `computer_obs
 
 Every fresh list replaces the Runner's process-local application registry, so IDs from an earlier generation become stale. Runner restart also invalidates every prior ID. The private Windows record stores the exact AppsFolder PIDL. The private macOS record stores the canonical application URL/path, bundle identifier/display/executable metadata, and `stat` identity for the bundle directory, `Contents/Info.plist`, and executable. Immediately before launch, Windows performs another bounded AppsFolder enumeration and requires an exact PIDL match; macOS reobtains the Foundation application roots and reconstructs the same bounded bundle/filesystem identity at the canonical path. Disappearance, ambiguity, metadata change, executable change, or same-path replacement returns `stale_application` before native launch. These private identities never cross the Runner boundary.
 
-Launch accepts only `client_id` and the opaque `application_id`. Windows submits the freshly revalidated Shell item by PIDL. macOS submits the freshly revalidated application URL to public `NSWorkspace.openApplication(at:configuration:completionHandler:)` exactly once with activation, prompting/error UI, Recent Items, hide/hide-others, forced new instance, and alternate-running-copy substitution disabled; arguments and environment are explicitly empty, and no document, URL target, or custom Apple event is supplied. It accepts no caller executable/path/bundle ID, argv, cwd, environment, shell command, PowerShell/cmd/script, URL/protocol launcher, `run_process` fallback, focus, activation, or input. The launch request is not a promise to create a new process, window, or instance: either platform may route it to the exact already-running application. Success means only that the native launch request completed successfully; it does not mean a usable window is ready, and WebCodex does not additionally activate or focus anything.
+Launch accepts only `client_id` and the opaque `application_id`. Windows submits the freshly revalidated Shell item by PIDL. macOS submits the freshly revalidated application URL to public `NSWorkspace.openApplication(at:configuration:completionHandler:)` exactly once with activation, prompting/error UI, Recent Items, hide/hide-others, forced new instance, and alternate-running-copy substitution disabled; arguments and environment are explicitly empty, and no document, URL target, or custom Apple event is supplied. It accepts no caller executable/path/bundle ID, argv, cwd, environment, shell command, PowerShell/cmd/script, URL/protocol launcher, `run_process` fallback, focus, activation, or input. The launch request is not a promise to create a new process, window, or instance: either platform may route it to the exact already-running application. Success means only that the native launch request completed successfully; it does not mean a usable window is ready, and WebPi does not additionally activate or focus anything.
 
 The canonical workflow is therefore:
 
@@ -119,7 +119,7 @@ This is intentionally separate from application launch. It solves the observed f
 
 ### CU-6 — normalized element state and observation generation
 
-Expose low-cost read-only state needed to choose the next semantic action without returning sensitive values. Prefer normalized WebCodex affordances over platform-specific AX vocabulary, for example:
+Expose low-cost read-only state needed to choose the next semantic action without returning sensitive values. Prefer normalized WebPi affordances over platform-specific AX vocabulary, for example:
 
 ```text
 role / subrole
@@ -236,7 +236,7 @@ Windows UIA parity
 -> clipboard (Windows production accepted; macOS native parity implemented)
 ```
 
-Windows parity should map UI Automation patterns into the same WebCodex semantic action/affordance vocabulary instead of exposing a second OS-specific model API.
+Windows parity should map UI Automation patterns into the same WebPi semantic action/affordance vocabulary instead of exposing a second OS-specific model API.
 
 Windows Computer Use current planned mainline capabilities are implemented, independently reviewed, and production/integration validated; future work should be driven by observed product friction rather than checklist parity.
 

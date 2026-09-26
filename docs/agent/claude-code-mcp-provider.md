@@ -1,7 +1,7 @@
 # Claude Code MCP provider (experimental)
 
 `webcodex-runner` can use `claude mcp serve` for one allowlisted, single-call
-search capability while WebCodex remains the online MCP/API, authorization,
+search capability while WebPi remains the online MCP/API, authorization,
 session, project, permission, timeout, and audit boundary.
 
 This provider is experimental, disabled by default, and not recommended for
@@ -33,21 +33,21 @@ project process start the provider performs MCP `initialize`, sends
 available only when its configured tool name is present and the discovered
 input schema contains all fields required by the adapter. Use the names exposed
 by the installed Claude Code version. This ordinary routing path never executes
-WebCodex file writes or edits.
+WebPi file writes or edits.
 
 Strategies:
 
-- `native` — existing WebCodex execution only; this is the default.
+- `native` — existing WebPi execution only; this is the default.
 - `claude_code` — return a structured provider error when Claude is disabled,
   missing, incompatible, or fails.
 - `claude_code_then_native` — use Claude first. Searches may fall back to the
   existing bounded Native `rg`/`grep` command after failure. Because configured
-  provider routing exposes only read-only search, it never routes a WebCodex
+  provider routing exposes only read-only search, it never routes a WebPi
   write to Claude and has no uncertain-write state.
 
 Claude Code builds do not necessarily expose a search tool. The real smoke with
 Claude Code 2.1.220 exposed `Edit` but no schema-compatible search tool. This
-does not disable WebCodex search when using `native` or `claude_code_then_native`:
+does not disable WebPi search when using `native` or `claude_code_then_native`:
 the latter falls back to the existing bounded Native `rg`/`grep` command. Strict
 `claude_code` strategy instead returns a capability error when no mapped search
 tool is available. Ordinary search routing does not use Claude's `Bash` tool and
@@ -60,7 +60,7 @@ child stderr, and terminates a timed-out child so a late request cannot keep
 running. The next
 call starts a fresh child lazily. It passes only a small environment allowlist
 needed for executable lookup, locale, temporary files, and Claude's local
-configuration. It does not inherit API-key or WebCodex credential variables.
+configuration. It does not inherit API-key or WebPi credential variables.
 
 The search adapter normalizes provider output into project-relative records.
 A recognized, completed response with no records uses search exit status 1, so
@@ -70,16 +70,16 @@ or otherwise untrusted path fails with a bounded provider error (or uses the
 configured Native fallback); it is never silently converted into an empty
 successful search.
 
-WebCodex `read_files` always keeps its Native file-read implementation in ordinary
+WebPi `read_files` always keeps its Native file-read implementation in ordinary
 provider routing. That routing path does not discover, map, or call Claude's
 `Read` tool.
 
-Claude tools remain an agent-internal implementation detail. WebCodex builds
+Claude tools remain an agent-internal implementation detail. WebPi builds
 its public MCP `tools/list`, runtime registry, OAuth policy, and OpenAPI from
-the static WebCodex tool definitions only. Claude `tools/list` output is never
+the static WebPi tool definitions only. Claude `tools/list` output is never
 inserted into those registries. A Claude upgrade may therefore add `Read`,
 `Bash`, `Write`, `Edit`, or other names to provider discovery without making
-any of them visible to an external WebCodex client. Public names and input
+any of them visible to an external WebPi client. Public names and input
 schemas, including `write_project_file` and `apply_text_edits`, are identical
 with the provider disabled or enabled.
 
@@ -184,7 +184,7 @@ fallback. Strict `claude_code` mode records `selected_provider=claude_code`,
 compatible search tool is mapped.
 
 All provider strings are allowlisted or bounded, discovered names are sorted,
-deduplicated, and capped at 64, and only the configured WebCodex capability
+deduplicated, and capped at 64, and only the configured WebPi capability
 key (`search_project_text`, with `edit_file` accepted from older Runners for
 mixed-version compatibility) is accepted by the server. Provider status never
 contains environment variables, authentication data, Claude configuration,

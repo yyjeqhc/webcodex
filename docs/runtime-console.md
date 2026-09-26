@@ -30,8 +30,8 @@ they do not create Sessions or send messages.
 - **Window activity** is a first-class navigation destination and also appears in
   Project overview. Adapter `_meta["openai/session"]` is hashed into a `ClientWindow`,
   separate from explicit `wc_sess_*` Workflow Sessions. This is an observability view
-  for ChatGPT/WebCodex call correlation. It
-  lists hashed `ClientWindow` identities, current in-flight WebCodex requests,
+  for ChatGPT/WebPi call correlation. It
+  lists hashed `ClientWindow` identities, current in-flight WebPi requests,
   bounded durable call history, linked Workflow Sessions, and explicit recorder
   continuity gaps. It never shows the raw host window value, tool arguments or
   outputs, and it cannot observe model reasoning or determine whether a host UI
@@ -43,7 +43,7 @@ For ordinary non-streaming `tools/call`, Window activity can project three timin
 facts from canonical adapter timestamps: `service_ms` is request-observed to
 response-handoff time, `next_call_gap_ms` is response handoff to the next
 meaningful same-Window/same-principal request, and `cycle_ms` is request start to
-the next meaningful request start. The gap is explicitly outside-WebCodex time;
+the next meaningful request start. The gap is explicitly outside-WebPi time;
 it may include network, host scheduling, model inference, user interaction, or
 other unobservable work and is never presented as model think/reasoning time.
 Status/discovery calls and MCP App controller/polling calls (including Goal Plan state and Agent continuation bind/state/acquire/prepare/finish/recovery/unbind traffic) remain ordinary Window-seen evidence but do not count as meaningful business activity or break the meaningful sequence. Model visibility is not the classifier: real read/search/edit/Git/process/validation/work calls remain meaningful. Overlapping calls

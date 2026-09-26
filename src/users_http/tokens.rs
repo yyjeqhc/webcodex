@@ -45,6 +45,14 @@ pub(crate) struct ListApiTokensRequest {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct UpdateApiTokenScopesRequest {
+    pub username: String,
+    pub token_id: String,
+    pub scopes: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub(crate) struct RevokeApiTokenRequest {
     pub token_id: String,
     pub username: String,
@@ -449,6 +457,176 @@ pub(crate) async fn tokens_list(req: &mut Request, depot: &mut Depot, res: &mut 
         "user_id": user.id,
         "tokens": tokens,
         "count": tokens.len(),
+    })));
+}
+
+/// `POST /api/tokens/update_scopes` — replace the scopes on one existing user PAT.
+///
+/// This preserves the token id/hash/prefix, so an existing client credential does
+/// not need to be rotated. Bootstrap/admin may manage any user; normal users may
+/// update only their own tokens. Revoked, expired, and agent tokens are rejected.
+#[handler]
+pub(crate) async fn tokens_update_scopes(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let body: UpdateApiTokenScopesRequest = match req.parse_json().await {
+        Ok(body) => body,
+        Err(error) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(json_error(
+                StatusCode::BAD_REQUEST,
+                format!("invalid request body: {error}"),
+            ));
+            return;
+        }
+    };
+    let Some(auth) = depot.obtain::<AuthContext>().ok() else {
+        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+        res.render(json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "no auth context",
+        ));
+        return;
+    };
+    if let Err((code, message)) = reject_agent_token(auth) {
+        res.status_code(code);
+        res.render(json_error(code, message));
+        return;
+    }
+    let username = match validate_username(&body.username) {
+        Ok(username) => username,
+        Err(error) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(json_error(StatusCode::BAD_REQUEST, error));
+            return;
+        }
+    };
+    if let Err((code, message)) = require_admin_or_self(auth, &username) {
+        res.status_code(code);
+        res.render(json_error(code, message));
+        return;
+    }
+    let token_id = body.token_id.trim();
+    if token_id.is_empty() {
+        res.status_code(StatusCode::BAD_REQUEST);
+        res.render(json_error(
+            StatusCode::BAD_REQUEST,
+            "token_id cannot be empty",
+        ));
+        return;
+    }
+    let scopes = match validate_scopes(&body.scopes) {
+        Ok(scopes) => scopes,
+        Err(error) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(json_error(StatusCode::BAD_REQUEST, error));
+            return;
+        }
+    };
+    if scopes.iter().any(|scope| scope == SCOPE_ADMIN) && !auth.is_admin_caller() {
+        res.status_code(StatusCode::FORBIDDEN);
+        res.render(json_error(
+            StatusCode::FORBIDDEN,
+            "only admin/bootstrap callers may grant the admin scope",
+        ));
+        return;
+    }
+    let Some(db) = crate::get_db(depot) else {
+        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+        res.render(json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "DB not available",
+        ));
+        return;
+    };
+    let user = match require_user_by_username(&db, &username) {
+        Ok(user) => user,
+        Err((code, message)) => {
+            res.status_code(code);
+            res.render(json_error(code, message));
+            return;
+        }
+    };
+    if user.is_disabled() {
+        res.status_code(StatusCode::FORBIDDEN);
+        res.render(json_error(StatusCode::FORBIDDEN, "user is disabled"));
+        return;
+    }
+    let existing = match db.get_api_key_by_id(token_id) {
+        Ok(Some(key)) if key.user_id == user.id => key,
+        Ok(Some(_)) => {
+            res.status_code(StatusCode::FORBIDDEN);
+            res.render(json_error(
+                StatusCode::FORBIDDEN,
+                "token does not belong to the specified user",
+            ));
+            return;
+        }
+        Ok(None) => {
+            res.status_code(StatusCode::NOT_FOUND);
+            res.render(json_error(StatusCode::NOT_FOUND, "token not found"));
+            return;
+        }
+        Err(error) => {
+            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+            res.render(json_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                error.to_string(),
+            ));
+            return;
+        }
+    };
+    if !existing.is_user_token() {
+        res.status_code(StatusCode::BAD_REQUEST);
+        res.render(json_error(
+            StatusCode::BAD_REQUEST,
+            "only user PAT scopes can be updated by this endpoint",
+        ));
+        return;
+    }
+    if existing.is_revoked() {
+        res.status_code(StatusCode::CONFLICT);
+        res.render(json_error(
+            StatusCode::CONFLICT,
+            "revoked token scopes cannot be updated",
+        ));
+        return;
+    }
+    if existing.is_expired(chrono::Utc::now().timestamp()) {
+        res.status_code(StatusCode::CONFLICT);
+        res.render(json_error(
+            StatusCode::CONFLICT,
+            "expired token scopes cannot be updated",
+        ));
+        return;
+    }
+    let changed = existing.scopes_vec() != scopes;
+    if !changed {
+        res.render(Json(json!({
+            "success": true,
+            "changed": false,
+            "token": token_summary(&existing),
+        })));
+        return;
+    }
+    let updated = match db.update_api_key_scopes(token_id, &scopes_to_string(&scopes)) {
+        Ok(Some(key)) => key,
+        Ok(None) => {
+            res.status_code(StatusCode::NOT_FOUND);
+            res.render(json_error(StatusCode::NOT_FOUND, "token not found"));
+            return;
+        }
+        Err(error) => {
+            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+            res.render(json_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                error.to_string(),
+            ));
+            return;
+        }
+    };
+    res.render(Json(json!({
+        "success": true,
+        "changed": true,
+        "token": token_summary(&updated),
     })));
 }
 

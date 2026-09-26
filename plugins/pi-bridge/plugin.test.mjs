@@ -216,6 +216,7 @@ test("Pi bridge loads native Pi extensions, hooks, skills, prompts, and context 
       "pi_extension_tool_list",
       "pi_extension_tool_call",
       "pi_resource_reload",
+      "pi_package_inspect",
       "pi_package_list",
       "pi_package_install",
       "pi_package_update",
@@ -336,6 +337,29 @@ test("Pi bridge exposes native skill, prompt, context, command, and TypeBox tool
 
     assert.equal(responses[7].result.isError, true);
     assert.match(responses[7].result.content[0].text, /invalid|schema|value|string/i);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Pi package inspect is exposed as a read-only preflight and rejects non-npm sources without mutation", async () => {
+  const root = tempRoot();
+  try {
+    const responses = await runProtocol(root, [
+      init(1),
+      { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} },
+      call("pi_package_inspect", { source: "git:github.com/example/repo" }, 3),
+    ]);
+    const tool = responses[1].result.tools.find((entry) => entry.name === "pi_package_inspect");
+    assert.ok(tool);
+    assert.equal(tool.annotations.readOnlyHint, true);
+    assert.equal(tool.annotations.destructiveHint, false);
+    assert.equal(tool.annotations.openWorldHint, true);
+    assert.equal(responses[2].result.isError, true);
+    assert.match(responses[2].result.content[0].text, /only explicit npm:/u);
+    assert.equal(responses[2].result.structuredContent.source, "git:github.com/example/repo");
+    assert.equal(responses[2].result.structuredContent.sourceReviewComplete, false);
+    assert.equal(fs.existsSync(path.join(root, ".webpi-state", "pi-agent", "settings.json")), false);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

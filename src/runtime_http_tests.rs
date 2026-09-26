@@ -5,6 +5,111 @@ use salvo::test::{ResponseExt, TestClient};
 use salvo::Service;
 use std::time::Duration;
 
+#[test]
+fn validated_kernel_result_fails_closed_on_internal_outcome_inconsistency() {
+    let ok = validated_kernel_result(
+        "runtime_status",
+        true,
+        Some(ToolResult::ok(serde_json::json!({"status": "ok"}))),
+    )
+    .expect("well-formed kernel outcome");
+    assert!(ok.success);
+
+    let missing = validated_kernel_result("runtime_status", true, None);
+    assert_eq!(missing.err(), Some("kernel_outcome_missing_result"));
+
+    let mismatch = validated_kernel_result(
+        "runtime_status",
+        true,
+        Some(ToolResult::err("private internal failure detail")),
+    );
+    assert_eq!(mismatch.err(), Some("kernel_outcome_success_mismatch"));
+    assert!(!KERNEL_OUTCOME_INTERNAL_ERROR.contains("private internal failure detail"));
+    assert_eq!(
+        KERNEL_OUTCOME_INTERNAL_ERROR,
+        "Tool runtime returned an incomplete internal outcome"
+    );
+}
+
+#[test]
+fn computer_snapshot_http_projection_bounds_large_inline_image_and_preserves_full_metadata() {
+    use base64::{engine::general_purpose, Engine as _};
+    use image::codecs::jpeg::JpegEncoder;
+    use sha2::{Digest, Sha256};
+
+    let (width, height, full) = [(1280u32, 720u32), (1024, 576), (960, 540)]
+        .into_iter()
+        .find_map(|(width, height)| {
+            let mut rgba = image::RgbaImage::new(width, height);
+            for (x, y, pixel) in rgba.enumerate_pixels_mut() {
+                let v = ((x.wrapping_mul(37) ^ y.wrapping_mul(91) ^ (x + y).wrapping_mul(13))
+                    & 0xff) as u8;
+                *pixel = image::Rgba([v, v.rotate_left(2), v.rotate_left(5), 255]);
+            }
+            [82u8, 76, 70, 64, 58].into_iter().find_map(|quality| {
+                let mut bytes = Vec::new();
+                JpegEncoder::new_with_quality(&mut bytes, quality)
+                    .encode_image(&rgba)
+                    .expect("encode full JPEG fixture");
+                (bytes.len() > crate::image_preview::ACTION_INLINE_PREVIEW_MAX_BYTES
+                    && bytes.len() < crate::artifact_policy::MAX_MCP_IMAGE_BYTES)
+                    .then_some((width, height, bytes))
+            })
+        })
+        .expect("fixture must fit full-image budget while exceeding preview budget");
+    let full_sha256 = format!("{:x}", Sha256::digest(&full));
+    let mut response = ToolResult::ok(json!({
+        "client_id": "runner-a",
+        "display_id": "display_abcdefghijklmnop",
+        "snapshot_generation": 1,
+        "source_width": width,
+        "source_height": height,
+        "width": width,
+        "height": height,
+        "mime_type": "image/jpeg",
+        "file_bytes": full.len(),
+        "sha256": full_sha256,
+        "captured_at_unix_ms": 1,
+        "content_base64": general_purpose::STANDARD.encode(&full),
+    }));
+
+    project_http_computer_snapshot_preview("computer_observe", &mut response);
+    let preview = general_purpose::STANDARD
+        .decode(response.output["content_base64"].as_str().unwrap())
+        .unwrap();
+    assert!(preview.len() <= crate::image_preview::ACTION_INLINE_PREVIEW_MAX_BYTES);
+    assert!(preview.len() < full.len());
+    assert_eq!(response.output["content_delivery"], "inline_preview");
+    assert_eq!(response.output["full_image_file_bytes"], full.len() as u64);
+    assert_eq!(response.output["full_image_sha256"], full_sha256);
+    assert_eq!(response.output["file_bytes"], preview.len() as u64);
+    assert_ne!(response.output["sha256"], full_sha256);
+    assert_eq!(response.output["source_width"], width);
+    assert_eq!(response.output["source_height"], height);
+}
+
+#[test]
+fn computer_snapshot_http_projection_leaves_small_inline_image_unchanged() {
+    use base64::{engine::general_purpose, Engine as _};
+    let full = vec![0xff, 0xd8, 0xff, 0xd9];
+    let encoded = general_purpose::STANDARD.encode(&full);
+    let mut response = ToolResult::ok(json!({
+        "width": 1,
+        "height": 1,
+        "mime_type": "image/jpeg",
+        "file_bytes": full.len(),
+        "sha256": "0".repeat(64),
+        "content_base64": encoded,
+    }));
+    project_http_computer_snapshot_preview("computer_observe", &mut response);
+    assert_eq!(
+        response.output["content_base64"],
+        general_purpose::STANDARD.encode(full)
+    );
+    assert!(response.output.get("content_delivery").is_none());
+    assert!(response.output.get("full_image_file_bytes").is_none());
+}
+
 #[path = "runtime_http/tests/import_http_tests.rs"]
 mod import_http_tests;
 #[path = "runtime_http/tests/jobs_tests.rs"]

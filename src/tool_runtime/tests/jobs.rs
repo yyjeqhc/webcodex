@@ -846,7 +846,7 @@ async fn run_shell_failure_reports_command_started_and_output_tail() {
     assert!(!result.success);
     let error = result.error.as_deref().unwrap_or("");
     assert!(error.contains("Command exited with status 7"));
-    assert!(error.contains("No files were modified by WebCodex itself"));
+    assert!(error.contains("No files were modified by WebPi itself"));
     assert!(error.contains("stdout_tail"));
     assert!(error.contains("stderr_tail"));
     assert!(error.contains("Retry guidance"));
@@ -2469,7 +2469,22 @@ async fn runtime_status_and_list_runners_filter_concurrency_counts_by_auth_group
         .await;
     assert_eq!(
         compact_a.output["jobs"],
-        json!({"active_count": 2, "running_count": 1, "queued_count": 1})
+        json!({
+            "active_count": 2,
+            "running_count": 1,
+            "queued_count": 1,
+            "operation_phase_counts": {
+                "accepted": 0,
+                "queued": 1,
+                "running": 1,
+                "waiting_external": 0,
+                "recovering": 0,
+                "succeeded": 0,
+                "failed": 0,
+                "rolled_back": 0,
+                "outcome_unknown": 0,
+            }
+        })
     );
 }
 

@@ -2,8 +2,9 @@ use serde_json::{json, Value};
 
 use super::common::{
     array_schema, cargo_test_count_assertion_schema, job_activity_schema, nullable_schema,
-    observe_job_continuation_schema, permission_decision_schema, recovery_kind_schema, schema_type,
-    session_hint_schema, suggested_tool_call_schema, wrapped_output_schema,
+    observe_job_continuation_schema, operation_phase_schema, permission_decision_schema,
+    recovery_kind_schema, schema_type, session_hint_schema, suggested_tool_call_schema,
+    wrapped_output_schema,
 };
 
 fn validation_job_projection_schema() -> Value {
@@ -27,6 +28,19 @@ fn validation_job_projection_schema() -> Value {
     })
 }
 
+fn terminal_outcome_schema(description: &str) -> Value {
+    json!({
+        "anyOf": [
+            {
+                "type": "string",
+                "enum": ["succeeded", "failed", "timed_out", "cancelled", "outcome_unknown"]
+            },
+            {"type": "null"}
+        ],
+        "description": description,
+    })
+}
+
 fn job_terminal_continuation_projection_schema() -> Value {
     json!({
         "type": "object",
@@ -38,7 +52,7 @@ fn job_terminal_continuation_projection_schema() -> Value {
             "state": {"type": "string", "enum": ["waiting", "triggered"]},
             "delivery_state": {"type": "string", "enum": ["not_ready", "pending", "prepared", "delivered", "delivery_unknown"]},
             "terminal_status": nullable_schema("string", "Sparse canonical terminal Job status."),
-            "terminal_outcome": nullable_schema("string", "Sparse canonical terminal Job outcome."),
+            "terminal_outcome": terminal_outcome_schema("Sparse canonical terminal Job outcome. lost maps to outcome_unknown and never implies retry safety."),
             "automatic_resume_available": {"type": "boolean"},
             "expires_at": {"type": "integer"},
             "fallback_tool": {"type": "string", "const": "observe_jobs"}
@@ -785,29 +799,110 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
     match name {
         "run_detached_process" => {
             let mut schema = wrapped_output_schema(vec![
-                ("job_id", schema_type("string", "Stable detached Job id when admitted or recovered.")),
+                (
+                    "job_id",
+                    schema_type(
+                        "string",
+                        "Stable detached Job id when admitted or recovered.",
+                    ),
+                ),
                 ("kind", schema_type("string", "Detached Job kind.")),
-                ("status", schema_type("string", "Current detached Job status at admission.")),
+                (
+                    "status",
+                    schema_type("string", "Current detached Job status at admission."),
+                ),
                 ("project", schema_type("string", "Configured project id.")),
-                ("execution_source", schema_type("string", "Always run_detached_process on successful admission.")),
-                ("purpose", schema_type("string", "Declared execution purpose.")),
-                ("process_summary", schema_type("string", "Bounded body-free detached process summary.")),
-                ("cwd", schema_type("string", "Resolved project-relative cwd.")),
-                ("shell", schema_type("string", "Always direct_argv for detached process Jobs.")),
-                ("executor", schema_type("string", "Always agent for detached process Jobs.")),
-                ("execution_state", json!({"type": "string", "enum": ["pending", "not_started"]})),
-                ("command_started", schema_type("boolean", "Whether the payload is known to have started at tool return.")),
-                ("command_completed", schema_type("boolean", "Whether the payload completed before tool return.")),
-                ("command_ok", schema_type("boolean", "False on pre-start tool failures.")),
-                ("exit_code", nullable_schema("integer", "Process exit code; null for detached initiation responses.")),
-                ("failure_kind", nullable_schema("string", "Structured detached initiation failure kind.")),
-                ("tool_failure", schema_type("boolean", "True for WebCodex initiation/runtime failures.")),
-                ("terminal", schema_type("boolean", "False after successful detached Job admission.")),
-                ("effective_timeout_secs", schema_type("integer", "Total detached process execution lifetime in seconds.")),
-                ("created_at", schema_type("integer", "Durable Job creation timestamp.")),
+                (
+                    "execution_source",
+                    schema_type(
+                        "string",
+                        "Always run_detached_process on successful admission.",
+                    ),
+                ),
+                (
+                    "purpose",
+                    schema_type("string", "Declared execution purpose."),
+                ),
+                (
+                    "process_summary",
+                    schema_type("string", "Bounded body-free detached process summary."),
+                ),
+                (
+                    "cwd",
+                    schema_type("string", "Resolved project-relative cwd."),
+                ),
+                (
+                    "shell",
+                    schema_type("string", "Always direct_argv for detached process Jobs."),
+                ),
+                (
+                    "executor",
+                    schema_type("string", "Always agent for detached process Jobs."),
+                ),
+                (
+                    "execution_state",
+                    json!({"type": "string", "enum": ["pending", "not_started"]}),
+                ),
+                (
+                    "command_started",
+                    schema_type(
+                        "boolean",
+                        "Whether the payload is known to have started at tool return.",
+                    ),
+                ),
+                (
+                    "command_completed",
+                    schema_type(
+                        "boolean",
+                        "Whether the payload completed before tool return.",
+                    ),
+                ),
+                (
+                    "command_ok",
+                    schema_type("boolean", "False on pre-start tool failures."),
+                ),
+                (
+                    "exit_code",
+                    nullable_schema(
+                        "integer",
+                        "Process exit code; null for detached initiation responses.",
+                    ),
+                ),
+                (
+                    "failure_kind",
+                    nullable_schema("string", "Structured detached initiation failure kind."),
+                ),
+                (
+                    "tool_failure",
+                    schema_type("boolean", "True for WebPi initiation/runtime failures."),
+                ),
+                (
+                    "terminal",
+                    schema_type("boolean", "False after successful detached Job admission."),
+                ),
+                (
+                    "effective_timeout_secs",
+                    schema_type(
+                        "integer",
+                        "Total detached process execution lifetime in seconds.",
+                    ),
+                ),
+                (
+                    "created_at",
+                    schema_type("integer", "Durable Job creation timestamp."),
+                ),
                 ("continuation", observe_job_continuation_schema()),
-                ("last_update_seq", nullable_schema("integer", "Latest agent update sequence when available.")),
-                ("redispatched", schema_type("boolean", "False when bounded replay recovery returns an existing Job.")),
+                (
+                    "last_update_seq",
+                    nullable_schema("integer", "Latest agent update sequence when available."),
+                ),
+                (
+                    "redispatched",
+                    schema_type(
+                        "boolean",
+                        "False when bounded replay recovery returns an existing Job.",
+                    ),
+                ),
             ]);
             schema["properties"]["output"]["properties"]["execution_source"]["const"] =
                 json!("run_detached_process");
@@ -821,17 +916,40 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 .as_object_mut()
                 .expect("run_process output properties");
             properties.remove("suggested_call");
-            properties.insert("skill_id".to_string(), schema_type("string", "Opaque Runner Skill identity that supplied the executed script."));
-            properties.insert("skill_name".to_string(), schema_type("string", "Selected trusted Runner Skill name."));
-            properties.insert("skill_path".to_string(), schema_type("string", "Executed package-relative scripts/ resource path."));
-            properties.insert("skill_sha256".to_string(), schema_type("string", "SHA-256 of the actual script bytes executed."));
+            properties.insert(
+                "skill_id".to_string(),
+                schema_type(
+                    "string",
+                    "Opaque Runner Skill identity that supplied the executed script.",
+                ),
+            );
+            properties.insert(
+                "skill_name".to_string(),
+                schema_type("string", "Selected trusted Runner Skill name."),
+            );
+            properties.insert(
+                "skill_path".to_string(),
+                schema_type(
+                    "string",
+                    "Executed package-relative scripts/ resource path.",
+                ),
+            );
+            properties.insert(
+                "skill_sha256".to_string(),
+                schema_type("string", "SHA-256 of the actual script bytes executed."),
+            );
             properties.insert("skill_trust".to_string(), json!({"type":"string","enum":["operator_configured_guidance","operator_installed_guidance"]}));
             properties.insert("skill_definition_revision".to_string(), schema_type("string", "Validated SKILL.md definition revision for this execution; configured script resource bytes remain live until execution."));
             properties.insert("skill_package_revision".to_string(), nullable_schema("string", "Immutable package revision for installed Skills; null for configured live Skills."));
-            properties.insert("state_changed".to_string(), schema_type("boolean", "False on pre-start Skill validation failures."));
+            properties.insert(
+                "state_changed".to_string(),
+                schema_type("boolean", "False on pre-start Skill validation failures."),
+            );
             if let Some(execution_source) = properties.get_mut("execution_source") {
                 execution_source["const"] = json!("run_skill_resource");
-                execution_source["description"] = json!("Canonical source is run_skill_resource. Diagnostic telemetry may be omitted on ordinary synchronous terminal success.");
+                execution_source["description"] = json!(
+                    "Canonical source is run_skill_resource. Diagnostic telemetry may be omitted on ordinary synchronous terminal success."
+                );
             }
             schema["allOf"]
                 .as_array_mut()
@@ -856,35 +974,59 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             let mut properties = vec![
                 (
                     "duration_ms",
-                    schema_type("integer", "Process duration in milliseconds. Diagnostic telemetry: omitted on ordinary synchronous terminal success and from the default model-facing failure projection."),
+                    schema_type(
+                        "integer",
+                        "Process duration in milliseconds. Diagnostic telemetry: omitted on ordinary synchronous terminal success and from the default model-facing failure projection.",
+                    ),
                 ),
                 (
                     "exit_code",
-                    nullable_schema("integer", "Process exit code when it must be explicit; omitted when outer success already implies 0."),
+                    nullable_schema(
+                        "integer",
+                        "Process exit code when it must be explicit; omitted when outer success already implies 0.",
+                    ),
                 ),
                 (
                     "stdout_tail",
-                    schema_type("string", "Bounded stdout tail; omitted when empty on ordinary synchronous terminal success."),
+                    schema_type(
+                        "string",
+                        "Bounded stdout tail; omitted when empty on ordinary synchronous terminal success.",
+                    ),
                 ),
                 (
                     "stderr_tail",
-                    schema_type("string", "Bounded stderr tail; omitted when empty on ordinary synchronous terminal success."),
+                    schema_type(
+                        "string",
+                        "Bounded stderr tail; omitted when empty on ordinary synchronous terminal success.",
+                    ),
                 ),
                 (
                     "stdout_lines",
-                    schema_type("integer", "Captured stdout line count; omitted when zero on ordinary synchronous terminal success."),
+                    schema_type(
+                        "integer",
+                        "Captured stdout line count; omitted when zero on ordinary synchronous terminal success.",
+                    ),
                 ),
                 (
                     "stderr_lines",
-                    schema_type("integer", "Captured stderr line count; omitted when zero on ordinary synchronous terminal success."),
+                    schema_type(
+                        "integer",
+                        "Captured stderr line count; omitted when zero on ordinary synchronous terminal success.",
+                    ),
                 ),
                 (
                     "stdout_truncated",
-                    schema_type("boolean", "Whether stdout_tail was truncated; false is omitted on ordinary synchronous terminal success."),
+                    schema_type(
+                        "boolean",
+                        "Whether stdout_tail was truncated; false is omitted on ordinary synchronous terminal success.",
+                    ),
                 ),
                 (
                     "stderr_truncated",
-                    schema_type("boolean", "Whether stderr_tail was truncated; false is omitted on ordinary synchronous terminal success."),
+                    schema_type(
+                        "boolean",
+                        "Whether stderr_tail was truncated; false is omitted on ordinary synchronous terminal success.",
+                    ),
                 ),
                 (
                     "command_started",
@@ -902,7 +1044,10 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 ),
                 (
                     "command_ok",
-                    schema_type("boolean", "Whether the process completed with exit code 0; omitted on ordinary synchronous terminal success."),
+                    schema_type(
+                        "boolean",
+                        "Whether the process completed with exit code 0; omitted on ordinary synchronous terminal success.",
+                    ),
                 ),
                 (
                     "failure_kind",
@@ -915,10 +1060,16 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                     "tool_failure",
                     schema_type(
                         "boolean",
-                        "True for WebCodex tool/runtime failures; false for child exit status failures. Omitted when false on ordinary synchronous terminal success.",
+                        "True for WebPi tool/runtime failures; false for child exit status failures. Omitted when false on ordinary synchronous terminal success.",
                     ),
                 ),
-                ("purpose", schema_type("string", "Declared execution purpose. Audit metadata: omitted on ordinary synchronous terminal success and from the default model-facing failure projection.")),
+                (
+                    "purpose",
+                    schema_type(
+                        "string",
+                        "Declared execution purpose. Audit metadata: omitted on ordinary synchronous terminal success and from the default model-facing failure projection.",
+                    ),
+                ),
                 (
                     "process_summary",
                     schema_type(
@@ -928,21 +1079,27 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 ),
                 (
                     "cwd",
-                    schema_type("string", "Resolved project-relative cwd. Diagnostic telemetry: omitted on ordinary synchronous terminal success and from the default model-facing failure projection."),
+                    schema_type(
+                        "string",
+                        "Resolved project-relative cwd. Diagnostic telemetry: omitted on ordinary synchronous terminal success and from the default model-facing failure projection.",
+                    ),
                 ),
-                ("executor", json!({
-                    "type": "string",
-                    "const": "agent",
-                    "description": "Runner-backed executor. Diagnostic telemetry: omitted on ordinary synchronous terminal success and from the default model-facing failure projection."
-                })),
+                (
+                    "executor",
+                    json!({
+                        "type": "string",
+                        "const": "agent",
+                        "description": "Runner-backed executor. Diagnostic telemetry: omitted on ordinary synchronous terminal success and from the default model-facing failure projection."
+                    }),
+                ),
                 (
                     "execution_source",
-                    schema_type("string", "Canonical source is run_process. Diagnostic telemetry: omitted on ordinary synchronous terminal success when canonical and from the default model-facing failure projection."),
+                    schema_type(
+                        "string",
+                        "Canonical source is run_process. Diagnostic telemetry: omitted on ordinary synchronous terminal success when canonical and from the default model-facing failure projection.",
+                    ),
                 ),
-                (
-                    "execution_state",
-                    process_execution_state_schema(),
-                ),
+                ("execution_state", process_execution_state_schema()),
                 (
                     "expectation_satisfied",
                     schema_type(
@@ -974,35 +1131,59 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             let mut properties = vec![
                 (
                     "duration_ms",
-                    schema_type("integer", "Script duration in milliseconds. Diagnostic telemetry: omitted on ordinary synchronous terminal success and from the default model-facing failure projection."),
+                    schema_type(
+                        "integer",
+                        "Script duration in milliseconds. Diagnostic telemetry: omitted on ordinary synchronous terminal success and from the default model-facing failure projection.",
+                    ),
                 ),
                 (
                     "exit_code",
-                    nullable_schema("integer", "Interpreter exit code when it must be explicit; omitted when outer success already implies 0."),
+                    nullable_schema(
+                        "integer",
+                        "Interpreter exit code when it must be explicit; omitted when outer success already implies 0.",
+                    ),
                 ),
                 (
                     "stdout_tail",
-                    schema_type("string", "Bounded stdout tail; omitted when empty on ordinary synchronous terminal success."),
+                    schema_type(
+                        "string",
+                        "Bounded stdout tail; omitted when empty on ordinary synchronous terminal success.",
+                    ),
                 ),
                 (
                     "stderr_tail",
-                    schema_type("string", "Bounded stderr tail; omitted when empty on ordinary synchronous terminal success."),
+                    schema_type(
+                        "string",
+                        "Bounded stderr tail; omitted when empty on ordinary synchronous terminal success.",
+                    ),
                 ),
                 (
                     "stdout_lines",
-                    schema_type("integer", "Captured stdout line count; omitted when zero on ordinary synchronous terminal success."),
+                    schema_type(
+                        "integer",
+                        "Captured stdout line count; omitted when zero on ordinary synchronous terminal success.",
+                    ),
                 ),
                 (
                     "stderr_lines",
-                    schema_type("integer", "Captured stderr line count; omitted when zero on ordinary synchronous terminal success."),
+                    schema_type(
+                        "integer",
+                        "Captured stderr line count; omitted when zero on ordinary synchronous terminal success.",
+                    ),
                 ),
                 (
                     "stdout_truncated",
-                    schema_type("boolean", "Whether stdout_tail was truncated; false is omitted on ordinary synchronous terminal success."),
+                    schema_type(
+                        "boolean",
+                        "Whether stdout_tail was truncated; false is omitted on ordinary synchronous terminal success.",
+                    ),
                 ),
                 (
                     "stderr_truncated",
-                    schema_type("boolean", "Whether stderr_tail was truncated; false is omitted on ordinary synchronous terminal success."),
+                    schema_type(
+                        "boolean",
+                        "Whether stderr_tail was truncated; false is omitted on ordinary synchronous terminal success.",
+                    ),
                 ),
                 (
                     "command_started",
@@ -1036,10 +1217,16 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                     "tool_failure",
                     schema_type(
                         "boolean",
-                        "True for WebCodex tool/runtime failures; false for interpreter exit status failures. Omitted when false on ordinary synchronous terminal success.",
+                        "True for WebPi tool/runtime failures; false for interpreter exit status failures. Omitted when false on ordinary synchronous terminal success.",
                     ),
                 ),
-                ("purpose", schema_type("string", "Declared execution purpose. Audit metadata: omitted on ordinary synchronous terminal success and from the default model-facing failure projection.")),
+                (
+                    "purpose",
+                    schema_type(
+                        "string",
+                        "Declared execution purpose. Audit metadata: omitted on ordinary synchronous terminal success and from the default model-facing failure projection.",
+                    ),
+                ),
                 (
                     "script_summary",
                     schema_type(
@@ -1053,21 +1240,27 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 ),
                 (
                     "cwd",
-                    schema_type("string", "Resolved project-relative cwd. Diagnostic telemetry: omitted on ordinary synchronous terminal success and from the default model-facing failure projection."),
+                    schema_type(
+                        "string",
+                        "Resolved project-relative cwd. Diagnostic telemetry: omitted on ordinary synchronous terminal success and from the default model-facing failure projection.",
+                    ),
                 ),
-                ("executor", json!({
-                    "type": "string",
-                    "const": "agent",
-                    "description": "Runner-backed executor. Diagnostic telemetry: omitted on ordinary synchronous terminal success and from the default model-facing failure projection."
-                })),
+                (
+                    "executor",
+                    json!({
+                        "type": "string",
+                        "const": "agent",
+                        "description": "Runner-backed executor. Diagnostic telemetry: omitted on ordinary synchronous terminal success and from the default model-facing failure projection."
+                    }),
+                ),
                 (
                     "execution_source",
-                    schema_type("string", "Canonical source is run_script. Diagnostic telemetry: omitted on ordinary synchronous terminal success when canonical and from the default model-facing failure projection."),
+                    schema_type(
+                        "string",
+                        "Canonical source is run_script. Diagnostic telemetry: omitted on ordinary synchronous terminal success when canonical and from the default model-facing failure projection.",
+                    ),
                 ),
-                (
-                    "execution_state",
-                    process_execution_state_schema(),
-                ),
+                ("execution_state", process_execution_state_schema()),
             ];
             properties.extend(structured_continuation_properties());
             let mut schema = wrapped_output_schema(properties);
@@ -1089,14 +1282,8 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                     "exit_code",
                     nullable_schema("integer", "Process exit code, when available."),
                 ),
-                (
-                    "stdout_tail",
-                    schema_type("string", "Bounded stdout tail."),
-                ),
-                (
-                    "stderr_tail",
-                    schema_type("string", "Bounded stderr tail."),
-                ),
+                ("stdout_tail", schema_type("string", "Bounded stdout tail.")),
+                ("stderr_tail", schema_type("string", "Bounded stderr tail.")),
                 (
                     "stdout_lines",
                     schema_type("integer", "Total captured stdout line count."),
@@ -1142,10 +1329,13 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                     "tool_failure",
                     schema_type(
                         "boolean",
-                        "True for WebCodex tool/runtime failures; false for command exit status failures or a healthy durable handoff.",
+                        "True for WebPi tool/runtime failures; false for command exit status failures or a healthy durable handoff.",
                     ),
                 ),
-                ("purpose", schema_type("string", "Declared execution purpose.")),
+                (
+                    "purpose",
+                    schema_type("string", "Declared execution purpose."),
+                ),
                 (
                     "command_summary",
                     schema_type("string", "Bounded first-line command summary."),
@@ -1164,11 +1354,14 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                         "Actual selected shell, configured executor shell, or remote SSH executor.",
                     ),
                 ),
-                ("executor", json!({
-                    "type": "string",
-                    "const": "agent",
-                    "description": "Runner-backed executor."
-                })),
+                (
+                    "executor",
+                    json!({
+                        "type": "string",
+                        "const": "agent",
+                        "description": "Runner-backed executor."
+                    }),
+                ),
                 (
                     "ssh_resource",
                     nullable_schema(
@@ -1190,55 +1383,67 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
         | "close_session_shell" => Some(persistent_shell_output_schema()),
         "run_job" => {
             let mut schema = wrapped_output_schema(vec![
-            ("job_id", schema_type("string", "Runtime job id.")),
-            ("kind", schema_type("string", "Job kind.")),
-            ("status", schema_type("string", "Initial job status.")),
-            ("project", schema_type("string", "Project id.")),
-            ("purpose", schema_type("string", "Declared execution purpose.")),
-            (
-                "command_summary",
-                schema_type("string", "Bounded first-line command summary."),
-            ),
-            (
-                "cwd",
-                schema_type(
-                    "string",
-                    "Resolved project-relative cwd, or the selected SSH resource's remote cwd.",
+                ("job_id", schema_type("string", "Runtime job id.")),
+                ("kind", schema_type("string", "Job kind.")),
+                ("status", schema_type("string", "Initial job status.")),
+                ("project", schema_type("string", "Project id.")),
+                (
+                    "purpose",
+                    schema_type("string", "Declared execution purpose."),
                 ),
-            ),
-            (
-                "shell",
-                schema_type(
-                    "string",
-                    "Selected shell, configured executor shell, or remote SSH executor.",
+                (
+                    "command_summary",
+                    schema_type("string", "Bounded first-line command summary."),
                 ),
-            ),
-            ("executor", json!({
-                "type": "string",
-                "const": "agent",
-                "description": "Runner-backed executor."
-            })),
-            (
-                "ssh_resource",
-                nullable_schema(
-                    "string",
-                    "Named Runner-local SSH resource used for this job, when any.",
+                (
+                    "cwd",
+                    schema_type(
+                        "string",
+                        "Resolved project-relative cwd, or the selected SSH resource's remote cwd.",
+                    ),
                 ),
-            ),
-            (
-                "execution_state",
-                schema_type("string", "Initial execution state; started after acceptance."),
-            ),
-            (
-                "created_at",
-                schema_type("integer", "Job creation timestamp."),
-            ),
-            ("continuation", observe_job_continuation_schema()),
-            (
-                "last_update_seq",
-                nullable_schema("integer", "Runner protocol diagnostic sequence; not a bounded-wait token."),
-            ),
-        ]);
+                (
+                    "shell",
+                    schema_type(
+                        "string",
+                        "Selected shell, configured executor shell, or remote SSH executor.",
+                    ),
+                ),
+                (
+                    "executor",
+                    json!({
+                        "type": "string",
+                        "const": "agent",
+                        "description": "Runner-backed executor."
+                    }),
+                ),
+                (
+                    "ssh_resource",
+                    nullable_schema(
+                        "string",
+                        "Named Runner-local SSH resource used for this job, when any.",
+                    ),
+                ),
+                (
+                    "execution_state",
+                    schema_type(
+                        "string",
+                        "Initial execution state; started after acceptance.",
+                    ),
+                ),
+                (
+                    "created_at",
+                    schema_type("integer", "Job creation timestamp."),
+                ),
+                ("continuation", observe_job_continuation_schema()),
+                (
+                    "last_update_seq",
+                    nullable_schema(
+                        "integer",
+                        "Runner protocol diagnostic sequence; not a bounded-wait token.",
+                    ),
+                ),
+            ]);
             require_success_output_field(&mut schema, "continuation");
             Some(schema)
         }
@@ -1250,10 +1455,16 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                     "Bounded job summaries; never includes stdout or stderr bodies.",
                 ),
             ),
-            ("count", schema_type("integer", "Returned job summary count.")),
+            (
+                "count",
+                schema_type("integer", "Returned job summary count."),
+            ),
             (
                 "matched_count",
-                schema_type("integer", "Caller-visible Job count matching all filters before limit."),
+                schema_type(
+                    "integer",
+                    "Caller-visible Job count matching all filters before limit.",
+                ),
             ),
             (
                 "truncated",
@@ -1270,15 +1481,24 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ),
             (
                 "already_stop_requested",
-                schema_type("boolean", "True when the job was already stop_requested before this call."),
+                schema_type(
+                    "boolean",
+                    "True when the job was already stop_requested before this call.",
+                ),
             ),
             (
                 "stop_request_accepted",
-                schema_type("boolean", "True when this call requested or applied a stop."),
+                schema_type(
+                    "boolean",
+                    "True when this call requested or applied a stop.",
+                ),
             ),
             (
                 "target_was_active_at_request",
-                schema_type("boolean", "True when status_before was running-like or stop_requested."),
+                schema_type(
+                    "boolean",
+                    "True when status_before was running-like or stop_requested.",
+                ),
             ),
             (
                 "terminal",
@@ -1286,15 +1506,24 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ),
             (
                 "terminal_pending",
-                schema_type("boolean", "True when status_after is stop_requested and waiting for terminal status."),
+                schema_type(
+                    "boolean",
+                    "True when status_after is stop_requested and waiting for terminal status.",
+                ),
             ),
             (
                 "final_status",
-                nullable_schema("string", "Terminal final status when terminal=true; null otherwise."),
+                nullable_schema(
+                    "string",
+                    "Terminal final status when terminal=true; null otherwise.",
+                ),
             ),
             (
                 "stop_effect",
-                schema_type("string", "Precise stop outcome: requested, stopped, already_finished, already_stop_requested, not_found, forbidden, or confirmation_required."),
+                schema_type(
+                    "string",
+                    "Precise stop outcome: requested, stopped, already_finished, already_stop_requested, not_found, forbidden, or confirmation_required.",
+                ),
             ),
             ("job_id", schema_type("string", "Runtime job id.")),
             ("project", schema_type("string", "Project id.")),
@@ -1309,240 +1538,410 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ),
             (
                 "command_started",
-                schema_type("boolean", "Always false; stop_job does not start a shell command."),
+                schema_type(
+                    "boolean",
+                    "Always false; stop_job does not start a shell command.",
+                ),
             ),
             (
                 "ownership_basis",
-                schema_type("string", "Ownership basis: project_and_session or unknown_session_project_only."),
+                schema_type(
+                    "string",
+                    "Ownership basis: project_and_session or unknown_session_project_only.",
+                ),
             ),
         ])),
         "wait_for_job_terminal" => Some(wrapped_output_schema(vec![
-            ("wait_id", schema_type("string", "Durable caller-owned one-shot terminal wait identity.")),
-            ("job_id", schema_type("string", "Exact existing Job execution identity.")),
-            ("state", schema_type("string", "Wait lifecycle: waiting or triggered.")),
-            ("delivery_state", schema_type("string", "Host delivery lifecycle: not_ready, pending, prepared, delivered, or delivery_unknown. pending means durable terminal truth exists but no accepted Host delivery has been proved. delivery_unknown means dispatch crossed its durable fence but acknowledgement is unknown and is never silently retried.")),
-            ("terminal_status", nullable_schema("string", "Canonical terminal Job status when triggered; null while waiting.")),
-            ("terminal_outcome", nullable_schema("string", "Bounded terminal outcome classification when triggered; null while waiting.")),
-            ("replayed", schema_type("boolean", "Whether this was exact keyed registration replay.")),
-            ("state_changed", schema_type("boolean", "Whether this call durably created, matched, or advanced delivery state for this wait.")),
-            ("automatic_resume_available", schema_type("boolean", "True only when a real current production Host continuation carrier is installed.")),
-            ("expires_at", schema_type("integer", "Bounded wait/event expiry as Unix seconds.")),
-            ("fallback_tool", schema_type("string", "Explicit logs/details and recovery fallback; currently observe_jobs.")),
+            (
+                "wait_id",
+                schema_type(
+                    "string",
+                    "Durable caller-owned one-shot terminal wait identity.",
+                ),
+            ),
+            (
+                "job_id",
+                schema_type("string", "Exact existing Job execution identity."),
+            ),
+            (
+                "state",
+                schema_type("string", "Wait lifecycle: waiting or triggered."),
+            ),
+            (
+                "delivery_state",
+                schema_type(
+                    "string",
+                    "Host delivery lifecycle: not_ready, pending, prepared, delivered, or delivery_unknown. pending means durable terminal truth exists but no accepted Host delivery has been proved. delivery_unknown means dispatch crossed its durable fence but acknowledgement is unknown and is never silently retried.",
+                ),
+            ),
+            (
+                "terminal_status",
+                nullable_schema(
+                    "string",
+                    "Canonical terminal Job status when triggered; null while waiting.",
+                ),
+            ),
+            (
+                "terminal_outcome",
+                terminal_outcome_schema(
+                    "Bounded terminal outcome classification when triggered; null while waiting. outcome_unknown means terminal reconciliation could not prove the true side-effect outcome and never grants retry authority.",
+                ),
+            ),
+            (
+                "replayed",
+                schema_type(
+                    "boolean",
+                    "Whether this was exact keyed registration replay.",
+                ),
+            ),
+            (
+                "state_changed",
+                schema_type(
+                    "boolean",
+                    "Whether this call durably created, matched, or advanced delivery state for this wait.",
+                ),
+            ),
+            (
+                "automatic_resume_available",
+                schema_type(
+                    "boolean",
+                    "True only when a real current production Host continuation carrier is installed.",
+                ),
+            ),
+            (
+                "expires_at",
+                schema_type("integer", "Bounded wait/event expiry as Unix seconds."),
+            ),
+            (
+                "fallback_tool",
+                schema_type(
+                    "string",
+                    "Explicit logs/details and recovery fallback; currently observe_jobs.",
+                ),
+            ),
         ])),
-        "present_job_terminal_continuation" => Some(wrapped_output_schema(vec![
-            ("job_terminal_continuation", job_terminal_continuation_projection_schema()),
-        ])),
-        "job_terminal_continuation_bind" | "job_terminal_continuation_unbind" => Some(wrapped_output_schema(vec![
-            ("job_terminal_continuation", job_terminal_continuation_projection_schema()),
-            ("host_binding", job_terminal_host_binding_schema()),
-            ("state_changed", schema_type("boolean", "Whether the process-local Host binding changed.")),
-        ])),
+        "present_job_terminal_continuation" => Some(wrapped_output_schema(vec![(
+            "job_terminal_continuation",
+            job_terminal_continuation_projection_schema(),
+        )])),
+        "job_terminal_continuation_bind" | "job_terminal_continuation_unbind" => {
+            Some(wrapped_output_schema(vec![
+                (
+                    "job_terminal_continuation",
+                    job_terminal_continuation_projection_schema(),
+                ),
+                ("host_binding", job_terminal_host_binding_schema()),
+                (
+                    "state_changed",
+                    schema_type("boolean", "Whether the process-local Host binding changed."),
+                ),
+            ]))
+        }
         "job_terminal_continuation_state" => Some(wrapped_output_schema(vec![
-            ("job_terminal_continuation", job_terminal_continuation_projection_schema()),
+            (
+                "job_terminal_continuation",
+                job_terminal_continuation_projection_schema(),
+            ),
             ("host_binding", job_terminal_host_binding_schema()),
-            ("app_protocol", json!({
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                    "prepared_attempt_id": nullable_schema("string", "App-private exact prepared attempt identity, present only after the durable dispatch fence.")
-                },
-                "required": ["prepared_attempt_id"]
-            })),
+            (
+                "app_protocol",
+                json!({
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "prepared_attempt_id": nullable_schema("string", "App-private exact prepared attempt identity, present only after the durable dispatch fence.")
+                    },
+                    "required": ["prepared_attempt_id"]
+                }),
+            ),
         ])),
         "job_terminal_continuation_prepare" => Some(wrapped_output_schema(vec![
-            ("wait_id", schema_type("string", "Exact Job terminal wait identity.")),
-            ("job_id", schema_type("string", "Exact Job execution identity.")),
-            ("delivery_state", schema_type("string", "Prepared delivery state.")),
-            ("attempt_id", schema_type("string", "Exact durable Job terminal delivery attempt identity.")),
-            ("dispatch_observation", schema_type("string", "dispatch_prepared after the durable prepare fence.")),
-            ("state_changed", schema_type("boolean", "True when this call crosses pending to prepared.")),
-            ("app_protocol", json!({
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {"automatic_message": {"type": "string", "maxLength": 1024}},
-                "required": ["automatic_message"]
-            })),
+            (
+                "wait_id",
+                schema_type("string", "Exact Job terminal wait identity."),
+            ),
+            (
+                "job_id",
+                schema_type("string", "Exact Job execution identity."),
+            ),
+            (
+                "delivery_state",
+                schema_type("string", "Prepared delivery state."),
+            ),
+            (
+                "attempt_id",
+                schema_type(
+                    "string",
+                    "Exact durable Job terminal delivery attempt identity.",
+                ),
+            ),
+            (
+                "dispatch_observation",
+                schema_type(
+                    "string",
+                    "dispatch_prepared after the durable prepare fence.",
+                ),
+            ),
+            (
+                "state_changed",
+                schema_type(
+                    "boolean",
+                    "True when this call crosses pending to prepared.",
+                ),
+            ),
+            (
+                "app_protocol",
+                json!({
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {"automatic_message": {"type": "string", "maxLength": 1024}},
+                    "required": ["automatic_message"]
+                }),
+            ),
         ])),
         "job_terminal_continuation_finish" => Some(wrapped_output_schema(vec![
-            ("wait_id", schema_type("string", "Exact Job terminal wait identity.")),
-            ("job_id", schema_type("string", "Exact Job execution identity.")),
-            ("attempt_id", schema_type("string", "Exact durable delivery attempt identity.")),
-            ("delivery_state", schema_type("string", "delivered or delivery_unknown.")),
-            ("dispatch_observation", schema_type("string", "dispatch_accepted or delivery_unknown.")),
-            ("state_changed", schema_type("boolean", "True when prepared delivery is finalized.")),
+            (
+                "wait_id",
+                schema_type("string", "Exact Job terminal wait identity."),
+            ),
+            (
+                "job_id",
+                schema_type("string", "Exact Job execution identity."),
+            ),
+            (
+                "attempt_id",
+                schema_type("string", "Exact durable delivery attempt identity."),
+            ),
+            (
+                "delivery_state",
+                schema_type("string", "delivered or delivery_unknown."),
+            ),
+            (
+                "dispatch_observation",
+                schema_type("string", "dispatch_accepted or delivery_unknown."),
+            ),
+            (
+                "state_changed",
+                schema_type("boolean", "True when prepared delivery is finalized."),
+            ),
         ])),
         "observe_jobs" => Some(observe_jobs_output_schema()),
         "job_tail" => {
             let mut schema = wrapped_output_schema(vec![
-            ("job_id", schema_type("string", "Runtime job id.")),
-            ("suggested_call", list_jobs_recovery_call_schema(false)),
-            (
-                "session_id",
-                nullable_schema("string", "Workflow Session that owns this job, when recorded."),
-            ),
-            (
-                "ssh_resource",
-                nullable_schema(
-                    "string",
-                    "Named Runner-local SSH resource used for this job, when any.",
+                ("job_id", schema_type("string", "Runtime job id.")),
+                ("suggested_call", list_jobs_recovery_call_schema(false)),
+                (
+                    "session_id",
+                    nullable_schema(
+                        "string",
+                        "Workflow Session that owns this job, when recorded.",
+                    ),
                 ),
-            ),
-            (
-                "wait_outcome",
-                schema_type(
-                    "string",
-                    "Bounded wait outcome: immediate (no wait or state already available), updated (non-terminal update after waiting), terminal (job terminal), or timeout (wait elapsed with no observable change; a normal result, not an error).",
+                (
+                    "ssh_resource",
+                    nullable_schema(
+                        "string",
+                        "Named Runner-local SSH resource used for this job, when any.",
+                    ),
                 ),
-            ),
-            (
-                "waited_ms",
-                schema_type("integer", "Milliseconds actually spent waiting, when a bounded wait was requested."),
-            ),
-            (
-                "changed",
-                schema_type("boolean", "Whether the lifecycle revision or Server epoch differs from the supplied token. Token format upgrades alone do not set changed."),
-            ),
-            (
-                "terminal",
-                schema_type("boolean", "Whether the job is in a terminal state per the canonical job terminal definition."),
-            ),
-            (
-                "exit_code",
-                nullable_schema("integer", "Process exit code, when available."),
-            ),
-            (
-                "command_execution_state",
-                job_command_execution_state_schema(),
-            ),
-            (
-                "structured_execution",
-                job_structured_execution_metadata_schema(),
-            ),
-            ("activity", job_activity_schema()),
-            (
-                "stdout_tail",
-                schema_type("string", "Bounded stdout baseline, automatic delta, conservative partial-line replay, explicit cursor segment, or reset-recovery tail. An unterminated final line may repeat until its line boundary is observed."),
-            ),
-            (
-                "stderr_tail",
-                schema_type("string", "Bounded stderr baseline, automatic delta, conservative partial-line replay, explicit cursor segment, or reset-recovery tail. An unterminated final line may repeat until its line boundary is observed."),
-            ),
-            (
-                "stdout_lines",
-                schema_type("integer", "Total observed stdout line count."),
-            ),
-            (
-                "stderr_lines",
-                schema_type("integer", "Total observed stderr line count."),
-            ),
-            (
-                "stdout_truncated",
-                schema_type("boolean", "Whether the requested stdout baseline/delta/reset projection was bounded or unavailable."),
-            ),
-            (
-                "stderr_truncated",
-                schema_type("boolean", "Whether the requested stderr baseline/delta/reset projection was bounded or unavailable."),
-            ),
-            (
-                "log_delta_status",
-                json!({
-                    "type": "string",
-                    "enum": ["baseline", "delta", "unchanged", "reset"],
-                    "description": "baseline is a bounded non-delta selection (first observation or explicit pagination); delta contains newly observable output and may conservatively replay an unterminated final line; unchanged has no model-facing output; reset is a bounded recovery tail because exact continuity could not be proved."
-                }),
-            ),
-            (
-                "stdout_delta_reset",
-                schema_type("boolean", "Whether stdout automatic delta continuity was reset for this observation."),
-            ),
-            (
-                "stderr_delta_reset",
-                schema_type("boolean", "Whether stderr automatic delta continuity was reset for this observation."),
-            ),
-            (
-                "stdout_retained_from_line",
-                nullable_schema("integer", "First retained absolute stdout line."),
-            ),
-            (
-                "stderr_retained_from_line",
-                nullable_schema("integer", "First retained absolute stderr line."),
-            ),
-            (
-                "earlier_stdout_unavailable",
-                schema_type("boolean", "True when earlier stdout is outside the bounded retained tail."),
-            ),
-            (
-                "earlier_stderr_unavailable",
-                schema_type("boolean", "True when earlier stderr is outside the bounded retained tail."),
-            ),
-            (
-                "recovery_state",
-                nullable_schema("string", "Bounded recovery state such as recovering or reconciled."),
-            ),
-            (
-                "recovery_reason_code",
-                nullable_schema("string", "Structured bounded recovery reason code."),
-            ),
-            (
-                "observation_token",
-                json!({
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": webcodex_core::job_observation::MAX_JOB_OBSERVATION_TOKEN_LEN,
-                    "description": "Opaque Job-bound lifecycle/log-delta token for the returned status and frozen log snapshot. Return it unchanged."
-                }),
-            ),
-            (
-                "last_update_seq",
-                nullable_schema("integer", "Runner protocol diagnostic sequence; not a bounded-wait token."),
-            ),
-            ("validation", validation_job_projection_schema()),
-            (
-                "cursor",
-                super::common::open_object_schema(
-                    "Next 1-based stdout/stderr cursors for bounded continuation; an unterminated final line remains pending until its boundary is observed.",
+                (
+                    "wait_outcome",
+                    schema_type(
+                        "string",
+                        "Bounded wait outcome: immediate (no wait or state already available), updated (non-terminal update after waiting), terminal (job terminal), or timeout (wait elapsed with no observable change; a normal result, not an error).",
+                    ),
                 ),
-            ),
-            (
-                "status",
-                schema_type("string", "Job status observed with the log."),
-            ),
-            (
-                "executor",
-                json!({
-                    "type": "string",
-                    "const": "agent",
-                    "description": "Runner-backed Job executor."
-                }),
-            ),
-            (
-                "cwd",
-                nullable_schema(
-                    "string",
-                    "Resolved project-relative cwd or remote SSH cwd, when recorded.",
+                (
+                    "waited_ms",
+                    schema_type(
+                        "integer",
+                        "Milliseconds actually spent waiting, when a bounded wait was requested.",
+                    ),
                 ),
-            ),
-            (
-                "shell",
-                nullable_schema(
-                    "string",
-                    "Selected shell, configured executor shell, or remote SSH executor.",
+                (
+                    "changed",
+                    schema_type(
+                        "boolean",
+                        "Whether the lifecycle revision or Server epoch differs from the supplied token. Token format upgrades alone do not set changed.",
+                    ),
                 ),
-            ),
-            (
-                "purpose",
-                nullable_schema("string", "Declared execution purpose, when recorded."),
-            ),
-            (
-                "command_summary",
-                nullable_schema("string", "Bounded first-line command summary, when recorded."),
-            ),
-            (
-                "detected_summary",
-                super::common::open_object_schema(
-                    "Compact detected operation/build/check/test summary from bounded evidence.",
+                (
+                    "terminal",
+                    schema_type(
+                        "boolean",
+                        "Whether the job is in a terminal state per the canonical job terminal definition.",
+                    ),
                 ),
-            ),
+                (
+                    "exit_code",
+                    nullable_schema("integer", "Process exit code, when available."),
+                ),
+                (
+                    "command_execution_state",
+                    job_command_execution_state_schema(),
+                ),
+                (
+                    "structured_execution",
+                    job_structured_execution_metadata_schema(),
+                ),
+                ("activity", job_activity_schema()),
+                (
+                    "stdout_tail",
+                    schema_type(
+                        "string",
+                        "Bounded stdout baseline, automatic delta, conservative partial-line replay, explicit cursor segment, or reset-recovery tail. An unterminated final line may repeat until its line boundary is observed.",
+                    ),
+                ),
+                (
+                    "stderr_tail",
+                    schema_type(
+                        "string",
+                        "Bounded stderr baseline, automatic delta, conservative partial-line replay, explicit cursor segment, or reset-recovery tail. An unterminated final line may repeat until its line boundary is observed.",
+                    ),
+                ),
+                (
+                    "stdout_lines",
+                    schema_type("integer", "Total observed stdout line count."),
+                ),
+                (
+                    "stderr_lines",
+                    schema_type("integer", "Total observed stderr line count."),
+                ),
+                (
+                    "stdout_truncated",
+                    schema_type(
+                        "boolean",
+                        "Whether the requested stdout baseline/delta/reset projection was bounded or unavailable.",
+                    ),
+                ),
+                (
+                    "stderr_truncated",
+                    schema_type(
+                        "boolean",
+                        "Whether the requested stderr baseline/delta/reset projection was bounded or unavailable.",
+                    ),
+                ),
+                (
+                    "log_delta_status",
+                    json!({
+                        "type": "string",
+                        "enum": ["baseline", "delta", "unchanged", "reset"],
+                        "description": "baseline is a bounded non-delta selection (first observation or explicit pagination); delta contains newly observable output and may conservatively replay an unterminated final line; unchanged has no model-facing output; reset is a bounded recovery tail because exact continuity could not be proved."
+                    }),
+                ),
+                (
+                    "stdout_delta_reset",
+                    schema_type(
+                        "boolean",
+                        "Whether stdout automatic delta continuity was reset for this observation.",
+                    ),
+                ),
+                (
+                    "stderr_delta_reset",
+                    schema_type(
+                        "boolean",
+                        "Whether stderr automatic delta continuity was reset for this observation.",
+                    ),
+                ),
+                (
+                    "stdout_retained_from_line",
+                    nullable_schema("integer", "First retained absolute stdout line."),
+                ),
+                (
+                    "stderr_retained_from_line",
+                    nullable_schema("integer", "First retained absolute stderr line."),
+                ),
+                (
+                    "earlier_stdout_unavailable",
+                    schema_type(
+                        "boolean",
+                        "True when earlier stdout is outside the bounded retained tail.",
+                    ),
+                ),
+                (
+                    "earlier_stderr_unavailable",
+                    schema_type(
+                        "boolean",
+                        "True when earlier stderr is outside the bounded retained tail.",
+                    ),
+                ),
+                (
+                    "recovery_state",
+                    nullable_schema(
+                        "string",
+                        "Bounded recovery state such as recovering or reconciled.",
+                    ),
+                ),
+                (
+                    "recovery_reason_code",
+                    nullable_schema("string", "Structured bounded recovery reason code."),
+                ),
+                (
+                    "observation_token",
+                    json!({
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": webcodex_core::job_observation::MAX_JOB_OBSERVATION_TOKEN_LEN,
+                        "description": "Opaque Job-bound lifecycle/log-delta token for the returned status and frozen log snapshot. Return it unchanged."
+                    }),
+                ),
+                (
+                    "last_update_seq",
+                    nullable_schema(
+                        "integer",
+                        "Runner protocol diagnostic sequence; not a bounded-wait token.",
+                    ),
+                ),
+                ("validation", validation_job_projection_schema()),
+                (
+                    "cursor",
+                    super::common::open_object_schema(
+                        "Next 1-based stdout/stderr cursors for bounded continuation; an unterminated final line remains pending until its boundary is observed.",
+                    ),
+                ),
+                (
+                    "status",
+                    schema_type("string", "Job status observed with the log."),
+                ),
+                (
+                    "executor",
+                    json!({
+                        "type": "string",
+                        "const": "agent",
+                        "description": "Runner-backed Job executor."
+                    }),
+                ),
+                (
+                    "cwd",
+                    nullable_schema(
+                        "string",
+                        "Resolved project-relative cwd or remote SSH cwd, when recorded.",
+                    ),
+                ),
+                (
+                    "shell",
+                    nullable_schema(
+                        "string",
+                        "Selected shell, configured executor shell, or remote SSH executor.",
+                    ),
+                ),
+                (
+                    "purpose",
+                    nullable_schema("string", "Declared execution purpose, when recorded."),
+                ),
+                (
+                    "command_summary",
+                    nullable_schema(
+                        "string",
+                        "Bounded first-line command summary, when recorded.",
+                    ),
+                ),
+                (
+                    "detected_summary",
+                    super::common::open_object_schema(
+                        "Compact detected operation/build/check/test summary from bounded evidence.",
+                    ),
+                ),
             ]);
             require_success_output_field(&mut schema, "activity");
             Some(schema)
@@ -1671,7 +2070,7 @@ fn persistent_shell_output_schema() -> Value {
             "tool_failure",
             schema_type(
                 "boolean",
-                "Whether WebCodex rejected or lost the operation.",
+                "Whether WebPi rejected or lost the operation.",
             ),
         ),
     ])
@@ -1685,6 +2084,7 @@ fn job_summary_schema() -> Value {
             "job_id": schema_type("string", "Runtime job id."),
             "kind": schema_type("string", "Job kind."),
             "status": schema_type("string", "Current job status."),
+            "operation_phase": operation_phase_schema("Canonical cross-domain operation phase derived from the authoritative Job lifecycle plus recovery overlay. This does not replace status."),
             "project": nullable_schema("string", "Project id, when known."),
             "session_id": nullable_schema("string", "Workflow Session that owns this job, when recorded."),
             "ssh_resource": nullable_schema("string", "Named Runner-local SSH resource used for this job, when any."),
@@ -1713,6 +2113,7 @@ fn job_summary_schema() -> Value {
             "job_id",
             "kind",
             "status",
+            "operation_phase",
             "project",
             "executor",
             "created_at",

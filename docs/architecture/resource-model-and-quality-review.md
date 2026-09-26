@@ -1,4 +1,4 @@
-# WebCodex 资源模型与架构质量探索
+# WebPi 资源模型与架构质量探索
 
 状态：探索性评审，不是新的运行时契约。本文会随真实 dogfood 和产品使用证据修订，而不是反过来要求实现服从路线图。2026-09-13 复审后，后续资源路线从 user-private / Memory-first 收缩为 usage-driven 的 Skill / Plugin-first；现有 Memory 保留但冻结扩张，Runner 继续承担执行与资源 placement，而不再作为面向用户的资源 scope。
 
@@ -6,7 +6,7 @@
 
 ## 1. 总体判断与范围
 
-WebCodex 不缺架构：Server/Runner 分离、分层 workspace、统一 ToolDefinition、RunnerOperation、事务式 Memory、精确 Plugin binding、独立 Workflow Session/Job/AgentTask 都已经存在。继续增加一层通用框架，未必比收拢现有概念更好。
+WebPi 不缺架构：Server/Runner 分离、分层 workspace、统一 ToolDefinition、RunnerOperation、事务式 Memory、精确 Plugin binding、独立 Workflow Session/Job/AgentTask 都已经存在。继续增加一层通用框架，未必比收拢现有概念更好。
 
 当前最值得投入的是：**统一观察与描述，收敛规则所有权，保留业务状态机，降低模型决策成本。** 目标应是以后新增一种资源或一种工具时，更少触碰不相关模块，而不是让所有对象实现同一个 CRUD 接口。
 
@@ -42,7 +42,7 @@ WebCodex 不缺架构：Server/Runner 分离、分层 workspace、统一 ToolDef
 | Placement / applicability | 它在哪里运行、在哪个 Project 适用？ | Runner placement、exact Project cwd、Control storage；不是新的 scope |
 | Domain operation | 怎样读取、绑定或执行？ | Skill read、Memory CAS、Plugin describe/call 各自保留 |
 
-这里的 `user` 是产品层“当前 WebCodex 用户可用的个人资源”概念，不等价于新建一个 `AuthContext.user_id` 私有安全域。对当前 self-hosted 模式，能够操作某个 Runner 已经代表对该执行宿主的用户权限；资源抽象不再额外引入 principal namespace、resource ACL、sharing grant 或 admin enumeration 体系。现有 authentication、Runner access、tool scope、Project authority 与 Plugin exact binding 继续按各自边界执行。
+这里的 `user` 是产品层“当前 WebPi 用户可用的个人资源”概念，不等价于新建一个 `AuthContext.user_id` 私有安全域。对当前 self-hosted 模式，能够操作某个 Runner 已经代表对该执行宿主的用户权限；资源抽象不再额外引入 principal namespace、resource ACL、sharing grant 或 admin enumeration 体系。现有 authentication、Runner access、tool scope、Project authority 与 Plugin exact binding 继续按各自边界执行。
 
 Runner 因此从面向用户的资源 scope 降为 **placement / provider host**。例如 configured / managed Skill 可以在产品层解释为 User Skill 的两种 source；Native Plugin 是由 Runner 托管的 User Plugin provider，再通过 exact cwd 等事实决定 Project applicability；Project Skill 仍直接来自 repository。Project 与 User 同名时是否默认优先、并存或 fail closed 属于具体资源的选择语义，不由一个通用 inheritance/ACL 框架决定。
 
@@ -278,7 +278,7 @@ Plugin 已有 `NotStarted / OutcomeUnknown / Completed`，见 [plugin.rs](../../
 - `read_files` 的编号、SHA 与显式 continuation 支撑可追溯分析和受保护修改；`search_project_texts` 一个子查询失败不影响其他查询。
 - 本轮 `show_changes(max_hunk_lines=200)` 顶层正确报告 `diff_hunk_line_limit` 并给出恢复调用，但对应 hunk 同时带有 `truncated=false`，文本又在函数中途结束。按提示使用 `git_diff_hunks`、更窄路径与 400 行上限后取得完整 diff。建议对顶层/条目级完整性元数据增加一致性测试；本轮只记录，不修改该工具。
 - 对不存在的 `src/tool_runtime/context_material.rs` 发起搜索，得到 `search_execution_failed / backend_process_failed / exit_code=2`。重新定位后实际文件是 `context_projection.rs`。相比之下，read_files 对不存在的文件明确返回 `not_found`。建议搜索入口也区分缺失路径与真正后端故障。
-- 一个拟进行只读源码计数的 Python 命令被宿主以“无法确定请求的安全状态”拦截；没有 Runner 执行结果。没有改换通道重试。此事不能归因于 WebCodex 权限策略，报告也不使用该计数结果。产品诊断应区分 host pre-dispatch rejection 与 Runner business error；Runner 未收到请求时不能声称观察到执行状态。
+- 一个拟进行只读源码计数的 Python 命令被宿主以“无法确定请求的安全状态”拦截；没有 Runner 执行结果。没有改换通道重试。此事不能归因于 WebPi 权限策略，报告也不使用该计数结果。产品诊断应区分 host pre-dispatch rejection 与 Runner business error；Runner 未收到请求时不能声称观察到执行状态。
 - `cargo_test` 能把同一执行交给 Job，再与独立阅读重叠，保留了执行身份。其当前结构化 schema 有 package/filter 等参数，却没有 `--lib` 选择项。可评估增加常见 target selector，减少为了精准验证退回 raw Cargo 的需要；不要求默认扩大运行范围。
 
 ### 可用性建议

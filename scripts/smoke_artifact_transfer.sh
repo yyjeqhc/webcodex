@@ -8,10 +8,10 @@ set -euo pipefail
 # checklist, then exits without reading secrets or contacting a server.
 #
 # Active mode:
-#   WEBCODEX_SMOKE_RUN=1 \
-#   WEBCODEX_PUBLIC_URL="https://webcodex.example.com" \
-#   WEBCODEX_TOKEN="<wc_pat_or_allowed_shared_key>" \
-#   WEBCODEX_SMOKE_PROJECT_ID="agent:<client_id>:<smoke-project>" \
+#   WEBPI_SMOKE_RUN=1 \
+#   WEBPI_PUBLIC_URL="https://webpi.example.com" \
+#   WEBPI_TOKEN="<wc_pat_or_allowed_shared_key>" \
+#   WEBPI_SMOKE_PROJECT_ID="agent:<client_id>:<smoke-project>" \
 #   bash scripts/smoke_artifact_transfer.sh
 #
 # This script never prints the token. It uses a pre-registered smoke project
@@ -32,20 +32,20 @@ contact a server, write files, or delete files.
 
 To run the HTTP smoke explicitly:
 
-  WEBCODEX_SMOKE_RUN=1 \\
-  WEBCODEX_PUBLIC_URL="https://webcodex.example.com" \\
-  WEBCODEX_TOKEN="<wc_pat_or_allowed_shared_key>" \\
-  WEBCODEX_SMOKE_PROJECT_ID="agent:<client_id>:<smoke-project>" \\
+  WEBPI_SMOKE_RUN=1 \\
+  WEBPI_PUBLIC_URL="https://webpi.example.com" \\
+  WEBPI_TOKEN="<wc_pat_or_allowed_shared_key>" \\
+  WEBPI_SMOKE_PROJECT_ID="agent:<client_id>:<smoke-project>" \\
   bash scripts/smoke_artifact_transfer.sh
 
-`WEBCODEX_SMOKE_PROJECT_ID` is required in active mode and must name an
+`WEBPI_SMOKE_PROJECT_ID` is required in active mode and must name an
 explicitly registered smoke project.
 
 Optional environment:
-  WEBCODEX_SMOKE_ARTIFACT_PATH   default: $DEFAULT_ARTIFACT_PATH
-  WEBCODEX_SMOKE_ABORT_PATH      default: $DEFAULT_ABORT_PATH
-  WEBCODEX_EXPECTED_OPERATION_COUNT default: $DEFAULT_EXPECTED_OPERATION_COUNT
-  WEBCODEX_MAX_OPERATION_COUNT      default: $DEFAULT_MAX_OPERATION_COUNT
+  WEBPI_SMOKE_ARTIFACT_PATH   default: $DEFAULT_ARTIFACT_PATH
+  WEBPI_SMOKE_ABORT_PATH      default: $DEFAULT_ABORT_PATH
+  WEBPI_EXPECTED_OPERATION_COUNT default: $DEFAULT_EXPECTED_OPERATION_COUNT
+  WEBPI_MAX_OPERATION_COUNT      default: $DEFAULT_MAX_OPERATION_COUNT
   SMOKE_TIMEOUT                  default: 20 seconds per HTTP call
 
 Preconditions:
@@ -68,43 +68,43 @@ Checks covered by active mode:
   8. git_status and show_changes report a clean worktree after cleanup.
 
 Active mode refuses non-smoke project ids unless
-WEBCODEX_SMOKE_ALLOW_NON_SMOKE_PROJECT=1 is set. Custom artifact paths must stay
-under artifacts/smoke/ unless WEBCODEX_SMOKE_ALLOW_CUSTOM_PATHS=1 is set.
+WEBPI_SMOKE_ALLOW_NON_SMOKE_PROJECT=1 is set. Custom artifact paths must stay
+under artifacts/smoke/ unless WEBPI_SMOKE_ALLOW_CUSTOM_PATHS=1 is set.
 EOF
 }
 
-if [ "${WEBCODEX_SMOKE_RUN:-0}" != "1" ]; then
+if [ "${WEBPI_SMOKE_RUN:-0}" != "1" ]; then
     print_checklist
     exit 0
 fi
 
-BASE_URL="${WEBCODEX_PUBLIC_URL:-${BASE_URL:-}}"
-TOKEN="${WEBCODEX_TOKEN:-${TOKEN:-}}"
-PROJECT_ID="${WEBCODEX_SMOKE_PROJECT_ID:-${PROJECT_ID:-}}"
-ARTIFACT_PATH="${WEBCODEX_SMOKE_ARTIFACT_PATH:-$DEFAULT_ARTIFACT_PATH}"
-ABORT_PATH="${WEBCODEX_SMOKE_ABORT_PATH:-$DEFAULT_ABORT_PATH}"
-EXPECTED_OPERATION_COUNT="${WEBCODEX_EXPECTED_OPERATION_COUNT:-$DEFAULT_EXPECTED_OPERATION_COUNT}"
-MAX_OPERATION_COUNT="${WEBCODEX_MAX_OPERATION_COUNT:-$DEFAULT_MAX_OPERATION_COUNT}"
+BASE_URL="${WEBPI_PUBLIC_URL:-${BASE_URL:-}}"
+TOKEN="${WEBPI_TOKEN:-${TOKEN:-}}"
+PROJECT_ID="${WEBPI_SMOKE_PROJECT_ID:-${PROJECT_ID:-}}"
+ARTIFACT_PATH="${WEBPI_SMOKE_ARTIFACT_PATH:-$DEFAULT_ARTIFACT_PATH}"
+ABORT_PATH="${WEBPI_SMOKE_ABORT_PATH:-$DEFAULT_ABORT_PATH}"
+EXPECTED_OPERATION_COUNT="${WEBPI_EXPECTED_OPERATION_COUNT:-$DEFAULT_EXPECTED_OPERATION_COUNT}"
+MAX_OPERATION_COUNT="${WEBPI_MAX_OPERATION_COUNT:-$DEFAULT_MAX_OPERATION_COUNT}"
 TIMEOUT="${SMOKE_TIMEOUT:-20}"
 
 if [ -z "$BASE_URL" ]; then
-    echo "[smoke] WEBCODEX_PUBLIC_URL (or BASE_URL) is required" >&2
+    echo "[smoke] WEBPI_PUBLIC_URL (or BASE_URL) is required" >&2
     exit 2
 fi
 if [ -z "$TOKEN" ]; then
-    echo "[smoke] WEBCODEX_TOKEN (or TOKEN) is required" >&2
+    echo "[smoke] WEBPI_TOKEN (or TOKEN) is required" >&2
     exit 2
 fi
 if [ -z "$PROJECT_ID" ]; then
-    echo "[smoke] WEBCODEX_SMOKE_PROJECT_ID (or PROJECT_ID) is required in active mode" >&2
+    echo "[smoke] WEBPI_SMOKE_PROJECT_ID (or PROJECT_ID) is required in active mode" >&2
     exit 2
 fi
 
 case "$PROJECT_ID" in
     *smoke*) ;;
     *)
-        if [ "${WEBCODEX_SMOKE_ALLOW_NON_SMOKE_PROJECT:-0}" != "1" ]; then
-            echo "[smoke] refusing non-smoke project id; set WEBCODEX_SMOKE_ALLOW_NON_SMOKE_PROJECT=1 to override" >&2
+        if [ "${WEBPI_SMOKE_ALLOW_NON_SMOKE_PROJECT:-0}" != "1" ]; then
+            echo "[smoke] refusing non-smoke project id; set WEBPI_SMOKE_ALLOW_NON_SMOKE_PROJECT=1 to override" >&2
             exit 2
         fi
         ;;
@@ -113,8 +113,8 @@ esac
 case "$ARTIFACT_PATH:$ABORT_PATH" in
     artifacts/smoke/*:artifacts/smoke/*) ;;
     *)
-        if [ "${WEBCODEX_SMOKE_ALLOW_CUSTOM_PATHS:-0}" != "1" ]; then
-            echo "[smoke] refusing artifact paths outside artifacts/smoke/; set WEBCODEX_SMOKE_ALLOW_CUSTOM_PATHS=1 to override" >&2
+        if [ "${WEBPI_SMOKE_ALLOW_CUSTOM_PATHS:-0}" != "1" ]; then
+            echo "[smoke] refusing artifact paths outside artifacts/smoke/; set WEBPI_SMOKE_ALLOW_CUSTOM_PATHS=1 to override" >&2
             exit 2
         fi
         ;;

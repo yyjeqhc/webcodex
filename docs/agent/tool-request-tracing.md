@@ -1,6 +1,6 @@
 # Tool Request Tracing — Maintainer Forensics
 
-This page is the maintainer-level contract for WebCodex tool-request tracing.
+This page is the maintainer-level contract for WebPi tool-request tracing.
 Ordinary operators should start with
 [Troubleshooting](../TROUBLESHOOTING.md#capture-one-failing-tool-call), reproduce
 the problem once, and only use the details below when field-by-field correlation
@@ -13,10 +13,10 @@ information; `full` additionally captures request/response payloads for forensic
 debugging.
 
 ```text
-WEBCODEX_TOOL_REQUEST_TRACE=full
-WEBCODEX_TOOL_REQUEST_TRACE_DIR=/var/lib/webcodex/tool-request-traces
-WEBCODEX_TOOL_REQUEST_TRACE_RETENTION_HOURS=168
-WEBCODEX_TOOL_REQUEST_TRACE_MAX_TOTAL_BYTES=2147483648
+WEBPI_TOOL_REQUEST_TRACE=full
+WEBPI_TOOL_REQUEST_TRACE_DIR=/var/lib/webpi/tool-request-traces
+WEBPI_TOOL_REQUEST_TRACE_RETENTION_HOURS=168
+WEBPI_TOOL_REQUEST_TRACE_MAX_TOTAL_BYTES=2147483648
 ```
 
 Apply the Server environment change using the normal deployment lifecycle, then
@@ -30,7 +30,7 @@ store keeps one directory per trace under the configured trace root. The trace
 directory contains lifecycle events plus compressed JSON payloads, for example:
 
 ```bash
-TRACE_ROOT=/var/lib/webcodex/tool-request-traces
+TRACE_ROOT=/var/lib/webpi/tool-request-traces
 find "$TRACE_ROOT/<server_trace_id>" -maxdepth 2 -type f -print
 cat "$TRACE_ROOT/<server_trace_id>/events.jsonl"
 zstd -dc "$TRACE_ROOT/<server_trace_id>/payloads/<payload>.json.zst" | jq .
@@ -80,14 +80,14 @@ evidence but do not redefine the tool result.
 
 ## Delivery boundary
 
-`tool_handler_returned` proves only that WebCodex handed a response to the HTTP
+`tool_handler_returned` proves only that WebPi handed a response to the HTTP
 framework. It is not proof that the remote client received it. When the Server
 trace ends cleanly but the client reports no response, correlate the request time
 with the reverse-proxy/access logs before treating the call as a runtime failure.
 
 ## Sensitive data
 
-Full tracing is raw forensic capture. The trace path does not read the WebCodex
+Full tracing is raw forensic capture. The trace path does not read the WebPi
 ingress HTTP `Authorization` header, but a token, key, source fragment, patch,
 script/stdin value, command output, user message, or other secret that is itself
 present inside a captured tool/Runner payload can appear in the trace.

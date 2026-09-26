@@ -18,6 +18,7 @@ import {
 import type { ToolResult } from "@yyjeqhc/webcodex-plugin-sdk";
 import { PiRuntimeHost } from "./pi-runtime-host.js";
 import type { ExtensionCandidateSummary } from "./pi-runtime-host.js";
+import { inspectNpmPackage } from "./package-inspect.js";
 import { checkedProjectPath, createGuardedFindTool, createGuardedGrepTool, createGuardedLsTool, createGuardedReadTool, readProjectFile, safeRelative } from "./project-files.js";
 
 const TEXT_MAX_CHARS = 64 * 1024;
@@ -765,6 +766,88 @@ const piResourceReload = defineTool({
   },
 });
 
+const packageDependencySchema = schema.object({
+  name: schema.string({ maxLength: 256 }),
+  range: schema.string({ maxLength: 1024 }),
+});
+
+const packageScriptSchema = schema.object({
+  name: schema.string({ maxLength: 64 }),
+  command: schema.string({ maxLength: 4096 }),
+});
+
+const piPackageInspect = defineTool({
+  name: "pi_package_inspect",
+  title: "Inspect npm Pi package metadata",
+  description:
+    "Read npm registry metadata for an explicit npm: Pi package source before installation. No tarball is downloaded, no package settings are written, and no lifecycle script is executed. Returns lifecycle scripts, dependency metadata, Pi manifest metadata, and sourceReviewComplete=false because registry metadata is not a source-code audit. Package mutation and executable-extension fingerprint approval remain separate consequential decisions.",
+  inputSchema: schema.object({
+    source: schema.string({ minLength: 1, maxLength: PATH_MAX_CHARS }),
+  }),
+  outputSchema: schema.object({
+    source: schema.string({ maxLength: PATH_MAX_CHARS }),
+    registry: schema.string({ maxLength: 128 }),
+    name: schema.string({ maxLength: 256 }),
+    requestedSelector: schema.string({ maxLength: 256 }),
+    resolvedVersion: schema.string({ maxLength: 256 }),
+    description: schema.string({ maxLength: DESCRIPTION_MAX_CHARS }),
+    license: schema.string({ maxLength: 512 }),
+    homepage: schema.string({ maxLength: DESCRIPTION_MAX_CHARS }),
+    repository: schema.string({ maxLength: DESCRIPTION_MAX_CHARS }),
+    deprecated: schema.string({ maxLength: DESCRIPTION_MAX_CHARS }),
+    enginesNode: schema.string({ maxLength: 512 }),
+    distTarballHost: schema.string({ maxLength: 512 }),
+    dependencies: schema.array(packageDependencySchema, { maxItems: 512 }),
+    peerDependencies: schema.array(packageDependencySchema, { maxItems: 512 }),
+    optionalDependencies: schema.array(packageDependencySchema, { maxItems: 512 }),
+    lifecycleScripts: schema.array(packageScriptSchema, { maxItems: 16 }),
+    hasLifecycleScripts: schema.boolean(),
+    piManifestJson: schema.string({ maxLength: 16 * 1024 }),
+    piManifestTruncated: schema.boolean(),
+    sourceReviewComplete: schema.boolean(),
+    notes: schema.array(schema.string({ maxLength: DESCRIPTION_MAX_CHARS }), { maxItems: 8 }),
+  }),
+  annotations: {
+    readOnlyHint: true,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: true,
+  },
+  async execute({ source }) {
+    const displaySource = source.trim().slice(0, PATH_MAX_CHARS);
+    try {
+      return textResult("Pi npm package metadata preview returned; source review is still required.", await inspectNpmPackage(safePackageSource(source)));
+    } catch (error) {
+      return errorResult(
+        error instanceof Error ? error.message.slice(0, 2000) : String(error).slice(0, 2000),
+        {
+          source: displaySource,
+          registry: "https://registry.npmjs.org",
+          name: "",
+          requestedSelector: "",
+          resolvedVersion: "",
+          description: "",
+          license: "",
+          homepage: "",
+          repository: "",
+          deprecated: "",
+          enginesNode: "",
+          distTarballHost: "",
+          dependencies: [] as Array<{ name: string; range: string }>,
+          peerDependencies: [] as Array<{ name: string; range: string }>,
+          optionalDependencies: [] as Array<{ name: string; range: string }>,
+          lifecycleScripts: [] as Array<{ name: string; command: string }>,
+          hasLifecycleScripts: false,
+          piManifestJson: "",
+          piManifestTruncated: false,
+          sourceReviewComplete: false,
+          notes: ["Metadata preview failed before package installation."] as string[],
+        },
+      );
+    }
+  },
+});
+
 const piPackageList = defineTool({
   name: "pi_package_list",
   title: "Pi package list",
@@ -1117,7 +1200,7 @@ const PI_PARITY_CAPABILITIES = [
     capability: "packages",
     status: "native",
     notes:
-      "WebPi delegates web-agent and local-admin install/list/update/remove plus package resource resolution to Pi's DefaultPackageManager. Web package mutation requires explicit lifecycle-script confirmation; executable extension import additionally requires exact WebPi fingerprint approval."
+      "WebPi adds a read-only npm registry metadata preflight before package mutation, then delegates install/list/update/remove plus package resource resolution to Pi's DefaultPackageManager. Web package mutation requires explicit lifecycle-script confirmation; executable extension import additionally requires exact WebPi fingerprint approval."
   },
   {
     capability: "read_images",
@@ -1224,6 +1307,7 @@ runPlugin(
       piExtensionToolDescribe,
       piExtensionToolCall,
       piResourceReload,
+      piPackageInspect,
       piPackageList,
       piPackageInstall,
       piPackageUpdate,

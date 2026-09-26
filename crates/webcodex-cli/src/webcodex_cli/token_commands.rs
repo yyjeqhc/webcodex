@@ -119,7 +119,7 @@ pub(crate) async fn run_runner_token_create_local(
     let req = build_admin_request(&cmd)?;
     post_json_with_bearer(&req).await?;
     Ok(format!(
-        "Runner transport token created locally and registered with server.\n\nClient ID:\n{}\n\nToken:\n{}\n\nUse this token in webcodex-runner config or WEBPI_AGENT_TOKEN.\nThis token will not be shown again.\n",
+        "Runner transport token created locally and registered with server.\n\nClient ID:\n{}\n\nToken:\n{}\n\nUse this token in webpi-runner config or WEBPI_AGENT_TOKEN.\nThis token will not be shown again.\n",
         opts.client_id, token
     ))
 }

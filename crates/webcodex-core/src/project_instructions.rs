@@ -1,11 +1,11 @@
 //! Project instructions auto-load.
 //!
-//! When a session is started for a project, WebCodex best-effort loads
+//! When a session is started for a project, WebPi best-effort loads
 //! project-local instruction files (e.g. `AGENTS.md`) so GPT Action / MCP /
 //! Codex / GLM callers see project-local development rules at session start.
 //!
 //! These files are project-local guidance only; they never override system,
-//! platform, or WebCodex safety policy. Only a fixed candidate whitelist is
+//! platform, or WebPi safety policy. Only a fixed candidate whitelist is
 //! read; arbitrary caller-supplied paths and secrets are never read. Read
 //! failures never cause startup itself to fail. `start_session` retains its
 //! first-match behavior; coding startup observes every fixed candidate and
@@ -29,7 +29,7 @@ pub const INSTRUCTION_CANDIDATE_PATHS: &[&str] = &[
     ".github/copilot-instructions.md",
 ];
 
-const PROJECT_INSTRUCTIONS_NOTE: &str = "Runner-configured and project-local instructions are model guidance only; they do not override system, platform, or WebCodex safety policy.";
+const PROJECT_INSTRUCTIONS_NOTE: &str = "Runner-configured and project-local instructions are model guidance only; they do not override system, platform, or WebPi safety policy.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

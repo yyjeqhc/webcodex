@@ -24,6 +24,8 @@ mod client_window;
 mod config;
 mod console_web;
 mod db;
+mod gateway_circuit_breaker;
+mod image_preview;
 pub(crate) use webcodex_core::job_observation;
 mod job_receipts;
 mod job_terminal_attention;
@@ -162,7 +164,7 @@ pub const SERVER_GRACEFUL_SHUTDOWN_TIMEOUT_SECS: u64 =
     REQUEST_HARD_TIMEOUT_SECS + SERVER_GRACEFUL_RESPONSE_MARGIN_SECS;
 
 /// systemd must outlive the application's own graceful/forced stop lifecycle
-/// so PID 1 does not SIGKILL the Server before WebCodex's bounded deadline.
+/// so PID 1 does not SIGKILL the Server before WebPi's bounded deadline.
 const SERVER_SYSTEMD_STOP_MARGIN_SECS: u64 = 15;
 pub const SERVER_SYSTEMD_TIMEOUT_STOP_SECS: u64 =
     SERVER_GRACEFUL_SHUTDOWN_TIMEOUT_SECS + SERVER_SYSTEMD_STOP_MARGIN_SECS;
@@ -292,6 +294,7 @@ pub async fn run_server_with_parent_liveness(
         tool_runtime::ToolRuntime::new(runner_registry.clone(), runtime_info.clone())
             .with_window_activity_database(db.clone())
             .with_memory_database(db.clone())
+            .with_deployment_database(db.clone())
             .with_communication_database(db.clone())
             .with_job_terminal_attention(db.clone(), job_terminal_continuations)
             .with_session_ledger(config.session_ledger_path())
@@ -515,6 +518,10 @@ pub async fn run_server_with_parent_liveness(
         .push(
             Router::with_path(route_metadata::api_path(RouteId::TokensList))
                 .post(users_http::tokens_list),
+        )
+        .push(
+            Router::with_path(route_metadata::api_path(RouteId::TokensUpdateScopes))
+                .post(users_http::tokens_update_scopes),
         )
         .push(
             Router::with_path(route_metadata::api_path(RouteId::TokensRevoke))
@@ -751,13 +758,13 @@ pub async fn run_server_with_parent_liveness(
                     .post(audit_http::audit_stats),
             ),
     );
-    tracing::info!("WebCodex Server is running.");
+    tracing::info!("WebPi Server is running.");
     let port = addr.split(':').next_back().unwrap_or("8080");
     let base = format!("http://localhost:{}", port);
     tracing::info!("Runtime base: {}", base);
     tracing::info!("MCP endpoint: {}/mcp", base);
     tracing::info!(
-        "Next: create a one-time login code in another terminal with `webcodex pairing create`."
+        "Next: create a one-time login code in another terminal with `webpi pairing create`."
     );
     tracing::info!(
         tool_request_trace = crate::config::tool_request_trace_enabled(),

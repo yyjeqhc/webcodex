@@ -59,12 +59,12 @@ fn mcp_runtime_tool_result_fallback_with_compat(
     // that full JSON object in `content.text` doubles model context, so the
     // compatibility copy is explicit opt-in rather than the default.
     let concise = if result.success {
-        "WebCodex tool completed successfully.".to_string()
+        "WebPi tool completed successfully.".to_string()
     } else {
         result
             .error
             .clone()
-            .unwrap_or_else(|| "WebCodex tool failed.".to_string())
+            .unwrap_or_else(|| "WebPi tool failed.".to_string())
     };
     let success = result.success;
     let structured = json!({
@@ -136,7 +136,7 @@ mod tests {
         );
         assert_eq!(
             rendered["content"][0]["text"],
-            "WebCodex tool completed successfully."
+            "WebPi tool completed successfully."
         );
         assert_eq!(rendered["structuredContent"]["output"]["count"], 2);
     }

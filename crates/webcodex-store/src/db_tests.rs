@@ -76,6 +76,7 @@ fn store_connection_domains_and_metric_names_are_closed_and_stable() {
             "audit",
             "communication",
             "core",
+            "deployment_receipts",
             "goal",
             "job_receipts",
             "job_terminal_wait",
@@ -514,6 +515,26 @@ fn api_key_records_round_trip_and_revoked_keys_are_ignored() {
         fetched_key.scopes_vec(),
         vec!["runtime:read".to_string(), "project:write".to_string()]
     );
+
+    let updated_scopes = db
+        .update_api_key_scopes("key-1", "runtime:read diagnostics:read")
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        updated_scopes.scopes_vec(),
+        vec!["runtime:read".to_string(), "diagnostics:read".to_string()]
+    );
+    assert_eq!(updated_scopes.key_prefix, "pk_live");
+    assert_eq!(updated_scopes.created_at, 11);
+    let stored_hash_after_scope_update: String = db
+        .conn_for_tests()
+        .query_row(
+            "SELECT key_hash FROM api_keys WHERE id = 'key-1'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(stored_hash_after_scope_update, "hash-1");
 
     db.update_api_key_last_used("key-1", 12).unwrap();
     assert_eq!(

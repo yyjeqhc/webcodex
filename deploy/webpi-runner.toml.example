@@ -1,8 +1,8 @@
-# Example config for webcodex-runner.
-# Copy to /etc/webcodex/clients/workstation/runner.toml and edit token/client_id/server_url.
-# Prefer generating this file with: webcodex runner init --profile workstation
+# Example config for webpi-runner.
+# Copy to /etc/webpi/clients/workstation/runner.toml and edit token/client_id/server_url.
+# Prefer generating this file with: webpi runner init --profile workstation
 
-server_url = "https://webcodex.example.com"
+server_url = "https://webpi.example.com"
 token = "replace-with-agent-token"
 client_id = "example-agent"
 display_name = "Example Agent"
@@ -11,12 +11,12 @@ transport = "auto"
 # Minimum idle polling interval used by polling/auto fallback. Empty polls may
 # back off above this value; values above 30000 are rejected.
 poll_interval_ms = 1000
-project_registry_dir = "/etc/webcodex/clients/workstation/project-registry"
+project_registry_dir = "/etc/webpi/clients/workstation/project-registry"
 
 # Agent transport. New deployments should prefer auto transport with
 # [quic] configured: the agent tries QUIC first, then WebSocket, then polling.
 # Use transport = "quic" only when you want strict QUIC without fallback.
-# QUIC is a custom WebCodex agent stream transport, NOT HTTP/3; the server
+# QUIC is a custom WebPi agent stream transport, NOT HTTP/3; the server
 # listens directly on UDP 8443 when enabled, and Nginx does not need QUIC/HTTP/3
 # support for GPT Actions or MCP. runtime_status/list_runners report the actual
 # connected transport. See docs/RUNNER.md.
@@ -25,8 +25,8 @@ project_registry_dir = "/etc/webcodex/clients/workstation/project-registry"
 # transport = "polling"
 # transport = "auto"
 # [quic]
-# server_addr = "webcodex.example.com:8443"
-# server_name = "webcodex.example.com"
+# server_addr = "webpi.example.com:8443"
+# server_name = "webpi.example.com"
 # alpn = "webcodex-runner/1"
 # connect_timeout_secs = 10
 # keepalive_interval_secs = 20 # QUIC transport keepalive; valid range 1..=25 seconds
@@ -43,9 +43,9 @@ program = "sh"
 args = ["-c"]
 
 [shell.profiles.rust.env]
-PATH = "/home/webcodex/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-CARGO_HOME = "/home/webcodex/.cargo"
-RUSTUP_HOME = "/home/webcodex/.rustup"
+PATH = "/home/webpi/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+CARGO_HOME = "/home/webpi/.cargo"
+RUSTUP_HOME = "/home/webpi/.rustup"
 
 [shell.profiles.py-venv]
 description = "Project-local Python virtual environment"
@@ -70,9 +70,9 @@ conda activate ml
 # and agent setup in the Runner host's SSH configuration; never put them here.
 # [ssh.resources.tmp]
 # host = "tmp"
-# default_cwd = "/opt/webcodex-edge"
+# default_cwd = "/opt/webpi-edge"
 
-# Optional live Skill roots on this Runner host. WebCodex does not modify files
+# Optional live Skill roots on this Runner host. WebPi does not modify files
 # under these roots, but supported scripts/*.py and scripts/*.sh may execute via
 # run_skill_resource because the configured root is an operator-trusted Skill source.
 # These paths do not expand [policy].allowed_roots and are not copied into the
@@ -80,7 +80,7 @@ conda activate ml
 # editing this roots list is applied with runner config check/reload, without restart.
 [skills]
 roots = []
-# roots = ["/home/webcodex/.codex/skills", "/opt/company/agent-skills"]
+# roots = ["/home/webpi/.codex/skills", "/opt/company/agent-skills"]
 # Windows TOML literal-string example: roots = ['C:\Users\alice\.codex\skills']
 
 # Optional Runner-level coding instructions. There is no implicit default path:
@@ -91,7 +91,7 @@ roots = []
 # re-read by each new project bootstrap without config reload or Runner restart.
 [instructions]
 files = []
-# files = ["/home/webcodex/.codex/AGENTS.md"]
+# files = ["/home/webpi/.codex/AGENTS.md"]
 # macOS example: files = ["/Users/alice/.codex/AGENTS.md"]
 # Windows TOML literal-string example: files = ['C:\Users\alice\.codex\AGENTS.md']
 

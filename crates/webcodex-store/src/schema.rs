@@ -87,6 +87,29 @@ impl Database {
             CREATE INDEX IF NOT EXISTS idx_job_receipts_runner_history
                 ON wc_job_receipts(client_id, terminal_observed_at DESC, job_id DESC);
 
+            CREATE TABLE IF NOT EXISTS wc_deployment_receipts (
+                receipt_id TEXT PRIMARY KEY,
+                owner_kind TEXT NOT NULL,
+                owner_id TEXT NOT NULL,
+                idempotency_key_hash TEXT NOT NULL,
+                request_hash TEXT NOT NULL CHECK(length(request_hash) = 64),
+                operation TEXT NOT NULL CHECK(operation IN ('deploy','restart','rollback')),
+                client_id TEXT NOT NULL,
+                target_manifest_json TEXT NOT NULL,
+                state TEXT NOT NULL CHECK(state IN ('planned','draining','ready','switching','verifying','succeeded','failed','rolled_back','outcome_unknown')),
+                revision INTEGER NOT NULL CHECK(revision >= 1),
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                terminal_at INTEGER,
+                last_error_code TEXT,
+                backup_id TEXT,
+                UNIQUE(owner_kind, owner_id, idempotency_key_hash),
+                CHECK((state IN ('succeeded','failed','rolled_back','outcome_unknown') AND terminal_at IS NOT NULL) OR
+                      (state NOT IN ('succeeded','failed','rolled_back','outcome_unknown') AND terminal_at IS NULL))
+            );
+            CREATE INDEX IF NOT EXISTS idx_deployment_receipts_target_updated
+                ON wc_deployment_receipts(client_id, updated_at DESC, receipt_id DESC);
+
             CREATE TABLE IF NOT EXISTS users (
                 id TEXT PRIMARY KEY,
                 username TEXT NOT NULL UNIQUE,
@@ -377,6 +400,9 @@ impl Database {
         // through this additive, idempotent migration.
         Self::ensure_action_event_window_schema(&mut conn)?;
         Self::ensure_action_event_observability_views(&mut conn)?;
+        // Deployment receipts gained explicit rollback identity after their
+        // initial introduction. Keep this additive so existing dogfood DBs upgrade in place.
+        Self::ensure_deployment_receipt_schema(&mut conn)?;
 
         // Durable Agent identity and Conversation state are an independent
         // communication domain. Workflow Session and project Memory ledgers
@@ -412,6 +438,21 @@ impl Database {
         // supported; development-only intermediate shapes are rejected.
         Self::ensure_project_memory_schema(&mut conn)?;
 
+        Ok(())
+    }
+
+    fn ensure_deployment_receipt_schema(conn: &mut Connection) -> anyhow::Result<()> {
+        let columns = table_columns(conn, "wc_deployment_receipts")?;
+        if columns.is_empty() {
+            anyhow::bail!("deployment receipt table is missing after base schema initialization");
+        }
+        if !columns.iter().any(|column| column == "backup_id") {
+            conn.execute(
+                "ALTER TABLE wc_deployment_receipts ADD COLUMN backup_id TEXT",
+                [],
+            )
+            .context("add deployment receipt backup_id column")?;
+        }
         Ok(())
     }
 

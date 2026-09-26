@@ -1,6 +1,6 @@
 <div id="app" style="font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;padding:16px;border:1px solid color-mix(in srgb,var(--color-border-primary,#8b8b8b) 72%,#d99742 28%);border-radius:14px;max-width:760px;color:var(--color-text-primary,inherit);background:var(--color-background-primary,#fff);background:linear-gradient(145deg,color-mix(in srgb,var(--color-background-primary,#fff) 96%,#d99742 4%),var(--color-background-primary,#fff));box-shadow:0 10px 30px rgba(0,0,0,.055)">
   <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
-    <strong id="title" style="font-size:17px;letter-spacing:-.01em">WebCodex Changes</strong>
+    <strong id="title" style="font-size:17px;letter-spacing:-.01em">WebPi Changes</strong>
     <span id="state" style="display:inline-flex;align-items:center;gap:5px;font-size:12px;font-variant-numeric:tabular-nums;font-weight:600">HTML loaded</span>
   </div>
   <div id="summary" style="margin-top:8px;font-size:13px;color:var(--color-text-secondary,inherit)">Waiting for a bounded Changes presentation</div>
@@ -775,7 +775,7 @@
   function renderPresentation(presentation) {
     if (!presentation || typeof presentation !== "object" || presentation.version !== 1) {
       stateEl.textContent = "changes unavailable";
-      summaryEl.textContent = "No bounded WebCodex presentation metadata was attached.";
+      summaryEl.textContent = "No bounded WebPi presentation metadata was attached.";
       clearCards();
       return;
     }
@@ -798,7 +798,7 @@
     }
     const items = Array.isArray(presentation.items) ? presentation.items.slice(0, MAX_ITEMS) : [];
     if (presentation.kind === "job_list") {
-      titleEl.textContent = "WebCodex Jobs";
+      titleEl.textContent = "WebPi Jobs";
       const returned = Number.isInteger(presentation.count) ? presentation.count : items.length;
       const matched = Number.isInteger(presentation.matched_count) ? presentation.matched_count : returned;
       const presented = Number.isInteger(presentation.presented_count) ? presentation.presented_count : items.length;
@@ -817,7 +817,7 @@
       if (presentation.items_truncated === true) parts.push("card subset bounded");
       summaryEl.textContent = parts.join(" · ");
     } else if (presentation.kind === "job_observation") {
-      titleEl.textContent = items.length === 1 ? "WebCodex Job" : "WebCodex Jobs";
+      titleEl.textContent = items.length === 1 ? "WebPi Job" : "WebPi Jobs";
       const wait = presentation.wait && typeof presentation.wait === "object" ? boundedString(presentation.wait.outcome) : null;
       const terminal = Number.isInteger(presentation.terminal_count) ? presentation.terminal_count : null;
       if (items.length === 1) {
@@ -839,7 +839,7 @@
       }
     } else {
       stateEl.textContent = "result rejected";
-      summaryEl.textContent = "Unsupported WebCodex presentation kind.";
+      summaryEl.textContent = "Unsupported WebPi presentation kind.";
       return;
     }
     items.forEach(renderItem);
@@ -872,7 +872,7 @@
     try {
       const result = await request("ui/initialize", {
         protocolVersion: APP_PROTOCOL,
-        appInfo: { name: "webcodex-changes-app", title: "WebCodex Changes", version: "2.1.0" },
+        appInfo: { name: "webpi-changes-app", title: "WebPi Changes", version: "2.1.0" },
         appCapabilities: {}
       });
       const protocol = result && typeof result === "object" ? boundedString(result.protocolVersion) : null;

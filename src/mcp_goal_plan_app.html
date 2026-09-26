@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>WebCodex Goal Plan</title>
+<title>WebPi Goal Plan</title>
 <style>
 :root { color-scheme: light dark; font: 13px/1.45 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
 * { box-sizing: border-box; }
@@ -177,16 +177,16 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     }
     if (activity.state === "active") {
       node.textContent = (activity.active_meaningful_request_count || 0) > 0
-        ? "Meaningful WebCodex work is currently running."
-        : "Meaningful WebCodex activity was observed recently.";
+        ? "Meaningful WebPi work is currently running."
+        : "Meaningful WebPi activity was observed recently.";
       return;
     }
     const quiet = formatQuiet(activity.quiet_for_ms);
     node.textContent = activity.last_seen_at_ms !== null
       && activity.last_meaningful_activity_at_ms !== null
       && activity.last_seen_at_ms > activity.last_meaningful_activity_at_ms
-      ? `Window still recently observed; no meaningful WebCodex work for ${quiet}. This Goal may need attention.`
-      : `No meaningful WebCodex activity for ${quiet}. This Goal may need attention.`;
+      ? `Window still recently observed; no meaningful WebPi work for ${quiet}. This Goal may need attention.`
+      : `No meaningful WebPi activity for ${quiet}. This Goal may need attention.`;
   }
 
   function render(plan) {
@@ -312,7 +312,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
   addEventListener("pagehide", teardown, { once: true });
   addEventListener("beforeunload", teardown, { once: true });
 
-  send("ui/initialize", { protocolVersion: APP_PROTOCOL, appInfo: { name: "webcodex-goal-plan-app", title: "WebCodex Goal Plan", version: "2.0.0" }, appCapabilities: {} })
+  send("ui/initialize", { protocolVersion: APP_PROTOCOL, appInfo: { name: "webpi-goal-plan-app", title: "WebPi Goal Plan", version: "2.0.0" }, appCapabilities: {} })
     .then(() => {
       if (tornDown) return;
       hostInitialized = true;

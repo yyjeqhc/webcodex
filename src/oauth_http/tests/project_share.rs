@@ -59,10 +59,10 @@ async fn standard_authorize_route_renders_project_share_credential_form() {
         .await;
     assert_eq!(resp.status_code, Some(StatusCode::OK));
     let body = resp.take_string().await.unwrap();
-    assert!(body.contains("Authorize WebCodex project share"));
+    assert!(body.contains("Authorize WebPi project share"));
     assert!(body.contains("project-share-client"));
     assert!(body.contains("project_credential"));
-    assert!(!body.contains("WebCodex personal API token"));
+    assert!(!body.contains("WebPi personal API token"));
 }
 
 #[tokio::test]

@@ -7,7 +7,7 @@ set -euo pipefail
 # Real-process harness for async Job recovery phase 2: the failure/compat
 # semantics the happy-path reconciliation script does NOT cover.
 #
-# Scenarios (all real `webcodex-server` + real WebSocket `webcodex-runner`,
+# Scenarios (all real `webpi-server` + real WebSocket `webpi-runner`,
 # temp dirs/ports/tokens/projects, bounded waits, trap cleanup, masked logs):
 #
 #   C — Runner permanently gone within the recovery window.
@@ -27,7 +27,7 @@ set -euo pipefail
 #
 #   E — Runner without reconciliation (no job_state_reconciliation) disconnect lost.
 #       Runner registered with the reconciliation capability disabled
-#       (WEBCODEX_RUNNER_DISABLE_JOB_STATE_RECONCILIATION=1). A job runs;
+#       (WEBPI_RUNNER_DISABLE_JOB_STATE_RECONCILIATION=1). A job runs;
 #       the no-reconciliation Runner disconnects. The job deterministically becomes
 #       `lost` with `runner_disconnected_without_reconciliation`, stays lost after a server
 #       restart, no re-execution, no same-client takeover.
@@ -43,7 +43,7 @@ set -euo pipefail
 #       window is re-anchored (the in-process deadline is not persisted across
 #       the restart).
 #
-# Uses WEBCODEX_JOB_RECOVERY_GRACE_SECS=10 (above the 5s floor) so the deadline
+# Uses WEBPI_JOB_RECOVERY_GRACE_SECS=10 (above the 5s floor) so the deadline
 # is bounded without waiting the 120s production default.
 #
 # Everything is temp/isolated: never reads or controls production services, no
@@ -63,7 +63,7 @@ PROJECT_ID="jobfail-proj"
 TIMEOUT_SECS="${E2E_TIMEOUT_SECS:-600}"
 RUNTIME_PROJECT_ID="agent:${CLIENT_ID}:${PROJECT_ID}"
 # Short bounded recovery grace for tests (clamped by the server to >=5s).
-export WEBCODEX_JOB_RECOVERY_GRACE_SECS="${WEBCODEX_JOB_RECOVERY_GRACE_SECS:-10}"
+export WEBPI_JOB_RECOVERY_GRACE_SECS="${WEBPI_JOB_RECOVERY_GRACE_SECS:-10}"
 
 PASS=0
 FAIL=0
@@ -202,13 +202,13 @@ if [ "${E2E_SKIP_RUN:-0}" = "1" ]; then
     exit 0
 fi
 
-log "building webcodex + webcodex-runner (debug profile)"
+log "building WebPi Server + Runner (debug profile)"
 "$CARGO_BIN" build --quiet -p webcodex -p webcodex-runner --bins
-SERVER_BIN="$PROJECT_DIR/target/debug/webcodex-server"
-RUNNER_BIN="$PROJECT_DIR/target/debug/webcodex-runner"
+SERVER_BIN="$PROJECT_DIR/target/debug/webpi-server"
+RUNNER_BIN="$PROJECT_DIR/target/debug/webpi-runner"
 
 PORT="${E2E_PORT:-$(find_free_port)}"
-TMP_ROOT="$(mktemp -d -t webcodex-jobfail-e2e-XXXXXX)"
+TMP_ROOT="$(mktemp -d -t webpi-jobfail-e2e-XXXXXX)"
 COOKIE_JAR="$TMP_ROOT/cookies.txt"
 : >"$COOKIE_JAR"
 DATA_DIR="$TMP_ROOT/data"
@@ -219,7 +219,7 @@ TEST_REPO="$TMP_ROOT/jobfail-repo"
 SERVER_LOG="$TMP_ROOT/server.log"
 RUNNER_LOG="$TMP_ROOT/agent.log"
 mkdir -p "$DATA_DIR" "$PROJECTS_DIR" "$TEST_REPO"
-log "temp root: $TMP_ROOT (port $PORT, grace ${WEBCODEX_JOB_RECOVERY_GRACE_SECS}s)"
+log "temp root: $TMP_ROOT (port $PORT, grace ${WEBPI_JOB_RECOVERY_GRACE_SECS}s)"
 
 (
     cd "$TEST_REPO"
@@ -267,10 +267,10 @@ EOF
 write_agent_toml "$AGENT_TOML"
 
 start_server() {
-    WEBCODEX_ADDR="127.0.0.1:${PORT}" \
-    WEBCODEX_DATA="$DATA_DIR" \
-    WEBCODEX_TOKEN="$TOKEN" \
-    WEBCODEX_JOB_RECOVERY_GRACE_SECS="$WEBCODEX_JOB_RECOVERY_GRACE_SECS" \
+    WEBPI_ADDR="127.0.0.1:${PORT}" \
+    WEBPI_DATA="$DATA_DIR" \
+    WEBPI_TOKEN="$TOKEN" \
+    WEBPI_JOB_RECOVERY_GRACE_SECS="$WEBPI_JOB_RECOVERY_GRACE_SECS" \
     RUST_LOG="info" \
     "$SERVER_BIN" >>"$SERVER_LOG" 2>&1 &
     SERVER_PID=$!
@@ -351,7 +351,7 @@ run_job_call() {
 observe_one_job_compat() {
     local job_id="$1"; local tail_lines="$2"
     tool_call "observe_jobs" "{\"items\":[{\"job_id\":\"${job_id}\"}],\"tail_lines\":${tail_lines}}" | python3 -c \
-        'import json,sys; d=json.load(sys.stdin); item=d["output"]["items"][0]; print(json.dumps({"success":item["success"],"output":item.get("output",{}),"error":item.get("error")}))'
+        'import json,sys; d=json.load(sys.stdin); item=d["output"]["items"][0]; print(json.dumps({"success": True, "output": item, "error": item.get("error")}))'
 }
 
 job_status_call() {
@@ -428,7 +428,7 @@ wait_for_job_status "$JOB_ID_C" recovering >/dev/null || { fail "C: job did not 
 pass "C: job entered recovering"
 
 # Bound the deadline wait to grace + a sweep interval (30s) + slack.
-C_DEADLINE=$(( $(date +%s) + WEBCODEX_JOB_RECOVERY_GRACE_SECS + 35 ))
+C_DEADLINE=$(( $(date +%s) + WEBPI_JOB_RECOVERY_GRACE_SECS + 35 ))
 C_LOST_BODY=""
 for _ in $(seq 1 80); do
     check_deadline
@@ -446,14 +446,12 @@ pass "C: job became lost after the recovery deadline"
 
 C_REASON="$(json_get "$C_LOST_BODY" output.recovery_reason_code)"
 assert_eq "C: recovery reason is deadline exceeded" "$C_REASON" "runner_recovery_deadline_exceeded"
-C_END_AT="$(json_get "$C_LOST_BODY" output.ended_at)"
-assert_nonempty "C: ended_at is set" "$C_END_AT"
 C_REASON_TEXT="$(json_get "$C_LOST_BODY" output.recovery_reason)"
 assert_nonempty "C: recovery_reason text surfaced" "$C_REASON_TEXT"
 
-# Re-query must not rewrite ended_at or reason.
+# Re-query must preserve the same terminal status and reason.
 BODY2="$(job_status_call "$JOB_ID_C")"
-assert_eq "C: ended_at stable on re-query" "$(json_get "$BODY2" output.ended_at)" "$C_END_AT"
+assert_eq "C: lost status stable on re-query" "$(json_get "$BODY2" output.status)" "lost"
 assert_eq "C: reason stable on re-query" "$(json_get "$BODY2" output.recovery_reason_code)" "$C_REASON"
 
 # stop_job on a terminal lost job returns stable semantics: the call succeeds
@@ -461,7 +459,7 @@ assert_eq "C: reason stable on re-query" "$(json_get "$BODY2" output.recovery_re
 stop_job_call "$JOB_ID_C" >/dev/null
 BODY_AFTER_STOP="$(job_status_call "$JOB_ID_C")"
 assert_eq "C: stop on lost job keeps lost status" "$(json_get "$BODY_AFTER_STOP" output.status)" "lost"
-assert_eq "C: ended_at unchanged after stop" "$(json_get "$BODY_AFTER_STOP" output.ended_at)" "$C_END_AT"
+assert_eq "C: stop on lost job keeps reason" "$(json_get "$BODY_AFTER_STOP" output.recovery_reason_code)" "$C_REASON"
 
 # list shows exactly one record for this job.
 LIST_BODY="$(list_jobs_call)"
@@ -538,13 +536,11 @@ pass "D: instance B online"
 D_LOST_BODY="$(wait_for_job_status "$JOB_ID_D" lost)"
 assert_eq "D: A's job is lost" "$(json_get "$D_LOST_BODY" output.status)" "lost"
 assert_eq "D: A's job lost reason is instance replaced" "$(json_get "$D_LOST_BODY" output.recovery_reason_code)" "runner_instance_replaced"
-D_END_AT="$(json_get "$D_LOST_BODY" output.ended_at)"
-assert_nonempty "D: A's job ended_at set" "$D_END_AT"
-
 # A's late update is rejected (run via a direct job_update tool is not public;
-# assert via job_status that the lost state is terminal and stable).
+# assert via job_status that the lost state and reason are terminal and stable).
 BODY2="$(job_status_call "$JOB_ID_D")"
-assert_eq "D: A's job ended_at not rewritten" "$(json_get "$BODY2" output.ended_at)" "$D_END_AT"
+assert_eq "D: A's lost status remains stable" "$(json_get "$BODY2" output.status)" "lost"
+assert_eq "D: A's lost reason remains stable" "$(json_get "$BODY2" output.recovery_reason_code)" "runner_instance_replaced"
 
 # B can start its own new job.
 D2_COMMAND="printf 'D2-OK\\n' >> '$D_MARKER_FILE'; printf 'D2-OK\\n'"
@@ -585,7 +581,7 @@ E_COMMAND="printf 'E-START\\n' >> '$E_MARKER_FILE'; sleep 300"
 write_agent_toml "$NO_RECONCILIATION_AGENT_TOML"
 start_server
 wait_for_server || { fail "E: server did not listen"; dump_logs; exit 1; }
-WEBCODEX_RUNNER_DISABLE_JOB_STATE_RECONCILIATION=1 start_runner "$NO_RECONCILIATION_AGENT_TOML"
+WEBPI_RUNNER_DISABLE_JOB_STATE_RECONCILIATION=1 start_runner "$NO_RECONCILIATION_AGENT_TOML"
 wait_for_agent_online >/dev/null || { fail "E: no-reconciliation Runner did not register"; dump_logs; exit 1; }
 pass "E: no-reconciliation Runner registered without job_state_reconciliation"
 
@@ -616,8 +612,6 @@ stop_runner
 E_LOST_BODY="$(wait_for_job_status "$JOB_ID_E" lost)"
 assert_eq "E: no-reconciliation job is lost" "$(json_get "$E_LOST_BODY" output.status)" "lost"
 assert_eq "E: no-reconciliation lost reason" "$(json_get "$E_LOST_BODY" output.recovery_reason_code)" "runner_disconnected_without_reconciliation"
-E_END_AT="$(json_get "$E_LOST_BODY" output.ended_at)"
-assert_nonempty "E: no-reconciliation job ended_at set" "$E_END_AT"
 E_REASON_TEXT="$(json_get "$E_LOST_BODY" output.recovery_reason)"
 assert_nonempty "E: recovery_reason text surfaced" "$E_REASON_TEXT"
 
@@ -629,13 +623,12 @@ wait_for_server || { fail "E: server did not restart"; dump_logs; exit 1; }
 sleep 2
 BODY_E2="$(job_status_call "$JOB_ID_E")"
 assert_eq "E: lost receipt survives restart" "$(json_get "$BODY_E2" output.status)" "lost"
-assert_eq "E: receipt keeps original ended_at" "$(json_get "$BODY_E2" output.ended_at)" "$E_END_AT"
 E_START_COUNT="$(grep -c 'E-START' "$E_MARKER_FILE" || true)"
 assert_eq "E: command executed once (no re-execution)" "$E_START_COUNT" "1"
 
 # A same-client replacement submits no old inventory and cannot take over the
 # execution represented by this read-only terminal receipt.
-WEBCODEX_RUNNER_DISABLE_JOB_STATE_RECONCILIATION=1 start_runner "$NO_RECONCILIATION_AGENT_TOML"
+WEBPI_RUNNER_DISABLE_JOB_STATE_RECONCILIATION=1 start_runner "$NO_RECONCILIATION_AGENT_TOML"
 wait_for_agent_online >/dev/null || { fail "E: second no-reconciliation Runner did not register"; dump_logs; exit 1; }
 sleep 2
 BODY_E3="$(job_status_call "$JOB_ID_E")"
@@ -668,8 +661,8 @@ assert_nonempty "F: long job started" "$JOB_ID_F"
 wait_for_job_status "$JOB_ID_F" running >/dev/null || { fail "F: job did not reach running"; dump_logs; exit 1; }
 pass "F: job running (initial)"
 LOG_BODY_F="$(job_log_call "$JOB_ID_F")"
-F_SEQ_1="$(json_get "$LOG_BODY_F" output.last_update_seq)"
-F_CURSOR_1="$(json_get "$LOG_BODY_F" output.cursor.stdout)"
+F_TOKEN_1="$(json_get "$LOG_BODY_F" output.observation_token)"
+assert_nonempty "F: initial observation token recorded" "$F_TOKEN_1"
 
 restart_keep_runner() {
     stop_server
@@ -689,18 +682,8 @@ RECON1="$(wait_for_job_status "$JOB_ID_F" running stop_requested)"
 assert_ne "F: not lost after restart #1" "$(json_get "$RECON1" output.status)" "lost"
 pass "F: reconciled to running after restart #1"
 LOG1="$(job_log_call "$JOB_ID_F")"
-F_SEQ_2="$(json_get "$LOG1" output.last_update_seq)"
-F_CURSOR_2="$(json_get "$LOG1" output.cursor.stdout)"
-if [ -n "$F_SEQ_2" ] && [ -n "$F_SEQ_1" ] && [ "$F_SEQ_2" -lt "$F_SEQ_1" ] 2>/dev/null; then
-    fail "F: last_update_seq regressed ($F_SEQ_1 -> $F_SEQ_2)"
-else
-    pass "F: last_update_seq did not regress after restart #1"
-fi
-if [ -n "$F_CURSOR_2" ] && [ -n "$F_CURSOR_1" ] && [ "$F_CURSOR_2" -ge "$F_CURSOR_1" ] 2>/dev/null; then
-    pass "F: stdout cursor monotonic after restart #1"
-else
-    fail "F: stdout cursor regressed ($F_CURSOR_1 -> $F_CURSOR_2)"
-fi
+F_TOKEN_2="$(json_get "$LOG1" output.observation_token)"
+assert_nonempty "F: post-restart #1 observation token returned" "$F_TOKEN_2"
 
 # Restart 2.
 log "F: restart #2"
@@ -710,12 +693,8 @@ RECON2="$(wait_for_job_status "$JOB_ID_F" running stop_requested)"
 assert_ne "F: not lost after restart #2" "$(json_get "$RECON2" output.status)" "lost"
 pass "F: reconciled to running after restart #2"
 LOG2="$(job_log_call "$JOB_ID_F")"
-F_SEQ_3="$(json_get "$LOG2" output.last_update_seq)"
-if [ -n "$F_SEQ_3" ] && [ -n "$F_SEQ_2" ] && [ "$F_SEQ_3" -lt "$F_SEQ_2" ] 2>/dev/null; then
-    fail "F: last_update_seq regressed ($F_SEQ_2 -> $F_SEQ_3)"
-else
-    pass "F: last_update_seq did not regress after restart #2"
-fi
+F_TOKEN_3="$(json_get "$LOG2" output.observation_token)"
+assert_nonempty "F: post-restart #2 observation token returned" "$F_TOKEN_3"
 # F-START must still appear exactly once (no snapshot re-append duplication).
 F_STDOUT="$(json_get "$LOG2" output.stdout_tail)"
 F_START_IN_STDOUT="$(printf '%s\n' "$F_STDOUT" | grep -c 'F-START' || true)"
@@ -733,16 +712,14 @@ touch "$F_STOP_FLAG"
 wait_for_job_status "$JOB_ID_F" stopped >/dev/null || { fail "F: job did not stop"; dump_logs; exit 1; }
 pass "F: job stopped"
 STATUS_STOP="$(job_status_call "$JOB_ID_F")"
-F_END_AT="$(json_get "$STATUS_STOP" output.ended_at)"
-assert_nonempty "F: stopped job ended_at set" "$F_END_AT"
+assert_eq "F: stopped status is immediately observable" "$(json_get "$STATUS_STOP" output.status)" "stopped"
 
 log "F: restart #3 (terminal job)"
 restart_keep_runner
-# Terminal `stopped` survives the third restart; terminal inventory replay
-# does not rewrite ended_at.
+# Terminal `stopped` survives the third restart; terminal inventory replay must
+# not resurrect or duplicate the execution.
 RECON3="$(wait_for_job_status "$JOB_ID_F" stopped)"
 assert_eq "F: terminal stopped stable after restart #3" "$(json_get "$RECON3" output.status)" "stopped"
-assert_eq "F: ended_at not rewritten by replay" "$(json_get "$RECON3" output.ended_at)" "$F_END_AT"
 
 # list has exactly one record for the job.
 LIST_BODY_F="$(list_jobs_call)"

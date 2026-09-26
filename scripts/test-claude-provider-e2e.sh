@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [ "${WEBCODEX_E2E_CLAUDE_PROVIDER:-0}" != "1" ]; then
-    printf '[claude-provider-e2e] skipped (set WEBCODEX_E2E_CLAUDE_PROVIDER=1)\n'
+if [ "${WEBPI_E2E_CLAUDE_PROVIDER:-0}" != "1" ]; then
+    printf '[claude-provider-e2e] skipped (set WEBPI_E2E_CLAUDE_PROVIDER=1)\n'
     exit 0
 fi
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 CARGO_BIN="${CARGO_BIN:-cargo}"
-CLAUDE_BIN="${WEBCODEX_E2E_CLAUDE_BIN:-claude}"
+CLAUDE_BIN="${WEBPI_E2E_CLAUDE_BIN:-claude}"
 CLIENT_ID="claude-provider-e2e"
 PROJECT_ID="fixture"
 RUNTIME_PROJECT="agent:${CLIENT_ID}:${PROJECT_ID}"
@@ -202,7 +202,7 @@ start_runner() {
     XDG_CACHE_HOME="$ISOLATED_HOME/.cache" \
     CLAUDE_CONFIG_DIR="$ISOLATED_HOME/.claude-e2e" \
     RUST_LOG=warn \
-        "$ROOT/target/debug/webcodex-runner" --config "$RUNNER_CONFIG" \
+        "$ROOT/target/debug/webpi-runner" --config "$RUNNER_CONFIG" \
         >"$RUNNER_LOG" 2>&1 &
     RUNNER_PID=$!
     wait_for_agent || fail "agent did not register"
@@ -237,7 +237,7 @@ require_command "$CARGO_BIN"
 require_command "$CLAUDE_BIN"
 
 cd "$ROOT"
-if [ "${WEBCODEX_E2E_SKIP_BUILD:-0}" != "1" ]; then
+if [ "${WEBPI_E2E_SKIP_BUILD:-0}" != "1" ]; then
     "$CARGO_BIN" build --quiet -p webcodex -p webcodex-runner --bins
 fi
 
@@ -256,7 +256,7 @@ mkdir -p "$DATA_DIR" "$PROJECTS_DIR" "$FIXTURE" \
 
 git -C "$FIXTURE" init -b main >/dev/null
 git -C "$FIXTURE" config user.email e2e@example.invalid
-git -C "$FIXTURE" config user.name 'WebCodex E2E'
+git -C "$FIXTURE" config user.name 'WebPi E2E'
 printf 'before\nneedle\n' >"$FIXTURE/fixture.txt"
 git -C "$FIXTURE" add fixture.txt
 git -C "$FIXTURE" commit -m fixture >/dev/null
@@ -269,9 +269,9 @@ allow_patch = true
 kind = "text"
 EOF
 
-HOME="$ISOLATED_HOME" WEBCODEX_ADDR="127.0.0.1:${PORT}" \
-WEBCODEX_DATA="$DATA_DIR" WEBCODEX_TOKEN="$TOKEN" RUST_LOG=warn \
-    "$ROOT/target/debug/webcodex-server" >"$SERVER_LOG" 2>&1 &
+HOME="$ISOLATED_HOME" WEBPI_ADDR="127.0.0.1:${PORT}" \
+WEBPI_DATA="$DATA_DIR" WEBPI_TOKEN="$TOKEN" RUST_LOG=warn \
+    "$ROOT/target/debug/webpi-server" >"$SERVER_LOG" 2>&1 &
 SERVER_PID=$!
 wait_for_port "$PORT" || fail "server port did not open"
 ok "isolated server started"

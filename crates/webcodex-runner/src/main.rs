@@ -107,6 +107,9 @@ enum RunnerCliAction {
         once: bool,
         stop_on_stdin_eof: bool,
     },
+    CheckConfig {
+        config_path: PathBuf,
+    },
     Exit {
         code: i32,
         stdout: String,
@@ -115,11 +118,12 @@ enum RunnerCliAction {
 }
 
 fn usage() -> &'static str {
-    "Usage: webpi-runner [--config PATH] [--once] [--stop-on-stdin-eof]\n\n\
+    "Usage: webpi-runner [--config PATH] [--check-config] [--once] [--stop-on-stdin-eof]\n\n\
      Options:\n\
        -h, --help                 Print help and exit\n\
        -V, --version              Print version and exit\n\
        -c, --config PATH          Runner config path for normal runtime\n\
+       --check-config             Validate config locally and exit without connecting to Server\n\
        --profile NAME             Client config profile for default config path\n\
        --once                     Complete one successful poll, then exit (polling transport)\n\
        --stop-on-stdin-eof        Stop when the invoking parent closes stdin\n\n\
@@ -183,6 +187,7 @@ where
     let mut config_path: Option<PathBuf> = None;
     let mut profile: Option<String> = None;
     let mut once = false;
+    let mut check_config = false;
     let mut stop_on_stdin_eof = false;
     let mut args = args.into_iter();
     while let Some(arg) = args.next() {
@@ -202,6 +207,7 @@ where
                 });
             }
             "--once" => once = true,
+            "--check-config" => check_config = true,
             "--stop-on-stdin-eof" => stop_on_stdin_eof = true,
             "--config" | "-c" => {
                 let Some(path) = args.next() else {
@@ -241,6 +247,14 @@ where
                 .unwrap_or_else(default_config_path)?
         }
     };
+    if check_config && (once || stop_on_stdin_eof) {
+        return Err(
+            "--check-config cannot be combined with --once or --stop-on-stdin-eof".to_string(),
+        );
+    }
+    if check_config {
+        return Ok(RunnerCliAction::CheckConfig { config_path });
+    }
     Ok(RunnerCliAction::Run {
         config_path,
         once,
@@ -2443,6 +2457,19 @@ fn handle_one_poll(
         .map_err(PollError::from_submit)
 }
 
+fn config_check_summary(cfg: &RunnerConfig) -> String {
+    serde_json::to_string(&serde_json::json!({
+        "status": "valid",
+        "client_id": cfg.client_id,
+        "transport": cfg.transport.as_deref().unwrap_or("websocket"),
+        "project_registry_configured": cfg.project_registry_dir.is_some(),
+        "max_concurrent_jobs": max_concurrent_jobs(cfg),
+        "mcp_provider_count": cfg.mcp_gateway.providers.len(),
+        "plugin_provider_count": cfg.plugins.providers.len(),
+    }))
+    .expect("Runner config check summary is JSON serializable")
+}
+
 fn main() {
     runner_config::isolate_webpi_process_environment();
     if let Some(code) =
@@ -2467,12 +2494,13 @@ fn main() {
             std::process::exit(2);
         }
     };
-    let (config_path, once, stop_on_stdin_eof) = match action {
+    let (config_path, once, stop_on_stdin_eof, check_config) = match action {
         RunnerCliAction::Run {
             config_path,
             once,
             stop_on_stdin_eof,
-        } => (config_path, once, stop_on_stdin_eof),
+        } => (config_path, once, stop_on_stdin_eof, false),
+        RunnerCliAction::CheckConfig { config_path } => (config_path, false, false, true),
         RunnerCliAction::Exit {
             code,
             stdout,
@@ -2497,6 +2525,10 @@ fn main() {
     if cfg.token.trim().is_empty() {
         eprintln!("WebPi Runner requires its own non-empty transport credential");
         std::process::exit(2);
+    }
+    if check_config {
+        println!("{}", config_check_summary(&cfg));
+        return;
     }
     if let Err(e) = run_runner(cfg, config_path, once, stop_on_stdin_eof) {
         eprintln!("webpi-runner failed: {}", e);

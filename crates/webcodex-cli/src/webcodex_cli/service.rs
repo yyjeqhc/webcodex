@@ -665,7 +665,7 @@ where
             ));
         }
         return Err(install_error_with_rollback(
-            "webcodex Server unit pair",
+            "WebPi Server unit pair",
             error,
             rollback_errors,
         ));
@@ -986,7 +986,7 @@ fn install_error_with_rollback(unit: &str, error: String, rollback_errors: Vec<S
 }
 
 fn uninstall_error_with_rollback(error: String, rollback_errors: Vec<String>) -> String {
-    let mut message = format!("uninstallation failed for webcodex Server unit pair: {error}");
+    let mut message = format!("uninstallation failed for WebPi Server unit pair: {error}");
     if !rollback_errors.is_empty() {
         let mut summary = rollback_errors.join("; ");
         if summary.len() > 600 {
@@ -1255,7 +1255,7 @@ pub(crate) fn install_server_unit_pair_with_executor<E: ProcessExecutor>(
             &socket_snapshot,
         );
         return Err(install_error_with_rollback(
-            "webcodex Server unit pair",
+            "WebPi Server unit pair",
             error,
             rollback_errors,
         ));
@@ -2258,7 +2258,7 @@ mod tests {
     fn user_scope_covers_install_status_control_logs_and_uninstall_manager_args() {
         let systemctl = Path::new("/usr/bin/systemctl");
         let journalctl = Path::new("/usr/bin/journalctl");
-        let unit = "webcodex-runner-work.service";
+        let unit = "webpi-runner-work.service";
 
         for invocation in plan_install_for_scope(ServiceScope::User, systemctl, unit, false) {
             assert_eq!(invocation.args.first().map(String::as_str), Some("--user"));
@@ -2348,7 +2348,7 @@ mod tests {
 
         let logs = journalctl_invocation(
             Path::new("/usr/bin/journalctl"),
-            "webcodex-runner-work.service",
+            "webpi-runner-work.service",
             75,
             Some("yesterday 12:00"),
             true,
@@ -2357,7 +2357,7 @@ mod tests {
             logs.args,
             [
                 "--unit",
-                "webcodex-runner-work.service",
+                "webpi-runner-work.service",
                 "--lines",
                 "75",
                 "--no-pager",
@@ -2908,10 +2908,10 @@ mod tests {
     fn unit_name_comes_from_selected_service_file() {
         assert_eq!(
             service_unit_name(
-                Path::new("/etc/systemd/system/webcodex-runner-special.service"),
+                Path::new("/etc/systemd/system/webpi-runner-special.service"),
                 RUNNER_SERVICE_UNIT
             ),
-            "webcodex-runner-special.service"
+            "webpi-runner-special.service"
         );
     }
 }

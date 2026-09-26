@@ -1,10 +1,13 @@
 use salvo::conn::tcp::TcpAcceptor;
 use salvo::conn::{Listener, TcpListener};
-use std::net::{SocketAddr, ToSocketAddrs};
+use std::net::SocketAddr;
+#[cfg(target_os = "linux")]
+use std::net::ToSocketAddrs;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ListenerMode {
     Direct,
+    #[cfg(target_os = "linux")]
     SystemdActivated,
 }
 
@@ -13,7 +16,9 @@ struct ActivationMetadata {
     fd_name: Option<String>,
 }
 
+#[cfg(target_os = "linux")]
 const SYSTEMD_LISTEN_FD_START: i32 = 3;
+#[cfg(any(target_os = "linux", test))]
 const HTTP_FD_NAME: &str = "webcodex-http";
 
 #[cfg(target_os = "linux")]
@@ -23,6 +28,7 @@ static PREPARED_ACTIVATION_METADATA: std::sync::OnceLock<Option<ActivationMetada
 #[cfg(target_os = "linux")]
 const SYSTEMD_ACTIVATION_ENV_KEYS: [&str; 3] = ["LISTEN_PID", "LISTEN_FDS", "LISTEN_FDNAMES"];
 
+#[cfg(any(target_os = "linux", test))]
 fn activation_metadata_from_values(
     listen_pid: Option<&str>,
     listen_fds: Option<&str>,
@@ -127,6 +133,7 @@ fn activation_metadata_from_env() -> Result<Option<ActivationMetadata>, String> 
     Ok(None)
 }
 
+#[cfg(target_os = "linux")]
 fn configured_addr_matches(configured: &str, actual: SocketAddr) -> Result<bool, String> {
     let configured_addrs = configured.to_socket_addrs().map_err(|error| {
         format!("invalid WEBPI_ADDR {configured:?}: cannot resolve configured listener address: {error}")

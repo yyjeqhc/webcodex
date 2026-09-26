@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [ "${WEBCODEX_E2E_AGENT_RELOAD:-0}" != "1" ]; then
-    printf '[agent-reload-e2e] skipped (set WEBCODEX_E2E_AGENT_RELOAD=1)\n'
+if [ "${WEBPI_E2E_AGENT_RELOAD:-0}" != "1" ]; then
+    printf '[agent-reload-e2e] skipped (set WEBPI_E2E_AGENT_RELOAD=1)\n'
     exit 0
 fi
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -10,7 +10,7 @@ CARGO_BIN="${CARGO_BIN:-cargo}"
 CLIENT_ID="agent-reload-e2e"
 PROJECT_ID="fixture"
 RUNTIME_PROJECT="agent:${CLIENT_ID}:${PROJECT_ID}"
-TOKEN="webcodex-runner-reload-e2e-only"
+TOKEN="webpi-runner-reload-e2e-only"
 STARTUP_DISPLAY="Agent Reload E2E"
 TMP_ROOT=""
 SERVER_PID=""
@@ -134,7 +134,7 @@ default_profile = "reload-test"
 [shell.profiles.reload-test]
 program = "sh"
 args = ["-lc"]
-env = { WEBCODEX_RELOAD_MARKER = "${marker}" }
+env = { WEBPI_RELOAD_MARKER = "${marker}" }
 [tool_providers]
 strategy = "${strategy}"
 [tool_providers.claude_code]
@@ -195,7 +195,7 @@ run_shell_request() {
     api_post /api/projects/run_shell "$(request_body "$1")" >"$RESPONSE_FILE"
 }
 assert_marker() {
-    run_shell_request 'printf %s "$WEBCODEX_RELOAD_MARKER"'
+    run_shell_request 'printf %s "$WEBPI_RELOAD_MARKER"'
     python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["success"] and d["output"]["stdout_tail"]==sys.argv[2] and d["output"]["stderr_tail"]=="" and d["output"]["exit_code"]==0' \
         "$RESPONSE_FILE" "$1" || fail "shell marker was not $1"
 }
@@ -210,10 +210,10 @@ job_status() {
 for command in awk curl git mv python3 setsid tail "$CARGO_BIN"; do require_command "$command"; done
 cd "$ROOT"
 REPO_STATUS_BEFORE="$(git status --short)"
-if [ "${WEBCODEX_E2E_SKIP_BUILD:-0}" != "1" ]; then
+if [ "${WEBPI_E2E_SKIP_BUILD:-0}" != "1" ]; then
     "$CARGO_BIN" build --quiet -p webcodex -p webcodex-runner --bins
 fi
-[ -x target/debug/webcodex-server ] && [ -x target/debug/webcodex-runner ] \
+[ -x target/debug/webpi-server ] && [ -x target/debug/webpi-runner ] \
     || fail "debug server/agent binaries are unavailable"
 TMP_ROOT="$(mktemp -d -t webcodex-runner-reload-e2e-XXXXXX)"
 DATA_DIR="$TMP_ROOT/data"
@@ -252,16 +252,16 @@ write_runner_config generation-1 5 65536 native false 30 "$STARTUP_DISPLAY" 1 \
 setsid env -i PATH="$PATH" LANG=C HOME="$ISOLATED_HOME" \
     XDG_CONFIG_HOME="$ISOLATED_HOME/.config" XDG_DATA_HOME="$ISOLATED_HOME/.local/share" \
     XDG_STATE_HOME="$ISOLATED_HOME/.local/state" XDG_CACHE_HOME="$ISOLATED_HOME/.cache" \
-    TMPDIR="$RUNTIME_TMP" WEBCODEX_ENV_FILE="$TMP_ROOT/empty.env" \
-    WEBCODEX_ADDR="127.0.0.1:${PORT}" WEBCODEX_DATA="$DATA_DIR" WEBCODEX_TOKEN="$TOKEN" \
-    RUST_LOG=warn target/debug/webcodex-server >"$SERVER_LOG" 2>&1 &
+    TMPDIR="$RUNTIME_TMP" WEBPI_ENV_FILE="$TMP_ROOT/empty.env" \
+    WEBPI_ADDR="127.0.0.1:${PORT}" WEBPI_DATA="$DATA_DIR" WEBPI_TOKEN="$TOKEN" \
+    RUST_LOG=warn target/debug/webpi-server >"$SERVER_LOG" 2>&1 &
 SERVER_PID=$!
 wait_for_port open || fail "isolated server port did not open"
 setsid env -i PATH="$PATH" LANG=C HOME="$ISOLATED_HOME" \
     XDG_CONFIG_HOME="$ISOLATED_HOME/.config" XDG_DATA_HOME="$ISOLATED_HOME/.local/share" \
     XDG_STATE_HOME="$ISOLATED_HOME/.local/state" XDG_CACHE_HOME="$ISOLATED_HOME/.cache" \
-    TMPDIR="$RUNTIME_TMP" WEBCODEX_ENV_FILE="$TMP_ROOT/empty.env" RUST_LOG=warn \
-    target/debug/webcodex-runner --config "$RUNNER_CONFIG" >"$RUNNER_LOG" 2>&1 &
+    TMPDIR="$RUNTIME_TMP" WEBPI_ENV_FILE="$TMP_ROOT/empty.env" RUST_LOG=warn \
+    target/debug/webpi-runner --config "$RUNNER_CONFIG" >"$RUNNER_LOG" 2>&1 &
 RUNNER_PID=$!
 START_RUNNER_PID="$RUNNER_PID"
 STAGE="generation 1 baseline"
@@ -303,12 +303,12 @@ kill -HUP "$RUNNER_PID"
 wait_for_status 3 partial null true display_name,max_concurrent_jobs native false \
     || fail "mixed reload status did not arrive"
 assert_runner_pid
-command='sleep 3; printf %s "$WEBCODEX_RELOAD_MARKER"'
+command='sleep 3; printf %s "$WEBPI_RELOAD_MARKER"'
 run_shell_request "$command"
 python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["success"] and d["output"]["stdout_tail"]=="generation-3"' \
     "$RESPONSE_FILE" || fail "generation 3 hot policy/shell snapshot was not active"
 JOB_ONE="$(start_job "while [ ! -e '$GATE' ]; do sleep 0.05; done; printf first")"
-JOB_TWO="$(start_job 'printf %s "$WEBCODEX_RELOAD_MARKER"')"
+JOB_TWO="$(start_job 'printf %s "$WEBPI_RELOAD_MARKER"')"
 queued_seen=false
 for _ in $(seq 1 50); do
     one="$(job_status "$JOB_ONE" 2>/dev/null || true)"

@@ -468,6 +468,114 @@ async fn mcp_computer_snapshot_resource_links_are_unique_caller_bound_and_scope_
 }
 
 #[tokio::test]
+async fn mcp_large_computer_snapshot_uses_bounded_inline_preview_and_preserves_full_resource() {
+    use image::codecs::jpeg::JpegEncoder;
+    use sha2::{Digest, Sha256};
+
+    fn snapshot_auth(api_key_id: &str) -> crate::auth::AuthContext {
+        let mut auth = crate::auth::AuthContext::new(crate::auth::AuthKind::ApiToken);
+        auth.api_key_id = Some(api_key_id.to_string());
+        auth.token_kind = Some("user".to_string());
+        auth.scopes = vec![
+            crate::auth::SCOPE_COMPUTER_READ.to_string(),
+            crate::auth::SCOPE_COMPUTER_DISPLAY_READ.to_string(),
+        ];
+        auth
+    }
+
+    let (width, height, full) = [(1280u32, 720u32), (1024, 576), (960, 540)]
+        .into_iter()
+        .find_map(|(width, height)| {
+            let mut rgba = image::RgbaImage::new(width, height);
+            for (x, y, pixel) in rgba.enumerate_pixels_mut() {
+                let v = ((x.wrapping_mul(37) ^ y.wrapping_mul(91) ^ (x + y).wrapping_mul(13))
+                    & 0xff) as u8;
+                *pixel = image::Rgba([v, v.rotate_left(2), v.rotate_left(5), 255]);
+            }
+            [82u8, 76, 70, 64, 58].into_iter().find_map(|quality| {
+                let mut bytes = Vec::new();
+                JpegEncoder::new_with_quality(&mut bytes, quality)
+                    .encode_image(&rgba)
+                    .expect("encode full JPEG fixture");
+                (bytes.len() > 192 * 1024
+                    && bytes.len() < crate::artifact_policy::MAX_MCP_IMAGE_BYTES)
+                    .then_some((width, height, bytes))
+            })
+        })
+        .expect("fixture must fit full-image budget while exceeding preview budget");
+
+    let runtime = test_runtime();
+    let auth = snapshot_auth("snapshot-large-owner");
+    let caller = mcp_artifact_export_caller_binding(Some(&auth)).unwrap();
+    let encoded = general_purpose::STANDARD.encode(&full);
+    let sha256 = format!("{:x}", Sha256::digest(&full));
+    let framed = mcp_runtime_tool_result_with_snapshot_resource(
+        "computer_observe",
+        false,
+        ToolResult::ok(json!({
+            "client_id": "large-preview-runner",
+            "display_id": "display_large_preview",
+            "snapshot_generation": 1,
+            "source_width": width,
+            "source_height": height,
+            "width": width,
+            "height": height,
+            "mime_type": "image/jpeg",
+            "file_bytes": full.len(),
+            "sha256": sha256,
+            "captured_at_unix_ms": 1,
+            "content_base64": encoded,
+        })),
+        Some(caller),
+    );
+
+    assert_eq!(framed["isError"], false);
+    let content = framed["content"].as_array().unwrap();
+    assert_eq!(content.len(), 3);
+    assert_eq!(content[0]["type"], "resource_link");
+    assert_eq!(content[0]["size"], Value::from(full.len() as u64));
+    assert_eq!(content[2]["type"], "image");
+    let preview = general_purpose::STANDARD
+        .decode(content[2]["data"].as_str().unwrap())
+        .unwrap();
+    assert!(preview.len() <= 192 * 1024);
+    assert!(preview.len() < full.len());
+    assert_eq!(content[2]["mimeType"], "image/jpeg");
+    assert_eq!(
+        framed["structuredContent"]["output"]["content_delivery"],
+        "mcp_image"
+    );
+    assert_eq!(
+        framed["structuredContent"]["output"]["full_image_resource"],
+        true
+    );
+    assert_eq!(
+        framed["structuredContent"]["output"]["preview_file_bytes"],
+        Value::from(preview.len() as u64)
+    );
+    let structured = serde_json::to_string(&framed["structuredContent"]).unwrap();
+    assert!(!structured.contains("content_base64"));
+    assert!(!structured.contains(&general_purpose::STANDARD.encode(&full)));
+
+    let uri = content[0]["uri"].as_str().unwrap().to_string();
+    let read = handle_mcp_request(
+        &runtime,
+        rpc(
+            "resources/read",
+            Some(json!(2116)),
+            mcp_2026_params(json!({ "uri": uri })),
+        ),
+        Some(&auth),
+    )
+    .await;
+    let McpOutcome::Ok(read) = read else {
+        panic!("full screenshot resource must remain readable");
+    };
+    let blob = read["result"]["contents"][0]["blob"].as_str().unwrap();
+    assert_eq!(general_purpose::STANDARD.decode(blob).unwrap(), full);
+}
+
+#[tokio::test]
 async fn mcp_resources_read_not_found_echoes_uri_without_changing_param_errors() {
     let runtime = test_runtime();
     let uri = "test://nonexistent-resource-for-conformance-testing";

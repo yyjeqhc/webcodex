@@ -1626,6 +1626,12 @@ fn runner_project_cache_invalidate_refreshes_after_project_op() {
         }),
     );
     project_ok(handle_project_op(&cfg.policy, &project_registry_dir, &req));
+    // The cache has a real five-second TTL. Under the full parallel test suite
+    // this thread may be descheduled long enough for that TTL to expire, which
+    // would make get() legitimately refresh before this assertion. Reset only
+    // the test freshness timestamp so this test exercises explicit invalidation
+    // deterministically rather than scheduler timing.
+    cache.mark_fresh_for_test();
 
     assert!(
         cache.get(&cfg).is_empty(),

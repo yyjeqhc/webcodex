@@ -20,17 +20,17 @@ if not re.fullmatch(r"[0-9a-f]{40}", commit):
 print(commit)
 PY
 )"
-WORK_ROOT="${WEBCODEX_MCP_CONFORMANCE_WORK_ROOT:-target/mcp-conformance}"
+WORK_ROOT="${WEBPI_MCP_CONFORMANCE_WORK_ROOT:-target/mcp-conformance}"
 HARNESS_DIR_EXTERNAL=0
-if [ "${WEBCODEX_MCP_CONFORMANCE_HARNESS_DIR+x}" = x ]; then
-  HARNESS_DIR="${WEBCODEX_MCP_CONFORMANCE_HARNESS_DIR}"
+if [ "${WEBPI_MCP_CONFORMANCE_HARNESS_DIR+x}" = x ]; then
+  HARNESS_DIR="${WEBPI_MCP_CONFORMANCE_HARNESS_DIR}"
   HARNESS_DIR_EXTERNAL=1
 else
   HARNESS_DIR="$WORK_ROOT/harness"
 fi
 REPORT_ROOT_EXTERNAL=0
-if [ "${WEBCODEX_MCP_CONFORMANCE_REPORT_ROOT+x}" = x ]; then
-  REPORT_ROOT="${WEBCODEX_MCP_CONFORMANCE_REPORT_ROOT}"
+if [ "${WEBPI_MCP_CONFORMANCE_REPORT_ROOT+x}" = x ]; then
+  REPORT_ROOT="${WEBPI_MCP_CONFORMANCE_REPORT_ROOT}"
   REPORT_ROOT_EXTERNAL=1
 else
   REPORT_ROOT="$WORK_ROOT/reports"
@@ -112,7 +112,7 @@ is_git_worktree() {
 prepare_harness_source() {
   if [ "$HARNESS_DIR_EXTERNAL" -eq 1 ]; then
     if ! is_git_worktree "$HARNESS_DIR"; then
-      echo "WEBCODEX_MCP_CONFORMANCE_HARNESS_DIR must name an existing Git worktree; refusing to modify it: $HARNESS_DIR" >&2
+      echo "WEBPI_MCP_CONFORMANCE_HARNESS_DIR must name an existing Git worktree; refusing to modify it: $HARNESS_DIR" >&2
       exit 2
     fi
   elif [ ! -e "$HARNESS_DIR" ]; then
@@ -176,7 +176,7 @@ prepare_report_root() {
     touch "$REPORT_ROOT/$REPORT_OWNER_MARKER"
   elif [ ! -f "$REPORT_ROOT/$REPORT_OWNER_MARKER" ]; then
     if find "$REPORT_ROOT" -mindepth 1 -maxdepth 1 -print -quit | grep -q .; then
-      echo "MCP report root is non-empty and lacks the WebCodex ownership marker; refusing to delete its contents: $REPORT_ROOT" >&2
+      echo "MCP report root is non-empty and lacks the WebPi ownership marker; refusing to delete its contents: $REPORT_ROOT" >&2
       exit 2
     fi
     touch "$REPORT_ROOT/$REPORT_OWNER_MARKER"
@@ -205,19 +205,19 @@ prepare_report_root
 prepare_harness_build
 python3 scripts/tests/test_mcp_conformance_report.py
 
-# Compile before starting the bounded readiness clock. A cold WebCodex test build
+# Compile before starting the bounded readiness clock. A cold WebPi test build
 # can take several minutes on small builders; readiness should measure server
 # startup, not Rust compilation time.
 cargo test --locked -p webcodex --lib mcp_conformance_fixture_server --no-run
 
-fixture_dir="$(mktemp -d "${TMPDIR:-/tmp}/webcodex-mcp-conformance.XXXXXX")"
+fixture_dir="$(mktemp -d "${TMPDIR:-/tmp}/webpi-mcp-conformance.XXXXXX")"
 url_file="$fixture_dir/url"
 stop_file="$fixture_dir/stop"
 fixture_log="$REPORT_ROOT/fixture.log"
 # Keep the entire Cargo + test-binary fixture tree in one private process group so
 # fallback teardown cannot leave the loopback server alive if Cargo exits first.
-WEBCODEX_MCP_CONFORMANCE_URL_FILE="$url_file" \
-WEBCODEX_MCP_CONFORMANCE_STOP_FILE="$stop_file" \
+WEBPI_MCP_CONFORMANCE_URL_FILE="$url_file" \
+WEBPI_MCP_CONFORMANCE_STOP_FILE="$stop_file" \
   python3 -c 'import os, sys; os.setsid(); os.execvp(sys.argv[1], sys.argv[1:])' \
   cargo test --locked -p webcodex --lib mcp_conformance_fixture_server -- --ignored --nocapture \
   >"$fixture_log" 2>&1 &

@@ -227,7 +227,7 @@ impl ToolRuntime {
             |head| git_log_command_at_head(head, limit, skip),
         );
         let output = match self
-            .run_project_command_capture(&resolved_project, command, 30, None)
+            .run_project_internal_posix_script_capture(&resolved_project, command, 30, None)
             .await
         {
             Ok(output) => output,

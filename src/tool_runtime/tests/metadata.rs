@@ -2557,6 +2557,7 @@ async fn runtime_status_does_not_expose_tokens_or_secrets() {
     let info = RuntimeInfo {
         auth_enabled: true,
         configured_public_url: Some("https://example.com".to_string()),
+        public_tunnel_probe: RuntimeInfo::default().public_tunnel_probe,
         oauth2_enabled: true,
         oauth2_shared_key_bridge_enabled: true,
         quic: Some(Arc::new(std::sync::Mutex::new(
@@ -2624,6 +2625,7 @@ async fn runtime_status_quic_enabled_error_is_sanitized() {
     let runtime = runtime_with_info(RuntimeInfo {
         auth_enabled: false,
         configured_public_url: None,
+        public_tunnel_probe: RuntimeInfo::default().public_tunnel_probe,
         quic: Some(status),
         oauth2_enabled: false,
         oauth2_shared_key_bridge_enabled: false,
@@ -2655,6 +2657,7 @@ async fn runtime_status_quic_started_reports_listen_and_alpn() {
     let runtime = runtime_with_info(RuntimeInfo {
         auth_enabled: false,
         configured_public_url: None,
+        public_tunnel_probe: RuntimeInfo::default().public_tunnel_probe,
         quic: Some(status),
         oauth2_enabled: false,
         oauth2_shared_key_bridge_enabled: false,
@@ -2675,6 +2678,7 @@ async fn runtime_status_auth_enabled_reflects_runtime_info() {
     let runtime = runtime_with_info(RuntimeInfo {
         auth_enabled: false,
         configured_public_url: None,
+        public_tunnel_probe: RuntimeInfo::default().public_tunnel_probe,
         oauth2_enabled: false,
         oauth2_shared_key_bridge_enabled: false,
         quic: Some(Arc::new(std::sync::Mutex::new(
@@ -2689,6 +2693,7 @@ async fn runtime_status_auth_enabled_reflects_runtime_info() {
     let runtime = runtime_with_info(RuntimeInfo {
         auth_enabled: true,
         configured_public_url: Some("https://webcodex.example.com".to_string()),
+        public_tunnel_probe: RuntimeInfo::default().public_tunnel_probe,
         oauth2_enabled: true,
         oauth2_shared_key_bridge_enabled: true,
         quic: Some(Arc::new(std::sync::Mutex::new(

@@ -24,6 +24,7 @@ pub enum AdminCliCommand {
     TokensCreate(AdminOptions, TokenCreateArgs),
     TokensRegisterHash(AdminOptions, TokenRegisterHashArgs),
     TokensList(AdminOptions, UsernameArgs),
+    TokensUpdateScopes(AdminOptions, TokenUpdateScopesArgs),
     TokensRevoke(AdminOptions, RevokeTokenArgs),
     RunnerTokensCreate(AdminOptions, RunnerTokenCreateArgs),
     RunnerTokensRegisterHash(AdminOptions, RunnerTokenRegisterHashArgs),
@@ -76,6 +77,13 @@ pub struct UsernameArgs {
 pub struct RevokeTokenArgs {
     pub username: String,
     pub token_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct TokenUpdateScopesArgs {
+    pub username: String,
+    pub token_id: String,
+    pub scopes: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]

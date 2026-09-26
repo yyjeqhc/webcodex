@@ -2,7 +2,7 @@
 
 [English](GPT_ACTIONS.md) | [简体中文](GPT_ACTIONS.zh-CN.md)
 
-Custom GPT 需要通过 Server 的 OpenAPI 兼容集成调用 WebCodex 时使用 GPT Actions。客户端直接支持 MCP 时优先使用 [MCP](MCP.zh-CN.md)；MCP 仍然是 ChatGPT 的主要接入方式。
+Custom GPT 需要通过 Server 的 OpenAPI 兼容集成调用 WebPi 时使用 GPT Actions。客户端直接支持 MCP 时优先使用 [MCP](MCP.zh-CN.md)；MCP 仍然是 ChatGPT 的主要接入方式。
 
 `/openapi.json` 使用同一套 canonical Adaptive Runtime routing policy：
 
@@ -19,7 +19,7 @@ https://your-domain.example/openapi.json
 
 ChatGPT 需要公网 HTTPS。API-key 认证配置为 HTTP Bearer，使用生成的 user token（`wc_pat_*`）。Runner token（`wc_agent_*`）只用于 Runner transport，不能放进 GPT。
 
-如果 Server 以前使用过旧 generic GPT Actions schema，升级后请**重新导入 `/openapi.json`**。新的 generic operation 名称直接使用 WebCodex canonical runtime tool 的 snake_case 名称，不再使用旧 camelCase Action vocabulary。
+如果 Server 以前使用过旧 generic GPT Actions schema，升级后请**重新导入 `/openapi.json`**。新的 generic operation 名称直接使用 WebPi canonical runtime tool 的 snake_case 名称，不再使用旧 camelCase Action vocabulary。
 
 ## 普通 Runtime Server
 
@@ -57,11 +57,11 @@ MCP-only presentation 不会伪装成 Action 能力。例如 Goal Plan / Agent c
 
 ### 300 字符 description 约束
 
-Custom GPT Actions 对 operation/tool description 有 300 characters 硬上限。WebCodex 保持 canonical MCP description 的更大预算不变：canonical description 不超过 300 时直接复用；超过时只在同一个 `ToolDefinition` 上提供简短 Action presentation override。Schema/property description 使用 presentation-only bounded projector，只改变 description 文本，不改变 JSON Schema 的 type、required、enum、oneOf/anyOf、约束或对象形状。
+Custom GPT Actions 对 operation/tool description 有 300 characters 硬上限。WebPi 保持 canonical MCP description 的更大预算不变：canonical description 不超过 300 时直接复用；超过时只在同一个 `ToolDefinition` 上提供简短 Action presentation override。Schema/property description 使用 presentation-only bounded projector，只改变 description 文本，不改变 JSON Schema 的 type、required、enum、oneOf/anyOf、约束或对象形状。
 
 ### OpenAPI 导入体积
 
-Custom GPT importer 还会拒绝达到 1 MB 的 OpenAPI schema。WebCodex 因此为 generic Action document 保留内部 800,000-byte JSON 预算，并在 CI 中同时检查 compact 与 pretty-printed serialization。Direct Action request schema 继续完整使用 canonical `ToolSpec.input_schema`；response schema 只描述真实的 compact `ToolResult` envelope，并把 `output` 保持为 generic，而不再为每个 operation 内联可能很大的 canonical output schema。这只改变 OpenAPI presentation contract；实际 runtime JSON result 以及 canonical/MCP output schema 都不变。
+Custom GPT importer 还会拒绝达到 1 MB 的 OpenAPI schema。WebPi 因此为 generic Action document 保留内部 800,000-byte JSON 预算，并在 CI 中同时检查 compact 与 pretty-printed serialization。Direct Action request schema 继续完整使用 canonical `ToolSpec.input_schema`；response schema 只描述真实的 compact `ToolResult` envelope，并把 `output` 保持为 generic，而不再为每个 operation 内联可能很大的 canonical output schema。这只改变 OpenAPI presentation contract；实际 runtime JSON result 以及 canonical/MCP output schema 都不变。
 
 ### 对话文件导入
 
@@ -71,7 +71,7 @@ MCP host-file import 保留独立的 trusted provenance 路径。普通 network-
 
 ## Project-scoped local `share` / `run`
 
-`webcodex share` 或 `webcodex run` 启动的 Server 使用与普通 Server 相同的 generic Adaptive Runtime OpenAPI projection。Project-scoped authentication 只把调用方限制在自己的 ProjectGrant，不会切换到单独的 Connector capability registry。
+`webpi share` 或 `webpi run` 启动的 Server 使用与普通 Server 相同的 generic Adaptive Runtime OpenAPI projection。Project-scoped authentication 只把调用方限制在自己的 ProjectGrant，不会切换到单独的 Connector capability registry。
 
 Custom GPT 可以使用 canonical runtime workflow：
 
@@ -84,11 +84,11 @@ validation 或 command 继续异步运行时观察同一个 Job。
 不要从 chat、credential 或猜测的 id 推导 Project/Session authority。
 ```
 
-旧 ProjectConnector Action 名称与 host-side `webcodex task` review workflow 不再作为 compatibility alias 投影。
+旧 ProjectConnector Action 名称与 host-side `webpi task` review workflow 不再作为 compatibility alias 投影。
 
 ## 管理与安全
 
-OpenAPI model surface 有意排除 users、API token、Runner token、pairing/enrollment、setup、doctor、npm、server 管理与 audit endpoint。这些请使用 `webcodex` CLI。
+OpenAPI model surface 有意排除 users、API token、Runner token、pairing/enrollment、setup、doctor、npm、server 管理与 audit endpoint。这些请使用 `webpi` CLI。
 
 MCP 与 GPT Actions 使用同一个 ToolRuntime authority model。GPT Actions 只改变 model presentation 和 HTTP transport，不会获得同一个 canonical tool 在 MCP/runtime 执行路径中没有的权限。
 

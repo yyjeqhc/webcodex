@@ -1,6 +1,6 @@
 # Architecture
 
-WebCodex is a self-hosted tool runtime that lets online AI clients operate
+WebPi is a self-hosted tool runtime that lets online AI clients operate
 private code through a Server and a local Runner, while the Server can also retain
 durable Agent/Conversation state independently of a browser window. This page is a
 conceptual overview; the [CLI](CLI.md), [Runner](RUNNER.md), [Deployment](DEPLOYMENT.md),
@@ -13,13 +13,13 @@ For a short definition of the terms, see the terminology sections in
 
 ```mermaid
 flowchart LR
-  C[AI client] -->|MCP or GPT Actions| S[WebCodex Server]
-  S -->|authenticated Runner connection| R[webcodex-runner]
+  C[AI client] -->|MCP or GPT Actions| S[WebPi Server]
+  S -->|authenticated Runner connection| R[webpi-runner]
   R --> P[Registered Project]
   R --> G[Git / Tests / Shell / Jobs]
 ```
 
-The online client calls WebCodex over MCP or GPT Actions. The Server
+The online client calls WebPi over MCP or GPT Actions. The Server
 authenticates the caller, applies policy, and routes runtime tool calls to a
 connected Runner. The Runner owns the local project boundary and performs the
 file, Git, validation, shell, and Job work on the machine that has the code.
@@ -30,7 +30,7 @@ project id `agent:<client_id>:<project_id>`.
 
 ## Product surfaces
 
-WebCodex exposes the same Server/Runner runtime through several user-facing adapters:
+WebPi exposes the same Server/Runner runtime through several user-facing adapters:
 
 - **MCP** — the recommended model-facing integration for ChatGPT, Claude, and other MCP clients.
 - **GPT Actions** — the OpenAPI integration for Custom GPTs that do not use MCP directly.
@@ -38,7 +38,7 @@ WebCodex exposes the same Server/Runner runtime through several user-facing adap
 - **CLI** — operator/developer setup, lifecycle, and diagnostics.
 - **Console** — the Server-hosted operator browser surface.
 
-A regular Server + Runner and the local `webcodex share` / `webcodex run` lifecycle all expose the ordinary WebCodex runtime. `share` and `run` are deployment/auth/reachability conveniences around one locally registered Project; they do not define a second coding runtime or task model. Their project-scoped credentials restrict which Runner/Project is visible without changing ToolRuntime semantics.
+A regular Server + Runner and the local `webpi share` / `webpi run` lifecycle all expose the ordinary WebPi runtime. `share` and `run` are deployment/auth/reachability conveniences around one locally registered Project; they do not define a second coding runtime or task model. Their project-scoped credentials restrict which Runner/Project is visible without changing ToolRuntime semantics.
 
 Internal type names used to route these adapters are maintainer implementation details; ordinary users should follow the tools and connection instructions returned by the current Server.
 
@@ -115,7 +115,7 @@ recovery state rather than a Runner wire lifecycle value.
 
 ```mermaid
 flowchart TD
-  M[Online model] -->|tool calls only| S[WebCodex Server]
+  M[Online model] -->|tool calls only| S[WebPi Server]
   S -->|policy + auth + session ledger| R[Runner]
   R -->|allowed project dirs only| P[Private repo]
   M -. no direct filesystem access .- P
@@ -135,7 +135,7 @@ See [SECURITY.md](../SECURITY.md) and [AUTH_MODEL.md](AUTH_MODEL.md).
 
 ## Persistence and recovery
 
-The Server persists managed accounts, OAuth state, Workflow Session evidence, durable Agent/Conversation/Agent Task state, and durable Goal state. Workflow Session, Agent Task, and Goal continuity is restored from each domain's own durable identifiers; WebCodex does not invent continuity from a credential, current browser window, Project, or neighboring domain identity.
+The Server persists managed accounts, OAuth state, Workflow Session evidence, durable Agent/Conversation/Agent Task state, and durable Goal state. Workflow Session, Agent Task, and Goal continuity is restored from each domain's own durable identifiers; WebPi does not invent continuity from a credential, current browser window, Project, or neighboring domain identity.
 
 Runner Jobs are reconciled when the same live Runner process reconnects. Ordinary child processes cannot be adopted by an unrelated replacement Runner; specialized detached execution has its own explicit durable ownership path. The stable Runner `client_id` and the current process lease are separate, but the exact lease field is an internal wire detail.
 
@@ -214,7 +214,7 @@ kept without a named consumer.
 Internal protocol taxonomies do not automatically belong on the model surface.
 Typed continuation kinds/carriers, absolute cursors, lifecycle bookkeeping,
 timestamps, derived counts, and forensic recovery metadata can remain canonical
-inside WebCodex while the normal model projection exposes only the business
+inside WebPi while the normal model projection exposes only the business
 result, correctness-critical identity/fence/completeness, and one unambiguous
 follow-up. Extra diagnostic detail is progressively disclosed when an exceptional
 state actually requires the model to reason about it. A field that cannot change

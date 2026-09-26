@@ -4,16 +4,19 @@ use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
+#[cfg(unix)]
 fn sha256_bytes(bytes: &[u8]) -> String {
     let mut hash = Sha256::new();
     hash.update(bytes);
     format!("{:x}", hash.finalize())
 }
 
+#[cfg(unix)]
 fn leaked(value: String) -> &'static str {
     Box::leak(value.into_boxed_str())
 }
 
+#[cfg(unix)]
 fn test_asset(bytes: &[u8], gzip_archive: bool) -> CloudflaredAsset {
     let binary_sha256 = if gzip_archive {
         unreachable!("archive tests construct their asset explicitly")
@@ -145,7 +148,7 @@ fn managed_root_prefers_xdg_then_home_and_requires_private_user_base() {
             Some(local.as_os_str()),
         )
         .unwrap(),
-        state.join("webcodex/tools/cloudflared")
+        state.join("webpi/tools/cloudflared")
     );
     assert_eq!(
         managed_cloudflared_root_from(None, Some(home.as_os_str()), Some(local.as_os_str()),)
@@ -154,7 +157,7 @@ fn managed_root_prefers_xdg_then_home_and_requires_private_user_base() {
     );
     assert_eq!(
         managed_cloudflared_root_from(None, None, Some(local.as_os_str())).unwrap(),
-        local.join("WebCodex/tools/cloudflared")
+        local.join("webpi/tools/cloudflared")
     );
     let error = managed_cloudflared_root_from(None, None, None).unwrap_err();
     assert_eq!(error.code, "tunnel_unavailable");

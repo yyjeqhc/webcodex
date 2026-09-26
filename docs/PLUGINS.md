@@ -2,7 +2,7 @@
 
 [English](PLUGINS.md) | [简体中文](PLUGINS.zh-CN.md)
 
-Native Tool Plugins let a WebCodex Runner expose tools implemented by an
+Native Tool Plugins let a WebPi Runner expose tools implemented by an
 arbitrary local executable. A Plugin can be Node.js, Bun, Deno, Python, `uv`,
 Ruby, a Rust/Go/C/C++ binary, or another program that can read stdin and write
 stdout. It does **not** need to implement an MCP server or depend on an MCP SDK.
@@ -10,7 +10,7 @@ stdout. It does **not** need to implement an MCP server or depend on an MCP SDK.
 The Plugin process runs on the Runner machine. The Server never receives its
 command, argv, cwd, prepared environment, PID, stderr, or local credentials.
 
-Native Plugins are **trusted local executables**. WebCodex does not sandbox,
+Native Plugins are **trusted local executables**. WebPi does not sandbox,
 contain, sign, or otherwise make an untrusted executable safe. A Plugin has the
 same practical local-process trust implications as launching that executable
 directly with the prepared Runner environment.
@@ -58,7 +58,7 @@ The selected shell profile prepares an environment snapshot, including
 `init_script`. The Plugin itself is then launched as a **native argv process**,
 not through a shell. A bare command such as `node`, `python`, `uv`, or `bun` is
 resolved from the prepared snapshot's `PATH`, not only from the Runner parent
-process PATH. Sensitive WebCodex process credentials are filtered from that
+process PATH. Sensitive WebPi process credentials are filtered from that
 environment.
 
 Plugin candidate preparation may read the complete startup-bound `runner.toml`
@@ -78,14 +78,14 @@ shell semantics; configure the native runtime executable instead.
 ## Runner-owned gateway model
 
 Native Plugins are Runner-owned capabilities. Provider tools never join the
-Server-global WebCodex tool namespace and are never appended to outer MCP
+Server-global WebPi tool namespace and are never appended to outer MCP
 `tools/list`. A Plugin may define `safe_delete`, `runtime_status`, or any other
-valid provider-local name without colliding with WebCodex built-ins or Plugin
+valid provider-local name without colliding with WebPi built-ins or Plugin
 tools on another Runner/provider.
 
-The stable model-facing entry is the first-class WebCodex tool `plugin_tool`.
+The stable model-facing entry is the first-class WebPi tool `plugin_tool`.
 Its ToolSpec is static and registered in the same canonical tool metadata path
-as other WebCodex tools; its schema does not depend on Runner availability or
+as other WebPi tools; its schema does not depend on Runner availability or
 Plugin inventory. `tool_manifest(tool_name="plugin_tool")` therefore describes
 the exact gateway contract even when no Plugin-capable Runner is online.
 `work_on_project` may additionally surface a bounded project-affine Plugin selection catalog at startup. That catalog is metadata only: it includes tools from ready committed providers whose configured `cwd` resolves to the authoritative Project root, omits providers for other directories, and never exposes provider paths, command/argv/environment, schemas, provider-instance identity, or an invocation binding. Catalogs are truncated by serialized byte size both at the Runner gateway and in the model projection; `total_count` and `catalog_revision` still describe the complete catalog. Selecting an entry still requires the canonical `plugin_tool describe -> call` path. The same project-affine metadata can be requested explicitly as `plugins.catalog` through the supported context sidecar when the caller has both `project:read` and `plugin:inspect`.
@@ -169,10 +169,10 @@ external side effects; `check` is not a purely static config linter.
 A successful check returns `ready=true` plus bounded tool summaries containing
 only names and optional titles. A broken candidate is normally a successful
 check operation with `ready=false`, a structured `phase`, a stable error `code`,
-and a bounded WebCodex-generated `detail`. Tool-definition validation failures
-also include a small `diagnostic` with a finite WebCodex-defined code and, when
+and a bounded WebPi-generated `detail`. Tool-definition validation failures
+also include a small `diagnostic` with a finite WebPi-defined code and, when
 safe, a validated tool name and finite field label such as `inputSchema`.
-Diagnostics come only from WebCodex protocol parsing/validators; raw serde
+Diagnostics come only from WebPi protocol parsing/validators; raw serde
 errors, protocol lines, schema fragments, Plugin stdout/stderr, executable
 configuration, environment, and process identities are never copied into the
 report. Plugin stderr remains Runner-local. The Runner keeps only a bounded,
@@ -234,7 +234,7 @@ Plugin `initialize -> tools/list` protocol/admission preflight.
 
 ## Plugin authoring/operator CLI
 
-`webcodex plugin` now has two deliberately separate paths. `plugin init` is a
+`webpi plugin` now has two deliberately separate paths. `plugin init` is a
 local-only scaffold generator and does not use Server authentication, a Runner,
 `plugin_tool`, or `/api/tools/call`. The four inspection/management commands remain
 operator-friendly adapters over the same canonical `plugin_tool` path; they do not
@@ -243,25 +243,25 @@ network command issues one authenticated `POST /api/tools/call` with
 `tool="plugin_tool"` and the corresponding canonical `params`:
 
 ```text
-webcodex plugin list
+webpi plugin list
     -> {"action":"list"}
-webcodex plugin list --runner special
+webpi plugin list --runner special
     -> {"action":"list","runner":"special"}
-webcodex plugin list --runner special --plugin safe-delete
+webpi plugin list --runner special --plugin safe-delete
     -> {"action":"list","runner":"special","plugin":"safe-delete"}
-webcodex plugin describe --runner special --plugin safe-delete --tool safe_delete
+webpi plugin describe --runner special --plugin safe-delete --tool safe_delete
     -> {"action":"describe","runner":"special","plugin":"safe-delete","tool":"safe_delete"}
-webcodex plugin check --runner special --plugin safe-delete
+webpi plugin check --runner special --plugin safe-delete
     -> {"action":"check","runner":"special","plugin":"safe-delete"}
-webcodex plugin reload --runner special
+webpi plugin reload --runner special
     -> {"action":"reload","runner":"special"}
 ```
 
 Create a standalone authoring project locally with:
 
 ```text
-webcodex plugin init ./my-plugin
-webcodex plugin init ./MyPlugin --id my-plugin
+webpi plugin init ./my-plugin
+webpi plugin init ./MyPlugin --id my-plugin
 ```
 
 The generated project contains `.gitignore`, `package.json`, `tsconfig.json`,
@@ -281,20 +281,20 @@ the target Runner's startup-bound `runner.toml` on that Runner host. The portabl
 scaffold README keeps an absolute-path placeholder and never records the author's
 machine path. If the active local config is unclear, inspect the Runner profile or
 service selection on the Runner host, for example with
-`webcodex runner status --profile <profile>`; the Server never discovers or returns
+`webpi runner status --profile <profile>`; the Server never discovers or returns
 Runner-local config/executable paths for this workflow.
 
 A practical author loop is therefore:
 
 ```text
-webcodex plugin init ./my-plugin
+webpi plugin init ./my-plugin
     -> npm install
     -> npm run build
     -> copy the printed provider block into the Runner-local startup config
-    -> webcodex plugin check --runner special --plugin my-plugin --token-file /path/to/plugin-authoring-pat
-    -> webcodex plugin reload --runner special --token-file /path/to/plugin-authoring-pat
-    -> webcodex plugin list --runner special --plugin my-plugin --token-file /path/to/plugin-authoring-pat
-    -> webcodex plugin describe --runner special --plugin my-plugin --tool echo --token-file /path/to/plugin-authoring-pat
+    -> webpi plugin check --runner special --plugin my-plugin --token-file /path/to/plugin-authoring-pat
+    -> webpi plugin reload --runner special --token-file /path/to/plugin-authoring-pat
+    -> webpi plugin list --runner special --plugin my-plugin --token-file /path/to/plugin-authoring-pat
+    -> webpi plugin describe --runner special --plugin my-plugin --tool echo --token-file /path/to/plugin-authoring-pat
 ```
 
 The identity and lifecycle rules are unchanged. Runner ids are exact; the CLI does
@@ -312,11 +312,11 @@ Network options follow the existing CLI Server conventions: `--server-url`,
 `--json`. For Plugin authoring, prefer a dedicated explicit token file such as
 `--token-file /path/to/plugin-authoring-pat`. The shared user/API resolver keeps its
 backward-compatible precedence: explicit `--token`; `--token-file`; selected
-`--env-file` `WEBCODEX_TOKEN`, then `WEBCODEX_PAT`; process `WEBCODEX_TOKEN`, then
-`WEBCODEX_PAT`. `WEBCODEX_PAT` is only an additive user/API CLI input alias; it does
-not redefine the Server bootstrap meaning of `WEBCODEX_TOKEN`, and when both names
-exist the legacy `WEBCODEX_TOKEN` input still wins. If a separate authoring PAT is
-needed, use the existing `webcodex tokens create-local` / Server token-management
+`--env-file` `WEBPI_TOKEN`, then `WEBPI_PAT`; process `WEBPI_TOKEN`, then
+`WEBPI_PAT`. `WEBPI_PAT` is only an additive user/API CLI input alias; it does
+not redefine the Server bootstrap meaning of `WEBPI_TOKEN`, and when both names
+exist the legacy `WEBPI_TOKEN` input still wins. If a separate authoring PAT is
+needed, use the existing `webpi tokens create-local` / Server token-management
 flow rather than a Plugin-specific credential path.
 
 Runner transport tokens are rejected before the user/API HTTP request. `list` and
@@ -336,10 +336,10 @@ array is empty; known rejection is non-zero.
 If `check` returns `phase=initialize` with `code=plugin_eof`, the provider's protocol
 output ended before initialize completed; the process may have exited or closed
 stdout. Verify the configured command and arguments. For a Plugin created by
-`webcodex plugin init`, ensure `npm run build` has produced `dist/plugin.js` on the
+`webpi plugin init`, ensure `npm run build` has produced `dist/plugin.js` on the
 Runner host before retrying. This is conditional author guidance, not a root-cause
 classification: any provider whose protocol output ends during initialize can
-produce `plugin_eof`, and WebCodex does not infer the cause from raw stderr or opaque
+produce `plugin_eof`, and WebPi does not infer the cause from raw stderr or opaque
 argv.
 
 The CLI never auto-retries `check` or `reload`. Once a request has begun, an HTTP
@@ -350,15 +350,15 @@ Plugin state before retrying. This is intentionally conservative even for `check
 because arbitrary Plugin startup/initialize/list behavior may itself have side
 effects.
 
-There is deliberately no `webcodex plugin call` in this authoring phase. The raw
+There is deliberately no `webpi plugin call` in this authoring phase. The raw
 `plugin_tool describe -> call` contract remains the canonical invocation path with
 its existing binding, effect, retry, and `OutcomeUnknown` semantics.
 
-Phase 1 intentionally deferred `webcodex plugin init` until the SDK had a truthful
+Phase 1 intentionally deferred `webpi plugin init` until the SDK had a truthful
 external dependency contract. That prerequisite is now satisfied:
 `@yyjeqhc/webcodex-plugin-sdk@0.1.0` is publicly distributed through npm, and Phase 3
 adds the local scaffold using that exact compatibility pin. A generated project
-therefore works independently of a WebCodex source checkout. Repository first-party
+therefore works independently of a WebPi source checkout. Repository first-party
 dogfood such as `plugins/safe-delete`, [`plugins/repo-info`](../plugins/repo-info/README.md),
 and [`plugins/campus-application`](../plugins/campus-application/README.md) intentionally
 continues to use the local SDK source so it tests the checkout under development;
@@ -403,11 +403,11 @@ remains the protocol reference and does not depend on the SDK.
 For the architectural boundary, development-stage compatibility policy, and staged
 authoring roadmap, see [`architecture/native-tool-plugins.md`](architecture/native-tool-plugins.md).
 
-## WebCodex Plugin Protocol v1
+## WebPi Plugin Protocol v1
 
 The native protocol is newline-delimited JSON-RPC 2.0 framing with the protocol
 version `webcodex-plugin-v1`. Each request or response is exactly one JSON line.
-It is a WebCodex Plugin protocol, not MCP.
+It is a WebPi Plugin protocol, not MCP.
 
 Initialization:
 
@@ -451,7 +451,7 @@ into a different tool contract.
 
 ### Native Plugin Schema Profile v1
 
-`inputSchema` and `outputSchema` use a deliberately small WebCodex profile; they
+`inputSchema` and `outputSchema` use a deliberately small WebPi profile; they
 are **not** advertised as full JSON Schema 2020-12. Every schema node requires a
 single string `type`. Supported types are `object`, `array`, `string`, `number`,
 `integer`, `boolean`, and `null`. Supported keywords are:
@@ -473,7 +473,7 @@ See [`examples/native-tool-plugin.mjs`](../examples/native-tool-plugin.mjs) for
 a minimal no-dependency Node example. The repository also ships first-party SDK
 dogfood Plugins: [`plugins/safe-delete`](../plugins/safe-delete/README.md) is an optional
 project-root-fenced Plugin that moves one file or directory to the operating system
-Trash/Recycle Bin without adding permanent deletion to WebCodex's built-in tool
+Trash/Recycle Bin without adding permanent deletion to WebPi's built-in tool
 surface; [`plugins/repo-info`](../plugins/repo-info/README.md) is a read-only authoring
 example whose single `git_summary` tool observes only the provider's configured
 repository `cwd`; and [`plugins/campus-application`](../plugins/campus-application/README.md)
@@ -486,7 +486,7 @@ submission.
 Each provider handles one request at a time. Concurrent calls receive a
 provider-busy result instead of being silently queued without bound.
 
-Before `tools/call` can enter the provider connection, WebCodex resolves the
+Before `tools/call` can enter the provider connection, WebPi resolves the
 exact frozen catalog entry, checks the caller's exact schema observation, and
 validates `arguments` against that frozen input schema. Any failure here is
 `NotStarted`; the executable sees zero `tools/call` bytes. No `tools/list` is
@@ -500,7 +500,7 @@ Bindings are bounded server-side observations, not bearer authorization tokens:
 every call still requires current `plugin:invoke` authority and current access to
 the logical Runner. A binding can also be evicted. If its Runner/provider
 instance disappears, the tool is removed, or its schema changes, the stale call
-fails `NotStarted` and must be described again. WebCodex never re-resolves the
+fails `NotStarted` and must be described again. WebPi never re-resolves the
 binding to a newer same-named provider/tool, never manufactures a replacement
 binding, and never replays the call. Internal Runner/provider instance ids and
 schema revision machinery are not exposed in the handle.
@@ -512,7 +512,7 @@ response wait. A Plugin that stops reading stdin therefore cannot make
 `write_all` escape the provider timeout.
 For effectful `tools/call`, once a frame may have started writing, a write
 timeout/failure, connection loss, process death, or response timeout is
-`OutcomeUnknown`; WebCodex does not automatically retry or replay it. Failures
+`OutcomeUnknown`; WebPi does not automatically retry or replay it. Failures
 proven to happen before any possible send are `NotStarted`.
 
 Plugin stdout is protocol-only. Plugin stderr is drained continuously on a
@@ -533,14 +533,14 @@ Native Plugin authority is operation-specific:
   `plugin:invoke`.
 - None of these scopes is part of the direct shared-key model baseline.
 - For the shared-key OAuth bridge, opt in explicitly with
-  `webcodex connect ... --auth oauth --oauth-local-plugins`; that opt-in grants
+  `webpi connect ... --auth oauth --oauth-local-plugins`; that opt-in grants
   only `plugin:inspect` + `plugin:invoke`, never `plugin:manage`.
 
 `mcp:local` does not grant Plugin access, and Plugin scopes do not grant
 Runner-owned MCP provider access. Effectful Plugin operations also pass the
 same Workflow Session guard and authority-mode permission policy as other
-consequential WebCodex execution when an explicit `recording_session_id` is
-supplied; WebCodex never infers that Session from MCP transport identity.
+consequential WebPi execution when an explicit `recording_session_id` is
+supplied; WebPi never infers that Session from MCP transport identity.
 
 ## Troubleshooting
 

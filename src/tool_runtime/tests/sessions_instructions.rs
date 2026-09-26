@@ -76,7 +76,7 @@ async fn start_session_without_project_instructions_when_no_candidate_exists() {
     let note = pi["note"].as_str().unwrap();
     assert!(note.contains("Runner-configured and project-local instructions"));
     assert!(note.contains("model guidance only"));
-    assert!(note.contains("do not override system, platform, or WebCodex safety policy"));
+    assert!(note.contains("do not override system, platform, or WebPi safety policy"));
 }
 
 #[tokio::test]
@@ -146,7 +146,7 @@ async fn start_session_loads_agents_md_from_agent_project() {
     let note = pi["note"].as_str().unwrap();
     assert!(note.contains("Runner-configured and project-local instructions"));
     assert!(note.contains("model guidance only"));
-    assert!(note.contains("do not override system, platform, or WebCodex safety policy"));
+    assert!(note.contains("do not override system, platform, or WebPi safety policy"));
 }
 
 #[tokio::test]

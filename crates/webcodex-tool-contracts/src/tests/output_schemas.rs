@@ -1789,6 +1789,7 @@ fn key_tool_output_schemas_include_expected_fields() {
     for field in [
         "service",
         "version",
+        "diagnostics",
         "build",
         "auth_enabled",
         "configured_public_url",
@@ -1811,6 +1812,180 @@ fn key_tool_output_schemas_include_expected_fields() {
             "list_projects missing {field}"
         );
     }
+}
+
+#[test]
+fn public_tunnel_probe_schema_is_bounded_and_payload_free() {
+    let schema = output_schema_for_tool("public_tunnel_probe");
+    let properties = schema["properties"]["output"]["properties"]
+        .as_object()
+        .expect("public_tunnel_probe output properties");
+    for field in [
+        "status",
+        "verified",
+        "reason_code",
+        "observed_at",
+        "age_secs",
+        "stale_after_secs",
+        "stale",
+        "latency_ms",
+        "openapi_status",
+        "protected_status",
+        "tls_verified",
+        "cached",
+        "state_changed",
+    ] {
+        assert!(
+            properties.contains_key(field),
+            "public_tunnel_probe missing {field}"
+        );
+    }
+    for forbidden in ["body", "headers", "url", "authorization", "token"] {
+        assert!(
+            !properties.contains_key(forbidden),
+            "public_tunnel_probe must not expose {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn runtime_diagnostics_schema_exposes_ring_loss_and_sequence_bounds() {
+    let schema = output_schema_for_tool("runtime_diagnostics");
+    let properties = schema["properties"]["output"]["properties"]
+        .as_object()
+        .expect("runtime_diagnostics output properties");
+    for field in [
+        "capacity",
+        "buffered_count",
+        "dropped_count",
+        "oldest_sequence",
+        "newest_sequence",
+        "info_count",
+        "warn_count",
+        "error_count",
+        "newest_warn_sequence",
+        "newest_error_sequence",
+        "returned_count",
+        "filters",
+        "events",
+    ] {
+        assert!(
+            properties.contains_key(field),
+            "runtime_diagnostics missing {field}"
+        );
+    }
+}
+
+#[test]
+fn terminal_attention_schema_preserves_outcome_unknown() {
+    let schema = output_schema_for_tool("wait_for_job_terminal");
+    let outcome = &schema["properties"]["output"]["properties"]["terminal_outcome"];
+    let variants = outcome["anyOf"]
+        .as_array()
+        .expect("terminal outcome variants");
+    let values = variants
+        .iter()
+        .find_map(|variant| variant.get("enum").and_then(Value::as_array))
+        .expect("terminal outcome enum");
+    assert!(values.iter().any(|value| value == "outcome_unknown"));
+}
+
+#[test]
+fn unified_operation_phase_is_declared_for_jobs_and_deployment_receipts() {
+    let list_jobs = output_schema_for_tool("list_jobs");
+    let job_item = &list_jobs["properties"]["output"]["properties"]["jobs"]["items"];
+    let job_phase = &job_item["properties"]["operation_phase"];
+    assert_eq!(job_phase["type"], "string");
+    assert!(job_item["required"]
+        .as_array()
+        .expect("job summary required")
+        .iter()
+        .any(|value| value == "operation_phase"));
+
+    let expected = serde_json::json!([
+        "accepted",
+        "queued",
+        "running",
+        "waiting_external",
+        "recovering",
+        "succeeded",
+        "failed",
+        "rolled_back",
+        "outcome_unknown"
+    ]);
+    assert_eq!(job_phase["enum"], expected);
+
+    for tool in [
+        "prepare_service_deployment",
+        "read_deployment_receipt",
+        "service_restart",
+        "service_deploy",
+        "service_rollback",
+    ] {
+        let schema = output_schema_for_tool(tool);
+        let receipt = &schema["properties"]["output"]["properties"]["deployment_receipt"];
+        assert_eq!(receipt["additionalProperties"], false, "{tool}");
+        assert_eq!(
+            receipt["properties"]["operation_phase"]["enum"], expected,
+            "{tool}"
+        );
+        assert!(
+            receipt["required"]
+                .as_array()
+                .expect("deployment receipt required")
+                .iter()
+                .any(|value| value == "operation_phase"),
+            "{tool}"
+        );
+    }
+}
+
+#[test]
+fn deployment_preflight_schema_exposes_candidate_evidence_only_for_deploy_cutover() {
+    let deploy = output_schema_for_tool("service_deploy");
+    let deploy_preflight = &deploy["properties"]["output"]["properties"]["preflight"];
+    assert_eq!(deploy_preflight["type"], "object");
+    assert_eq!(deploy_preflight["additionalProperties"], false);
+    let deploy_props = deploy_preflight["properties"]
+        .as_object()
+        .expect("service_deploy preflight properties");
+    for field in [
+        "readiness",
+        "operation",
+        "ready_to_begin",
+        "ready_for_cutover",
+        "drain_required",
+        "service_lifecycle",
+        "target",
+        "jobs",
+        "authority",
+        "blockers",
+        "warnings",
+        "candidate_preflight",
+        "receipt_store_writable",
+    ] {
+        assert!(
+            deploy_props.contains_key(field),
+            "service_deploy.preflight missing {field}"
+        );
+    }
+    assert!(deploy_preflight["required"]
+        .as_array()
+        .expect("service_deploy preflight required")
+        .iter()
+        .any(|value| value == "candidate_preflight"));
+    assert!(deploy_preflight["required"]
+        .as_array()
+        .expect("service_deploy preflight required")
+        .iter()
+        .any(|value| value == "receipt_store_writable"));
+
+    let restart = output_schema_for_tool("service_restart");
+    let restart_props = restart["properties"]["output"]["properties"]["preflight"]["properties"]
+        .as_object()
+        .expect("service_restart preflight properties");
+    assert!(!restart_props.contains_key("candidate_preflight"));
+    assert!(!restart_props.contains_key("receipt_store_writable"));
 }
 
 #[test]

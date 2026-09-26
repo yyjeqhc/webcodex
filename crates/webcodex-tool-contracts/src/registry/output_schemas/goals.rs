@@ -96,11 +96,11 @@ fn goal_activity_schema() -> Value {
             "available": {"type": "boolean", "description": "Whether runtime liveness evidence is authorized and available. False never reveals Window existence, counts, or timestamps."},
             "state": {"type": "string", "enum": ["active", "attention_needed", "unobserved", "not_applicable"], "description": "Derived soft liveness observation only; never authoritative Goal or Task state."},
             "idle_threshold_ms": {"type": "integer", "const": 300000, "description": "Internal five-minute soft-attention heuristic, not an execution timeout."},
-            "last_seen_at_ms": nullable_integer("Latest caller-visible WebCodex Window activity, including non-meaningful Host/App control traffic."),
-            "last_meaningful_activity_at_ms": nullable_integer("Latest caller-visible meaningful WebCodex business activity across correlated Windows."),
+            "last_seen_at_ms": nullable_integer("Latest caller-visible WebPi Window activity, including non-meaningful Host/App control traffic."),
+            "last_meaningful_activity_at_ms": nullable_integer("Latest caller-visible meaningful WebPi business activity across correlated Windows."),
             "quiet_for_ms": nullable_integer("Milliseconds since latest visible meaningful activity at projection time, or null when unobserved."),
             "linked_window_count": {"anyOf": [{"type": "integer", "minimum": 0, "maximum": 16}, {"type": "null"}], "description": "Bounded count of legally observable correlated Window candidates, or null when runtime observation is unavailable/not applicable."},
-            "active_meaningful_request_count": {"anyOf": [{"type": "integer", "minimum": 0, "maximum": 64}, {"type": "null"}], "description": "Visible in-flight meaningful WebCodex requests across candidate Windows, or null when unavailable/not applicable."},
+            "active_meaningful_request_count": {"anyOf": [{"type": "integer", "minimum": 0, "maximum": 64}, {"type": "null"}], "description": "Visible in-flight meaningful WebPi requests across candidate Windows, or null when unavailable/not applicable."},
             "coverage_partial": {"type": "boolean", "description": "True when bounded scans or active-request retention may omit evidence. Partial coverage never produces attention_needed."}
         },
         "required": [

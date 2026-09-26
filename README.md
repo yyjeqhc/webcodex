@@ -1,123 +1,167 @@
 # WebPi
 
-This repository is the independent WebPi fork: a web-GPT-primary coding runtime with the native Pi extension ecosystem. Use [WebPi setup](docs/WEBPI.md) and the authoritative [identity/configuration migration guide](docs/WEBPI_IDENTITY.md).
+**WebPi is a local-first coding runtime for web AI agents.** It lets ChatGPT / Custom GPT work on real repositories, Git, tests, processes, browser/computer observations, artifacts, and the native Pi extension ecosystem while keeping execution on the machine that owns the project.
 
-The supported native programs are `webpi`, `webpi-server`, and `webpi-runner`; use `webpi.cmd` for the Windows standalone installation. Old WebPi env files must be explicitly migrated before startup. Upstream npm downloaders, Desktop packaging and release automation are disabled, not WebPi installation paths.
+WebPi is an independent product and deployment. The supported native programs are `webpi`, `webpi-server`, and `webpi-runner`; on the validated Windows standalone installation, use `webpi.cmd`.
 
-## Retained upstream documentation — historical reference only
+> Internal compatibility names such as some `webcodex-*` Rust crates, wire/resource identifiers, database filenames, credential prefixes, and the published `@yyjeqhc/webcodex-plugin-sdk` may remain intentionally. User-facing commands, configuration, runtime messages, and product documentation use WebPi.
 
-The following original WebCodex documentation is retained for source attribution and architectural context. Its install, release and setup recommendations are **not** current WebPi instructions; do not execute them to install this fork.
+## Why WebPi
 
-[English](README.md) | [简体中文](README.zh-CN.md)
+- **Local-first development** — repositories and toolchains stay on the machine where they already live.
+- **Guarded mutations** — project roots, stale-write fences, exact file edits, scope checks, and reviewable Git changes are first-class.
+- **Real development tools** — run tests, compilers, formatters, language services, durable Jobs, and project-specific commands.
+- **Durable work** — Workflow Sessions, Jobs, validation evidence, and resumable observations survive beyond one model turn.
+- **Read-only desktop/browser observation by default** — optional Computer/Browser scopes can inspect without granting pointer, keyboard, clipboard, or launch authority.
+- **High-resolution artifact delivery** — screenshots and other bounded artifacts can be saved as project artifacts and exported through short-lived one-shot HTTPS capabilities instead of oversized base64 Action responses.
+- **Pi-native extensions without a second model loop** — WebPi hosts the Pi resource/package/extension ecosystem through the first-party `pi-bridge` while WebPi remains the execution authority.
 
-**WebCodex lets ChatGPT, Claude, and other AI agents work directly with code and developer tools on your own machines.**
+## Quick start — validated Windows standalone
 
-Ask your assistant to inspect a repository, modify code, run tests, use Git, or investigate a failure. Your repository stays on the machine where it already lives; you do not need to move the project into a hosted workspace just to use an AI coding agent.
+From the WebPi checkout:
 
-## Start using WebCodex
-
-### Everyday development: full WebCodex (recommended)
-
-If you want ChatGPT to keep using your real development environment, start with a **regular Server + Runner**. This is the full development experience: durable access to multiple projects plus project exploration, editing, Git, commands, tests, long-running work, and code navigation. Public HTTPS, Cloudflare Tunnel, and OpenAI Secure MCP Tunnel are only ways for ChatGPT to reach the Server; they do not switch you into a different restricted experience.
-
-For Windows or macOS, the recommended first path is **WebCodex Desktop + the official OpenAI Secure Tunnel**. Follow the [Desktop installation guide](docs/desktop-install.md). For CLI, an existing Server, self-hosting, or advanced setup, use the [Full Setup guide](docs/PERSONAL_SETUP.md).
-
-### Just trying it for a few minutes: temporary share
-
-To quickly see whether WebCodex fits your workflow, run this inside one repository:
-
-```bash
-cd /path/to/your/repository
-npx --yes @yyjeqhc/webcodex share
+```powershell
+.\webpi.cmd status
+.\webpi.cmd doctor
+.\webpi.cmd run
 ```
 
-`share` starts a temporary, single-project instance of the ordinary WebCodex Adaptive Runtime and prints the ChatGPT connection values. Its temporary Project Credential limits access to that ProjectGrant; the endpoint and credential stop working when the command exits. It is intended for trials and short-lived sharing, not as the default full daily setup. See the [Quick Trial](docs/QUICK_START.md) for the exact steps.
+`doctor` is the first troubleshooting command. A healthy clean deployment reports the Server and Runner online, Pi Bridge ready when configured, and source alignment as `aligned`.
 
-## What can it do?
+For first-time local configuration, use:
 
-- **Understand and edit code** — read, search, inspect, and make guarded changes inside configured projects.
-- **Use the real toolchain** — run commands, tests, formatters, compilers, and project-specific tooling on the machine that owns the repository.
-- **Work with Git** — inspect status and diffs while keeping repository operations visible and reviewable.
-- **Handle long-running work** — keep jobs observable instead of requiring one model turn to stay open indefinitely.
-- **Support human review** — use the [Runtime Console](docs/runtime-console.md), Workflow Session evidence, Jobs, and Git/diff review without a separate task/result acceptance subsystem.
+```powershell
+.\webpi.cmd init
+.\webpi.cmd enroll
+.\webpi.cmd doctor
+```
 
-## Why WebCodex?
+Private runtime state stays under `.webpi-state/`; portable runtime assets stay under `.webpi-runtime/`. Do not put PATs, bootstrap credentials, tunnel credentials, or private keys in prompts, logs, or Git.
 
-- **Your code stays on your machine.** The repository does not need to be copied into the chat service.
-- **The agent gets a real development environment.** It can use the same files, Git checkout, compilers, tests, and tools you already use.
-- **Work survives beyond a single request.** Long-running execution and evidence remain observable through WebCodex.
-- **Start temporary or run it long-term.** Use one-command sharing for a quick session, or connect machines to a self-hosted Server for a durable setup.
+### Public ChatGPT Actions
 
-## How it works
+When an HTTPS origin already routes to the local WebPi Server, register it explicitly:
+
+```powershell
+.\webpi.cmd cloudflare-config https://webpi.example.com
+.\webpi.cmd doctor
+.\webpi.cmd verify --base-url https://webpi.example.com --expect-public-origin https://webpi.example.com --with-action-token
+```
+
+Then import:
 
 ```text
-AI client
-   |
-   | MCP / HTTPS
-   v
-WebCodex
-   |
-   v
-your machine
-   |
-   +-- repository
-   +-- Git
-   +-- compilers / tests / developer tools
+https://webpi.example.com/openapi.json
 ```
 
-For the internal Server/Runner architecture, protocol surfaces, and authority boundaries, see [Architecture](docs/ARCHITECTURE.md), [MCP](docs/MCP.md), and [Authentication](docs/AUTH_MODEL.md).
+Configure the WebPi Action PAT as Bearer authentication in the client. Never paste the PAT into chat. The public origin is stored as `WEBPI_PUBLIC_URL`; public reachability does not remove bearer/scope checks from protected execution routes.
 
-## Star History
+## Recommended agent workflow
 
-[![Star History Chart](https://api.star-history.com/image?repos=yyjeqhc/webcodex&type=Date)](https://www.star-history.com/yyjeqhc/webcodex)
+1. **Establish exact authority** — resolve the Project and Workflow Session with `work_on_project`; never guess ids.
+2. **Observe before mutating** — inspect runtime, Git/workspace state, relevant files, and tool/extension schemas first.
+3. **Use the narrowest structured tool** — prefer exact file/Git/process/validation tools over shell; prefer direct Actions over generic gateways.
+4. **Change one bounded thing** — preserve unrelated work and treat unknown outcomes as “inspect before retry”.
+5. **Prove the result** — run the smallest targeted test, then the relevant broader gate; do not equate HTTP 200, process start, or a successful retry with correctness.
+6. **Review the diff** — inspect changed paths and evidence before declaring completion.
+7. **Report clearly** — what changed, what was validated, remaining risks, and whether the user must do anything.
 
-## Platforms
+See [WebPi agent instructions](docs/WEBPI_GPT_INSTRUCTIONS.md) and [WebPi prompt recipes](docs/WEBPI_PROMPTS.md).
 
-- **Linux x64/arm64** — local `share`, Server, and Runner workflows.
-- **macOS x64/arm64** — Desktop local Server + Runner, OpenAI Secure Tunnel, local `share`, and standalone Runner workflows.
-- **Windows x64** — Desktop local Server + Runner with the official OpenAI Secure Tunnel, plus CLI + Runner, local foreground Server, and explicit `webcodex share --tunnel cloudflare|openai|none`.
-- **Windows arm64** — CLI + Runner, local foreground Server, and `share`; managed OpenAI `tunnel-client` is supported. The pinned Cloudflare release has no official Windows ARM64 artifact, so Cloudflare requires a trusted explicit/PATH `cloudflared`. The Desktop installer is currently Windows x64 only. WebCodex-managed Windows Server services remain unsupported outside Desktop's owned foreground runtime.
+## Core capabilities
 
-Windows and long-lived deployments are covered in [Deployment](docs/DEPLOYMENT.md) and [MCP](docs/MCP.md).
+| Area | WebPi capability |
+| --- | --- |
+| Project files | bounded read/search, exact guarded edits, sensitive-path policy |
+| Git | status, diff/review, references, commits when explicitly authorized |
+| Processes | structured commands, shell only when needed, durable Jobs and terminal attention |
+| Code intelligence | symbols, definitions, references, diagnostics, validation evidence |
+| Sessions | Workflow Session provenance, messages, goals/tasks, resumable handoff |
+| Computer | display/window discovery, read-only snapshots, artifact-backed high-resolution screenshots |
+| Browser | target/DOM observation with separate launch/control authority |
+| Artifacts | metadata/inspect plus bounded project artifacts and one-shot HTTPS downloads |
+| Plugins | inspect/describe/invoke with scope separation; management is a distinct authority |
+| Pi ecosystem | resources, skills, prompts, packages, exact extension candidate fingerprints, approval/reload/revoke |
 
-## Existing Servers and advanced setup
+## Safe defaults
 
-If someone already provides the WebCodex Server and connection credential, use that existing Server and follow the [Full Setup guide](docs/PERSONAL_SETUP.md). For a normal Windows/macOS personal installation, use the [Desktop guide](docs/desktop-install.md). Use [Deployment](docs/DEPLOYMENT.md) only for production hosting, multiple users, systemd/Docker, OAuth, proxies, and private CAs.
+WebPi deliberately separates observation from control and discovery from execution.
 
-Those are follow-up operating concerns, not concepts a first-time user should have to learn before WebCodex works.
+- Computer display read does **not** grant pointer/keyboard/launch or clipboard access.
+- Browser read does **not** grant browser control or launch.
+- Plugin inspect/invoke does **not** grant plugin management.
+- Pi extension discovery does not import unapproved executable code.
+- Package install/update/remove is consequential and may execute lifecycle scripts; explicit confirmation/trust is required.
+- An `outcome_unknown` mutation is never blindly retried: inspect the real state first.
+- Destructive cleanup, credential rotation, release/push, trust elevation, and broad overwrites remain explicit user decisions.
+
+See [credential and authority boundaries](docs/WEBPI_AUTH_BOUNDARIES.md) and [Pi parity](docs/WEBPI_PI_PARITY.md).
+
+## Pi and Native Tool Plugins
+
+WebPi's first-party `pi-bridge` exposes Pi resources without starting a second reasoning model. The normal extension flow is:
+
+```text
+discover candidate
+→ inspect source/dependencies/permissions
+→ verify exact candidate id + SHA-256
+→ approve that fingerprint
+→ reload resources
+→ list/describe the exact tool
+→ invoke
+→ validate
+```
+
+Changing extension content changes its fingerprint and returns it to pending approval.
+
+For authoring a Native Tool Plugin:
+
+```text
+webpi plugin init ...
+webpi plugin check ...
+webpi plugin reload ...
+webpi plugin list ...
+webpi plugin describe ...
+```
+
+The published SDK package currently retains its compatibility name: `@yyjeqhc/webcodex-plugin-sdk`.
 
 ## Documentation
 
-- [Desktop installation](docs/desktop-install.md) — recommended Windows/macOS path: Desktop + official OpenAI Secure Tunnel
-- [Using Desktop](docs/desktop-guide.md) — projects, connections, activity, and background operation
-- [Full Setup](docs/PERSONAL_SETUP.md) — CLI, existing Server, Linux, and advanced regular Server + Runner setup
-- [Quick Trial](docs/QUICK_START.md) — temporarily try one repository with `share`
-- [MCP](docs/MCP.md) — ChatGPT, Claude, authentication choices, and MCP reference
-- [Deployment](docs/DEPLOYMENT.md) — production, self-hosting, and advanced operations
-- [Troubleshooting](docs/TROUBLESHOOTING.md) — connection and runtime problems
-- [CLI](docs/CLI.md) — command and credential reference
-- [AI-assisted setup](docs/AI_ONBOARDING.md) — have an AI agent help configure WebCodex
-- [Security](SECURITY.md) — security model and operational guidance
-- [Documentation index](docs/INDEX.md) — all user and contributor documentation
+- [WebPi operating guide](docs/WEBPI.md)
+- [Identity, configuration isolation, and migration](docs/WEBPI_IDENTITY.md)
+- [Authentication and credential boundaries](docs/WEBPI_AUTH_BOUNDARIES.md)
+- [WebPi ↔ Pi capability contract](docs/WEBPI_PI_PARITY.md)
+- [WebPi + Pi ecosystem strategy and package watchlist](docs/WEBPI_PI_ECOSYSTEM.md)
+- [WebPi agent/system instructions](docs/WEBPI_GPT_INSTRUCTIONS.md)
+- [Prompt recipes for research, features, bugs, review, and release](docs/WEBPI_PROMPTS.md)
+- [Upstream/compatibility policy](docs/WEBPI_UPSTREAM.md)
 
-## Security
+Historical audit and cutover records under `docs/` are evidence for specific past deployments; they are not the current installation instructions.
 
-WebCodex can read and modify files and execute commands inside configured project boundaries. Use version control, keep credentials out of prompts/logs/Git, and register only project roots the assistant should access. Read [SECURITY.md](SECURITY.md) for the complete model.
+## Development
 
-## Build from source
+Run focused tests while editing, then the relevant broader gates. Typical Rust checks are:
 
 ```bash
-cargo build --release --workspace --bins
-export PATH="$PWD/target/release:$PATH"
+cargo fmt --all -- --check
+cargo test -p webcodex --lib
+cargo test -p webcodex-tool-contracts --lib
+cargo test -p webcodex-cli
 ```
 
-## Contributing
+For the Windows standalone layer:
 
-Contributions are welcome, including contributions created with WebCodex itself or other coding agents. For bug reports, development workflow, and pull request guidance, see [CONTRIBUTING.md](CONTRIBUTING.md).
+```powershell
+C:\Python314\python.exe -m unittest discover -s scripts\webpi\tests -p "test_*.py" -v
+.\webpi.cmd doctor
+```
 
-## Acknowledgements
+Production builds should come from a clean Git revision so Server, Runner, and source-alignment evidence agree.
 
-Thanks to the [LINUX DO](https://linux.do/) community for its welcoming space for technical discussion and support for open-source sharing.
+## Upstream and compatibility
+
+WebPi reuses hardened implementation assets from WebCodex but has its own product identity, runtime state, Server/Runner deployment, public schema, and Pi integration. Do not mechanically rename internal compatibility identifiers; see [WEBPI_UPSTREAM.md](docs/WEBPI_UPSTREAM.md) and [WEBPI_IDENTITY.md](docs/WEBPI_IDENTITY.md) for the boundary.
 
 ## License
 

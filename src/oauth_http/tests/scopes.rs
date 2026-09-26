@@ -51,6 +51,34 @@ fn direct_shared_key_model_scopes_are_all_oauth_delegable() {
 }
 
 #[test]
+fn service_scopes_are_delegated_only_when_client_explicitly_allows_them() {
+    let denied =
+        normalize_oauth_scopes(Some("service:restart"), "runtime:read service:deploy").unwrap_err();
+    assert_eq!(denied, OAuthAuthorizeError::InvalidScope("invalid scope"));
+
+    let restart =
+        normalize_oauth_scopes(Some("service:restart"), "runtime:read service:restart").unwrap();
+    assert_eq!(restart, "service:restart");
+
+    let both = normalize_oauth_scopes(
+        Some("service:deploy service:restart"),
+        "service:restart service:deploy",
+    )
+    .unwrap();
+    assert_eq!(both, "service:restart service:deploy");
+}
+
+#[test]
+fn service_scopes_join_default_intersection_only_when_client_allows_them() {
+    let normalized = normalize_oauth_scopes(
+        None,
+        "runtime:read service:restart service:deploy agent:poll admin",
+    )
+    .unwrap();
+    assert_eq!(normalized, "runtime:read service:restart service:deploy");
+}
+
+#[test]
 fn normalize_oauth_scopes_deduplicates_and_orders() {
     let normalized = normalize_oauth_scopes(
         Some("project:write runtime:read runtime:read"),

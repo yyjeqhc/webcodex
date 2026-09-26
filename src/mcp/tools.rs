@@ -383,6 +383,29 @@ fn adapt_native_image_output_schema_for_mcp(spec: &mut ToolSpec) {
             "description": "MCP native-image delivery marker; binary image bytes are carried in the image ContentBlock rather than structuredContent."
         }),
     );
+    properties.insert(
+        "full_image_resource".to_string(),
+        json!({
+            "type": "boolean",
+            "description": "When true, the inline image is a bounded preview and the full screenshot is available through the accompanying authenticated resource_link."
+        }),
+    );
+    properties.insert(
+        "preview_mime_type".to_string(),
+        json!({"type":"string","enum":["image/png","image/jpeg","image/webp"]}),
+    );
+    properties.insert(
+        "preview_file_bytes".to_string(),
+        json!({"type":"integer","minimum":1,"maximum":196608}),
+    );
+    properties.insert(
+        "preview_width".to_string(),
+        json!({"type":"integer","minimum":1,"maximum":4096}),
+    );
+    properties.insert(
+        "preview_height".to_string(),
+        json!({"type":"integer","minimum":1,"maximum":4096}),
+    );
 }
 
 fn mcp_context_projection_output_schema() -> Value {
@@ -499,7 +522,7 @@ pub(super) fn add_stateless_workflow_recorder_metadata(payload: &mut Value) {
             crate::tool_runtime::sessions::TOOL_CALL_SESSION_MESSAGE_RESOLUTION_FIELD.to_string(),
             json!({
                 "type": "object",
-                "description": "After handling one non-todo message in the explicit recording Session, attach its id and bounded resolution text here to resolve it on the same WebCodex call. Any ACK-required Session message also needs request-scoped ACK. Applies only to that exact recording Session; removed before concrete parsing; does not apply to Peer messages and does not predict call success. Todos use the atomic completion path.",
+                "description": "After handling one non-todo message in the explicit recording Session, attach its id and bounded resolution text here to resolve it on the same WebPi call. Any ACK-required Session message also needs request-scoped ACK. Applies only to that exact recording Session; removed before concrete parsing; does not apply to Peer messages and does not predict call success. Todos use the atomic completion path.",
                 "properties": {
                     "message_id": {
                         "type": "string",

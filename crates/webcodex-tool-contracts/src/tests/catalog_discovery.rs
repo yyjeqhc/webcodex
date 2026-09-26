@@ -513,7 +513,7 @@ fn discovery_and_persistent_shell_flows_route_high_value_adaptive_tools() {
     assert!(persistent.summary.contains("one-shot SSH uses run_process"));
     assert!(persistent
         .manifest_purpose
-        .contains("SSH target does not run WebCodex Runner"));
+        .contains("SSH target does not run WebPi Runner"));
     assert!(persistent.manifest_purpose.contains("ssh_resource list"));
     assert!(persistent
         .manifest_purpose
@@ -651,6 +651,11 @@ fn audit_and_exploration_intents_prefer_canonical_batch_and_review_tools() {
         .find(|intent| intent.name == "release")
         .unwrap();
     assert!(release.tools.contains(&"show_changes"));
+    assert!(release.tools.contains(&"deployment_preflight"));
+    assert!(
+        !release.tools.contains(&"public_tunnel_probe"),
+        "deployment_preflight owns bounded public-ingress evidence refresh; the model should not spend a separate turn probing it"
+    );
     assert!(!release.tools.contains(&"git_diff_summary"));
 }
 

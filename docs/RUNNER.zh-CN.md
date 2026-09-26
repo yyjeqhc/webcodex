@@ -1,7 +1,7 @@
 # Runner
 
-Runner 是真正执行工作的组件。可执行文件是 `webcodex-runner`；管理它的 CLI 命名
-空间是 `webcodex runner ...`。`webcodex` 与 `webcodex-runner` 是两个独立可执行
+Runner 是真正执行工作的组件。可执行文件是 `webpi-runner`；管理它的 CLI 命名
+空间是 `webpi runner ...`。`webpi` 与 `webpi-runner` 是两个独立可执行
 文件。运维生命周期统一使用 `runner` 命名空间；历史 `agent` 术语只保留在兼容性所需
 的令牌、存储、身份、项目 id 与 wire contract 中。本页说明 Runner 做什么、如何连接、
 如何注册项目、如何以服务方式运维，以及它的主要运行时概念。
@@ -11,7 +11,7 @@ Runner 是真正执行工作的组件。可执行文件是 `webcodex-runner`；�
 
 ## Runner 做什么
 
-Runner 运行在持有仓库的机器上。它主动连接 WebCodex Server，注册它允许服务的
+Runner 运行在持有仓库的机器上。它主动连接 WebPi Server，注册它允许服务的
 项目，并在这些项目边界内执行有界操作——文件读写、Git 检查、结构化校验、shell
 命令与长任务 Job。
 
@@ -23,17 +23,17 @@ Runner 是最接近你仓库的信任边界。请用窄的 allowed roots 与显�
 | 术语 | 含义 |
 | --- | --- |
 | **Server** | 认证调用方、保存共享 runtime 状态并路由工作。 |
-| **CLI** | 运维/开发者使用的 `webcodex` 命令。 |
-| **Runner** | 在仓库机器上执行工作的 `webcodex-runner` 进程。 |
+| **CLI** | 运维/开发者使用的 `webpi` 命令。 |
+| **Runner** | 在仓库机器上执行工作的 `webpi-runner` 进程。 |
 | **profile** | 一组命名的本地 Runner/client 配置。 |
 | **client_id** | 一个 Runner/设备的稳定逻辑名称。 |
 | **Project** | 由该 Runner 注册的一个仓库/工作区。 |
 
-部分 compatibility-facing value 仍使用历史 `agent` 名称，例如 Runner token 的 `wc_agent_*` 前缀与 `agent:<client_id>:<project_id>` runtime Project address。它们不属于 WebCodex 独立的 Durable Agent domain；普通用户也不需要理解 Runner recovery 背后的进程级 lease identifier。
+部分 compatibility-facing value 仍使用历史 `agent` 名称，例如 Runner token 的 `wc_agent_*` 前缀与 `agent:<client_id>:<project_id>` runtime Project address。它们不属于 WebPi 独立的 Durable Agent domain；普通用户也不需要理解 Runner recovery 背后的进程级 lease identifier。
 
 ### Runner 配置文件名兼容
 
-`runner.toml` 是 canonical config filename。只有旧 `agent.toml` 的历史目录仍可继续读取；同一配置目录同时存在两种文件名时 WebCodex 会 fail closed，要求 operator 先消除歧义。`WEBCODEX_RUNNER_CONFIG` 是当前 path override，旧 `WEBCODEX_AGENT_CONFIG` 只作为兼容 alias 保留。
+`runner.toml` 是 canonical config filename。只有旧 `agent.toml` 的历史目录仍可继续读取；同一配置目录同时存在两种文件名时 WebPi 会 fail closed，要求 operator 先消除歧义。`WEBPI_RUNNER_CONFIG` 是当前 path override，旧 `WEBPI_AGENT_CONFIG` 只作为兼容 alias 保留。
 
 ## 连接 Server
 
@@ -72,7 +72,7 @@ TOML：
 ```toml
 id = "webcodex"
 path = "/srv/webcodex/projects/webcodex"
-name = "WebCodex"
+name = "WebPi"
 kind = "repo"
 allow_patch = true
 ```
@@ -81,7 +81,7 @@ allow_patch = true
 用于保存 Project record，本身不是 workspace root。
 
 新配置使用 `project-registry/` 与 `project_registry_dir`。历史安装如果只有
-`projects.d/` / `projects_dir` 仍可读取；如果新旧 location/field 同时存在，WebCodex
+`projects.d/` / `projects_dir` 仍可读取；如果新旧 location/field 同时存在，WebPi
 会 fail closed，而不是 merge 或猜 precedence。新的 CLI 命令使用
 `--project-registry-dir`。
 
@@ -113,7 +113,7 @@ runtime 工具 `register_project` 与 `create_project` 让客户端在在线 Run
 | 来源 | 位置 / owner | Trust | 版本语义 |
 | --- | --- | --- | --- |
 | Project Skills | `<project>/.agents/skills/<package>/SKILL.md` | `project_content` | Project live content；没有 package revision。 |
-| Configured live Runner Skill roots | Runner 主机上由 operator 配置的绝对目录 | `operator_configured_guidance` | WebCodex 不修改的 live filesystem content；受支持脚本可通过 `run_skill_resource` 执行；没有 install、activation、rollback 或 package revision。 |
+| Configured live Runner Skill roots | Runner 主机上由 operator 配置的绝对目录 | `operator_configured_guidance` | WebPi 不修改的 live filesystem content；受支持脚本可通过 `run_skill_resource` 执行；没有 install、activation、rollback 或 package revision。 |
 | Managed Runner Skill Store | Runner state 下的 `runner-skills-v1` | `operator_installed_guidance` | immutable package revision，并保留 install、activation、remove 与 rollback-oriented Store 语义。 |
 
 Configured live roots 默认不存在，需要在 Runner 的 `runner.toml` 中显式配置：
@@ -138,7 +138,7 @@ roots = [
 ```
 
 每个 root 直接包含 `<root>/<package>/SKILL.md`，package 内可以有 `references/`
-与 `scripts/` 等 resource。WebCodex 不会修改 configured root 内的文件，也不会把
+与 `scripts/` 等 resource。WebPi 不会修改 configured root 内的文件，也不会把
 它们复制到 managed Store；`skill_install`、`skill_activate` 与
 `skill_remove_revision` 仍然只修改 managed Store。这里的“不修改”不等于“不可执行”：
 operator 配置的 trusted Skill 中，受支持的 `scripts/*.py` / `scripts/*.sh` 可以通过
@@ -242,7 +242,7 @@ source 就丢弃整份 context material。
 
 ## 本地 MCP provider
 
-Runner 可以直接托管供 WebCodex 内建 MCP gateway 使用的 persistent stdio MCP provider：
+Runner 可以直接托管供 WebPi 内建 MCP gateway 使用的 persistent stdio MCP provider：
 
 ```toml
 [mcp]
@@ -260,11 +260,11 @@ timeout_secs = 30
 
 `executable` 与可选 `cwd` 都是 Runner host-local operator 配置并且必须为绝对路径；非法路径会 fail closed。`[mcp]` 现在参与正常的 generation-fenced Runner config reload transaction：配置未变化的 provider 保留 exact provider identity 和现有 connection；配置发生变化的 provider 获得新的 provider identity；新增/删除 provider 会在不重启 Runner 的情况下更新 routing。旧的 exact provider identity 会 fail closed，绝不会被静默 retarget。
 
-provider 不会整体继承 Runner 环境。`env_from_env` 只复制显式列出的变量，WebCodex 自己的 sensitive transport/account credential 变量不允许映射；配置的 source variable 缺失时会在 provider 启动前失败。Windows 上，Runner 在清空环境后会额外只提供非敏感的 `SYSTEMROOT` OS bootstrap（除非 operator 显式映射该 destination）；`PATH`、用户 profile 状态、代理与 credential 仍不会被整体继承。
+provider 不会整体继承 Runner 环境。`env_from_env` 只复制显式列出的变量，WebPi 自己的 sensitive transport/account credential 变量不允许映射；配置的 source variable 缺失时会在 provider 启动前失败。Windows 上，Runner 在清空环境后会额外只提供非敏感的 `SYSTEMROOT` OS bootstrap（除非 operator 显式映射该 destination）；`PATH`、用户 profile 状态、代理与 credential 仍不会被整体继承。
 
-把 credential 映射给 provider，就等于把这份 credential 委托给该 provider process。provider 可以按自身实现使用它，也可以通过正常 tool result 返回派生值甚至原始值；WebCodex 不会尝试对任意 provider output 做 secret redaction。因此应把 configured provider 视为 credential recipient，使用 least-privilege provider credential，并注意任何拥有 `mcp:local` 权限的 caller 都能行使这些 credential 为 provider 提供的能力。
+把 credential 映射给 provider，就等于把这份 credential 委托给该 provider process。provider 可以按自身实现使用它，也可以通过正常 tool result 返回派生值甚至原始值；WebPi 不会尝试对任意 provider output 做 secret redaction。因此应把 configured provider 视为 credential recipient，使用 least-privilege provider credential，并注意任何拥有 `mcp:local` 权限的 caller 都能行使这些 credential 为 provider 提供的能力。
 
-provider connection 在第一次真实交互时启动，并在健康时复用。发生 fatal stdio/protocol failure 时只会退休当前 connection；WebCodex 绝不会重放刚才失败的 request。后续由 caller 明确发起的新 request 可以在同一逻辑 provider identity 下建立新 connection；effectful `tools/call` 在 dispatch 前仍会重新 `tools/list` 并核对已绑定 schema。Server 只看到逻辑 provider `id`/`name`，不会拿到 executable path、环境 value、PID、stderr 或 Runner credential。`mcp_tool(action=list)` 只表示 provider id 是否可路由。`mcp_tool(action=status, server=...)` 是纯 Runner-side lifecycle observation，不会启动、initialize 或 ping provider，只返回 `never_started`、`healthy`、`connection_retired` 或 `busy`。这里的 `healthy` 只表示当前保留 connection 的子进程仍在运行，不代表执行过端到端 MCP health probe。`list(server=...)` 与 `describe` 才会与 provider 交互。
+provider connection 在第一次真实交互时启动，并在健康时复用。发生 fatal stdio/protocol failure 时只会退休当前 connection；WebPi 绝不会重放刚才失败的 request。后续由 caller 明确发起的新 request 可以在同一逻辑 provider identity 下建立新 connection；effectful `tools/call` 在 dispatch 前仍会重新 `tools/list` 并核对已绑定 schema。Server 只看到逻辑 provider `id`/`name`，不会拿到 executable path、环境 value、PID、stderr 或 Runner credential。`mcp_tool(action=list)` 只表示 provider id 是否可路由。`mcp_tool(action=status, server=...)` 是纯 Runner-side lifecycle observation，不会启动、initialize 或 ping provider，只返回 `never_started`、`healthy`、`connection_retired` 或 `busy`。这里的 `healthy` 只表示当前保留 connection 的子进程仍在运行，不代表执行过端到端 MCP health probe。`list(server=...)` 与 `describe` 才会与 provider 交互。
 
 ### Provider-side gateway V1 compatibility
 
@@ -280,7 +280,7 @@ Runner 到 configured local provider 的内建 gateway 有意限制为 bounded s
 ## Shell profile
 
 普通 Project Shell/Process 默认使用 `[shell] environment_mode = "inherit"`，继承
-启动 Runner 的 PATH、HOME/USERPROFILE 和工具链环境，继续过滤 WebCodex 内部凭据。
+启动 Runner 的 PATH、HOME/USERPROFILE 和工具链环境，继续过滤 WebPi 内部凭据。
 Shell env 覆盖继承值，profile env 再覆盖 Shell env；未配置 init_script 时不执行
 启动脚本，也不会自动 source `.bashrc` / `.profile`。
 
@@ -345,7 +345,7 @@ Profile 的安全要点：
 ### `run_script` 的 typed 脚本语言
 
 `run_script` 接受 `sh`、`bash`、`powershell`、`javascript` 和 `typescript`。
-JavaScript 与 TypeScript 都由 Runner 上的外部 Node.js 执行。WebCodex 从准备好的
+JavaScript 与 TypeScript 都由 Runner 上的外部 Node.js 执行。WebPi 从准备好的
 shell/profile PATH 解析 `node`（仅当已配置的 shell/profile program 本身是
 `node`/`node.exe` 时也可直接使用）。JavaScript 正文写入 Runner-owned `.mjs`
 临时文件，并以 `node <temporary.mjs> <args...>` 的 native argv 形式启动；`.mjs`
@@ -361,12 +361,12 @@ native stripping，不再附加该 flag。Node 缺失、版本无法解析或低
 但实际脚本进程之后拒绝某项 runtime semantics，则以实际已启动进程的 lifecycle 为准。
 
 该 TypeScript contract 覆盖 Node 能直接擦除的语法，例如 type annotations、interface /
-type alias、generics，以及普通 JavaScript 的 async/await、ESM、Node builtins。WebCodex
+type alias、generics，以及普通 JavaScript 的 async/await、ESM、Node builtins。WebPi
 不会执行 type checking，不会调用 `tsc`，不会把 `tsconfig.json` 当作项目构建配置，
 不会实现 tsconfig path alias，也不承诺 enum、parameter properties、runtime namespace、
 import alias 等需要 transform 的 TypeScript 语法。本 contract 也不使用
 `--experimental-transform-types`。在仍把 type stripping 标为 experimental 的旧版 Node
-上，Node 自己的 `ExperimentalWarning` 可能进入 stderr；WebCodex 不做 suppress/filter，
+上，Node 自己的 `ExperimentalWarning` 可能进入 stderr；WebPi 不做 suppress/filter，
 以免同时吞掉用户脚本产生的 warning。
 
 滚动升级时，JavaScript 独立要求 `structured_script_javascript`，TypeScript 独立要求
@@ -375,7 +375,7 @@ import alias 等需要 transform 的 TypeScript 语法。本 contract 也不使�
 literal native argv，stdin 继续独立传递，两种语言继续复用相同的 resolved project cwd、
 timeout/cancellation、Runner policy 和 Job lifecycle。
 
-WebCodex 不会安装或 bootstrap npm dependencies，不会注入 `node_modules` / `NODE_PATH`，
+WebPi 不会安装或 bootstrap npm dependencies，不会注入 `node_modules` / `NODE_PATH`，
 不会选择 package manager，也不会 fallback 到 Bun、Deno、`tsx`、`npx` 或其他 runtime。
 由于 `.mjs` / `.mts` 入口位于 Runner-owned 临时目录，相对 ESM import 会相对于该临时
 module 解析，而不是 project cwd；导入项目代码时应使用 Node builtin 或显式项目路径/file URL。
@@ -404,11 +404,11 @@ max_concurrent_jobs = 4
 在 Server 上启用 QUIC listener 并打开所选 UDP 端口：
 
 ```sh
-WEBCODEX_QUIC_ENABLED=true
-WEBCODEX_QUIC_LISTEN=0.0.0.0:8443
-WEBCODEX_QUIC_CERT=/etc/letsencrypt/live/<host>/fullchain.pem
-WEBCODEX_QUIC_KEY=/etc/letsencrypt/live/<host>/privkey.pem
-WEBCODEX_QUIC_ALPN=webcodex-runner/1
+WEBPI_QUIC_ENABLED=true
+WEBPI_QUIC_LISTEN=0.0.0.0:8443
+WEBPI_QUIC_CERT=/etc/letsencrypt/live/<host>/fullchain.pem
+WEBPI_QUIC_KEY=/etc/letsencrypt/live/<host>/privkey.pem
+WEBPI_QUIC_ALPN=webcodex-runner/1
 ```
 
 证书 SAN 必须匹配 Runner 上配置的 `server_name`。配置了 `[quic]` 时 `auto` 先试
@@ -435,12 +435,12 @@ Server 会把稳定的 Runner `client_id` 与当前 live process lease 分开。
 
 ## 关停与重启
 
-`webcodex-runner` 在 `SIGINT`/`SIGTERM` 时干净关停。它不会自行 daemonize。
-托管部署请用 `webcodex runner install --scope user|system` 把它安装并托管为
+`webpi-runner` 在 `SIGINT`/`SIGTERM` 时干净关停。它不会自行 daemonize。
+托管部署请用 `webpi runner install --scope user|system` 把它安装并托管为
 user 或 system 服务，并把令牌放进服务环境。
 
-机器重启后，hosted `connect` profile 通过重新运行 `webcodex connect` 或
-`webcodex runner start --profile <profile>` 来恢复。hosted profile 暂不支持开机自动
+机器重启后，hosted `connect` profile 通过重新运行 `webpi connect` 或
+`webpi runner start --profile <profile>` 来恢复。hosted profile 暂不支持开机自动
 启动。
 
 ## SSH 会话资源（高级）
@@ -478,7 +478,7 @@ Managed mutation 修改的是 durable desired state，不是当前进程的 live
 `restart_required=true` 时，需要重启该 Runner，再次 `list` 后才能把资源绑定到
 Workflow Session。已经与 frozen startup snapshot 一致的幂等操作可以返回
 `restart_required=false`。访问还需要独立的可选 `ssh:local` permission；hosted OAuth
-client 通过 `webcodex connect ... --oauth-local-ssh` 显式 opt in。
+client 通过 `webpi connect ... --oauth-local-ssh` 显式 opt in。
 
 Managed target 最终仍由现有 SSH transport 消费。因此，成功登记 Windows OpenSSH
 destination 不代表一定能建立 PersistentShell：当前 remote persistent-shell contract
@@ -502,8 +502,8 @@ incoming/outgoing 广度优先遍历；canonical Connector 将其投影为 `code
 不会暴露原始协议方法或不透明 LSP item data。
 它们只读、project-bound，并且被约束为启动语言服务器绝不执行仓库代码或拉取依赖。
 路径是项目相对路径；外部/依赖位置会被省略。语言服务器必须安装在 Runner 机器上，
-或通过 `WEBCODEX_RUST_ANALYZER`、`WEBCODEX_GOPLS` 等 env override 指定。gopls
-profile 还会关闭 module/toolchain 网络访问并使用 `-mod=readonly`；WebCodex 不会为语义
+或通过 `WEBPI_RUST_ANALYZER`、`WEBPI_GOPLS` 等 env override 指定。gopls
+profile 还会关闭 module/toolchain 网络访问并使用 `-mod=readonly`；WebPi 不会为语义
 导航自动安装 gopls，也不会拉取缺失的 Go 依赖。
 
 Call hierarchy 必须由独立的 `lsp_call_hierarchy` capability 声明，且所选语言服务器
@@ -515,24 +515,24 @@ Call hierarchy 必须由独立的 `lsp_call_hierarchy` capability 声明，且�
 最简命令：
 
 ```bash
-webcodex runner status --profile <profile>
-webcodex runner logs --profile <profile> --lines 100
-webcodex runner restart --profile <profile>
+webpi runner status --profile <profile>
+webpi runner logs --profile <profile> --lines 100
+webpi runner restart --profile <profile>
 ```
 
 用户服务：
 
 ```bash
-webcodex runner install --scope user --config <login-reported-runner-config>
-webcodex runner status --scope user --config <login-reported-runner-config>
+webpi runner install --scope user --config <login-reported-runner-config>
+webpi runner status --scope user --config <login-reported-runner-config>
 ```
 
 管理员管理的系统服务：
 
 ```bash
-sudo webcodex runner install --scope system --profile <profile> \
+sudo webpi runner install --scope system --profile <profile> \
   --user <runner-user> --working-directory /home/<runner-user>
-sudo webcodex runner status --scope system --profile <profile>
+sudo webpi runner status --scope system --profile <profile>
 ```
 
 install、status、start、stop、restart、logs、uninstall 请使用相同的 `--scope`。

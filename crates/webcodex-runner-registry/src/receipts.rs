@@ -132,6 +132,20 @@ impl DerefMut for ReceiptRegistryGuard<'_> {
         self.guard.as_mut().unwrap()
     }
 }
+pub(crate) fn terminal_persistence_error_code(error: &str) -> &str {
+    let code = error.trim();
+    if !code.is_empty()
+        && code.len() <= 96
+        && code
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
+    {
+        code
+    } else {
+        "unknown"
+    }
+}
+
 impl Drop for ReceiptRegistryGuard<'_> {
     fn drop(&mut self) {
         let now = now_ts();
@@ -187,12 +201,15 @@ impl Drop for ReceiptRegistryGuard<'_> {
         }
         if let Some(sink) = &self.state.terminal_event_sink {
             let mut failed = 0;
+            let mut first_error_code = None;
             let mut retry_ids = Vec::new();
             let mut succeeded_ids = Vec::new();
             for event in terminal_events {
                 let job_id = event.job_id.clone();
-                if sink.record_terminal_event(&event).is_err() {
+                if let Err(error) = sink.record_terminal_event(&event) {
                     failed += 1;
+                    first_error_code
+                        .get_or_insert_with(|| terminal_persistence_error_code(&error).to_string());
                     retry_ids.push(job_id);
                 } else {
                     succeeded_ids.push(job_id);
@@ -202,7 +219,14 @@ impl Drop for ReceiptRegistryGuard<'_> {
                 let mut retry_not_before =
                     self.state.terminal_event_retry_not_before.lock().unwrap();
                 for id in succeeded_ids {
-                    retry_not_before.remove(&id);
+                    if retry_not_before.remove(&id).is_some() {
+                        webcodex_core::runtime_diagnostics::record(
+                            webcodex_core::runtime_diagnostics::DiagnosticSeverity::Info,
+                            "job_terminal_attention",
+                            "persistence_recovered",
+                            Some(&id),
+                        );
+                    }
                 }
             }
             if !retry_ids.is_empty() {
@@ -218,14 +242,26 @@ impl Drop for ReceiptRegistryGuard<'_> {
                 }
                 let mut retry_not_before =
                     self.state.terminal_event_retry_not_before.lock().unwrap();
+                let mut first_degradation = false;
                 for id in retry_ids {
-                    retry_not_before.insert(id, retry_at);
+                    if retry_not_before.insert(id, retry_at).is_none() {
+                        first_degradation = true;
+                    }
+                }
+                if first_degradation {
+                    webcodex_core::runtime_diagnostics::record(
+                        webcodex_core::runtime_diagnostics::DiagnosticSeverity::Warn,
+                        "job_terminal_attention",
+                        "persistence_degraded",
+                        None,
+                    );
                 }
             }
             if failed > 0 {
                 tracing::warn!(
                     count = failed,
                     retry_after_secs = TERMINAL_EVENT_RETRY_COOLDOWN_SECS,
+                    error_code = first_error_code.as_deref().unwrap_or("unknown"),
                     "terminal Job attention persistence degraded"
                 );
             }
@@ -233,12 +269,21 @@ impl Drop for ReceiptRegistryGuard<'_> {
     }
 }
 
-fn terminal_outcome(status: &str) -> &'static str {
+pub(crate) fn terminal_outcome(status: &str) -> &'static str {
     match status {
         "completed" => "succeeded",
-        "timed_out" => "timed_out",
+        "timeout" | "timed_out" => "timed_out",
         "stopped" | "cancelled" => "cancelled",
+        "lost" => "outcome_unknown",
         _ => "failed",
+    }
+}
+
+fn canonical_terminal_attention_status(status: &str) -> &str {
+    if status == "timeout" {
+        "timed_out"
+    } else {
+        status
     }
 }
 
@@ -247,7 +292,8 @@ pub(crate) fn capture_terminal_event(job: &ShellJobRecord) -> Option<JobTerminal
         return None;
     }
     let terminal_observed_at = job.observation.terminal_observed_at?;
-    let status = job.lifecycle.as_wire().to_string();
+    let wire_status = job.lifecycle.as_wire();
+    let status = canonical_terminal_attention_status(wire_status).to_string();
     Some(JobTerminalEvent {
         job_id: job.job_id.clone(),
         client_id: job.client_id.clone(),
@@ -347,6 +393,18 @@ fn capture(job: &ShellJobRecord) -> Option<RetainedJobReceipt> {
         return None;
     }
     Some(receipt)
+}
+
+#[cfg(test)]
+mod terminal_outcome_tests {
+    use super::terminal_outcome;
+
+    #[test]
+    fn lost_terminal_job_preserves_unknown_outcome_semantics() {
+        assert_eq!(terminal_outcome("lost"), "outcome_unknown");
+        assert_eq!(terminal_outcome("failed"), "failed");
+        assert_eq!(terminal_outcome("completed"), "succeeded");
+    }
 }
 
 impl RunnerRegistry {

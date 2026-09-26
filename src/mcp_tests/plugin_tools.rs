@@ -106,6 +106,18 @@ fn plugin_tool(name: &str) -> PluginTool {
     }
 }
 
+fn destructive_plugin_tool(name: &str) -> PluginTool {
+    let mut tool = plugin_tool(name);
+    tool.title = Some("Destructive Repository Mutation".to_string());
+    tool.description = Some("Mutates repository state".to_string());
+    tool.annotations = Some(json!({
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false
+    }));
+    tool
+}
+
 fn spawn_generic_plugin_call(
     runtime: &Arc<ToolRuntime>,
     auth: &crate::auth::AuthContext,
@@ -593,6 +605,100 @@ async fn plugin_operation_scopes_are_independent_and_fail_closed() {
         manage_reload["result"]["structuredContent"]["error"]["code"],
         "runner_unavailable"
     );
+}
+
+#[tokio::test]
+async fn destructive_plugin_call_requires_plugin_mutate_before_runner_dispatch() {
+    let runtime = Arc::new(test_runtime());
+    register_plugin_runner(
+        &runtime,
+        "runner-a",
+        "runner-instance-a",
+        "repo-tools",
+        "provider-instance-a",
+        vec![destructive_plugin_tool("delete_symbol")],
+    )
+    .await;
+
+    let inspect = plugin_auth_with_scopes(&[crate::auth::SCOPE_PLUGIN_INSPECT]);
+    let provider = PluginProviderView {
+        provider_id: "repo-tools".to_string(),
+        provider_instance_id: "provider-instance-a".to_string(),
+        name: "Repo Tools".to_string(),
+        status: "ready".to_string(),
+        error_code: None,
+    };
+    let (binding, _) = describe_dynamic_binding(
+        &runtime,
+        &inspect,
+        "runner-a",
+        "runner-instance-a",
+        provider,
+        destructive_plugin_tool("delete_symbol"),
+        6881,
+    )
+    .await;
+
+    let invoke_only = plugin_auth_with_scopes(&[crate::auth::SCOPE_PLUGIN_INVOKE]);
+    let denied = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(6882)),
+            json!({
+                "name": crate::plugin_gateway::PLUGIN_TOOL_NAME,
+                "arguments": {
+                    "action":"call",
+                    "binding": binding,
+                    "arguments": {"query":"victim"}
+                }
+            }),
+        ),
+        Some(&invoke_only),
+    )
+    .await;
+    match denied {
+        McpOutcome::Forbidden { required_scope, .. } => {
+            assert_eq!(required_scope, Some(crate::auth::SCOPE_PLUGIN_MUTATE));
+        }
+        other => panic!("destructive Plugin call must require plugin:mutate: {other:?}"),
+    }
+
+    let mutate = plugin_auth_with_scopes(&[
+        crate::auth::SCOPE_PLUGIN_INVOKE,
+        crate::auth::SCOPE_PLUGIN_MUTATE,
+    ]);
+    let call = spawn_binding_call(&runtime, &mutate, binding, json!({"query":"victim"}), 6883);
+    let call_request =
+        wait_for_plugin_request(&runtime.runner_registry, "runner-a", "runner-instance-a").await;
+    assert!(matches!(
+        call_request.plugin_gateway,
+        Some(PluginGatewayRequest::ToolsCall {
+            ref provider_id,
+            ref provider_instance_id,
+            ref name,
+            ..
+        }) if provider_id == "repo-tools"
+            && provider_instance_id == "provider-instance-a"
+            && name == "delete_symbol"
+    ));
+    complete_plugin_request(
+        &runtime,
+        call_request,
+        "runner-instance-a",
+        PluginGatewayResponse::success(PluginGatewayResponsePayload::ToolResult {
+            result: PluginToolResult {
+                content: vec![],
+                structured_content: Some(json!({"deleted": true})),
+                is_error: false,
+            },
+        }),
+    )
+    .await;
+    let McpOutcome::Ok(call) = call.await.unwrap() else {
+        panic!("plugin:mutate must pass destructive Plugin call scope governance");
+    };
+    assert_eq!(call["result"]["isError"], false);
 }
 
 #[tokio::test]

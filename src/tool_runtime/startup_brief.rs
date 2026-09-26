@@ -52,7 +52,7 @@ pub(crate) use webcodex_core::runtime_contract::{
     BUILTIN_CODING_WORKFLOW_CONTRACT, BUILTIN_CODING_WORKFLOW_VERSION,
 };
 
-/// Stable model-facing coding/review semantics owned by WebCodex itself.
+/// Stable model-facing coding/review semantics owned by WebPi itself.
 ///
 /// This is intentionally not a project instruction source and is never stored
 /// as Session mode, capability, permission, or execution authority. Ordinary

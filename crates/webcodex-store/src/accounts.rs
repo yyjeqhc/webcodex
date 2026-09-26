@@ -313,6 +313,26 @@ impl Database {
         self.get_api_key_by_id(id)
     }
 
+    /// Replace the scope set for one existing API key without rotating its
+    /// credential material. Authorization and lifecycle checks belong to the
+    /// HTTP/admin layer; this store primitive mutates only the `scopes` column.
+    pub fn update_api_key_scopes(
+        &self,
+        id: &str,
+        scopes: &str,
+    ) -> anyhow::Result<Option<ApiKeyRecord>> {
+        let conn = self.lock_connection(crate::StoreDomain::Accounts);
+        let changed = conn.execute(
+            "UPDATE api_keys SET scopes = ?2 WHERE id = ?1",
+            params![id, scopes],
+        )?;
+        drop(conn);
+        if changed == 0 {
+            return Ok(None);
+        }
+        self.get_api_key_by_id(id)
+    }
+
     /// Disable (or re-enable) a user. When disabling, both the legacy
     /// `disabled` flag and the Phase 2 `disabled_at` timestamp are set so the
     /// existing authentication disabled-flag check (`disabled != 0`) and the new

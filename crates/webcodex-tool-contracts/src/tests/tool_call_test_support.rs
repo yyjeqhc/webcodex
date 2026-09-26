@@ -41,6 +41,9 @@ fn sample_tool_args_for_spec(spec: &ToolSpec) -> Value {
         "update_goal" => {
             args.insert("expected_revision".to_string(), json!(1));
         }
+        "service_deploy" | "service_rollback" => {
+            args.insert("expected_revision".to_string(), json!(1));
+        }
         "observe_jobs" => {
             args.insert("items".to_string(), json!([{"job_id": "job_123"}]));
         }
@@ -118,6 +121,13 @@ fn sample_field_value(field: &str) -> Value {
         "diff" => json!("diff --git a/a b/a\n--- a/a\n+++ b/a\n@@ -1 +1 @@\n-a\n+b\n"),
         "job_id" => json!("job_123"),
         "idempotency_key" => json!("sample-detached-key"),
+        "operation" => json!("restart"),
+        "receipt_id" => json!("wc_deploy_1234567890abcdef1234567890abcdef"),
+        "target_manifest" => json!({
+            "version": "0.4.1",
+            "git_commit": "a".repeat(40),
+            "artifacts": []
+        }),
         "handle" => json!("reviewer"),
         "display_name" => json!("Reviewer"),
         "agent_id" => json!("wc_dagent_qqqqqqqqqqqqqqqq".to_string()),
@@ -150,6 +160,7 @@ fn sample_field_value(field: &str) -> Value {
         "source" => json!("text('ok');"),
         "checkpoint_id" => json!("wc_ckpt_1234"),
         "confirm" => json!(true),
+        "draining" => json!(true),
         "client_id" => json!("oe"),
         "application_id" => json!("application_qqqqqqqqqqqqqqqq".to_string()),
         "display_id" => json!("display_qqqqqqqqqqqqqqqq".to_string()),

@@ -124,7 +124,7 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
             true,
             super::ToolSessionEvidencePolicy::NONE,
         ),
-        "Run bounded sh, bash, PowerShell, JavaScript, or TypeScript as typed Runner-owned script data. JavaScript is Node.js-backed fixed .mjs ESM. TypeScript uses Node native erasable type stripping in .mts ESM, requires Node.js 22.6+, does not type-check, and rejects enum and other transform-required syntax. The Runner owns runtime selection/flags; WebCodex does not install npm dependencies, run tsc, or fall back to Bun/Deno/tsx. Relative ESM imports resolve from the Runner-owned temporary module, not project cwd. Prefer run_process for native argv, run_script for program-like scripts, and run_shell when shell grammar is required. Long work continues as the same execution / same Job and is never restarted; timeout_secs defaults to 60 seconds and the total script execution lifetime clamps at 7 days; script bodies never become shell command text. If a native child must outlive the Runner across restart/upgrade/stop/replacement, use run_detached_process from the start.",
+        "Run bounded sh, bash, PowerShell, JavaScript, or TypeScript as typed Runner-owned script data. JavaScript is Node.js-backed fixed .mjs ESM. TypeScript uses Node native erasable type stripping in .mts ESM, requires Node.js 22.6+, does not type-check, and rejects enum and other transform-required syntax. The Runner owns runtime selection/flags; WebPi does not install npm dependencies, run tsc, or fall back to Bun/Deno/tsx. Relative ESM imports resolve from the Runner-owned temporary module, not project cwd. Prefer run_process for native argv, run_script for program-like scripts, and run_shell when shell grammar is required. Long work continues as the same execution / same Job and is never restarted; timeout_secs defaults to 60 seconds and the total script execution lifetime clamps at 7 days; script bodies never become shell command text. If a native child must outlive the Runner across restart/upgrade/stop/replacement, use run_detached_process from the start.",
     )
     .with_execution(super::ToolExecutionContract::new(
         super::ToolExecutionForm::TypedScript,
@@ -190,7 +190,7 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
                 true,
                 super::ToolSessionEvidencePolicy::NONE.persistent_shell(super::PersistentShellEvidenceAction::Open),
             ),
-            "Open one bounded long-lived shell for an explicit Workflow Session. Primary use: one shell for repeated commands on the active named SSH resource in execution_context.resource, preserving remote cwd/env/exports/functions/umask. Local sh/bash or Windows PowerShell remains supported only when same local shell-process state is actually required, not merely for several commands. New SSH targets use ssh_resource list/register, Runner restart, list again, then update_session_context; no per-shell host/resource parameter. The SSH target does not need WebCodex Runner.",
+            "Open one bounded long-lived shell for an explicit Workflow Session. Primary use: one shell for repeated commands on the active named SSH resource in execution_context.resource, preserving remote cwd/env/exports/functions/umask. Local sh/bash or Windows PowerShell remains supported only when same local shell-process state is actually required, not merely for several commands. New SSH targets use ssh_resource list/register, Runner restart, list again, then update_session_context; no per-shell host/resource parameter. The SSH target does not need WebPi Runner.",
     )),
     requires_explicit_business_session(model_spec(
             def(
@@ -334,7 +334,7 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
                 false,
                 super::ToolSessionEvidencePolicy::NONE,
             ),
-            "Stop one existing WebCodex Job by job_id. Requires confirm=true and preserves project/session ownership; log bodies are not returned.",
+            "Stop one existing WebPi Job by job_id. Requires confirm=true and preserves project/session ownership; log bodies are not returned.",
         ).with_gpt_action_gateway_only(),
         PERMISSION_RISK_JOB,
     ), 81),
@@ -365,8 +365,8 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
                 super::ToolActivityPresentation::Transport,
                 super::ToolActivityInteraction::Meaningful,
             ),
-            "Continue known Jobs by job_id; do not call list_jobs first. Pass observation_token unchanged as after_observation_token. No token gives an immediate baseline; no wait_secs gives an immediate observation. With tokens, bounded wait_secs (runtime max 100) uses wake_on=change by default. Prefer the returned continuation; otherwise use wait_secs=55,wake_on=terminal when useful progress is blocked on terminal outcome because longer waits may exceed the Host deadline. If independent work remains, observe later—do not poll for visibility. terminal wakes on any terminal Job; all_terminal waits for all. Updates do not extend the deadline; item errors return immediately. Timeout may include changed=true. Never launches, retries, stops, or subscribes.",
-        ).with_gpt_action_description("Continue known Jobs. Prefer the returned continuation; otherwise use wait_secs=55,wake_on=terminal only when blocked on terminal outcome. Runtime allows up to 100s, but longer waits may exceed the Host deadline. Tokens are cursors, never retry authority."),
+            "Continue known Jobs by job_id; do not call list_jobs first. Pass observation_token unchanged as after_observation_token. No token gives an immediate baseline; no wait_secs gives an immediate observation. With tokens, bounded wait_secs (runtime max 100) uses wake_on=change by default. Prefer the returned continuation; otherwise use wait_secs=20,wake_on=terminal when useful progress is blocked on terminal outcome because longer waits may exceed the Host deadline. If independent work remains, observe later—do not poll for visibility. terminal wakes on any terminal Job; all_terminal waits for all. Updates do not extend the deadline; item errors return immediately. Timeout may include changed=true. Never launches, retries, stops, or subscribes.",
+        ).with_gpt_action_description("Continue known Jobs. Prefer the returned continuation; otherwise use wait_secs=20,wake_on=terminal only when blocked on terminal outcome. Runtime allows up to 100s, but longer waits may exceed the Host deadline. Tokens are cursors, never retry authority."),
         80,
     ),
     adaptive_runtime_direct(

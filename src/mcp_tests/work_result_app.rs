@@ -351,7 +351,7 @@ fn work_result_html_is_bounded_display_only_manual_refresh_ui() {
         "state_version",
         "pagehide",
         "beforeunload",
-        "WebCodex Work",
+        "WebPi Work",
     ] {
         assert!(
             MCP_WORK_RESULT_APP_HTML.contains(required),

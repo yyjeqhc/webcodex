@@ -29,7 +29,9 @@ use serde_json::{json, Value};
 mod tokens;
 mod users;
 
-pub(crate) use tokens::{tokens_create, tokens_list, tokens_register_hash, tokens_revoke};
+pub(crate) use tokens::{
+    tokens_create, tokens_list, tokens_register_hash, tokens_revoke, tokens_update_scopes,
+};
 pub(crate) use users::{users_create, users_list, users_me};
 
 // ---------------------------------------------------------------------------

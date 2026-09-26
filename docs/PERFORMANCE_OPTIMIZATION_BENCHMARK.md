@@ -1,4 +1,4 @@
-# WebCodex performance optimization benchmark
+# WebPi performance optimization benchmark
 
 Baseline commit: `2466a3e80d7c90c4b6c80a58978281995a8f8b45`
 
@@ -87,7 +87,7 @@ For the four nearby matches, compound inspection reduced four requested source r
 
 The largest local latency gain comes from avoiding the Windows Bash process chain for eligible single-file searches. `read_files` coalescing mainly reduces redundant Runner work. `search_and_read` is primarily a model-round-trip optimization: its local execution time is similar to performing search plus read sequentially, but it removes one outer model/tool turn and, after coalescing, significantly reduces duplicated source bytes sent to the model.
 
-A cross-call read cache was intentionally not added. After the other optimizations, bounded local reads are already on the order of a few milliseconds, while cache invalidation must remain correct when editors, Git, scripts, or other agents modify files outside WebCodex.
+A cross-call read cache was intentionally not added. After the other optimizations, bounded local reads are already on the order of a few milliseconds, while cache invalidation must remain correct when editors, Git, scripts, or other agents modify files outside WebPi.
 
 ## Validation performed
 

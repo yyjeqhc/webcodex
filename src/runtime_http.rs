@@ -10,9 +10,10 @@ use crate::tool_runtime::kernel::{
 use crate::tool_runtime::model_ergonomics_telemetry::ModelErgonomicsCompletion;
 use crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD;
 use crate::tool_runtime::{
-    ListToolsOptions, ToolCall, ToolRuntime, TOOL_CALL_PARAMS_FIELD, TOOL_CALL_TOOL_FIELD,
-    TOOL_CALL_WRAPPER_FIELDS,
+    ListToolsOptions, ToolCall, ToolResult, ToolRuntime, TOOL_CALL_PARAMS_FIELD,
+    TOOL_CALL_TOOL_FIELD, TOOL_CALL_WRAPPER_FIELDS,
 };
+use base64::{engine::general_purpose, Engine as _};
 use salvo::prelude::*;
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -199,6 +200,92 @@ fn record_action_tools_call_pre_result_failure(
         summary["model_ergonomics"] = telemetry;
     }
     audit.record(ActionAuditRecord::new(tool.to_string(), false, status).summary(summary));
+}
+
+fn project_http_computer_snapshot_preview(tool: &str, result: &mut ToolResult) {
+    if tool != "computer_observe" || !result.success {
+        return;
+    }
+    let Some(output) = result.output.as_object_mut() else {
+        return;
+    };
+    let Some(data) = output.get("content_base64").and_then(Value::as_str) else {
+        return;
+    };
+    let Ok(decoded) = general_purpose::STANDARD.decode(data) else {
+        webcodex_core::runtime_diagnostics::record(
+            webcodex_core::runtime_diagnostics::DiagnosticSeverity::Warn,
+            "runtime_http",
+            "snapshot_preview_invalid_base64",
+            Some(tool),
+        );
+        return;
+    };
+    if decoded.len() <= crate::image_preview::ACTION_INLINE_PREVIEW_MAX_BYTES {
+        return;
+    }
+    let full_sha256 = output
+        .get("sha256")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let full_file_bytes = decoded.len();
+    let preview = match crate::image_preview::encode_bounded_preview(
+        &decoded,
+        crate::image_preview::ACTION_INLINE_PREVIEW_MAX_BYTES,
+    ) {
+        Ok(preview) => preview,
+        Err(_) => {
+            webcodex_core::runtime_diagnostics::record(
+                webcodex_core::runtime_diagnostics::DiagnosticSeverity::Warn,
+                "runtime_http",
+                "snapshot_preview_encode_failed",
+                Some(tool),
+            );
+            return;
+        }
+    };
+    output.insert(
+        "content_base64".to_string(),
+        json!(general_purpose::STANDARD.encode(&preview.bytes)),
+    );
+    output.insert("mime_type".to_string(), json!(preview.mime_type));
+    output.insert("file_bytes".to_string(), json!(preview.bytes.len()));
+    output.insert("sha256".to_string(), json!(preview.sha256));
+    output.insert("width".to_string(), json!(preview.width));
+    output.insert("height".to_string(), json!(preview.height));
+    output.insert("content_delivery".to_string(), json!("inline_preview"));
+    output.insert("full_image_file_bytes".to_string(), json!(full_file_bytes));
+    if let Some(full_sha256) = full_sha256 {
+        output.insert("full_image_sha256".to_string(), json!(full_sha256));
+    }
+}
+
+const KERNEL_OUTCOME_INTERNAL_ERROR: &str = "Tool runtime returned an incomplete internal outcome";
+
+fn validated_kernel_result(
+    tool: &str,
+    outcome_success: bool,
+    result: Option<ToolResult>,
+) -> Result<ToolResult, &'static str> {
+    let Some(result) = result else {
+        webcodex_core::runtime_diagnostics::record(
+            webcodex_core::runtime_diagnostics::DiagnosticSeverity::Error,
+            "runtime_http",
+            "kernel_outcome_missing_result",
+            Some(tool),
+        );
+        return Err("kernel_outcome_missing_result");
+    };
+    if outcome_success != result.success {
+        webcodex_core::runtime_diagnostics::record(
+            webcodex_core::runtime_diagnostics::DiagnosticSeverity::Error,
+            "runtime_http",
+            "kernel_outcome_success_mismatch",
+            Some(tool),
+        );
+        return Err("kernel_outcome_success_mismatch");
+    }
+    Ok(result)
 }
 
 #[handler]
@@ -400,10 +487,43 @@ pub async fn tools_call(req: &mut Request, depot: &mut Depot, res: &mut Response
             );
         }
         None => {
-            let result = outcome
-                .result
-                .expect("tool kernel outcome without error must include result");
-            debug_assert_eq!(outcome.success, result.success);
+            let result = match validated_kernel_result(&tool, outcome.success, outcome.result) {
+                Ok(result) => result,
+                Err(error_kind) => {
+                    guard.dispatch_failed(error_kind);
+                    record_action_tools_call_pre_result_failure(
+                        &audit,
+                        &tool,
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        model_ergonomics.as_ref(),
+                        error_kind,
+                    );
+                    guard.dispatch_finished(false, Some(false), error_kind);
+                    let body = serde_json::json!({
+                        "status": StatusCode::INTERNAL_SERVER_ERROR.as_u16(),
+                        "error": KERNEL_OUTCOME_INTERNAL_ERROR,
+                    });
+                    guard.capture_payload("final_response", &body);
+                    let estimated = estimate_json_bytes(&body);
+                    guard.response_serialized(
+                        StatusCode::INTERNAL_SERVER_ERROR.as_u16(),
+                        estimated,
+                        Some(false),
+                        Some(false),
+                        error_kind,
+                    );
+                    res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+                    res.render(Json(body));
+                    guard.handler_returned(
+                        StatusCode::INTERNAL_SERVER_ERROR.as_u16(),
+                        estimated,
+                        Some(false),
+                        Some(false),
+                        error_kind,
+                    );
+                    return;
+                }
+            };
             let tool_success = result.success;
             // HTTP/API protocol success tracks the rendered status (200 vs 400).
             let protocol_success = tool_success;
@@ -414,7 +534,7 @@ pub async fn tools_call(req: &mut Request, depot: &mut Depot, res: &mut Response
             }
             // Audit the tool-specific durable projection; optionally compact only the HTTP response body.
             // Trace size reflects what ChatGPT receives (post-compact when on).
-            let (status, response) = prepare_action_tools_call_response(
+            let (status, mut response) = prepare_action_tools_call_response(
                 &audit,
                 &tool,
                 outcome.project,
@@ -422,6 +542,7 @@ pub async fn tools_call(req: &mut Request, depot: &mut Depot, res: &mut Response
                 model_ergonomics.as_ref(),
                 &outcome.correlation,
             );
+            project_http_computer_snapshot_preview(&tool, &mut response);
             let response_value = guard
                 .enabled()
                 .then(|| serde_json::to_value(&response).ok())
@@ -820,9 +941,24 @@ pub async fn gpt_action_invoke(req: &mut Request, depot: &mut Depot, res: &mut R
             res.render(json_error(StatusCode::BAD_REQUEST, message));
         }
         None => {
-            let result = outcome
-                .result
-                .expect("tool kernel outcome without error must include result");
+            let result = match validated_kernel_result(&tool, outcome.success, outcome.result) {
+                Ok(result) => result,
+                Err(error_kind) => {
+                    record_action_tools_call_pre_result_failure(
+                        &audit,
+                        &tool,
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        outcome.model_ergonomics.as_ref(),
+                        error_kind,
+                    );
+                    res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+                    res.render(json_error(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        KERNEL_OUTCOME_INTERNAL_ERROR,
+                    ));
+                    return;
+                }
+            };
             let (status, mut response) = prepare_action_tools_call_response(
                 &audit,
                 &tool,
@@ -831,6 +967,7 @@ pub async fn gpt_action_invoke(req: &mut Request, depot: &mut Depot, res: &mut R
                 outcome.model_ergonomics.as_ref(),
                 &outcome.correlation,
             );
+            project_http_computer_snapshot_preview(&tool, &mut response);
             // ActionAudit above records canonical ToolRuntime truth. Only the
             // response copy is projected to the callable Adaptive Action route.
             crate::model_surface::project_tool_result_suggested_calls(

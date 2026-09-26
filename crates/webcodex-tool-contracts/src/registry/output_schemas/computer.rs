@@ -480,6 +480,18 @@ fn raw_output_schema_for_tool(name: &str) -> Option<Value> {
                 json!({"type": "integer", "minimum": 1, "maximum": 9007199254740991u64}),
             ),
             ("content_base64", json!({"type": "string"})),
+            (
+                "content_delivery",
+                json!({"type":"string","enum":["inline_preview"]}),
+            ),
+            (
+                "full_image_file_bytes",
+                json!({"type":"integer","minimum":1,"maximum":1048576}),
+            ),
+            (
+                "full_image_sha256",
+                json!({"type":"string","pattern":"^[0-9a-f]{64}$"}),
+            ),
         ])),
         "computer_snapshot_display" => Some(strict_computer_output_schema(vec![
             (
@@ -527,6 +539,18 @@ fn raw_output_schema_for_tool(name: &str) -> Option<Value> {
                 json!({"type": "integer", "minimum": 1, "maximum": 9007199254740991u64}),
             ),
             ("content_base64", json!({"type": "string"})),
+            (
+                "content_delivery",
+                json!({"type":"string","enum":["inline_preview"]}),
+            ),
+            (
+                "full_image_file_bytes",
+                json!({"type":"integer","minimum":1,"maximum":1048576}),
+            ),
+            (
+                "full_image_sha256",
+                json!({"type":"string","pattern":"^[0-9a-f]{64}$"}),
+            ),
         ])),
         "computer_save_display_snapshot" => Some(wrapped_output_schema(vec![
             ("project", json!({"type": "string", "minLength": 1})),

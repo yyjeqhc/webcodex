@@ -109,9 +109,9 @@ fi
 
 log "building Server, Runner, and CLI binaries"
 "$CARGO_BIN" build --quiet \
-    -p webcodex --bin webcodex-server \
-    -p webcodex-runner --bin webcodex-runner \
-    -p webcodex-cli --bin webcodex
+    -p webcodex --bin webpi-server \
+    -p webcodex-runner --bin webpi-runner \
+    -p webcodex-cli --bin webpi
 
 PORT="$(free_port)"
 BOOTSTRAP_KEY="$(random_secret)"
@@ -123,7 +123,7 @@ mkdir -p "$TMP_ROOT/data" "$TMP_ROOT/project" "$TMP_ROOT/second-project" "$TMP_R
     cd "$TMP_ROOT/project"
     git init -q -b main
     git config user.email e2e@example.invalid
-    git config user.name "WebCodex E2E"
+    git config user.name "WebPi E2E"
     printf '# hosted connect smoke\n' > README.md
     git add README.md
     git commit -q -m init
@@ -167,12 +167,12 @@ XDG_STATE_HOME="$TMP_ROOT/state" \
     || die "bounded runner logs did not return the expected final tail line"
 
 log "starting temporary shared-key-enabled Server"
-WEBCODEX_ADDR="127.0.0.1:${PORT}" \
-WEBCODEX_DATA="$TMP_ROOT/data" \
-WEBCODEX_TOKEN="$BOOTSTRAP_KEY" \
-WEBCODEX_SHARED_KEY_ENABLED=true \
+WEBPI_ADDR="127.0.0.1:${PORT}" \
+WEBPI_DATA="$TMP_ROOT/data" \
+WEBPI_TOKEN="$BOOTSTRAP_KEY" \
+WEBPI_SHARED_KEY_ENABLED=true \
 RUST_LOG=warn \
-"$REPO_DIR/target/debug/webcodex-server" >"$TMP_ROOT/server.log" 2>&1 &
+"$REPO_DIR/target/debug/webpi-server" >"$TMP_ROOT/server.log" 2>&1 &
 SERVER_PID=$!
 
 for _ in $(seq 1 80); do

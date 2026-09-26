@@ -62,6 +62,12 @@ mod detached_scope_tests {
     }
 
     #[test]
+    fn legacy_default_client_does_not_gain_service_lifecycle_scopes() {
+        assert!(!default_client_allowed_scopes().contains(&"service:restart"));
+        assert!(!default_client_allowed_scopes().contains(&"service:deploy"));
+    }
+
+    #[test]
     fn legacy_default_client_does_not_gain_browser_authority() {
         for scope in ["browser:read", "browser:control", "browser:launch"] {
             assert!(super::super::scope_registry::oauth_scopes_supported().contains(&scope));

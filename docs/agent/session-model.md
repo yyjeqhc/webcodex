@@ -1,6 +1,6 @@
 # Session Model — Two Non-Interchangeable Concepts
 
-WebCodex uses the word **session** for two independent systems. They share
+WebPi uses the word **session** for two independent systems. They share
 casual vocabulary only. They must not be merged, cross-wired, or inferred from
 each other.
 
@@ -93,13 +93,13 @@ identity. Adjacent meaningful MCP calls are eligible to pair only when the hashe
 `ClientWindow` and canonical authenticated principal correlation both match.
 Project remains an event dimension and current-visibility boundary, not the
 continuity identity. A matching Window does not prove a matching model turn:
-WebCodex receives no reliable turn/generation/response id and never infers one
+WebPi receives no reliable turn/generation/response id and never infers one
 from elapsed time. Missing or malformed host Window metadata therefore leaves
 loop continuity unavailable rather than falling back to Workflow Session,
 credential, Project, connection, trace, or MCP Session identity.
 
 For a later successful meaningful Project tool call with no explicit recorder,
-WebCodex may diagnose a **recorder continuity gap** when the same hashed Window,
+WebPi may diagnose a **recorder continuity gap** when the same hashed Window,
 canonical principal, and exact Project have a recent explicit Session affinity.
 The candidate must still be Active, match the exact Project, and pass the current
 caller through the ordinary Session authority check. The diagnostic may suggest
@@ -544,7 +544,7 @@ a `finish_coding_task` verdict.
   `insufficient_scope_identity`, `validation_not_requested`). Count deltas are
   signed integers (a decrease in passed tests yields a negative `passed_delta`);
   zero-test success never resolves a prior test failure.
-- **Async terminal validation evidence:** structured validation Job metadata carries the same opaque `validation_target_id` as the originating validation attempt. When an authorized validation-summary or Runtime Console Session read observes a retained terminal Job, WebCodex idempotently materializes one bounded `validation_job_terminal` event in that exact Workflow Session before projecting validation state. Idempotence does not depend on that event remaining in the 200-event Session FIFO: the version-1 ledger also persists a serde-defaulted exact Job-id marker set bounded to the Runner authoritative terminal inventory limit (64), and a new materialization evicts only markers absent from the current terminal-candidate snapshot. The marker check, marker insertion, and event append commit under one Session-store mutation, so concurrent reconcilers append at most once and restart restoration keeps the same suppression identity. Terminal reconciliation also serializes authoritative candidate-snapshot acquisition through marker/event materialization within one runtime: a later snapshot cannot commit first, so an older snapshot never gains eviction authority over a marker established from newer inventory. Synthetic evidence uses the authoritative Job `finished_at`; reconciliation never advances Session activity to the wall-clock read time. This is recovery/materialization only: it never re-runs validation, never treats acceptance/handoff as terminal success, and never exposes raw Job output. A later terminal success for the same structured target can therefore resolve an older retained failure even after the acceptance event is gone; the materialized terminal evidence then follows normal Session persistence/retention across Server restart.
+- **Async terminal validation evidence:** structured validation Job metadata carries the same opaque `validation_target_id` as the originating validation attempt. When an authorized validation-summary or Runtime Console Session read observes a retained terminal Job, WebPi idempotently materializes one bounded `validation_job_terminal` event in that exact Workflow Session before projecting validation state. Idempotence does not depend on that event remaining in the 200-event Session FIFO: the version-1 ledger also persists a serde-defaulted exact Job-id marker set bounded to the Runner authoritative terminal inventory limit (64), and a new materialization evicts only markers absent from the current terminal-candidate snapshot. The marker check, marker insertion, and event append commit under one Session-store mutation, so concurrent reconcilers append at most once and restart restoration keeps the same suppression identity. Terminal reconciliation also serializes authoritative candidate-snapshot acquisition through marker/event materialization within one runtime: a later snapshot cannot commit first, so an older snapshot never gains eviction authority over a marker established from newer inventory. Synthetic evidence uses the authoritative Job `finished_at`; reconciliation never advances Session activity to the wall-clock read time. This is recovery/materialization only: it never re-runs validation, never treats acceptance/handoff as terminal success, and never exposes raw Job output. A later terminal success for the same structured target can therefore resolve an older retained failure even after the acceptance event is gone; the materialized terminal evidence then follows normal Session persistence/retention across Server restart.
 - **Cargo test-count postconditions:** a `cargo_test` caller may require a
   bounded minimum count with `require_tests` / `min_tests`. These are
   request-scoped evidence assertions: they are persisted with local and Runner

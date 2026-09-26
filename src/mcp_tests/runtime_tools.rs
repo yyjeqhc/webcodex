@@ -84,7 +84,15 @@ async fn mcp_tools_list_exposes_canonical_coding_bootstrap_and_runtime_status_ux
     assert_eq!(work_props["include_project_instructions"]["default"], true);
     assert_eq!(work_props["include_workflow_guidance"]["default"], true);
     assert_eq!(work_props["guidance_profile"]["default"], "direct");
-    assert_eq!(work_props["guidance_profile"]["enum"], json!(["direct"]));
+    let expected_guidance_profiles = if cfg!(feature = "experimental-code-mode") {
+        json!(["direct", "code_mode"])
+    } else {
+        json!(["direct"])
+    };
+    assert_eq!(
+        work_props["guidance_profile"]["enum"],
+        expected_guidance_profiles
+    );
     assert_eq!(work_props["include_extension_catalog"]["default"], true);
     assert_eq!(work_props["mode"]["enum"], json!(["checkout", "worktree"]));
     assert_eq!(work_props["mode"]["default"], "checkout");
@@ -217,7 +225,7 @@ async fn mcp_tools_call_runtime_status_returns_content() {
     assert_eq!(value["result"]["content"][0]["type"], "text");
     assert_eq!(
         value["result"]["content"][0]["text"],
-        "WebCodex tool completed successfully."
+        "WebPi tool completed successfully."
     );
     // structuredContent carries the ToolResult shape exactly once; content.text
     // must not serialize the structured payload again.

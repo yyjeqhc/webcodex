@@ -19,6 +19,7 @@ mod agent_wake;
 mod audit;
 mod communication;
 mod connection_observation;
+mod deployment_receipt;
 mod goal;
 mod job_receipts;
 mod job_terminal_wait;
@@ -68,6 +69,12 @@ pub use self::communication::{
     MAX_DURABLE_AGENTS,
 };
 pub(crate) use self::connection_observation::StoreDomain;
+pub use self::deployment_receipt::{
+    DeploymentOperation, DeploymentPrincipal, DeploymentReceiptBeginOutcome,
+    DeploymentReceiptRecord, DeploymentReceiptStoreError, DeploymentState, NewDeploymentReceipt,
+    DEPLOYMENT_RECEIPT_ID_PREFIX, MAX_DEPLOYMENT_IDEMPOTENCY_KEY_BYTES,
+    MAX_DEPLOYMENT_MANIFEST_BYTES,
+};
 pub use self::goal::{
     GoalCorrelation, GoalCorrelationKind, GoalDetail, GoalLifecycle, GoalMutation, GoalPage,
     GoalPatch, GoalStoreError, GoalSummary, NewGoal, GOAL_ID_PREFIX, MAX_GOAL_CORRELATIONS,
@@ -163,6 +170,8 @@ mod agent_wake_tests;
 mod communication_tests;
 #[cfg(test)]
 mod db_tests;
+#[cfg(test)]
+mod deployment_receipt_tests;
 #[cfg(test)]
 mod goal_tests;
 #[cfg(test)]

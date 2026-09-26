@@ -1,8 +1,8 @@
-# systemd unit for the WebCodex server.
+# systemd unit for the WebPi server.
 #
-# Copy to /etc/systemd/system/webcodex.service, then:
+# Copy to /etc/systemd/system/webpi.service, then:
 #   sudo systemctl daemon-reload
-#   sudo systemctl enable --now webcodex
+#   sudo systemctl enable --now webpi
 #
 # The server is a zero-project-config relay: it does NOT read a projects.toml
 # for runtime project discovery. Projects are registered by agents as
@@ -10,27 +10,28 @@
 # project source.
 #
 # Keep the server bound to 127.0.0.1 behind a reverse proxy that terminates
-# TLS. WEBCODEX_TOKEN is the application-layer gate; TLS is the transport gate.
+# TLS. WEBPI_TOKEN is the application-layer gate; TLS is the transport gate.
 
 [Unit]
-Description=WebCodex runtime server (zero-config relay)
+Description=WebPi runtime server (zero-config relay)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-User=webcodex
-Group=webcodex
+User=webpi
+Group=webpi
 
 # Runtime data lives here (SQLite DB and durable runtime state). Persistent.
-StateDirectory=webcodex
-WorkingDirectory=/opt/webcodex
+StateDirectory=webpi
+WorkingDirectory=/opt/webpi
 
-ExecStart=/opt/webcodex/webcodex-server
+ExecStart=/opt/webpi/webpi-server
 
 # Load secrets + public URL from the env file (chmod 0600, owner root).
-# See webcodex.env.example for the full set.
-EnvironmentFile=/etc/webcodex/webcodex.env
+# See webcodex.env.example for the full set; this legacy-named example remains
+# read-protected as a sensitive env path and must be migrated separately.
+EnvironmentFile=/etc/webpi/webpi.env
 
 # Sensible defaults; override in the env file if needed.
 Environment=RUST_LOG=info
@@ -43,7 +44,7 @@ NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
-ReadWritePaths=/var/lib/webcodex
+ReadWritePaths=/var/lib/webpi
 
 [Install]
 WantedBy=multi-user.target

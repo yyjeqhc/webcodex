@@ -278,6 +278,12 @@ pub(super) fn job_view(job: &ShellJobRecord) -> ShellJobInfo {
         shell: job.shell.clone(),
         command_preview: job.command_preview.clone(),
         status: job.public_status().to_string(),
+        operation_phase: Some(
+            webcodex_core::operation_phase::OperationPhase::from_runner_job(
+                job.lifecycle,
+                job.recovery_active(),
+            ),
+        ),
         created_at: job.created_at,
         started_at: job.started_at,
         ended_at: job.ended_at,
@@ -554,6 +560,12 @@ pub(super) fn begin_job_recovery(job: &mut ShellJobRecord, now: i64, reason: Job
     job.recovery.reason = Some(reason);
     job.ended_at = None;
     job.activity = None;
+    webcodex_core::runtime_diagnostics::record(
+        webcodex_core::runtime_diagnostics::DiagnosticSeverity::Info,
+        "runner_job_recovery",
+        reason.as_wire(),
+        Some(&job.job_id),
+    );
     notify_job_update(job);
 }
 
@@ -585,6 +597,12 @@ pub(super) fn mark_job_lost(
         .then_some(JobRecoveryPhase::LostAfterReconcile);
     job.recovery.reason = Some(reason);
     job.recovery.recovering_since = None;
+    webcodex_core::runtime_diagnostics::record(
+        webcodex_core::runtime_diagnostics::DiagnosticSeverity::Warn,
+        "runner_job_recovery",
+        reason.as_wire(),
+        Some(&job.job_id),
+    );
     notify_job_update(job);
 }
 

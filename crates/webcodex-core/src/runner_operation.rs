@@ -515,7 +515,10 @@ impl RunnerComputerOperationKind {
     }
 
     pub fn is_large_image(self) -> bool {
-        matches!(self, Self::Snapshot | Self::SnapshotDisplay)
+        matches!(
+            self,
+            Self::Snapshot | Self::SnapshotRegion | Self::SnapshotDisplay
+        )
     }
 }
 
@@ -1963,6 +1966,32 @@ mod tests {
             client_id: "runner-1".to_string(),
             requested_by: "tester".to_string(),
             created_at: 123,
+        }
+    }
+
+    #[test]
+    fn computer_large_image_classification_covers_all_snapshot_variants_only() {
+        for kind in [
+            RunnerComputerOperationKind::Snapshot,
+            RunnerComputerOperationKind::SnapshotRegion,
+            RunnerComputerOperationKind::SnapshotDisplay,
+        ] {
+            assert!(
+                kind.is_large_image(),
+                "{kind:?} must use large image retention"
+            );
+        }
+        for kind in [
+            RunnerComputerOperationKind::ListWindows,
+            RunnerComputerOperationKind::ListDisplays,
+            RunnerComputerOperationKind::ReadClipboard,
+            RunnerComputerOperationKind::AccessibilityTree,
+            RunnerComputerOperationKind::PointerClick,
+        ] {
+            assert!(
+                !kind.is_large_image(),
+                "{kind:?} must keep ordinary retention"
+            );
         }
     }
 

@@ -5,10 +5,10 @@ set -euo pipefail
 # WebCodex — Runner/Server Restart & Reconnect Continuity E2E
 #
 # Real-process integration harness for Iteration 9 Phase 2:
-#   1. Boots a real `webcodex-server` and `webcodex-runner` (WebSocket).
+#   1. Boots a real `webpi-server` and `webpi-runner` (WebSocket).
 #   2. Verifies the layered connection observations (runner_process /
 #      server_transport / server_registration / project_registry /
-#      connector_endpoint / last_successful_tool_call) carry the full
+#      last_successful_tool_call) carry the full
 #      observation contract, plus version_compatibility and the runner-reported
 #      shell profile dialect.
 #   3. Creates a durable coding-task session.
@@ -162,13 +162,13 @@ if [ "${E2E_SKIP_RUN:-0}" = "1" ]; then
 fi
 
 # Build once so restarts are fast and both restarts run the same binaries.
-log "building webcodex + webcodex-runner (release of the current tree, debug profile)"
+log "building WebPi Server + Runner (current tree, debug profile)"
 "$CARGO_BIN" build --quiet -p webcodex -p webcodex-runner --bins
-SERVER_BIN="$PROJECT_DIR/target/debug/webcodex-server"
-RUNNER_BIN="$PROJECT_DIR/target/debug/webcodex-runner"
+SERVER_BIN="$PROJECT_DIR/target/debug/webpi-server"
+RUNNER_BIN="$PROJECT_DIR/target/debug/webpi-runner"
 
 PORT="${E2E_PORT:-$(find_free_port)}"
-TMP_ROOT="$(mktemp -d -t webcodex-reconnect-e2e-XXXXXX)"
+TMP_ROOT="$(mktemp -d -t webpi-reconnect-e2e-XXXXXX)"
 COOKIE_JAR="$TMP_ROOT/cookies.txt"
 : >"$COOKIE_JAR"
 DATA_DIR="$TMP_ROOT/data"
@@ -216,9 +216,9 @@ max_output_bytes = 262144
 EOF
 
 start_server() {
-    WEBCODEX_ADDR="127.0.0.1:${PORT}" \
-    WEBCODEX_DATA="$DATA_DIR" \
-    WEBCODEX_TOKEN="$TOKEN" \
+    WEBPI_ADDR="127.0.0.1:${PORT}" \
+    WEBPI_DATA="$DATA_DIR" \
+    WEBPI_TOKEN="$TOKEN" \
     RUST_LOG="info" \
     "$SERVER_BIN" >>"$SERVER_LOG" 2>&1 &
     SERVER_PID=$!
@@ -291,8 +291,6 @@ assert_eq "server_registration registered" \
     "$(json_get "$BODY" ${LAYERS_PREFIX}.server_registration.status)" "registered"
 assert_eq "project_registry registered" \
     "$(json_get "$BODY" ${LAYERS_PREFIX}.project_registry.status)" "registered"
-assert_eq "connector_endpoint honest not_configured" \
-    "$(json_get "$BODY" ${LAYERS_PREFIX}.connector_endpoint.status)" "not_configured"
 assert_eq "version_compatibility compatible" \
     "$(json_get "$BODY" output.version_compatibility.status)" "compatible"
 assert_nonempty "server build version reported" \
@@ -337,7 +335,7 @@ for layer_status in \
 done
 
 JOBS_BODY="$(observe_job "$JOB_ID")"
-JOB_STATE="$(json_get "$JOBS_BODY" output.items.0.output.status)"
+JOB_STATE="$(json_get "$JOBS_BODY" output.items.0.status)"
 assert_eq "in-flight reconciliation-capable job is recovering after crash" "$JOB_STATE" "recovering"
 
 # ----------------------------------------------------------------------------
@@ -357,10 +355,10 @@ assert_eq "project re-registered after runner restart" \
     "$(json_get "$BODY" ${LAYERS_PREFIX}.project_registry.status)" "registered"
 
 JOBS_BODY="$(observe_job "$JOB_ID")"
-JOB_STATE="$(json_get "$JOBS_BODY" output.items.0.output.status)"
+JOB_STATE="$(json_get "$JOBS_BODY" output.items.0.status)"
 assert_eq "replacement instance fences old recovering job to lost" "$JOB_STATE" "lost"
 assert_eq "replacement loss reason is runner_instance_replaced" \
-    "$(json_get "$JOBS_BODY" output.items.0.output.recovery_reason_code)" "runner_instance_replaced"
+    "$(json_get "$JOBS_BODY" output.items.0.recovery_reason_code)" "runner_instance_replaced"
 
 READ_BODY="$(api_post /api/tools/call "{\"tool\":\"read_files\",\"params\":{\"project\":\"${RUNTIME_PROJECT_ID}\",\"items\":[{\"path\":\"README.md\"}]}}")"
 assert_eq "calls recover after runner restart (no server restart)" \

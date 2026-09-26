@@ -42,6 +42,19 @@ impl ToolRuntime {
                 )
                 .await
             }
+            ToolCall::DeploymentPreflight {
+                client_id,
+                operation,
+            } => self.deployment_preflight(auth, client_id, operation).await,
+            ToolCall::RuntimeDiagnostics {
+                severity,
+                component,
+                correlation_id,
+                since,
+                until,
+                limit,
+            } => self.runtime_diagnostics(severity, component, correlation_id, since, until, limit),
+            ToolCall::PublicTunnelProbe { .. } => self.public_tunnel_probe().await,
             ToolCall::RuntimeStatus {
                 compact,
                 summary_only,

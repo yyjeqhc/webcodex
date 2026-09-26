@@ -2,11 +2,11 @@
 
 [English](CODING_WORKFLOW.md) | [简体中文](CODING_WORKFLOW.zh-CN.md)
 
-本文面向普通 WebCodex coding/review 工作，只说明模型真正需要遵循的流程，不展开内部 continuity、audit 或 transport 协议。
+本文面向普通 WebPi coding/review 工作，只说明模型真正需要遵循的流程，不展开内部 continuity、audit 或 transport 协议。
 
 ## 普通循环
 
-日常 WebCodex coding loop 应该保持很小：
+日常 WebPi coding loop 应该保持很小：
 
 ```text
 work_on_project
@@ -48,9 +48,9 @@ Code Mode。Nested canonical authority、effects、evidence 和 retry certainty 
 
 ## 开始或继续任务
 
-新任务和显式 continuation 都使用 `work_on_project`。WebCodex 会保留有界 Workflow Session evidence，让 validation、review 与 handoff 可以指向同一轮工作，但 Workflow Session 不是认证凭据，也不会扩大 project authority。
+新任务和显式 continuation 都使用 `work_on_project`。WebPi 会保留有界 Workflow Session evidence，让 validation、review 与 handoff 可以指向同一轮工作，但 Workflow Session 不是认证凭据，也不会扩大 project authority。
 
-普通使用不需要理解 WebCodex 内部的 continuity/audit field；这些属于 implementation/maintainer contract。
+普通使用不需要理解 WebPi 内部的 continuity/audit field；这些属于 implementation/maintainer contract。
 
 内置默认 guidance 本身就是普通 implementation workflow。正常的“implement/fix/refactor”任务不需要知道任何实现角色名：把已授权工作推进到具体、可评审的完成状态，端到端覆盖跨层改动，保持设计最小化，按范围验证，并如实报告证据。只使用当前暴露 schema 支持的工具与协议字段。
 
@@ -83,7 +83,7 @@ Guard failure 是 **zero-write conflict**，不是削弱 guard 的理由。重�
 
 对于确定性的 `context_mismatch`，同样消费有界 `read_files` recovery，并基于 current source 重新生成 patch；不要盲目重复相同 patch。若结果是 `outcome_unknown`，先检查 workspace，再决定是否允许任何写入重试。
 
-具体 matching metadata 与 transactional protocol 属于维护 WebCodex 本身时才需要的细节，应以 tool contract/tests 为准。
+具体 matching metadata 与 transactional protocol 属于维护 WebPi 本身时才需要的细节，应以 tool contract/tests 为准。
 
 ## Validation
 
@@ -107,7 +107,7 @@ Formatting 属于收尾，不是每次编辑后的 validation。普通循环是�
 
 ## 长时间运行的工作
 
-命令或 validation 超过同步等待窗口时，会作为同一条 WebCodex Job 继续执行。保留其精确 Job identity 与 parser-ready continuation；如果仍有有用的独立工作，就先继续这些工作，之后再 observe，不要为了“保持可见”反复轮询 running Job。只有下一步真正依赖 terminal result 时，才使用返回的 host-safe `wait_secs=55, wake_on=terminal` continuation。Runtime 仍接受最长 100 秒的显式 observation wait，但更长的 model-facing wait 可能超过外层 MCP Host deadline。单个 Job 或任一 terminal result 即可推进时使用 `terminal`；预先确定的一组 Job 必须全部结束才能推进时使用 `all_terminal`。Recovery/continuation hint 不会授权对不确定 effect 做 retry。
+命令或 validation 超过同步等待窗口时，会作为同一条 WebPi Job 继续执行。保留其精确 Job identity 与 parser-ready continuation；如果仍有有用的独立工作，就先继续这些工作，之后再 observe，不要为了“保持可见”反复轮询 running Job。只有下一步真正依赖 terminal result 时，才使用返回的 host-safe `wait_secs=20, wake_on=terminal` continuation。Runtime 仍接受最长 100 秒的显式 observation wait，但更长的 model-facing wait 可能超过外层 MCP Host deadline。单个 Job 或任一 terminal result 即可推进时使用 `terminal`；预先确定的一组 Job 必须全部结束才能推进时使用 `all_terminal`。Recovery/continuation hint 不会授权对不确定 effect 做 retry。
 
 ## 手动多窗口协作
 
@@ -123,7 +123,7 @@ Formatting 属于收尾，不是每次编辑后的 validation。普通循环是�
 
 ## 内部协议细节
 
-开发 WebCodex 本身时，直接阅读 maintainer contract，而不是继续扩充这份普通用户指南：
+开发 WebPi 本身时，直接阅读 maintainer contract，而不是继续扩充这份普通用户指南：
 
 - [Session model](agent/session-model.md) —— Workflow Session continuity、message 与 evidence 语义。
 - [Authority model](agent/permission-model.md) —— execution authority 与 hard-safety layering。

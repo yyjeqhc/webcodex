@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>WebCodex Agent Continuation</title>
+<title>WebPi Agent Continuation</title>
 <style>
 :root { color-scheme: light dark; font: 13px/1.45 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
 * { box-sizing: border-box; }
@@ -181,7 +181,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     if (!callResult || typeof callResult !== "object" || Array.isArray(callResult)) return null;
     // A direct bridge return has no CallToolResult carrier to prefer.
     if (canonicalStructuredEnvelope(callResult)) return callResult;
-    // WebCodex duplicates the exact Server envelope into standard text content for
+    // WebPi duplicates the exact Server envelope into standard text content for
     // these app-only tools. Production shows Hosts may independently project
     // structuredContent while preserving the outer success/output envelope, so a
     // complete CallToolResult prefers the canonical standard content copy first.
@@ -964,7 +964,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
 
   request("ui/initialize", {
     protocolVersion: APP_PROTOCOL,
-    appInfo: { name: "webcodex-agent-continuation-app", title: "WebCodex Agent Continuation", version: "17.0.0" },
+    appInfo: { name: "webpi-agent-continuation-app", title: "WebPi Agent Continuation", version: "17.0.0" },
     appCapabilities: {},
   }).then(() => {
     if (tornDown) return;

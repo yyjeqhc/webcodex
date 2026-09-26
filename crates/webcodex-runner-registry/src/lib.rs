@@ -7,6 +7,10 @@
 mod access;
 mod access_control;
 mod capabilities;
+pub use capabilities::{
+    capability_negotiation_summary, RunnerCapabilityNegotiationSummary,
+    RunnerCriticalCapabilityContracts,
+};
 mod job_status;
 mod job_updates;
 mod jobs;

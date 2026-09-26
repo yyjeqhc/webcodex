@@ -1878,7 +1878,7 @@ fn parse_service_kind(command: &str, args: &[String]) -> Result<ServiceActionKin
         if let Some(flag) = args.first() {
             if flag == "--root" || flag == "--state-dir" || flag == "--console-assets-dir" {
                 return Err(format!(
-                    "`webpi runner {command}` manages the installed service; use `webcodex run` for project runtime options"
+                    "`webpi runner {command}` manages the installed service; use `webpi run` for project runtime options"
                 ));
             }
             return Err(format!("unknown {command} option: {flag}"));

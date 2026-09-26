@@ -16,7 +16,10 @@ use std::time::Duration;
 
 pub(crate) const MCP_TOOL_NAME: &str = "mcp_tool";
 const MAX_SCHEMA_OBSERVATIONS: usize = 512;
-const GATEWAY_WAIT_TIMEOUT: Duration = Duration::from_secs(125);
+// Keep synchronous provider waits inside the model-facing Host budget so WebPi
+// can return an explicit dispatch-state error before the outer conversation UI times out.
+const GATEWAY_WAIT_TIMEOUT: Duration =
+    Duration::from_secs(webcodex_core::runtime_contract::MODEL_JOB_CONTINUATION_WAIT_SECS);
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 struct ObservationKey {
@@ -35,9 +38,16 @@ struct ObservationStore {
 #[derive(Default)]
 pub(crate) struct McpGatewayRuntime {
     observations: Mutex<ObservationStore>,
+    breaker: crate::gateway_circuit_breaker::GatewayCircuitBreaker,
 }
 
 impl McpGatewayRuntime {
+    pub(crate) fn breaker_stats(
+        &self,
+    ) -> crate::gateway_circuit_breaker::GatewayCircuitBreakerStats {
+        self.breaker.stats()
+    }
+
     fn remember(&self, key: ObservationKey, value: McpGatewaySchemaObservation) {
         let mut store = self
             .observations
@@ -132,7 +142,7 @@ pub(crate) fn authorized(auth: Option<&AuthContext>) -> bool {
 pub(crate) fn tool_spec() -> Value {
     json!({
         "name": MCP_TOOL_NAME,
-        "description": "Access explicitly authorized Runner-owned local MCP servers through WebCodex's built-in gateway. No-argument action=list reports registration routing resolvability. action=status with server passively reports bounded provider lifecycle state without starting, initializing, or pinging the provider; healthy means the retained connection's child is still running, not an end-to-end protocol probe. action=list with server and action=describe interact with the provider. Use action=describe before action=call, and re-describe when WebCodex reports a schema change. Provider process identities, paths, stderr, environment, and schema revision tokens are intentionally hidden.",
+        "description": "Access explicitly authorized Runner-owned local MCP servers through WebPi's built-in gateway. No-argument action=list reports registration routing resolvability. action=status with server passively reports bounded provider lifecycle state without starting, initializing, or pinging the provider; healthy means the retained connection's child is still running, not an end-to-end protocol probe. action=list with server and action=describe interact with the provider. Use action=describe before action=call, and re-describe when WebPi reports a schema change. Provider process identities, paths, stderr, environment, and schema revision tokens are intentionally hidden.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -385,7 +395,7 @@ async fn call_upstream(
         .ok_or_else(|| {
             GatewayError::local(
                 "describe_required",
-                "describe this tool before calling it so WebCodex can bind the current schema",
+                "describe this tool before calling it so WebPi can bind the current schema",
             )
             .recovery("Call mcp_tool with action=describe for this server and tool, then retry with the described schema.")
         })?;
@@ -438,7 +448,7 @@ async fn call_upstream(
         if error.code == "stale_provider" {
             gateway_error.code = "provider_replaced".to_string();
             gateway_error.recovery = Some(
-                "The exact provider instance changed. Re-list or re-describe; WebCodex did not retarget or replay the call.",
+                "The exact provider instance changed. Re-list or re-describe; WebPi did not retarget or replay the call.",
             );
         }
         return Err(gateway_error);
@@ -517,12 +527,45 @@ fn resolve_provider(
     Ok(matches[0].clone())
 }
 
+fn gateway_breaker_key(provider: &ResolvedProvider) -> String {
+    format!(
+        "{}|{}|{}",
+        provider.client_id, provider.runner_instance_id, provider.provider_instance_id
+    )
+}
+
+fn breaker_rejection_error(
+    rejection: crate::gateway_circuit_breaker::GatewayAdmissionRejection,
+) -> GatewayError {
+    use crate::gateway_circuit_breaker::GatewayAdmissionRejection;
+    match rejection {
+        GatewayAdmissionRejection::CircuitOpen { retry_after_secs } => GatewayError::local(
+            "gateway_circuit_open",
+            format!(
+                "the exact MCP provider circuit is temporarily open; retry after about {retry_after_secs}s"
+            ),
+        ),
+        GatewayAdmissionRejection::Saturated { in_flight, limit } => GatewayError::local(
+            "gateway_saturated",
+            format!(
+                "the exact MCP provider has {in_flight} synchronous gateway calls in flight (limit {limit}); retry later"
+            ),
+        ),
+    }
+}
+
 async fn execute_exact(
     runtime: &ToolRuntime,
     provider: &ResolvedProvider,
     request: McpGatewayRequest,
     auth: Option<&AuthContext>,
 ) -> Result<McpGatewayResponse, GatewayError> {
+    let breaker_key = gateway_breaker_key(provider);
+    runtime
+        .mcp_gateway
+        .breaker
+        .admit(&breaker_key)
+        .map_err(breaker_rejection_error)?;
     let access = crate::runner_http::runner_access_from_auth(auth);
     let (request_id, receiver) = runtime
         .runner_registry
@@ -535,6 +578,7 @@ async fn execute_exact(
         )
         .await
         .map_err(|message| {
+            runtime.mcp_gateway.breaker.record_responsive(&breaker_key);
             let (code, public_message) = if message.contains("stale")
                 || message.contains("exact Runner")
             {
@@ -549,13 +593,38 @@ async fn execute_exact(
                 )
             };
             GatewayError::local(code, public_message).recovery(
-                "Re-list or re-describe the MCP server. WebCodex did not retarget or replay this operation.",
+                "Re-list or re-describe the MCP server. WebPi did not retarget or replay this operation.",
             )
         })?;
 
     match tokio::time::timeout(GATEWAY_WAIT_TIMEOUT, receiver).await {
-        Ok(Ok(response)) => Ok(response),
+        Ok(Ok(response)) => {
+            if runtime.mcp_gateway.breaker.record_responsive(&breaker_key) {
+                webcodex_core::runtime_diagnostics::record(
+                    webcodex_core::runtime_diagnostics::DiagnosticSeverity::Info,
+                    "mcp_gateway",
+                    "circuit_closed",
+                    Some(&provider.provider_instance_id),
+                );
+            }
+            Ok(response)
+        }
         Ok(Err(_)) | Err(_) => {
+            let breaker = runtime.mcp_gateway.breaker.record_timeout(&breaker_key);
+            if breaker.circuit_opened {
+                webcodex_core::runtime_diagnostics::record(
+                    webcodex_core::runtime_diagnostics::DiagnosticSeverity::Warn,
+                    "mcp_gateway",
+                    "circuit_opened",
+                    Some(&provider.provider_instance_id),
+                );
+            }
+            webcodex_core::runtime_diagnostics::record(
+                webcodex_core::runtime_diagnostics::DiagnosticSeverity::Warn,
+                "mcp_gateway",
+                "gateway_timeout",
+                Some(&request_id),
+            );
             let dispatched = runtime
                 .runner_registry
                 .cancel_request_dispatch_state(&request_id)
@@ -618,11 +687,11 @@ fn response_tools(response: McpGatewayResponse) -> Result<Vec<McpGatewayTool>, G
         };
         let recovery = if stale_provider {
             Some(
-                "The exact provider instance changed. Re-list or re-describe; WebCodex did not retarget or replay the operation.",
+                "The exact provider instance changed. Re-list or re-describe; WebPi did not retarget or replay the operation.",
             )
         } else if response.dispatch_state == McpGatewayDispatchState::OutcomeUnknown {
             Some(
-                "The failed provider connection was retired. A later explicit list or describe request may establish a fresh connection under the same provider identity; WebCodex did not replay the failed request.",
+                "The failed provider connection was retired. A later explicit list or describe request may establish a fresh connection under the same provider identity; WebPi did not replay the failed request.",
             )
         } else {
             None
@@ -732,6 +801,30 @@ fn dispatch_state_name(state: McpGatewayDispatchState) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn circuit_breaker_rejections_are_definitively_not_started() {
+        use crate::gateway_circuit_breaker::GatewayAdmissionRejection;
+        for rejection in [
+            GatewayAdmissionRejection::CircuitOpen {
+                retry_after_secs: 10,
+            },
+            GatewayAdmissionRejection::Saturated {
+                in_flight: 8,
+                limit: 8,
+            },
+        ] {
+            let error = breaker_rejection_error(rejection);
+            assert_eq!(
+                error.dispatch_state,
+                Some(McpGatewayDispatchState::NotStarted)
+            );
+            assert!(matches!(
+                error.code.as_str(),
+                "gateway_circuit_open" | "gateway_saturated"
+            ));
+        }
+    }
 
     #[test]
     fn webcodex_generated_gateway_results_keep_canonical_data_only_in_structured_content() {

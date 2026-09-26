@@ -22,10 +22,12 @@ pub use webcodex_core::authority::{
     SCOPE_BROWSER_CONTROL, SCOPE_BROWSER_LAUNCH, SCOPE_BROWSER_READ, SCOPE_CODING_AGENT_RUN,
     SCOPE_COMMUNICATION_MANAGE, SCOPE_COMMUNICATION_READ, SCOPE_COMPUTER_CLIPBOARD_READ,
     SCOPE_COMPUTER_CLIPBOARD_WRITE, SCOPE_COMPUTER_CONTROL, SCOPE_COMPUTER_DISPLAY_READ,
-    SCOPE_COMPUTER_LAUNCH, SCOPE_COMPUTER_POINTER_CONTROL, SCOPE_COMPUTER_READ, SCOPE_JOB_DETACH,
-    SCOPE_JOB_RUN, SCOPE_MCP_LOCAL, SCOPE_MEMORY_MANAGE, SCOPE_MEMORY_READ, SCOPE_PLUGIN_INSPECT,
-    SCOPE_PLUGIN_INVOKE, SCOPE_PLUGIN_MANAGE, SCOPE_PROJECT_READ, SCOPE_PROJECT_WRITE,
-    SCOPE_RUNNER_MANAGE, SCOPE_RUNTIME_READ, SCOPE_SESSION_COLLABORATE, SCOPE_SSH_LOCAL,
+    SCOPE_COMPUTER_LAUNCH, SCOPE_COMPUTER_POINTER_CONTROL, SCOPE_COMPUTER_READ,
+    SCOPE_DIAGNOSTICS_READ, SCOPE_JOB_DETACH, SCOPE_JOB_RUN, SCOPE_MCP_LOCAL, SCOPE_MEMORY_MANAGE,
+    SCOPE_MEMORY_READ, SCOPE_PLUGIN_INSPECT, SCOPE_PLUGIN_INVOKE, SCOPE_PLUGIN_MANAGE,
+    SCOPE_PLUGIN_MUTATE, SCOPE_PROJECT_READ, SCOPE_PROJECT_WRITE, SCOPE_RUNNER_MANAGE,
+    SCOPE_RUNTIME_READ, SCOPE_SERVICE_DEPLOY, SCOPE_SERVICE_RESTART, SCOPE_SESSION_COLLABORATE,
+    SCOPE_SSH_LOCAL,
 };
 
 /// True when `scope` is one of the Runner transport scopes.
@@ -42,11 +44,15 @@ pub(crate) fn scope_requires_explicit_unauthenticated_authority(scope: &str) -> 
             | SCOPE_BROWSER_READ
             | SCOPE_BROWSER_CONTROL
             | SCOPE_BROWSER_LAUNCH
+            | SCOPE_DIAGNOSTICS_READ
             | SCOPE_MEMORY_READ
             | SCOPE_MEMORY_MANAGE
             | SCOPE_PLUGIN_INSPECT
             | SCOPE_PLUGIN_INVOKE
+            | SCOPE_PLUGIN_MUTATE
             | SCOPE_PLUGIN_MANAGE
+            | SCOPE_SERVICE_RESTART
+            | SCOPE_SERVICE_DEPLOY
             | SCOPE_SSH_LOCAL
     )
 }
@@ -224,6 +230,29 @@ mod tests {
         )
         .is_err());
         assert!(validate_agent_scopes(&["admin".to_string()]).is_err());
+        assert!(validate_agent_scopes(&[SCOPE_SERVICE_RESTART.to_string()]).is_err());
+        assert!(validate_agent_scopes(&[SCOPE_SERVICE_DEPLOY.to_string()]).is_err());
+    }
+
+    #[test]
+    fn service_scopes_are_known_but_require_explicit_non_agent_authority() {
+        assert!(validate_scopes(&[
+            SCOPE_SERVICE_RESTART.to_string(),
+            SCOPE_SERVICE_DEPLOY.to_string(),
+        ])
+        .is_ok());
+        assert!(scope_requires_explicit_unauthenticated_authority(
+            SCOPE_SERVICE_RESTART
+        ));
+        assert!(scope_requires_explicit_unauthenticated_authority(
+            SCOPE_SERVICE_DEPLOY
+        ));
+        assert!(!AGENT_SCOPES.contains(&SCOPE_SERVICE_RESTART));
+        assert!(!AGENT_SCOPES.contains(&SCOPE_SERVICE_DEPLOY));
+        assert!(!crate::auth::shared_key::DIRECT_SHARED_KEY_MODEL_SCOPES
+            .contains(&SCOPE_SERVICE_RESTART));
+        assert!(!crate::auth::shared_key::DIRECT_SHARED_KEY_MODEL_SCOPES
+            .contains(&SCOPE_SERVICE_DEPLOY));
     }
 
     #[test]

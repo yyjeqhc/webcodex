@@ -1,6 +1,6 @@
 # MCP conformance baseline
 
-WebCodex tracks MCP wire compatibility with the upstream
+WebPi tracks MCP wire compatibility with the upstream
 [`modelcontextprotocol/conformance`](https://github.com/modelcontextprotocol/conformance)
 referee in addition to its focused Rust tests. The baseline is evidence about the
 checks that actually ran; it is not a blanket "MCP compliant" badge.
@@ -34,16 +34,16 @@ bash scripts/mcp_conformance.sh
 To reuse an already checked-out referee without changing the pin:
 
 ```bash
-WEBCODEX_MCP_CONFORMANCE_HARNESS_DIR=/path/to/conformance \
+WEBPI_MCP_CONFORMANCE_HARNESS_DIR=/path/to/conformance \
   bash scripts/mcp_conformance.sh 2026-07-28
 ```
 
 The supplied checkout must resolve to the exact pinned commit. A checkout supplied
-through `WEBCODEX_MCP_CONFORMANCE_HARNESS_DIR` is read-only from this script's
+through `WEBPI_MCP_CONFORMANCE_HARNESS_DIR` is read-only from this script's
 perspective: invalid or mismatched checkouts are rejected rather than deleted or
 rewritten, and local working-tree changes are ignored by the pinned `git archive`.
 Reports are written to `target/mcp-conformance/reports` by default. An explicitly
-supplied report directory must be empty or carry the WebCodex ownership marker
+supplied report directory must be empty or carry the WebPi ownership marker
 before old profile output is removed. CI uploads the report directory even when
 the gate fails so the raw evidence remains inspectable.
 
@@ -52,17 +52,17 @@ the gate fails so the raw evidence remains inspectable.
 The script starts one ignored, test-only Rust fixture on `127.0.0.1:0`. The
 fixture composes the same Salvo `AuthMiddleware` and `/mcp` handlers used by the
 production HTTP surface, with temporary database/runtime state and authentication
-disabled in the isolated test config. The referee therefore reaches real WebCodex parsing, dispatch and
+disabled in the isolated test config. The referee therefore reaches real WebPi parsing, dispatch and
 rendering without production credentials or an external deployment.
 
 No conformance-only tool is added to the production registry. Some upstream
-scenarios intentionally expect named reference-fixture tools. When WebCodex does
+scenarios intentionally expect named reference-fixture tools. When WebPi does
 not expose such a tool, that result is a coverage gap until a test-only adapter is
 provided; it must not be relabeled as a product protocol failure merely to make a
 summary green.
 
 Authenticated runtime behavior, including project-scoped ProjectGrant access, remains covered by focused synthetic-credential integration tests. The upstream server CLI does not provide a generic
-way to inject WebCodex authorization headers, so an authentication-blocked
+way to inject WebPi authorization headers, so an authentication-blocked
 scenario is inconclusive rather than a pass.
 
 ## Coverage-aware report gate
@@ -96,7 +96,7 @@ classifications are:
 
 | Classification | Meaning |
 |---|---|
-| `genuine_protocol_failure` | The intended WebCodex behavior was reached and a protocol requirement is known to be violated. |
+| `genuine_protocol_failure` | The intended WebPi behavior was reached and a protocol requirement is known to be violated. |
 | `missing_harness_fixture` | The upstream scenario depends on reference-fixture behavior that the product endpoint does not expose. The product behavior remains untested by that check. |
 | `optional_capability_not_implemented` | A capability is genuinely optional and is not advertised/implemented. The entry must cite capability/spec evidence. |
 | `harness_limitation_pending` | The pinned referee itself marks or demonstrates a limitation/pending check. |
@@ -146,10 +146,10 @@ Each profile retains:
 
 - the referee's raw per-scenario `checks.json` files;
 - the referee stdout/stderr log;
-- metadata containing the WebCodex source SHA, referee SHA, profile, upstream
+- metadata containing the WebPi source SHA, referee SHA, profile, upstream
   referee exit code, observed server capability projection, exact scored scenario
   list, and frozen `not_scored` server scenarios with their upstream reasons;
-- the coverage-aware WebCodex summary.
+- the coverage-aware WebPi summary.
 
 Baseline updates should be narrow. Add a classification only after reproducing
 and understanding the exact check, then record its observed status and evidence

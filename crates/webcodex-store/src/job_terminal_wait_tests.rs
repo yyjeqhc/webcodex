@@ -79,6 +79,50 @@ fn terminal_fact_fast_path_still_prunes_expired_waits() {
 }
 
 #[test]
+fn terminal_fact_accepts_legacy_timeout_status() {
+    let temp = tempdir().unwrap();
+    let db = Database::open(&temp.path().join("job-terminal-timeout.db")).unwrap();
+    let owner = principal('a');
+    db.create_job_terminal_wait(
+        &owner,
+        waiting("timeout-job", "timeout-key", T0 + 8_100),
+        T0,
+    )
+    .unwrap();
+    let mut terminal = fact("timeout-job", T0 + 20);
+    terminal.status = "timeout".to_string();
+    terminal.outcome = "timed_out".to_string();
+
+    let matched = db.match_job_terminal_fact(&terminal, T0 + 20).unwrap();
+    assert_eq!(matched.matched_count, 1);
+    let wait = db
+        .read_job_terminal_wait(&owner, &matched.delivery_candidates[0].1, T0 + 21)
+        .unwrap();
+    assert_eq!(wait.terminal_status.as_deref(), Some("timeout"));
+    assert_eq!(wait.terminal_outcome.as_deref(), Some("timed_out"));
+}
+
+#[test]
+fn lost_terminal_fact_roundtrips_outcome_unknown() {
+    let temp = tempdir().unwrap();
+    let db = Database::open(&temp.path().join("job-terminal-lost.db")).unwrap();
+    let owner = principal('c');
+    db.create_job_terminal_wait(&owner, waiting("lost-job", "lost-key", T0 + 8_100), T0)
+        .unwrap();
+    let mut terminal = fact("lost-job", T0 + 20);
+    terminal.status = "lost".to_string();
+    terminal.outcome = "outcome_unknown".to_string();
+
+    let matched = db.match_job_terminal_fact(&terminal, T0 + 20).unwrap();
+    assert_eq!(matched.matched_count, 1);
+    let wait = db
+        .read_job_terminal_wait(&owner, &matched.delivery_candidates[0].1, T0 + 21)
+        .unwrap();
+    assert_eq!(wait.terminal_status.as_deref(), Some("lost"));
+    assert_eq!(wait.terminal_outcome.as_deref(), Some("outcome_unknown"));
+}
+
+#[test]
 fn keyed_registration_matching_and_owner_partition_are_one_shot() {
     let temp = tempdir().unwrap();
     let db = Database::open(&temp.path().join("job-terminal-wait.db")).unwrap();

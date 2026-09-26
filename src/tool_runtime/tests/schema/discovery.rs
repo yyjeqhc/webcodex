@@ -2203,7 +2203,7 @@ async fn tool_manifest_exact_persistent_shell_tool_surfaces_its_reuse_flow() {
     let purpose = flow["purpose"].as_str().expect("persistent_shell purpose");
     assert!(purpose.contains("Runner-local named SSH resource"));
     assert!(purpose.contains("not an arbitrary host"));
-    assert!(purpose.contains("does not run WebCodex Runner"));
+    assert!(purpose.contains("does not run WebPi Runner"));
     for tool in [
         "update_session_context",
         "open_session_shell",

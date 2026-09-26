@@ -10,9 +10,13 @@ fn observe_runtime_metric_fail_open(observe: impl FnOnce()) {
     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(observe));
 }
 
+// Per-envelope transport metrics are intentionally DEBUG-level. Emitting one
+// INFO record for every request/result/job_update/ping can dominate operational
+// logs and add avoidable I/O under busy Job streams; lifecycle and degradation
+// events remain INFO/WARN at their dedicated call sites.
 macro_rules! runtime_metric_info {
     ($($fields:tt)*) => {
-        observe_runtime_metric_fail_open(|| tracing::info!($($fields)*))
+        observe_runtime_metric_fail_open(|| tracing::debug!($($fields)*))
     };
 }
 

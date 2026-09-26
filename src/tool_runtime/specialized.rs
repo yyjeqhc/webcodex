@@ -312,6 +312,22 @@ impl SpecializedOperationPolicy {
         }
     }
 
+    pub(crate) fn local_execution_all(
+        source: SpecializedSource,
+        operation: &'static str,
+        required_scopes: &'static [&'static str],
+    ) -> Self {
+        Self {
+            source,
+            operation,
+            authority: SpecializedAuthorityRequirement::All(required_scopes),
+            effect: SpecializedEffect::LocalExecution,
+            risk: "specialized_local_execution",
+            write_like: false,
+            shell_like: true,
+        }
+    }
+
     pub(crate) fn management(
         source: SpecializedSource,
         operation: &'static str,

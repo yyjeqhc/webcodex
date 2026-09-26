@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ShutdownReason {
     Sigint,
+    #[cfg(any(unix, test))]
     Sigterm,
     ParentEof,
 }
@@ -18,6 +19,7 @@ impl ShutdownReason {
     fn as_str(self) -> &'static str {
         match self {
             Self::Sigint => "SIGINT",
+            #[cfg(any(unix, test))]
             Self::Sigterm => "SIGTERM",
             Self::ParentEof => "parent_stdin_eof",
         }

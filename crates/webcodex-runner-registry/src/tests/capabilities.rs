@@ -329,6 +329,46 @@ async fn current_protocol_generation_never_infers_registration_required_host_fea
         .unwrap());
 }
 
+#[test]
+fn negotiation_summary_reports_only_explicit_registration_required_features() {
+    let mut capabilities = v2_baseline_capabilities();
+    capabilities.job_state_reconciliation = true;
+    capabilities.native_tool_plugins = true;
+    capabilities.detached_process_jobs = false;
+    capabilities.runner_config_control = true;
+    let summary = capability_negotiation_summary(&capabilities);
+
+    assert_eq!(summary.mode, "explicit_additive_capabilities");
+    assert_eq!(summary.generation_baseline_feature_count, 22);
+    assert!(summary.supported_feature_count >= summary.generation_baseline_feature_count);
+    assert!(summary
+        .registration_required_supported
+        .contains(&RunnerFeature::JobStateReconciliation.as_wire_name()));
+    assert!(summary
+        .registration_required_supported
+        .contains(&RunnerFeature::NativeToolPlugins.as_wire_name()));
+    assert!(summary
+        .registration_required_supported
+        .contains(&RunnerFeature::RunnerConfigControl.as_wire_name()));
+    assert!(!summary
+        .registration_required_supported
+        .contains(&RunnerFeature::DetachedProcessJobs.as_wire_name()));
+    assert!(summary.critical_contracts.job_state_reconciliation);
+    assert!(summary.critical_contracts.native_tool_plugins);
+    assert!(!summary.critical_contracts.detached_process_jobs);
+    assert!(summary.critical_contracts.runner_config_control);
+}
+
+#[test]
+fn negotiation_summary_never_promotes_generation_baseline_into_explicit_registration_list() {
+    let summary = capability_negotiation_summary(&v2_baseline_capabilities());
+    assert!(summary.registration_required_supported.is_empty());
+    assert_eq!(
+        summary.supported_feature_count,
+        summary.generation_baseline_feature_count
+    );
+}
+
 #[tokio::test]
 async fn shell_client_view_preserves_capability_wire_projection() {
     let registry = RunnerRegistry::default();

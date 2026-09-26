@@ -4,17 +4,16 @@
 
 按你现在想完成的事情选择文档即可。
 
-## 我想正常使用 WebCodex
+## 我想正常使用 WebPi
 
-- [README](../README.zh-CN.md) —— WebCodex 能做什么，以及完整使用和临时试用的区别
-- [Desktop 安装与连接](desktop-install.zh-CN.md) —— **Windows / macOS 推荐入口**：Desktop + 官方 OpenAI Secure Tunnel
+- [README](../README.zh-CN.md) —— WebPi 能做什么，以及完整使用和临时试用的区别
 - [完整使用指南](PERSONAL_SETUP.zh-CN.md) —— CLI、已有 Server、Linux 与高级普通 Server + Runner 配置
 - [AI 辅助接入](AI_ONBOARDING.zh-CN.md) —— 让 AI 帮你按普通用户语言完成配置
 - [MCP](MCP.zh-CN.md) —— ChatGPT、Claude 与其他 MCP 客户端
 
 ## 我只想先试几分钟
 
-- [快速试用](QUICK_START.zh-CN.md) —— 一条 `webcodex share` 临时体验一个仓库
+- [快速试用](QUICK_START.zh-CN.md) —— 一条 `webpi share` 临时体验一个仓库
 
 ## 我需要生产部署或深入排障
 
@@ -35,7 +34,7 @@
 - [故障排查](TROUBLESHOOTING.zh-CN.md) —— 安装、连接、运行和 Runner 问题
 - [安全说明](../SECURITY.md) —— 安全模型和使用建议
 
-## 我想理解或扩展 WebCodex
+## 我想理解或扩展 WebPi
 
 - [架构](ARCHITECTURE.md) —— 主要组件如何协同
 - [Coding 工作流](CODING_WORKFLOW.zh-CN.md) —— 任务启动、指导、验证和收尾
@@ -45,7 +44,7 @@
 ## 我想参与开发或发布
 
 下面 `docs/agent/` 中的页面属于 maintainer/internal contract。它们会有意保留
-protocol field、兼容名称和实现 invariant；普通用户不需要为了使用 WebCodex 而学习
+protocol field、兼容名称和实现 invariant；普通用户不需要为了使用 WebPi 而学习
 这些内容。
 
 - [AGENTS.md](../AGENTS.md) —— 面向 coding/AI agent 的仓库开发指引

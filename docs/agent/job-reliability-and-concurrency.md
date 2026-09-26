@@ -373,7 +373,7 @@ item errors, or one shared absolute deadline expires. It never returns an
 `updated` wake reason: at the deadline `wait.outcome=timeout` can coexist with
 `changed=true`. Item errors take precedence over terminal, then timeout.
 
-Canonical execution handoffs expose the host-safe `wait_secs=55,
+Canonical execution handoffs expose the host-safe `wait_secs=20,
 wake_on=terminal` parser-ready observation continuation. When blocked on terminal,
 prefer `wait_for_job_terminal` with a real Host carrier; the bounded observation
 wait remains the details/recovery fallback, not a polling subscription. When

@@ -569,7 +569,7 @@ fn app_error(code: &'static str, message: &str) -> JobTerminalWaitStoreError {
 
 fn automatic_message(envelope: &JobTerminalDeliveryEnvelope) -> String {
     format!(
-        "WebCodex Job {} reached terminal status {} with outcome {}. Reconcile this completion with the current conversation before continuing: if newer user instructions superseded the waiting task, do not resume the old work. If it is still relevant, continue without rerunning this Job. Call observe_jobs once only if detailed logs or validation evidence are needed.",
+        "WebPi Job {} reached terminal status {} with outcome {}. Reconcile this completion with the current conversation before continuing: if newer user instructions superseded the waiting task, do not resume the old work. If it is still relevant, continue without rerunning this Job. Call observe_jobs once only if detailed logs or validation evidence are needed.",
         envelope.job_id, envelope.status, envelope.outcome
     )
 }

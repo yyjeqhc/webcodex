@@ -726,6 +726,11 @@ impl RunnerProjectCache {
         self.get_with_shutdown(cfg, None)
     }
 
+    #[cfg(test)]
+    pub(crate) fn mark_fresh_for_test(&mut self) {
+        self.refreshed_at = Some(Instant::now());
+    }
+
     pub(crate) fn get_with_shutdown(
         &mut self,
         cfg: &RunnerConfig,

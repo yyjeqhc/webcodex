@@ -10,6 +10,25 @@ use super::shared_key_bridge::{
     is_shared_key_bridge_query, render_bridge_authorize_form, validate_bridge_authorize_request,
 };
 
+fn record_oauth_authorize_diagnostic(code: &'static str) {
+    webcodex_core::runtime_diagnostics::record(
+        webcodex_core::runtime_diagnostics::DiagnosticSeverity::Warn,
+        "oauth_authorize",
+        code,
+        None,
+    );
+}
+
+fn safe_authorize_header(value: &str, diagnostic_code: &'static str) -> Option<HeaderValue> {
+    match HeaderValue::from_str(value) {
+        Ok(value) => Some(value),
+        Err(_) => {
+            record_oauth_authorize_diagnostic(diagnostic_code);
+            None
+        }
+    }
+}
+
 pub(super) fn oauth_authorize_direct_error(
     res: &mut Response,
     status: StatusCode,
@@ -390,7 +409,10 @@ impl AuthorizeSessionStore {
         };
         let id = generate_authorize_session_id();
         let hash = hash_token(&id);
-        let mut guard = self.inner.lock().unwrap();
+        let mut guard = self
+            .inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         // Opportunistic cleanup of expired sessions to bound growth.
         guard.retain(|_, s| s.expires_at > now);
         guard.insert(hash, session);
@@ -405,7 +427,10 @@ impl AuthorizeSessionStore {
         }
         let hash = hash_token(id);
         let now = chrono::Utc::now().timestamp();
-        let mut guard = self.inner.lock().unwrap();
+        let mut guard = self
+            .inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let session = guard.get(&hash).cloned();
         match session {
             Some(s) if s.expires_at > now => Some(s),
@@ -483,6 +508,11 @@ fn is_secure_authorize(config: &crate::Config) -> bool {
 /// starts with a single `/`, is not `//...` or `/\...`, and must point at the
 /// authorize endpoint.
 fn validate_authorize_return_to(return_to: &str) -> Result<(), ()> {
+    if return_to.bytes().any(|byte| byte < 0x20 || byte == 0x7f)
+        || HeaderValue::from_str(return_to).is_err()
+    {
+        return Err(());
+    }
     if !return_to.starts_with('/') {
         return Err(());
     }
@@ -577,7 +607,7 @@ pub(crate) async fn oauth_authorize_login(
             res.status_code(StatusCode::UNAUTHORIZED);
             res.render(Text::Html(authorize_login_html(
                 &return_to_owned,
-                Some("a WebCodex token is required"),
+                Some("a WebPi token is required"),
             )));
             return;
         }
@@ -627,15 +657,31 @@ pub(crate) async fn oauth_authorize_login(
 
     let session_id = session_store.create_session(user_id);
     let secure = is_secure_authorize(&config);
-    res.headers_mut().append(
-        salvo::http::header::SET_COOKIE,
-        HeaderValue::from_str(&authorize_session_cookie_header(&session_id, secure)).unwrap(),
-    );
+    let cookie_header = authorize_session_cookie_header(&session_id, secure);
+    let Some(cookie_header) =
+        safe_authorize_header(&cookie_header, "authorize_session_cookie_header_invalid")
+    else {
+        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+        res.render(Json(
+            serde_json::json!({"error": "authorization session unavailable"}),
+        ));
+        return;
+    };
+    let Some(location) =
+        safe_authorize_header(&return_to_owned, "authorize_return_location_header_invalid")
+    else {
+        res.status_code(StatusCode::BAD_REQUEST);
+        res.render(Text::Html(authorize_login_html(
+            "/oauth/authorize",
+            Some("invalid return destination"),
+        )));
+        return;
+    };
+    res.headers_mut()
+        .append(salvo::http::header::SET_COOKIE, cookie_header);
     res.status_code(StatusCode::FOUND);
-    res.headers_mut().insert(
-        salvo::http::header::LOCATION,
-        HeaderValue::from_str(&return_to_owned).unwrap(),
-    );
+    res.headers_mut()
+        .insert(salvo::http::header::LOCATION, location);
 }
 
 #[handler]
@@ -683,10 +729,13 @@ pub(crate) async fn oauth_authorize_consent(
         res.status_code(StatusCode::UNAUTHORIZED);
         // Clear the stale cookie.
         let secure = is_secure_authorize(&config);
-        res.headers_mut().append(
-            salvo::http::header::SET_COOKIE,
-            HeaderValue::from_str(&authorize_session_clear_cookie_header(secure)).unwrap(),
-        );
+        let clear_cookie = authorize_session_clear_cookie_header(secure);
+        if let Some(clear_cookie) =
+            safe_authorize_header(&clear_cookie, "authorize_clear_cookie_header_invalid")
+        {
+            res.headers_mut()
+                .append(salvo::http::header::SET_COOKIE, clear_cookie);
+        }
         res.render(Text::Html(authorize_login_html(
             "/oauth/authorize",
             Some("session expired; please sign in again"),
@@ -977,8 +1026,16 @@ pub(crate) async fn oauth_authorize(req: &mut Request, depot: &mut Depot, res: &
     // rejected because it has no user_id to bind the authorization code to.
     if let Some(token) = crate::auth::bearer_token(req) {
         match crate::auth::authenticate(&config, Some(&db), &token).await {
-            Ok(Some(ctx)) if is_authorize_identity_allowed(&ctx) && ctx.user_id.is_some() => {
-                let user_id = ctx.user_id.clone().unwrap();
+            Ok(Some(ctx)) if is_authorize_identity_allowed(&ctx) => {
+                let Some(user_id) = ctx.user_id.clone() else {
+                    oauth_authorize_direct_error(
+                        res,
+                        StatusCode::FORBIDDEN,
+                        "invalid_request",
+                        "authorization endpoint requires first-party user authentication",
+                    );
+                    return;
+                };
                 authorize_issue_with_context(res, &config, &db, &user_id, &query).await;
                 return;
             }

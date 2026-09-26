@@ -5410,6 +5410,36 @@ fn show_changes_complete_model_projection_removes_only_derived_review_metadata()
 }
 
 #[test]
+fn show_changes_large_truncated_projection_stays_under_ordinary_model_transport_budget() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+
+    let baseline = (0..100)
+        .map(|line| format!("baseline-{line:03}\n"))
+        .collect::<String>();
+    for index in 0..80 {
+        let name = format!("review-{index:03}-{}.txt", "x".repeat(96));
+        commit_file(tmp.path(), &name, &baseline, "add review fixture");
+        let changed = (0..100)
+            .map(|line| format!("changed-{index:03}-{line:03}-{}\n", "y".repeat(40)))
+            .collect::<String>();
+        std::fs::write(tmp.path().join(name), changed).unwrap();
+    }
+
+    let canonical = bounded_show_changes_output(tmp.path(), true, 100, 240);
+    assert_eq!(canonical["transport_safe"], true);
+    assert_eq!(canonical["output_truncated"], true);
+    let mut projected = ToolResult::ok(canonical);
+    sparsify_complete_git_review_success("show_changes", &mut projected);
+    let serialized = serde_json::to_vec(&projected).unwrap();
+    assert!(
+        serialized.len() <= ORDINARY_RUNNER_RESULT_RETENTION_COMPAT_BYTES,
+        "model-facing show_changes projection is {} bytes, above the ordinary 256 KiB transport-safe budget",
+        serialized.len()
+    );
+}
+
+#[test]
 fn show_changes_diff_respects_max_hunks() {
     let tmp = tempfile::tempdir().unwrap();
     init_git_repo(tmp.path());
@@ -6399,6 +6429,45 @@ fn git_read_commands_are_non_mutating_and_log_is_bounded() {
             "git_log command must not contain {forbidden:?}: {log}"
         );
     }
+}
+
+#[tokio::test]
+async fn git_log_uses_internal_posix_runtime() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    commit_file(tmp.path(), "README.md", "tracked\n", "initial");
+
+    let runtime = test_runtime();
+    let project =
+        register_structured_git_agent_at_path(&runtime, "git-log-posix", "repo", tmp.path()).await;
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        async move { runtime.git_log(project, None, Some(5), Some(0), None).await }
+    });
+
+    let request = wait_for_patch_agent_request(&runtime, "git-log-posix").await;
+    assert_eq!(request.kind, "run_internal_posix_script");
+    assert!(request.command.is_empty());
+    let script = request
+        .script
+        .as_ref()
+        .expect("git_log must carry a typed internal POSIX script");
+    assert_eq!(script.language.as_str(), "sh");
+    assert!(script.script.contains("git log"));
+    let (exit_code, stdout, stderr) = run_runner_shell_request_locally(&request);
+    complete_patch_agent_request(
+        &runtime,
+        "git-log-posix",
+        &request.request_id,
+        exit_code,
+        &stdout,
+        &stderr,
+    )
+    .await;
+
+    let result = task.await.unwrap();
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["count"], 1);
 }
 
 #[test]

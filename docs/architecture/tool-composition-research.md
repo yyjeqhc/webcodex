@@ -8,13 +8,13 @@ existing tool, Session, Job, permission, audit, Project, recovery, or Runner bou
 
 ## Motivation
 
-Current WebCodex already has strong primitive tools and several homogeneous batch
+Current WebPi already has strong primitive tools and several homogeneous batch
 surfaces: `read_files`, `search_project_texts`, `observe_jobs`, guarded edit
 batches, and structured validation. `run_shell` and `run_script` can also execute
 multiple local commands in one remote request.
 
 Those capabilities reduce some transport cost, but they do not provide a general
-way to combine *heterogeneous canonical WebCodex tools* in one model-facing MCP
+way to combine *heterogeneous canonical WebPi tools* in one model-facing MCP
 round trip. A review may still need a sequence such as:
 
 ```text
@@ -36,16 +36,16 @@ and audit policy. The target is therefore composition *above* canonical tools,
 not a return to a remote-shell-only surface.
 
 Window activity correlation provides a useful measurement boundary for this
-work. WebCodex can measure time from one inbound request through Server/Runner
+work. WebPi can measure time from one inbound request through Server/Runner
 processing and can see when the next request arrives. It still cannot observe the
-model's private reasoning or prove why time outside WebCodex elapsed. Performance
+model's private reasoning or prove why time outside WebPi elapsed. Performance
 telemetry must preserve that distinction.
 
 ## Research snapshots
 
-### WebCodex Next
+### WebPi Next
 
-The inspected WebCodex Next design already separates model-facing call economy
+The inspected WebPi Next design already separates model-facing call economy
 from canonical effect identity. Its `Apply` envelope can admit multiple typed
 operations in one request while creating an independent durable Execution for
 each operation. The safety model is "atomic admission, ordered effects": retry,
@@ -58,7 +58,7 @@ canonical patch operations without inventing a new Node batch effect, transactio
 or rollback contract. This is a useful precedent for reducing model-facing
 round trips without collapsing underlying effect identities.
 
-WebCodex Next dogfood also found that a very large composed `Apply` schema could
+WebPi Next dogfood also found that a very large composed `Apply` schema could
 project poorly through a ChatGPT host while focused composition-free tools in the
 same server projected explicit arguments correctly. The lesson is not to weaken
 the canonical internal model. Keep the canonical substrate expressive, but keep
@@ -80,7 +80,7 @@ The useful ideas are:
 - serialization can eventually be scoped to the resource that actually carries
   the race, instead of forcing all unrelated work through one global lock.
 
-WebCodex should adopt the first principle before attempting generalized resource
+WebPi should adopt the first principle before attempting generalized resource
 locking. Resource-level concurrency should be added only for concrete mutation
 cases whose authority and race semantics are already understood.
 
@@ -99,7 +99,7 @@ return to the existing canonical tool router. Code therefore expresses
 orchestration while tools continue to own authority and effects. Recursive Code
 Mode invocation is also excluded.
 
-That shape is more attractive for WebCodex than a large user-facing JSON DAG:
+That shape is more attractive for WebPi than a large user-facing JSON DAG:
 code can express dependencies and parallel branches compactly, while the Server
 can keep a small outer MCP schema and a closed nested-tool boundary.
 
@@ -119,7 +119,7 @@ runtime.
 
 ## Combined design principles
 
-A WebCodex composition layer should follow these rules:
+A WebPi composition layer should follow these rules:
 
 1. **One outer call may contain many canonical child invocations, but it must not
    collapse their identities.** Child authority, audit, validation, Job state,
@@ -140,7 +140,7 @@ A WebCodex composition layer should follow these rules:
    version should use a closed direct-tool allowlist; any later dynamic admission
    must consume the same canonical discovery policy as direct invocation.
 7. **The parent is not a transaction.** If one child effect succeeds and a later
-   child fails, WebCodex does not invent rollback. Existing child result truth
+   child fails, WebPi does not invent rollback. Existing child result truth
    remains authoritative.
 8. **Output and execution are bounded independently.** Program size, child-call
    count, concurrent child count, wall time, emitted bytes, and retained child
@@ -302,7 +302,7 @@ tool, resource-budget exhaustion, runtime exception, cancellation, or a hard
 orchestration timeout. Such a parent failure must not claim that already-entered
 child effects did not occur.
 
-Long-running child execution now uses the existing WebCodex Job path directly. E2a admits only structured `cargo_check` / `cargo_test` as consequential children and caps their nested synchronous handoff preference at five seconds without changing total `timeout_secs`. An unfinished validator returns the same canonical `job_id` and parser-ready ordinary Job continuation; E2a creates no second background-process or cell lifecycle and does not restart the child. `observe_jobs` intentionally remains outside nested Code Mode in E2a.
+Long-running child execution now uses the existing WebPi Job path directly. E2a admits only structured `cargo_check` / `cargo_test` as consequential children and caps their nested synchronous handoff preference at five seconds without changing total `timeout_secs`. An unfinished validator returns the same canonical `job_id` and parser-ready ordinary Job continuation; E2a creates no second background-process or cell lifecycle and does not restart the child. `observe_jobs` intentionally remains outside nested Code Mode in E2a.
 
 A Server restart should not attempt to resume arbitrary process-local
 orchestration code. Canonical child effects keep their existing recovery truth.
@@ -354,17 +354,17 @@ actual child-process duration
 response projection time
 ```
 
-The interval between a completed WebCodex response and the next inbound request
-is outside WebCodex. It may be model inference, host scheduling, user delay, UI
+The interval between a completed WebPi response and the next inbound request
+is outside WebPi. It may be model inference, host scheduling, user delay, UI
 behavior, or something else and must not be labeled as model reasoning without
 host evidence.
 
 Agent Loop Observability P1 makes that outer timing boundary concrete for
 ordinary non-streaming MCP calls. Let `A_i` be request observation and `H_i` be
-response handoff. WebCodex-owned service time is `H_i - A_i`; the adjacent
+response handoff. WebPi-owned service time is `H_i - A_i`; the adjacent
 meaningful Window gap is `A_(i+1) - H_i`; and the call cycle is
 `A_(i+1) - A_i`. Serial calls should therefore approximately satisfy cycle =
-service + outside-WebCodex gap. Pairing uses hashed `ClientWindow` plus canonical
+service + outside-WebPi gap. Pairing uses hashed `ClientWindow` plus canonical
 authenticated principal, never Workflow Session or Project identity. Overlap is a
 separate relation, streaming handoff is excluded from completed-response gap
 semantics, and restart does not reconstruct process-local predecessor state.
@@ -377,7 +377,7 @@ without labeling by Window, Session, Job, request, trace, Project path, command,
 or payload. The current repository has no Prometheus/OpenMetrics endpoint, so the
 boundary and structured observations remain exporter-independent while the
 Runtime Console supplies a bounded dogfood projection. Baseline data comes before
-SLO targets: WebCodex-owned service/failure SLIs and interaction-efficiency gaps
+SLO targets: WebPi-owned service/failure SLIs and interaction-efficiency gaps
 must remain separate because only the former are wholly service-owned.
 
 ## Staged implementation plan
@@ -480,7 +480,7 @@ This work should not become:
 - a transaction/rollback abstraction over unrelated tools;
 - an unbounded parallel task runner.
 
-WebCodex already has the canonical primitives. The composition layer should stay
+WebPi already has the canonical primitives. The composition layer should stay
 thin enough that deleting it would leave the underlying tools and their direct
 semantics intact.
 
@@ -498,7 +498,7 @@ A production-ready first slice should satisfy all of the following:
 - sequential policy reliably prevents unsafe overlap;
 - total child count, concurrency, program size, wall time, and output are bounded;
 - cancellation/timeout never fabricates rollback or "no effect" truth;
-- Window activity can still explain outer versus nested WebCodex work without
+- Window activity can still explain outer versus nested WebPi work without
   exposing raw host identity or payload bodies;
 - direct tools continue to work unchanged;
 - no Workflow Session is selected from Window identity;
@@ -512,7 +512,7 @@ A production-ready first slice should satisfy all of the following:
    `tools.call(name, args)` primitive, or generated helpers over the currently
    admitted direct surface?
 3. How should nested tool schemas be made ergonomic without recreating the large
-   composed-schema projection problem observed in WebCodex Next?
+   composed-schema projection problem observed in WebPi Next?
 4. What is the smallest canonical concurrency metadata that supports Phase 1
    without prematurely designing resource locks for mutation?
 5. How should parent/child invocation identities appear in ActionAudit and the

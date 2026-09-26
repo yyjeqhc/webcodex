@@ -19,7 +19,7 @@ https://your-domain.example/openapi.json
 
 ChatGPT requires public HTTPS. Configure API-key authentication as HTTP Bearer and use a generated user token (`wc_pat_*`). Runner tokens (`wc_agent_*`) are Runner-transport credentials and must not be placed in a GPT.
 
-After upgrading a Server that used the older generic GPT Actions schema, **re-import `/openapi.json`**. The generic operation names are now the canonical WebCodex runtime tool names rather than the retired camelCase Action vocabulary.
+After upgrading a Server that used the older generic GPT Actions schema, **re-import `/openapi.json`**. The generic operation names are now the canonical WebPi runtime tool names rather than the retired camelCase Action vocabulary.
 
 ## Generic runtime Server
 
@@ -57,11 +57,11 @@ All authorization still runs through the normal ToolRuntime kernel. The Action a
 
 ### Descriptions and the 300-character Action limit
 
-Custom GPT Actions reject operation/tool descriptions above 300 characters. WebCodex keeps the canonical MCP description budget independent and larger. An Action reuses the canonical description when it fits; only over-limit tools carry a short presentation override on their canonical `ToolDefinition`. Generated schema/property descriptions are bounded by a presentation-only projector that changes description text, not JSON-schema shape.
+Custom GPT Actions reject operation/tool descriptions above 300 characters. WebPi keeps the canonical MCP description budget independent and larger. An Action reuses the canonical description when it fits; only over-limit tools carry a short presentation override on their canonical `ToolDefinition`. Generated schema/property descriptions are bounded by a presentation-only projector that changes description text, not JSON-schema shape.
 
 ### OpenAPI import size
 
-The Custom GPT importer also rejects OpenAPI schemas at 1 MB. WebCodex therefore keeps the generated generic Action document below an internal 800,000-byte JSON budget with CI coverage for compact and pretty-printed serialization. Direct Action request schemas remain the canonical `ToolSpec.input_schema`; response schemas use the real compact `ToolResult` envelope with a generic `output` field instead of inlining each potentially large canonical output schema. This changes only the OpenAPI presentation contract: actual runtime JSON results and canonical/MCP output schemas are unchanged.
+The Custom GPT importer also rejects OpenAPI schemas at 1 MB. WebPi therefore keeps the generated generic Action document below an internal 800,000-byte JSON budget with CI coverage for compact and pretty-printed serialization. Direct Action request schemas remain the canonical `ToolSpec.input_schema`; response schemas use the real compact `ToolResult` envelope with a generic `output` field instead of inlining each potentially large canonical output schema. This changes only the OpenAPI presentation contract: actual runtime JSON results and canonical/MCP output schemas are unchanged.
 
 ### Conversation file import
 
@@ -71,7 +71,7 @@ MCP host-file import remains a separate trusted provenance path. Normal network-
 
 ## Project-scoped local `share` / `run`
 
-A Server launched by `webcodex share` or `webcodex run` uses the same generic Adaptive Runtime OpenAPI projection as an ordinary Server. Project-scoped authentication limits the caller to its ProjectGrant; it does not switch schema generation to a separate Connector capability registry.
+A Server launched by `webpi share` or `webpi run` uses the same generic Adaptive Runtime OpenAPI projection as an ordinary Server. Project-scoped authentication limits the caller to its ProjectGrant; it does not switch schema generation to a separate Connector capability registry.
 
 Suggested Custom GPT instructions can therefore use the canonical runtime workflow:
 
@@ -84,11 +84,11 @@ Review with show_changes and close with finish_coding_task.
 Do not infer Project or Session authority from chat, credential, or guessed ids.
 ```
 
-The retired ProjectConnector Action names and host-side `webcodex task` review workflow are not projected as compatibility aliases.
+The retired ProjectConnector Action names and host-side `webpi task` review workflow are not projected as compatibility aliases.
 
 ## Management and safety
 
-The OpenAPI model surface intentionally excludes users, API tokens, Runner tokens, pairing/enrollment, setup, doctor, npm, server management, and audit endpoints. Use the `webcodex` CLI for those tasks.
+The OpenAPI model surface intentionally excludes users, API tokens, Runner tokens, pairing/enrollment, setup, doctor, npm, server management, and audit endpoints. Use the `webpi` CLI for those tasks.
 
 Both MCP and GPT Actions use the same ToolRuntime authority model. GPT Actions changes model presentation and HTTP transport only; it never grants authority that the same canonical tool would not have through MCP/runtime execution.
 

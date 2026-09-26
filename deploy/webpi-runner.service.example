@@ -1,8 +1,8 @@
-# systemd unit for the WebCodex runner.
+# systemd unit for the WebPi runner.
 #
-# Copy to /etc/systemd/system/webcodex-runner-workstation.service, then:
+# Copy to /etc/systemd/system/webpi-runner-workstation.service, then:
 #   sudo systemctl daemon-reload
-#   sudo systemctl enable --now webcodex-runner-workstation
+#   sudo systemctl enable --now webpi-runner-workstation
 #
 # The runner owns local machine knowledge (project id/path/policy/capabilities)
 # and registers it with the server at startup. The server is a zero-project-
@@ -14,7 +14,7 @@
 # strict transport only when you intentionally want exactly one transport.
 
 [Unit]
-Description=WebCodex runner (auto transport: QUIC, WebSocket, polling)
+Description=WebPi runner (auto transport: QUIC, WebSocket, polling)
 After=network-online.target
 Wants=network-online.target
 
@@ -22,7 +22,7 @@ Wants=network-online.target
 Type=simple
 User=root
 Group=root
-ExecStart=/opt/webcodex/webcodex-runner --config /etc/webcodex/clients/workstation/runner.toml
+ExecStart=/opt/webpi/webpi-runner --config /etc/webpi/clients/workstation/runner.toml
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=always
 RestartSec=5s

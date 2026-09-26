@@ -195,6 +195,80 @@ async fn computer_snapshot_region_requires_additive_capability() {
 }
 
 #[tokio::test]
+async fn computer_snapshot_region_preserves_large_native_image_response_stdout() {
+    let registry = RunnerRegistry::default();
+    let alice = auth_context(Some("alice"), false);
+    registry
+        .register(current_runner_registration(RunnerRegisterRequest {
+            process_started_at: None,
+            build: None,
+            job_concurrency_limit: None,
+            job_inventory: None,
+            coding_agent_providers: None,
+            coding_agent_inventory: None,
+            client_id: "computer-region-large".to_string(),
+            runner_instance_id: "region-large-inst".to_string(),
+            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
+            display_name: None,
+            owner: Some("alice".to_string()),
+            hostname: None,
+            host_context: None,
+            capabilities: RunnerCapabilities {
+                computer_observe: true,
+                computer_snapshot_region: true,
+                ..Default::default()
+            },
+            policy: None,
+        }))
+        .await
+        .unwrap();
+
+    let payload = r#"{"surface_id":"surface_test","region":{"x":0,"y":0,"width":1280,"height":720},"max_width":1280,"max_height":720}"#;
+    let (request_id, response_rx) = registry
+        .enqueue_computer(
+            "computer-region-large".to_string(),
+            "computer_snapshot_region",
+            payload.to_string(),
+            "alice".to_string(),
+            Some(&alice),
+            5,
+        )
+        .await
+        .unwrap();
+    let request = registry
+        .poll(RunnerPollRequest {
+            client_id: "computer-region-large".to_string(),
+            runner_instance_id: "region-large-inst".to_string(),
+        })
+        .await
+        .unwrap()
+        .expect("queued region snapshot request");
+    assert_eq!(request.kind, "computer_snapshot_region");
+
+    let stdout = "x".repeat(super::super::ORDINARY_RESULT_STREAM_RETENTION_BYTES + 1024);
+    assert!(stdout.len() < crate::artifact_policy::MAX_MCP_IMAGE_RESPONSE_BYTES);
+    registry
+        .complete(RunnerResultRequest {
+            client_id: "computer-region-large".to_string(),
+            runner_instance_id: "region-large-inst".to_string(),
+            request_id,
+            exit_code: Some(0),
+            stdout: Some(stdout.clone()),
+            stderr: None,
+            stdout_truncated: false,
+            stderr_truncated: false,
+            duration_ms: Some(1),
+            error: None,
+        })
+        .await
+        .unwrap();
+
+    let response = response_rx.await.unwrap();
+    assert!(response.success);
+    assert_eq!(response.stdout.as_deref(), Some(stdout.as_str()));
+}
+
+#[tokio::test]
 async fn computer_snapshot_display_preserves_large_native_image_response_stdout() {
     let registry = RunnerRegistry::default();
     let alice = auth_context(Some("alice"), false);

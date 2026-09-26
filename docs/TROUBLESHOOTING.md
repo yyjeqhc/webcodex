@@ -2,40 +2,40 @@
 
 [English](TROUBLESHOOTING.md) | [简体中文](TROUBLESHOOTING.zh-CN.md)
 
-Practical checks for common WebCodex deployment issues. Do not paste or share real tokens, env files, `Authorization` headers, or complete `runner.toml` files while debugging.
+Practical checks for common WebPi deployment issues. Do not paste or share real tokens, env files, `Authorization` headers, or complete `runner.toml` files while debugging.
 
 ## Operational checklist
 
 Server:
 
-- `webcodex --version` prints a version.
-- `webcodex server status --env-file /etc/webcodex/webcodex.env` reports the local server reachable.
+- `webpi --version` prints a version.
+- `webpi server status --env-file /etc/webpi/webcodex.env` reports the local server reachable.
 - `curl http://127.0.0.1:8080/openapi.json` returns OpenAPI JSON on the server host.
 - Public HTTPS is reachable through nginx or your chosen reverse proxy, if used.
 
 Client:
 
-- `webcodex-runner --version` prints a version.
-- For hosted quick-start, `webcodex runner status --profile <profile-from-connect>`
+- `webpi-runner --version` prints a version.
+- For hosted quick-start, `webpi runner status --profile <profile-from-connect>`
   reports `runner mode: hosted local process`, `runner active: true`, and
   `client online: yes`.
-- `webcodex runner status --profile workstation` can read the local Runner config (`runner.toml`).
-- `webcodex doctor` passes for a canonical project, or advanced
-  `webcodex ops status --strict --server-url https://your-domain.example`
+- `webpi runner status --profile workstation` can read the local Runner config (`runner.toml`).
+- `webpi doctor` passes for a canonical project, or advanced
+  `webpi ops status --strict --server-url https://your-domain.example`
   passes for a managed deployment.
 - `list_runners` / `runtime_status` shows the Runner online.
 
 ## Common issues
 
-### `webcodex connect` cannot finish
+### `webpi connect` cannot finish
 
 `connect` waits up to 15 seconds for the complete path: Server reachable,
 Runner visible, and target project visible to the same key. Its error includes
 the profile Runner log path. Check:
 
 ```bash
-webcodex runner status --profile <profile-from-connect>
-webcodex runner logs --profile <profile-from-connect> --lines 100
+webpi runner status --profile <profile-from-connect>
+webpi runner logs --profile <profile-from-connect> --lines 100
 ```
 
 Confirm that the Server URL points to the root origin, the Server enables
@@ -62,35 +62,35 @@ shared-key count or retention limits. All Runner registrations have a
 
 This is deliberate. `wc_pat_*`, `wc_agent_*`, `wc_acct_*`, and other `wc_*`
 values are managed credentials and never fall back to shared-key auth. Use a
-different random key for the hosted shared-key flow, or use `webcodex login`
+different random key for the hosted shared-key flow, or use `webpi login`
 for managed identity.
 
-`webcodex tokens generate` is offline material generation only. It does not
+`webpi tokens generate` is offline material generation only. It does not
 register the generated credential with a remote Server, so do not use its
 output as a hosted shared key.
 
 ### A hosted Runner stopped or its PID is stale
 
-Re-run the same `webcodex connect` command. The profile lock prevents duplicate
+Re-run the same `webpi connect` command. The profile lock prevents duplicate
 starts; a live Runner with the same config is reused, while stale or
 non-Runner PID state is discarded before one replacement Runner starts. To
 stop it explicitly:
 
 ```bash
-webcodex runner stop --profile <profile-from-connect>
+webpi runner stop --profile <profile-from-connect>
 ```
 
 The key is stored only in the protected profile config and is not printed by
 status or written to the project checkout.
 
-### `webcodex server install` says the service already exists
+### `webpi server install` says the service already exists
 
 Use `--overwrite` only when you intentionally want to replace the existing unit:
 
 ```bash
-sudo webcodex server install \
-  --env-file /etc/webcodex/webcodex.env \
-  --bin /usr/local/bin/webcodex-server \
+sudo webpi server install \
+  --env-file /etc/webpi/webcodex.env \
+  --bin /usr/local/bin/webpi-server \
   --overwrite
 sudo systemctl daemon-reload
 ```
@@ -107,7 +107,7 @@ journalctl -u webcodex
 curl http://127.0.0.1:8080/openapi.json
 ```
 
-If local HTTP works but public HTTPS does not, check the nginx upstream host/port and TLS configuration. WebCodex CLI does not automate reverse proxy setup.
+If local HTTP works but public HTTPS does not, check the nginx upstream host/port and TLS configuration. WebPi CLI does not automate reverse proxy setup.
 
 ### Capture one failing tool call
 
@@ -115,8 +115,8 @@ When status/log output is not enough on a self-hosted Server, temporarily enable
 full tool-request tracing and reproduce the failing call **once**:
 
 ```text
-WEBCODEX_TOOL_REQUEST_TRACE=full
-WEBCODEX_TOOL_REQUEST_TRACE_DIR=/var/lib/webcodex/tool-request-traces
+WEBPI_TOOL_REQUEST_TRACE=full
+WEBPI_TOOL_REQUEST_TRACE_DIR=/var/lib/webcodex/tool-request-traces
 ```
 
 Apply the Server environment change using your normal deployment lifecycle, note
@@ -133,7 +133,7 @@ For the internal trace layout, request/Runner correlation fields, payload layers
 and capture-omission semantics, see the maintainer-only
 [Tool Request Tracing](agent/tool-request-tracing.md) contract.
 
-### Client says `webcodex: command not found`
+### Client says `webpi: command not found`
 
 Install or symlink the CLI onto the client's `PATH`, for example:
 
@@ -143,15 +143,15 @@ sudo ln -s /opt/webcodex/bin/webcodex /usr/local/bin/webcodex
 
 Use the actual install path for your host.
 
-### Client accidentally runs `pairing create` and `/etc/webcodex/webcodex.env` is missing
+### Client accidentally runs `pairing create` and `/etc/webpi/webcodex.env` is missing
 
-`webcodex pairing create` is server/admin-side and uses the server bootstrap env file. A friend/client machine should run `webcodex login <server-url> --code <wc_pair_...>` with the short-lived `wc_pair_*` code from the server owner.
+`webpi pairing create` is server/admin-side and uses the server bootstrap env file. A friend/client machine should run `webpi login <server-url> --code <wc_pair_...>` with the short-lived `wc_pair_*` code from the server owner.
 
-Copy only the `wc_pair_*` code between machines. Do not copy `WEBCODEX_TOKEN`, user API tokens, Runner tokens, env files, or complete `runner.toml` files.
+Copy only the `wc_pair_*` code between machines. Do not copy `WEBPI_TOKEN`, user API tokens, Runner tokens, env files, or complete `runner.toml` files.
 
 ### Doctor warns `binary webcodex not found in PATH` on a client
 
-That can be acceptable on Runner-only client machines. Runner-only clients need the public `webcodex` CLI and `webcodex-runner`; `webcodex-server` is only required on server hosts.
+That can be acceptable on Runner-only client machines. Runner-only clients need the public `webpi` CLI and `webpi-runner`; `webpi-server` is only required on server hosts.
 
 ### `client online: no`
 
@@ -163,12 +163,12 @@ Use the same scope that installed the service:
 
 ```bash
 # Ordinary user service
-webcodex runner status --scope user
-webcodex runner logs --scope user --lines 100
+webpi runner status --scope user
+webpi runner logs --scope user --lines 100
 
 # Administrator-managed system service
-sudo webcodex runner status --scope system
-sudo webcodex runner logs --scope system --lines 100
+sudo webpi runner status --scope system
+sudo webpi runner logs --scope system --lines 100
 ```
 
 Also verify the server URL, local token files, and Runner `allowed_roots`. Missing or empty `allowed_roots` defaults to `$HOME`; explicit `allowed_roots` replaces that default.
@@ -199,8 +199,8 @@ new service and check `journalctl -u webcodex` for startup or auth errors.
 Run `runtime_status` or `list_runners`, then check the Runner host:
 
 ```bash
-webcodex runner status --scope user
-webcodex runner logs --scope user --lines 100
+webpi runner status --scope user
+webpi runner logs --scope user --lines 100
 # Use `sudo ... --scope system` for an administrator-managed system service.
 ```
 
@@ -210,12 +210,12 @@ Confirm the Runner server URL, token file, service user, and `allowed_roots`.
 
 In the hosted quick-start, MCP and Runner use the same non-`wc_` shared key.
 In managed mode, GPT Actions, MCP, and ordinary REST/project APIs use
-`webcodex-user-token` (`wc_pat_*`), while the Runner token (`wc_agent_*`) is
-only for Runner transport — after `webcodex login` it lives inline in
-`runner.toml`, with no separate `webcodex-runner-token` file. A 403 after putting a `wc_agent_*`
+`webpi-user-token` (`wc_pat_*`), while the Runner token (`wc_agent_*`) is
+only for Runner transport — after `webpi login` it lives inline in
+`runner.toml`, with no separate `webpi-runner-token` file. A 403 after putting a `wc_agent_*`
 value in `--token` or `--token-file` is the expected security boundary: select
-the generated `webcodex-user-token` instead. Recent CLI commands also diagnose
-this mismatch without printing the complete token. `WEBCODEX_TOKEN` is
+the generated `webpi-user-token` instead. Recent CLI commands also diagnose
+this mismatch without printing the complete token. `WEBPI_TOKEN` is
 bootstrap/admin-oriented and should not be copied into GPT Actions, MCP, or
 Runner config.
 
@@ -230,7 +230,7 @@ Non-root callers default to user scope. Root callers default to system scope,
 but installation still requires a non-root `--user`; an intentional root
 Runner additionally requires `--allow-root-runner` and is discouraged. If a
 custom `--service-file` was used during install, pass that same absolute path
-and scope to later commands. WebCodex does not silently migrate or overwrite a
+and scope to later commands. WebPi does not silently migrate or overwrite a
 unit in the other scope.
 
 ### Non-git smoke workspace cannot run `git_status`

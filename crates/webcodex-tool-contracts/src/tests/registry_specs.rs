@@ -601,7 +601,7 @@ fn tool_specs_describe_default_coding_loop_preferences() {
         "not merely for several commands",
         "update_session_context",
         "no per-shell host/resource parameter",
-        "does not need webcodex runner",
+        "does not need webpi runner",
         "ssh_resource",
         "runner restart",
     ] {

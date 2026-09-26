@@ -267,7 +267,7 @@ mod tests {
             panic!("expected help exit");
         };
         assert_eq!(code, 0);
-        assert!(stdout.contains("webcodex status"));
+        assert!(stdout.contains("webpi status"));
         assert!(stderr.is_empty());
         assert!(project_entry::usage().contains("--no-copy-url"));
         let share_help = project_entry::usage();

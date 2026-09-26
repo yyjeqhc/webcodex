@@ -21,6 +21,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock, Weak};
 
+#[cfg(not(windows))]
 const DEFAULT_SYSTEM_CONFIG_DIR: &str = "/etc/webpi";
 pub(crate) const CLIENT_PROFILE_ERROR: &str =
     "--profile must be a safe path component using only ASCII letters, digits, '.', '_' or '-'";
@@ -727,6 +728,7 @@ impl ReloadableRunnerConfig {
 
     /// Authoritative reload primitive used by Unix SIGHUP. Formal first-class
     /// reload goes through the same implementation with an optimistic fence.
+    #[cfg(any(unix, test))]
     pub(crate) fn reload(&self) -> RunnerConfigReloadStatus {
         self.reload_internal(None).0
     }
@@ -1862,7 +1864,7 @@ fn validate_acp_config(config: &AcpConfig) -> Result<(), String> {
                 || super::shell::is_sensitive_env_key(source)
             {
                 return Err(format!(
-                    "ACP agent '{}' env_from_env may not map WebCodex-sensitive environment variables",
+                    "ACP agent '{}' env_from_env may not map WebPi-sensitive environment variables",
                     agent.id
                 ));
             }
@@ -2005,7 +2007,7 @@ fn validate_mcp_gateway_config(config: &McpGatewayConfig) -> Result<(), String> 
                 || super::shell::is_sensitive_env_key(source)
             {
                 return Err(format!(
-                    "mcp provider '{}' env_from_env may not map WebCodex-sensitive environment variables",
+                    "mcp provider '{}' env_from_env may not map WebPi-sensitive environment variables",
                     provider.id
                 ));
             }
@@ -2124,15 +2126,18 @@ mod acp_config_tests {
     }
 
     #[test]
-    fn acp_env_mapping_rejects_webcodex_pat() {
-        for (destination, source) in [("WEBPI_PAT", "SOURCE"), ("DEST", "WEBPI_PAT")] {
+    fn acp_env_mapping_rejects_webpi_and_legacy_webcodex_credentials() {
+        for (destination, source) in [
+            ("WEBPI_PAT", "SOURCE"),
+            ("DEST", "WEBPI_PAT"),
+            ("WEBCODEX_PAT", "SOURCE"),
+            ("DEST", "WEBCODEX_PAT"),
+        ] {
             let mut sensitive = agent();
             sensitive
                 .env_from_env
                 .insert(destination.to_string(), source.to_string());
-            assert!(validate(sensitive)
-                .unwrap_err()
-                .contains("WebCodex-sensitive"));
+            assert!(validate(sensitive).unwrap_err().contains("WebPi-sensitive"));
         }
 
         #[cfg(windows)]
@@ -2143,7 +2148,7 @@ mod acp_config_tests {
                 .insert("DEST".to_string(), "WebCodex_Pat".to_string());
             assert!(validate(mixed_case)
                 .unwrap_err()
-                .contains("WebCodex-sensitive"));
+                .contains("WebPi-sensitive"));
         }
     }
 }
@@ -2285,14 +2290,16 @@ mod mcp_gateway_config_tests {
             ("DEST", "WEBPI_AGENT_TOKEN"),
             ("WEBPI_USER_TOKEN", "SOURCE"),
             ("DEST", "AUTHORIZATION"),
+            ("WEBCODEX_TOKEN", "SOURCE"),
+            ("DEST", "WEBCODEX_PAT"),
+            ("DEST", "WEBCODEX_AGENT_TOKEN"),
+            ("WEBCODEX_USER_TOKEN", "SOURCE"),
         ] {
             let mut sensitive = provider();
             sensitive
                 .env_from_env
                 .insert(destination.to_string(), source.to_string());
-            assert!(validate(sensitive)
-                .unwrap_err()
-                .contains("WebCodex-sensitive"));
+            assert!(validate(sensitive).unwrap_err().contains("WebPi-sensitive"));
         }
 
         #[cfg(windows)]
@@ -2303,7 +2310,7 @@ mod mcp_gateway_config_tests {
                 .insert("DEST".to_string(), "WebCodex_Pat".to_string());
             assert!(validate(mixed_case_pat)
                 .unwrap_err()
-                .contains("WebCodex-sensitive"));
+                .contains("WebPi-sensitive"));
         }
 
         let mut case_pair = provider();

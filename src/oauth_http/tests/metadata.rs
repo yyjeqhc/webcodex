@@ -63,7 +63,7 @@ async fn oauth_protected_resource_metadata_fields() {
     );
 
     // resource_name
-    assert_eq!(body["resource_name"], "WebCodex");
+    assert_eq!(body["resource_name"], "WebPi");
 }
 
 #[tokio::test]

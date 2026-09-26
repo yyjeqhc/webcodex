@@ -36,8 +36,10 @@ pub(crate) mod ssh;
 mod string_match;
 pub(crate) mod transport;
 pub(crate) mod util {
+    #[cfg(not(windows))]
+    pub(crate) use webcodex_process::is_executable_file;
     pub(crate) use webcodex_process::{
-        find_executable_in_path, is_executable_file, resolve_program_in_path, ResolvedProgram,
+        find_executable_in_path, resolve_program_in_path, ResolvedProgram,
     };
 }
 pub(crate) mod validation;

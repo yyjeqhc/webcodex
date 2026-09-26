@@ -31,7 +31,7 @@ impl ServerInstanceGuard {
             .open(&lock_path)
             .context("open standalone Server ownership lock")?;
         file.try_lock_exclusive()
-            .map_err(|_| anyhow!("another WebCodex Server already owns this standalone state"))?;
+            .map_err(|_| anyhow!("another WebPi Server already owns this standalone state"))?;
         Ok(Self {
             file,
             database_path,

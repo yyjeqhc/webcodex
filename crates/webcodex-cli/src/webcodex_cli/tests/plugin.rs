@@ -415,7 +415,7 @@ fn plugin_init_creates_exact_public_sdk_scaffold_without_executing_dependencies(
     assert!(readme.contains("npm run build"));
     assert!(readme.contains("id = \"echo-plugin\""));
     assert!(readme.contains("/absolute/path/to/PLUGIN_DIRECTORY/dist/plugin.js"));
-    assert!(readme.contains("webcodex plugin check --runner <runner> --plugin echo-plugin"));
+    assert!(readme.contains("webpi plugin check --runner <runner> --plugin echo-plugin"));
     assert!(readme.contains("--tool echo"));
     assert!(readme.contains("--token-file /path/to/plugin-authoring-pat"));
     assert!(readme.contains("WEBPI_PAT"));

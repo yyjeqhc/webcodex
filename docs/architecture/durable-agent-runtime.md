@@ -1,8 +1,8 @@
 # Durable Agent runtime and asynchronous work
 
 This document defines the standing product direction for durable Agent identity and
-asynchronous work in WebCodex. It builds on the implemented Agent/Conversation/Wake
-foundation without turning WebCodex into a generic swarm framework or workflow
+asynchronous work in WebPi. It builds on the implemented Agent/Conversation/Wake
+foundation without turning WebPi into a generic swarm framework or workflow
 scheduler.
 
 Implementation details for the current communication and wake substrate live in
@@ -29,14 +29,14 @@ Agent. Closing a window therefore means that an Endpoint disappeared; it does no
 mean that the Agent, its Conversations, or its accepted work disappeared.
 
 This direction may eventually make multi-Agent scheduling possible, but scheduling
-is not the product definition. WebCodex should first make Agent identity and work
+is not the product definition. WebPi should first make Agent identity and work
 independent from windows and synchronous model turns. Runnable-frontier scheduling,
 capacity management, graph execution, and autonomous delegation remain optional
 capabilities that require separate product evidence.
 
 ## Names that must not collapse
 
-WebCodex already contains several concepts that use similar words. They are separate
+WebPi already contains several concepts that use similar words. They are separate
 domains and must remain explicit in code, schemas, documentation, and reviews.
 
 | Concept | Meaning | Not interchangeable with |
@@ -143,7 +143,7 @@ G3 adds an optional production ChatGPT MCP App Host carrier on top of this subst
 
 Every bridge operation re-runs ordinary communication authorization and exact Agent/Endpoint/controller-generation validation. Ordinary push bindings still require an Endpoint freshly attached in the current Server process. For MCP Apps, successful bind persists the current identity-bound recovery fingerprint and the optional canonical ClientWindow key already derived by the protocol adapter. Server takeover clears process-local bindings and `wake_capable` but preserves both. With no local binding, the exact fingerprint remains sufficient; when a canonical Window is present, the same principal + exact current Endpoint/generation + same Window may also receive the normal `success=true` recovery projection and create a new iframe fence after refresh. Exact unbind clears the current fingerprint but preserves a matching Window key; natural expiry also preserves only that Window key for the dedicated expired-Endpoint replacement operation. Explicit detach (including after expiry), ordinary Endpoint replacement, and push transition clear both recovery values. Replacement replay re-checks the successor's retained Window key, so a historical replay record cannot undo that revocation. Only a newly committed replacement populates `attached_endpoints`; replay and restart recovery never recreate fresh push-attachment authority. Missing or malformed Window metadata grants nothing beyond the exact fingerprint fallback, and another Window, stale generation, expiry, detach, foreign principal, malformed result, or generic bridge failure remains fail-closed. The strict published continuation projection schema still requires `recovery` on every result (`null` normally, the sole fixed restart-loss object when recoverable), so Host schema projection cannot discard the observation. Replacing or withdrawing a View reuses existing Wake reconciliation: a pre-fence claim is revoked and the logical Wake returns to `pending`, while a prepared/delivered Attempt becomes `delivery_unknown`. The App never blindly resends after the dispatch fence. Host `ui/message` success means only `dispatch_accepted`; only later exact `consume_agent_wake` proves that a continuation model turn actually ran. A consume-before-ACK race is valid and late ACK is idempotent. v16 keeps the slower bounded heartbeat cadence while hidden but allows the same acquire -> prepare -> `ui/message` -> finish path in background. Visibility transitions are scheduling observations only: they do not by themselves create `delivery_unknown`. Host scheduling remains best effort/non-immediate, and correctness still depends on the durable Wake and exact consume rather than timer liveness.
 
-Runtime Console, explicit activation, and push `ContinuationAdapter` behavior retain their existing contracts. The MCP App is an optional carrier, not a scheduler or a source of Agent, Task, Goal, Project, Workflow Session, or execution authority. Ordinary WebCodex Jobs are not materialized as MCP Tasks. See [`../agent/mcp-app-continuation-experiments.md`](../agent/mcp-app-continuation-experiments.md) for the Host evidence and production mapping.
+Runtime Console, explicit activation, and push `ContinuationAdapter` behavior retain their existing contracts. The MCP App is an optional carrier, not a scheduler or a source of Agent, Task, Goal, Project, Workflow Session, or execution authority. Ordinary WebPi Jobs are not materialized as MCP Tasks. See [`../agent/mcp-app-continuation-experiments.md`](../agent/mcp-app-continuation-experiments.md) for the Host evidence and production mapping.
 
 These invariants, the natural-conversation slice, and the durable A3 ownership
 substrate support asynchronous Agent work without introducing a scheduler.
@@ -218,13 +218,13 @@ The projection is intentionally sparse: exact `goal_id`, bounded title/objective
 
 For an **active** Goal, ClientWindow liveness is observational evidence only. The direction is exact authorized Goal → explicit Goal/Workflow Session correlations → re-authorized Session/Project → historically linked same-principal Window candidates → currently caller-visible Window-wide activity. The raw Window-wide timestamps returned while discovering Session-linked candidates are never projected directly; each event and in-flight request is re-filtered through current Project visibility first. `runtime:read` is required to expose the observation, and Project-scoped evidence still needs ordinary Project visibility, but Goal read itself keeps its existing communication-read requirement. Without runtime observability authority, Goal Plan remains usable with `activity.available=false` and no Window count or timestamps. This chain is never reversible: Window, Project, Session, credential, or timing cannot select a Goal.
 
-The soft heuristic uses a fixed five-minute attention horizon. A caller-visible meaningful request currently in flight keeps the observation `active` even if it has run for hours. Otherwise the latest visible meaningful WebCodex completion at or within five minutes is `active`; older known meaningful activity becomes `attention_needed` only when bounded coverage is sufficient. No correlated Window evidence is `unobserved`, not failure. Terminal Goals are `not_applicable` and never show inactivity warning. `last_seen` intentionally includes non-meaningful Host/App controller traffic while `last_meaningful_activity` excludes it, so a recently observed card can still report that business activity has been quiet. Session, Window, event, Project-visibility, and active-request scans are bounded; partial evidence never produces `attention_needed`.
+The soft heuristic uses a fixed five-minute attention horizon. A caller-visible meaningful request currently in flight keeps the observation `active` even if it has run for hours. Otherwise the latest visible meaningful WebPi completion at or within five minutes is `active`; older known meaningful activity becomes `attention_needed` only when bounded coverage is sufficient. No correlated Window evidence is `unobserved`, not failure. Terminal Goals are `not_applicable` and never show inactivity warning. `last_seen` intentionally includes non-meaningful Host/App controller traffic while `last_meaningful_activity` excludes it, so a recently observed card can still report that business activity has been quiet. Session, Window, event, Project-visibility, and active-request scans are bounded; partial evidence never produces `attention_needed`.
 
-No meaningful WebCodex activity for five minutes is **not** proof that a model turn failed. The interval may contain Host scheduling, model inference, user interaction, work through GitHub or other connectors, Web/network delay, or a genuinely stalled turn. The projection is therefore a human-attention signal only: it does not heartbeat/extend/expire a TaskAttempt, create a Wake or successor Attempt, resume a model, terminalize a Task, mutate Goal lifecycle/revision, or grant execution authority. TaskAttempt correctness leases remain a separate hard fencing mechanism.
+No meaningful WebPi activity for five minutes is **not** proof that a model turn failed. The interval may contain Host scheduling, model inference, user interaction, work through GitHub or other connectors, Web/network delay, or a genuinely stalled turn. The projection is therefore a human-attention signal only: it does not heartbeat/extend/expire a TaskAttempt, create a Wake or successor Attempt, resume a model, terminalize a Task, mutate Goal lifecycle/revision, or grant execution authority. TaskAttempt correctness leases remain a separate hard fencing mechanism.
 
 The App receives exact `goal_id` and revision in the initial presentation result and polls the authoritative Store by that id after successful Host initialization. Derived activity is live state rather than Goal revision truth, so the card may refresh `active → attention_needed → active` while the authoritative Goal revision remains unchanged; this never mutates `wc_goals`. Early results can render while initialization is pending. Active cards converge again after foreground/visibility changes; terminal Goals stop polling and retain a stable terminal presentation even if an older active notification arrives later. Teardown/page unload stops timers. Refresh/reopen requires no localStorage or Server process-local Goal map: the rebuilt View can recover current state from the exact durable identity and SQLite truth. Multiple Views observing the same Goal are safe because both presentation tools are pure reads.
 
-There is no stable Goal page in the Web UI yet, so G2 deliberately omits an `Open in WebCodex` link rather than emitting a dead or semantically incorrect URL.
+There is no stable Goal page in the Web UI yet, so G2 deliberately omits an `Open in WebPi` link rather than emitting a dead or semantically incorrect URL.
 
 **G3 — production Host continuation adapter.** G3 is now implemented for explicit Durable Agent Endpoints, independently of Goal. The public `present_agent_continuation` entry requires exact `agent_id`, `endpoint_id`, and `expected_controller_generation`; it does not infer a target from Goal, Workflow Session, Project, ClientWindow, credential, recent Agent, recent Task, or any other ambient state. The associated App bridge is available only on an App-enabled Stateless MCP 2026 request, where its hidden tools are projected with `ui.visibility = ["app"]`; they remain absent from the ordinary model universe, legacy MCP, REST/generic runtime, and Adaptive gateway targets, with a kernel protocol-capability gate as the final backstop.
 
@@ -409,7 +409,7 @@ that eventually exist.
 
 ## Idempotency, replay, and uncertainty
 
-Agent Task mutations should follow the existing WebCodex durable patterns:
+Agent Task mutations should follow the existing WebPi durable patterns:
 
 - create-like operations use caller-generated idempotency keys plus canonical
   request fingerprints;
@@ -693,7 +693,7 @@ one-hop recovery. The App validates every edge and stops after eight hops. Ordin
 replacement, push takeover, detach, different ClientWindow/principal, stale binding,
 and generic JSON-RPC `-32000` still fail closed.
 
-Only after A4a and A4b reveal repeated common machinery should WebCodex consider a
+Only after A4a and A4b reveal repeated common machinery should WebPi consider a
 minimal shared execution binding/adapter abstraction.
 
 ## Asynchronous events and scheduling are derived capabilities
@@ -748,7 +748,7 @@ If it still needs future attention it creates a new Wait.
 
 Cancellation is similarly bounded: `waiting`, `pending`, or `claimed` work can be
 cancelled/revoked before Host dispatch preparation; cancellation fails closed after the
-prepare fence because WebCodex can no longer prove that the Host did not receive the
+prepare fence because WebPi can no longer prove that the Host did not receive the
 resume message. Server restart preserves Waits, sources, matches, and Wakes but does not
 reconstruct process-local Host ownership. The MCP App card reuses the existing Agent
 Continuation controller/dispatcher and may poll an exact read-only Wait projection for
@@ -786,7 +786,7 @@ Useful future invariants include:
 Capacity is therefore potentially per execution class rather than simply
 "number of active Agent Tasks = number of ChatGPT windows".
 
-This is a possible later product slice, not an A4b requirement and not WebCodex's
+This is a possible later product slice, not an A4b requirement and not WebPi's
 north star.
 
 ## Dependencies and workflow graphs come later

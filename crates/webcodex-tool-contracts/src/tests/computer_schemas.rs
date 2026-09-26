@@ -218,6 +218,9 @@ fn computer_gateway_outputs_cover_preserved_observation_and_control_shapes() {
         "text",
         "snapshot_generation",
         "content_base64",
+        "content_delivery",
+        "full_image_file_bytes",
+        "full_image_sha256",
         "suggested_call",
         "reconcile_with",
     ] {

@@ -400,8 +400,8 @@ fn runner_cli_help_and_version_exit_before_runtime() {
             stderr,
         } => {
             assert_eq!(code, 0);
-            assert!(stdout.contains("Usage: webcodex-runner"));
-            assert!(!stdout.contains("webcodex-runner init"));
+            assert!(stdout.contains("Usage: webpi-runner"));
+            assert!(!stdout.contains("webpi-runner init"));
             assert!(stderr.is_empty());
         }
         other => panic!("expected help exit, got {other:?}"),
@@ -414,13 +414,13 @@ fn runner_cli_help_and_version_exit_before_runtime() {
         } => {
             assert_eq!(code, 0);
             assert!(stdout.starts_with(&format!(
-                "webcodex-runner {} (commit ",
+                "webpi-runner {} (commit ",
                 env!("CARGO_PKG_VERSION")
             )));
             assert!(stdout.trim_end().ends_with(')'));
             assert_ne!(
                 stdout,
-                format!("webcodex-runner {}\n", env!("CARGO_PKG_VERSION"))
+                format!("webpi-runner {}\n", env!("CARGO_PKG_VERSION"))
             );
             assert!(stderr.is_empty());
         }
@@ -446,11 +446,64 @@ fn runner_version_output_includes_build_metadata() {
         } => {
             assert_eq!(code, 0);
             assert!(stdout.contains("commit "));
-            assert!(stdout.starts_with("webcodex-runner "));
+            assert!(stdout.starts_with("webpi-runner "));
             assert!(stderr.is_empty());
         }
         other => panic!("expected version exit, got {other:?}"),
     }
+}
+
+#[test]
+fn runner_cli_check_config_selects_offline_validation_mode() {
+    let _guard = test_env_lock();
+    let action = parse_runner_args(["--config", "/tmp/runner.toml", "--check-config"]).unwrap();
+    assert_eq!(
+        action,
+        RunnerCliAction::CheckConfig {
+            config_path: PathBuf::from("/tmp/runner.toml"),
+        }
+    );
+}
+
+#[test]
+fn runner_cli_check_config_rejects_runtime_execution_flags() {
+    let _guard = test_env_lock();
+    for args in [
+        vec!["--check-config", "--once"],
+        vec!["--check-config", "--stop-on-stdin-eof"],
+    ] {
+        let error = parse_runner_args(args).unwrap_err();
+        assert!(
+            error.contains("--check-config cannot be combined"),
+            "unexpected error: {error}"
+        );
+    }
+}
+
+#[test]
+fn runner_config_check_summary_is_secret_and_path_free() {
+    let private_root = PathBuf::from("C:/private-project-path-sentinel");
+    let mut cfg = test_config(private_root.clone());
+    cfg.token = "secret-token-sentinel".to_string();
+    cfg.server_url = "https://secret.example.test/path?credential=secret-url-sentinel".to_string();
+    cfg.transport = Some("polling".to_string());
+    cfg.max_concurrent_jobs = Some(3);
+
+    let summary = config_check_summary(&cfg);
+    let value: serde_json::Value = serde_json::from_str(&summary).unwrap();
+    assert_eq!(value["status"], "valid");
+    assert_eq!(value["client_id"], cfg.client_id);
+    assert_eq!(value["transport"], "polling");
+    assert_eq!(value["project_registry_configured"], true);
+    assert_eq!(value["max_concurrent_jobs"], 3);
+    assert_eq!(value["mcp_provider_count"], 0);
+    assert_eq!(value["plugin_provider_count"], 0);
+    assert!(!summary.contains("secret-token-sentinel"));
+    assert!(!summary.contains("secret-url-sentinel"));
+    assert!(!summary.contains(private_root.to_string_lossy().as_ref()));
+    assert!(!summary.contains("server_url"));
+    assert!(!summary.contains("token"));
+    assert!(!summary.contains("project_registry_dir"));
 }
 
 #[test]
@@ -547,7 +600,7 @@ fn runner_profile_config_resolution_accepts_legacy_only_and_rejects_dual_files()
         .set("USERPROFILE", tmp.path())
         .remove("WEBPI_RUNNER_CONFIG")
         .remove("WEBPI_AGENT_CONFIG");
-    let profile_dir = tmp.path().join("webcodex/clients/special");
+    let profile_dir = tmp.path().join("webpi/clients/special");
     std::fs::create_dir_all(&profile_dir).unwrap();
 
     assert_eq!(

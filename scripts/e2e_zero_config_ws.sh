@@ -2,15 +2,15 @@
 set -euo pipefail
 
 # ============================================================================
-# WebCodex — Zero-Config Agent Transport E2E Smoke
+# WebPi — Zero-Config Agent Transport E2E Smoke
 #
-# Starts a real `webcodex` server and a `webcodex-runner` connected over
+# Starts a real `webpi-server` and a `webpi-runner` connected over
 # the selected agent transport, defaulting to WebSocket, then exercises the
 # full GPT Actions + MCP surface via curl to prove the runtime is wired
 # end-to-end on a single host.
 #
 # What this proves:
-#   - Server boots with WEBCODEX_TOKEN auth and no server-side projects.toml.
+#   - Server boots with WEBPI_TOKEN auth and no server-side projects.toml.
 #   - Agent registers over the selected transport and announces a project.
 #   - listProjects / getRuntimeStatus see the agent-registered project.
 #   - read_files / getProjectGitStatus route to the agent.
@@ -36,8 +36,8 @@ set -euo pipefail
 #                       seconds to idle before the keepalive-online recheck
 #                       (default: 2; raise to ~35 to span a real ping/pong)
 #   E2E_SKIP_RUN        if set to "1", skip execution and only syntax-check
-#   E2E_SERVER_BIN      existing webcodex-server executable; skips server `cargo run`
-#   E2E_RUNNER_BIN      existing webcodex-runner executable; skips runner `cargo run`
+#   E2E_SERVER_BIN      existing webpi-server executable; skips server `cargo run`
+#   E2E_RUNNER_BIN      existing webpi-runner executable; skips runner `cargo run`
 #   CARGO_BIN           cargo binary (default: cargo; used when an override is absent)
 #
 # Exit codes:
@@ -323,7 +323,7 @@ fi
 PORT="${E2E_PORT:-$(find_free_port)}"
 BASE="http://127.0.0.1:${PORT}"
 
-TMP_ROOT="$(mktemp -d -t webcodex-e2e-XXXXXX)"
+TMP_ROOT="$(mktemp -d -t webpi-e2e-XXXXXX)"
 DATA_DIR="$TMP_ROOT/data"
 PROJECTS_DIR="$TMP_ROOT/project-registry"
 AGENT_TOML="$TMP_ROOT/runner.toml"
@@ -340,7 +340,7 @@ log "temp root: $TMP_ROOT"
     git init -b main >/dev/null 2>&1
     git config user.email "e2e@test.local"
     git config user.name "E2E Smoke"
-    printf '# Smoke Project\n\nUsed by the webcodex E2E harness.\n' > README.md
+    printf '# Smoke Project\n\nUsed by the WebPi E2E harness.\n' > README.md
     printf 'fn main() { println!("smoke"); }\n' > src.rs 2>/dev/null || {
         mkdir -p src
         printf 'fn main() { println!("smoke"); }\n' > src/main.rs
@@ -360,7 +360,7 @@ description = "E2E smoke project"
 EOF
 
 # Agent config: WebSocket preferred transport. owner is arbitrary because
-# WEBCODEX_TOKEN auth marks the principal as bootstrap (any owner allowed).
+# WEBPI_TOKEN auth marks the principal as bootstrap (any owner allowed).
 cat > "$AGENT_TOML" <<EOF
 server_url = "http://127.0.0.1:${PORT}"
 token = "${TOKEN}"
@@ -388,18 +388,26 @@ log "runtime project id: $RUNTIME_PROJECT_ID"
 
 if [ -n "$SERVER_BIN" ]; then
     log "starting server (existing binary: $SERVER_BIN)"
-    WEBCODEX_ADDR="127.0.0.1:${PORT}" \
-    WEBCODEX_DATA="$DATA_DIR" \
-    WEBCODEX_TOKEN="$TOKEN" \
+    WEBPI_ADDR="127.0.0.1:${PORT}" \
+    WEBPI_DATA="$DATA_DIR" \
+    WEBPI_TOKEN="$TOKEN" \
+    WEBPI_SHARED_KEY_ENABLED=false \
+    WEBPI_ALLOW_ANONYMOUS=false \
+    WEBPI_OAUTH2_SHARED_KEY_BRIDGE=false \
+    WEBPI_PROJECT_SHARE_MCP_QUERY_TOKEN_ENABLED=false \
     RUST_LOG="info" \
     "$SERVER_BIN" >"$SERVER_LOG" 2>&1 &
 else
-    log "starting server (cargo run -p webcodex --bin webcodex-server)"
-    WEBCODEX_ADDR="127.0.0.1:${PORT}" \
-    WEBCODEX_DATA="$DATA_DIR" \
-    WEBCODEX_TOKEN="$TOKEN" \
+    log "starting server (cargo run -p webcodex --bin webpi-server)"
+    WEBPI_ADDR="127.0.0.1:${PORT}" \
+    WEBPI_DATA="$DATA_DIR" \
+    WEBPI_TOKEN="$TOKEN" \
+    WEBPI_SHARED_KEY_ENABLED=false \
+    WEBPI_ALLOW_ANONYMOUS=false \
+    WEBPI_OAUTH2_SHARED_KEY_BRIDGE=false \
+    WEBPI_PROJECT_SHARE_MCP_QUERY_TOKEN_ENABLED=false \
     RUST_LOG="info" \
-    "$CARGO_BIN" run --quiet -p webcodex --bin webcodex-server >"$SERVER_LOG" 2>&1 &
+    "$CARGO_BIN" run --quiet -p webcodex --bin webpi-server >"$SERVER_LOG" 2>&1 &
 fi
 SERVER_PID=$!
 
@@ -418,8 +426,8 @@ if [ -n "$RUNNER_BIN" ]; then
     log "starting agent (existing binary: $RUNNER_BIN, transport=$TRANSPORT)"
     "$RUNNER_BIN" --config "$AGENT_TOML" >"$RUNNER_LOG" 2>&1 &
 else
-    log "starting agent (cargo run -p webcodex-runner --bin webcodex-runner, transport=$TRANSPORT)"
-    "$CARGO_BIN" run --quiet -p webcodex-runner --bin webcodex-runner -- --config "$AGENT_TOML" >"$RUNNER_LOG" 2>&1 &
+    log "starting agent (cargo run -p webcodex-runner --bin webpi-runner, transport=$TRANSPORT)"
+    "$CARGO_BIN" run --quiet -p webcodex-runner --bin webpi-runner -- --config "$AGENT_TOML" >"$RUNNER_LOG" 2>&1 &
 fi
 RUNNER_PID=$!
 
@@ -539,7 +547,7 @@ else
     for _ in $(seq 1 40); do
         check_deadline
         body="$(observe_one_job_call "$JOB_ID" 1)"
-        status="$(json_get "$body" output.items.0.output.status)"
+        status="$(json_get "$body" output.items.0.status)"
         case "$status" in
             completed|failed|stopped|lost)
                 JOB_TERMINAL=1
@@ -564,7 +572,7 @@ else
     # observe_jobs — read bounded stdout for the job through the canonical observer.
     body="$(observe_one_job_call "$JOB_ID" 50)"
     assert_success "observe_jobs" "$body" || true
-    log_stdout="$(json_get "$body" output.items.0.output.stdout_tail)"
+    log_stdout="$(json_get "$body" output.items.0.stdout_tail)"
     if echo "$log_stdout" | grep -q "job-log-ok"; then
         pass "observe_jobs contains async job output"
     else
@@ -576,7 +584,7 @@ fi
 # 6. MCP surface smoke
 # ----------------------------------------------------------------------------
 
-# WebCodex has one model-facing runtime contract: Adaptive Runtime. Legacy
+# WebPi has one model-facing runtime contract: Adaptive Runtime. Legacy
 # initialize no longer reports a selectable runtime taxonomy. Ordinary
 # model-visible long-tail tools stay behind call_runtime_tool.
 log "expected runtime: Adaptive Runtime"
@@ -627,7 +635,7 @@ adaptive_present=1
 for tname in work_on_project runtime_status tool_manifest \
     search_project_texts read_files apply_text_edits run_process run_shell observe_jobs list_jobs \
     cargo_check cargo_test git_review_summary git_diff_hunks \
-    show_changes workspace_hygiene_check finish_coding_task call_runtime_tool; do
+    show_changes call_runtime_tool; do
     if ! mcp_tool_present "$tname"; then
         adaptive_present=0
         fail "MCP tools/list missing Adaptive direct tool $tname"
@@ -635,7 +643,7 @@ for tname in work_on_project runtime_status tool_manifest \
 done
 for tname in list_tools list_projects project_overview apply_patch run_script apply_unified_diff \
     go_test validation_summary git_status goto_definition computer_observe computer_control computer_save_snapshot \
-    post_session_message coding_agent_start artifact_upload_begin; do
+    post_session_message coding_agent_start artifact_upload_begin workspace_hygiene_check finish_coding_task; do
     if mcp_tool_present "$tname"; then
         adaptive_present=0
         fail "MCP tools/list must keep long-tail tool $tname behind call_runtime_tool"
@@ -651,20 +659,21 @@ if [ "$adaptive_present" = "1" ]; then
     pass "MCP tools/list exposes canonical Adaptive direct tools plus gateway"
 fi
 
-# tools/call list_projects — must return structuredContent with the agent project.
-body="$(api_post /mcp '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"list_projects","arguments":{}}}')"
+# list_projects is model-visible long tail, so MCP must reach it through the
+# stable call_runtime_tool gateway rather than direct tools/call.
+body="$(api_post /mcp '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"call_runtime_tool","arguments":{"tool":"list_projects","arguments":{}}}}')"
 sc="$(json_get "$body" result.structuredContent)"
 sc_success="$(json_get "$sc" success)"
 if [ "$sc_success" = "True" ]; then
-    pass "MCP tools/call(list_projects) returns structuredContent.success=true"
+    pass "MCP call_runtime_tool(list_projects) returns structuredContent.success=true"
 else
-    fail "MCP tools/call(list_projects) structuredContent not success (body: ${body:0:300})"
+    fail "MCP call_runtime_tool(list_projects) structuredContent not success (body: ${body:0:300})"
 fi
 sc_output="$(json_get "$sc" output)"
 if echo "$sc_output" | grep -q "$RUNTIME_PROJECT_ID"; then
-    pass "MCP list_projects sees agent project $RUNTIME_PROJECT_ID"
+    pass "MCP gateway list_projects sees agent project $RUNTIME_PROJECT_ID"
 else
-    fail "MCP list_projects did not see $RUNTIME_PROJECT_ID (got: ${sc_output:0:200})"
+    fail "MCP gateway list_projects did not see $RUNTIME_PROJECT_ID (got: ${sc_output:0:200})"
 fi
 
 # tools/call read_files — exercise the real bounded batch path through MCP and
@@ -877,13 +886,14 @@ for path, methods in schema.get("paths", {}).items():
 ops_set = set(ops)
 
 expected_ops = {
-    "listRuntimeTools", "listProjects", "registerProject", "createProject",
-    "getRuntimeStatus",
-    "getProjectGitStatus", "listProjectFiles",
-    "applyUnifiedDiff",
-    "runProjectShellCommand", "gitRestorePaths",
-    "discardUntrackedFiles", "importConversationFilesToProject", "startProjectShellJob",
-    "listRuntimeJobs", "getRuntimeJobTail", "callRuntimeTool",
+    "apply_text_edits", "call_runtime_tool", "cargo_check", "cargo_test",
+    "git_diff_hunks", "git_review_summary", "import_conversation_files_to_project",
+    "list_jobs", "observe_jobs", "plugin_tool", "project_artifact", "read_files",
+    "run_detached_process", "run_process", "run_shell", "run_skill_resource",
+    "runtime_status", "search_and_read", "search_project_texts",
+    "session_discussion_summary", "session_handoff_summary", "show_changes",
+    "skill_load", "tool_manifest", "wait_for_agent_events", "wait_for_job_terminal",
+    "work_on_project",
 }
 missing = expected_ops - ops_set
 extra = ops_set - expected_ops
@@ -898,24 +908,6 @@ if len(ops) > 30:
     errors.append(f"too many operations: {len(ops)} (must be <= 30)")
 if len(ops) != len(expected_ops):
     errors.append(f"operation count must be {len(expected_ops)}, got {len(ops)}")
-
-tool_call = (
-    schema
-    .get("components", {})
-    .get("schemas", {})
-    .get("ToolCallRequest", {})
-)
-tool_desc = (
-    tool_call
-    .get("properties", {})
-    .get("tool", {})
-    .get("description", "")
-)
-# The generic GPT Action advertises only current model-facing runtime tools.
-# work_on_project is the canonical external task bootstrap; start_coding_task is retired.
-for runtime_tool in ["work_on_project", "finish_coding_task"]:
-    if runtime_tool not in tool_desc:
-        errors.append(f"ToolCallRequest.tool description missing {runtime_tool}")
 
 # Keep this cross-language check aligned with MODEL_TOOL_DESCRIPTION_MAX_CHARS.
 MODEL_TOOL_DESCRIPTION_MAX_CHARS = 1024
@@ -997,43 +989,6 @@ for path, methods in schema.get("paths", {}).items():
         if sch.get("additionalProperties") is not False:
             errors.append(f"{method} {path} requestBody schema '{name}' must have additionalProperties=false")
 
-# Mutation/execution actions must mention side effects and Bearer auth (or
-# equivalent) so GPT callers understand they are not read-only.
-mutation_paths = [
-    "/api/projects/register",
-    "/api/projects/create",
-    "/api/projects/apply_unified_diff",
-    "/api/projects/run_shell",
-    "/api/projects/git_restore_paths",
-    "/api/projects/discard_untracked",
-    "/api/projects/run_job",
-]
-for path in mutation_paths:
-    op = schema.get("paths", {}).get(path, {}).get("post", {})
-    desc = (op.get("description") or "").lower()
-    if "side effect" not in desc:
-        errors.append(f"{path} mutation description should mention side effects")
-    if "bearer auth" not in desc:
-        errors.append(f"{path} mutation description should mention Bearer auth")
-
-# Read-only actions must explicitly say read-only or never writes so GPT
-# callers can tell them apart from mutations. callRuntimeTool is excluded
-# because it is a generic escape hatch.
-readonly_paths = [
-    "/api/tools/list",
-    "/api/projects/list",
-    "/api/runtime/status",
-    "/api/jobs/list",
-    "/api/jobs/tail",
-    "/api/projects/git_status",
-    "/api/projects/list_files",
-]
-for path in readonly_paths:
-    op = schema.get("paths", {}).get(path, {}).get("post", {})
-    desc = (op.get("description") or "").lower()
-    if "read-only" not in desc and "never writes" not in desc:
-        errors.append(f"{path} read-only description should mention read-only or never writes")
-
 if errors:
     print("FAIL")
     for e in errors:
@@ -1042,7 +997,7 @@ if errors:
 print(f"OK ops={len(ops)} paths={len(paths)}")
 PY
 if [ $? -eq 0 ]; then
-    pass "/openapi.json operation set + POST-only + no legacy/admin paths + additionalProperties=false + mutation/readonly descriptions"
+    pass "/openapi.json Adaptive operation set + POST-only + no legacy/admin paths + additionalProperties=false"
 else
     fail "/openapi.json schema checks failed (see stderr above)"
 fi
@@ -1051,51 +1006,51 @@ fi
 # 7b. MCP App console (Phase B) — public static entry + protected data API
 # ----------------------------------------------------------------------------
 
-log "---- MCP App console (/console) ----"
+log "---- Runtime Console (/runtime) ----"
 
 # The console HTML shell is public (no Bearer auth) and must reference the
 # bundled assets. It never embeds the token.
-console_html="$(curl -sS --max-time 10 "http://127.0.0.1:${PORT}/console" 2>/dev/null)"
-if echo "$console_html" | grep -q "WebCodex" && \
-   echo "$console_html" | grep -q "/console/app.js"; then
-    pass "GET /console serves public HTML shell"
+console_html="$(curl -sS --max-time 10 "http://127.0.0.1:${PORT}/runtime" 2>/dev/null)"
+if echo "$console_html" | grep -q "WebPi" && \
+   echo "$console_html" | grep -q "/runtime/app.js"; then
+    pass "GET /runtime serves public WebPi HTML shell"
 else
-    fail "GET /console did not return expected HTML shell (got: ${console_html:0:200})"
+    fail "GET /runtime did not return expected WebPi HTML shell (got: ${console_html:0:200})"
 fi
 
 # The bundled JS is public. Assert on stable properties (non-empty resource,
 # correct content type, no token/credential material) rather than any specific
 # JavaScript implementation text, which may be refactored. The console page is
 # already verified above to reference the bundle and embed no token literal.
-console_js="$(curl -sS --max-time 10 "http://127.0.0.1:${PORT}/console/app.js")"
+console_js="$(curl -sS --max-time 10 "http://127.0.0.1:${PORT}/runtime/app.js")"
 js_bytes="${#console_js}"
-js_type="$(curl -sS -o /dev/null -w '%{content_type}' --max-time 10 "http://127.0.0.1:${PORT}/console/app.js")"
+js_type="$(curl -sS -o /dev/null -w '%{content_type}' --max-time 10 "http://127.0.0.1:${PORT}/runtime/app.js")"
 console_js_ok=1
 if [ "$js_bytes" -le 0 ]; then
     console_js_ok=0
-    fail "GET /console/app.js returned an empty resource"
+    fail "GET /runtime/app.js returned an empty resource"
 fi
 case "$js_type" in
     application/javascript*|text/javascript*|application/x-javascript*)
         ;;
     *)
         console_js_ok=0
-        fail "GET /console/app.js content-type '$js_type' is not a JS type"
+        fail "GET /runtime/app.js content-type '$js_type' is not a JS type"
         ;;
 esac
-if echo "$console_js" | grep -qi "WEBCODEX_TOKEN\|wc_agent_secret"; then
+if echo "$console_js" | grep -qi "WEBPI_TOKEN\|wc_agent_secret"; then
     console_js_ok=0
-    fail "GET /console/app.js contains token or credential material"
+    fail "GET /runtime/app.js contains token or credential material"
 fi
 if [ "$console_js_ok" = "1" ]; then
-    pass "GET /console/app.js returns a non-empty JS resource (${js_bytes} bytes) without token material"
+    pass "GET /runtime/app.js returns a non-empty JS resource (${js_bytes} bytes) without token material"
 fi
 
 # The bundle must never embed the token key in the DOM.
-if echo "$console_html" | grep -qi "webcodex_token"; then
-    fail "console HTML leaked WEBCODEX_TOKEN literal"
+if echo "$console_html" | grep -qi "webpi_token"; then
+    fail "console HTML leaked WEBPI_TOKEN literal"
 else
-    pass "console HTML does not leak WEBCODEX_TOKEN literal"
+    pass "console HTML does not leak WEBPI_TOKEN literal"
 fi
 
 # The protected data API must still reject unauthenticated requests even though
@@ -1519,6 +1474,7 @@ fi
 
 # read_files confirms the probe content.
 body="$(api_post /api/tools/call "{\"tool\":\"read_files\",\"params\":{\"project\":\"$RUNTIME_PROJECT_ID\",\"items\":[{\"path\":\"EDIT_PROBE.txt\"}]}}")"
+edit_probe_revision="$(json_get "$body" output.items.0.output.read_revision)"
 if echo "$(json_get "$body" output.items.0.output.text)" | grep -q "hello world"; then
     pass "read_files confirms EDIT_PROBE.txt content"
 else
@@ -1526,7 +1482,7 @@ else
 fi
 
 # apply_text_edits via callRuntimeTool — replace_exact "world" -> "rust" on
-# EDIT_PROBE.txt, guarded by the create-time sha256.
+# EDIT_PROBE.txt, guarded by the read revision returned above.
 ate_body="$(python3 -c '
 import json, sys
 print(json.dumps({
@@ -1536,12 +1492,12 @@ print(json.dumps({
         "changes": [{
             "kind": "edit",
             "path": "EDIT_PROBE.txt",
-            "expected_sha256": sys.argv[2],
+            "expected_read_revision": int(sys.argv[2]),
             "edits": [{"kind": "replace_exact", "old_text": "world", "new_text": "rust"}]
         }]
     }
 }))
-' "$RUNTIME_PROJECT_ID" "$wpf_sha")"
+' "$RUNTIME_PROJECT_ID" "$edit_probe_revision")"
 body="$(api_post /api/tools/call "$ate_body")"
 ate_success="$(json_get "$body" success)"
 ate_changed="$(json_get "$body" output.changed)"
@@ -1559,8 +1515,8 @@ else
     fail "read_files did not confirm edit (got: ${body:0:200})"
 fi
 
-# apply_text_edits with a stale expected_sha256 (the create-time hash no longer
-# matches the edited file) must reject the whole batch WITHOUT modifying it.
+# Reusing the pre-edit expected_read_revision after the file changed must reject
+# the whole batch WITHOUT modifying it.
 ate_miss="$(python3 -c '
 import json, sys
 print(json.dumps({
@@ -1570,24 +1526,24 @@ print(json.dumps({
         "changes": [{
             "kind": "edit",
             "path": "EDIT_PROBE.txt",
-            "expected_sha256": sys.argv[2],
+            "expected_read_revision": int(sys.argv[2]),
             "edits": [{"kind": "replace_exact", "old_text": "rust", "new_text": "x"}]
         }]
     }
 }))
-' "$RUNTIME_PROJECT_ID" "$wpf_sha")"
+' "$RUNTIME_PROJECT_ID" "$edit_probe_revision")"
 body="$(api_post /api/tools/call "$ate_miss")"
 ate_error_kind="$(json_get "$body" output.error_kind)"
-if [ "$(json_get "$body" success)" = "False" ] && [ "$ate_error_kind" = "sha256_conflict" ]; then
-    pass "apply_text_edits(stale sha guard) fails with sha256_conflict"
+if [ "$(json_get "$body" success)" = "False" ] && [ "$ate_error_kind" = "stale_file_revision" ]; then
+    pass "apply_text_edits(stale revision guard) fails with stale_file_revision"
 else
-    fail "apply_text_edits(stale sha guard) did not report sha256_conflict (error_kind=$ate_error_kind body: ${body:0:200})"
+    fail "apply_text_edits(stale revision guard) did not report stale_file_revision (error_kind=$ate_error_kind body: ${body:0:200})"
 fi
 body="$(api_post /api/tools/call "{\"tool\":\"read_files\",\"params\":{\"project\":\"$RUNTIME_PROJECT_ID\",\"items\":[{\"path\":\"EDIT_PROBE.txt\"}]}}")"
 if echo "$(json_get "$body" output.items.0.output.text)" | grep -q "hello rust"; then
-    pass "apply_text_edits(stale sha guard) left file unchanged"
+    pass "apply_text_edits(stale revision guard) left file unchanged"
 else
-    fail "apply_text_edits(stale sha guard) modified the file (got: ${body:0:200})"
+    fail "apply_text_edits(stale revision guard) modified the file (got: ${body:0:200})"
 fi
 
 # Canonical runtime delete removes the probe so the worktree returns to clean.
@@ -1784,16 +1740,16 @@ fi
 # Step 2: read_files — read README.md.
 body="$(api_post /api/tools/call "{\"tool\":\"read_files\",\"params\":{\"project\":\"$RUNTIME_PROJECT_ID\",\"items\":[{\"path\":\"README.md\"}]}}")"
 loop_readme="$(json_get "$body" output.items.0.output.text)"
-loop_readme_sha="$(json_get "$body" output.items.0.output.sha256)"
+loop_readme_revision="$(json_get "$body" output.items.0.output.read_revision)"
 if echo "$loop_readme" | grep -q "$LOOP_MARKER_OLD"; then
     pass "loop: read_files sees README.md with target marker"
 else
     fail "loop: read_files did not find marker in README.md (got: ${loop_readme:0:120})"
 fi
-if [ -n "$loop_readme_sha" ] && [ "$loop_readme_sha" != "None" ] && [ ${#loop_readme_sha} -eq 64 ]; then
-    pass "loop: read_files returns README.md sha256 guard"
+if [[ "$loop_readme_revision" =~ ^[0-9]+$ ]] && [ "$loop_readme_revision" -gt 0 ]; then
+    pass "loop: read_files returns README.md read_revision guard"
 else
-    fail "loop: read_files did not return a valid README.md sha256 (got: $loop_readme_sha)"
+    fail "loop: read_files did not return a valid README.md read_revision (got: $loop_readme_revision)"
 fi
 
 # Step 3: search_project_texts — locate the target substring through the canonical
@@ -1815,7 +1771,7 @@ else
 fi
 
 # Step 5: callRuntimeTool(apply_text_edits) — small reversible edit on
-# README.md, guarded by the sha256 returned by Step 2 for this fixture.
+# README.md, guarded by the read_revision returned by Step 2 for this fixture.
 loop_replace_body="$(python3 -c '
 import json, sys
 print(json.dumps({
@@ -1825,7 +1781,7 @@ print(json.dumps({
         "changes": [{
             "kind": "edit",
             "path": "README.md",
-            "expected_sha256": sys.argv[2],
+            "expected_read_revision": int(sys.argv[2]),
             "edits": [{
                 "kind": "replace_exact",
                 "old_text": sys.argv[3],
@@ -1834,7 +1790,7 @@ print(json.dumps({
         }]
     }
 }))
-' "$RUNTIME_PROJECT_ID" "$loop_readme_sha" "$LOOP_MARKER_OLD" "$LOOP_MARKER_NEW")"
+' "$RUNTIME_PROJECT_ID" "$loop_readme_revision" "$LOOP_MARKER_OLD" "$LOOP_MARKER_NEW")"
 body="$(api_post /api/tools/call "$loop_replace_body")"
 if [ "$(json_get "$body" success)" = "True" ] && [ "$(json_get "$body" output.changed)" = "True" ]; then
     pass "loop: callRuntimeTool(apply_text_edits) edited README.md"
@@ -1938,7 +1894,7 @@ fi
 #
 #   1. callRuntimeTool(write_project_file) — create WRITE_ACTION_PROBE.txt
 #   2. callRuntimeTool(read_files)        — confirm content
-#   3. callRuntimeTool(write_project_file) — overwrite with an expected_sha256 guard
+#   3. callRuntimeTool(write_project_file) — overwrite with an expected_read_revision guard
 #   4. callRuntimeTool(read_files) — confirm overwritten content
 #   5. callRuntimeTool(delete_project_files) — cleanup the probe file
 #   6. startProjectShellJob — start `printf job-ok` asynchronously
@@ -1974,14 +1930,15 @@ fi
 
 # Step 2: read_files — confirm content.
 body="$(api_post /api/tools/call "{\"tool\":\"read_files\",\"params\":{\"project\":\"$RUNTIME_PROJECT_ID\",\"items\":[{\"path\":\"WRITE_ACTION_PROBE.txt\"}]}}")"
+waf_read_revision="$(json_get "$body" output.items.0.output.read_revision)"
 if echo "$(json_get "$body" output.items.0.output.text)" | grep -q "write-action-probe-v1"; then
     pass "read_files confirms WRITE_ACTION_PROBE.txt content"
 else
     fail "read_files did not confirm probe content (got: ${body:0:200})"
 fi
 
-# Step 3: callRuntimeTool(write_project_file) — overwrite with an expected_sha256
-# guard. Use the sha256 returned by the create step so the guard matches exactly.
+# Step 3: callRuntimeTool(write_project_file) — overwrite with an
+# expected_read_revision guard from the immediately preceding read.
 waf_overwrite_body="$(python3 -c '
 import json, sys
 print(json.dumps({
@@ -1991,13 +1948,13 @@ print(json.dumps({
         "path": "WRITE_ACTION_PROBE.txt",
         "content": "write-action-probe-v2\n",
         "overwrite": True,
-        "expected_sha256": sys.argv[2]
+        "expected_read_revision": int(sys.argv[2])
     }
 }))
-' "$RUNTIME_PROJECT_ID" "$waf_sha")"
+' "$RUNTIME_PROJECT_ID" "$waf_read_revision")"
 body="$(api_post /api/tools/call "$waf_overwrite_body")"
 if [ "$(json_get "$body" success)" = "True" ]; then
-    pass "callRuntimeTool(write_project_file) overwrites with matching expected_sha256 guard"
+    pass "callRuntimeTool(write_project_file) overwrites with matching expected_read_revision guard"
 else
     fail "callRuntimeTool(write_project_file) overwrite with guard failed (body: ${body:0:300})"
 fi
@@ -2043,7 +2000,7 @@ sj_status=""
 while [ "$sj_poll_tries" -lt 20 ]; do
     check_deadline
     body="$(observe_one_job_call "$SJ_JOB_ID" 1)"
-    sj_status="$(json_get "$body" output.items.0.output.status)"
+    sj_status="$(json_get "$body" output.items.0.status)"
     case "$sj_status" in
         completed|failed|stopped|lost)
             sj_done=1

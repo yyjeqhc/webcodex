@@ -79,6 +79,7 @@ chrono = { version = "0.4", features = ["serde"] }
 anyhow = "1"
 toml = "0.8"
 base64 = "0.22"
+image = { version = "0.25.9", default-features = false, features = ["jpeg", "png"] }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 url = "2"
 sha2 = "0.10"

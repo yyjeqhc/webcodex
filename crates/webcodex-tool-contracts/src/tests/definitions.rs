@@ -580,7 +580,12 @@ fn adaptive_runtime_direct_declarations_are_visible_ranked_and_unique() {
             continue;
         };
         assert!(definition.visibility.is_model_visible());
-        assert!(seen_ranks.insert(rank, definition.name).is_none());
+        if let Some(previous) = seen_ranks.insert(rank, definition.name) {
+            panic!(
+                "adaptive runtime direct rank {rank} is shared by {previous} and {}",
+                definition.name
+            );
+        }
     }
 
     let derived = adaptive_runtime_direct_tool_definitions();
@@ -914,7 +919,7 @@ fn run_skill_resource_contract_distinguishes_live_configured_and_managed_fences(
     let list_spec = spec_named(&extension_specs, "skill_list")
         .description
         .to_ascii_lowercase();
-    assert!(list_spec.contains("webcodex does not modify configured skill roots"));
+    assert!(list_spec.contains("webpi does not modify configured skill roots"));
     assert!(list_spec.contains("run_skill_resource"));
     assert!(!list_spec.contains("configured live read-only skills"));
 

@@ -1,136 +1,140 @@
-# Release Readiness Checklist
+# WebPi Release Readiness Checklist
 
-This checklist is for final release readiness before tagging, publishing artifacts, updating client schemas, or deploying a new WebCodex server/Runner/runtime build.
+## PUBLIC RELEASE IS FAIL-CLOSED
 
-It governs release/publish rollouts and deployment of published releases. An explicitly requested development/dogfood deployment of a reviewed commit is governed by [`AGENTS.md`](../AGENTS.md) and [Runner Release Process Notes](agent/release-process.md): it does not require the version/tag/publication/artifact steps below, but it still uses the focused post-deployment smoke in section 10 where applicable.
+The current WebPi tree does **not** have an enabled public packaging/publication pipeline. `.github/workflows/release-build.yml` keeps its public release candidate path behind `if: ${{ false }}`, and `.github/workflows/release-image.yml` keeps public server-image publication behind the same fail-closed guard. Those guards are authoritative.
 
-Do not create tags, push commits, publish npm packages, create GitHub Releases, rewrite history, deploy, or touch secrets while running this checklist unless the operator explicitly requests that action.
+**Do not tag, publish npm, publish a GitHub Release, or publish GHCR from this checklist while those guards remain disabled.** Historical npm/Desktop/GHCR machinery that is still present in scripts or workflow bodies is retained implementation/reference material, not a supported WebPi release path. In particular, the current source tree does not ship a supported Desktop implementation.
 
-## 1. Source Validation
+An explicitly requested development/dogfood deployment of a reviewed WebPi commit is a different operation. It is governed by [`AGENTS.md`](../AGENTS.md), [Runner Release Process Notes](agent/release-process.md), WebPi service authority, and the post-deployment acceptance gate below. It does not imply that public artifact publication is enabled.
 
-After the release-prep PR is squash-merged, select the exact `origin/main` commit that would be tagged. Final pre-tag validation is a reviewed GitHub Actions workflow, not a sequence of hand-run release-host commands:
+## 1. Source and workspace gate
 
-```bash
-python3 scripts/release_operator.py readiness-start \
-  --source-sha <MAIN_COMMIT> \
-  --state-file <STATE_FILE>
+Before any deployable WebPi candidate is considered:
 
-python3 scripts/release_operator.py readiness-status \
-  --state-file <STATE_FILE> \
-  --wait-secs 3600
-```
+- identify the exact Git commit and branch;
+- require a clean, isolated candidate worktree rather than packaging an unrelated dirty checkout;
+- require `git diff --check`;
+- record the exact Server and Runner build identity;
+- keep existing user work and unrelated dirty changes out of the candidate;
+- do not create tags, push commits, rewrite history, deploy, publish, or touch credentials without the authority required for that operation.
 
-`readiness-start` first requires GitHub `main` to equal `<MAIN_COMMIT>` and requires exactly one successful `push` CI run for that exact source. It records that CI run id and attempt in the mode-0600 operator-local state before dispatch, then passes the proof into `.github/workflows/release-readiness.yml`. The workflow re-fetches that exact immutable CI attempt with read-only Actions authority and fails closed unless it is the successful `.github/workflows/ci.yml` main-push run for the requested source. Readiness never tags, publishes, deploys, uploads release candidates, rebuilds the six native release archives, or produces any of the four formal Desktop distribution candidates.
+For a future public release, the candidate must first land on `main` and obtain the exact-main CI evidence described by `.github/workflows/release-readiness.yml`. A local pass is useful evidence but is not a substitute for that immutable remote proof.
 
-If dispatch delivery becomes uncertain or the run is not resolved before the short start timeout, **do not create a second state file and do not redispatch**. Continue with `readiness-status` on the original state; its unique request id recovers the exact workflow run when present. Only terminal `success` (operator exit 0) satisfies the pre-tag gate. A nonterminal/unresolved status is not release approval.
+## 2. Current CI and readiness evidence
 
-The evidence graph deliberately avoids making scarce native runners part of every development cycle. Main-push daily CI remains the common correctness authority: it runs formatting/frontend/workspace boundaries, complete Linux Rust package shards, the deterministic release static/tooling contract, and path-aware Windows x64, macOS Apple-Silicon, Desktop, and amd64 Server-image checks. Release readiness first proves that exact CI attempt, then invokes `extended-native.yml` for native Linux ARM64, macOS Intel/Desktop, and Windows ARM64/Desktop validation of the same source while release-specific WebSocket/polling zero-config E2E and coding-loop compare eval run independently. After E2E/eval succeed, readiness also builds the disposable native `linux/amd64` and `linux/arm64` Server images, verifies runtime/health/non-root/bootstrap generation, and discards them. The six native release-profile/ABI/PE/Mach-O/package surfaces and four formal Desktop distribution artifacts are intentionally **not** built before tagging; `.github/workflows/release-build.yml` remains their single authoritative builder after the immutable tag exists. The eval job explicitly builds debug Server/Runner fixtures before running the harness so cold-runner compilation is not misclassified as a service-start timeout.
+Current WebPi validation is split across normal CI, Windows-specific checks, extended-native checks and the release-readiness workflow. Review the workflow definitions at the exact candidate commit; do not assume historical release behavior.
 
-For focused diagnosis outside the final workflow, the underlying commands remain available, but a local pass does not replace the exact-source readiness run.
+Important current contracts:
 
-## 2. Focused Runtime Tests
+- `.github/workflows/webpi-checks.yml` validates the WebPi Windows surface, builds `webpi`, `webpi-server`, and `webpi-runner`, runs Rust/Python/JavaScript regressions, the isolated HTTP/Pi acceptance fixture, formatting and whitespace checks.
+- `.github/workflows/release-readiness.yml` is a non-publication gate. It proves the exact successful `main` CI attempt, invokes extended-native validation, runs WebSocket/polling E2E, coding-loop compare evaluation, and disposable server-image validation.
+- `.github/workflows/release-build.yml` contains retained candidate-packaging machinery but its public candidate path is disabled.
+- `.github/workflows/release-image.yml` contains retained container-publication machinery but its public publication path is disabled.
 
-During implementation/review, run focused lanes when touching runtime metadata, schemas, OpenAPI, MCP, session, handoff, validation, or coding-task behavior. Exact-main CI owns the full Linux package suites plus deterministic metadata/schema/OpenAPI/MCP and release-tooling evidence; release-readiness binds that successful CI attempt instead of repeating it. Re-run an individual lane only to diagnose a failure or when a review explicitly requires separate evidence.
+If the delivery or observation of a remote workflow becomes uncertain, keep observing the same durable request/run identity. Do not dispatch a second copy merely because a response was lost.
 
-## 3. Product Documentation Check
+## 3. Focused runtime validation
 
-Confirm the user-facing docs tell one story:
+During implementation and review, use the smallest sufficient focused suites for the changed contract, then broaden before deployment. Relevant areas include:
 
-- README states the product position in the first screen and clearly separates full daily use from temporary `share`.
-- Full Setup has one recommended regular Server + Runner path for ordinary daily use; Quick Trial stays focused on temporary single-project `share`.
-- Concepts explains server, Runner, Runner-registered projects, runtime project ids, ToolRuntime, MCP, GPT Actions, session, handoff, validation, review/hygiene, and `run_shell` as a bounded shell primitive for real shell semantics or short related command chains.
-- Architecture starts with client/server/Runner/codebase, security-boundary, and runtime-module diagrams before Rust module notes.
-- MCP and GPT Actions both say they call the same WebCodex ToolRuntime.
-- Security explains what the model can and cannot do, project access, Runner trust boundary, shell/job risk, token handling, session/audit evidence, and revocation.
-- The release PR / GitHub Release notes read like external release notes and include highlights, compatibility or breaking changes, known limitations, upgrade notes, and validation. Do not restore per-version release-note files as a second documentation source.
-- Roadmap stays short and does not promise a full IDE replacement, autonomous ops, arbitrary computer use, or universal client compatibility.
+- tool schemas/OpenAPI/MCP/GPT Actions;
+- file/search/edit stale-write and project/path fences;
+- Git review and recovery;
+- structured processes, Jobs and continuation;
+- Goal/AgentTask/WorkflowSession state;
+- authentication/authorization and credential redaction;
+- plugin/Pi trust and reload;
+- service lifecycle, deployment manifest and rollback identity;
+- Windows/WSL cross-platform behavior.
 
-Run `python3 scripts/check_markdown_links.py` (also included in `release_check.sh`) and require zero missing repository-local links. Product narrative and allowed legacy-term matches remain review judgments in the release-prep PR; the readiness workflow automates only deterministic checks.
+A compile-only result, zero-test filter, HTTP 200, or process-start signal is not a complete validation result. Where a behavior defect is fixed, preserve a meaningful RED -> GREEN test when practical.
 
-## 4. Legacy Surface Guard
+## 4. Product and documentation gate
 
-Scan docs and scripts for stale onboarding guidance:
+Current user/model/operator surfaces must describe **WebPi** consistently:
 
-```bash
-rg "run_codex|Codex delegation|retained runner|future explicit opt-in|WEBCODEX_ENABLE_LEGACY_CODEX_RUN|PROJECTS_CONFIG|server_static|/api/codex|api/codex|projects.toml" README.md README.zh-CN.md docs deploy scripts SECURITY.md
-```
+- public programs are `webpi`, `webpi-server`, and `webpi-runner`;
+- current environment/configuration is `WEBPI_*`;
+- MCP and GPT Actions call the same WebPi ToolRuntime;
+- supported installation/deployment guidance must match files and workflows that actually exist in the current tree;
+- retired Desktop/public-release material must be explicitly marked historical or fail-closed rather than presented as a current recommendation.
 
-Allowed matches are negative statements, release-note breaking changes, guard tests, and deployment comments that explicitly say the legacy path is removed or not required.
+Do not mechanically rename stable compatibility identifiers. The identity contract in [`WEBPI_IDENTITY.md`](WEBPI_IDENTITY.md) intentionally retains internal `webcodex*` Rust/package names, the `@yyjeqhc/webcodex-plugin-sdk` package id, `webcodex-plugin-v1`, `webcodex-runner/1`, `wc_*` durable ids and other documented persistence/wire identifiers.
 
-Do not allow docs that ask users to configure server-side project onboarding, imply legacy routes exist, imply `run_codex` exists, or describe retained runner / future opt-in behavior as the current plan.
+Run the WebPi brand/document-contract tests and the repository-local Markdown link checker. Any remaining historical `WebCodex` mention should be explainable as an explicit upstream/reference/compatibility or retired-history statement.
 
-## 5. E2E Smoke
+## 5. E2E and task-quality gate
 
-After exact-main CI proof succeeds, the release-readiness workflow builds dedicated debug `webcodex-server` / `webcodex-runner` fixtures once for both supported zero-config transports while the compare eval runs independently. Disposable Server-image validation waits for both release-specific gates. The debug fixtures and images are never uploaded or promoted; `.github/workflows/release-build.yml` remains the only native release-candidate producer after the immutable tag exists.
+For a candidate intended for deployment, exercise a representative coding loop rather than only isolated endpoints:
 
-The underlying smoke commands remain:
+1. bootstrap project/session context;
+2. inspect/read/search;
+3. perform one safe edit in an isolated fixture;
+4. demonstrate a failing validation when the scenario requires it;
+5. fix and obtain GREEN validation;
+6. review bounded Git/workspace changes;
+7. finish with validation evidence and no unresolved unknown outcome.
 
-```bash
-bash scripts/e2e_zero_config_ws.sh
-E2E_TRANSPORT=polling bash scripts/e2e_zero_config_ws.sh
-```
+Track result size, redundant Runner/tool round trips, approval interruptions, retries and elapsed time where they are meaningful. A performance change is accepted only against a comparable baseline without reducing correctness or evidence quality.
 
-These commands remain useful for diagnosis, but do not rerun them manually after a successful readiness workflow merely to duplicate evidence. They must never target a production repository; any write checks stay within disposable probe files or a temporary project.
+The release-readiness workflow owns the remote WebSocket/polling zero-config E2E and compare-eval evidence for a future exact-main release candidate. Local invocations remain diagnostic evidence, not publication authority.
 
-## 6. Eval Harness
+## 6. Security and leakage gate
 
-The exact-source release-readiness workflow runs `EVAL_MODE=compare bash scripts/eval_coding_loop.sh`. Run it separately only for focused diagnosis. The eval harness measures scripted WebCodex tool-call mechanics; it is not a full model-behavior evaluation.
+Confirm that:
 
-## 7. Security And Leakage Checks
+- no secret, `.env`, credential file, token, private key or Authorization value was printed or committed;
+- account/admin/pairing/token-management authority is not accidentally exposed through model-facing MCP/GPT tools;
+- project/path/symlink/reparse and stale-revision fences remain fail-closed;
+- shell dialects are explicit, and structured process tools are preferred unless real shell semantics are required;
+- plugin/Pi package trust still follows discover -> inspect -> exact approval -> reload -> describe -> call;
+- deployment/restart/rollback uses its normal service scopes and supervisor protocol rather than an alternate bypass;
+- uncertain execution remains `unknown`/attention-required until reconciled.
 
-Confirm:
+## 7. Development/dogfood deployment gate
 
-- No secrets, `.env`, credentials, token files, generated deployment env files, or Authorization headers were touched or printed.
-- `finish_coding_task` and `session_handoff_summary` compact outputs do not expose raw stdout/stderr bodies, command text, tails, excerpts, env values, tokens, or secrets.
-- `run_shell` is documented as a bounded shell primitive, while structured validators remain the default validation source.
-- Model-facing runtime docs keep admin, account, pairing, token-management, and Runner-token management outside MCP and GPT Actions.
+When the operator has explicitly requested deployment of a reviewed commit and the caller has WebPi service authority:
 
-## 8. Packaging And Artifact Checks
+1. isolate a clean candidate revision;
+2. run the relevant focused suites plus the complete pre-deploy smoke/regression matrix;
+3. review the exact candidate diff independently;
+4. record candidate commit/build identity and rollback target;
+5. run WebPi deployment preflight and require source/revision/generation alignment;
+6. deploy through WebPi service lifecycle authority only;
+7. treat a lost lifecycle response as uncertain and reconcile the same operation identity;
+8. verify the new exact build identity after the service reaches ready state.
 
-For every new binary and npm release, choose one candidate `<VERSION>` first and treat its tag and uploaded bytes as immutable once published:
+If `service:restart`/`service:deploy` is not granted, stop at the deployment boundary. Do not substitute a shell/service-manager path to evade the denial.
 
-- If `<VERSION>` already has a tag only because an earlier pre-publication attempt failed, reclaim it **before preflight** only through `python3 scripts/release_operator.py reclaim-tag --version <VERSION> --confirm v<VERSION> --root <EXACT_MAIN_WORKTREE>`. The command requires clean exact remote `main`, matching Cargo/npm versions, an annotated tag, no GitHub Release, no npm version, no active matching release-build, and no successful authoritative release-build. Keep failed historical runs as evidence. The normal Release check is authenticated; `--allow-public-release-check` is permitted only after the human operator separately confirms there is no draft Release.
-- Before pre-tag readiness, run `python3 scripts/release_operator.py preflight --version <VERSION> --source-sha <MAIN_COMMIT> --root <EXACT_MAIN_WORKTREE>`. It requires a clean exact source; matching workspace Cargo, npm, Desktop package, Desktop Cargo, and Tauri app versions; GitHub `main` at that source; an unused Git tag/GitHub Release/npm version; and usable GitHub/npm publication identities without printing credentials.
-- Prefer `python3 scripts/release_operator.py doctor --version <VERSION> --source-sha <MAIN_COMMIT> --root <EXACT_MAIN_WORKTREE>` before release day. `doctor` is read-only: it combines publication preflight, the five-way release-version fence, exact-main daily-CI proof, the explicit/reusable extended-native workflow, the six-platform npm runtime plus Windows x64/ARM64 and macOS Intel/Apple-Silicon Desktop workflow contract, draft-capable authenticated Release-list access, verifier parsing, required tool availability, and `actionlint` when installed. It validates that rare native runners stay out of ordinary CI and that the current macOS distribution path remains ad-hoc signed without paid Apple signing credentials. It reports all failed checks together and performs no tag, dispatch, draft, publish, or deployment mutation.
-- For normal operator flow, initialize one durable high-level plan with `release-init --version <VERSION> --source-sha <MAIN_COMMIT> --root <EXACT_MAIN_WORKTREE> --state-file <PLAN_STATE> --work-dir <PLAN_WORK_DIR>`, then use `release-resume --state-file <PLAN_STATE> --wait-secs <N>` and `release-status --state-file <PLAN_STATE>`. The plan automatically advances only safe-to-initiate/recoverable phases (readiness observation, bound build observation, same-run bundle collection, npm staging, draft verification) and stops with `needs_authorization` before tag creation, draft creation, and public publication. Existing low-level commands remain the recovery/debug primitives and the plan never substitutes a second dispatch after uncertainty.
-- `Cargo.toml`, every local WebCodex workspace entry in `Cargo.lock`, `npm/webcodex/package.json`, `apps/desktop/package.json`, `apps/desktop/src-tauri/Cargo.toml`, `apps/desktop/src-tauri/tauri.conf.json`, `manifest.example.json`, and the relevant package self-tests must agree on `<VERSION>` before tagging.
-- `npm/webcodex/manifest.json` is generated release metadata and is intentionally not tracked. Do not commit real checksums or create a post-tag checksum-only PR.
-- Build the six published runtime platforms (`linux-x64`, `linux-arm64`, `darwin-x64`, `darwin-arm64`, `win32-x64`, `win32-arm64`) natively from the exact `v<VERSION>` tag through the reviewed release-build workflow. Both Windows jobs and both macOS jobs stage their already-built and verified runtime binaries into the matching Desktop distribution without recompiling a second runtime. `win32-arm64` uses the native Windows ARM64 runner, `darwin-x64` uses GitHub's native Intel runner, and `darwin-arm64` uses native Apple Silicon. The unsigned macOS runtime bytes are the same release-build inputs used by the runtime archive; platform code signing may change the Mach-O bytes copied into the `.app`, so native evidence records both the unsigned input digest and the bundled signed digest rather than claiming byte-for-byte equality after signing.
-- Dispatch `release-build.yml` through `release_operator.py build-start` with a fresh mode-0600 state file, then observe that same state with `build-status`. The operator requires GitHub `main` and the remote annotated tag to resolve to the exact release source, injects one durable `rb_<24 hex>` request id into the workflow run name, and never blind-redispatches after an uncertain POST outcome. Only terminal success for the bound run/source satisfies the build gate.
-- For both `linux-x64` and `linux-arm64`, build in the native-architecture manylinux2014 userspace used by the release-build workflow. Before packaging, inspect all three ELF binaries with `readelf` and fail the release if any required `GLIBC_*` symbol version exceeds 2.17 or an unexpected host-specific `DT_NEEDED` dependency appears. The published Linux x64 and arm64 artifacts therefore share the glibc 2.17 floor.
-- Pin one `WEBCODEX_BUILT_AT` value for the release. Every final `webcodex`, `webcodex-server`, and `webcodex-runner` binary must report `<VERSION>`, the same concrete tag commit, `dirty=false`, and the shared `built_at`.
-- Windows packaging must use `scripts/package_release_artifact.ps1` in its default provenance-checked mode. `-AllowDevelopmentBuild` is for local/CI smoke only and its output must never be uploaded.
-- macOS verification and formal GitHub Release candidates use ad-hoc signing and are explicitly not notarized. This keeps Desktop distribution free of Apple Developer Program credentials. Native CI still verifies the app code signature, runtime identity, architecture, DMG contents, and exact release provenance. Gatekeeper may require the user to approve a newly downloaded build through **System Settings → Privacy & Security → Open Anyway**; do not instruct users to disable Gatekeeper globally. Developer ID signing and notarization can be introduced later as a separate distribution upgrade if the project chooses to pay for that trust path.
-- After all six native targets succeed, the release-build workflow must aggregate only artifacts from that same workflow run, verify every per-target SHA sidecar plus all four Desktop sidecars and native Mac signing evidence, and upload one `<ARCHIVE_STEM>-bundle`. For a real future `v<VERSION>` release the retained bundle contains the six unchanged native archives, both Windows Desktop installers, both macOS DMGs, `manifest.json`, one `SHA256SUMS` covering all ten downloadable product bytes, both Linux ELF reports, and `release-build.json`. `release-build.json` keeps the six runtime entries under `artifacts` and the four Desktop entries under `desktop_artifacts`; the npm manifest remains six-platform runtime-only.
-- The release control host collects that single assembled bundle instead of fetching six target artifacts independently. Use `python3 scripts/release_operator.py collect --run-id <RUN_ID> --source-sha <TAG_COMMIT> --tag v<VERSION> --output-dir <BUNDLE_DIR>` as the canonical path. `collect` resolves exactly one `*-bundle` artifact from the locked successful run, validates its run/source/expiry/SHA-256 metadata, downloads it by artifact id through the GitHub REST API (not `gh run download`), verifies the artifact zip digest, extracts it with bounded path/type/size checks, and validates `release-build.json`, `SHA256SUMS`, archive membership, and release manifest consistency before atomically exposing `<BUNDLE_DIR>`. It reuses `GH_TOKEN`/`GITHUB_TOKEN` or the current `gh auth` login without printing credentials. Never substitute an archive from another workflow run.
-- Create and validate the npm publication tree with `python3 scripts/release_operator.py stage-npm --bundle-dir <BUNDLE_DIR> --source-root <EXACT_TAG_WORKTREE> --output-dir <STAGE_DIR>`. It revalidates the retained bundle, requires a clean worktree at the immutable tag, extracts only the exact verified `linux-x64` binaries into a bounded temporary directory, then runs the existing staging helper and `npm_package_smoke.sh --binary-dir`. The release path never invokes Cargo and compares installed native files byte-for-byte with the retained CI candidates.
-- Create a draft GitHub Release and upload exactly the six native archives, both Windows Desktop installers, both macOS DMGs, and `SHA256SUMS` (eleven initial assets). Before making it public, run `python3 scripts/release_operator.py verify-draft --bundle-dir <BUNDLE_DIR>`; require the draft asset set, sizes, states, and GitHub-provided `sha256:` digests to match the retained bundle. Do not re-download the same retained draft bytes on the control host. The post-public `verify_public_release.py` run is the single full public-byte download/verification pass; Linux verification hashes the Desktop distributions but does not claim to prove macOS code signing/notarization.
-- Server container publication is owned by `.github/workflows/release-image.yml`, separate from the read-only `release-build.yml` candidate workflow. It runs only after a GitHub Release is public (or by guarded manual backfill of that already-public immutable tag), builds native `linux/amd64` and `linux/arm64` images from the exact annotated tag with the release build identity, verifies the non-root runtime, exact Server/CLI identity, health check, and absence of the Runner, then publishes immutable `v<VERSION>` / `<VERSION>` image tags (with SemVer `+` build metadata encoded as `_`, since Docker tags do not allow `+`). From the final immutable multi-arch digest it also generates one self-contained `webcodex-server-bootstrap.sh` from the reviewed publication-workflow source; that script embeds and materializes a Compose definition pinned to the exact image digest, which keeps guarded backfill usable for Releases whose application tags predate the deployment tooling. `webcodex-server-image.json` records the application source SHA, deployment-tooling source SHA, manifest/child digests, and bootstrap SHA-256. Existing Release assets are reconciled byte-for-byte on rerun; only the current latest stable GitHub Release may move the mutable `latest` tag.
-- GitHub creates the first GHCR package as private by default. On the first WebCodex Server image publication only, the repository owner must change `webcodex-server` package visibility to **Public** in GitHub Packages, then rerun the failed anonymous-availability gate. After activation, require anonymous inspection/pull availability for every release; do not distribute registry credentials to end users.
+## 8. Post-deployment acceptance smoke
 
-## 9. Release Sequence
+After a new WebPi Server/Runner/runtime build is actually deployed:
 
-For the normal path, the sequence below may be driven by one `release-init` + repeated `release-resume` calls. Each `needs_authorization` result is a hard human boundary, not a request for the operator to infer consent. Low-level commands listed in the individual steps remain authoritative recovery/debug operations.
+1. verify compact `runtime_status`, readiness and exact source/build alignment;
+2. verify loopback behavior before public exposure;
+3. verify the public origin/tunnel and protected-route authentication behavior;
+4. refresh MCP/GPT schemas if tool contracts changed;
+5. run focused tool discovery;
+6. enumerate the expected Runner/project;
+7. run a read-only coding flow (`work_on_project`, read/search, bounded `show_changes`, hygiene);
+8. run one small reversible edit in an explicitly safe fixture and review the diff;
+9. run representative Job continuation and, where applicable, Pi/plugin capability discovery;
+10. record the exact deployed revision, smoke evidence and rollback instructions.
 
-1. Put version bumps, release notes, platform docs, packaging changes, and release tests in **one release-prep PR** and squash-merge it into `main`. Resolve the exact merged commit. If an explicitly approved failed pre-publication tag for `<VERSION>` exists, run the guarded `release_operator.py reclaim-tag` now and require successful remote-ref reconciliation. Run `release_operator.py doctor` before the release window, then create the durable plan with `release-init`; require all three publication namespaces (Git tag, GitHub Release, npm version) to be unused, both publication identities to be available, and the exact merged source's main-push CI to be successful.
-2. `release-resume` dispatches one readiness run and keeps its nested durable state; repeated resumes observe that same run until terminal. The low-level equivalent is `readiness-start` plus `readiness-status --wait-secs 3600`. Readiness binds the exact successful daily-CI run id/attempt, independently revalidates that proof, calls `extended-native.yml` for Linux ARM64, macOS Intel/Desktop, and Windows ARM64/Desktop validation of the same source, then runs release-specific E2E/eval and the two disposable Server-image architectures. No six-platform native release-profile candidate is built in readiness. If dispatch/observation is uncertain, recover from the same state instead of blind redispatch.
-3. After readiness success, the plan stops at `awaiting_tag_authorization`. Only after explicit human authorization create and push the immutable annotated `v<VERSION>` tag at that exact source; never move it. On the next resume the plan reconciles the remote annotated tag and dispatches/observes one bound authoritative build. The low-level equivalent is `build-start --source-sha <TAG_COMMIT> --tag v<VERSION> --state-file <BUILD_STATE>` once, then `build-status --state-file <BUILD_STATE> --wait-secs 7200`. Require all six native targets, all four native Desktop candidates/smokes, native macOS ad-hoc code-signing evidence, and `assemble` to succeed in that one bound workflow run.
-4. After build success, `release-resume` collects only that run's `<ARCHIVE_STEM>-bundle` and records it in the plan. The low-level `collect` command remains available for recovery. Existing bundle bytes are reconciled against exact source/tag rather than silently replaced.
-5. The same resume stages npm from the retained bundle and exact tag worktree without recompilation. If the stage path already exists but the successful state transition was not durably recorded, the plan stops with `needs_reconciliation` rather than deleting/re-running it. `stage-npm` remains the low-level primitive.
-6. The plan then stops at `awaiting_draft_authorization`. After explicit authorization, create a **draft** GitHub Release and upload the six retained archives, all four retained Desktop distribution artifacts, and `SHA256SUMS`; the next resume runs the same `verify-draft` digest gate and requires all eleven initial GitHub asset digests/sizes/states to match retained bytes before advancing to the publication authorization boundary.
-7. After explicit human authorization, make the verified GitHub Release public. From the release control host only, publish npm from `<STAGE_DIR>/npm-package` (`npm publish --access public --registry https://registry.npmjs.org/`) and verify the requested version/dist-tag; `package.json` also pins the same public registry through `publishConfig`. If publish success is followed by delayed registry visibility, poll rather than publishing twice.
-8. Require `.github/workflows/release-image.yml` to finish successfully for the same public `v<VERSION>` Release. It must publish/reconcile `ghcr.io/yyjeqhc/webcodex-server:v<VERSION>` for both Linux architectures, attach the digest metadata plus the self-contained clone-free bootstrap, verify its public SHA-256 and embedded pinned-digest contract, and pass its anonymous GHCR availability gate. For the first-ever package only, make the package Public once and rerun that failed gate; do not rebuild or retag the immutable image merely to change visibility.
-9. From one trusted, well-connected Linux verification host, run `python3 scripts/verify_public_release.py <VERSION>`. This remains the single full public-byte acceptance pass for npm plus the six native GitHub archives and the Desktop distributions required by that release generation: none before `0.4.0`, three for the already-published `0.4.0`/`0.4.1` releases, and four from `0.4.2+` (adding Windows ARM64). The verifier cross-checks npm manifest / `SHA256SUMS` / GitHub asset digests, validates archive membership and foreign binary architecture without executing foreign binaries, hashes the bounded public Desktop bytes, and rechecks Linux GLIBC/`DT_NEEDED` metadata. It does not attempt to re-run macOS code-signature checks from Linux; native Mac extended/release-build validation owns the ad-hoc `codesign` and DMG execution evidence. The container workflow independently proves the public GHCR digest/platform contract.
+A static HTTP 200, an HTML error page, unauthenticated response, or merely observing that a process is alive is not acceptance.
 
-## 10. Post-Deployment Acceptance Smoke
+## 9. Re-enabling public publication
 
-After deploying a new server, Runner, or runtime build:
+Public publication may become a supported WebPi capability only through a separate reviewed change that:
 
-1. Refresh the GPT Action or MCP schema if runtime tool schemas changed.
-2. Run compact `runtime_status`.
-3. Run focused tool discovery.
-4. Run `list_projects` and pick a Runner-registered project marked appropriate for smoke when available.
-5. Run a read-only coding task: `work_on_project`, `read_files` or `search_project_texts`, `show_changes(include_diff=false)`, `workspace_hygiene_check`, and `finish_coding_task(summary_only=true)`.
-6. Run one small reversible edit task on a safe project and review the diff before accepting it.
+- removes the fail-closed workflow guards intentionally;
+- defines the WebPi artifact/package/container names and ownership;
+- removes or productizes the retired Desktop dependency instead of silently inheriting it;
+- validates the exact native platform matrix and provenance;
+- verifies immutable tag/source/version identity;
+- defines draft/publication/rollback/reconciliation behavior;
+- passes anonymous availability checks for any public package/container;
+- updates this checklist and its contract tests in the same change.
 
-Do not run production mutations as acceptance smoke.
+Until that work is complete, retained release scripts and disabled workflow bodies are **not** instructions to publish WebPi.

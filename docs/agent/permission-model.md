@@ -1,6 +1,6 @@
 # Authority Model — Decision Layer for Tool Execution
 
-Canonical contract for the WebCodex **authority mode**: how consequential tool
+Canonical contract for the WebPi **authority mode**: how consequential tool
 invocations are authorized, recorded, and bounded on a self-hosted deployment.
 
 This document describes the authority contract and current runtime behavior.
@@ -9,7 +9,7 @@ needed. Resolve disagreements using current callers, deployment requirements,
 and Git history; update implementation, tests, and documentation together while
 preserving the explicit authority boundaries below.
 
-**Audience:** agents and maintainers working on self-hosted WebCodex.
+**Audience:** agents and maintainers working on self-hosted WebPi.
 
 **Related docs (link, do not duplicate):**
 
@@ -27,16 +27,16 @@ preserving the explicit authority boundaries below.
 ## 1. Canonical configuration
 
 ```text
-WEBCODEX_AUTHORITY_MODE = trusted_agent | restricted
+WEBPI_AUTHORITY_MODE = trusted_agent | restricted
 ```
 
 | Rule | Behavior |
 |---|---|
-| Env var | `WEBCODEX_AUTHORITY_MODE` |
+| Env var | `WEBPI_AUTHORITY_MODE` |
 | Unset / empty / whitespace | **`trusted_agent`** (self-hosted single-operator product default), source reported as `default` |
-| Explicit known value | `trusted_agent` or `restricted`, source `env:WEBCODEX_AUTHORITY_MODE` |
+| Explicit known value | `trusted_agent` or `restricted`, source `env:WEBPI_AUTHORITY_MODE` |
 | Unknown non-empty value | Invalid configuration → consequential tools **fail closed** with reason `invalid_authority_mode:{value}` |
-| Legacy values | `dev_auto_approve` aliases `trusted_agent`; `require_approval` aliases `restricted`, in either environment variable. Legacy-only configuration reports `migrated_env:WEBCODEX_PERMISSION_MODE`. Both variables may agree; conflicting values and unknown legacy values (including `audit_only`) remain invalid. |
+| Legacy values | `dev_auto_approve` aliases `trusted_agent`; `require_approval` aliases `restricted`, in either environment variable. Legacy-only configuration reports `migrated_env:WEBPI_PERMISSION_MODE`. Both variables may agree; conflicting values and unknown legacy values (including `audit_only`) remain invalid. |
 
 The resolved mode and source are projected on `runtime_status` and on internal
 full startup diagnostics as the `authority` object. The canonical external

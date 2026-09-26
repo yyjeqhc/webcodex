@@ -5367,6 +5367,7 @@ dependencies = [
  "base64",
  "chrono",
  "futures-util",
+ "image",
  "libc",
  "quinn",
  "rcgen",

@@ -94,6 +94,7 @@ const DETACHED_INTERNAL_WATCHDOG: &str = "--webcodex-internal-detached-watchdog"
 const HANDSHAKE_READY: u8 = b'R';
 const HANDSHAKE_ACCEPT: u8 = b'C';
 const HANDSHAKE_ACCEPTED: u8 = b'A';
+#[cfg(any(unix, test))]
 const WATCHDOG_ARMED: &str = "WATCHDOG_ARMED";
 const SUPERVISOR_LOCK_FILE: &str = "supervisor.lock";
 const TREE_LOCK_FILE: &str = "tree.lock";

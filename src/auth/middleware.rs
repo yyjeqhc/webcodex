@@ -663,7 +663,7 @@ pub(crate) fn require_mcp_request_authority(
         return Err((
             403,
             "untrusted_request_authority",
-            "request Host is not an allowed WebCodex authority",
+            "request Host is not an allowed WebPi authority",
         ));
     }
 

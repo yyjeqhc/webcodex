@@ -1,4 +1,5 @@
 //! Bounded historical Job evidence. This contract carries no execution authority.
+use crate::operation_phase::OperationPhase;
 use crate::runner_job_lifecycle::RunnerJobLifecycle;
 use crate::runner_protocol::{ShellJobSnapshot, JOB_TERMINAL_RETENTION_SECS};
 
@@ -31,6 +32,18 @@ pub struct RetainedJobReceipt {
 }
 
 impl RetainedJobReceipt {
+    /// Project retained terminal evidence into the shared cross-domain phase.
+    /// No additional receipt field is persisted: the phase is deterministically
+    /// derived from the authoritative terminal Runner lifecycle already stored.
+    pub fn operation_phase(&self) -> Result<OperationPhase, &'static str> {
+        let lifecycle = RunnerJobLifecycle::from_wire(&self.snapshot.status)
+            .map_err(|_| "invalid receipt Job lifecycle")?;
+        if !lifecycle.is_terminal() {
+            return Err("receipt Job lifecycle is not terminal");
+        }
+        Ok(OperationPhase::from_runner_job(lifecycle, false))
+    }
+
     /// Validate before writing and after reading. A malformed row is never a
     /// source of active state or an implicit anonymous/owner partition.
     pub fn validate(&self, now: i64) -> Result<(), &'static str> {

@@ -1,6 +1,6 @@
-# WebCodex Runtime UI
+# WebPi Runtime UI
 
-This document is the visual contract for the Runtime Console. It is deliberately product-specific: WebCodex is a dense, local-first control surface for the hierarchy **Runner → Project → Session → Conversation**, not a generic AI landing page.
+This document is the visual contract for the Runtime Console. It is deliberately product-specific: WebPi is a dense, local-first control surface for the hierarchy **Runner → Project → Session → Conversation**, not a generic AI landing page.
 
 ## Design synthesis
 

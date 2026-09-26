@@ -1718,7 +1718,7 @@ fn result_app_html_is_display_only_and_uses_safe_dom_rendering() {
         "View diff",
         "Hide diff",
         "boundedDiffString",
-        "No bounded WebCodex presentation metadata was attached.",
+        "No bounded WebPi presentation metadata was attached.",
         "!presentation || typeof presentation !== \"object\" || presentation.version !== 1",
         "Committed review",
         "Cargo Test",

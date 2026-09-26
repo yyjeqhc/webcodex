@@ -164,7 +164,10 @@ pub struct ToolMetadata {
 }
 
 pub const RUNTIME_READ: &str = webcodex_core::authority::SCOPE_RUNTIME_READ;
+pub const DIAGNOSTICS_READ: &str = webcodex_core::authority::SCOPE_DIAGNOSTICS_READ;
 pub const RUNNER_MANAGE: &str = webcodex_core::authority::SCOPE_RUNNER_MANAGE;
+pub const SERVICE_RESTART: &str = webcodex_core::authority::SCOPE_SERVICE_RESTART;
+pub const SERVICE_DEPLOY: &str = webcodex_core::authority::SCOPE_SERVICE_DEPLOY;
 pub const SESSION_COLLABORATE: &str = webcodex_core::authority::SCOPE_SESSION_COLLABORATE;
 pub const COMMUNICATION_READ: &str = webcodex_core::authority::SCOPE_COMMUNICATION_READ;
 pub const COMMUNICATION_MANAGE: &str = webcodex_core::authority::SCOPE_COMMUNICATION_MANAGE;
@@ -185,6 +188,7 @@ pub const COMPUTER_CLIPBOARD_READ: &str = webcodex_core::authority::SCOPE_COMPUT
 pub const COMPUTER_CLIPBOARD_WRITE: &str = webcodex_core::authority::SCOPE_COMPUTER_CLIPBOARD_WRITE;
 pub const PLUGIN_INSPECT: &str = webcodex_core::authority::SCOPE_PLUGIN_INSPECT;
 pub const PLUGIN_INVOKE: &str = webcodex_core::authority::SCOPE_PLUGIN_INVOKE;
+pub const PLUGIN_MUTATE: &str = webcodex_core::authority::SCOPE_PLUGIN_MUTATE;
 pub const PLUGIN_MANAGE: &str = webcodex_core::authority::SCOPE_PLUGIN_MANAGE;
 pub const SSH_LOCAL: &str = webcodex_core::authority::SCOPE_SSH_LOCAL;
 

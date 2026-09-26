@@ -11,7 +11,9 @@ use super::shutdown::lock_unpoison;
 use super::RunnerPolicy;
 use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::path::{Path, PathBuf};
+#[cfg(unix)]
+use std::path::Path;
+use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
@@ -19,7 +21,9 @@ use std::time::{Duration, Instant};
 #[cfg(windows)]
 use webcodex_process::ManagedChild;
 
+#[cfg(unix)]
 const SSH_CONNECT_TIMEOUT_SECS: u64 = 10;
+#[cfg(unix)]
 const SSH_CONTROL_PERSIST_SECS: u64 = 300;
 const SSH_PIPE_DRAIN_TIMEOUT_SECS: u64 = 2;
 const SSH_REMOTE_CWD_MAX_BYTES: usize = 4096;
@@ -48,6 +52,7 @@ pub(crate) struct SshConnectionKey {
 }
 
 #[derive(Debug, Clone)]
+#[cfg_attr(windows, allow(dead_code))]
 struct SshConnection {
     key: SshConnectionKey,
     control_path: PathBuf,
@@ -60,6 +65,7 @@ struct SshConnection {
 }
 
 #[derive(Debug, Default)]
+#[cfg_attr(windows, allow(dead_code))]
 struct SshPoolState {
     control_root: Option<PathBuf>,
     entries: HashMap<SshConnectionKey, SshConnection>,
@@ -85,6 +91,7 @@ pub(crate) struct SshConnectionPool {
 /// reusable transport to invalidate.
 #[derive(Debug, Clone)]
 pub(crate) enum PreparedSshTransport {
+    #[cfg_attr(windows, allow(dead_code))]
     Mux(SshConnectionKey),
     // Constructed only by the Windows direct-OpenSSH path.
     #[cfg_attr(not(windows), allow(dead_code))]
@@ -99,12 +106,11 @@ pub(crate) enum PreparedSshTransport {
 /// The frame unwraps to the exact remote program in the same remote shell.
 #[derive(Debug, Clone)]
 pub(crate) enum PreparedSshProgramDelivery {
+    #[cfg_attr(windows, allow(dead_code))]
     Argv,
     // Constructed only by the Windows direct-OpenSSH path.
     #[cfg_attr(not(windows), allow(dead_code))]
-    StdinFramed {
-        program: Vec<u8>,
-    },
+    StdinFramed { program: Vec<u8> },
 }
 
 impl PreparedSshProgramDelivery {
@@ -593,6 +599,7 @@ impl SshConnectionPool {
         Command::new(ssh_executable())
     }
 
+    #[cfg(unix)]
     fn connection_for(
         &self,
         generation: u64,
@@ -809,6 +816,7 @@ pub(crate) fn is_transport_failure(
     .any(|marker| stderr.contains(marker))
 }
 
+#[cfg(unix)]
 fn ensure_control_root(state: &mut SshPoolState) -> Result<PathBuf, String> {
     if let Some(root) = &state.control_root {
         return Ok(root.clone());
@@ -845,6 +853,7 @@ fn ensure_control_root(state: &mut SshPoolState) -> Result<PathBuf, String> {
     )
 }
 
+#[cfg(unix)]
 fn establish_control_socket(connection: &SshConnection) -> Result<(), String> {
     let mut ssh = ssh_command(connection);
     ssh.arg("-o")
@@ -876,6 +885,7 @@ fn establish_control_socket(connection: &SshConnection) -> Result<(), String> {
     }
 }
 
+#[cfg(unix)]
 fn control_socket_healthy(connection: &SshConnection) -> bool {
     ssh_command(connection)
         .arg("-o")
@@ -897,6 +907,7 @@ fn control_socket_healthy(connection: &SshConnection) -> bool {
 /// are already running. Config changes and resource removal retire a transport
 /// this way; the bounded ControlPersist lifetime lets it exit after the last
 /// active channel finishes.
+#[cfg(unix)]
 fn retire_control_socket(connection: &SshConnection) {
     let _ = ssh_command(connection)
         .arg("-o")
@@ -913,6 +924,10 @@ fn retire_control_socket(connection: &SshConnection) {
         .status();
 }
 
+#[cfg(not(unix))]
+fn retire_control_socket(_connection: &SshConnection) {}
+
+#[cfg(unix)]
 fn close_control_socket(connection: &SshConnection) {
     let status = ssh_command(connection)
         .arg("-o")
@@ -932,6 +947,9 @@ fn close_control_socket(connection: &SshConnection) {
     }
 }
 
+#[cfg(not(unix))]
+fn close_control_socket(_connection: &SshConnection) {}
+
 /// `-O exit` is the normal path. Some OpenSSH builds can reject the control
 /// request after a transport-side failure even though the master is still
 /// alive. The socket lives in our private 0700 directory, so a successful
@@ -946,11 +964,6 @@ fn release_control_master_after_failed_exit(connection: &SshConnection) {
             let _ = libc::kill(pid, libc::SIGTERM);
         }
     }
-}
-
-#[cfg(not(unix))]
-fn release_control_master_after_failed_exit(_connection: &SshConnection) {
-    // Windows never has an `-O check`-derived master pid to release.
 }
 
 #[cfg(unix)]
@@ -985,10 +998,12 @@ fn control_master_pid(connection: &SshConnection) -> Option<i32> {
     })
 }
 
+#[cfg(unix)]
 fn ssh_command(connection: &SshConnection) -> Command {
     ssh_command_with_config(connection.config_path.as_deref())
 }
 
+#[cfg(unix)]
 fn ssh_command_with_config(config_path: Option<&Path>) -> Command {
     let mut command = Command::new(ssh_executable());
     if let Some(config_path) = config_path {
@@ -1100,6 +1115,7 @@ fn is_safe_session_id(value: &str) -> bool {
 
 // On non-Unix the body is a no-op, so the `command` parameter is unused there.
 #[cfg_attr(not(unix), allow(unused_variables))]
+#[cfg(unix)]
 fn configure_private_process_group(command: &mut Command) {
     #[cfg(unix)]
     {

@@ -7,7 +7,10 @@
 
 pub(crate) use webcodex_core::plugin::*;
 
-use crate::auth::{AuthContext, SCOPE_PLUGIN_INSPECT, SCOPE_PLUGIN_INVOKE, SCOPE_PLUGIN_MANAGE};
+use crate::auth::{
+    AuthContext, SCOPE_PLUGIN_INSPECT, SCOPE_PLUGIN_INVOKE, SCOPE_PLUGIN_MANAGE,
+    SCOPE_PLUGIN_MUTATE,
+};
 use crate::json_measurement::serialized_json_len;
 use crate::tool_runtime::sessions::SessionTransport;
 #[cfg(test)]
@@ -25,8 +28,12 @@ use webcodex_tool_contracts::PluginToolAction;
 
 pub(crate) const PLUGIN_TOOL_NAME: &str = "plugin_tool";
 const MAX_PLUGIN_BINDINGS: usize = 512;
-const GATEWAY_WAIT_TIMEOUT: Duration = Duration::from_secs(125);
+// Keep synchronous provider waits inside the model-facing Host budget so WebPi
+// can return an explicit dispatch-state error before the outer conversation UI times out.
+const GATEWAY_WAIT_TIMEOUT: Duration =
+    Duration::from_secs(webcodex_core::runtime_contract::MODEL_JOB_CONTINUATION_WAIT_SECS);
 pub(crate) const MAX_PLUGIN_CATALOG_CONTEXT_BYTES: usize = 8 * 1024;
+const PLUGIN_MUTATING_CALL_SCOPES: &[&str] = &[SCOPE_PLUGIN_INVOKE, SCOPE_PLUGIN_MUTATE];
 
 #[derive(Debug, Clone)]
 struct PluginBinding {
@@ -47,9 +54,16 @@ struct BindingStore {
 #[derive(Default)]
 pub(crate) struct PluginGatewayRuntime {
     bindings: Mutex<BindingStore>,
+    breaker: crate::gateway_circuit_breaker::GatewayCircuitBreaker,
 }
 
 impl PluginGatewayRuntime {
+    pub(crate) fn breaker_stats(
+        &self,
+    ) -> crate::gateway_circuit_breaker::GatewayCircuitBreakerStats {
+        self.breaker.stats()
+    }
+
     fn remember(&self, value: PluginBinding) -> String {
         let mut store = self
             .bindings
@@ -194,6 +208,40 @@ impl PluginOperation {
     }
 }
 
+fn binding_is_explicitly_read_only(binding: &PluginBinding) -> bool {
+    let annotations = PluginSelectionAnnotations::from_value(binding.schema.annotations.as_ref());
+    annotations.read_only_hint == Some(true) && annotations.destructive_hint != Some(true)
+}
+
+fn policy_for_request(
+    runtime: &ToolRuntime,
+    operation: PluginOperation,
+    request: &PluginToolCall,
+) -> SpecializedOperationPolicy {
+    if operation != PluginOperation::Call {
+        return operation.policy();
+    }
+    let Some(binding) = request
+        .binding
+        .as_deref()
+        .and_then(|binding| runtime.plugin_gateway.binding(binding))
+    else {
+        // An absent/unknown binding cannot dispatch. Preserve the existing
+        // plugin:invoke -> describe_required recovery path rather than turning an
+        // observation error into a mutation-scope denial.
+        return operation.policy();
+    };
+    if binding_is_explicitly_read_only(&binding) {
+        operation.policy()
+    } else {
+        SpecializedOperationPolicy::local_execution_all(
+            SpecializedSource::Plugin,
+            "call",
+            PLUGIN_MUTATING_CALL_SCOPES,
+        )
+    }
+}
+
 pub(crate) fn invoke_authorized(auth: Option<&AuthContext>) -> bool {
     auth.is_some_and(|auth| auth.has_scope(SCOPE_PLUGIN_INVOKE))
 }
@@ -284,13 +332,13 @@ fn audit_arguments_with_resolved_binding(mut audit: Value, binding: &PluginBindi
 
 #[derive(Debug, Clone)]
 pub(crate) struct PluginInvocationResult {
-    operation: PluginOperation,
+    policy: SpecializedOperationPolicy,
     result: Result<GatewaySuccess, GatewayError>,
 }
 
 impl PluginInvocationResult {
     pub(crate) fn policy(&self) -> SpecializedOperationPolicy {
-        self.operation.policy()
+        self.policy
     }
 
     pub(crate) fn success(&self) -> bool {
@@ -362,7 +410,7 @@ pub(crate) async fn invoke(
     transport: SessionTransport,
 ) -> Result<PluginInvocationResult, SpecializedGovernanceDenial> {
     let operation = PluginOperation::from(request.action);
-    let policy = operation.policy();
+    let policy = policy_for_request(runtime, operation, &request);
     let audit = audit_request_with_identity(runtime, &request, auth).await;
     let permit = runtime
         .govern_specialized_invocation(
@@ -376,7 +424,7 @@ pub(crate) async fn invoke(
         .await?;
 
     let result = execute_business(runtime, operation, request, auth).await;
-    let invocation = PluginInvocationResult { operation, result };
+    let invocation = PluginInvocationResult { policy, result };
     runtime.finish_specialized_invocation(
         permit,
         invocation.success(),
@@ -605,7 +653,7 @@ async fn observe_effective_provider_tools(
         Err(mut error) if matches!(error.code.as_str(), "stale_runner" | "runner_unavailable") => {
             error.code = "plugin_replaced".to_string();
             error.recovery =
-                Some("Re-list the Plugin. WebCodex did not retarget or replay the operation.");
+                Some("Re-list the Plugin. WebPi did not retarget or replay the operation.");
             return Err(error);
         }
         Err(error) => return Err(error),
@@ -643,7 +691,7 @@ async fn observe_effective_provider_tools(
         {
             error.code = "plugin_replaced".to_string();
             error.recovery =
-                Some("Re-list the Plugin. WebCodex did not retarget or replay the operation.");
+                Some("Re-list the Plugin. WebPi did not retarget or replay the operation.");
             return Err(error);
         }
         Err(error) => return Err(error),
@@ -692,7 +740,7 @@ async fn call_plugin(
             "plugin_replaced",
             "the exact Runner instance described by this binding is no longer current",
         )
-        .recovery("Re-describe this Plugin tool. WebCodex did not retarget or replay the call."));
+        .recovery("Re-describe this Plugin tool. WebPi did not retarget or replay the call."));
     }
 
     // Deliberately do not re-list/re-resolve the provider here. The exact
@@ -717,7 +765,7 @@ async fn call_plugin(
             if error.code == "plugin_replaced" {
                 runtime.plugin_gateway.forget(&binding_id);
                 error.recovery = Some(
-                    "Re-describe this Plugin tool. WebCodex did not retarget or replay the call.",
+                    "Re-describe this Plugin tool. WebPi did not retarget or replay the call.",
                 );
             }
             return Err(error);
@@ -740,13 +788,13 @@ async fn call_plugin(
             "plugin_schema_changed" | "plugin_tool_unavailable"
         ) {
             error.recovery = Some(
-                "Re-describe this Plugin tool before calling again; WebCodex did not retarget or replay the call.",
+                "Re-describe this Plugin tool before calling again; WebPi did not retarget or replay the call.",
             );
         }
         if error.code == "stale_plugin_provider" || error.code == "plugin_provider_unavailable" {
             error.code = "plugin_replaced".to_string();
             error.recovery = Some(
-                "The exact Plugin provider instance changed or retired. Re-describe it; WebCodex did not retarget or replay the call.",
+                "The exact Plugin provider instance changed or retired. Re-describe it; WebPi did not retarget or replay the call.",
             );
         }
         return Err(error);
@@ -816,12 +864,54 @@ pub(crate) async fn resolve_runner(
         })
 }
 
+fn gateway_breaker_key(
+    runner: &ResolvedPluginRunner,
+    request: &PluginGatewayRequest,
+) -> Option<(String, String)> {
+    let (_, provider_instance_id) = request.provider_binding()?;
+    Some((
+        format!(
+            "{}|{}|{}",
+            runner.client_id, runner.runner_instance_id, provider_instance_id
+        ),
+        provider_instance_id.to_string(),
+    ))
+}
+
+fn breaker_rejection_error(
+    rejection: crate::gateway_circuit_breaker::GatewayAdmissionRejection,
+) -> GatewayError {
+    use crate::gateway_circuit_breaker::GatewayAdmissionRejection;
+    match rejection {
+        GatewayAdmissionRejection::CircuitOpen { retry_after_secs } => GatewayError::local(
+            "plugin_circuit_open",
+            format!(
+                "the exact Plugin provider circuit is temporarily open; retry after about {retry_after_secs}s"
+            ),
+        ),
+        GatewayAdmissionRejection::Saturated { in_flight, limit } => GatewayError::local(
+            "plugin_gateway_saturated",
+            format!(
+                "the exact Plugin provider has {in_flight} synchronous gateway calls in flight (limit {limit}); retry later"
+            ),
+        ),
+    }
+}
+
 pub(crate) async fn execute_exact(
     runtime: &ToolRuntime,
     runner: &ResolvedPluginRunner,
     request: PluginGatewayRequest,
     auth: Option<&AuthContext>,
 ) -> Result<PluginGatewayResponse, GatewayError> {
+    let breaker = gateway_breaker_key(runner, &request);
+    if let Some((key, _)) = breaker.as_ref() {
+        runtime
+            .plugin_gateway
+            .breaker
+            .admit(key)
+            .map_err(breaker_rejection_error)?;
+    }
     let access = crate::runner_http::runner_access_from_auth(auth);
     let (request_id, receiver) = runtime
         .runner_registry
@@ -834,6 +924,9 @@ pub(crate) async fn execute_exact(
         )
         .await
         .map_err(|message| {
+            if let Some((key, _)) = breaker.as_ref() {
+                runtime.plugin_gateway.breaker.record_responsive(key);
+            }
             let (code, public_message) = if message.contains("stale")
                 || message.contains("exact Runner")
                 || message.contains("offline")
@@ -849,13 +942,42 @@ pub(crate) async fn execute_exact(
                 )
             };
             GatewayError::local(code, public_message).recovery(
-                "Re-list or re-describe the Plugin. WebCodex did not retarget or replay this operation.",
+                "Re-list or re-describe the Plugin. WebPi did not retarget or replay this operation.",
             )
         })?;
 
     match tokio::time::timeout(GATEWAY_WAIT_TIMEOUT, receiver).await {
-        Ok(Ok(response)) => Ok(response),
+        Ok(Ok(response)) => {
+            if let Some((key, provider_instance_id)) = breaker.as_ref() {
+                if runtime.plugin_gateway.breaker.record_responsive(key) {
+                    webcodex_core::runtime_diagnostics::record(
+                        webcodex_core::runtime_diagnostics::DiagnosticSeverity::Info,
+                        "plugin_gateway",
+                        "circuit_closed",
+                        Some(provider_instance_id),
+                    );
+                }
+            }
+            Ok(response)
+        }
         Ok(Err(_)) | Err(_) => {
+            if let Some((key, provider_instance_id)) = breaker.as_ref() {
+                let outcome = runtime.plugin_gateway.breaker.record_timeout(key);
+                if outcome.circuit_opened {
+                    webcodex_core::runtime_diagnostics::record(
+                        webcodex_core::runtime_diagnostics::DiagnosticSeverity::Warn,
+                        "plugin_gateway",
+                        "circuit_opened",
+                        Some(provider_instance_id),
+                    );
+                }
+            }
+            webcodex_core::runtime_diagnostics::record(
+                webcodex_core::runtime_diagnostics::DiagnosticSeverity::Warn,
+                "plugin_gateway",
+                "gateway_timeout",
+                Some(&request_id),
+            );
             let dispatched = runtime
                 .runner_registry
                 .cancel_request_dispatch_state(&request_id)
@@ -1145,7 +1267,7 @@ fn describe_required_error() -> GatewayError {
         "this Plugin binding is unavailable to the current credential or is no longer retained",
     )
     .recovery(
-        "Call plugin_tool with action=describe for the intended runner, plugin, and tool, then call with the returned binding. WebCodex did not retarget or replay the call.",
+        "Call plugin_tool with action=describe for the intended runner, plugin, and tool, then call with the returned binding. WebPi did not retarget or replay the call.",
     )
 }
 
@@ -1234,6 +1356,27 @@ fn dispatch_state_name(state: PluginDispatchState) -> &'static str {
 mod tests {
     use super::*;
 
+    #[test]
+    fn circuit_breaker_rejections_are_definitively_not_started() {
+        use crate::gateway_circuit_breaker::GatewayAdmissionRejection;
+        for rejection in [
+            GatewayAdmissionRejection::CircuitOpen {
+                retry_after_secs: 10,
+            },
+            GatewayAdmissionRejection::Saturated {
+                in_flight: 8,
+                limit: 8,
+            },
+        ] {
+            let error = breaker_rejection_error(rejection);
+            assert_eq!(error.dispatch_state, Some(PluginDispatchState::NotStarted));
+            assert!(matches!(
+                error.code.as_str(),
+                "plugin_circuit_open" | "plugin_gateway_saturated"
+            ));
+        }
+    }
+
     fn test_binding(provider: &str, tool: &str) -> PluginBinding {
         PluginBinding {
             client_id: "runner-a".to_string(),
@@ -1247,6 +1390,81 @@ mod tests {
                 annotations: None,
             },
         }
+    }
+
+    fn call_request(binding: Option<String>) -> PluginToolCall {
+        PluginToolCall {
+            action: PluginToolAction::Call,
+            runner: None,
+            plugin: None,
+            tool: None,
+            binding,
+            arguments: Some(json!({})),
+        }
+    }
+
+    #[test]
+    fn plugin_call_policy_uses_invoke_only_for_explicit_read_only_binding() {
+        let runtime = ToolRuntime::new_for_tests();
+        let mut binding = test_binding("provider-a", "read_tool");
+        binding.schema.annotations = Some(json!({
+            "readOnlyHint": true
+        }));
+        let opaque = runtime.plugin_gateway.remember(binding);
+        let policy =
+            policy_for_request(&runtime, PluginOperation::Call, &call_request(Some(opaque)));
+        assert_eq!(
+            policy.authority,
+            SpecializedAuthorityRequirement::Scope(SCOPE_PLUGIN_INVOKE)
+        );
+    }
+
+    #[test]
+    fn plugin_call_policy_requires_mutate_for_destructive_or_ambiguous_binding() {
+        let runtime = ToolRuntime::new_for_tests();
+
+        let mut destructive = test_binding("provider-a", "delete_tool");
+        destructive.schema.annotations = Some(json!({
+            "readOnlyHint": false,
+            "destructiveHint": true
+        }));
+        let destructive_binding = runtime.plugin_gateway.remember(destructive);
+        let destructive_policy = policy_for_request(
+            &runtime,
+            PluginOperation::Call,
+            &call_request(Some(destructive_binding)),
+        );
+        assert_eq!(
+            destructive_policy.authority,
+            SpecializedAuthorityRequirement::All(PLUGIN_MUTATING_CALL_SCOPES)
+        );
+
+        let ambiguous_binding = runtime
+            .plugin_gateway
+            .remember(test_binding("provider-b", "ambiguous_tool"));
+        let ambiguous_policy = policy_for_request(
+            &runtime,
+            PluginOperation::Call,
+            &call_request(Some(ambiguous_binding)),
+        );
+        assert_eq!(
+            ambiguous_policy.authority,
+            SpecializedAuthorityRequirement::All(PLUGIN_MUTATING_CALL_SCOPES)
+        );
+    }
+
+    #[test]
+    fn unknown_plugin_binding_keeps_invoke_policy_for_describe_required_recovery() {
+        let runtime = ToolRuntime::new_for_tests();
+        let policy = policy_for_request(
+            &runtime,
+            PluginOperation::Call,
+            &call_request(Some("wc_pbind_AAAAAAAAAAAAAAAAAAAAAA".to_string())),
+        );
+        assert_eq!(
+            policy.authority,
+            SpecializedAuthorityRequirement::Scope(SCOPE_PLUGIN_INVOKE)
+        );
     }
 
     #[test]

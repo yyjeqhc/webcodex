@@ -30,6 +30,24 @@ pub fn nullable_schema(kind: &str, description: &str) -> Value {
     })
 }
 
+pub fn operation_phase_schema(description: &str) -> Value {
+    json!({
+        "type": "string",
+        "enum": [
+            "accepted",
+            "queued",
+            "running",
+            "waiting_external",
+            "recovering",
+            "succeeded",
+            "failed",
+            "rolled_back",
+            "outcome_unknown"
+        ],
+        "description": description,
+    })
+}
+
 pub(super) fn session_mode_schema(description: &str) -> Value {
     input_property_schema_for_tool("start_session", "mode", description)
 }

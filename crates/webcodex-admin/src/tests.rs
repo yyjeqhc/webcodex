@@ -61,6 +61,7 @@ fn admin_usage_keeps_rest_registration_commands_but_not_create_local() {
     assert!(!stdout.contains("create-local"));
     assert!(stdout.contains("webcodex tokens create"));
     assert!(stdout.contains("webcodex tokens register-hash"));
+    assert!(stdout.contains("webcodex tokens update-scopes"));
     assert!(stdout.contains("webcodex runner-tokens create"));
     assert!(stdout.contains("webcodex runner-tokens register-hash"));
     assert!(!stdout.contains("webcodex agent-tokens create"));
@@ -114,6 +115,56 @@ fn tokens_create_builds_repeated_scopes() {
     assert_eq!(req.body["username"], "alice");
     assert_eq!(req.body["name"], "chatgpt-action");
     assert_eq!(req.body["scopes"], json!(["runtime:read", "project:write"]));
+}
+
+#[test]
+fn tokens_update_scopes_builds_request_and_prefers_account_credential() {
+    let req = request(&[
+        "tokens",
+        "update-scopes",
+        "--server-url",
+        "https://example.test/",
+        "--credential",
+        "wc_acct_fake",
+        "--username",
+        "alice",
+        "--token-id",
+        "token-123",
+        "--scope",
+        "runtime:read",
+        "--scopes",
+        "account:manage, diagnostics:read",
+    ]);
+    assert_eq!(req.server_url, "https://example.test");
+    assert_eq!(req.path, "/api/tokens/update_scopes");
+    assert_eq!(req.token, "wc_acct_fake");
+    assert_eq!(req.body["username"], "alice");
+    assert_eq!(req.body["token_id"], "token-123");
+    assert_eq!(
+        req.body["scopes"],
+        json!(["runtime:read", "account:manage", "diagnostics:read"])
+    );
+}
+
+#[test]
+fn tokens_update_scopes_requires_at_least_one_scope() {
+    let error = parse_admin_cli(&args(&[
+        "tokens",
+        "update-scopes",
+        "--server-url",
+        "https://example.test",
+        "--token",
+        "fake-admin",
+        "--username",
+        "alice",
+        "--token-id",
+        "token-123",
+    ]))
+    .unwrap_err();
+    assert!(
+        error.contains("at least one --scope is required"),
+        "{error}"
+    );
 }
 
 #[test]

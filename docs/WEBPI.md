@@ -91,7 +91,7 @@ When Cloudflare Tunnel is already managed outside WebPi, do not start a second t
 .\webpi.cmd status
 ```
 
-`cloudflare-config` never stores a Cloudflare tunnel token. It writes `WEBCODEX_PUBLIC_URL` and enforces the standalone WebPi auth profile: arbitrary shared-key fallback, anonymous mode, the shared-key OAuth bridge, and MCP query-token auth are disabled. Custom GPT Actions use the WebPi Action PAT as Bearer authentication. `/openapi.json` and static console assets may be publicly fetchable through the HTTPS hostname, but `/mcp` and `/api/*` execution surfaces remain bearer-authenticated.
+`cloudflare-config` never stores a Cloudflare tunnel token. It writes `WEBPI_PUBLIC_URL` and enforces the standalone WebPi auth profile: arbitrary shared-key fallback, anonymous mode, the shared-key OAuth bridge, and MCP query-token auth are disabled. Custom GPT Actions use the WebPi Action PAT as Bearer authentication. `/openapi.json` and static console assets may be publicly fetchable through the HTTPS hostname, but `/mcp` and `/api/*` execution surfaces remain bearer-authenticated.
 
 A running Server reads this policy at process start. If `status` reports the new values while an older Server is still running, restart the WebPi Server/Runner lifecycle once before exposing the hostname publicly.
 

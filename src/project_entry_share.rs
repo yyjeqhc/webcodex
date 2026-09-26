@@ -131,7 +131,7 @@ pub(crate) fn parse_share_options(args: &[String]) -> Result<ShareCommandOptions
         return Err("--public-url requires --tunnel none; managed tunnel providers own their transport endpoint".to_string());
     }
     if tunnel == TunnelProvider::OpenAiSecure && auth != ShareAuth::Bearer {
-        return Err("--tunnel openai currently requires --auth bearer; WebCodex keeps that temporary Bearer credential local and tunnel-client injects it into the private MCP hop".to_string());
+        return Err("--tunnel openai currently requires --auth bearer; WebPi keeps that temporary Bearer credential local and tunnel-client injects it into the private MCP hop".to_string());
     }
     match auth {
         ShareAuth::OAuth if oauth_redirect_uri.as_deref().is_none_or(str::is_empty) => {
@@ -323,7 +323,7 @@ fn share_oauth_state_error(message: impl Into<String>) -> ProductError {
     ProductError::new(
         "project_registration_invalid",
         message,
-        Some("Resolve the protected share OAuth state, then retry webcodex share --auth oauth."),
+        Some("Resolve the protected share OAuth state, then retry webpi share --auth oauth."),
     )
 }
 
@@ -336,7 +336,7 @@ fn revoke_previous_share_oauth_grants(
         .and_then(|_| db.revoke_oauth_refresh_tokens_for_client(client_id, now))
         .and_then(|_| db.revoke_oauth_authorization_codes_for_client(client_id, now))
         .map_err(|_| {
-            share_oauth_state_error("WebCodex could not retire previous share OAuth grants")
+            share_oauth_state_error("WebPi could not retire previous share OAuth grants")
         })?;
     Ok(())
 }
@@ -368,7 +368,7 @@ fn prepare_share_oauth_client(
     }
 
     let db = crate::Database::open(&paths.data.join("webcodex.db"))
-        .map_err(|_| share_oauth_state_error("WebCodex could not open project OAuth state"))?;
+        .map_err(|_| share_oauth_state_error("WebPi could not open project OAuth state"))?;
     let scopes = project_share_oauth_scopes();
 
     if present.iter().all(|present| *present) {
@@ -385,7 +385,7 @@ fn prepare_share_oauth_client(
         }
         let existing = db
             .list_oauth_clients()
-            .map_err(|_| share_oauth_state_error("WebCodex could not read project OAuth clients"))?
+            .map_err(|_| share_oauth_state_error("WebPi could not read project OAuth clients"))?
             .into_iter()
             .find(|client| client.client_id == client_id);
         if let Some(client) = existing {
@@ -416,7 +416,7 @@ fn prepare_share_oauth_client(
                 revoked_at: None,
             })
             .map_err(|_| {
-                share_oauth_state_error("WebCodex could not restore the share OAuth client")
+                share_oauth_state_error("WebPi could not restore the share OAuth client")
             })?;
         }
         revoke_previous_share_oauth_grants(&db, &client_id)?;
@@ -442,7 +442,7 @@ fn prepare_share_oauth_client(
         created_at: chrono::Utc::now().timestamp(),
         revoked_at: None,
     })
-    .map_err(|_| share_oauth_state_error("WebCodex could not create the share OAuth client"))?;
+    .map_err(|_| share_oauth_state_error("WebPi could not create the share OAuth client"))?;
 
     let persist = (|| {
         create_private_dir(&directory)?;
@@ -482,7 +482,7 @@ impl CloudflareTunnel {
         Err(ProductError::new(
             "tunnel_unavailable",
             format!("Cloudflare Quick Tunnel stopped unexpectedly ({status})"),
-            Some("Check network connectivity and cloudflared, then retry webcodex share."),
+            Some("Check network connectivity and cloudflared, then retry webpi share."),
         ))
     }
 
@@ -505,7 +505,7 @@ fn tunnel_runtime_error() -> ProductError {
     ProductError::new(
         "tunnel_unavailable",
         "Cloudflare Quick Tunnel process could not be supervised",
-        Some("Check cloudflared installation and retry webcodex share."),
+        Some("Check cloudflared installation and retry webpi share."),
     )
 }
 
@@ -528,7 +528,7 @@ pub(crate) async fn share(options: &ShareCommandOptions) -> Result<(), ProductEr
     let (config, paths) = configured_project(&options.project)?;
     ensure_local_runtime_port_available(
         config.port,
-        "Stop the conflicting process, then retry webcodex share.",
+        "Stop the conflicting process, then retry webpi share.",
     )?;
     let persistent_credential = read_project_credential(&paths.project_credential)?;
     let session = ShareSession::create(&paths.state)?;
@@ -536,7 +536,7 @@ pub(crate) async fn share(options: &ShareCommandOptions) -> Result<(), ProductEr
         return Err(ProductError::new(
             "project_credential_invalid",
             "temporary share credential unexpectedly matched the persistent project credential",
-            Some("Retry webcodex share."),
+            Some("Retry webpi share."),
         ));
     }
 
@@ -599,7 +599,7 @@ pub(crate) async fn share(options: &ShareCommandOptions) -> Result<(), ProductEr
             } else {
                 Vec::new()
             },
-            port_conflict_action: "Stop the conflicting process, then retry webcodex share.",
+            port_conflict_action: "Stop the conflicting process, then retry webpi share.",
             readiness_deadline: Some(startup_deadline),
         },
     )
@@ -682,7 +682,7 @@ pub(crate) async fn share(options: &ShareCommandOptions) -> Result<(), ProductEr
         let encoded = serde_json::to_string(&event).map_err(|_| {
             ProductError::new(
                 "machine_output_failed",
-                "WebCodex could not encode Quick Share readiness",
+                "WebPi could not encode Quick Share readiness",
                 Some("Retry Quick Share or use the interactive CLI output."),
             )
         })?;
@@ -790,7 +790,7 @@ async fn wait_for_share_stop_signal(stop_on_stdin_eof: bool) {
 async fn wait_for_share_stdin_eof() {
     let (tx, rx) = tokio::sync::oneshot::channel();
     let _ = std::thread::Builder::new()
-        .name("webcodex-share-stdin".to_string())
+        .name("webpi-share-stdin".to_string())
         .spawn(move || {
             let mut stdin = std::io::stdin().lock();
             let mut buffer = [0_u8; 256];
@@ -855,7 +855,7 @@ fn share_access_labels(
 
 fn render_openai_share_ready(project_name: &str, tunnel_id: &str) -> String {
     format!(
-        "WebCodex ready\n\nTemporary share\nThis session ends when this command exits.\n\nWhat to do next\n1. In ChatGPT Developer Mode, create a custom MCP app.\n2. Connection: Tunnel\n3. Tunnel: {tunnel_id}\n4. Authentication: No authentication\n5. Scan Tools.\n6. First prompt: \"Inspect this repository and summarize its structure. Do not make changes.\"\n\nReady for ChatGPT through OpenAI Secure MCP Tunnel.\n\nDetails\nProject: {project_name}\nRuntime: local\nTunnel: OpenAI Secure MCP Tunnel\nPublic access: no public WebCodex endpoint; outbound-only OpenAI Tunnel transport\nWebCodex authentication: the temporary Bearer credential stays local and is injected by tunnel-client into the private MCP hop. Do not paste it into ChatGPT.\nCredential lifetime: temporary; stopping this share removes the local credential and tunnel-client process. The Platform Tunnel identity remains operator managed.\nPress Ctrl-C to stop sharing."
+        "WebPi ready\n\nTemporary share\nThis session ends when this command exits.\n\nWhat to do next\n1. In ChatGPT Developer Mode, create a custom MCP app.\n2. Connection: Tunnel\n3. Tunnel: {tunnel_id}\n4. Authentication: No authentication\n5. Scan Tools.\n6. First prompt: \"Use read-only tools first. Inspect this repository, Git/workspace status, architecture, and available WebPi capabilities. Summarize risks and the smallest safe next step. Do not modify files or call mutation tools until I ask.\"\n\nReady for ChatGPT through OpenAI Secure MCP Tunnel.\n\nDetails\nProject: {project_name}\nRuntime: local\nTunnel: OpenAI Secure MCP Tunnel\nPublic access: no public WebPi endpoint; outbound-only OpenAI Tunnel transport\nWebPi authentication: the temporary Bearer credential stays local and is injected by tunnel-client into the private MCP hop. Do not paste it into ChatGPT.\nCredential lifetime: temporary; stopping this share removes the local credential and tunnel-client process. The Platform Tunnel identity remains operator managed.\nPress Ctrl-C to stop sharing."
     )
 }
 
@@ -878,18 +878,18 @@ fn render_share_ready(
             "1. In ChatGPT Developer Mode, create a custom MCP app."
         };
         return format!(
-            "WebCodex ready\n\nTemporary share\nThis session ends when this command exits.\n\nWhat to do next\n{client_step}\n2. MCP URL (sensitive): {endpoint}\n3. Authentication: No authentication\n4. Scan Tools.\n5. First prompt: \"Inspect this repository and summarize its structure. Do not make changes.\"\n\n{ready_message}\n\nDetails\nProject: {project_name}\nRuntime: local\nTunnel: {tunnel_name}\nPublic access: {public_access}\nCredential transport: URL query (`token=`), explicitly opted in for this temporary share only.\nSecurity: treat the entire MCP URL as a secret; query credentials may appear in client, proxy, clipboard, or access logs. Prefer `--auth bearer` when the client supports headers.\nCredential lifetime: temporary; stopping this share removes the accepted credential.\nPress Ctrl-C to stop sharing."
+            "WebPi ready\n\nTemporary share\nThis session ends when this command exits.\n\nWhat to do next\n{client_step}\n2. MCP URL (sensitive): {endpoint}\n3. Authentication: No authentication\n4. Scan Tools.\n5. First prompt: \"Use read-only tools first. Inspect this repository, Git/workspace status, architecture, and available WebPi capabilities. Summarize risks and the smallest safe next step. Do not modify files or call mutation tools until I ask.\"\n\n{ready_message}\n\nDetails\nProject: {project_name}\nRuntime: local\nTunnel: {tunnel_name}\nPublic access: {public_access}\nCredential transport: URL query (`token=`), explicitly opted in for this temporary share only.\nSecurity: treat the entire MCP URL as a secret; query credentials may appear in client, proxy, clipboard, or access logs. Prefer `--auth bearer` when the client supports headers.\nCredential lifetime: temporary; stopping this share removes the accepted credential.\nPress Ctrl-C to stop sharing."
         );
     }
     let next_steps = match tunnel {
         TunnelProvider::CloudflareQuick if !externally_managed => format!(
-            "What to do next\n1. In ChatGPT Developer Mode, create a custom MCP app.\n2. MCP URL: {base}/mcp\n3. Authentication: Bearer token\n4. Credential (this share only): {credential}\n5. Scan Tools.\n6. First prompt: \"Inspect this repository and summarize its structure. Do not make changes.\""
+            "What to do next\n1. In ChatGPT Developer Mode, create a custom MCP app.\n2. MCP URL: {base}/mcp\n3. Authentication: Bearer token\n4. Credential (this share only): {credential}\n5. Scan Tools.\n6. First prompt: \"Use read-only tools first. Inspect this repository, Git/workspace status, architecture, and available WebPi capabilities. Summarize risks and the smallest safe next step. Do not modify files or call mutation tools until I ask.\""
         ),
         TunnelProvider::None if externally_managed => format!(
-            "What to do next\n1. In ChatGPT Developer Mode, create a custom MCP app.\n2. MCP URL: {base}/mcp\n3. Authentication: Bearer token\n4. Credential (this share only): {credential}\n5. Scan Tools.\n6. First prompt: \"Inspect this repository and summarize its structure. Do not make changes.\""
+            "What to do next\n1. In ChatGPT Developer Mode, create a custom MCP app.\n2. MCP URL: {base}/mcp\n3. Authentication: Bearer token\n4. Credential (this share only): {credential}\n5. Scan Tools.\n6. First prompt: \"Use read-only tools first. Inspect this repository, Git/workspace status, architecture, and available WebPi capabilities. Summarize risks and the smallest safe next step. Do not modify files or call mutation tools until I ask.\""
         ),
         TunnelProvider::None => format!(
-            "What to do next\n1. Add this MCP endpoint to a local MCP client: {base}/mcp\n2. Authentication: Bearer token\n3. Credential (this share only): {credential}\n4. First prompt: \"Inspect this repository and summarize its structure. Do not make changes.\""
+            "What to do next\n1. Add this MCP endpoint to a local MCP client: {base}/mcp\n2. Authentication: Bearer token\n3. Credential (this share only): {credential}\n4. First prompt: \"Use read-only tools first. Inspect this repository, Git/workspace status, architecture, and available WebPi capabilities. Summarize risks and the smallest safe next step. Do not modify files or call mutation tools until I ask.\""
         ),
         TunnelProvider::OpenAiSecure | TunnelProvider::CloudflareQuick => {
             "What to do next\nOpenAI Secure MCP Tunnel uses dedicated credential-free ChatGPT handoff output.".to_string()
@@ -903,7 +903,7 @@ fn render_share_ready(
         TunnelProvider::None => "This credential is temporary.",
     };
     format!(
-        "WebCodex ready\n\nTemporary share\nThis session ends when this command exits.\n\n{next_steps}\n\n{ready_message}\n\nDetails\nProject: {project_name}\nRuntime: local\nTunnel: {tunnel_name}\nPublic access: {public_access}\nCredential lifetime: {lifetime_message}\nPress Ctrl-C to stop sharing."
+        "WebPi ready\n\nTemporary share\nThis session ends when this command exits.\n\n{next_steps}\n\n{ready_message}\n\nDetails\nProject: {project_name}\nRuntime: local\nTunnel: {tunnel_name}\nPublic access: {public_access}\nCredential lifetime: {lifetime_message}\nPress Ctrl-C to stop sharing."
     )
 }
 
@@ -929,7 +929,7 @@ fn render_share_oauth_ready(
         "1. In a local MCP client, create an MCP connection."
     };
     format!(
-        "WebCodex ready\n\nTemporary share\nThis session ends when this command exits.\n\nWhat to do next\n{client_step}\n2. MCP URL: {base}/mcp\n3. Authentication: OAuth 2.0 Authorization Code + PKCE S256\n4. Client ID: {}\n5. Client secret: {}\n6. Redirect URI: {}\n7. Scan Tools and complete the WebCodex authorization flow.\n   Project share credential (this share only): {credential}\n   Enter it only on the WebCodex authorization page; do not put it in ChatGPT.\n8. First prompt: \"Inspect this repository and summarize its structure. Do not make changes.\"\n\n{ready_message}\n\nDetails\nProject: {project_name}\nRuntime: local\nTunnel: {tunnel_name}\nPublic access: {public_access}\nAuthorization server: {base}\nOAuth grant lifetime: fenced to this share process; access/refresh grants cannot survive a restart.\nCredential lifetime: {lifetime_message}\nPress Ctrl-C to stop sharing.",
+        "WebPi ready\n\nTemporary share\nThis session ends when this command exits.\n\nWhat to do next\n{client_step}\n2. MCP URL: {base}/mcp\n3. Authentication: OAuth 2.0 Authorization Code + PKCE S256\n4. Client ID: {}\n5. Client secret: {}\n6. Redirect URI: {}\n7. Scan Tools and complete the WebPi authorization flow.\n   Project share credential (this share only): {credential}\n   Enter it only on the WebPi authorization page; do not put it in ChatGPT.\n8. First prompt: \"Use read-only tools first. Inspect this repository, Git/workspace status, architecture, and available WebPi capabilities. Summarize risks and the smallest safe next step. Do not modify files or call mutation tools until I ask.\"\n\n{ready_message}\n\nDetails\nProject: {project_name}\nRuntime: local\nTunnel: {tunnel_name}\nPublic access: {public_access}\nAuthorization server: {base}\nOAuth grant lifetime: fenced to this share process; access/refresh grants cannot survive a restart.\nCredential lifetime: {lifetime_message}\nPress Ctrl-C to stop sharing.",
         oauth.client_id, oauth.client_secret, oauth.redirect_uri
     )
 }
@@ -952,7 +952,7 @@ async fn start_cloudflare_quick_with_binary(
         ProductError::new(
             "tunnel_unavailable",
             "cloudflared could not start",
-            Some("Check the cloudflared executable and retry webcodex share."),
+            Some("Check the cloudflared executable and retry webpi share."),
         )
     })?;
     let stdout = child.stdout.take().ok_or_else(tunnel_runtime_error)?;
@@ -1381,7 +1381,7 @@ mod tests {
         assert!(output.contains(temporary));
         assert!(!output.contains(persistent));
         assert!(output.starts_with(
-            "WebCodex ready\n\nTemporary share\nThis session ends when this command exits.\n\nWhat to do next"
+            "WebPi ready\n\nTemporary share\nThis session ends when this command exits.\n\nWhat to do next"
         ));
         assert!(output.contains("https://demo.trycloudflare.com/mcp"));
         assert!(output.contains("Authentication: Bearer token"));
@@ -1432,7 +1432,7 @@ mod tests {
     }
 
     #[test]
-    fn openai_share_output_keeps_webcodex_credential_local() {
+    fn openai_share_output_keeps_webpi_credential_local() {
         let output = render_openai_share_ready("demo", "tunnel_0123456789abcdef0123456789abcdef");
         assert!(output.contains("Connection: Tunnel"));
         assert!(output.contains("Authentication: No authentication"));
@@ -1466,7 +1466,7 @@ mod tests {
         assert!(output.contains("wc_csec_test"));
         assert!(output.contains("webcodex_temporary-print-once"));
         assert!(output.starts_with(
-            "WebCodex ready\n\nTemporary share\nThis session ends when this command exits.\n\nWhat to do next"
+            "WebPi ready\n\nTemporary share\nThis session ends when this command exits.\n\nWhat to do next"
         ));
         assert!(output.contains("Project share credential (this share only)"));
         assert!(output.find("MCP URL:").unwrap() < output.find("Details").unwrap());

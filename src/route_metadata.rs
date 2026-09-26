@@ -159,6 +159,7 @@ pub(crate) enum RouteId {
     TokensCreate,
     TokensRegisterHash,
     TokensList,
+    TokensUpdateScopes,
     TokensRevoke,
     AgentTokensCreate,
     AgentTokensRegisterHash,

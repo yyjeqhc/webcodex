@@ -1535,6 +1535,8 @@ struct EncodedImage {
     bytes: Vec<u8>,
     width: u32,
     height: u32,
+    #[cfg(test)]
+    quality: u8,
 }
 
 fn current_unix_ms() -> Result<u64, String> {
@@ -1798,11 +1800,11 @@ fn encode_bounded_jpeg(
             &image,
             ((image.width() as f64 * scale).floor() as u32).max(1),
             ((image.height() as f64 * scale).floor() as u32).max(1),
-            FilterType::Triangle,
+            FilterType::Lanczos3,
         );
     }
-    for _ in 0..5 {
-        for quality in [82u8, 72, 62, 52, 42] {
+    for _ in 0..6 {
+        for quality in [88u8, 84, 80, 76] {
             let mut bytes = Vec::new();
             JpegEncoder::new_with_quality(&mut bytes, quality)
                 .encode_image(&image)
@@ -1812,6 +1814,8 @@ fn encode_bounded_jpeg(
                     bytes,
                     width: image.width(),
                     height: image.height(),
+                    #[cfg(test)]
+                    quality,
                 });
             }
         }
@@ -1820,14 +1824,39 @@ fn encode_bounded_jpeg(
         }
         image = image::imageops::resize(
             &image,
-            (image.width() * 3 / 4).max(1),
-            (image.height() * 3 / 4).max(1),
-            FilterType::Triangle,
+            (image.width() * 4 / 5).max(1),
+            (image.height() * 4 / 5).max(1),
+            FilterType::Lanczos3,
         );
     }
     Err(format!(
         "image_too_large: screenshot could not be encoded within {max_encoded_image_bytes} bytes"
     ))
+}
+
+#[cfg(all(test, any(target_os = "macos", windows)))]
+mod bounded_jpeg_quality_tests {
+    use super::*;
+
+    #[test]
+    fn bounded_jpeg_prefers_resizing_over_low_quality_for_dense_ui_like_image() {
+        let width = 1600;
+        let height = 900;
+        let mut image = image::RgbaImage::new(width, height);
+        for (x, y, pixel) in image.enumerate_pixels_mut() {
+            let v =
+                ((x.wrapping_mul(37) ^ y.wrapping_mul(91) ^ (x + y).wrapping_mul(13)) & 0xff) as u8;
+            *pixel = image::Rgba([v, v.rotate_left(2), v.rotate_left(5), 255]);
+        }
+
+        let encoded = encode_bounded_jpeg(image, 96 * 1024).expect("bounded JPEG");
+        assert!(encoded.bytes.len() <= 96 * 1024);
+        assert!(encoded.quality >= 76, "quality dropped below UI-safe floor");
+        assert!(
+            encoded.width < width || encoded.height < height,
+            "dense image should resize before using low JPEG quality"
+        );
+    }
 }
 
 #[cfg(not(any(target_os = "macos", windows)))]

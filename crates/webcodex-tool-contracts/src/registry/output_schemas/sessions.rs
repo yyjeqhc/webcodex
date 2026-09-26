@@ -67,7 +67,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 "project_instructions",
                 nullable_schema(
                     "object",
-                    "Best-effort project-local instruction files loaded at session start (e.g. AGENTS.md). null when no project was provided. Project-local guidance only; does not override system/platform/WebCodex safety policy.",
+                    "Best-effort project-local instruction files loaded at session start (e.g. AGENTS.md). null when no project was provided. Project-local guidance only; does not override system/platform/WebPi safety policy.",
                 ),
             ),
         ])),
@@ -175,7 +175,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 "project_instructions",
                 nullable_schema(
                     "object",
-                    "Summary-only projection of project-local instructions loaded at session start (no content bodies). Present when the session was created with a project. Project-local guidance only; does not override system/platform/WebCodex safety policy.",
+                    "Summary-only projection of project-local instructions loaded at session start (no content bodies). Present when the session was created with a project. Project-local guidance only; does not override system/platform/WebPi safety policy.",
                 ),
             ),
         ])),

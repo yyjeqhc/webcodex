@@ -488,6 +488,65 @@ impl RunnerFeature {
     }
 }
 
+/// Read-only capability-negotiation summary derived exclusively from one accepted
+/// Runner wire snapshot. It adds no authority and never infers registration-required
+/// features from protocol generation, OS, transport, or Server build identity.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunnerCapabilityNegotiationSummary {
+    pub mode: &'static str,
+    pub supported_feature_count: usize,
+    pub generation_baseline_feature_count: usize,
+    pub registration_required_supported: Vec<&'static str>,
+    pub critical_contracts: RunnerCriticalCapabilityContracts,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RunnerCriticalCapabilityContracts {
+    pub job_state_reconciliation: bool,
+    pub native_tool_plugins: bool,
+    pub detached_process_jobs: bool,
+    pub runner_config_control: bool,
+    pub managed_worktree: bool,
+    pub skill_management: bool,
+}
+
+pub fn capability_negotiation_summary(
+    capabilities: &RunnerCapabilities,
+) -> RunnerCapabilityNegotiationSummary {
+    let features = RunnerFeatureSet::from_wire_for_projection(capabilities);
+    let supported_feature_count = RunnerFeature::all()
+        .iter()
+        .copied()
+        .filter(|feature| features.supports(*feature))
+        .count();
+    let generation_baseline_feature_count = RunnerFeature::all()
+        .iter()
+        .copied()
+        .filter(|feature| feature.inference() == RunnerFeatureInference::GenerationEligible)
+        .count();
+    let registration_required_supported = RunnerFeature::all()
+        .iter()
+        .copied()
+        .filter(|feature| feature.inference() == RunnerFeatureInference::RegistrationRequired)
+        .filter(|feature| features.supports(*feature))
+        .map(RunnerFeature::as_wire_name)
+        .collect();
+    RunnerCapabilityNegotiationSummary {
+        mode: "explicit_additive_capabilities",
+        supported_feature_count,
+        generation_baseline_feature_count,
+        registration_required_supported,
+        critical_contracts: RunnerCriticalCapabilityContracts {
+            job_state_reconciliation: features.supports(RunnerFeature::JobStateReconciliation),
+            native_tool_plugins: features.supports(RunnerFeature::NativeToolPlugins),
+            detached_process_jobs: features.supports(RunnerFeature::DetachedProcessJobs),
+            runner_config_control: features.supports(RunnerFeature::RunnerConfigControl),
+            managed_worktree: features.supports(RunnerFeature::ManagedWorktree),
+            skill_management: features.supports(RunnerFeature::SkillManagement),
+        },
+    }
+}
+
 /// Canonical Server-side capability truth for one accepted Runner registration.
 ///
 /// There is intentionally no public mutation API. Every set is rebuilt from the
@@ -500,6 +559,12 @@ pub struct RunnerFeatureSet {
 }
 
 impl RunnerFeatureSet {
+    fn from_wire_for_projection(capabilities: &RunnerCapabilities) -> Self {
+        Self {
+            capabilities: capabilities.clone(),
+        }
+    }
+
     /// Normalize one accepted generation-2 registration into canonical feature truth.
     ///
     /// Every frozen generation-2 baseline capability must remain true in the

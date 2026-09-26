@@ -62,6 +62,9 @@ pub(in crate::tool_runtime::tests) fn sample_tool_args_for_spec(spec: &ToolSpec)
         "update_goal" => {
             args.insert("expected_revision".to_string(), json!(1));
         }
+        "service_deploy" | "service_rollback" => {
+            args.insert("expected_revision".to_string(), json!(1));
+        }
         "observe_jobs" => {
             args.insert("items".to_string(), json!([{"job_id": "job_123"}]));
         }
@@ -144,6 +147,16 @@ pub(in crate::tool_runtime::tests) fn sample_field_value(field: &str) -> Value {
         "diff" => json!("diff --git a/a b/a\n--- a/a\n+++ b/a\n@@ -1 +1 @@\n-a\n+b\n"),
         "job_id" => json!("job_123"),
         "idempotency_key" => json!("sample-detached-key"),
+        "receipt_id" => json!("wc_deploy_1234567890abcdef1234567890abcdef"),
+        "target_manifest" => json!({
+            "version": "0.4.1",
+            "git_commit": "a".repeat(40),
+            "artifacts": [{
+                "name": "webpi.exe",
+                "sha256": "b".repeat(64),
+                "size_bytes": 1024
+            }]
+        }),
         "handle" => json!("reviewer"),
         "display_name" => json!("Reviewer"),
         "agent_id" => json!("wc_dagent_qqqqqqqqqqqqqqqq".to_string()),
@@ -175,6 +188,7 @@ pub(in crate::tool_runtime::tests) fn sample_field_value(field: &str) -> Value {
         "session_id" => json!(format!("wc_sess_{}", "1".repeat(32))),
         "checkpoint_id" => json!("wc_ckpt_1234"),
         "confirm" => json!(true),
+        "draining" => json!(true),
         "client_id" => json!("oe"),
         "application_id" => json!("application_qqqqqqqqqqqqqqqq".to_string()),
         "display_id" => json!("display_qqqqqqqqqqqqqqqq".to_string()),
@@ -183,6 +197,7 @@ pub(in crate::tool_runtime::tests) fn sample_field_value(field: &str) -> Value {
         "surface_id" => json!("surface_test"),
         "element_id" => json!("element_test"),
         "action" => json!("focus"),
+        "operation" => json!("restart"),
         "key" => json!("tab"),
         "id" => json!("private-drop"),
         "base_commit" => json!("a".repeat(40)),

@@ -2,7 +2,7 @@ use super::output::{format_error, sanitize};
 use super::{
     build_server_http_client, AdminCliCommand, AdminCliRequest, AdminOptions, CreateUserArgs,
     RevokeTokenArgs, RunnerTokenCreateArgs, RunnerTokenRegisterHashArgs, TokenCreateArgs,
-    TokenRegisterHashArgs, UsernameArgs,
+    TokenRegisterHashArgs, TokenUpdateScopesArgs, UsernameArgs,
 };
 use reqwest::header::CONTENT_TYPE;
 use serde_json::{json, Value};
@@ -62,6 +62,7 @@ pub fn usage() -> &'static str {
       webcodex tokens create --server-url URL [--token TOKEN|--token-file PATH] --username USER [--name NAME] [--scope SCOPE...]\n\
       webcodex tokens register-hash --server-url URL --username USER --hash HASH --prefix PREFIX [--credential CRED] [--name NAME] [--scope SCOPE...]\n\
       webcodex tokens list --server-url URL [--token TOKEN|--token-file PATH] --username USER\n\
+      webcodex tokens update-scopes --server-url URL [--token TOKEN|--token-file PATH|--credential CRED] --username USER --token-id ID --scope SCOPE...\n\
       webcodex tokens revoke --server-url URL [--token TOKEN|--token-file PATH] --username USER --token-id ID\n\
       webcodex runner-tokens create --server-url URL [--token TOKEN|--token-file PATH] --username USER --client-id ID [--name NAME] [--scope SCOPE...]\n\
       webcodex runner-tokens register-hash --server-url URL --username USER --client-id ID --hash HASH --prefix PREFIX [--credential CRED] [--name NAME] [--scope SCOPE...]\n\
@@ -86,6 +87,7 @@ pub fn parse_admin_cli(args: &[String]) -> Result<AdminCliCommand, String> {
         ("tokens", "create") => parse_tokens_create(rest),
         ("tokens", "register-hash") => parse_tokens_register_hash(rest),
         ("tokens", "list") => parse_tokens_list(rest),
+        ("tokens", "update-scopes") => parse_tokens_update_scopes(rest),
         ("tokens", "revoke") => parse_tokens_revoke(rest),
         ("runner-tokens" | "agent-tokens", "create") => parse_runner_tokens_create(rest),
         ("runner-tokens" | "agent-tokens", "register-hash") => {
@@ -252,6 +254,40 @@ fn parse_tokens_create(args: &[String]) -> Result<AdminCliCommand, String> {
 fn parse_tokens_list(args: &[String]) -> Result<AdminCliCommand, String> {
     let (opts, username) = parse_username_command(args, "tokens list")?;
     Ok(AdminCliCommand::TokensList(opts, UsernameArgs { username }))
+}
+
+fn parse_tokens_update_scopes(args: &[String]) -> Result<AdminCliCommand, String> {
+    let mut opts = AdminOptions::default();
+    let mut update = TokenUpdateScopesArgs::default();
+    let mut p = FlagParser::new(args);
+    while let Some(flag) = p.next() {
+        if parse_common_flag(&mut opts, &mut p, &flag)? {
+            continue;
+        }
+        match flag.as_str() {
+            "--username" => update.username = p.value(&flag)?,
+            "--token-id" => update.token_id = p.value(&flag)?,
+            "--scope" => update.scopes.push(p.value(&flag)?),
+            "--scopes" => {
+                update.scopes.extend(
+                    p.value(&flag)?
+                        .split(',')
+                        .map(str::trim)
+                        .filter(|scope| !scope.is_empty())
+                        .map(str::to_string),
+                );
+            }
+            _ => return Err(format!("unknown tokens update-scopes flag: {}", flag)),
+        }
+    }
+    p.finish()?;
+    require_common(&opts)?;
+    require_non_empty("--username", &update.username)?;
+    require_non_empty("--token-id", &update.token_id)?;
+    if update.scopes.is_empty() {
+        return Err("at least one --scope is required".to_string());
+    }
+    Ok(AdminCliCommand::TokensUpdateScopes(opts, update))
 }
 
 fn parse_tokens_revoke(args: &[String]) -> Result<AdminCliCommand, String> {
@@ -440,6 +476,15 @@ pub fn build_admin_request(cmd: &AdminCliCommand) -> Result<AdminCliRequest, Str
         AdminCliCommand::TokensList(opts, t) => {
             (opts, "/api/tokens/list", json!({ "username": t.username }))
         }
+        AdminCliCommand::TokensUpdateScopes(opts, t) => (
+            opts,
+            "/api/tokens/update_scopes",
+            json!({
+                "username": t.username,
+                "token_id": t.token_id,
+                "scopes": t.scopes,
+            }),
+        ),
         AdminCliCommand::TokensRevoke(opts, t) => (
             opts,
             "/api/tokens/revoke",
@@ -490,6 +535,7 @@ pub fn build_admin_request(cmd: &AdminCliCommand) -> Result<AdminCliRequest, Str
                 AdminCliCommand::TokensRegisterHash(_, _)
                     | AdminCliCommand::RunnerTokensRegisterHash(_, _)
                     | AdminCliCommand::TokensList(_, _)
+                    | AdminCliCommand::TokensUpdateScopes(_, _)
                     | AdminCliCommand::TokensRevoke(_, _)
             ),
         )?,

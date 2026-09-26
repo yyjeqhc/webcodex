@@ -628,7 +628,7 @@ async fn resolve_binding(
             "runner_replaced",
             "the exact Runner instance observed by this binding is no longer current",
         )
-        .recovery("List SSH resources again. WebCodex did not retarget or replay the mutation."));
+        .recovery("List SSH resources again. WebPi did not retarget or replay the mutation."));
     }
     Ok((binding_id, observed, runner))
 }
@@ -698,7 +698,7 @@ async fn execute_exact(
                     "the exact Runner changed or became unavailable before dispatch",
                 )
                 .recovery(
-                    "List SSH resources again. WebCodex did not retarget or replay the operation.",
+                    "List SSH resources again. WebPi did not retarget or replay the operation.",
                 )
             } else {
                 GatewayError::new(

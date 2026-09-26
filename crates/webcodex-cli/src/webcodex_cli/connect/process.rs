@@ -544,7 +544,7 @@ fn spawn_log_writer(state_dir: &Path) -> Result<SpawnedLogWriter, String> {
         .map_err(|error| format!("failed to clone Runner log pipe: {error}"))?;
     let executable = std::env::current_exe()
         .and_then(|path| path.canonicalize())
-        .map_err(|error| format!("failed to resolve the webcodex executable: {error}"))?;
+        .map_err(|error| format!("failed to resolve the WebPi executable: {error}"))?;
     let mut command = Command::new(&executable);
     command
         .arg("__hosted-log-writer")
@@ -658,7 +658,7 @@ fn start_runner(
             drop(command);
             finish_owned_log_writer(log_writer.owned);
             return Err(format!(
-                "failed to start webcodex-runner {}: {error}",
+                "failed to start webpi-runner {}: {error}",
                 executable.display()
             ));
         }
@@ -677,7 +677,7 @@ fn start_runner(
     if let Some(status) = immediate_status {
         drop(command);
         finish_owned_log_writer(log_writer.owned);
-        return Err(format!("webcodex-runner exited immediately with {status}"));
+        return Err(format!("webpi-runner exited immediately with {status}"));
     }
     match owned_log_writer_exited(&mut log_writer.owned) {
         Ok(false) => {}
@@ -1308,7 +1308,7 @@ mod tests {
         // A real, native long-lived "Runner": a cmd batch that loops forever.
         // ensure_runner_unlocked drives it through the same Win32 identity
         // capture and taskkill stop path the production binary uses.
-        let runner = tmp.path().join("webcodex-runner.cmd");
+        let runner = tmp.path().join("webpi-runner.cmd");
         std::fs::write(
             &runner,
             "@echo off\r\n:loop\r\nping -n 2 127.0.0.1 >nul\r\ngoto loop\r\n",

@@ -30,15 +30,15 @@ pub(super) fn authorize_login_html(return_to: &str, error: Option<&str>) -> Stri
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>WebCodex Authorize</title>
+<title>WebPi Authorize</title>
 </head>
 <body>
-<h1>WebCodex Authorization</h1>
-<p>Sign in with a WebCodex PAT to continue.</p>
+<h1>WebPi Authorization</h1>
+<p>Sign in with a WebPi PAT to continue.</p>
 {error_html}
 <form method="post" action="/oauth/authorize/login">
   <input type="hidden" name="return_to" value="{return_to}">
-  <label>WebCodex token<br>
+  <label>WebPi token<br>
     <input type="password" name="token" autocomplete="current-password" required>
   </label>
   <button type="submit">Continue</button>
@@ -86,10 +86,10 @@ pub(super) fn authorize_consent_html(
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Authorize WebCodex client</title>
+<title>Authorize WebPi client</title>
 </head>
 <body>
-<h1>Authorize WebCodex client</h1>
+<h1>Authorize WebPi client</h1>
 <p>Client: <strong>{client_name}</strong> ({client_id})</p>
 <p>Redirect URI: <code>{redirect_uri}</code></p>
 {resource_html}
@@ -149,10 +149,10 @@ pub(super) fn authorize_project_share_html(
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Authorize WebCodex project share</title>
+<title>Authorize WebPi project share</title>
 </head>
 <body>
-<h1>Authorize WebCodex project share</h1>
+<h1>Authorize WebPi project share</h1>
 <p>Client: <strong>{client_name}</strong> ({client_id})</p>
 <p>Redirect URI: <code>{redirect_uri}</code></p>
 {resource_html}
@@ -243,15 +243,15 @@ pub(super) fn authorize_bridge_html(
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Authorize WebCodex shared key</title>
+<title>Authorize WebPi shared key</title>
 </head>
 <body>
-<h1>Authorize WebCodex shared key</h1>
+<h1>Authorize WebPi shared key</h1>
 <p>Client: <strong>{client_name}</strong> ({client_id})</p>
 <p>Redirect URI: <code>{redirect_uri}</code></p>
 {resource_html}
 <h2>Standard access</h2>
-<p>The OAuth request includes the following standard WebCodex access:</p>
+<p>The OAuth request includes the following standard WebPi access:</p>
 <ul>
 {scope_items}
 </ul>

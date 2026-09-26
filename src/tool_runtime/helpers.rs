@@ -752,7 +752,7 @@ pub(crate) fn command_rejected_message(
 
 pub(crate) fn command_outcome_unknown_message(reason: impl AsRef<str>) -> String {
     format!(
-        "Command execution outcome is unknown: {}.\nThe command may have started or produced side effects, but WebCodex did not receive a terminal result.\nDo not automatically retry a potentially side-effecting command.\nRetry guidance: inspect the actual Job, process, service, or target state as appropriate before deciding whether retry is safe.",
+        "Command execution outcome is unknown: {}.\nThe command may have started or produced side effects, but WebPi did not receive a terminal result.\nDo not automatically retry a potentially side-effecting command.\nRetry guidance: inspect the actual Job, process, service, or target state as appropriate before deciding whether retry is safe.",
         reason.as_ref()
     )
 }
@@ -766,7 +766,7 @@ pub(crate) fn command_failed_message(
         .map(|code| code.to_string())
         .unwrap_or_else(|| "unknown".to_string());
     format!(
-        "Command exited with status {}.\nNo files were modified by WebCodex itself; command side effects, if any, are from the invoked command.\nstdout_tail:\n{}\nstderr_tail:\n{}\nRetry guidance: inspect stderr/stdout above, then fix the reported issue or use a narrower tool.",
+        "Command exited with status {}.\nNo files were modified by WebPi itself; command side effects, if any, are from the invoked command.\nstdout_tail:\n{}\nstderr_tail:\n{}\nRetry guidance: inspect stderr/stdout above, then fix the reported issue or use a narrower tool.",
         status, stdout_tail, stderr_tail
     )
 }
@@ -777,7 +777,7 @@ pub(crate) fn command_timeout_message(
     stderr_tail: &str,
 ) -> String {
     format!(
-        "Command timed out after {}s.\nCommand definitely started, but WebCodex cannot prove its side effects ended with the timeout.\nOutput tails before timeout:\nstdout_tail:\n{}\nstderr_tail:\n{}\nRetry guidance: do not blindly retry. First inspect the actual Job, process, service, and target state. On a fresh safe attempt, keep ordinary long work on its canonical execution tool and Job handoff; use run_job only for intentional asynchronous shell start. If a new native child must survive Runner restart/replacement, use run_detached_process from the start instead of changing tools merely for duration.",
+        "Command timed out after {}s.\nCommand definitely started, but WebPi cannot prove its side effects ended with the timeout.\nOutput tails before timeout:\nstdout_tail:\n{}\nstderr_tail:\n{}\nRetry guidance: do not blindly retry. First inspect the actual Job, process, service, and target state. On a fresh safe attempt, keep ordinary long work on its canonical execution tool and Job handoff; use run_job only for intentional asynchronous shell start. If a new native child must survive Runner restart/replacement, use run_detached_process from the start instead of changing tools merely for duration.",
         timeout_secs, stdout_tail, stderr_tail
     )
 }

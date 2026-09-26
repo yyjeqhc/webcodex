@@ -147,7 +147,7 @@ async fn plugin_check_tool_spec_and_argument_contract_fail_closed_before_dispatc
         .iter()
         .any(|action| action == "check"));
     let description = spec["description"].as_str().unwrap();
-    assert!(description.contains("Provider tools are never outer WebCodex MCP tools"));
+    assert!(description.contains("Provider tools are never outer WebPi MCP tools"));
     assert!(description.contains("call accepts only binding + arguments"));
 
     let runtime = test_runtime();

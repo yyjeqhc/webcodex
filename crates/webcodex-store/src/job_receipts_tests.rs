@@ -28,12 +28,20 @@ fn job_receipts_schema_additive_reopen_first_write_and_fixed_expiry() {
     drop(db);
     let now = chrono::Utc::now().timestamp();
     let original = receipt(now - JOB_TERMINAL_RETENTION_SECS + 10, "job-reopen");
+    assert_eq!(
+        original.operation_phase().unwrap(),
+        webcodex_core::operation_phase::OperationPhase::Succeeded
+    );
     let db = Database::open(&path).unwrap();
     db.upsert_job_receipt(&original, now).unwrap();
     let mut replay = original.clone();
     replay.terminal_observed_at = now;
     replay.expires_at = now + JOB_TERMINAL_RETENTION_SECS;
     replay.snapshot.status = "failed".into();
+    assert_eq!(
+        replay.operation_phase().unwrap(),
+        webcodex_core::operation_phase::OperationPhase::Failed
+    );
     replay.snapshot.exit_code = Some(7);
     replay.owner_at_admission = Some("mallory".into());
     db.upsert_job_receipt(&replay, now).unwrap();

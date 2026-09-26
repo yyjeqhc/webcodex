@@ -8,9 +8,9 @@ use super::output_text::{
     CapturedOutputEncoding, FullStreamUtf8Validity, LeadingBom, OutputTextSource,
 };
 use super::projects::find_project_shell_context;
-use crate::runner_protocol::{
-    ShellCommandExecutionState, ShellProcessArgv, ShellScriptLanguage, ShellScriptPayload,
-};
+#[cfg(windows)]
+use crate::runner_protocol::ShellCommandExecutionState;
+use crate::runner_protocol::{ShellProcessArgv, ShellScriptLanguage, ShellScriptPayload};
 use std::collections::HashMap;
 #[cfg(windows)]
 use std::ffi::OsStr;
@@ -105,11 +105,15 @@ fn resolve_dialect(program: &str, explicit: Option<ShellDialect>) -> ShellDialec
 #[cfg(test)]
 mod desktop_mcp_env_tests;
 
-const SENSITIVE_ENV_KEYS: [&str; 5] = [
+const SENSITIVE_ENV_KEYS: [&str; 9] = [
     "WEBPI_TOKEN",
     "WEBPI_PAT",
     "WEBPI_AGENT_TOKEN",
     "WEBPI_USER_TOKEN",
+    "WEBCODEX_TOKEN",
+    "WEBCODEX_PAT",
+    "WEBCODEX_AGENT_TOKEN",
+    "WEBCODEX_USER_TOKEN",
     "AUTHORIZATION",
 ];
 
@@ -143,6 +147,9 @@ fn should_inherit_env_key(key: &str) -> bool {
         && !key
             .to_ascii_uppercase()
             .starts_with(webcodex_runner_config::DESKTOP_MCP_ENV_PREFIX)
+        && !key
+            .to_ascii_uppercase()
+            .starts_with(webcodex_runner_config::LEGACY_DESKTOP_MCP_ENV_PREFIX)
         && !(cfg!(windows) && key.starts_with('='))
 }
 

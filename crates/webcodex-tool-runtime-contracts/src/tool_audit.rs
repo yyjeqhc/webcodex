@@ -5841,6 +5841,77 @@ impl ToolCallAuditProjection for ToolCall {
                 "limit": limit,
                 "payload_index": payload_index,
             }),
+            Self::PrepareServiceDeployment {
+                client_id,
+                operation,
+                idempotency_key,
+                target_manifest,
+            } => serde_json::json!({
+                "client_id_present": !client_id.trim().is_empty(),
+                "operation": operation,
+                "idempotency_key_present": !idempotency_key.is_empty(),
+                "target_manifest_present": !target_manifest.is_null(),
+            }),
+            Self::ReadDeploymentReceipt { receipt_id } => serde_json::json!({
+                "receipt_id": receipt_id,
+            }),
+            Self::ServiceRollback {
+                receipt_id,
+                expected_revision,
+                expected_generation,
+            } => serde_json::json!({
+                "receipt_id": receipt_id,
+                "expected_revision": expected_revision,
+                "expected_generation": expected_generation,
+            }),
+            Self::ServiceDeploy {
+                receipt_id,
+                expected_revision,
+                expected_generation,
+            } => serde_json::json!({
+                "receipt_id": receipt_id,
+                "expected_revision": expected_revision,
+                "expected_generation": expected_generation,
+            }),
+            Self::ServiceRestart {
+                client_id,
+                idempotency_key,
+                expected_generation,
+            } => serde_json::json!({
+                "client_id_present": !client_id.trim().is_empty(),
+                "idempotency_key_present": !idempotency_key.is_empty(),
+                "expected_generation": expected_generation,
+            }),
+            Self::ServiceDrain {
+                draining,
+                expected_generation,
+            } => serde_json::json!({
+                "draining": draining,
+                "expected_generation": expected_generation,
+            }),
+            Self::DeploymentPreflight {
+                client_id,
+                operation,
+            } => serde_json::json!({
+                "client_id_present": !client_id.trim().is_empty(),
+                "operation": operation,
+            }),
+            Self::RuntimeDiagnostics {
+                severity,
+                component,
+                correlation_id,
+                since,
+                until,
+                limit,
+            } => serde_json::json!({
+                "severity": severity,
+                "component": component,
+                "correlation_id_present": correlation_id.is_some(),
+                "since": since,
+                "until": until,
+                "limit": limit,
+            }),
+            Self::PublicTunnelProbe { .. } => serde_json::json!({}),
             Self::RuntimeStatus {
                 compact,
                 summary_only,

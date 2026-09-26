@@ -236,7 +236,7 @@ pub(crate) fn setup(options: &ProjectCommandOptions) -> Result<SetupReport, Prod
             return Err(ProductError::new(
                 "project_registration_invalid",
                 "existing Runner configuration conflicts with missing authentication material",
-                Some("Restore the existing authentication material or remove this incomplete profile, then run webcodex setup."),
+                Some("Restore the existing authentication material or remove this incomplete profile, then run webpi setup."),
             ));
         }
         let value = generate_project_credential();
@@ -266,13 +266,17 @@ pub(crate) fn setup(options: &ProjectCommandOptions) -> Result<SetupReport, Prod
     };
 
     if !runner_config.is_file() {
-        let allowed_root = config.root.parent().ok_or_else(|| {
-            ProductError::new(
+        let allowed_root = config
+            .root
+            .parent()
+            .ok_or_else(|| {
+                ProductError::new(
                 "project_registration_invalid",
                 "the project root has no parent directory for canonical managed worktrees",
-                Some("Move the project below a normal filesystem directory, then run webcodex setup."),
+                Some("Move the project below a normal filesystem directory, then run webpi setup."),
             )
-        })?.to_path_buf();
+            })?
+            .to_path_buf();
         let content = generated_runner_config_toml(&RunnerInitOptions {
             server_url: config.server_url(),
             token: Some(agent_token),
@@ -292,7 +296,7 @@ pub(crate) fn setup(options: &ProjectCommandOptions) -> Result<SetupReport, Prod
             ProductError::new(
                 "project_registration_invalid",
                 format!("could not generate Runner configuration: {message}"),
-                Some("Correct the reported configuration issue, then run webcodex setup."),
+                Some("Correct the reported configuration issue, then run webpi setup."),
             )
         })?;
         write_new_private(&runner_config, content.as_bytes())?;
@@ -306,7 +310,7 @@ pub(crate) fn setup(options: &ProjectCommandOptions) -> Result<SetupReport, Prod
             ProductError::new(
                 "project_registration_invalid",
                 format!("could not serialize project registration: {error}"),
-                Some("Run webcodex setup again after correcting the local state error."),
+                Some("Run webpi setup again after correcting the local state error."),
             )
         })?;
         write_new_private(&project_path, content.as_bytes())?;
@@ -318,7 +322,7 @@ pub(crate) fn setup(options: &ProjectCommandOptions) -> Result<SetupReport, Prod
             ProductError::new(
                 "project_registration_invalid",
                 format!("could not serialize project configuration: {error}"),
-                Some("Run webcodex setup again after correcting the local state error."),
+                Some("Run webpi setup again after correcting the local state error."),
             )
         })?;
         write_new_private(&paths.config, content.as_bytes())?;
@@ -339,7 +343,7 @@ pub(crate) fn setup(options: &ProjectCommandOptions) -> Result<SetupReport, Prod
             "configured".to_string()
         },
         changed,
-        next_action: "webcodex doctor".to_string(),
+        next_action: "webpi doctor".to_string(),
     })
 }
 
@@ -360,7 +364,7 @@ fn select_available_project_port(primary: u16) -> Result<u16, ProductError> {
             "no available loopback port was found after checking {PROJECT_PORT_PROBE_LIMIT} stable project port candidates"
         ),
         Some(
-            "Stop a conflicting local process or choose a separate project state/profile, then run webcodex setup again.",
+            "Stop a conflicting local process or choose a separate project state/profile, then run webpi setup again.",
         ),
     ))
 }
@@ -375,8 +379,8 @@ pub(super) fn local_readiness(options: &ProjectCommandOptions) -> LocalReadiness
             findings: vec![ReadinessFact::fail(
                 "Setup",
                 "project_not_configured",
-                "No WebCodex setup was found for this project.",
-                "webcodex setup",
+                "No WebPi setup was found for this project.",
+                "webpi setup",
             )],
         },
         LocalProjectState::Invalid {
@@ -472,7 +476,7 @@ fn configured_readiness(config: ProjectConfig, paths: ProjectPaths) -> LocalRead
             "Runner runtime",
             "required_capability_unavailable",
             "The local Runner executable is unavailable.",
-            "Install all WebCodex binaries, then retry.",
+            "Install all WebPi binaries, then retry.",
         ));
     }
     LocalReadiness {
@@ -505,7 +509,7 @@ fn local_project_state(options: &ProjectCommandOptions) -> LocalProjectState {
         return LocalProjectState::invalid(
             None,
             paths,
-            invalid_registration("the WebCodex project state path is not a directory"),
+            invalid_registration("the WebPi project state path is not a directory"),
         );
     }
     if !paths.config.exists() {
@@ -514,7 +518,7 @@ fn local_project_state(options: &ProjectCommandOptions) -> LocalProjectState {
                 None,
                 paths,
                 invalid_registration(
-                    "WebCodex project state exists but its registration is incomplete",
+                    "WebPi project state exists but its registration is incomplete",
                 ),
             )
         } else {
@@ -558,7 +562,7 @@ fn invalid_registration(message: &str) -> ProductError {
     ProductError::new(
         "project_registration_invalid",
         message,
-        Some("Resolve the invalid private state, then run webcodex setup."),
+        Some("Resolve the invalid private state, then run webpi setup."),
     )
 }
 
@@ -608,9 +612,7 @@ pub(super) fn validate_existing_runner(
             return Err(ProductError::new(
                 "project_registration_invalid",
                 format!("existing Runner configuration conflicts in field '{field}'"),
-                Some(
-                    "Resolve the existing configuration conflict; WebCodex will not overwrite it.",
-                ),
+                Some("Resolve the existing configuration conflict; WebPi will not overwrite it."),
             ));
         }
     }
@@ -628,7 +630,7 @@ pub(super) fn validate_existing_runner(
         return Err(ProductError::new(
             "project_registration_invalid",
             "existing Runner configuration conflicts in field 'project_registry_dir'",
-            Some("Resolve the existing configuration conflict; WebCodex will not overwrite it."),
+            Some("Resolve the existing configuration conflict; WebPi will not overwrite it."),
         ));
     }
     if value
@@ -639,7 +641,7 @@ pub(super) fn validate_existing_runner(
         return Err(ProductError::new(
             "project_registration_invalid",
             "existing Runner configuration conflicts in field 'authentication'",
-            Some("Restore the existing authentication material; WebCodex will not overwrite it."),
+            Some("Restore the existing authentication material; WebPi will not overwrite it."),
         ));
     }
     Ok(())
@@ -714,7 +716,7 @@ fn registration_conflict(field: &str) -> Result<(), ProductError> {
     Err(ProductError::new(
         "project_registration_invalid",
         format!("existing project registration conflicts in field '{field}'"),
-        Some("Resolve the existing registration conflict; WebCodex will not overwrite it."),
+        Some("Resolve the existing registration conflict; WebPi will not overwrite it."),
     ))
 }
 
@@ -756,14 +758,14 @@ fn discover_project_root(input: &Path) -> Result<PathBuf, ProductError> {
         ProductError::new(
             "workspace_unavailable",
             "the project path is unavailable",
-            Some("Run webcodex setup from an accessible Git project."),
+            Some("Run webpi setup from an accessible Git project."),
         )
     })?;
     if !canonical.is_dir() {
         return Err(ProductError::new(
             "workspace_unavailable",
             "the project path is not a directory",
-            Some("Run webcodex setup from a Git project directory."),
+            Some("Run webpi setup from a Git project directory."),
         ));
     }
     let output = std::process::Command::new("git")
@@ -775,14 +777,14 @@ fn discover_project_root(input: &Path) -> Result<PathBuf, ProductError> {
             ProductError::new(
                 "workspace_unavailable",
                 "Git is unavailable",
-                Some("Install Git, then run webcodex setup."),
+                Some("Install Git, then run webpi setup."),
             )
         })?;
     if !output.status.success() {
         return Err(ProductError::new(
             "workspace_unavailable",
             "the selected directory is not a supported Git project",
-            Some("Run webcodex setup from a Git project directory."),
+            Some("Run webpi setup from a Git project directory."),
         ));
     }
     let discovered = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -861,7 +863,7 @@ pub(super) fn resolve_state_path_from(
     if state == canonical_root || state.starts_with(&canonical_root) {
         return Err(ProductError::new(
             "state_directory_unsafe",
-            "the WebCodex state directory must be outside the Git project checkout",
+            "the WebPi state directory must be outside the Git project checkout",
             Some(
                 "Choose --state-dir in a private directory outside the checkout, or omit it to use the default user state directory.",
             ),
@@ -932,16 +934,30 @@ fn state_path_unavailable() -> ProductError {
 }
 
 fn default_state_base() -> Result<PathBuf, ProductError> {
-    default_state_base_from(
-        std::env::var_os("XDG_STATE_HOME").as_deref(),
-        std::env::var_os("HOME").as_deref(),
-        if cfg!(windows) {
-            std::env::var_os("LOCALAPPDATA")
-        } else {
-            None
+    let xdg_state_home = std::env::var_os("XDG_STATE_HOME");
+    let home = std::env::var_os("HOME");
+    let local_app_data = if cfg!(windows) {
+        std::env::var_os("LOCALAPPDATA")
+    } else {
+        None
+    };
+    let preferred = default_state_base_from(
+        xdg_state_home.as_deref(),
+        home.as_deref(),
+        local_app_data.as_deref(),
+    )?;
+    if !preferred.exists() {
+        if let Some(legacy) = legacy_default_state_base_from(
+            xdg_state_home.as_deref(),
+            home.as_deref(),
+            local_app_data.as_deref(),
+        )
+        .filter(|path| path.is_dir())
+        {
+            return Ok(legacy);
         }
-        .as_deref(),
-    )
+    }
+    Ok(preferred)
 }
 
 pub(super) fn default_state_base_from(
@@ -950,7 +966,7 @@ pub(super) fn default_state_base_from(
     local_app_data: Option<&std::ffi::OsStr>,
 ) -> Result<PathBuf, ProductError> {
     if let Some(path) = xdg_state_home.filter(|value| !value.is_empty()) {
-        return Ok(PathBuf::from(path).join("webcodex/projects"));
+        return Ok(PathBuf::from(path).join("webpi/projects"));
     }
     // Preserve the historical HOME path when it exists. Native Windows shells
     // commonly lack HOME, so LOCALAPPDATA is the compatibility fallback rather
@@ -959,13 +975,31 @@ pub(super) fn default_state_base_from(
         return Ok(PathBuf::from(path).join(".local/state/webpi/projects"));
     }
     if let Some(path) = local_app_data.filter(|value| !value.is_empty()) {
-        return Ok(PathBuf::from(path).join("WebCodex/state/projects"));
+        return Ok(PathBuf::from(path).join("webpi/state/projects"));
     }
     Err(ProductError::new(
         "project_not_configured",
         "no private user state directory is available and no --state-dir was provided",
         Some("Set HOME/XDG_STATE_HOME, ensure LOCALAPPDATA is available on Windows, or pass an absolute --state-dir."),
     ))
+}
+
+pub(super) fn legacy_default_state_base_from(
+    xdg_state_home: Option<&std::ffi::OsStr>,
+    home: Option<&std::ffi::OsStr>,
+    local_app_data: Option<&std::ffi::OsStr>,
+) -> Option<PathBuf> {
+    if let Some(path) = xdg_state_home.filter(|value| !value.is_empty()) {
+        return Some(PathBuf::from(path).join("webcodex/projects"));
+    }
+    // HOME-based state already used the WebPi namespace before this migration,
+    // so there is no distinct legacy path to prefer here.
+    if home.is_some_and(|value| !value.is_empty()) {
+        return None;
+    }
+    local_app_data
+        .filter(|value| !value.is_empty())
+        .map(|path| PathBuf::from(path).join("WebCodex/state/projects"))
 }
 
 fn read_toml<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T, ProductError> {
@@ -976,7 +1010,7 @@ fn read_toml<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T, ProductErro
         .ok_or_else(|| {
             ProductError::new(
                 "project_registration_invalid",
-                "a WebCodex configuration file is unreadable or not protected",
+                "a WebPi configuration file is unreadable or not protected",
                 Some("Restore protected private state, then retry."),
             )
         })?;
@@ -984,15 +1018,15 @@ fn read_toml<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T, ProductErro
     let content = std::fs::read_to_string(path).map_err(|_| {
         ProductError::new(
             "project_registration_invalid",
-            "a WebCodex configuration file is unreadable",
+            "a WebPi configuration file is unreadable",
             Some("Restore readable private state, then retry."),
         )
     })?;
     toml::from_str(&content).map_err(|_| {
         ProductError::new(
             "project_registration_invalid",
-            "a WebCodex configuration file is invalid",
-            Some("Resolve the invalid configuration; WebCodex will not overwrite it."),
+            "a WebPi configuration file is invalid",
+            Some("Resolve the invalid configuration; WebPi will not overwrite it."),
         )
     })
 }
@@ -1093,7 +1127,7 @@ pub(super) fn harden_existing_runtime_private_state(
                     if !metadata.file_type().is_file() {
                         return Err(ProductError::new(
                             "project_registration_invalid",
-                            "WebCodex refused unsafe existing private Windows runtime state",
+                            "WebPi refused unsafe existing private Windows runtime state",
                             Some(
                                 "Remove the unexpected reparse or non-file runtime state, then retry.",
                             ),
@@ -1102,7 +1136,7 @@ pub(super) fn harden_existing_runtime_private_state(
                     super::windows_private_state::protect_private_file(&path).map_err(|_| {
                         ProductError::new(
                             "project_registration_invalid",
-                            "WebCodex could not protect existing private Windows runtime state",
+                            "WebPi could not protect existing private Windows runtime state",
                             Some(
                                 "Check local filesystem permissions and reparse points, then retry.",
                             ),
@@ -1113,7 +1147,7 @@ pub(super) fn harden_existing_runtime_private_state(
                 Err(_) => {
                     return Err(ProductError::new(
                         "project_registration_invalid",
-                        "WebCodex could not inspect existing private Windows runtime state",
+                        "WebPi could not inspect existing private Windows runtime state",
                         Some("Check local filesystem permissions, then retry."),
                     ));
                 }
@@ -1129,7 +1163,7 @@ pub(super) fn create_private_dir(path: &Path) -> Result<(), ProductError> {
     std::fs::create_dir_all(path).map_err(|_| {
         ProductError::new(
             "project_registration_invalid",
-            "WebCodex could not create its private state directory",
+            "WebPi could not create its private state directory",
             Some("Check local filesystem permissions, then retry."),
         )
     })?;
@@ -1139,7 +1173,7 @@ pub(super) fn create_private_dir(path: &Path) -> Result<(), ProductError> {
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).map_err(|_| {
             ProductError::new(
                 "project_registration_invalid",
-                "WebCodex could not protect its private state directory",
+                "WebPi could not protect its private state directory",
                 Some("Check local filesystem permissions, then retry."),
             )
         })?;
@@ -1148,7 +1182,7 @@ pub(super) fn create_private_dir(path: &Path) -> Result<(), ProductError> {
     super::windows_private_state::protect_private_directory(path).map_err(|_| {
         ProductError::new(
             "project_registration_invalid",
-            "WebCodex could not protect its private Windows state directory",
+            "WebPi could not protect its private Windows state directory",
             Some("Check local filesystem permissions and reparse points, then retry."),
         )
     })?;
@@ -1167,9 +1201,9 @@ pub(super) fn write_new_private(path: &Path, content: &[u8]) -> Result<(), Produ
                 ProductError::new(
                     "project_registration_invalid",
                     if conflict {
-                        "WebCodex refused to overwrite existing project state"
+                        "WebPi refused to overwrite existing project state"
                     } else {
-                        "WebCodex could not securely write private Windows project state"
+                        "WebPi could not securely write private Windows project state"
                     },
                     Some(if conflict {
                         "Resolve the existing state conflict, then retry."
@@ -1192,14 +1226,14 @@ pub(super) fn write_new_private(path: &Path, content: &[u8]) -> Result<(), Produ
         let mut file = options.open(path).map_err(|_| {
             ProductError::new(
                 "project_registration_invalid",
-                "WebCodex refused to overwrite existing project state",
+                "WebPi refused to overwrite existing project state",
                 Some("Resolve the existing state conflict, then retry."),
             )
         })?;
         file.write_all(content).map_err(|_| {
             ProductError::new(
                 "project_registration_invalid",
-                "WebCodex could not write private project state",
+                "WebPi could not write private project state",
                 Some("Check local filesystem permissions, then retry."),
             )
         })

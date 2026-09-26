@@ -2,6 +2,8 @@
 
 [English](desktop-guide.md) | [简体中文](desktop-guide.zh-CN.md)
 
+> **Retired historical reference.** The current WebPi tree has no supported Desktop implementation. This page describes a retired design and intentionally preserves its historical WebCodex names; do not use it as current operating guidance.
+
 Desktop prepares local projects and manages connections. You ask for work in ChatGPT or another AI client. For installation, Tunnel configuration, and system permissions, see the [installation and connection guide](desktop-install.md).
 
 ## First use

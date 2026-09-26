@@ -77,7 +77,7 @@ pub struct PluginToolCall {
     #[schemars(length(min = 1, max = 64))]
     #[serde(default)]
     pub plugin: Option<String>,
-    /// Logical provider-local Plugin tool name. Provider tools never become outer WebCodex MCP tool
+    /// Logical provider-local Plugin tool name. Provider tools never become outer WebPi MCP tool
     /// names.
     #[schemars(length(min = 1, max = 128))]
     #[serde(default)]
@@ -1168,7 +1168,7 @@ pub enum ToolCall {
         /// Whether this bootstrap response should include bounded project-instruction bodies such as
         /// AGENTS.md. Defaults to true. A fresh Workflow Session does not imply a fresh model context:
         /// explicitly set false even for a new Session when the current model context already retains the
-        /// applicable repository instructions; keep true for a fresh or uncertain model context. WebCodex
+        /// applicable repository instructions; keep true for a fresh or uncertain model context. WebPi
         /// never infers retention from Session id, Window, transport, credential, or Server identity.
         /// Instruction files are still re-observed for fingerprint/change detection and Workflow Session
         /// metadata is still updated; false controls only redundant model-facing instruction-body
@@ -1176,10 +1176,10 @@ pub enum ToolCall {
         #[serde(default = "default_true")]
         include_project_instructions: bool,
         #[schemars(extend("default" = true))]
-        /// Whether this bootstrap response should include the built-in WebCodex coding-workflow and selected tool-strategy
+        /// Whether this bootstrap response should include the built-in WebPi coding-workflow and selected tool-strategy
         /// guidance. Defaults to true. A fresh Workflow Session does not imply a fresh model context:
         /// explicitly set false even for a new Session when the current model context already retains this
-        /// guidance; keep true for a fresh or uncertain model context. WebCodex never infers retention from
+        /// guidance; keep true for a fresh or uncertain model context. WebPi never infers retention from
         /// Session id, Window, transport, credential, or Server identity. False controls only redundant
         /// model-facing workflow projection; it does not change Workflow Session state, authority, role
         /// selection, or execution semantics.
@@ -1340,7 +1340,7 @@ pub enum ToolCall {
         /// Message kind.
         kind: SessionMessageKind,
         /// Non-empty message body. Guidance is session-local context and never overrides
-        /// system/platform/WebCodex safety policy.
+        /// system/platform/WebPi safety policy.
         #[schemars(length(max = 8000))]
         message: String,
         /// Optional tags for filtering or review.
@@ -1383,7 +1383,7 @@ pub enum ToolCall {
         #[serde(default)]
         priority: SessionMessagePriority,
         #[schemars(extend("default" = false))]
-        /// When false, WebCodex attempts one ambient projection on the recipient's next model-facing
+        /// When false, WebPi attempts one ambient projection on the recipient's next model-facing
         /// tool result. When true, omission of the request-scoped ACK causes the message to be projected
         /// again. ACK never grants authority, resolves the message, or requires a reply.
         #[serde(default)]
@@ -2228,7 +2228,7 @@ pub enum ToolCall {
         #[serde(default)]
         cwd: Option<String>,
         /// When true, perform pure read-only `cargo fmt -- --check` validation. Omit or use false during
-        /// coding to ensure formatting: WebCodex first checks, then runs mutating `cargo fmt` only when a
+        /// coding to ensure formatting: WebPi first checks, then runs mutating `cargo fmt` only when a
         /// stable rustfmt diff is proven.
         #[serde(default)]
         check: Option<bool>,
@@ -2468,7 +2468,7 @@ pub enum ToolCall {
         #[schemars(regex(pattern = "^wc_skillpkg_[A-Za-z0-9_-]{43}$"))]
         #[serde(default)]
         expected_package_revision: Option<String>,
-        /// Ordered literal script arguments. WebCodex selects the interpreter from the trusted Skill
+        /// Ordered literal script arguments. WebPi selects the interpreter from the trusted Skill
         /// resource extension and preserves the selected package/script execution identity while keeping
         /// the requested Project cwd. The Skill script body and Runner-native package path are never model
         /// arguments.
@@ -3608,7 +3608,7 @@ pub enum ToolCall {
         /// Omission or any item without a token returns an immediate observation/baseline. Values above 100
         /// seconds are clamped to 100. With tokens, wake_on selects early wake behavior; updates never
         /// extend the deadline. Runtime accepts explicit waits up to 100 seconds, while model-facing
-        /// continuations recommend 55 seconds to stay below common MCP Host deadlines. Use terminal waits
+        /// continuations recommend 20 seconds to stay comfortably below common MCP Host deadlines. Use terminal waits
         /// when further useful progress depends on terminal outcome; otherwise defer observation while
         /// independent work continues.
         #[schemars(range(min = 1))]
@@ -4476,7 +4476,7 @@ pub enum ToolCall {
         summary_only: bool,
     },
 
-    /// Register an existing directory as a WebCodex project on a selected
+    /// Register an existing directory as a WebPi project on a selected
     /// agent. The Runner validates the path against its own policy, writes a
     /// project registration record `<project_registry_dir>/<id>.toml` atomically, and refreshes its local
     /// Project list. The Server refreshes its cached Project summaries for
@@ -4504,7 +4504,7 @@ pub enum ToolCall {
     },
 
     /// Unregister one exact Runner project registration using a revision
-    /// observed from `list_projects`. This removes only WebCodex registration
+    /// observed from `list_projects`. This removes only WebPi registration
     /// state; it never deletes the project directory, Git worktree, or branch.
     /// The target deliberately bypasses generic project pre-resolution so a
     /// terminal `already_unregistered` Runner outcome remains representable.
@@ -4517,7 +4517,7 @@ pub enum ToolCall {
     },
 
     /// Create a new directory on the selected Runner, or explicitly adopt an
-    /// already-existing empty directory, and register it as a WebCodex project.
+    /// already-existing empty directory, and register it as a WebPi project.
     /// The Runner validates the path against its own policy, creates or adopts
     /// the directory (and may add requested template files / git init), writes
     /// a project registration record `<project_registry_dir>/<id>.toml` atomically, and refreshes its local
@@ -4612,6 +4612,115 @@ pub enum ToolCall {
     /// ToolDefinition is a worst-case discovery contract; exact execution
     /// policy is classified from `action` before specialized governance.
     SshResource(SshResourceToolCall),
+
+    /// Read-only deployment readiness check for one exact Runner target.
+    /// Reports service-scope gaps, active/recovering Jobs, source alignment,
+    /// and whether a drain is required. Never changes service state.
+    DeploymentPreflight {
+        /// Exact caller-visible Runner client_id targeted for a future controlled deploy/restart.
+        #[schemars(length(min = 1, max = 128))]
+        client_id: String,
+        /// Closed operation vocabulary used to evaluate the narrow required service scopes.
+        #[schemars(length(min = 6, max = 8))]
+        operation: String,
+    },
+
+    /// Enter or leave process-local service drain mode using an optimistic generation fence.
+    /// Drain mode blocks new consequential runtime tool calls while preserving read-only
+    /// observability and already-running work. This does not restart or deploy by itself.
+    ServiceDrain {
+        /// Desired drain state. true stops admitting new consequential calls; false resumes admission.
+        draining: bool,
+        /// Optimistic lifecycle generation observed from runtime_status/deployment_preflight/service_drain.
+        #[schemars(range(min = 1))]
+        expected_generation: u64,
+    },
+
+    /// Create or exactly replay one durable deployment receipt without executing cutover.
+    PrepareServiceDeployment {
+        /// Exact caller-visible Runner client_id targeted by this deployment intent.
+        #[schemars(length(min = 1, max = 128))]
+        client_id: String,
+        /// Closed operation vocabulary: deploy, restart, or rollback.
+        #[schemars(length(min = 6, max = 8))]
+        operation: String,
+        /// Caller-generated idempotency key. Plaintext is never persisted.
+        #[schemars(length(min = 1, max = 256))]
+        idempotency_key: String,
+        /// Bounded non-secret release manifest. Runtime enforces an explicit schema.
+        target_manifest: Value,
+    },
+
+    /// Read one exact durable deployment receipt owned by the current principal.
+    ReadDeploymentReceipt {
+        #[schemars(length(min = 1, max = 96))]
+        receipt_id: String,
+    },
+
+    /// Schedule one authenticated supervisor-backed restart after drain/preflight.
+    /// The restart is bound to a durable receipt and never accepts executable/argv input.
+    ServiceRestart {
+        #[schemars(length(min = 1, max = 128))]
+        client_id: String,
+        #[schemars(length(min = 1, max = 256))]
+        idempotency_key: String,
+        /// Exact service lifecycle generation observed after entering drain mode.
+        #[schemars(range(min = 1))]
+        expected_generation: u64,
+    },
+
+    /// Execute one previously prepared deploy receipt through the fixed-action supervisor.
+    /// Candidate identity and artifact hashes come only from the durable receipt manifest.
+    ServiceDeploy {
+        #[schemars(length(min = 1, max = 96))]
+        receipt_id: String,
+        /// Optimistic durable receipt revision observed before scheduling cutover.
+        #[schemars(range(min = 1))]
+        expected_revision: u64,
+        /// Exact process-local lifecycle generation observed after entering drain mode.
+        #[schemars(range(min = 1))]
+        expected_generation: u64,
+    },
+
+    /// Execute one previously prepared rollback receipt through the fixed-action supervisor.
+    /// The target is a safe supervisor backup id stored in the durable receipt manifest.
+    ServiceRollback {
+        #[schemars(length(min = 1, max = 96))]
+        receipt_id: String,
+        #[schemars(range(min = 1))]
+        expected_revision: u64,
+        #[schemars(range(min = 1))]
+        expected_generation: u64,
+    },
+
+    /// Read the bounded secrets-safe runtime diagnostic ring.
+    RuntimeDiagnostics {
+        /// Optional severity filter: info, warn, or error.
+        #[serde(default)]
+        severity: Option<String>,
+        /// Optional exact code-owned component token.
+        #[schemars(length(min = 1, max = 128))]
+        #[serde(default)]
+        component: Option<String>,
+        /// Optional exact token-shaped correlation id (for example a Job/request/receipt id).
+        #[schemars(length(min = 1, max = 128))]
+        #[serde(default)]
+        correlation_id: Option<String>,
+        /// Optional inclusive Unix timestamp lower bound.
+        #[serde(default)]
+        since: Option<i64>,
+        /// Optional inclusive Unix timestamp upper bound.
+        #[serde(default)]
+        until: Option<i64>,
+        /// Maximum events returned. Runtime clamps to 1..=200.
+        #[schemars(range(min = 1, max = 200))]
+        #[serde(default)]
+        limit: Option<usize>,
+    },
+
+    /// Probe the configured public WebPi origin without credentials and cache bounded health evidence.
+    /// The caller cannot supply or retarget the URL.
+    PublicTunnelProbe {},
 
     /// Return a structured runtime health/observability summary.
     ///
@@ -5172,6 +5281,15 @@ impl ToolCall {
             Self::RunnerConfigReload { .. } => "runner_config_reload",
             Self::PluginTool(_) => "plugin_tool",
             Self::SshResource(_) => "ssh_resource",
+            Self::PrepareServiceDeployment { .. } => "prepare_service_deployment",
+            Self::ReadDeploymentReceipt { .. } => "read_deployment_receipt",
+            Self::ServiceRollback { .. } => "service_rollback",
+            Self::ServiceDeploy { .. } => "service_deploy",
+            Self::ServiceRestart { .. } => "service_restart",
+            Self::ServiceDrain { .. } => "service_drain",
+            Self::DeploymentPreflight { .. } => "deployment_preflight",
+            Self::RuntimeDiagnostics { .. } => "runtime_diagnostics",
+            Self::PublicTunnelProbe { .. } => "public_tunnel_probe",
             Self::RuntimeStatus { .. } => "runtime_status",
             Self::ReadToolTrace { .. } => "read_tool_trace",
             Self::ToolManifest { .. } => "tool_manifest",

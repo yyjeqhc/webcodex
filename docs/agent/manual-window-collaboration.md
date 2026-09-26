@@ -6,15 +6,15 @@ This guide defines two bounded multi-window collaboration layers: lightweight **
 
 Assume coordinator Session `C` and worker Session `W`.
 
-`C` owns the collaboration todo and bounded answers. `W` owns the worker's tool calls, validation, review evidence, and workspace activity. They are always independent Sessions: the worker does not resume `C`, and WebCodex does not copy `W` execution history into `C`.
+`C` owns the collaboration todo and bounded answers. `W` owns the worker's tool calls, validation, review evidence, and workspace activity. They are always independent Sessions: the worker does not resume `C`, and WebPi does not copy `W` execution history into `C`.
 
 Knowing a `session_id`, `message_id`, worker Session id, Job id, checkpoint id, artifact ref, commit SHA, or PR number is not authority. Every read or mutation still passes the normal caller/project/owner authorization checks. A `recording_session_id` is authorized before it can affect ledger recording, provenance, or project-mismatch logic; it does not become business execution context. Project-scoped Session targets require both current authorization to the stored project and an immutable creation-time canonical authority-group fingerprint; project-less Sessions use the same internal durable fence. Direct shared-key access and its OAuth shared-key bridge normalize to the same authority group. Workflow Session selection is always explicit: neither window identity, credentials, project identity, nor recorder provenance selects another business Session implicitly. Collaboration never grants filesystem, shell, Computer, artifact, credential, or other project authority.
 
 ## Window Peer awareness and cross-Project messaging
 
-A stable host window may be represented by a principal-scoped `wc_peer_*` identity derived from the already-hashed `ClientWindow`. Stateless MCP obtains that `ClientWindow` from host metadata such as `_meta["openai/session"]`; WebCodex never exposes or persists the raw host value. Peer identity is communication identity only: it is not a Workflow Session selector, Project authority, credential, task lease, model-turn id, or proof that the host/model is currently running.
+A stable host window may be represented by a principal-scoped `wc_peer_*` identity derived from the already-hashed `ClientWindow`. Stateless MCP obtains that `ClientWindow` from host metadata such as `_meta["openai/session"]`; WebPi never exposes or persists the raw host value. Peer identity is communication identity only: it is not a Workflow Session selector, Project authority, credential, task lease, model-turn id, or proof that the host/model is currently running.
 
-Peer **discovery** is deliberately narrower than peer **contact**. WebCodex may piggyback `peer_awareness` when another window owned by the same authenticated principal has meaningful activity in the exact same visible Project within the last 10 minutes. The hint is deduplicated by retained Server state per observer/peer/Project and reports recent activity, not liveness or presence. A window that has merely opened a connection or issued non-meaningful discovery traffic is not thereby an active collaborator.
+Peer **discovery** is deliberately narrower than peer **contact**. WebPi may piggyback `peer_awareness` when another window owned by the same authenticated principal has meaningful activity in the exact same visible Project within the last 10 minutes. The hint is deduplicated by retained Server state per observer/peer/Project and reports recent activity, not liveness or presence. A window that has merely opened a connection or issued non-meaningful discovery traffic is not thereby an active collaborator.
 
 Once a peer id is known, `post_peer_message(peer_id=...)` routes to that same principal-owned window independently of Project. This is intentional: a collaborator may discover another window in the main checkout, then move to a managed worktree or another Project without the Project change itself invalidating the communication route; bounded retention still applies. Cross-Project peer contact never reveals or authorizes the recipient's current Project, Workflow Session, branch, files, tool activity, assignment, or handoff. Session collaboration tools keep their existing independent target authorization and exact-project equality rules.
 
@@ -22,7 +22,7 @@ Peer messages reuse the Session message vocabulary (`note`, `proposal`, `questio
 
 Delivery is model-facing and intentionally lightweight:
 
-- `requires_ack=false`: WebCodex durably records the message and attempts to piggyback it once in `peer_messages` on the recipient window's next normal model-facing tool result. The persisted first/last projection timestamps and projection count describe a Server projection attempt, not a delivery/read receipt. There is no retry obligation if the model or transport never acts on it.
+- `requires_ack=false`: WebPi durably records the message and attempts to piggyback it once in `peer_messages` on the recipient window's next normal model-facing tool result. The persisted first/last projection timestamps and projection count describe a Server projection attempt, not a delivery/read receipt. There is no retry obligation if the model or transport never acts on it.
 - `requires_ack=true`: the message is eligible for the same bounded piggyback on later calls whenever the current request omits its id. Echoing the id in `ack_session_message_ids` suppresses it for that one request/response and records the first observed ACK time. ACK proves neither acceptance nor execution, never resolves the message, and never requires a reply.
 
 Peer transport is deliberately bounded rather than a permanent task queue. Old retained Peer messages and discovery edges may be pruned; `requires_ack` therefore means repeat while retained, not indefinite durable work. ActionAudit activity is discovery input only and never establishes a communication route by itself: a peer route exists only while retained Peer discovery/message state can still resolve it. Use Workflow Session todos and assignment fencing for durable work commitments.
@@ -68,11 +68,11 @@ A successful completion records:
 - a persisted fingerprint of the exact accepted assignment fence for replay correlation;
 - `author_session_id` only from an already-authorized explicit recording Session when the tool call is recorded under one.
 
-Without an explicit trusted recorder, `author_session_id` is `null`; callers cannot supply a trusted author identity themselves. Stateless MCP 2026 never derives a Workflow Session identity from transport/window continuity, so callers that want worker provenance pass explicit `recording_session_id` wrapper metadata. WebCodex does not infer Workflow Session provenance from `mcp-session-id`, HTTP connection state, credentials, project identity, a client window, or a recent Workflow Session.
+Without an explicit trusted recorder, `author_session_id` is `null`; callers cannot supply a trusted author identity themselves. Stateless MCP 2026 never derives a Workflow Session identity from transport/window continuity, so callers that want worker provenance pass explicit `recording_session_id` wrapper metadata. WebPi does not infer Workflow Session provenance from `mcp-session-id`, HTTP connection state, credentials, project identity, a client window, or a recent Workflow Session.
 
-When a collaboration call has both a recording Session and a target Session, WebCodex authorizes both independently and then requires their stored project scopes to match exactly. `project/project` is allowed only for the same project, `project/project` with different projects is denied, both `project/project-less` directions are denied, and `project-less/project-less` is allowed only after both owner authorities have independently matched. The generic cross-project escape flag never widens this collaboration relationship.
+When a collaboration call has both a recording Session and a target Session, WebPi authorizes both independently and then requires their stored project scopes to match exactly. `project/project` is allowed only for the same project, `project/project` with different projects is denied, both `project/project-less` directions are denied, and `project-less/project-less` is allowed only after both owner authorities have independently matched. The generic cross-project escape flag never widens this collaboration relationship.
 
-For uncertain responses, retry the same `session_id + message_id + completion_key + expected_assignment_fence` with the same answer metadata. WebCodex returns the original canonical completion without creating another answer. Reusing the same key with different answer content, tags, priority, trusted author, or fence fails closed. Historical completed rows that predate assignment-fence metadata remain queryable after restore but cannot be replayed successfully by a current request; WebCodex never invents a historical fence.
+For uncertain responses, retry the same `session_id + message_id + completion_key + expected_assignment_fence` with the same answer metadata. WebPi returns the original canonical completion without creating another answer. Reusing the same key with different answer content, tags, priority, trusted author, or fence fails closed. Historical completed rows that predate assignment-fence metadata remain queryable after restore but cannot be replayed successfully by a current request; WebPi never invents a historical fence.
 
 A successful completion is fenced through the Session-ledger writer generation that contains that completion before success is returned. If durable persistence cannot be confirmed, the tool returns `completion_persistence_uncertain` with `failure_kind=outcome_unknown`, `retry_same_completion=true`, and `recovery_kind=retry_same`; retry the exact same `session_id + message_id + completion_key + expected_assignment_fence + payload` to reconcile the already-possible in-memory mutation instead of posting a second answer. `retry_same` is an exact idempotent replay contract, not general retryability. Correlation and idempotency metadata survive restart/persistence restoration. Malformed partial completion structures fail closed and never silently reopen a resolved todo.
 
@@ -107,13 +107,13 @@ Message observation is **not** a delivery receipt, **not** proof of model-contex
 
 The Server-hosted `/runtime` page presents the same authoritative runtime and Workflow Session state without creating a second Session store or collaboration truth. It keeps a bounded Server overview, a focused per-Runner machine view, one compact/searchable Project selector, compact Workflow Session activity, and retained collaboration messages. The narrow Human Join composer is the only collaboration mutation affordance: it posts bounded Session messages through the canonical kernel path described below. Existing Project and Workflow Session console reads retain their `project:read` boundary; Server-wide/Runner-wide facts and full collaboration message/observation/post routes require `runtime:read` and still re-authorize the exact target Session/project.
 
-The collaboration panel establishes an observation baseline before reading the retained snapshot, then uses bounded long-polls and merges deltas by `message_id`. `has_more` is drained before the next wait, while `history_lost` causes a retained-board reload and a new baseline rather than claiming complete history. Manual Refresh reports visible refreshing/success/failure state and preserves prior usable data; a healthy live collaboration loop is not restarted merely because Refresh was clicked, while a paused/failed loop performs a retained reload, new baseline, and bounded reconnect. Session liveness is derived only from WebCodex facts such as a running call, owned running Job, or recent retained activity; it never claims to know whether the host/model is processing, frozen, or present. All aggregate counts remain bounded/truncation-aware. Browser observation remains UI refresh only: it is not a model wake-up, subscription, participant-presence mechanism, scheduler, worker claim, or execution lease.
+The collaboration panel establishes an observation baseline before reading the retained snapshot, then uses bounded long-polls and merges deltas by `message_id`. `has_more` is drained before the next wait, while `history_lost` causes a retained-board reload and a new baseline rather than claiming complete history. Manual Refresh reports visible refreshing/success/failure state and preserves prior usable data; a healthy live collaboration loop is not restarted merely because Refresh was clicked, while a paused/failed loop performs a retained reload, new baseline, and bounded reconnect. Session liveness is derived only from WebPi facts such as a running call, owned running Job, or recent retained activity; it never claims to know whether the host/model is processing, frozen, or present. All aggregate counts remain bounded/truncation-aware. Browser observation remains UI refresh only: it is not a model wake-up, subscription, participant-presence mechanism, scheduler, worker claim, or execution lease.
 
 ## Provenance is metadata, not authority
 
 A completed answer can identify the independent worker with `author_session_id` only when the completion carries an already-authorized explicit `recording_session_id`; without that recorder, no author Session is inferred from caller auth, client window, or other ambient state. It is not a caller-authored claim. In stateless MCP 2026, `recording_session_id` is explicit wrapper provenance metadata, not a transport Session and not an authority grant; the legacy `mcp-session-id` header remains irrelevant.
 
-The coordinator may then explicitly inspect `session_handoff_summary(worker_session_id)` if it has authority to that Session. WebCodex does not copy the worker's transcript, validation, diff review, Job logs, or workspace evidence into the coordinator Session merely because the answer references `W`.
+The coordinator may then explicitly inspect `session_handoff_summary(worker_session_id)` if it has authority to that Session. WebPi does not copy the worker's transcript, validation, diff review, Job logs, or workspace evidence into the coordinator Session merely because the answer references `W`.
 
 Session message bodies are explicit bounded collaboration payloads. Ordinary tool audit stores metadata such as target Session/message ids, body byte counts, tag counts, correlation ids, completion identity, and safe author provenance; it does not persist a second copy of the full todo/answer body or raw completion key.
 
@@ -129,7 +129,7 @@ The implementation Session posts a review todo containing the exact commit/range
 
 ### Two independent worktrees in parallel
 
-If two workers may write concurrently, give them separate Git worktrees and separate WebCodex Projects/Sessions. The message board coordinates intent and results only. It does not claim a branch, lease a path, serialize edits, or prevent conflicts.
+If two workers may write concurrently, give them separate Git worktrees and separate WebPi Projects/Sessions. The message board coordinates intent and results only. It does not claim a branch, lease a path, serialize edits, or prevent conflicts.
 
 ### Cross-host conceptual example
 
@@ -145,7 +145,7 @@ Do not treat todo state, `reply_to`, `completion_key`, `author_session_id`, or `
 - proof that only one worker inspected the source;
 - authority to mutate another Project.
 
-When multiple workers operate on the same source, use normal Git/WebCodex Project isolation and revalidate current state before acting on collaboration messages.
+When multiple workers operate on the same source, use normal Git/WebPi Project isolation and revalidate current state before acting on collaboration messages.
 
 ## Human join and acknowledgement ergonomics
 
@@ -170,7 +170,7 @@ Do not put bearer tokens, OAuth secrets, private keys, credentials, sensitive co
 
 This workflow does not add automatic worker spawning, scheduler/worker pool behavior, generic task queues, automatic claims, work leases, filesystem locks, branch locks, shared transcripts, hidden chain-of-thought transfer, cross-owner peer routing/delegation, webhook/model callbacks, automatic Job-terminal continuation, or implicit authority inheritance.
 
-The human or coordinator still chooses workers and isolated worktrees/Projects. WebCodex supplies bounded durable collaboration state and deterministic completion correlation, not a multi-agent execution scheduler.
+The human or coordinator still chooses workers and isolated worktrees/Projects. WebPi supplies bounded durable collaboration state and deterministic completion correlation, not a multi-agent execution scheduler.
 
 ## Relationship to durable Agent/Conversation and asynchronous work
 

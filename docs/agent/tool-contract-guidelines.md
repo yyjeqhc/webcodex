@@ -435,3 +435,21 @@ Current tool work should proceed in this order:
 Do not skip directly to pruning or composition just because a trace contains many
 tool calls. First determine whether the extra calls are real model decisions or
 avoidable contract friction.
+
+### Runtime status projections
+
+Canonical `runtime_status` and HTTP/API omission retain full diagnostic output.
+MCP supplies `compact=true` only when the argument is omitted, for both direct
+and `call_runtime_tool` calls. Use `compact=false` (without `summary_only=true`)
+for full diagnostics. `summary_only=true` is still an alias for sparse status.
+Discovery schema compaction does not control result projection.
+
+Sparse fleet status reports Server identity, MCP Host profile, Runner/Project
+counts, active/running/queued/recovering/lost-after-reconcile Job counts,
+protocol/build/source alignment, and connection states. Exact `client_id`
+focus limits these observations to that caller-visible Runner, including its
+protocol generation and shared Job concurrency. It does not return fleet rows,
+capabilities, provider inventories, authority, auth configuration or timestamps.
+Full mode retains those diagnostic facts. Both modes use the same canonical
+Job counting and compatibility rules; sparse status branches before full
+inventory/configuration JSON construction.

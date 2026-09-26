@@ -448,7 +448,16 @@ mod tests {
         assert!(work_on_project.contains("mode=worktree"));
         assert!(work_on_project.contains("exact Git base"));
         assert!(work_on_project.contains("Project authority"));
-        for name in ["list_runners", "runtime_status"] {
+        let status = &find("runtime_status").description;
+        for hint in [
+            "Job concurrency",
+            "sparse",
+            "full diagnostics",
+            "compact=false",
+        ] {
+            assert!(status.contains(hint), "runtime_status: {status}");
+        }
+        for name in ["list_runners"] {
             let description = &find(name).description;
             assert!(
                 description.contains("shared Job concurrency"),

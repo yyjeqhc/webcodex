@@ -240,7 +240,7 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
         <div class="section-head"><h2>Collaboration</h2><span id="collaborationMeta" class="secondary"></span></div>
         <div id="messages" class="conversation"></div>
         <form id="composer" class="composer">
-          <textarea id="messageInput" maxlength="8000" placeholder="Send an instruction or follow-up…" aria-label="Message WebCodex"></textarea>
+          <textarea id="messageInput" maxlength="8000" placeholder="Send a message to this Window…" aria-label="Message this Window"></textarea>
           <button id="sendMessage" class="refresh" type="submit">Send</button>
         </form>
         <div id="composerState" class="secondary"></div>
@@ -449,11 +449,13 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
 
   function validCollaborationMessage(value) {
     if (!value || typeof value !== "object" || Array.isArray(value) || !MESSAGE_ID.test(value.message_id)) return false;
-    if (!Number.isSafeInteger(value.created_at) || typeof value.message !== "string" || Array.from(value.message).length > 801) return false;
-    if (!["user", "agent"].includes(value.author) || !["sent", "acknowledged", "handled"].includes(value.state)) return false;
-    if (typeof value.kind !== "string" || value.kind.length < 1 || value.kind.length > 32 || typeof value.requires_ack !== "boolean") return false;
-    for (const key of ["first_seen_at", "handled_at"]) if (!(value[key] === null || (Number.isSafeInteger(value[key]) && value[key] >= 0))) return false;
-    return value.resolution === null || (typeof value.resolution === "string" && Array.from(value.resolution).length <= 801);
+    if (!Number.isSafeInteger(value.created_at_ms) || value.created_at_ms < 0 || typeof value.message !== "string" || Array.from(value.message).length > 8000) return false;
+    if (!["operator", "peer"].includes(value.source) || !["inbound", "outbound"].includes(value.direction)) return false;
+    if (typeof value.requires_ack !== "boolean") return false;
+    if (value.peer_id !== undefined && (typeof value.peer_id !== "string" || !/^wc_peer_[0-9a-f]{32}$/.test(value.peer_id))) return false;
+    if (value.context_session_id !== undefined && !SESSION_ID.test(value.context_session_id)) return false;
+    for (const key of ["first_projected_at_ms", "first_ack_observed_at_ms"]) if (!(value[key] === null || (Number.isSafeInteger(value[key]) && value[key] >= 0))) return false;
+    return true;
   }
 
   function validCollaboration(value) {
@@ -801,43 +803,40 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
   function renderMessages(collaboration) {
     const root = el("messages");
     root.replaceChildren();
-    el("collaborationMeta").textContent = collaboration.available ? "Linked work conversation" : "No linked work conversation";
-    const rows = [...collaboration.messages].reverse();
+    el("collaborationMeta").textContent = "";
+    const rows = collaboration.messages;
     for (const message of rows) {
       const article = document.createElement("article");
-      article.className = `message ${message.author}`;
+      article.className = `message ${message.source === "operator" ? "user" : "agent"}`;
       const copy = document.createElement("div"); copy.className = "message-copy"; copy.textContent = message.message;
       const meta = document.createElement("div"); meta.className = "message-meta";
-      const author = document.createElement("strong"); author.textContent = message.author === "user" ? "You" : "WebCodex";
-      const time = document.createElement("span"); time.textContent = formatAge(message.created_at * 1000);
-      meta.append(author, time);
-      if (message.author === "user") {
-        const state = document.createElement("span"); state.className = `message-state ${message.state}`;
-        state.textContent = message.state === "handled" ? "Handled" : message.state === "acknowledged" ? "Acknowledged" : "Sent";
-        meta.append(state);
+      const author = document.createElement("strong");
+      author.textContent = message.source === "operator" ? "You" : (message.direction === "outbound" ? "This Window → " : "") + "Window · " + String(message.peer_id || "").slice(8, 16);
+      const time = document.createElement("span"); time.textContent = formatAge(message.created_at_ms);
+      const state = document.createElement("span"); state.className = "message-state";
+      state.textContent = message.first_ack_observed_at_ms !== null ? "Acknowledged" : message.first_projected_at_ms !== null ? "Delivered" : "Sent";
+      meta.append(author, time, state);
+      if (message.context_session_id) {
+        const context = document.createElement("span"); context.textContent = "Context · " + message.context_session_id.slice(8, 14);
+        meta.append(context);
       }
       article.append(copy, meta);
-      if (message.resolution) {
-        const resolution = document.createElement("div"); resolution.className = "message-resolution";
-        resolution.textContent = message.resolution;
-        article.append(resolution);
-      }
       root.append(article);
     }
     if (!rows.length) {
-      const empty = document.createElement("div"); empty.className = "secondary";
-      empty.textContent = collaboration.available ? "No messages yet." : "A linked Workflow Session has not appeared in this Window yet.";
+      const empty = document.createElement("div"); empty.className = "empty";
+      empty.textContent = collaboration.available ? "No messages yet" : "Collaboration unavailable";
       root.append(empty);
     }
     updateComposerControl(collaboration);
   }
 
   function updateComposerControl(collaboration = lastRenderedState?.collaboration) {
-    const enabled = !!collaboration?.available && !!collaboration?.can_send && !!lastRenderedState?.session_id && hostInitialized && !tornDown && !sendInFlight;
-    el("messageInput").disabled = !enabled;
+    const enabled = !!collaboration?.available && !!collaboration?.can_send && hostInitialized && !tornDown && !sendInFlight;
+    el("messageInput").disabled = !enabled || !!pendingSend;
     el("sendMessage").disabled = !enabled || !String(el("messageInput").value || "").trim();
     el("sendMessage").textContent = sendInFlight ? "Sending…" : "Send";
-    if (collaboration && !collaboration.can_send) el("composerState").textContent = collaboration.available ? "This task is closed for new messages." : "";
+    if (collaboration && !collaboration.can_send) el("composerState").textContent = collaboration.available ? "Messaging unavailable." : "";
   }
 
   function renderWindowCurrentActivity(activity) {
@@ -946,7 +945,7 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     if (tornDown) return;
     lastRenderedState = state;
     el("projectIdentity").textContent = "Window activity";
-    el("sessionIdentity").textContent = state.session_id ? "Collaboration linked" : "";
+    el("sessionIdentity").textContent = state.session_id ? "Context · " + state.session_id.slice(8, 14) : "";
     const hasFinalChanges = snapshot !== null || state.final_changes !== undefined;
     el("taskTitle").textContent = state.session?.title || "WebCodex activity";
     renderWindowCurrentActivity(state.activity);
@@ -977,17 +976,12 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     if (tornDown || !hostInitialized || !identity || sendInFlight || !lastRenderedState?.collaboration?.can_send) return;
     const text = String(el("messageInput").value || "").trim();
     if (!text) return;
-    if (!pendingSend || pendingSend.message !== text) pendingSend = { message: text, delivery_key: newDeliveryKey() };
+    if (!pendingSend) pendingSend = { project: identity.project, ...(lastRenderedState.session_id ? { session_id: lastRenderedState.session_id } : {}), message: text, delivery_key: newDeliveryKey() };
     sendInFlight = true;
     el("composerState").textContent = "Sending…";
     updateComposerControl();
     try {
-      const response = await send("tools/call", { name: "work_result_send_message", arguments: {
-        project: identity.project,
-        session_id: lastRenderedState.session_id,
-        message: pendingSend.message,
-        delivery_key: pendingSend.delivery_key,
-      } });
+      const response = await send("tools/call", { name: "work_result_send_message", arguments: pendingSend });
       if (tornDown) return;
       if (toolSuccess(response) !== true) {
         el("composerState").textContent = "Send failed · retry";

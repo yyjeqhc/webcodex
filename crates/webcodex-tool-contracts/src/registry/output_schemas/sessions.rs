@@ -284,10 +284,9 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
         "validation_summary" => Some(validation_summary_tool_output_schema()),
         "present_work_result" | "work_result_state" => Some(wrapped_output_schema(vec![(
             "work_result",
-            open_object_schema("Bounded persistent card state for one exact Project and current client Window. Presentation and App refreshes expose the same bounded Window ActionAudit activity used by WebUI, including observe/diagnostic actions; linked Workflow Session collaboration and sealed final_changes are optional evidence that may appear later."),
+            open_object_schema("Bounded persistent card state for one exact Project and current client Window. Presentation and App refreshes expose the same bounded Window ActionAudit activity used by WebUI, including observe/diagnostic actions; Window collaboration is a read-only Operator/peer transcript independent of Sessions; linked Session evidence and sealed final_changes are optional."),
         )])),        "work_result_send_message" => Some(wrapped_output_schema(vec![
             ("success", schema_type("boolean", "Always true on success.")),
-            ("session_id", schema_type("string", "Exact Workflow Session updated by the card.")),
             ("message_id", schema_type("string", "Created or replayed wc_msg_* message id.")),
             ("replayed", schema_type("boolean", "True when the exact delivery key replayed an already retained message.")),
             ("state_changed", schema_type("boolean", "True only when a new message was created.")),

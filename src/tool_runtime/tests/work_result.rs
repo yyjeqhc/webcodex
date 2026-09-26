@@ -891,126 +891,103 @@ async fn work_result_state_fails_closed_for_foreign_session_authority() {
 }
 
 #[tokio::test]
-async fn work_result_collaboration_reuses_session_store_and_ack_resolution_state() {
+async fn work_result_collaboration_is_window_first_without_creating_session() {
     let tmp = tempfile::tempdir().unwrap();
     init_git_repo(tmp.path());
     commit_file(tmp.path(), "README.md", "hello\n", "initial");
-    let runtime = test_runtime();
+    let db =
+        std::sync::Arc::new(crate::Database::open(&tmp.path().join("collaboration.db")).unwrap());
+    let runtime = test_runtime()
+        .with_window_activity_database(db.clone())
+        .with_communication_database(db.clone());
     let project =
         register_runner_project_at_path(&runtime, "work-result-collab", "demo", tmp.path()).await;
     let auth = auth_context(None, true);
-    let session = runtime.sessions.start_session(
-        Some(project.clone()),
-        Some("Collaborative Work Result".to_string()),
+    let window = crate::client_window::ClientWindow::for_test("operator-card");
+    let before =
+        present_window_once(&runtime, "work-result-collab", &project, &auth, &window).await;
+    assert!(before.success, "{:?}", before.error);
+    assert_eq!(
+        before.output["work_result"]["collaboration"]["available"],
+        true
     );
-
-    let send = runtime
-        .work_result_send_message(
-            project.clone(),
-            session.session_id.clone(),
-            "Please keep the existing retry mechanism.".to_string(),
-            "card-message-1".to_string(),
-            Some(&auth),
-            None,
-        )
-        .await;
+    assert!(before.output["work_result"]["session_id"].is_null());
+    use super::super::kernel::{
+        HostFileImportTrust, ToolCallContext, ToolCallRequest, ToolInvocationMetadata,
+        ToolProtocolCapabilities, ToolTransport,
+    };
+    let send = runtime.call_tool_with_invocation_metadata(
+        ToolCallRequest { tool_name: "work_result_send_message".into(), arguments: json!({"project":project,"message":"Check tests","delivery_key":"card-1"}) },
+        ToolCallContext { transport: ToolTransport::Mcp, session_id: None, auth: Some(&auth), window: Some(&window), record_oauth_scope_denials: false, host_file_import_trust: HostFileImportTrust::Untrusted },
+        ToolInvocationMetadata::default(), ToolProtocolCapabilities {work_result_app:true,..Default::default()},
+    ).await;
+    assert!(send.error_status.is_none(), "{:?}", send.error_status);
+    let send = send.result.unwrap();
+    assert!(send.output.get("operator_messages").is_none());
     assert!(send.success, "{:?}", send.error);
-    let message_id = send.output["message_id"].as_str().unwrap().to_string();
-    assert_eq!(send.output["replayed"], false);
-    assert_eq!(send.output["state_changed"], true);
-
-    let retained = runtime
-        .sessions
-        .list_messages(
-            &session.session_id,
-            webcodex_workflow_session::ListSessionMessagesFilter {
-                limit: Some(10),
-                ..Default::default()
-            },
-        )
-        .unwrap();
-    assert_eq!(retained.len(), 1);
-    assert_eq!(
-        retained[0].kind,
-        webcodex_workflow_session::SessionMessageKind::Guidance
-    );
-    assert!(retained[0].requires_ack);
-    assert!(retained[0].first_ack_observed_at.is_none());
-
-    let sent = refresh_once(
-        &runtime,
-        "work-result-collab",
-        &project,
-        &session.session_id,
-        &auth,
-    )
-    .await;
-    assert!(sent.success, "{:?}", sent.error);
-    assert_eq!(
-        sent.output["work_result"]["collaboration"]["messages"][0]["message_id"],
-        message_id
-    );
-    assert_eq!(
-        sent.output["work_result"]["collaboration"]["messages"][0]["state"],
-        "sent"
-    );
-
-    let ack = runtime
-        .sessions
-        .observe_message_acks(&session.session_id, std::slice::from_ref(&message_id));
-    assert_eq!(ack.accepted_count, 1);
-    let seen = refresh_once(
-        &runtime,
-        "work-result-collab",
-        &project,
-        &session.session_id,
-        &auth,
-    )
-    .await;
-    assert_eq!(
-        seen.output["work_result"]["collaboration"]["messages"][0]["state"],
-        "acknowledged"
-    );
-
-    runtime
-        .sessions
-        .resolve_message(
-            &session.session_id,
-            &message_id,
-            Some("Applied the requested constraint.".to_string()),
-        )
-        .unwrap();
-    let handled = refresh_once(
-        &runtime,
-        "work-result-collab",
-        &project,
-        &session.session_id,
-        &auth,
-    )
-    .await;
-    assert_eq!(
-        handled.output["work_result"]["collaboration"]["messages"][0]["state"],
-        "handled"
-    );
-    assert_eq!(
-        handled.output["work_result"]["collaboration"]["messages"][0]["resolution"],
-        "Applied the requested constraint."
-    );
-
     let replay = runtime
         .work_result_send_message(
-            project,
-            session.session_id,
-            "Please keep the existing retry mechanism.".to_string(),
-            "card-message-1".to_string(),
-            Some(&auth),
+            project.clone(),
             None,
+            "Check tests".into(),
+            "card-1".into(),
+            Some(&auth),
+            Some(&window),
         )
         .await;
-    assert!(replay.success, "{:?}", replay.error);
-    assert_eq!(replay.output["message_id"], message_id);
+    assert_eq!(send.output["message_id"], replay.output["message_id"]);
     assert_eq!(replay.output["replayed"], true);
-    assert_eq!(replay.output["state_changed"], false);
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        let auth = auth.clone();
+        let window = window.clone();
+        async move {
+            runtime
+                .call_tool_with_invocation_metadata(
+                    ToolCallRequest {
+                        tool_name: "work_result_state".into(),
+                        arguments: json!({"project":project}),
+                    },
+                    ToolCallContext {
+                        transport: ToolTransport::Mcp,
+                        session_id: None,
+                        auth: Some(&auth),
+                        window: Some(&window),
+                        record_oauth_scope_denials: false,
+                        host_file_import_trust: HostFileImportTrust::Untrusted,
+                    },
+                    ToolInvocationMetadata::default(),
+                    ToolProtocolCapabilities {
+                        work_result_app: true,
+                        ..Default::default()
+                    },
+                )
+                .await
+        }
+    });
+    let request = wait_for_patch_agent_request(&runtime, "work-result-collab").await;
+    complete_agent_request_by_running_locally(&runtime, "work-result-collab", request).await;
+    let state = task.await.unwrap();
+    assert!(state.error_status.is_none(), "{:?}", state.error_status);
+    let state = state.result.unwrap();
+    assert!(state.success, "{:?}", state.error);
+    assert!(state.output.get("operator_messages").is_none());
+    assert_eq!(runtime.sessions.active_session_count_for_test(None), 0);
+    assert!(state.output["work_result"]["session_id"].is_null());
+    let messages = &state.output["work_result"]["collaboration"]["messages"];
+    assert_eq!(messages[0]["message_id"], send.output["message_id"]);
+    assert_eq!(messages[0]["source"], "operator");
+    assert!(messages[0]["first_projected_at_ms"].is_null());
+    let count: i64 = db
+        .conn_for_tests()
+        .query_row(
+            "SELECT projection_count FROM window_operator_messages",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(count, 0);
 }
 
 #[test]

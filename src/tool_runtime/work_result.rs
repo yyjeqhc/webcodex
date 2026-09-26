@@ -1,7 +1,7 @@
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 
-use crate::auth::{AuthContext, SCOPE_SESSION_COLLABORATE};
+use crate::auth::AuthContext;
 use crate::client_window::ClientWindow;
 use crate::json_digest::update_sha256_with_json;
 
@@ -13,10 +13,7 @@ use super::validation_events::{
     current_validation_evidence_for_session, validation_summary_from_events,
 };
 use super::{ToolResult, ToolRuntime};
-use webcodex_workflow_session::{
-    ListSessionMessagesFilter, SessionMessageKind, SessionMessagePriority, SessionMessageStatus,
-    SessionSummary,
-};
+use webcodex_workflow_session::SessionSummary;
 
 const WORK_RESULT_SESSION_EVENT_LIMIT: usize = 200;
 const WORK_RESULT_VALIDATION_LIMIT: usize = 20;
@@ -28,7 +25,6 @@ const MAX_WORK_RESULT_BRANCH_CHARS: usize = 160;
 const MAX_WORK_RESULT_REVIEW_TOOLS: usize = 12;
 const MAX_WORK_RESULT_TOOL_CHARS: usize = 64;
 const MAX_WORK_RESULT_MESSAGES: usize = 6;
-const MAX_WORK_RESULT_MESSAGE_CHARS: usize = 800;
 
 impl ToolRuntime {
     #[cfg(test)]
@@ -78,43 +74,28 @@ impl ToolRuntime {
     pub(crate) async fn work_result_send_message(
         &self,
         project: String,
-        session_id: String,
+        session_id: Option<String>,
         message: String,
         delivery_key: String,
         auth: Option<&AuthContext>,
         window: Option<&ClientWindow>,
     ) -> ToolResult {
-        if let Err(result) = self
-            .authorize_work_result_target(&project, &session_id, "work_result_send_message", auth)
-            .await
-        {
-            return result;
-        }
-        let result = self
-            .post_session_message_tool(
-                session_id.clone(),
-                SessionMessageKind::Guidance,
-                message,
-                Vec::new(),
-                None,
-                SessionMessagePriority::Normal,
-                true,
-                Some(delivery_key),
-                auth,
-                window,
-                None,
-            )
-            .await;
-        if !result.success {
-            return result;
-        }
-        ToolResult::ok(json!({
-            "success": true,
-            "session_id": session_id,
-            "message_id": result.output.get("message_id").cloned().unwrap_or(Value::Null),
-            "replayed": result.output.get("replayed").cloned().unwrap_or(json!(false)),
-            "state_changed": result.output.get("state_changed").cloned().unwrap_or(json!(false)),
-        }))
+        let project = match self.authorize_work_result_project(&project, auth).await {
+            Ok(project) => project,
+            Err(result) => return result,
+        };
+        let Some(window) = window else {
+            return ToolResult::err("stable Window identity required");
+        };
+        self.post_window_operator_message(
+            window.key(),
+            session_id.as_deref(),
+            Some(&project),
+            message,
+            delivery_key,
+            auth,
+        )
+        .await
     }
 
     async fn authorize_work_result_project(
@@ -252,7 +233,6 @@ impl ToolRuntime {
             );
             projection["session"] = work_result_session(summary);
             projection["session_id"] = json!(summary.session_id);
-            projection["collaboration"] = self.work_result_collaboration(summary, auth);
             if let Some(detail) = self.workflow_session_console_detail(
                 &resolved_project,
                 &summary.session_id,
@@ -308,6 +288,11 @@ impl ToolRuntime {
             })
         };
 
+        projection["collaboration"] = self.window_collaboration(
+            window.map(ClientWindow::key),
+            auth,
+            MAX_WORK_RESULT_MESSAGES,
+        );
         projection["window_activity"] = work_result_window_activity_projection(&observed);
         projection["activity"] = work_result_activity_projection(&observed, summary.as_ref());
         projection["state_version"] = json!(work_result_state_version(&projection));
@@ -320,41 +305,6 @@ impl ToolRuntime {
             }
         }
         ToolResult::ok(json!({"work_result": projection}))
-    }
-
-    fn work_result_collaboration(
-        &self,
-        summary: &SessionSummary,
-        auth: Option<&AuthContext>,
-    ) -> Value {
-        let available = auth.is_some_and(|auth| auth.has_scope(SCOPE_SESSION_COLLABORATE));
-        if !available {
-            return json!({
-                "available": false,
-                "can_send": false,
-                "messages": [],
-            });
-        }
-        let messages = self
-            .sessions
-            .list_messages(
-                &summary.session_id,
-                ListSessionMessagesFilter {
-                    limit: Some(MAX_WORK_RESULT_MESSAGES),
-                    ..Default::default()
-                },
-            )
-            .unwrap_or_default()
-            .into_iter()
-            .filter(|message| message.closure_kind.is_none())
-            .into_iter()
-            .map(work_result_message)
-            .collect::<Vec<_>>();
-        json!({
-            "available": true,
-            "can_send": summary.lifecycle.allows_mutation(),
-            "messages": messages,
-        })
     }
 }
 
@@ -773,44 +723,6 @@ fn session_activity_fallback(summary: &SessionSummary) -> Value {
         "last_meaningful_activity_at_ms": last_at,
         "coverage_partial": summary.events_truncated,
     })
-}
-
-fn work_result_message(message: webcodex_workflow_session::SessionMessage) -> Value {
-    let handled = message.status == SessionMessageStatus::Resolved;
-    let seen = message.first_ack_observed_at.is_some();
-    let state = if handled {
-        "handled"
-    } else if seen {
-        "acknowledged"
-    } else {
-        "sent"
-    };
-    let text = truncate_plain_text(&message.message, MAX_WORK_RESULT_MESSAGE_CHARS);
-    let resolution = message
-        .resolution
-        .as_deref()
-        .map(|value| truncate_plain_text(value, MAX_WORK_RESULT_MESSAGE_CHARS));
-    json!({
-        "message_id": message.message_id,
-        "created_at": message.created_at,
-        "kind": message.kind.as_str(),
-        "message": text,
-        "author": if message.author_session_id.is_some() { "agent" } else { "user" },
-        "state": state,
-        "requires_ack": message.requires_ack,
-        "first_seen_at": message.first_ack_observed_at,
-        "handled_at": message.resolved_at,
-        "resolution": resolution,
-    })
-}
-
-fn truncate_plain_text(value: &str, max_chars: usize) -> String {
-    let mut chars = value.chars();
-    let mut text = chars.by_ref().take(max_chars).collect::<String>();
-    if chars.next().is_some() {
-        text.push('…');
-    }
-    text
 }
 
 fn work_result_workspace(call_succeeded: bool, source: &Value) -> Value {

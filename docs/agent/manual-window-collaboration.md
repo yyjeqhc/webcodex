@@ -2,6 +2,38 @@
 
 This guide defines two bounded multi-window collaboration layers: lightweight **Window Peer** awareness/messages and authoritative **Workflow Session** handoff/assignment. Neither layer is a scheduler, worker pool, claim service, shared transcript, or filesystem lock. The peer layer routes conversation; the Session layer keeps task evidence and fenced todo completion. Both remain separate from the durable Agent/Conversation domain.
 
+## Operator messages and Window transcripts
+
+Runtime WebUI and Work Result App v8 use the exact Window as the collaboration
+target. A Project is optional work-location context; an optional exact Workflow
+Session identifies related work and must be visible and explicitly linked to
+that Window. Neither context changes the recipient or creates a Session.
+
+Operator messages use the independent durable `window_operator_messages` store,
+with exact principal isolation, 512 retained messages per principal, and a
+principal-scoped delivery key. Within retention, exact retries return the same
+message ID; changing recipient, context, or content with the same key conflicts.
+An uncertain write must retain the complete payload and key when retried.
+
+`POST /api/runtime-console/window-collaboration` accepts `client_window_key` and
+optional `limit` (1–100). The read-only transcript merges inbound Operator,
+inbound peer, and outbound peer messages, oldest first within the latest bounded
+slice. `POST /api/runtime-console/window-collaboration-post` accepts that exact
+Window key, `message`, `delivery_key`, and optional `context_session_id`. Both
+require `runtime:read`, `session:collaborate`, and a Window visible under the
+caller's exact observation principal; the wider Console inventory is not write
+authority. The card uses its Host-derived current ClientWindow and independently
+authorizes its Project.
+
+Transcript reads never consume attention. Only model-visible tool activity
+projects pending Operator messages and updates delivery timestamps;
+`present_work_result`, `work_result_state`, `work_result_send_message`, and
+`changes_file_diff` do not. The existing ACK transport carries message IDs without
+changing wrapper protocol. UI states are Sent, Delivered, and Acknowledged.
+Operator identity is never synthesized as a peer Window, and peer self-target
+rejection remains intact. Legacy Session message APIs/UI remain available, but
+new Window UI and card messages no longer write the Session message store.
+
 ## Core model
 
 Assume coordinator Session `C` and worker Session `W`.
@@ -151,7 +183,7 @@ When multiple workers operate on the same source, use normal Git/WebCodex Projec
 
 The hosted Runtime Console may post `note`, `guidance`, `question`, and `todo` messages into an exact authorized Workflow Session through the same `post_session_message` kernel path. This is a browser affordance, not a Participant entity, membership record, presence signal, or identity-spoofing surface. The browser route keeps the current collaboration metadata authority policy (`runtime:read`) and still applies the stored Session/project authority fence.
 
-Any Session message may opt into `requires_ack`, independently of kind and priority. A Stateless MCP 2026 caller may echo visible `wc_msg_*` ids in `ack_session_message_ids`, or reuse the compact `session_attention.ack_ref`. Each returned ref represents the exact Session ACK set explicitly retained across the current exchange: ACK evidence accepted on this request plus ACK-required messages newly projected in this response. As further bounded messages are projected, the next ref carries that retained set forward in one bounded value. The compact ref is Session-only: it is checked against the exact authorized attention Session and its full current open ACK-required membership, so a changed, stale, malformed, foreign-Session, or foreign-principal ref acknowledges nothing and cannot absorb later messages. The exact-ID wrapper remains available and is still the only ACK form for Window Peer messages. The original tool executes normally whether ACK evidence is present, missing, unknown, foreign, or stale. A valid ACK suppresses the represented Session/Peer body only for that request/response. Later omission makes unresolved Session messages or retained Peer ACK messages eligible for bounded re-projection. The first observed ACK timestamp is observability only; it must never be described as delivered, read, accepted, or currently remembered. Session durable completion still requires normal message resolution.
+Any Session message may opt into `requires_ack`, independently of kind and priority. A Stateless MCP 2026 caller may echo visible `wc_msg_*` ids in `ack_session_message_ids`, or reuse the compact `session_attention.ack_ref`. Each returned ref represents the exact Session ACK set explicitly retained across the current exchange: ACK evidence accepted on this request plus ACK-required messages newly projected in this response. As further bounded messages are projected, the next ref carries that retained set forward in one bounded value. The compact ref is Session-only: it is checked against the exact authorized attention Session and its full current open ACK-required membership, so a changed, stale, malformed, foreign-Session, or foreign-principal ref acknowledges nothing and cannot absorb later messages. The exact-ID wrapper remains available and is still the ACK form for Window Peer and Operator messages. Operator ACKs persistently stop redelivery; the following request-scoped behavior applies to the legacy Session/Peer channels. The original tool executes normally whether ACK evidence is present, missing, unknown, foreign, or stale. A valid ACK suppresses the represented Session/Peer body only for that request/response. Later omission makes unresolved Session messages or retained Peer ACK messages eligible for bounded re-projection. The first observed ACK timestamp is observability only; it must never be described as delivered, read, accepted, or currently remembered. Session durable completion still requires normal message resolution.
 
 ## Bounded payload guidance
 

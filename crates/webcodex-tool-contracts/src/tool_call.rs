@@ -1516,7 +1516,10 @@ pub enum ToolCall {
     /// Host delivery can be retried without duplicating the retained message.
     WorkResultSendMessage {
         project: String,
-        session_id: String,
+        /// Optional exact work context explicitly linked to the current Window; never the recipient.
+        #[serde(default)]
+        #[schemars(regex(pattern = "^wc_sess_([A-Za-z0-9_-]{16}|[0-9a-f]{32})$"))]
+        session_id: Option<String>,
         #[schemars(length(min = 1, max = 8000))]
         message: String,
         #[schemars(length(min = 1, max = 128))]

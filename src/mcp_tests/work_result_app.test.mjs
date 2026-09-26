@@ -153,7 +153,7 @@ test("Window card renders and refreshes before any Workflow Session exists", asy
   assert.equal(view.nodes.sessionIdentity.textContent, "");
   assert.equal(view.nodes.windowCoverage.textContent, "2 observed events");
   assert.equal(view.nodes.windowActivity.children.length, 2);
-  assert.equal(view.nodes.collaborationMeta.textContent, "No linked work conversation");
+  assert.equal(view.nodes.collaborationMeta.textContent, "");
   assert.equal(view.nodes.messageInput.disabled, true);
   assert.equal(view.timers.size, 1);
   await view.fireTimers(2500);
@@ -187,7 +187,7 @@ test("primary task card hides raw tool and live file details while keeping seman
   assert.equal(view.nodes.windowCoverage.textContent, "2 observed events");
   assert.equal(view.nodes.windowActivity.children.length, 2);
   assert.equal(view.nodes.files, undefined);
-  assert.equal(view.nodes.collaborationMeta.textContent, "Linked work conversation");
+  assert.equal(view.nodes.collaborationMeta.textContent, "");
 });
 
 test("recent inactive work keeps the lightweight last-active state before the idle threshold", async () => {
@@ -281,7 +281,7 @@ test("unchanged state_version refresh still advances wall-clock idle copy withou
   assert.equal(view.nodes.activityAge.textContent, "Idle for 1m");
 });
 
-test("shared Session messages render user-facing Sent, Acknowledged, and Handled states", async () => {
+test("Window messages render Sent, Delivered, and Acknowledged states", async () => {
   const messageState = {
     ...baseState,
     state_version: `wr2_${"d".repeat(64)}`,
@@ -289,9 +289,9 @@ test("shared Session messages render user-facing Sent, Acknowledged, and Handled
       available: true,
       can_send: true,
       messages: [
-        { message_id: "wc_msg_handled", created_at: 1_999_999_999, kind: "guidance", message: "handled", author: "user", state: "handled", requires_ack: true, first_seen_at: 1_999_999_999, handled_at: 2_000_000_000, resolution: "Applied." },
-        { message_id: "wc_msg_seen", created_at: 1_999_999_998, kind: "guidance", message: "seen", author: "user", state: "acknowledged", requires_ack: true, first_seen_at: 1_999_999_999, handled_at: null, resolution: null },
-        { message_id: "wc_msg_sent", created_at: 1_999_999_997, kind: "guidance", message: "sent", author: "user", state: "sent", requires_ack: true, first_seen_at: null, handled_at: null, resolution: null },
+        { message_id: "wc_msg_sent", created_at_ms: 1_999_999_997_000, message: "sent", source: "operator", direction: "inbound", requires_ack: true, first_projected_at_ms: null, first_ack_observed_at_ms: null },
+        { message_id: "wc_msg_seen", created_at_ms: 1_999_999_998_000, message: "seen", source: "operator", direction: "inbound", requires_ack: true, first_projected_at_ms: 1_999_999_999_000, first_ack_observed_at_ms: null },
+        { message_id: "wc_msg_handled", created_at_ms: 1_999_999_999_000, message: "acknowledged", source: "operator", direction: "inbound", requires_ack: true, first_projected_at_ms: 1_999_999_999_000, first_ack_observed_at_ms: 2_000_000_000_000 },
       ],
     },
   };
@@ -299,8 +299,7 @@ test("shared Session messages render user-facing Sent, Acknowledged, and Handled
   view.toolResult({ work_result: messageState });
   await view.initialize();
   const labels = view.nodes.messages.children.map(article => article.children[1].children.at(-1).textContent);
-  assert.deepEqual(labels, ["Sent", "Acknowledged", "Handled"]);
-  assert.equal(view.nodes.messages.children[2].children[2].textContent, "Applied.");
+  assert.deepEqual(labels, ["Sent", "Delivered", "Acknowledged"]);
 });
 
 test("card composer retries uncertain delivery with the same key and refreshes shared state", async () => {
@@ -342,7 +341,7 @@ test("card composer retries uncertain delivery with the same key and refreshes s
       available: true,
       can_send: true,
       messages: [
-        { message_id: "wc_msg_card", created_at: 2_000_000_000, kind: "guidance", message: "Use the existing retry mechanism.", author: "user", state: "sent", requires_ack: true, first_seen_at: null, handled_at: null, resolution: null },
+        { message_id: "wc_msg_card", created_at_ms: 2_000_000_000_000, message: "Use the existing retry mechanism.", source: "operator", direction: "inbound", requires_ack: true, first_projected_at_ms: null, first_ack_observed_at_ms: null },
       ],
     },
   };
@@ -847,7 +846,7 @@ test("Activity and Collaboration tabs preserve Window activity and drafts across
   view.toolResult({ work_result: baseState });
   await view.initialize();
   assert.equal(view.nodes.projectIdentity.textContent, "Window activity");
-  assert.equal(view.nodes.sessionIdentity.textContent, "Collaboration linked");
+  assert.equal(view.nodes.sessionIdentity.textContent, "Context · " + session_id.slice(8, 14));
   assert.equal(view.nodes.windowActivity.children.length, 2);
   assert.equal(view.nodes.windowActivity.children[0].children[0].children[0].textContent, "Reviewed changes");
   assert.equal(view.nodes.windowActivity.children[1].children[0].children[1].textContent, "Observe · Succeeded");
@@ -876,4 +875,25 @@ for (const workflow of [
   await view.initialize();
   assert.equal(view.nodes.badge.textContent, "Unavailable");
   assert.equal(view.calls("work_result_state").length, 0);
+});
+
+test("Window card sends without a Session and keeps pending context on uncertain retry", async () => {
+  const state = { ...baseState, session_id: undefined, session: undefined };
+  const view = app("mcp_work_result_app.html");
+  view.toolInput({ project });
+  view.toolResult({ work_result: state });
+  await view.initialize();
+  assert.equal(view.nodes.messageInput.disabled, false);
+  view.nodes.messageInput.value = "Before any Session";
+  view.nodes.messageInput.oninput();
+  view.nodes.composer.onsubmit({ preventDefault() {} });
+  await flush();
+  const first = view.calls("work_result_send_message")[0];
+  assert.equal(first.params.arguments.session_id, undefined);
+  await view.fireTimers(10000);
+  view.toolResult({ work_result: { ...baseState, state_version: `wr2_${"a".repeat(64)}` } });
+  view.nodes.composer.onsubmit({ preventDefault() {} });
+  await flush();
+  const retry = view.calls("work_result_send_message")[1];
+  assert.deepEqual(retry.params.arguments, first.params.arguments);
 });

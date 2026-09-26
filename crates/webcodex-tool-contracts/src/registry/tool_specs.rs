@@ -38,17 +38,17 @@ pub fn goal_plan_app_tool_specs() -> Vec<ToolSpec> {
 }
 
 /// Work Result App primitives. Canonical definitions stay ModelHidden; only the
-/// MCP Apps adapter projects live refresh, bounded Session collaboration, closeout
+/// MCP Apps adapter projects live refresh, bounded Window collaboration, closeout
 /// sealing, and frozen lazy diff reads.
 pub fn work_result_app_tool_specs() -> Vec<ToolSpec> {
     vec![
         tool_spec(
             "work_result_state",
-            "App-only exact live Work Result refresh. Re-authorizes project + session_id and never records into the target Session. It returns bounded exact-Session workflow stages/activity, independent Window activity and collaboration state plus any retained immutable final-changes snapshot already sealed by a non-blocking finish_coding_task closeout; the refresh never creates or replaces that snapshot.",
+            "App-only exact live Work Result refresh. Re-authorizes the exact Project and optional context session_id and never consumes message attention or records into a Session. It returns Window activity and read-only Window collaboration, optional Session evidence plus any retained immutable final-changes snapshot already sealed by a non-blocking finish_coding_task closeout; the refresh never creates or replaces that snapshot.",
         ),
         tool_spec(
             "work_result_send_message",
-            "Work Result App-only bounded collaboration write for the exact card Project + Workflow Session. It reuses the canonical Session message store and session:collaborate checks, fixes user input to guidance + requires_ack, and requires a replay key so an uncertain Host call can be retried without duplicating the message.",
+            "Work Result App-only Operator-to-Window message. Routes to the current stable ClientWindow, never a Session or peer sender. Project authorization and session:collaborate scope are required; optional session_id is exact, visible, explicitly linked context only. Stores a bounded durable message without consuming model attention or creating a Session. Retry uncertain results with the same delivery_key and payload; conflicting reuse is rejected.",
         ),
         tool_spec(
             "changes_file_diff",

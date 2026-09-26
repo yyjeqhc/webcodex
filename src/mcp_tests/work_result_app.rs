@@ -36,11 +36,12 @@ async fn handle_with_server_apps_enabled(
 async fn work_result_descriptor_is_explicit_sparse_app_only_and_resource_backed() {
     assert_eq!(
         MCP_WORK_RESULT_UI_RESOURCE_URI,
-        "ui://webcodex/work-result/v7"
+        "ui://webcodex/work-result/v8"
     );
     assert!(MCP_WORK_RESULT_UI_RESOURCE_LEGACY_URIS.contains(&"ui://webcodex/work-result/v4"));
     assert!(MCP_WORK_RESULT_UI_RESOURCE_LEGACY_URIS.contains(&"ui://webcodex/work-result/v5"));
     assert!(MCP_WORK_RESULT_UI_RESOURCE_LEGACY_URIS.contains(&"ui://webcodex/work-result/v6"));
+    assert!(MCP_WORK_RESULT_UI_RESOURCE_LEGACY_URIS.contains(&"ui://webcodex/work-result/v7"));
     let runtime = test_runtime();
 
     let ui = handle_with_server_apps_enabled(
@@ -91,7 +92,7 @@ async fn work_result_descriptor_is_explicit_sparse_app_only_and_resource_backed(
     assert!(send.pointer("/_meta/ui/resourceUri").is_none());
     assert_eq!(
         send["inputSchema"]["required"],
-        json!(["project", "session_id", "message", "delivery_key"])
+        json!(["project", "message", "delivery_key"])
     );
     assert!(!registered_tool_specs()
         .iter()
@@ -461,10 +462,10 @@ fn work_result_html_is_bounded_live_progress_ui() {
         "Activity",
         "Collaboration",
         "Final changes",
-        "Message WebCodex",
-        "Linked work conversation",
+        "Message this Window",
+        "No messages yet",
         "Acknowledged",
-        "Handled",
+        "Delivered",
         "ui/notifications/tool-input",
         "ui/notifications/tool-result",
         "id=\"refresh\"",
@@ -485,6 +486,9 @@ fn work_result_html_is_bounded_live_progress_ui() {
         );
     }
     for forbidden in [
+        "Linked work conversation",
+        "No linked work conversation",
+        "A linked Workflow Session has not appeared",
         "Task workflow",
         "Checks and review",
         "Result · Ready",

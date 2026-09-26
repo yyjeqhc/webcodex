@@ -114,6 +114,7 @@ it("shows active Window work without any Workflow Session and keeps observe call
       activity_returned: 1,
     }));
     if (path === "window") return ok(windowDetail({ client_window_key: observeKey }));
+    if (path === "window-collaboration") return ok({ messages: [], can_send: true });
     throw new Error("unexpected path " + path);
   });
 
@@ -175,6 +176,9 @@ it("shows active Window work without any Workflow Session and keeps observe call
   fireEvent.change(search, { target: { value: "runtime_status" } });
   expect(screen.getByTestId("work-window-row-" + activeKey).closest(".window-current-selection")).toBeTruthy();
   expect(screen.getByTestId("work-window-row-" + observeKey)).toBeTruthy();
+  expect(vi.mocked(client.post).mock.calls.some(([path]) => path === "window-collaboration")).toBe(false);
+  fireEvent.click(screen.getByRole("tab", { name: "Collaboration" }));
+  await waitFor(() => expect(vi.mocked(client.post).mock.calls.some(([path]) => path === "window-collaboration")).toBe(true));
 });
 
 it("uses exact Session tags to focus contiguous Window call segments", async () => {

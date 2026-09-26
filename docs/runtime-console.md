@@ -112,6 +112,11 @@ requests immediately. Active Session refreshes likewise preserve slow requests.
 Window relations use the returned evidence directly instead of fetching each
 linked Session solely to enrich a Window count.
 
+Window collaboration refreshes every three seconds only while its tab and the
+browser page are visible. Hiding either aborts outstanding transcript reads;
+returning refreshes immediately. The mounted composer retains drafts and exact
+retry identity, and already-started sends still settle while hidden.
+
 These are bounded polling views, not lossless real-time event subscriptions. The
 WebUI reads the latest 80 calls every 3 seconds in the foreground (15 seconds in
 the background), and hydrates up to 2,000 retained calls at entry and every

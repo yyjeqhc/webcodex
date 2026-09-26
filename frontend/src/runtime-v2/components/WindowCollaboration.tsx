@@ -48,12 +48,13 @@ function priorityLabel(priority: WindowCollaborationPriority, zh: boolean): stri
       : (zh ? "普通" : "Normal");
 }
 
-export function WindowCollaboration({ client, windowKey, selectedSessionId, language, onUnauthorized }: {
+export function WindowCollaboration({ client, windowKey, selectedSessionId, language, onUnauthorized, active = true }: {
   client: RuntimeV2Client;
   windowKey: string;
   selectedSessionId: string;
   language: RuntimeLanguage;
   onUnauthorized: () => void;
+  active?: boolean;
 }) {
   const zh = language === "zh-CN";
   const [message, setMessage] = useState("");
@@ -63,7 +64,7 @@ export function WindowCollaboration({ client, windowKey, selectedSessionId, lang
   const followLatest = useRef(true);
   const [hasNewMessages, setHasNewMessages] = useState(false);
   const threadRef = useRef<HTMLDivElement | null>(null);
-  const state = useWindowCollaboration(client, windowKey, onUnauthorized);
+  const state = useWindowCollaboration(client, windowKey, onUnauthorized, active);
   const sending = state.sendState === "sending";
   const uncertain = state.sendState === "uncertain";
   const messages = state.transcript?.messages || [];

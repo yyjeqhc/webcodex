@@ -467,6 +467,7 @@ export function WindowWorkbench({
                   key={windows.selectedKey}
                   client={client}
                   windowKey={windows.selectedKey}
+                  active={centerTab === "collaboration"}
                   selectedSessionId={selectedSessionId}
                   language={language}
                   onUnauthorized={onUnauthorized}

@@ -506,7 +506,7 @@ fn tool_specs_describe_default_coding_loop_preferences() {
         "project-source mutation should normally use canonical structured editors",
         "runner-owned execution",
         "timeout_secs is total lifetime",
-        "sync_wait_secs is only job-handoff grace",
+        "server timing policy controls job-handoff grace",
         "retain exact job_id/continuation",
         "continue independent work",
         "passive job attention",

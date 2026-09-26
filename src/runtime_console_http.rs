@@ -7049,23 +7049,58 @@ mod tests {
             Some((&session.session_id, project)),
             6000,
         );
-        let linked = runtime
+        let webui_style = runtime
             .post_window_operator_message(
                 &key,
                 Some(&session.session_id),
                 None,
-                "context".into(),
-                "context-key".into(),
+                "context from WebUI".into(),
+                "context-key-webui".into(),
                 Some(&writer),
             )
             .await;
-        assert!(linked.success, "{:?}", linked.error);
+        assert!(webui_style.success, "{:?}", webui_style.error);
+        let mcp_style = runtime
+            .post_window_operator_message(
+                &key,
+                Some(&session.session_id),
+                Some(project),
+                "context from MCP".into(),
+                "context-key-mcp".into(),
+                Some(&writer),
+            )
+            .await;
+        assert!(mcp_style.success, "{:?}", mcp_style.error);
+        let mismatch = runtime
+            .post_window_operator_message(
+                &key,
+                Some(&session.session_id),
+                Some("agent:other:project"),
+                "mismatched context".into(),
+                "context-key-mismatch".into(),
+                Some(&writer),
+            )
+            .await;
+        assert!(!mismatch.success);
+        assert_eq!(mismatch.output["failure_kind"], "invalid_context");
+        assert_eq!(mismatch.output["error_kind"], "session_project_mismatch");
+
         let rows = runtime.window_collaboration(Some(&key), Some(&writer), 10);
-        assert!(rows["messages"]
+        let context_rows = rows["messages"]
             .as_array()
             .unwrap()
             .iter()
-            .any(|row| row["context_session_id"] == session.session_id));
+            .filter(|row| row["context_session_id"] == session.session_id)
+            .collect::<Vec<_>>();
+        assert_eq!(context_rows.len(), 2);
+        assert!(context_rows
+            .iter()
+            .all(|row| row["context_project"] == project));
+        assert!(context_rows
+            .iter()
+            .all(|row| row["first_projected_at_ms"].is_null()));
+        let rows_again = runtime.window_collaboration(Some(&key), Some(&writer), 10);
+        assert_eq!(rows["messages"], rows_again["messages"]);
         assert!(runtime
             .sessions
             .list_messages(&session.session_id, Default::default())

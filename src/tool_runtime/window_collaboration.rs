@@ -3,6 +3,19 @@ use crate::auth::{AuthContext, SCOPE_SESSION_COLLABORATE};
 use crate::client_window::ClientWindow;
 use serde_json::json;
 
+fn invalid_window_context(error_kind: &str, message: &str) -> ToolResult {
+    ToolResult::err_with_output(
+        message,
+        json!({
+            "failure_kind": "invalid_context",
+            "error_kind": error_kind,
+            "state_changed": false,
+            "retry_same_delivery": false,
+            "dispatch_certainty": "not_started",
+        }),
+    )
+}
+
 impl ToolRuntime {
     pub(crate) async fn post_window_operator_message(
         &self,
@@ -26,31 +39,49 @@ impl ToolRuntime {
         {
             return ToolResult::err("invalid message or delivery_key");
         }
-        if let Some(session) = context_session_id {
+        let canonical_context_project = if let Some(session) = context_session_id {
             if !webcodex_core::workflow_session_contract::is_valid_session_id(session) {
-                return ToolResult::err("exact Session context identity required");
+                return invalid_window_context(
+                    "invalid_session_context",
+                    "exact Session context identity required",
+                );
             }
-            if let Err(result) = self
+            if self
                 .authorize_session_target(session, "work_result_send_message", auth)
                 .await
+                .is_err()
             {
-                return result;
+                return invalid_window_context(
+                    "session_context_unavailable",
+                    "Session context is no longer available",
+                );
             }
             let related = self.window_activity_db.as_ref().is_some_and(|db| {
                 db.window_has_session_context(&kind, &principal, target_window_key, session)
                     .unwrap_or(false)
             });
             if !related {
-                return ToolResult::err("Session context is not explicitly linked to this Window");
+                return invalid_window_context(
+                    "session_context_unlinked",
+                    "Session context is not explicitly linked to this Window",
+                );
             }
-            if context_project.is_some_and(|project| {
-                self.sessions
-                    .summary(session, Some(1))
-                    .is_none_or(|summary| summary.project.as_deref() != Some(project))
-            }) {
-                return ToolResult::err("Session context Project mismatch");
+            let Some(summary) = self.sessions.summary(session, Some(1)) else {
+                return invalid_window_context(
+                    "session_context_unavailable",
+                    "Session context is no longer available",
+                );
+            };
+            if context_project.is_some_and(|project| summary.project.as_deref() != Some(project)) {
+                return invalid_window_context(
+                    "session_project_mismatch",
+                    "Session context Project mismatch",
+                );
             }
-        }
+            summary.project
+        } else {
+            context_project.map(str::to_string)
+        };
         let Some(db) = self.communication_db.as_ref() else {
             return ToolResult::err("Window collaboration unavailable");
         };
@@ -59,7 +90,7 @@ impl ToolRuntime {
             principal_id: principal,
             recipient_window_key: target_window_key.to_string(),
             context_session_id: context_session_id.map(str::to_string),
-            context_project: context_project.map(str::to_string),
+            context_project: canonical_context_project,
             kind: "guidance".into(),
             priority: "normal".into(),
             message,

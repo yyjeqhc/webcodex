@@ -58,6 +58,9 @@ pub(crate) struct ToolCallRequest {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct ToolInvocationMetadata {
     pub(crate) control: Option<super::control_sidecar::ControlSidecars>,
+    // Historical wrapper name retained for protocol compatibility. Exact IDs may
+    // acknowledge either legacy Session-board messages or Window collaboration
+    // messages; each collaboration store still performs its own principal/Window checks.
     pub(crate) ack_session_message_ids: Vec<String>,
     pub(crate) ack_ref: Option<String>,
     pub(crate) session_message_resolution: Option<ToolCallSessionMessageResolution>,

@@ -281,7 +281,7 @@ test("unchanged state_version refresh still advances wall-clock idle copy withou
   assert.equal(view.nodes.activityAge.textContent, "Idle for 1m");
 });
 
-test("Window messages render Sent, Delivered, and Acknowledged states", async () => {
+test("Window messages render sender delivery state but not inbound peer delivery state", async () => {
   const messageState = {
     ...baseState,
     state_version: `wr2_${"d".repeat(64)}`,
@@ -292,17 +292,24 @@ test("Window messages render Sent, Delivered, and Acknowledged states", async ()
         { message_id: "wc_msg_sent", created_at_ms: 1_999_999_997_000, message: "sent", source: "operator", direction: "inbound", requires_ack: true, first_projected_at_ms: null, first_ack_observed_at_ms: null },
         { message_id: "wc_msg_seen", created_at_ms: 1_999_999_998_000, message: "seen", source: "operator", direction: "inbound", requires_ack: true, first_projected_at_ms: 1_999_999_999_000, first_ack_observed_at_ms: null },
         { message_id: "wc_msg_handled", created_at_ms: 1_999_999_999_000, message: "acknowledged", source: "operator", direction: "inbound", requires_ack: true, first_projected_at_ms: 1_999_999_999_000, first_ack_observed_at_ms: 2_000_000_000_000 },
+        { message_id: "wc_msg_peer_in", created_at_ms: 2_000_000_000_000, message: "peer inbound", source: "peer", direction: "inbound", peer_id: `wc_peer_${"2".repeat(32)}`, requires_ack: false, first_projected_at_ms: 2_000_000_000_000, first_ack_observed_at_ms: null },
+        { message_id: "wc_msg_peer_out", created_at_ms: 2_000_000_001_000, message: "peer outbound", source: "peer", direction: "outbound", peer_id: `wc_peer_${"3".repeat(32)}`, requires_ack: false, first_projected_at_ms: 2_000_000_001_000, first_ack_observed_at_ms: null },
       ],
     },
   };
   const view = app("mcp_work_result_app.html");
   view.toolResult({ work_result: messageState });
   await view.initialize();
-  const labels = view.nodes.messages.children.map(article => article.children[1].children.at(-1).textContent);
-  assert.deepEqual(labels, ["Sent", "Delivered", "Acknowledged"]);
+  const rows = view.nodes.messages.children;
+  const lastMeta = row => row.children[1].children.at(-1).textContent;
+  assert.equal(lastMeta(rows[0]), "Sent");
+  assert.equal(lastMeta(rows[1]), "Delivered");
+  assert.equal(lastMeta(rows[2]), "Acknowledged");
+  assert.doesNotMatch(lastMeta(rows[3]), /Sent|Delivered|Acknowledged/);
+  assert.equal(lastMeta(rows[4]), "Delivered");
 });
 
-test("card composer retries uncertain delivery with the same key and refreshes shared state", async () => {
+test("card composer retries uncertain delivery with the same payload across context changes", async () => {
   const view = app("mcp_work_result_app.html");
   view.toolInput(input);
   view.toolResult({ work_result: baseState });
@@ -320,11 +327,14 @@ test("card composer retries uncertain delivery with the same key and refreshes s
 
   await view.fireTimers(10000);
   assert.match(view.nodes.composerState.textContent, /status unknown/);
+  const changedContext = { ...baseState, session_id: `wc_sess_${"2".repeat(32)}`, state_version: `wr2_${"9".repeat(64)}` };
+  view.toolResult({ work_result: changedContext });
+  await flush();
   view.nodes.composer.onsubmit({ preventDefault() {} });
   await flush();
   assert.equal(view.calls("work_result_send_message").length, 2);
   const second = view.calls("work_result_send_message")[1];
-  assert.equal(second.params.arguments.delivery_key, first.params.arguments.delivery_key);
+  assert.deepEqual(second.params.arguments, first.params.arguments);
 
   await view.reply(second, contentOnly(toolResult({
     success: true,
@@ -348,6 +358,67 @@ test("card composer retries uncertain delivery with the same key and refreshes s
   await view.reply(view.calls("work_result_state")[0], contentOnly(toolResult({ work_result: refreshed })));
   assert.equal(view.nodes.messageInput.value, "");
   assert.equal(view.nodes.messages.children[0].children[1].children.at(-1).textContent, "Sent");
+});
+
+test("card conflict is deterministic and the next explicit send gets a new delivery key", async () => {
+  const view = app("mcp_work_result_app.html");
+  view.toolInput(input);
+  view.toolResult({ work_result: baseState });
+  await view.initialize();
+  view.nodes.messageInput.value = "Keep conflict draft";
+  view.nodes.messageInput.oninput();
+  view.nodes.composer.onsubmit({ preventDefault() {} });
+  await flush();
+  const first = view.calls("work_result_send_message")[0];
+  await view.reply(first, { structuredContent: { success: false, output: { failure_kind: "conflict", error_kind: "delivery_key_conflict", state_changed: false }, error: "delivery_key_conflict" } });
+  assert.equal(view.nodes.messageInput.value, "Keep conflict draft");
+  assert.equal(view.nodes.sendMessage.textContent, "Send");
+  assert.equal(view.nodes.composerState.textContent, "Message could not be sent");
+  view.nodes.composer.onsubmit({ preventDefault() {} });
+  await flush();
+  const second = view.calls("work_result_send_message")[1];
+  assert.notEqual(second.params.arguments.delivery_key, first.params.arguments.delivery_key);
+});
+
+test("card invalid context preserves the draft and rebuilds payload on the next explicit send", async () => {
+  const view = app("mcp_work_result_app.html");
+  view.toolInput(input);
+  view.toolResult({ work_result: baseState });
+  await view.initialize();
+  view.nodes.messageInput.value = "Keep context draft";
+  view.nodes.messageInput.oninput();
+  view.nodes.composer.onsubmit({ preventDefault() {} });
+  await flush();
+  const first = view.calls("work_result_send_message")[0];
+  await view.reply(first, { structuredContent: { success: false, output: { failure_kind: "invalid_context", error_kind: "session_context_unlinked", state_changed: false }, error: "Session context is not explicitly linked to this Window" } });
+  assert.equal(view.nodes.messageInput.value, "Keep context draft");
+  assert.equal(view.nodes.composerState.textContent, "Context is no longer available");
+  const replacement = { ...baseState, session_id: `wc_sess_${"4".repeat(32)}`, state_version: `wr2_${"4".repeat(64)}` };
+  view.toolResult({ work_result: replacement });
+  await flush();
+  view.nodes.composer.onsubmit({ preventDefault() {} });
+  await flush();
+  const second = view.calls("work_result_send_message")[1];
+  assert.notEqual(second.params.arguments.delivery_key, first.params.arguments.delivery_key);
+  assert.equal(second.params.arguments.session_id, replacement.session_id);
+});
+
+test("card sends normally before a Session exists", async () => {
+  const windowOnly = { ...baseState, state_version: `wr2_${"5".repeat(64)}` };
+  delete windowOnly.session_id;
+  delete windowOnly.session;
+  const view = app("mcp_work_result_app.html");
+  view.toolInput({ project });
+  view.toolResult({ work_result: windowOnly });
+  await view.initialize();
+  view.nodes.messageInput.value = "Window only";
+  view.nodes.messageInput.oninput();
+  view.nodes.composer.onsubmit({ preventDefault() {} });
+  await flush();
+  const sendCall = view.calls("work_result_send_message")[0];
+  assert.equal(sendCall.params.arguments.project, project);
+  assert.equal(sendCall.params.arguments.message, "Window only");
+  assert.equal(Object.prototype.hasOwnProperty.call(sendCall.params.arguments, "session_id"), false);
 });
 
 for (const first of ["input", "result"]) {
@@ -549,6 +620,35 @@ test("malformed authoritative Refresh state fails closed", async () => {
   await view.reply(view.calls("work_result_state")[0], toolResult({ work_result: { ...baseState, state_version: "bad" } }));
   assert.equal(view.nodes.status.textContent, "This task card is unavailable");
   assert.equal(view.nodes.refresh.disabled, true);
+});
+
+test("collaboration context_project rejects controls and unbounded identities", async () => {
+  for (const context_project of ["agent:special:bad\nproject", "p".repeat(513)]) {
+    const view = app("mcp_work_result_app.html");
+    view.toolResult({ work_result: {
+      ...baseState,
+      state_version: `wr2_${"8".repeat(64)}`,
+      collaboration: {
+        available: true,
+        can_send: true,
+        messages: [{
+          message_id: "wc_msg_context",
+          source: "operator",
+          direction: "inbound",
+          message: "context",
+          created_at_ms: 1,
+          context_session_id: session_id,
+          context_project,
+          requires_ack: true,
+          first_projected_at_ms: null,
+          first_ack_observed_at_ms: null,
+        }],
+      },
+    } });
+    await view.initialize();
+    assert.equal(view.nodes.status.textContent, "This task card is unavailable");
+    assert.equal(view.nodes.refresh.disabled, true);
+  }
 });
 
 test("Window coverage stays explicit when retained activity is truncated", async () => {

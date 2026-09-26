@@ -289,6 +289,7 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
   let lastRenderedState = null;
   let sendInFlight = false;
   let pendingSend = null;
+  let collaborationSendState = "idle";
   let tornDown = false;
   let initialResultTransportMissing = false;
   let selectedPane = "Activity";
@@ -454,6 +455,7 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     if (typeof value.requires_ack !== "boolean") return false;
     if (value.peer_id !== undefined && (typeof value.peer_id !== "string" || !/^wc_peer_[0-9a-f]{32}$/.test(value.peer_id))) return false;
     if (value.context_session_id !== undefined && !SESSION_ID.test(value.context_session_id)) return false;
+    if (value.context_project !== undefined && !validProject(value.context_project)) return false;
     for (const key of ["first_projected_at_ms", "first_ack_observed_at_ms"]) if (!(value[key] === null || (Number.isSafeInteger(value[key]) && value[key] >= 0))) return false;
     return true;
   }
@@ -533,6 +535,20 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
 
   function toolSuccess(result) {
     return structuredOf(result)?.success ?? null;
+  }
+
+  function sendFailureOf(result) {
+    const structured = structuredOf(result);
+    if (!structured || structured.success !== false) return null;
+    const output = structured.output && typeof structured.output === "object" && !Array.isArray(structured.output) ? structured.output : {};
+    const failureKind = typeof output.failure_kind === "string" ? output.failure_kind : "";
+    const errorKind = typeof output.error_kind === "string" ? output.error_kind : "";
+    const error = typeof structured.error === "string" ? structured.error : "";
+    if (failureKind === "outcome_unknown" || output.retry_same_delivery === true) return "uncertain";
+    if (failureKind === "conflict" || errorKind === "delivery_key_conflict") return "conflict";
+    if (failureKind === "invalid_context" || errorKind.startsWith("session_context_") || errorKind === "invalid_session_context") return "context";
+    if (failureKind === "unavailable" || failureKind === "permission" || /unavailable|scope required|stable Window identity required/i.test(error)) return "unavailable";
+    return "failed";
   }
 
   function extractState(result) {
@@ -800,6 +816,13 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     el("activityAge").textContent = "";
   }
 
+  function deliveryLabel(message) {
+    if (message.source === "peer" && message.direction === "inbound") return null;
+    if (message.first_ack_observed_at_ms !== null) return "Acknowledged";
+    if (message.first_projected_at_ms !== null) return "Delivered";
+    return "Sent";
+  }
+
   function renderMessages(collaboration) {
     const root = el("messages");
     root.replaceChildren();
@@ -813,11 +836,14 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
       const author = document.createElement("strong");
       author.textContent = message.source === "operator" ? "You" : (message.direction === "outbound" ? "This Window → " : "") + "Window · " + String(message.peer_id || "").slice(8, 16);
       const time = document.createElement("span"); time.textContent = formatAge(message.created_at_ms);
-      const state = document.createElement("span"); state.className = "message-state";
-      state.textContent = message.first_ack_observed_at_ms !== null ? "Acknowledged" : message.first_projected_at_ms !== null ? "Delivered" : "Sent";
-      meta.append(author, time, state);
+      meta.append(author, time);
+      const label = deliveryLabel(message);
+      if (label) {
+        const state = document.createElement("span"); state.className = "message-state"; state.textContent = label;
+        meta.append(state);
+      }
       if (message.context_session_id) {
-        const context = document.createElement("span"); context.textContent = "Context · " + message.context_session_id.slice(8, 14);
+        const context = document.createElement("span"); context.textContent = "Session · " + message.context_session_id.slice(8, 14);
         meta.append(context);
       }
       article.append(copy, meta);
@@ -832,11 +858,12 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
   }
 
   function updateComposerControl(collaboration = lastRenderedState?.collaboration) {
-    const enabled = !!collaboration?.available && !!collaboration?.can_send && hostInitialized && !tornDown && !sendInFlight;
-    el("messageInput").disabled = !enabled || !!pendingSend;
-    el("sendMessage").disabled = !enabled || !String(el("messageInput").value || "").trim();
-    el("sendMessage").textContent = sendInFlight ? "Sending…" : "Send";
-    if (collaboration && !collaboration.can_send) el("composerState").textContent = collaboration.available ? "Messaging unavailable." : "";
+    const enabled = !!collaboration?.available && !!collaboration?.can_send && hostInitialized && !tornDown && !sendInFlight && collaborationSendState !== "unavailable";
+    const exactRetry = collaborationSendState === "uncertain" && !!pendingSend;
+    el("messageInput").disabled = !enabled || exactRetry;
+    el("sendMessage").disabled = !enabled || (!exactRetry && !String(el("messageInput").value || "").trim());
+    el("sendMessage").textContent = sendInFlight ? "Sending…" : exactRetry ? "Retry" : "Send";
+    if (collaboration && !collaboration.can_send && collaborationSendState === "idle") el("composerState").textContent = collaboration.available ? "Messaging unavailable." : "";
   }
 
   function renderWindowCurrentActivity(activity) {
@@ -973,26 +1000,47 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
   }
 
   async function sendMessageFromCard() {
-    if (tornDown || !hostInitialized || !identity || sendInFlight || !lastRenderedState?.collaboration?.can_send) return;
+    if (tornDown || !hostInitialized || !identity || sendInFlight || !lastRenderedState?.collaboration?.can_send || collaborationSendState === "unavailable") return;
     const text = String(el("messageInput").value || "").trim();
     if (!text) return;
     if (!pendingSend) pendingSend = { project: identity.project, ...(lastRenderedState.session_id ? { session_id: lastRenderedState.session_id } : {}), message: text, delivery_key: newDeliveryKey() };
     sendInFlight = true;
+    collaborationSendState = "sending";
     el("composerState").textContent = "Sending…";
     updateComposerControl();
     try {
       const response = await send("tools/call", { name: "work_result_send_message", arguments: pendingSend });
       if (tornDown) return;
       if (toolSuccess(response) !== true) {
-        el("composerState").textContent = "Send failed · retry";
+        const failure = sendFailureOf(response);
+        if (failure === "uncertain") {
+          collaborationSendState = "uncertain";
+          el("composerState").textContent = "Send status unknown · retry";
+          return;
+        }
+        pendingSend = null;
+        if (failure === "context") {
+          collaborationSendState = "error";
+          el("composerState").textContent = "Context is no longer available";
+        } else if (failure === "unavailable") {
+          collaborationSendState = "unavailable";
+          el("composerState").textContent = "Collaboration is unavailable for this Window";
+        } else {
+          collaborationSendState = "error";
+          el("composerState").textContent = "Message could not be sent";
+        }
         return;
       }
       el("messageInput").value = "";
       pendingSend = null;
+      collaborationSendState = "idle";
       el("composerState").textContent = "Sent";
       await refresh(false);
     } catch (_) {
-      if (!tornDown) el("composerState").textContent = "Send status unknown · retry";
+      if (!tornDown) {
+        collaborationSendState = "uncertain";
+        el("composerState").textContent = "Send status unknown · retry";
+      }
     } finally {
       sendInFlight = false;
       updateComposerControl();
@@ -1171,8 +1219,11 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
   el("frozenMore").onclick = () => { if (snapshot) appendFrozenFiles(snapshot.files.length); };
   el("composer").onsubmit = event => { event.preventDefault(); void sendMessageFromCard(); };
   el("messageInput").oninput = () => {
-    if (pendingSend && pendingSend.message !== String(el("messageInput").value || "").trim()) pendingSend = null;
-    if (el("composerState").textContent !== "Sending…") el("composerState").textContent = "";
+    if (collaborationSendState !== "uncertain" && pendingSend && pendingSend.message !== String(el("messageInput").value || "").trim()) pendingSend = null;
+    if (collaborationSendState !== "sending" && collaborationSendState !== "uncertain") {
+      collaborationSendState = "idle";
+      el("composerState").textContent = "";
+    }
     updateComposerControl();
   };
   addEventListener("visibilitychange", () => {

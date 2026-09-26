@@ -1136,6 +1136,7 @@ fn key_tool_output_schemas_include_expected_fields() {
             "outcome_unknown",
             "completed",
             "timed_out",
+            "pending",
             "queued",
             "running"
         ])
@@ -1616,12 +1617,11 @@ fn key_tool_output_schemas_include_expected_fields() {
             .as_str()
             .expect("cargo execution_state description");
         for state in [
+            "pending",
             "not_started",
             "outcome_unknown",
             "completed",
             "timed_out",
-            "queued",
-            "running",
         ] {
             assert!(
                 state_description.contains(state),

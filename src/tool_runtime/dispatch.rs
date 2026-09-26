@@ -526,12 +526,10 @@ impl ModelFacingProjectionPlan {
             | ToolCall::ReadAgentWait { .. }
             | ToolCall::CancelAgentWait { .. } => ModelFacingProjection::AgentWait,
             ToolCall::ApplyTextEdits { .. } => ModelFacingProjection::ApplyTextEdits,
-            ToolCall::RunJob { .. }
-            | ToolCall::RunProcess { .. }
+            ToolCall::RunProcess { .. }
             | ToolCall::RunSkillResource { .. }
             | ToolCall::RunScript { .. }
             | ToolCall::RunShell { .. }
-            | ToolCall::RunDetachedProcess { .. }
             | ToolCall::CargoFmt { .. }
             | ToolCall::CargoCheck { .. }
             | ToolCall::CargoTest { .. }

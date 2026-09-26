@@ -71,7 +71,8 @@ pub(crate) fn builtin_coding_workflow_projection(profile: CodingGuidanceProfile)
             "Ordinary implementation is default: map cross-layer changes end to end; use compiler/schema/exhaustiveness failures for gaps; minimize concepts, avoid speculative redesign.",
             "Validation failure is evidence, not queue cleanliness. Fix dependent blockers; continue otherwise. Reuse assertion_name; outcome_unknown fails closed. After Rust stabilizes, format once. Development validation may overlap independent work; covered-source edits make it stale for final evidence.",
             "For closeout evidence, freeze source covered by final validation. Continue read-only review/docs/external inspection; if covered source must change, invalidate that evidence and rerun the appropriate final validation.",
-            "Keep one execution/Job and exact continuation. After handoff continue independent work; passive Job attention may surface transitions. observe_jobs is for logs/details/recovery; list_jobs is identity recovery. Use wait_for_job_terminal only when terminal outcome is a true dependency and no independent work remains."
+            "Keep one execution/Job; execution_state=pending means exact continuation, not redispatch. Continue independent work; passive Job attention may surface.",
+            "observe_jobs is for logs/details/recovery; list_jobs is identity recovery. Use wait_for_job_terminal only when terminal outcome is a true dependency and no independent work remains."
         ],
         "tool_strategy": tool_strategy_projection(profile),
         "model_protocol": {
@@ -171,8 +172,8 @@ fn tool_strategy_guidance(profile: CodingGuidanceProfile) -> &'static [&'static 
             "Known independent cross-tool read-only observations: native batches first. For remaining fan-out, use Host Promise.allSettled when partial evidence is useful; use Promise.all only for true all-or-nothing. Prefer search_and_read for search→read; keep result-dependent chains in one Host cell when mechanically determined.",
             "Do not return to the model merely because one child ToolResult arrived. If the next call is mechanically determined with no unresolved semantic choice/uncertainty/authority need, stay in the Host cell and return compact evidence for the next decision.",
             "Natural model-turn boundaries are semantic choice, ambiguous result, new user decision, authority/permission, outcome_unknown or competing recovery, or unresolved mutation intent—not child-call completion.",
-            "Keep full ToolResults in the Host cell when possible; preserve identities/revisions/continuations such as job_id, observation_ref, read_revision and failure/recovery fields. Avoid text(JSON.stringify(fullResult)) dumps.",
-            "Host cells are short dependency DAGs, not long Job lifetimes. After handoff save exact identity; finish independent work. If only waiting remains, end the cell and resume continuation. Passive Job attention; observe_jobs only for logs/details/recovery; wait_for_job_terminal only after independent work is exhausted.",
+            "Keep full ToolResults in the Host cell when possible; preserve revisions, exact pending continuations, observation_ref/read_revision, and failure/recovery fields. Normal pending results may intentionally hide top-level Job bookkeeping. Avoid text(JSON.stringify(fullResult)) dumps.",
+            "Host cells are short dependency DAGs. On execution_state=pending, keep the continuation and finish independent calls. Later outer results may carry terminal job_attention. Observe only for details/recovery; wait only when terminal outcome blocks all useful progress.",
             "Development validation may overlap independent work. For final evidence freeze covered source; covered-source edits invalidate that evidence and require rerun. Host support is supplied by the Host, not verified by WebCodex.",
         ],
         #[cfg(feature = "experimental-code-mode")]

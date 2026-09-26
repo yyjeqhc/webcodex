@@ -219,23 +219,13 @@ fn schema_tree_requires_field(schema: &serde_json::Value, field: &str) -> bool {
 }
 
 #[test]
-fn job_activity_is_required_nullable_on_stable_model_surfaces() {
+fn job_activity_is_required_nullable_on_explicit_job_observation_surfaces() {
     let specs = registered_tool_specs();
-    for name in [
-        "run_process",
-        "run_script",
-        "run_shell",
-        "cargo_fmt",
-        "cargo_check",
-        "cargo_test",
-        "go_test",
-        "list_jobs",
-        "observe_jobs",
-    ] {
+    for name in ["list_jobs", "observe_jobs"] {
         let spec = spec_named(&specs, name);
         assert!(
             schema_tree_requires_field(&spec.output_schema, "activity"),
-            "{name} must require activity on its stable Job projection"
+            "{name} must require activity on its explicit Job projection"
         );
     }
 

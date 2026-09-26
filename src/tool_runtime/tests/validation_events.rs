@@ -251,9 +251,7 @@ async fn promoted_run_process_cargo_test_materializes_canonical_validation_evide
     assert_eq!(request.process.as_ref().unwrap().executable, "cargo");
     let handoff = task.await.unwrap();
     assert!(handoff.success, "{:?}", handoff.error);
-    assert!(handoff.output.get("promoted_to_job").is_none());
-    assert_eq!(handoff.output["continuation"]["tool"], "observe_jobs");
-    let job_id = handoff.output["job_id"].as_str().unwrap().to_string();
+    let job_id = assert_sparse_pending_job_handoff(&handoff.output).to_string();
     let admitted = runtime.runner_registry.get_job(&job_id).await.unwrap();
     let metadata = admitted.structured_execution.as_ref().unwrap();
     assert_eq!(metadata.execution_source, "run_process");

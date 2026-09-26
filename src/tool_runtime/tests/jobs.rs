@@ -153,6 +153,62 @@ fn compact_validation_job_summary_reobserves_missing_crossed_and_restart_fences(
     }
 }
 
+#[test]
+fn passive_validation_projection_separates_execution_result_from_source_freshness() {
+    let runtime = ToolRuntime::new_for_tests();
+    let project = "agent:passive-validation:demo";
+    let start = runtime.validation_sources.capture(project).unwrap();
+    let mut job = compact_validation_job(project, Some(start.clone()));
+    job.exit_code = Some(0);
+
+    let passed = runtime
+        .passive_job_validation_projection(&job)
+        .expect("structured validation projection");
+    assert_eq!(passed["tool"], "cargo_check");
+    assert_eq!(passed["passed"], true);
+    assert_eq!(passed["source_state"]["freshness"], "unproven");
+    assert_eq!(
+        passed["source_state"]["observed_mutation_fence"],
+        "uncrossed"
+    );
+    assert!(passed.get("diagnostics").is_none());
+
+    runtime
+        .validation_sources
+        .begin(project)
+        .unwrap()
+        .finish(&ToolResult::ok(json!({"state_changed": true})));
+    let stale = runtime
+        .passive_job_validation_projection(&job)
+        .expect("stale structured validation projection");
+    assert_eq!(
+        stale["passed"], true,
+        "execution success remains historical fact"
+    );
+    assert_eq!(stale["source_state"]["freshness"], "stale");
+    assert_eq!(stale["source_state"]["observed_mutation_fence"], "crossed");
+
+    job.exit_code = Some(1);
+    let failed = runtime
+        .passive_job_validation_projection(&job)
+        .expect("failed structured validation projection");
+    assert_eq!(failed["passed"], false);
+
+    let metadata = job.validation.as_mut().unwrap();
+    metadata.tool = "cargo_test".to_string();
+    metadata.kind = "test".to_string();
+    job.exit_code = Some(0);
+    job.test_count_evidence = None;
+    let inconclusive = runtime
+        .passive_job_validation_projection(&job)
+        .expect("test validation projection");
+    assert!(
+        inconclusive["passed"].is_null(),
+        "successful cargo_test without authoritative executed-test evidence must remain inconclusive"
+    );
+    assert_eq!(inconclusive["source_state"]["freshness"], "stale");
+}
+
 #[tokio::test]
 async fn run_shell_session_events_record_exit_without_stdio_bodies() {
     let runtime = runtime_with_agent_project("telemetry-shell");
@@ -566,20 +622,7 @@ async fn long_run_shell_hands_off_same_job_once_and_status_log_stop_observe_it()
 
     let result = task.await.unwrap();
     assert!(result.success, "{:?}", result.error);
-    assert!(result.output.get("promoted_to_job").is_none());
-    assert_eq!(result.output["terminal"], false);
-    assert_eq!(result.output["execution_state"], "running");
-    assert_eq!(result.output["command_started"], true);
-    assert_eq!(result.output["command_completed"], false);
-    assert_eq!(result.output["effective_timeout_secs"], 600);
-    assert_eq!(result.output["sync_wait_secs"], 1);
-    assert_eq!(result.output["job_id"], job_id);
-    assert_eq!(result.output["purpose"], "diagnostic");
-    assert_eq!(result.output["shell"], "bash");
-    assert_eq!(result.output["cwd"], ".");
-    assert_observe_job_continuation(&result.output);
-    assert!(result.output.as_object().unwrap().contains_key("activity"));
-    assert!(result.output["activity"].is_null());
+    assert_eq!(assert_sparse_pending_job_handoff(&result.output), job_id);
     assert_run_shell_result_matches_schema(&result);
     assert!(
         probe_patch_agent_request(&runtime, client_id)
@@ -2748,22 +2791,37 @@ fn job_handoff_model_projection_keeps_identity_and_exceptional_receipts() {
     });
     let mut model = ToolResult::ok(receipt.clone());
     super::super::jobs::sparsify_job_handoff_model_result(&mut model);
+    assert_eq!(
+        model
+            .output
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>(),
+        ["continuation".to_string(), "execution_state".to_string()]
+            .into_iter()
+            .collect()
+    );
+    assert_eq!(model.output["execution_state"], "pending");
+    assert_observe_job_continuation(&model.output);
     for key in [
+        "job_id",
+        "job_status",
+        "terminal",
         "promoted_to_job",
         "async_handoff_available",
         "observation_token",
         "continuation_semantics",
+        "stdout_truncated",
+        "stderr_truncated",
     ] {
-        assert!(model.output.get(key).is_none());
+        assert!(model.output.get(key).is_none(), "{key}");
         assert!(
             receipt.get(key).is_some(),
-            "internal receipt stays complete"
+            "internal receipt stays complete for {key}"
         );
     }
-    assert_eq!(model.output["terminal"], false);
-    assert_eq!(model.output["job_status"], "running");
-    assert_eq!(model.output["stdout_truncated"], true);
-    assert_observe_job_continuation(&model.output);
     assert_eq!(
         serde_json::to_string(&model.output)
             .unwrap()

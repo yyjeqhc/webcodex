@@ -844,6 +844,131 @@ impl ToolRuntime {
         summary
     }
 
+    pub(crate) fn passive_job_validation_projection(&self, job: &ShellJobInfo) -> Option<Value> {
+        let metadata = job.validation.as_ref();
+        let generic_validation = job
+            .structured_execution
+            .as_ref()
+            .and_then(|metadata| metadata.validation_identity.as_deref())
+            .is_some()
+            && job
+                .purpose
+                .as_deref()
+                .is_some_and(is_validation_like_execution_purpose);
+        if metadata.is_none() && !generic_validation {
+            return None;
+        }
+
+        let mut validation = if let Some(metadata) = metadata {
+            let mut value = validation_job_projection_with_policy(
+                Some(metadata.tool.as_str()),
+                Some(metadata.kind.as_str()),
+                &job.status,
+                job.exit_code.map(i64::from),
+                "",
+                "",
+                true,
+                job.test_count_evidence.as_ref(),
+                metadata.minimum_tests,
+                metadata.require_tests,
+                metadata.no_run,
+            )?;
+            for field in [
+                "diagnostics",
+                "warnings_count",
+                "errors_count",
+                "tests_passed",
+                "tests_failed",
+                "truncated",
+            ] {
+                value
+                    .as_object_mut()
+                    .expect("validation projection object")
+                    .remove(field);
+            }
+            if job.test_count_evidence.is_none() {
+                for field in ["tests_detected", "tests_run_count", "zero_tests_run"] {
+                    value
+                        .as_object_mut()
+                        .expect("validation projection object")
+                        .remove(field);
+                }
+                if metadata.tool == "cargo_test"
+                    && metadata.no_run != Some(true)
+                    && RunnerJobLifecycle::from_wire(&job.status)
+                        == Ok(RunnerJobLifecycle::Completed)
+                    && job.exit_code == Some(0)
+                {
+                    // A successful process exit without Runner-authoritative test-count
+                    // evidence is not validation proof. Detailed observation may recover
+                    // bounded logs/evidence, but passive attention stays conservative.
+                    value["passed"] = Value::Null;
+                }
+            }
+            if let Some(target_id) = metadata.validation_target_id.as_deref() {
+                value["validation_target_id"] = json!(target_id);
+            }
+            value
+        } else {
+            let lifecycle = RunnerJobLifecycle::from_wire(&job.status).ok();
+            let state = if !lifecycle.is_some_and(RunnerJobLifecycle::is_terminal) {
+                if matches!(
+                    lifecycle,
+                    Some(RunnerJobLifecycle::Queued | RunnerJobLifecycle::RunnerQueued)
+                ) {
+                    "pending"
+                } else {
+                    "running"
+                }
+            } else {
+                match lifecycle {
+                    Some(RunnerJobLifecycle::Timeout | RunnerJobLifecycle::TimedOut) => "timed_out",
+                    Some(RunnerJobLifecycle::Stopped | RunnerJobLifecycle::Cancelled) => {
+                        "cancelled"
+                    }
+                    Some(RunnerJobLifecycle::Lost) => "lost",
+                    _ => "completed",
+                }
+            };
+            let passed = if lifecycle == Some(RunnerJobLifecycle::Completed) {
+                job.exit_code
+                    .map(|code| code == 0)
+                    .map(Value::Bool)
+                    .unwrap_or(Value::Null)
+            } else {
+                Value::Null
+            };
+            json!({
+                "tool": job
+                    .structured_execution
+                    .as_ref()
+                    .and_then(|metadata| metadata.validation_tool.as_deref())
+                    .unwrap_or_else(|| {
+                        job.structured_execution
+                            .as_ref()
+                            .map(|metadata| metadata.execution_source.as_str())
+                            .unwrap_or(job.kind.as_str())
+                    }),
+                "kind": job.purpose.as_deref().unwrap_or("validation"),
+                "state": state,
+                "passed": passed,
+            })
+        };
+
+        let source_state = match job.project_id.as_deref().filter(|value| !value.is_empty()) {
+            Some(project) => self.validation_sources.observe(
+                project,
+                metadata.and_then(|metadata| metadata.source_fence.as_ref()),
+            ),
+            None => webcodex_core::validation_source::ValidationSourceState::default(),
+        };
+        validation["source_state"] = json!({
+            "freshness": source_state.freshness,
+            "observed_mutation_fence": source_state.observed_mutation_fence,
+        });
+        Some(validation)
+    }
+
     #[cfg(test)]
     pub(crate) fn model_job_summary_value_for_test(&self, job: &ShellJobInfo) -> Value {
         self.model_job_summary_value(job)
@@ -874,8 +999,20 @@ pub(crate) fn observe_job_continuation(job_id: &str, observation_token: Option<&
     .to_value()
 }
 
-/// Keep the internal handoff receipt intact for recording, then project the
-/// exact observe call as the sole observation-token carrier on normal handoff.
+pub(crate) fn observe_job_details_call(job_id: &str) -> Value {
+    super::SuggestedToolCall::new(
+        "observe_jobs",
+        json!({
+            "items": [{"job_id": job_id}],
+        }),
+    )
+    .to_value()
+}
+
+/// Keep the internal handoff receipt intact for recording, then collapse a
+/// normal successful same-execution handoff to one generic pending marker plus
+/// its exact fallback continuation. The continuation retains durable identity;
+/// Job lifecycle/bookkeeping stays in canonical Session/registry state.
 pub(super) fn sparsify_job_handoff_model_result(result: &mut ToolResult) {
     if !result.success {
         return;
@@ -904,18 +1041,10 @@ pub(super) fn sparsify_job_handoff_model_result(result: &mut ToolResult) {
     if call["arguments"]["items"][0]["after_observation_token"].as_str() != token {
         return;
     }
-    output.remove("observation_token");
-    output.remove("continuation_semantics");
-    if output.get("promoted_to_job").and_then(Value::as_bool) == Some(true) {
-        output.remove("promoted_to_job");
-    }
-    if output
-        .get("async_handoff_available")
-        .and_then(Value::as_bool)
-        == Some(true)
-    {
-        output.remove("async_handoff_available");
-    }
+    let continuation = call.clone();
+    output.clear();
+    output.insert("execution_state".to_string(), json!("pending"));
+    output.insert("continuation".to_string(), continuation);
 }
 
 fn list_jobs_recovery_suggested_call(project: Option<&str>) -> Value {

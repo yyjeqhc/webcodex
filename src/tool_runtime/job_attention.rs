@@ -11,6 +11,55 @@ const MAX_CURSOR_KEYS: usize = 128;
 const MAX_JOBS_PER_KEY: usize = 32;
 const MAX_ITEMS: usize = 8;
 
+fn pending_continuation_job_id(result: &ToolResult) -> Option<&str> {
+    if result.output["execution_state"].as_str() != Some("pending") {
+        return None;
+    }
+    let continuation = result.output.get("continuation")?;
+    if continuation["tool"].as_str() != Some("observe_jobs") {
+        return None;
+    }
+    continuation["arguments"]["items"][0]["job_id"]
+        .as_str()
+        .filter(|job_id| !job_id.is_empty())
+}
+
+fn attention_tool(job: &ShellJobInfo) -> &str {
+    job.validation
+        .as_ref()
+        .map(|metadata| metadata.tool.as_str())
+        .or_else(|| {
+            job.structured_execution
+                .as_ref()
+                .and_then(|metadata| metadata.validation_tool.as_deref())
+        })
+        .or_else(|| {
+            job.structured_execution
+                .as_ref()
+                .map(|metadata| metadata.execution_source.as_str())
+        })
+        .unwrap_or(job.kind.as_str())
+}
+
+fn is_explicit_job_surface(tool_name: &str) -> bool {
+    matches!(
+        tool_name,
+        "run_job"
+            | "run_detached_process"
+            | "observe_jobs"
+            | "job_tail"
+            | "list_jobs"
+            | "stop_job"
+            | "wait_for_job_terminal"
+            | "present_job_terminal_continuation"
+            | "job_terminal_continuation_bind"
+            | "job_terminal_continuation_state"
+            | "job_terminal_continuation_prepare"
+            | "job_terminal_continuation_finish"
+            | "job_terminal_continuation_unbind"
+    )
+}
+
 #[derive(Clone, Hash, PartialEq, Eq)]
 struct AttentionKey {
     principal_kind: String,
@@ -57,7 +106,16 @@ struct CursorInner {
 pub(crate) struct JobAttentionCursor(Mutex<CursorInner>);
 
 impl JobAttentionCursor {
-    fn project_result(&self, result: &mut ToolResult, key: AttentionKey, jobs: &[ShellJobInfo]) {
+    fn project_result<F>(
+        &self,
+        result: &mut ToolResult,
+        key: AttentionKey,
+        jobs: &[ShellJobInfo],
+        initiating_handoff_job_id: Option<&str>,
+        project_item: F,
+    ) where
+        F: Fn(&ShellJobInfo) -> Value,
+    {
         let Ok(mut inner) = self.0.lock() else {
             return;
         };
@@ -65,6 +123,9 @@ impl JobAttentionCursor {
         let items: Vec<Value> = jobs
             .iter()
             .filter(|job| {
+                if initiating_handoff_job_id == Some(job.job_id.as_str()) {
+                    return false;
+                }
                 let previous = prior.and_then(|entry| entry.states.get(&job.job_id));
                 match previous {
                     Some(previous) => previous != &JobState::from(*job),
@@ -72,18 +133,7 @@ impl JobAttentionCursor {
                 }
             })
             .take(MAX_ITEMS)
-            .map(|job| {
-                json!({
-                    "job_id": job.job_id,
-                    "kind": job.kind,
-                    "status": job.status,
-                    "created_at": job.created_at,
-                    "started_at": job.started_at,
-                    "ended_at": job.ended_at,
-                    "exit_code": job.exit_code,
-                    "reconciled_at": job.reconciled_at,
-                })
-            })
+            .map(project_item)
             .collect();
         let emitted: HashSet<String> = items
             .iter()
@@ -125,6 +175,7 @@ impl JobAttentionCursor {
             // more than eight states change, leave unprojected revisions ready
             // for the next ordinary result instead of silently consuming them.
             if emitted.contains(&job.job_id)
+                || initiating_handoff_job_id == Some(job.job_id.as_str())
                 || (initial && !webcodex_runner_registry::job_status_is_active(&job.status))
                 || !entry.states.contains_key(&job.job_id)
                     && !webcodex_runner_registry::job_status_is_active(&job.status)
@@ -154,6 +205,46 @@ impl JobAttentionCursor {
 }
 
 impl ToolRuntime {
+    fn passive_job_attention_item(&self, job: &ShellJobInfo) -> Value {
+        let terminal = super::jobs::is_terminal_job_status(&job.status);
+        let mut item = json!({
+            "job_id": job.job_id,
+            "tool": attention_tool(job),
+            "status": job.status,
+            "state": if terminal { "terminal" } else { "active" },
+        });
+        if let Some(recovery_state) = job.recovery_state.as_deref() {
+            item["recovery_state"] = json!(recovery_state);
+        }
+        if let Some(reason) = job.recovery_reason_code.as_deref() {
+            item["recovery_reason_code"] = json!(reason);
+        }
+        if terminal {
+            let detected = super::jobs::detected_job_summary_with_activity(
+                None,
+                job.purpose.as_deref(),
+                &job.status,
+                job.exit_code.map(i64::from),
+                "",
+                "",
+                true,
+                job.activity.as_ref(),
+            );
+            item["outcome"] = detected["outcome"].clone();
+            item["exit_code"] = job.exit_code.map(Value::from).unwrap_or(Value::Null);
+            item["command_ok"] = match detected["outcome"].as_str() {
+                Some("passed") => Value::Bool(true),
+                Some("failed" | "timed_out" | "cancelled") => Value::Bool(false),
+                _ => Value::Null,
+            };
+            if let Some(validation) = self.passive_job_validation_projection(job) {
+                item["validation"] = validation;
+            }
+            item["details"] = super::jobs::observe_job_details_call(&job.job_id);
+        }
+        item
+    }
+
     /// Add a small post-result sidecar only after the exact business relation is
     /// proven by canonical dispatch. Absence or failure is silent and never
     /// changes the main ToolResult or advances the cursor.
@@ -166,7 +257,10 @@ impl ToolRuntime {
         window: Option<&ClientWindow>,
         auth: Option<&AuthContext>,
     ) {
-        if tool_name == "current_window_activity" || !result.success {
+        if tool_name == "current_window_activity"
+            || is_explicit_job_surface(tool_name)
+            || !result.success
+        {
             return;
         }
         let (Some(project), Some(session_id), Some(window), Some(auth)) =
@@ -198,6 +292,7 @@ impl ToolRuntime {
             project: project.to_string(),
             session_id: session_id.to_string(),
         };
+        let initiating_handoff_job_id = pending_continuation_job_id(result).map(str::to_string);
         let jobs = self
             .runner_registry
             .snapshot_jobs_for_auth_filtered(
@@ -207,6 +302,12 @@ impl ToolRuntime {
                 MAX_JOBS_PER_KEY,
             )
             .await;
-        self.job_attention_cursor.project_result(result, key, &jobs);
+        self.job_attention_cursor.project_result(
+            result,
+            key,
+            &jobs,
+            initiating_handoff_job_id.as_deref(),
+            |job| self.passive_job_attention_item(job),
+        );
     }
 }

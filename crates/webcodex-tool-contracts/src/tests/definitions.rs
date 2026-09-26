@@ -935,7 +935,7 @@ fn adaptive_runtime_direct_declarations_are_visible_ranked_and_unique() {
         .contains("Recovery and inventory primitive"));
     assert!(list_jobs
         .description
-        .contains("retain that identity and continue independent work"));
+        .contains("retain that continuation and continue independent work"));
     assert!(list_jobs
         .description
         .contains("using observe_jobs only when logs/details/recovery are needed"));
@@ -971,8 +971,7 @@ fn turn_economy_descriptors_stay_converged_and_bounded() {
             .expect("execution action description");
         assert!(!action.contains("Use observe_jobs later"), "{name}");
         assert!(
-            spec.description
-                .contains("passive Job attention may surface transitions"),
+            spec.description.contains("sparse terminal Job attention"),
             "{name}"
         );
     }
@@ -1004,7 +1003,7 @@ fn turn_economy_descriptors_stay_converged_and_bounded() {
     let observe = spec_named(&specs, "observe_jobs");
     for phrase in [
         "logs/details/recovery",
-        "not the default Job-handoff step",
+        "not the default follow-up to execution_state=pending",
         "Never launches, retries",
     ] {
         assert!(
@@ -1028,7 +1027,7 @@ fn turn_economy_descriptors_stay_converged_and_bounded() {
         .contains("not the normal continuation step"));
     assert!(list
         .description
-        .contains("retain that identity and continue independent work"));
+        .contains("retain that continuation and continue independent work"));
     assert!(list
         .description
         .contains("observe_jobs only when logs/details/recovery are needed"));

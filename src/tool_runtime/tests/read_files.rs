@@ -3,7 +3,8 @@
 use super::super::*;
 use super::support::*;
 use crate::runner_protocol::{
-    RunnerCapabilities, RunnerPollRequest, RunnerRegisterRequest, RunnerResultRequest,
+    RunnerCapabilities, RunnerJobUpdateRequest, RunnerPollRequest, RunnerRegisterRequest,
+    RunnerResultRequest,
 };
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -2165,6 +2166,154 @@ async fn read_files_direct_session_overlay_pressure_keeps_final_response_under_h
         serialized_len <= MAX_SERIALIZED_OUTPUT_BYTES,
         "direct Session overlays pushed read_files final response above the 512 KiB inspection hard cap: {serialized_len} bytes"
     );
+}
+
+#[tokio::test]
+async fn ordinary_read_delivers_terminal_attention_without_host_continuation_support() {
+    use crate::client_window::ClientWindow;
+    use crate::tool_runtime::kernel::{
+        HostFileImportTrust, ToolCallContext, ToolCallRequest, ToolInvocationMetadata,
+        ToolProtocolCapabilities, ToolTransport,
+    };
+
+    let runtime = ToolRuntime::new_for_tests();
+    let auth = shared_key_auth_context("read-passive-owner");
+    let client_id = "read-passive-terminal";
+    super::jobs::register_job_agent_for_auth(&runtime, client_id, "repo", &auth).await;
+    let project = format!("agent:{client_id}:repo");
+    let session = runtime.sessions.start_session(
+        Some(project.clone()),
+        Some("same-turn passive job attention".to_string()),
+    );
+    let window = ClientWindow::for_test("read-passive-window");
+
+    let job_id = super::jobs::start_agent_runtime_job_in_session(
+        &runtime,
+        client_id,
+        "repo",
+        Some(&session.session_id),
+        &auth,
+    )
+    .await;
+    assert_eq!(
+        super::jobs::mark_next_agent_job_running(&runtime, client_id).await,
+        job_id
+    );
+
+    let mut initiating_handoff = ToolResult::ok(json!({
+        "execution_state": "pending",
+        "continuation": super::super::jobs::observe_job_continuation(&job_id, None),
+    }));
+    runtime
+        .add_passive_job_attention(
+            &mut initiating_handoff,
+            "run_process",
+            Some(&project),
+            Some(&session.session_id),
+            Some(&window),
+            Some(&auth),
+        )
+        .await;
+    assert!(initiating_handoff.output.get("job_attention").is_none());
+
+    let job = runtime
+        .runner_registry
+        .get_job_for_auth(Some(&crate::test_support::runner_access(&auth)), &job_id)
+        .await
+        .unwrap();
+    runtime
+        .runner_registry
+        .update_job(RunnerJobUpdateRequest {
+            client_id: client_id.into(),
+            runner_instance_id: "inst".into(),
+            job_id: job_id.clone(),
+            request_id: job.request_id,
+            update_seq: Some(2),
+            status: "completed".into(),
+            stdout_chunk: Some("PRIVATE_JOB_OUTPUT".into()),
+            stderr_chunk: None,
+            log_snapshot: None,
+            exit_code: Some(0),
+            duration_ms: Some(50),
+            error: None,
+            command_execution_state: None,
+            validation_progress: None,
+            test_count_evidence: None,
+            activity: None,
+            finished: true,
+        })
+        .await
+        .unwrap();
+
+    let arguments = json!({
+        "project": project,
+        "items": [{"path": "a.rs"}],
+        "session_id": session.session_id,
+    });
+    let read = runtime.call_tool_with_invocation_metadata(
+        ToolCallRequest {
+            tool_name: "read_files".to_string(),
+            arguments,
+        },
+        ToolCallContext {
+            transport: ToolTransport::Mcp,
+            session_id: Some(&session.session_id),
+            auth: Some(&auth),
+            window: Some(&window),
+            record_oauth_scope_denials: false,
+            host_file_import_trust: HostFileImportTrust::Untrusted,
+        },
+        ToolInvocationMetadata::default(),
+        ToolProtocolCapabilities::default(),
+    );
+    tokio::pin!(read);
+    assert!(futures_util::poll!(&mut read).is_pending());
+    let request = next_read_request(&runtime, client_id).await;
+    complete_read(&runtime, client_id, &request, "ordinary read\n").await;
+
+    let result = read
+        .await
+        .result
+        .expect("model-facing ordinary read result");
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["items"][0]["output"]["text"], "ordinary read");
+    let attention = &result.output["job_attention"]["items"][0];
+    assert_eq!(attention["job_id"], job_id);
+    assert_eq!(attention["state"], "terminal");
+    assert_eq!(attention["outcome"], "passed");
+    assert_eq!(attention["command_ok"], true);
+    assert_eq!(attention["details"]["tool"], "observe_jobs");
+    assert!(!result.output["job_attention"]
+        .to_string()
+        .contains("PRIVATE_JOB_OUTPUT"));
+
+    let second_arguments = json!({
+        "project": project,
+        "items": [{"path": "b.rs"}],
+        "session_id": session.session_id,
+    });
+    let second = runtime.call_tool_with_invocation_metadata(
+        ToolCallRequest {
+            tool_name: "read_files".to_string(),
+            arguments: second_arguments,
+        },
+        ToolCallContext {
+            transport: ToolTransport::Mcp,
+            session_id: Some(&session.session_id),
+            auth: Some(&auth),
+            window: Some(&window),
+            record_oauth_scope_denials: false,
+            host_file_import_trust: HostFileImportTrust::Untrusted,
+        },
+        ToolInvocationMetadata::default(),
+        ToolProtocolCapabilities::default(),
+    );
+    tokio::pin!(second);
+    assert!(futures_util::poll!(&mut second).is_pending());
+    let request = next_read_request(&runtime, client_id).await;
+    complete_read(&runtime, client_id, &request, "next read\n").await;
+    let second = second.await.result.expect("second ordinary read result");
+    assert!(second.output.get("job_attention").is_none());
 }
 
 #[tokio::test]

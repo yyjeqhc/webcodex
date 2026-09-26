@@ -204,8 +204,8 @@ impl ToolRuntime {
             None
         };
 
-        // Keep legacy compact workspace/check/review fields when a Session is linked so
-        // already-cached v6 cards remain readable. v7 does not use them as navigation.
+        // The Results pane uses current Project changes and, when linked, Session
+        // check/review evidence separately from sealed final task changes.
         let workspace_result = self
             .show_changes_for_presentation(resolved_project.clone())
             .await;

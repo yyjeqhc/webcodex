@@ -81,13 +81,3 @@ export function focusedWindowCallKeys(
 
   return focused;
 }
-
-export function windowSessionsWithCallEvidence(detail: WindowDetail): string[] {
-  const seen = new Set<string>();
-  for (const activity of detail.activity) {
-    for (const link of activity.workflow_sessions) {
-      seen.add(link.workflow_session_id);
-    }
-  }
-  return [...seen];
-}

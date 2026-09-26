@@ -1,3 +1,4 @@
+import { CopyIdentity } from "./ui/CopyIdentity.js";
 import { displayProjectPath } from "../../ui/projectPresentation.js";
 import type { RuntimeLanguage } from "../../runtime_i18n.js";
 import { translate } from "../../runtime_i18n.js";
@@ -6,7 +7,6 @@ import type { ProjectRow, WindowDetail } from "../model/types.js";
 import {
   focusedWindowCallKeys,
   windowSessionCatalog,
-  windowSessionsWithCallEvidence,
 } from "../model/windowSessions.js";
 
 type Props = {
@@ -15,6 +15,7 @@ type Props = {
   language: RuntimeLanguage;
   selectedSessionId?: string;
   onSelectSession?: (sessionId: string) => void;
+  onOpenSessionRecord?: (project: string, sessionId: string) => void;
 };
 
 export function WindowActivityFeed({
@@ -23,14 +24,14 @@ export function WindowActivityFeed({
   language,
   selectedSessionId = "",
   onSelectSession,
+  onOpenSessionRecord,
 }: Props) {
   const t = (value: string) => translate(value, language);
   const orderedSessions = windowSessionCatalog(detail);
   const sessionOrder = new Map(orderedSessions.map((session, index) => [session.workflow_session_id, index]));
   const sessionMeta = new Map(orderedSessions.map((session) => [session.workflow_session_id, session]));
   const jobsById = new Map((detail.jobs || []).map((job) => [job.job_id, job]));
-  const callEvidenceSessions = new Set(windowSessionsWithCallEvidence(detail));
-  const filterSessions = orderedSessions.filter((session) => callEvidenceSessions.has(session.workflow_session_id));
+  const filterSessions = orderedSessions;
   // Keep each invocation, including repeated observation calls. The trace only
   // reconciles a completed call with the same call in the live snapshot.
   const completedTraces = new Set(detail.activity.map((row) => row.server_trace_id).filter(Boolean));
@@ -66,6 +67,7 @@ export function WindowActivityFeed({
   const activeSessionId = selectedSessionId;
   const focusedKeys = focusedWindowCallKeys(calls, activeSessionId);
   const visibleCalls = activeSessionId ? calls.filter((call) => focusedKeys.has(call.key)) : calls;
+  const selectedProject = sessionMeta.get(activeSessionId)?.project;
   const selectedTone = activeSessionId ? (sessionOrder.get(activeSessionId) ?? 0) % 8 : 0;
 
   return (
@@ -94,6 +96,10 @@ export function WindowActivityFeed({
           <small>{visibleCalls.length}/{calls.length}</small>
         </div>
       )}
+      {selectedProject && onOpenSessionRecord && <button type="button" className="text-button" onClick={() => onOpenSessionRecord(selectedProject, activeSessionId)}>{t("View Session record")}</button>}
+      {detail.sessions_truncated && <p className="inventory-note">{t("Some linked Sessions are not available in this view.")}</p>}
+      {activeSessionId && <CopyIdentity key={activeSessionId} value={activeSessionId} label={t("Session")} language={language} />}
+      {activeSessionId && !visibleCalls.length && <p className="inventory-note">{t("This Session is linked to the Window but has no retained calls.")}</p>}
       {detail.active_count > detail.active_requests.length && <div className="inventory-note">{t("Some running calls are not shown.")} {detail.active_requests.length}/{detail.active_count}</div>}
       {detail.activity_truncated && <div className="inventory-note">{t("Earlier calls are not available in this view. Showing retained activity from oldest to newest.")}</div>}
       <div className="window-workflow-list">

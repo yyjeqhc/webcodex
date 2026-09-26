@@ -111,6 +111,22 @@ disabling the underlying tools.
 
 The current Result App is intentionally static. September 2026 Host experiments proved that a separately designed MCP App controller can poll server-owned state and request later ChatGPT model turns, including a bounded foreground autonomous multi-turn loop, but background-tab model-turn scheduling is not an immediate guarantee. Those findings and the production design constraints are recorded in [`agent/mcp-app-continuation-experiments.md`](agent/mcp-app-continuation-experiments.md); they do not change the current Result App contract.
 
+### Live Work Result card
+
+`present_work_result` opens the separate Window work card with Activity, Results,
+and Collaboration tabs. Results shows the current Project's uncommitted files,
+rename paths, staging state, and available line counts while work is in progress.
+The bounded workspace snapshot can include changes from other work; partial file
+lists and missing line counts are labelled. A clean workspace is not task success.
+Linked Session check/review evidence appears when available.
+
+After closeout, Results also shows the sealed final task changes with on-demand
+per-file diffs. Those diffs keep their original snapshot identity even if the live
+workspace changes. Refresh uses the existing App-only observation path; opening
+Results adds no tool calls. Discuss these changes opens the existing composer
+without sending a message. New cards use `ui://webcodex/work-result/v9` so Hosts
+with cached older templates discover the restored file view.
+
 ## Existing Server
 
 For an existing hosted Server intentionally configured for shared-key clients,

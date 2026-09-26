@@ -15,6 +15,18 @@ import type { Availability, RuntimeOverview } from "../model/types.js";
 import { AgentsPanel } from "../components/AgentsPanel.js";
 import { PageHeader } from "../components/ui/PageHeader.js";
 
+const CONFIG_LABELS: Record<string, string> = {
+  "shared_key_enabled": "Shared key authentication",
+  "anonymous_enabled": "Anonymous access",
+  "oauth2_enabled": "OAuth2 authentication",
+  "oauth2_shared_key_bridge_enabled": "OAuth2 shared key bridge",
+  "profile": "MCP host profile",
+  "host_budget_secs": "Host request budget",
+  "initial_job_handoff_secs": "Initial job handoff wait",
+  "max_sync_wait_secs": "Maximum synchronous wait",
+  "continuation_wait_secs": "Continuation wait"
+};
+
 type RuntimeMode = "overview" | "agents";
 
 function buildAlignmentLabel(value: string | undefined, t: (source: string) => string): string {
@@ -39,6 +51,9 @@ type Props = {
   language: RuntimeLanguage;
   overview: RuntimeOverview | null;
   overviewAvailability: Availability;
+  onRefresh?: () => void;
+  updatedAt?: number | null;
+  refreshing?: boolean;
   onOpenWork: () => void;
   target?: { mode: "agents"; agentId: string } | null;
   onTargetConsumed?: () => void;
@@ -50,6 +65,9 @@ export function RuntimeView({
   language,
   overview,
   overviewAvailability,
+  onRefresh,
+  updatedAt,
+  refreshing,
   onOpenWork,
   target,
   onTargetConsumed,
@@ -78,6 +96,12 @@ export function RuntimeView({
           <span className={"status-dot " + overviewStatus.className} />
           {t(overviewStatus.label)}
         </span>} />
+
+      <div className="runtime-sync-status">
+        <span>{updatedAt ? t("Last synced") + " · " + new Date(updatedAt).toLocaleTimeString() : t("Loading…")}</span>
+        <button type="button" className="text-button" onClick={onRefresh} disabled={refreshing}>{t(refreshing ? "Refreshing…" : "Refresh")}</button>
+        {overviewAvailability === "stale" && <span role="status">{t("Refresh failed · showing previous data")}</span>}
+      </div>
 
       <div className="runtime-tabs" role="tablist">
         <button className={mode === "overview" ? "active" : ""} role="tab" aria-selected={mode === "overview"} onClick={() => setMode("overview")}>
@@ -133,6 +157,21 @@ export function RuntimeView({
             ))}
             {!overview?.runners.length && <div className="empty-inline">{t(overviewAvailability === "loading" || overviewAvailability === "idle" ? "Loading…" : overview ? "No Runners connected" : "Runtime overview unavailable")}</div>}
           </section>
+
+          {overview && <section className="runtime-section">
+            <div className="section-heading"><h2>{t("Server configuration")}</h2></div>
+            <p>{t("Effective server parameters. Credentials are never displayed.")}</p>
+            <div className="runtime-diagnostic-row"><strong>{t("Version")}</strong><code>{overview.version || "—"}</code></div>
+            {overview.effective_config ? <>
+              {Object.entries(overview.effective_config.auth).map(([name, enabled]) => <div className="runtime-diagnostic-row" key={name}>
+                <strong>{t(CONFIG_LABELS[name] || name)}</strong><code>auth.{name}</code><span>{t(enabled ? "Enabled" : "Disabled")}</span>
+              </div>)}
+              {Object.entries(overview.effective_config.mcp_host).map(([name, value]) => <div className="runtime-diagnostic-row" key={name}>
+                <strong>{t(CONFIG_LABELS[name] || name)}</strong><code>mcp_host.{name}</code><span>{value}{name.endsWith("_secs") ? " " + t("seconds") : ""}</span>
+              </div>)}
+              <div className="runtime-diagnostic-row"><strong>{t("Request tracing")}</strong><code>tool_request_trace_mode</code><span>{overview.effective_config.tool_request_trace_mode}</span></div>
+            </> : <p>{t("Configuration is unavailable from this server version.")}</p>}
+          </section>}
 
           {overview && <details className="runtime-section runtime-diagnostics">
             <summary>{t("Build diagnostics")}</summary>

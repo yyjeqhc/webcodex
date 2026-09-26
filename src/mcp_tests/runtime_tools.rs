@@ -416,10 +416,45 @@ async fn mcp_runtime_status_defaults_sparse_preserves_explicit_full_and_gateway_
             }
         }
     }
+    let McpOutcome::Ok(manifest) = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(2)),
+            mcp_2026_params(json!({
+                "name": "tool_manifest",
+                "arguments": {"tool_name": "runtime_status"}
+            })),
+        ),
+        None,
+    )
+    .await
+    else {
+        panic!("runtime_status manifest")
+    };
+    let manifest_output = &manifest["result"]["structuredContent"]["output"];
+    assert_eq!(manifest_output["name"], "runtime_status");
+    assert_eq!(
+        manifest_output["input_schema"]["properties"]["compact"]["default"],
+        true
+    );
+    assert!(
+        manifest_output["input_schema"]["properties"]["compact"]["description"]
+            .as_str()
+            .unwrap()
+            .contains("MCP defaults to sparse status")
+    );
+
     let canonical = runtime
         .dispatch(
             crate::tool_runtime::ToolCall::from_tool_name("runtime_status", json!({})).unwrap(),
         )
         .await;
     assert!(canonical.output.get("authority").is_some());
+    assert_eq!(
+        webcodex_tool_contracts::input_schema_for_tool("runtime_status")["properties"]["compact"]
+            ["default"],
+        false,
+        "canonical/API runtime_status default must remain full"
+    );
 }

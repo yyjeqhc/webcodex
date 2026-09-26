@@ -67,11 +67,7 @@ async fn passive_attention_requires_exact_business_relation_and_deduplicates_sta
         .await;
     assert!(diagnostic.output.get("job_attention").is_none());
     let first = attention(&runtime, &project, Some(&session), &window, &auth).await;
-    assert_eq!(first.output["job_attention"]["items"][0]["job_id"], job_id);
-    assert_eq!(
-        first.output["job_attention"]["items"][0]["status"],
-        "running"
-    );
+    assert!(first.output.get("job_attention").is_none());
     assert_eq!(first.output["main"], "preserved");
     for absent in [
         "stdout",
@@ -119,6 +115,13 @@ async fn passive_attention_requires_exact_business_relation_and_deduplicates_sta
             .get("job_attention")
             .is_none()
     );
+    assert!(
+        attention(&runtime, "agent:wrong:repo", Some(&session), &window, &auth)
+            .await
+            .output
+            .get("job_attention")
+            .is_none()
+    );
     let mut no_runtime_read = auth.clone();
     no_runtime_read
         .scopes
@@ -158,20 +161,22 @@ async fn passive_attention_requires_exact_business_relation_and_deduplicates_sta
     .output
     .get("job_attention")
     .is_none());
-    assert_eq!(
+    assert!(
         attention(&runtime, &project, Some(&session), &another_window, &auth)
             .await
-            .output["job_attention"]["items"][0]["job_id"],
-        job_id
+            .output
+            .get("job_attention")
+            .is_none()
     );
     let mut restarted = runtime.clone();
     restarted.job_attention_cursor =
         std::sync::Arc::new(crate::tool_runtime::job_attention::JobAttentionCursor::default());
-    assert_eq!(
+    assert!(
         attention(&restarted, &project, Some(&session), &window, &auth)
             .await
-            .output["job_attention"]["items"][0]["job_id"],
-        job_id
+            .output
+            .get("job_attention")
+            .is_none()
     );
     let mut failed_attention = runtime.clone();
     failed_attention.job_attention_cursor =
@@ -216,6 +221,29 @@ async fn passive_attention_requires_exact_business_relation_and_deduplicates_sta
         "completed"
     );
     assert_eq!(terminal.output["job_attention"]["items"][0]["exit_code"], 0);
+    assert_eq!(
+        attention(&runtime, &project, Some(&session), &another_window, &auth)
+            .await
+            .output["job_attention"]["items"][0]["job_id"],
+        job_id
+    );
+    let mut restarted_after_terminal = runtime.clone();
+    restarted_after_terminal.job_attention_cursor =
+        std::sync::Arc::new(crate::tool_runtime::job_attention::JobAttentionCursor::default());
+    assert!(
+        attention(
+            &restarted_after_terminal,
+            &project,
+            Some(&session),
+            &window,
+            &auth
+        )
+        .await
+        .output
+        .get("job_attention")
+        .is_none(),
+        "historical terminal must not replay"
+    );
     let terminal_item = &terminal.output["job_attention"]["items"][0];
     assert_eq!(terminal_item["state"], "terminal");
     assert_eq!(terminal_item["outcome"], "passed");
@@ -265,7 +293,6 @@ async fn initiating_handoff_is_cursor_baseline_then_terminal_is_delivered_once()
     let window = ClientWindow::for_test("passive-handoff-window");
     let job_id =
         start_agent_runtime_job_in_session(&runtime, client, "repo", Some(&session), &auth).await;
-    assert_eq!(mark_next_agent_job_running(&runtime, client).await, job_id);
 
     let mut handoff = ToolResult::ok(json!({
         "execution_state": "pending",
@@ -285,6 +312,7 @@ async fn initiating_handoff_is_cursor_baseline_then_terminal_is_delivered_once()
         handoff.output.get("job_attention").is_none(),
         "initiating handoff must establish cursor baseline without duplicate active attention"
     );
+    assert_eq!(mark_next_agent_job_running(&runtime, client).await, job_id);
     assert!(
         attention(&runtime, &project, Some(&session), &window, &auth)
             .await
@@ -439,11 +467,12 @@ async fn passive_attention_projects_recovering_from_server_record_without_runner
     let job_id =
         start_agent_runtime_job_in_session(&runtime, client, "repo", Some(&session), &auth).await;
     assert_eq!(mark_next_agent_job_running(&runtime, client).await, job_id);
-    assert_eq!(
+    assert!(
         attention(&runtime, &project, Some(&session), &window, &auth)
             .await
-            .output["job_attention"]["items"][0]["status"],
-        "running"
+            .output
+            .get("job_attention")
+            .is_none()
     );
     runtime
         .runner_registry

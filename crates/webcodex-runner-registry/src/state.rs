@@ -286,7 +286,7 @@ pub enum ShellJobVisibility {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum JobRecoveryPhase {
+pub enum JobRecoveryPhase {
     Recovering,
     Reconciled,
     LostAfterReconcile,
@@ -303,7 +303,7 @@ impl JobRecoveryPhase {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum JobRecoveryReason {
+pub enum JobRecoveryReason {
     RunnerTransportDisconnected,
     RunnerTransportStale,
     RunnerRequestNotDispatched,

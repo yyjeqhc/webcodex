@@ -17,6 +17,7 @@ fn snapshot(
     metadata.tool = tool.into();
     metadata.kind = kind.into();
     JobAttentionSnapshot {
+        recovery: None,
         job,
         validation_output: Some(JobValidationOutput {
             stdout: stdout.into(),

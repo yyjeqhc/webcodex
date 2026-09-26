@@ -144,5 +144,6 @@ pub(crate) use registry::{
     MAX_RETIRED_INSTANCES_PER_RUNNER, ORDINARY_RESULT_STREAM_RETENTION_BYTES,
 };
 pub use requests::{EnqueueLspError, EnqueueRunnerSkillError};
+pub use state::{JobRecoveryPhase, JobRecoveryReason};
 pub use state::{RunnerSemanticView, ShellJobVisibility};
 pub use telemetry::{NoopRunnerRegistryTelemetry, RunnerRegistryTelemetry};

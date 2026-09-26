@@ -6,6 +6,7 @@ use crate::runner_protocol::ShellJobInfo;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Mutex;
+use webcodex_core::runner_job_lifecycle::RunnerJobLifecycle;
 use webcodex_runner_registry::JobAttentionSnapshot;
 
 const MAX_CURSOR_KEYS: usize = 128;
@@ -116,22 +117,35 @@ struct AttentionKey {
 
 #[derive(Clone, PartialEq, Eq)]
 struct JobState {
-    status: String,
-    started_at: Option<i64>,
-    ended_at: Option<i64>,
+    lifecycle: Option<RunnerJobLifecycle>,
     exit_code: Option<i32>,
-    reconciled_at: Option<i64>,
+    recovery: Option<(
+        webcodex_runner_registry::JobRecoveryPhase,
+        Option<webcodex_runner_registry::JobRecoveryReason>,
+    )>,
 }
 
-impl From<&ShellJobInfo> for JobState {
-    fn from(job: &ShellJobInfo) -> Self {
+impl From<&JobAttentionSnapshot> for JobState {
+    fn from(snapshot: &JobAttentionSnapshot) -> Self {
         Self {
-            status: job.status.clone(),
-            started_at: job.started_at,
-            ended_at: job.ended_at,
-            exit_code: job.exit_code,
-            reconciled_at: job.reconciled_at,
+            lifecycle: RunnerJobLifecycle::from_wire(&snapshot.job.status).ok(),
+            exit_code: snapshot.job.exit_code,
+            recovery: snapshot.recovery,
         }
+    }
+}
+
+impl JobState {
+    fn should_deliver(&self, previous: Option<&Self>) -> bool {
+        if self.lifecycle.is_some_and(RunnerJobLifecycle::is_terminal) {
+            // Unknown historical terminals establish a baseline, including on
+            // restart/eviction. Only a previously observed Job can complete.
+            return previous.is_some_and(|previous| previous != self);
+        }
+        // Server-owned recovery phases/reasons are meaningful even while the
+        // Runner lifecycle stays active. Routine lifecycle/progress is silent.
+        self.recovery.is_some()
+            && previous.is_none_or(|previous| previous.recovery != self.recovery)
     }
 }
 
@@ -165,7 +179,7 @@ impl JobAttentionCursor {
             return;
         };
         let prior = inner.entries.get(&key);
-        let items: Vec<Value> = jobs
+        let mut changed: Vec<_> = jobs
             .iter()
             .filter(|snapshot| {
                 let job = &snapshot.job;
@@ -173,11 +187,13 @@ impl JobAttentionCursor {
                     return false;
                 }
                 let previous = prior.and_then(|entry| entry.states.get(&job.job_id));
-                match previous {
-                    Some(previous) => previous != &JobState::from(job),
-                    None => webcodex_runner_registry::job_status_is_active(&job.status),
-                }
+                JobState::from(*snapshot).should_deliver(previous)
             })
+            .collect();
+        // Under the item budget, completion decisions precede recovery updates.
+        changed.sort_by_key(|snapshot| !super::jobs::is_terminal_job_status(&snapshot.job.status));
+        let items: Vec<Value> = changed
+            .into_iter()
             .take(MAX_ITEMS)
             .map(project_item)
             .collect();
@@ -209,7 +225,6 @@ impl JobAttentionCursor {
         }
         inner.tick = inner.tick.wrapping_add(1);
         let tick = inner.tick;
-        let initial = !inner.entries.contains_key(&key);
         let entry = inner.entries.entry(key).or_default();
         entry.last_used = tick;
         let in_snapshot: HashSet<&str> = jobs
@@ -221,16 +236,24 @@ impl JobAttentionCursor {
             .retain(|id, _| in_snapshot.contains(id.as_str()));
         for snapshot in jobs.iter().take(MAX_JOBS_PER_KEY) {
             let job = &snapshot.job;
-            // Old terminal Jobs establish a baseline on a fresh Window. When
-            // more than eight states change, leave unprojected revisions ready
-            // for the next ordinary result instead of silently consuming them.
+            // Quiet active changes and unknown terminals establish baseline.
+            // Changed deliverable states beyond MAX_ITEMS remain unconsumed.
+            // The initiating result only delivered pending truth. A terminal
+            // update racing this snapshot must remain deliverable next time.
+            let state = if initiating_handoff_job_id == Some(job.job_id.as_str()) {
+                JobState {
+                    lifecycle: None,
+                    exit_code: None,
+                    recovery: None,
+                }
+            } else {
+                JobState::from(snapshot)
+            };
             if emitted.contains(&job.job_id)
                 || initiating_handoff_job_id == Some(job.job_id.as_str())
-                || (initial && !webcodex_runner_registry::job_status_is_active(&job.status))
-                || !entry.states.contains_key(&job.job_id)
-                    && !webcodex_runner_registry::job_status_is_active(&job.status)
+                || !state.should_deliver(entry.states.get(&job.job_id))
             {
-                entry.states.insert(job.job_id.clone(), JobState::from(job));
+                entry.states.insert(job.job_id.clone(), state);
             }
         }
         if inner.entries.len() > MAX_CURSOR_KEYS {
@@ -363,3 +386,7 @@ impl ToolRuntime {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "tests/job_attention/cursor.rs"]
+mod cursor_tests;

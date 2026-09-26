@@ -101,6 +101,8 @@ impl Default for JobLogWait {
 pub struct JobAttentionSnapshot {
     pub job: ShellJobInfo,
     pub validation_output: Option<JobValidationOutput>,
+    /// Canonical recovery overlay semantics, excluding routine timestamps.
+    pub recovery: Option<(crate::JobRecoveryPhase, Option<crate::JobRecoveryReason>)>,
 }
 
 #[derive(Debug, Clone)]
@@ -1840,6 +1842,7 @@ impl RunnerRegistry {
                 JobAttentionSnapshot {
                     job: job_view(job),
                     validation_output,
+                    recovery: job.recovery.phase.map(|phase| (phase, job.recovery.reason)),
                 }
             })
             .collect()

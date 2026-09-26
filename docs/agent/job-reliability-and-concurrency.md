@@ -101,7 +101,12 @@ available for truncated/absent evidence, full logs, and recovery. Evidence comes
 from the same frozen Server record and retained bounded excerpts, never a Runner
 poll. It never inlines logs, panic/assertion bodies, or command bodies. A bounded
 process-local cursor keyed by principal, Window, Project, and business Session emits
-changed states once per observed revision. Server restart may repeat one bounded
+decision-relevant states once per observed semantic revision. Routine queued,
+agent_queued, started, running, stop-requested, progress, and timestamp changes
+only advance the baseline. Terminal transitions and changes to the canonical
+Server recovery phase/reason pair are deliverable; recovery completion is useful
+because it resolves previously uncertain execution visibility. No status-text
+heuristic classifies recovery. Server restart may repeat one bounded
 active snapshot; historical terminal records establish a baseline rather than being
 replayed as new completion. The cursor is not durable authority. Failure or
 omission of attention leaves the main tool result intact. `current_window_activity`
@@ -271,7 +276,7 @@ source fence, and structured execution metadata. A handoff in an exact
 authenticated Window/Project/Workflow Session establishes the passive
 `JobAttentionCursor` baseline without echoing a second active notification.
 Subsequent ordinary coding calls in that same scope may attach `job_attention`
-only when the Server-side registry state changes. Terminal attention contains
+only when terminal truth or the canonical Server recovery overlay changes. Terminal attention contains
 bounded outcome / exit truth, conservative validation/source-freshness truth
 when applicable, and an explicit details call, but never stdout/stderr bodies.
 The same terminal revision is delivered at most once per process-local cursor;

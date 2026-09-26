@@ -1432,7 +1432,7 @@ async fn git_diff_hunks_committed_exact_range_isolated_targeted_and_head_attribu
 async fn git_diff_hunks_ignores_external_diff_helpers_in_worktree_and_cached_modes() {
     use std::os::unix::fs::PermissionsExt;
 
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = crate::test_support::executable_tempdir();
     init_git_repo(tmp.path());
     write_git_review_fixture_file(tmp.path(), "safe.txt", "safe-old\n");
     write_git_review_fixture_file(tmp.path(), ".env", "FAKE_PRIVATE_MARKER_117\n");
@@ -7742,7 +7742,7 @@ async fn show_changes_agent_untracked_preview_uses_internal_posix_runtime() {
 fn show_changes_preserves_sentinel_text_from_external_diff() {
     use std::os::unix::fs::PermissionsExt;
 
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = crate::test_support::executable_tempdir();
     init_git_repo(tmp.path());
     commit_file(tmp.path(), "external.txt", "before\n", "initial");
     std::fs::write(tmp.path().join("external.txt"), "after\n").unwrap();
@@ -8575,7 +8575,7 @@ fn bounded_show_changes_output_from_frames(
 fn show_changes_oversized_no_hunk_preamble_is_bounded_and_drained() {
     use std::os::unix::fs::PermissionsExt;
 
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = crate::test_support::executable_tempdir();
     init_git_repo(tmp.path());
     commit_file(tmp.path(), "README.md", "before\n", "initial");
     std::fs::write(tmp.path().join("README.md"), "after\n").unwrap();
@@ -8781,7 +8781,7 @@ async fn show_changes_runtime_rejects_stat_only_failure_for_both_diff_modes() {
     let real_git = real_git.trim();
     assert!(!real_git.is_empty());
 
-    let wrapper_dir = tempfile::tempdir().unwrap();
+    let wrapper_dir = crate::test_support::executable_tempdir();
     let wrapper_path = wrapper_dir.path().join("git");
     std::fs::write(
         &wrapper_path,

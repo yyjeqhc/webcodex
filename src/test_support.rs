@@ -8,6 +8,23 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+/// Create a test temp directory on the Cargo build filesystem.
+///
+/// Some hardened hosts mount the system temp directory with `noexec`. Tests
+/// that intentionally create and execute fake binaries/scripts must not assume
+/// `tempfile::tempdir()` is executable. Keep ordinary data-only temp dirs on
+/// the system temp filesystem; use this helper only for executable fixtures.
+pub(crate) fn executable_tempdir() -> tempfile::TempDir {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join("test-executables");
+    std::fs::create_dir_all(&root).expect("create executable test temp root");
+    tempfile::Builder::new()
+        .prefix("webcodex-exec-")
+        .tempdir_in(root)
+        .expect("create executable test temp dir")
+}
+
 thread_local! {
     static TOOL_REQUEST_TRACE_ENV_READ_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
 }

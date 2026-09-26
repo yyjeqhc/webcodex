@@ -75,6 +75,7 @@ export function useAgentWorkspace(
   const [status, setStatus] = useState("");
   const [revision, setRevision] = useState(0);
   const request = useRef<AbortController | null>(null);
+  const refreshQueued = useRef(false);
   const pendingAgentCreate = useRef<PendingKey>(null);
   const pendingConversationCreate = useRef<PendingKey>(null);
   const pendingMessage = useRef<PendingKey>(null);
@@ -91,11 +92,19 @@ export function useAgentWorkspace(
   );
   const endpoint = selectedAgentId ? endpoints.get(selectedAgentId) || null : null;
 
-  const refresh = useCallback(() => setRevision((value) => value + 1), []);
+  const refresh = useCallback(() => {
+    if (request.current) {
+      refreshQueued.current = true;
+      return;
+    }
+    setRevision((value) => value + 1);
+  }, []);
 
   useEffect(() => {
     if (!enabled) {
       request.current?.abort();
+      request.current = null;
+      refreshQueued.current = false;
       return;
     }
     const controller = new AbortController();
@@ -136,11 +145,19 @@ export function useAgentWorkspace(
         : nextAgents[0]?.agent_id || "");
       setSelectedConversationId((current) => current || nextConversations[0]?.conversation_id || "");
       setStatus("");
+    }).finally(() => {
+      if (request.current !== controller) return;
+      request.current = null;
+      if (!disposed && refreshQueued.current) {
+        refreshQueued.current = false;
+        setRevision((value) => value + 1);
+      }
     });
 
     return () => {
       disposed = true;
       controller.abort();
+      if (request.current === controller) request.current = null;
     };
   }, [client, enabled, onUnauthorized, revision]);
 

@@ -31,6 +31,63 @@ it("loads conversation detail once and ignores a late response after switching",
   expect(result.current.conversationDetail?.messages?.[0].body).toBe("Current message");
 });
 
+it("lets slow Agent inventory finish across polling ticks and coalesces queued refreshes", async () => {
+  vi.useFakeTimers();
+  try {
+    let resolveAgents!: (value: unknown) => void;
+    let resolveConversations!: (value: unknown) => void;
+    const slowAgents = new Promise(resolve => { resolveAgents = resolve; });
+    const slowConversations = new Promise(resolve => { resolveConversations = resolve; });
+    const inventorySignals: AbortSignal[] = [];
+    let agentReads = 0;
+    let conversationReads = 0;
+    const client = {
+      post: vi.fn(async (path: string, _payload: any, signal?: AbortSignal) => {
+        if (path === "communication/agents") {
+          if (signal) inventorySignals.push(signal);
+          agentReads += 1;
+          return agentReads === 1 ? slowAgents : ok({ agents });
+        }
+        if (path === "communication/conversations") {
+          if (signal) inventorySignals.push(signal);
+          conversationReads += 1;
+          return conversationReads === 1 ? slowConversations : ok({ conversations });
+        }
+        if (path === "communication/conversation") return ok({ messages: [] });
+        return ok({});
+      }),
+    } as unknown as RuntimeV2Client;
+    const unauthorized = vi.fn();
+    const { result, unmount } = renderHook(() => useAgentWorkspace(client, true, unauthorized));
+
+    await act(async () => {});
+    expect(agentReads).toBe(1);
+    expect(conversationReads).toBe(1);
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(61_000); });
+    expect(agentReads).toBe(1);
+    expect(conversationReads).toBe(1);
+    expect(inventorySignals.every(signal => !signal.aborted)).toBe(true);
+
+    act(() => result.current.refresh());
+    expect(agentReads).toBe(1);
+    expect(conversationReads).toBe(1);
+
+    await act(async () => {
+      resolveAgents(ok({ agents }));
+      resolveConversations(ok({ conversations }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(agentReads).toBe(2);
+    expect(conversationReads).toBe(2);
+
+    unmount();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("puts the inbox first, keeps global conversations separate and sends human messages to the chosen conversation", async () => {
   const client = clientFor(() => ok({ messages: [] }), path => path === "communication/message/post" ? ok({ message: {} }) : ok({}));
   render(<UiProvider><AgentsPanel client={client} language="en" onUnauthorized={vi.fn()} /></UiProvider>);

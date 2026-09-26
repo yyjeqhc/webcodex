@@ -129,6 +129,9 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
   overflow-wrap: anywhere;
   font: 11px/1.6 var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
 }
+.workspace-files { display: grid; gap: 6px; max-height: 320px; overflow: auto; }
+.workspace-file { display: grid; gap: 4px; padding: 9px 10px; border: 1px solid var(--divider); border-radius: 9px; }
+.workspace-file code { font: 12px/1.5 var(--font-mono, ui-monospace, monospace); white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
 .frozen-file { overflow: hidden; border: 1px solid var(--divider); border-radius: 9px; background: color-mix(in srgb, Canvas 94%, CanvasText 6%); }
 .frozen-file + .frozen-file { margin-top: 6px; }
 .file-toggle {
@@ -211,6 +214,7 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
   <div class="task-context"><span id="projectIdentity"></span><span id="sessionIdentity"></span></div>
   <nav class="card-tabs" role="tablist" aria-label="Window views">
     <button id="tabActivity" type="button" role="tab" aria-selected="true" aria-controls="panelActivity">Activity</button>
+    <button id="tabResults" type="button" role="tab" aria-selected="false" aria-controls="panelResults" tabindex="-1">Results</button>
     <button id="tabCollaboration" type="button" role="tab" aria-selected="false" aria-controls="panelCollaboration" tabindex="-1">Collaboration</button>
   </nav>
   <div class="content">
@@ -228,6 +232,9 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
         <div id="windowActivity" class="workflow-activity"></div>
         <button id="askActivity" class="refresh" type="button">Send an instruction</button>
       </section>
+      <button id="viewResults" class="refresh" type="button">View changed files</button>
+    </div>
+    <div id="panelResults" class="card-panel" role="tabpanel" aria-labelledby="tabResults" hidden>
       <section id="finalChanges" class="section" hidden>
         <div class="section-head"><h2>Final changes</h2><span id="frozenStats" class="stats-inline"></span></div>
         <div id="frozenSummary" class="primary"></div>
@@ -235,6 +242,20 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
         <button id="frozenMore" class="refresh" type="button" hidden></button>
         <div id="frozenFooter" class="secondary"></div>
       </section>
+      <section class="section">
+        <div class="section-head"><h2>Workspace changes</h2><span id="workspaceStats" class="stats-inline"></span></div>
+        <div id="workspaceStatus" class="primary">Waiting for files…</div>
+        <p class="secondary">Current uncommitted changes in this Project, including other work. Final task changes are shown separately above.</p>
+        <div id="workspaceFiles" class="workspace-files" role="list" aria-label="Changed files"></div>
+        <div id="workspaceMeta" class="secondary"></div>
+      </section>
+      <section id="resultChecks" class="section">
+        <div class="section-head"><h2>Checks and review</h2></div>
+        <div id="validationStatus" class="primary"></div><div id="validationMeta" class="secondary"></div>
+        <div id="reviewStatus" class="primary"></div><div id="reviewMeta" class="secondary"></div>
+        <p class="secondary">Evidence for the linked Session; a clean workspace does not prove the task passed.</p>
+      </section>
+      <button id="discussResults" class="refresh" type="button">Discuss these changes</button>
     </div>
     <div id="panelCollaboration" class="card-panel" role="tabpanel" aria-labelledby="tabCollaboration" hidden>
       <section class="section">
@@ -332,6 +353,11 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     el("status").textContent = "This task card is unavailable";
     el("finalChanges").hidden = true;
     el("frozenFiles").replaceChildren();
+    el("workspaceFiles").replaceChildren();
+    el("workspaceStatus").textContent = "Changes unavailable";
+    el("workspaceStats").replaceChildren();
+    el("workspaceMeta").textContent = "";
+    el("resultChecks").hidden = true;
     diffCache.clear();
   }
 
@@ -741,8 +767,44 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     return `${days}d ${hours % 24}h`;
   }
 
+  let renderedWorkspace = null;
   function renderWorkspace(workspace) {
     el("branch").textContent = workspace.branch || "Window activity";
+    const fingerprint = JSON.stringify(workspace);
+    if (fingerprint === renderedWorkspace) return;
+    renderedWorkspace = fingerprint;
+    const root = el("workspaceFiles");
+    root.replaceChildren();
+    el("workspaceStats").replaceChildren();
+    el("workspaceMeta").textContent = "";
+    if (!workspace.git_available) {
+      el("workspaceStatus").textContent = workspace.reason_code === "non_git_project"
+        ? "This Project is not a Git repository" : "Workspace changes unavailable";
+      el("workspaceMeta").textContent = "File changes cannot be determined from this snapshot.";
+      return;
+    }
+    el("workspaceStatus").textContent = workspace.clean ? "No uncommitted changes"
+      : workspace.files_total ? `${workspace.files_total} ${workspace.files_total === 1 ? "file" : "files"} changed` : "Change status incomplete";
+    if (safeCount(workspace.additions) && safeCount(workspace.deletions)) {
+      renderLineStats(el("workspaceStats"), workspace.additions, workspace.deletions, workspace.line_stats_partial ? "partial" : "");
+    }
+    for (const file of workspace.files) {
+      const row = document.createElement("div"); row.className = "workspace-file"; row.setAttribute("role", "listitem");
+      const path = document.createElement("code"); path.textContent = file.old_path ? `${file.old_path} → ${file.path}` : file.path;
+      const meta = document.createElement("div"); meta.className = "secondary";
+      const kind = ({ modified: "Modified", added: "Added", deleted: "Deleted", renamed: "Renamed", copied: "Copied", untracked: "Untracked", conflicted: "Conflict" })[file.status] || "Changed";
+      const staging = file.staged && file.unstaged ? "Staged + unstaged" : file.staged ? "Staged" : file.unstaged ? "Unstaged" : "";
+      meta.textContent = [kind, staging].filter(Boolean).join(" · ");
+      const stats = document.createElement("span"); stats.className = "stats-inline";
+      if (safeCount(file.additions) && safeCount(file.deletions)) renderLineStats(stats, file.additions, file.deletions);
+      else stats.textContent = "Line counts unavailable";
+      row.append(path, meta, stats); root.append(row);
+    }
+    if (workspace.truncated || workspace.files_total > workspace.files.length) {
+      el("workspaceMeta").textContent = `Showing ${workspace.files.length} of ${workspace.files_total} files · limited snapshot`;
+    } else if (workspace.line_stats_partial) {
+      el("workspaceMeta").textContent = "Line counts are incomplete.";
+    }
   }
 
   function validationLabel(validation) {
@@ -765,7 +827,10 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
   }
 
   function renderReview(review) {
-    if (review.total > 0) {
+    if (!review.available) {
+      el("reviewStatus").textContent = "Review status unavailable";
+      el("reviewMeta").textContent = "";
+    } else if (review.total > 0) {
       el("reviewStatus").textContent = "Review recorded";
       el("reviewMeta").textContent = review.history_partial ? "Recent review activity available" : "";
     } else if (review.history_partial) {
@@ -944,7 +1009,7 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     }
   }
 
-  const panes = ["Activity", "Collaboration"];
+  const panes = ["Activity", "Results", "Collaboration"];
   function selectPane(name, focus = false) {
     if (!panes.includes(name)) return;
     selectedPane = name;
@@ -1002,6 +1067,12 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     renderWindowActivity(state.window_activity);
     renderMessages(state.collaboration);
     renderWorkspace(state.workspace);
+    el("resultChecks").hidden = !state.session_id || (!state.validation && !state.review);
+    if (state.validation) renderValidation(state.validation);
+    else { el("validationStatus").textContent = "Check status unavailable"; el("validationMeta").textContent = ""; }
+    if (state.review) renderReview(state.review);
+    else { el("reviewStatus").textContent = "Review status unavailable"; el("reviewMeta").textContent = ""; }
+    el("viewResults").textContent = hasFinalChanges ? "View final result" : `View changed files · ${state.workspace.files_total}`;
     el("finalChanges").hidden = !hasFinalChanges;
 
     if (state.activity.active) {
@@ -1243,6 +1314,8 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     };
   }
   el("askActivity").onclick = () => { selectPane("Collaboration"); el("messageInput").focus?.(); };
+  el("viewResults").onclick = () => selectPane("Results", true);
+  el("discussResults").onclick = () => { selectPane("Collaboration"); el("messageInput").focus?.(); };
   selectPane("Activity");
   el("refresh").onclick = () => { void refresh(false); };
   el("frozenMore").onclick = () => { if (snapshot) appendFrozenFiles(snapshot.files.length); };

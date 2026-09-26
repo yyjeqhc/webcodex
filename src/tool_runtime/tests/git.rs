@@ -1245,11 +1245,16 @@ async fn run_runner_git_diff_hunks_committed_page_with_options(
             assert!(script.contains("GIT_OPTIONAL_LOCKS=0"));
             assert!(script.contains("GIT_CONFIG_GLOBAL=/dev/null"));
             assert!(script.contains("attributesFile = /dev/null"));
+            assert!(script.contains("git read-tree "));
+            assert!(script.contains("git ls-files -z -- .gitattributes ':(glob)**/.gitattributes'"));
+            assert!(script.contains("git checkout-index -z --stdin --prefix=\"$view/worktree/\""));
+            assert!(!script.contains("checkout-index -a"));
+            assert!(!script.contains("checkout-index --all"));
             for forbidden in [
                 "git fetch",
                 "git apply",
                 "git commit",
-                "git checkout",
+                "git checkout ",
                 "git reset",
                 "git push",
                 "git stash",
@@ -2960,7 +2965,7 @@ async fn git_diff_hunks_committed_drains_bounded_consumer_and_preserves_producer
         .clone();
     let head_q = shell_escape_simple(&head);
     let needle = format!(
-        "git --no-pager -c core.quotePath=false -c attr.tree={head_q} diff --no-ext-diff --no-textconv --find-renames --unified=80 {} {head_q} -- 'file.txt'",
+        "git --no-pager -c core.quotePath=false diff --no-ext-diff --no-textconv --find-renames --unified=80 {} {head_q} -- 'file.txt'",
         shell_escape_simple(&base),
     );
     assert_eq!(
@@ -6501,11 +6506,20 @@ async fn run_git_review_summary_via_agent(
             assert!(payload.script.contains("GIT_ATTR_NOSYSTEM=1"));
             assert!(payload.script.contains("attributesFile = /dev/null"));
             assert!(payload.script.contains("GIT_CONFIG_GLOBAL=/dev/null"));
+            assert!(payload.script.contains("git read-tree "));
+            assert!(payload
+                .script
+                .contains("git ls-files -z -- .gitattributes ':(glob)**/.gitattributes'"));
+            assert!(payload
+                .script
+                .contains("git checkout-index -z --stdin --prefix=\"$view/worktree/\""));
+            assert!(!payload.script.contains("checkout-index -a"));
+            assert!(!payload.script.contains("checkout-index --all"));
             for forbidden in [
                 "git fetch",
                 "git apply",
                 "git commit",
-                "git checkout",
+                "git checkout ",
                 "git reset",
                 "git push",
                 "git stash",
@@ -6779,6 +6793,98 @@ async fn git_review_summary_uses_reviewed_head_committed_attributes() {
     let result =
         run_git_review_summary_via_agent(&runtime, "review-head-attributes", project, base, head)
             .await;
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["stats"]["files_changed"], 2);
+    assert_eq!(result.output["stats"]["binary_files"], 1);
+    let data = result.output["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|file| file["path"] == "data.txt")
+        .unwrap();
+    assert_eq!(data["binary"], true);
+    assert_eq!(data["symbol_inspection"], "skipped_binary");
+}
+
+#[tokio::test]
+async fn git_review_summary_uses_nested_reviewed_head_attributes_without_mutable_leakage() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    write_git_review_fixture_file(tmp.path(), "src/nested/data.txt", "a\nb\n");
+    let base = commit_git_review_fixture(tmp.path(), "nested base");
+
+    write_git_review_fixture_file(tmp.path(), "src/nested/.gitattributes", "data.txt -diff\n");
+    write_git_review_fixture_file(tmp.path(), "src/nested/data.txt", "a\nc\n");
+    let head = commit_git_review_fixture(tmp.path(), "nested head attributes");
+
+    write_git_review_fixture_file(tmp.path(), "src/nested/.gitattributes", "data.txt diff\n");
+    fs::create_dir_all(tmp.path().join(".git/info")).unwrap();
+    fs::write(
+        tmp.path().join(".git/info/attributes"),
+        "src/nested/data.txt diff\n",
+    )
+    .unwrap();
+
+    let runtime = test_runtime();
+    let project = register_structured_git_agent_at_path(
+        &runtime,
+        "review-nested-head-attributes",
+        "repo",
+        tmp.path(),
+    )
+    .await;
+    let result = run_git_review_summary_via_agent(
+        &runtime,
+        "review-nested-head-attributes",
+        project,
+        base,
+        head,
+    )
+    .await;
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["stats"]["files_changed"], 2);
+    assert_eq!(result.output["stats"]["binary_files"], 1);
+    let data = result.output["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|file| file["path"] == "src/nested/data.txt")
+        .unwrap();
+    assert_eq!(data["binary"], true);
+    assert_eq!(data["symbol_inspection"], "skipped_binary");
+}
+
+#[tokio::test]
+async fn git_review_summary_exact_range_prefers_reviewed_head_over_dirty_and_info_attributes() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    write_git_review_fixture_file(tmp.path(), "data.txt", "a\nb\n");
+    let base = commit_git_review_fixture(tmp.path(), "root base");
+
+    write_git_review_fixture_file(tmp.path(), ".gitattributes", "data.txt -diff\n");
+    write_git_review_fixture_file(tmp.path(), "data.txt", "a\nc\n");
+    let head = commit_git_review_fixture(tmp.path(), "root head attributes");
+
+    write_git_review_fixture_file(tmp.path(), ".gitattributes", "data.txt diff\n");
+    fs::create_dir_all(tmp.path().join(".git/info")).unwrap();
+    fs::write(tmp.path().join(".git/info/attributes"), "data.txt diff\n").unwrap();
+
+    let runtime = test_runtime();
+    let project = register_structured_git_agent_at_path(
+        &runtime,
+        "review-root-head-attributes",
+        "repo",
+        tmp.path(),
+    )
+    .await;
+    let result = run_git_review_summary_via_agent(
+        &runtime,
+        "review-root-head-attributes",
+        project,
+        base,
+        head,
+    )
+    .await;
     assert!(result.success, "{:?}", result.error);
     assert_eq!(result.output["stats"]["files_changed"], 2);
     assert_eq!(result.output["stats"]["binary_files"], 1);

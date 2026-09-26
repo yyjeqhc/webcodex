@@ -111,7 +111,7 @@ fn bounded_review_diff_command(
     let failure = format!("printf '{}\\n'; exit 0", GIT_REVIEW_ERROR_SENTINEL);
     let isolated_view = committed_git_isolated_view_setup(head, &failure);
     let producer = format!(
-        "git --no-pager -c core.quotePath=false -c attr.tree={head_q} diff --no-ext-diff --no-textconv --find-renames {mode} {base_q} {head_q}",
+        "git --no-pager -c core.quotePath=false diff --no-ext-diff --no-textconv --find-renames {mode} {base_q} {head_q}",
         head_q = shell_escape_simple(head),
         mode = mode,
         base_q = shell_escape_simple(merge_base),
@@ -562,7 +562,7 @@ fn git_review_symbol_command(merge_base: &str, head: &str, paths: &[String]) -> 
     let failure = format!("printf '{}\\n'; exit 0", GIT_REVIEW_ERROR_SENTINEL);
     let isolated_view = committed_git_isolated_view_setup(head, &failure);
     let producer = format!(
-        "git --no-pager -c core.quotePath=false -c attr.tree={head_q} diff --no-ext-diff --no-textconv --find-renames --unified=0 --src-prefix=a/ --dst-prefix=b/ {base_q} {head_q} -- {paths}",
+        "git --no-pager -c core.quotePath=false diff --no-ext-diff --no-textconv --find-renames --unified=0 --src-prefix=a/ --dst-prefix=b/ {base_q} {head_q} -- {paths}",
         base_q = shell_escape_simple(merge_base),
         head_q = shell_escape_simple(head),
         paths = joined,

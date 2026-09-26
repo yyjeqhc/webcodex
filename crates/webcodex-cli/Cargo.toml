@@ -13,6 +13,7 @@ webcodex = { path = "../.." }
 webcodex-admin = { path = "../webcodex-admin" }
 webcodex-runner-config = { path = "../webcodex-runner-config" }
 webcodex-core = { path = "../webcodex-core" }
+webcodex-environment = { path = "../webcodex-environment" }
 chrono = "0.4"
 fs2 = "0.4"
 os_pipe = "1"
@@ -37,6 +38,7 @@ windows-sys = { version = "0.61.2", features = [
     "Win32_Security_Authorization",
     "Win32_Storage_FileSystem",
     "Win32_System_Threading",
+    "Win32_System_Console",
 ] }
 
 [dev-dependencies]

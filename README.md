@@ -6,7 +6,7 @@
 
 <p align="center"><strong>Give cloud AI agents a real development environment on your own machines.</strong></p>
 <p align="center">Connect ChatGPT, Claude, and other MCP clients to the repositories, Git checkout, and tools you already use.</p>
-<p align="center"><a href="#just-trying-it-for-a-few-minutes-temporary-share">Quick Trial</a> · <a href="#download-a-release">Downloads</a> · <a href="docs/PERSONAL_SETUP.md">Full Setup</a> · <a href="#documentation">Documentation</a> · <a href="https://github.com/yyjeqhc/webcodex/issues">Issues</a> · <a href="CONTRIBUTING.md">Contribute</a> · <a href="SECURITY.md">Security</a></p>
+<p align="center"><a href="docs/unified-installation.md">One computer</a> · <a href="docs/unified-installation.md#several-computers">Several computers</a> · <a href="#documentation">Documentation</a> · <a href="https://github.com/yyjeqhc/webcodex/issues">Issues</a> · <a href="CONTRIBUTING.md">Contribute</a> · <a href="SECURITY.md">Security</a></p>
 
 <p align="center">
   <a href="docs/MCP.md"><img src="https://img.shields.io/badge/protocol-MCP-2563EB?labelColor=1E40AF&amp;style=flat-square" alt="MCP protocol"></a>
@@ -24,37 +24,14 @@ Ask your assistant to inspect a repository, modify code, run tests, use Git, or 
 
 ## Start using WebCodex
 
-### Just trying it for a few minutes: temporary share
+The unified installer workflow below is under development; see the [validation status](docs/unified-deployment-validation.md) before choosing an artifact. Once a validated installer is available, choose the setup that matches where your code lives:
 
-To quickly see whether WebCodex fits your workflow, run this inside one repository:
+- **One computer:** install WebCodex on your personal workstation, open Desktop, and follow [Unified installation](docs/unified-installation.md). This setup includes Desktop, CLI, Server, and Runner in one platform package.
+- **Several computers:** install the same package on the machine that will host the WebCodex Server and on each machine that owns repositories. Follow [Unified installation](docs/unified-installation.md#several-computers) and [Deployment validation](docs/unified-deployment-validation.md).
 
-```bash
-cd /path/to/your/repository
-npx --yes @yyjeqhc/webcodex share
-```
+This branch defines unified Windows NSIS, macOS package, and Debian 12 / Ubuntu 22.04+ `.deb` installer targets for x64 and arm64. The six installer variants still require native build and installation acceptance before release. Real-machine installation, reboot persistence, GUI behavior, and upgrade have not been accepted across all three platforms; this branch makes no claim of identical cross-platform behavior. Published files are listed in [GitHub Releases](https://github.com/yyjeqhc/webcodex/releases). The [`download/`](download/README.md) directory contains static page source only; the [download-page workflow](https://github.com/yyjeqhc/webcodex/actions/workflows/download-page.yml) builds a Release-manifest-based GitHub Actions artifact after publication, but does not host or deploy a page. For a source preview, check out the exact feature or release revision you intend to evaluate and follow [Desktop development](docs/DESKTOP_DEVELOPMENT.md#linux-source-preview-against-an-existing-server).
 
-`share` starts a temporary, single-project instance of the ordinary WebCodex Adaptive Runtime and prints the ChatGPT connection values. Its temporary Project Credential limits access to that ProjectGrant; the endpoint and credential stop working when the command exits. It is intended for trials and short-lived sharing, not as the default full daily setup. See the [Quick Trial](docs/QUICK_START.md) for the exact steps.
-
-### Everyday development: full WebCodex (recommended)
-
-If you want ChatGPT to keep using your real development environment, start with a **regular Server + Runner**. This is the full development experience: durable access to multiple projects plus project exploration, editing, Git, commands, tests, long-running work, and code navigation. Public HTTPS, Cloudflare Tunnel, and OpenAI Secure MCP Tunnel are only ways for ChatGPT to reach the Server; they do not switch you into a different restricted experience.
-
-For Windows or macOS, the recommended first path is **WebCodex Desktop + the official OpenAI Secure Tunnel**. Follow the [Desktop installation guide](docs/desktop-install.md). For CLI, an existing Server, self-hosting, or advanced setup, use the [Full Setup guide](docs/PERSONAL_SETUP.md).
-
-### Download a release
-
-The links below are for the **official upstream v0.4.1 release**. Choose a Desktop installer for ordinary Windows/macOS use, or a native CLI archive for Server/Runner workflows. [View the release and checksums](https://github.com/yyjeqhc/webcodex/releases/tag/v0.4.1).
-
-| Platform | Desktop | CLI / Server / Runner |
-| --- | --- | --- |
-| Windows x64 | [Installer](https://github.com/yyjeqhc/webcodex/releases/download/v0.4.1/webcodex-desktop-v0.4.1-win32-x64-setup.exe) | [Archive](https://github.com/yyjeqhc/webcodex/releases/download/v0.4.1/webcodex-v0.4.1-win32-x64.tar.gz) |
-| Windows arm64 | — | [Archive](https://github.com/yyjeqhc/webcodex/releases/download/v0.4.1/webcodex-v0.4.1-win32-arm64.tar.gz) |
-| macOS Apple Silicon | [DMG](https://github.com/yyjeqhc/webcodex/releases/download/v0.4.1/webcodex-desktop-v0.4.1-darwin-arm64.dmg) | [Archive](https://github.com/yyjeqhc/webcodex/releases/download/v0.4.1/webcodex-v0.4.1-darwin-arm64.tar.gz) |
-| macOS Intel | [DMG](https://github.com/yyjeqhc/webcodex/releases/download/v0.4.1/webcodex-desktop-v0.4.1-darwin-x64.dmg) | [Archive](https://github.com/yyjeqhc/webcodex/releases/download/v0.4.1/webcodex-v0.4.1-darwin-x64.tar.gz) |
-| Linux x64 | — | [Archive](https://github.com/yyjeqhc/webcodex/releases/download/v0.4.1/webcodex-v0.4.1-linux-x64.tar.gz) |
-| Linux arm64 | — | [Archive](https://github.com/yyjeqhc/webcodex/releases/download/v0.4.1/webcodex-v0.4.1-linux-arm64.tar.gz) |
-
-The npm installation path remains `npm install -g @yyjeqhc/webcodex` (Node.js 18+).
+For temporary one-repository trials, advanced self-hosting, npm/runtime archives, Docker, or historical release artifacts, see [Deployment](docs/DEPLOYMENT.md).
 
 ## What can it do?
 
@@ -101,28 +78,17 @@ This chart tracks the upstream [yyjeqhc/webcodex](https://github.com/yyjeqhc/web
   </picture>
 </a>
 
-## Platforms
+## Platform packages
 
-The platform capabilities below describe the official upstream release linked above.
-
-- **Linux x64/arm64** — local `share`, Server, and Runner workflows.
-- **macOS x64/arm64** — Desktop local Server + Runner, OpenAI Secure Tunnel, local `share`, and standalone Runner workflows.
-- **Windows x64** — Desktop local Server + Runner with the official OpenAI Secure Tunnel, plus CLI + Runner, local foreground Server, and explicit `webcodex share --tunnel cloudflare|openai|none`.
-- **Windows arm64** — Desktop local Server + Runner and the official OpenAI Secure Tunnel are supported by the native ARM64 build path; CLI + Runner, local foreground Server, and `share` are also supported. Release builds include the Windows ARM64 Desktop installer from v0.4.2+. The pinned Cloudflare release has no official Windows ARM64 artifact, so Cloudflare still requires a trusted explicit/PATH `cloudflared`. WebCodex-managed Windows Server services remain unsupported outside Desktop's owned foreground runtime.
-
-Windows and long-lived deployments are covered in [Deployment](docs/DEPLOYMENT.md) and [MCP](docs/MCP.md).
-
-## Existing Servers and advanced setup
-
-If someone already provides the WebCodex Server and connection credential, use that existing Server and follow the [Full Setup guide](docs/PERSONAL_SETUP.md). For a normal Windows/macOS personal installation, use the [Desktop guide](docs/desktop-install.md). Use [Deployment](docs/DEPLOYMENT.md) only for production hosting, multiple users, systemd/Docker, OAuth, proxies, and private CAs.
-
-Those are follow-up operating concerns, not concepts a first-time user should have to learn before WebCodex works.
+The unified installer targets Windows NSIS, macOS, and Debian 12 / Ubuntu 22.04+ `.deb` on x64 and arm64. The branch defines the build pipeline; the six installer variants still require native build and installation acceptance before release. See [Unified installation](docs/unified-installation.md) and the [validation checklist](docs/unified-deployment-validation.md). Existing release artifacts and npm/Docker deployment paths remain documented as advanced historical/current compatibility references in [Deployment](docs/DEPLOYMENT.md).
 
 ## Documentation
 
-- [Desktop installation](docs/desktop-install.md) — recommended Windows/macOS path: Desktop + official OpenAI Secure Tunnel
+- [Unified installation](docs/unified-installation.md) — personal and multi-computer setup for the unified package
+- [Deployment validation](docs/unified-deployment-validation.md) — platform acceptance status and required native checks
+- [Legacy Desktop installation](docs/desktop-install.md) — existing release-specific detailed guide
 - [Using Desktop](docs/desktop-guide.md) — projects, connections, activity, and background operation
-- [Desktop development](docs/DESKTOP_DEVELOPMENT.md) — run from source and build Windows/macOS installers locally
+- [Desktop development](docs/DESKTOP_DEVELOPMENT.md) — run from source on Linux, Windows, and macOS; build local packages
 - [Full Setup](docs/PERSONAL_SETUP.md) — CLI, existing Server, Linux, and advanced regular Server + Runner setup
 - [Quick Trial](docs/QUICK_START.md) — temporarily try one repository with `share`
 - [MCP](docs/MCP.md) — ChatGPT, Claude, authentication choices, and MCP reference

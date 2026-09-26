@@ -20,6 +20,26 @@ Server API 完成。
 
 ## 命令总览
 
+### 环境配置
+
+`webcodex environment` 与 Desktop 调用同一配置核心。该命名空间配置本机持久环境；原有项目级 `webcodex setup` 含义保持不变。安装包供应与原生验收状态见[统一安装指南](unified-installation.zh-CN.md)和[部署验收清单](unified-deployment-validation.md)。
+
+| 命令 | 用途 |
+| --- | --- |
+| `webcodex environment configure` | 交互选择创建/加入和项目/跳过，再收集必要地址、认证信息和系统授权。 |
+| `configure --create --project PATH` / `configure --create --no-project` | 创建或继续配置本机 Server + Runner / 仅 Server 环境。 |
+| `configure --join URL --project PATH --code-stdin` | 带项目加入；从 stdin 读取一次性 Runner 配对码，完成凭据保存、项目注册、服务安装和就绪检查。 |
+| `configure --join URL --no-project --token-file PATH` | 从受保护文件读取用户 API 凭据，仅作为查看端加入；不创建本机 Runner 身份或服务。省略文件选项时使用隐藏终端输入。 |
+| `resume` | 核实已保存进度，只补做缺失步骤，不静默改绑环境。 |
+| `invite` | 在环境的本机 Server 创建 Runner 短期邀请；显示的 code 属于敏感信息。 |
+| `add-project PATH` | 复用已有 Runner 身份；查看端需先完成 Runner 接入。 |
+| `status --json` / `doctor --json` | 查看已保存配置、Server 连通性、Runner/项目就绪状态和结构化诊断。 |
+| `start COMPONENT` / `stop COMPONENT` / `restart COMPONENT` | 显式控制环境所拥有的 `server`、`runner` 或 `tunnel`。 |
+| `repair-user-credential [--token-file PATH]` | 核实并替换已保存用户凭据，不配对 Runner 或改变服务状态。 |
+| `repair-credential runner` | 通过隐藏输入修复 Windows SCM 账户凭据。 |
+
+完整命名空间（含 Tunnel profile、显式旧配置迁移和安装器升级/恢复）见 `webcodex environment --help`。公开环境命令支持 `--json` 和 `--environment-dir PATH`。不要将 token、配对码或服务密码放入命令行参数。配对兑换结果不确定时，先阅读恢复诊断，再显式通过 `resume --new-pairing-code --code-stdin` 提供替换码，不自动重放旧码。
+
 ### 项目 / 本地工作流
 
 以下命令作用于当前 Git 项目。

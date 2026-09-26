@@ -76,6 +76,21 @@ export const desktopApi = {
     invoke<DesktopState>("configure_local_setup", {
       request: { projectPath },
     }),
+  configureEnvironment: (request: {
+    mode: "create" | "join";
+    serverUrl?: string | null;
+    projectPath?: string | null;
+    pairingCode?: string | null;
+    userToken?: string | null;
+    replacePairingCode?: boolean;
+  }) => invoke<DesktopState>("configure_environment", { request }),
+  environmentServiceAction: (request: {
+    environmentId: string;
+    component: "server" | "runner";
+    action: "start" | "stop" | "restart" | "repair_credential";
+  }) => invoke<DesktopState>("environment_service_action", { request }),
+  repairEnvironmentUserCredential: (request: { environmentId: string; userToken: string }) =>
+    invoke<DesktopState>("repair_environment_user_credential", { request }),
   activateLocalProject: (projectPath: string) =>
     invoke<DesktopState>("activate_local_project", {
       request: { projectPath },
@@ -104,4 +119,3 @@ export const desktopApi = {
 };
 
 export type QuickShareProvider = "cloudflare" | "openai" | "none";
-

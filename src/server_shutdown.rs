@@ -12,6 +12,7 @@ pub(crate) enum ShutdownReason {
     Sigint,
     Sigterm,
     ParentEof,
+    ServiceStop,
 }
 
 impl ShutdownReason {
@@ -20,6 +21,7 @@ impl ShutdownReason {
             Self::Sigint => "SIGINT",
             Self::Sigterm => "SIGTERM",
             Self::ParentEof => "parent_stdin_eof",
+            Self::ServiceStop => "SCM_STOP",
         }
     }
 }
@@ -167,6 +169,7 @@ pub(crate) async fn serve_until_termination<A, S>(
     coordinator: Arc<ShutdownCoordinator>,
     graceful_timeout: Duration,
     stop_on_stdin_eof: bool,
+    service_stop: impl Future<Output = ()> + Send,
 ) -> io::Result<()>
 where
     A: Acceptor + Send,
@@ -183,9 +186,13 @@ where
             tokio::select! {
                 reason = signals.recv() => reason,
                 _ = parent_eof => ShutdownReason::ParentEof,
+                _ = service_stop => ShutdownReason::ServiceStop,
             }
         } else {
-            signals.recv().await
+            tokio::select! {
+                reason = signals.recv() => reason,
+                _ = service_stop => ShutdownReason::ServiceStop,
+            }
         }
     };
     serve_with_signal(server, service, coordinator, signal, graceful_timeout).await

@@ -6,14 +6,26 @@ pub struct RegularServerTunnelOptions {
     pub local_server_url: String,
     pub bootstrap_token: String,
     pub runtime_parent: PathBuf,
+    pub stop_on_stdin_eof: bool,
 }
 
 pub async fn run_regular_server_tunnel(options: RegularServerTunnelOptions) -> Result<(), String> {
-    project_entry::run_regular_server_tunnel(&project_entry::RegularServerTunnelOptions {
-        local_server_url: options.local_server_url,
-        bootstrap_token: options.bootstrap_token,
-        runtime_parent: options.runtime_parent,
-    })
+    run_regular_server_tunnel_with_stop(options, std::future::pending()).await
+}
+
+pub async fn run_regular_server_tunnel_with_stop(
+    options: RegularServerTunnelOptions,
+    stop: impl std::future::Future<Output = ()>,
+) -> Result<(), String> {
+    project_entry::run_regular_server_tunnel_with_stop(
+        &project_entry::RegularServerTunnelOptions {
+            local_server_url: options.local_server_url,
+            bootstrap_token: options.bootstrap_token,
+            runtime_parent: options.runtime_parent,
+            stop_on_stdin_eof: options.stop_on_stdin_eof,
+        },
+        stop,
+    )
     .await
     .map_err(|error| project_entry::render_error(&error, true))
 }

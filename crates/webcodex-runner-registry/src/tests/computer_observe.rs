@@ -1,6 +1,92 @@
 use super::*;
 
 #[tokio::test]
+async fn brokered_computer_requires_current_session_availability() {
+    let registry = RunnerRegistry::default();
+    let mut registration = runner_registration("computer-brokered", "broker-instance", Vec::new());
+    registration.owner = Some("alice".to_string());
+    registration.capabilities.computer_observe = true;
+    registration.computer_session_availability = Some(false);
+    registry
+        .register(current_runner_registration(registration))
+        .await
+        .unwrap();
+
+    let view = registry
+        .get_runner_semantic_view("computer-brokered")
+        .await
+        .unwrap();
+    let alice = auth_context(Some("alice"), false);
+    assert!(view.view.capabilities.computer_observe); // static support remains separate
+    assert!(!view.supports(RunnerFeature::ComputerObserve));
+    let error = registry
+        .enqueue_computer(
+            "computer-brokered".to_string(),
+            "computer_list_windows",
+            r#"{"limit":1}"#.to_string(),
+            "test".to_string(),
+            Some(&alice),
+            5,
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        error.contains("does not support computer_observe"),
+        "{error}"
+    );
+
+    registry
+        .update_computer_session_availability(
+            "computer-brokered",
+            "broker-instance",
+            None,
+            Some(true),
+        )
+        .await
+        .unwrap();
+    assert!(registry
+        .get_runner_semantic_view("computer-brokered")
+        .await
+        .unwrap()
+        .supports(RunnerFeature::ComputerObserve));
+    let (_id, _rx) = registry
+        .enqueue_computer(
+            "computer-brokered".to_string(),
+            "computer_list_windows",
+            r#"{"limit":1}"#.to_string(),
+            "test".to_string(),
+            Some(&alice),
+            5,
+        )
+        .await
+        .unwrap();
+
+    assert!(registry
+        .update_computer_session_availability(
+            "computer-brokered",
+            "old-instance",
+            None,
+            Some(false)
+        )
+        .await
+        .is_err());
+    registry
+        .update_computer_session_availability(
+            "computer-brokered",
+            "broker-instance",
+            None,
+            Some(false),
+        )
+        .await
+        .unwrap();
+    assert!(!registry
+        .get_runner_semantic_view("computer-brokered")
+        .await
+        .unwrap()
+        .supports(RunnerFeature::ComputerObserve));
+}
+
+#[tokio::test]
 async fn computer_enqueue_requires_exact_owner_and_distinct_capability() {
     let registry = RunnerRegistry::default();
     register_computer_test_runner(
@@ -107,6 +193,7 @@ async fn computer_snapshot_region_requires_additive_capability() {
 
     registry
         .register(current_runner_registration(RunnerRegisterRequest {
+            computer_session_availability: None,
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -146,6 +233,7 @@ async fn computer_snapshot_region_requires_additive_capability() {
 
     registry
         .register(current_runner_registration(RunnerRegisterRequest {
+            computer_session_availability: None,
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -200,6 +288,7 @@ async fn computer_snapshot_display_preserves_large_native_image_response_stdout(
     let alice = auth_context(Some("alice"), false);
     registry
         .register(current_runner_registration(RunnerRegisterRequest {
+            computer_session_availability: None,
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,

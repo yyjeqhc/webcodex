@@ -50,6 +50,7 @@ async fn register_target_agent(
     runtime
         .runner_registry
         .register(RunnerRegisterRequest {
+            computer_session_availability: None,
             process_started_at: None,
             build,
             job_concurrency_limit: Some(4),
@@ -91,6 +92,7 @@ async fn register_target_agent_for_auth(
         .runner_registry
         .register_with_auth(
             RunnerRegisterRequest {
+                computer_session_availability: None,
                 process_started_at: None,
                 build: None,
                 job_concurrency_limit: Some(4),
@@ -144,6 +146,7 @@ async fn register_managed_target_agent(
     runtime
         .runner_registry
         .register(RunnerRegisterRequest {
+            computer_session_availability: None,
             process_started_at: None,
             build: None,
             job_concurrency_limit: Some(4),

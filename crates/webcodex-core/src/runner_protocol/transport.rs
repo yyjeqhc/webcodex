@@ -82,6 +82,8 @@ pub enum RunnerEnvelope {
         tool_providers: ToolProvidersStatus,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         mcp_gateway_providers: Option<Vec<crate::mcp_gateway::McpGatewayProvider>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        computer_session_availability: Option<bool>,
     },
     /// Runner -> Server bounded page of one project-inventory snapshot. New
     /// Runners send this only after the Registered view proved support.

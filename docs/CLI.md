@@ -23,6 +23,26 @@ For everyday development, follow the [Full Setup guide](PERSONAL_SETUP.md) and u
 
 ## Command map
 
+### Environment configuration
+
+`webcodex environment` and Desktop call the same setup core. This namespace configures the machine's persistent environment; the existing project-level `webcodex setup` command keeps its original meaning. Installer availability and native acceptance are tracked in [Unified installation](unified-installation.md) and [Deployment validation](unified-deployment-validation.md).
+
+| Command | Purpose |
+| --- | --- |
+| `webcodex environment configure` | Interactively choose create/join and project/skip, then collect the required address, authentication, and system authorization. |
+| `configure --create --project PATH` / `configure --create --no-project` | Create or resume local Server + Runner / Server-only setup. |
+| `configure --join URL --project PATH --code-stdin` | Join with a project; read one Runner pairing code from stdin, then save credentials, register the project, install services, and verify readiness. |
+| `configure --join URL --no-project --token-file PATH` | Join as a viewer with a protected user API credential; creates no local Runner identity or service. Omit the file option for hidden terminal input. |
+| `resume` | Reconcile saved progress and complete missing steps without silently rebinding the environment. |
+| `invite` | Create a short-lived Runner invitation on the environment's local Server; the displayed code is sensitive. |
+| `add-project PATH` | Reuse the existing Runner identity; a viewer must complete Runner enrollment first. |
+| `status --json` / `doctor --json` | Inspect saved configuration, Server reachability, Runner/project readiness, and structured diagnostics. |
+| `start COMPONENT` / `stop COMPONENT` / `restart COMPONENT` | Explicitly manage an environment-owned `server`, `runner`, or `tunnel`. |
+| `repair-user-credential [--token-file PATH]` | Verify and replace the saved user credential without pairing or changing service state. |
+| `repair-credential runner` | Repair Windows SCM account credentials through hidden input. |
+
+Use `webcodex environment --help` for the complete namespace, including Tunnel profiles, explicit legacy migrations, and installer upgrade/recovery commands. Public environment commands support `--json` and `--environment-dir PATH`. Do not put tokens, pairing codes, or service passwords in command arguments. When pairing redemption is uncertain, read the recovery diagnostic before explicitly supplying a replacement through `resume --new-pairing-code --code-stdin`; do not replay the old code automatically.
+
 ### Project / local workflow
 
 These commands work on the current Git project.

@@ -19,6 +19,7 @@ pub enum ServerTopology {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum RunnerTopology {
     Local,
+    None,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -36,6 +37,7 @@ pub enum Enrollment {
     ManagedPairing,
     SharedKey,
     ExistingProfile { profile: String },
+    UserCredential,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -255,6 +257,8 @@ pub struct QuickShareState {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum DesktopOperationKind {
+    EnvironmentMigration,
+    EnvironmentService,
     LocalSetup,
     LocalProjectActivate,
     ProjectUnregister,
@@ -279,6 +283,8 @@ pub enum DesktopOperationKind {
 impl DesktopOperationKind {
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::EnvironmentMigration => "environment_migration",
+            Self::EnvironmentService => "environment_service",
             Self::LocalSetup => "local_setup",
             Self::LocalProjectActivate => "local_project_activate",
             Self::ProjectUnregister => "project_unregister",
@@ -394,6 +400,12 @@ pub struct ChatGptActivitySnapshot {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DesktopStateSnapshot {
+    #[serde(default)]
+    pub can_repair_runner_credential: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub setup_progress: Option<webcodex_environment::SetupProgress>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub persistent_environment: Option<String>,
     pub workspace_runner: Option<crate::webcodex::settings::SettingsTarget>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub configuration_issue: Option<String>,
@@ -426,6 +438,9 @@ pub struct DesktopStateSnapshot {
 impl Default for DesktopStateSnapshot {
     fn default() -> Self {
         Self {
+            can_repair_runner_credential: false,
+            setup_progress: None,
+            persistent_environment: None,
             workspace_runner: None,
             configuration_issue: None,
             saved_projects: Vec::new(),
@@ -479,6 +494,8 @@ pub struct StoredDesktopConfig {
     pub project: Option<ProjectSelection>,
     pub runtime: Option<StoredRuntime>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub persistent_environment: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime_autostart: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preferred_connection: Option<RegularConnectionPreference>,
@@ -504,6 +521,7 @@ impl Default for StoredDesktopConfig {
             topology: None,
             project: None,
             runtime: None,
+            persistent_environment: None,
             runtime_autostart: None,
             preferred_connection: None,
             tunnel_proxy: Default::default(),
@@ -527,6 +545,52 @@ pub struct StoredRuntime {
     pub runner_client_id: Option<String>,
     pub project_id: Option<String>,
     pub runtime_project_id: Option<String>,
+}
+
+/// Transient native IPC input. Credentials are never included in Desktop state,
+/// activity entries, or the persistent setup journal.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentInput {
+    pub mode: String,
+    pub server_url: Option<String>,
+    pub project_path: Option<String>,
+    pub pairing_code: Option<String>,
+    pub user_token: Option<String>,
+    #[serde(default)]
+    pub replace_pairing_code: bool,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EnvironmentServiceComponent {
+    Server,
+    Runner,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EnvironmentServiceAction {
+    Start,
+    Stop,
+    Restart,
+    RepairCredential,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct EnvironmentServiceRequest {
+    pub environment_id: String,
+    pub component: EnvironmentServiceComponent,
+    pub action: EnvironmentServiceAction,
+}
+
+// Transient IPC only; never derive Debug or Serialize for credential input.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct EnvironmentUserCredentialRequest {
+    pub environment_id: String,
+    pub user_token: String,
 }
 
 #[cfg(test)]

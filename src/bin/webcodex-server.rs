@@ -28,7 +28,56 @@ fn build_server_runtime() -> std::io::Result<tokio::runtime::Runtime> {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    match server_binary_action(std::env::args().skip(1)) {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let service = webcodex_environment::runtime_entry::split_windows_service_args(&args)
+        .map_err(std::io::Error::other)?;
+    if let Some((name, service_args)) = service {
+        #[cfg(windows)]
+        {
+            if service_args.len() != 2
+                || service_args[0] != "--env-file"
+                || service_args[1].is_empty()
+            {
+                return Err(
+                    std::io::Error::other("Server service requires only --env-file PATH").into(),
+                );
+            }
+            let env_file = std::path::PathBuf::from(&service_args[1]);
+            webcodex_environment::runtime_entry::validate_service_env_file(&env_file)
+                .map_err(std::io::Error::other)?;
+            return webcodex_environment::service::runtime::run_windows_service(
+                &name,
+                move |stop| {
+                    // SCM owns this thread; Server owns a single Tokio runtime and its drain path.
+                    let log_dir = env_file
+                        .parent()
+                        .ok_or("Server service env file has no parent directory")?;
+                    let mut service_log = webcodex_environment::service::ServiceLogGuard::open(
+                        log_dir,
+                        webcodex_environment::service::Component::Server,
+                    )?;
+                    std::env::set_var("WEBCODEX_SERVICE_LOG_DIR", log_dir);
+                    std::env::set_var("WEBCODEX_ENV_FILE", &env_file);
+                    webcodex::prepare_server_process_environment()?;
+                    let result = build_server_runtime()
+                        .map_err(|error| error.to_string())?
+                        .block_on(webcodex::run_server_with_shutdown(false, stop.cancelled()))
+                        .map_err(|error| error.to_string());
+                    if result.is_ok() {
+                        service_log.stopped()?;
+                    }
+                    result
+                },
+            )
+            .map_err(Into::into);
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = (name, service_args);
+            unreachable!("service prefix rejected on non-Windows");
+        }
+    }
+    match server_binary_action(args) {
         ServerBinaryAction::Run { stop_on_stdin_eof } => {
             webcodex::prepare_server_process_environment().map_err(std::io::Error::other)?;
             build_server_runtime()?

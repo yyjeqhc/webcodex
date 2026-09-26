@@ -6,7 +6,7 @@
 
 <p align="center"><strong>让云端 AI Agent 使用你自己机器上的真实开发环境。</strong></p>
 <p align="center">把 ChatGPT、Claude 等 MCP 客户端连接到你已有的仓库、Git 工作区和开发工具。</p>
-<p align="center"><a href="#只想先试几分钟临时分享">快速试用</a> · <a href="#下载发行版">下载</a> · <a href="docs/PERSONAL_SETUP.zh-CN.md">完整配置</a> · <a href="#文档">文档</a> · <a href="https://github.com/yyjeqhc/webcodex/issues">Issues</a> · <a href="CONTRIBUTING.zh-CN.md">参与贡献</a> · <a href="SECURITY.md">安全说明</a></p>
+<p align="center"><a href="docs/unified-installation.zh-CN.md">一台电脑</a> · <a href="docs/unified-installation.zh-CN.md#多台电脑">多台电脑</a> · <a href="#文档">文档</a> · <a href="https://github.com/yyjeqhc/webcodex/issues">Issues</a> · <a href="CONTRIBUTING.zh-CN.md">参与贡献</a> · <a href="SECURITY.md">安全说明</a></p>
 
 <p align="center">
   <a href="docs/MCP.zh-CN.md"><img src="https://img.shields.io/badge/protocol-MCP-2563EB?labelColor=1E40AF&amp;style=flat-square" alt="MCP 协议"></a>
@@ -22,39 +22,16 @@
   </a>
 </p>
 
-## 开始使用
+## 开始使用 WebCodex
 
-### 只想先试几分钟：临时分享
+以下统一安装流程仍在开发中，请先查看[验收状态](docs/unified-deployment-validation.md)。对应安装包通过验收并发布后，按代码所在位置选择安装方式：
 
-如果你只是想快速看看 WebCodex 是否适合自己，可以在一个仓库里运行：
+- **一台电脑：**在个人工作站安装 WebCodex，打开 Desktop，并按[统一安装指南](docs/unified-installation.zh-CN.md)操作。每个平台的统一安装包包含 Desktop、CLI、Server 和 Runner。
+- **多台电脑：**在承载 WebCodex Server 的机器以及持有代码仓库的每台机器上安装相同平台安装包。按[统一安装指南](docs/unified-installation.zh-CN.md#多台电脑)和[部署验收清单](docs/unified-deployment-validation.md)操作。
 
-```bash
-cd /path/to/your/repository
-npx --yes @yyjeqhc/webcodex share
-```
+面向 Windows NSIS、macOS 安装包和 Debian 12 / Ubuntu 22.04+ `.deb` 的 x64、arm64 统一安装包是**本分支构建流程定义的交付目标**，六类安装文件仍需完成原生构建和安装验收后才能发布。三种平台的真实机器安装、重启持久性、GUI 行为和升级尚未全部验收；本分支不宣称跨平台体验一致。已发布文件见 [GitHub Releases](https://github.com/yyjeqhc/webcodex/releases)。仓库 [`download/`](download/README.md) 目录仅包含静态页面源文件；[下载页 workflow](https://github.com/yyjeqhc/webcodex/actions/workflows/download-page.yml) 会在 Release 发布后根据 manifest 构建 GitHub Actions artifact，但不会托管或部署网页。源码预览请检出要验证的功能分支或发布修订，再按 [Desktop 开发指南](docs/DESKTOP_DEVELOPMENT.zh-CN.md#linux-源码预览与已有-server)操作。
 
-`share` 会临时启动仅开放单个项目的 WebCodex Adaptive Runtime，并给出 ChatGPT 连接信息。临时 Project Credential 只允许访问对应的 ProjectGrant；关闭命令后连接和凭据都会失效。它适合试用和临时分享，不是日常完整体验的默认部署方式。详细步骤见[快速试用](docs/QUICK_START.zh-CN.md)。
-
-### 日常使用：完整 WebCodex（推荐）
-
-如果你准备让 ChatGPT 长期使用自己的开发环境，推荐从 **普通 Server + Runner** 开始。这是 WebCodex 的完整开发体验：可以长期连接多个项目，并使用项目探索、编辑、Git、命令、测试、长任务和代码导航能力。公网 HTTPS、Cloudflare Tunnel 或 OpenAI Secure MCP Tunnel 只是 ChatGPT 到 Server 的连接方式，不会把你切换到另一套受限体验。
-
-Windows / macOS 普通用户最推荐 **WebCodex Desktop + 官方 OpenAI Secure Tunnel**，直接按 [Desktop 安装与连接指南](docs/desktop-install.zh-CN.md)操作即可；CLI、已有 Server、自托管或高级配置再看[完整使用指南](docs/PERSONAL_SETUP.zh-CN.md)。
-
-### 下载发行版
-
-下表链接到**上游官方 v0.4.1 Release**。Windows/macOS 普通使用可选择 Desktop 安装包；Server/Runner 工作流可选择对应平台的 CLI 压缩包。[查看发行说明与校验值](https://github.com/yyjeqhc/webcodex/releases/tag/v0.4.1)。
-
-| 平台 | Desktop | CLI / Server / Runner |
-| --- | --- | --- |
-| Windows x64 | [安装包](https://github.com/yyjeqhc/webcodex/releases/download/v0.4.1/webcodex-desktop-v0.4.1-win32-x64-setup.exe) | [压缩包](https://github.com/yyjeqhc/webcodex/releases/download/v0.4.1/webcodex-v0.4.1-win32-x64.tar.gz) |
-| Windows arm64 | — | [压缩包](https://github.com/yyjeqhc/webcodex/releases/download/v0.4.1/webcodex-v0.4.1-win32-arm64.tar.gz) |
-| macOS Apple Silicon | [DMG](https://github.com/yyjeqhc/webcodex/releases/download/v0.4.1/webcodex-desktop-v0.4.1-darwin-arm64.dmg) | [压缩包](https://github.com/yyjeqhc/webcodex/releases/download/v0.4.1/webcodex-v0.4.1-darwin-arm64.tar.gz) |
-| macOS Intel | [DMG](https://github.com/yyjeqhc/webcodex/releases/download/v0.4.1/webcodex-desktop-v0.4.1-darwin-x64.dmg) | [压缩包](https://github.com/yyjeqhc/webcodex/releases/download/v0.4.1/webcodex-v0.4.1-darwin-x64.tar.gz) |
-| Linux x64 | — | [压缩包](https://github.com/yyjeqhc/webcodex/releases/download/v0.4.1/webcodex-v0.4.1-linux-x64.tar.gz) |
-| Linux arm64 | — | [压缩包](https://github.com/yyjeqhc/webcodex/releases/download/v0.4.1/webcodex-v0.4.1-linux-arm64.tar.gz) |
-
-也可以通过 npm 安装：`npm install -g @yyjeqhc/webcodex`（需要 Node.js 18+）。
+临时单仓库试用、高级自托管、npm/runtime 压缩包、Docker 和历史版本请看[部署指南](docs/DEPLOYMENT.zh-CN.md)。
 
 ## 能做什么？
 
@@ -101,28 +78,17 @@ WebCodex
   </picture>
 </a>
 
-## 平台支持
+## 平台安装包
 
-以下平台能力以链接的上游官方版本为准。
-
-- **Linux x64/arm64** —— 支持本机 `share`、Server 和 Runner 工作流。
-- **macOS x64/arm64** —— 支持 Desktop 本机 Server + Runner、OpenAI Secure Tunnel、本机 `share` 和独立 Runner 工作流。
-- **Windows x64** —— 推荐 Desktop 本机 Server + Runner + 官方 OpenAI Secure Tunnel；同时支持 CLI + Runner、本地前台 Server，以及显式 `webcodex share --tunnel cloudflare|openai|none`。
-- **Windows arm64** —— native ARM64 构建路径支持 Desktop 本机 Server + Runner 与官方 OpenAI Secure Tunnel，同时也支持 CLI + Runner、本地前台 Server 与 `share`；从 v0.4.2+ 的 Release 构建开始提供 Windows ARM64 Desktop installer。固定版本 Cloudflare 没有官方 Windows ARM64 artifact，因此使用 Cloudflare 时仍需要受信任的显式/`PATH` `cloudflared`。除 Desktop 自己托管的前台 runtime 外，WebCodex-managed Windows Server service 仍不支持。
-
-Windows 接入和长期部署见[部署指南](docs/DEPLOYMENT.zh-CN.md)与 [MCP](docs/MCP.zh-CN.md)。
-
-## 已有 Server 与高级配置
-
-如果已经有人为你提供 WebCodex Server 和接入凭据，直接使用已有 Server 并看[完整使用指南](docs/PERSONAL_SETUP.zh-CN.md)。普通 Windows / macOS 个人安装使用 [Desktop 指南](docs/desktop-install.zh-CN.md)。生产环境、多用户、systemd/Docker、OAuth、代理/私有 CA 等运维内容再查看[部署指南](docs/DEPLOYMENT.zh-CN.md)。
-
-这些是后续配置，不应该成为第一次使用 WebCodex 的概念负担。
+统一安装包目标平台为 Windows NSIS、macOS 和 Debian 12 / Ubuntu 22.04+ `.deb`，支持 x64 与 arm64。本分支定义了构建流程；六类安装文件仍需完成原生构建和安装验收后才能发布。详见[统一安装指南](docs/unified-installation.zh-CN.md)和[验收清单](docs/unified-deployment-validation.md)。现有 Release artifact 与 npm/Docker 部署路径仍作为高级历史/兼容参考保留在[部署指南](docs/DEPLOYMENT.zh-CN.md)。
 
 ## 文档
 
-- [Desktop 安装与连接](docs/desktop-install.zh-CN.md) —— Windows / macOS 推荐路径：Desktop + 官方 OpenAI Secure Tunnel
+- [统一安装指南](docs/unified-installation.zh-CN.md) —— 统一安装包的个人与多机配置
+- [部署验收清单](docs/unified-deployment-validation.md) —— 各平台验收状态与真实机器检查项
+- [旧版 Desktop 安装指南](docs/desktop-install.zh-CN.md) —— 现有 Release 的详细说明
 - [Desktop 日常使用](docs/desktop-guide.zh-CN.md) —— 项目、连接、活动与后台运行
-- [Desktop 开发与打包](docs/DESKTOP_DEVELOPMENT.zh-CN.md) —— 从源码运行并在 Windows/macOS 本地构建安装包
+- [Desktop 开发与打包](docs/DESKTOP_DEVELOPMENT.zh-CN.md) —— 在 Linux、Windows、macOS 从源码运行，以及本地打包
 - [完整使用指南](docs/PERSONAL_SETUP.zh-CN.md) —— CLI、已有 Server、Linux 与高级普通 Server + Runner 配置
 - [快速试用](docs/QUICK_START.zh-CN.md) —— 用 `share` 临时体验一个仓库
 - [MCP](docs/MCP.zh-CN.md) —— ChatGPT、Claude、认证方式和 MCP 参考

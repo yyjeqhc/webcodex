@@ -73,6 +73,7 @@ async fn register_goal_activity_project(
     runtime
         .runner_registry
         .register(crate::runner_protocol::RunnerRegisterRequest {
+            computer_session_availability: None,
             process_started_at: None,
             build: None,
             job_concurrency_limit: Some(4),

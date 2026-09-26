@@ -21,6 +21,7 @@ export function Dashboard(props: DashboardProps) {
   const workspace = useWorkspace();
   const recent = workspace.sessions.slice(0, 3);
   const busy = Boolean(state.current_operation);
+  const hasLocalRunner = state.topology?.runner?.kind !== "none";
   const currentProject = state.project ? workspace.projects.find(project => sameProject(project, state.project!)) : undefined;
   return <section className="page-section workspace-page dashboard-page" aria-labelledby="home-title" data-webcodex-page="home">
     <header className="page-heading-row">
@@ -32,10 +33,10 @@ export function Dashboard(props: DashboardProps) {
     <WorkspaceStatus state={state} />
     <div className="workspace-quick-actions">
       <span>{workspace.projects.length} {p("projects")}</span>
-      <Button className={currentProject ? "secondary-button" : "primary-button"} variant={currentProject ? "default" : "filled"} onClick={props.onChooseProject} disabled={busy}>{p("addProject")}</Button>
+      <Button className={currentProject ? "secondary-button" : "primary-button"} variant={currentProject ? "default" : "filled"} onClick={hasLocalRunner ? props.onChooseProject : props.onChangeSetup} disabled={busy}>{p("addProject")}</Button>
       <Button className="secondary-button" variant="default" aria-label={`${p("manage")} ${c("connections")}`} onClick={() => onNavigate("connection")}>{c("connections")}</Button>
       {!state.readiness.runtime_ready && <Button className="secondary-button" variant="default" onClick={state.readiness.next_action_kind === "restart_quick_share" ? props.onChangeSetup : props.onResumeRuntime} disabled={busy}>{state.readiness.next_action_kind === "restart_quick_share" ? p("restart") + " Quick Share" : p("start") + " WebCodex"}</Button>}
-      {(state.readiness.project === "error" || state.readiness.project === "reload_required") && <Button className="secondary-button" variant="default" onClick={props.onChooseProject} disabled={busy}>{p("setup")} {p("projects")}</Button>}
+      {(state.readiness.project === "error" || state.readiness.project === "reload_required") && <Button className="secondary-button" variant="default" onClick={hasLocalRunner ? props.onChooseProject : props.onChangeSetup} disabled={busy}>{p("setup")} {p("projects")}</Button>}
     </div>
     <div className="dashboard-content-grid">
     <section className="workspace-section ui-workbench-surface" aria-labelledby="recent-projects-title">

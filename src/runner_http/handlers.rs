@@ -214,6 +214,14 @@ pub async fn runner_poll(req: &mut Request, depot: &mut Depot, res: &mut Respons
             body.mcp_gateway_providers,
         )
         .await;
+    let _ = registry
+        .update_computer_session_availability(
+            &body.request.client_id,
+            &body.request.runner_instance_id,
+            None,
+            body.computer_session_availability,
+        )
+        .await;
     let client_id = body.request.client_id.clone();
     let runner_instance_id = body.request.runner_instance_id.clone();
     let inventory_page = body.project_inventory_page;

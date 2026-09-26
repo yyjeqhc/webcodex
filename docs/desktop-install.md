@@ -307,3 +307,5 @@ If Desktop shows a healthy Service / Runner / Project / Tunnel but ChatGPT still
 ## Keep the Shell, update the Runtime
 
 Use **Settings → Runtime** to inspect an extracted official archive or native source build, then explicitly activate it. Do not edit the app bundle. See [Runtime compatibility and diagnostics](DESKTOP_RUNTIME_COMPATIBILITY.md); unknown/missing Custom files do not silently fall back to bundled binaries.
+
+> This detailed walkthrough documents the existing release-specific Desktop + OpenAI Tunnel path. For the unified package under development, use [Unified installation](unified-installation.md); the new package is not yet published or fully accepted across native platforms.

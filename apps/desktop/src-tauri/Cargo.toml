@@ -31,6 +31,7 @@ tokio = { version = "1", features = ["fs", "io-util", "macros", "process", "rt-m
 url = "2"
 uuid = { version = "1", features = ["v4"] }
 webcodex-core = { path = "../../../crates/webcodex-core" }
+webcodex-environment = { path = "../../../crates/webcodex-environment" }
 webcodex-process = { path = "../../../crates/webcodex-process" }
 webcodex-runner-config = { path = "../../../crates/webcodex-runner-config" }
 

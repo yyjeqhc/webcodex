@@ -78,6 +78,7 @@ pub(crate) struct HiddenHandoffFault {
 #[derive(Debug, Clone)]
 pub struct RunnerRegistry {
     pub(crate) inner: Arc<ReceiptRegistryState>,
+    pub(crate) maintenance_store: Option<Arc<dyn crate::maintenance::MaintenanceStore>>,
     pub(crate) observation_epoch: Arc<str>,
     pub(crate) shared_key_limits: SharedKeyRegistrationLimits,
     pub(crate) telemetry: Arc<dyn RunnerRegistryTelemetry>,
@@ -100,6 +101,7 @@ impl RunnerRegistry {
     pub fn with_telemetry(telemetry: Arc<dyn RunnerRegistryTelemetry>) -> Self {
         Self {
             inner: Arc::new(ReceiptRegistryState::new(None)),
+            maintenance_store: None,
             observation_epoch: Arc::from(uuid::Uuid::new_v4().to_string()),
             shared_key_limits: SharedKeyRegistrationLimits::default(),
             telemetry,

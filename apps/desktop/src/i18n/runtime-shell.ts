@@ -1,6 +1,10 @@
 import { useLocale } from "./locale";
 
 const zh: Record<string, string> = {
+  "Persistent local services": "持久化本地服务", "Local Server": "本地 Server", "Local Runner": "本地 Runner", "Status": "状态",
+  "Start": "启动", "Stop": "停止", "Restart": "重启", "Repair Runner credential": "修复 Runner 凭据", "Credential repair uses the native operating system prompt.": "凭据修复会使用操作系统原生提示框。",
+  "Restore Server user credential": "恢复 Server 用户凭据", "Existing Server user API token": "现有 Server 用户 API 令牌", "Save credential": "保存凭据",
+  "stopped": "已停止", "starting": "正在启动", "ready": "就绪", "error": "错误", "unknown": "未知", "connecting": "正在连接",
   "No default project": "无默认展示项目",
   "Restart Tunnel": "重启 Tunnel",
   "Gap from preceding response": "距前次响应交付的间隔",
@@ -51,8 +55,30 @@ const zh: Record<string, string> = {
   "Project": "项目", "ChatGPT connection": "ChatGPT 连接", "Computer Use": "Computer Use", "Restart Runner": "重启 Runner", "Check connection": "检查连接", "Reactivate project": "重新激活项目",
   "Runtime protocol is incompatible": "Runtime 协议不兼容", "Settings": "设置", "Runtime unavailable": "Runtime 不可用",
 };
+const serviceText: Record<string, Record<string, string>> = {
+  "de-DE": {
+    "Persistent local services": "Dauerhafte lokale Dienste", "Local Server": "Lokaler Server", "Local Runner": "Lokaler Runner", "Status": "Status", "Start": "Starten", "Stop": "Stoppen", "Restart": "Neu starten", "Repair Runner credential": "Runner-Zugangsdaten reparieren", "Credential repair uses the native operating system prompt.": "Die Reparatur verwendet den nativen Dialog des Betriebssystems.",
+    "Restore Server user credential": "Server-Benutzerzugangsdaten wiederherstellen", "Existing Server user API token": "Vorhandenes Server-Benutzer-API-Token", "Save credential": "Zugangsdaten speichern",
+    stopped: "Gestoppt", starting: "Wird gestartet", ready: "Bereit", error: "Fehler", unknown: "Unbekannt", connecting: "Verbindet",
+  },
+  "fr-FR": {
+    "Persistent local services": "Services locaux persistants", "Local Server": "Serveur local", "Local Runner": "Runner local", "Status": "État", "Start": "Démarrer", "Stop": "Arrêter", "Restart": "Redémarrer", "Repair Runner credential": "Réparer les identifiants du Runner", "Credential repair uses the native operating system prompt.": "La réparation utilise la fenêtre native du système d’exploitation.",
+    "Restore Server user credential": "Restaurer les identifiants de l’utilisateur du serveur", "Existing Server user API token": "Jeton API existant de l’utilisateur du serveur", "Save credential": "Enregistrer les identifiants",
+    stopped: "Arrêté", starting: "Démarrage", ready: "Prêt", error: "Erreur", unknown: "Inconnu", connecting: "Connexion",
+  },
+  "ja-JP": {
+    "Persistent local services": "永続ローカルサービス", "Local Server": "ローカル Server", "Local Runner": "ローカル Runner", "Status": "状態", "Start": "開始", "Stop": "停止", "Restart": "再起動", "Repair Runner credential": "Runner の認証情報を修復", "Credential repair uses the native operating system prompt.": "認証情報の修復には OS 標準のダイアログを使用します。",
+    "Restore Server user credential": "Server ユーザー認証情報を復元", "Existing Server user API token": "既存の Server ユーザー API トークン", "Save credential": "認証情報を保存",
+    stopped: "停止", starting: "起動中", ready: "準備完了", error: "エラー", unknown: "不明", connecting: "接続中",
+  },
+  "ko-KR": {
+    "Persistent local services": "영구 로컬 서비스", "Local Server": "로컬 Server", "Local Runner": "로컬 Runner", "Status": "상태", "Start": "시작", "Stop": "중지", "Restart": "다시 시작", "Repair Runner credential": "Runner 자격 증명 복구", "Credential repair uses the native operating system prompt.": "자격 증명 복구에는 운영 체제 기본 대화상자를 사용합니다.",
+    "Restore Server user credential": "Server 사용자 자격 증명 복원", "Existing Server user API token": "기존 Server 사용자 API 토큰", "Save credential": "자격 증명 저장",
+    stopped: "중지됨", starting: "시작 중", ready: "준비됨", error: "오류", unknown: "알 수 없음", connecting: "연결 중",
+  },
+};
 export type ShellText = (text: string) => string;
 export function useShellText(): ShellText {
   const { locale } = useLocale();
-  return (text) => locale === "zh-CN" ? zh[text] ?? text : text;
+  return (text) => locale === "zh-CN" ? zh[text] ?? text : serviceText[locale]?.[text] ?? text;
 }

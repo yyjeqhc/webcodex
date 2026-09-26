@@ -323,6 +323,7 @@ struct WorkflowSessionReplaceMessageInput {
 
 #[derive(Debug, Serialize)]
 struct RuntimeConsoleOverview {
+    authenticated_user: Option<String>,
     service: Option<String>,
     version: Option<String>,
     build_git_commit: Option<String>,
@@ -560,6 +561,8 @@ struct RuntimeConsoleLocatedSession {
 
 #[derive(Debug, Serialize)]
 struct RuntimeConsoleRunnerSummary {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    computer_session_availability: Option<bool>,
     client_id: String,
     connected: bool,
     status: Option<String>,
@@ -588,6 +591,8 @@ struct RuntimeConsoleRunner {
     tool_request_trace_mode: Option<String>,
     runner_protocol_generation: Option<u64>,
     capabilities: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    computer_session_availability: Option<bool>,
     client_id: String,
     connected: bool,
     coding_agent_providers: Vec<webcodex_core::coding_agent::CodingAgentProviderSummary>,
@@ -1231,6 +1236,9 @@ fn runner_fleet_rows(
                 .unwrap_or_else(empty_console_aggregate);
             sessions.sessions_truncated |= scan.project_scan_truncated;
             Some(RuntimeConsoleRunnerSummary {
+                computer_session_availability: runner_value
+                    .get("computer_session_availability")
+                    .and_then(Value::as_bool),
                 protocol_compatibility: status
                     .and_then(|value| value.get("protocol_compatibility"))
                     .and_then(Value::as_str)
@@ -2860,6 +2868,7 @@ async fn overview_for_auth(
     let unavailable = runner_count.saturating_sub(online.saturating_add(stale));
     let active_windows = active_window_count_for_auth(runtime, auth).await?;
     Ok(RuntimeConsoleOverview {
+        authenticated_user: auth.username.clone(),
         service: safe_string(status.get("service"), 80),
         version: safe_string(status.get("version"), 80),
         build_git_commit: safe_string(build.get("git_commit"), 80),
@@ -2979,6 +2988,9 @@ async fn runner_for_auth(
             .get("capabilities")
             .cloned()
             .unwrap_or_else(|| serde_json::json!({})),
+        computer_session_availability: runner_value
+            .get("computer_session_availability")
+            .and_then(Value::as_bool),
         protocol_compatibility: focus
             .get("protocol_compatibility")
             .and_then(Value::as_str)
@@ -3520,6 +3532,7 @@ mod tests {
             .runner_registry
             .register_with_auth(
                 RunnerRegisterRequest {
+                    computer_session_availability: None,
                     process_started_at: None,
                     build: None,
                     job_concurrency_limit: None,

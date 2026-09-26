@@ -179,6 +179,17 @@ impl Default for CodingAgentServerState {
 }
 
 impl CodingAgentServerState {
+    pub(crate) async fn active_runs_for_maintenance(&self, client_id: Option<&str>) -> usize {
+        self.runs
+            .lock()
+            .await
+            .values()
+            .filter(|binding| {
+                client_id.is_none_or(|id| binding.client_id == id)
+                    && !binding.snapshot.state.terminal()
+            })
+            .count()
+    }
     fn with_observation_mac_key(observation_mac_key: [u8; OBSERVATION_MAC_KEY_BYTES]) -> Self {
         Self {
             epoch: webcodex_core::compact::random_bytes(),
@@ -1825,6 +1836,7 @@ mod tests {
 
     fn test_shell_client() -> crate::runner_protocol::RunnerView {
         crate::runner_protocol::RunnerView {
+            computer_session_availability: None,
             client_id: "client".to_string(),
             runner_instance_id: "instance".to_string(),
             display_name: None,

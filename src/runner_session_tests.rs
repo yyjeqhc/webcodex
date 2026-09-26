@@ -22,6 +22,7 @@ fn streaming_registration(client_id: &str, runner_instance_id: &str) -> RunnerRe
     capabilities.async_jobs = true;
     capabilities.async_shell_jobs = true;
     crate::test_support::current_runner_registration(RunnerRegisterRequest {
+        computer_session_availability: None,
         process_started_at: None,
         build: None,
         job_concurrency_limit: None,

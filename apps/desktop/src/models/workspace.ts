@@ -12,6 +12,7 @@ export interface WorkflowSession {
   activity?: SessionActivity[]; activity_truncated?: boolean;
 }
 export interface WorkspaceProject {
+  client_id?: string; agent_status?: string;
   id: string; name?: string; path?: string; connected: boolean;
   sessions?: { active_sessions: number; running_sessions: number; latest_updated_at?: number; sessions_truncated?: boolean };
 }
@@ -20,6 +21,23 @@ export interface RunnerOverview {
   client_id: string; connected: boolean; status?: string; visible_project_count: number;
   projects: WorkspaceProject[]; projects_truncated: boolean;
   recent_sessions?: { sessions: WorkflowSession[]; truncated: boolean; scan_truncated: boolean };
+}
+export interface ServerRunnerSummary {
+  client_id: string; connected: boolean; status?: string;
+  computer_session_availability?: boolean;
+}
+export interface ServerOverview {
+  runners?: ServerRunnerSummary[];
+  projects_available: boolean;
+  visible_projects: number;
+  projects_truncated: boolean;
+  projects: WorkspaceProject[];
+  recent_sessions?: RunnerOverview["recent_sessions"];
+}
+export interface ServerProjects {
+  projects: WorkspaceProject[];
+  total: number;
+  truncated: boolean;
 }
 export interface WindowSummary {
   client_window_key: string; source: string; last_project?: string; last_seen_at_ms: number;
@@ -45,7 +63,7 @@ export interface ExtensionsSnapshot {
   plugins: { available: boolean; catalog?: { providers?: PluginSummary[]; plugins?: PluginSummary[]; truncated?: boolean } };
 }
 export type WorkspaceRequest =
-  | { kind: "overview" | "windows" }
+  | { kind: "overview" | "projects" | "runner_details" | "windows" }
   | { kind: "sessions" | "extensions" | "project_git"; project: string }
   | { kind: "session"; project: string; session_id: string }
   | { kind: "window"; client_window_key: string }

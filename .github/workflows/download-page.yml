@@ -1,0 +1,43 @@
+name: Build download page
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to render (for example v1.2.3)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Download release manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/release"
+          gh release download "$RELEASE_TAG" --repo "$GH_REPOSITORY" --pattern manifest.json --dir "$RUNNER_TEMP/release"
+          test -s "$RUNNER_TEMP/release/manifest.json"
+      - name: Build static download page
+        run: >-
+          python3 scripts/build_download_page.py
+          --manifest "$RUNNER_TEMP/release/manifest.json"
+          --output-dir "$RUNNER_TEMP/download-page"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: download-page-${{ github.event.release.tag_name || inputs.tag }}
+          path: ${{ runner.temp }}/download-page/
+          if-no-files-found: error

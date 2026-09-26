@@ -47,6 +47,8 @@ mod runner_tokens_http;
 mod runner_ws;
 mod runtime_console_http;
 mod runtime_http;
+mod upgrade_http;
+mod upgrade_maintenance_store;
 pub(crate) use webcodex_store::ServerInstanceGuard;
 mod server_listener;
 mod server_shutdown;
@@ -87,6 +89,23 @@ pub use startup::{
     is_project_command, run_project_command, run_regular_server_tunnel, CliCommandOutput,
     RegularServerTunnelOptions,
 };
+pub async fn run_regular_server_tunnel_with_stop(
+    options: RegularServerTunnelOptions,
+    stop: impl std::future::Future<Output = ()>,
+) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    let mut service_log = webcodex_environment::service::ServiceLogGuard::from_managed_env(
+        webcodex_environment::service::Component::Tunnel,
+    )?;
+    let result = startup::run_regular_server_tunnel_with_stop(options, stop).await;
+    #[cfg(target_os = "macos")]
+    if result.is_ok() {
+        if let Some(log) = service_log.as_mut() {
+            log.stopped()?;
+        }
+    }
+    result
+}
 pub use webcodex_store::models::{ActionEventRecord, ActionSessionRecord};
 
 // ============================================================================
@@ -186,6 +205,13 @@ pub fn prepare_server_process_environment() -> Result<(), String> {
         .map_err(|_| "Server process environment was prepared concurrently".to_string())
 }
 
+/// Loads one validated service-owned environment at process startup. Tunnel
+/// services use this on platforms that do not support EnvironmentFile.
+pub fn load_service_environment_file(path: &std::path::Path) -> Result<(), String> {
+    webcodex_environment::runtime_entry::validate_service_env_file(path)?;
+    config::load_env_file(path).map(|_| ())
+}
+
 pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
     run_server_with_parent_liveness(false).await
 }
@@ -194,6 +220,19 @@ pub async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
 pub async fn run_server_with_parent_liveness(
     stop_on_stdin_eof: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    run_server_with_shutdown(stop_on_stdin_eof, std::future::pending()).await
+}
+
+#[doc(hidden)]
+pub async fn run_server_with_shutdown(
+    stop_on_stdin_eof: bool,
+    service_stop: impl std::future::Future<Output = ()> + Send,
+) -> Result<(), Box<dyn std::error::Error>> {
+    #[cfg(target_os = "macos")]
+    let mut service_log = webcodex_environment::service::ServiceLogGuard::from_managed_env(
+        webcodex_environment::service::Component::Server,
+    )
+    .map_err(std::io::Error::other)?;
     let env_loads = match PREPARED_SERVER_ENV_LOADS.get() {
         Some(prepared) => prepared.clone(),
         None => load_startup_env_files().map_err(std::io::Error::other)?,
@@ -271,13 +310,19 @@ only for local/trusted-network demos."
     let authorize_session_store = Arc::new(oauth_http::AuthorizeSessionStore::new());
     let job_terminal_continuations =
         job_terminal_attention::JobTerminalContinuationController::new(db.clone());
-    let runner_registry = Arc::new(
-        job_receipts::production_registry_with_terminal_attention(
-            db.clone(),
-            job_terminal_continuations.clone(),
-        )
-        .await,
-    );
+    let mut registry = job_receipts::production_registry_with_terminal_attention(
+        db.clone(),
+        job_terminal_continuations.clone(),
+    )
+    .await;
+    registry
+        .attach_maintenance_store(Arc::new(
+            upgrade_maintenance_store::FileMaintenanceStore::new(&config.data_dir)
+                .map_err(std::io::Error::other)?,
+        ))
+        .await
+        .map_err(std::io::Error::other)?;
+    let runner_registry = Arc::new(registry);
     // Root HTTP admission consults this process-local state before any
     // side-effecting handler can run. It closes the small race between the
     // authoritative drain transition and Salvo consuming its stop command.
@@ -388,6 +433,10 @@ only for local/trusted-network demos."
         .push(
             Router::with_path(route_metadata::api_path(RouteId::RuntimeStatus))
                 .post(runtime_http::runtime_status),
+        )
+        .push(
+            Router::with_path(route_metadata::api_path(RouteId::RuntimeUpgradeMaintenance))
+                .post(upgrade_http::maintenance),
         )
         // Phase 2e-3: first-party OAuth client management API. Behind
         // AuthMiddleware; route policy is FirstPartyOnly so OAuth2 access
@@ -742,14 +791,33 @@ only for local/trusted-network demos."
             runner_http::recovery_timeout_sweep(&sweep_registry).await;
         }
     });
+    #[cfg(target_os = "macos")]
+    if let Some(log) = service_log.as_ref() {
+        log.ready().map_err(std::io::Error::other)?;
+    }
+    #[cfg(windows)]
+    if let Some(log) = webcodex_environment::service::ServiceLog::from_managed_env()
+        .map_err(std::io::Error::other)?
+    {
+        log.record(
+            webcodex_environment::service::Component::Server,
+            webcodex_environment::service::ServiceLogEvent::Ready,
+        )
+        .map_err(std::io::Error::other)?;
+    }
     server_shutdown::serve_until_termination(
         Server::new(acceptor),
         router,
         shutdown_coordinator,
         std::time::Duration::from_secs(SERVER_GRACEFUL_SHUTDOWN_TIMEOUT_SECS),
         stop_on_stdin_eof,
+        service_stop,
     )
     .await?;
+    #[cfg(target_os = "macos")]
+    if let Some(log) = service_log.as_mut() {
+        log.stopped().map_err(std::io::Error::other)?;
+    }
     Ok(())
 }
 

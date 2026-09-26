@@ -2,45 +2,46 @@
 
 [English](desktop-guide.md) | [简体中文](desktop-guide.zh-CN.md)
 
-Desktop prepares local projects and manages connections. You ask for work in ChatGPT or another AI client. For installation, Tunnel configuration, and system permissions, see the [installation and connection guide](desktop-install.md).
+Desktop sets up or joins a WebCodex environment, shows the projects and Runners your Server credential authorizes, and manages local connections. You ask for work in ChatGPT or another AI client. Start with the [unified installation guide](unified-installation.md) and its [native acceptance status](unified-deployment-validation.md). The [existing release installation guide](desktop-install.md) covers its Desktop and Tunnel workflow in detail.
 
 For contributor workflows—frontend/Tauri development, source runtime resolution, NSIS/DMG packaging, and native smoke tests—see [Desktop development](DESKTOP_DEVELOPMENT.md).
 
+## Projects and Runners
 
-## Runner project inventory
+Projects shows the Server-authorized project and Runner fleet, including remote Runners and their projects when your credential grants access. A remote path belongs to its Runner's computer; Desktop does not treat it as a local folder. The page also shows Git branches, active Sessions, recent activity, and whether an online Runner reports a GUI session. A viewer has no local Runner but can still inspect this authorized fleet. Multiple projects can be used concurrently; models select an exact runtime Project ID and do not require a Desktop project switch. The home page’s primary project is an internal display default.
 
-Projects lists this Runner’s projects, Git branches, active Sessions and recent activity. Multiple projects can be used concurrently; models select an exact runtime Project ID and do not require a Desktop project switch. The home page’s primary project is an internal display default.
+With a local Runner, Add Project selects and registers a folder on this computer. From a viewer-only Home, Add Project opens setup to add a local Runner; that conversion needs a one-time Runner pairing code from the Server operator. The Projects page does not offer a local folder picker to a viewer. Windows drive, UNC and extended-length spellings deduplicate without changing registered IDs or canonical paths; the UI presents ordinary user paths.
 
-Add Project retains folder selection and registration. Windows drive, UNC and extended-length spellings deduplicate without changing registered IDs or canonical paths; the UI presents ordinary user paths.
-
-Unregister requires confirmation of the exact project. It removes the Runner registration and matching Desktop saved entries, preserving the directory, Git files and allowed roots. The Server rejects removal when active Jobs conflict. Failures or uncertain outcomes are never automatically retried; refresh and inspect the inventory first. Removing the home page’s default does not activate another project; adding a folder remains available through setup.
+Unregister is available for projects on this Desktop's local Runner and requires confirmation of the exact project. It removes the Runner registration and matching Desktop saved entries, preserving the directory, Git files and allowed roots. The Server rejects removal when active Jobs conflict. Failures or uncertain outcomes are never automatically retried; refresh and inspect the inventory first. Removing the home page’s default does not activate another project; adding a folder remains available through setup.
 
 ## First use
 
-1. Choose **Use WebCodex on this computer** on the welcome page, the recommended personal setup.
-2. Click **Choose folder** and select the actual project you want AI to use. Review the project path at the top, then apply the setup.
-3. Tunnel presence checks live under **Optional: check ChatGPT tunnel configuration**. Enter the Tunnel ID and API key and click Save configuration to prefer the local file without restarting. You can also prepare the local project before configuring a Tunnel. If configuration is present, you can opt into connecting ChatGPT after setup.
-4. On Home, confirm the current project path. The three steps are **Prepare your project → Connect your AI client → Start working**.
-5. Click **Connection** in the sidebar, select **OpenAI Secure Tunnel**, then click **Start secure tunnel**. Selecting a connection method alone does not start a process.
-6. When the tunnel is ready, follow the connection page instructions to enter the Tunnel ID in ChatGPT and perform one real project read.
+1. Choose **Create a WebCodex environment** to create an environment, or **Join an existing WebCodex environment** to join one. Select **Choose folder** for a local project or skip it:
 
-**Local tunnel readiness does not prove ChatGPT is connected.** Home keeps the verification step pending until Desktop observes a real call against the current project.
+   | Setup | With a local project | Without a local project |
+   | --- | --- | --- |
+   | Create | Local Server and Runner | Server only |
+   | Join | Local Runner connected to the remote Server | Viewer with no local Runner |
 
-If you already have a remote Server, choose the existing Server option on the welcome page, enter its address and pairing code, and select a local project. Connection shows the remote Server; its operator manages external connectivity.
+2. For a join with a project, enter the Server address and the short-lived Runner pairing code supplied by its operator. For a viewer join, enter a personal Server user credential in the protected field; viewer access does not use a pairing code. Reopening setup for the same saved Server can reuse the applicable saved credential or Runner registration.
+3. Apply setup and inspect Home and Projects. A project on another Runner appears in the authorized inventory; its path is not a local folder. When this computer has a local project, confirm its path before asking the AI client to use it.
+4. If this Desktop owns a regular OpenAI Secure Tunnel, configure its Tunnel ID and API key in **Connection**, then explicitly start the tunnel. Selecting a connection method alone does not start it. Follow the connection instructions in ChatGPT and perform a real project read. A remote Server's operator manages that Server's external connection.
+
+**Local tunnel readiness does not prove ChatGPT is connected.** When there is a current project, Home keeps verification pending until Desktop observes a real call against it. A viewer can inspect authorized activity without registering a local project.
 
 For temporary use of one project, choose Quick Share and a connection provider. Quick Share has its own temporary lifecycle, with handoff information and a stop control on Home.
 
 ## Start each day on Home
 
-Home prioritizes overall readiness, the next action, and your current project. Click **Start** when the runtime is stopped; start a secure tunnel once the local runtime and Tunnel configuration are ready.
+Home prioritizes overall readiness, the next action, and an optional current project. It also summarizes authorized projects and recent activity. For a persistent environment, Desktop observes service status without automatically restarting a stopped service; use explicit local controls in Diagnostics when available. Start a Desktop-owned Tunnel explicitly after its configuration is ready.
 
-- **Current project** shows its name and full path. In a configured local Full Runtime, **Choose another project** or **Add project** opens the folder picker and applies that exact project immediately; there is no second setup confirmation.
+- **Current project** shows its name and full path when one is selected. With a local Runner, **Add Project** opens the folder picker; on a viewer it opens setup to add a Runner and requires pairing. Remote project paths shown in the fleet are never used as local folder selections.
 - **Three steps** distinguish project readiness, connection preparation, and verified use; they collapse after completion.
 - **View runtime diagnostics** expands the detailed Service, Runner, project, and connection states, plus runtime controls.
 - **Sidebar navigation** opens Projects, Connection, Extensions, Activity, and Settings. Home also provides direct connection and extension shortcuts.
-- **Projects → Saved roots on this Runner** shows previously selected exact folders. Select another root or add a folder without configuring another MCP application. The list is scoped to the saved Runner configuration; choosing one project does not revoke the others.
+- **Projects** shows the authorized Server fleet. When this computer has a Runner, its saved roots are local to that Runner; selecting one project does not revoke the others.
 
-You do not need to stop the runtime or OpenAI Secure Tunnel before changing projects. Desktop adds the selected exact project root to the Runner policy, hot-activates it on a compatible Runner, persists the current selection, and keeps the existing Service and Tunnel. Only a legacy or incompatible Runner may need its Desktop-owned Runner process refreshed. Do not broaden allowed directories to work around a project loading failure.
+You do not need to stop the runtime or OpenAI Secure Tunnel before changing a local project. Desktop adds the selected exact project root to the local Runner policy, hot-activates it on a compatible Runner, persists the current selection, and keeps the existing Server and Tunnel. Only a legacy or incompatible Desktop-owned Runner may need its process refreshed. Do not broaden allowed directories to work around a project loading failure.
 
 ## Connections and recovery
 
@@ -52,7 +53,7 @@ A real observed project call verifies prior client use, not current host presenc
 
 | Situation | Next action |
 | --- | --- |
-| Local runtime is not ready | Restore it on Home; reconfigure the same project if necessary |
+| A local Server or Runner is stopped | For a Core-managed persistent environment, use that component's explicit control in Diagnostics; otherwise use its actual service owner |
 | Tunnel ID or API key is missing | Enter and save the Tunnel ID and API key in Desktop; quitting and reopening is needed only for environment-variable changes |
 | Start failed with no active tunnel | Fix configuration or networking, then click Start again with the same selection |
 | An existing tunnel reports an error | Stop it, then start it again; stop failures remain visible and can be retried |
@@ -63,7 +64,7 @@ A real observed project call verifies prior client use, not current host presenc
 
 ## Instructions, Skills, and native Tool Plugins
 
-**Extensions** shows the selected project's conventional `AGENTS.md` location, global instruction file paths, configured Skill roots, and saved native Plugin IDs. A displayed `AGENTS.md` location is not a claim that the file exists; edit its contents using the project editor. Save up to 16 absolute instruction paths and 16 absolute Skill roots. Saves target the exact observed Runner configuration and reject stale path edits, preserving unrelated configuration, comments, credentials, and existing provider settings.
+When this computer has a local Runner and a selected local project, **Extensions** shows that project's conventional `AGENTS.md` location, global instruction file paths, configured Skill roots, and saved native Plugin IDs. A displayed `AGENTS.md` location is not a claim that the file exists; edit its contents using the project editor. Save up to 16 absolute instruction paths and 16 absolute Skill roots. Saves target the exact observed local Runner configuration and reject stale path edits, preserving unrelated configuration, comments, credentials, and existing provider settings. A viewer does not configure a remote Runner's local files through this panel.
 
 **Add a native Tool Plugin** registers a new trusted provider by ID, display name, executable, string-array arguments, and optional absolute working directory. Existing IDs are never overwritten. Arguments are write-only and cleared after submission; use configuration profiles for credentials. The saved registration list is not a live health check. Existing registration edits/removal and advanced provider fields remain in the shown Runner configuration file.
 
@@ -73,7 +74,7 @@ Saving paths or registering a Plugin does not start it or silently restart the R
 
 The first foreground launch with missing Desktop permissions presents an explanation with **Request Accessibility**, **Request screen recording**, and a continue action. Background/login launches do not open a permission dialog over other applications. Requests require an explicit button press; denying or dismissing them does not prevent ordinary project work. Recheck from Settings after changing system permissions.
 
-Desktop's own permission results do not prove that a separately launched Runner is authorized. Computer Use executes in the Runner: grant permissions to the actual process shown by macOS and follow the system's restart guidance. The UI labels unobserved Runner authorization honestly. Windows does not display macOS permission controls.
+Desktop's own permission results do not prove that a separately launched Runner is authorized. For a persistent Runner, GUI operations execute in its same-user interactive helper and require an active, unlocked session; the project service can remain online without GUI availability. Grant permissions to the actual helper process shown by macOS and follow the system's restart guidance. A legacy foreground Runner still uses its own Computer backend. The UI labels unobserved Runner authorization honestly. Native GUI helper and session behavior still requires the platform checks in [Deployment validation](unified-deployment-validation.md). Windows does not display macOS permission controls.
 
 ## Activity, settings, and background operation
 
@@ -83,7 +84,7 @@ If the local Server exits during startup, expand the error's **Details**. Deskto
 
 **Settings** contains language, launch at login, Computer Use permissions on macOS, Tunnel networking, and diagnostics. You can also switch language at the bottom of the sidebar. Supported languages are 简体中文, English, 日本語, 한국어, Deutsch, and Français. The selection is remembered across restarts, and activity times follow the selected locale. System tray menus and raw backend diagnostics remain in English; the operating system controls native file-picker language.
 
-Closing the window hides it in the menu bar or system tray; the runtime continues in the background. **Quit WebCodex** in the tray ends Desktop and its owned processes. Stopping the Desktop-managed runtime on Home also updates the saved runtime startup preference. These controls do not terminate independently started WebCodex processes.
+Closing the window hides Desktop in the menu bar or system tray. Persistent Server, Runner, and Tunnel services continue independently of that window, including when Desktop quits. **Quit WebCodex** ends Desktop and processes it directly owns, such as a temporary Quick Share and legacy Desktop-owned runtime or regular Tunnel. Use the explicit Diagnostics controls for Core-managed local services; they appear only for components this computer owns. A viewer has no local Runner control, and a Server-only computer has no Runner control. A custom legacy service can be observed through its Server connection without Desktop taking over its lifecycle. Home's legacy Desktop-managed runtime stop also updates its saved startup preference; it does not stop an independent service.
 
 Use **⌘ + 1–6** on macOS or **Ctrl + 1–6** on Windows to switch between Home, Projects, Connection, Extensions, Activity, and Settings. Navigation shortcuts also work inside inputs and language selectors; ordinary typing and text-editing shortcuts remain available. Use Tab to focus controls and Enter to activate them; diagnostic disclosure controls also support the keyboard.
 
@@ -91,12 +92,14 @@ Runtime controls on Home and technical diagnostics in Settings are collapsed by 
 
 ### Runtime after unregistering a project
 
-A Full Runtime consists of the Server, Runner, and its project inventory. The
-Desktop default/display project is optional. Unregistering that project (including
-the last project) leaves the Runtime available, clears its project-specific ChatGPT
-observation, and does not select a replacement. Add Project remains available.
-Desktop restart resumes the saved Server/Runner identity and Connections without
-logging in again or registering saved projects.
+A persistent environment can have a Server with no local Runner, a viewer with no
+local Runner, or a local Runner with no registered project. The Desktop default
+project is optional. Unregistering that project (including the last project)
+leaves the environment available, clears its project-specific ChatGPT observation,
+and does not select a replacement. Add Project remains available through the
+appropriate local Runner or viewer setup path. Reopening Desktop observes the
+saved environment and its authorized Server fleet without registering saved
+projects again or starting a stopped persistent service.
 
 A complete, online Runner inventory is authoritative. Desktop reconciles stale
 saved registration history only within the same Runner configuration and client

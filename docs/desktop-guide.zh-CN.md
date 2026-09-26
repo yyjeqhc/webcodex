@@ -2,45 +2,46 @@
 
 [English](desktop-guide.md) | [简体中文](desktop-guide.zh-CN.md)
 
-Desktop 负责准备本机项目和管理连接；你在 ChatGPT 等 AI 客户端中发起工作。首次安装、Tunnel 配置和系统权限请看[安装与连接指南](desktop-install.zh-CN.md)。
+Desktop 用于创建或加入 WebCodex 环境、查看 Server 凭据授权的项目与 Runner，以及管理本机连接；你在 ChatGPT 等 AI 客户端中发起工作。请先看[统一安装指南](unified-installation.zh-CN.md)及其[原生平台验收状态](unified-deployment-validation.md)。[现有版本安装与连接指南](desktop-install.zh-CN.md)仍详细说明对应版本的 Desktop 和 Tunnel 流程。
 
 贡献者如果要做 frontend/Tauri 开发、从源码加载 runtime、构建 NSIS/DMG 或运行原生安装 smoke，请看 [Desktop 开发与打包](DESKTOP_DEVELOPMENT.zh-CN.md)。
 
+## 项目与 Runner
 
-## Runner 项目清单
+“项目”页显示当前 Server 授权访问的项目和 Runner，包括其他机器上的 Runner 及其项目。远程项目路径属于 Runner 所在机器，Desktop 不会把它当作本机目录。页面还显示 Git 分支、活跃 Session、最近活动，以及在线 Runner 报告的 GUI 会话可用性。viewer 没有本机 Runner，仍可查看获授权的清单。多个项目可以同时使用；模型使用准确的 runtime Project ID，不需要先在 Desktop 切换项目。首页的主要项目只是 Desktop 的默认展示。
 
-“项目”页列出此 Runner 的项目、Git 分支、活跃 Session 和最近活动。多个项目可以同时使用；模型使用 exact runtime Project ID，不需要先在 Desktop 切换项目。首页的主要展示项目只是 Desktop 的内部默认展示。
+有本机 Runner 时，“添加项目”会选择并注册本机目录。viewer 在首页点击“添加项目”会进入设置流程，先把此电脑转为 Runner；转换需要 Server 管理者提供一次性 Runner 配对码。“项目”页不会向 viewer 提供本机目录选择器。Windows 盘符、UNC 和 extended-length 路径的不同写法不会产生重复项目行；用户界面显示普通路径，注册 ID 和 canonical path 不变。
 
-“添加项目”保留目录选择与注册流程。Windows 盘符、UNC 和 extended-length 路径的不同写法不会产生重复项目行；用户界面显示普通路径，注册 ID 和 canonical path 不变。
-
-“取消注册”需要确认具体项目，只移除 Runner 注册及对应 Desktop 保存记录，不删除目录或 Git 文件，不撤销或扩大 allowed roots。运行中的 Job 会由服务端拒绝此操作。失败或结果不确定时不会自动重试；先刷新 inventory 再检查。取消首页默认项目后，Desktop 不会自动激活另一个项目；添加目录仍可通过设置流程完成。
+只有此 Desktop 本机 Runner 上的项目可执行“取消注册”，且需要确认具体项目。它只移除 Runner 注册及对应 Desktop 保存记录，不删除目录或 Git 文件，不撤销或扩大 allowed roots。运行中的 Job 会由服务端拒绝此操作。失败或结果不确定时不会自动重试；先刷新清单再检查。取消首页默认项目后，Desktop 不会自动激活另一个项目；添加目录仍可通过设置流程完成。
 
 ## 第一次使用
 
-1. 在欢迎页选择 **在此电脑使用 WebCodex**。这是普通个人使用的推荐入口。
-2. 点击 **选择文件夹**，选择真正要交给 AI 使用的项目。页面首先展示项目路径；确认无误后点击 **配置 WebCodex**。
-3. Tunnel 配置检测位于 **可选：检查 ChatGPT 安全隧道配置** 中。在此填写 Tunnel ID 和 API key 后点击“保存配置”，即可优先使用本机配置文件，无需重启。没有 Tunnel 配置也可以先准备本机项目；配置齐全时，可勾选配置后连接 ChatGPT。
-4. 回到首页，确认当前项目路径与实际工作目录一致。首页的三个步骤依次是 **准备项目 → 连接 AI 客户端 → 开始使用**。
-5. 点击侧栏的 **连接**。选择 **OpenAI Secure Tunnel** 后，再点击 **启动安全隧道**。仅选择连接方式不会启动进程。
-6. 隧道就绪后，按照连接页指引在 ChatGPT 中填入 Tunnel ID，再执行一次真实项目读取。
+1. 在欢迎页选择 **创建 WebCodex 环境** 创建环境，或选择 **加入已有 WebCodex 环境** 加入环境。通过 **选择文件夹** 指定本机项目，也可以跳过：
 
-**本地隧道就绪不等于 ChatGPT 已连接。** 首页会保留等待验证的状态；只有观察到当前项目的真实调用，才显示使用已验证。
+   | 设置方式 | 选择本机项目 | 不选择本机项目 |
+   | --- | --- | --- |
+   | 创建环境 | 本机 Server 与 Runner | 只有 Server |
+   | 加入环境 | 本机 Runner 连接远程 Server | 没有本机 Runner 的 viewer |
 
-如果已有远程 Server，欢迎页选择 **连接现有 Server**，填写地址和配对码，再选择本机项目。Desktop 连接页会显示远程 Server 信息，外部连接由 Server 管理者负责。
+2. 加入环境并选择项目时，填写 Server 地址和管理员提供的短期一次性 Runner 配对码。以 viewer 身份加入时，在受保护输入框提供个人 Server 用户凭据，不使用配对码。再次进入同一已保存 Server 的设置流程时，可以复用相应的用户凭据或 Runner 注册。
+3. 完成设置后查看首页和项目页。其他 Runner 上的项目会出现在获授权清单中，其路径不是此电脑的本机目录。如果此电脑有本机项目，向 AI 客户端交付工作前先确认路径。
+4. 如果此 Desktop 管理普通 OpenAI Secure Tunnel，请在 **连接** 页填写 Tunnel ID 和 API key，再明确启动 Tunnel。仅选择连接方式不会启动进程。按连接页指引在 ChatGPT 中完成连接并真实读取一个项目。远程 Server 的外部连接由其管理员管理。
+
+**本地隧道就绪不等于 ChatGPT 已连接。** 有当前项目时，首页会保留等待验证的状态，直到观察到该项目的真实调用。viewer 无需注册本机项目也能查看获授权的活动。
 
 如果只想临时使用一个项目，选择 **快速共享项目**，再选择连接提供方。Quick Share 是独立的临时使用方式；首页提供连接交接信息和停止入口。
 
 ## 每天从首页开始
 
-首页优先显示整体状态、下一步操作和当前工作项目。运行环境停止时可点击 **启动**；本机项目已就绪且 Tunnel 配置齐全时可点击 **启动安全隧道**。
+首页优先显示整体状态、下一步操作和可选的当前项目，也概览获授权的项目及近期活动。持久环境中的服务停止时，Desktop 只观察状态，不会自动重启；可在适用时使用诊断页的本机控制。Desktop 管理的 Tunnel 配置就绪后，仍需明确启动。
 
-- **当前工作项目**：展示项目名和完整路径。本机 Full Runtime 已配置时，点击 **选择其他项目** 或 **添加项目** 会直接打开目录选择器，并立即应用这个精确项目，不再需要第二次点击“配置 WebCodex”。
+- **当前工作项目**：选中项目时显示其名称和完整路径。有本机 Runner 时，**添加项目**打开目录选择器；viewer 点击后进入设置流程，需要先配对 Runner。获授权清单中的远程路径不会被当成本机目录选择。
 - **三个步骤**：区分项目就绪、连接准备和实际使用验证；完成后默认折叠。
 - **查看运行诊断**：按需展开 Service、Runner、项目和连接的详细状态及运行控制。
 - **侧栏导航**：进入项目、连接、扩展、活动和设置页面；首页也提供连接和扩展的直接入口。
-- **项目 → 此 Runner 保存的目录**：显示同一 Runner 下之前选择的精确项目根目录。可以切换或添加文件夹，无需另配 MCP 应用；选择一个项目不会撤销其他项目。列表按保存的 Runner 配置隔离。
+- **项目**：显示 Server 授权的 Runner 和项目。本机有 Runner 时，保存的项目根目录仅属于该 Runner；选择一个项目不会撤销其他项目。
 
-切换项目无需先手工停止 Runtime，也无需断开 OpenAI Secure Tunnel。Desktop 会把所选项目的精确根目录加入 Runner policy，在兼容 Runner 上热激活并持久化当前选择，同时保留现有 Service 和 Tunnel；只有旧版或不兼容 Runner 才可能刷新 Desktop 自己管理的 Runner。不要通过扩大允许目录来解决项目加载失败。
+切换本机项目无需先手工停止 Runtime，也无需断开 OpenAI Secure Tunnel。Desktop 会把所选项目的精确根目录加入本机 Runner policy，在兼容 Runner 上热激活并持久化当前选择，同时保留现有 Server 和 Tunnel；只有旧版或不兼容且由 Desktop 管理的 Runner 才可能刷新其进程。不要通过扩大允许目录来解决项目加载失败。
 
 ## 连接与故障恢复
 
@@ -52,7 +53,7 @@ Desktop 负责准备本机项目和管理连接；你在 ChatGPT 等 AI 客户�
 
 | 看到的情况 | 下一步 |
 | --- | --- |
-| 本机运行环境未就绪 | 回首页恢复运行环境；需要时重新配置同一个项目 |
+| 本机 Server 或 Runner 已停止 | Core 管理的持久环境可在诊断页明确启动相应服务；其他服务由其实际管理者处理 |
 | Tunnel ID 或 API key 未检测到 | 在配置区填写并保存 Tunnel ID 和 API key；仅使用环境变量时才需退出重开 |
 | 启动失败且没有活动隧道 | 保留当前选择，修复配置或网络后再次点击启动 |
 | 已有隧道报错 | 点击停止，成功后重新启动；停止失败会保留错误和重试入口 |
@@ -63,7 +64,7 @@ Desktop 负责准备本机项目和管理连接；你在 ChatGPT 等 AI 客户�
 
 ## 指令、Skills 与原生 Tool Plugins
 
-**扩展** 显示所选项目约定的 `AGENTS.md` 路径、全局指令文件、Skill 根目录，以及配置中保存的原生 Plugin ID。显示路径不表示文件一定存在；请用项目编辑器修改 `AGENTS.md` 内容。全局指令文件和 Skill 根目录各支持最多 16 个绝对路径。保存绑定到读到的精确 Runner 配置，拒绝过期编辑，保留其他配置、注释、凭据及已有插件设置。
+此电脑有本机 Runner 且选中了本机项目时，**扩展**显示该项目约定的 `AGENTS.md` 路径、全局指令文件、Skill 根目录，以及配置中保存的原生 Plugin ID。显示路径不表示文件一定存在；请用项目编辑器修改 `AGENTS.md` 内容。全局指令文件和 Skill 根目录各支持最多 16 个绝对路径。保存绑定到读到的精确本机 Runner 配置，拒绝过期编辑，保留其他配置、注释、凭据及已有插件设置。viewer 不能通过此页面配置远程 Runner 的本机文件。
 
 **添加原生 Tool Plugin** 可填写新插件 ID、名称、可执行程序、字符串数组形式的参数，以及可选的绝对工作目录。不会覆盖已有 ID；参数仅写入，提交后清空。凭据请使用配置中的 profile。注册列表不代表实时连接状态；已有插件的编辑、移除及高级字段仍通过页面展示的 Runner 配置文件管理。
 
@@ -73,7 +74,7 @@ Desktop 负责准备本机项目和管理连接；你在 ChatGPT 等 AI 客户�
 
 首次前台启动且 Desktop 权限不全时，会显示权限说明，提供请求辅助功能、请求屏幕录制和稍后继续入口。后台登录启动不会弹出对话框抢占其他应用焦点。系统权限请求必须由按钮触发；拒绝或跳过不影响普通项目操作。授权后可在设置页重新检测。
 
-Desktop 的授权结果不等于独立 Runner 已获授权。Computer Use 实际在 Runner 中执行，应为 macOS 显示的实际进程授权，并按系统提示重启。未观测到的 Runner 授权状态不会被显示为已授权。Windows 不显示 macOS 专属权限按钮。
+Desktop 的授权结果不等于独立 Runner 已获授权。持久 Runner 的 GUI 操作由同用户交互会话中的 helper 执行，要求活动且未锁定的会话；GUI 不可用时，项目服务仍可在线。应为 macOS 显示的实际 helper 进程授权，并按系统提示重启。旧前台 Runner 仍使用自身的 Computer backend。未观测到的 Runner 授权状态不会被显示为已授权。原生 GUI helper 与会话行为仍需完成[部署验收清单](unified-deployment-validation.md)中的平台检查。Windows 不显示 macOS 专属权限按钮。
 
 ## 活动、设置和后台运行
 
@@ -83,7 +84,7 @@ Desktop 的授权结果不等于独立 Runner 已获授权。Computer Use 实际
 
 **设置** 包含语言、登录时启动、macOS Computer Use 权限、Tunnel 网络和诊断信息。语言也可以在左下角直接切换。支持简体中文、English、日本語、한국어、Deutsch、Français；选择会保存，重开后恢复，活动时间按所选语言格式显示。系统托盘菜单和原始后端诊断仍使用英文，系统文件选择器的语言由操作系统决定。
 
-关闭窗口只是隐藏到菜单栏或系统托盘，已启动的运行环境仍在后台工作。托盘中的 **退出 WebCodex** 才会结束 Desktop 及其管理的进程。首页的 **停止 Desktop 管理的运行环境** 会停止运行环境并更新保存的启动偏好；这些操作不会终止其他自行启动的 WebCodex 进程。
+关闭窗口只会把 Desktop 隐藏到菜单栏或系统托盘。持久的 Server、Runner 和 Tunnel 服务独立于窗口运行，退出 Desktop 后也会继续运行。托盘中的 **退出 WebCodex** 会结束 Desktop 及其直接管理的进程，例如临时 Quick Share、旧版由 Desktop 管理的 Runtime 或普通 Tunnel。Core 管理的本机服务需要使用诊断页的明确控制；仅此电脑拥有的组件才显示对应控制。viewer 没有本机 Runner 控制，只有 Server 的电脑也没有 Runner 控制。Desktop 可以通过 Server 连接观察自定义旧服务，但不会接管其生命周期。首页用于旧版 Desktop Runtime 的停止操作还会更新已保存的启动偏好，不会停止独立服务。
 
 macOS 使用 **⌘ + 1–6**，Windows 使用 **Ctrl + 1–6**，依次切换首页、项目、连接、扩展、活动和设置。这些导航快捷键在输入框和语言选择框内同样生效，普通输入及复制、粘贴等文本编辑快捷键不受影响。可用 Tab 聚焦按钮，用 Enter 激活；诊断折叠项也支持键盘操作。
 
@@ -91,11 +92,12 @@ macOS 使用 **⌘ + 1–6**，Windows 使用 **Ctrl + 1–6**，依次切换首
 
 ### 取消注册后的 Runtime 状态
 
-Full Runtime 由 Server、Runner 和项目清单组成，Desktop 默认展示项目是可选的。
-取消注册默认项目（包括最后一个项目）后，Runtime 继续可用，只清空该项目的
-ChatGPT 活动观察，不自动选择替代项目。仍可通过“添加项目”注册目录。
-Desktop 重启使用已保存的 Server/Runner 身份恢复 Runtime 和 Connections，
-不会重新登录或自动注册历史项目。
+持久环境可以只有 Server 而没有本机 Runner，也可以是没有本机 Runner 的 viewer，
+或是尚未注册项目的本机 Runner。Desktop 默认展示项目是可选的。取消注册默认
+项目（包括最后一个项目）后，环境继续可用，只清空该项目的 ChatGPT 活动观察，
+不会自动选择替代项目。仍可通过对应的本机 Runner 或 viewer 设置流程添加项目。
+重新打开 Desktop 时会观察已保存的环境及 Server 授权清单，不会重复注册历史项目，
+也不会启动已停止的持久服务。
 
 正常在线且完整的 Runner 项目清单是注册状态的权威来源。Desktop 仅在同一
 Runner 配置和客户端身份下清理失效的注册历史；离线、无访问权限、截断或失败

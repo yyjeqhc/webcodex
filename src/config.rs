@@ -209,10 +209,10 @@ pub(crate) fn parse_env_file_line(line: &str) -> Option<Result<(String, String),
     Some(Ok((key.to_string(), value)))
 }
 
-fn load_env_file(path: &Path) -> Result<EnvFileLoad, String> {
+pub(crate) fn load_env_file(path: &Path) -> Result<EnvFileLoad, String> {
     let content = std::fs::read_to_string(path)
         .map_err(|e| format!("failed to read env file {}: {}", path.display(), e))?;
-    let mut loaded_count = 0;
+    let mut values = Vec::new();
     for (idx, line) in content.lines().enumerate() {
         let Some(parsed) = parse_env_file_line(line) else {
             continue;
@@ -225,6 +225,10 @@ fn load_env_file(path: &Path) -> Result<EnvFileLoad, String> {
                 e
             )
         })?;
+        values.push((key, value));
+    }
+    let mut loaded_count = 0;
+    for (key, value) in values {
         if std::env::var_os(&key).is_none() {
             std::env::set_var(&key, value);
             loaded_count += 1;
@@ -808,6 +812,17 @@ mod tests {
         assert_eq!(std::env::var("WEBCODEX_TOKEN").unwrap(), "new");
 
         env.remove("WEBCODEX_ENV_FILE");
+    }
+
+    #[test]
+    fn invalid_env_file_does_not_partially_change_process_environment() {
+        let mut env = crate::test_support::TestEnvGuard::new();
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("webcodex.env");
+        std::fs::write(&file, "WEBCODEX_TOKEN=secret\nINVALID KEY=value\n").unwrap();
+        env.remove("WEBCODEX_TOKEN");
+        assert!(load_env_file(&file).is_err());
+        assert!(std::env::var_os("WEBCODEX_TOKEN").is_none());
     }
 
     #[test]

@@ -63,6 +63,9 @@ pub(super) struct RunnerRecord {
     /// registration snapshot. It also owns the public wire projection, so the
     /// record has no second independently stored capability copy.
     pub(super) runner_features: RunnerFeatureSet,
+    /// None preserves legacy direct-session behavior; brokered persistent
+    /// Runners report current helper eligibility separately from support.
+    pub(super) computer_session_availability: Option<bool>,
     pub(super) projects: Vec<RunnerProjectSummary>,
     /// Authoritative project snapshot plus bounded in-progress staging. A
     /// staging failure never changes liveness or partially publishes projects.
@@ -131,6 +134,9 @@ pub struct RunnerSemanticView {
 impl RunnerSemanticView {
     pub fn supports(&self, feature: RunnerFeature) -> bool {
         self.runner_features.supports(feature)
+            && (!feature.is_computer()
+                || self.view.computer_session_availability.is_none()
+                || (self.view.computer_session_availability == Some(true) && self.view.connected))
     }
 
     #[cfg(any(test, feature = "root-test-support"))]
@@ -154,6 +160,15 @@ pub(super) struct ProjectedStructuredTerminalSuppression {
 }
 
 impl RunnerRecord {
+    pub(super) fn supports(&self, feature: RunnerFeature) -> bool {
+        self.runner_features.supports(feature)
+            && (!feature.is_computer()
+                || self.computer_session_availability.is_none()
+                || (self.computer_session_availability == Some(true)
+                    && super::now_ts().saturating_sub(self.last_seen)
+                        <= super::RUNNER_ONLINE_WINDOW_SECS))
+    }
+
     pub(super) fn prune_projected_structured_terminal_suppressions(&mut self, now: i64) {
         self.projected_structured_terminal_suppressions
             .retain(|suppression| suppression.expires_at > now);
@@ -511,6 +526,8 @@ impl Default for ShellJobLogState {
 
 #[derive(Debug, Default)]
 pub(super) struct RunnerRegistryInner {
+    pub(super) maintenance: Option<crate::maintenance::MaintenanceLeaseState>,
+    pub(super) runtime_calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     pub(super) runners: HashMap<String, RunnerRecord>,
     pub(super) pending_by_id: HashMap<String, PendingShellRequest>,
     /// Waiters for explicit persistent-shell lifecycle results. Kept separate

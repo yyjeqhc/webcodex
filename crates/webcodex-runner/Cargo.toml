@@ -15,6 +15,7 @@ webcodex-browser = { path = "../webcodex-browser" }
 webcodex-computer = { path = "../webcodex-computer" }
 webcodex-runner-config = { path = "../webcodex-runner-config" }
 webcodex-core = { path = "../webcodex-core" }
+webcodex-environment = { path = "../webcodex-environment" }
 webcodex-lsp = { path = "../webcodex-lsp" }
 webcodex-persistent-shell = { path = "../webcodex-persistent-shell" }
 webcodex-process = { path = "../webcodex-process" }

@@ -273,6 +273,36 @@ pub async fn configure_local_setup(
 }
 
 #[tauri::command]
+pub async fn repair_environment_user_credential(
+    request: crate::models::EnvironmentUserCredentialRequest,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<DesktopStateSnapshot, DesktopError> {
+    project_state_result(
+        &app,
+        state.repair_environment_user_credential(request).await,
+    )
+}
+
+#[tauri::command]
+pub async fn environment_service_action(
+    request: crate::models::EnvironmentServiceRequest,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<DesktopStateSnapshot, DesktopError> {
+    project_state_result(&app, state.environment_service_action(request).await)
+}
+
+#[tauri::command]
+pub async fn configure_environment(
+    request: crate::models::EnvironmentInput,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<DesktopStateSnapshot, DesktopError> {
+    project_state_result(&app, state.configure_environment(request).await)
+}
+
+#[tauri::command]
 pub async fn activate_local_project(
     request: ProjectRequest,
     app: AppHandle,

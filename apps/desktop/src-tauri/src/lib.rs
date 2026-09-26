@@ -27,6 +27,9 @@ use state::AppState;
 use tauri::Manager;
 use tauri_plugin_autostart::MacosLauncher;
 
+/// The no-window CLI probe and Tauri command share one build-info source.
+pub use commands::get_desktop_build_info as desktop_build_info;
+
 pub fn run() {
     let app = tauri::Builder::default()
         // Tauri recommends registering single-instance first so a secondary
@@ -100,6 +103,9 @@ pub fn run() {
             commands::tunnel_profile_action,
             commands::inspect_project,
             commands::configure_local_setup,
+            commands::configure_environment,
+            commands::environment_service_action,
+            commands::repair_environment_user_credential,
             commands::activate_local_project,
             commands::prepare_project_unregister,
             commands::unregister_project,

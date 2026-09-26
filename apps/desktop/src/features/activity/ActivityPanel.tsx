@@ -67,7 +67,7 @@ export function ActivityPanel({ activity }: { activity: ActivityEntry[] }) {
     <section role="tabpanel" id={`activity-view-${tab}`} aria-labelledby={`activity-tab-${tab}`}>
     {tab === "windows" && <>
       <div className="activity-overview"><span>{s("Calls in progress")}: <strong>{windows.reduce((total, row) => total + row.active_count, 0)}</strong></span><span>{s("Recent work")}: <strong>{windows.length}</strong></span></div>
-      {workspace.windowsError && <p role="alert">{p("loadError")}</p>}
+      {workspace.windowsError && <p role="alert">{p(workspace.windowsErrorReason)}</p>}
       {visible.map(row => {
         const detail = previews[row.client_window_key]; const latest = detail ? recentMeaningfulCalls(detail)[0] : undefined;
         const linked = detail?.linked_sessions.slice().sort((a, b) => (b.last_linked_at_ms ?? 0) - (a.last_linked_at_ms ?? 0)).find(link => link.title);
@@ -86,7 +86,7 @@ export function ActivityPanel({ activity }: { activity: ActivityEntry[] }) {
       {!windows.length && !workspace.loading && <WorkspaceEmptyState kind="activity" message={p("noWindows")} action={<button type="button" className="secondary-button" onClick={workspace.refresh}>{p("refresh")}</button>} />}
     </>}
     {tab === "sessions" && <>
-      {workspace.error && <p role="alert">{p("loadError")}</p>}
+      {workspace.error && <p role="alert">{p(workspace.errorReason)}</p>}
       {sessions.map(session => <button type="button" className="workspace-session-row" key={`${session.project_id}:${session.session_id}`} onClick={() => session.project_id && workspace.setSelection({ kind: "session", project: session.project_id, id: session.session_id })}>
         <div className="session-row-heading"><strong>{sessionTitle(session.title)}</strong><span className={`workspace-badge ${session.running_call || session.running_jobs ? "working" : ""}`}>{session.running_call || session.running_jobs ? p("inProgress") : sessionLifecycle(session.lifecycle, p)}</span></div>
         <span className="session-row-project">{projectLabel(session.project_id)} · {observationTime(session.updated_at * 1000, locale)}</span>

@@ -11,8 +11,8 @@ root-test-support = []
 webcodex-core = { path = "../webcodex-core" }
 chrono = "0.4"
 serde_json = "1"
+serde = { version = "1", features = ["derive"] }
 sha2 = "0.10"
 tokio = { version = "1", features = ["macros", "rt", "sync", "time"] }
 tracing = "0.1"
 uuid = { version = "1", features = ["v4"] }
-

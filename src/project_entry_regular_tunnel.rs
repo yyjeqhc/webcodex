@@ -3,6 +3,7 @@ use super::openai_tunnel_service::{prepare_openai_tunnel, start_openai_tunnel};
 use super::setup_service::{create_private_dir, write_new_private};
 use super::ProductError;
 use serde_json::{json, Value};
+use std::future::Future;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -14,6 +15,7 @@ pub(crate) struct RegularServerTunnelOptions {
     pub(crate) local_server_url: String,
     pub(crate) bootstrap_token: String,
     pub(crate) runtime_parent: PathBuf,
+    pub(crate) stop_on_stdin_eof: bool,
 }
 
 struct RegularTunnelSession {
@@ -48,10 +50,11 @@ impl Drop for RegularTunnelSession {
     }
 }
 
-pub(crate) async fn run_regular_server_tunnel(
+pub(crate) async fn run_regular_server_tunnel_with_stop(
     options: &RegularServerTunnelOptions,
+    stop: impl Future<Output = ()>,
 ) -> Result<(), ProductError> {
-    match run_regular_server_tunnel_inner(options).await {
+    match run_regular_server_tunnel_inner(options, stop).await {
         Ok(()) => Ok(()),
         Err(error) => {
             println!("{}", machine_regular_tunnel_failure_event(&error));
@@ -62,20 +65,29 @@ pub(crate) async fn run_regular_server_tunnel(
 
 async fn run_regular_server_tunnel_inner(
     options: &RegularServerTunnelOptions,
+    stop: impl Future<Output = ()>,
 ) -> Result<(), ProductError> {
     let local_server_url = validate_local_server_url(&options.local_server_url)?;
     let session = RegularTunnelSession::create(&options.runtime_parent)?;
     let authorization_file = session.write_authorization_file(&options.bootstrap_token)?;
-    let prerequisites = prepare_openai_tunnel().await?;
+    tokio::pin!(stop);
+    let prerequisites = tokio::select! {
+        _ = &mut stop => return Ok(()),
+        result = prepare_openai_tunnel() => result?,
+    };
     let deadline = Instant::now() + REGULAR_TUNNEL_STARTUP_TIMEOUT;
-    let mut tunnel = start_openai_tunnel(
+    let mcp_endpoint = mcp_url(&local_server_url);
+    let start = start_openai_tunnel(
         &prerequisites,
-        &mcp_url(&local_server_url),
+        &mcp_endpoint,
         &authorization_file,
         &session.directory,
         deadline,
-    )
-    .await?;
+    );
+    let mut tunnel = tokio::select! {
+        _ = &mut stop => return Ok(()),
+        result = start => result?,
+    };
 
     // Managed profiles use explicit Copy ID controls; concurrent starts must not
     // race over the user's clipboard. Keep CLI handoff for an unmanaged invocation.
@@ -100,11 +112,19 @@ async fn run_regular_server_tunnel_inner(
 
     let health_url = tunnel.health_url.clone();
     let local_mcp_url = mcp_url(&local_server_url);
+    let readiness_path = options.runtime_parent.join("readiness.json");
+    let service_readiness = managed
+        .then_some(readiness_path)
+        .filter(|path| path.is_file());
     let outcome = tokio::select! {
-        _ = wait_for_regular_tunnel_stop_signal() => Ok(()),
+        _ = wait_for_regular_tunnel_stop_signal(options.stop_on_stdin_eof) => Ok(()),
+        _ = &mut stop => Ok(()),
         result = tunnel.wait_for_exit() => result,
-        result = report_regular_tunnel_health(&health_url, &local_mcp_url, &options.bootstrap_token) => result,
+        result = report_regular_tunnel_health(&health_url, &local_mcp_url, &options.bootstrap_token, service_readiness.as_deref()) => result,
     };
+    if let Some(path) = service_readiness {
+        let _ = webcodex_environment::write_tunnel_health(&path, false, false);
+    }
     tunnel.stop().await;
     outcome
 }
@@ -115,6 +135,7 @@ async fn report_regular_tunnel_health(
     health_url: &str,
     local_mcp_url: &str,
     bootstrap: &str,
+    service_readiness: Option<&Path>,
 ) -> Result<(), ProductError> {
     let client = reqwest::Client::builder()
         .no_proxy()
@@ -137,6 +158,10 @@ async fn report_regular_tunnel_health(
             },
             probe_local_mcp(&client, local_mcp_url, bootstrap),
         );
+        if let Some(path) = service_readiness {
+            webcodex_environment::write_tunnel_health(path, tunnel_ready, local_mcp_ready)
+                .map_err(|_| tunnel_auth_error("Could not persist service connection health"))?;
+        }
         println!(
             "{}",
             json!({"event":"health", "schema_version":1, "tunnel_ready":tunnel_ready, "local_mcp_ready":local_mcp_ready})
@@ -247,10 +272,32 @@ fn validate_local_server_url(value: &str) -> Result<String, ProductError> {
     Ok(value.to_string())
 }
 
-async fn wait_for_regular_tunnel_stop_signal() {
-    tokio::select! {
-        _ = wait_for_platform_stop_signal() => {},
-        _ = wait_for_stdin_eof() => {},
+async fn wait_for_regular_tunnel_stop_signal(stop_on_stdin_eof: bool) {
+    wait_for_regular_tunnel_stop_signal_with(
+        stop_on_stdin_eof,
+        wait_for_platform_stop_signal(),
+        wait_for_stdin_eof(),
+    )
+    .await;
+}
+
+async fn wait_for_regular_tunnel_stop_signal_with<S, E>(
+    stop_on_stdin_eof: bool,
+    stop_signal: S,
+    stdin_eof: E,
+) where
+    S: Future<Output = ()>,
+    E: Future<Output = ()>,
+{
+    if stop_on_stdin_eof {
+        tokio::select! {
+            _ = stop_signal => {},
+            _ = stdin_eof => {},
+        }
+    } else {
+        // Do not even poll stdin in persistent mode: daemons commonly inherit
+        // an already-closed stdin descriptor.
+        stop_signal.await;
     }
 }
 
@@ -274,7 +321,16 @@ async fn wait_for_stdin_eof() {
 
 #[cfg(not(windows))]
 async fn wait_for_platform_stop_signal() {
-    let _ = tokio::signal::ctrl_c().await;
+    use tokio::signal::unix::{signal, SignalKind};
+
+    let Ok(mut terminate) = signal(SignalKind::terminate()) else {
+        let _ = tokio::signal::ctrl_c().await;
+        return;
+    };
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {},
+        _ = terminate.recv() => {},
+    }
 }
 
 #[cfg(windows)]
@@ -303,6 +359,39 @@ fn tunnel_auth_error(message: &str) -> ProductError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn persistent_tunnel_does_not_poll_stdin_eof() {
+        let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
+        let task = tokio::spawn(wait_for_regular_tunnel_stop_signal_with(
+            false,
+            async move {
+                let _ = stop_rx.await;
+            },
+            async { panic!("persistent tunnel polled stdin EOF") },
+        ));
+        tokio::task::yield_now().await;
+        assert!(!task.is_finished());
+        stop_tx.send(()).unwrap();
+        task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn parent_liveness_mode_stops_on_stdin_eof() {
+        let (_stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            wait_for_regular_tunnel_stop_signal_with(
+                true,
+                async move {
+                    let _ = stop_rx.await;
+                },
+                std::future::ready(()),
+            ),
+        )
+        .await
+        .expect("stdin EOF should stop parent-owned tunnel mode");
+    }
 
     #[test]
     fn machine_ready_event_contains_only_safe_handoff_metadata() {

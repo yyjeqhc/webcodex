@@ -1424,6 +1424,10 @@ pub struct RunnerRegisterRequest {
     /// inherits the pre-0.4 missing-field=true behavior.
     #[serde(deserialize_with = "deserialize_registration_capabilities")]
     pub capabilities: RunnerCapabilities,
+    /// Current brokered login-session eligibility. Absent on transient and
+    /// older Runners, which retain their existing direct Computer behavior.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub computer_session_availability: Option<bool>,
     /// Optional bounded planning context declared by the Runner configuration.
     /// This is descriptive metadata only: it never grants authority or proves
     /// current host/service/network state.
@@ -1607,6 +1611,8 @@ pub struct RunnerView {
     pub connected: bool,
     pub last_seen: i64,
     pub capabilities: RunnerCapabilities,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub computer_session_availability: Option<bool>,
     /// Bounded sanitized startup-owned ACP provider inventory. Logical ids are
     /// model-visible planning metadata; executable/argv/env/PID/private ACP ids
     /// never enter this view.
@@ -2002,6 +2008,9 @@ pub struct RunnerPollPayload {
     /// metadata update; `Some([])` explicitly clears the active inventory.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mcp_gateway_providers: Option<Vec<crate::mcp_gateway::McpGatewayProvider>>,
+    /// Changed-only login-session eligibility for a brokered persistent Runner.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub computer_session_availability: Option<bool>,
     /// Optional bounded project inventory page for the canonical paged inventory protocol.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project_inventory_page: Option<ShellProjectInventoryPage>,
@@ -2617,6 +2626,7 @@ mod envelope_tests {
 
     fn sample_register() -> RunnerRegisterRequest {
         RunnerRegisterRequest {
+            computer_session_availability: None,
             process_started_at: None,
             build: None,
             client_id: "ws-1".to_string(),
@@ -3850,6 +3860,7 @@ mod envelope_tests {
     fn runtime_metadata_and_legacy_poll_payloads_round_trip() {
         let env = RunnerEnvelope::RuntimeMetadata {
             tool_providers: sample_tool_providers(),
+            computer_session_availability: None,
             mcp_gateway_providers: Some(vec![crate::mcp_gateway::McpGatewayProvider {
                 provider_id: "blender".to_string(),
                 provider_instance_id: "instance-1".to_string(),
@@ -4258,6 +4269,7 @@ mod envelope_tests {
     #[tokio::test]
     async fn quic_register_codec_round_trips_current_wire_shape() {
         let payload = RunnerRegisterRequest {
+            computer_session_availability: None,
             process_started_at: None,
             build: None,
             client_id: "q-1".to_string(),

@@ -117,10 +117,12 @@ pub async fn unregister(
         return Err(uncertain());
     }
     if output.get("outcome").and_then(Value::as_str) == Some("already_unregistered") {
-        let overview =
-            crate::workspace::query(runtime, crate::workspace::WorkspaceRequest::Overview {})
-                .await
-                .map_err(|_| uncertain())?;
+        let overview = crate::workspace::query(
+            runtime,
+            crate::workspace::WorkspaceRequest::RunnerDetails {},
+        )
+        .await
+        .map_err(|_| uncertain())?;
         let rows = complete_inventory(runtime, &overview).ok_or_else(uncertain)?;
         if rows
             .iter()

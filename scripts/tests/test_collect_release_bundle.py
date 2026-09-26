@@ -31,7 +31,7 @@ def _archive_bytes(platform: str) -> bytes:
     return output.getvalue()
 
 
-def _write_bundle(root: Path, tag: str, build_kind: str) -> tuple[str, dict[str, str]]:
+def _write_bundle(root: Path, tag: str, build_kind: str, *, unified: bool = False) -> tuple[str, dict[str, str]]:
     stem = (
         f"webcodex-v{VERSION}"
         if build_kind == "release"
@@ -63,6 +63,38 @@ def _write_bundle(root: Path, tag: str, build_kind: str) -> tuple[str, dict[str,
         desktop_digest = hashlib.sha256(desktop_payload).hexdigest()
         checksum_lines.append(f"{desktop_digest}  {desktop_name}")
         desktop_artifacts[platform] = {"filename": desktop_name, "sha256": desktop_digest}
+    installer_artifacts = {}
+    installer_manifest = {}
+    if unified:
+        for platform in collector.PLATFORMS:
+            filename = collector.installer_artifact_filename(VERSION, platform)
+            magic = b"!<arch>\n" if platform.startswith("linux-") else b"xar!" if platform.startswith("darwin-") else b"MZ"
+            payload = magic + b"synthetic installer"
+            (root / filename).write_bytes(payload)
+            digest = hashlib.sha256(payload).hexdigest()
+            checksum_lines.append(f"{digest}  {filename}")
+            source_name = f"webcodex-source-v{VERSION}-{platform}.json"
+            source_payload = json.dumps({"schema_version": 1, "version": VERSION, "source_sha": SOURCE_SHA, "source_workflow_run_id": RUN_ID, "source_workflow_ref": "test/.github/workflows/release-build.yml@refs/tags/v0.3.8", "platform": platform}).encode()
+            (root / source_name).write_bytes(source_payload)
+            source_digest = hashlib.sha256(source_payload).hexdigest()
+            checksum_lines.append(f"{source_digest}  {source_name}")
+            installer_artifacts[platform] = {
+                "filename": filename,
+                "sha256": digest,
+                "source_manifest_filename": source_name,
+                "source_manifest_sha256": source_digest,
+                **({
+                    "inner_sha256": hashlib.sha256(b"inner payload").hexdigest(),
+                    "candidate_manifest_sha256": hashlib.sha256(b"candidate manifest").hexdigest(),
+                } if platform.startswith("win32-") else {}),
+            }
+            installer_manifest[platform] = {
+                "filename": filename,
+                "url": f"https://github.com/{collector.DEFAULT_REPO}/releases/download/v{VERSION}/{filename}",
+                "sha256": digest,
+                "source_manifest_url": f"https://github.com/{collector.DEFAULT_REPO}/releases/download/v{VERSION}/{source_name}",
+                "source_manifest_sha256": source_digest,
+            }
     (root / "SHA256SUMS").write_text("\n".join(checksum_lines) + "\n", encoding="ascii")
     (root / "linux-x64-elf.txt").write_text("ELF x64\n", encoding="utf-8")
     (root / "linux-arm64-elf.txt").write_text("ELF arm64\n", encoding="utf-8")
@@ -76,12 +108,14 @@ def _write_bundle(root: Path, tag: str, build_kind: str) -> tuple[str, dict[str,
         "archive_stem": stem,
         "artifacts": artifact_payload,
         "desktop_artifacts": desktop_artifacts,
+        **({"installer_artifacts": installer_artifacts} if unified else {}),
     }
     (root / "release-build.json").write_text(json.dumps(release_build) + "\n", encoding="utf-8")
     if build_kind == "release":
         manifest = {
             "version": VERSION,
             "binaries": list(collector.BINARIES),
+            **({"installers": installer_manifest} if unified else {}),
             "artifacts": {
                 platform: {
                     "url": f"https://github.com/{collector.DEFAULT_REPO}/releases/download/v{VERSION}/{stem}-{platform}.tar.gz",
@@ -175,6 +209,50 @@ class ArtifactSelectionTests(unittest.TestCase):
 
 
 class BundleTests(unittest.TestCase):
+    def test_release_bundle_contract_with_six_unified_installers(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            stem, _hashes = _write_bundle(root, f"v{VERSION}", "release", unified=True)
+            summary = collector.verify_bundle_directory(
+                root,
+                repo=collector.DEFAULT_REPO,
+                run_id=RUN_ID,
+                expected_source_sha=SOURCE_SHA,
+                expected_tag=f"v{VERSION}",
+                artifact_name=f"{stem}-bundle",
+            )
+            self.assertEqual(set(summary["installer_artifacts"]), set(collector.PLATFORMS))
+            self.assertEqual(
+                summary["installer_artifacts"]["linux-x64"]["filename"],
+                f"webcodex-unified-v{VERSION}-linux-x64.deb",
+            )
+            (root / summary["installer_artifacts"]["win32-x64"]["filename"]).write_bytes(b"broken")
+            with self.assertRaises(collector.CollectionError):
+                collector.verify_bundle_directory(
+                    root,
+                    repo=collector.DEFAULT_REPO,
+                    run_id=RUN_ID,
+                    expected_source_sha=SOURCE_SHA,
+                    expected_tag=f"v{VERSION}",
+                    artifact_name=f"{stem}-bundle",
+                )
+
+    def test_release_bundle_rejects_tampered_public_source_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            stem, _ = _write_bundle(root, f"v{VERSION}", "release", unified=True)
+            source_name = f"webcodex-source-v{VERSION}-linux-x64.json"
+            (root / source_name).write_bytes(b"tampered")
+            with self.assertRaisesRegex(collector.CollectionError, "source manifest SHA-256 mismatch"):
+                collector.verify_bundle_directory(
+                    root,
+                    repo=collector.DEFAULT_REPO,
+                    run_id=RUN_ID,
+                    expected_source_sha=SOURCE_SHA,
+                    expected_tag=f"v{VERSION}",
+                    artifact_name=f"{stem}-bundle",
+                )
+
     def test_release_bundle_contract(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

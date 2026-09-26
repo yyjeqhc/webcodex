@@ -2,7 +2,13 @@
 
 [English](DEPLOYMENT.md) | [简体中文](DEPLOYMENT.zh-CN.md)
 
-This guide is for **production and advanced self-hosting**: long-lived Servers, multiple machines/users, system services, reverse proxies, Docker, and operator-managed networking. If you are installing WebCodex on a normal Windows or macOS workstation, **do not start here**; the recommended path is [WebCodex Desktop + the official OpenAI Secure Tunnel](desktop-install.md). For CLI or an existing Server, use the [Full Setup guide](PERSONAL_SETUP.md). For a few-minute one-repository trial, use the [Quick Trial](QUICK_START.md).
+This guide is for **production and advanced self-hosting**: long-lived Servers, multiple machines/users, system services, reverse proxies, Docker, and operator-managed networking. For personal and multi-computer setup, start with [Unified installation](unified-installation.md) and its release/validation status. For existing published Desktop artifacts, use the [legacy installation guide](desktop-install.md); the [Full Setup guide](PERSONAL_SETUP.md) retains the advanced CLI procedures. For a few-minute one-repository trial, use the [Quick Trial](QUICK_START.md).
+
+## Unified installation status
+
+For personal or multi-computer installation, start with [Unified installation](unified-installation.md). Its Windows NSIS, macOS package, and Debian 12 / Ubuntu 22.04+ `.deb` installer targets for x64 and arm64 are defined in the build pipeline; the six installer variants have not yet received native build and installation acceptance or a unified release. Real-machine installation, reboot persistence, GUI behavior, and upgrade have not yet been accepted on all three platforms; see the [validation checklist](unified-deployment-validation.md).
+
+The npm/runtime archive, Docker, and platform-specific procedures below are retained as advanced compatibility and historical operational guidance. They do not redefine the unified installer workflow.
 
 ## Components
 
@@ -22,13 +28,13 @@ writable data directory, not a separate legacy `uploads` directory.
 
 ## Build and install
 
-The documented distribution path is the npm thin installer/wrapper:
+For existing published runtime/CLI artifacts, the npm thin installer/wrapper remains available:
 
 ```bash
 npm install -g @yyjeqhc/webcodex
 ```
 
-Supported package platforms are Linux x64, Linux arm64, macOS x64, macOS arm64, Windows x64, and Windows arm64. Windows supports CLI + Runner, explicit foreground Server, and explicit local `webcodex share --tunnel cloudflare|openai|none`. Windows x64 supports managed Cloudflare acquisition; Windows ARM64 Cloudflare requires a trusted explicit/PATH binary because the pinned upstream release has no official ARM64 artifact. Managed OpenAI `tunnel-client` supports Windows x64/arm64. WebCodex-managed Windows Server and Runner services remain unsupported; run them explicitly in the foreground instead. The npm wrapper
+Supported package platforms are Linux x64, Linux arm64, macOS x64, macOS arm64, Windows x64, and Windows arm64. Windows supports CLI + Runner, explicit foreground Server, and explicit local `webcodex share --tunnel cloudflare|openai|none`. Windows x64 supports managed Cloudflare acquisition; Windows ARM64 Cloudflare requires a trusted explicit/PATH binary because the pinned upstream release has no official ARM64 artifact. Managed OpenAI `tunnel-client` supports Windows x64/arm64. The legacy `server install` / `runner install` commands do not manage Windows services; the foreground examples below remain available. The new `environment` workflow implements SCM services with explicit account requirements; see [Unified installation](unified-installation.md#services-and-credentials) and its pending native acceptance. The npm wrapper
 requires Node.js 18 or newer. The native Linux x64 artifact targets glibc 2.17
 or newer.
 
@@ -67,7 +73,7 @@ webcodex login http://127.0.0.1:8080 --code <wc_pair_...> --allowed-root C:\src 
 webcodex runner run --config <login-reported-runner-config>
 ```
 
-When Server and Runner are on different machines, replace the loopback URL with the Server's reachable HTTPS URL and configure the Server listener/public URL plus a trusted reverse proxy or tunnel as described below. Do not copy the Server bootstrap token or env file to the Runner machine. `webcodex server install/start/stop/restart/logs/uninstall` and `webcodex runner install` remain unsupported on Windows; Ctrl-C or Ctrl-Break ends the foreground runtime.
+When Server and Runner are on different machines, replace the loopback URL with the Server's reachable HTTPS URL and configure the Server listener/public URL plus a trusted reverse proxy or network route as described below. An OpenAI Secure MCP Tunnel carries ChatGPT-to-MCP traffic and is not a Runner enrollment URL. Do not copy the Server bootstrap token or env file to the Runner machine. The legacy `webcodex server install/start/stop/restart/logs/uninstall` and `webcodex runner install` commands remain unsupported on Windows; Ctrl-C or Ctrl-Break ends the foreground runtime.
 
 To keep a Windows Server loopback-only while exposing MCP privately through an OpenAI Secure MCP Tunnel and operating an independent Runner like a normal long-lived Runner, see the [Windows + OpenAI Secure MCP Tunnel deep dive](WINDOWS_OPENAI_TUNNEL.md). It is advanced setup/troubleshooting material; ordinary users do not need it before understanding the full setup path.
 

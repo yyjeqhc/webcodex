@@ -604,6 +604,7 @@ async fn dispatch_inbound(
         RunnerEnvelope::RuntimeMetadata {
             tool_providers,
             mcp_gateway_providers,
+            computer_session_availability,
         } => {
             let _ = registry
                 .update_runtime_metadata_for_connection(
@@ -612,6 +613,14 @@ async fn dispatch_inbound(
                     connection_id,
                     Some(tool_providers),
                     mcp_gateway_providers,
+                )
+                .await;
+            let _ = registry
+                .update_computer_session_availability(
+                    client_id,
+                    runner_instance_id,
+                    Some(connection_id),
+                    computer_session_availability,
                 )
                 .await;
         }

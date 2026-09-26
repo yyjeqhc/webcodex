@@ -2,8 +2,7 @@
 
 [English](DESKTOP_DEVELOPMENT.md) | [简体中文](DESKTOP_DEVELOPMENT.zh-CN.md)
 
-This guide is for contributors who want to modify WebCodex Desktop, run it from
-source, or build an installable Windows/macOS package for local testing.
+This guide covers Desktop source development on Linux, Windows, and macOS, plus local packaging. For unified NSIS, `.pkg`, and `.deb` release/acceptance status, see [Unified installation](unified-installation.md). The Windows NSIS / macOS DMG helpers below remain local compatibility packaging workflows.
 
 For ordinary installation, use [Desktop installation](desktop-install.md). For
 day-to-day product use, see [Using Desktop](desktop-guide.md). Formal public
@@ -136,6 +135,33 @@ For frontend-only iteration, `npm --prefix apps/desktop run dev` starts Vite, bu
 that is not a complete Desktop runtime and does not replace a Tauri run when the
 change depends on native commands, process lifecycle, tray/menu behavior, file
 dialogs, autostart, or bundled runtime behavior.
+
+## Linux source preview against an existing Server
+
+A native source preview uses the real Desktop backend and embedded frontend assets. It does not install a `.deb`, migrate service ownership, or establish reboot/installer acceptance. Debian/Ubuntu builds need `build-essential`, `pkg-config`, `libssl-dev`, `libgtk-3-dev`, `libwebkit2gtk-4.1-dev`, and `libayatana-appindicator3-dev`, as well as the Rust/Node prerequisites above. Run the following from the repository root after installing both npm dependency sets:
+
+```bash
+cargo build --locked --profile dogfood -p webcodex -p webcodex-cli -p webcodex-runner
+npm run build --prefix apps/desktop
+cargo build --locked --profile dogfood \
+  --manifest-path apps/desktop/src-tauri/Cargo.toml --features tauri/custom-protocol
+```
+
+Direct Cargo builds need `tauri/custom-protocol` to embed and load the built UI; the Tauri CLI normally selects it for packaged builds. These paths assume the default Cargo target directories. Verify `--build-info-json` on all four executables before deployment: source SHA, version, architecture, and dirty status must match the intended candidate. Build timestamps may differ. Local dogfood is not published build-provenance verification.
+
+If Server and Runner are already managed independently, connect Desktop as a viewer. On a machine with no saved Environment, import an existing **user API credential**, using the Server's actual reachable URL and a protected credential file:
+
+```bash
+target/dogfood/webcodex environment configure \
+  --join http://127.0.0.1:8080 --no-project \
+  --token-file /private/path/webcodex-user-token --bin-dir "$PWD/target/dogfood"
+WEBCODEX_DESKTOP_BIN_DIR="$PWD/target/dogfood" \
+  apps/desktop/src-tauri/target/dogfood/webcodex-desktop
+```
+
+Launch from the logged-in graphical session. An existing Environment is checked for conflicts; this procedure is not an instruction to overwrite it. Viewer setup creates no Runner identity and does not install, stop, or take over existing services. **Local Runner · Not configured** refers to this Desktop environment, while Projects can show authorized work on independently running local or remote Runners. Open `SERVER_URL/runtime` for the same Server's browser console.
+
+To upgrade independently managed Server/Runner binaries, first identify their real service owner, check active work, save the previous binaries/configuration and a consistent Server data snapshot, then use that owner's lifecycle controls. Verify the deployed build and recovery of the same Runner identities/project registrations. Keep existing Tunnel configuration with its owner. This manual source deployment is separate from Core migration and installer upgrade; see the [recorded Linux dogfood evidence](unified-deployment-validation.md#linux-source-deployment-evidence).
 
 ## Build a Windows installer locally
 

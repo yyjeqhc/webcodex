@@ -135,6 +135,7 @@ pub(crate) enum RouteId {
     ArtifactsImport,
     ProjectsResolveOrRegister,
     RuntimeStatus,
+    RuntimeUpgradeMaintenance,
     OAuthClientsCreate,
     OAuthClientsList,
     OAuthClientsUpdateScopes,

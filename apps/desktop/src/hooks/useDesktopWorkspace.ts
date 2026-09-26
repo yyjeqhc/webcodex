@@ -114,6 +114,20 @@ export function useDesktopWorkspace() {
         if (!initial.topology && !initial.configuration_issue) setShowSetup(true);
         commitState(initial);
         if (initial.current_operation || initial.configuration_issue) return;
+        if (initial.persistent_environment) {
+          // System services own persistence. Opening Desktop only observes them;
+          // it must not restart a service the user explicitly stopped.
+          setRefreshing(true);
+          try {
+            const observed = await desktopApi.refresh();
+            if (!cancelled) commitState(observed);
+          } catch (value) {
+            if (!cancelled) setError(normalizeDesktopError(value));
+          } finally {
+            if (!cancelled) setRefreshing(false);
+          }
+          return;
+        }
         const resumeExisting = Boolean(
           initial.topology
           && initial.runtime_autostart
@@ -159,7 +173,9 @@ export function useDesktopWorkspace() {
         void (async () => {
           const observedVersion = stateVersionRef.current;
           try {
-            const next = await desktopApi.getState();
+            const next = state?.persistent_environment && !hasCurrentOperation && !refreshing
+              ? await desktopApi.refresh()
+              : await desktopApi.getState();
             if (!cancelled && stateVersionRef.current === observedVersion) {
               commitState(next);
             }
@@ -178,7 +194,7 @@ export function useDesktopWorkspace() {
       cancelled = true;
       if (timeoutId !== undefined) window.clearTimeout(timeoutId);
     };
-  }, [commitState, hasCurrentOperation, hasLoadedState, refreshing]);
+  }, [commitState, hasCurrentOperation, hasLoadedState, refreshing, state?.persistent_environment]);
 
   useEffect(() => {
     if (!shouldObserveChatgptActivity) return;

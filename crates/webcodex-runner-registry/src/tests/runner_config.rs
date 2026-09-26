@@ -6,6 +6,7 @@ use webcodex_core::runner_protocol::{
 
 fn registration(instance: &str, runner_config_control: bool) -> RunnerRegisterRequest {
     current_runner_registration(RunnerRegisterRequest {
+        computer_session_availability: None,
         client_id: "runner-config-control".to_string(),
         runner_instance_id: instance.to_string(),
         runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,

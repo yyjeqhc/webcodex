@@ -72,6 +72,7 @@ fn runner_concurrency_counts_jobs_across_projects_for_one_client() {
     }
 
     let client = RunnerView {
+        computer_session_availability: None,
         client_id: "shared-runner".to_string(),
         runner_instance_id: "shared-instance".to_string(),
         display_name: None,

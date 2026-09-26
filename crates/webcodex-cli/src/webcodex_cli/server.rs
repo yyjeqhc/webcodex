@@ -32,6 +32,14 @@ pub(crate) struct ServerStatusOptions {
 }
 
 pub(crate) async fn run_server_tunnel(opts: ServerTunnelOptions) -> Result<(), String> {
+    run_server_tunnel_with_stop(opts, std::future::pending()).await
+}
+
+pub(crate) async fn run_server_tunnel_with_stop(
+    opts: ServerTunnelOptions,
+    stop: impl std::future::Future<Output = ()>,
+) -> Result<(), String> {
+    webcodex::load_service_environment_file(&opts.env_file)?;
     let local_server_url = derive_regular_tunnel_server_url(&opts.env_file)?;
     let bootstrap_token = derive_regular_tunnel_bootstrap_token(&opts.env_file)?;
     let runtime_parent = opts
@@ -39,11 +47,15 @@ pub(crate) async fn run_server_tunnel(opts: ServerTunnelOptions) -> Result<(), S
         .parent()
         .unwrap_or_else(|| Path::new("."))
         .to_path_buf();
-    webcodex::run_regular_server_tunnel(webcodex::RegularServerTunnelOptions {
-        local_server_url,
-        bootstrap_token,
-        runtime_parent,
-    })
+    webcodex::run_regular_server_tunnel_with_stop(
+        webcodex::RegularServerTunnelOptions {
+            local_server_url,
+            bootstrap_token,
+            runtime_parent,
+            stop_on_stdin_eof: opts.stop_on_stdin_eof,
+        },
+        stop,
+    )
     .await
 }
 

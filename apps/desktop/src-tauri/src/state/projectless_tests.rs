@@ -249,7 +249,7 @@ async fn workspace_observation_fences_completed_concurrent_operations_and_persis
         let query_app = app.clone();
         let query = tokio::spawn(async move {
             query_app
-                .workspace_query(crate::workspace::WorkspaceRequest::Overview {})
+                .workspace_query(crate::workspace::WorkspaceRequest::RunnerDetails {})
                 .await
         });
         received_rx.await.unwrap();

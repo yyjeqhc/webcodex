@@ -74,6 +74,7 @@ async fn computer_element_state_requires_its_own_additive_capability() {
 
     registry
         .register(current_runner_registration(RunnerRegisterRequest {
+            computer_session_availability: None,
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,

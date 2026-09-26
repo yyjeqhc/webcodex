@@ -2,7 +2,13 @@
 
 [English](DEPLOYMENT.md) | [简体中文](DEPLOYMENT.zh-CN.md)
 
-本文档只面向**生产与高级自托管**：长期 Server、多机器/多用户、systemd/Docker、反向代理和 operator 管理的网络配置。普通 Windows / macOS 工作站**不要从这里开始**；最推荐的路径是 [WebCodex Desktop + 官方 OpenAI Secure Tunnel](desktop-install.zh-CN.md)。CLI 或已有 Server 再看[完整使用指南](PERSONAL_SETUP.zh-CN.md)；如果只想几分钟临时体验一个仓库，再看[快速试用](QUICK_START.zh-CN.md)。
+本文档只面向**生产与高级自托管**：长期 Server、多机器/多用户、systemd/Docker、反向代理和 operator 管理的网络配置。个人和多机配置请先看[统一安装指南](unified-installation.zh-CN.md)及其发布/验收状态。已发布 Desktop 包仍可按[旧版安装指南](desktop-install.zh-CN.md)使用；高级 CLI 流程保留在[完整使用指南](PERSONAL_SETUP.zh-CN.md)；如果只想几分钟临时体验一个仓库，再看[快速试用](QUICK_START.zh-CN.md)。
+
+## 统一安装状态
+
+个人或多机安装请先看[统一安装指南](unified-installation.zh-CN.md)。其中面向 Windows NSIS、macOS 安装包和 Debian 12 / Ubuntu 22.04+ `.deb` 的 x64、arm64 安装目标已在构建流程中定义；六类安装文件尚未完成原生构建与安装验收，也未作为统一安装包发布。三种平台的真实机器安装、重启持久性、GUI 行为和升级尚未全部验收，详见[部署验收清单](unified-deployment-validation.md)。
+
+下文的 npm/runtime 压缩包、Docker 和平台专属操作流程作为高级兼容与历史运维参考保留，不改变统一安装流程。
 
 ## 组件
 
@@ -15,13 +21,13 @@
 
 ## 构建与安装
 
-官方分发路径是 npm 薄安装器/包装器：
+已有的 runtime/CLI 发布产物仍可通过 npm 薄安装器/包装器获取：
 
 ```bash
 npm install -g @yyjeqhc/webcodex
 ```
 
-支持 Linux x64、Linux arm64、macOS x64、macOS arm64、Windows x64 与 Windows arm64。Windows 支持 CLI + Runner、显式前台 Server，以及显式本机 `webcodex share --tunnel cloudflare|openai|none`。Windows x64 支持 managed Cloudflare 获取；固定版本 upstream 没有官方 Windows ARM64 artifact，因此 ARM64 使用 Cloudflare 时需要受信任的显式/`PATH` binary。managed OpenAI `tunnel-client` 支持 Windows x64/arm64。WebCodex 仍不支持 Windows Server/Runner service 托管生命周期；Windows 上应显式以前台方式运行。npm 包装器要求 Node.js 18 或更新。Linux x64 native artifact 以 glibc 2.17 或更新为兼容基线。
+支持 Linux x64、Linux arm64、macOS x64、macOS arm64、Windows x64 与 Windows arm64。Windows 支持 CLI + Runner、显式前台 Server，以及显式本机 `webcodex share --tunnel cloudflare|openai|none`。Windows x64 支持 managed Cloudflare 获取；固定版本 upstream 没有官方 Windows ARM64 artifact，因此 ARM64 使用 Cloudflare 时需要受信任的显式/`PATH` binary。managed OpenAI `tunnel-client` 支持 Windows x64/arm64。旧 `server install` / `runner install` 命令不托管 Windows 服务，仍可使用下文前台流程。新的 `environment` 流程实现了 SCM 服务与显式账户要求；参见[统一安装指南](unified-installation.zh-CN.md#服务与凭据)及待完成的原生验收。npm 包装器要求 Node.js 18 或更新。Linux x64 native artifact 以 glibc 2.17 或更新为兼容基线。
 
 从源码构建：
 

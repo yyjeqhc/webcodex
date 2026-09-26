@@ -460,7 +460,42 @@ fn runner_cli_explicit_config_path_remains_exact() {
             config_path: PathBuf::from("/tmp/agent.toml"),
             once: true,
             stop_on_stdin_eof: false,
+            computer_session_dir: None,
         }
+    );
+}
+
+#[test]
+fn computer_session_cli_modes_are_explicit_and_do_not_need_runner_config() {
+    let _guard = test_env_lock();
+    assert_eq!(
+        parse_runner_args([
+            "--computer-session-helper",
+            "--session-state-dir",
+            "/tmp/computer-session"
+        ])
+        .unwrap(),
+        RunnerCliAction::ComputerSessionHelper {
+            session_state_dir: PathBuf::from("/tmp/computer-session")
+        }
+    );
+    assert_eq!(
+        parse_runner_args([
+            "--config",
+            "/tmp/runner.toml",
+            "--computer-session-dir",
+            "/tmp/computer-session"
+        ])
+        .unwrap(),
+        RunnerCliAction::Run {
+            config_path: PathBuf::from("/tmp/runner.toml"),
+            once: false,
+            stop_on_stdin_eof: false,
+            computer_session_dir: Some(PathBuf::from("/tmp/computer-session")),
+        }
+    );
+    assert!(
+        parse_runner_args(["--computer-session-helper", "--config", "/tmp/runner.toml"]).is_err()
     );
 }
 
@@ -475,6 +510,7 @@ fn runner_parent_liveness_is_explicit_opt_in() {
             config_path: PathBuf::from("/tmp/runner.toml"),
             once: false,
             stop_on_stdin_eof: true,
+            computer_session_dir: None,
         }
     );
 }
@@ -491,6 +527,7 @@ fn runner_cli_config_env_keeps_legacy_fallback_and_rejects_dual_env() {
             config_path: PathBuf::from("/tmp/runner.toml"),
             once: false,
             stop_on_stdin_eof: false,
+            computer_session_dir: None,
         }
     );
     drop(_env);
@@ -504,6 +541,7 @@ fn runner_cli_config_env_keeps_legacy_fallback_and_rejects_dual_env() {
             config_path: PathBuf::from("/tmp/agent.toml"),
             once: false,
             stop_on_stdin_eof: false,
+            computer_session_dir: None,
         }
     );
     drop(_legacy);
@@ -520,6 +558,7 @@ fn runner_cli_config_env_keeps_legacy_fallback_and_rejects_dual_env() {
             config_path: PathBuf::from("/tmp/explicit.toml"),
             once: false,
             stop_on_stdin_eof: false,
+            computer_session_dir: None,
         },
         "an explicit --config path must not be blocked by irrelevant default-path env values"
     );
@@ -529,6 +568,7 @@ fn runner_cli_config_env_keeps_legacy_fallback_and_rejects_dual_env() {
             config_path: client_profile_runner_config("special").unwrap(),
             once: false,
             stop_on_stdin_eof: false,
+            computer_session_dir: None,
         },
         "an explicit profile must not be blocked by irrelevant default-path env values"
     );
@@ -576,6 +616,7 @@ fn runner_cli_profile_derives_default_config_path() {
             config_path: client_profile_runner_config("special").unwrap(),
             once: false,
             stop_on_stdin_eof: false,
+            computer_session_dir: None,
         }
     );
 }
@@ -591,6 +632,7 @@ fn runner_cli_explicit_config_overrides_profile() {
             config_path: PathBuf::from("/tmp/agent.toml"),
             once: false,
             stop_on_stdin_eof: false,
+            computer_session_dir: None,
         }
     );
 }

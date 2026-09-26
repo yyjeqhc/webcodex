@@ -1,6 +1,7 @@
 mod coding_agents;
 mod connections;
 mod diagnostics;
+mod environment;
 mod mcp_providers;
 #[cfg(test)]
 mod projectless_tests;
@@ -260,12 +261,40 @@ impl AppState {
         &self,
         project_path: Option<&str>,
     ) -> DesktopResult<DesktopStateSnapshot> {
+        self.configure_environment(crate::models::EnvironmentInput {
+            mode: "create".into(),
+            server_url: None,
+            project_path: project_path.map(str::to_owned),
+            pairing_code: None,
+            user_token: None,
+            replace_pairing_code: false,
+        })
+        .await
+    }
+
+    pub async fn configure_environment(
+        &self,
+        input: crate::models::EnvironmentInput,
+    ) -> DesktopResult<DesktopStateSnapshot> {
+        let migration = self
+            .get_state()
+            .topology
+            .as_ref()
+            .is_some_and(|topology| topology.experience == Experience::Full)
+            && self.get_state().persistent_environment.is_none();
         let (operation, cancellation, mut core, baseline) = self
-            .begin_operation(DesktopOperationKind::LocalSetup, true)
+            .begin_operation(
+                if migration {
+                    DesktopOperationKind::EnvironmentMigration
+                } else if input.mode == "create" {
+                    DesktopOperationKind::LocalSetup
+                } else {
+                    DesktopOperationKind::RemoteSetup
+                },
+                false,
+            )
             .await?;
-        let result = core
-            .configure_local_setup(project_path, &cancellation)
-            .await;
+        let result = core.configure_environment(input, &cancellation).await;
         self.finish_operation(operation, cancellation, core, baseline, result)
             .await
     }
@@ -277,9 +306,13 @@ impl AppState {
         let (operation, cancellation, mut core, baseline) = self
             .begin_operation(DesktopOperationKind::LocalProjectActivate, true)
             .await?;
-        let result = core
-            .activate_local_project(project_path, &cancellation)
-            .await;
+        let result = if core.config.persistent_environment.is_some() {
+            core.add_environment_project(project_path, &cancellation)
+                .await
+        } else {
+            core.activate_local_project(project_path, &cancellation)
+                .await
+        };
         self.finish_operation(operation, cancellation, core, baseline, result)
             .await
     }
@@ -290,14 +323,15 @@ impl AppState {
         pairing_code: &str,
         project_path: &str,
     ) -> DesktopResult<DesktopStateSnapshot> {
-        let (operation, cancellation, mut core, baseline) = self
-            .begin_operation(DesktopOperationKind::RemoteSetup, true)
-            .await?;
-        let result = core
-            .configure_remote_setup(server_url, pairing_code, project_path, &cancellation)
-            .await;
-        self.finish_operation(operation, cancellation, core, baseline, result)
-            .await
+        self.configure_environment(crate::models::EnvironmentInput {
+            mode: "join".into(),
+            server_url: Some(server_url.to_owned()),
+            project_path: Some(project_path.to_owned()),
+            pairing_code: Some(pairing_code.to_owned()),
+            user_token: None,
+            replace_pairing_code: false,
+        })
+        .await
     }
 
     pub async fn start_quick_share(
@@ -424,7 +458,12 @@ impl AppState {
         if result.is_ok() && cancellation.is_cancelled() {
             result = Err(cancelled_error());
         }
-        if result.is_err() {
+        if result.is_err() && operation.kind == DesktopOperationKind::EnvironmentMigration {
+            // Core's durable migration coordinator owns both restoration and
+            // the unknown-result state. Generic supervisor cleanup could kill
+            // a successfully restored original generation.
+            core.publish_snapshot();
+        } else if result.is_err() {
             let cancelled = result
                 .as_ref()
                 .err()
@@ -618,10 +657,16 @@ impl DesktopCore {
         let config_path = data_dir.join("desktop-state.json");
         // Keep Diagnostics usable if migration fails; admission below prevents
         // replacing the operator's files with a default configuration.
-        let (config, configuration_issue) = match load_config(&config_path, &activity) {
+        let (mut config, configuration_issue) = match load_config(&config_path, &activity) {
             Ok(config) => (config, None),
             Err(error) => (StoredDesktopConfig::default(), Some(error.code)),
         };
+        if configuration_issue.is_none() {
+            environment::adopt_saved_environment(&mut config);
+            if config.persistent_environment.is_none() && environment::migration_in_progress() {
+                config.runtime_autostart = Some(false);
+            }
+        }
         let tunnel_config = TunnelConfig::load(
             &data_dir.join("secrets").join("tunnel-config.json"),
             config.preferred_connection == Some(RegularConnectionPreference::OpenAiTunnel),
@@ -664,7 +709,13 @@ impl DesktopCore {
         snapshot.coding_agents = coding_agents.snapshot(None);
         let published = Arc::new(RwLock::new(snapshot.clone()));
         let supervisor = Arc::new(Mutex::new(ProcessSupervisor::new(activity.clone())));
-        let mut adapter = WebCodexAdapter::new(Some(resource_dir.join("webcodex-runtime")));
+        let runtime_directory = std::env::current_exe()
+            .ok()
+            .and_then(|executable| {
+                webcodex_environment::installed_desktop_runtime_directory(&executable)
+            })
+            .unwrap_or_else(|| resource_dir.join("webcodex-runtime"));
+        let mut adapter = WebCodexAdapter::new(Some(runtime_directory));
         adapter.set_runtime_source(config.runtime_binary_source.clone());
         adapter.set_runtime_approval(config.runtime_binary_fingerprint.clone());
         Ok(Self {
@@ -740,6 +791,9 @@ impl DesktopCore {
         cancellation: &CancellationContext,
     ) -> DesktopResult<DesktopStateSnapshot> {
         cancellation.check()?;
+        if self.config.persistent_environment.is_some() {
+            return self.refresh_environment_status(cancellation).await;
+        }
         if self.snapshot.quick_share.is_some() {
             self.snapshot.chatgpt_activity = None;
             let active = self
@@ -977,6 +1031,14 @@ impl DesktopCore {
         cancellation: &CancellationContext,
     ) -> DesktopResult<DesktopStateSnapshot> {
         cancellation.check()?;
+        if self.config.persistent_environment.is_some() {
+            return self.resume_environment(cancellation).await;
+        }
+        if environment::migration_in_progress() {
+            return Err(DesktopError::new("migration_required",
+                "A previous owner handoff is unfinished",
+                "Open environment setup to resume its exact saved migration; do not start another Runner."));
+        }
         let Some(topology) = self.config.topology.clone() else {
             return self.get_state().await;
         };
@@ -1180,6 +1242,7 @@ impl DesktopCore {
         self.get_state().await
     }
 
+    #[cfg(test)]
     pub async fn configure_local_setup(
         &mut self,
         project_path: Option<&str>,
@@ -1606,6 +1669,7 @@ impl DesktopCore {
         self.get_state().await
     }
 
+    #[cfg(test)]
     pub async fn configure_remote_setup(
         &mut self,
         server_url: &str,
@@ -2066,8 +2130,11 @@ impl DesktopCore {
 
     pub async fn stop_local_runtime(
         &mut self,
-        _cancellation: &CancellationContext,
+        cancellation: &CancellationContext,
     ) -> DesktopResult<DesktopStateSnapshot> {
+        if self.config.persistent_environment.is_some() {
+            return self.stop_environment(cancellation).await;
+        }
         self.stop_all_connection_processes().await?;
         self.stop_process(ProcessKey::LocalRunner).await;
         self.config.runtime_autostart = Some(false);
@@ -3160,6 +3227,13 @@ fn preferred_connection(config: &StoredDesktopConfig) -> RegularConnectionPrefer
 }
 
 fn apply_config_projection(snapshot: &mut DesktopStateSnapshot, config: &StoredDesktopConfig) {
+    snapshot.persistent_environment = config.persistent_environment.clone();
+    snapshot.can_repair_runner_credential = cfg!(windows)
+        && config.persistent_environment.is_some()
+        && config
+            .topology
+            .as_ref()
+            .is_some_and(|topology| topology.runner == RunnerTopology::Local);
     snapshot.workspace_runner = config
         .runtime
         .as_ref()

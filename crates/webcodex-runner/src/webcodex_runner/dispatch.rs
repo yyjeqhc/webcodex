@@ -485,7 +485,11 @@ pub(crate) fn dispatch_request_with_outcome(
                 .map(|_| true)
         }
         RunnerOperation::Computer(operation) => {
-            let result = handle_computer_operation(&operation);
+            let result = if super::computer_session::configured() {
+                super::computer_session::dispatch(&operation)
+            } else {
+                handle_computer_operation(&operation)
+            };
             sink.submit_result_with_metadata(request_id, result, config, runtime)
                 .map(|_| true)
         }

@@ -372,6 +372,7 @@ mod tests {
     fn register_envelope_with_instance(client_id: &str, instance_id: &str) -> RunnerEnvelope {
         RunnerEnvelope::Register {
             payload: RunnerRegisterRequest {
+                computer_session_availability: None,
                 process_started_at: None,
                 build: None,
                 job_concurrency_limit: None,
@@ -888,6 +889,7 @@ mod tests {
 
         ws.send(TungsteniteMessage::Text(
             RunnerEnvelope::RuntimeMetadata {
+                computer_session_availability: None,
                 tool_providers: provider_status(),
                 mcp_gateway_providers: Some(vec![crate::mcp_gateway::McpGatewayProvider {
                     provider_id: "blender".to_string(),

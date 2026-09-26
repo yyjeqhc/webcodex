@@ -98,6 +98,42 @@ pub enum TunnelConfigRequest {
 }
 
 impl TunnelConfig {
+    /// Resolve the exact saved profile for a native service handoff. The
+    /// returned secrets are transient and are never included in a snapshot.
+    pub(crate) fn credentials_for(
+        &self,
+        id: TunnelProfileId,
+    ) -> DesktopResult<webcodex_environment::TunnelCredentials> {
+        if self.invalid {
+            return Err(invalid());
+        }
+        let profile = self
+            .stored
+            .profiles
+            .iter()
+            .find(|profile| profile.id == id)
+            .ok_or_else(missing)?;
+        let credentials = match &profile.credentials {
+            Some(pair) => pair.clone(),
+            None if id == TunnelProfileId::DEFAULT => Credentials {
+                tunnel_id: std::env::var("CONTROL_PLANE_TUNNEL_ID")
+                    .unwrap_or_default()
+                    .trim()
+                    .to_owned(),
+                api_key: std::env::var("CONTROL_PLANE_API_KEY")
+                    .unwrap_or_default()
+                    .trim()
+                    .to_owned(),
+            },
+            None => return Err(invalid()),
+        };
+        validate_pair(&credentials.tunnel_id, &credentials.api_key)?;
+        Ok(webcodex_environment::TunnelCredentials {
+            tunnel_id: webcodex_environment::Secret::new(credentials.tunnel_id),
+            api_key: webcodex_environment::Secret::new(credentials.api_key),
+        })
+    }
+
     pub fn load(path: &Path, legacy_autostart: bool) -> Self {
         Self::load_with_writer(path, legacy_autostart, |path, bytes, original| {
             write_guarded(path, bytes, original)

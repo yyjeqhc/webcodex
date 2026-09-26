@@ -5,6 +5,11 @@ Quick trial:\n\
   share                         Temporarily share one project; ends when the command exits\n\
   (no command)                  Interactive Git repo shortcut for `share` on Linux/macOS\n\n\
 Daily self-hosted setup:\n\
+  environment configure         Create or join an environment; optionally select local projects\n\
+  environment add-project       Add a project using this machine's existing Runner identity\n\
+  environment status|doctor     View the authorized fleet and diagnose this machine\n\
+  See `webcodex environment --help` for services, invitations, recovery and upgrades.\n\n\
+Advanced component commands:\n\
   server                        Configure and operate the Server\n\
   controller                    WSL/Linux terminal control plane for Server, Runner, and Tunnel\n\
   pairing create                Create a one-time login code\n\
@@ -419,13 +424,13 @@ For start/stop/restart/logs/uninstall, --service-file PATH targets a custom mana
 }
 
 pub(crate) fn server_tunnel_usage() -> &'static str {
-    "Usage: webcodex server tunnel --provider openai --env-file PATH --json --stop-on-stdin-eof\n\n\
+    "Usage: webcodex server tunnel --provider openai --env-file PATH --json [--stop-on-stdin-eof]\n\n\
 Run the canonical OpenAI Secure Tunnel for an already-running local WebCodex Server.\n\n\
 Options:\n\
   --provider openai          Required provider; regular Cloudflare remains a separate future contract\n\
   --env-file PATH            Local Server env file used for loopback address and bootstrap authority\n\
   --json                     Emit the safe machine readiness event\n\
-  --stop-on-stdin-eof        Stop when the owning integration closes stdin\n\
+  --stop-on-stdin-eof        Stop when the owning integration closes stdin (default: keep running)\n\
   -h, --help                 Print help and exit\n\n\
 The Tunnel exposes only the local Server MCP endpoint and authenticates it with the effective Server bootstrap credential (process environment overrides the env file). The ready event contains only provider/readiness/clipboard metadata; credentials are never printed.\n"
 }

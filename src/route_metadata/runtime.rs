@@ -5,7 +5,7 @@ use super::{
 };
 use webcodex_core::authority::{
     OAuthBodyAwarePolicy, OAuthRouteScopePolicy::*, SCOPE_JOB_RUN, SCOPE_PROJECT_WRITE,
-    SCOPE_RUNTIME_READ,
+    SCOPE_RUNNER_MANAGE, SCOPE_RUNTIME_READ,
 };
 
 pub(super) const ROUTES: &[RouteSpec] = &[
@@ -67,6 +67,16 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         RuntimeApi,
         Hidden,
         Report,
+        AuthMiddleware,
+    ),
+    route(
+        RuntimeUpgradeMaintenance,
+        Post,
+        "/api/runtime/upgrade-maintenance",
+        Require(SCOPE_RUNNER_MANAGE),
+        RuntimeApi,
+        Hidden,
+        Other,
         AuthMiddleware,
     ),
 ];

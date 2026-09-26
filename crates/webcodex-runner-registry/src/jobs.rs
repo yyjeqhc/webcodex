@@ -22,6 +22,7 @@ pub(super) enum PendingRequestEnqueueError {
     UnknownRunner { client_id: String },
     RunnerOffline { client_id: String },
     QueueFull { client_id: String, limit: usize },
+    Maintenance,
 }
 
 impl fmt::Display for PendingRequestEnqueueError {
@@ -42,6 +43,7 @@ impl fmt::Display for PendingRequestEnqueueError {
                 formatter,
                 "too many pending requests for runner {client_id} (limit {limit})"
             ),
+            Self::Maintenance => write!(formatter, "runner admission is paused for maintenance"),
         }
     }
 }
@@ -588,7 +590,7 @@ pub(super) fn mark_job_lost(
     notify_job_update(job);
 }
 
-fn runner_is_connected_locked(inner: &RunnerRegistryInner, client_id: &str) -> bool {
+pub(crate) fn runner_is_connected_locked(inner: &RunnerRegistryInner, client_id: &str) -> bool {
     inner
         .runners
         .get(client_id)
@@ -654,6 +656,13 @@ pub(super) fn ensure_dispatch_supported_locked(
     inner: &RunnerRegistryInner,
     client_id: &str,
 ) -> Result<(), PendingRequestEnqueueError> {
+    if inner
+        .maintenance
+        .as_ref()
+        .is_some_and(|lease| lease.scope.covers(client_id))
+    {
+        return Err(PendingRequestEnqueueError::Maintenance);
+    }
     if !inner.runners.contains_key(client_id) {
         return Err(PendingRequestEnqueueError::UnknownRunner {
             client_id: client_id.to_string(),

@@ -62,6 +62,13 @@ fn optional_snapshot_dimension(payload: &Value, field: &str) -> Result<Option<u3
 }
 
 pub(crate) fn handle_computer_operation(operation: &RunnerComputerOperation) -> CommandResult {
+    handle_computer_operation_with_runtime(computer_runtime(), operation)
+}
+
+pub(crate) fn handle_computer_operation_with_runtime(
+    runtime: &ComputerRuntime,
+    operation: &RunnerComputerOperation,
+) -> CommandResult {
     let start = Instant::now();
     let payload = match serde_json::from_str::<Value>(&operation.payload) {
         Ok(value) => value,
@@ -80,7 +87,7 @@ pub(crate) fn handle_computer_operation(operation: &RunnerComputerOperation) -> 
                 .and_then(|value| usize::try_from(value).ok())
                 .unwrap_or(MAX_WINDOWS)
                 .clamp(1, MAX_WINDOWS);
-            computer_runtime().list_windows(limit)
+            runtime.list_windows(limit)
         }
         RunnerComputerOperationKind::ListDisplays => {
             ensure_exact_payload_fields(&payload, &["limit"])
@@ -94,7 +101,7 @@ pub(crate) fn handle_computer_operation(operation: &RunnerComputerOperation) -> 
                             "invalid_request: display discovery limit is invalid".to_string()
                         })
                 })
-                .and_then(|limit| computer_runtime().list_displays(limit))
+                .and_then(|limit| runtime.list_displays(limit))
         }
         RunnerComputerOperationKind::ListApplications => {
             ensure_exact_payload_fields(&payload, &["limit"])
@@ -108,7 +115,7 @@ pub(crate) fn handle_computer_operation(operation: &RunnerComputerOperation) -> 
                             "invalid_request: application discovery limit is invalid".to_string()
                         })
                 })
-                .and_then(|limit| computer_runtime().list_applications(limit))
+                .and_then(|limit| runtime.list_applications(limit))
         }
         RunnerComputerOperationKind::LaunchApplication => {
             ensure_exact_payload_fields(&payload, &["application_id"])
@@ -118,11 +125,9 @@ pub(crate) fn handle_computer_operation(operation: &RunnerComputerOperation) -> 
                         .and_then(Value::as_str)
                         .ok_or_else(|| "invalid_request: application_id is required".to_string())
                 })
-                .and_then(|application_id| computer_runtime().launch_application(application_id))
+                .and_then(|application_id| runtime.launch_application(application_id))
         }
-        RunnerComputerOperationKind::AccessibilityStatus => {
-            computer_runtime().accessibility_status()
-        }
+        RunnerComputerOperationKind::AccessibilityStatus => runtime.accessibility_status(),
         RunnerComputerOperationKind::AccessibilityTree => {
             let surface_id = payload
                 .get("surface_id")
@@ -138,9 +143,8 @@ pub(crate) fn handle_computer_operation(operation: &RunnerComputerOperation) -> 
                 .and_then(Value::as_u64)
                 .and_then(|value| usize::try_from(value).ok())
                 .unwrap_or(DEFAULT_ACCESSIBILITY_NODES);
-            surface_id.and_then(|surface_id| {
-                computer_runtime().accessibility_tree(surface_id, max_depth, max_nodes)
-            })
+            surface_id
+                .and_then(|surface_id| runtime.accessibility_tree(surface_id, max_depth, max_nodes))
         }
         RunnerComputerOperationKind::ElementState => {
             ensure_exact_payload_fields(&payload, &["surface_id", "element_id"]).and_then(|()| {
@@ -152,7 +156,7 @@ pub(crate) fn handle_computer_operation(operation: &RunnerComputerOperation) -> 
                     .get("element_id")
                     .and_then(Value::as_str)
                     .ok_or_else(|| "invalid_request: element_id is required".to_string())?;
-                computer_runtime().element_state(surface_id, element_id)
+                runtime.element_state(surface_id, element_id)
             })
         }
         RunnerComputerOperationKind::ActivateWindow => {
@@ -163,34 +167,32 @@ pub(crate) fn handle_computer_operation(operation: &RunnerComputerOperation) -> 
                         .and_then(Value::as_str)
                         .ok_or_else(|| "invalid_request: surface_id is required".to_string())
                 })
-                .and_then(|surface_id| computer_runtime().activate_window(surface_id))
+                .and_then(|surface_id| runtime.activate_window(surface_id))
         }
-        RunnerComputerOperationKind::Control => {
-            ensure_exact_payload_fields(&payload, &["surface_id", "element_id", "action"]).and_then(
-                |()| {
-                    let surface_id = payload
-                        .get("surface_id")
-                        .and_then(Value::as_str)
-                        .ok_or_else(|| "invalid_request: surface_id is required".to_string());
-                    let element_id = payload
-                        .get("element_id")
-                        .and_then(Value::as_str)
-                        .ok_or_else(|| "invalid_request: element_id is required".to_string());
-                    let action = payload
-                        .get("action")
-                        .and_then(Value::as_str)
-                        .ok_or_else(|| "invalid_request: action is required".to_string())
-                        .and_then(ComputerAction::parse);
-                    surface_id.and_then(|surface_id| {
-                        element_id.and_then(|element_id| {
-                            action.and_then(|action| {
-                                computer_runtime().control(surface_id, element_id, action)
-                            })
-                        })
-                    })
-                },
-            )
-        }
+        RunnerComputerOperationKind::Control => ensure_exact_payload_fields(
+            &payload,
+            &["surface_id", "element_id", "action"],
+        )
+        .and_then(|()| {
+            let surface_id = payload
+                .get("surface_id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "invalid_request: surface_id is required".to_string());
+            let element_id = payload
+                .get("element_id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "invalid_request: element_id is required".to_string());
+            let action = payload
+                .get("action")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "invalid_request: action is required".to_string())
+                .and_then(ComputerAction::parse);
+            surface_id.and_then(|surface_id| {
+                element_id.and_then(|element_id| {
+                    action.and_then(|action| runtime.control(surface_id, element_id, action))
+                })
+            })
+        }),
         RunnerComputerOperationKind::ScrollToElement => {
             ensure_exact_payload_fields(&payload, &["surface_id", "element_id"]).and_then(|()| {
                 let surface_id = payload
@@ -201,11 +203,12 @@ pub(crate) fn handle_computer_operation(operation: &RunnerComputerOperation) -> 
                     .get("element_id")
                     .and_then(Value::as_str)
                     .ok_or_else(|| "invalid_request: element_id is required".to_string())?;
-                computer_runtime().scroll_to_element(surface_id, element_id)
+                runtime.scroll_to_element(surface_id, element_id)
             })
         }
-        RunnerComputerOperationKind::ReadClipboard => ensure_exact_payload_fields(&payload, &[])
-            .and_then(|()| computer_runtime().read_clipboard()),
+        RunnerComputerOperationKind::ReadClipboard => {
+            ensure_exact_payload_fields(&payload, &[]).and_then(|()| runtime.read_clipboard())
+        }
         RunnerComputerOperationKind::WriteClipboard => {
             ensure_exact_payload_fields(&payload, &["text"])
                 .and_then(|()| {
@@ -214,7 +217,7 @@ pub(crate) fn handle_computer_operation(operation: &RunnerComputerOperation) -> 
                         .and_then(Value::as_str)
                         .ok_or_else(|| "invalid_request: clipboard text is required".to_string())
                 })
-                .and_then(|text| computer_runtime().write_clipboard(text))
+                .and_then(|text| runtime.write_clipboard(text))
         }
         RunnerComputerOperationKind::KeyInput => {
             ensure_exact_payload_fields(&payload, &["surface_id", "key", "modifiers"]).and_then(
@@ -239,7 +242,7 @@ pub(crate) fn handle_computer_operation(operation: &RunnerComputerOperation) -> 
                             })
                         })
                         .collect::<Result<Vec<_>, _>>()?;
-                    computer_runtime().key_input(surface_id, key, &modifiers)
+                    runtime.key_input(surface_id, key, &modifiers)
                 },
             )
         }
@@ -274,7 +277,7 @@ pub(crate) fn handle_computer_operation(operation: &RunnerComputerOperation) -> 
                         RunnerComputerOperationKind::PointerClick => PointerAction::Click,
                         _ => unreachable!("pointer branch is typed"),
                     };
-                    computer_runtime().pointer_effect(action, display_id, snapshot_generation, x, y)
+                    runtime.pointer_effect(action, display_id, snapshot_generation, x, y)
                 })
         }
         RunnerComputerOperationKind::InputText => {
@@ -294,9 +297,7 @@ pub(crate) fn handle_computer_operation(operation: &RunnerComputerOperation) -> 
                         .ok_or_else(|| "invalid_request: text is required".to_string());
                     surface_id.and_then(|surface_id| {
                         element_id.and_then(|element_id| {
-                            text.and_then(|text| {
-                                computer_runtime().input_text(surface_id, element_id, text)
-                            })
+                            text.and_then(|text| runtime.input_text(surface_id, element_id, text))
                         })
                     })
                 },
@@ -311,7 +312,7 @@ pub(crate) fn handle_computer_operation(operation: &RunnerComputerOperation) -> 
                         .ok_or_else(|| "invalid_request: display_id is required".to_string())?;
                     let max_width = optional_snapshot_dimension(&payload, "max_width")?;
                     let max_height = optional_snapshot_dimension(&payload, "max_height")?;
-                    computer_runtime().snapshot_display(display_id, max_width, max_height)
+                    runtime.snapshot_display(display_id, max_width, max_height)
                 })
         }
         RunnerComputerOperationKind::Snapshot => {
@@ -322,7 +323,7 @@ pub(crate) fn handle_computer_operation(operation: &RunnerComputerOperation) -> 
                         .and_then(Value::as_str)
                         .ok_or_else(|| "invalid_request: surface_id is required".to_string())
                 })
-                .and_then(|surface_id| computer_runtime().snapshot(surface_id, None, None, None))
+                .and_then(|surface_id| runtime.snapshot(surface_id, None, None, None))
         }
         RunnerComputerOperationKind::SnapshotRegion => ensure_exact_payload_fields(
             &payload,
@@ -342,7 +343,7 @@ pub(crate) fn handle_computer_operation(operation: &RunnerComputerOperation) -> 
                         .to_string(),
                 );
             }
-            computer_runtime().snapshot(surface_id, region, max_width, max_height)
+            runtime.snapshot(surface_id, region, max_width, max_height)
         }),
     };
     match result {

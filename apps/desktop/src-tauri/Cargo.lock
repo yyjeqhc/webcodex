@@ -1189,6 +1189,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "fs2"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9564fc758e15025b46aa6643b1b77d047d1a56a1aea6e01002ac0c7026876213"
+dependencies = [
+ "libc",
+ "winapi",
+]
+
+[[package]]
 name = "futures-channel"
 version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3117,6 +3127,7 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "futures-core",
+ "futures-util",
  "http",
  "http-body",
  "http-body-util",
@@ -3136,12 +3147,14 @@ dependencies = [
  "sync_wrapper",
  "tokio",
  "tokio-rustls",
+ "tokio-util",
  "tower",
  "tower-http",
  "tower-service",
  "url",
  "wasm-bindgen",
  "wasm-bindgen-futures",
+ "wasm-streams 0.4.2",
  "web-sys",
  "webpki-roots",
 ]
@@ -3176,7 +3189,7 @@ dependencies = [
  "url",
  "wasm-bindgen",
  "wasm-bindgen-futures",
- "wasm-streams",
+ "wasm-streams 0.5.0",
  "web-sys",
 ]
 
@@ -4888,6 +4901,19 @@ dependencies = [
 
 [[package]]
 name = "wasm-streams"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "15053d8d85c7eccdbefef60f06769760a563c7f0a9d6902a13d35c7800b0ad65"
+dependencies = [
+ "futures-util",
+ "js-sys",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+]
+
+[[package]]
+name = "wasm-streams"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9d1ec4f6517c9e11ae630e200b2b65d193279042e28edd4a2cda233e46670bbb"
@@ -5002,6 +5028,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "webcodex-admin"
+version = "0.4.3"
+dependencies = [
+ "reqwest 0.12.28",
+ "serde_json",
+]
+
+[[package]]
 name = "webcodex-core"
 version = "0.4.3"
 dependencies = [
@@ -5037,10 +5071,32 @@ dependencies = [
  "url",
  "uuid",
  "webcodex-core",
+ "webcodex-environment",
  "webcodex-process",
  "webcodex-runner-config",
  "windows-sys 0.61.2",
  "winreg 0.55.0",
+]
+
+[[package]]
+name = "webcodex-environment"
+version = "0.4.3"
+dependencies = [
+ "fs2",
+ "libc",
+ "quick-xml",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "toml 0.8.2",
+ "url",
+ "uuid",
+ "webcodex-admin",
+ "webcodex-core",
+ "webcodex-runner-config",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

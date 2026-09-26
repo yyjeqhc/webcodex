@@ -22,7 +22,7 @@ export function CodingAgentsPanel({ state, onState, settings, onRestarted }: {
   const [deleting, setDeleting] = useState<{ profile: CodingAgentProfile; revision: number; target: SettingsTarget } | null>(null);
   useEffect(() => {
     let cancelled = false; setInventory(null); setLoading(true);
-    void workspaceQuery<CodingAgentInventory>({ kind: "overview" }).then(value => {
+    void workspaceQuery<CodingAgentInventory>({ kind: "runner_details" }).then(value => {
       if (!cancelled && value.client_id === settings?.target.client_id) setInventory(value);
     }).catch(() => { if (!cancelled) setInventory(null); }).finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };

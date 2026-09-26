@@ -1515,6 +1515,7 @@ async fn memory_scope_missing_or_incomplete_inventory_is_unknown_until_complete(
         .runner_registry
         .register(crate::test_support::current_runner_registration(
             RunnerRegisterRequest {
+                computer_session_availability: None,
                 process_started_at: None,
                 build: None,
                 job_concurrency_limit: None,

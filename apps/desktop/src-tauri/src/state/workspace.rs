@@ -9,7 +9,10 @@ impl AppState {
             return Err(crate::workspace::unavailable());
         }
         let generation = self.operations.generation();
-        let overview = matches!(&request, crate::workspace::WorkspaceRequest::Overview {});
+        let overview = matches!(
+            &request,
+            crate::workspace::WorkspaceRequest::RunnerDetails {}
+        );
         let runtime = {
             let slot = self.core.lock().await;
             let core = slot.as_ref().ok_or_else(crate::workspace::unavailable)?;
@@ -31,7 +34,7 @@ impl AppState {
         {
             return Err(crate::workspace::unavailable());
         }
-        if overview {
+        if overview && core.config.persistent_environment.is_none() {
             core.reconcile_inventory(&value).await;
         }
         Ok(value)
@@ -71,6 +74,47 @@ impl AppState {
             .begin_operation(DesktopOperationKind::ProjectUnregister, false)
             .await?;
         let result = async {
+            if core.config.persistent_environment.is_some() {
+                if !request.confirmed {
+                    return Err(DesktopError::new(
+                        "project_confirmation_required",
+                        "Project removal requires confirmation",
+                        "Review the current project and confirm removal.",
+                    ));
+                }
+                let runtime = core
+                    .config
+                    .runtime
+                    .clone()
+                    .ok_or_else(crate::workspace::unavailable)?;
+                crate::webcodex::settings::verify_target(&runtime, &request.target)?;
+                let observed =
+                    crate::project_inventory::observe(&runtime, &request.project).await?;
+                if observed.expected_revision != request.expected_revision
+                    || observed.path.is_empty()
+                {
+                    return Err(DesktopError::new(
+                        "project_revision_changed",
+                        "The project changed since confirmation",
+                        "Review the current project again before removing it.",
+                    ));
+                }
+                let store = super::environment::store()?;
+                let mut native = webcodex_environment::NativeEnvironment::new()
+                    .map_err(super::environment::desktop_error)?;
+                let result = native
+                    .remove_project(&store, &request.project, Some(&request.expected_revision))
+                    .await
+                    .map_err(super::environment::desktop_error)?;
+                core.project_environment_result(&store, result).await?;
+                crate::project_inventory::forget(
+                    &mut core.config,
+                    &request.project,
+                    &observed.path,
+                );
+                core.save_config().await?;
+                return core.get_state().await;
+            }
             let runtime = core
                 .config
                 .runtime

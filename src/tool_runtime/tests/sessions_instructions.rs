@@ -397,6 +397,7 @@ async fn instruction_snapshot_from_obsolete_config_is_not_projected() {
     runtime
         .runner_registry
         .register(RunnerRegisterRequest {
+            computer_session_availability: None,
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,

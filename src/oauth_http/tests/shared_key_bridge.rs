@@ -429,6 +429,7 @@ async fn register_shared_key_runner_with_capabilities(
     registry
         .register_with_auth(
             crate::runner_protocol::RunnerRegisterRequest {
+                computer_session_availability: None,
                 client_id: client_id.to_string(),
                 runner_instance_id: instance_id.to_string(),
                 runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,

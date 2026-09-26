@@ -396,6 +396,23 @@ impl ToolRuntime {
         return_timing: super::return_timing::ToolReturnTimingPolicy,
         control: &mut Option<super::control_sidecar::ControlExecution>,
     ) -> ToolCallOutcome {
+        // Admit before any tool-specific await or side effect. The permit is
+        // retained through the complete call, including direct SSH effects.
+        let _maintenance_permit = match self.runner_registry.admit_runtime_call().await {
+            Ok(permit) => permit,
+            Err(message) => {
+                return ToolCallOutcome {
+                    success: false,
+                    result: None,
+                    error_status: Some(ToolCallErrorStatus::InvalidArguments {
+                        message: message.to_string(),
+                    }),
+                    project: None,
+                    model_ergonomics: None,
+                    correlation: Default::default(),
+                }
+            }
+        };
         if let Some(control) = control.as_ref() {
             if let Err(outcome) = control.validate(
                 &request.tool_name,

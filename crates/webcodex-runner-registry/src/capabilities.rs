@@ -168,6 +168,26 @@ pub(crate) enum RunnerFeatureInference {
 }
 
 impl RunnerFeature {
+    pub(crate) const fn is_computer(self) -> bool {
+        matches!(
+            self,
+            Self::ComputerObserve
+                | Self::ComputerApplicationDiscovery
+                | Self::ComputerApplicationLaunch
+                | Self::ComputerDisplayObserve
+                | Self::ComputerPointerControl
+                | Self::ComputerClipboardRead
+                | Self::ComputerClipboardWrite
+                | Self::ComputerSnapshotRegion
+                | Self::ComputerAccessibilityObserve
+                | Self::ComputerElementState
+                | Self::ComputerControl
+                | Self::ComputerScrollToElement
+                | Self::ComputerKeyInput
+                | Self::ComputerWindowActivate
+                | Self::ComputerTextInput
+        )
+    }
     pub(crate) const fn all() -> &'static [Self] {
         ALL_RUNNER_FEATURES
     }

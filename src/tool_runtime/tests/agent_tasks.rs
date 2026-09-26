@@ -55,6 +55,7 @@ async fn register_coding_agent_task_runner(
     runtime
         .runner_registry
         .register(RunnerRegisterRequest {
+            computer_session_availability: None,
             process_started_at: Some(1_700_000_000),
             build: None,
             job_concurrency_limit: None,

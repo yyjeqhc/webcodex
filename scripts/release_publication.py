@@ -1024,13 +1024,20 @@ def verify_draft_assets(*, repo: str, bundle_dir: Path, timeout: float) -> dict:
     if not isinstance(release_url, str) or not release_url.startswith("https://github.com/"):
         raise PublicationError("GitHub draft release URL is invalid")
     assets = release.get("assets")
-    if not isinstance(assets, list) or len(assets) > 16:
+    if not isinstance(assets, list) or len(assets) > 32:
         raise PublicationError("GitHub draft asset listing is malformed or too large")
 
     expected_files = {"SHA256SUMS"}
     if summary.get("runtime_manifest") is not None:
         expected_files.add("webcodex-release-manifest.json")
     expected_files.update(f"{summary['archive_stem']}-{platform}.tar.gz" for platform in collector.PLATFORMS)
+    installer_artifacts = summary.get("installer_artifacts")
+    if installer_artifacts is not None:
+        if not isinstance(installer_artifacts, dict) or set(installer_artifacts) != set(collector.PLATFORMS):
+            raise PublicationError("retained bundle unified installer summary is invalid")
+        expected_files.add("manifest.json")
+        expected_files.update(item["filename"] for item in installer_artifacts.values())
+        expected_files.update(item["source_manifest_filename"] for item in installer_artifacts.values())
     desktop_artifacts = summary.get("desktop_artifacts")
     desktop_platforms = collector.primary_desktop_platforms_for_version(str(summary["version"]))
     if not isinstance(desktop_artifacts, dict) or set(desktop_artifacts) != set(desktop_platforms):

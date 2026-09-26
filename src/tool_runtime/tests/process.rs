@@ -943,6 +943,7 @@ async fn detached_process_lost_initiation_after_server_restart_recovers_same_job
     restarted
         .runner_registry
         .register(crate::runner_protocol::RunnerRegisterRequest {
+            computer_session_availability: None,
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -2518,6 +2519,7 @@ async fn shell_recovery_requires_raw_shell_policy_and_explicit_selection_capabil
         runtime
             .runner_registry
             .register(crate::runner_protocol::RunnerRegisterRequest {
+                computer_session_availability: None,
                 process_started_at: None,
                 build: None,
                 job_concurrency_limit: None,

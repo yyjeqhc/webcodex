@@ -356,6 +356,7 @@ async fn http_mcp_code_mode_persists_only_bounded_composition_telemetry() {
     runner_registry
         .register(crate::test_support::current_runner_registration(
             RunnerRegisterRequest {
+                computer_session_availability: None,
                 process_started_at: None,
                 build: None,
                 job_concurrency_limit: None,

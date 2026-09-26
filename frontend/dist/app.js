@@ -16004,6 +16004,9 @@ Object.assign(Hn, {
   "Adding project…": "正在添加项目…",
   Cancel: "取消",
   "Runtime overview unavailable": "运行时概览不可用",
+  "No authorized Runners yet": "暂无获授权的 Runner",
+  "GUI session available": "GUI 会话可用",
+  "GUI session unavailable": "GUI 会话不可用",
   "This credential sees only its observation principal's Windows within currently authorized Projects. Global Window observation requires an administrator Runtime credential.": "当前凭证只能查看其观察主体在当前已授权项目内的窗口。全局窗口观察需要管理员运行时凭证。",
   "Window inventory is bounded; not all observed Windows are loaded.": "窗口清单受返回范围限制，未加载全部已观察窗口。",
   "Linked Session inventory is bounded; additional relations are not loaded.": "关联会话清单受返回范围限制，更多关系尚未加载。",
@@ -30420,7 +30423,11 @@ function C9({ client: e, language: i, overview: a, overviewAvailability: r, onOp
                 }),
                 /* @__PURE__ */ (0, c.jsxs)("span", {
                   className: "runtime-row-primary",
-                  children: [/* @__PURE__ */ (0, c.jsx)("strong", { children: j.client_id }), /* @__PURE__ */ (0, c.jsxs)("small", { children: [j.connected ? p("Runner online") : p("Runner unavailable"), j.version ? " · " + j.version : ""] })]
+                  children: [/* @__PURE__ */ (0, c.jsx)("strong", { children: j.client_id }), /* @__PURE__ */ (0, c.jsxs)("small", { children: [
+                    j.connected ? p("Runner online") : p("Runner unavailable"),
+                    j.version ? " · " + j.version : "",
+                    j.computer_session_availability !== void 0 && " · " + p(r === "available" && j.connected && j.status !== "stale" && j.computer_session_availability ? "GUI session available" : "GUI session unavailable")
+                  ] })]
                 }),
                 /* @__PURE__ */ (0, c.jsxs)("span", {
                   className: "runtime-row-meta runtime-row-jobs",
@@ -30443,7 +30450,7 @@ function C9({ client: e, language: i, overview: a, overviewAvailability: r, onOp
             }, j.client_id)),
             !a?.runners.length && /* @__PURE__ */ (0, c.jsx)("div", {
               className: "empty-inline",
-              children: p(r === "loading" || r === "idle" ? "Loading…" : a ? "No Runners connected" : "Runtime overview unavailable")
+              children: p(r === "loading" || r === "idle" ? "Loading…" : a ? "No authorized Runners yet" : "Runtime overview unavailable")
             })
           ]
         }),

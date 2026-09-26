@@ -3,7 +3,7 @@ use super::project_inventory::reconcile_dynamic_projection;
 #[cfg(any(test, feature = "root-test-support"))]
 use super::validation::validate_id;
 use super::validation::validate_project_summary;
-use super::{RunnerFeatureSet, RunnerRegistry};
+use super::{RunnerFeature, RunnerFeatureSet, RunnerRegistry};
 #[cfg(test)]
 use std::fmt;
 use webcodex_core::runner_protocol::RunnerProjectSummary;
@@ -82,7 +82,8 @@ impl RunnerRegistry {
                 .ok_or_else(|| RunnerLookupError::UnknownRunner {
                     client_id: client_id.to_string(),
                 })?;
-        Ok(runner.runner_features.supports_wire_name(capability))
+        Ok(RunnerFeature::from_wire_name(capability)
+            .is_some_and(|feature| runner.supports(feature)))
     }
 
     pub async fn runner_supports_for_auth(
@@ -98,7 +99,8 @@ impl RunnerRegistry {
             .get(client_id)
             .ok_or_else(|| format!("unknown shell client: {}", client_id))?;
         assert_runner_access(auth, runner)?;
-        Ok(runner.runner_features.supports_wire_name(capability))
+        Ok(RunnerFeature::from_wire_name(capability)
+            .is_some_and(|feature| runner.supports(feature)))
     }
 
     /// Test-only accessor for projects registered to a runner.

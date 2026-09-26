@@ -6,6 +6,7 @@ use webcodex_core::runner_skill::RunnerSkillRequest;
 
 fn skill_registration(instance: &str, runtime: bool, management: bool) -> RunnerRegisterRequest {
     current_runner_registration(RunnerRegisterRequest {
+        computer_session_availability: None,
         client_id: "skill-runner".to_string(),
         runner_instance_id: instance.to_string(),
         runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,

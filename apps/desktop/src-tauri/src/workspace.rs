@@ -14,6 +14,8 @@ const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum WorkspaceRequest {
     Overview {},
+    Projects {},
+    RunnerDetails {},
     Windows {},
     Sessions {
         project: String,
@@ -51,25 +53,60 @@ pub fn unavailable() -> DesktopError {
     )
 }
 
-fn request_body(request: WorkspaceRequest, runner: &str) -> DesktopResult<(&'static str, Value)> {
+fn authentication_required() -> DesktopError {
+    DesktopError::new(
+        "workspace_authentication_required",
+        "Server authentication is missing or expired",
+        "Restore the saved user credential, then refresh.",
+    )
+}
+
+fn response_error(status: reqwest::StatusCode) -> DesktopError {
+    match status {
+        reqwest::StatusCode::UNAUTHORIZED => authentication_required(),
+        reqwest::StatusCode::FORBIDDEN => DesktopError::new(
+            "workspace_permission_denied",
+            "The user cannot access this Server view",
+            "Check the existing user's permissions on the Server.",
+        ),
+        _ => unavailable(),
+    }
+}
+
+fn unreachable() -> DesktopError {
+    DesktopError::new(
+        "workspace_server_unreachable",
+        "The Server could not be reached",
+        "Check the Server address and connection, then refresh.",
+    )
+}
+
+fn request_body(
+    request: WorkspaceRequest,
+    runner: Option<&str>,
+) -> DesktopResult<(&'static str, Value)> {
     // These selectors are identities, not paths. Authorization remains at the Server.
     let valid = |value: &str| {
         !value.is_empty() && value.len() <= 512 && !value.chars().any(char::is_control)
     };
-    let own_project = |value: &str| valid(value) && value.starts_with(&format!("agent:{runner}:"));
+    let own_project = |value: &str| {
+        runner.is_some_and(|runner| valid(value) && value.starts_with(&format!("agent:{runner}:")))
+    };
     Ok(match request {
-        WorkspaceRequest::Overview {} => {
-            ("runner", json!({"client_id": runner, "project_limit": 32}))
+        WorkspaceRequest::Overview {} => ("overview", json!({})),
+        WorkspaceRequest::Projects {} => ("projects", json!({"limit": 200})),
+        WorkspaceRequest::RunnerDetails {} if runner.is_some() => {
+            ("runner", json!({"client_id": runner, "project_limit": 200}))
         }
         WorkspaceRequest::Windows {} => ("windows", json!({"limit": 64})),
-        WorkspaceRequest::Sessions { project } if own_project(&project) => (
+        WorkspaceRequest::Sessions { project } if valid(&project) => (
             "workflow-sessions",
             json!({"project": project, "limit": 50}),
         ),
         WorkspaceRequest::Session {
             project,
             session_id,
-        } if own_project(&project) && valid(&session_id) => (
+        } if valid(&project) && valid(&session_id) => (
             "workflow-session",
             json!({"project": project, "session_id": session_id, "limit": 50}),
         ),
@@ -77,10 +114,10 @@ fn request_body(request: WorkspaceRequest, runner: &str) -> DesktopResult<(&'sta
             "window",
             json!({"client_window_key": client_window_key, "activity_limit": 30, "session_limit": 20}),
         ),
-        WorkspaceRequest::Extensions { project } if own_project(&project) => {
+        WorkspaceRequest::Extensions { project } if valid(&project) => {
             ("extensions", json!({"project": project}))
         }
-        WorkspaceRequest::ProjectGit { project } if own_project(&project) => {
+        WorkspaceRequest::ProjectGit { project } if valid(&project) => {
             ("project-git", json!({"project": project}))
         }
         WorkspaceRequest::Instruction {
@@ -88,7 +125,7 @@ fn request_body(request: WorkspaceRequest, runner: &str) -> DesktopResult<(&'sta
             source_scope,
             path,
             fingerprint,
-        } if own_project(&project)
+        } if valid(&project)
             && matches!(source_scope.as_str(), "runner" | "project")
             && path.len() <= 4096
             && fingerprint.len() <= 128 =>
@@ -108,11 +145,7 @@ fn request_body(request: WorkspaceRequest, runner: &str) -> DesktopResult<(&'sta
 }
 
 pub async fn query(runtime: &StoredRuntime, request: WorkspaceRequest) -> DesktopResult<Value> {
-    let runner = runtime
-        .runner_client_id
-        .as_deref()
-        .ok_or_else(unavailable)?;
-    let (route, body) = request_body(request, runner)?;
+    let (route, body) = request_body(request, runtime.runner_client_id.as_deref())?;
     post(
         runtime,
         &format!("/api/runtime-console/{route}"),
@@ -149,17 +182,20 @@ pub(crate) async fn post(
     ) {
         builder = builder.no_proxy();
     }
-    let token_path = runtime.user_token_file.as_ref().ok_or_else(unavailable)?;
+    let token_path = runtime
+        .user_token_file
+        .as_ref()
+        .ok_or_else(authentication_required)?;
     let mut token = String::new();
     tokio::fs::File::open(token_path)
         .await
-        .map_err(|_| unavailable())?
+        .map_err(|_| authentication_required())?
         .take(16_385)
         .read_to_string(&mut token)
         .await
-        .map_err(|_| unavailable())?;
+        .map_err(|_| authentication_required())?;
     if token.len() > 16_384 || token.trim().is_empty() {
-        return Err(unavailable());
+        return Err(authentication_required());
     }
     let client = builder.build().map_err(|_| unavailable())?;
     let mut response = client
@@ -168,10 +204,10 @@ pub(crate) async fn post(
         .json(&body)
         .send()
         .await
-        .map_err(|_| unavailable())?;
+        .map_err(|_| unreachable())?;
     drop(token);
     if !response.status().is_success() {
-        return Err(unavailable());
+        return Err(response_error(response.status()));
     }
     if response
         .content_length()
@@ -193,6 +229,21 @@ pub(crate) async fn post(
 mod tests {
     use super::*;
     #[test]
+    fn response_failures_preserve_authentication_and_permission_boundaries() {
+        assert_eq!(
+            response_error(reqwest::StatusCode::UNAUTHORIZED).code,
+            "workspace_authentication_required"
+        );
+        assert_eq!(
+            response_error(reqwest::StatusCode::FORBIDDEN).code,
+            "workspace_permission_denied"
+        );
+        assert_eq!(
+            response_error(reqwest::StatusCode::INTERNAL_SERVER_ERROR).code,
+            "workspace_unavailable"
+        );
+    }
+    #[test]
     fn request_vocabulary_is_closed_and_selectors_are_bounded() {
         assert!(serde_json::from_value::<WorkspaceRequest>(
             json!({"kind":"overview","url":"https://other.example"})
@@ -203,14 +254,14 @@ mod tests {
             WorkspaceRequest::Sessions {
                 project: "x".repeat(513)
             },
-            "runner"
+            Some("runner")
         )
         .is_err());
         assert_eq!(
-            request_body(WorkspaceRequest::Overview {}, "mini")
+            request_body(WorkspaceRequest::Overview {}, Some("mini"))
                 .unwrap()
                 .1,
-            json!({"client_id":"mini","project_limit":32})
+            json!({})
         );
     }
 }

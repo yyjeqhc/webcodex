@@ -25,7 +25,7 @@ mod windows_guard {
             let message = windows_unsupported_platform_action(&args(&command))
                 .expect("managed server lifecycle must be blocked on Windows");
             assert!(
-                message.contains("service-managed Server lifecycle"),
+                message.contains("webcodex environment start|stop|restart server"),
                 "{command:?}: {message}"
             );
             assert!(
@@ -48,7 +48,7 @@ mod windows_guard {
             let message = windows_unsupported_platform_action(&args(&command))
                 .expect("runner install must be blocked on Windows");
             assert!(
-                message.contains("Automatic Windows Runner startup is not supported"),
+                message.contains("webcodex environment start|stop|restart runner"),
                 "{command:?}: {message}"
             );
             assert!(

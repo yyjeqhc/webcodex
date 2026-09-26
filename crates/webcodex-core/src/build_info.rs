@@ -80,6 +80,7 @@ pub fn machine_build_info(binary: &str) -> crate::desktop_runtime_contract::Mach
         desktop_runtime_contract: DESKTOP_RUNTIME_CONTRACT,
         agent_protocol_generation: matches!(binary, "webcodex-server" | "webcodex-runner")
             .then_some(crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2.get()),
+        environment_data_format: Some(1),
     }
 }
 

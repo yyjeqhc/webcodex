@@ -306,6 +306,7 @@ impl RunnerRegistry {
             hostname: trim_string(body.hostname),
             host_context,
             runner_features: runner_features.clone(),
+            computer_session_availability: body.computer_session_availability,
             projects,
             project_inventory,
             last_seen: now,
@@ -792,6 +793,37 @@ impl RunnerRegistry {
                 policy.mcp_gateway_providers = Some(providers);
             }
         }
+        runner.last_seen = now_ts();
+        Ok(())
+    }
+
+    /// Update only brokered Computer availability for the exact active lease.
+    /// A missing field leaves legacy/transient behavior unchanged.
+    pub async fn update_computer_session_availability(
+        &self,
+        client_id: &str,
+        runner_instance_id: &str,
+        connection_id: Option<&str>,
+        availability: Option<bool>,
+    ) -> Result<(), String> {
+        let Some(availability) = availability else {
+            return Ok(());
+        };
+        validate_runner_instance_id(runner_instance_id)?;
+        let mut inner = self.inner.lock().await;
+        let runner = inner
+            .runners
+            .get_mut(client_id)
+            .ok_or_else(|| format!("unknown shell client: {client_id}"))?;
+        if runner.runner_instance_id != runner_instance_id
+            || connection_id.is_some_and(|id| runner.connection_id.as_deref() != Some(id))
+        {
+            return Err("computer session availability has a stale Runner lease".to_string());
+        }
+        if runner.computer_session_availability.is_none() {
+            return Err("computer session availability requires registration opt-in".to_string());
+        }
+        runner.computer_session_availability = Some(availability);
         runner.last_seen = now_ts();
         Ok(())
     }
@@ -1544,6 +1576,7 @@ impl RunnerRegistry {
             connected,
             last_seen: runner.last_seen,
             capabilities: runner.runner_features.wire_capabilities().clone(),
+            computer_session_availability: runner.computer_session_availability,
             coding_agent_providers: (!runner.coding_agent_providers.is_empty())
                 .then(|| runner.coding_agent_providers.clone()),
             pending_requests,

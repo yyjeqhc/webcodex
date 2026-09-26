@@ -10,6 +10,7 @@ mod capabilities;
 mod job_status;
 mod job_updates;
 mod jobs;
+mod maintenance;
 mod polling;
 mod project_inventory;
 mod projects;
@@ -132,6 +133,9 @@ pub use job_updates::{
     MAX_JOB_TELEMETRY_SNAPSHOTS,
 };
 pub use jobs::{command_preview, process_preview, script_preview, COMMAND_PREVIEW_MAX_CHARS};
+pub use maintenance::{
+    MaintenanceGrant, MaintenanceScope, MaintenanceStore, SavedMaintenanceLease,
+};
 pub(crate) use protocol::AcceptedRunnerProtocol;
 pub use reconciliation::recovery_timeout_sweep;
 pub use registry::{

@@ -23,6 +23,7 @@ export function Sidebar({ state, navigation, setNavigation }: { state: DesktopSt
   const p = useProduct(); const c = useConnectionsTools();
   const nextAppearance = appearance === "system" ? "light" : appearance === "light" ? "dark" : "system";
   const AppearanceIcon = appearance === "dark" ? Moon : appearance === "light" ? Sun : Monitor;
+  const hasLocalRunner = state.topology?.runner?.kind !== "none";
   return (
       <aside className="sidebar">
         <div className="brand"><BrandMark /><div><strong>WebCodex</strong><span>Desktop</span></div></div>
@@ -78,8 +79,8 @@ export function Sidebar({ state, navigation, setNavigation }: { state: DesktopSt
           <AccentPicker color={accent} onChange={setAccent} compact />
         </div>
         <div className="sidebar-status">
-          <i className={`status-dot ${state.readiness.runtime_ready ? "ready" : "unknown"}`} aria-hidden="true" />
-          <div><strong>Runner · {p(statusKey(state.readiness.runner))}</strong><span>{c("connections")} · {state.connections?.running ?? 0} / {state.connections?.profiles.length ?? 0}</span></div>
+          <i className={`status-dot ${(hasLocalRunner ? state.readiness.runtime_ready : state.readiness.server === "ready") ? "ready" : "unknown"}`} aria-hidden="true" />
+          <div><strong>{hasLocalRunner ? `Runner · ${p(statusKey(state.readiness.runner))}` : `${p("serverConnection")} · ${p(statusKey(state.readiness.server))}`}</strong><span>{c("connections")} · {state.connections?.running ?? 0} / {state.connections?.profiles.length ?? 0}</span></div>
         </div>
       </aside>
   );

@@ -50,6 +50,7 @@ fn register_request(
     build: Option<RunnerBuildInfo>,
 ) -> RunnerRegisterRequest {
     crate::test_support::current_runner_registration(RunnerRegisterRequest {
+        computer_session_availability: None,
         client_id: client_id.to_string(),
         runner_instance_id: instance.to_string(),
         runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,

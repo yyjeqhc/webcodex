@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <title>Download WebCodex</title>
+    <link rel="stylesheet" href="./styles.css">
+    <script type="module" src="./app.js"></script>
+  </head>
+  <body>
+    <main class="page">
+      <header class="top">
+        <a class="brand" href="https://github.com/yyjeqhc/webcodex">WebCodex</a>
+        <a class="release-link" id="release-link" href="https://github.com/yyjeqhc/webcodex/releases">All releases</a>
+      </header>
+      <section class="hero" aria-labelledby="title">
+        <p class="eyebrow">Desktop and Runtime</p>
+        <h1 id="title">Download WebCodex</h1>
+        <p class="intro">Choose the installer for this computer. The package includes Desktop, CLI, Server, and Runner.</p>
+        <p class="version" id="version">Loading the latest release…</p>
+      </section>
+      <section class="download-card" aria-labelledby="choice-title">
+        <label for="platform"><span id="choice-title">Choose your platform</span></label>
+        <select id="platform" disabled>
+          <option value="">Loading installers…</option>
+        </select>
+        <p class="recommendation" id="recommendation" aria-live="polite"></p>
+        <a class="download-button disabled" id="download" aria-disabled="true">Download installer</a>
+        <div class="checksum">
+          <span>SHA-256</span>
+          <code id="sha256">Available after the release loads</code>
+        </div>
+        <a class="checksums-link" id="checksums" href="https://github.com/yyjeqhc/webcodex/releases">View release checksums</a>
+      </section>
+      <section class="help">
+        <h2>Not sure which option to choose?</h2>
+        <p>The recommendation uses your browser's platform and architecture when available. Verify it against your computer's system settings before downloading.</p>
+        <p>For supported versions and setup instructions, see the <a href="https://github.com/yyjeqhc/webcodex">WebCodex repository</a>.</p>
+      </section>
+      <p class="error" id="error" role="alert" hidden></p>
+      <footer>WebCodex installers are provided as release assets. Review the source and release notes before installation.</footer>
+    </main>
+  </body>
+</html>

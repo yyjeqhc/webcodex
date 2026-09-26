@@ -83,7 +83,7 @@ describe("Desktop Coding Agents", () => {
     fireEvent.click(screen.getByRole("button", { name: "Restart Runner" }));
     await waitFor(() => expect(api.restartOwnedRunner).toHaveBeenCalledExactlyOnceWith(target));
     await waitFor(() => expect(within(screen.getByRole("article", { name: "Pi Agent" })).getByText("Configured · Active")).toBeInTheDocument());
-    expect(query).toHaveBeenLastCalledWith({ kind: "overview" });
+    expect(query).toHaveBeenLastCalledWith({ kind: "runner_details" });
   });
 
   it("never invents Active from desired state, another Runner or a stale provider name", async () => {

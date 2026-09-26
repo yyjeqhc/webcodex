@@ -5,6 +5,7 @@ async fn registry_allows_session_scoped_run_without_ssh_resource() {
     let registry = RunnerRegistry::default();
     registry
         .register(current_runner_registration(RunnerRegisterRequest {
+            computer_session_availability: None,
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -76,6 +77,7 @@ async fn script_language_extensions_require_independent_additive_capabilities() 
         capabilities.structured_script_javascript = javascript;
         capabilities.structured_script_typescript = typescript;
         current_runner_registration(RunnerRegisterRequest {
+            computer_session_availability: None,
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -165,6 +167,7 @@ async fn script_language_extensions_require_independent_additive_capabilities() 
 async fn python_direct_script_requires_additive_capability_before_enqueue() {
     let registry = RunnerRegistry::default();
     let registration = |python: bool| RunnerRegisterRequest {
+        computer_session_availability: None,
         process_started_at: None,
         build: None,
         job_concurrency_limit: None,
@@ -244,6 +247,7 @@ async fn bash_login_requires_additive_capability_before_enqueue() {
     use webcodex_core::workflow_session_contract::ExecutionShell;
     let registry = RunnerRegistry::default();
     let registration = |login: bool| RunnerRegisterRequest {
+        computer_session_availability: None,
         process_started_at: None,
         build: None,
         job_concurrency_limit: None,

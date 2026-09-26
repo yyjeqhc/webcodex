@@ -102,6 +102,7 @@ async fn stateless_observation_runner_registry() -> Arc<crate::runner_http::Runn
     runner_registry
         .register(crate::test_support::current_runner_registration(
             RunnerRegisterRequest {
+                computer_session_availability: None,
                 process_started_at: None,
                 build: None,
                 job_concurrency_limit: None,

@@ -4,6 +4,7 @@ pub(crate) mod browser;
 pub(crate) mod checkpoints;
 pub(crate) mod coding_agent;
 pub(crate) mod computer;
+pub(crate) mod computer_session;
 pub(crate) mod config;
 pub(crate) mod configured_skills;
 pub(crate) mod detached_job;

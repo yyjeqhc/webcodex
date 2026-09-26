@@ -72,6 +72,53 @@ def synthetic_elf(machine: int, glibc: str = "2.17", needed: tuple[str, ...] = (
 
 
 class ManifestTests(unittest.TestCase):
+    def test_unified_installer_manifest_and_asset_set_require_all_six_canonical_installers(self) -> None:
+        version = "0.3.8"
+        manifest = {
+            "version": version,
+            "binaries": list(verifier.BINARIES),
+            "artifacts": {
+                platform: {"url": verifier.expected_artifact_url(version, platform), "sha256": "a" * 64}
+                for platform in verifier.PLATFORMS
+            },
+            "installers": {
+                platform: {
+                    "filename": verifier.canonical_installer_name(version, platform),
+                    "url": verifier.expected_installer_url(version, platform),
+                    "sha256": "b" * 64,
+                    "source_manifest_url": f"https://github.com/{verifier.REPO}/releases/download/v{version}/{verifier.canonical_source_manifest_name(version, platform)}",
+                    "source_manifest_sha256": "c" * 64,
+                }
+                for platform in verifier.PLATFORMS
+            },
+        }
+        validated = verifier.validate_public_installers(manifest, version)
+        self.assertEqual(set(validated), set(verifier.PLATFORMS))
+        names = [verifier.canonical_archive_name(version, platform) for platform in verifier.PLATFORMS]
+        names += [verifier.canonical_installer_name(version, platform) for platform in verifier.PLATFORMS]
+        names += [verifier.canonical_source_manifest_name(version, platform) for platform in verifier.PLATFORMS]
+        names.append("SHA256SUMS")
+        release = {
+            "tag_name": f"v{version}", "draft": False, "prerelease": False,
+            "assets": [{"name": name, "state": "uploaded", "browser_download_url": "https://example.invalid/" + name} for name in names],
+        }
+        self.assertEqual(set(verifier.validate_github_assets(release, version)), set(names))
+        partial = dict(manifest)
+        partial["installers"] = dict(manifest["installers"])
+        del partial["installers"]["linux-arm64"]
+        with self.assertRaises(verifier.VerificationError):
+            verifier.validate_public_installers(partial, version)
+
+    def test_unified_installer_checksums_are_included_only_for_the_complete_set(self) -> None:
+        version = "0.3.8"
+        filenames = [verifier.canonical_archive_name(version, platform) for platform in verifier.PLATFORMS]
+        filenames += [verifier.canonical_installer_name(version, platform) for platform in verifier.PLATFORMS]
+        filenames += [verifier.canonical_source_manifest_name(version, platform) for platform in verifier.PLATFORMS]
+        text = "\n".join(f"{'a' * 64}  {name}" for name in filenames) + "\n"
+        self.assertEqual(len(verifier.parse_sha256sums(text, version, unified_installers=True)), 18)
+        with self.assertRaises(verifier.VerificationError):
+            verifier.parse_sha256sums(text, version)
+
     def test_manifest_requires_exact_release_platforms(self) -> None:
         version = "0.3.8"
         manifest = {

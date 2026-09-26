@@ -260,6 +260,7 @@ async fn register_import_agent_with_capabilities(
     registry
         .register(crate::test_support::current_runner_registration(
             RunnerRegisterRequest {
+                computer_session_availability: None,
                 process_started_at: None,
                 build: None,
                 job_concurrency_limit: None,
@@ -588,6 +589,7 @@ fn http_runtime_status_after_runner_registration_fits_default_worker_stack() {
             .expect("realistic current Runner policy fixture");
             let mut registration =
                 crate::test_support::current_runner_registration(RunnerRegisterRequest {
+                    computer_session_availability: None,
                     process_started_at: Some(1),
                     build: Some(RunnerBuildInfo {
                         version: Some(env!("CARGO_PKG_VERSION").to_string()),
@@ -2594,6 +2596,7 @@ async fn gpt_action_direct_cannot_bypass_project_owner_authority() {
     registry
         .register(crate::test_support::current_runner_registration(
             RunnerRegisterRequest {
+                computer_session_availability: None,
                 process_started_at: None,
                 build: None,
                 job_concurrency_limit: None,

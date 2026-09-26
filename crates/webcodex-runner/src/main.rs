@@ -106,6 +106,10 @@ enum RunnerCliAction {
         config_path: PathBuf,
         once: bool,
         stop_on_stdin_eof: bool,
+        computer_session_dir: Option<PathBuf>,
+    },
+    ComputerSessionHelper {
+        session_state_dir: PathBuf,
     },
     Exit {
         code: i32,
@@ -115,7 +119,7 @@ enum RunnerCliAction {
 }
 
 fn usage() -> &'static str {
-    "Usage: webcodex-runner [--config PATH] [--once] [--stop-on-stdin-eof]\n\n\
+    "Usage: webcodex-runner [--config PATH] [--once] [--stop-on-stdin-eof] [--computer-session-dir PATH]\n\n\
      Options:\n\
        -h, --help                 Print help and exit\n\
        -V, --version              Print version and exit\n\
@@ -123,6 +127,8 @@ fn usage() -> &'static str {
        --profile NAME             Client config profile for default config path\n\
        --once                     Complete one successful poll, then exit (polling transport)\n\
        --stop-on-stdin-eof        Stop when the invoking parent closes stdin\n\n\
+       --computer-session-dir PATH  Route Computer calls to login-session helper\n\
+       --computer-session-helper --session-state-dir PATH  Run login-session helper\n\n\
      With --profile, the default config path is derived under\n\
      /etc/webcodex/clients/<profile> for root or\n\
      ~/.config/webcodex/clients/<profile> for non-root users. Explicit\n\
@@ -149,6 +155,19 @@ fn parse_args() -> Result<RunnerCliAction, String> {
     parse_runner_args(std::env::args().skip(1))
 }
 
+#[cfg(windows)]
+fn parse_service_runner_args(args: &[String]) -> Result<(PathBuf, PathBuf), String> {
+    if args.len() != 4
+        || args[0] != "--config"
+        || args[2] != "--computer-session-dir"
+        || args[1].is_empty()
+        || args[3].is_empty()
+    {
+        return Err("Runner service requires --config PATH --computer-session-dir PATH".into());
+    }
+    Ok((PathBuf::from(&args[1]), PathBuf::from(&args[3])))
+}
+
 fn parse_runner_args<I, S>(args: I) -> Result<RunnerCliAction, String>
 where
     I: IntoIterator<Item = S>,
@@ -158,6 +177,19 @@ where
         .into_iter()
         .map(|arg| arg.as_ref().to_string())
         .collect();
+    if args
+        .first()
+        .is_some_and(|arg| arg == "--computer-session-helper")
+    {
+        if args.len() != 3 || args[1] != "--session-state-dir" || args[2].is_empty() {
+            return Err(
+                "computer session helper requires only --session-state-dir PATH".to_string(),
+            );
+        }
+        return Ok(RunnerCliAction::ComputerSessionHelper {
+            session_state_dir: PathBuf::from(&args[2]),
+        });
+    }
     if args.len() == 1 {
         match args[0].as_str() {
             "--build-info-json" => {
@@ -190,6 +222,7 @@ where
     let mut profile: Option<String> = None;
     let mut once = false;
     let mut stop_on_stdin_eof = false;
+    let mut computer_session_dir = None;
     let mut args = args.into_iter();
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -209,6 +242,12 @@ where
             }
             "--once" => once = true,
             "--stop-on-stdin-eof" => stop_on_stdin_eof = true,
+            "--computer-session-dir" => {
+                let Some(path) = args.next() else {
+                    return Err("--computer-session-dir requires a path".to_string());
+                };
+                computer_session_dir = Some(PathBuf::from(path));
+            }
             "--config" | "-c" => {
                 let Some(path) = args.next() else {
                     return Err("--config requires a path".to_string());
@@ -257,6 +296,7 @@ where
         config_path,
         once,
         stop_on_stdin_eof,
+        computer_session_dir,
     })
 }
 
@@ -1629,6 +1669,7 @@ fn build_register_request_with_provider_status(
     Arc<webcodex_runner::external_tools::ExternalToolRouter>,
     u64,
 ) {
+    webcodex_runner::computer_session::set_server_availability_contract(false);
     let hot = runtime.snapshot();
     let mut capabilities = runner_register_capabilities(cfg);
     let coding_agent_providers = runtime
@@ -1649,6 +1690,7 @@ fn build_register_request_with_provider_status(
             hostname: cfg.hostname.clone().or_else(hostname),
             host_context: cfg.host_context.clone(),
             capabilities,
+            computer_session_availability: webcodex_runner::computer_session::availability(),
             policy: Some(register_policy_summary(
                 &hot,
                 prepared_cache_count,
@@ -1841,6 +1883,14 @@ fn register(
     let response: RunnerRegisterResponse = post_json(client, cfg, RUNNER_REGISTER_PATH, &body)
         .map_err(|error| RegisterError::from_http(error, &cfg.client_id))?;
     if response.success {
+        webcodex_runner::computer_session::set_server_availability_contract(
+            webcodex_runner::computer_session::registration_echo_confirms_contract(
+                response
+                    .client
+                    .as_ref()
+                    .and_then(|client| client.computer_session_availability),
+            ),
+        );
         provider.mark_status_reported(provider_revision);
         let inventory_status = response
             .client
@@ -2360,6 +2410,7 @@ fn handle_one_poll(
                     revision,
                 )
             });
+    let computer_session_update = webcodex_runner::computer_session::changed_availability();
     let poll = RunnerPollPayload {
         request: RunnerPollRequest {
             client_id: cfg.client_id.clone(),
@@ -2371,6 +2422,7 @@ fn handle_one_poll(
         mcp_gateway_providers: provider_update
             .as_ref()
             .map(|_| runtime.mcp_gateway().provider_inventory()),
+        computer_session_availability: computer_session_update,
         project_inventory_page,
     };
     let response: RunnerPollResponse = match post_json(client, cfg, RUNNER_POLL_PATH, &poll) {
@@ -2390,6 +2442,9 @@ fn handle_one_poll(
             &cfg.client_id,
             response.error,
         ));
+    }
+    if let Some(available) = computer_session_update {
+        webcodex_runner::computer_session::mark_availability_reported(available);
     }
     if let Some((_, provider, revision)) = provider_update {
         provider.mark_status_reported(revision);
@@ -2492,9 +2547,67 @@ fn handle_one_poll(
 }
 
 fn main() {
-    if let Some(code) =
-        webcodex_runner::detached_job::maybe_run_internal_mode(std::env::args().skip(1))
-    {
+    let raw_args: Vec<String> = std::env::args().skip(1).collect();
+    let service = match webcodex_environment::runtime_entry::split_windows_service_args(&raw_args) {
+        Ok(service) => service,
+        Err(error) => {
+            eprintln!("{error}");
+            std::process::exit(2);
+        }
+    };
+    if let Some((name, args)) = service {
+        #[cfg(windows)]
+        {
+            let (config_path, computer_session_dir) = match parse_service_runner_args(&args) {
+                Ok(paths) => paths,
+                Err(error) => {
+                    eprintln!("{error}");
+                    std::process::exit(2);
+                }
+            };
+            let result =
+                webcodex_environment::service::runtime::run_windows_service(&name, move |stop| {
+                    let log_dir = config_path
+                        .parent()
+                        .ok_or("Runner config has no parent directory")?;
+                    let mut service_log = webcodex_environment::service::ServiceLogGuard::open(
+                        log_dir,
+                        webcodex_environment::service::Component::Runner,
+                    )?;
+                    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+                    let _ = tracing_subscriber::fmt()
+                        .with_env_filter(
+                            EnvFilter::try_from_default_env()
+                                .unwrap_or_else(|_| EnvFilter::new("info")),
+                        )
+                        .try_init();
+                    let cfg = load_config(&config_path)?;
+                    let result = run_runner(
+                        cfg,
+                        config_path,
+                        false,
+                        false,
+                        Some(computer_session_dir),
+                        Some(stop),
+                    );
+                    if result.is_ok() {
+                        service_log.stopped()?;
+                    }
+                    result
+                });
+            if let Err(error) = result {
+                eprintln!("webcodex-runner service failed: {error}");
+                std::process::exit(1);
+            }
+            return;
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = (name, args);
+            unreachable!("service prefix rejected on non-Windows");
+        }
+    }
+    if let Some(code) = webcodex_runner::detached_job::maybe_run_internal_mode(raw_args.iter()) {
         std::process::exit(code);
     }
     // Pin the process start timestamp before any transport work so register
@@ -2514,12 +2627,20 @@ fn main() {
             std::process::exit(2);
         }
     };
-    let (config_path, once, stop_on_stdin_eof) = match action {
+    let (config_path, once, stop_on_stdin_eof, computer_session_dir) = match action {
         RunnerCliAction::Run {
             config_path,
             once,
             stop_on_stdin_eof,
-        } => (config_path, once, stop_on_stdin_eof),
+            computer_session_dir,
+        } => (config_path, once, stop_on_stdin_eof, computer_session_dir),
+        RunnerCliAction::ComputerSessionHelper { session_state_dir } => {
+            if let Err(error) = webcodex_runner::computer_session::run_helper(&session_state_dir) {
+                eprintln!("{error}");
+                std::process::exit(2);
+            }
+            return;
+        }
         RunnerCliAction::Exit {
             code,
             stdout,
@@ -2534,6 +2655,16 @@ fn main() {
             std::process::exit(code);
         }
     };
+    #[cfg(target_os = "macos")]
+    let mut service_log = match webcodex_environment::service::ServiceLogGuard::from_managed_env(
+        webcodex_environment::service::Component::Runner,
+    ) {
+        Ok(log) => log,
+        Err(error) => {
+            eprintln!("Runner service lifecycle log unavailable: {error}");
+            std::process::exit(2);
+        }
+    };
     if config_path.file_name().and_then(|name| name.to_str())
         == Some(runner_config::paths::LEGACY_AGENT_CONFIG_FILE)
     {
@@ -2545,6 +2676,8 @@ fn main() {
     let cfg = match load_config(&config_path) {
         Ok(cfg) => cfg,
         Err(e) => {
+            #[cfg(target_os = "macos")]
+            drop(service_log);
             eprintln!("{}", e);
             std::process::exit(2);
         }
@@ -2554,9 +2687,23 @@ fn main() {
             "webcodex-runner warning: agent token is empty; connecting without Authorization; the server must be started with --open"
         );
     }
-    if let Err(e) = run_runner(cfg, config_path, once, stop_on_stdin_eof) {
+    if let Err(e) = run_runner(
+        cfg,
+        config_path,
+        once,
+        stop_on_stdin_eof,
+        computer_session_dir,
+        #[cfg(windows)]
+        None,
+    ) {
+        #[cfg(target_os = "macos")]
+        drop(service_log);
         eprintln!("webcodex-runner failed: {}", e);
         std::process::exit(1);
+    }
+    #[cfg(target_os = "macos")]
+    if let Some(log) = service_log.as_mut() {
+        let _ = log.stopped();
     }
 }
 

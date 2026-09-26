@@ -27,6 +27,7 @@ async fn register(
         .runner_registry
         .register_with_auth(
             RunnerRegisterRequest {
+                computer_session_availability: None,
                 client_id: client_id.into(),
                 runner_instance_id: format!("inst-{client_id}"),
                 runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,

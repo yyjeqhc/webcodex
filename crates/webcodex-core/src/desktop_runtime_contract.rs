@@ -55,6 +55,10 @@ pub struct MachineBuildInfo {
     pub desktop_runtime_contract: DesktopRuntimeContract,
     #[serde(default)]
     pub agent_protocol_generation: Option<u16>,
+    /// Explicit persistent-data compatibility. A release that changes an
+    /// on-disk format must change this contract and supply a migration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub environment_data_format: Option<u16>,
 }
 
 impl MachineBuildInfo {

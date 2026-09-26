@@ -27,12 +27,28 @@ export function ProjectsPanel({ state, onChooseProject, onState }: { state: Desk
     finally { setRemoval(null); setBusy(false); workspace.refresh(); }
   };
   const rows = workspace.projects.filter(project => `${projectName(project)} ${displayProjectPath(project.path)}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
+  const localRunner = state.topology?.runner.kind === "local";
   return <section className="page-section workspace-page" aria-labelledby="projects-title" data-webcodex-page="projects">
-    <header className="page-heading-row"><div><span className="eyebrow">Runner · {workspace.runner?.client_id || p("workspace")}</span><h1 id="projects-title">{p("runnerProjects")} <span className="heading-count">{workspace.projects.length}</span></h1></div>
-      <Button className="primary-button" onClick={onChooseProject} disabled={Boolean(state.current_operation)} data-webcodex-action="add-project">{p("addProject")}</Button></header>
+    <header className="page-heading-row"><div><span className="eyebrow">{p("workspace")}</span><h1 id="projects-title">{p("projects")} <span className="heading-count">{workspace.projects.length}</span></h1></div>
+      {localRunner && <Button className="primary-button" onClick={onChooseProject} disabled={Boolean(state.current_operation)} data-webcodex-action="add-project">{p("addProject")}</Button>}</header>
+    {workspace.runners.length > 0 && <section className="form-card" aria-label={p("authorizedRunners")}>
+      <h2>{p("authorizedRunners")}</h2>
+      <ul>{workspace.runners.map(runner => {
+        const stale = workspace.fleetStale || runner.status === "stale";
+        const gui = !stale && runner.connected && runner.computer_session_availability === true;
+        return <li key={runner.client_id}>
+          <code>{runner.client_id}</code>{runner.client_id === state.workspace_runner?.client_id && <> · {p("thisComputer")}</>}
+          {" · "}{p(stale ? "staleData" : runner.connected ? "online" : "offline")}
+          {" · "}{p(gui ? "guiAvailable" : "guiUnavailable")}
+        </li>;
+      })}</ul>
+    </section>}
     <div className="workspace-search"><TextInput id="projects-search" label={p("search")} type="search" value={query} onChange={event => setQuery(event.currentTarget.value)} /></div>
-    {workspace.error && <div className="workspace-notice" role="alert">{p("loadError")} <button className="text-button" onClick={workspace.refresh}>{p("refresh")}</button></div>}
-    <ProjectRows projects={rows} onUnregister={prepare} busy={busy || Boolean(state.current_operation)} />
+    {workspace.error && <div className="workspace-notice" role="alert">{p(workspace.errorReason)} <button className="text-button" onClick={workspace.refresh}>{p("refresh")}</button></div>}
+    <ProjectRows projects={rows}
+      onUnregister={localRunner ? prepare : undefined}
+      canUnregister={project => Boolean(workspace.runner?.client_id && project.id?.startsWith(`agent:${workspace.runner.client_id}:`))}
+      busy={busy || Boolean(state.current_operation)} />
     {error && <p role="alert" className="workspace-notice">{p("unregisterError")}</p>}
     {removal && <WorkspaceDialog title={p("unregisterProject")} onClose={() => setRemoval(null)} busy={busy}>
       <p>{p("unregisterDescription")}</p><code>{displayProjectPath(removal.path)}</code>
@@ -40,7 +56,7 @@ export function ProjectsPanel({ state, onChooseProject, onState }: { state: Desk
       <Button variant="default" onClick={() => setRemoval(null)} disabled={busy}>{p("cancel")}</Button>
       <Button color="red" onClick={() => void unregister()} disabled={busy || Boolean(state.current_operation)}>{p("unregisterProject")}</Button>
     </WorkspaceDialog>}
-    {!rows.length && <p className="workspace-empty">{p(query ? "noMatches" : "noProjects")}</p>}
+    {!rows.length && !workspace.error && !workspace.loading && <p className="workspace-empty">{p(query ? "noMatches" : "noProjects")}</p>}
     {workspace.runner?.projects_truncated && <p className="workspace-notice">{p("partial")}</p>}
   </section>;
 }

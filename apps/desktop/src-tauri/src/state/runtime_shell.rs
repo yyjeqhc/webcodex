@@ -19,12 +19,14 @@ impl AppState {
             )
         };
         if let Some(runtime) = runtime {
-            settings.active_jobs =
-                crate::workspace::query(&runtime, crate::workspace::WorkspaceRequest::Overview {})
-                    .await
-                    .ok()
-                    .filter(|v| v.get("connected").and_then(Value::as_bool) == Some(true))
-                    .and_then(|v| observed_active_jobs(&v));
+            settings.active_jobs = crate::workspace::query(
+                &runtime,
+                crate::workspace::WorkspaceRequest::RunnerDetails {},
+            )
+            .await
+            .ok()
+            .filter(|v| v.get("connected").and_then(Value::as_bool) == Some(true))
+            .and_then(|v| observed_active_jobs(&v));
         } else {
             settings.active_jobs = Some(0);
         }
@@ -225,6 +227,11 @@ impl DesktopCore {
     }
 
     pub(super) async fn runtime_switch_authority(&self) -> DesktopResult<()> {
+        if self.config.persistent_environment.is_some() {
+            return Err(runtime_selection::error(
+                "persistent_runtime_upgrade_required",
+            ));
+        }
         if self.configuration_issue.is_some() {
             return Err(runtime_selection::error("configuration_migration_failed"));
         }

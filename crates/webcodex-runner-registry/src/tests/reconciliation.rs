@@ -83,6 +83,7 @@ fn empty_inventory() -> ShellJobInventory {
 
 fn register_request(instance: &str, inventory: ShellJobInventory) -> RunnerRegisterRequest {
     crate::test_support::current_runner_registration(RunnerRegisterRequest {
+        computer_session_availability: None,
         client_id: CLIENT_ID.to_string(),
         runner_instance_id: instance.to_string(),
         runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,

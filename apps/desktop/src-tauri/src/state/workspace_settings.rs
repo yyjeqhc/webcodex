@@ -13,10 +13,13 @@ impl AppState {
             .runtime
             .clone()
             .ok_or_else(|| desktop_state_unavailable("Configure a Runner first"))?;
-        let can_restart = core
-            .process_snapshot(ProcessKey::LocalRunner)
-            .await
-            .is_some_and(|p| p.owned_by_desktop && p.phase == ProcessPhase::Running);
+        let can_restart = if core.config.persistent_environment.is_some() {
+            runtime.runner_config.is_some() && runtime.runner_client_id.is_some()
+        } else {
+            core.process_snapshot(ProcessKey::LocalRunner)
+                .await
+                .is_some_and(|p| p.owned_by_desktop && p.phase == ProcessPhase::Running)
+        };
         tokio::task::spawn_blocking(move || {
             crate::webcodex::settings::inspect(&runtime, can_restart)
         })
@@ -57,6 +60,15 @@ impl AppState {
             .begin_operation(DesktopOperationKind::RunnerRestart, false)
             .await?;
         let result = async {
+            if core.config.persistent_environment.is_some() {
+                let runtime = core
+                    .config
+                    .runtime
+                    .as_ref()
+                    .ok_or_else(|| desktop_state_unavailable("Runner identity unavailable"))?;
+                crate::webcodex::settings::verify_target(runtime, &expected)?;
+                return core.restart_environment_runner(&cancellation).await;
+            }
             if !core
                 .process_snapshot(ProcessKey::LocalRunner)
                 .await

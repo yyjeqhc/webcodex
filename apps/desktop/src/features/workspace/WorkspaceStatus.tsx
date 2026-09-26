@@ -23,10 +23,12 @@ export function statusKey(status: string | undefined): ProductKey {
 export function WorkspaceStatus({ state }: { state: DesktopState }) {
   const p = useProduct(); const c = useConnectionsTools();
   const connections = state.connections ?? EMPTY_CONNECTIONS;
-  const values = [["Server", state.readiness.server], ["Runner", state.readiness.runner]];
+  const hasLocalRunner = state.topology?.runner?.kind !== "none";
+  const values: Array<[string, string]> = [["Server", state.readiness.server]];
+  values.push(hasLocalRunner ? ["Runner", state.readiness.runner] : ["Local Runner", "notConfigured"]);
   if (state.topology?.experience === "quick_share") values.push(["Quick Share", state.readiness.exposure === "remote_ready" ? "ready" : state.readiness.exposure]);
   return <dl className="workspace-status-strip" aria-label={p("workspace")} role="status">
-    {values.map(([name, status]) => <div key={name}><dt>{name}</dt><dd><i className={`status-dot ${status === "ready" ? "ready" : status === "error" ? "error" : "unknown"}`} aria-hidden="true" />{p(statusKey(status))}</dd></div>)}
+    {values.map(([name, status]) => <div key={name}><dt>{name === "Local Runner" ? p("localRunner") : name}</dt><dd><i className={`status-dot ${status === "ready" ? "ready" : status === "error" ? "error" : "unknown"}`} aria-hidden="true" />{status === "notConfigured" ? p("notConfigured") : p(statusKey(status))}</dd></div>)}
     {state.topology?.experience !== "quick_share" && <div><dt>{c("connections")}</dt><dd><i className={`status-dot ${connections.running > 0 ? "ready" : "unknown"}`} aria-hidden="true" />{connections.running} / {connections.profiles.length} {p("running")}</dd></div>}
   </dl>;
 }

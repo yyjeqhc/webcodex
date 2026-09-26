@@ -292,3 +292,5 @@ ChatGPT 网页版 → Tunnel → Server → Runner → Project 链路已经打�
 ## 保留 Shell，单独更新 Runtime
 
 在“设置 → Runtime”检查官方解压目录或原生源码构建，然后明确激活，无需修改应用包。详见 [Runtime 兼容与诊断](DESKTOP_RUNTIME_COMPATIBILITY.zh-CN.md)。所选 Custom 文件缺失时不会悄悄改用内置文件。
+
+> 本文详细说明现有 Release 的 Desktop + OpenAI Tunnel 流程。统一安装包仍在开发中，请看[统一安装指南](unified-installation.zh-CN.md)；新包尚未发布，也未完成所有平台的真实机器验收。

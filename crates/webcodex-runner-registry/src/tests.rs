@@ -69,6 +69,7 @@ fn runner_registration(
     _projects: Vec<RunnerProjectSummary>,
 ) -> RunnerRegisterRequest {
     RunnerRegisterRequest {
+        computer_session_availability: None,
         process_started_at: None,
         build: None,
         job_concurrency_limit: None,
@@ -137,6 +138,7 @@ async fn register_computer_test_runner(
 ) {
     registry
         .register(current_runner_registration(RunnerRegisterRequest {
+            computer_session_availability: None,
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -169,6 +171,7 @@ async fn register_computer_test_runner(
 async fn register_quic_v1_runner(registry: &RunnerRegistry, client_id: &str) {
     registry
         .register(RunnerRegisterRequest {
+            computer_session_availability: None,
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -201,6 +204,7 @@ async fn register_instance_with_capabilities(
 ) -> Result<RunnerView, String> {
     registry
         .register(current_runner_registration(RunnerRegisterRequest {
+            computer_session_availability: None,
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -239,6 +243,7 @@ async fn register_with_instance(
 ) -> RunnerView {
     registry
         .register(RunnerRegisterRequest {
+            computer_session_availability: None,
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -335,6 +340,8 @@ mod job_lifecycle;
 mod job_log_wait;
 #[path = "tests/lsp.rs"]
 mod lsp;
+#[path = "tests/maintenance.rs"]
+mod maintenance;
 #[path = "tests/mcp_gateway.rs"]
 mod mcp_gateway;
 #[path = "tests/plugin_gateway.rs"]

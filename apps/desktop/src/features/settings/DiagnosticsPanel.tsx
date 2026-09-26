@@ -15,6 +15,9 @@ export function DiagnosticsPanel({ state, onState }: { state: DesktopState; onSt
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState("");
+  const [credentialRecoveryOpen, setCredentialRecoveryOpen] = useState(false);
+  const [userToken, setUserToken] = useState("");
+  const userTokenInput = useRef<HTMLInputElement>(null);
   const [confirmation, setConfirmation] = useState<{ kind: "trace"; restart: boolean; jobs: number | null } | { kind: "credential" } | { kind: "restore" } | null>(null);
   const alive = useRef(true);
   const install = (next: DiagnosticSnapshot) => { if (alive.current) { setData(next); setMode(next.trace.mode); } };
@@ -24,6 +27,9 @@ export function DiagnosticsPanel({ state, onState }: { state: DesktopState; onSt
     return () => { alive.current = false; };
   }, []);
   const disabled = busy || Boolean(state.current_operation);
+  const persistentEnvironment = state.persistent_environment?.trim() || null;
+  const localServer = Boolean(persistentEnvironment && state.topology?.server.kind === "local");
+  const localRunner = Boolean(persistentEnvironment && state.topology?.runner.kind === "local");
   const act = async (action: () => Promise<void>) => {
     if (disabled) return;
     setBusy(true); setError(null); setNotice("");
@@ -35,6 +41,22 @@ export function DiagnosticsPanel({ state, onState }: { state: DesktopState; onSt
     const next = await desktopApi.setToolRequestTracing({ mode, expected_revision: data.trace.revision, confirm_full: mode === "full" && confirmed, restart, confirm_interrupt: restart && confirmed });
     if (alive.current) { setData({ ...data, trace: next }); setNotice(next.restart_required ? "Restart required" : "Saved"); setConfirmation(null); }
     onState(await desktopApi.getState());
+  };
+  const serviceAction = (component: "server" | "runner", action: "start" | "stop" | "restart" | "repair_credential") => act(async () => {
+    if (!persistentEnvironment) return;
+    onState(await desktopApi.environmentServiceAction({ environmentId: persistentEnvironment, component, action }));
+  });
+  const restoreServerUserCredential = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const token = userToken;
+    setUserToken("");
+    if (userTokenInput.current) userTokenInput.current.value = "";
+    void act(async () => {
+      if (!persistentEnvironment || token.length === 0) return;
+      const next = await desktopApi.repairEnvironmentUserCredential({ environmentId: persistentEnvironment, userToken: token });
+      onState(next);
+      if (alive.current) setCredentialRecoveryOpen(false);
+    });
   };
   const prepareTrace = (restart: boolean) => act(async () => {
     if (restart) {
@@ -64,6 +86,40 @@ export function DiagnosticsPanel({ state, onState }: { state: DesktopState; onSt
         <h3>{s("Configuration could not be migrated")}</h3><code>{data.configuration.reason_code}</code>
         <button type="button" className="secondary-button" disabled={disabled || !data.configuration.backup_available || !data.configuration.primary_fingerprint} onClick={() => setConfirmation({ kind: "restore" })}>{s("Restore previous configuration")}</button>
       </section>}
+      {persistentEnvironment && <div className="shell-subsection" data-testid="persistent-services">
+        <h3>{s("Persistent local services")}</h3>
+        <section className="shell-subsection" aria-label={s("Restore Server user credential")}>
+          <h4>{s("Restore Server user credential")}</h4>
+          {!credentialRecoveryOpen ? <button type="button" className="secondary-button" disabled={disabled} onClick={() => setCredentialRecoveryOpen(true)}>{s("Restore Server user credential")}</button> : <form onSubmit={restoreServerUserCredential}>
+            <label htmlFor="server-user-api-token">{s("Existing Server user API token")}</label>
+            <input ref={userTokenInput} id="server-user-api-token" type="password" autoComplete="current-password" value={userToken} onChange={event => setUserToken(event.target.value)} disabled={disabled} />
+            <div className="shell-actions">
+              <button type="submit" className="primary-button" disabled={disabled || userToken.length === 0}>{s("Save credential")}</button>
+              <button type="button" className="secondary-button" disabled={disabled} onClick={() => { setUserToken(""); if (userTokenInput.current) userTokenInput.current.value = ""; setCredentialRecoveryOpen(false); }}>{s("Cancel")}</button>
+            </div>
+          </form>}
+        </section>
+        {localServer && <section className="shell-subsection" aria-label={s("Local Server")}>
+          <h4>{s("Local Server")}</h4>
+          <p>{s("Status")}: {s(state.readiness.server)}</p>
+          <div className="shell-actions">
+            <button type="button" className="secondary-button" disabled={disabled} onClick={() => void serviceAction("server", "start")}>{s("Start")}</button>
+            <button type="button" className="secondary-button" disabled={disabled} onClick={() => void serviceAction("server", "stop")}>{s("Stop")}</button>
+            <button type="button" className="secondary-button" disabled={disabled} onClick={() => void serviceAction("server", "restart")}>{s("Restart")}</button>
+          </div>
+        </section>}
+        {localRunner && <section className="shell-subsection" aria-label={s("Local Runner")}>
+          <h4>{s("Local Runner")}</h4>
+          <p>{s("Status")}: {s(state.readiness.runner)}</p>
+          <div className="shell-actions">
+            <button type="button" className="secondary-button" disabled={disabled} onClick={() => void serviceAction("runner", "start")}>{s("Start")}</button>
+            <button type="button" className="secondary-button" disabled={disabled} onClick={() => void serviceAction("runner", "stop")}>{s("Stop")}</button>
+            <button type="button" className="secondary-button" disabled={disabled} onClick={() => void serviceAction("runner", "restart")}>{s("Restart")}</button>
+            {state.can_repair_runner_credential && <button type="button" className="secondary-button" disabled={disabled} onClick={() => void serviceAction("runner", "repair_credential")}>{s("Repair Runner credential")}</button>}
+          </div>
+          {state.can_repair_runner_credential && <p className="field-help">{s("Credential repair uses the native operating system prompt.")}</p>}
+        </section>}
+      </div>}
       <div className="shell-subsection">
         <h3>{s("Tool Request Tracing")}</h3>
         <label htmlFor="desktop-trace-mode">{s("Tool Request Tracing")}</label>

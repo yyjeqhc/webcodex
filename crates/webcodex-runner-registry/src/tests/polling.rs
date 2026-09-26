@@ -5,6 +5,7 @@ async fn registry_enqueues_polls_and_completes_shell_request() {
     let registry = RunnerRegistry::default();
     registry
         .register(current_runner_registration(RunnerRegisterRequest {
+            computer_session_availability: None,
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,
@@ -77,6 +78,7 @@ async fn rejected_cross_client_result_does_not_consume_pending_request() {
     for (client_id, instance) in [("owner", "inst-owner"), ("other", "inst-other")] {
         registry
             .register(current_runner_registration(RunnerRegisterRequest {
+                computer_session_availability: None,
                 process_started_at: None,
                 build: None,
                 job_concurrency_limit: None,
@@ -163,6 +165,7 @@ async fn polling_out_of_order_results_resolve_only_their_original_waiters() {
     let registry = RunnerRegistry::default();
     registry
         .register(current_runner_registration(RunnerRegisterRequest {
+            computer_session_availability: None,
             process_started_at: None,
             build: None,
             job_concurrency_limit: None,

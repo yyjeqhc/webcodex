@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { DesktopState } from "../../models/topology";
-import type { RunnerOverview, WindowSummary, WorkspaceProject, WorkspaceRequest, WorkflowSession } from "../../models/workspace";
+import type { RunnerOverview, ServerRunnerSummary, ServerOverview, ServerProjects, WindowSummary, WorkspaceProject, WorkspaceRequest, WorkflowSession } from "../../models/workspace";
 
 export function workspaceQuery<T>(request: WorkspaceRequest): Promise<T> {
   return invoke<T>("workspace_query", { request });
@@ -19,15 +19,16 @@ export function sameProjectPath(a?: string, b?: string): boolean {
   };
   return normalize(a) === normalize(b);
 }
-export function sameProject(row: WorkspaceProject, saved: { runtime_project_id?: string | null; path?: string }): boolean {
+export function sameProject(row: WorkspaceProject, saved: { runtime_project_id?: string | null; path?: string }, localRunner?: string): boolean {
+  if (!saved.runtime_project_id && localRunner && row.id && !row.id.startsWith(`agent:${localRunner}:`)) return false;
   return row.id && saved.runtime_project_id
     ? row.id === saved.runtime_project_id
     : sameProjectPath(row.path, saved.path);
 }
-export function mergeProjects(runner: WorkspaceProject[], saved: { runtime_project_id?: string | null; path: string }[], complete = false): WorkspaceProject[] {
+export function mergeProjects(runner: WorkspaceProject[], saved: { runtime_project_id?: string | null; path: string }[], complete = false, localRunner?: string): WorkspaceProject[] {
   const rows = [...runner];
   for (const project of complete ? [] : saved) {
-    if (!rows.some(row => sameProject(row, project))) rows.push({
+    if (!rows.some(row => sameProject(row, project, localRunner))) rows.push({
       id: project.runtime_project_id || "", path: project.path, connected: false,
     });
   }
@@ -42,16 +43,32 @@ export function sessionTitle(value: string): string {
   return title.length > 110 ? title.slice(0, 109) + "…" : title;
 }
 export { projectPresentationName as projectName, displayProjectPath } from "../../../../../frontend/src/ui/projectPresentation";
+type WorkspaceErrorReason = "loadError" | "authenticationRequired" | "permissionDenied" | "serverUnreachable";
+function errorReason(result: PromiseSettledResult<unknown>): WorkspaceErrorReason | null {
+  if (result.status === "fulfilled") return null;
+  // Only accept the closed native error vocabulary; never render an arbitrary
+  // error body that could contain credentials or untrusted Server text.
+  switch (result.reason?.code) {
+    case "workspace_authentication_required": return "authenticationRequired";
+    case "workspace_permission_denied": return "permissionDenied";
+    case "workspace_server_unreachable": return "serverUnreachable";
+    default: return "loadError";
+  }
+}
+function authorizationFailed(reason: WorkspaceErrorReason | null | undefined): boolean {
+  return reason === "authenticationRequired" || reason === "permissionDenied";
+}
 interface WorkspaceValue {
+  runners: ServerRunnerSummary[]; fleetStale: boolean;
   state: DesktopState; runner: RunnerOverview | null; projects: WorkspaceProject[]; windows: WindowSummary[];
-  sessions: WorkflowSession[]; loading: boolean; error: boolean; windowsError: boolean; refresh: () => void; removeProject: (id: string) => void; revision: number;
+  sessions: WorkflowSession[]; loading: boolean; error: boolean; errorReason: WorkspaceErrorReason; windowsError: boolean; windowsErrorReason: WorkspaceErrorReason; refresh: () => void; removeProject: (id: string) => void; revision: number;
   selection: { kind: "session"; project: string; id: string } | { kind: "window"; id: string } | null;
   setSelection: (value: WorkspaceValue["selection"]) => void;
 }
 const WorkspaceContext = createContext<WorkspaceValue | null>(null);
 export function WorkspaceProvider({ state, children }: { state: DesktopState; children: ReactNode }) {
-  const key = JSON.stringify([state.topology?.server, state.workspace_runner]);
-  const [snapshot, setSnapshot] = useState<{ key: string; runner: RunnerOverview | null; windows: WindowSummary[]; error: boolean; windowsError: boolean } | null>(null);
+  const key = JSON.stringify([state.topology?.server, state.workspace_runner, state.persistent_environment]);
+  const [snapshot, setSnapshot] = useState<{ key: string; runners: ServerRunnerSummary[]; runner: RunnerOverview | null; windows: WindowSummary[]; error: boolean; errorReason: WorkspaceErrorReason | null; windowsError: boolean; windowsErrorReason: WorkspaceErrorReason | null } | null>(null);
   const [loading, setLoading] = useState(false);
   const [revision, setRevision] = useState(0);
   const [selection, setSelection] = useState<WorkspaceValue["selection"]>(null);
@@ -62,7 +79,7 @@ export function WorkspaceProvider({ state, children }: { state: DesktopState; ch
   }, []);
   const refresh = useCallback(() => setRevision(value => value + 1), []);
   const busy = Boolean(state.current_operation);
-  const ready = state.readiness.server === "ready" && state.readiness.runner === "ready";
+  const ready = state.readiness.server === "ready";
   useEffect(() => {
     if (!ready || busy) return;
     let disposed = false;
@@ -70,19 +87,42 @@ export function WorkspaceProvider({ state, children }: { state: DesktopState; ch
     const poll = async () => {
       if (disposed) return;
       setLoading(true);
-      const [runner, windows] = await Promise.allSettled([
-        workspaceQuery<RunnerOverview>({ kind: "overview" }),
+      const [overview, projectInventory, windows] = await Promise.allSettled([
+        workspaceQuery<ServerOverview>({ kind: "overview" }),
+        workspaceQuery<ServerProjects>({ kind: "projects" }),
         workspaceQuery<{ windows: WindowSummary[] }>({ kind: "windows" }),
       ]);
       if (disposed) return;
+      const errors = [errorReason(overview), errorReason(projectInventory)];
+      const failure = errors.find(authorizationFailed) || errors.find(Boolean) || null;
+      const denied = authorizationFailed(failure);
+      const windowsFailure = errorReason(windows);
+      const runner: RunnerOverview | null = overview.status === "fulfilled"
+        ? {
+            client_id: state.workspace_runner?.client_id || "",
+            connected: true,
+            projects_available: overview.value.projects_available,
+            visible_project_count: projectInventory.status === "fulfilled"
+              ? projectInventory.value.total : overview.value.visible_projects,
+            projects: projectInventory.status === "fulfilled"
+              ? projectInventory.value.projects : overview.value.projects,
+            projects_truncated: projectInventory.status === "fulfilled"
+              ? projectInventory.value.truncated : overview.value.projects_truncated,
+            recent_sessions: overview.value.recent_sessions,
+          }
+        : null;
       setSnapshot(old => ({
         key,
-        runner: runner.status === "fulfilled" ? runner.value : old?.key === key ? old.runner : null,
-        windows: windows.status === "fulfilled" ? windows.value.windows : old?.key === key ? old.windows : [],
-        error: runner.status === "rejected", windowsError: windows.status === "rejected",
+        runners: denied ? [] : overview.status === "fulfilled" ? overview.value.runners || [] : old?.key === key ? old.runners : [],
+        runner: denied ? null : runner || (old?.key === key ? old.runner : null),
+        windows: denied || authorizationFailed(windowsFailure) ? [] : windows.status === "fulfilled" ? windows.value.windows : old?.key === key ? old.windows : [],
+        error: overview.status === "rejected" || projectInventory.status === "rejected",
+        errorReason: failure,
+        windowsError: windows.status === "rejected",
+        windowsErrorReason: windowsFailure,
       }));
-      if (runner.status === "fulfilled" && runnerInventoryComplete(runner.value)) {
-        setRemoved(ids => ids.filter(id => runner.value.projects.some(project => project.id === id)));
+      if (runner && runnerInventoryComplete(runner)) {
+        setRemoved(ids => ids.filter(id => runner.projects.some(project => project.id === id)));
       }
       setLoading(false);
       timer = window.setTimeout(() => { if (document.visibilityState === "visible") void poll(); }, 15_000);
@@ -94,18 +134,18 @@ export function WorkspaceProvider({ state, children }: { state: DesktopState; ch
   }, [key, ready, busy, revision, refresh]);
   useEffect(() => { setSelection(null); setRemoved([]); }, [key]);
   const current = snapshot?.key === key ? snapshot : null;
-  const projects = useMemo(() => mergeProjects(current?.runner?.projects || [],
-    state.saved_projects || (state.project ? [state.project] : []), runnerInventoryComplete(current?.runner))
+  const projects = useMemo(() => authorizationFailed(current?.errorReason) ? [] : mergeProjects(current?.runner?.projects || [],
+    state.saved_projects || (state.project ? [state.project] : []), runnerInventoryComplete(current?.runner), state.workspace_runner?.client_id)
     .filter(project => !removed.includes(project.id)),
-  [current?.runner, state.saved_projects, state.project, removed]);
+  [current?.runner, current?.errorReason, state.saved_projects, state.project, state.workspace_runner?.client_id, removed]);
   useEffect(() => {
     setSelection(current => current?.kind === "session" && !projects.some(project => project.id === current.project) ? null : current);
   }, [projects]);
   const ids = new Set(projects.map(project => project.id));
-  return <WorkspaceContext.Provider value={{ state, runner: current?.runner || null, projects,
+  return <WorkspaceContext.Provider value={{ state, runners: current?.runners || [], fleetStale: !ready || Boolean(current?.error), runner: current?.runner || null, projects,
     windows: (current?.windows || []).filter(row => !row.last_project || ids.has(row.last_project)),
     sessions: (current?.runner?.recent_sessions?.sessions || []).filter(session => !session.project_id || ids.has(session.project_id)), loading: ready && !busy && (loading || !current),
-    error: Boolean(current?.error), windowsError: Boolean(current?.windowsError), refresh, removeProject, revision, selection, setSelection,
+    error: Boolean(current?.error), errorReason: current?.errorReason || "loadError", windowsError: Boolean(current?.windowsError), windowsErrorReason: current?.windowsErrorReason || "loadError", refresh, removeProject, revision, selection, setSelection,
   }}>{children}</WorkspaceContext.Provider>;
 }
 export function useWorkspace(): WorkspaceValue {

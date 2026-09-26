@@ -33,6 +33,7 @@ async fn oauth_mcp_service_with_plugin_runner(
         .runner_registry
         .register(crate::test_support::current_runner_registration(
             RunnerRegisterRequest {
+                computer_session_availability: None,
                 client_id: "oauth-plugin-runner".to_string(),
                 runner_instance_id: "oauth-plugin-runner-instance".to_string(),
                 runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,

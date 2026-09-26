@@ -12,6 +12,17 @@ fn server_tunnel_parser_is_machine_owned_and_openai_only() {
     ]))
     .unwrap();
     assert_eq!(parsed.env_file, PathBuf::from("local.env"));
+    assert!(parsed.stop_on_stdin_eof);
+
+    let persistent = parse_server_tunnel(&args(&[
+        "--provider",
+        "openai",
+        "--env-file",
+        "local.env",
+        "--json",
+    ]))
+    .unwrap();
+    assert!(!persistent.stop_on_stdin_eof);
 
     assert!(parse_server_tunnel(&args(&[
         "--provider",

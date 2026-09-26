@@ -20,7 +20,9 @@ mod share_service;
 #[path = "project_entry_windows.rs"]
 mod windows_private_state;
 
-pub(crate) use regular_tunnel_service::{run_regular_server_tunnel, RegularServerTunnelOptions};
+pub(crate) use regular_tunnel_service::{
+    run_regular_server_tunnel_with_stop, RegularServerTunnelOptions,
+};
 pub(crate) use setup_service::setup;
 use setup_service::{
     create_private_dir, local_readiness, prepare_runtime_private_state, read_private_value,

@@ -2,8 +2,7 @@
 
 [English](DESKTOP_DEVELOPMENT.md) | [简体中文](DESKTOP_DEVELOPMENT.zh-CN.md)
 
-本文面向希望修改 WebCodex Desktop、从源码运行，或者自己构建 Windows/macOS
-可安装包进行测试的贡献者。
+本文面向在 Linux、Windows、macOS 修改和从源码运行 WebCodex Desktop，以及构建本地测试包的贡献者。统一 NSIS、`.pkg`、`.deb` 的发布与验收状态见[统一安装指南](unified-installation.zh-CN.md)；下文 Windows NSIS / macOS DMG helper 保留为本地兼容打包流程。
 
 普通安装请看 [Desktop 安装与连接](desktop-install.zh-CN.md)，日常使用请看
 [Desktop 使用指南](desktop-guide.zh-CN.md)。正式公开发布是另一套 maintainer 流程，
@@ -130,6 +129,33 @@ Tauri 会按配置自动启动 Vite。debug Desktop 的 runtime 解析顺序是�
 只改 UI 时可以执行 `npm --prefix apps/desktop run dev` 启动 Vite，但它并不是完整
 Desktop runtime。只要修改涉及 Tauri IPC、native command、process lifecycle、tray/menu、
 文件选择器、autostart 或 bundle runtime，就必须用完整 Tauri dev 验证。
+
+## Linux 源码预览与已有 Server
+
+原生源码预览使用真实 Desktop 后端和内嵌前端资源，不会安装 `.deb`、迁移服务所有权，也不代表已通过重启或安装器验收。Debian/Ubuntu 需要 `build-essential`、`pkg-config`、`libssl-dev`、`libgtk-3-dev`、`libwebkit2gtk-4.1-dev`、`libayatana-appindicator3-dev`，以及上文的 Rust/Node 环境。安装两套 npm 依赖后，在仓库根目录运行：
+
+```bash
+cargo build --locked --profile dogfood -p webcodex -p webcodex-cli -p webcodex-runner
+npm run build --prefix apps/desktop
+cargo build --locked --profile dogfood \
+  --manifest-path apps/desktop/src-tauri/Cargo.toml --features tauri/custom-protocol
+```
+
+直接使用 Cargo 构建时，需要 `tauri/custom-protocol` 来内嵌并加载构建后的界面；Tauri CLI 打包时通常会自动选择该功能。上述路径以默认 Cargo target 目录为准。部署前对四个可执行文件运行 `--build-info-json`，核对 source SHA、版本、架构和 dirty 状态符合候选构建；构建时间戳可以不同。源码 dogfood 不代表已通过发布来源验证。
+
+如果 Server、Runner 已由其他方式托管，可以让 Desktop 仅作为查看端连接。在尚未保存 Environment 的机器上，用 Server 的实际可达地址和受保护文件中的现有**用户 API 凭据**执行：
+
+```bash
+target/dogfood/webcodex environment configure \
+  --join http://127.0.0.1:8080 --no-project \
+  --token-file /private/path/webcodex-user-token --bin-dir "$PWD/target/dogfood"
+WEBCODEX_DESKTOP_BIN_DIR="$PWD/target/dogfood" \
+  apps/desktop/src-tauri/target/dogfood/webcodex-desktop
+```
+
+在已登录的图形会话中启动 Desktop。已有 Environment 时会检查冲突，以上步骤不要求覆盖旧配置。仅查看配置不创建 Runner 身份，也不安装、停止或接管现有服务。“本地 Runner · 未配置”指当前 Desktop 环境；项目页仍可显示独立运行的本机或远端 Runner 上获授权的项目。浏览器打开 `SERVER_URL/runtime` 可查看同一 Server 的网页控制台。
+
+升级独立托管的 Server/Runner 程序前，应先确认实际服务所有者和活动任务，保存旧程序、配置以及一致的 Server 数据快照，再通过原所有者的生命周期入口切换。升级后核对构建身份、Runner 身份和项目注册是否恢复。原 Tunnel 配置仍由原所有者管理。该手动源码部署与 Core 迁移、安装器升级不同，参见[已记录的 Linux dogfood 证据](unified-deployment-validation.md#linux-源码部署证据)。
 
 ## 在 Windows 本地构建 installer
 

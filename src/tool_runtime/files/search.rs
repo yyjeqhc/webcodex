@@ -1630,6 +1630,7 @@ impl ToolRuntime {
         mut options: SearchOptions,
         batch_deadline: Option<Instant>,
     ) -> ToolResult {
+        let mut batch_deadline_limited_timeout = false;
         if let Some(deadline) = batch_deadline {
             let now = Instant::now();
             if now >= deadline {
@@ -1640,6 +1641,7 @@ impl ToolRuntime {
             // remainder when tests or a nearly exhausted batch have less than
             // one second left.
             let remaining_secs = deadline.duration_since(now).as_secs().max(1);
+            batch_deadline_limited_timeout = remaining_secs < options.timeout_secs;
             options.timeout_secs = options.timeout_secs.min(remaining_secs);
         }
         if is_search_project_text_excluded_path(&options.path) {
@@ -1730,7 +1732,9 @@ impl ToolRuntime {
                         &stdout,
                         backend.as_deref(),
                         resp.exit_code,
-                        if backend.is_some() {
+                        if batch_deadline_limited_timeout {
+                            "batch_deadline"
+                        } else if backend.is_some() {
                             "backend_execution"
                         } else {
                             "agent_execution"

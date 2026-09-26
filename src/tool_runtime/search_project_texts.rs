@@ -954,6 +954,10 @@ impl ToolRuntime {
         let runtime_project_id = resolved.resolved_id.clone();
         let requested_count = queries.len();
         let deadline = Instant::now() + self.search_project_texts_deadline;
+        // One absolute Server-owned latency deadline covers the whole batch.
+        // Queueing, retries, and include-glob diagnostics all consume this same
+        // deadline; each query's execution ceiling is further clamped to the
+        // remaining batch budget and the deadline is never reset.
         // Validation, Runner enqueue, and response waiting all happen inside
         // the concurrency slot. A third query cannot enter the Runner queue
         // while two earlier queries still hold their slots.

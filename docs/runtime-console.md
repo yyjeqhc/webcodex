@@ -119,9 +119,7 @@ retry identity, and already-started sends still settle while hidden.
 
 Overview aggregation scans retained Session identities once for the already-authorized
 Project set, then preserves each Project's existing ordering and retention limits.
-Goal list/detail aggregation reuses authorized Session, Task and Project observations
-only within the current HTTP request. No observation cache survives into the next
-poll or is shared between credentials; refresh cadence and response fields are unchanged.
+This preserves the existing refresh cadence and response fields.
 
 These are bounded polling views, not lossless real-time event subscriptions. The
 WebUI reads the latest 80 calls every 3 seconds in the foreground (15 seconds in

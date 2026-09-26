@@ -3520,7 +3520,7 @@ mod tests {
         }
     }
 
-    pub(super) async fn register_project(
+    async fn register_project(
         runtime: &ToolRuntime,
         client_id: &str,
         project_id: &str,
@@ -3586,8 +3586,7 @@ mod tests {
         (tmp, db, runtime)
     }
 
-    pub(super) fn test_runtime_with_goal_db(
-    ) -> (tempfile::TempDir, Arc<crate::Database>, Arc<ToolRuntime>) {
+    fn test_runtime_with_goal_db() -> (tempfile::TempDir, Arc<crate::Database>, Arc<ToolRuntime>) {
         let tmp = tempfile::tempdir().unwrap();
         let db = Arc::new(crate::Database::open(&tmp.path().join("goal-console.db")).unwrap());
         let runtime = Arc::new(

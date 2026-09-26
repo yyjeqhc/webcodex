@@ -37,24 +37,30 @@ Options:\n\
 
 pub(crate) fn controller_usage() -> &'static str {
     "Usage: webcodex controller <COMMAND> [OPTIONS]\n\n\
-WSL/Linux terminal control plane for a local WebCodex Server + Runner + optional OpenAI Tunnel.\n\n\
+WSL/Linux terminal control plane for a local or remote WebCodex Server, local Runner, and optional local OpenAI Tunnel.\n\n\
 Commands:\n\
   init       Create controller.toml with local defaults\n\
   run        Run the Controller in the foreground and own child processes\n\
   install    Install and optionally start the systemd user service\n\
   start      Start the installed systemd user service\n\
-  status     Read live Controller/component state over the Unix socket\n\
-  doctor     Validate configuration, binaries, loopback Server address, and Tunnel credentials\n\
-  stop       Stop the installed systemd user service\n\
-  restart    Restart the Controller service, or one component: server|runner|tunnel\n\
-  logs       Read bounded in-memory Controller/component logs\n\n\
+  status     Show live runtime state or installed systemd user-service state\n\
+  doctor     Validate topology, config, binaries, Runner target, and Tunnel credentials\n\
+  stop       Stop a foreground Controller or installed systemd user service\n\
+  restart    Restart the systemd Controller/foreground runtime, or one managed component\n\
+  logs       Read live in-memory logs, falling back to the systemd user journal\n\
+  uninstall  Stop/disable/remove only the Controller systemd user service (--confirm)\n\
+  project    List, register, or unregister projects through an online Runner\n\n\
+Project commands: project list | project register PATH | project remove ID-OR-PATH\n\
+  --user-token-file PATH   User API credential [default: matching Runner connection's webcodex-user-token]\n\
+  All project commands require the configured Runner online; no local registry fallback.\n\n\
 Common options:\n\
   --config PATH   Controller config [default: ~/.config/webcodex/controller.toml]\n\
   --service-file PATH      systemd user unit [default: ~/.config/systemd/user/webcodex-controller.service]\n\
   --environment-file PATH  optional service environment file [default: ~/.config/webcodex/controller.env]\n\
   --overwrite     Replace an existing managed Controller unit during install\n\
   --no-start      Install/enable the unit without starting it\n\
-  --json          Machine-readable output for status/doctor\n\
+  --confirm       Required by controller uninstall\n\
+  --json          Machine-readable output for status/doctor/project\n\
   -h, --help      Print help and exit\n\n\
 Controller V0 does not modify Desktop and uses existing Server, Runner, and Tunnel process contracts.\n"
 }

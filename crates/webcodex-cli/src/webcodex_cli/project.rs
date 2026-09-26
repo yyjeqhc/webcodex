@@ -402,7 +402,7 @@ fn reread_activation_config(
     Ok(snapshot)
 }
 
-fn server_url_is_loopback(server_url: &str) -> bool {
+pub(super) fn server_url_is_loopback(server_url: &str) -> bool {
     url::Url::parse(server_url)
         .ok()
         .and_then(|url| url.host_str().map(str::to_owned))

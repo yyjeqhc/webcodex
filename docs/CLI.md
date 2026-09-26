@@ -125,7 +125,7 @@ keep their detached-process behavior when `--scope` is omitted.
 
 ## Controller (WSL/Linux V0)
 
-webcodex controller is the local terminal control plane for WSL/Linux. V0 does not modify Desktop and does not change the lower-level Server, Runner, or OpenAI Tunnel process contracts; the Controller owns and supervises those existing processes as their parent.
+webcodex controller is the terminal control plane for WSL/Linux. V0 does not modify Desktop and does not change the lower-level Server, Runner, or OpenAI Tunnel process contracts. The Server may be locally managed or remotely observed; the Runner remains local and Controller-managed; the OpenAI Tunnel is available only for a local Server.
 
     webcodex controller init
     webcodex controller doctor
@@ -143,10 +143,25 @@ Common operations:
     webcodex controller restart tunnel
     webcodex controller logs --lines 100
     webcodex controller stop
+    webcodex controller uninstall --confirm
 
-V0 uses the local Server as the dependency root, so enabling Runner or Tunnel also requires Server to be enabled. The configured Runner `server_url` must match that Controller-managed loopback Server; remote Server topology is rejected before the Runner starts or any local Server credential is used. The Controller refuses to take ownership when the existing webcodex.service, webcodex.socket, or webcodex-runner.service is already active, avoiding duplicate process ownership.
+Project management:
 
-`controller install` installs a user service at `~/.config/systemd/user/webcodex-controller.service` by default and manages the Controller lifecycle through `systemctl --user`. The optional service environment file defaults to `~/.config/webcodex/controller.env`; when OpenAI Tunnel is enabled for background startup, `CONTROL_PLANE_TUNNEL_ID` and `CONTROL_PLANE_API_KEY` can be placed there. `controller doctor` checks those same two credentials from the process environment or the selected `--environment-file`. Tunnel control-plane credentials are not inherited by the managed Server or Runner children. The Controller service does not install separate Server/Runner services; those lower-level processes remain children owned by the Controller.
+    webcodex controller project list
+    webcodex controller project register /path/to/project
+    webcodex controller project remove <project-id-or-path>
+
+The [server] section supports mode = "local" and mode = "remote". Local mode requires env_file and the Controller starts/supervises webcodex-server. Remote mode requires url; the Controller only probes that Server, does not start a local Server, and rejects a local regular Tunnel. In both modes the Runner uses the local runner.toml, whose server_url must match the Controller Server target. The Controller refuses duplicate ownership of existing local webcodex.service, webcodex.socket, or webcodex-runner.service instances.
+
+`controller install` installs a user service at `~/.config/systemd/user/webcodex-controller.service` by default and manages it through `systemctl --user`. `status` prefers the live Controller Unix Socket and also reports service state; if the socket is unavailable it still reports the installed service. `logs` prefers the Controller's bounded in-memory component logs and falls back to the user journal. `stop` automatically handles a foreground Controller or installed service. A component-less `restart` prefers an installed service and otherwise restarts the foreground runtime; `restart server|runner|tunnel` always uses Controller IPC. `uninstall --confirm` removes only the Controller unit and preserves controller.toml and controller.env.
+
+All `controller project` commands require `runner.enabled=true` and the configured Runner to be online and visible through the Server. The Controller daemon itself need not be running. Offline, inaccessible, or unsupported targets fail explicitly; there is no local registry fallback or automatic Runner start.
+
+Each command accepts `--user-token-file PATH`. When omitted, the CLI selects the matching Server/Runner connection's `webcodex-user-token`, preferring the connection containing the configured Runner file. A missing or ambiguous default requires an explicit file. An explicit file never falls back to another credential; Runner transport and Tunnel credentials are not substitutes.
+
+When a Runner has more than 100 projects, remove by the full project ID returned by the Server (for example `agent:runner-a:demo`); this uses an exact Server-side inventory filter. Short IDs and paths require an untruncated inventory to reject ambiguous targets safely.
+
+`project list` calls `list_projects` for the configured Runner and reports inventory synchronization and truncation (up to 100 results). `project register PATH` uses the existing online resolve-or-register API within the Runner's current allowed roots; it does not extend `[policy].allowed_roots`. `project remove ID-OR-PATH` resolves a unique project in a complete inventory and calls `unregister_project` with its revision. It unregisters the project without deleting workspace files, shrinking allowed roots, or stopping the Runner. Changes take effect online without a Runner restart. Revision conflicts fail; lost mutation responses are reported as uncertain and are never automatically retried or repaired by deleting local files. With `--json`, successful API output is written to stdout and command failures are JSON on stderr with a nonzero exit status.
 
 On Windows, `server init`, foreground `server run`, and explicit `share` are supported. The managed service lifecycle (`install`, `start`, `stop`, `restart`, `logs`, `uninstall`) remains Linux-only.
 

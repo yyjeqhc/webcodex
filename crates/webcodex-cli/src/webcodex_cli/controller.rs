@@ -9,6 +9,9 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, Command};
 use tokio::sync::watch;
 
+#[path = "controller_projects.rs"]
+mod projects;
+
 #[cfg(unix)]
 use tokio::net::{UnixListener, UnixStream};
 
@@ -38,6 +41,7 @@ pub(crate) enum ControllerCommand {
     },
     Status {
         config: PathBuf,
+        service_file: PathBuf,
         json: bool,
     },
     Doctor {
@@ -46,6 +50,7 @@ pub(crate) enum ControllerCommand {
         json: bool,
     },
     Stop {
+        config: PathBuf,
         service_file: PathBuf,
     },
     Restart {
@@ -55,8 +60,26 @@ pub(crate) enum ControllerCommand {
     },
     Logs {
         config: PathBuf,
+        service_file: PathBuf,
         lines: usize,
     },
+    Uninstall {
+        service_file: PathBuf,
+        confirm: bool,
+    },
+    Project {
+        config: PathBuf,
+        action: ProjectAction,
+        user_token_file: Option<PathBuf>,
+        json: bool,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ProjectAction {
+    List,
+    Register { project: PathBuf },
+    Remove { target: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -121,17 +144,37 @@ impl Default for ControllerSettings {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum ServerMode {
+    Local,
+    Remote,
+}
+
+impl Default for ServerMode {
+    fn default() -> Self {
+        Self::Local
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 struct ServerSettings {
-    enabled: bool,
-    env_file: PathBuf,
+    mode: ServerMode,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    env_file: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    enabled: Option<bool>,
 }
 impl Default for ServerSettings {
     fn default() -> Self {
         Self {
-            enabled: true,
-            env_file: PathBuf::new(),
+            mode: ServerMode::Local,
+            env_file: None,
+            url: None,
+            enabled: None,
         }
     }
 }
@@ -178,6 +221,7 @@ struct ComponentSnapshot {
 #[derive(Debug, Clone, Serialize)]
 struct ControllerSnapshot {
     controller: &'static str,
+    server_mode: ServerMode,
     server: ComponentSnapshot,
     runner: ComponentSnapshot,
     tunnel: ComponentSnapshot,
@@ -226,6 +270,97 @@ struct ControllerRuntime {
 struct RunnerConfigView {
     server_url: String,
     client_id: String,
+}
+
+fn controller_service_status(service_file: &Path) -> super::service::SystemdStatus {
+    let unit = super::service_unit_name(service_file, CONTROLLER_SERVICE_UNIT);
+    super::query_systemd_service_status_for_scope(crate::ServiceScope::User, &unit)
+}
+
+fn controller_service_loaded(status: &super::service::SystemdStatus) -> bool {
+    status.loaded == "loaded"
+}
+
+fn uninstall_controller_service(service_file: &Path, confirm: bool) -> Result<String, String> {
+    if !confirm {
+        return Err(
+            "controller uninstall requires --confirm; controller.toml and controller.env are never deleted"
+                .to_string(),
+        );
+    }
+    let service_file = absolute_path(service_file)?;
+    super::validate_service_file_scope(crate::ServiceScope::User, &service_file)?;
+    let unit = super::service_unit_name(&service_file, CONTROLLER_SERVICE_UNIT);
+    let result = super::uninstall_unit_for_scope(crate::ServiceScope::User, &service_file, &unit)?;
+    Ok(format!(
+        "Controller service {}. Controller config and environment files were not deleted.\n",
+        if result.removed {
+            "uninstalled"
+        } else {
+            "was already absent"
+        }
+    ))
+}
+
+fn parse_controller_project_command(args: &[String]) -> Result<ControllerCommand, String> {
+    let Some(action) = args.first().map(String::as_str) else {
+        return Err(
+            "Usage: webcodex controller project <list|register|remove> [TARGET] [--config PATH] [--user-token-file PATH] [--json]"
+                .to_string(),
+        );
+    };
+    let mut config = None;
+    let mut user_token_file = None;
+    let mut json = false;
+    let mut positional = Vec::new();
+    let mut iter = args[1..].iter();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--config" => {
+                config = Some(PathBuf::from(
+                    iter.next()
+                        .ok_or_else(|| "--config requires PATH".to_string())?,
+                ));
+            }
+            "--user-token-file" => {
+                user_token_file =
+                    Some(PathBuf::from(iter.next().ok_or_else(|| {
+                        "--user-token-file requires PATH".to_string()
+                    })?));
+            }
+            "--json" => json = true,
+            value if !value.starts_with('-') => positional.push(value.to_string()),
+            other => return Err(format!("unknown controller project option: {other}")),
+        }
+    }
+    let config = config
+        .map(Ok)
+        .unwrap_or_else(default_controller_config_path)?;
+    let action = match action {
+        "list" if positional.is_empty() => ProjectAction::List,
+        "register" if positional.len() == 1 => ProjectAction::Register {
+            project: PathBuf::from(&positional[0]),
+        },
+        "remove" if positional.len() == 1 => ProjectAction::Remove {
+            target: positional.remove(0),
+        },
+        "list" => return Err("controller project list takes no TARGET".to_string()),
+        "register" => {
+            return Err("controller project register requires exactly one project PATH".to_string())
+        }
+        "remove" => {
+            return Err(
+                "controller project remove requires exactly one project ID or PATH".to_string(),
+            )
+        }
+        other => return Err(format!("unknown controller project action: {other}")),
+    };
+    Ok(ControllerCommand::Project {
+        config,
+        action,
+        user_token_file,
+        json,
+    })
 }
 #[derive(Debug, Deserialize)]
 struct IpcRequest {
@@ -369,15 +504,70 @@ fn controller_socket(config: &ControllerConfig) -> Result<PathBuf, String> {
         .unwrap_or(default_runtime_dir()?)
         .join("controller.sock"))
 }
+
+impl ServerSettings {
+    fn is_local(&self) -> bool {
+        self.mode == ServerMode::Local
+    }
+
+    fn local_env_file(&self) -> Result<&Path, String> {
+        if !self.is_local() {
+            return Err("remote Server has no local env_file".to_string());
+        }
+        self.env_file
+            .as_deref()
+            .filter(|path| !path.as_os_str().is_empty())
+            .ok_or_else(|| "server.env_file is required when server.mode=\"local\"".to_string())
+    }
+
+    fn remote_url(&self) -> Result<String, String> {
+        if self.mode != ServerMode::Remote {
+            return Err("local Server has no remote url".to_string());
+        }
+        let raw = self
+            .url
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| "server.url is required when server.mode=\"remote\"".to_string())?;
+        super::connections::canonical_server_url(raw).map(|server| server.url)
+    }
+}
+
 fn validate_config(cfg: &ControllerConfig) -> Result<(), String> {
-    if (cfg.runner.enabled || cfg.tunnel.enabled) && !cfg.server.enabled {
+    if cfg.server.enabled == Some(false) {
         return Err(
-            "Controller V0 requires server.enabled=true when runner or tunnel is enabled"
+            "server.enabled=false is no longer supported; select server.mode=\"local\" or \"remote\""
                 .to_string(),
         );
     }
-    if cfg.server.enabled && cfg.server.env_file.as_os_str().is_empty() {
-        return Err("server.env_file is required when server.enabled=true".to_string());
+    match cfg.server.mode {
+        ServerMode::Local => {
+            cfg.server.local_env_file()?;
+            if cfg
+                .server
+                .url
+                .as_deref()
+                .is_some_and(|url| !url.trim().is_empty())
+            {
+                return Err("server.url must be omitted when server.mode=\"local\"".to_string());
+            }
+        }
+        ServerMode::Remote => {
+            cfg.server.remote_url()?;
+            if cfg
+                .server
+                .env_file
+                .as_ref()
+                .is_some_and(|path| !path.as_os_str().is_empty())
+            {
+                return Err(
+                    "server.env_file must be omitted when server.mode=\"remote\"".to_string(),
+                );
+            }
+            if cfg.tunnel.enabled {
+                return Err("local Tunnel is not supported when server.mode=\"remote\"".to_string());
+            }
+        }
     }
     if cfg.runner.enabled && cfg.runner.config.as_os_str().is_empty() {
         return Err("runner.config is required when runner.enabled=true".to_string());
@@ -393,7 +583,7 @@ fn validate_config(cfg: &ControllerConfig) -> Result<(), String> {
 
 fn existing_service_conflicts(config: &ControllerConfig) -> Vec<String> {
     let mut conflicts = Vec::new();
-    if config.server.enabled {
+    if config.server.is_local() {
         let service = super::query_systemd_service_status(super::SERVER_SERVICE_UNIT);
         let socket = super::query_systemd_socket_status(super::SERVER_SOCKET_UNIT);
         if service.active == "active" {
@@ -443,9 +633,17 @@ fn read_config(path: &Path) -> Result<ControllerConfig, String> {
     validate_config(&cfg)?;
     Ok(cfg)
 }
+
 fn server_base_url(env_file: &Path) -> Result<String, String> {
     super::server::derive_regular_tunnel_server_url(env_file)
         .map_err(|error| format!("Controller requires a loopback Server: {error}"))
+}
+
+fn configured_server_url(config: &ControllerConfig) -> Result<String, String> {
+    match config.server.mode {
+        ServerMode::Local => server_base_url(config.server.local_env_file()?),
+        ServerMode::Remote => config.server.remote_url(),
+    }
 }
 
 fn server_token(env_file: &Path) -> Result<Option<String>, String> {
@@ -469,13 +667,16 @@ fn same_server_origin(left: &str, right: &str) -> bool {
         .eq_ignore_ascii_case(right.trim_end_matches('/'))
 }
 
-fn validate_runner_target(view: &RunnerConfigView, local_server_url: &str) -> Result<(), String> {
-    if same_server_origin(&view.server_url, local_server_url) {
+fn validate_runner_target(
+    view: &RunnerConfigView,
+    controller_server_url: &str,
+) -> Result<(), String> {
+    if same_server_origin(&view.server_url, controller_server_url) {
         return Ok(());
     }
     Err(format!(
-        "Controller V0 manages one local Server; Runner server_url {:?} does not match {}",
-        view.server_url, local_server_url
+        "Runner server_url {:?} does not match Controller Server {}",
+        view.server_url, controller_server_url
     ))
 }
 
@@ -599,10 +800,39 @@ async fn wait_runtime_status(
     Err("runtime did not become ready within 30 seconds".to_string())
 }
 
+async fn wait_remote_server_reachable(base: &str) -> Result<(), String> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(2))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let deadline = Instant::now() + READY_TIMEOUT;
+    while Instant::now() < deadline {
+        if let Ok(response) = client
+            .post(format!("{}/api/runtime/status", base.trim_end_matches('/')))
+            .json(&json!({}))
+            .send()
+            .await
+        {
+            let status = response.status().as_u16();
+            if response.status().is_success() || matches!(status, 401 | 403) {
+                return Ok(());
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    }
+    Err(format!(
+        "remote Server {base} did not become reachable within 30 seconds"
+    ))
+}
+
 impl ControllerRuntime {
     fn new(config: ControllerConfig) -> Self {
+        let mut server = RuntimeComponent::new(config.server.is_local());
+        if !config.server.is_local() {
+            server.phase = "remote";
+        }
         Self {
-            server: RuntimeComponent::new(config.server.enabled),
+            server,
             runner: RuntimeComponent::new(config.runner.enabled),
             tunnel: RuntimeComponent::new(config.tunnel.enabled),
             config,
@@ -614,14 +844,19 @@ impl ControllerRuntime {
     fn snapshot(&self) -> ControllerSnapshot {
         ControllerSnapshot {
             controller: if self.shutdown { "stopping" } else { "running" },
+            server_mode: self.config.server.mode,
             server: self.server.snapshot(),
             runner: self.runner.snapshot(),
             tunnel: self.tunnel.snapshot(),
         }
     }
     async fn start_all(&mut self) -> Result<(), String> {
-        if self.server.enabled {
+        if self.config.server.is_local() {
             self.start_component(Component::Server).await?;
+        } else {
+            self.server.phase = "connecting";
+            self.wait_server_ready().await?;
+            self.server.phase = "remote_ready";
         }
         if self.runner.enabled {
             self.start_component(Component::Runner).await?;
@@ -634,15 +869,22 @@ impl ControllerRuntime {
     async fn start_component(&mut self, component: Component) -> Result<(), String> {
         match component {
             Component::Server => {
+                if !self.config.server.is_local() {
+                    return Err(
+                        "remote Server is observed by Controller and cannot be restarted locally"
+                            .to_string(),
+                    );
+                }
                 self.stop_component(Component::Server).await;
                 self.server.phase = "starting";
                 let bin = super::discover_internal_binary("webcodex-server").ok_or_else(|| {
                     "webcodex-server was not found beside webcodex or in PATH".to_string()
                 })?;
                 let mut command = Command::new(bin);
+                let env_file = self.config.server.local_env_file()?;
                 command
                     .arg("--stop-on-stdin-eof")
-                    .env("WEBCODEX_ENV_FILE", &self.config.server.env_file)
+                    .env("WEBCODEX_ENV_FILE", env_file)
                     .stdin(Stdio::piped())
                     .stdout(Stdio::piped())
                     .stderr(Stdio::piped())
@@ -655,8 +897,8 @@ impl ControllerRuntime {
             }
             Component::Runner => {
                 let view = runner_view(&self.config.runner.config)?;
-                let local_server_url = server_base_url(&self.config.server.env_file)?;
-                validate_runner_target(&view, &local_server_url)?;
+                let server_url = configured_server_url(&self.config)?;
+                validate_runner_target(&view, &server_url)?;
                 self.stop_component(Component::Runner).await;
                 self.runner.phase = "starting";
                 let bin = super::discover_internal_binary("webcodex-runner").ok_or_else(|| {
@@ -674,20 +916,24 @@ impl ControllerRuntime {
                 remove_controller_tunnel_credentials(&mut command);
                 self.runner.process =
                     Some(spawn_process(command, "runner", self.log.clone(), None)?);
-                self.wait_runner_ready(&view, &local_server_url).await?;
+                self.wait_runner_ready(&view, &server_url).await?;
                 self.runner.phase = "ready";
             }
             Component::Tunnel => {
+                if !self.config.server.is_local() {
+                    return Err("local Tunnel cannot be started for a remote Server".to_string());
+                }
                 self.stop_component(Component::Tunnel).await;
                 self.tunnel.phase = "starting";
                 let exe = std::env::current_exe()
                     .map_err(|e| format!("cannot resolve webcodex executable: {e}"))?;
+                let default_env = self.config.server.local_env_file()?;
                 let env_file = self
                     .config
                     .tunnel
                     .server_env_file
-                    .as_ref()
-                    .unwrap_or(&self.config.server.env_file);
+                    .as_deref()
+                    .unwrap_or(default_env);
                 let mut command = Command::new(exe);
                 command
                     .args(["server", "tunnel", "--provider", "openai", "--env-file"])
@@ -717,6 +963,10 @@ impl ControllerRuntime {
         Ok(())
     }
     async fn stop_component(&mut self, component: Component) {
+        if component == Component::Server && !self.config.server.is_local() {
+            self.server.phase = "remote";
+            return;
+        }
         let target = match component {
             Component::Server => &mut self.server,
             Component::Runner => &mut self.runner,
@@ -747,6 +997,12 @@ impl ControllerRuntime {
     }
     async fn restart_component(&mut self, component: Option<Component>) -> Result<(), String> {
         if let Some(component) = component {
+            if component == Component::Server && !self.config.server.is_local() {
+                return Err(
+                    "remote Server is observed by Controller and cannot be restarted locally"
+                        .to_string(),
+                );
+            }
             let enabled = match component {
                 Component::Server => self.server.enabled,
                 Component::Runner => self.runner.enabled,
@@ -771,20 +1027,39 @@ impl ControllerRuntime {
         }
     }
     async fn wait_server_ready(&self) -> Result<(), String> {
-        let base = server_base_url(&self.config.server.env_file)?;
-        let token = server_token(&self.config.server.env_file)?;
-        wait_runtime_status(&base, token.as_deref(), |_| true).await
+        let base = configured_server_url(&self.config)?;
+        if self.config.server.is_local() {
+            let token = server_token(self.config.server.local_env_file()?)?;
+            wait_runtime_status(&base, token.as_deref(), |_| true).await
+        } else {
+            wait_remote_server_reachable(&base).await
+        }
     }
     async fn wait_runner_ready(
-        &self,
+        &mut self,
         view: &RunnerConfigView,
-        local_server_url: &str,
+        server_url: &str,
     ) -> Result<(), String> {
-        let token = server_token(&self.config.server.env_file)?;
-        wait_runtime_status(local_server_url, token.as_deref(), |output| {
-            runtime_has_online_runner(output, &view.client_id)
-        })
-        .await
+        if self.config.server.is_local() {
+            let token = server_token(self.config.server.local_env_file()?)?;
+            return wait_runtime_status(server_url, token.as_deref(), |output| {
+                runtime_has_online_runner(output, &view.client_id)
+            })
+            .await;
+        }
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while Instant::now() < deadline {
+            if let Some(status) = self
+                .runner
+                .process
+                .as_mut()
+                .and_then(|process| process.child.try_wait().ok().flatten())
+            {
+                return Err(format!("Runner exited before becoming stable: {status}"));
+            }
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+        Ok(())
     }
     async fn wait_tunnel_ready(&mut self) -> Result<(), String> {
         let Some(mut rx) = self.tunnel_ready_rx.clone() else {
@@ -861,8 +1136,10 @@ fn render_default_config() -> Result<String, String> {
         version: 1,
         controller: ControllerSettings::default(),
         server: ServerSettings {
-            enabled: true,
-            env_file: home.join(".config/webcodex/webcodex.env"),
+            mode: ServerMode::Local,
+            env_file: Some(home.join(".config/webcodex/webcodex.env")),
+            url: None,
+            enabled: None,
         },
         runner: RunnerSettings {
             enabled: true,
@@ -873,12 +1150,18 @@ fn render_default_config() -> Result<String, String> {
     .map_err(|e| e.to_string())
 }
 fn doctor_report(config: &ControllerConfig, environment_file: &Path) -> Result<Value, String> {
-    let server_env = config.server.env_file.is_file();
+    let server_env = config
+        .server
+        .env_file
+        .as_ref()
+        .is_some_and(|path| path.is_file());
     let runner_config = config.runner.config.is_file();
-    let server_url = server_env
-        .then(|| server_base_url(&config.server.env_file).ok())
-        .flatten();
-    let server_bin = super::discover_internal_binary("webcodex-server").is_some();
+    let server_url = configured_server_url(config).ok();
+    let server_bin = if config.server.is_local() {
+        Some(super::discover_internal_binary("webcodex-server").is_some())
+    } else {
+        None
+    };
     let runner_bin = super::discover_internal_binary("webcodex-runner").is_some();
     let runner_server_matches_controller = if !config.runner.enabled {
         Some(true)
@@ -886,7 +1169,7 @@ fn doctor_report(config: &ControllerConfig, environment_file: &Path) -> Result<V
         runner_view(&config.runner.config).ok().and_then(|view| {
             server_url
                 .as_deref()
-                .map(|local| same_server_origin(&view.server_url, local))
+                .map(|server| same_server_origin(&view.server_url, server))
         })
     } else {
         None
@@ -894,14 +1177,23 @@ fn doctor_report(config: &ControllerConfig, environment_file: &Path) -> Result<V
     let tunnel_credentials =
         !config.tunnel.enabled || tunnel_credentials_present(environment_file)?;
     let service_conflicts = existing_service_conflicts(config);
-    let ok = (!config.server.enabled || (server_env && server_url.is_some() && server_bin))
+    let server_ok = match config.server.mode {
+        ServerMode::Local => server_env && server_url.is_some() && server_bin == Some(true),
+        ServerMode::Remote => server_url.is_some(),
+    };
+    let ok = server_ok
         && (!config.runner.enabled
             || (runner_config && runner_bin && runner_server_matches_controller == Some(true)))
         && tunnel_credentials
         && service_conflicts.is_empty();
     Ok(json!({
         "ok": ok,
-        "server": {"enabled":config.server.enabled,"env_file":server_env,"loopback_url":server_url,"binary":server_bin},
+        "server": {
+            "mode": config.server.mode,
+            "env_file": if config.server.is_local() { json!(server_env) } else { Value::Null },
+            "url": server_url,
+            "binary": server_bin
+        },
         "runner": {
             "enabled":config.runner.enabled,
             "config_file":runner_config,
@@ -1098,11 +1390,15 @@ pub(crate) fn parse_controller_command(args: &[String]) -> Result<ControllerComm
     if matches!(command, "--help" | "-h") {
         return Err(super::controller_usage().to_string());
     }
+    if command == "project" {
+        return parse_controller_project_command(&args[1..]);
+    }
     let mut config = None;
     let mut environment_file = None;
     let mut service_file = None;
     let mut overwrite = false;
     let mut no_start = false;
+    let mut confirm = false;
     let mut json = false;
     let mut component = None;
     let mut lines = 100usize;
@@ -1129,6 +1425,7 @@ pub(crate) fn parse_controller_command(args: &[String]) -> Result<ControllerComm
             }
             "--overwrite" => overwrite = true,
             "--no-start" => no_start = true,
+            "--confirm" => confirm = true,
             "--json" => json = true,
             "--lines" => {
                 lines = iter
@@ -1185,6 +1482,7 @@ pub(crate) fn parse_controller_command(args: &[String]) -> Result<ControllerComm
         }),
         "status" => Ok(ControllerCommand::Status {
             config: resolve_config()?,
+            service_file: resolve_service_file()?,
             json,
         }),
         "doctor" => Ok(ControllerCommand::Doctor {
@@ -1193,6 +1491,7 @@ pub(crate) fn parse_controller_command(args: &[String]) -> Result<ControllerComm
             json,
         }),
         "stop" => Ok(ControllerCommand::Stop {
+            config: resolve_config()?,
             service_file: resolve_service_file()?,
         }),
         "restart" => Ok(ControllerCommand::Restart {
@@ -1202,7 +1501,12 @@ pub(crate) fn parse_controller_command(args: &[String]) -> Result<ControllerComm
         }),
         "logs" => Ok(ControllerCommand::Logs {
             config: resolve_config()?,
+            service_file: resolve_service_file()?,
             lines,
+        }),
+        "uninstall" => Ok(ControllerCommand::Uninstall {
+            service_file: resolve_service_file()?,
+            confirm,
         }),
         other => Err(format!(
             "unknown controller subcommand: {other}\n\n{}",
@@ -1248,14 +1552,15 @@ pub(crate) async fn run_controller_command(command: ControllerCommand) -> Result
                 } else {
                     "FAIL"
                 },
-                if report["server"]["enabled"].as_bool() == Some(false) {
-                    "disabled"
-                } else if report["server"]["env_file"].as_bool() == Some(true)
-                    && report["server"]["binary"].as_bool() == Some(true)
-                {
-                    "ok"
-                } else {
-                    "check required"
+                match report["server"]["mode"].as_str() {
+                    Some("remote") if report["server"]["url"].as_str().is_some() => "remote",
+                    Some("local")
+                        if report["server"]["env_file"].as_bool() == Some(true)
+                            && report["server"]["binary"].as_bool() == Some(true) =>
+                    {
+                        "local"
+                    }
+                    _ => "check required",
                 },
                 if report["runner"]["enabled"].as_bool() == Some(false) {
                     "disabled"
@@ -1311,33 +1616,91 @@ pub(crate) async fn run_controller_command(command: ControllerCommand) -> Result
         }
         ControllerCommand::Status {
             config,
+            service_file,
             json: as_json,
         } => {
-            let cfg = read_config(&config)?;
-            let socket = controller_socket(&cfg)?;
+            let service = controller_service_status(&service_file);
             #[cfg(unix)]
             {
-                let value = ipc_call(&socket, json!({"method":"status"})).await?;
-                let result = &value["result"];
+                if let Ok(cfg) = read_config(&config) {
+                    let socket = controller_socket(&cfg)?;
+                    if let Ok(value) = ipc_call(&socket, json!({"method":"status"})).await {
+                        let result = &value["result"];
+                        let source = if service.active == "active" {
+                            "systemd"
+                        } else {
+                            "foreground"
+                        };
+                        if as_json {
+                            return serde_json::to_string_pretty(&json!({
+                                "source": source,
+                                "runtime": result,
+                                "service": {
+                                    "unit": super::service_unit_name(&service_file, CONTROLLER_SERVICE_UNIT),
+                                    "loaded": service.loaded,
+                                    "active": service.active,
+                                    "enabled": service.enabled,
+                                }
+                            }))
+                            .map_err(|e| e.to_string());
+                        }
+                        return Ok(format!(
+                            "Controller: {}\nMode: {}\nServer: {}\nRunner: {}\nTunnel: {}\nService: {} / {}\n",
+                            result["controller"].as_str().unwrap_or("unknown"),
+                            source,
+                            result["server"]["phase"].as_str().unwrap_or("unknown"),
+                            result["runner"]["phase"].as_str().unwrap_or("unknown"),
+                            result["tunnel"]["phase"].as_str().unwrap_or("unknown"),
+                            service.active,
+                            service.enabled,
+                        ));
+                    }
+                }
                 if as_json {
-                    return serde_json::to_string_pretty(result).map_err(|e| e.to_string());
+                    return serde_json::to_string_pretty(&json!({
+                        "source": "systemd",
+                        "runtime": Value::Null,
+                        "service": {
+                            "unit": super::service_unit_name(&service_file, CONTROLLER_SERVICE_UNIT),
+                            "loaded": service.loaded,
+                            "active": service.active,
+                            "enabled": service.enabled,
+                        }
+                    }))
+                    .map_err(|e| e.to_string());
                 }
                 Ok(format!(
-                    "Controller: {}\nServer: {}\nRunner: {}\nTunnel: {}\n",
-                    result["controller"].as_str().unwrap_or("unknown"),
-                    result["server"]["phase"].as_str().unwrap_or("unknown"),
-                    result["runner"]["phase"].as_str().unwrap_or("unknown"),
-                    result["tunnel"]["phase"].as_str().unwrap_or("unknown"),
+                    "Controller: not reachable\nService: {} / {} / {}\n",
+                    service.loaded, service.active, service.enabled
                 ))
             }
             #[cfg(not(unix))]
             {
-                let _ = (socket, as_json);
+                let _ = (config, service_file, service, as_json);
                 Err("webcodex controller is currently supported only on WSL/Linux/Unix".to_string())
             }
         }
-        ControllerCommand::Stop { service_file } => {
-            control_controller_service(&service_file, super::ServiceControl::Stop)
+        ControllerCommand::Stop {
+            config,
+            service_file,
+        } => {
+            #[cfg(unix)]
+            {
+                if let Ok(cfg) = read_config(&config) {
+                    let socket = controller_socket(&cfg)?;
+                    if ipc_call(&socket, json!({"method":"stop"})).await.is_ok() {
+                        return Ok(
+                            "Controller stop requested through the local control socket.\n"
+                                .to_string(),
+                        );
+                    }
+                }
+            }
+            let status = controller_service_status(&service_file);
+            if controller_service_loaded(&status) {
+                return control_controller_service(&service_file, super::ServiceControl::Stop);
+            }
+            Err("Controller is not running and no systemd user service is installed".to_string())
         }
         ControllerCommand::Restart {
             config,
@@ -1345,9 +1708,27 @@ pub(crate) async fn run_controller_command(command: ControllerCommand) -> Result
             component,
         } => {
             if component.is_none() {
+                let status = controller_service_status(&service_file);
+                if controller_service_loaded(&status) || status.active == "active" {
+                    return control_controller_service(
+                        &service_file,
+                        super::ServiceControl::Restart,
+                    );
+                }
                 let cfg = read_config(&config)?;
-                reject_existing_service_conflicts(&cfg)?;
-                return control_controller_service(&service_file, super::ServiceControl::Restart);
+                let socket = controller_socket(&cfg)?;
+                #[cfg(unix)]
+                {
+                    ipc_call(&socket, json!({"method":"restart","component":Value::Null})).await?;
+                    return Ok("Controller foreground runtime restart completed.\n".to_string());
+                }
+                #[cfg(not(unix))]
+                {
+                    return Err(
+                        "Controller restart requires an installed systemd service on this platform"
+                            .to_string(),
+                    );
+                }
             }
             let cfg = read_config(&config)?;
             let socket = controller_socket(&cfg)?;
@@ -1366,30 +1747,67 @@ pub(crate) async fn run_controller_command(command: ControllerCommand) -> Result
                 Err("webcodex controller is currently supported only on WSL/Linux/Unix".to_string())
             }
         }
-        ControllerCommand::Logs { config, lines } => {
-            let cfg = read_config(&config)?;
-            let socket = controller_socket(&cfg)?;
+        ControllerCommand::Logs {
+            config,
+            service_file,
+            lines,
+        } => {
             #[cfg(unix)]
             {
-                let value = ipc_call(&socket, json!({"method":"logs","lines":lines})).await?;
-                let mut out = String::new();
-                for item in value["result"]["lines"]
-                    .as_array()
-                    .cloned()
-                    .unwrap_or_default()
-                {
-                    if let Some(line) = item.as_str() {
-                        out.push_str(line);
-                        out.push('\n');
+                if let Ok(cfg) = read_config(&config) {
+                    let socket = controller_socket(&cfg)?;
+                    if let Ok(value) =
+                        ipc_call(&socket, json!({"method":"logs","lines":lines})).await
+                    {
+                        let mut out = String::new();
+                        for item in value["result"]["lines"]
+                            .as_array()
+                            .cloned()
+                            .unwrap_or_default()
+                        {
+                            if let Some(line) = item.as_str() {
+                                out.push_str(line);
+                                out.push('\n');
+                            }
+                        }
+                        return Ok(out);
                     }
                 }
-                Ok(out)
+                let status = controller_service_status(&service_file);
+                if controller_service_loaded(&status) {
+                    let unit = super::service_unit_name(&service_file, CONTROLLER_SERVICE_UNIT);
+                    return super::run_logs_for_scope(
+                        crate::ServiceScope::User,
+                        &unit,
+                        lines.min(u32::MAX as usize) as u32,
+                        None,
+                        false,
+                    );
+                }
+                Err(
+                    "Controller is not running and no systemd user service is installed"
+                        .to_string(),
+                )
             }
             #[cfg(not(unix))]
             {
-                let _ = (socket, lines);
+                let _ = (config, service_file, lines);
                 Err("webcodex controller is currently supported only on WSL/Linux/Unix".to_string())
             }
+        }
+        ControllerCommand::Uninstall {
+            service_file,
+            confirm,
+        } => uninstall_controller_service(&service_file, confirm),
+        ControllerCommand::Project {
+            config,
+            action,
+            user_token_file,
+            json: as_json,
+        } => {
+            let cfg =
+                read_config(&config).map_err(|error| projects::format_error(error, as_json))?;
+            projects::run(&cfg, action, user_token_file.as_deref(), as_json).await
         }
     }
 }
@@ -1443,8 +1861,10 @@ mod tests {
             version: 1,
             controller: ControllerSettings::default(),
             server: ServerSettings {
-                enabled: true,
-                env_file: "/tmp/server.env".into(),
+                mode: ServerMode::Local,
+                env_file: Some("/tmp/server.env".into()),
+                url: None,
+                enabled: None,
             },
             runner: RunnerSettings {
                 enabled: false,
@@ -1460,23 +1880,27 @@ mod tests {
     }
 
     #[test]
-    fn config_requires_local_server_for_managed_runner_or_tunnel() {
+    fn config_rejects_local_tunnel_for_remote_server() {
         let cfg = ControllerConfig {
             version: 1,
             controller: ControllerSettings::default(),
             server: ServerSettings {
-                enabled: false,
-                env_file: PathBuf::new(),
+                mode: ServerMode::Remote,
+                env_file: None,
+                url: Some("https://runtime.example.test".into()),
+                enabled: None,
             },
             runner: RunnerSettings {
                 enabled: true,
                 config: "/tmp/runner.toml".into(),
             },
-            tunnel: TunnelSettings::default(),
+            tunnel: TunnelSettings {
+                enabled: true,
+                provider: "openai".into(),
+                server_env_file: None,
+            },
         };
-        assert!(validate_config(&cfg)
-            .unwrap_err()
-            .contains("server.enabled=true"));
+        assert!(validate_config(&cfg).unwrap_err().contains("remote"));
     }
 
     #[test]
@@ -1588,8 +2012,10 @@ mod tests {
             version: 1,
             controller: ControllerSettings::default(),
             server: ServerSettings {
-                enabled: false,
-                env_file: PathBuf::new(),
+                mode: ServerMode::Local,
+                env_file: Some("/tmp/server.env".into()),
+                url: None,
+                enabled: None,
             },
             runner: RunnerSettings {
                 enabled: false,

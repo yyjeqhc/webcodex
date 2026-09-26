@@ -1236,14 +1236,21 @@ fn tool_call_session_id_accessor_covers_session_tool_specs() {
         }
         let call = ToolCall::from_tool_name(&spec.name, sample_tool_args_with_session(&spec.name))
             .unwrap_or_else(|e| panic!("{} should deserialize: {}", spec.name, e));
-        let expected = if spec.name == "list_jobs" {
-            // list_jobs.session_id is an exact metadata filter over the
-            // already-authorized Job set. It deliberately does not opt into
-            // generic Workflow Session lookup/recording, which would turn a
-            // foreign or missing filter value into an existence oracle.
-            None
-        } else {
-            Some("wc_sess_accessor")
+        let expected = match spec.name.as_str() {
+            "list_jobs" => {
+                // list_jobs.session_id is an exact metadata filter over the
+                // already-authorized Job set. It deliberately does not opt into
+                // generic Workflow Session lookup/recording, which would turn a
+                // foreign or missing filter value into an existence oracle.
+                None
+            }
+            "present_work_result" => {
+                // Work Result is Window-first. Its optional session_id is
+                // compatibility/context evidence only and must not re-enter the
+                // generic business-Session lookup or recorder projection.
+                None
+            }
+            _ => Some("wc_sess_accessor"),
         };
         assert_eq!(
             call.session_id(),

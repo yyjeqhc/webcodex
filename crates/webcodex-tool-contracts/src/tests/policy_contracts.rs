@@ -435,7 +435,6 @@ fn tool_definitions_drive_session_and_permission_policy() {
             "record_external_observation",
             "list_external_observations",
             "finish_coding_task",
-            "present_work_result",
             "session_summary",
             "update_session_context",
             "close_session",

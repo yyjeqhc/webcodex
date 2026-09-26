@@ -54,4 +54,3 @@ export const baseState = {
   },
   collaboration: { available: true, can_send: true, messages: [] },
 };
-

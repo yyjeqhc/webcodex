@@ -10,11 +10,13 @@ use super::edit_tool_telemetry::{edit_tool_surface, EditToolSurface};
 use super::tool_definition::model_visible_tool_definitions;
 use super::{ToolResult, RECOVERY_KIND_VALUES};
 use crate::json_measurement::serialized_json_len;
+use crate::mcp_host::McpHostRuntimePolicy;
 use serde::Serialize;
 use serde_json::Value;
 #[cfg(test)]
 use std::time::Duration;
 use std::time::Instant;
+use webcodex_tool_contracts::tool_inputs::CodingGuidanceProfile;
 
 const MAX_STRUCTURED_KIND_BYTES: usize = 64;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -40,6 +42,29 @@ enum WorkOnProjectGuidanceProfile {
     HostCodeMode,
     CodeMode,
     Invalid,
+}
+
+impl WorkOnProjectGuidanceProfile {
+    fn explicit_request(self) -> Option<CodingGuidanceProfile> {
+        match self {
+            Self::Direct => Some(CodingGuidanceProfile::Direct),
+            Self::HostCodeMode => Some(CodingGuidanceProfile::HostCodeMode),
+            #[cfg(feature = "experimental-code-mode")]
+            Self::CodeMode => Some(CodingGuidanceProfile::CodeMode),
+            #[cfg(not(feature = "experimental-code-mode"))]
+            Self::CodeMode => None,
+            Self::Invalid => None,
+        }
+    }
+
+    fn from_effective(profile: CodingGuidanceProfile) -> Self {
+        match profile {
+            CodingGuidanceProfile::Direct => Self::Direct,
+            CodingGuidanceProfile::HostCodeMode => Self::HostCodeMode,
+            #[cfg(feature = "experimental-code-mode")]
+            CodingGuidanceProfile::CodeMode => Self::CodeMode,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -121,6 +146,26 @@ impl ModelErgonomicsRecord {
 }
 
 impl ModelErgonomicsTimer {
+    pub(crate) fn resolve_work_on_project_guidance_profile(
+        &mut self,
+        policy: McpHostRuntimePolicy,
+        mcp_transport: bool,
+    ) {
+        let Some(facts) = self.work_on_project.as_mut() else {
+            return;
+        };
+        if facts.guidance_profile == WorkOnProjectGuidanceProfile::Invalid {
+            return;
+        }
+        let requested = facts
+            .guidance_profile_explicit
+            .then(|| facts.guidance_profile.explicit_request())
+            .flatten();
+        facts.guidance_profile = WorkOnProjectGuidanceProfile::from_effective(
+            policy.effective_guidance_profile(requested, mcp_transport),
+        );
+    }
+
     pub(crate) fn start(tool_name: &str) -> Option<Self> {
         Self::start_with_arguments(tool_name, &Value::Null)
     }
@@ -573,6 +618,55 @@ mod tests {
             .finish_after(Duration::ZERO)
             .record_for_tool_result(&ToolResult::ok(json!({})))
             .expect("serializable telemetry")
+    }
+
+    #[test]
+    fn omitted_work_on_project_profile_records_effective_mcp_host_profile() {
+        let mut timer = ModelErgonomicsTimer::start_with_arguments(
+            "work_on_project",
+            &json!({"project":"agent:private:project","instruction":"private instruction"}),
+        )
+        .unwrap();
+        timer.resolve_work_on_project_guidance_profile(
+            crate::mcp_host::McpHostConfig {
+                profile: crate::mcp_host::McpHostProfile::HostCodeMode,
+                host_budget_secs: None,
+            }
+            .runtime_policy(),
+            true,
+        );
+        let record = timer
+            .finish_after(Duration::ZERO)
+            .record_for_tool_result(&ToolResult::ok(json!({})))
+            .unwrap();
+        let facts = record.work_on_project.unwrap();
+        assert_eq!(
+            facts.guidance_profile,
+            WorkOnProjectGuidanceProfile::HostCodeMode
+        );
+        assert!(!facts.guidance_profile_explicit);
+
+        let mut explicit = ModelErgonomicsTimer::start_with_arguments(
+            "work_on_project",
+            &json!({"project":"agent:private:project","instruction":"private instruction","guidance_profile":"direct"}),
+        )
+        .unwrap();
+        explicit.resolve_work_on_project_guidance_profile(
+            crate::mcp_host::McpHostConfig {
+                profile: crate::mcp_host::McpHostProfile::HostCodeMode,
+                host_budget_secs: None,
+            }
+            .runtime_policy(),
+            true,
+        );
+        let facts = explicit
+            .finish_after(Duration::ZERO)
+            .record_for_tool_result(&ToolResult::ok(json!({})))
+            .unwrap()
+            .work_on_project
+            .unwrap();
+        assert_eq!(facts.guidance_profile, WorkOnProjectGuidanceProfile::Direct);
+        assert!(facts.guidance_profile_explicit);
     }
 
     #[test]

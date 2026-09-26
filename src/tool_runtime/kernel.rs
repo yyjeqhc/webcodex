@@ -345,8 +345,14 @@ impl ToolRuntime {
         // MCP enters the kernel here directly rather than through
         // call_tool_with_context, so give it the same bounded adapter future.
         Box::pin(async move {
-            let telemetry =
+            let mut telemetry =
                 ModelErgonomicsTimer::start_with_arguments(&request.tool_name, &request.arguments);
+            if let Some(telemetry) = telemetry.as_mut() {
+                telemetry.resolve_work_on_project_guidance_profile(
+                    self.mcp_host_policy,
+                    matches!(context.transport, ToolTransport::Mcp),
+                );
+            }
             let tool_name = request.tool_name.clone();
             let mut control = invocation_metadata
                 .control

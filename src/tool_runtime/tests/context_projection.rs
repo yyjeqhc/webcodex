@@ -846,6 +846,53 @@ fn plugins_catalog_selection_projection_has_independent_hard_bound() {
 }
 
 #[tokio::test]
+async fn workflow_context_uses_mcp_host_profile_only_for_mcp_omission() {
+    let runtime = ToolRuntime::new_for_tests().with_mcp_host_policy(
+        crate::mcp_host::McpHostConfig {
+            profile: crate::mcp_host::McpHostProfile::HostCodeMode,
+            host_budget_secs: None,
+        }
+        .runtime_policy(),
+    );
+    for (transport, expected) in [
+        (ToolTransport::Mcp, "host_code_mode"),
+        (ToolTransport::Api, "direct"),
+    ] {
+        let outcome = runtime
+            .call_tool_with_invocation_metadata(
+                ToolCallRequest {
+                    tool_name: "list_tools".to_string(),
+                    arguments: json!({}),
+                },
+                ToolCallContext {
+                    transport,
+                    session_id: None,
+                    auth: None,
+                    window: None,
+                    record_oauth_scope_denials: false,
+                    host_file_import_trust: HostFileImportTrust::Untrusted,
+                },
+                ToolInvocationMetadata {
+                    context_request: vec!["webcodex.workflow".to_string()],
+                    ..Default::default()
+                },
+                ToolProtocolCapabilities {
+                    context_sidecar: true,
+                    ..Default::default()
+                },
+            )
+            .await;
+        let result = outcome.result.expect("model-facing result");
+        assert!(result.success, "{:?}", result.error);
+        assert_eq!(
+            context_material(&result, "webcodex.workflow")["projection"]["tool_strategy"]
+                ["profile"],
+            expected
+        );
+    }
+}
+
+#[tokio::test]
 async fn context_projection_coexists_without_context_ack_and_with_attention() {
     use crate::tool_runtime::sessions::{
         PostSessionMessageInput, SessionMessageKind, SessionMessagePriority,

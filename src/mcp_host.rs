@@ -1,5 +1,6 @@
 use serde::Serialize;
 use webcodex_core::runtime_contract::MAX_JOB_OBSERVATION_WAIT_SECS;
+use webcodex_tool_contracts::tool_inputs::CodingGuidanceProfile;
 
 pub(crate) const HOST_RETURN_GUARD_SECS: u64 = 5;
 const DIRECT_DEFAULT_HOST_BUDGET_SECS: u64 = 60;
@@ -110,6 +111,27 @@ pub(crate) struct McpHostRuntimePolicy {
     pub(crate) continuation_wait_secs: u64,
 }
 
+impl McpHostRuntimePolicy {
+    /// One SSOT for model guidance defaults. Explicit request selection always
+    /// wins; only MCP omission inherits the configured Host capability profile.
+    pub(crate) const fn effective_guidance_profile(
+        self,
+        requested: Option<CodingGuidanceProfile>,
+        mcp_transport: bool,
+    ) -> CodingGuidanceProfile {
+        if let Some(profile) = requested {
+            return profile;
+        }
+        if !mcp_transport {
+            return CodingGuidanceProfile::Direct;
+        }
+        match self.profile {
+            McpHostProfile::Direct => CodingGuidanceProfile::Direct,
+            McpHostProfile::HostCodeMode => CodingGuidanceProfile::HostCodeMode,
+        }
+    }
+}
+
 impl Default for McpHostRuntimePolicy {
     fn default() -> Self {
         McpHostConfig::default().runtime_policy()
@@ -145,6 +167,42 @@ mod tests {
                 max_sync_wait_secs: 5,
                 continuation_wait_secs: 5,
             }
+        );
+    }
+
+    #[test]
+    fn effective_guidance_profile_uses_explicit_then_mcp_host_then_direct() {
+        let direct = McpHostConfig::default().runtime_policy();
+        let host = McpHostConfig {
+            profile: McpHostProfile::HostCodeMode,
+            host_budget_secs: None,
+        }
+        .runtime_policy();
+
+        assert_eq!(
+            direct.effective_guidance_profile(None, true),
+            CodingGuidanceProfile::Direct
+        );
+        assert_eq!(
+            host.effective_guidance_profile(None, true),
+            CodingGuidanceProfile::HostCodeMode
+        );
+        assert_eq!(
+            host.effective_guidance_profile(Some(CodingGuidanceProfile::Direct), true),
+            CodingGuidanceProfile::Direct
+        );
+        assert_eq!(
+            direct.effective_guidance_profile(Some(CodingGuidanceProfile::HostCodeMode), true),
+            CodingGuidanceProfile::HostCodeMode
+        );
+        assert_eq!(
+            host.effective_guidance_profile(None, false),
+            CodingGuidanceProfile::Direct
+        );
+        #[cfg(feature = "experimental-code-mode")]
+        assert_eq!(
+            direct.effective_guidance_profile(Some(CodingGuidanceProfile::CodeMode), true),
+            CodingGuidanceProfile::CodeMode
         );
     }
 

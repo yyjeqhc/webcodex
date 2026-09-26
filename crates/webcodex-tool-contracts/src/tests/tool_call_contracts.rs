@@ -2271,19 +2271,18 @@ fn job_terminal_continuation_calls_require_explicit_wait_and_private_view_fence(
 
 #[test]
 fn guidance_profile_defaults_and_schema_follow_compiled_availability() {
-    use crate::tool_inputs::CodingGuidanceProfile;
     let base = json!({"project": "agent:profile:demo", "instruction": "inspect the project"});
     let default = ToolCall::from_tool_name("work_on_project", base.clone()).unwrap();
     assert!(matches!(
         default,
         ToolCall::WorkOnProject {
-            guidance_profile: CodingGuidanceProfile::Direct,
+            guidance_profile: None,
             ..
         }
     ));
     let schema = crate::request_schema::input_schema_for_tool("work_on_project");
     let property = &schema["properties"]["guidance_profile"];
-    assert_eq!(property["default"], "direct");
+    assert!(property.get("default").is_none());
     assert!(!schema["required"]
         .as_array()
         .unwrap()

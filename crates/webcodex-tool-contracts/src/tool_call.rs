@@ -7,8 +7,9 @@
 #[cfg(feature = "workspace-checkpoints")]
 use super::tool_inputs::CheckpointValidationInput;
 use super::tool_inputs::{
-    default_true, ApplyFileChangeInput, CodingGuidanceProfile, ExecutionPurpose, ExecutionShell,
-    GoalLifecycleInput, SessionMode, WorkOnProjectMode,
+    default_true, deserialize_optional_coding_guidance_profile, ApplyFileChangeInput,
+    CodingGuidanceProfile, ExecutionPurpose, ExecutionShell, GoalLifecycleInput, SessionMode,
+    WorkOnProjectMode,
 };
 use crate::{lookup_tool_definition, model_visible_tool_names_csv};
 use schemars::JsonSchema;
@@ -1427,13 +1428,18 @@ pub enum ToolCall {
         /// title.
         #[schemars(length(min = 1, max = 4000))]
         instruction: String,
-        /// Model guidance only: direct (default), host_code_mode for Host-native orchestration,
-        /// or feature-gated code_mode for WebCodex nested orchestration. No tool admission,
-        /// authority, effects, or Session state changes; explicit resume may choose again.
-        /// Request
+        /// Model guidance only. An explicit direct, host_code_mode, or feature-gated code_mode
+        /// always wins. When omitted on MCP, the configured MCP Host profile supplies the default;
+        /// omission on non-MCP/internal calls falls back to direct. No tool admission, authority,
+        /// effects, or Session state changes; explicit resume may choose again. Request
         /// `context_request=["webcodex.workflow"]` when the current model context needs that guidance.
-        #[serde(default)]
-        guidance_profile: CodingGuidanceProfile,
+        #[serde(
+            default,
+            deserialize_with = "deserialize_optional_coding_guidance_profile",
+            skip_serializing_if = "Option::is_none"
+        )]
+        #[schemars(with = "CodingGuidanceProfile")]
+        guidance_profile: Option<CodingGuidanceProfile>,
         #[schemars(extend("default" = true))]
         /// Whether startup should include a small bounded Skills/Plugins selection catalog. Defaults to
         /// true. Set false only when the caller's current model context already retains the relevant

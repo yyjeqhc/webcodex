@@ -29,10 +29,11 @@ Bootstrap 或 discovery 返回 `project_ref` 后，普通 Project-scoped tool ca
 
 ## 工具策略 guidance
 
-`work_on_project` 的 `guidance_profile` 默认是 `direct`。Workflow contract v21
-保持共享的 `guidance`、`model_protocol` 和 review `roles`，并在显式
-`context_request=["webcodex.workflow"]` 时通过
-`tool_strategy` 返回本次请求选中的策略。
+`work_on_project` 的 `guidance_profile` 是可选的：显式值始终优先；MCP 调用省略时
+使用已配置的 `WEBCODEX_MCP_HOST_PROFILE` 作为 model-guidance 默认值；非 MCP/internal
+调用省略时仍回退到 `direct`。Workflow contract v21 保持共享的 `guidance`、
+`model_protocol` 和 review `roles`，并在显式 `context_request=["webcodex.workflow"]`
+时通过 `tool_strategy` 返回本次请求选中的 effective 策略。
 
 - `direct`：简单 observation 直接调用最合适的 primitive；预先确定且独立的
   observations 可以批量执行，模型根据结果顺序决定 adaptive follow-up。
@@ -63,9 +64,8 @@ Bootstrap 或 discovery 返回 `project_ref` 后，普通 Project-scoped tool ca
 这只是本次请求的 presentation 选择，不增加 admission、权限或 execution semantics，
 不写入 Session。Exact resume 可以重新选择，也不会根据 Window、Session 或历史调用
 猜测。未编译 Experimental Code Mode 时，显式 `code_mode` 被拒绝为无效输入。
-在 `work_on_project` 调用中，`webcodex.workflow` sidecar 使用该次请求的
-`guidance_profile`；其他无 profile context 的普通工具显式请求该 material 时，
-继续使用 canonical default `direct`。
+`work_on_project` startup 与后续普通工具的 `webcodex.workflow` context refresh
+使用同一套 effective profile 规则；不会因为 Session/Window 历史选择发生漂移。
 
 这些策略共用 scope、recovery、validation truth、Job continuation、review 和 closeout。
 默认仍走 canonical edit 和 structured validation；只有多个相关 validation 或

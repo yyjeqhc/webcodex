@@ -1204,13 +1204,21 @@ impl ToolRuntime {
     /// plan after the same authoritative Project resolution used for execution.
     /// The returned ToolResult is still canonical with respect to domain-local
     /// budgeting and sparse projection so an outer recorder can consume it first.
-    fn context_guidance_profile(call: &ToolCall) -> CodingGuidanceProfile {
-        match call {
+    fn context_guidance_profile(
+        &self,
+        call: &ToolCall,
+        transport: sessions::SessionTransport,
+    ) -> CodingGuidanceProfile {
+        let requested = match call {
             ToolCall::WorkOnProject {
                 guidance_profile, ..
             } => *guidance_profile,
-            _ => CodingGuidanceProfile::default(),
-        }
+            _ => None,
+        };
+        self.mcp_host_policy.effective_guidance_profile(
+            requested,
+            matches!(transport, sessions::SessionTransport::Mcp),
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1232,7 +1240,7 @@ impl ToolRuntime {
         super::window_activity::ToolCallCorrelation,
     ) {
         let mut result_projection = ModelFacingProjectionPlan::capture(&call);
-        let context_guidance_profile = Self::context_guidance_profile(&call);
+        let context_guidance_profile = self.context_guidance_profile(&call, transport);
         let immediate_tool_name = call.tool_name();
         let immediate_expectation = recorder_metadata.expectation.clone();
         let mut correlation = super::window_activity::ToolCallCorrelation::default();
@@ -1497,7 +1505,7 @@ impl ToolRuntime {
         } else {
             resolved_project.cloned()
         };
-        let context_guidance_profile = Self::context_guidance_profile(&call);
+        let context_guidance_profile = self.context_guidance_profile(&call, transport);
         // work_on_project.session_id is explicit coding-resume business input,
         // never a generic tool recorder. Its implementation delegates exact
         // Session/project/lifecycle/authority handling to the coding workflow
@@ -3354,7 +3362,7 @@ mod structured_execution_sparse_projection_tests {
             mode: None,
             base_ref: None,
             instruction: "inspect".to_string(),
-            guidance_profile: CodingGuidanceProfile::default(),
+            guidance_profile: None,
             include_extension_catalog: false,
             session_id: None,
         };

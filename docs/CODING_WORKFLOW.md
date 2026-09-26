@@ -63,16 +63,17 @@ When `work_on_project`, `start_session`, `session_summary`, or an explicit hando
 
 ## Tool strategy guidance
 
-`work_on_project` accepts `guidance_profile`, defaulting to `direct`. Workflow
-contract v21 returns shared `guidance`, `model_protocol` and review `roles`, plus
-only the selected `tool_strategy`, when explicitly requested
-through `context_request=["webcodex.workflow"]`. The selection is request-local:
-choose again on exact resume without changing Session identity or business state.
-It is never inferred from a Window, Session or past tool use, and grants no tools,
-admission, authority or execution semantics. Builds without Experimental Code Mode
-reject explicit `code_mode` as an invalid profile. On a `work_on_project` call the
-workflow sidecar uses that call's `guidance_profile`; unrelated tools that request
-`webcodex.workflow` use the canonical default `direct` profile.
+`work_on_project` accepts an optional `guidance_profile`. An explicit value always
+wins. When omitted on MCP, the configured `WEBCODEX_MCP_HOST_PROFILE` supplies the
+model-guidance default; omission on non-MCP/internal calls falls back to `direct`.
+Workflow contract v21 returns shared `guidance`, `model_protocol` and review `roles`,
+plus only the selected `tool_strategy`, when explicitly requested through
+`context_request=["webcodex.workflow"]`. The selection is request-local: choose again
+on exact resume without changing Session identity or business state. It is never
+remembered from a Window, Session or past tool use, and grants no tools, admission,
+authority or execution semantics. Builds without Experimental Code Mode reject
+explicit `code_mode` as an invalid profile. Startup and later `webcodex.workflow`
+context refreshes use the same effective-profile rule.
 
 - `direct`: use the simplest sufficient primitive; batch predetermined independent
   observations and let the model inspect results before adaptive follow-up calls.

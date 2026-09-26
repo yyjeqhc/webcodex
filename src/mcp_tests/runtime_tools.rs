@@ -84,7 +84,7 @@ async fn mcp_tools_list_exposes_canonical_coding_bootstrap_and_runtime_status_ux
     ] {
         assert!(work_props.contains_key(field), "MCP schema missing {field}");
     }
-    assert_eq!(work_props["guidance_profile"]["default"], "direct");
+    assert!(work_props["guidance_profile"].get("default").is_none());
     assert_eq!(
         work_props["guidance_profile"]["enum"],
         if cfg!(feature = "experimental-code-mode") {

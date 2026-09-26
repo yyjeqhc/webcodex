@@ -25,6 +25,10 @@ impl ToolRuntime {
                 include_extension_catalog,
                 session_id,
             } => {
+                let guidance_profile = self.mcp_host_policy.effective_guidance_profile(
+                    guidance_profile,
+                    matches!(transport, sessions::SessionTransport::Mcp),
+                );
                 self.work_on_project(
                     project,
                     client_id,

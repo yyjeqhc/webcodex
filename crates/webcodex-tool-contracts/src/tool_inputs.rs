@@ -31,6 +31,19 @@ pub enum CodingGuidanceProfile {
     CodeMode,
 }
 
+/// Preserve omission for transport-aware effective guidance selection while
+/// rejecting explicit JSON null, which is not a valid profile request.
+pub fn deserialize_optional_coding_guidance_profile<'de, D>(
+    deserializer: D,
+) -> Result<Option<CodingGuidanceProfile>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Option::<CodingGuidanceProfile>::deserialize(deserializer)?
+        .map(Some)
+        .ok_or_else(|| serde::de::Error::custom("guidance_profile must not be null"))
+}
+
 impl StartupDetail {
     pub const fn as_str(self) -> &'static str {
         match self {

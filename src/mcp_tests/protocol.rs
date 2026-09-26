@@ -227,9 +227,8 @@ async fn mcp_stateless_tools_list_uses_2026_result_shape() {
             );
             let description = ack["description"].as_str().unwrap();
             assert!(description.contains("wc_msg_*"));
-            assert!(description.contains("retained in model context"));
-            assert!(description.contains("Session/Peer/Operator"));
-            assert!(description.contains("never resolves or authorizes"));
+            assert!(description.contains("Retained"));
+            assert!(description.contains("does not resolve"));
             let resolution = &read_files["inputSchema"]["properties"]["session_message_resolution"];
             assert_eq!(resolution["type"], "object");
             assert!(
@@ -244,10 +243,8 @@ async fn mcp_stateless_tools_list_uses_2026_result_shape() {
                 crate::tool_runtime::sessions::MAX_MESSAGE_RESOLUTION_CHARS
             );
             let resolution_description = resolution["description"].as_str().unwrap();
-            assert!(resolution_description.contains("exact wc_msg_*"));
-            assert!(resolution_description.contains("ACK separately if required"));
-            assert!(resolution_description.contains("Independent of call success"));
-            assert!(!resolution_description.contains("recording_session_id"));
+            assert!(resolution_description.contains("non-todo"));
+            assert!(resolution_description.contains("requires recording_session_id"));
             assert!(!resolution_description.contains("complete_session_message"));
             let context_request = &read_files["inputSchema"]["properties"]["context_request"];
             assert_eq!(context_request["type"], "array");
@@ -256,8 +253,8 @@ async fn mcp_stateless_tools_list_uses_2026_result_shape() {
             assert!(context_request["items"].get("enum").is_none());
             assert_eq!(context_request["items"]["maxLength"], 64);
             let request_description = context_request["description"].as_str().unwrap();
-            assert!(request_description.contains("Post-result sidecar keys"));
-            assert!(request_description.contains("no authority"));
+            assert!(request_description.contains("Sidecar keys"));
+            assert!(request_description.contains("jobs.attention"));
             assert!(!request_description.contains("memory_read"));
             assert!(read_files["inputSchema"]["properties"]
                 .get("ack_session_context_revision")

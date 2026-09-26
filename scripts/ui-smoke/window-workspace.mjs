@@ -26,6 +26,16 @@ try {
           const response = await route.fetch();
           const data = await response.json();
           const payload = route.request().postDataJSON();
+          // The primary and full snapshots must describe the same retained call
+          // with the same trace identity; otherwise progressive merge correctly
+          // treats them as two distinct invocations.
+          data.activity[0] = {
+            ...data.activity[0],
+            tool_name: 'runtime_status',
+            meaningful: false,
+            project: undefined,
+            workflow_sessions: [],
+          };
           if (payload.detail_level === 'primary') {
             data.detail_level = 'primary';
             data.linked_sessions = [];
@@ -76,10 +86,7 @@ try {
             elapsed_secs: 95,
           }];
           data.jobs_truncated = false;
-          data.activity = [
-            { ...base, server_trace_id: 'observe-1', tool_name: 'runtime_status', meaningful: false, project: undefined, workflow_sessions: [] },
-            ...taggedCalls,
-          ];
+          data.activity = [base, ...taggedCalls];
           data.activity_returned = data.activity.length;
           await route.fulfill({ response, json: data });
         });

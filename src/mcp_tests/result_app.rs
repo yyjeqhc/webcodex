@@ -484,10 +484,10 @@ async fn server_mcp_apps_setting_disables_only_app_presentation() {
         rpc(
             "tools/call",
             Some(json!(3215)),
-            mcp_2026_ui_params(json!({
-                "name": "list_jobs",
-                "arguments": {"limit": 1}
-            })),
+            mcp_2026_ui_params(adaptive_runtime_gateway_params(
+                "list_jobs",
+                json!({"limit": 1}),
+            )),
         ),
         None,
         false,
@@ -2056,10 +2056,10 @@ async fn mcp_job_presentation_tracks_real_running_to_terminal_transition() {
         rpc(
             "tools/call",
             Some(json!(32101)),
-            mcp_2026_ui_params(json!({
-                "name": "list_jobs",
-                "arguments": {"project": "agent:result-app-runner:demo", "limit": 10}
-            })),
+            mcp_2026_ui_params(adaptive_runtime_gateway_params(
+                "list_jobs",
+                json!({"project": "agent:result-app-runner:demo", "limit": 10}),
+            )),
         ),
         Some(&auth),
     )
@@ -2079,10 +2079,10 @@ async fn mcp_job_presentation_tracks_real_running_to_terminal_transition() {
         rpc(
             "tools/call",
             Some(json!(32102)),
-            mcp_2026_params(json!({
-                "name": "list_jobs",
-                "arguments": {"project": "agent:result-app-runner:demo", "limit": 10}
-            })),
+            mcp_2026_params(adaptive_runtime_gateway_params(
+                "list_jobs",
+                json!({"project": "agent:result-app-runner:demo", "limit": 10}),
+            )),
         ),
         Some(&auth),
     )
@@ -2119,7 +2119,7 @@ async fn mcp_job_presentation_tracks_real_running_to_terminal_transition() {
     );
     assert_eq!(
         presentation(&unknown)["items"][0]["suggested_call"],
-        json!({"tool": "list_jobs", "arguments": {}})
+        json!({"tool": "call_runtime_tool", "arguments": {"tool": "list_jobs", "arguments": {}}})
     );
 
     assert!(runtime.runner_registry.remove_job_record(&job_id).await);
@@ -2365,4 +2365,27 @@ fn observe_jobs_item_limit_matches_presentation_bound() {
         summary_only: false,
     };
     assert!(matches!(parsed, ToolCall::ObserveJobs { .. }));
+}
+
+#[test]
+fn mcp_job_recovery_presentation_accepts_exact_gateway_and_rejects_extra_arguments() {
+    for valid in [true, false] {
+        let mut call = json!({"tool": "call_runtime_tool", "arguments": {"tool": "list_jobs", "arguments": {}}});
+        if !valid {
+            call["arguments"]["arguments"]["unexpected"] = json!("private");
+        }
+        let canonical = ToolResult::ok(json!({"items": [{
+            "job_id": "missing", "success": false, "error_kind": "unknown_job",
+            "suggested_call": call
+        }]}));
+        let mut framed =
+            super::super::tools::mcp_runtime_tool_result("observe_jobs", false, canonical);
+        super::super::presentation::attach_result_app_presentation("observe_jobs", &mut framed);
+        let projected = &presentation(&framed)["items"][0];
+        if valid {
+            assert_eq!(projected["suggested_call"], call);
+        } else {
+            assert!(projected.get("suggested_call").is_none());
+        }
+    }
 }

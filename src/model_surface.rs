@@ -536,10 +536,10 @@ mod tests {
     }
 
     #[test]
-    fn job_stop_gateway_only_policy_changes_actions_not_adaptive_route() {
+    fn job_stop_uses_gateway_on_adaptive_and_actions() {
         assert_eq!(
             adaptive_runtime_gateway_target_route("stop_job"),
-            AdaptiveRuntimeGatewayTargetRoute::Direct
+            AdaptiveRuntimeGatewayTargetRoute::Gateway
         );
         assert_eq!(
             gpt_action_gateway_target_route("stop_job"),

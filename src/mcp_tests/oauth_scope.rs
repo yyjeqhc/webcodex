@@ -722,15 +722,15 @@ async fn oauth2_mcp_detached_process_requires_job_run_and_job_detach() {
             &service,
             &token,
             "tools/call",
-            json!({
-                "name": "run_detached_process",
-                "arguments": {
+            adaptive_runtime_gateway_params(
+                "run_detached_process",
+                json!({
                     "project": "demo",
                     "idempotency_key": "oauth-detached-scope",
                     "executable": "argv-helper",
                     "args": []
-                }
-            }),
+                }),
+            ),
         )
         .await;
         assert_mcp_oauth_scope_rejected(status, &body, challenge.as_deref(), Some(missing));
@@ -741,15 +741,15 @@ async fn oauth2_mcp_detached_process_requires_job_run_and_job_detach() {
         &service,
         &token,
         "tools/call",
-        json!({
-            "name": "run_detached_process",
-            "arguments": {
+        adaptive_runtime_gateway_params(
+            "run_detached_process",
+            json!({
                 "project": "demo",
                 "idempotency_key": "oauth-detached-both",
                 "executable": "argv-helper",
                 "args": []
-            }
-        }),
+            }),
+        ),
     )
     .await;
     assert_ne!(status, StatusCode::FORBIDDEN, "body: {:?}", body);

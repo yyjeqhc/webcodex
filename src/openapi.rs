@@ -415,9 +415,9 @@ mod tests {
     }
 
     #[test]
-    fn stop_job_is_direct_runtime_but_gateway_only_action_without_operation_growth() {
+    fn stop_job_remains_gateway_only_without_operation_growth() {
         let definition = webcodex_tool_contracts::lookup_tool_definition("stop_job").unwrap();
-        assert!(definition.adaptive_runtime_direct_rank().is_some());
+        assert!(definition.adaptive_runtime_direct_rank().is_none());
         assert_eq!(
             definition.gpt_action_exposure(),
             webcodex_tool_contracts::ToolGptActionExposure::GatewayOnly

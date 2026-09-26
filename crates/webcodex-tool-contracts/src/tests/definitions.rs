@@ -633,7 +633,7 @@ fn stop_job_direct_exposure_preserves_one_canonical_effect_and_gateway_budget() 
             .count(),
         1
     );
-    assert_eq!(definition.adaptive_runtime_direct_rank(), Some(81));
+    assert_eq!(definition.adaptive_runtime_direct_rank(), None);
     assert_eq!(
         definition.gpt_action_exposure(),
         ToolGptActionExposure::GatewayOnly
@@ -774,12 +774,9 @@ fn adaptive_runtime_direct_declarations_are_visible_ranked_and_unique() {
         ("rotate_agent_continuation_endpoint", 19),
         ("import_conversation_files_to_project", 55),
         ("project_artifact", 56),
-        ("transfer_project_artifact", 57),
-        ("run_detached_process", 72),
         ("run_script", 74),
         ("run_shell", 75),
         ("observe_jobs", 80),
-        ("stop_job", 81),
     ] {
         let definition = derived
             .iter()
@@ -793,6 +790,10 @@ fn adaptive_runtime_direct_declarations_are_visible_ranked_and_unique() {
     }
 
     for name in [
+        "list_jobs",
+        "stop_job",
+        "run_detached_process",
+        "transfer_project_artifact",
         "workspace_hygiene_check",
         "finish_coding_task",
         "runner_config_check",
@@ -823,7 +824,6 @@ fn adaptive_runtime_direct_declarations_are_visible_ranked_and_unique() {
 
     for (name, expected_rank, expected_authority) in [
         ("session_discussion_summary", 15, RUNTIME_READ),
-        ("list_jobs", 85, RUNTIME_READ),
         ("git_diff_hunks", 125, PROJECT_READ),
     ] {
         let definition = derived

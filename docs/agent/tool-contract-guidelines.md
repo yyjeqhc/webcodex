@@ -453,3 +453,5 @@ capabilities, provider inventories, authority, auth configuration or timestamps.
 Full mode retains those diagnostic facts. Both modes use the same canonical
 Job counting and compatibility rules; sparse status branches before full
 inventory/configuration JSON construction.
+
+Measured costs and direct-surface decisions: [model-call economy audit](model-call-economy-audit.md).

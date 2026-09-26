@@ -11,7 +11,7 @@ use webcodex_code_mode::{
 };
 
 #[tokio::test]
-async fn stop_job_manifest_remains_one_direct_canonical_mutation() {
+async fn stop_job_manifest_remains_one_gateway_canonical_mutation() {
     let mut result = test_runtime()
         .dispatch(ToolCall::ToolManifest {
             tool_name: Some("stop_job".into()),
@@ -24,14 +24,13 @@ async fn stop_job_manifest_remains_one_direct_canonical_mutation() {
     assert!(result.success, "{:?}", result.error);
     crate::tool_runtime::surface::sparsify_tool_manifest_model_result(&mut result);
     assert_eq!(result.output["name"], "stop_job");
-    assert_eq!(result.output["route"]["primary"]["mode"], "direct");
-    assert_eq!(result.output["route"]["primary"]["tool"], "stop_job");
-    assert_eq!(result.output["route"]["fallback"]["mode"], "gateway");
+    assert_eq!(result.output["route"]["primary"]["mode"], "gateway");
     assert_eq!(
-        result.output["route"]["fallback"]["tool"],
+        result.output["route"]["primary"]["tool"],
         "call_runtime_tool"
     );
-    assert_eq!(result.output["route"]["fallback"]["target"], "stop_job");
+    assert_eq!(result.output["route"]["primary"]["target"], "stop_job");
+    assert!(result.output["route"]["fallback"].is_null());
     assert_eq!(result.output["effect"], "mutate");
     assert_eq!(result.output["idempotency"], "desired_state");
     assert_eq!(
@@ -2460,7 +2459,7 @@ async fn tool_manifest_routing_metadata_uses_canonical_adaptive_routes() {
         ("import_conversation_files_to_project", "direct", None),
         ("project_artifact", "direct", None),
         ("session_discussion_summary", "direct", None),
-        ("list_jobs", "direct", None),
+        ("list_jobs", "gateway", Some("call_runtime_tool")),
         ("git_diff_hunks", "direct", None),
         ("run_script", "direct", None),
         (

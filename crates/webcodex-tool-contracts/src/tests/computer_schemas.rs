@@ -23,15 +23,15 @@ fn action_properties<'a>(schema: &'a Value, action: &str) -> &'a serde_json::Map
 }
 
 #[test]
-fn tool_specs_generic_sync_wait_is_runtime_clamped_and_scoped_to_process_and_script() {
+fn tool_specs_hide_legacy_sync_wait_from_process_and_script_discovery() {
     let specs = registered_tool_specs();
     for name in ["run_process", "run_script"] {
         let spec = spec_named(&specs, name);
         let props = spec.input_schema["properties"].as_object().unwrap();
-        let sync_wait = &props["sync_wait_secs"];
-        assert_eq!(sync_wait["type"], "integer", "{name}");
-        assert_eq!(sync_wait["minimum"], 1, "{name}");
-        assert!(sync_wait.get("maximum").is_none(), "{name}");
+        assert!(
+            !props.contains_key("sync_wait_secs"),
+            "{name} must hide sync_wait_secs from model discovery"
+        );
         assert!(!required_fields(spec).contains(&"sync_wait_secs".to_string()));
     }
 }

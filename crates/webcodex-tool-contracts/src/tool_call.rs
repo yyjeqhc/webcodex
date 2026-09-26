@@ -1999,12 +1999,10 @@ pub enum ToolCall {
         #[schemars(range(min = 1))]
         #[serde(default)]
         timeout_secs: Option<u64>,
-        /// Optional synchronous grace before durable Job handoff. Omit to use 10 seconds bounded by the
-        /// total timeout. Explicit values must be positive; values above 55 or above the effective timeout
-        /// are accepted and clamped to the smaller bound. It only controls how long the Server waits for
-        /// the already-started execution before exposing that same execution as a Job; it does not extend
-        /// the total runtime timeout or rerun work.
-        #[schemars(range(min = 1))]
+        /// Legacy caller override for same-execution Job handoff grace. The field remains accepted for
+        /// compatibility but is hidden from model discovery; Server transport policy and timeout_secs bound
+        /// the effective wait. It never extends command lifetime or reruns work.
+        #[schemars(skip)]
         #[serde(default)]
         sync_wait_secs: Option<u64>,
         /// Project-relative working directory. Omit, empty string, or '.' for the project root. Named
@@ -2174,12 +2172,10 @@ pub enum ToolCall {
         #[schemars(range(min = 1))]
         #[serde(default)]
         timeout_secs: Option<u64>,
-        /// Optional synchronous grace before durable Job handoff. Omit to use 10 seconds bounded by the
-        /// total timeout. Explicit values must be positive; values above 55 or above the effective timeout
-        /// are accepted and clamped to the smaller bound. It only controls how long the Server waits for
-        /// the already-started execution before exposing that same execution as a Job; it does not extend
-        /// the total runtime timeout or rerun work.
-        #[schemars(range(min = 1))]
+        /// Legacy caller override for same-execution Job handoff grace. The field remains accepted for
+        /// compatibility but is hidden from model discovery; Server transport policy and timeout_secs bound
+        /// the effective wait. It never extends command lifetime or reruns work.
+        #[schemars(skip)]
         #[serde(default)]
         sync_wait_secs: Option<u64>,
         /// Project-relative working directory. Omit, empty string, or '.' for the project root. Named
@@ -2213,9 +2209,10 @@ pub enum ToolCall {
         #[schemars(range(min = 1))]
         #[serde(default)]
         timeout_secs: Option<u64>,
-        /// same-execution durable Job handoff grace (default 10s), clamped by 55s and timeout; controls
-        /// return, not when the command is killed; named SSH unsupported.
-        #[schemars(range(min = 1))]
+        /// Legacy caller override for same-execution durable Job handoff grace. Hidden from model discovery;
+        /// Server transport policy and timeout_secs bound the effective wait. It controls return only, not
+        /// when the command is killed; named SSH remains unsupported.
+        #[schemars(skip)]
         #[serde(default)]
         sync_wait_secs: Option<u64>,
         /// Working directory contract: without a Session SSH resource, omit, empty string, or '.' selects
@@ -2548,14 +2545,11 @@ pub enum ToolCall {
         #[schemars(range(min = 1))]
         #[serde(default)]
         timeout_secs: Option<u64>,
-        /// Optional synchronous grace in seconds. With check=true it controls only how long the caller
-        /// waits before the same execution is handed off as a Job; omission uses the Runtime early-handoff
-        /// default bounded by the effective timeout_secs. Explicit positive values above 55 or above the
-        /// effective timeout_secs are accepted and clamped to the smaller bound, and it never extends
-        /// timeout_secs or retries the validation. With check=false it is accepted for caller-shape
-        /// compatibility but ignored; ensure-format remains synchronous and timeout_secs remains the full
-        /// precheck-plus-mutation budget.
-        #[schemars(range(min = 1))]
+        /// Legacy caller override for same-execution Job handoff grace. With check=true the field remains
+        /// accepted but is hidden from model discovery; Server transport policy and timeout_secs bound the
+        /// effective wait. With check=false it is accepted for caller-shape compatibility but ignored;
+        /// ensure-format remains synchronous and timeout_secs remains the full precheck-plus-mutation budget.
+        #[schemars(skip)]
         #[serde(default)]
         sync_wait_secs: Option<u64>,
     },
@@ -2602,12 +2596,10 @@ pub enum ToolCall {
         #[schemars(range(min = 1))]
         #[serde(default)]
         timeout_secs: Option<u64>,
-        /// Optional synchronous grace in seconds. It controls only how long the caller waits before the
-        /// same execution is handed off as a Job. Omission uses the Runtime early-handoff default bounded
-        /// by the effective timeout_secs. Explicit positive values above 55 or above the effective
-        /// timeout_secs are accepted and clamped to the smaller bound. The submitted validation may still
-        /// be queued; this never extends timeout_secs, retries, or starts a second validation.
-        #[schemars(range(min = 1))]
+        /// Legacy caller override for same-execution Job handoff grace. Hidden from model discovery;
+        /// Server transport policy and the effective timeout_secs bound the wait. The submitted validation
+        /// may still be queued; this never extends timeout_secs, retries, or starts a second validation.
+        #[schemars(skip)]
         #[serde(default)]
         sync_wait_secs: Option<u64>,
     },
@@ -2670,12 +2662,10 @@ pub enum ToolCall {
         #[schemars(range(min = 1))]
         #[serde(default)]
         timeout_secs: Option<u64>,
-        /// Optional synchronous grace in seconds. It controls only how long the caller waits before the
-        /// same execution is handed off as a Job. Omission uses the Runtime early-handoff default bounded
-        /// by the effective timeout_secs. Explicit positive values above 55 or above the effective
-        /// timeout_secs are accepted and clamped to the smaller bound. The submitted validation may still
-        /// be queued; this never extends timeout_secs, retries, or starts a second validation.
-        #[schemars(range(min = 1))]
+        /// Legacy caller override for same-execution Job handoff grace. Hidden from model discovery;
+        /// Server transport policy and the effective timeout_secs bound the wait. The submitted validation
+        /// may still be queued; this never extends timeout_secs, retries, or starts a second validation.
+        #[schemars(skip)]
         #[serde(default)]
         sync_wait_secs: Option<u64>,
     },
@@ -2705,12 +2695,10 @@ pub enum ToolCall {
         #[schemars(range(min = 1))]
         #[serde(default)]
         timeout_secs: Option<u64>,
-        /// Optional synchronous grace in seconds. It controls only how long the caller waits before the
-        /// same execution is handed off as a Job. Omission uses the Runtime early-handoff default bounded
-        /// by the effective timeout_secs. Explicit positive values above 55 or above the effective
-        /// timeout_secs are accepted and clamped to the smaller bound. The submitted validation may still
-        /// be queued; this never extends timeout_secs, retries, or starts a second validation.
-        #[schemars(range(min = 1))]
+        /// Legacy caller override for same-execution Job handoff grace. Hidden from model discovery;
+        /// Server transport policy and the effective timeout_secs bound the wait. The submitted validation
+        /// may still be queued; this never extends timeout_secs, retries, or starts a second validation.
+        #[schemars(skip)]
         #[serde(default)]
         sync_wait_secs: Option<u64>,
     },
@@ -2804,12 +2792,10 @@ pub enum ToolCall {
         #[schemars(range(min = 1))]
         #[serde(default)]
         timeout_secs: Option<u64>,
-        /// Optional synchronous grace before durable Job handoff. Omit to use 10 seconds bounded by the
-        /// total timeout. Explicit values must be positive; values above 55 or above the effective timeout
-        /// are accepted and clamped to the smaller bound. It only controls how long the Server waits for
-        /// the already-started execution before exposing that same execution as a Job; it does not extend
-        /// the total runtime timeout or rerun work.
-        #[schemars(range(min = 1))]
+        /// Legacy caller override for same-execution Job handoff grace. The field remains accepted for
+        /// compatibility but is hidden from model discovery; Server transport policy and timeout_secs bound
+        /// the effective wait. It never extends command lifetime or reruns work.
+        #[schemars(skip)]
         #[serde(default)]
         sync_wait_secs: Option<u64>,
         /// Project-relative working directory. Omit, empty string, or '.' for the project root. Skill
@@ -4030,8 +4016,8 @@ pub enum ToolCall {
         /// Optional one shared bounded wait (a maximum), never a minimum sleep or multiplied by item count.
         /// Omission or any item without a token returns an immediate observation/baseline. Values above 100
         /// seconds are clamped to 100. With tokens, wake_on selects early wake behavior; updates never
-        /// extend the deadline. Runtime accepts explicit waits up to 100 seconds, while model-facing
-        /// continuations recommend 55 seconds to stay below common MCP Host deadlines. Use terminal waits
+        /// extend the deadline. Runtime accepts explicit waits up to 100 seconds; MCP transport may clamp
+        /// that wait further using the effective Server-side Host timing profile. Use terminal waits
         /// when further useful progress depends on terminal outcome; otherwise defer observation while
         /// independent work continues.
         #[schemars(range(min = 1))]

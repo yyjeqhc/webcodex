@@ -39,6 +39,7 @@ import {
 import { locateSession } from "./api/sessions.js";
 import { projectFamilyId } from "../ui/projectPresentation.js";
 import { RuntimeV2Client } from "./api/client.js";
+import { SessionWindowNavigation } from "./components/SessionWindowNavigation.js";
 import { AuthGate } from "./components/AuthGate.js";
 import { BrandMark } from "./components/ui/BrandMark.js";
 import { AccentPicker } from "./components/ui/AccentPicker.js";
@@ -83,7 +84,9 @@ export function App() {
   const [view, setViewState] = useState<PrimaryView>(initialView);
   const [selected, setSelected] = useState<SessionLocation | null>(null);
   const [workSurface, setWorkSurface] = useState<WorkSurface>("windows");
-  const [workWindowTarget, setWorkWindowTarget] = useState("");
+  const [workWindowTarget, setWorkWindowTarget] = useState<{ windowKey: string; sessionId: string } | null>(null);
+  const [sessionNavigation, setSessionNavigation] = useState<SessionLocation | null>(null);
+  const closeSessionNavigation = useCallback(() => setSessionNavigation(null), []);
   const [runtimeTarget, setRuntimeTarget] = useState<RuntimeTarget | null>(null);
   const [language, setLanguage] = useState<RuntimeLanguage>(loadLanguagePreference);
   const [appearance, setAppearance] = useState<AppearancePreference>(loadAppearancePreference);
@@ -113,6 +116,8 @@ export function App() {
     client.clearToken();
     setToken("");
     setSelected(null);
+    setSessionNavigation(null);
+    setWorkWindowTarget(null);
     setNotice(message);
   }, [client]);
 
@@ -143,7 +148,10 @@ export function App() {
     try { window.localStorage.setItem(VIEW_KEY, next); } catch { /* Preference remains in memory. */ }
   }, []);
 
-  const openSession = useCallback((location: SessionLocation) => {
+  const openSession = useCallback((location: SessionLocation) => setSessionNavigation(location), []);
+
+  const openSessionRecord = useCallback((location: SessionLocation) => {
+    setSessionNavigation(null);
     setSelected(location);
     setWorkSurface("session");
     setView("work");
@@ -159,8 +167,9 @@ export function App() {
     setView("runtime");
   }, [setView]);
 
-  const openWindow = useCallback((windowKey: string) => {
-    setWorkWindowTarget(windowKey);
+  const openWindow = useCallback((windowKey: string, sessionId = "") => {
+    setSessionNavigation(null);
+    setWorkWindowTarget({ windowKey, sessionId });
     setWorkSurface("windows");
     setView("work");
   }, [setView]);
@@ -348,8 +357,9 @@ export function App() {
             onOpenWindow={openWindow}
             onOpenSession={openSession}
             onLocateSession={locateExactSession}
-            requestedWindowKey={workWindowTarget}
-            onRequestedWindowConsumed={() => setWorkWindowTarget("")}
+            requestedWindowKey={workWindowTarget?.windowKey}
+            requestedSessionId={workWindowTarget?.sessionId}
+            onRequestedWindowConsumed={() => setWorkWindowTarget(null)}
             onUnauthorized={handleUnauthorized}
           />
         )}
@@ -376,6 +386,13 @@ export function App() {
           />
         )}
       </section>
+
+      {sessionNavigation && <SessionWindowNavigation
+        key={sessionNavigation.projectId + ":" + sessionNavigation.sessionId}
+        client={client} location={sessionNavigation} language={language}
+        onClose={closeSessionNavigation} onOpenWindow={openWindow}
+        onOpenRecord={openSessionRecord} onUnauthorized={handleUnauthorized}
+      />}
 
       <nav className="mobile-primary-nav ui-glass" aria-label={translate("Workspace views", language)}>
         <button className={view === "work" ? "active" : ""} type="button" onClick={openWork} aria-current={view === "work" ? "page" : undefined}><BriefcaseBusiness size={18} /><span>{translate("Work", language)}</span></button>

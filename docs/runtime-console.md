@@ -26,8 +26,14 @@ On desktop, select a project on the left and inspect its activity, workspaces,
 and retained Sessions on the right. Narrow screens stack the list and details;
 selecting a project moves focus to its details. Initial loading fetches the
 project list, Window inventory, and the selected workspace's Session list.
-Git branches are checked only with **Check branch** for the selected workspace;
-Session details load when opened, not to populate counts in the project list.
+Git branches are checked only with **Check branch** for the selected workspace.
+Opening a Session resolves its authorized Window links and opens the same
+Activity workbench used by **Work**, focused on that Session. If multiple Windows
+are linked, choose one; if no link is retained or Window observation is unavailable,
+the dialog offers **View Session record** explicitly. A matching Project alone is
+never used to infer a Window link. A Window omitted from the bounded inventory is
+loaded by its exact key, and unavailable targets never silently select another
+Window. Session details load when opened, not to populate counts in the project list.
 
 **Runtime** contains **Overview**, **Window Activity**, and **Agents**. Overview
 puts Runner availability and running work first, with disconnected or

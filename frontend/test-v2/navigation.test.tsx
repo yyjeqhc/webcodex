@@ -15,7 +15,7 @@ function json(data: unknown, status = 200): Response {
   });
 }
 
-function installFetch(locateResponse?: () => Promise<Response>, windowResponse?: () => Promise<Response>) {
+function installFetch(locateResponse?: () => Promise<Response>, windowResponse?: () => Promise<Response>, sessionResponse?: () => Promise<Response>) {
   const overview = runtimeOverview();
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
@@ -53,6 +53,7 @@ function installFetch(locateResponse?: () => Promise<Response>, windowResponse?:
     if (url.endsWith("/api/runtime-console/workflow-session-locate") && locateResponse) return await locateResponse();
     if (url.endsWith("/api/runtime-console/project-git")) return json({ branch: "prototype/runtime-webui-v2", clean: false, git_available: true });
     if (url.endsWith("/api/runtime-console/workflow-session-messages")) return json({ session_id: body.session_id, messages: [] });
+    if (url.endsWith("/api/runtime-console/workflow-session") && sessionResponse) return await sessionResponse();
     if (url.endsWith("/api/runtime-console/workflow-session")) return json(sessionDetail({ session_id: body.session_id }));
     if (url.endsWith("/api/runtime-console/projects")) return json({ projects: overview.projects, total: 1, truncated: false });
     if (url.endsWith("/api/runtime-console/workflow-sessions")) return json({ sessions: [sessionItem()], total: 1, returned: 1, truncated: false });
@@ -98,6 +99,79 @@ describe("Runtime v2 navigation", () => {
     expect(await screen.findByRole("heading", { name: "Runtime" })).toBeTruthy();
     expect(screen.getByRole("tab", { name: /Window Activity/ })).toBeTruthy();
     expect(screen.getByRole("tab", { name: /Agents/ })).toBeTruthy();
+  });
+
+  const linkedWindow = (key: string) => ({
+    client_window_key: key, source: "openai-session", first_linked_at_ms: 1, last_linked_at_ms: 2,
+    last_seen_at_ms: 2, relations: ["recording"], relation_count: 1, recorder_gap_count: 0,
+  });
+  const openProjectSession = async () => {
+    window.localStorage.setItem("webcodex.runtime.v2.view.v1", "projects");
+    render(<App />);
+    fireEvent.click(await screen.findByText(sessionItem().title));
+  };
+
+  it("opens a Project Session in the current Window workbench, even outside the Window inventory", async () => {
+    const key = "b".repeat(64);
+    const sessionId = sessionItem().session_id;
+    installFetch(undefined, async () => json(windowDetail({ client_window_key: key })), async () => json(sessionDetail({ linked_windows: [linkedWindow(key)] })));
+    await openProjectSession();
+    expect(await screen.findByTestId("window-primary-workbench")).toBeTruthy();
+    await waitFor(() => expect((screen.getByRole("combobox", { name: "Session filter" }) as HTMLSelectElement).value).toBe(sessionId));
+    expect(screen.getByText("No calls in this Session")).toBeTruthy();
+    expect(screen.queryByRole("searchbox", { name: "Search Sessions" })).toBeNull();
+    const calls = vi.mocked(fetch).mock.calls;
+    expect(calls.some(([url]) => String(url).endsWith("/project-git") || String(url).endsWith("/workflow-session-messages"))).toBe(false);
+    const windowCalls = calls.filter(([url]) => String(url).endsWith("/window"));
+    expect(windowCalls.length).toBeGreaterThan(0);
+    expect(windowCalls.every(([, init]) => JSON.parse(String(init?.body)).client_window_key === key)).toBe(true);
+  });
+
+  it("asks which exact Window to open when a Session has multiple links", async () => {
+    installFetch(undefined, undefined, async () => json(sessionDetail({ linked_windows: [linkedWindow("a".repeat(64)), linkedWindow("b".repeat(64))] })));
+    await openProjectSession();
+    expect(await screen.findByText("Choose a Window for this Session")).toBeTruthy();
+    expect(screen.queryByTestId("window-primary-workbench")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /Window bbbbb/ }));
+    expect(await screen.findByTestId("window-primary-workbench")).toBeTruthy();
+    await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([url, init]) => String(url).endsWith("/window") && JSON.parse(String(init?.body)).client_window_key === "b".repeat(64))).toBe(true));
+  });
+
+  it("keeps unlinked history explicit instead of silently switching to the Session layout", async () => {
+    await openProjectSession();
+    expect(await screen.findByText("No linked Windows in retained evidence.")).toBeTruthy();
+    expect(screen.queryByRole("searchbox", { name: "Search Sessions" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "View Session record" }));
+    expect(await screen.findByRole("searchbox", { name: "Search Sessions" })).toBeTruthy();
+  });
+
+  it.each([403, 404])("does not redirect to another Window when Session access returns %s", async status => {
+    installFetch(undefined, undefined, async () => json({}, status));
+    await openProjectSession();
+    expect(await screen.findByText("Session unavailable")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "View Session record" })).toBeNull();
+    expect(screen.queryByTestId("window-primary-workbench")).toBeNull();
+  });
+
+  it("locks the workspace when resolving a Session returns 401", async () => {
+    installFetch(undefined, undefined, async () => json({}, 401));
+    await openProjectSession();
+    expect(await screen.findByRole("heading", { name: "Connect to your workspace" })).toBeTruthy();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("ignores a Session navigation result after the dialog is dismissed", async () => {
+    let resolveSession!: (response: Response) => void;
+    const pending = new Promise<Response>(resolve => { resolveSession = resolve; });
+    installFetch(undefined, undefined, () => pending);
+    await openProjectSession();
+    expect(await screen.findByText("Finding linked Windows…")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    resolveSession(json(sessionDetail({ linked_windows: [linkedWindow("b".repeat(64))] })));
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(screen.queryByTestId("window-primary-workbench")).toBeNull();
+    expect(screen.getByRole("heading", { name: "Projects" })).toBeTruthy();
   });
 
   it("keeps the three primary destinations reachable in a narrow viewport", async () => {

@@ -292,3 +292,18 @@ it("lets slow project and Session inventories finish across polling ticks", asyn
     hook.unmount();
   } finally { vi.useRealTimers(); }
 });
+
+it("does not retarget an explicit Window when its detail is unavailable or inventory omits it", async () => {
+  const key = "b".repeat(64);
+  const client = { post: vi.fn(async (path) => path === "windows"
+    ? { ok: true, status: 200, data: { windows: [{ client_window_key: "a".repeat(64) }], total: 1, truncated: true } }
+    : { ok: false, status: 404, data: null }) } as unknown as RuntimeV2Client;
+  const unauthorized = vi.fn();
+  const { result } = renderHook(() => useWindowWorkspace(client, true, unauthorized, { initialWindowKey: key }));
+  await waitFor(() => expect(result.current.detailAvailability).toBe("denied"));
+  act(() => result.current.refresh());
+  await waitFor(() => expect(vi.mocked(client.post).mock.calls.filter(([path]) => path === "window")).toHaveLength(2));
+  expect(result.current.selectedKey).toBe(key);
+  expect(result.current.detail).toBeNull();
+  expect(vi.mocked(client.post).mock.calls.filter(([path]) => path === "window").every(([, payload]) => (payload as any).client_window_key === key)).toBe(true);
+});

@@ -38,6 +38,7 @@ type Props = {
   onSurfaceChange: (surface: WorkSurface) => void;
   onUnauthorized: () => void;
   requestedWindowKey?: string;
+  requestedSessionId?: string;
   onRequestedWindowConsumed?: () => void;
 };
 
@@ -108,22 +109,16 @@ export function WindowWorkbench({
   onSurfaceChange,
   onUnauthorized,
   requestedWindowKey,
+  requestedSessionId,
   onRequestedWindowConsumed,
 }: Props) {
   const t = (value: string) => translate(value, language);
-  const windows = useWindowWorkspace(client, true, onUnauthorized, { refreshMs: 3_000, loadDetail: true });
+  const windows = useWindowWorkspace(client, true, onUnauthorized, { refreshMs: 3_000, loadDetail: true, initialWindowKey: requestedWindowKey });
   const [search, setSearch] = useState("");
   const [projectFamily, setProjectFamily] = useState("");
   const [centerTab, setCenterTab] = useState<"window" | "collaboration">("window");
   const [selectedSessionId, setSelectedSessionId] = useState("");
   const families = useMemo(() => buildProjectFamilies(projects, windows.windows), [projects, windows.windows]);
-
-  useEffect(() => {
-    if (!requestedWindowKey) return;
-    if (!windows.windows.some((window) => window.client_window_key === requestedWindowKey)) return;
-    windows.select(requestedWindowKey);
-    onRequestedWindowConsumed?.();
-  }, [onRequestedWindowConsumed, requestedWindowKey, windows.windows]);
 
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -163,6 +158,18 @@ export function WindowWorkbench({
     setCenterTab("window");
     setSelectedSessionId("");
   }, [windows.selectedKey]);
+  useEffect(() => {
+    if (!requestedWindowKey) return;
+    if (windows.selectedKey !== requestedWindowKey) {
+      windows.select(requestedWindowKey);
+      return;
+    }
+    setSearch("");
+    setProjectFamily("");
+    setCenterTab("window");
+    setSelectedSessionId(requestedSessionId || "");
+    onRequestedWindowConsumed?.();
+  }, [onRequestedWindowConsumed, requestedWindowKey, requestedSessionId, windows.selectedKey, windows.select]);
   const selectedSummary = windows.windows.find((row) => row.client_window_key === windows.selectedKey);
   const activeRequest = detail?.active_requests.slice().sort((a, b) => b.started_at_ms - a.started_at_ms)[0];
   const currentProjectId = activeRequest?.project || selectedSummary?.last_project || detail?.activity[0]?.project;

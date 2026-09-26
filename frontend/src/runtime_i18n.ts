@@ -5,6 +5,11 @@ export type RuntimeLanguage = "en" | "zh-CN";
 export const LANGUAGE_STORAGE_KEY = "webcodex.runtime.language.v1";
 
 export const RUNTIME_ZH_TEXT: Record<string, string> = {
+  "Session activity": "会话活动",
+  "Finding linked Windows…": "正在查找关联窗口…",
+  "Could not load Session activity.": "无法加载会话活动。",
+  "Choose a Window for this Session": "选择要查看的关联窗口",
+  "View Session record": "查看会话记录",
   "Check branch": "查看分支",
   "Git status unavailable": "无法读取 Git 状态",
   "Detached HEAD": "分离的 HEAD",

@@ -28,6 +28,7 @@ type Props = {
   onLocateSession: (sessionId: string) => Promise<boolean>;
   onUnauthorized: () => void;
   requestedWindowKey?: string;
+  requestedSessionId?: string;
   onRequestedWindowConsumed?: () => void;
 };
 
@@ -46,6 +47,7 @@ export function WorkView({
   onLocateSession,
   onUnauthorized,
   requestedWindowKey,
+  requestedSessionId,
   onRequestedWindowConsumed,
 }: Props) {
   const t = (value: string) => translate(value, language);
@@ -81,6 +83,7 @@ export function WorkView({
         onSurfaceChange={onSurfaceChange}
         onUnauthorized={onUnauthorized}
         requestedWindowKey={requestedWindowKey}
+        requestedSessionId={requestedSessionId}
         onRequestedWindowConsumed={onRequestedWindowConsumed}
       />
     );

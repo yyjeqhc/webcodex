@@ -599,7 +599,7 @@ it("groups a managed worktree under one human Project and exposes Window activit
   const card = screen.getByTestId("project-card-" + source.id);
   expect(card.textContent).toContain("WebCodex");
   expect(card.textContent).toContain("2 workspaces");
-  expect(card.textContent).toContain("1 active");
+  await waitFor(() => expect(card.textContent).toContain("1 active"));
 
   expect((await screen.findAllByText("Primary workspace"))[0]).toBeTruthy();
   expect(screen.getByText("webcodex-activity-fix")).toBeTruthy();

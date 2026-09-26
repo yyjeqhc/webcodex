@@ -25972,6 +25972,11 @@ function _L({ color: e, onChange: i, label: a, customLabel: r, compact: l = !1, 
   });
 }
 var jn = {
+  "Session activity": "会话活动",
+  "Finding linked Windows…": "正在查找关联窗口…",
+  "Could not load Session activity.": "无法加载会话活动。",
+  "Choose a Window for this Session": "选择要查看的关联窗口",
+  "View Session record": "查看会话记录",
   "Check branch": "查看分支",
   "Git status unavailable": "无法读取 Git 状态",
   "Detached HEAD": "分离的 HEAD",

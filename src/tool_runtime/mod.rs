@@ -75,6 +75,7 @@ mod projects;
 mod read_cache;
 mod read_files;
 mod read_revisions;
+mod return_timing;
 mod runtime;
 mod runtime_info;
 pub(crate) mod runtime_metrics;

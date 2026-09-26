@@ -1,7 +1,25 @@
-use super::{sessions::SessionTransport, ToolCall, ToolResult};
+use super::{
+    return_timing::ToolReturnTimingPolicy, sessions::SessionTransport, ToolCall, ToolResult,
+};
 use crate::mcp_host::McpHostRuntimePolicy;
 
-pub(super) fn normalize_call_timing(
+/// MCP contributes only a Host/adapter return-latency upper bound. Canonical
+/// ToolRuntime combines it with any trusted internal orchestration bound before
+/// structured execution resolves its own lifetime and handoff budget.
+pub(super) fn return_timing_policy(
+    transport: SessionTransport,
+    policy: McpHostRuntimePolicy,
+) -> ToolReturnTimingPolicy {
+    if matches!(transport, SessionTransport::Mcp) {
+        ToolReturnTimingPolicy::handoff_max_secs(policy.max_sync_wait_secs)
+    } else {
+        ToolReturnTimingPolicy::unconstrained()
+    }
+}
+
+/// Job observation is a separate contract from structured-execution handoff.
+/// Only MCP Host latency policy narrows an explicit observation wait.
+pub(super) fn normalize_observation_call_timing(
     call: &mut ToolCall,
     transport: SessionTransport,
     policy: McpHostRuntimePolicy,
@@ -9,24 +27,7 @@ pub(super) fn normalize_call_timing(
     if !matches!(transport, SessionTransport::Mcp) {
         return;
     }
-
     match call {
-        ToolCall::RunProcess { sync_wait_secs, .. }
-        | ToolCall::RunScript { sync_wait_secs, .. }
-        | ToolCall::RunShell { sync_wait_secs, .. }
-        | ToolCall::RunSkillResource { sync_wait_secs, .. }
-        | ToolCall::CargoCheck { sync_wait_secs, .. }
-        | ToolCall::CargoTest { sync_wait_secs, .. }
-        | ToolCall::GoTest { sync_wait_secs, .. } => {
-            normalize_sync_wait(sync_wait_secs, policy);
-        }
-        ToolCall::CargoFmt {
-            check,
-            sync_wait_secs,
-            ..
-        } if *check == Some(true) => {
-            normalize_sync_wait(sync_wait_secs, policy);
-        }
         ToolCall::ObserveJobs { wait_secs, .. } | ToolCall::JobTail { wait_secs, .. } => {
             if let Some(wait_secs) = wait_secs.as_mut() {
                 *wait_secs = (*wait_secs).min(policy.continuation_wait_secs);
@@ -56,14 +57,6 @@ pub(super) fn normalize_result_timing(
     }
 }
 
-fn normalize_sync_wait(sync_wait_secs: &mut Option<u64>, policy: McpHostRuntimePolicy) {
-    *sync_wait_secs = Some(
-        sync_wait_secs
-            .unwrap_or(policy.initial_job_handoff_secs)
-            .min(policy.max_sync_wait_secs),
-    );
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -77,6 +70,17 @@ mod tests {
         .runtime_policy()
     }
 
+    fn normalize_structured_for_transport(
+        call: &mut ToolCall,
+        transport: SessionTransport,
+        policy: McpHostRuntimePolicy,
+    ) {
+        super::super::return_timing::normalize_structured_handoff(
+            call,
+            return_timing_policy(transport, policy),
+        );
+    }
+
     #[test]
     fn mcp_structured_execution_defaults_and_clamps_sync_wait() {
         let policy = host_code_mode_policy();
@@ -85,7 +89,7 @@ mod tests {
             serde_json::json!({"project":"demo","command":"true"}),
         )
         .unwrap();
-        normalize_call_timing(&mut default_call, SessionTransport::Mcp, policy);
+        normalize_structured_for_transport(&mut default_call, SessionTransport::Mcp, policy);
         match default_call {
             ToolCall::RunShell { sync_wait_secs, .. } => assert_eq!(sync_wait_secs, Some(5)),
             _ => unreachable!(),
@@ -96,7 +100,7 @@ mod tests {
             serde_json::json!({"project":"demo","sync_wait_secs":55}),
         )
         .unwrap();
-        normalize_call_timing(&mut explicit_call, SessionTransport::Mcp, policy);
+        normalize_structured_for_transport(&mut explicit_call, SessionTransport::Mcp, policy);
         match explicit_call {
             ToolCall::CargoTest { sync_wait_secs, .. } => assert_eq!(sync_wait_secs, Some(5)),
             _ => unreachable!(),
@@ -111,7 +115,7 @@ mod tests {
             serde_json::json!({"project":"demo","command":"true"}),
         )
         .unwrap();
-        normalize_call_timing(&mut default_call, SessionTransport::Mcp, policy);
+        normalize_structured_for_transport(&mut default_call, SessionTransport::Mcp, policy);
         match default_call {
             ToolCall::RunShell { sync_wait_secs, .. } => assert_eq!(sync_wait_secs, Some(10)),
             _ => unreachable!(),
@@ -122,7 +126,7 @@ mod tests {
             serde_json::json!({"project":"demo","sync_wait_secs":100}),
         )
         .unwrap();
-        normalize_call_timing(&mut explicit_call, SessionTransport::Mcp, policy);
+        normalize_structured_for_transport(&mut explicit_call, SessionTransport::Mcp, policy);
         match explicit_call {
             ToolCall::CargoCheck { sync_wait_secs, .. } => assert_eq!(sync_wait_secs, Some(55)),
             _ => unreachable!(),
@@ -137,7 +141,7 @@ mod tests {
             serde_json::json!({"project":"demo","command":"true","sync_wait_secs":55}),
         )
         .unwrap();
-        normalize_call_timing(&mut call, SessionTransport::Api, policy);
+        normalize_structured_for_transport(&mut call, SessionTransport::Api, policy);
         match call {
             ToolCall::RunShell { sync_wait_secs, .. } => assert_eq!(sync_wait_secs, Some(55)),
             _ => unreachable!(),
@@ -221,7 +225,7 @@ mod tests {
             serde_json::json!({"items":[{"job_id":"job"}],"wait_secs":100}),
         )
         .unwrap();
-        normalize_call_timing(&mut observe, SessionTransport::Mcp, policy);
+        normalize_observation_call_timing(&mut observe, SessionTransport::Mcp, policy);
         match observe {
             ToolCall::ObserveJobs { wait_secs, .. } => assert_eq!(wait_secs, Some(5)),
             _ => unreachable!(),
@@ -232,7 +236,7 @@ mod tests {
             serde_json::json!({"items":[{"job_id":"job"}],"wait_secs":100}),
         )
         .unwrap();
-        normalize_call_timing(
+        normalize_observation_call_timing(
             &mut direct,
             SessionTransport::Mcp,
             McpHostRuntimePolicy::default(),
@@ -247,7 +251,7 @@ mod tests {
             serde_json::json!({"job_id":"job","wait_secs":100}),
         )
         .unwrap();
-        normalize_call_timing(&mut tail, SessionTransport::Mcp, policy);
+        normalize_observation_call_timing(&mut tail, SessionTransport::Mcp, policy);
         match tail {
             ToolCall::JobTail { wait_secs, .. } => assert_eq!(wait_secs, Some(5)),
             _ => unreachable!(),
@@ -258,7 +262,7 @@ mod tests {
             serde_json::json!({"items":[{"job_id":"job"}],"wait_secs":100}),
         )
         .unwrap();
-        normalize_call_timing(&mut api, SessionTransport::Api, policy);
+        normalize_observation_call_timing(&mut api, SessionTransport::Api, policy);
         match api {
             ToolCall::ObserveJobs { wait_secs, .. } => assert_eq!(wait_secs, Some(100)),
             _ => unreachable!(),

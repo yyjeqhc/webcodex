@@ -535,7 +535,7 @@ const edit = await tools.apply_text_edits({changes:[{
 if (!edit.success || typeof edit.output?.state_changed !== "boolean") {
   throw new Error("Inspect the edit recovery; do not validate a rejected edit");
 }
-const check = await tools.cargo_check({sync_wait_secs:1});
+const check = await tools.cargo_check({});
 text({state_changed:edit.output.state_changed, call_success:check.success,
       source_state:check.output?.source_state, job_handoff:!!check.output?.job_id});
 ```

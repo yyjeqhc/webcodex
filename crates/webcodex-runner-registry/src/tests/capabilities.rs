@@ -89,6 +89,7 @@ fn capability_classification_keeps_environment_dependent_features_registration_r
         RunnerFeature::StructuredScriptJavascript,
         RunnerFeature::StructuredScriptTypescript,
         RunnerFeature::ApplyTextEditLineScope,
+        RunnerFeature::ApplyTextEditRange,
         RunnerFeature::ApplyTextEditExpectedMatchCount,
         RunnerFeature::ApplyTextEditLocalGuardWithoutSha,
         RunnerFeature::ApplyPatchMatchMetadata,

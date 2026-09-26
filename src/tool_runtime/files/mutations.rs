@@ -287,6 +287,23 @@ fn apply_text_edit_line_scope_capability_rejection(reason: impl AsRef<str>) -> T
     )
 }
 
+fn apply_text_edit_range_capability_rejection(reason: impl AsRef<str>) -> ToolResult {
+    let reason = reason.as_ref();
+    ToolResult::err_with_output(
+        format!(
+            "Rejected before write: {reason}.\nNo files were modified.\nRetry guidance: reconnect a Runner that explicitly supports apply_text_edit_range before retrying this revision-fenced range edit."
+        ),
+        json!({
+            "changed": false,
+            "state_changed": false,
+            "execution_state": "not_started",
+            "error_kind": "agent_capability_unavailable",
+            "failure_kind": "capability_unavailable",
+            "capability": crate::runner_protocol::RUNNER_CAPABILITY_APPLY_TEXT_EDIT_RANGE
+        }),
+    )
+}
+
 fn apply_patch_capability_rejection(
     reason: impl AsRef<str>,
     capability: &'static str,
@@ -398,6 +415,27 @@ fn validate_apply_text_edit(
         }
     }
     match edit.kind {
+        ApplyTextEditKind::ReplaceRange => {
+            if edit.line_scope.is_none() {
+                return Err(format!(
+                    "change {change_index} edit {edit_index} (replace_range): start_line/end_line are required"
+                ));
+            }
+            if edit.new_text.is_none() {
+                return Err(format!(
+                    "change {change_index} edit {edit_index} (replace_range): new_text is required"
+                ));
+            }
+            if edit.old_text.is_some()
+                || edit.anchor_text.is_some()
+                || edit.occurrence.is_some()
+                || edit.expected_match_count.is_some()
+            {
+                return Err(format!(
+                    "change {change_index} edit {edit_index} (replace_range): old_text, anchor_text, occurrence, and expected_match_count are not allowed"
+                ));
+            }
+        }
         ApplyTextEditKind::ReplaceExact => {
             if edit
                 .old_text
@@ -2435,7 +2473,46 @@ pub(crate) fn apply_text_edits_to_string(
                 .validate()
                 .map_err(|reason| edit_field_error(index, kind, reason))?;
         }
+        if kind == ApplyTextEditKind::ReplaceRange {
+            if edit.old_text.is_some()
+                || edit.anchor_text.is_some()
+                || edit.occurrence.is_some()
+                || edit.expected_match_count.is_some()
+            {
+                return Err(edit_field_error(
+                    index,
+                    kind,
+                    "old_text, anchor_text, occurrence, and expected_match_count are not allowed",
+                ));
+            }
+            let range = edit
+                .line_scope
+                .ok_or_else(|| edit_field_error(index, kind, "start_line/end_line are required"))?;
+            let replacement = edit
+                .new_text
+                .as_deref()
+                .ok_or_else(|| edit_field_error(index, kind, "new_text is required"))?;
+            if replacement.contains('\0') {
+                return Err(edit_field_error(
+                    index,
+                    kind,
+                    "edit text cannot contain NUL bytes",
+                ));
+            }
+            if replacement.len() > MAX_APPLY_TEXT_EDIT_FIELD_BYTES {
+                return Err(edit_field_error(index, kind, "edit field is too large"));
+            }
+            let replacement = canonicalize_apply_text_line_endings(replacement, line_ending)
+                .map_err(|reason| edit_field_error(index, kind, reason))?
+                .into_owned();
+            let (start, end) =
+                crate::apply_edits_shared::resolve_apply_text_line_range(original, range)
+                    .map_err(|reason| edit_field_error(index, kind, reason))?;
+            ops.push((start, end, replacement, index));
+            continue;
+        }
         let (needle, replacement): (&str, String) = match kind {
+            ApplyTextEditKind::ReplaceRange => unreachable!("handled above"),
             ApplyTextEditKind::ReplaceExact => {
                 let old = edit
                     .old_text
@@ -3441,6 +3518,14 @@ impl ToolRuntime {
                     ) =>
             {
                 return apply_text_edit_line_scope_capability_rejection(error)
+            }
+            Err(error)
+                if error.starts_with("capability_unavailable:")
+                    && error.contains(
+                        crate::runner_protocol::RUNNER_CAPABILITY_APPLY_TEXT_EDIT_RANGE,
+                    ) =>
+            {
+                return apply_text_edit_range_capability_rejection(error)
             }
             Err(error)
                 if error.starts_with("capability_unavailable:")

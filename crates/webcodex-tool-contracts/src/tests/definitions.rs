@@ -1034,8 +1034,14 @@ fn turn_economy_descriptors_stay_converged_and_bounded() {
 
     let edits = spec_named(&specs, "edit_project_files");
     for phrase in [
-        "expected_match_count=N", "Optional dry_run", "change_summary", "mechanical scope",
-        "not semantic review", "show_changes", "git_diff_hunks", "expected_read_revision",
+        "expected_match_count=N",
+        "Optional dry_run",
+        "change_summary",
+        "mechanical scope",
+        "not semantic review",
+        "show_changes",
+        "git_diff_hunks",
+        "expected_read_revision",
     ] {
         assert!(
             edits.description.contains(phrase),

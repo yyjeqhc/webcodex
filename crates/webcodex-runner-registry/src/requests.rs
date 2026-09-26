@@ -50,7 +50,8 @@ use webcodex_core::runner_protocol::{
     RUNNER_CAPABILITY_APPLY_TEXT_EDIT_EXPECTED_MATCH_COUNT,
     RUNNER_CAPABILITY_APPLY_TEXT_EDIT_LINE_SCOPE,
     RUNNER_CAPABILITY_APPLY_TEXT_EDIT_LOCAL_GUARD_WITHOUT_SHA,
-    RUNNER_CAPABILITY_APPLY_TEXT_EDIT_OCCURRENCE, RUNNER_CAPABILITY_ARTIFACT_EXPORT_CHUNK_READ,
+    RUNNER_CAPABILITY_APPLY_TEXT_EDIT_OCCURRENCE, RUNNER_CAPABILITY_APPLY_TEXT_EDIT_RANGE,
+    RUNNER_CAPABILITY_ARTIFACT_EXPORT_CHUNK_READ,
     RUNNER_CAPABILITY_ARTIFACT_EXPORT_STREAMING_METADATA,
     RUNNER_CAPABILITY_EXPLICIT_SHELL_SELECTION, RUNNER_CAPABILITY_FILE_READ,
     RUNNER_CAPABILITY_FILE_WRITE, RUNNER_CAPABILITY_INTERNAL_POSIX_SCRIPT,
@@ -390,26 +391,29 @@ pub(super) fn resolve_disconnected_sync_requests_locked(
     }
 }
 
-fn apply_text_edits_capability_requirements(body: &ShellFileOpRequest) -> (bool, bool, bool, bool) {
+fn apply_text_edits_capability_requirements(
+    body: &ShellFileOpRequest,
+) -> (bool, bool, bool, bool, bool) {
     if body.op != "apply_text_edits" {
-        return (false, false, false, false);
+        return (false, false, false, false, false);
     }
     let Some(content) = body.content.as_deref() else {
-        return (false, false, false, false);
+        return (false, false, false, false, false);
     };
     let Ok(payload) = serde_json::from_str::<serde_json::Value>(content) else {
         // Invalid JSON cannot become a valid Runner mutation. Preserve the
         // existing generic-ingress behavior and let the Runner reject it.
-        return (false, false, false, false);
+        return (false, false, false, false, false);
     };
     let Some(changes) = payload.get("changes").and_then(serde_json::Value::as_array) else {
-        return (false, false, false, false);
+        return (false, false, false, false, false);
     };
 
     let mut requires_occurrence = false;
     let mut requires_line_scope = false;
     let mut requires_local_guard_without_sha = false;
     let mut requires_expected_match_count = false;
+    let mut requires_range = false;
     for change in changes {
         if change.get("kind").and_then(serde_json::Value::as_str) == Some("edit")
             && change
@@ -424,8 +428,14 @@ fn apply_text_edits_capability_requirements(body: &ShellFileOpRequest) -> (bool,
             .into_iter()
             .flatten()
         {
+            let is_range =
+                edit.get("kind").and_then(serde_json::Value::as_str) == Some("replace_range");
+            requires_range |= is_range;
             requires_occurrence |= edit.get("occurrence").is_some_and(|value| !value.is_null());
-            requires_line_scope |= edit.get("line_scope").is_some_and(|value| !value.is_null());
+            // replace_range reuses line_scope in the internal Runner DTO, but
+            // its semantics are fenced by the dedicated range capability.
+            requires_line_scope |=
+                !is_range && edit.get("line_scope").is_some_and(|value| !value.is_null());
             requires_expected_match_count |= edit
                 .get("expected_match_count")
                 .is_some_and(|value| !value.is_null());
@@ -436,6 +446,7 @@ fn apply_text_edits_capability_requirements(body: &ShellFileOpRequest) -> (bool,
         requires_line_scope,
         requires_local_guard_without_sha,
         requires_expected_match_count,
+        requires_range,
     )
 }
 
@@ -491,8 +502,12 @@ impl RunnerRegistry {
             requires_line_scope,
             requires_local_guard_without_sha,
             requires_expected_match_count,
+            requires_range,
         ) = apply_text_edits_capability_requirements(&body);
-        if requires_line_scope || requires_local_guard_without_sha || requires_expected_match_count
+        if requires_line_scope
+            || requires_local_guard_without_sha
+            || requires_expected_match_count
+            || requires_range
         {
             return self
                 .enqueue_apply_text_edits_with_requirements(
@@ -502,6 +517,7 @@ impl RunnerRegistry {
                     requires_line_scope,
                     requires_local_guard_without_sha,
                     requires_expected_match_count,
+                    requires_range,
                 )
                 .await;
         }
@@ -566,6 +582,7 @@ impl RunnerRegistry {
             requires_line_scope,
             requires_local_guard_without_sha,
             requires_expected_match_count,
+            requires_range,
         ) = apply_text_edits_capability_requirements(&body);
         self.enqueue_apply_text_edits_with_requirements(
             body,
@@ -574,6 +591,7 @@ impl RunnerRegistry {
             requires_line_scope,
             requires_local_guard_without_sha,
             requires_expected_match_count,
+            requires_range,
         )
         .await
     }
@@ -585,7 +603,7 @@ impl RunnerRegistry {
         requested_by: String,
         requires_occurrence: bool,
     ) -> Result<(String, oneshot::Receiver<ShellRunResponse>), String> {
-        let (_, _, requires_local_guard_without_sha, requires_expected_match_count) =
+        let (_, _, requires_local_guard_without_sha, requires_expected_match_count, requires_range) =
             apply_text_edits_capability_requirements(&body);
         self.enqueue_apply_text_edits_with_requirements(
             body,
@@ -594,6 +612,7 @@ impl RunnerRegistry {
             true,
             requires_local_guard_without_sha,
             requires_expected_match_count,
+            requires_range,
         )
         .await
     }
@@ -606,6 +625,7 @@ impl RunnerRegistry {
         requires_line_scope: bool,
         requires_local_guard_without_sha: bool,
         requires_expected_match_count: bool,
+        requires_range: bool,
     ) -> Result<(String, oneshot::Receiver<ShellRunResponse>), String> {
         validate_file_request(&body)?;
         if body.op != "apply_text_edits" {
@@ -628,6 +648,16 @@ impl RunnerRegistry {
         {
             return Err(format!(
                 "capability_unavailable: runner {} does not support {RUNNER_CAPABILITY_APPLY_TEXT_EDIT_LINE_SCOPE}",
+                body.client_id
+            ));
+        }
+        if requires_range
+            && !runner
+                .runner_features
+                .supports(RunnerFeature::ApplyTextEditRange)
+        {
+            return Err(format!(
+                "capability_unavailable: runner {} does not support {RUNNER_CAPABILITY_APPLY_TEXT_EDIT_RANGE}",
                 body.client_id
             ));
         }
@@ -867,6 +897,7 @@ impl RunnerRegistry {
             requires_line_scope,
             requires_local_guard_without_sha,
             requires_expected_match_count,
+            requires_range,
         ) = requirements;
         if requires_expected_match_count
             && !current
@@ -882,6 +913,16 @@ impl RunnerRegistry {
         {
             return Err(format!(
                 "capability_unavailable: runner {} does not support {RUNNER_CAPABILITY_APPLY_TEXT_EDIT_LINE_SCOPE}",
+                body.client_id
+            ));
+        }
+        if requires_range
+            && !current
+                .runner_features
+                .supports(RunnerFeature::ApplyTextEditRange)
+        {
+            return Err(format!(
+                "capability_unavailable: runner {} does not support {RUNNER_CAPABILITY_APPLY_TEXT_EDIT_RANGE}",
                 body.client_id
             ));
         }

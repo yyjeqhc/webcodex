@@ -9,9 +9,13 @@ fn schema_accepts(schema: &Value, value: &Value) -> bool {
 fn edit_project_files_schema_and_parser_require_closed_revision_fenced_changes() {
     let specs = registered_tool_specs();
     let schema = &spec_named(&specs, "edit_project_files").input_schema;
-    let variants = schema["properties"]["changes"]["items"]["oneOf"].as_array().unwrap();
+    let variants = schema["properties"]["changes"]["items"]["oneOf"]
+        .as_array()
+        .unwrap();
     assert_eq!(variants.len(), 4);
-    for variant in variants { assert_eq!(variant["additionalProperties"], false); }
+    for variant in variants {
+        assert_eq!(variant["additionalProperties"], false);
+    }
     let valid = [
         json!({"kind":"edit","path":"a.rs","expected_read_revision":123,"edits":[{"kind":"replace_exact","old_text":"old","new_text":"new"}]}),
         json!({"kind":"create","path":"new.rs","content":""}),
@@ -24,8 +28,18 @@ fn edit_project_files_schema_and_parser_require_closed_revision_fenced_changes()
         let parsed = ToolCall::from_tool_name("edit_project_files", request).unwrap();
         let serialized = serde_json::to_value(parsed).unwrap();
         assert!(serialized.to_string().contains("edit_project_files"));
-        for field in ["content", "to_path", "edits", "expected_sha256", "old_text", "new_text", "unknown"] {
-            if change.get(field).is_some() { continue; }
+        for field in [
+            "content",
+            "to_path",
+            "edits",
+            "expected_sha256",
+            "old_text",
+            "new_text",
+            "unknown",
+        ] {
+            if change.get(field).is_some() {
+                continue;
+            }
             let mut invalid = change.clone();
             invalid[field] = json!("unexpected");
             let request = json!({"project":"demo","changes":[invalid]});
@@ -34,7 +48,10 @@ fn edit_project_files_schema_and_parser_require_closed_revision_fenced_changes()
         }
         if change["kind"] != "create" {
             let mut invalid = change.clone();
-            invalid.as_object_mut().unwrap().remove("expected_read_revision");
+            invalid
+                .as_object_mut()
+                .unwrap()
+                .remove("expected_read_revision");
             let request = json!({"project":"demo","changes":[invalid]});
             assert!(!schema_accepts(schema, &request));
             assert!(ToolCall::from_tool_name("edit_project_files", request).is_err());
@@ -45,10 +62,72 @@ fn edit_project_files_schema_and_parser_require_closed_revision_fenced_changes()
         assert!(!schema_accepts(schema, &request));
         assert!(ToolCall::from_tool_name("edit_project_files", request).is_err());
     }
-    assert!(ToolCall::from_tool_name("apply_text_edits", json!({"project":"demo","changes":[valid[1]]})).is_err());
-    let shorthand = json!({"project":"demo","changes":[{"path":"a","old_text":"old","new_text":"new"}]});
+    assert!(ToolCall::from_tool_name(
+        "apply_text_edits",
+        json!({"project":"demo","changes":[valid[1]]})
+    )
+    .is_err());
+    let shorthand =
+        json!({"project":"demo","changes":[{"path":"a","old_text":"old","new_text":"new"}]});
     assert!(!schema_accepts(schema, &shorthand));
     assert!(ToolCall::from_tool_name("edit_project_files", shorthand).is_err());
+}
+
+#[test]
+fn edit_project_files_range_edit_schema_is_closed_and_revision_fenced() {
+    let specs = registered_tool_specs();
+    let schema = &spec_named(&specs, "edit_project_files").input_schema;
+    let valid = json!({
+        "project": "demo",
+        "changes": [{
+            "kind": "edit",
+            "path": "a.rs",
+            "expected_read_revision": 123,
+            "edits": [{
+                "kind": "replace_range",
+                "start_line": 2,
+                "end_line": 4,
+                "new_text": "replacement\n"
+            }]
+        }]
+    });
+    assert!(schema_accepts(schema, &valid), "{valid}");
+    assert!(ToolCall::from_tool_name("edit_project_files", valid.clone()).is_ok());
+
+    for (field, value) in [
+        ("old_text", json!("old")),
+        ("anchor_text", json!("anchor")),
+        ("occurrence", json!(1)),
+        ("expected_match_count", json!(1)),
+        ("line_scope", json!({"start_line": 2, "end_line": 4})),
+        ("unknown", json!(true)),
+    ] {
+        let mut invalid = valid.clone();
+        invalid["changes"][0]["edits"][0][field] = value;
+        assert!(!schema_accepts(schema, &invalid), "{invalid}");
+        assert!(ToolCall::from_tool_name("edit_project_files", invalid).is_err());
+    }
+
+    let mut zero_start = valid.clone();
+    zero_start["changes"][0]["edits"][0]["start_line"] = json!(0);
+    assert!(!schema_accepts(schema, &zero_start), "{zero_start}");
+    assert!(ToolCall::from_tool_name("edit_project_files", zero_start).is_err());
+
+    // JSON Schema can express positive endpoints but not the cross-field
+    // start_line <= end_line invariant. The parser enforces it before runtime.
+    let mut reversed = valid.clone();
+    reversed["changes"][0]["edits"][0]["start_line"] = json!(3);
+    reversed["changes"][0]["edits"][0]["end_line"] = json!(2);
+    assert!(schema_accepts(schema, &reversed), "{reversed}");
+    assert!(ToolCall::from_tool_name("edit_project_files", reversed).is_err());
+
+    let mut missing_revision = valid;
+    missing_revision["changes"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("expected_read_revision");
+    assert!(!schema_accepts(schema, &missing_revision));
+    assert!(ToolCall::from_tool_name("edit_project_files", missing_revision).is_err());
 }
 
 #[test]
@@ -58,6 +137,16 @@ fn apply_text_edits_model_schema_size_is_bounded() {
     let input_schema_bytes = serde_json::to_vec(&spec.input_schema).unwrap().len();
     let description_bytes = spec.description.len();
     let total_tool_projection_bytes = serde_json::to_vec(spec).unwrap().len();
+    std::fs::write(
+        "/tmp/webcodex-edit-project-files-input-schema.json",
+        serde_json::to_vec_pretty(&spec.input_schema).unwrap(),
+    )
+    .unwrap();
+    std::fs::write(
+        "/tmp/webcodex-edit-project-files-spec.json",
+        serde_json::to_vec_pretty(spec).unwrap(),
+    )
+    .unwrap();
 
     eprintln!(
         "apply_text_edits surface bytes: input_schema={input_schema_bytes} description={description_bytes} total_tool_projection={total_tool_projection_bytes}"
@@ -121,7 +210,15 @@ fn write_project_file_schema_uses_read_revision_for_whole_file_replacement() {
 fn edit_project_files_guidance_is_read_native() {
     let specs = registered_tool_specs();
     let spec = spec_named(&specs, "edit_project_files");
-    for phrase in ["read_files", "ONE change per file", "expected_read_revision", "preflighted transactionally", "outcome_unknown", "show_changes", "structured validation"] {
+    for phrase in [
+        "read_files",
+        "ONE change per file",
+        "expected_read_revision",
+        "preflighted transactionally",
+        "outcome_unknown",
+        "show_changes",
+        "structured validation",
+    ] {
         assert!(spec.description.contains(phrase), "{phrase}");
     }
 }

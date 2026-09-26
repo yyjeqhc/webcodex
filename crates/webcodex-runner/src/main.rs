@@ -1435,6 +1435,9 @@ fn runner_register_capabilities(cfg: &RunnerConfig) -> RunnerCapabilities {
     // Line scopes are an additive rolling-upgrade fence: advertise only because
     // this binary resolves full-match containment before any mutation.
     capabilities.apply_text_edit_line_scope = true;
+    // Deterministic whole-line range replacement is an additive rolling-upgrade
+    // capability and must never be inferred from generic line_scope support.
+    capabilities.apply_text_edit_range = true;
     // This binary proves explicit all-match cardinality before any file write.
     capabilities.apply_text_edit_expected_match_count = true;
     // Codex Patch is an additive request kind with Runner-authoritative parsing and

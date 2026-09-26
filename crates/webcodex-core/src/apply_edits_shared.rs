@@ -83,6 +83,7 @@ pub fn restore_apply_text_line_endings(text: String, line_ending: ApplyTextLineE
 #[serde(rename_all = "snake_case")]
 pub enum ApplyTextEditKind {
     ReplaceExact,
+    ReplaceRange,
     InsertAfter,
     InsertBefore,
     DeleteExact,
@@ -92,11 +93,34 @@ impl ApplyTextEditKind {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::ReplaceExact => "replace_exact",
+            Self::ReplaceRange => "replace_range",
             Self::InsertAfter => "insert_after",
             Self::InsertBefore => "insert_before",
             Self::DeleteExact => "delete_exact",
         }
     }
+}
+
+/// Byte range of complete 1-based inclusive lines in the canonical original source.
+/// Includes the selected final line's newline if present. EOF adds no synthetic line.
+/// The caller must verify a whole-file read guard before resolving this range.
+pub fn resolve_apply_text_line_range(
+    source: &str,
+    range: ApplyTextLineScope,
+) -> Result<(usize, usize), &'static str> {
+    range.validate()?;
+    let mut offset = 0;
+    let mut start = None;
+    for (index, line) in source.split_inclusive('\n').enumerate() {
+        if index + 1 == range.start_line {
+            start = Some(offset);
+        }
+        offset += line.len();
+        if index + 1 == range.end_line {
+            return Ok((start.expect("validated line order"), offset));
+        }
+    }
+    Err("replace_range exceeds the original file's line count")
 }
 
 /// Canonical model-facing advisory for the narrow duplicate-anchor insertion case.
@@ -169,7 +193,7 @@ pub struct ApplyTextEditInput {
 
 /// Maximum number of source-order exact-match candidates returned for one
 /// recoverable edit conflict. The full match count remains available.
-pub const MAX_APPLY_TEXT_CONFLICT_CANDIDATES: usize = 8;
+pub const MAX_APPLY_TEXT_CONFLICT_CANDIDATES: usize = 5;
 /// Bound both requested bulk work and model-facing source-range evidence.
 pub const MAX_APPLY_TEXT_EXPECTED_MATCH_COUNT: usize = 1024;
 pub const MAX_APPLY_TEXT_MATCH_RANGES_PER_EDIT: usize = 8;
@@ -476,6 +500,27 @@ mod tests {
     }
 
     #[test]
+    fn replace_range_resolves_complete_inclusive_lines_without_synthetic_eof() {
+        let source = "alpha\nβeta\ngamma\n";
+        let (start, end) = resolve_apply_text_line_range(source, scope(2, 3)).unwrap();
+        assert_eq!(&source[start..end], "βeta\ngamma\n");
+
+        let eof_source = "alpha\nβeta";
+        let (start, end) = resolve_apply_text_line_range(eof_source, scope(2, 2)).unwrap();
+        assert_eq!(&eof_source[start..end], "βeta");
+        assert!(resolve_apply_text_line_range("alpha\n", scope(2, 2)).is_err());
+    }
+
+    #[test]
+    fn replace_range_rejects_invalid_or_out_of_bounds_ranges() {
+        let source = "a\nb\nc\n";
+        assert!(resolve_apply_text_line_range(source, scope(0, 1)).is_err());
+        assert!(resolve_apply_text_line_range(source, scope(3, 2)).is_err());
+        assert!(resolve_apply_text_line_range(source, scope(2, 4)).is_err());
+        assert!(resolve_apply_text_line_range("", scope(1, 1)).is_err());
+    }
+
+    #[test]
     fn lowercase_sha256_validation_is_exact() {
         assert!(is_lowercase_hex_sha256(
             "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -505,7 +550,10 @@ mod tests {
         assert!(conflict.candidates_truncated);
         assert_eq!(conflict.candidate_ranges[0].occurrence, 1);
         assert_eq!(conflict.candidate_ranges[0].start_line, 2);
-        assert_eq!(conflict.candidate_ranges[7].occurrence, 8);
+        assert_eq!(
+            conflict.candidate_ranges[MAX_APPLY_TEXT_CONFLICT_CANDIDATES - 1].occurrence,
+            MAX_APPLY_TEXT_CONFLICT_CANDIDATES
+        );
         let second = resolve_apply_text_match(&source, "needle\n", Some(2), None).unwrap();
         assert_eq!(&source[second.0..second.1], "needle\n");
         assert!(second.0 > source.find("needle\n").unwrap());

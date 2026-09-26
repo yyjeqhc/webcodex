@@ -19,6 +19,7 @@ pub enum RunnerFeature {
     ApplyTextEditOccurrence,
     ApplyTextEditLocalGuardWithoutSha,
     ApplyTextEditLineScope,
+    ApplyTextEditRange,
     ApplyTextEditExpectedMatchCount,
     ApplyPatch,
     ApplyPatchMatchMetadata,
@@ -93,6 +94,7 @@ const ALL_RUNNER_FEATURES: &[RunnerFeature] = &[
     RunnerFeature::ApplyTextEditOccurrence,
     RunnerFeature::ApplyTextEditLocalGuardWithoutSha,
     RunnerFeature::ApplyTextEditLineScope,
+    RunnerFeature::ApplyTextEditRange,
     RunnerFeature::ApplyTextEditExpectedMatchCount,
     RunnerFeature::ApplyPatch,
     RunnerFeature::ApplyPatchMatchMetadata,
@@ -189,6 +191,7 @@ impl RunnerFeature {
                 wire::RUNNER_CAPABILITY_APPLY_TEXT_EDIT_LOCAL_GUARD_WITHOUT_SHA
             }
             Self::ApplyTextEditLineScope => wire::RUNNER_CAPABILITY_APPLY_TEXT_EDIT_LINE_SCOPE,
+            Self::ApplyTextEditRange => wire::RUNNER_CAPABILITY_APPLY_TEXT_EDIT_RANGE,
             Self::ApplyTextEditExpectedMatchCount => {
                 wire::RUNNER_CAPABILITY_APPLY_TEXT_EDIT_EXPECTED_MATCH_COUNT
             }
@@ -287,6 +290,7 @@ impl RunnerFeature {
                 Self::ApplyTextEditLocalGuardWithoutSha
             }
             wire::RUNNER_CAPABILITY_APPLY_TEXT_EDIT_LINE_SCOPE => Self::ApplyTextEditLineScope,
+            wire::RUNNER_CAPABILITY_APPLY_TEXT_EDIT_RANGE => Self::ApplyTextEditRange,
             wire::RUNNER_CAPABILITY_APPLY_TEXT_EDIT_EXPECTED_MATCH_COUNT => {
                 Self::ApplyTextEditExpectedMatchCount
             }
@@ -404,6 +408,7 @@ impl RunnerFeature {
             | Self::StructuredCargoTestLib
             | Self::StructuredCargoCheckPackages
             | Self::ApplyTextEditLineScope
+            | Self::ApplyTextEditRange
             | Self::ApplyTextEditExpectedMatchCount
             | Self::ApplyTextEditLocalGuardWithoutSha
             | Self::ApplyPatch
@@ -462,6 +467,7 @@ impl RunnerFeature {
                 capabilities.apply_text_edit_local_guard_without_sha
             }
             Self::ApplyTextEditLineScope => capabilities.apply_text_edit_line_scope,
+            Self::ApplyTextEditRange => capabilities.apply_text_edit_range,
             Self::ApplyTextEditExpectedMatchCount => {
                 capabilities.apply_text_edit_expected_match_count
             }

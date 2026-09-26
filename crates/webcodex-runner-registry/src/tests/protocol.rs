@@ -462,6 +462,7 @@ async fn runner_supports_recognizes_all_protocol_capability_names() {
                 structured_file_delete: true,
                 apply_text_edit_occurrence: true,
                 apply_text_edit_line_scope: true,
+                apply_text_edit_range: true,
                 apply_text_edit_expected_match_count: true,
                 apply_text_edit_local_guard_without_sha: true,
                 apply_patch: true,

@@ -364,8 +364,13 @@ fn tool_specs_describe_default_coding_loop_preferences() {
 
     let apply_text_edits_desc = desc("edit_project_files");
     for phrase in [
-        "primary project editor", "read_files", "expected_read_revision", "global source order",
-        "preflighted transactionally", "conflicts fail closed", "outcome_unknown",
+        "primary project editor",
+        "read_files",
+        "expected_read_revision",
+        "global source order",
+        "preflighted transactionally",
+        "conflicts fail closed",
+        "outcome_unknown",
     ] {
         assert!(
             apply_text_edits_desc.contains(phrase),
@@ -809,8 +814,8 @@ fn edit_tool_surface_keeps_mutation_options_visible_and_schemas_stable() {
             "apply_text_edits must keep field {field}"
         );
     }
-    let text_edit_output =
-        &spec_named(&specs, "edit_project_files").output_schema["properties"]["output"]["properties"];
+    let text_edit_output = &spec_named(&specs, "edit_project_files").output_schema["properties"]
+        ["output"]["properties"];
     let text_edit_file_properties = text_edit_output["files"]["items"]["properties"]
         .as_object()
         .expect("apply_text_edits file summary properties");

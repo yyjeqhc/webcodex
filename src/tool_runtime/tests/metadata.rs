@@ -477,6 +477,7 @@ async fn register_agent_projects_for_auth(
                         structured_file_delete: false,
                         apply_text_edit_occurrence: false,
                         apply_text_edit_line_scope: false,
+                        apply_text_edit_range: false,
                         apply_text_edit_expected_match_count: false,
                         apply_text_edit_local_guard_without_sha: false,
                         apply_patch: false,

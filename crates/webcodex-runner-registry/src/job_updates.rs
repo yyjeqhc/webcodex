@@ -95,6 +95,17 @@ impl Default for JobLogWait {
     }
 }
 
+pub const MAX_JOB_TELEMETRY_SNAPSHOTS: usize = 9;
+
+/// Content-free Server facts for bounded, observation-only audit correlation.
+#[derive(Debug, Clone)]
+pub struct JobTelemetrySnapshot {
+    pub job_id: String,
+    pub project_id: Option<String>,
+    pub session_id: Option<String>,
+    pub terminal_observed_at: Option<i64>,
+}
+
 /// Frozen, read-only Server record for passive attention. Validation excerpts
 /// stay internal and are bounded by the canonical retained Job log limits.
 #[derive(Debug, Clone)]
@@ -1846,6 +1857,35 @@ impl RunnerRegistry {
                 }
             })
             .collect()
+    }
+
+    /// Best-effort telemetry must not wait on the registry or refresh lifecycle.
+    /// Exact ids are selected only from successful canonical result projections.
+    pub fn try_job_telemetry_snapshots_for_auth(
+        &self,
+        auth: Option<&crate::RunnerAccess>,
+        job_ids: &[&str],
+    ) -> Option<Vec<JobTelemetrySnapshot>> {
+        self.inner.try_read(|inner| {
+            job_ids
+                .iter()
+                .take(MAX_JOB_TELEMETRY_SNAPSHOTS)
+                .filter_map(|id| {
+                    let job = inner.jobs_by_id.get(*id)?;
+                    if job.visibility != ShellJobVisibility::Public
+                        || !shell_job_visible_to_auth(auth, &inner, job)
+                    {
+                        return None;
+                    }
+                    Some(JobTelemetrySnapshot {
+                        job_id: job.job_id.clone(),
+                        project_id: job.project_id.clone(),
+                        session_id: job.session_id.clone(),
+                        terminal_observed_at: job.observation.terminal_observed_at,
+                    })
+                })
+                .collect()
+        })
     }
 
     async fn visible_job_records_for_auth(

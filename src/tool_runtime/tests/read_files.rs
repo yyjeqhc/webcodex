@@ -2271,10 +2271,25 @@ async fn ordinary_read_delivers_terminal_attention_without_host_continuation_sup
     let request = next_read_request(&runtime, client_id).await;
     complete_read(&runtime, client_id, &request, "ordinary read\n").await;
 
-    let result = read
-        .await
+    let outcome = read.await;
+    let result = outcome
         .result
+        .as_ref()
         .expect("model-facing ordinary read result");
+    let telemetry = outcome
+        .model_ergonomics
+        .as_ref()
+        .unwrap()
+        .record_for_tool_result(result)
+        .unwrap();
+    assert_eq!(
+        telemetry
+            .job_convergence
+            .as_ref()
+            .unwrap()
+            .passive_terminal_delivery_count,
+        1
+    );
     assert!(result.success, "{:?}", result.error);
     assert_eq!(result.output["items"][0]["output"]["text"], "ordinary read");
     let attention = &result.output["job_attention"]["items"][0];

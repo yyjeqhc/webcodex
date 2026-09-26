@@ -1,4 +1,5 @@
 mod failures;
+mod telemetry;
 
 use super::jobs::{
     mark_next_agent_job_running, register_job_agent_for_auth,

@@ -1269,5 +1269,134 @@ class AgentLoopReportTests(unittest.TestCase):
         )
 
 
+
+    def test_job_convergence_loads_exact_unlinked_observe_from_audit_context(self):
+        for trace, link in [(1, True), (2, False), (3, True)]:
+            self.insert_event(str(trace), trace_id=str(trace), started=trace * 1000,
+                              handed=trace * 1000 + 100, transition="serial" if trace > 1 else "unavailable", link=link)
+        values = [JobConvergenceTests.row(1, kind="pending_handoff"),
+                  JobConvergenceTests.row(2, 1, "explicit_observe", terminal=2000),
+                  JobConvergenceTests.row(3, 2)]
+        with sqlite3.connect(self.audit_db) as connection:
+            for row in values:
+                connection.execute("UPDATE action_events SET summary_json = ? WHERE event_id = ?",
+                                   (json.dumps(row["summary"]), row["event_id"]))
+        result = self.summarize()["job_convergence"]
+        self.assertEqual(result["pending_followed_immediately_by_observe_count"], 1)
+        self.assertEqual(result["pending_followup_known_count"], 1)
+        self.assertEqual(result["pending_to_terminal_ms"]["observed_total"], 900)
+
+
+class JobConvergenceTests(unittest.TestCase):
+    @staticmethod
+    def row(trace, previous=None, kind=None, relation="a" * 64, failure=None, terminal=None):
+        event = {"kind": kind, "relation": relation}
+        if failure is not None:
+            event["failure"] = failure
+        if terminal is not None:
+            event["terminal_observed_at_ms"] = terminal
+        facts = {
+            "pending_handoff_count": int(kind == "pending_handoff"),
+            "passive_terminal_delivery_count": int(kind == "passive_terminal"),
+            "passive_failure_delivery_count": int(failure is True),
+            "wait_for_job_terminal_count": 0,
+            "correlation_complete": True,
+            "events": [event] if kind else [],
+        }
+        return {
+            "event_id": str(trace), "server_trace_id": str(trace),
+            "client_window_key": "window", "principal_correlation_kind": "user",
+            "principal_correlation_id": "principal", "window_meaningful": True,
+            "window_continuity_eligible": True, "response_streaming": False,
+            "window_transition_kind": "serial" if previous else "unavailable",
+            "request_observed_at_ms": trace * 1000,
+            "response_handed_at_ms": trace * 1000 + 100,
+            "summary": {"previous_meaningful_call": str(previous) if previous else None,
+                        "model_ergonomics": {"schema_version": 10, "job_convergence": facts}},
+        }
+
+    def test_exact_immediate_observe_and_unrelated_relations(self):
+        pending = self.row(1, kind="pending_handoff")
+        observe = self.row(2, 1, "explicit_observe")
+        result = report._summarize_job_convergence([pending, observe], [])
+        self.assertEqual(result["pending_handoff_count"], 1)
+        self.assertEqual(result["pending_followed_immediately_by_observe_count"], 1)
+        unrelated = self.row(2, 1, "explicit_observe", relation="b" * 64)
+        self.assertEqual(report._summarize_job_convergence([pending, unrelated], [])["pending_followed_immediately_by_observe_count"], 0)
+        intervening_read = self.row(2, 1)
+        later = self.row(3, 2, "explicit_observe")
+        self.assertEqual(report._summarize_job_convergence([pending, intervening_read, later], [])["pending_followed_immediately_by_observe_count"], 0)
+
+    def test_passive_failure_then_fix_or_observe_and_authoritative_timing(self):
+        pending = self.row(1, kind="pending_handoff")
+        terminal = self.row(2, 1, "passive_terminal", failure=True, terminal=2000)
+        terminal["summary"]["model_ergonomics"]["job_convergence"]["events"][0]["validation_failure"] = True
+        edit = self.row(3, 2)
+        result = report._summarize_job_convergence([pending, terminal, edit], [])
+        self.assertEqual(result["passive_terminal_delivery_count"], 1)
+        self.assertEqual(result["passive_failure_delivery_count"], 1)
+        self.assertEqual(result["passive_terminal_before_explicit_observe_count"], 1)
+        self.assertEqual(result["terminal_failure_followed_by_observe_count"], 0)
+        self.assertEqual(result["pending_to_terminal_ms"]["observed_total"], 900)
+        observe = self.row(3, 2, "explicit_observe")
+        second_observe = self.row(4, 3, "explicit_observe")
+        result = report._summarize_job_convergence([pending, terminal, observe, second_observe], [])
+        self.assertEqual(result["terminal_failure_followed_by_observe_count"], 1)
+        self.assertEqual(result["terminal_validation_failure_followed_by_observe_count"], 1)
+        self.assertEqual(result["passive_validation_failure_delivery_count"], 1)
+        unrelated = self.row(3, 2, "explicit_observe", relation="b" * 64)
+        self.assertEqual(report._summarize_job_convergence([pending, terminal, unrelated], [])["terminal_failure_followed_by_observe_count"], 0)
+
+    def test_prior_observe_does_not_count_as_passive_before_observe(self):
+        rows = [self.row(1, kind="pending_handoff"), self.row(2, 1, "explicit_observe"), self.row(3, 2, "passive_terminal", failure=False, terminal=3000)]
+        result = report._summarize_job_convergence(rows, [])
+        self.assertEqual(result["passive_terminal_before_explicit_observe_count"], 0)
+        self.assertEqual(result["passive_failure_delivery_count"], 0)
+
+    def test_gaps_overlap_wrong_principal_window_and_absent_timestamps_are_unknown(self):
+        pending = self.row(1, kind="pending_handoff")
+        for change in [
+            {"window_transition_kind": "overlap"},
+            {"client_window_key": "other-window"},
+            {"principal_correlation_id": "other-principal"},
+            {"request_observed_at_ms": None},
+            {"response_streaming": True},
+        ]:
+            observe = self.row(2, 1, "explicit_observe")
+            observe.update(change)
+            self.assertEqual(report._summarize_job_convergence([pending, observe], [])["pending_followed_immediately_by_observe_count"], 0)
+        # Even if the last exported row was pending, an absent exact predecessor
+        # never becomes adjacency. This also covers a dropped audit write.
+        observe = self.row(3, 2, "explicit_observe")
+        self.assertEqual(report._summarize_job_convergence([pending, observe], [])["pending_followed_immediately_by_observe_count"], 0)
+        for timestamp in [None, 1000]:
+            terminal = self.row(2, 1, "passive_terminal", failure=False, terminal=timestamp)
+            result = report._summarize_job_convergence([pending, terminal], [])
+            self.assertEqual(result["pending_to_terminal_ms"]["samples"], 0)
+            self.assertEqual(result["pending_to_terminal_ms"]["missing"], 1)
+
+    def test_failed_observe_correlation_does_not_prove_absence_of_observation(self):
+        pending = self.row(1, kind="pending_handoff")
+        failed_observe = self.row(2, 1)
+        failed_observe["summary"]["model_ergonomics"]["job_convergence"]["correlation_complete"] = False
+        terminal = self.row(3, 2, "passive_terminal", terminal=3000)
+        result = report._summarize_job_convergence([pending, failed_observe, terminal], [])
+        self.assertEqual(result["passive_terminal_before_explicit_observe_count"], 0)
+        self.assertEqual(result["pending_followup_known_count"], 0)
+        self.assertEqual(result["unknown_relations"], 1)
+
+    def test_wait_count_and_bounded_identity_free_aggregate(self):
+        row = self.row(1)
+        row["summary"]["model_ergonomics"]["job_convergence"]["wait_for_job_terminal_count"] = 1
+        row["summary"]["source"] = "SECRET_SOURCE_COMMAND_STDOUT_STDERR"
+        result = report._summarize_job_convergence([row], [])
+        self.assertEqual(result["wait_for_job_terminal_count"], 1)
+        encoded = json.dumps(result)
+        for private in ["SECRET", "principal", "window", "a" * 64]:
+            self.assertNotIn(private, encoded)
+        with self.assertRaisesRegex(report.ReportError, "100000"):
+            report._summarize_job_convergence([row] * 100001, [])
+
+
 if __name__ == "__main__":
     unittest.main()

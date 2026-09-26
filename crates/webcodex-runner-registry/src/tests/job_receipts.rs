@@ -845,3 +845,13 @@ async fn receipts_transient_storage_failure_retries_without_job_reexecution() {
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].snapshot.job_id, job.job_id);
 }
+
+#[tokio::test]
+async fn job_telemetry_contention_omits_snapshot_without_waiting_or_mutating() {
+    let registry = RunnerRegistry::default();
+    let guard = registry.inner.lock().await;
+    assert!(registry.try_job_telemetry_snapshots_for_auth(None, &["unknown"]).is_none());
+    assert!(guard.jobs_by_id.is_empty());
+    drop(guard);
+    assert!(registry.try_job_telemetry_snapshots_for_auth(None, &["unknown"]).unwrap().is_empty());
+}

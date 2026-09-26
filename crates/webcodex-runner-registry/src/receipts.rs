@@ -104,6 +104,12 @@ impl ReceiptRegistryState {
         self.state.try_lock().is_ok()
     }
 
+    /// A nonblocking immutable observation has no receipt/event effects.
+    pub(crate) fn try_read<T>(&self, read: impl FnOnce(&RunnerRegistryInner) -> T) -> Option<T> {
+        let guard = self.state.try_lock().ok()?;
+        Some(read(&guard))
+    }
+
     pub(crate) async fn lock(&self) -> ReceiptRegistryGuard<'_> {
         ReceiptRegistryGuard {
             guard: Some(self.state.lock().await),

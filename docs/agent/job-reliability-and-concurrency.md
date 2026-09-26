@@ -533,3 +533,60 @@ The current contract is implemented and tested primarily in:
   and slot reservation;
 - `docs/RUNNER.md` — public Job/concurrency behavior;
 - `docs/TESTING.md` — real-process restart/reconciliation acceptance coverage.
+
+## Server-only convergence measurement
+
+The existing Action Audit `summary.model_ergonomics` (schema version 10) adds
+optional `job_convergence`. It records per-invocation `pending_handoff_count`,
+`passive_terminal_delivery_count`, `passive_failure_delivery_count`, and
+`wait_for_job_terminal_count`, plus at most nine bounded events. Wait counts
+include rejected invocations. Terminal failure means negative validation truth
+or failed command truth; a separate event boolean identifies the validation
+failure cohort for measuring actionable diagnostics.
+
+Events are `pending_handoff`, `explicit_observe`, or `passive_terminal`. Their
+64-hex `relation` hashes an unambiguous length-prefixed tuple: process-local
+random salt, authenticated principal kind/id, exact Window, durable Project,
+business Workflow Session, and Job. The salt is shared by runtime clones and
+changes after restart. No native ids, command, argv, cwd, env, source, logs,
+error text, or provider payload enter this projection. Reading durable Session
+attribution for an exact authorized `observe_jobs` result is telemetry only;
+it never supplies request/business/recorder context. Explicit mismatching
+Project/Session context cannot correlate. Missing Window, scope, Job attribution,
+or a busy registry yields `correlation_complete=false`, never a guessed match.
+Failed or partially failed observation also leaves incomplete correlation; it
+cannot be used as evidence that no explicit observation occurred.
+The immutable telemetry snapshot uses a nonblocking read and cannot poll, refresh,
+mutate, create receipts, or affect the ToolResult.
+
+MCP's existing bounded principal/Window continuity registry also retains the
+exact prior meaningful call's Server trace id. Action Audit stores that link as
+`summary.previous_meaningful_call` only for a proven serial predecessor. Overlap,
+cancellation, eviction and coverage gaps invalidate the link. There is no new
+model-turn identity or claim that the Host/model consumed the result.
+
+The existing offline `scripts/agent_loop_report.py summarize` report derives:
+
+- `pending_followed_immediately_by_observe_count`: the next serial meaningful
+  MCP call has an exact `explicit_observe` event matching the pending relation.
+  Discovery/diagnostic calls are nonmeaningful under the existing policy. An
+  intervening meaningful read/edit or different Job/Project/Session does not count.
+- `passive_terminal_before_explicit_observe_count`: a complete chain back to the
+  exact pending handoff contains no explicit observation of that relation.
+- `terminal_failure_followed_by_observe_count`: the first later exact explicit
+  observation after passive failure, within a proven serial chain. Reads/edits
+  alone do not count. The report separately counts the validation failure cohort.
+- `pending_to_terminal_ms`: first Server terminal observation minus the pending
+  response's existing `response_handed_at_ms`. Terminal time comes from the
+  registry's existing `terminal_observed_at`, at second resolution. Missing or
+  inconsistent timestamps are unknown, never replaced by creation/start time,
+  duration, or observation delivery time.
+
+Correlations and distributions are computed offline because kernel completion
+cannot establish adapter response handoff or exact serial adjacency. Missing
+predecessor rows, non-MCP timing, restart/retention loss and overlap remain
+unknown; they never become evidence of "no observe". The report consumes at most
+100,000 rows and one million predecessor links for this analysis and exports
+only aggregate counters/distributions, not relations or identities. Existing
+Action Audit retention and failure isolation apply. Nothing is added to ordinary
+`runtime_status`, model results, discovery, or nested Code Mode contracts.

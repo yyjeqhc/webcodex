@@ -127,8 +127,9 @@ pub use access::{DetachedInitiatorIdentity, RunnerAccess, RunnerAccessGroup};
 pub use capabilities::{RunnerFeature, RunnerFeatureSet};
 pub use job_status::job_status_is_active;
 pub use job_updates::{
-    JobAttentionSnapshot, JobLogWait, JobLogWaitOutcome, JobValidationOutput,
+    JobAttentionSnapshot, JobLogWait, JobLogWaitOutcome, JobTelemetrySnapshot, JobValidationOutput,
     ShellJobLogObservation, ShellJobStartMetadata, StructuredJobExecution,
+    MAX_JOB_TELEMETRY_SNAPSHOTS,
 };
 pub use jobs::{command_preview, process_preview, script_preview, COMMAND_PREVIEW_MAX_CHARS};
 pub(crate) use protocol::AcceptedRunnerProtocol;

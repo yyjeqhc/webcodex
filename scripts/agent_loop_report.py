@@ -313,7 +313,10 @@ e.event_id, e.action_name, e.client_window_key,
 e.principal_correlation_kind, e.principal_correlation_id,
 e.window_started_at_ms, e.request_observed_at_ms, e.response_handed_at_ms,
 e.window_transition_kind, e.window_continuity_eligible,
-e.window_meaningful, e.started_at
+e.window_meaningful, e.started_at, e.server_trace_id, e.response_streaming,
+CASE WHEN json_valid(e.summary_json) THEN json_extract(e.summary_json, '$.model_ergonomics.schema_version') END AS model_ergonomics_version,
+CASE WHEN json_valid(e.summary_json) THEN json_extract(e.summary_json, '$.model_ergonomics.job_convergence') END AS job_convergence_json,
+CASE WHEN json_valid(e.summary_json) THEN json_extract(e.summary_json, '$.previous_meaningful_call') END AS previous_meaningful_call
 """.strip()
 
 
@@ -367,6 +370,12 @@ def _row_to_audit_event(row: sqlite3.Row) -> dict[str, Any]:
 
 def _row_to_continuity_event(row: sqlite3.Row) -> dict[str, Any]:
     return {
+        "server_trace_id": row["server_trace_id"],
+        "response_streaming": None if row["response_streaming"] is None else bool(row["response_streaming"]),
+        "summary": {
+            "previous_meaningful_call": row["previous_meaningful_call"],
+            "model_ergonomics": {"schema_version": row["model_ergonomics_version"], "job_convergence": _parse_json_object(row["job_convergence_json"] or "{}", "job_convergence", str(row["event_id"]))},
+        },
         "event_id": str(row["event_id"]),
         "action_name": row["action_name"],
         "client_window_key": row["client_window_key"],
@@ -501,6 +510,149 @@ def load_audit_continuity_events(
 def _telemetry(event: dict[str, Any]) -> dict[str, Any] | None:
     value = event.get("summary", {}).get("model_ergonomics")
     return value if isinstance(value, dict) else None
+
+
+def _summarize_job_convergence(selected: list[dict[str, Any]], context: list[dict[str, Any]]) -> dict[str, Any]:
+    """Exact audit joins; no identities or content are returned in the aggregate.
+
+    Missing links, overlap, non-MCP timing and correlation gaps remain unknown.
+    Work is bounded to 100k rows and one million predecessor links per report.
+    """
+    if len(selected) + len(context) > 100_000:
+        raise ReportError("Job convergence analysis exceeds 100000 audit rows")
+    rows = {row.get("server_trace_id"): row for row in context + selected if row.get("server_trace_id")}
+    counts = Counter({name: 0 for name in (
+        "pending_handoff_count", "pending_followed_immediately_by_observe_count", "pending_followup_known_count",
+        "passive_terminal_delivery_count", "passive_failure_delivery_count",
+        "passive_terminal_before_explicit_observe_count", "terminal_failure_followed_by_observe_count",
+        "wait_for_job_terminal_count", "uncorrelated_calls", "unknown_relations",
+        "passive_validation_failure_delivery_count", "terminal_validation_failure_followed_by_observe_count",
+    )})
+    timings: list[int] = []
+    timing_missing = 0
+    links_remaining = 1_000_000
+    failure_observed: set[str] = set()
+    timed: set[str] = set()
+    pending_observed: set[str] = set()
+
+    def facts(row: dict[str, Any]) -> dict[str, Any]:
+        value = (_telemetry(row) or {}).get("job_convergence")
+        return value if isinstance(value, dict) else {}
+
+    def events(row: dict[str, Any]) -> list[dict[str, Any]]:
+        raw = facts(row).get("events", [])
+        if not isinstance(raw, list) or len(raw) > 9:
+            return []
+        return [event for event in raw if isinstance(event, dict)
+                and _is_exact_sha256(event.get("relation"))
+                and event.get("kind") in ("pending_handoff", "explicit_observe", "passive_terminal")]
+
+    def predecessor(row: dict[str, Any]) -> dict[str, Any] | None:
+        nonlocal links_remaining
+        if links_remaining <= 0:
+            return None
+        links_remaining -= 1
+        previous = rows.get(row.get("summary", {}).get("previous_meaningful_call"))
+        if not previous or row.get("window_transition_kind") != "serial":
+            return None
+        for field in ("client_window_key", "principal_correlation_kind", "principal_correlation_id"):
+            if not row.get(field) or row.get(field) != previous.get(field):
+                return None
+        if any(call.get("window_continuity_eligible") is not True or call.get("response_streaming") is not False
+               for call in (row, previous)):
+            return None
+        start, end = row.get("request_observed_at_ms"), previous.get("response_handed_at_ms")
+        if not isinstance(start, int) or not isinstance(end, int) or start < end:
+            return None
+        return previous
+
+    def history(row: dict[str, Any]):
+        seen: set[str] = set()
+        while (row := predecessor(row)) is not None:
+            trace = row["server_trace_id"]
+            version = (_telemetry(row) or {}).get("schema_version")
+            if (trace in seen or facts(row).get("correlation_complete") is False
+                    or not isinstance(version, int) or version < 10):
+                return
+            seen.add(trace)
+            yield row
+
+    selected_relations = {event["relation"] for row in selected for event in events(row)}
+    selected_traces = {row.get("server_trace_id") for row in selected}
+    measured_rows = [row for row in rows.values() if row.get("server_trace_id") in selected_traces
+                     or any(event["relation"] in selected_relations for event in events(row))]
+    # Missing trace/timing still contributes observed invocation counts, but
+    # cannot participate in a relation chain.
+    measured_rows.extend(row for row in selected if not row.get("server_trace_id"))
+    known_followups: set[str] = set()
+    for row in rows.values():
+        version = (_telemetry(row) or {}).get("schema_version")
+        if facts(row).get("correlation_complete") is False or not isinstance(version, int) or version < 10:
+            continue
+        previous = predecessor(row)
+        if previous:
+            for event in events(previous):
+                if event["kind"] == "pending_handoff" and event["relation"] in selected_relations:
+                    known_followups.add(event["relation"])
+    counts["pending_followup_known_count"] = len(known_followups)
+    for row in measured_rows:
+        data = facts(row)
+        for name in ("pending_handoff_count", "passive_terminal_delivery_count", "passive_failure_delivery_count", "wait_for_job_terminal_count"):
+            value = data.get(name, 0)
+            if isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 9:
+                counts[name] += value
+        if data.get("correlation_complete") is False:
+            counts["uncorrelated_calls"] += 1
+        for event in events(row):
+            relation_id = event["relation"]
+            pending = None
+            if event["kind"] == "explicit_observe":
+                previous = predecessor(row)
+                if previous and any(old["kind"] == "pending_handoff" and old["relation"] == relation_id for old in events(previous)):
+                    if relation_id not in pending_observed:
+                        counts["pending_followed_immediately_by_observe_count"] += 1
+                        pending_observed.add(relation_id)
+                if relation_id in failure_observed:
+                    continue
+                for previous in history(row):
+                    matching = [old for old in events(previous) if old["relation"] == relation_id]
+                    if any(old["kind"] == "passive_terminal" and old.get("failure") is True for old in matching):
+                        counts["terminal_failure_followed_by_observe_count"] += 1
+                        failure_observed.add(relation_id)
+                        if any(old.get("validation_failure") is True for old in matching if old["kind"] == "passive_terminal"):
+                            counts["terminal_validation_failure_followed_by_observe_count"] += 1
+                        break
+                    if any(old["kind"] == "pending_handoff" for old in matching):
+                        break
+            elif event["kind"] == "passive_terminal":
+                counts["passive_validation_failure_delivery_count"] += int(event.get("validation_failure") is True)
+                observed = False
+                pending = None
+                for previous in history(row):
+                    matching = [old for old in events(previous) if old["relation"] == relation_id]
+                    observed |= any(old["kind"] == "explicit_observe" for old in matching)
+                    if any(old["kind"] == "pending_handoff" for old in matching):
+                        pending = previous
+                        break
+                if pending is None:
+                    counts["unknown_relations"] += 1
+                elif not observed:
+                    counts["passive_terminal_before_explicit_observe_count"] += 1
+            if event["kind"] == "explicit_observe" and event.get("terminal_observed_at_ms") is not None:
+                for previous in history(row):
+                    if any(old["kind"] == "pending_handoff" and old["relation"] == relation_id for old in events(previous)):
+                        pending = previous
+                        break
+            if event["kind"] == "passive_terminal" or event.get("terminal_observed_at_ms") is not None:
+                if relation_id not in timed:
+                    timed.add(relation_id)
+                    handed = pending.get("response_handed_at_ms") if pending else None
+                    terminal = event.get("terminal_observed_at_ms")
+                    if isinstance(handed, int) and isinstance(terminal, int) and terminal >= handed:
+                        timings.append(terminal - handed)
+                    else:
+                        timing_missing += 1
+    return {**counts, "pending_to_terminal_ms": _metric_distribution(timings, missing=timing_missing)}
 
 
 def _code_mode_composition(event: dict[str, Any]) -> dict[str, Any] | None:
@@ -1127,6 +1279,7 @@ def summarize(*, trace_root: Path | None, audit_db: Path | None, workflow_sessio
     jobs, jobs_availability = _job_summary(trace_events, trace_metadata_present)
     core["runner"] = runner
     core["jobs"] = jobs
+    core["job_convergence"] = _summarize_job_convergence(audit_events, continuity_events or [])
     core["availability"]["runner_requests"] = runner_availability
     core["availability"]["job_handoffs"] = jobs_availability
     benchmark = _benchmark_metadata(case_manifest=case_manifest, case_id=case_id, variant=variant, surface=surface, base_revision=base_revision)

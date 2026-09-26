@@ -176,8 +176,9 @@ struct WindowContinuityKey {
     principal_id: String,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct CompletedMeaningfulCall {
+    server_trace_id: String,
     request_observed_at_ms: i64,
     response_handed_at_ms: i64,
 }
@@ -261,15 +262,15 @@ impl WindowActivityRegistry {
         if meaningful {
             inner.advance_meaningful_revision();
         }
-        let (transition, overlapped) = if meaningful {
+        let (transition, overlapped, previous_meaningful_call) = if meaningful {
             continuity_key
                 .as_ref()
                 .map(|key| {
                     classify_transition_and_mark_overlap(&mut inner, key, request_observed_at_ms)
                 })
-                .unwrap_or((WindowLoopTransition::Unavailable, false))
+                .unwrap_or((WindowLoopTransition::Unavailable, false, None))
         } else {
-            (WindowLoopTransition::Unavailable, false)
+            (WindowLoopTransition::Unavailable, false, None)
         };
         let record = ActiveWindowRequest {
             client_window_key: window.key().to_string(),
@@ -319,6 +320,7 @@ impl WindowActivityRegistry {
             meaningful,
             request_observed_at_ms,
             transition,
+            previous_meaningful_call,
             active: true,
         }
     }
@@ -525,6 +527,7 @@ impl WindowActivityRegistry {
                     inner.previous_meaningful.insert(
                         key.clone(),
                         CompletedMeaningfulCall {
+                            server_trace_id: server_trace_id.to_string(),
                             request_observed_at_ms,
                             response_handed_at_ms: completion.response_handed_at_ms,
                         },
@@ -550,7 +553,7 @@ fn classify_transition_and_mark_overlap(
     inner: &mut WindowActivityRegistryInner,
     key: &WindowContinuityKey,
     request_observed_at_ms: i64,
-) -> (WindowLoopTransition, bool) {
+) -> (WindowLoopTransition, bool, Option<String>) {
     let active_overlap = inner.by_trace.values().any(|request| {
         request.meaningful
             && request.client_window_key == key.client_window_key
@@ -578,13 +581,13 @@ fn classify_transition_and_mark_overlap(
                 request.overlapped = true;
             }
         }
-        return (WindowLoopTransition::Overlap, true);
+        return (WindowLoopTransition::Overlap, true, None);
     }
     // Consume the predecessor at arrival. Only this request's eligible
     // completion may establish the next anchor; cancellation, streaming,
     // timeout, or active-record eviction must not leave an older call behind.
     let Some(previous) = inner.previous_meaningful.remove(key) else {
-        return (WindowLoopTransition::Unavailable, false);
+        return (WindowLoopTransition::Unavailable, false, None);
     };
     (
         WindowLoopTransition::Serial {
@@ -592,6 +595,7 @@ fn classify_transition_and_mark_overlap(
                 .unwrap_or(u64::MAX),
         },
         false,
+        Some(previous.server_trace_id),
     )
 }
 
@@ -680,10 +684,25 @@ pub(crate) struct WindowActivityGuard {
     meaningful: bool,
     request_observed_at_ms: i64,
     transition: WindowLoopTransition,
+    previous_meaningful_call: Option<String>,
     active: bool,
 }
 
 impl WindowActivityGuard {
+    /// Exact serial predecessor established by the existing principal/Window
+    /// continuity registry. Observation only; absent after gaps or overlaps.
+    pub(crate) fn previous_meaningful_call(&self) -> Option<&str> {
+        // A later arrival can mark this call overlapped after its initial
+        // transition was captured. Do not persist a serial chain through it.
+        let inner = self.registry.inner.lock().ok()?;
+        let current = inner.by_trace.get(&self.server_trace_id)?;
+        if current.overlapped {
+            None
+        } else {
+            self.previous_meaningful_call.as_deref()
+        }
+    }
+
     pub(crate) fn update(&self, tool_name: Option<&str>, project: Option<&str>) {
         self.registry
             .update(&self.server_trace_id, tool_name, project);
@@ -911,6 +930,7 @@ mod tests {
             1_500,
         );
         assert_eq!(second.transition().gap_ms(), Some(375));
+        assert_eq!(second.previous_meaningful_call(), Some("trace-first"));
     }
 
     #[test]
@@ -1031,6 +1051,23 @@ mod tests {
     }
 
     #[test]
+    fn later_overlap_invalidates_job_telemetry_predecessor_before_completion() {
+        let registry = WindowActivityRegistry::default();
+        let window = window("late-overlap");
+        meaningful_start(&registry, &window, "pending", ("username", "alice"), 1000).complete(
+            completion(1000, 1100),
+            true,
+            true,
+        );
+        let first = meaningful_start(&registry, &window, "passive", ("username", "alice"), 1200);
+        assert_eq!(first.previous_meaningful_call(), Some("pending"));
+        let overlapping =
+            meaningful_start(&registry, &window, "observe", ("username", "alice"), 1250);
+        assert_eq!(first.previous_meaningful_call(), None);
+        assert_eq!(overlapping.previous_meaningful_call(), None);
+    }
+
+    #[test]
     fn overlapping_meaningful_calls_never_emit_negative_serial_gap() {
         let registry = WindowActivityRegistry::default();
         let window = window("overlap");
@@ -1049,6 +1086,7 @@ mod tests {
             1_050,
         );
         assert_eq!(second.transition(), WindowLoopTransition::Overlap);
+        assert_eq!(second.previous_meaningful_call(), None);
         assert_eq!(second.transition().gap_ms(), None);
         first.complete(completion(1_000, 1_200), true, true);
         second.complete(completion(1_050, 1_250), true, true);

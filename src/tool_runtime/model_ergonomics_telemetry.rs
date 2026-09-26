@@ -4,6 +4,8 @@
 //! latency and transports finalize the record from the exact model-facing
 //! `ToolResult` projection before attaching it to the existing Action Audit row.
 
+pub(crate) mod job_convergence;
+
 use super::edit_tool_telemetry::{edit_tool_surface, EditToolSurface};
 use super::tool_definition::model_visible_tool_definitions;
 use super::{ToolResult, RECOVERY_KIND_VALUES};
@@ -63,7 +65,7 @@ pub(crate) struct ModelErgonomicsTimer {
     bulk_exact_requested: bool,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub(crate) struct ModelErgonomicsCompletion {
     tool_name: &'static str,
     tool_category: &'static str,
@@ -71,6 +73,7 @@ pub(crate) struct ModelErgonomicsCompletion {
     finish_summary_only: Option<bool>,
     work_on_project: Option<WorkOnProjectErgonomicsFacts>,
     bulk_exact_requested: bool,
+    pub(crate) job_convergence: Option<job_convergence::JobConvergenceRecord>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -99,6 +102,8 @@ pub(crate) struct ModelErgonomicsRecord {
     pub(crate) bulk_exact_match_total: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) work_on_project: Option<WorkOnProjectErgonomicsFacts>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) job_convergence: Option<job_convergence::JobConvergenceRecord>,
 }
 
 impl ModelErgonomicsRecord {
@@ -167,6 +172,7 @@ impl ModelErgonomicsTimer {
             finish_summary_only: self.finish_summary_only,
             work_on_project: self.work_on_project,
             bulk_exact_requested: self.bulk_exact_requested,
+            job_convergence: None,
         }
     }
 
@@ -180,6 +186,7 @@ impl ModelErgonomicsTimer {
             finish_summary_only: self.finish_summary_only,
             work_on_project: self.work_on_project,
             bulk_exact_requested: self.bulk_exact_requested,
+            job_convergence: None,
         }
     }
 }
@@ -252,7 +259,7 @@ impl ModelErgonomicsCompletion {
         let edit = edit_facts(self.tool_name, success, output);
         let edit_uncertain = edit.outcome.as_deref() == Some("uncertain");
         ModelErgonomicsRecord {
-            schema_version: 9,
+            schema_version: 10,
             tool_name: self.tool_name,
             tool_category: self.tool_category,
             success,
@@ -313,6 +320,16 @@ impl ModelErgonomicsCompletion {
                 None
             },
             work_on_project: self.work_on_project,
+            job_convergence: self.job_convergence.clone().or_else(|| {
+                matches!(self.tool_name, "wait_for_job_terminal" | "observe_jobs").then(|| {
+                    job_convergence::JobConvergenceRecord {
+                        wait_for_job_terminal_count: u8::from(
+                            self.tool_name == "wait_for_job_terminal",
+                        ),
+                        ..Default::default()
+                    }
+                })
+            }),
         }
     }
 }
@@ -585,7 +602,7 @@ mod tests {
         let record = completion("tool_manifest", 0)
             .record_for_tool_result(&ToolResult::ok(json!({})))
             .unwrap();
-        assert_eq!(record.schema_version, 9);
+        assert_eq!(record.schema_version, 10);
         assert_eq!(record.work_on_project, None);
         assert!(!serde_json::to_string(&record)
             .unwrap()
@@ -892,7 +909,7 @@ mod tests {
             let record = completion("apply_text_edits", 0)
                 .record_for_tool_result(&result)
                 .unwrap();
-            assert_eq!(record.schema_version, 9);
+            assert_eq!(record.schema_version, 10);
             assert_eq!(record.edit_surface.as_deref(), Some("structured_or_patch"));
             assert_eq!(record.edit_outcome.as_deref(), outcome);
             assert_eq!(record.edit_conflict_kind.as_deref(), conflict_kind);
@@ -1000,7 +1017,7 @@ mod tests {
                     .finish_after(Duration::ZERO)
                     .record_for_tool_result(&ToolResult::ok(json!({"private_body": "do-not-copy"})))
                     .unwrap();
-            assert_eq!(record.schema_version, 9);
+            assert_eq!(record.schema_version, 10);
             assert_eq!(record.finish_summary_only, Some(expected));
             assert!(record.serialized_result_bytes.is_some());
             let serialized = serde_json::to_string(&record).unwrap();

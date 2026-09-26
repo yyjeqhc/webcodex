@@ -205,6 +205,8 @@ pub struct ToolRuntime {
     /// to raw job_id + after_observation_token on unknown refs.
     pub(crate) observation_ref_registry:
         Arc<webcodex_core::job_observation::ObservationRefRegistry>,
+    /// Process-local salt for content-free Job ergonomics correlation.
+    pub(crate) job_ergonomics_salt: Arc<[u8; 16]>,
     /// Process-local, bounded, non-authoritative passive Job attention cursor.
     pub(crate) job_attention_cursor: Arc<super::job_attention::JobAttentionCursor>,
 }
@@ -270,6 +272,7 @@ impl ToolRuntime {
             observation_ref_registry: Arc::new(
                 webcodex_core::job_observation::ObservationRefRegistry::default(),
             ),
+            job_ergonomics_salt: Arc::new(*uuid::Uuid::new_v4().as_bytes()),
             job_attention_cursor: Arc::new(super::job_attention::JobAttentionCursor::default()),
         }
     }

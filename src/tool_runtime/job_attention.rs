@@ -76,7 +76,7 @@ pub(crate) fn bounded_failure_diagnostics(mut diagnostics: Value) -> Value {
     }
 }
 
-fn pending_continuation_job_id(result: &ToolResult) -> Option<&str> {
+pub(crate) fn pending_continuation_job_id(result: &ToolResult) -> Option<&str> {
     if result.output["execution_state"].as_str() != Some("pending") {
         return None;
     }

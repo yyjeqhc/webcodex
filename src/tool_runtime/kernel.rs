@@ -347,6 +347,7 @@ impl ToolRuntime {
         Box::pin(async move {
             let telemetry =
                 ModelErgonomicsTimer::start_with_arguments(&request.tool_name, &request.arguments);
+            let tool_name = request.tool_name.clone();
             let mut control = invocation_metadata
                 .control
                 .take()
@@ -365,6 +366,17 @@ impl ToolRuntime {
                 control.decorate(&mut outcome);
             }
             outcome.model_ergonomics = telemetry.map(ModelErgonomicsTimer::finish);
+            if let (Some(completion), Some(result)) =
+                (&mut outcome.model_ergonomics, &outcome.result)
+            {
+                completion.job_convergence = self.job_convergence_record(
+                    &tool_name,
+                    result,
+                    &outcome.correlation,
+                    context.auth,
+                    context.window,
+                );
+            }
             outcome
         })
     }

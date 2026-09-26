@@ -70,7 +70,7 @@ impl RuntimeInfo {
 }
 
 impl ToolRuntime {
-    fn effective_config_status(&self) -> Value {
+    pub(crate) fn effective_config_status(&self) -> Value {
         json!({
             "auth": {
                 "shared_key_enabled": self.runtime_info.auth_enabled

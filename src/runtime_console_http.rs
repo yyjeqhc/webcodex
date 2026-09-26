@@ -323,6 +323,7 @@ struct WorkflowSessionReplaceMessageInput {
 
 #[derive(Debug, Serialize)]
 struct RuntimeConsoleOverview {
+    effective_config: Value,
     service: Option<String>,
     version: Option<String>,
     build_git_commit: Option<String>,
@@ -2800,8 +2801,10 @@ async fn overview_for_auth(
     auth: &AuthContext,
 ) -> Result<RuntimeConsoleOverview, RuntimeConsoleError> {
     require_runtime_read(auth)?;
-    let status = runtime_status_value(runtime, auth, None).await?;
-    let runners_value = list_runners_value(runtime, auth, None).await?;
+    let (status, runners_value) = tokio::try_join!(
+        runtime_status_value(runtime, auth, None),
+        list_runners_value(runtime, auth, None),
+    )?;
     let summary = runners_value.get("summary").unwrap_or(&Value::Null);
     let build = status.get("build").unwrap_or(&Value::Null);
     let status_clients = status
@@ -2860,6 +2863,7 @@ async fn overview_for_auth(
     let unavailable = runner_count.saturating_sub(online.saturating_add(stale));
     let active_windows = active_window_count_for_auth(runtime, auth).await?;
     Ok(RuntimeConsoleOverview {
+        effective_config: runtime.effective_config_status(),
         service: safe_string(status.get("service"), 80),
         version: safe_string(status.get("version"), 80),
         build_git_commit: safe_string(build.get("git_commit"), 80),
@@ -6295,6 +6299,25 @@ mod tests {
         assert_eq!(overview_view.runner_count, 1);
         assert_eq!(overview_view.visible_projects, 1);
         assert!(!overview_view.projects_truncated);
+        assert_eq!(
+            overview_view.effective_config,
+            runtime.effective_config_status()
+        );
+        assert_eq!(
+            overview_view
+                .effective_config
+                .as_object()
+                .unwrap()
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            vec!["auth", "mcp_host", "tool_request_trace_mode"]
+        );
+        assert!(overview_view.effective_config["auth"]
+            .as_object()
+            .unwrap()
+            .values()
+            .all(Value::is_boolean));
 
         let runner_view = runner_for_auth(&runtime, &auth_a, "client-a", Some(20))
             .await

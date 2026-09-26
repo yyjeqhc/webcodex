@@ -93,3 +93,22 @@ The old Runtime classic concatenation bundle has been retired. frontend/scripts/
 ## Multi-Agent extension point
 
 Work presentation items allow optional actor identity and do not assume one Agent per Session. Future Coordinator / Worker / Reviewer events can therefore be projected into the same grouped timeline without changing the primary information architecture. AgentTask, Goal, Conversation and handoff events remain evidence inside Work or Runtime rather than new primary destinations.
+
+## Runtime freshness and inspectable identity
+
+The overview and Project Session lists refresh every five seconds while visible,
+and immediately on focus or visibility return. Slow overview requests finish before
+another poll begins; previous data stays visible after refresh failures. Runtime
+shows the last successful sync time and a manual refresh action. Independent
+server status and Runner inventory reads run concurrently.
+
+Window headers and Session context expose selectable, complete canonical IDs with
+copy actions and explicit clipboard failure feedback. Window Session filters include
+all retained exact relations, even those without retained calls; selecting a Session
+can open its full record using its exact Project relation. Retention limits remain
+visible and never imply a complete history.
+
+Runtime displays the existing allowlisted effective configuration projection
+(authentication switches, MCP host wait budgets in seconds, request tracing), with
+readable labels and canonical parameter names. It never reads raw environment
+variables or displays credentials; the existing runtime-read boundary applies.

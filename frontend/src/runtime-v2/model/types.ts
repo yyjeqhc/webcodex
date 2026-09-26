@@ -213,6 +213,11 @@ export type RunnerSummary = {
 };
 
 export type RuntimeOverview = {
+  effective_config?: {
+    auth: Record<string, boolean>;
+    mcp_host: { profile: string; host_budget_secs: number; initial_job_handoff_secs: number; max_sync_wait_secs: number; continuation_wait_secs: number };
+    tool_request_trace_mode: string;
+  };
   service?: string;
   version?: string;
   build_git_commit?: string;

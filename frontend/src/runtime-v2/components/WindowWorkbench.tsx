@@ -8,6 +8,7 @@ import {
   Search,
   Server,
 } from "lucide-react";
+import { CopyIdentity } from "./ui/CopyIdentity.js";
 import { TextInput } from "@mantine/core";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -37,6 +38,7 @@ type Props = {
   surface: WorkSurface;
   onSurfaceChange: (surface: WorkSurface) => void;
   onUnauthorized: () => void;
+  onOpenSessionRecord?: (project: string, sessionId: string) => void;
   requestedWindowKey?: string;
   requestedSessionId?: string;
   onRequestedWindowConsumed?: () => void;
@@ -112,6 +114,7 @@ export function WindowWorkbench({
   surface,
   onSurfaceChange,
   onUnauthorized,
+  onOpenSessionRecord,
   requestedWindowKey,
   requestedSessionId,
   onRequestedWindowConsumed,
@@ -272,6 +275,7 @@ export function WindowWorkbench({
           <WorkSurfaceSwitch surface={surface} onSurfaceChange={onSurfaceChange} language={language} />
         </div>
         <div className="window-work-filters">
+          <button type="button" className="text-button" onClick={windows.refresh}>{t("Refresh")}</button>
           <ProjectPicker
             label={t("Projects")}
             allLabel={t("All projects")}
@@ -344,7 +348,7 @@ export function WindowWorkbench({
                 <div className="window-header-facts">
                   <span className="window-header-fact" title={windows.selectedKey} data-testid="current-window-identity">
                     <Monitor size={14} /><small>{t("Window")}</small>
-                    <strong>{shortId(windows.selectedKey, 6, 4)}</strong>
+                    <CopyIdentity key={windows.selectedKey} value={windows.selectedKey} label={t("Window")} language={language} />
                   </span>
                   {currentMachine && (
                     <span className="window-header-fact" title={currentMachine}>
@@ -438,6 +442,7 @@ export function WindowWorkbench({
                   language={language}
                   selectedSessionId={selectedSessionId}
                   onSelectSession={setSelectedSessionId}
+                  onOpenSessionRecord={onOpenSessionRecord}
                 />
               ) : (
                 <div className="empty-inline">

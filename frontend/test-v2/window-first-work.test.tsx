@@ -157,7 +157,8 @@ it("shows active Window work without any Workflow Session and keeps observe call
   expect(header?.textContent).toContain("/root/.webcodex-managed-worktrees/webcodex-activity-fix");
   expect(header?.textContent).toContain("Project address");
   expect(header?.textContent).toContain(worktree.id);
-  expect(header?.textContent).not.toContain(activeKey.slice(0, 8));
+  expect(header?.textContent).toContain(activeKey);
+  expect(screen.getByRole("button", { name: "Copy Window" })).toBeTruthy();
 
   expect(screen.queryByText("Each call is shown separately, from first to last.")).toBeNull();
   expect(screen.queryByRole("heading", { name: "Tool calls" })).toBeNull();

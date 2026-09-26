@@ -55,11 +55,11 @@ pub fn nullable_schema(kind: &str, description: &str) -> Value {
 pub(super) fn pending_job_strategy_schema() -> Value {
     json!({
         "type": "object",
-        "description": "Model-facing pending Job policy. Independent work is the default; exact observe_jobs continuation is only for logs/details/recovery, and blocking callers should wait once for terminal state.",
+        "description": "Model-facing pending Job policy. Independent work is the default; eligible later same-scope results may carry passive terminal attention, exact observe_jobs continuation is only for logs/details/recovery, and blocking callers should wait once for terminal state.",
         "additionalProperties": false,
         "properties": {
             "default": {"type": "string", "const": "continue_independent_work"},
-            "passive_terminal_attention": {"type": "boolean", "const": true},
+            "passive_terminal_attention": {"type": "string", "const": "same_scope_may_surface", "description": "Conditional guidance only: passive terminal attention may appear on a later eligible same-Window/Project/business-Session result; it is not guaranteed for every pending call."},
             "observe_continuation": {"type": "string", "const": "logs_details_recovery_fallback"},
             "observe_auto_follow": {"type": "boolean", "const": false},
             "blocked_fallback": {"type": "string", "const": "wait_for_job_terminal"}

@@ -2813,7 +2813,7 @@ fn job_handoff_model_projection_keeps_identity_and_exceptional_receipts() {
         model.output["pending_strategy"],
         json!({
             "default": "continue_independent_work",
-            "passive_terminal_attention": true,
+            "passive_terminal_attention": "same_scope_may_surface",
             "observe_continuation": "logs_details_recovery_fallback",
             "observe_auto_follow": false,
             "blocked_fallback": "wait_for_job_terminal",

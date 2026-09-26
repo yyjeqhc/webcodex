@@ -1,12 +1,16 @@
 import {
+  Box,
   CircleDot,
+  FolderOpen,
   MessageSquare,
   Monitor,
   Search,
+  Server,
 } from "lucide-react";
 import { TextInput } from "@mantine/core";
 import { useEffect, useMemo, useState } from "react";
 import {
+  displayProjectPath,
   projectFamilyId,
   projectFamilyName,
   projectVariantLabel,
@@ -16,7 +20,7 @@ import { ProjectPicker } from "../../ui/ProjectPicker.js";
 import type { RuntimeLanguage } from "../../runtime_i18n.js";
 import { translate } from "../../runtime_i18n.js";
 import type { RuntimeV2Client } from "../api/client.js";
-import { absoluteTime, clockTime, relativeTime, shortId } from "../model/format.js";
+import { absoluteTime, clockTime, relativeTime } from "../model/format.js";
 import type { ProjectRow, WindowSummary } from "../model/types.js";
 
 import { useWindowWorkspace } from "../state/useWindowWorkspace.js";
@@ -175,6 +179,9 @@ export function WindowWorkbench({
   const currentWorkspaceName = currentProject?.lineage
     ? projectVariantLabel(currentProject)
     : currentProjectName;
+  const currentMachine = currentProject?.client_id;
+  const currentDirectory = displayProjectPath(currentProject?.path);
+  const currentProjectAddress = currentProject?.id;
 
   return (
     <div className="work-layout window-primary-workbench" data-testid="window-primary-workbench">
@@ -238,7 +245,12 @@ export function WindowWorkbench({
                 <span className="window-work-row-main">
                   <strong>{workspaceLabel}</strong>
                   <small>{project?.lineage ? projectLabel + " · " : ""}{activity}</small>
-                  <small>{project?.client_id || t("Runner unavailable")} · {t("Window")} {shortId(window.client_window_key)}</small>
+                  <small title={displayProjectPath(project?.path || source?.path)}>
+                    {[
+                      project?.client_id || t("Runner unavailable"),
+                      displayProjectPath(project?.path || source?.path),
+                    ].filter(Boolean).join(" · ")}
+                  </small>
                 </span>
                 <span className="window-work-row-side">
                   {window.active_count > 0
@@ -262,19 +274,43 @@ export function WindowWorkbench({
             <header className="window-work-header">
               <div>
                 <div className="breadcrumbs">
-                  <span>{currentProjectName || t("Window")}</span>
-                  {currentProject?.lineage && <><span>/</span><span>{t("Workspace")}</span></>}
+                  {currentProject?.lineage ? (
+                    <><span>{currentProjectName || t("Project")}</span><span>/</span><span>{t("Workspace")}</span></>
+                  ) : (
+                    <span>{t("Project")}</span>
+                  )}
                 </div>
                 <h2>{currentWorkspaceName || currentActivity || t("Window")}</h2>
-                <p className="window-header-meta">
-                  {currentActivity && <span>{currentActivity}</span>}
-                  {lastObservedAt && (
-                    <time dateTime={new Date(lastObservedAt).toISOString()} title={absoluteTime(lastObservedAt)}>
-                      {clockTime(lastObservedAt)}
-                    </time>
+                <div className="window-header-facts">
+                  {currentMachine && (
+                    <span className="window-header-fact" title={currentMachine}>
+                      <Server size={14} />
+                      <small>{t("Machine")}</small>
+                      <strong>{currentMachine}</strong>
+                    </span>
                   )}
-                  <span title={detail.client_window_key}>{t("Window")} {shortId(detail.client_window_key)}</span>
-                </p>
+                  {currentDirectory && (
+                    <span className="window-header-fact" title={currentDirectory}>
+                      <FolderOpen size={14} />
+                      <small>{t("Directory")}</small>
+                      <strong>{currentDirectory}</strong>
+                    </span>
+                  )}
+                  {currentProjectAddress && (
+                    <span className="window-header-fact" title={currentProjectAddress}>
+                      <Box size={14} />
+                      <small>{t("Project address")}</small>
+                      <strong>{currentProjectAddress}</strong>
+                    </span>
+                  )}
+                  {currentActivity && (
+                    <span className="window-header-fact window-header-activity">
+                      <CircleDot size={12} />
+                      <small>{t("Latest activity")}</small>
+                      <strong>{currentActivity}{lastObservedAt ? " · " + clockTime(lastObservedAt) : ""}</strong>
+                    </span>
+                  )}
+                </div>
               </div>
               <span className={"quiet-pill " + (isActive ? "running" : "")}>
                 <CircleDot size={11} />

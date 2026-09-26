@@ -137,6 +137,9 @@ it("shows active Window work without any Workflow Session and keeps observe call
   expect(activeRow.textContent).toContain("WebCodex");
   expect(activeRow.textContent).toContain("webcodex-activity-fix");
   expect(activeRow.textContent).toContain("1 active");
+  expect(activeRow.textContent).toContain("special");
+  expect(activeRow.textContent).toContain("/root/.webcodex-managed-worktrees/webcodex-activity-fix");
+  expect(activeRow.textContent).not.toContain(activeKey.slice(0, 8));
   expect(within(activeRow).getByText("webcodex-activity-fix")).toBeTruthy();
   const projectPicker = screen.getByRole("button", { name: "Projects: All projects" });
   fireEvent.click(projectPicker);
@@ -148,6 +151,13 @@ it("shows active Window work without any Workflow Session and keeps observe call
   const header = screen.getByRole("heading", { name: "webcodex-activity-fix" }).closest("header");
   expect(header?.textContent).toContain("WebCodex");
   expect(header?.textContent).toContain("apply_text_edits");
+  expect(header?.textContent).toContain("Machine");
+  expect(header?.textContent).toContain("special");
+  expect(header?.textContent).toContain("Directory");
+  expect(header?.textContent).toContain("/root/.webcodex-managed-worktrees/webcodex-activity-fix");
+  expect(header?.textContent).toContain("Project address");
+  expect(header?.textContent).toContain(worktree.id);
+  expect(header?.textContent).not.toContain(activeKey.slice(0, 8));
 
   expect(screen.queryByText("Each call is shown separately, from first to last.")).toBeNull();
   expect(screen.queryByRole("heading", { name: "Tool calls" })).toBeNull();

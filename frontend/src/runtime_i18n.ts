@@ -1092,6 +1092,13 @@ Object.assign(RUNTIME_ZH_TEXT, {
   "No Window activity": "暂无窗口活动"
 });
 
+Object.assign(RUNTIME_ZH_TEXT, {
+  "Machine": "机器",
+  "Directory": "目录",
+  "Project address": "项目地址",
+  "Latest activity": "最近活动"
+});
+
 export function translate(source: string, language: RuntimeLanguage = "en"): string {
   return language === "zh-CN" ? (RUNTIME_ZH_TEXT[source] || source) : source;
 }

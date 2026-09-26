@@ -50,6 +50,12 @@ async fn runner_observability_has_one_collection_and_preserves_health_across_mod
         assert!(result.success, "{:?}", result.error);
         assert!(result.output.get("agents").is_none());
         assert!(result.output["runners"]["summary"].get("clients").is_none());
+        if arguments.get("compact").is_some() || arguments.get("summary_only").is_some() {
+            assert!(result.output["runners"].get("clients").is_none());
+            assert_eq!(result.output["runners"]["count"], 1);
+            assert_eq!(result.output["runners"]["online_count"], 1);
+            continue;
+        }
         let clients = result.output["runners"]["clients"].as_array().unwrap();
         assert_eq!(clients.len(), 1);
         for key in [
@@ -67,10 +73,6 @@ async fn runner_observability_has_one_collection_and_preserves_health_across_mod
         }
         assert!(clients[0].get("agent_instance_id").is_none());
         assert!(clients[0].get("agent_protocol_generation").is_none());
-        if arguments.get("compact").is_some() || arguments.get("summary_only").is_some() {
-            assert!(clients[0].get("owner").is_none());
-            assert!(clients[0].get("policy").is_none());
-        }
     }
     for arguments in [
         json!({"client_id":"projection-runner", "compact":true}),
@@ -82,10 +84,9 @@ async fn runner_observability_has_one_collection_and_preserves_health_across_mod
         assert!(result.success);
         assert!(result.output.get("runners").is_none());
         assert!(result.output.get("agents").is_none());
-        assert_eq!(
-            result.output["focus"]["runner_instance_id"],
-            "projection-instance"
-        );
+        assert_eq!(result.output["focus"]["client_id"], "projection-runner");
+        assert_eq!(result.output["focus"]["job_concurrency"]["limit"], 4);
+        assert!(result.output["focus"].get("runner_instance_id").is_none());
         assert!(result.output["focus"].get("agent_instance_id").is_none());
     }
     for arguments in [
@@ -2589,11 +2590,12 @@ async fn runtime_status_preserves_allowlisted_effective_config_across_projection
             .dispatch(ToolCall::from_tool_name("runtime_status", arguments).unwrap())
             .await;
         assert!(compact.success, "{:?}", compact.error);
-        assert_eq!(compact.output["effective_config"], *config);
-        assert_eq!(compact.output["auth_enabled"], full.output["auth_enabled"]);
+        assert!(compact.output.get("effective_config").is_none());
+        assert!(compact.output.get("auth_enabled").is_none());
+        assert!(compact.output.get("configured_public_url").is_none());
         assert_eq!(
-            compact.output["configured_public_url"],
-            full.output["configured_public_url"]
+            compact.output["mcp_host"]["profile"],
+            config["mcp_host"]["profile"]
         );
     }
 }
@@ -2673,67 +2675,45 @@ async fn runtime_status_compact_and_summary_only_return_sanitized_summary() {
             .await;
         assert!(result.success, "{:?}", result.error);
         let summary = &result.output;
-        assert_eq!(summary["compact"], true, "arguments: {arguments}");
-        assert_eq!(
-            summary["mcp_compact_schemas"],
-            crate::model_surface::effective_mcp_compact_schemas(
-                crate::config::mcp_compact_schemas_override(),
-            ),
-            "arguments: {arguments}"
-        );
-        assert!(summary["effective_config"].is_object());
-        assert_eq!(summary["auth_enabled"], false);
-        assert!(summary["configured_public_url"].is_null());
         for pointer in [
             "/service",
             "/version",
             "/build/git_commit",
             "/build/git_dirty",
-            "/tools/count",
             "/jobs/active_count",
+            "/jobs/recovering_count",
+            "/jobs/lost_after_reconcile_count",
             "/runners/count",
             "/runners/online_count",
             "/runners/stale_count",
-            "/runners/summary/online",
-            "/projects/effective/status",
-            "/projects/effective/count",
-            "/projects/runner_registered/count",
-            "/projects/runner_registered/online_count",
-            "/connection_layers/runner_process/status",
-            "/connection_layers/server_transport/status",
-            "/connection_layers/server_registration/status",
-            "/connection_layers/project_registry/status",
-            "/connection_layers/last_successful_tool_call/status",
+            "/projects/count",
+            "/projects/online_count",
+            "/projects/status",
+            "/connection/runner_process",
+            "/connection/server_transport",
+            "/connection/project_registry",
+            "/mcp_host/profile",
+            "/compatibility/protocol",
         ] {
             assert!(
                 summary.pointer(pointer).is_some(),
-                "compact runtime_status should include {pointer}: {summary:?}"
+                "missing {pointer}: {summary}"
             );
         }
-        assert_eq!(summary["service"], "webcodex");
-        assert_eq!(summary["version"], env!("CARGO_PKG_VERSION"));
-        assert_eq!(summary["runners"]["summary"]["count"], 1);
-        assert_eq!(summary["runners"]["summary"]["online"], 1);
         assert_eq!(summary["runners"]["count"], 1);
         assert_eq!(summary["runners"]["online_count"], 1);
-        assert_eq!(summary["runners"]["stale_count"], 0);
-        assert!(summary["runners"].get("offline_count").is_none());
-        assert_eq!(summary["projects"]["effective"]["count"], 1);
-        assert_eq!(summary["projects"]["effective"]["status"], "ok");
-        assert!(summary["tools"].get("names").is_none());
-        assert!(
-            summary
-                .pointer("/runners/clients/0/policy/allowed_roots")
-                .is_none(),
-            "compact runtime_status must not include full client policy"
-        );
-        assert!(
-            summary
-                .pointer("/runners/clients/0/shell_profiles")
-                .is_none(),
-            "compact runtime_status must not include shell profile details"
-        );
-
+        assert_eq!(summary["projects"]["count"], 1);
+        assert_eq!(summary["projects"]["status"], "ok");
+        for field in [
+            "authority",
+            "effective_config",
+            "tools",
+            "auth_enabled",
+            "configured_public_url",
+        ] {
+            assert!(summary.get(field).is_none(), "{field}");
+        }
+        assert!(summary["runners"].get("clients").is_none());
         let serialized = serde_json::to_string(summary).unwrap();
         for forbidden in [
             "tools.names",

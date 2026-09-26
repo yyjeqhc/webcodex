@@ -346,7 +346,7 @@ async fn stateless_full_trace_preserves_raw_context_request_and_records_clean_ef
     assert_eq!(raw["context_request"], json!(["webcodex.workflow"]));
     let effective = read_phase("effective_arguments");
     assert!(effective.get("context_request").is_none());
-    assert_eq!(effective, json!({}));
+    assert_eq!(effective, json!({"compact": true}));
     assert!(!effective.to_string().contains("__webcodex_"));
     let final_response = read_phase("final_response");
     assert_eq!(final_response["result"]["isError"], false);

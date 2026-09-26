@@ -854,23 +854,15 @@ async fn runtime_status_focus_is_not_polluted_by_unrelated_runner_mismatch() {
         .await;
     assert!(special.success, "{:?}", special.error);
     assert_eq!(special.output["focus"]["client_id"], "special");
-    assert_eq!(special.output["focus"]["build"]["built_at"], "100");
+    assert!(special.output["focus"].get("build").is_none());
+    assert!(special.output.get("fleet_summary").is_none());
     assert_eq!(
-        special.output["focus"]["build"]["target"],
-        "x86_64-unknown-linux-gnu"
-    );
-    assert_eq!(special.output["focus"]["build"]["architecture"], "x86_64");
-    assert_eq!(
-        special.output["version_compatibility"]["status"],
+        special.output["focus"]["protocol_compatibility"],
         "compatible"
     );
     assert_eq!(
         special.output["focus"]["source_alignment"],
-        global_special["source_alignment"]
-    );
-    assert_eq!(
-        special.output["fleet_summary"]["mismatched_runners_count"],
-        0
+        global_special["source_alignment"]["status"]
     );
     let serialized = special.output.to_string();
     assert!(!serialized.contains("inst-mini"));
@@ -886,7 +878,7 @@ async fn runtime_status_focus_is_not_polluted_by_unrelated_runner_mismatch() {
         mini.output["focus"]["build_alignment"],
         global_mini["build_alignment"]
     );
-    assert_eq!(mini.output["version_compatibility"]["status"], "compatible");
+    assert_eq!(mini.output["focus"]["protocol_compatibility"], "compatible");
 
     let unknown = runtime
         .dispatch(runtime_status_call(Some("missing"), true))
@@ -917,6 +909,22 @@ async fn runtime_status_focus_preserves_selected_stale_runner_truth() {
     assert_eq!(focused.output["focus"]["connected"], false);
     assert_eq!(focused.output["focus"]["status"], "stale");
     assert_eq!(focused.output["runners"]["count"], 1);
+    let sparse = runtime
+        .dispatch(runtime_status_call(Some("special"), true))
+        .await;
+    assert!(sparse.success);
+    assert_eq!(sparse.output["focus"]["connected"], false);
+    assert_eq!(sparse.output["focus"]["status"], "stale");
+    assert_eq!(
+        sparse.output["connection"]["server_transport"],
+        "disconnected"
+    );
+    assert_eq!(sparse.output["connection"]["project_registry"], "stale");
+    assert!(serde_json::to_vec(&sparse.output).unwrap().len() <= 1_050);
+    let fleet = runtime.dispatch(runtime_status_call(None, true)).await;
+    assert_eq!(fleet.output["runners"]["stale_count"], 1);
+    assert_eq!(fleet.output["runners"]["online_count"], 0);
+    assert!(serde_json::to_vec(&fleet.output).unwrap().len() <= 900);
 }
 
 #[test]

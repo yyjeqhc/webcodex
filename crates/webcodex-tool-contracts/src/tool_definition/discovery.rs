@@ -172,8 +172,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             .with_host_orchestration_hint(
                 super::ToolHostOrchestrationHint::independent_parallel_read(),
             ),
-            "Read runtime status; pass exact client_id for one Runner deployment/source alignment, omit for fleet-wide. Reports shared Job concurrency; global mode includes bounded host_context advisory metadata, never authority.",
-        ),
+            "Read runtime health and protocol/build/source alignment; exact client_id focuses one Runner and its Job concurrency. compact=true or summary_only=true selects sparse counts without inventories. Canonical/API default is full diagnostics with capabilities, build, authority, configuration and connection details; MCP defaults to sparse and accepts compact=false for diagnostics.",
+        ).with_gpt_action_description("Read fleet or exact client_id Runner health and protocol/build/source alignment. compact=true returns sparse counts; omit for full diagnostic inventories and configuration."),
         20,
     ),
     model_spec(

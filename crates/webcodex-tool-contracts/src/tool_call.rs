@@ -5027,8 +5027,8 @@ pub enum ToolCall {
     /// secrets, full env, or stdout/stderr. It returns service metadata,
     /// Project config status, Runner summaries, and Job counts.
     RuntimeStatus {
-        /// When true, return compact runtime observability with service/version, build revision, tool/job
-        /// counts, Runner health summary, and project effective/server status. Defaults to false.
+        /// True selects sparse health, Project/Job counts and protocol/build/source alignment without
+        /// inventories. Canonical/API default is false (full diagnostics); MCP defaults omission to true.
         #[serde(default)]
         compact: bool,
         /// Alias for compact=true. Returns the same compact runtime observability shape. Defaults to false.

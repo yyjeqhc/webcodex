@@ -1575,18 +1575,27 @@ fn mcp_tools_list_inputs_equal_canonical_except_descriptions_and_host_file_overl
             let name = tool["name"].as_str().unwrap();
             let canonical = &specs[name];
             let mut expected = canonical.input_schema.clone();
-            // MCP Host rewrites these two required references; this is the only
-            // direct-input transport overlay, independent of description mode.
+            // MCP owns Host-file requiredness and runtime_status omission defaults;
+            // neither overlay mutates the canonical schema.
             if name == "import_conversation_files_to_project" {
                 expected["properties"]["openaiFileIdRefs"]["items"]["required"] =
                     json!(["download_url", "file_id"]);
+            }
+            let mut expected_description = canonical.description.clone();
+            if name == "runtime_status" {
+                assert_eq!(expected["properties"]["compact"]["default"], false);
+                expected["properties"]["compact"]["default"] = json!(true);
+                expected["properties"]["compact"]["description"] = json!("MCP defaults to sparse status. Set false for full diagnostics; summary_only=true still selects sparse.");
+                expected_description.push_str(
+                    " MCP defaults to sparse status; compact=false opts into full diagnostics.",
+                );
             }
             let mut actual = tool["inputSchema"].clone();
             if compact {
                 strip_description_text(&mut expected);
                 strip_description_text(&mut actual);
             } else {
-                assert_eq!(tool["description"], canonical.description, "{name}");
+                assert_eq!(tool["description"], expected_description, "{name}");
                 // Output schemas retain their existing MCP suggested-call
                 // routing overlays; compact discovery must not remove them here.
                 assert!(tool["outputSchema"].is_object(), "{name}");

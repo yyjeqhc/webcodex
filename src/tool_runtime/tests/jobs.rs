@@ -2619,7 +2619,7 @@ async fn runtime_status_and_list_runners_filter_concurrency_counts_by_auth_group
         .await;
     assert_eq!(
         compact_a.output["jobs"],
-        json!({"active_count": 2, "running_count": 1, "queued_count": 1})
+        json!({"active_count": 2, "running_count": 1, "queued_count": 1, "recovering_count": 0, "lost_after_reconcile_count": 0})
     );
 }
 

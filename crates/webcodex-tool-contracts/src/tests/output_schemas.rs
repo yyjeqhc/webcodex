@@ -2188,7 +2188,7 @@ fn cleanup_output_schemas_describe_result_metadata_only() {
 
 #[test]
 fn write_project_file_output_schema_include_metadata_fields() {
-    let specs = registered_tool_specs();
+    let specs = exact_manifest_specialist_tool_specs();
 
     // The removed legacy edit tools (`replace_in_file` and friends) are no
     // longer known tools, so they have no public ToolSpec/output schema.
@@ -2242,7 +2242,8 @@ fn write_project_file_output_schema_include_metadata_fields() {
 
 #[test]
 fn cleanup_and_compatibility_write_output_schemas_do_not_advertise_broad_exfiltration() {
-    let specs = registered_tool_specs();
+    let mut specs = registered_tool_specs();
+    specs.extend(exact_manifest_specialist_tool_specs());
 
     for tool in [
         "git_restore_paths",
@@ -2598,18 +2599,20 @@ fn model_facing_output_schemas_do_not_publish_recorder_only_telemetry() {
         }
     }
 
-    for tool in [
-        "read_files",
-        "search_project_texts",
-        "apply_patch",
-        "cargo_check",
-    ] {
+    for tool in ["read_files", "search_project_texts", "cargo_check"] {
         let fields = output_schema_field_names(spec_named(&specs, tool));
         assert!(
             !fields.contains("session_id"),
             "{tool} still publishes synthetic recorder session_id"
         );
     }
+
+    let specialist_specs = exact_manifest_specialist_tool_specs();
+    let patch_fields = output_schema_field_names(spec_named(&specialist_specs, "apply_patch"));
+    assert!(
+        !patch_fields.contains("session_id"),
+        "apply_patch still publishes synthetic recorder session_id"
+    );
 
     assert!(
         output_schema_field_names(spec_named(&specs, "update_session_context"))

@@ -1,5 +1,5 @@
 use super::RunnerCapabilityRequirement::FileWrite;
-use super::ToolVisibility::ModelVisible;
+use super::ToolVisibility::{ModelHidden, ModelVisible};
 use super::{
     adaptive_runtime_direct, def, model_spec, permission_risk, ToolDefinition,
     PERMISSION_RISK_WRITE, TOOL_CATEGORY_EDIT,
@@ -16,7 +16,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             def(
             "write_project_file",
             super::ToolAuditPolicy::TYPED_CANONICAL,
-            ModelVisible,
+            ModelHidden,
             TOOL_CATEGORY_EDIT,
             Some(FileWrite),
             TOOL_PROVIDER_RUNNER,

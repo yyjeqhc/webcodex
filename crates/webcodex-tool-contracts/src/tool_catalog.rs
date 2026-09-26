@@ -21,6 +21,12 @@ pub const TOOL_DISCOVERY_GROUP_RUNTIME: &str = "runtime";
 pub const TOOL_DISCOVERY_GROUP_SHELL: &str = "shell";
 pub const TOOL_DISCOVERY_GROUP_VALIDATION: &str = "validation";
 
+/// Hidden editing specialists that remain available only through exact
+/// tool_manifest lookup followed by the canonical gateway. They are excluded
+/// from ordinary tools/list, intent ranking, and recommended edit routing.
+pub const EXACT_MANIFEST_SPECIALIST_TOOL_NAMES: &[&str] =
+    &["apply_patch", "apply_unified_diff", "write_project_file"];
+
 pub const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
     ToolDiscoveryGroup {
         name: TOOL_DISCOVERY_GROUP_INSPECT,
@@ -184,9 +190,6 @@ pub const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
         name: TOOL_DISCOVERY_GROUP_EDIT,
         tools: &[
             "edit_project_files",
-            "apply_patch",
-            "apply_unified_diff",
-            "write_project_file",
             "save_project_artifact",
             #[cfg(feature = "experimental-code-mode")]
             "code_mode_exec_mutating",
@@ -437,16 +440,16 @@ pub const TOOL_RECOMMENDED_FLOWS: &[ToolRecommendedFlow] = &[
     ToolRecommendedFlow {
         name: "edit",
         summary:
-            "Edit by mutation shape: apply_text_edits for small/local exact edits, write_project_file for intentional whole-file replacement, apply_patch for contextual patch-shaped work, bounded deterministic transforms for repetitive mechanical changes, and apply_unified_diff for external diffs.",
+            "Edit: read_files → edit_project_files → show_changes or git_diff_hunks → structured validation. Existing-file changes use read_revision fences; exact and deterministic range edits share one primary editor. Other edit specialists require exact-name discovery.",
         manifest_purpose:
-            "Choose the simplest reliable mutation for the edit shape. apply_text_edits is the strong transactional path for small/local exact edits; read_files first when read_revision, positional scope, or stale-context protection materially helps, but do not add a ritual read for globally unique exact edits that do not need it. Use write_project_file for intentional whole-file replacement. Bounded deterministic programmatic transforms through run_shell are first-class for repetitive mechanical rewrites; respect Project/path/permission policy, avoid unauthorized network, inspect the resulting diff, and validate final source. Use apply_patch only when naturally contextual or multi-hunk patch form is materially clearer. Repetitive patch targets need stable unique containing function/impl/type/test/module context. On matching_mode_rejected, never weaken the guard or switch to first_match; if patch form remains clearer, consume bounded read_files recovery and preserve unique/exact_unique. context_mismatch requires bounded reread and regeneration from current source, never blind retry. External raw diffs use apply_unified_diff.",
+            "Use read_files to obtain the exact source snapshot and read_revision, then use edit_project_files for edit/create/delete/rename. Exact edits and replace_range share the same transactional editor and original-snapshot semantics. Existing-file mutations fail closed when the revision is stale. Review with show_changes or git_diff_hunks, then use structured validation. Patch, unified-diff, and whole-file primitives are exact-name specialists for already patch/diff/whole-file-shaped inputs, not ordinary coding routing or recovery.",
         tools: &[
             "read_files",
             "edit_project_files",
-            "apply_patch",
-            "apply_unified_diff",
-            "write_project_file",
-            "run_shell",
+            "show_changes",
+            "git_diff_hunks",
+            "cargo_check",
+            "cargo_test",
         ],
     },
     ToolRecommendedFlow {
@@ -562,9 +565,9 @@ pub const CODING_INTENT_TOOL_NAMES: &[&str] = &[
     "goto_definition",
     "find_references",
     "call_hierarchy",
-    // Canonical edit plus contextual/multi-hunk specialist.
+    // Canonical project editor. Patch/diff/whole-file specialists require
+    // exact-name discovery and are intentionally absent from ordinary coding.
     "edit_project_files",
-    "apply_patch",
     #[cfg(feature = "experimental-code-mode")]
     "code_mode_exec_mutating",
     // Ordinary execution plus program-like multi-stage specialist.

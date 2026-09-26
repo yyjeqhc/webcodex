@@ -5,17 +5,14 @@ fn registered_tool_categories() -> Value {
     Value::Object(
         TOOL_DISCOVERY_GROUPS
             .iter()
-            .map(|group| {
-                (
-                    group.name.to_string(),
-                    Value::Array(
-                        group
-                            .tools
-                            .iter()
-                            .map(|tool| Value::String((*tool).to_string()))
-                            .collect(),
-                    ),
-                )
+            .filter_map(|group| {
+                let tools = group
+                    .tools
+                    .iter()
+                    .filter(|tool| is_model_visible_tool_name(tool))
+                    .map(|tool| Value::String((*tool).to_string()))
+                    .collect::<Vec<_>>();
+                (!tools.is_empty()).then(|| (group.name.to_string(), Value::Array(tools)))
             })
             .collect(),
     )
@@ -319,30 +316,30 @@ fn goal_agent_wait_orchestration_flow_registers_before_worker_execution_without_
 }
 
 #[test]
-fn edit_recommended_flow_selects_mutation_by_shape_without_weakening_guards() {
+fn edit_recommended_flow_converges_on_one_primary_editor() {
     let flow = TOOL_RECOMMENDED_FLOWS
         .iter()
         .find(|flow| flow.name == "edit")
         .expect("edit recommended flow");
     assert_eq!(flow.tools.first().copied(), Some("read_files"));
     assert_eq!(flow.tools.get(1).copied(), Some("edit_project_files"));
-    assert_eq!(flow.tools.get(2).copied(), Some("apply_patch"));
+    assert_eq!(flow.tools.get(2).copied(), Some("show_changes"));
+    for specialist in EXACT_MANIFEST_SPECIALIST_TOOL_NAMES {
+        assert!(!flow.tools.contains(specialist), "{specialist}");
+    }
     let guidance = format!("{}\n{}", flow.summary, flow.manifest_purpose).to_lowercase();
     for phrase in [
-        "edit by mutation shape",
-        "apply_text_edits for small/local exact edits",
-        "intentional whole-file replacement",
-        "bounded deterministic programmatic transforms",
-        "repetitive mechanical",
-        "do not add a ritual read",
+        "read_files",
+        "edit_project_files",
         "read_revision",
-        "naturally contextual",
-        "stable unique containing function/impl/type/test/module context",
-        "matching_mode_rejected",
-        "never weaken the guard or switch to first_match",
-        "preserve unique/exact_unique",
-        "context_mismatch requires bounded reread",
-        "never blind retry",
+        "exact edits",
+        "replace_range",
+        "same transactional editor",
+        "show_changes",
+        "git_diff_hunks",
+        "structured validation",
+        "exact-name specialists",
+        "not ordinary coding routing or recovery",
     ] {
         assert!(
             guidance.contains(phrase),
@@ -415,7 +412,6 @@ fn tool_categories_and_recommended_flows_are_well_formed() {
         TOOL_DISCOVERY_GROUP_GIT,
         TOOL_DISCOVERY_GROUP_REVIEW,
         TOOL_DISCOVERY_GROUP_VALIDATION,
-        TOOL_DISCOVERY_GROUP_PATCH,
         TOOL_DISCOVERY_GROUP_SHELL,
         TOOL_DISCOVERY_GROUP_JOBS,
         TOOL_DISCOVERY_GROUP_RUNTIME,
@@ -477,10 +473,10 @@ fn tool_categories_and_recommended_flows_are_well_formed() {
         edit_prefix,
         vec![
             "edit_project_files",
-            "apply_patch",
-            "apply_unified_diff",
-            "write_project_file",
-            "save_project_artifact"
+            "save_project_artifact",
+            "read_project_artifact_metadata",
+            "read_project_artifact",
+            "import_conversation_files_to_project"
         ]
     );
     let file_transfer = categories[TOOL_DISCOVERY_GROUP_FILE_TRANSFER]
@@ -526,8 +522,9 @@ fn tool_categories_and_recommended_flows_are_well_formed() {
         "inspect: choose the simplest sufficient primitive",
         "native commands are first-class for small bounded observations",
         "search_project_texts/read_files when batching",
-        "edit by mutation shape",
-        "bounded deterministic transforms",
+        "edit: read_files → edit_project_files",
+        "exact and deterministic range edits share one primary editor",
+        "specialists require exact-name discovery",
         "validate: use structured validators when their canonical diagnostics",
         "native execution is first-class when the command is outside or awkward",
         "file transfer: host -> import_conversation_files_to_project -> project",
@@ -721,13 +718,11 @@ fn tool_categories_include_edit_group() {
     let edit = categories[TOOL_DISCOVERY_GROUP_EDIT]
         .as_array()
         .expect("edit category present");
-    for present in [
-        "edit_project_files",
-        "apply_patch",
-        "write_project_file",
-        "apply_unified_diff",
-    ] {
+    for present in ["edit_project_files"] {
         assert!(edit.iter().any(|value| value == present));
+    }
+    for hidden in EXACT_MANIFEST_SPECIALIST_TOOL_NAMES {
+        assert!(!edit.iter().any(|value| value == hidden), "{hidden}");
     }
     for removed in ["replace_in_file", "replace_line_range", "insert_at_line"] {
         assert!(!edit.iter().any(|value| value == removed));
@@ -873,7 +868,6 @@ fn coding_intent_has_independent_ordered_canonical_selection_surface() {
         "git_diff_hunks",
         "workspace_hygiene_check",
         "finish_coding_task",
-        "apply_patch",
         "run_script",
         "cargo_fmt",
         "go_test",
@@ -890,7 +884,9 @@ fn coding_intent_has_independent_ordered_canonical_selection_surface() {
         "job_status",
         "job_log",
         "run_job",
+        "apply_patch",
         "apply_unified_diff",
+        "write_project_file",
         "coding_agent_start",
         "coding_agent_observe",
         "coding_agent_cancel",
@@ -902,15 +898,15 @@ fn coding_intent_has_independent_ordered_canonical_selection_surface() {
             "coding intent should not recommend {compatibility_or_overlap}"
         );
     }
-    let apply_text_edits_position = coding
+    let read_files_position = coding
+        .tools
+        .iter()
+        .position(|tool| *tool == "read_files")
+        .unwrap();
+    let edit_project_files_position = coding
         .tools
         .iter()
         .position(|tool| *tool == "edit_project_files")
         .unwrap();
-    let apply_patch_position = coding
-        .tools
-        .iter()
-        .position(|tool| *tool == "apply_patch")
-        .unwrap();
-    assert!(apply_text_edits_position < apply_patch_position);
+    assert!(read_files_position < edit_project_files_position);
 }

@@ -757,11 +757,11 @@ fn adaptive_runtime_direct_declarations_are_visible_ranked_and_unique() {
     }
     assert_eq!(derived.len(), seen_ranks.len());
     let apply_patch = lookup_tool_definition("apply_patch").expect("apply_patch definition");
-    assert!(apply_patch.visibility.is_model_visible());
+    assert!(apply_patch.visibility.is_model_hidden());
     assert_eq!(
         apply_patch.adaptive_runtime_direct_rank(),
         None,
-        "specialized patching should stay ModelVisible but use Adaptive discovery/gateway"
+        "specialized patching is exact-manifest gateway-only"
     );
     assert!(
         derived
@@ -804,7 +804,6 @@ fn adaptive_runtime_direct_declarations_are_visible_ranked_and_unique() {
         "session_shell_status",
         "close_session_shell",
         "attach_agent_endpoint",
-        "apply_patch",
         "save_project_artifact",
         "read_project_artifact",
         "artifact_upload_begin",
@@ -863,7 +862,7 @@ fn adaptive_runtime_direct_declarations_are_visible_ranked_and_unique() {
         expected_gpt_action_direct,
         "GPT Actions direct exposure must inherit Adaptive Direct ordering minus definition-owned unsupported/gateway-only exceptions"
     );
-    assert!(gpt_action_tool_supported("apply_patch"));
+    assert!(!gpt_action_tool_supported("apply_patch"));
     #[cfg(feature = "experimental-code-mode")]
     {
         assert!(gpt_action_tool_supported("code_mode_exec_effectful"));
@@ -1034,18 +1033,20 @@ fn turn_economy_descriptors_stay_converged_and_bounded() {
 
     let edits = spec_named(&specs, "edit_project_files");
     for phrase in [
-        "expected_match_count=N",
-        "Optional dry_run",
-        "change_summary",
-        "mechanical scope",
-        "not semantic review",
-        "show_changes",
-        "git_diff_hunks",
+        "read_files",
         "expected_read_revision",
+        "Exact edits fail closed on ambiguity",
+        "replace_range",
+        "same original snapshot",
+        "preflighted transactionally",
+        "dry_run",
+        "show_changes",
+        "structured validation",
+        "outcome_unknown",
     ] {
         assert!(
             edits.description.contains(phrase),
-            "apply_text_edits: {phrase}"
+            "edit_project_files: {phrase}"
         );
     }
     assert!(spec_named(&specs, "cargo_check")

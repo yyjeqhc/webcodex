@@ -1288,7 +1288,13 @@ fn from_tool_name_unknown_tool_lists_available_tools_and_hint() {
     );
     // Should list at least a couple of known tool names.
     assert!(err.contains("show_changes"));
-    assert!(err.contains("apply_unified_diff"));
+    assert!(err.contains("edit_project_files"));
+    for hidden in EXACT_MANIFEST_SPECIALIST_TOOL_NAMES {
+        assert!(
+            !err.contains(hidden),
+            "ordinary unknown-tool hints must not advertise hidden specialist {hidden}: {err}"
+        );
+    }
     // Must not leak secret/config artifacts.
     let lower = err.to_lowercase();
     for forbidden in [

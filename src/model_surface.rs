@@ -51,7 +51,9 @@ pub(crate) fn adaptive_runtime_tool_invocation_route_with_operator_extension(
     tool_name: &str,
     operator_extension_admitted: bool,
 ) -> (&'static str, Option<&'static str>) {
-    if operator_extension_admitted {
+    if operator_extension_admitted
+        || webcodex_tool_contracts::EXACT_MANIFEST_SPECIALIST_TOOL_NAMES.contains(&tool_name)
+    {
         return (
             TOOL_SURFACE_AVAILABILITY_GATEWAY,
             Some(ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME),

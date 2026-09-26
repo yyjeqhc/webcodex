@@ -5,6 +5,7 @@ use serde_json::Value;
 mod memory;
 mod skills;
 
+use super::super::tool_catalog::EXACT_MANIFEST_SPECIALIST_TOOL_NAMES;
 use super::super::tool_definition::{
     lookup_tool_definition, model_visible_tool_definitions, runtime_tool_operator_extension_family,
     ToolDefinition, ToolOperatorExtensionFamily,
@@ -15,6 +16,17 @@ use std::collections::BTreeSet;
 
 pub fn registered_tool_specs() -> Vec<ToolSpec> {
     resolve_tool_specs(model_visible_tool_definitions())
+}
+
+/// Specialist mutation contracts are intentionally absent from the ordinary
+/// model surface but remain discoverable by exact name through tool_manifest.
+pub fn exact_manifest_specialist_tool_specs() -> Vec<ToolSpec> {
+    resolve_tool_specs(EXACT_MANIFEST_SPECIALIST_TOOL_NAMES.iter().map(|name| {
+        let definition = lookup_tool_definition(name)
+            .unwrap_or_else(|| panic!("missing exact-manifest specialist definition: {name}"));
+        debug_assert!(!definition.visibility.is_model_visible());
+        definition
+    }))
 }
 
 fn operator_extension_specs(
@@ -533,7 +545,7 @@ mod tests {
 
     #[test]
     fn tool_specs_unified_diff_field_rejects_codex_wrapper() {
-        let specs = registered_tool_specs();
+        let specs = exact_manifest_specialist_tool_specs();
         let spec = specs
             .iter()
             .find(|spec| spec.name == "apply_unified_diff")

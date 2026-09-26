@@ -802,7 +802,7 @@ impl CanonicalOrchestrationHost {
                 {
                     return Err(OrchestrationHostError::new(
                         OrchestrationHostFailureKind::CompositionPolicyDenied,
-                        "validation requires a successful canonical apply_text_edits result with known state_changed in this cell; rejected or unknown edits cannot be validated",
+                        "validation requires a successful canonical edit_project_files result with known state_changed in this cell; rejected or unknown edits cannot be validated",
                     ));
                 }
             }

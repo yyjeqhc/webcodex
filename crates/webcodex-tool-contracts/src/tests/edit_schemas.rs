@@ -158,7 +158,7 @@ fn apply_text_edits_model_schema_size_is_bounded() {
 
 #[test]
 fn write_project_file_schema_uses_read_revision_for_whole_file_replacement() {
-    let specs = registered_tool_specs();
+    let specs = exact_manifest_specialist_tool_specs();
     let schema = &spec_named(&specs, "write_project_file").input_schema;
     let revision = 3817291045227_u64;
 

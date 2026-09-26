@@ -776,15 +776,12 @@ fn tool_specs_covers_expected_tool_set() {
         "workspace_checkpoint_restore",
         #[cfg(feature = "workspace-checkpoints")]
         "workspace_checkpoint_delete",
-        "apply_patch",
-        "apply_unified_diff",
         "delete_project_files",
         "git_restore_paths",
         "discard_untracked",
         "project_overview",
         "list_project_tracked_files",
         "list_jobs",
-        "write_project_file",
         "save_project_artifact",
         "read_project_artifact_metadata",
         "read_project_artifact",
@@ -799,6 +796,15 @@ fn tool_specs_covers_expected_tool_set() {
             names.iter().any(|name| name == expected),
             "missing {expected}"
         );
+    }
+
+    let specialists = exact_manifest_specialist_tool_specs();
+    for hidden in EXACT_MANIFEST_SPECIALIST_TOOL_NAMES {
+        assert!(
+            specialists.iter().any(|spec| spec.name == *hidden),
+            "missing exact-manifest specialist {hidden}"
+        );
+        assert!(!names.iter().any(|name| name == hidden), "{hidden}");
     }
 }
 

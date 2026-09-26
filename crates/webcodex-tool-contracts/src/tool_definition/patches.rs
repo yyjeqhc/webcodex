@@ -1,5 +1,5 @@
 use super::RunnerCapabilityRequirement::{ApplyPatch, Shell};
-use super::ToolVisibility::ModelVisible;
+use super::ToolVisibility::ModelHidden;
 use super::{
     def, model_spec, permission_risk, ToolDefinition, PERMISSION_RISK_PATCH, TOOL_CATEGORY_PATCH,
 };
@@ -13,7 +13,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             def(
             "apply_patch",
             super::ToolAuditPolicy::TYPED_CANONICAL,
-            ModelVisible,
+            ModelHidden,
             TOOL_CATEGORY_PATCH,
             Some(ApplyPatch),
             TOOL_PROVIDER_RUNNER,
@@ -39,7 +39,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             def(
                 "apply_unified_diff",
                 super::ToolAuditPolicy::TYPED_CANONICAL,
-                ModelVisible,
+                ModelHidden,
                 TOOL_CATEGORY_PATCH,
                 Some(Shell),
                 TOOL_PROVIDER_RUNNER,

@@ -1393,17 +1393,21 @@ async fn search_project_texts_retry_uses_only_remaining_absolute_deadline() {
         ToolRuntime::new_for_tests().with_search_project_texts_deadline(Duration::from_secs(6));
     let client_id = "batch-search-retry-deadline";
     register_runner_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    let mut retry_query = query("deadline-retry", None);
+    retry_query.timeout_secs = Some(120);
     let task = tokio::spawn({
         let runtime = runtime.clone();
         async move {
             runtime
-                .search_project_texts("demo".to_string(), vec![query("deadline-retry", None)])
+                .search_project_texts("demo".to_string(), vec![retry_query])
                 .await
         }
     });
 
     let first = wait_for_patch_agent_request(&runtime, client_id).await;
     tokio::time::sleep(Duration::from_millis(1100)).await;
+    assert!(first.timeout_secs < 120);
+    assert!(first.timeout_secs <= 6);
     runtime
         .runner_registry
         .cancel_request(&first.request_id)
@@ -1470,6 +1474,87 @@ async fn search_project_texts_retry_uses_only_remaining_absolute_deadline() {
         late.is_err(),
         "expired request remained pending after batch timeout"
     );
+}
+
+#[tokio::test]
+async fn search_project_texts_batch_limited_backend_timeout_reports_batch_deadline() {
+    let root = tempfile::tempdir().unwrap();
+    let runtime =
+        ToolRuntime::new_for_tests().with_search_project_texts_deadline(Duration::from_secs(6));
+    let client_id = "batch-search-clamped-timeout";
+    register_runner_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    let mut item = query("batch-clamped", None);
+    item.timeout_secs = Some(120);
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        async move {
+            runtime
+                .search_project_texts("demo".to_string(), vec![item])
+                .await
+        }
+    });
+
+    let request = wait_for_patch_agent_request(&runtime, client_id).await;
+    assert!(request.timeout_secs < 120);
+    assert!(request.timeout_secs <= 6);
+    complete_patch_agent_request(
+        &runtime,
+        client_id,
+        &request.request_id,
+        -1,
+        r#"{"webcodex_search":{"backend":"rg","feature_unavailable":false}}
+"#,
+        &format!("command timed out after {} seconds", request.timeout_secs),
+    )
+    .await;
+
+    let result = task.await.unwrap();
+    assert_eq!(
+        result.output["items"][0]["output"]["reason_code"],
+        "timeout"
+    );
+    assert_eq!(
+        result.output["items"][0]["output"]["failure_stage"],
+        "batch_deadline"
+    );
+}
+
+#[tokio::test]
+async fn search_project_texts_queued_query_does_not_start_after_absolute_deadline() {
+    let root = tempfile::tempdir().unwrap();
+    let runtime =
+        ToolRuntime::new_for_tests().with_search_project_texts_deadline(Duration::from_millis(100));
+    let client_id = "batch-search-queued-expiry";
+    register_runner_project_at_path(&runtime, client_id, "demo", root.path()).await;
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        async move {
+            runtime
+                .search_project_texts(
+                    "demo".to_string(),
+                    vec![
+                        query("first", None),
+                        query("second", None),
+                        query("queued", None),
+                    ],
+                )
+                .await
+        }
+    });
+
+    let _first = wait_for_patch_agent_request(&runtime, client_id).await;
+    let _second = wait_for_patch_agent_request(&runtime, client_id).await;
+    let result = tokio::time::timeout(Duration::from_secs(2), task)
+        .await
+        .expect("shared batch deadline should finish queued work deterministically")
+        .unwrap();
+    let items = result.output["items"].as_array().unwrap();
+    assert_eq!(items.len(), 3);
+    for item in items {
+        assert_eq!(item["output"]["reason_code"], "timeout");
+        assert_eq!(item["output"]["failure_stage"], "batch_deadline");
+    }
+    assert_no_agent_request(&runtime, client_id).await;
 }
 
 #[tokio::test]

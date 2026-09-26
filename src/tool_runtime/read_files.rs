@@ -961,6 +961,9 @@ impl ToolRuntime {
         let planned_reads = plan_read_files(items.clone());
         let with_line_numbers = with_line_numbers.unwrap_or(false);
         let deadline = Instant::now() + self.read_files_deadline;
+        // This is one absolute batch latency/resource deadline shared by all
+        // planned reads. It is independent from any Runner execution lifetime
+        // and is never reset as concurrent groups make progress.
         // Capture the active Runner process before dispatch. A replacement that
         // races this batch therefore makes these handles unusable rather than
         // silently retargeting them to the replacement Runner.

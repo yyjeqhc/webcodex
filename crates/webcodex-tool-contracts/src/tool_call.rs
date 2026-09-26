@@ -338,8 +338,10 @@ pub struct SearchProjectTextsQuery {
     #[serde(default)]
     pub result_mode: Option<SearchResultMode>,
     #[schemars(extend("default" = 30))]
-    /// Optional search timeout in seconds. Server clamps the value to 1..120 (default 30). Out-of-range
-    /// values are accepted and clamped rather than rejected by schema.
+    /// Per-query execution ceiling in seconds. Server clamps the value to 1..120 (default 30).
+    /// A search_project_texts batch also shares one Server-owned absolute latency deadline, so the
+    /// effective query timeout is the smaller of this ceiling and the remaining batch budget. Queued
+    /// queries, bounded retries, and diagnostics do not reserve or reset that outer deadline.
     #[serde(default)]
     pub timeout_secs: Option<i64>,
 }

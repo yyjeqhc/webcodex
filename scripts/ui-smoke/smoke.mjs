@@ -449,10 +449,10 @@ try {
     if (width === 1440) await themeSurfaceAudit('Runtime Overview', 'light');
     await screenshot(`runtime-overview-${width}`);
     if (width === 1440) {
-      await page.getByRole('tab', { name: /Window Activity/ }).click();
-      await page.locator('.window-row').first().waitFor();
-      await page.locator('.window-row').first().click();
-      await page.locator('.window-detail-head').waitFor();
+      await page.getByRole('button', { name: /View activity/ }).click();
+      await page.locator('.window-work-row').first().waitFor();
+      await page.locator('.window-work-row').first().click();
+      await page.locator('.window-work-header').waitFor();
       await themeSurfaceAudit('Runtime Window', 'light');
       const windowCalls = fixture.requests.filter(request => request.route === 'window');
       assert(windowCalls.length > 0);
@@ -555,11 +555,11 @@ try {
     assert(Math.max(...surface) < 90, `Runtime dark Activity signals must use a dark surface at 2560 px: ${surface}`);
     report.checks.push('Runtime dark Activity signals at 2560 px');
     await page.locator('.app-nav .nav-button').filter({ hasText: 'Runtime' }).click();
-    await page.getByRole('tab', { name: /Window Activity/ }).click();
-    await page.locator('.window-row').first().click();
+    await page.getByRole('button', { name: /View activity/ }).click();
+    await page.locator('.window-work-row').first().click();
     const windowLayout = await page.evaluate(() => {
-      const workbench = document.querySelector('.windows-workbench').getBoundingClientRect();
-      const selected = document.querySelector('.window-row.selected');
+      const workbench = document.querySelector('.window-primary-workbench').getBoundingClientRect();
+      const selected = document.querySelector('.window-work-row.selected');
       return {
         width: workbench.width,
         background: getComputedStyle(selected).backgroundColor.match(/\d+/g).slice(0, 3).map(Number),

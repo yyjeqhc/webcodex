@@ -5,6 +5,7 @@ import type { RuntimeV2Client } from "../src/runtime-v2/api/client.js";
 import { workItemFromRecent } from "../src/runtime-v2/model/work.js";
 import { ProjectsView } from "../src/runtime-v2/views/ProjectsView.js";
 import { RuntimeView } from "../src/runtime-v2/views/RuntimeView.js";
+import { WindowWorkbench } from "../src/runtime-v2/components/WindowWorkbench.js";
 import { WindowActivityFeed } from "../src/runtime-v2/components/WindowActivityFeed.js";
 import { WorkView } from "../src/runtime-v2/views/WorkView.js";
 import { UiProvider } from "../src/ui/UiProvider.js";
@@ -205,18 +206,12 @@ describe("Project / Session / Window relationships", () => {
     });
 
     render(
-      <RuntimeView
-        client={client}
-        language="en"
-        overview={overview}
-        overviewAvailability="available"
-        projects={overview.projects}
-        onUnauthorized={vi.fn()}
-      />,
+      <WindowWorkbench client={client} language="en" projects={overview.projects}
+        surface="windows" onSurfaceChange={vi.fn()} onUnauthorized={vi.fn()} />,
     );
-    fireEvent.click(screen.getByRole("tab", { name: /Window Activity/ }));
 
-    expect(await screen.findByText("read_files")).toBeTruthy();
+    fireEvent.click(await screen.findByTestId("work-window-row-" + firstKey));
+    expect((await screen.findAllByText("read_files")).length).toBeGreaterThan(0);
     const workflowStep = screen.getByTestId("window-workflow-step");
     expect(within(workflowStep).getByText("/root/git/webcodex")).toBeTruthy();
     expect(within(workflowStep).getByText("120ms")).toBeTruthy();
@@ -225,9 +220,8 @@ describe("Project / Session / Window relationships", () => {
     expect(screen.queryByText("Linked Sessions")).toBeNull();
     expect(screen.queryByText("Runtime E2E hardening")).toBeNull();
     expect((client.post as ReturnType<typeof vi.fn>).mock.calls.some(([path]) => path === "workflow-session")).toBe(false);
-    expect(screen.getByTestId("window-scope-note").textContent).toContain("observation principal");
 
-    fireEvent.click(screen.getByRole("button", { name: /Window bbbbbbbbbb/ }));
+    fireEvent.click(screen.getByTestId("work-window-row-" + secondKey));
     expect(await screen.findByText("No tool calls yet")).toBeTruthy();
   });
 
@@ -325,7 +319,7 @@ describe("Project / Session / Window relationships", () => {
         language="en"
         overview={overview}
         overviewAvailability="available"
-        projects={overview.projects}
+        onOpenWork={vi.fn()}
         onUnauthorized={vi.fn()}
       />,
     );
@@ -355,7 +349,7 @@ describe("Project / Session / Window relationships", () => {
         language="en"
         overview={null}
         overviewAvailability="denied"
-        projects={overview.projects}
+        onOpenWork={vi.fn()}
         onUnauthorized={vi.fn()}
       />,
     );
@@ -398,16 +392,9 @@ describe("Project / Session / Window relationships", () => {
     });
 
     render(
-      <RuntimeView
-        client={client}
-        language="en"
-        overview={overview}
-        overviewAvailability="available"
-        projects={overview.projects}
-        onUnauthorized={vi.fn()}
-      />,
+      <WindowWorkbench client={client} language="en" projects={overview.projects}
+        surface="windows" onSurfaceChange={vi.fn()} onUnauthorized={vi.fn()} />,
     );
-    fireEvent.click(screen.getByRole("tab", { name: /Window Activity/ }));
     expect((await screen.findAllByText("tool-204")).length).toBeGreaterThan(0);
     expect(screen.getAllByText("tool-0").length).toBeGreaterThan(0);
     const steps = screen.getAllByTestId("window-workflow-step");

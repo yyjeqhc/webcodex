@@ -66,8 +66,9 @@ try {
       await page.getByText('Build diagnostics', { exact: true }).click();
       assert.notEqual(await page.locator('.runtime-diagnostics').getAttribute('open'), null);
       await noOverflow();
-      await page.getByRole('tab', { name: /Window Activity/ }).click();
-      await page.getByTestId('window-row-' + '4700'.repeat(16)).waitFor();
+      await page.getByRole('button', { name: /View activity/ }).click();
+      await page.getByTestId('work-window-row-' + '4700'.repeat(16)).waitFor();
+      await nav.getByRole('button', { name: /^Runtime/ }).click();
       await Promise.all([
         page.waitForResponse(response => response.url().endsWith('/communication/agents')),
         page.getByRole('tab', { name: 'Agents', exact: true }).click(),

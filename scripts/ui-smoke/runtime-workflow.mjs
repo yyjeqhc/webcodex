@@ -35,15 +35,15 @@ try {
       await page.screenshot({ path: new URL(`work-${width}-${theme}.png`, output).pathname });
       const nav = page.locator(width <= 700 ? '.mobile-primary-nav' : '.app-nav');
       await nav.getByRole('button', { name: /^Runtime/ }).click();
-      await page.getByRole('tab', { name: /Window Activity/ }).click();
+      await page.getByRole('button', { name: /View activity/ }).click();
       await page.getByText('run_process', { exact: true }).waitFor();
       assert(await page.getByText('500ms', { exact: true }).isVisible());
       assert(await page.locator('.window-call-card').filter({ hasText: 'read_files' }).getByText('Fixture alpha', { exact: true }).isVisible());
       assert(await page.locator('.window-relations-disclosure').getAttribute('open') !== null);
       if (width === 1440 && theme === 'light') {
         revealWindow = true;
-        await page.getByTestId('window-row-' + 'b'.repeat(64)).waitFor({ timeout: 10_000 });
-        assert.equal(await page.locator('.window-row.selected').getAttribute('data-testid'), 'window-row-' + '4700'.repeat(16));
+        await page.getByTestId('work-window-row-' + 'b'.repeat(64)).waitFor({ timeout: 10_000 });
+        assert.equal(await page.locator('.window-work-row.selected').getAttribute('data-testid'), 'work-window-row-' + '4700'.repeat(16));
       }
       const bounds = await page.evaluate(() => ({ width: innerWidth, body: document.body.scrollWidth, root: document.documentElement.scrollWidth }));
       assert(bounds.body <= width + 1 && bounds.root <= width + 1, JSON.stringify(bounds));

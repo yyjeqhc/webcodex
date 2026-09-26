@@ -98,7 +98,10 @@ describe("Runtime v2 navigation", () => {
 
     fireEvent.click(screen.getAllByRole("button", { name: /Runtime/ })[0]);
     expect(await screen.findByRole("heading", { name: "Runtime" })).toBeTruthy();
-    expect(screen.getByRole("tab", { name: /Window Activity/ })).toBeTruthy();
+    expect(screen.queryByRole("tab", { name: /Window Activity/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /View activity/ }));
+    expect(await screen.findByTestId("window-primary-workbench")).toBeTruthy();
+    fireEvent.click(screen.getAllByRole("button", { name: /Runtime/ })[0]);
     expect(screen.getByRole("tab", { name: /Agents/ })).toBeTruthy();
   });
 

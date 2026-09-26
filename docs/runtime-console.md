@@ -40,22 +40,29 @@ selection scrolls into view without scrolling the whole page. If the inventory
 later includes the target, its entry appears once in the normal list.
 Session details load when opened, not to populate counts in the project list.
 
-**Runtime** contains **Overview**, **Window Activity**, and **Agents**. Overview
-puts Runner availability and running work first, with disconnected or
-protocol-mismatched Runners at the top. Build identity is available under the
-collapsed **Build diagnostics** section. Window and Agent inventories load only
-when their respective tabs are opened.
+**Runtime** contains **Overview** and **Agents**. Overview puts Runner availability
+and running work first, with disconnected or protocol-mismatched Runners at the
+top. Build identity is available under the collapsed **Build diagnostics** section.
+**View activity** opens the canonical **Work / Activity** workbench; Runtime no
+longer maintains a second Window browser. Agent inventories load when **Agents**
+is opened.
 
-In **Window Activity**, the left list puts Windows with active requests first,
-then sorts by recent activity. Each row leads with its last observed Project or activity, with a short
-Window identifier, request count, and recency. Hovering the identifier reveals
-the full hashed identity. Hovering
-on a timestamp reveals the absolute time. The last Project is a historical
-observation, not the attribution for every call in the Window.
+**Agents** opens the selected Agent's **Inbox**, showing pending messages and
+connections. Connecting this browser explicitly enables inbox reading,
+acknowledgement, and sending as that Agent; it does not start a model. An inbox
+message can open its conversation, and acknowledgement uses the exact attached
+Endpoint generation. **All conversations** is the account-visible shared list,
+not a list inferred from the selected Agent. Participants and optional recipients
+are selected by name. Sending defaults to the human identity; sending as an Agent
+requires its attached browser connection. **Profile** holds editable identity
+and specialty fields, with revision, generation and lease evidence under
+**Technical details**. Connection counts and pending messages are not execution
+or task completion indicators.
 
-The selected Window uses the same individual tool-call stream as **Work**.
-Failed refreshes identify retained observations as stale. Switching Windows
-never displays the previous Window's calls under the newly selected identity.
+Failed Window refreshes identify retained observations as stale. Switching
+Windows never displays the previous Window's calls under the newly selected
+identity. Conversation detail has one cancellable loading path so a late response
+cannot replace the newly selected conversation's messages.
 
 Adapter `_meta["openai/session"]` is hashed into a `ClientWindow`, separate from
 explicit `wc_sess_*` Workflow Sessions. This view never exposes the raw host value,

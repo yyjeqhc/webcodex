@@ -54,7 +54,7 @@ import { RuntimeView } from "./views/RuntimeView.js";
 import { WorkView } from "./views/WorkView.js";
 
 type PrimaryView = "work" | "projects" | "runtime";
-type RuntimeTarget = { mode: "windows"; windowKey: string } | { mode: "agents"; agentId: string };
+type RuntimeTarget = { mode: "agents"; agentId: string };
 const VIEW_KEY = "webcodex.runtime.v2.view.v1";
 const BUCKET_PRIORITY: Record<WorkBucket, number> = { running: 0, attention: 1, active: 2, recent: 3 };
 
@@ -379,7 +379,7 @@ export function App() {
             language={language}
             overview={overview}
             overviewAvailability={overviewState.availability}
-            projects={overview?.projects || []}
+            onOpenWork={() => { setWorkSurface("windows"); setView("work"); }}
             onUnauthorized={handleUnauthorized}
             target={runtimeTarget}
             onTargetConsumed={() => setRuntimeTarget(null)}

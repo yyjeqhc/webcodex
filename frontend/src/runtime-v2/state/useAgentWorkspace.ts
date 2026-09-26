@@ -39,6 +39,7 @@ export type AgentWorkspaceState = {
   selectedAgent: DurableAgent | null;
   selectedConversation: DurableConversation | null;
   conversationDetail: ConversationDetail | null;
+  conversationLoading: boolean;
   endpoint: AgentEndpoint | null;
   inbox: InboxDelivery[];
   busy: boolean;
@@ -66,6 +67,7 @@ export function useAgentWorkspace(
   const [conversations, setConversations] = useState<DurableConversation[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState("");
   const [selectedConversationId, setSelectedConversationId] = useState("");
+  const [conversationLoading, setConversationLoading] = useState(false);
   const [conversationDetail, setConversationDetail] = useState<ConversationDetail | null>(null);
   const [endpoints, setEndpoints] = useState<Map<string, AgentEndpoint>>(new Map());
   const [inbox, setInbox] = useState<InboxDelivery[]>([]);
@@ -104,7 +106,7 @@ export function useAgentWorkspace(
     void Promise.all([
       fetchAgents(client, controller.signal),
       fetchConversations(client, controller.signal),
-    ]).then(async ([agentResponse, conversationResponse]) => {
+    ]).then(([agentResponse, conversationResponse]) => {
       if (disposed || request.current !== controller) return;
       if (agentResponse?.status === 401 || conversationResponse?.status === 401) {
         onUnauthorized();
@@ -132,22 +134,8 @@ export function useAgentWorkspace(
       setSelectedAgentId((current) => nextAgents.some((agent) => agent.agent_id === current)
         ? current
         : nextAgents[0]?.agent_id || "");
-      setSelectedConversationId((current) => nextConversations.some((conversation) => conversation.conversation_id === current)
-        ? current
-        : nextConversations[0]?.conversation_id || "");
+      setSelectedConversationId((current) => current || nextConversations[0]?.conversation_id || "");
       setStatus("");
-
-      const conversationId = selectedConversationId && nextConversations.some((row) => row.conversation_id === selectedConversationId)
-        ? selectedConversationId
-        : nextConversations[0]?.conversation_id || "";
-      if (conversationId) {
-        const summary = nextConversations.find((row) => row.conversation_id === conversationId);
-        const afterSeq = Math.max(0, Number(summary?.last_seq || 0) - 100);
-        const detailResponse = await fetchConversation(client, conversationId, afterSeq, controller.signal);
-        if (!disposed && detailResponse?.ok && detailResponse.data) setConversationDetail(detailResponse.data);
-      } else {
-        setConversationDetail(null);
-      }
     });
 
     return () => {
@@ -156,15 +144,20 @@ export function useAgentWorkspace(
     };
   }, [client, enabled, onUnauthorized, revision]);
 
+  useEffect(() => { setConversationDetail(null); }, [selectedConversationId]);
+
   useEffect(() => {
     if (!enabled || !selectedConversationId) {
       if (!selectedConversationId) setConversationDetail(null);
       return;
     }
     const controller = new AbortController();
+    setConversationLoading(true);
     const afterSeq = Math.max(0, Number(selectedConversation?.last_seq || 0) - 100);
     void fetchConversation(client, selectedConversationId, afterSeq, controller.signal).then((response) => {
-      if (controller.signal.aborted || !response) return;
+      if (controller.signal.aborted) return;
+      setConversationLoading(false);
+      if (!response) return;
       if (response.status === 401) {
         onUnauthorized();
         return;
@@ -174,15 +167,14 @@ export function useAgentWorkspace(
         return;
       }
       if (response.status === 404) {
-        setSelectedConversationId("");
         setConversationDetail(null);
-        refresh();
         return;
       }
       if (response.ok && response.data) setConversationDetail(response.data);
+      else setStatus("Conversation refresh failed; previous messages retained.");
     });
     return () => controller.abort();
-  }, [client, enabled, onUnauthorized, refresh, selectedConversation?.last_seq, selectedConversationId]);
+  }, [client, enabled, onUnauthorized, refresh, selectedConversation?.last_seq, selectedConversationId, revision]);
 
   useEffect(() => {
     if (!enabled || !selectedAgentId || !endpoint) {
@@ -609,6 +601,7 @@ export function useAgentWorkspace(
     selectedAgent,
     selectedConversation,
     conversationDetail,
+    conversationLoading,
     endpoint,
     inbox,
     busy,

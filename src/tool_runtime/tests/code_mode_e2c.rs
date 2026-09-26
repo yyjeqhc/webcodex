@@ -155,6 +155,44 @@ async fn canonical_call(runtime: &ToolRuntime, name: &str, args: Value) -> ToolR
     outcome.result.unwrap()
 }
 
+fn spawn_e2c_mcp_call(
+    runtime: &ToolRuntime,
+    project: &str,
+    session_id: &str,
+    source: &str,
+) -> JoinHandle<ToolResult> {
+    let runtime = runtime.clone();
+    let project = project.to_string();
+    let session_id = session_id.to_string();
+    let source = source.to_string();
+    tokio::spawn(async move {
+        let auth = bootstrap_auth_context();
+        let outcome = runtime
+            .call_tool_with_context(
+                ToolCallRequest {
+                    tool_name: "code_mode_exec_mutating".to_string(),
+                    arguments: json!({
+                        "project": project,
+                        "session_id": session_id,
+                        "source": source,
+                        "timeout_ms": 5_000,
+                    }),
+                },
+                ToolCallContext {
+                    transport: ToolTransport::Mcp,
+                    session_id: Some(&session_id),
+                    auth: Some(&auth),
+                    window: None,
+                    record_oauth_scope_denials: true,
+                    host_file_import_trust: HostFileImportTrust::Untrusted,
+                },
+            )
+            .await;
+        assert!(outcome.error_status.is_none(), "{outcome:?}");
+        outcome.result.expect("outer E2c ToolResult")
+    })
+}
+
 async fn direct_edit(
     runtime: &ToolRuntime,
     client: &str,
@@ -202,7 +240,7 @@ async fn e2c_guarded_edit_then_check_or_test_keeps_execution_and_source_truth_se
     ] {
         let client = format!("e2c-known-{tool}-{noop}-{exit}");
         let (root, runtime, project, session) = fixture(&client).await;
-        let source = format!("{EDIT} const validation = await tools.{tool}({{sync_wait_secs:5}}); text({{changed:edit.output.state_changed,success:validation.success,passed:validation.output.passed,source:validation.output.source_state}});");
+        let source = format!("{EDIT} const validation = await tools.{tool}({{}}); text({{changed:edit.output.state_changed,success:validation.success,passed:validation.output.passed,source:validation.output.source_state}});");
         let task = spawn_e2b_call(&runtime, &project, &session, &source, None);
         let request = reach_validation(
             &runtime,
@@ -216,6 +254,11 @@ async fn e2c_guarded_edit_then_check_or_test_keeps_execution_and_source_truth_se
         )
         .await;
         validation_reply(&runtime, &client, &request, Some(exit)).await;
+        let request_json = serde_json::to_value(&request).unwrap();
+        assert_eq!(
+            request_json["job_context"]["validation"]["sync_wait_secs"], 5,
+            "E2c API validation handoff must be owned by trusted orchestration policy"
+        );
         let result = task.await.unwrap();
         assert!(
             result.success,
@@ -260,6 +303,51 @@ async fn e2c_guarded_edit_then_check_or_test_keeps_execution_and_source_truth_se
             validation["current_evidence"]["status"],
             if exit == 0 { "unproven" } else { "failed" },
             "{validation}"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn e2c_mcp_direct_and_host_code_mode_keep_internal_five_second_handoff() {
+    for (suffix, host_code_mode) in [("direct", false), ("host-code-mode", true)] {
+        let client = format!("e2c-mcp-{suffix}");
+        let (_root, runtime, project, session) = fixture(&client).await;
+        let runtime = if host_code_mode {
+            runtime.with_mcp_host_policy(
+                crate::mcp_host::McpHostConfig {
+                    profile: crate::mcp_host::McpHostProfile::HostCodeMode,
+                    host_budget_secs: None,
+                }
+                .runtime_policy(),
+            )
+        } else {
+            runtime
+        };
+        let source = format!(
+            "{EDIT} const validation = await tools.cargo_check({{timeout_secs:600}}); text({{job_id:validation.output?.job_id??null}});"
+        );
+        let task = spawn_e2c_mcp_call(&runtime, &project, &session, &source);
+        let request =
+            reach_validation(&runtime, &client, &task, MutationFixtureReply::ApplyExact).await;
+        let request_json = serde_json::to_value(&request).unwrap();
+        assert_eq!(
+            request_json["job_context"]["validation"]["sync_wait_secs"], 5,
+            "{suffix}"
+        );
+        assert_eq!(
+            request_json["job_context"]["validation"]["effective_timeout_secs"], 600,
+            "{suffix}: return policy must not shorten execution lifetime"
+        );
+        validation_reply(&runtime, &client, &request, None).await;
+
+        let result = task.await.unwrap();
+        assert!(result.success, "{suffix}: {result:?}");
+        let receipt = validator_receipt(&result);
+        assert_eq!(receipt["outcome"], "job_handoff", "{suffix}");
+        assert_eq!(
+            receipt["job_id"],
+            request.job_id.as_deref().unwrap(),
+            "{suffix}"
         );
     }
 }
@@ -401,7 +489,7 @@ async fn e2c_validator_requires_edit_and_second_mutation_is_pre_dispatch_rejecte
         );
         assert!(probe_patch_agent_request(&runtime, client).await.is_none());
     }
-    let source = format!("{EDIT} await tools.cargo_check({{sync_wait_secs:5}}); await tools.apply_text_edits({{changes:[{{path:'src/example.rs',old_text:'after',new_text:'twice'}}]}});");
+    let source = format!("{EDIT} await tools.cargo_check({{}}); await tools.apply_text_edits({{changes:[{{path:'src/example.rs',old_text:'after',new_text:'twice'}}]}});");
     let task = spawn_e2b_call(&runtime, &project, &session, &source, None);
     let request = reach_validation(&runtime, client, &task, MutationFixtureReply::ApplyExact).await;
     validation_reply(&runtime, client, &request, Some(0)).await;
@@ -419,7 +507,7 @@ async fn e2c_validator_requires_edit_and_second_mutation_is_pre_dispatch_rejecte
 async fn e2c_concurrent_canonical_write_from_another_session_crosses_running_validation() {
     let client = "e2c-concurrent";
     let (_root, runtime, project, session) = fixture(client).await;
-    let source = format!("{EDIT} const r=await tools.cargo_check({{sync_wait_secs:5}}); text({{success:r.success,source:r.output.source_state}});");
+    let source = format!("{EDIT} const r=await tools.cargo_check({{}}); text({{success:r.success,source:r.output.source_state}});");
     let task = spawn_e2b_call(&runtime, &project, &session, &source, None);
     let request = reach_validation(&runtime, client, &task, MutationFixtureReply::ApplyExact).await;
     let other = runtime.sessions.start_session(Some(project.clone()), None);
@@ -626,7 +714,7 @@ async fn e2c_external_write_is_not_covered_and_never_gets_current_proof() {
         &runtime,
         &project,
         &session,
-        &format!("{EDIT} await tools.cargo_check({{sync_wait_secs:5}});"),
+        &format!("{EDIT} await tools.cargo_check({{}});"),
         None,
     );
     let request = reach_validation(&runtime, client, &task, MutationFixtureReply::ApplyExact).await;
@@ -649,7 +737,7 @@ async fn e2c_external_write_is_not_covered_and_never_gets_current_proof() {
 async fn e2c_frontend_timeout_after_validation_dispatch_preserves_edit_and_exact_job() {
     let client = "e2c-timeout";
     let (_root, runtime, project, session) = fixture(client).await;
-    let source = format!("{EDIT} tools.cargo_check({{sync_wait_secs:1}}); while(true){{}}");
+    let source = format!("{EDIT} tools.cargo_check({{}}); while(true){{}}");
     let task = spawn_e2b_call(&runtime, &project, &session, &source, Some(1000));
     let request = reach_validation(&runtime, client, &task, MutationFixtureReply::ApplyExact).await;
     validation_reply(&runtime, client, &request, None).await;

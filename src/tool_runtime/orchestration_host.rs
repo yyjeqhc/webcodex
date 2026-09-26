@@ -21,8 +21,7 @@ use webcodex_core::workflow_session_contract::{
     TOOL_EXPECTED_FAILURE_KIND_FIELD, TOOL_RESULT_EXPECTATION_FIELD,
 };
 use webcodex_tool_contracts::{
-    runtime_tool_composition_policy, runtime_tool_execution_contract, runtime_tool_metadata,
-    ToolCompositionPolicy, ToolEffect, ToolExecutionContinuation,
+    runtime_tool_composition_policy, runtime_tool_metadata, ToolCompositionPolicy, ToolEffect,
 };
 
 /// Process-local serialization for orchestration-originated Project mutation.
@@ -116,11 +115,10 @@ pub(crate) struct OrchestrationPolicy {
     /// canonical Server-owned target/invocation fields below are always denied
     /// by the host and cannot be weakened by a frontend policy.
     pub(crate) additional_forbidden_argument_fields: &'static [&'static str],
-    /// Optional frontend-only cap for an explicitly requested synchronous handoff
-    /// preference of canonical tools whose continuation is observe_jobs. Omission
-    /// stays omitted so the child uses its canonical default. This never changes
-    /// the child's total execution timeout or Job identity.
-    pub(crate) nested_sync_wait_max_secs: Option<u64>,
+    /// Trusted frontend-owned return policy for nested canonical calls. This may
+    /// only shorten synchronous handoff of an already-started durable execution;
+    /// it never changes execution lifetime, Job identity, or Job observation.
+    pub(crate) child_return_timing: super::return_timing::ToolReturnTimingPolicy,
     /// Optional per-cell budget for canonical mutation attempts. Classification
     /// comes only from ToolEffect::Mutate; a rejected over-budget call never
     /// crosses canonical business dispatch.
@@ -690,11 +688,7 @@ impl CanonicalOrchestrationHost {
         receipt
     }
 
-    fn prepare_arguments(
-        &self,
-        tool_name: &str,
-        arguments: Value,
-    ) -> Result<Value, OrchestrationHostError> {
+    fn prepare_arguments(&self, arguments: Value) -> Result<Value, OrchestrationHostError> {
         let Some(mut arguments) = arguments.as_object().cloned() else {
             return Err(OrchestrationHostError::new(
                 OrchestrationHostFailureKind::InvalidArguments,
@@ -720,17 +714,6 @@ impl CanonicalOrchestrationHost {
                 OrchestrationHostFailureKind::InvalidArguments,
                 format!("nested tool arguments may not set frontend-reserved field `{field}`"),
             ));
-        }
-        if let Some(max_secs) = self.policy.nested_sync_wait_max_secs {
-            if runtime_tool_execution_contract(tool_name).is_some_and(|execution| {
-                execution.continuation == ToolExecutionContinuation::ObserveJobs
-            }) {
-                if let Some(value) = arguments.get_mut("sync_wait_secs") {
-                    if value.as_u64().is_some_and(|seconds| seconds > max_secs) {
-                        *value = Value::from(max_secs);
-                    }
-                }
-            }
         }
         arguments.insert("project".to_string(), Value::String(self.project.clone()));
         arguments.insert(
@@ -759,7 +742,7 @@ impl CanonicalOrchestrationHost {
         // explicit admitted tool set. Once admitted, argument/scope failures are
         // still counted as attempted child calls so diagnostics preserve them.
         let mut child_guard = self.begin_nested_call(&tool_name);
-        let arguments = self.prepare_arguments(&tool_name, arguments)?;
+        let arguments = self.prepare_arguments(arguments)?;
         let scheduling_guard = self.acquire_scheduling_guard(&tool_name).await?;
         let mutation_guard = if runtime_tool_metadata(&tool_name).effect == ToolEffect::Mutate {
             Some(
@@ -853,7 +836,7 @@ impl CanonicalOrchestrationHost {
         );
         let outcome = self
             .tools
-            .call_tool_with_context(
+            .call_tool_with_context_and_return_timing(
                 ToolCallRequest {
                     tool_name: tool_name.clone(),
                     arguments,
@@ -868,6 +851,7 @@ impl CanonicalOrchestrationHost {
                     record_oauth_scope_denials: true,
                     host_file_import_trust: HostFileImportTrust::Untrusted,
                 },
+                self.policy.child_return_timing,
             )
             .await;
         // Both orchestration fences cover exactly the canonical ToolRuntime

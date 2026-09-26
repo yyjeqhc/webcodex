@@ -1195,6 +1195,7 @@ impl ToolRuntime {
             context_request,
             material_capabilities,
             super::kernel::ToolProtocolCapabilities::default(),
+            super::return_timing::ToolReturnTimingPolicy::unconstrained(),
         )
         .await;
         projection.project(&mut result);
@@ -1226,6 +1227,7 @@ impl ToolRuntime {
         context_request: Vec<String>,
         material_capabilities: super::context_projection::ContextMaterialCapabilities,
         protocol_capabilities: super::kernel::ToolProtocolCapabilities,
+        return_timing: super::return_timing::ToolReturnTimingPolicy,
     ) -> (
         ToolResult,
         ModelFacingProjectionPlan,
@@ -1251,6 +1253,7 @@ impl ToolRuntime {
                 context_request.clone(),
                 material_capabilities,
                 protocol_capabilities,
+                return_timing,
                 &mut correlation,
                 &mut result_projection,
             )
@@ -1397,12 +1400,21 @@ impl ToolRuntime {
         context_request: Vec<String>,
         material_capabilities: super::context_projection::ContextMaterialCapabilities,
         protocol_capabilities: super::kernel::ToolProtocolCapabilities,
+        return_timing: super::return_timing::ToolReturnTimingPolicy,
         correlation: &mut super::window_activity::ToolCallCorrelation,
         result_projection: &mut ModelFacingProjectionPlan,
     ) -> ToolResult {
         call = call
             .with_coding_agent_recording_session_id(recorder_metadata.recording_session_id.clone());
-        super::mcp_timing::normalize_call_timing(&mut call, transport, self.mcp_host_policy);
+        let effective_return_timing = return_timing.intersect(
+            super::mcp_timing::return_timing_policy(transport, self.mcp_host_policy),
+        );
+        super::return_timing::normalize_structured_handoff(&mut call, effective_return_timing);
+        super::mcp_timing::normalize_observation_call_timing(
+            &mut call,
+            transport,
+            self.mcp_host_policy,
+        );
         if let ToolCall::PluginTool(plugin) = call {
             return match crate::plugin_gateway::invoke(
                 self,

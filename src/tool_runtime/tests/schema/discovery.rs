@@ -1822,6 +1822,18 @@ async fn code_mode_exact_manifest_projects_canonical_stage_callable_contracts() 
             projection["constraints"]["validation_after_successful_known_mutation"],
             policy.validation_after_mutation
         );
+        assert!(
+            projection["constraints"]
+                .get("nested_sync_wait_max_secs")
+                .is_none(),
+            "{entry_tool} must not expose internal return timing"
+        );
+        assert!(
+            !projection["examples"]
+                .to_string()
+                .contains("sync_wait_secs"),
+            "{entry_tool} examples must not teach hidden compatibility timing"
+        );
         let projected_names = projection["tools"]
             .as_array()
             .expect("projected callable tools")
@@ -1840,6 +1852,10 @@ async fn code_mode_exact_manifest_projects_canonical_stage_callable_contracts() 
             let input_properties = input["properties"]
                 .as_object()
                 .unwrap_or_else(|| panic!("{tool_name} projected input properties"));
+            assert!(
+                !input_properties.contains_key("sync_wait_secs"),
+                "{tool_name} callable projection must keep legacy sync_wait_secs hidden"
+            );
             assert!(
                 input_properties
                     .keys()

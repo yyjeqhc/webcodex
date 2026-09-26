@@ -8,7 +8,6 @@ use crate::tool_runtime::kernel::{
 use crate::tool_runtime::orchestration_host::{
     CanonicalOrchestrationHost, OrchestrationHostFailureKind, OrchestrationPolicy,
 };
-use crate::tool_runtime::structured_execution::STRUCTURED_EXECUTION_SYNC_WAIT_SECS;
 use crate::tool_runtime::{ObserveJobsItem, ObserveJobsWakeOn, ToolRuntime};
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -22,13 +21,14 @@ struct ObservedRunnerRequest {
     cwd: Option<String>,
 }
 
-fn spawn_code_mode_call(
+fn spawn_code_mode_call_with_transport(
     runtime: &ToolRuntime,
     tool_name: &'static str,
     project: String,
     session_id: String,
     source: String,
     timeout_ms: u64,
+    transport: ToolTransport,
 ) -> JoinHandle<ToolCallOutcome> {
     let runtime = runtime.clone();
     tokio::spawn(async move {
@@ -45,7 +45,7 @@ fn spawn_code_mode_call(
                     }),
                 },
                 ToolCallContext {
-                    transport: ToolTransport::Mcp,
+                    transport,
                     session_id: Some(&session_id),
                     auth: Some(&auth),
                     window: None,
@@ -55,6 +55,25 @@ fn spawn_code_mode_call(
             )
             .await
     })
+}
+
+fn spawn_code_mode_call(
+    runtime: &ToolRuntime,
+    tool_name: &'static str,
+    project: String,
+    session_id: String,
+    source: String,
+    timeout_ms: u64,
+) -> JoinHandle<ToolCallOutcome> {
+    spawn_code_mode_call_with_transport(
+        runtime,
+        tool_name,
+        project,
+        session_id,
+        source,
+        timeout_ms,
+        ToolTransport::Mcp,
+    )
 }
 
 async fn e2a_validation_runtime(client_id: &str) -> (ToolRuntime, String, String) {
@@ -169,7 +188,7 @@ async fn e1_still_rejects_structured_validation_before_runner_dispatch() {
         "code_mode_exec",
         project,
         session_id,
-        "await tools.cargo_check({sync_wait_secs: 1, timeout_secs: 600});".to_string(),
+        "await tools.cargo_check({timeout_secs: 600});".to_string(),
         5_000,
     )
     .await
@@ -192,7 +211,6 @@ async fn e2a_cargo_check_handoff_preserves_same_canonical_job_and_sparse_receipt
         session_id.clone(),
         r#"
         const check = await tools.cargo_check({
-            sync_wait_secs: 99,
             timeout_secs: 600
         });
         text({job_id: check.output?.job_id ?? null, terminal: check.output?.terminal ?? null});
@@ -207,7 +225,7 @@ async fn e2a_cargo_check_handoff_preserves_same_canonical_job_and_sparse_receipt
     let request_json = serde_json::to_value(&request).unwrap();
     assert_eq!(
         request_json["job_context"]["validation"]["sync_wait_secs"], 5,
-        "E2a clamps only the synchronous Job-handoff preference"
+        "E2a owns its child handoff bound even when the program omits legacy timing input"
     );
     assert_eq!(
         request_json["job_context"]["validation"]["effective_timeout_secs"],
@@ -311,10 +329,10 @@ async fn e2a_cargo_check_handoff_preserves_same_canonical_job_and_sparse_receipt
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn e2a_omitted_sync_wait_uses_canonical_validation_default() {
+async fn e2a_api_omitted_sync_wait_uses_server_owned_handoff_policy() {
     let client_id = "code-mode-e2a-default-handoff";
     let (runtime, project, session_id) = e2a_validation_runtime(client_id).await;
-    let task = spawn_code_mode_call(
+    let task = spawn_code_mode_call_with_transport(
         &runtime,
         "code_mode_exec_effectful",
         project,
@@ -325,15 +343,15 @@ async fn e2a_omitted_sync_wait_uses_canonical_validation_default() {
         "#
         .to_string(),
         5_000,
+        ToolTransport::Api,
     );
 
     let (request, job_id) =
         super::validation_handoff::poll_start_validation_job(&runtime, client_id).await;
     let request_json = serde_json::to_value(&request).unwrap();
     assert_eq!(
-        request_json["job_context"]["validation"]["sync_wait_secs"],
-        STRUCTURED_EXECUTION_SYNC_WAIT_SECS,
-        "E2a omission must reach the canonical validation budget resolver"
+        request_json["job_context"]["validation"]["sync_wait_secs"], 5,
+        "E2a API child handoff must be constrained by trusted orchestration policy"
     );
     assert_eq!(
         request_json["job_context"]["validation"]["effective_timeout_secs"],
@@ -401,6 +419,112 @@ async fn e2a_omitted_sync_wait_uses_canonical_validation_default() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn e2a_mcp_host_code_mode_combines_return_bounds_without_shortening_execution() {
+    let client_id = "code-mode-e2a-host-code-mode";
+    let (runtime, project, session_id) = e2a_validation_runtime(client_id).await;
+    let runtime = runtime.with_mcp_host_policy(
+        crate::mcp_host::McpHostConfig {
+            profile: crate::mcp_host::McpHostProfile::HostCodeMode,
+            host_budget_secs: None,
+        }
+        .runtime_policy(),
+    );
+    let task = spawn_code_mode_call(
+        &runtime,
+        "code_mode_exec_effectful",
+        project,
+        session_id,
+        "const check = await tools.cargo_check({timeout_secs: 600}); text({job_id: check.output?.job_id ?? null});".to_string(),
+        5_000,
+    );
+
+    let (request, job_id) =
+        super::validation_handoff::poll_start_validation_job(&runtime, client_id).await;
+    let request_json = serde_json::to_value(&request).unwrap();
+    assert_eq!(
+        request_json["job_context"]["validation"]["sync_wait_secs"],
+        5
+    );
+    assert_eq!(
+        request_json["job_context"]["validation"]["effective_timeout_secs"], 600,
+        "return policy must not shorten child execution lifetime"
+    );
+    runtime
+        .runner_registry
+        .update_job(super::validation_handoff::cargo_test_update(
+            client_id,
+            &request.request_id,
+            &job_id,
+            "running",
+            "Checking host-code-mode child\n",
+            "",
+            None,
+            super::validation_handoff::running_progress("check"),
+            false,
+        ))
+        .await
+        .unwrap();
+
+    let outcome = task.await.unwrap();
+    assert!(outcome.success, "{outcome:?}");
+    let result = outcome.result.expect("outer E2a ToolResult");
+    assert!(result.success, "{result:?}");
+    assert_eq!(result.output["effect_receipt"]["job_handoffs"], 1);
+    assert_eq!(
+        result.output["effect_receipt"]["children"][0]["job_id"],
+        job_id
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn e2a_api_legacy_sync_wait_cannot_exceed_server_owned_return_bound() {
+    let client_id = "code-mode-e2a-legacy-sync-wait";
+    let (runtime, project, session_id) = e2a_validation_runtime(client_id).await;
+    let task = spawn_code_mode_call_with_transport(
+        &runtime,
+        "code_mode_exec_effectful",
+        project,
+        session_id,
+        "const check = await tools.cargo_check({sync_wait_secs: 99, timeout_secs: 600}); text({job_id: check.output?.job_id ?? null});".to_string(),
+        5_000,
+        ToolTransport::Api,
+    );
+
+    let (request, job_id) =
+        super::validation_handoff::poll_start_validation_job(&runtime, client_id).await;
+    let request_json = serde_json::to_value(&request).unwrap();
+    assert_eq!(
+        request_json["job_context"]["validation"]["sync_wait_secs"], 5,
+        "legacy compatibility input may only tighten, never exceed trusted return policy"
+    );
+    assert_eq!(
+        request_json["job_context"]["validation"]["effective_timeout_secs"],
+        600
+    );
+    runtime
+        .runner_registry
+        .update_job(super::validation_handoff::cargo_test_update(
+            client_id,
+            &request.request_id,
+            &job_id,
+            "running",
+            "Checking legacy timing child\n",
+            "",
+            None,
+            super::validation_handoff::running_progress("check"),
+            false,
+        ))
+        .await
+        .unwrap();
+
+    let outcome = task.await.unwrap();
+    assert!(outcome.success, "{outcome:?}");
+    let result = outcome.result.expect("outer E2a ToolResult");
+    assert!(result.success, "{result:?}");
+    assert_eq!(result.output["effect_receipt"]["job_handoffs"], 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn e2a_failed_cargo_test_is_known_result_not_outcome_unknown() {
     let client_id = "code-mode-e2a-known-failure";
     let (runtime, project, session_id) = e2a_validation_runtime(client_id).await;
@@ -410,7 +534,7 @@ async fn e2a_failed_cargo_test_is_known_result_not_outcome_unknown() {
         project,
         session_id,
         r#"
-        const test = await tools.cargo_test({sync_wait_secs: 5, timeout_secs: 600});
+        const test = await tools.cargo_test({timeout_secs: 600});
         text({child_success: test.success});
         "#
         .to_string(),
@@ -465,8 +589,8 @@ async fn e2a_promise_all_validators_handoff_sequentially_then_jobs_remain_indepe
         session_id,
         r#"
         const [check, test] = await Promise.all([
-            tools.cargo_check({sync_wait_secs: 1, timeout_secs: 600}),
-            tools.cargo_test({sync_wait_secs: 1, timeout_secs: 600})
+            tools.cargo_check({timeout_secs: 600}),
+            tools.cargo_test({timeout_secs: 600})
         ]);
         text({check_job: check.output?.job_id ?? null, test_job: test.output?.job_id ?? null});
         "#
@@ -638,7 +762,7 @@ async fn e2a_js_error_after_job_handoff_preserves_effect_receipt_and_no_retry_cl
         project,
         session_id,
         r#"
-        const check = await tools.cargo_check({sync_wait_secs: 1, timeout_secs: 600});
+        const check = await tools.cargo_check({timeout_secs: 600});
         throw new Error("E2A_AFTER_CHILD");
         "#
         .to_string(),
@@ -715,7 +839,7 @@ async fn e2a_cpu_timeout_after_child_dispatch_preserves_started_job_truth() {
         project,
         session_id,
         r#"
-        const child = tools.cargo_check({sync_wait_secs: 1, timeout_secs: 600});
+        const child = tools.cargo_check({timeout_secs: 600});
         while (true) {}
         "#
         .to_string(),
@@ -892,7 +1016,7 @@ async fn e2a_parent_and_child_complete_without_retired_continuity_overlays() {
                     arguments: json!({
                         "project": project_for_call,
                         "session_id": session_for_call,
-                        "source": "const check = await tools.cargo_check({sync_wait_secs: 1, timeout_secs: 600}); text({job_id: check.output?.job_id ?? null});",
+                        "source": "const check = await tools.cargo_check({timeout_secs: 600}); text({job_id: check.output?.job_id ?? null});",
                         "timeout_ms": 5_000,
                     }),
                 },
@@ -997,7 +1121,7 @@ async fn e2a_outer_job_run_scope_denial_starts_no_validation_process() {
                 arguments: json!({
                     "project": project,
                     "session_id": session_id,
-                    "source": "await tools.cargo_check({sync_wait_secs: 1, timeout_secs: 600});",
+                    "source": "await tools.cargo_check({timeout_secs: 600});",
                     "timeout_ms": 2_000,
                 }),
             },
@@ -1063,7 +1187,8 @@ async fn canonical_orchestration_host_distinguishes_child_scope_denial_from_inva
         admitted_tools: &["cargo_check"],
         denied_tools: &[],
         additional_forbidden_argument_fields: &[],
-        nested_sync_wait_max_secs: Some(5),
+        child_return_timing:
+            crate::tool_runtime::return_timing::ToolReturnTimingPolicy::handoff_max_secs(5),
         max_mutation_calls: None,
         validation_after_mutation: false,
     };
@@ -1078,11 +1203,7 @@ async fn canonical_orchestration_host_distinguishes_child_scope_denial_from_inva
     );
 
     let error = host
-        .invoke_tool(
-            1,
-            "cargo_check".to_string(),
-            json!({"sync_wait_secs": 1, "timeout_secs": 600}),
-        )
+        .invoke_tool(1, "cargo_check".to_string(), json!({"timeout_secs": 600}))
         .await
         .unwrap_err();
     assert_eq!(
@@ -1119,7 +1240,8 @@ async fn canonical_orchestration_host_runs_without_the_v8_frontend() {
         admitted_tools: &["read_files"],
         denied_tools: &[],
         additional_forbidden_argument_fields: &[],
-        nested_sync_wait_max_secs: None,
+        child_return_timing:
+            crate::tool_runtime::return_timing::ToolReturnTimingPolicy::unconstrained(),
         max_mutation_calls: None,
         validation_after_mutation: false,
     };
@@ -1220,7 +1342,8 @@ async fn canonical_orchestration_host_rejects_server_owned_metadata_without_fron
         admitted_tools: &["read_files"],
         denied_tools: &[],
         additional_forbidden_argument_fields: &[],
-        nested_sync_wait_max_secs: None,
+        child_return_timing:
+            crate::tool_runtime::return_timing::ToolReturnTimingPolicy::unconstrained(),
         max_mutation_calls: None,
         validation_after_mutation: false,
     };
@@ -1234,7 +1357,7 @@ async fn canonical_orchestration_host_rejects_server_owned_metadata_without_fron
         policy,
     );
 
-    for (attempt_index, (field, value)) in [
+    let server_owned_attempts = [
         ("project", json!("agent:other:demo")),
         ("session_id", json!("wc_sess_0000000000000000")),
         ("recording_session_id", json!("wc_sess_0000000000000000")),
@@ -1251,10 +1374,9 @@ async fn canonical_orchestration_host_rejects_server_owned_metadata_without_fron
         ("accepted_exit_codes", json!([0, 1])),
         ("assertion_name", json!("nested-assertion")),
         ("__webcodex_private", json!(true)),
-    ]
-    .into_iter()
-    .enumerate()
-    {
+    ];
+    let server_owned_attempt_count = server_owned_attempts.len();
+    for (attempt_index, (field, value)) in server_owned_attempts.into_iter().enumerate() {
         let mut arguments = serde_json::Map::new();
         arguments.insert(field.to_string(), value);
         arguments.insert("items".to_string(), json!([{"path": "README.md"}]));
@@ -1269,13 +1391,20 @@ async fn canonical_orchestration_host_rejects_server_owned_metadata_without_fron
         assert!(error.into_message().contains(field), "{field}");
     }
     let composition = host.composition_summary(0, 0, 0, 0);
-    assert_eq!(composition.nested_calls, 12);
-    assert_eq!(composition.nested_failures, 12);
+    assert_eq!(composition.nested_calls, server_owned_attempt_count);
+    assert_eq!(composition.nested_failures, server_owned_attempt_count);
     assert_eq!(composition.max_in_flight, 0);
-    assert_eq!(composition.nested_tool_counts.get("read_files"), Some(&12));
+    assert_eq!(
+        composition.nested_tool_counts.get("read_files"),
+        Some(&server_owned_attempt_count)
+    );
 
     let error = host
-        .invoke_tool(13, "cargo_check".to_string(), json!({}))
+        .invoke_tool(
+            server_owned_attempt_count + 1,
+            "cargo_check".to_string(),
+            json!({}),
+        )
         .await
         .expect_err("frontend-unadmitted tools must fail before composition accounting");
     assert_eq!(
@@ -1283,7 +1412,7 @@ async fn canonical_orchestration_host_rejects_server_owned_metadata_without_fron
         OrchestrationHostFailureKind::ToolNotAdmitted
     );
     let composition = host.composition_summary(0, 0, 0, 0);
-    assert_eq!(composition.nested_calls, 12);
+    assert_eq!(composition.nested_calls, server_owned_attempt_count);
     assert!(composition.nested_tool_counts.get("cargo_check").is_none());
 }
 

@@ -24,7 +24,8 @@ const E2B_MUTATION_ONLY_POLICY: OrchestrationPolicy = OrchestrationPolicy {
     admitted_tools: &["apply_text_edits"],
     denied_tools: &["code_mode_exec_mutating"],
     additional_forbidden_argument_fields: &[],
-    nested_sync_wait_max_secs: None,
+    child_return_timing: crate::tool_runtime::return_timing::ToolReturnTimingPolicy::unconstrained(
+    ),
     max_mutation_calls: Some(1),
     validation_after_mutation: false,
 };
@@ -35,7 +36,8 @@ const READ_ONLY_TEST_POLICY: OrchestrationPolicy = OrchestrationPolicy {
     admitted_tools: &["read_files"],
     denied_tools: &[],
     additional_forbidden_argument_fields: &[],
-    nested_sync_wait_max_secs: None,
+    child_return_timing: crate::tool_runtime::return_timing::ToolReturnTimingPolicy::unconstrained(
+    ),
     max_mutation_calls: None,
     validation_after_mutation: false,
 };
@@ -1008,7 +1010,7 @@ async fn e2a_validation_does_not_acquire_project_mutation_fence() {
                     ToolCall::CodeModeExecEffectful {
                         project,
                         session_id,
-                        source: "const r=await tools.cargo_check({sync_wait_secs:1,timeout_secs:600}); text(JSON.stringify({job:r.output?.job_id??null}));".to_string(),
+                        source: "const r=await tools.cargo_check({timeout_secs:600}); text(JSON.stringify({job:r.output?.job_id??null}));".to_string(),
                         timeout_ms: Some(5_000),
                     },
                     Some(&bootstrap_auth_context()),

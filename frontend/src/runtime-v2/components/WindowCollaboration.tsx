@@ -14,8 +14,8 @@ function deliveryLabel(row: WindowCollaborationMessage, zh: boolean): string | n
   if (row.source === "peer" && row.direction === "inbound") return null;
   if (row.source === "window") return null;
   if (row.first_ack_observed_at_ms != null) return zh ? "已确认" : "Acknowledged";
-  if (row.first_projected_at_ms != null) return zh ? "已送达" : "Delivered";
-  return zh ? "已发送" : "Sent";
+  if (row.first_projected_at_ms != null) return zh ? "已附入工具结果" : "Included in tool result";
+  return zh ? "已保存" : "Saved";
 }
 
 function participantLabel(row: WindowCollaborationMessage, zh: boolean): string {

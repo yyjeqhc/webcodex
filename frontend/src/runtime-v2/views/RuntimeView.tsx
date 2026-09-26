@@ -1,5 +1,4 @@
 import {
-  Activity,
   ArrowUpRight,
   Bot,
   Check,
@@ -7,7 +6,6 @@ import {
   Monitor,
   Play,
   Server,
-  TerminalSquare,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { RuntimeLanguage } from "../../runtime_i18n.js";
@@ -15,7 +13,6 @@ import { translate } from "../../runtime_i18n.js";
 import type { RuntimeV2Client } from "../api/client.js";
 import { absoluteTime, relativeTime, shortId } from "../model/format.js";
 import type { Availability, ProjectRow, RuntimeOverview } from "../model/types.js";
-import { useAgentInventory } from "../state/useAgentInventory.js";
 import { WindowActivityFeed } from "../components/WindowActivityFeed.js";
 import { AgentsPanel } from "../components/AgentsPanel.js";
 import { PageHeader } from "../components/ui/PageHeader.js";
@@ -65,11 +62,10 @@ export function RuntimeView({
   const [mode, setMode] = useState<RuntimeMode>("overview");
   const [requestedWindowKey, setRequestedWindowKey] = useState("");
   const [requestedAgentId, setRequestedAgentId] = useState("");
-  const windows = useWindowWorkspace(client, true, onUnauthorized, {
+  const windows = useWindowWorkspace(client, mode === "windows", onUnauthorized, {
     refreshMs: mode === "windows" ? 3_000 : 30_000,
     loadDetail: mode === "windows",
   });
-  const agents = useAgentInventory(client, mode === "overview");
   const latestWindowActivityAt = windows.detail
     ? (windows.detail.last_meaningful_activity_at_ms || windows.detail.last_tool_call_at_ms || windows.detail.last_seen_at_ms)
     : undefined;
@@ -115,10 +111,10 @@ export function RuntimeView({
           <Server size={15} /> {t("Overview")}
         </button>
         <button className={mode === "windows" ? "active" : ""} role="tab" aria-selected={mode === "windows"} onClick={() => setMode("windows")}>
-          <Monitor size={15} /> {t("Window Activity")} <span>{windows.total || windows.windows.length}</span>
+          <Monitor size={15} /> {t("Window Activity")} {mode === "windows" && <span>{windows.total || windows.windows.length}</span>}
         </button>
         <button className={mode === "agents" ? "active" : ""} role="tab" aria-selected={mode === "agents"} onClick={() => setMode("agents")}>
-          <Bot size={15} /> {t("Agents")} {agents.count !== null && <span>{agents.count}</span>}
+          <Bot size={15} /> {t("Agents")}
         </button>
       </div>
 
@@ -136,14 +132,9 @@ export function RuntimeView({
               <small>{overview ? String(overview.workflow_sessions.running) + " " + t("running Sessions") : "—"}</small>
             </div>
             <div>
-              <span><Monitor size={17} /> {t("Observed windows")}</span>
-              <strong>{windows.availability === "denied" ? "—" : windows.total || windows.windows.length}</strong>
-              <small>{t("many-to-many Session evidence")}</small>
-            </div>
-            <div>
-              <span><Bot size={17} /> {t("Durable agents")}</span>
-              <strong>{agents.available === false ? "—" : agents.count ?? "…"}</strong>
-              <small>{agents.available === false ? t("communication:read required") : t("runtime inventory")}</small>
+              <span><Monitor size={17} /> {t("Active Windows")}</span>
+              <strong>{overview?.active_windows ?? "—"}</strong>
+              <button className="text-button" type="button" onClick={() => setMode("windows")}>{t("View activity")} <ArrowUpRight size={13} /></button>
             </div>
           </div>
 
@@ -151,7 +142,7 @@ export function RuntimeView({
             <div className="section-heading">
               <div><h2>{t("Runner fleet")}</h2></div>
             </div>
-            {overview?.runners.map((runner) => (
+            {overview?.runners.slice().sort((a, b) => Number(a.connected) - Number(b.connected) || Number(a.protocol_compatibility === "compatible") - Number(b.protocol_compatibility === "compatible") || a.client_id.localeCompare(b.client_id)).map((runner) => (
               <div className="runtime-row" key={runner.client_id}>
                 <span className="runner-icon"><Monitor size={17} /></span>
                 <span className="runtime-row-primary">
@@ -168,46 +159,21 @@ export function RuntimeView({
                   {runner.protocol_compatibility === "compatible" ? <Check size={12} /> : <HardDrive size={12} />}
                   {t(runner.protocol_compatibility || "unknown")}
                 </span>
-                <span className="runtime-row-meta runtime-row-build" title={`${t("Build revisions are diagnostic identity, not compatibility gates.")}${runner.build_git_commit ? ` · ${runner.build_git_commit}` : ""}`}>
-                  {t("Build alignment")}: {buildAlignmentLabel(runner.build_alignment || runner.source_alignment, t)}
-                  {runner.build_git_commit ? ` · ${shortId(runner.build_git_commit, 8, 4)}` : ""}
-                </span>
               </div>
             ))}
-            {!overview?.runners.length && <div className="empty-inline">{t("Runtime overview unavailable")}</div>}
+            {!overview?.runners.length && <div className="empty-inline">{t(overviewAvailability === "loading" || overviewAvailability === "idle" ? "Loading…" : overview ? "No Runners connected" : "Runtime overview unavailable")}</div>}
           </section>
 
-          <section className="runtime-section">
-            <div className="section-heading">
-              <div><h2>{t("Meaningful runtime status")}</h2></div>
-              <button className="text-button" type="button" onClick={() => setMode("windows")}>
-                {t("Open Window activity")} <ArrowUpRight size={13} />
-              </button>
-            </div>
-            <div className="event-log">
-              <div>
-                <Activity size={15} />
-                <span>
-                  <strong>{t("Workflow Sessions")}</strong>
-                  <small>{overview ? String(overview.workflow_sessions.active) + " " + t("active") : "—"}</small>
-                </span>
-                <time>{overview?.recent_sessions.sessions[0] ? relativeTime(overview.recent_sessions.sessions[0].updated_at) : "—"}</time>
-              </div>
-              <div>
-                <TerminalSquare size={15} />
-                <span><strong>{t("Active jobs")}</strong><small>{overview ? String(overview.active_jobs) : "—"}</small></span>
-                <time>{overview?.mixed_builds_present ? t("mixed builds") : t("builds observed")}</time>
-              </div>
-              <div>
-                <HardDrive size={15} />
-                <span>
-                  <strong>{t("Source alignment")}</strong>
-                  <small>{overview ? String(overview.source_mismatched_runners) + " " + t("mismatched runners") : "—"}</small>
-                </span>
-                <time>{overview?.build_git_commit ? shortId(overview.build_git_commit) : "—"}</time>
-              </div>
-            </div>
-          </section>
+          {overview && <details className="runtime-section runtime-diagnostics">
+            <summary>{t("Build diagnostics")}</summary>
+            <p>{t("Build revisions are diagnostic identity, not compatibility gates.")}</p>
+            <div className="runtime-diagnostic-row"><strong>{t("Current Runtime")}</strong><code>{overview.build_git_commit || "—"}</code></div>
+            {overview.runners.map((runner) => <div className="runtime-diagnostic-row" key={runner.client_id}>
+              <strong>{runner.client_id}</strong>
+              <span className="runtime-row-build">{t("Build alignment")}: {buildAlignmentLabel(runner.build_alignment || runner.source_alignment, t)}</span>
+              <code>{runner.build_git_commit || "—"}</code>
+            </div>)}
+          </details>}
         </>
       ) : mode === "agents" ? (
         <AgentsPanel client={client} language={language} onUnauthorized={onUnauthorized} selectedAgentId={requestedAgentId} onSelectedAgentConsumed={() => setRequestedAgentId("")} />
@@ -217,7 +183,6 @@ export function RuntimeView({
             <div className="window-list-head">
               <div>
                 <strong>{t("Observed Windows")}</strong>
-                <small>{t("Observation evidence; Windows do not own Sessions.")}</small>
               </div>
               <span className="count-badge">{windows.windows.length}</span>
             </div>
@@ -244,9 +209,9 @@ export function RuntimeView({
                 >
                   <span className="window-icon"><Monitor size={16} /></span>
                   <span className="window-row-main">
-                    <strong title={window.client_window_key}>Window {shortId(window.client_window_key)}</strong>
+                    <strong title={window.client_window_key}>{project?.name || window.last_activity_name || `Window ${shortId(window.client_window_key)}`}</strong>
                     <small>{window.source} · {project?.client_id || t("Runner not observed")}</small>
-                    <small title={window.last_project}>{t("Last Project")}: {project?.name || window.last_project || t("No current Project evidence")}</small>
+                    <small title={window.client_window_key}>Window {shortId(window.client_window_key)}</small>
                     <small>{window.active_count} {t("active requests")}</small>
                   </span>
                   <time title={absoluteTime(window.last_meaningful_activity_at_ms || window.last_seen_at_ms)}>{relativeTime(window.last_meaningful_activity_at_ms || window.last_seen_at_ms)}</time>
@@ -268,7 +233,7 @@ export function RuntimeView({
                 <header className="window-detail-head">
                   <div>
                     <span className="eyebrow">{t("Window evidence")}</span>
-                    <h2>Window {shortId(windows.detail.client_window_key)}</h2>
+                    <h2>{windows.windows.find((row) => row.client_window_key === windows.detail?.client_window_key)?.last_activity_name || `Window ${shortId(windows.detail.client_window_key)}`}</h2>
                     <p>{windows.detail.source} · {t("last observed")} {relativeTime(windows.detail.last_seen_at_ms)}</p>
                   </div>
                   <span className="quiet-pill">{windows.detail.active_count} {t("active requests")}</span>

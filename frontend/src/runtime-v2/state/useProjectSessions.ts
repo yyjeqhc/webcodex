@@ -1,17 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { fetchProjectSessions, fetchSessionDetail } from "../api/sessions.js";
+import { fetchProjectSessions } from "../api/sessions.js";
 import type { RuntimeV2Client } from "../api/client.js";
 import type { Availability, SessionListItem } from "../model/types.js";
-
-const MAX_WINDOW_ENRICHMENT = 20;
-const DETAIL_CONCURRENCY = 3;
 
 export type ProjectSessionsState = {
   availability: Availability;
   sessions: SessionListItem[];
   total: number;
   truncated: boolean;
-  windowCountBySession: Map<string, number | null>;
 };
 
 export function useProjectSessions(
@@ -24,22 +20,20 @@ export function useProjectSessions(
   const [sessions, setSessions] = useState<SessionListItem[]>([]);
   const [total, setTotal] = useState(0);
   const [truncated, setTruncated] = useState(false);
-  const [windowCountBySession, setWindowCountBySession] = useState<Map<string, number | null>>(new Map());
   const [revision, setRevision] = useState(0);
-  const refresh = useCallback(() => setRevision((value) => value + 1), []);
   const listRequest = useRef<AbortController | null>(null);
-  const enrichmentRequest = useRef<AbortController | null>(null);
   const activeProject = useRef("");
+  const refresh = useCallback(() => {
+    if (!listRequest.current) setRevision((value) => value + 1);
+  }, []);
 
   useEffect(() => {
     listRequest.current?.abort();
-    enrichmentRequest.current?.abort();
     if (!enabled || !projectId) {
       activeProject.current = "";
       setSessions([]);
       setTotal(0);
       setTruncated(false);
-      setWindowCountBySession(new Map());
       setAvailability("idle");
       return;
     }
@@ -49,7 +43,6 @@ export function useProjectSessions(
       setSessions([]);
       setTotal(0);
       setTruncated(false);
-      setWindowCountBySession(new Map());
       setAvailability("loading");
     } else {
       setAvailability((current) => current === "idle" ? "loading" : current);
@@ -57,7 +50,7 @@ export function useProjectSessions(
     const controller = new AbortController();
     listRequest.current = controller;
     void fetchProjectSessions(client, projectId, controller.signal).then((response) => {
-      if (listRequest.current !== controller || !response) return;
+      if (controller.signal.aborted || listRequest.current !== controller || !response) return;
       listRequest.current = null;
       if (response.status === 401) {
         onUnauthorized();
@@ -67,7 +60,6 @@ export function useProjectSessions(
         setSessions([]);
         setTotal(0);
         setTruncated(false);
-        setWindowCountBySession(new Map());
         setAvailability("denied");
         return;
       }
@@ -80,46 +72,11 @@ export function useProjectSessions(
       setTruncated(Boolean(response.data.truncated));
       setAvailability("available");
     });
-    return () => controller.abort();
-  }, [client, enabled, onUnauthorized, projectId, revision]);
-
-  useEffect(() => {
-    if (!enabled || availability !== "available" || !projectId) return;
-    const targets = sessions
-      .filter((session) => session.lifecycle === "active" || session.running_call || session.running_jobs > 0)
-      .slice(0, MAX_WINDOW_ENRICHMENT);
-    if (!targets.length) return;
-    const controller = new AbortController();
-    enrichmentRequest.current?.abort();
-    enrichmentRequest.current = controller;
-    let cursor = 0;
-    let running = 0;
-    let disposed = false;
-    const next = () => {
-      while (!disposed && !controller.signal.aborted && running < DETAIL_CONCURRENCY && cursor < targets.length) {
-        const session = targets[cursor++];
-        running += 1;
-        void fetchSessionDetail(client, projectId, session.session_id, controller.signal, 1)
-          .then((response) => {
-            if (disposed || controller.signal.aborted) return;
-            setWindowCountBySession((existing) => {
-              const updated = new Map(existing);
-              updated.set(session.session_id, response?.ok && response.data ? response.data.linked_windows.length : null);
-              return updated;
-            });
-          })
-          .finally(() => {
-            running -= 1;
-            next();
-          });
-      }
-    };
-    next();
     return () => {
-      disposed = true;
       controller.abort();
+      if (listRequest.current === controller) listRequest.current = null;
     };
-  }, [availability, client, enabled, projectId, sessions]);
+  }, [client, enabled, onUnauthorized, projectId, revision]);
 
   useEffect(() => {
     if (!enabled || !projectId) return;
@@ -127,5 +84,5 @@ export function useProjectSessions(
     return () => window.clearInterval(timer);
   }, [enabled, projectId, refresh]);
 
-  return { availability, sessions, total, truncated, windowCountBySession };
+  return { availability, sessions, total, truncated };
 }

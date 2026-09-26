@@ -24,7 +24,7 @@ function ok(data: unknown) {
 }
 
 describe("Project / Session / Window relationships", () => {
-  it("renders Project -> multiple active Sessions and bounded Window counts", async () => {
+  it("renders active Sessions without fetching per-Session or Git details", async () => {
     const sessions = [
       sessionItem({ session_id: "wc_sess_1111111111111111", title: "Runtime E2E hardening", running_jobs: 1 }),
       sessionItem({ session_id: "wc_sess_2222222222222222", title: "WebUI v2 rewrite", running_call: true }),
@@ -67,9 +67,10 @@ describe("Project / Session / Window relationships", () => {
 
     expect(await screen.findByText("Runtime E2E hardening")).toBeTruthy();
     expect(screen.getByText("WebUI v2 rewrite")).toBeTruthy();
-    await waitFor(() => expect(screen.getByText(/2 Windows/)).toBeTruthy());
-    expect(screen.getByText(/1 Windows/)).toBeTruthy();
-    expect(screen.getByText("View workspaces and activity")).toBeTruthy();
+    expect(vi.mocked(client.post).mock.calls.map(([path]) => path).sort()).toEqual(["projects", "windows", "workflow-sessions"]);
+    fireEvent.click(screen.getByRole("button", { name: "Check branch" }));
+    expect(await screen.findByText("prototype/runtime-webui-v2")).toBeTruthy();
+    expect(vi.mocked(client.post).mock.calls.filter(([path]) => path === "project-git")).toHaveLength(1);
   });
 
   it("loads the selected Project's retained Sessions when its card is opened", async () => {
@@ -224,7 +225,6 @@ describe("Project / Session / Window relationships", () => {
     expect(screen.queryByText("Linked Sessions")).toBeNull();
     expect(screen.queryByText("Runtime E2E hardening")).toBeNull();
     expect((client.post as ReturnType<typeof vi.fn>).mock.calls.some(([path]) => path === "workflow-session")).toBe(false);
-    expect(screen.getAllByText(/observation evidence/i).length).toBeGreaterThan(0);
     expect(screen.getByTestId("window-scope-note").textContent).toContain("observation principal");
 
     fireEvent.click(screen.getByRole("button", { name: /Window bbbbbbbbbb/ }));
@@ -302,7 +302,7 @@ describe("Project / Session / Window relationships", () => {
     expect(await screen.findByText("No linked Windows in retained evidence.")).toBeTruthy();
   });
 
-  it("keeps Runner build metadata in a dedicated cell with product-facing alignment text", () => {
+  it("keeps build diagnostics collapsed and defers Runtime inventories until requested", () => {
     const base = runtimeOverview();
     const overview = runtimeOverview({
       runners: [{
@@ -333,7 +333,11 @@ describe("Project / Session / Window relationships", () => {
     const build = container.querySelector(".runtime-row-build");
     expect(build).toBeTruthy();
     expect(build?.textContent).toContain("Build alignment: Different version");
-    expect(build?.textContent).toContain("f080c8f3…0000");
+    expect(container.querySelector(".runtime-diagnostics")?.hasAttribute("open")).toBe(false);
+    expect(container.querySelector(".runtime-diagnostics")?.textContent).toContain("f080c8f3ea700000000000000000000000000000");
+    expect(client.post).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByText("Build diagnostics"));
+    expect(container.querySelector(".runtime-diagnostics")?.hasAttribute("open")).toBe(true);
     expect(build?.textContent).not.toContain("different_version");
   });
 

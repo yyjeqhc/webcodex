@@ -1,10 +1,12 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { RuntimeV2Client } from "../src/runtime-v2/api/client.js";
+import { useProjects } from "../src/runtime-v2/state/useProjects.js";
+import { useProjectSessions } from "../src/runtime-v2/state/useProjectSessions.js";
 import { useRuntimeOverview } from "../src/runtime-v2/state/useRuntimeOverview.js";
 import { useWindowWorkspace } from "../src/runtime-v2/state/useWindowWorkspace.js";
 import { useSessionWorkspace } from "../src/runtime-v2/state/useSessionWorkspace.js";
-import { sessionDetail, runtimeOverview } from "./fixtures.js";
+import { sessionDetail, runtimeOverview, windowDetail } from "./fixtures.js";
 
 type ResponseShape = { ok: boolean; status: number; data: unknown };
 
@@ -236,4 +238,57 @@ it("does not cancel a slow active Session refresh on the next five-second tick",
   } finally {
     vi.useRealTimers();
   }
+});
+
+it.each(["disabled", "list only"])("discards full Window hydration after switching to %s", async (mode) => {
+  let resolveFull!: (value: ResponseShape) => void;
+  const pending = new Promise<ResponseShape>(resolve => { resolveFull = resolve; });
+  const detail = windowDetail();
+  let fullSignal: AbortSignal | undefined;
+  const client = { post: vi.fn(async (path, payload, signal) => {
+    if (path === "windows") return { ok: true, status: 200, data: { windows: [{ client_window_key: detail.client_window_key }], total: 1 } };
+    if (payload.detail_level === "primary") return { ok: true, status: 200, data: { ...detail, detail_level: "primary" } };
+    fullSignal = signal;
+    return pending;
+  }) } as unknown as RuntimeV2Client;
+  const unauthorized = vi.fn();
+  const { result, rerender } = renderHook(({ enabled, loadDetail }) => useWindowWorkspace(client, enabled, unauthorized, { loadDetail }), {
+    initialProps: { enabled: true, loadDetail: true },
+  });
+  await waitFor(() => expect(result.current.detailHydrating).toBe(true));
+  rerender({ enabled: mode !== "disabled", loadDetail: false });
+  expect(fullSignal?.aborted).toBe(true);
+  await act(async () => resolveFull({ ok: true, status: 200, data: detail }));
+  expect(result.current.detail).toBeNull();
+  expect(result.current.detailHydrating).toBe(false);
+});
+
+it("lets slow project and Session inventories finish across polling ticks", async () => {
+  vi.useFakeTimers();
+  try {
+    let resolveProjects!: (value: ResponseShape) => void;
+    let resolveSessions!: (value: ResponseShape) => void;
+    const projects = new Promise<ResponseShape>(resolve => { resolveProjects = resolve; });
+    const sessions = new Promise<ResponseShape>(resolve => { resolveSessions = resolve; });
+    const signals: AbortSignal[] = [];
+    const client = { post: vi.fn(async (path, _payload, signal) => {
+      signals.push(signal);
+      return path === "projects" ? projects : sessions;
+    }) } as unknown as RuntimeV2Client;
+    const unauthorized = vi.fn();
+    const hook = renderHook(() => ({
+      projects: useProjects(client, true, unauthorized),
+      sessions: useProjectSessions(client, true, "agent:special:webcodex", unauthorized),
+    }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(31_000); });
+    expect(client.post).toHaveBeenCalledTimes(2);
+    expect(signals.every(signal => !signal.aborted)).toBe(true);
+    await act(async () => {
+      resolveProjects({ ok: true, status: 200, data: { projects: runtimeOverview().projects, total: 1 } });
+      resolveSessions({ ok: true, status: 200, data: { sessions: [], total: 0 } });
+    });
+    expect(hook.result.current.projects.availability).toBe("available");
+    expect(hook.result.current.sessions.availability).toBe("available");
+    hook.unmount();
+  } finally { vi.useRealTimers(); }
 });

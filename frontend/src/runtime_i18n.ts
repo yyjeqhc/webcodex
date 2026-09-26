@@ -5,6 +5,13 @@ export type RuntimeLanguage = "en" | "zh-CN";
 export const LANGUAGE_STORAGE_KEY = "webcodex.runtime.language.v1";
 
 export const RUNTIME_ZH_TEXT: Record<string, string> = {
+  "Check branch": "查看分支",
+  "Git status unavailable": "无法读取 Git 状态",
+  "Detached HEAD": "分离的 HEAD",
+  "Active Windows": "活跃窗口",
+  "View activity": "查看活动",
+  "Build diagnostics": "构建诊断",
+  "No Runners connected": "暂无已连接的运行器",
   "Observation scope": "观测范围",
   "Window activity refresh failed; showing previous observations.": "窗口活动刷新失败，正在显示之前的观测记录。",
   "Last Project": "最近项目",

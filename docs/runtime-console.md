@@ -21,12 +21,24 @@ the stream does not imply that pruned history is recoverable.
 **Goals** remains available in the Work switch; returning from another destination
 preserves the chosen Work surface.
 
-**Projects** browses authorized workspaces and their retained Sessions.
-**Runtime** contains **Overview**, **Window Activity**, and **Agents**.
+**Projects** groups a primary checkout and its managed worktrees into one project.
+On desktop, select a project on the left and inspect its activity, workspaces,
+and retained Sessions on the right. Narrow screens stack the list and details;
+selecting a project moves focus to its details. Initial loading fetches the
+project list, Window inventory, and the selected workspace's Session list.
+Git branches are checked only with **Check branch** for the selected workspace;
+Session details load when opened, not to populate counts in the project list.
+
+**Runtime** contains **Overview**, **Window Activity**, and **Agents**. Overview
+puts Runner availability and running work first, with disconnected or
+protocol-mismatched Runners at the top. Build identity is available under the
+collapsed **Build diagnostics** section. Window and Agent inventories load only
+when their respective tabs are opened.
 
 In **Window Activity**, the left list puts Windows with active requests first,
-then sorts by recent activity. Each row shows the hashed Window identity,
-last observed Project, request count, and recency. Hovering
+then sorts by recent activity. Each row leads with its last observed Project or activity, with a short
+Window identifier, request count, and recency. Hovering the identifier reveals
+the full hashed identity. Hovering
 on a timestamp reveals the absolute time. The last Project is a historical
 observation, not the attribution for every call in the Window.
 
@@ -61,7 +73,9 @@ When the experimental Code Mode feature is enabled, one outer `code_mode_exec` W
 
 These are presentation changes. Workflow Session and durable Agent identities,
 credential scopes, and mutation handling keep their existing contracts.
-Model-reported progress remains informational.
+Model-reported progress remains informational. Collaboration message status
+distinguishes a saved message from one included in a tool result; projection
+alone does not establish that the recipient received or read it.
 
 The Windows list and detail routes require `runtime:read`. Non-admin callers are
 first principal-filtered and then re-projected through current canonical Project

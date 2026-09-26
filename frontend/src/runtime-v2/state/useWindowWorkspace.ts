@@ -251,7 +251,7 @@ export function useWindowWorkspace(
     fullDetailLoadedKey.current = "";
     fullDetailLoadedAt.current = 0;
     setDetailHydrating(false);
-  }, [selectedKey]);
+  }, [client, enabled, loadDetail, selectedKey]);
 
   useEffect(() => {
     detailRequest.current?.abort();

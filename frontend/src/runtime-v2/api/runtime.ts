@@ -8,7 +8,3 @@ export function fetchRuntimeOverview(client: RuntimeV2Client, signal?: AbortSign
 export function fetchRunner(client: RuntimeV2Client, clientId: string, signal?: AbortSignal) {
   return client.post<RunnerSummary>("runner", { client_id: clientId }, signal);
 }
-
-export function fetchCommunicationAgents(client: RuntimeV2Client, signal?: AbortSignal) {
-  return client.post<{ agents?: unknown[]; total?: number; returned?: number }>("communication/agents", { offset: 0, limit: 100 }, signal);
-}

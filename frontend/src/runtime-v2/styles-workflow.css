@@ -255,3 +255,39 @@
   .window-work-header { padding: 14px 18px; gap: 10px; }
   .window-work-scroll { max-height: 75dvh; }
 }
+
+/* Project selection stays beside the work it opens. */
+.project-browser { max-width: 1480px; margin: 0 auto; display: grid; grid-template-columns: minmax(260px, 340px) minmax(0, 1fr); gap: 32px; align-items: start; }
+.project-browser-list { min-width: 0; position: sticky; top: 20px; max-height: calc(100dvh - 80px); overflow: auto; }
+.project-browser .project-grid { display: grid; grid-template-columns: minmax(0, 1fr); }
+.project-browser .project-card { grid-template-columns: minmax(0, 1fr); min-height: 96px; gap: 12px; padding: 14px 12px; }
+.project-browser .project-card-body { grid-template-columns: 1fr 1fr; padding-left: 46px; gap: 8px; }
+.project-browser .project-family-details { min-width: 0; width: 100%; margin: 0; gap: 24px; }
+.project-browser .project-family-heading { margin: 0; }
+.project-browser .project-sessions { margin: 0; }
+.project-browser .project-workspace-row { grid-template-columns: 32px minmax(0, 1fr) auto; }
+.project-browser .project-session-row { grid-template-columns: 9px minmax(0, 1fr) auto 65px 14px; }
+.project-git-action { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.runtime-page .runtime-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.runtime-page .runtime-row { grid-template-areas: "icon primary jobs compat"; grid-template-columns: 34px minmax(0, 1fr) auto auto; }
+.runtime-diagnostics > summary { padding: 16px 0; cursor: pointer; font-size: 14px; font-weight: 600; }
+.runtime-diagnostics > p { color: var(--muted); font-size: 12px; }
+.runtime-diagnostic-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px 20px; padding: 12px 0; border-top: 1px solid var(--line); font-size: 12px; overflow-wrap: anywhere; }
+.runtime-diagnostic-row code { color: var(--muted); overflow-wrap: anywhere; min-width: 0; }
+.runtime-page .runtime-metrics .text-button { justify-self: start; }
+@media (max-width: 900px) {
+  .project-browser { grid-template-columns: minmax(0, 1fr); gap: 24px; }
+  .project-browser-list { position: static; max-height: none; }
+  .project-browser .project-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .project-browser .project-family-details { scroll-margin-top: 72px; }
+}
+@media (max-width: 600px) {
+  .project-browser .project-grid { grid-template-columns: minmax(0, 1fr); }
+  .project-browser .project-session-row { grid-template-columns: 9px minmax(0, 1fr) auto; }
+  .project-browser .project-session-row > time, .project-browser .project-session-row > svg { display: none; }
+  .project-browser .project-window-row { grid-template-columns: 9px minmax(0, 1fr) auto; }
+  .project-browser .project-window-row > time, .project-browser .project-window-row > svg { display: none; }
+  .runtime-page .runtime-row { grid-template-areas: "icon primary compat" "icon jobs jobs"; grid-template-columns: 28px minmax(0, 1fr) auto; }
+  .runtime-page .runtime-metrics > div { padding: 12px 8px; border-top: 0; }
+  .runtime-page .runtime-metrics > div + div { border-left: 1px solid var(--line); }
+}

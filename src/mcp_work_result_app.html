@@ -159,7 +159,7 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
 .message.user { justify-self: end; background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 18%, var(--divider)); }
 .message.agent { justify-self: start; }
 .message-copy { white-space: pre-wrap; overflow-wrap: anywhere; }
-.message-meta { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 10px; }
+.message-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; color: var(--muted); font-size: 10px; }
 .message-state.acknowledged, .message-state.handled { color: var(--success); }
 .message-resolution { padding-top: 4px; border-top: 1px solid var(--divider); color: var(--muted); font-size: 11px; }
 .composer { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px; align-items: end; }
@@ -196,6 +196,7 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
 .workflow-row strong { overflow-wrap: anywhere; }
 .workflow-row time { color: var(--muted); font-size: 11px; }
 .section p { margin: 0; }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; scroll-behavior: auto !important; } }
 </style>
 </head>
 <body>
@@ -533,10 +534,6 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     return canonicalStructuredEnvelope(direct) ? direct : null;
   }
 
-  function toolSuccess(result) {
-    return structuredOf(result)?.success ?? null;
-  }
-
   function sendFailureOf(result) {
     const structured = structuredOf(result);
     if (!structured || structured.success !== false) return null;
@@ -820,11 +817,21 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     if (message.source === "peer" && message.direction === "inbound") return null;
     if (message.source === "window") return null;
     if (message.first_ack_observed_at_ms !== null) return "Acknowledged";
-    if (message.first_projected_at_ms !== null) return "Delivered";
-    return "Sent";
+    if (message.first_projected_at_ms !== null) return "Included in tool result";
+    return "Saved";
   }
 
+  let renderedCollaboration = null;
+  let messageTimes = [];
   function renderMessages(collaboration) {
+    updateComposerControl(collaboration);
+    const fingerprint = JSON.stringify({ available: collaboration.available, messages: collaboration.messages });
+    if (fingerprint === renderedCollaboration) {
+      for (const [node, createdAt] of messageTimes) node.textContent = formatAge(createdAt);
+      return;
+    }
+    renderedCollaboration = fingerprint;
+    messageTimes = [];
     const root = el("messages");
     root.replaceChildren();
     el("collaborationMeta").textContent = "";
@@ -841,6 +848,7 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
           ? "This Window"
           : (message.direction === "outbound" ? "This Window → " : "") + "Window · " + String(message.peer_id || "").slice(8, 16);
       const time = document.createElement("span"); time.textContent = formatAge(message.created_at_ms);
+      messageTimes.push([time, message.created_at_ms]);
       meta.append(author, time);
       const label = deliveryLabel(message);
       if (label) {
@@ -1016,7 +1024,13 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     try {
       const response = await send("tools/call", { name: "work_result_send_message", arguments: pendingSend });
       if (tornDown) return;
-      if (toolSuccess(response) !== true) {
+      const receipt = structuredOf(response);
+      if (!receipt || (receipt.success === true && (typeof receipt.output?.message_id !== "string" || !MESSAGE_ID.test(receipt.output.message_id)))) {
+        collaborationSendState = "uncertain";
+        el("composerState").textContent = "Send status unknown · retry";
+        return;
+      }
+      if (receipt.success !== true) {
         const failure = sendFailureOf(response);
         if (failure === "uncertain") {
           collaborationSendState = "uncertain";
@@ -1039,7 +1053,7 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
       el("messageInput").value = "";
       pendingSend = null;
       collaborationSendState = "idle";
-      el("composerState").textContent = "Sent";
+      el("composerState").textContent = "Saved";
       await refresh(false);
     } catch (_) {
       if (!tornDown) {

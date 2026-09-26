@@ -152,3 +152,31 @@ describe("Window collaboration", () => {
     view.unmount();
   });
 });
+
+it("keeps the reader's scroll position when a bounded transcript gains a new message", async () => {
+  let current = transcript;
+  const post = vi.fn(async () => ({ ok: true, status: 200, data: current }));
+  const client = { post } as unknown as RuntimeV2Client;
+  const view = render(<WindowCollaboration client={client} windowKey="exact-window" selectedSessionId="" language="en" onUnauthorized={vi.fn()} />);
+  await screen.findByText("Review done");
+  const thread = view.container.querySelector(".window-collaboration-thread") as HTMLDivElement;
+  Object.defineProperties(thread, { scrollHeight: { value: 1000 }, clientHeight: { value: 200 } });
+  thread.scrollTop = 100;
+  fireEvent.scroll(thread);
+  current = { ...transcript, messages: [...transcript.messages.slice(1), { ...transcript.messages[0], message_id: "wc_msg_latest", message: "New reply" }] };
+  view.rerender(<WindowCollaboration client={client} windowKey="exact-window" selectedSessionId="" language="en" onUnauthorized={vi.fn()} />);
+  await screen.findByText("New reply");
+  expect(thread.scrollTop).toBe(100);
+  fireEvent.click(screen.getByRole("button", { name: "View new messages" }));
+  expect(thread.scrollTop).toBe(1000);
+  expect(screen.queryByRole("button", { name: "View new messages" })).toBeNull();
+});
+
+it("does not send while an input method is composing", async () => {
+  const post = vi.fn(async () => ({ ok: true, status: 200, data: transcript }));
+  render(<WindowCollaboration client={{ post } as unknown as RuntimeV2Client} windowKey="exact-window" selectedSessionId="" language="en" onUnauthorized={vi.fn()} />);
+  await screen.findByText("Review done");
+  fireEvent.change(screen.getByRole("textbox"), { target: { value: "正在输入" } });
+  fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter", ctrlKey: true, isComposing: true });
+  expect(post.mock.calls.some(([path]) => path === "window-collaboration-post")).toBe(false);
+});

@@ -60,6 +60,8 @@ export function WindowCollaboration({ client, windowKey, selectedSessionId, lang
   const [messageKind, setMessageKind] = useState<WindowCollaborationKind>("guidance");
   const [priority, setPriority] = useState<WindowCollaborationPriority>("normal");
   const [requiresAck, setRequiresAck] = useState(true);
+  const followLatest = useRef(true);
+  const [hasNewMessages, setHasNewMessages] = useState(false);
   const threadRef = useRef<HTMLDivElement | null>(null);
   const state = useWindowCollaboration(client, windowKey, onUnauthorized);
   const sending = state.sendState === "sending";
@@ -78,8 +80,9 @@ export function WindowCollaboration({ client, windowKey, selectedSessionId, lang
   useEffect(() => {
     const node = threadRef.current;
     if (!node) return;
-    node.scrollTop = node.scrollHeight;
-  }, [messages.length]);
+    if (followLatest.current) node.scrollTop = node.scrollHeight;
+    else setHasNewMessages(true);
+  }, [messages.at(-1)?.message_id]);
 
   const submit = () => {
     const text = message.trim();
@@ -101,11 +104,17 @@ export function WindowCollaboration({ client, windowKey, selectedSessionId, lang
         <span className="window-collaboration-title-icon"><MessageSquare size={16} /></span>
         <div>
           <strong>{zh ? "协作" : "Collaboration"}</strong>
-          <small>
+          <small aria-live="polite">
             {messages.length
               ? `${messages.length} ${zh ? "条消息" : messages.length === 1 ? "message" : "messages"}`
               : (zh ? "给这个窗口留下消息或指令" : "Leave a message or instruction for this Window")}
           </small>
+          {hasNewMessages && <button type="button" className="text-button" onClick={() => {
+            const node = threadRef.current;
+            if (node) node.scrollTop = node.scrollHeight;
+            followLatest.current = true;
+            setHasNewMessages(false);
+          }}>{zh ? "查看新消息" : "View new messages"}</button>}
         </div>
         {selectedSessionId && (
           <span className="window-collaboration-context" title={selectedSessionId}>
@@ -114,7 +123,12 @@ export function WindowCollaboration({ client, windowKey, selectedSessionId, lang
         )}
       </header>
 
-      <div className="window-collaboration-thread" ref={threadRef} aria-live="polite">
+      <div className="window-collaboration-thread" ref={threadRef} onScroll={() => {
+        const node = threadRef.current;
+        if (!node) return;
+        followLatest.current = node.scrollHeight - node.scrollTop - node.clientHeight < 48;
+        if (followLatest.current) setHasNewMessages(false);
+      }}>
         {state.error && (
           <div className="window-collaboration-banner" role="status">
             {zh ? "暂时无法刷新消息。" : "Messages could not be refreshed."}
@@ -241,7 +255,7 @@ export function WindowCollaboration({ client, windowKey, selectedSessionId, lang
             disabled={sending || uncertain || !state.transcript?.can_send}
             onChange={event => setMessage(event.currentTarget.value)}
             onKeyDown={event => {
-              if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+              if (!event.nativeEvent.isComposing && (event.metaKey || event.ctrlKey) && event.key === "Enter") {
                 event.preventDefault();
                 submit();
               }

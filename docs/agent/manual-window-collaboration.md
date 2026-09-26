@@ -30,10 +30,18 @@ projects pending Operator messages and updates projection timestamps;
 `present_work_result`, `work_result_state`, `work_result_send_message`, and
 `changes_file_diff` do not. The existing exact-ID ACK transport carries Session,
 Peer, and Operator message IDs without changing the historical wrapper field name.
-The UI labels these states Sent, Delivered, and Acknowledged for operator ergonomics;
+The WebUI and Work Result card label these states Saved, Included in tool result,
+and Acknowledged;
 internally they mean retained, projected into model-visible context, and later ACK
 evidence observed. They are not transport/read receipts or proof that work was
 accepted or executed.
+
+The WebUI follows new messages while the reader is near the end of the thread.
+Reading earlier messages keeps the scroll position and offers **View new messages**.
+Ctrl/Command + Enter does not submit while an input method is composing. The card
+keeps unchanged message nodes across activity refreshes and respects reduced-motion
+preferences. Missing or malformed send receipts preserve the exact retry payload
+and draft, just like a timeout; they do not prove that the message was rejected.
 Operator identity is never synthesized as a peer Window, and peer self-target
 rejection remains intact. Legacy Session message APIs/UI remain available, but
 new Window UI and card messages no longer write the Session message store.

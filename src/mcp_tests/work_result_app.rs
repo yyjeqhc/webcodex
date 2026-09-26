@@ -465,7 +465,7 @@ fn work_result_html_is_bounded_live_progress_ui() {
         "Message this Window",
         "No messages yet",
         "Acknowledged",
-        "Delivered",
+        "Included in tool result",
         "ui/notifications/tool-input",
         "ui/notifications/tool-result",
         "id=\"refresh\"",

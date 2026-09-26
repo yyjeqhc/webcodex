@@ -2,62 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { app, flush, toolResult } from "./app_test_support.mjs";
 
-const project = "agent:special:demo";
-const session_id = `wc_sess_${"1".repeat(32)}`;
-const input = { project, session_id };
-const baseState = {
-  version: 2,
-  project,
-  session_id,
-  state_version: `wr2_${"a".repeat(64)}`,
-  workspace: {
-    git_available: true,
-    clean: false,
-    branch: "feature/work",
-    counts: {
-      modified: 1, added: 0, deleted: 0, renamed: 0, copied: 0,
-      untracked: 0, conflicted: 0, staged: 0, unstaged: 1,
-    },
-    files_total: 1,
-    files: [{ path: "src/a.rs", status: "modified", kind: "tracked", staged: false, unstaged: true, additions: 4, deletions: 1 }],
-    additions: 4,
-    deletions: 1,
-    line_stats_partial: false,
-    truncated: false,
-  },
-  validation: {
-    status: "passed", latest_status: "passed", current_status: "passed", history_partial: false,
-    successes: 3, failures: 0, unresolved_failures: 0, evidence_gaps: 0,
-  },
-  review: {
-    available: true, total: 1, history_partial: false, read_only_inspection_count: 0, search_count: 0,
-    diff_review_count: 1, workspace_review_count: 1, hygiene_review_count: 0,
-    tools: ["show_changes"],
-  },
-  session: {
-    lifecycle: "active", events_total: 7, events_returned: 7, history_partial: false,
-    updated_at: 1789812000, title: "Work Result test",
-    latest_activity: {
-      tool: "show_changes", kind: "tool_call_finished", timestamp: 1789812000,
-      status: "completed", duration_ms: 42,
-    },
-  },
-  activity: {
-    available: true, scope: "window", active: false, current: null,
-    last: { label: "Reviewed changes", kind: "review", at_ms: 1_999_999_990_000 },
-    last_meaningful_activity_at_ms: 1_999_999_990_000, coverage_partial: false,
-  },
-  window_activity: {
-    available: true, active: false, active_requests: [],
-    events_returned: 2, events_observed: 2, truncated: false,
-    last_activity_at_ms: 1_999_999_990_000,
-    events: [
-      { label: "Reviewed changes", kind: "review", status: "success", meaningful: true, started_at_ms: 1_999_999_989_000, ended_at_ms: 1_999_999_990_000, duration_ms: 1000 },
-      { label: "Observed Runtime status", kind: null, status: "success", meaningful: false, started_at_ms: 1_999_999_980_000, ended_at_ms: 1_999_999_980_100, duration_ms: 100 },
-    ],
-  },
-  collaboration: { available: true, can_send: true, messages: [] },
-};
+import { project, session_id, input, baseState } from "./work_result_app_fixture.mjs";
 
 const nextState = {
   ...baseState,
@@ -303,13 +248,13 @@ test("Window messages render sender delivery state but not inbound peer delivery
   await view.initialize();
   const rows = view.nodes.messages.children;
   const lastMeta = row => row.children[1].children.at(-1).textContent;
-  assert.equal(lastMeta(rows[0]), "Sent");
-  assert.equal(lastMeta(rows[1]), "Delivered");
+  assert.equal(lastMeta(rows[0]), "Saved");
+  assert.equal(lastMeta(rows[1]), "Included in tool result");
   assert.equal(lastMeta(rows[2]), "Acknowledged");
-  assert.doesNotMatch(lastMeta(rows[3]), /Sent|Delivered|Acknowledged/);
+  assert.doesNotMatch(lastMeta(rows[3]), /Saved|Included in tool result|Acknowledged/);
   assert.equal(rows[3].children[1].children[0].textContent, "This Window");
-  assert.doesNotMatch(lastMeta(rows[4]), /Sent|Delivered|Acknowledged/);
-  assert.equal(lastMeta(rows[5]), "Delivered");
+  assert.doesNotMatch(lastMeta(rows[4]), /Saved|Included in tool result|Acknowledged/);
+  assert.equal(lastMeta(rows[5]), "Included in tool result");
 });
 
 test("card composer retries uncertain delivery with the same payload across context changes", async () => {
@@ -360,7 +305,7 @@ test("card composer retries uncertain delivery with the same payload across cont
   };
   await view.reply(view.calls("work_result_state")[0], contentOnly(toolResult({ work_result: refreshed })));
   assert.equal(view.nodes.messageInput.value, "");
-  assert.equal(view.nodes.messages.children[0].children[1].children.at(-1).textContent, "Sent");
+  assert.equal(view.nodes.messages.children[0].children[1].children.at(-1).textContent, "Saved");
 });
 
 test("card conflict is deterministic and the next explicit send gets a new delivery key", async () => {
@@ -1000,3 +945,39 @@ test("Window card sends without a Session and keeps pending context on uncertain
   const retry = view.calls("work_result_send_message")[1];
   assert.deepEqual(retry.params.arguments, first.params.arguments);
 });
+
+test("unrelated activity refresh preserves message nodes and the user's draft", async () => {
+  const collaboration = { available: true, can_send: true, messages: [
+    { message_id: "wc_msg_reading", created_at_ms: 1_999_999_997_000, message: "Keep reading this reply", source: "window", direction: "outbound", requires_ack: false, first_projected_at_ms: null, first_ack_observed_at_ms: null },
+  ] };
+  const view = app("mcp_work_result_app.html");
+  view.toolResult({ work_result: { ...baseState, collaboration } });
+  await view.initialize();
+  const article = view.nodes.messages.children[0];
+  view.nodes.messageInput.value = "My draft";
+  view.nodes.refresh.onclick(); await flush();
+  await view.reply(view.calls("work_result_state")[0], toolResult({ work_result: { ...nextState, collaboration: { ...collaboration, can_send: false } } }));
+  assert.equal(view.nodes.messages.children[0], article);
+  assert.equal(view.nodes.messageInput.value, "My draft");
+  assert.equal(view.nodes.messageInput.disabled, true);
+});
+
+for (const receipt of [{}, toolResult({}), toolResult({ message_id: 42 })]) {
+  test(`missing or invalid message receipt preserves exact retry: ${JSON.stringify(receipt)}`, async () => {
+    const view = app("mcp_work_result_app.html");
+    view.toolResult({ work_result: baseState });
+    await view.initialize();
+    view.nodes.messageInput.value = "Keep this exact message";
+    view.nodes.messageInput.oninput();
+    view.nodes.composer.onsubmit({ preventDefault() {} });
+    await flush();
+    const first = view.calls("work_result_send_message")[0];
+    await view.reply(first, receipt);
+    assert.equal(view.nodes.sendMessage.textContent, "Retry");
+    assert.equal(view.nodes.messageInput.value, "Keep this exact message");
+    assert.equal(view.nodes.messageInput.disabled, true);
+    view.nodes.composer.onsubmit({ preventDefault() {} });
+    await flush();
+    assert.deepEqual(view.calls("work_result_send_message")[1].params.arguments, first.params.arguments);
+  });
+}

@@ -1813,27 +1813,46 @@ impl RunnerRegistry {
         auth: Option<&crate::RunnerAccess>,
         project_id: &str,
         session_id: &str,
-        limit: usize,
+        active_limit: usize,
+        terminal_limit: usize,
     ) -> Vec<JobAttentionSnapshot> {
         let inner = self.inner.lock().await;
-        let mut jobs = inner
+        let mut active = Vec::new();
+        let mut terminal = Vec::new();
+        for job in inner
             .jobs_by_id
             .values()
             .filter(|job| job.visibility == ShellJobVisibility::Public)
             .filter(|job| shell_job_visible_to_auth(auth, &inner, job))
             .filter(|job| job.project_id.as_deref() == Some(project_id))
             .filter(|job| job.session_id.as_deref() == Some(session_id))
-            .collect::<Vec<_>>();
-        // Active work must not disappear behind a full page of newer terminal
-        // records. Keep the snapshot bounded while prioritizing active Jobs.
-        jobs.sort_by(|a, b| {
-            a.lifecycle
-                .is_terminal()
-                .cmp(&b.lifecycle.is_terminal())
+        {
+            if job.lifecycle.is_terminal() {
+                terminal.push(job);
+            } else {
+                active.push(job);
+            }
+        }
+        // Passive attention needs both sides of a transition. Reserve a bounded
+        // page for active baselines and a separate bounded page for recent
+        // terminals so a long-running Job cannot disappear at the instant it
+        // completes merely because newer terminal history filled the page.
+        active.sort_by_key(|job| std::cmp::Reverse(job.created_at));
+        terminal.sort_by(|a, b| {
+            let observed = |job: &&ShellJobRecord| {
+                job.observation
+                    .terminal_observed_at
+                    .or(job.ended_at)
+                    .unwrap_or(job.created_at)
+            };
+            observed(b)
+                .cmp(&observed(a))
                 .then_with(|| b.created_at.cmp(&a.created_at))
         });
-        jobs.into_iter()
-            .take(limit.min(32))
+        active
+            .into_iter()
+            .take(active_limit.min(webcodex_core::runner_protocol::JOB_INVENTORY_MAX_ACTIVE_JOBS))
+            .chain(terminal.into_iter().take(terminal_limit.min(32)))
             .map(|job| {
                 let validation_output = (job.lifecycle.is_terminal()
                     && (job.validation.is_some()

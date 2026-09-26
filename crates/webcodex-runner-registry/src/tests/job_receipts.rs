@@ -847,6 +847,75 @@ async fn receipts_transient_storage_failure_retries_without_job_reexecution() {
 }
 
 #[tokio::test]
+async fn passive_snapshot_keeps_recent_terminal_transition_beside_terminal_history() {
+    let registry = RunnerRegistry::default();
+    register(&registry, INSTANCE_A, empty_inventory()).await;
+
+    let (old, _) = start_and_take_over(&registry, INSTANCE_A).await;
+    registry
+        .update_job(update(INSTANCE_A, &old.job_id, 1, "running", None, false))
+        .await
+        .unwrap();
+    {
+        let mut inner = registry.inner.lock().await;
+        inner.jobs_by_id.get_mut(&old.job_id).unwrap().created_at = 1;
+    }
+
+    let mut newer = Vec::new();
+    for index in 0..32 {
+        let (job, _) = start_and_take_over(&registry, INSTANCE_A).await;
+        registry
+            .update_job(update(INSTANCE_A, &job.job_id, 1, "running", None, false))
+            .await
+            .unwrap();
+        registry
+            .update_job(update(INSTANCE_A, &job.job_id, 2, "completed", None, true))
+            .await
+            .unwrap();
+        {
+            let mut inner = registry.inner.lock().await;
+            let record = inner.jobs_by_id.get_mut(&job.job_id).unwrap();
+            record.created_at = 10 + index;
+            record.observation.terminal_observed_at = Some(100 + index);
+        }
+        newer.push(job.job_id);
+    }
+
+    let baseline = registry
+        .snapshot_jobs_for_auth_filtered(None, RUNTIME_PROJECT_ID, SESSION_ID, 64, 32)
+        .await;
+    assert!(baseline.iter().any(|snapshot| snapshot.job.job_id == old.job_id));
+    assert_eq!(
+        baseline.len(),
+        33,
+        "active baseline and terminal history have independent bounded pages"
+    );
+
+    registry
+        .update_job(update(INSTANCE_A, &old.job_id, 2, "completed", None, true))
+        .await
+        .unwrap();
+    {
+        let mut inner = registry.inner.lock().await;
+        inner
+            .jobs_by_id
+            .get_mut(&old.job_id)
+            .unwrap()
+            .observation
+            .terminal_observed_at = Some(1_000);
+    }
+    let terminal = registry
+        .snapshot_jobs_for_auth_filtered(None, RUNTIME_PROJECT_ID, SESSION_ID, 64, 32)
+        .await;
+    assert!(
+        terminal.iter().any(|snapshot| snapshot.job.job_id == old.job_id),
+        "a newly terminalized old Job must remain observable even with 32 newer terminal records"
+    );
+    assert_eq!(terminal.len(), 32);
+    assert!(newer.iter().any(|id| terminal.iter().any(|snapshot| &snapshot.job.job_id == id)));
+}
+
+#[tokio::test]
 async fn job_telemetry_contention_omits_snapshot_without_waiting_or_mutating() {
     let registry = RunnerRegistry::default();
     let guard = registry.inner.lock().await;

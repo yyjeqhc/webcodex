@@ -130,7 +130,9 @@ fn job_attention_recovery_uses_typed_overlay_not_status_text_or_timestamps() {
 #[test]
 fn job_attention_bounded_delivery_does_not_consume_undelivered_terminals() {
     let cursor = JobAttentionCursor::default();
-    let mut jobs: Vec<_> = (0..MAX_JOBS_PER_KEY).map(|id| job(id, "running")).collect();
+    let mut jobs: Vec<_> = (0..MAX_ACTIVE_JOBS_PER_KEY)
+        .map(|id| job(id, "running"))
+        .collect();
     assert!(project(&cursor, &jobs)
         .output
         .get("job_attention")
@@ -139,7 +141,7 @@ fn job_attention_bounded_delivery_does_not_consume_undelivered_terminals() {
         snapshot.job.status = "failed".into();
     }
     let mut delivered = HashSet::new();
-    for _ in 0..MAX_JOBS_PER_KEY / MAX_ITEMS {
+    for _ in 0..MAX_ACTIVE_JOBS_PER_KEY / MAX_ITEMS {
         let result = project(&cursor, &jobs);
         let items = result.output["job_attention"]["items"].as_array().unwrap();
         assert_eq!(items.len(), MAX_ITEMS);
@@ -147,7 +149,7 @@ fn job_attention_bounded_delivery_does_not_consume_undelivered_terminals() {
             assert!(delivered.insert(item["job_id"].as_str().unwrap().to_string()));
         }
     }
-    assert_eq!(delivered.len(), MAX_JOBS_PER_KEY);
+    assert_eq!(delivered.len(), MAX_ACTIVE_JOBS_PER_KEY);
     assert!(project(&cursor, &jobs)
         .output
         .get("job_attention")

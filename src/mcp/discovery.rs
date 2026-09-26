@@ -48,7 +48,7 @@ pub(super) fn compact_tool(tool: &mut Value) {
         // Nested IDs/resolution have no description; keep their type hints here.
         for (pointer, description) in [
             ("/properties/recording_session_id", "Optional explicit recorder for one exact Workflow Session (wc_sess_* or issued ~sN); never execution/business authority. Omission may still allow authorized same-Window attention without recording."),
-            ("/properties/ack_session_message_ids", "ACK-required wc_msg_* IDs retained in model context; Session uses recorder/window affinity; never resolves or authorizes."),
+            ("/properties/ack_session_message_ids", "ACK-required wc_msg_* retained in model context; Session/Peer/Operator exact-ID ACK; never resolves or authorizes."),
             ("/properties/ack_ref", "Compact exact Session ACK-set evidence returned in session_attention; Session-only, request-scoped, non-authoritative, and never resolves messages."),
             ("/properties/session_message_resolution", "Resolve one handled non-todo recorder message by exact wc_msg_*; ACK separately if required. Independent of call success."),
             ("/properties/context_request", "Post-result sidecar keys; no authority: project.instructions, webcodex.workflow, jobs.attention, skills.catalog, plugins.catalog, memory.bootstrap."),

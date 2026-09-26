@@ -26,10 +26,14 @@ authority. The card uses its Host-derived current ClientWindow and independently
 authorizes its Project.
 
 Transcript reads never consume attention. Only model-visible tool activity
-projects pending Operator messages and updates delivery timestamps;
+projects pending Operator messages and updates projection timestamps;
 `present_work_result`, `work_result_state`, `work_result_send_message`, and
-`changes_file_diff` do not. The existing ACK transport carries message IDs without
-changing wrapper protocol. UI states are Sent, Delivered, and Acknowledged.
+`changes_file_diff` do not. The existing exact-ID ACK transport carries Session,
+Peer, and Operator message IDs without changing the historical wrapper field name.
+The UI labels these states Sent, Delivered, and Acknowledged for operator ergonomics;
+internally they mean retained, projected into model-visible context, and later ACK
+evidence observed. They are not transport/read receipts or proof that work was
+accepted or executed.
 Operator identity is never synthesized as a peer Window, and peer self-target
 rejection remains intact. Legacy Session message APIs/UI remain available, but
 new Window UI and card messages no longer write the Session message store.
@@ -181,9 +185,9 @@ When multiple workers operate on the same source, use normal Git/WebCodex Projec
 
 ## Human join and acknowledgement ergonomics
 
-The hosted Runtime Console may post `note`, `guidance`, `question`, and `todo` messages into an exact authorized Workflow Session through the same `post_session_message` kernel path. This is a browser affordance, not a Participant entity, membership record, presence signal, or identity-spoofing surface. The browser route keeps the current collaboration metadata authority policy (`runtime:read`) and still applies the stored Session/project authority fence.
+The hosted Runtime Console's primary human-join path now posts durable Operator messages to an exact authorized ClientWindow. An optional exact Workflow Session is context only and never changes the Window recipient. The legacy Session collaboration routes remain available for compatibility and still use the canonical Session message store. Neither browser affordance creates a Participant entity, membership record, presence signal, or identity-spoofing surface; each route keeps its normal visibility, collaboration-scope, and target-authority checks.
 
-Any Session message may opt into `requires_ack`, independently of kind and priority. A Stateless MCP 2026 caller may echo visible `wc_msg_*` ids in `ack_session_message_ids`, or reuse the compact `session_attention.ack_ref`. Each returned ref represents the exact Session ACK set explicitly retained across the current exchange: ACK evidence accepted on this request plus ACK-required messages newly projected in this response. As further bounded messages are projected, the next ref carries that retained set forward in one bounded value. The compact ref is Session-only: it is checked against the exact authorized attention Session and its full current open ACK-required membership, so a changed, stale, malformed, foreign-Session, or foreign-principal ref acknowledges nothing and cannot absorb later messages. The exact-ID wrapper remains available and is still the ACK form for Window Peer and Operator messages. Operator ACKs persistently stop redelivery; the following request-scoped behavior applies to the legacy Session/Peer channels. The original tool executes normally whether ACK evidence is present, missing, unknown, foreign, or stale. A valid ACK suppresses the represented Session/Peer body only for that request/response. Later omission makes unresolved Session messages or retained Peer ACK messages eligible for bounded re-projection. The first observed ACK timestamp is observability only; it must never be described as delivered, read, accepted, or currently remembered. Session durable completion still requires normal message resolution.
+Any retained collaboration message may require ACK. A Stateless MCP 2026 caller may echo visible Session, Peer, or Operator `wc_msg_*` ids in the historical `ack_session_message_ids` wrapper. Session messages may alternatively reuse the compact `session_attention.ack_ref`; that compact form remains Session-only. Each returned ref represents the exact Session ACK set explicitly retained across the current exchange: ACK evidence accepted on this request plus ACK-required messages newly projected in this response. As further bounded messages are projected, the next ref carries that retained set forward in one bounded value. The compact ref is Session-only: it is checked against the exact authorized attention Session and its full current open ACK-required membership, so a changed, stale, malformed, foreign-Session, or foreign-principal ref acknowledges nothing and cannot absorb later messages. The exact-ID wrapper remains available and is still the ACK form for Window Peer and Operator messages. Operator ACKs persistently stop redelivery; the following request-scoped behavior applies to the legacy Session/Peer channels. The original tool executes normally whether ACK evidence is present, missing, unknown, foreign, or stale. A valid ACK suppresses the represented Session/Peer body only for that request/response. Later omission makes unresolved Session messages or retained Peer ACK messages eligible for bounded re-projection. The first observed ACK timestamp is observability only; it must never be described as delivered, read, accepted, or currently remembered. Session durable completion still requires normal message resolution.
 
 ## Bounded payload guidance
 

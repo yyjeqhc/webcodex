@@ -457,7 +457,7 @@ fn stateless_collaboration_ack_schema() -> Value {
             "type": "string",
             "pattern": "^wc_msg_([A-Za-z0-9_-]{16}|[0-9a-f]{32})$"
         },
-        "description": "Proves the current model context still retains the listed ACK-required collaboration messages. Session ACK uses the explicit recorder when present, otherwise an authorized same-Window active Session affinity for the resolved Project; Peer ACK targets the current principal-bound ClientWindow. Repeat while retained. ACK neither resolves messages nor grants authority or gates execution."
+        "description": "Proves the current model context still retains the listed ACK-required collaboration messages. Session ACK uses the explicit recorder when present, otherwise an authorized same-Window active Session affinity for the resolved Project; Peer and Operator ACK target the current principal-bound ClientWindow. Repeat while retained. The historical field name is shared across all three channels. ACK neither resolves messages nor grants authority or gates execution."
     })
 }
 

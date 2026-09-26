@@ -143,6 +143,10 @@ fn assert_builtin_workflow(output: &Value) {
     assert!(message_ack_guidance.contains("session_attention"));
     assert!(message_ack_guidance.contains("requires_ack"));
     assert!(message_ack_guidance.contains("ack_session_message_ids"));
+    assert!(message_ack_guidance.contains("operator_messages"));
+    assert!(message_ack_guidance.contains("peer_messages"));
+    assert!(message_ack_guidance.contains("historical wrapper name"));
+    assert!(message_ack_guidance.contains("ack_ref remains Session-only"));
     assert!(message_ack_guidance.contains("model-context retention"));
     assert!(message_ack_guidance.contains("resolves messages"));
     assert!(message_ack_guidance.contains("grants authority"));

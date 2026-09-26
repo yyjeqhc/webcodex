@@ -228,6 +228,7 @@ async fn mcp_stateless_tools_list_uses_2026_result_shape() {
             let description = ack["description"].as_str().unwrap();
             assert!(description.contains("wc_msg_*"));
             assert!(description.contains("retained in model context"));
+            assert!(description.contains("Session/Peer/Operator"));
             assert!(description.contains("never resolves or authorizes"));
             let resolution = &read_files["inputSchema"]["properties"]["session_message_resolution"];
             assert_eq!(resolution["type"], "object");

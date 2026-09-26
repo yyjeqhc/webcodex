@@ -2076,11 +2076,6 @@ fn mcp_compact_common_copy_respects_tool_and_argument_boundaries() {
             vec!["Project-relative", "Skill resolution"],
         ),
         (
-            "run_detached_process",
-            "timeout_secs",
-            vec!["Total runtime", "604800"],
-        ),
-        (
             "run_shell",
             "assertion_name",
             vec!["reuse after a fix", "validation-like"],
@@ -2172,20 +2167,12 @@ fn mcp_compact_descriptions_preserve_selection_and_schema_literals() {
             vec!["shell grammar", "related command chain", "observe_jobs"],
         ),
         (
-            "run_detached_process",
-            vec!["survives Runner", "idempotency_key", "same Job"],
-        ),
-        (
             "observe_jobs",
             vec![
                 "observation_token",
                 "after_observation_token",
                 "never redispatches",
             ],
-        ),
-        (
-            "list_jobs",
-            vec!["Recover or inventory", "observe_jobs directly"],
         ),
         (
             "wait_for_job_terminal",
@@ -2195,7 +2182,6 @@ fn mcp_compact_descriptions_preserve_selection_and_schema_literals() {
                 "Host continuation",
             ],
         ),
-        ("stop_job", vec!["confirm=true", "without stopping"]),
         (
             "present_agent_continuation",
             vec![
@@ -2368,12 +2354,12 @@ async fn mcp_tools_list_stateless_serialized_size_budget() {
     let mut admin = scoped.clone();
     admin.scopes.push(crate::auth::SCOPE_ADMIN.to_string());
     // Final Stateless result bytes include wrappers/gateways, not the RPC
-    // envelope. Wrapper compaction keeps the same admitted tool inventory and
-    // leaves about 91/93/103 KB. Keep small explicit growth headroom.
+    // envelope. Wrapper compaction and four gateway-only long-tail entries
+    // leave about 82/85/95 KB. Keep small explicit growth headroom.
     for (label, auth, max_tools, max_bytes) in [
-        ("anonymous", None, 34, 93_000),
-        ("scoped", Some(&scoped), 35, 95_500),
-        ("admin", Some(&admin), 41, 106_000),
+        ("anonymous", None, 30, 84_000),
+        ("scoped", Some(&scoped), 31, 87_000),
+        ("admin", Some(&admin), 37, 97_000),
     ] {
         for app_enabled in [false, true] {
             let mut sizes = Vec::new();

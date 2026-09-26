@@ -19,11 +19,8 @@ pub(super) fn compact_tool(tool: &mut Value) {
             "call_runtime_tool" => "Call one admitted runtime tool with its exact arguments. Use tool_manifest to discover the contract. Prefer an available direct callable; ordinary direct tools may fall back here when unavailable, but MCP App presentation tools must use their direct callable while Apps are enabled. Target validation and authority checks still apply.",
             "run_process" => "Run one native executable with literal argv. Use run_shell for shell grammar or a short related command chain. Long work continues as the same Runner-owned Job through observe_jobs; retain the returned continuation instead of redispatching.",
             "run_shell" => "Run shell grammar or a short related command chain. Use run_process for one native executable with literal argv. Long work continues as the same Runner-owned Job through observe_jobs; retain the returned continuation instead of redispatching.",
-            "run_detached_process" => "Start a native child that intentionally survives Runner restart or replacement as a durable Job. Duration alone does not require detachment. Requires an idempotency_key; retain the same Job and use observe_jobs or stop_job after handoff uncertainty.",
             "observe_jobs" => "Continue known Jobs by job_id; do not list first. Pass observation_token unchanged as after_observation_token. Follow the returned continuation for more output; observation never redispatches work. Use wait_for_job_terminal when blocked only on terminal completion.",
-            "list_jobs" => "Recover or inventory caller-visible Job identities. When a job_id or continuation is already known, use observe_jobs directly.",
             "wait_for_job_terminal" => "Arm a bounded one-shot terminal wait for one exact existing Job. Reuse the keyed wait and returned continuation; never redispatch the Job. Continue independent work, or follow the offered Host continuation when only terminal completion blocks progress.",
-            "stop_job" => "Stop one existing Job by exact job_id with confirm=true. Preserves Project and Session ownership. Use observe_jobs to inspect output or wait_for_job_terminal to wait without stopping.",
             "present_agent_continuation" => "Present one exact Agent/Endpoint generation as the persistent MCP App continuation card. Pass agent_continuation_ref or the exact tuple. New window setup: create_agent_identity -> rotate_agent_continuation_endpoint -> present_agent_continuation, then yield/end promptly. Presentation success is not wake readiness; later verify list_agent_identities.production_auto_resume_available.",
             "start_agent_task_attempt" => "Create one leased fenced Attempt for the explicit current assignee. Returns attempt_id, attempt_fence, and attempt_ref. Exact keyed retry returns that same Attempt. Does not dispatch CodingAgent, Job, Wake, or Endpoint work.",
             "start_agent_task_endpoint_continuation" => "Select the Endpoint continuation for one exact live AgentTaskAttempt. Pass attempt_ref or task, attempt, assignee, fence, and controller generation. Does not choose an Endpoint or grant CodingAgent authority. A stale ref fails closed and is not rewritten onto a later attempt or generation.",
@@ -141,11 +138,11 @@ fn common_input_description(tool: &str, field: &str) -> Option<&'static str> {
     // particular run_shell cwd/timeouts can refer to a named SSH resource;
     // project, client_id and idempotency_key also differ between direct tools.
     Some(match (tool, field) {
-        ("run_process" | "run_detached_process", "cwd") =>
+        ("run_process", "cwd") =>
             "Project-relative cwd; omit, empty or '.' for root. No named Session SSH resources.",
         ("run_skill_resource", "cwd") =>
             "Project-relative cwd; omit, empty or '.' for root. Skill resolution does not change cwd.",
-        ("run_process" | "run_detached_process", "timeout_secs") =>
+        ("run_process", "timeout_secs") =>
             "Total runtime seconds; default 60, clamped to 604800 (7 days).",
         ("run_skill_resource", "timeout_secs") =>
             "Total runtime seconds; default 60, clamped to 3600.",

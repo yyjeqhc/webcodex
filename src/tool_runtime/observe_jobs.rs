@@ -1214,10 +1214,11 @@ mod tests {
             }
             other => panic!("unexpected recovery call: {}", other.tool_name()),
         }
-        assert!(
-            crate::tool_runtime::tool_definition::is_adaptive_runtime_direct_tool(
+        assert_eq!(
+            crate::model_surface::adaptive_runtime_gateway_target_route(
                 suggested["tool"].as_str().unwrap()
-            )
+            ),
+            crate::model_surface::AdaptiveRuntimeGatewayTargetRoute::Gateway
         );
 
         let invalid_token = batch_item(ObservedJob {

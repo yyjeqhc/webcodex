@@ -53,48 +53,45 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
         )),
         70,
     ),
-    adaptive_runtime_direct(
-        require_all_scopes(
-            model_spec(
-                def(
-                    "run_detached_process",
-                    super::ToolAuditPolicy::TYPED_CANONICAL.session_input(
-                        super::ToolAuditSessionInputPolicy::OmitTopLevel(&[
-                            "executable",
-                            "args",
-                            "stdin",
-                            "idempotency_key",
-                            "process_summary",
-                        ]),
-                    ),
-                    ModelVisible,
-                    TOOL_CATEGORY_JOB,
-                    Some(DetachedProcess),
-                    TOOL_PROVIDER_RUNNER,
-                    super::ToolSemanticContract {
-                        effect: super::ToolEffect::Execute,
-                        risk: JobRun,
-                        approval: super::ToolApprovalPolicy::Standard,
-                        idempotency: super::ToolIdempotency::Keyed,
-                    },
-                    Some(JOB_RUN),
-                    true,
-                    NoPath,
-                    true,
-                    true,
-                    super::ToolSessionEvidencePolicy::NONE,
+    require_all_scopes(
+        model_spec(
+            def(
+                "run_detached_process",
+                super::ToolAuditPolicy::TYPED_CANONICAL.session_input(
+                    super::ToolAuditSessionInputPolicy::OmitTopLevel(&[
+                        "executable",
+                        "args",
+                        "stdin",
+                        "idempotency_key",
+                        "process_summary",
+                    ]),
                 ),
-                "Start a supervisor-owned detached native process as a durable Job when accepted work must outlive the initiating Runner process. Use it from the start when the workflow will restart, upgrade, stop, or replace this Runner and a native child must remain alive across Runner exit or replacement. Duration alone is not a reason to detach: ordinary long work stays Runner-owned. timeout_secs defaults to 60 seconds and the total detached execution lifetime clamps at 7 days. Ownership is handed off before payload start; after restart or upgrade, a replacement Runner can recover the same logical Job only when the supervisor/native identity and lifetime fence reconcile. A bounded replay key prevents duplicate dispatch while retained; expired keys are not retry tokens. Observe or stop with Job tools. No shell, script, SSH-resource, or retry fallback.",
-            ).with_gpt_action_description("Start a supervisor-owned native process that must survive Runner restart/upgrade as a durable Job. Requires an idempotency_key; observe/stop with Job tools. Duration alone is not a reason to detach.")
-            .with_execution(super::ToolExecutionContract::new(
-                super::ToolExecutionForm::NativeArgv,
-                super::ToolExecutionLifetime::Supervisor,
-                super::ToolExecutionStart::AsyncImmediate,
-                super::ToolExecutionContinuation::ObserveJobs,
-            )),
-            &[JOB_RUN, SCOPE_JOB_DETACH],
-        ),
-        72,
+                ModelVisible,
+                TOOL_CATEGORY_JOB,
+                Some(DetachedProcess),
+                TOOL_PROVIDER_RUNNER,
+                super::ToolSemanticContract {
+                    effect: super::ToolEffect::Execute,
+                    risk: JobRun,
+                    approval: super::ToolApprovalPolicy::Standard,
+                    idempotency: super::ToolIdempotency::Keyed,
+                },
+                Some(JOB_RUN),
+                true,
+                NoPath,
+                true,
+                true,
+                super::ToolSessionEvidencePolicy::NONE,
+            ),
+            "Start a supervisor-owned detached native process as a durable Job when accepted work must outlive the initiating Runner process. Use it from the start when the workflow will restart, upgrade, stop, or replace this Runner and a native child must remain alive across Runner exit or replacement. Duration alone is not a reason to detach: ordinary long work stays Runner-owned. timeout_secs defaults to 60 seconds and the total detached execution lifetime clamps at 7 days. Ownership is handed off before payload start; after restart or upgrade, a replacement Runner can recover the same logical Job only when the supervisor/native identity and lifetime fence reconcile. A bounded replay key prevents duplicate dispatch while retained; expired keys are not retry tokens. Observe or stop with Job tools. No shell, script, SSH-resource, or retry fallback.",
+        ).with_gpt_action_description("Start a supervisor-owned native process that must survive Runner restart/upgrade as a durable Job. Requires an idempotency_key; observe/stop with Job tools. Duration alone is not a reason to detach.")
+        .with_execution(super::ToolExecutionContract::new(
+            super::ToolExecutionForm::NativeArgv,
+            super::ToolExecutionLifetime::Supervisor,
+            super::ToolExecutionStart::AsyncImmediate,
+            super::ToolExecutionContinuation::ObserveJobs,
+        )),
+        &[JOB_RUN, SCOPE_JOB_DETACH],
     ),
     adaptive_runtime_direct(
         model_spec(
@@ -316,7 +313,7 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
         )),
         TOOL_CATEGORY_JOB,
     ),
-    adaptive_runtime_direct(permission_risk(
+    permission_risk(
         model_spec(
             def(
                 "stop_job",
@@ -341,7 +338,7 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
             "Stop one existing WebCodex Job by job_id. Requires confirm=true and preserves project/session ownership; log bodies are not returned.",
         ).with_gpt_action_gateway_only(),
         PERMISSION_RISK_JOB,
-    ), 81),
+    ),
     adaptive_runtime_direct(
         model_spec(
             def(
@@ -409,38 +406,35 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
 ];
 
 pub(super) const LISTING_DEFINITIONS: &[ToolDefinition] = &[
-    adaptive_runtime_direct(
-        model_spec(
-            def(
-                "list_jobs",
-                super::ToolAuditPolicy::TYPED_CANONICAL.session_input(
-                    super::ToolAuditSessionInputPolicy::OmitTopLevel(&["project", "session_id"]),
-                ),
-                ModelVisible,
-                TOOL_CATEGORY_JOB,
-                None,
-                TOOL_PROVIDER_NATIVE,
-                super::ToolSemanticContract {
-                    effect: super::ToolEffect::Observe,
-                    risk: Read,
-                    approval: super::ToolApprovalPolicy::None,
-                    idempotency: super::ToolIdempotency::PureRead,
-                },
-                Some(RUNTIME_READ),
-                false,
-                NoPath,
-                false,
-                false,
-                super::ToolSessionEvidencePolicy::NONE,
-            )
-            .with_activity(
-                super::ToolActivityPresentation::Support,
-                super::ToolActivityInteraction::Meaningful,
+    model_spec(
+        def(
+            "list_jobs",
+            super::ToolAuditPolicy::TYPED_CANONICAL.session_input(
+                super::ToolAuditSessionInputPolicy::OmitTopLevel(&["project", "session_id"]),
             ),
-            "Recovery and inventory primitive for caller-visible Jobs, not the normal continuation step. Do not call list_jobs when the initiating pending result already provides an exact continuation or passive attention already identifies the execution; retain that continuation and continue independent work, using observe_jobs only when logs/details/recovery are needed. Use list_jobs when exact Job identity was lost, unknown_job explicitly requests inventory recovery, the user asks to enumerate background work, or multiple historical/parallel Jobs must be inspected. Exact project/session_id filters are preferred when known and combine with status using AND semantics. stdout/stderr bodies are never included; exact Job logs belong to observe_jobs.",
-        ).with_gpt_action_description("Inventory caller-visible Jobs only when exact identity is lost or enumeration is requested. If an exact continuation or Job identity is already known, retain it and continue independent work; use observe_jobs only for logs/details/recovery."),
-        85,
-    ),
+            ModelVisible,
+            TOOL_CATEGORY_JOB,
+            None,
+            TOOL_PROVIDER_NATIVE,
+            super::ToolSemanticContract {
+                effect: super::ToolEffect::Observe,
+                risk: Read,
+                approval: super::ToolApprovalPolicy::None,
+                idempotency: super::ToolIdempotency::PureRead,
+            },
+            Some(RUNTIME_READ),
+            false,
+            NoPath,
+            false,
+            false,
+            super::ToolSessionEvidencePolicy::NONE,
+        )
+        .with_activity(
+            super::ToolActivityPresentation::Support,
+            super::ToolActivityInteraction::Meaningful,
+        ),
+        "Recovery and inventory primitive for caller-visible Jobs, not the normal continuation step. Do not call list_jobs when the initiating pending result already provides an exact continuation or passive attention already identifies the execution; retain that continuation and continue independent work, using observe_jobs only when logs/details/recovery are needed. Use list_jobs when exact Job identity was lost, unknown_job explicitly requests inventory recovery, the user asks to enumerate background work, or multiple historical/parallel Jobs must be inspected. Exact project/session_id filters are preferred when known and combine with status using AND semantics. stdout/stderr bodies are never included; exact Job logs belong to observe_jobs.",
+    ).with_gpt_action_description("Inventory caller-visible Jobs only when exact identity is lost or enumeration is requested. If an exact continuation or Job identity is already known, retain it and continue independent work; use observe_jobs only for logs/details/recovery."),
     adaptive_runtime_direct(
         model_spec(
             def(

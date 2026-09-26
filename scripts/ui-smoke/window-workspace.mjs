@@ -65,6 +65,18 @@ try {
           data.activity_returned = data.activity.length;
           await route.fulfill({ response, json: data });
         });
+        const messages = [
+          { message_id: 'wc_msg_operator', source: 'operator', direction: 'inbound', message: 'Check the failing tests first.', created_at_ms: Date.now(), requires_ack: true, first_projected_at_ms: null, first_ack_observed_at_ms: null },
+          { message_id: 'wc_msg_peer', source: 'peer', direction: 'inbound', peer_id: 'wc_peer_' + 'b'.repeat(32), message: 'Parser review complete.', created_at_ms: Date.now(), requires_ack: false, first_projected_at_ms: Date.now(), first_ack_observed_at_ms: null },
+        ];
+        const sent = [];
+        await page.route('**/api/runtime-console/window-collaboration', route => route.fulfill({ json: { available: true, can_send: true, messages, truncated: false } }));
+        await page.route('**/api/runtime-console/window-collaboration-post', async route => {
+          const payload = route.request().postDataJSON(); sent.push(payload);
+          const message_id = 'wc_msg_send' + sent.length;
+          messages.push({ ...messages[0], message_id, message: payload.message, context_session_id: payload.context_session_id || undefined });
+          await route.fulfill({ json: { message_id, replayed: false, state_changed: true } });
+        });
         await page.goto(fixture.url + '/runtime/');
         const zh = language === 'zh-CN';
         await page.locator('.window-call-card.running').waitFor();
@@ -102,7 +114,25 @@ try {
         assert(bounds.body <= width + 1 && bounds.root <= width + 1, JSON.stringify(bounds));
         assert(bounds.filterRight !== null && bounds.filterRight <= width + 1, JSON.stringify(bounds));
         await page.screenshot({ path: new URL(`calls-${width}-${theme}-${language}.png`, output).pathname, fullPage: true });
-        checks.push({ width, theme, language, overflow: false, individualCalls: 14, centerTabs: 2, sessionFilter: true, sessionOptions: 13, jobLinks: 2 });
+        await centerTabs.nth(1).click();
+        await page.getByText('Parser review complete.', { exact: true }).waitFor();
+        const composer = page.getByRole('textbox', { name: zh ? '给这个窗口发消息' : 'Message this Window' });
+        await composer.fill('Window message without context');
+        await page.getByRole('button', { name: zh ? '发送' : 'Send', exact: true }).click();
+        await page.getByText('Window message without context', { exact: true }).waitFor();
+        assert.equal(sent[0].context_session_id, null);
+        await centerTabs.nth(0).click();
+        await sessionFilter.selectOption('wc_sess_fixture_02');
+        await centerTabs.nth(1).click();
+        await composer.fill('Window message with context');
+        await page.getByRole('button', { name: zh ? '发送' : 'Send', exact: true }).click();
+        await page.getByText('Window message with context', { exact: true }).waitFor();
+        assert.equal(sent[1].client_window_key, sent[0].client_window_key);
+        assert.equal(sent[1].context_session_id, 'wc_sess_fixture_02');
+        const collaborationBounds = await page.evaluate(() => ({ body: document.body.scrollWidth, root: document.documentElement.scrollWidth }));
+        assert(collaborationBounds.body <= width + 1 && collaborationBounds.root <= width + 1, JSON.stringify(collaborationBounds));
+        await page.screenshot({ path: new URL(`collaboration-${width}-${theme}-${language}.png`, output).pathname, fullPage: true });
+        checks.push({ width, theme, language, overflow: false, individualCalls: 14, centerTabs: 2, sessionFilter: true, sessionOptions: 13, jobLinks: 2, collaboration: true });
         await page.close();
       }
     }

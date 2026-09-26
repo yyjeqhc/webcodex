@@ -94,6 +94,8 @@ pub(crate) enum RouteId {
     RuntimeConsoleRunner,
     RuntimeConsoleWindows,
     RuntimeConsoleWindow,
+    RuntimeConsoleWindowCollaboration,
+    RuntimeConsoleWindowCollaborationPost,
     RuntimeConsoleProjects,
     RuntimeConsoleGoals,
     RuntimeConsoleGoal,

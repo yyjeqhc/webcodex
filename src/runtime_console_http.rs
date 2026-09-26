@@ -29,6 +29,7 @@ use webcodex_core::runner_job_lifecycle::RunnerJobLifecycle;
 
 mod communication;
 mod goals;
+mod window_collaboration;
 mod workspace;
 
 use communication::{
@@ -74,6 +75,14 @@ pub(crate) fn routes() -> Router {
         .push(Router::with_path(api_path(RouteId::RuntimeConsoleRunner)).post(runner))
         .push(Router::with_path(api_path(RouteId::RuntimeConsoleWindows)).post(windows))
         .push(Router::with_path(api_path(RouteId::RuntimeConsoleWindow)).post(window))
+        .push(
+            Router::with_path(api_path(RouteId::RuntimeConsoleWindowCollaboration))
+                .post(window_collaboration::list),
+        )
+        .push(
+            Router::with_path(api_path(RouteId::RuntimeConsoleWindowCollaborationPost))
+                .post(window_collaboration::post),
+        )
         .push(Router::with_path(api_path(RouteId::RuntimeConsoleProjects)).post(projects))
         .push(Router::with_path(api_path(RouteId::RuntimeConsoleGoals)).post(goals_handler))
         .push(Router::with_path(api_path(RouteId::RuntimeConsoleGoal)).post(goal_handler))
@@ -6939,5 +6948,128 @@ mod tests {
         assert!(observed.history_lost);
         assert!(observed.has_more);
         assert_eq!(observed.messages.len(), 100);
+    }
+    #[tokio::test]
+    async fn window_collaboration_requires_exact_principal_and_visible_target() {
+        let (_tmp, db, runtime) = test_runtime_with_goal_db();
+        let writer = scoped_oauth(&[
+            SCOPE_RUNTIME_READ,
+            SCOPE_PROJECT_READ,
+            SCOPE_SESSION_COLLABORATE,
+        ]);
+        let mut other = writer.clone();
+        other.api_key_id = Some("another-token".into());
+        let key = "a".repeat(64);
+        record_window_event(&db, &writer, &key, None, None, 5000);
+        assert!(window_collaboration::authorize(&runtime, &writer, &key)
+            .await
+            .is_ok());
+        assert!(window_collaboration::authorize(&runtime, &other, &key)
+            .await
+            .is_err());
+        assert!(
+            window_collaboration::authorize(&runtime, &writer, &"b".repeat(64))
+                .await
+                .is_err()
+        );
+        assert!(
+            window_collaboration::authorize(&runtime, &writer, "bad-window")
+                .await
+                .is_err()
+        );
+        let sent = runtime
+            .post_window_operator_message(
+                &key,
+                None,
+                None,
+                "hello".into(),
+                "console-1".into(),
+                Some(&writer),
+            )
+            .await;
+        assert!(sent.success, "{:?}", sent.error);
+        let transcript = runtime.window_collaboration(Some(&key), Some(&writer), 10);
+        assert_eq!(
+            transcript["messages"][0]["message_id"],
+            sent.output["message_id"]
+        );
+        assert!(transcript["messages"][0]["first_projected_at_ms"].is_null());
+        assert!(
+            runtime.window_collaboration(Some(&key), Some(&other), 10)["messages"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        let invalid = runtime
+            .post_window_operator_message(
+                &key,
+                Some("wc_sess_invalid"),
+                None,
+                "hello".into(),
+                "console-2".into(),
+                Some(&writer),
+            )
+            .await;
+        assert!(!invalid.success);
+        assert_eq!(
+            runtime.window_collaboration(Some(&key), Some(&writer), 10)["messages"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        let project = "agent:context-owner:demo";
+        register_project(
+            &runtime,
+            "context-owner",
+            "demo",
+            "/context-project",
+            Some(&writer),
+        )
+        .await;
+        let session = runtime
+            .sessions
+            .start_session(Some(project.into()), Some("context".into()));
+        let unlinked = runtime
+            .post_window_operator_message(
+                &key,
+                Some(&session.session_id),
+                None,
+                "context".into(),
+                "context-key".into(),
+                Some(&writer),
+            )
+            .await;
+        assert!(!unlinked.success);
+        record_window_event(
+            &db,
+            &writer,
+            &key,
+            Some(project),
+            Some((&session.session_id, project)),
+            6000,
+        );
+        let linked = runtime
+            .post_window_operator_message(
+                &key,
+                Some(&session.session_id),
+                None,
+                "context".into(),
+                "context-key".into(),
+                Some(&writer),
+            )
+            .await;
+        assert!(linked.success, "{:?}", linked.error);
+        let rows = runtime.window_collaboration(Some(&key), Some(&writer), 10);
+        assert!(rows["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["context_session_id"] == session.session_id));
+        assert!(runtime
+            .sessions
+            .list_messages(&session.session_id, Default::default())
+            .unwrap()
+            .is_empty());
     }
 }

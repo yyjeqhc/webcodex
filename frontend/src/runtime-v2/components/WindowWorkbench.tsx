@@ -21,6 +21,7 @@ import type { ProjectRow, WindowSummary } from "../model/types.js";
 
 import { useWindowWorkspace } from "../state/useWindowWorkspace.js";
 import { WorkSurfaceSwitch, type WorkSurface } from "./GoalWorkbench.js";
+import { WindowCollaboration } from "./WindowCollaboration.js";
 import { WindowActivityFeed } from "./WindowActivityFeed.js";
 
 
@@ -336,11 +337,8 @@ export function WindowWorkbench({
               aria-labelledby="window-collaboration-tab"
               hidden={centerTab !== "collaboration"}
             >
-              <div className="empty-work window-collaboration-placeholder">
-                <MessageSquare size={22} />
-                <h2>{t("Window collaboration")}</h2>
-                <p>{t("Reserved for the next Window-level collaboration design.")}</p>
-              </div>
+              <WindowCollaboration key={detail.client_window_key} client={client} windowKey={detail.client_window_key}
+                selectedSessionId={selectedSessionId} language={language} onUnauthorized={onUnauthorized} />
             </div>
           </>
         ) : (

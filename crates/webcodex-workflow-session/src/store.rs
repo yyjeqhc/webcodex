@@ -50,8 +50,9 @@ use super::model::{
     SessionMessagePriority, SessionMessageStatus, SessionRecord, SessionStoreStatus,
     SessionSummary, SessionTransport, StoredSession, ToolCallExpectation, ToolCallRecorderMetadata,
     ToolCallStart, ToolEffectEventEvidence, WithdrawSessionMessageOutcome, CALL_ID_PREFIX,
-    DEFAULT_MAX_EVENTS_PER_SESSION, DEFAULT_MAX_MESSAGES_PER_SESSION, DEFAULT_MAX_SESSIONS,
-    DEFAULT_SUMMARY_LIMIT, EVENT_ID_PREFIX, MAX_CODING_INSTRUCTION_CHARS, MAX_INPUT_ARRAY_ITEMS,
+    DEFAULT_MAX_EVENTS_PER_SESSION, DEFAULT_MAX_MESSAGES_PER_SESSION,
+    DEFAULT_MAX_RETAINED_CLOSED_SESSIONS, DEFAULT_MAX_SESSIONS, DEFAULT_SUMMARY_LIMIT,
+    EVENT_ID_PREFIX, MAX_CODING_INSTRUCTION_CHARS, MAX_INPUT_ARRAY_ITEMS,
     MAX_MATERIALIZED_VALIDATION_JOB_IDS, MAX_MESSAGE_DELIVERY_KEY_CHARS, MAX_SUMMARY_LIMIT,
     MESSAGE_ID_PREFIX, SESSION_ID_PREFIX, SESSION_LEDGER_VERSION,
 };
@@ -96,7 +97,8 @@ pub struct SessionStore {
 ///
 /// Why this exists: every `push_event` used to call `persist_after_mutation`
 /// synchronously on the request path, holding a global write mutex while
-/// cloning/serializing up to max_sessions×max_events and renaming on disk.
+/// cloning/serializing the full retained Session set (with bounded per-Session
+/// tails) and renaming on disk.
 /// Under concurrent MCP tools/call traffic that saturates the async runtime
 /// and surfaces as intermittent "no reply" hangs.
 struct LedgerWriterGuard {
@@ -300,7 +302,9 @@ pub(super) struct SessionStoreInner {
     /// Durable workflow sessions. Mutated only via the helpers below.
     sessions: HashMap<String, StoredSession>,
     lru: VecDeque<String>,
-    max_sessions: usize,
+    hot_session_capacity_target: usize,
+    historical_session_retention_limit: usize,
+    capacity_evictions: u64,
     max_events_per_session: usize,
     persistence: Option<SessionPersistence>,
 }
@@ -314,7 +318,11 @@ struct SessionPersistence {
 
 impl Default for SessionStore {
     fn default() -> Self {
-        Self::new(DEFAULT_MAX_SESSIONS, DEFAULT_MAX_EVENTS_PER_SESSION)
+        Self::new_in_memory_with_limits(
+            DEFAULT_MAX_SESSIONS,
+            DEFAULT_MAX_RETAINED_CLOSED_SESSIONS,
+            DEFAULT_MAX_EVENTS_PER_SESSION,
+        )
     }
 }
 
@@ -324,12 +332,22 @@ impl SessionStore {
     }
 
     pub fn new_in_memory(max_sessions: usize, max_events_per_session: usize) -> Self {
+        Self::new_in_memory_with_limits(max_sessions, max_sessions, max_events_per_session)
+    }
+
+    pub fn new_in_memory_with_limits(
+        hot_session_capacity_target: usize,
+        historical_session_retention_limit: usize,
+        max_events_per_session: usize,
+    ) -> Self {
         let (message_observation_notify, _) = tokio::sync::watch::channel(0_u64);
         Self {
             inner: Arc::new(Mutex::new(SessionStoreInner {
                 sessions: HashMap::<String, StoredSession>::new(),
                 lru: VecDeque::new(),
-                max_sessions,
+                hot_session_capacity_target,
+                historical_session_retention_limit,
+                capacity_evictions: 0,
                 max_events_per_session,
                 persistence: None,
             })),
@@ -348,12 +366,27 @@ impl SessionStore {
         max_sessions: usize,
         max_events_per_session: usize,
     ) -> Self {
+        Self::with_persistence_limits(path, max_sessions, max_sessions, max_events_per_session)
+    }
+
+    pub fn with_persistence_limits(
+        path: impl Into<PathBuf>,
+        hot_session_capacity_target: usize,
+        historical_session_retention_limit: usize,
+        max_events_per_session: usize,
+    ) -> Self {
         let path = path.into();
-        let restored = load_persisted_ledger(&path, max_sessions, max_events_per_session);
+        let restored = load_persisted_ledger(
+            &path,
+            historical_session_retention_limit,
+            max_events_per_session,
+        );
         let inner = Arc::new(Mutex::new(SessionStoreInner {
             sessions: restored.sessions,
             lru: restored.lru,
-            max_sessions,
+            hot_session_capacity_target,
+            historical_session_retention_limit,
+            capacity_evictions: restored.capacity_evictions,
             max_events_per_session,
             persistence: Some(SessionPersistence {
                 path,
@@ -400,10 +433,30 @@ impl SessionStore {
             ),
             None => ("disabled".to_string(), 0, None),
         };
+        let active_sessions = inner
+            .sessions
+            .values()
+            .filter(|session| session.lifecycle() == SessionLifecycle::Active)
+            .count();
+        let closed_sessions = inner.sessions.len().saturating_sub(active_sessions);
+        let hot_sessions = inner
+            .sessions
+            .values()
+            .filter(|session| matches!(session, StoredSession::Hot(_)))
+            .count();
+        let cold_sessions = inner.sessions.len().saturating_sub(hot_sessions);
         SessionStoreStatus {
             persistence,
             restored_sessions,
-            max_sessions: inner.max_sessions,
+            max_sessions: inner.hot_session_capacity_target,
+            retained_sessions: inner.sessions.len(),
+            active_sessions,
+            closed_sessions,
+            hot_sessions,
+            cold_sessions,
+            hot_session_capacity_target: inner.hot_session_capacity_target,
+            historical_session_retention_limit: inner.historical_session_retention_limit,
+            capacity_evictions: inner.capacity_evictions,
             max_events_per_session: inner.max_events_per_session,
             max_messages_per_session: DEFAULT_MAX_MESSAGES_PER_SESSION,
             last_persist_error,
@@ -1125,6 +1178,10 @@ impl SessionStore {
             already_closed: true,
         });
         self.coldify_closed_session(session_id);
+        {
+            let mut inner = self.inner.lock().expect("session store mutex poisoned");
+            inner.enforce_historical_retention_bound();
+        }
         self.persist_after_mutation();
         Ok(outcome)
     }
@@ -2726,7 +2783,7 @@ impl SessionStoreInner {
         self.sessions
             .insert(session_id.clone(), StoredSession::Hot(record));
         self.touch(&session_id);
-        self.enforce_session_bound();
+        self.enforce_historical_retention_bound();
         self.summary(&session_id, Some(DEFAULT_SUMMARY_LIMIT))
             .expect("newly inserted session must summarize")
     }
@@ -3605,13 +3662,33 @@ impl SessionStoreInner {
         }
     }
 
-    fn enforce_session_bound(&mut self) {
-        while self.sessions.len() > self.max_sessions {
-            let Some(oldest) = self.lru.pop_front() else {
-                break;
-            };
-            self.sessions.remove(&oldest);
+    fn enforce_historical_retention_bound(&mut self) {
+        let mut closed_count = self
+            .sessions
+            .values()
+            .filter(|session| session.lifecycle() == SessionLifecycle::Closed)
+            .count();
+        if closed_count <= self.historical_session_retention_limit {
+            return;
         }
+
+        let mut retained_order = VecDeque::with_capacity(self.lru.len());
+        while let Some(session_id) = self.lru.pop_front() {
+            let remove = closed_count > self.historical_session_retention_limit
+                && self
+                    .sessions
+                    .get(&session_id)
+                    .is_some_and(|session| session.lifecycle() == SessionLifecycle::Closed);
+            if remove {
+                if self.sessions.remove(&session_id).is_some() {
+                    closed_count = closed_count.saturating_sub(1);
+                    self.capacity_evictions = self.capacity_evictions.saturating_add(1);
+                }
+            } else {
+                retained_order.push_back(session_id);
+            }
+        }
+        self.lru = retained_order;
     }
 
     pub(super) fn summary(&self, session_id: &str, limit: Option<usize>) -> Option<SessionSummary> {

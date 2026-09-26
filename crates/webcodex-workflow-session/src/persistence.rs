@@ -17,10 +17,10 @@ use super::events::{
 };
 use super::model::{
     ColdSessionRecord, PersistedSessionLedger, PersistedSessionRecord, SessionEvent, SessionGuards,
-    SessionMessage, SessionRecord, StoredSession, DEFAULT_MAX_MESSAGES_PER_SESSION,
-    EVENT_ID_PREFIX, MAX_CODING_INSTRUCTION_CHARS, MAX_INPUT_ARRAY_ITEMS,
-    MAX_MATERIALIZED_VALIDATION_JOB_IDS, MAX_MESSAGE_CHARS, MAX_MESSAGE_RESOLUTION_CHARS,
-    SESSION_LEDGER_VERSION,
+    SessionLifecycle, SessionMessage, SessionRecord, StoredSession,
+    DEFAULT_MAX_MESSAGES_PER_SESSION, EVENT_ID_PREFIX, MAX_CODING_INSTRUCTION_CHARS,
+    MAX_INPUT_ARRAY_ITEMS, MAX_MATERIALIZED_VALIDATION_JOB_IDS, MAX_MESSAGE_CHARS,
+    MAX_MESSAGE_RESOLUTION_CHARS, SESSION_LEDGER_VERSION,
 };
 use super::query::{is_valid_completion_id, validate_message_tags};
 use super::util::{
@@ -497,6 +497,7 @@ pub struct RestoredSessionLedger {
     pub sessions: HashMap<String, StoredSession>,
     pub lru: VecDeque<String>,
     pub restored_sessions: usize,
+    pub capacity_evictions: u64,
     pub last_persist_error: Option<String>,
 }
 
@@ -506,6 +507,7 @@ impl RestoredSessionLedger {
             sessions: HashMap::new(),
             lru: VecDeque::new(),
             restored_sessions: 0,
+            capacity_evictions: 0,
             last_persist_error,
         }
     }
@@ -513,7 +515,7 @@ impl RestoredSessionLedger {
 
 pub fn load_persisted_ledger(
     path: &PathBuf,
-    max_sessions: usize,
+    historical_session_retention_limit: usize,
     max_events_per_session: usize,
 ) -> RestoredSessionLedger {
     let content = match fs::read_to_string(path) {
@@ -590,9 +592,22 @@ pub fn load_persisted_ledger(
         })
         .collect();
     records.sort_by_key(StoredSession::updated_at);
-    while records.len() > max_sessions {
-        records.remove(0);
-    }
+
+    let closed_count = records
+        .iter()
+        .filter(|record| record.lifecycle() == SessionLifecycle::Closed)
+        .count();
+    let closed_to_prune = closed_count.saturating_sub(historical_session_retention_limit);
+    let mut pruned_closed = 0usize;
+    records.retain(|record| {
+        if pruned_closed < closed_to_prune && record.lifecycle() == SessionLifecycle::Closed {
+            pruned_closed += 1;
+            false
+        } else {
+            true
+        }
+    });
+
     let mut sessions = HashMap::new();
     let mut lru = VecDeque::new();
     for record in records {
@@ -606,6 +621,7 @@ pub fn load_persisted_ledger(
         sessions,
         lru,
         restored_sessions,
+        capacity_evictions: pruned_closed as u64,
         last_persist_error: None,
     }
 }

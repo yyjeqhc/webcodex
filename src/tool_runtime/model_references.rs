@@ -192,6 +192,75 @@ mod tests {
     }
 
     #[test]
+    fn active_session_ref_survives_capacity_churn_without_retargeting() {
+        let tmp = tempfile::tempdir().unwrap();
+        let runtime = ToolRuntime::new_for_tests().with_project_reference_database(Arc::new(
+            crate::Database::open(&tmp.path().join("session-refs-capacity.db")).unwrap(),
+        ));
+        let authority = workflow_session_authority_fingerprint(None).unwrap();
+        let first = runtime
+            .sessions
+            .start_session_with_options(
+                SessionCreateOptions::new(
+                    None,
+                    Some("capacity pinned".to_string()),
+                    SessionMode::Normal,
+                    SessionGuards::default(),
+                )
+                .with_owner_authority_fingerprint(Some(authority.clone())),
+            )
+            .unwrap();
+        let canonical_id = first.session_id.clone();
+        let session_ref = runtime
+            .session_reference_for_id(&canonical_id, None)
+            .unwrap();
+
+        for index in 0..110 {
+            runtime
+                .sessions
+                .start_session_with_options(
+                    SessionCreateOptions::new(
+                        None,
+                        Some(format!("churn {index}")),
+                        SessionMode::Normal,
+                        SessionGuards::default(),
+                    )
+                    .with_owner_authority_fingerprint(Some(authority.clone())),
+                )
+                .unwrap();
+        }
+
+        assert!(runtime.sessions.contains_session(&canonical_id));
+        assert_eq!(
+            runtime
+                .canonicalize_explicit_session_selector(&session_ref, None)
+                .unwrap(),
+            canonical_id
+        );
+        assert_ne!(
+            runtime
+                .session_reference_for_id(
+                    &runtime
+                        .sessions
+                        .start_session_with_options(
+                            SessionCreateOptions::new(
+                                None,
+                                Some("later".to_string()),
+                                SessionMode::Normal,
+                                SessionGuards::default(),
+                            )
+                            .with_owner_authority_fingerprint(Some(authority)),
+                        )
+                        .unwrap()
+                        .session_id,
+                    None,
+                )
+                .unwrap(),
+            session_ref
+        );
+    }
+
+    #[test]
     fn closed_session_ref_still_resolves_before_existing_lifecycle_checks() {
         let tmp = tempfile::tempdir().unwrap();
         let runtime = ToolRuntime::new_for_tests().with_project_reference_database(Arc::new(

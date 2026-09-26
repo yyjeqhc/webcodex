@@ -1263,39 +1263,214 @@ fn unknown_session_mutations_do_not_recreate_session() {
     assert!(matches!(resolve, Err(SessionMessageError::UnknownSession)));
 }
 
-/// Evicted (capacity-bound) sessions stay gone: events must not revive them.
-
 #[test]
-fn evicted_session_is_not_reactivated_by_events_or_messages() {
+fn active_session_survives_capacity_churn_and_keeps_exact_identity_and_fences() {
     let store = SessionStore::new(1, 10);
-    let first = store.start_session(None, Some("first".to_string()));
-    let second = store.start_session(None, Some("second".to_string()));
+    let owner_authority = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    let guards = SessionGuards {
+        deny_write_tools: true,
+        deny_shell_tools: true,
+    };
+    let first = store
+        .start_session_with_options(
+            SessionCreateOptions::new(
+                Some("agent:test:durable-a".to_string()),
+                Some("first".to_string()),
+                SessionMode::ReadOnly,
+                guards,
+            )
+            .with_owner_authority_fingerprint(Some(owner_authority.to_string())),
+        )
+        .unwrap();
+    let canonical_id = first.session_id.clone();
 
-    assert!(!store.contains_session(&first.session_id));
-    assert!(store.contains_session(&second.session_id));
+    for index in 0..4 {
+        store.start_session(
+            Some(format!("agent:test:churn-{index}")),
+            Some(format!("churn {index}")),
+        );
+    }
 
-    assert!(store
+    assert!(store.contains_session(&canonical_id));
+    let retained = store.summary(&canonical_id, Some(10)).unwrap();
+    assert_eq!(retained.session_id, canonical_id);
+    assert_eq!(retained.lifecycle, SessionLifecycle::Active);
+    assert_eq!(retained.project.as_deref(), Some("agent:test:durable-a"));
+    assert_eq!(retained.mode, SessionMode::ReadOnly);
+    assert_eq!(retained.guards, guards);
+
+    let start = store
         .record_tool_call_started(
-            Some(&first.session_id),
+            Some(&canonical_id),
             SessionTransport::Api,
             "read_file",
-            &json!({"project": "demo", "path": "a.rs"}),
+            &json!({"project": "agent:test:durable-a", "path": "a.rs"}),
             session_tool_contract("read_file"),
         )
-        .is_none());
-    assert!(!store.contains_session(&first.session_id));
-    assert!(store.summary(&first.session_id, None).is_none());
+        .expect("capacity pressure must not turn an Active Session into unknown");
+    store.record_tool_call_finished(Some(start), true, &json!({"ok": true}), None, None);
 
-    let post = store.post_message(PostSessionMessageInput {
-        session_id: first.session_id.clone(),
-        kind: SessionMessageKind::Note,
-        message: "revive?".to_string(),
-        tags: Vec::new(),
-        reply_to: None,
-        priority: SessionMessagePriority::Normal,
-    });
-    assert!(matches!(post, Err(SessionMessageError::UnknownSession)));
-    assert!(!store.contains_session(&first.session_id));
+    let resume = |project: &str, authority_fingerprint: &str| CodingSessionRequest {
+        project: project.to_string(),
+        authority_fingerprint: authority_fingerprint.to_string(),
+        resume_session_id: Some(canonical_id.clone()),
+        instruction: Some("resume exact identity".to_string()),
+        mode: SessionMode::ReadOnly,
+        guards,
+        execution_context: None,
+        project_instructions: None,
+        transport: SessionTransport::Api,
+        context_refreshed: true,
+        write_scope_verified: true,
+    };
+    let resumed = store
+        .ensure_coding_session_with_git_baseline(
+            resume("agent:test:durable-a", owner_authority),
+            None,
+        )
+        .unwrap();
+    assert!(resumed.reused);
+    assert_eq!(resumed.summary.session_id, canonical_id);
+
+    assert!(matches!(
+        store.ensure_coding_session_with_git_baseline(
+            resume("agent:test:wrong-project", owner_authority,),
+            None,
+        ),
+        Err(CodingSessionError::ResumeProjectMismatch { .. })
+    ));
+    assert!(matches!(
+        store.ensure_coding_session_with_git_baseline(
+            resume(
+                "agent:test:durable-a",
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            ),
+            None,
+        ),
+        Err(CodingSessionError::ResumeAuthorityMismatch { .. })
+    ));
+
+    let status = store.status();
+    assert_eq!(status.hot_session_capacity_target, 1);
+    assert!(status.retained_sessions > status.hot_session_capacity_target);
+    assert_eq!(status.active_sessions, status.retained_sessions);
+    assert_eq!(status.capacity_evictions, 0);
+}
+
+#[test]
+fn active_session_survives_persistence_restart_after_capacity_churn() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ledger = tmp.path().join("sessions.json");
+    let owner_authority = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    let request =
+        |resume_session_id: Option<String>, project: &str, authority: &str| CodingSessionRequest {
+            project: project.to_string(),
+            authority_fingerprint: authority.to_string(),
+            resume_session_id,
+            instruction: Some("durable active".to_string()),
+            mode: SessionMode::Normal,
+            guards: SessionGuards::default(),
+            execution_context: None,
+            project_instructions: None,
+            transport: SessionTransport::Api,
+            context_refreshed: true,
+            write_scope_verified: true,
+        };
+
+    let store = SessionStore::with_persistence(&ledger, 1, 10);
+    let first = store
+        .ensure_coding_session_with_git_baseline(
+            request(None, "agent:test:persistent-active", owner_authority),
+            None,
+        )
+        .unwrap();
+    let canonical_id = first.summary.session_id.clone();
+    for index in 0..4 {
+        store.start_session(
+            Some(format!("agent:test:persist-churn-{index}")),
+            Some(format!("churn {index}")),
+        );
+    }
+    assert!(store.contains_session(&canonical_id));
+    store.flush_persistence();
+    drop(store);
+
+    let restored = SessionStore::with_persistence(&ledger, 1, 10);
+    assert!(restored.contains_session(&canonical_id));
+    assert_eq!(
+        restored.lifecycle_state(&canonical_id),
+        Some(SessionLifecycle::Active)
+    );
+    assert!(restored.status().restored_sessions > 1);
+    assert!(matches!(
+        restored.ensure_coding_session_with_git_baseline(
+            request(
+                Some(canonical_id.clone()),
+                "agent:test:wrong-project",
+                owner_authority,
+            ),
+            None,
+        ),
+        Err(CodingSessionError::ResumeProjectMismatch { .. })
+    ));
+    assert!(matches!(
+        restored.ensure_coding_session_with_git_baseline(
+            request(
+                Some(canonical_id.clone()),
+                "agent:test:persistent-active",
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            ),
+            None,
+        ),
+        Err(CodingSessionError::ResumeAuthorityMismatch { .. })
+    ));
+    let resumed = restored
+        .ensure_coding_session_with_git_baseline(
+            request(
+                Some(canonical_id.clone()),
+                "agent:test:persistent-active",
+                owner_authority,
+            ),
+            None,
+        )
+        .unwrap();
+    assert!(resumed.reused);
+    assert_eq!(resumed.summary.session_id, canonical_id);
+}
+
+#[test]
+fn restore_boundary_preserves_older_active_sessions_beyond_hot_target() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ledger = tmp.path().join("sessions.json");
+    let store = SessionStore::with_persistence(&ledger, 10, 10);
+    let oldest = store.start_session(
+        Some("agent:test:restore-boundary".to_string()),
+        Some("oldest active".to_string()),
+    );
+    let _middle = store.start_session(
+        Some("agent:test:restore-boundary".to_string()),
+        Some("middle active".to_string()),
+    );
+    let newest = store.start_session(
+        Some("agent:test:restore-boundary".to_string()),
+        Some("newest active".to_string()),
+    );
+    store.flush_persistence();
+    drop(store);
+
+    let restored = SessionStore::with_persistence(&ledger, 1, 10);
+    assert!(restored.contains_session(&oldest.session_id));
+    assert!(restored.contains_session(&newest.session_id));
+    assert_eq!(
+        restored.lifecycle_state(&oldest.session_id),
+        Some(SessionLifecycle::Active)
+    );
+    let status = restored.status();
+    assert_eq!(status.hot_session_capacity_target, 1);
+    assert_eq!(status.retained_sessions, 3);
+    assert_eq!(status.active_sessions, 3);
+    assert_eq!(status.closed_sessions, 0);
+    assert_eq!(status.capacity_evictions, 0);
 }
 
 #[test]

@@ -350,9 +350,10 @@ impl ToolRuntime {
     }
 
     pub fn with_session_ledger(mut self, path: impl Into<PathBuf>) -> Self {
-        self.sessions = sessions::SessionStore::with_persistence(
+        self.sessions = sessions::SessionStore::with_persistence_limits(
             path,
             sessions::DEFAULT_MAX_SESSIONS,
+            sessions::DEFAULT_MAX_RETAINED_CLOSED_SESSIONS,
             sessions::DEFAULT_MAX_EVENTS_PER_SESSION,
         );
         self

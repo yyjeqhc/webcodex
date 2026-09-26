@@ -358,6 +358,7 @@ fn apply_unified_diff_schema_matches_flat_runtime_contract_and_old_tools_are_abs
         "recovery_kind",
         "session_hint",
         "trace_ref",
+        "job_attention",
     ]
     .into_iter()
     .collect();

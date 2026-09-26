@@ -34,7 +34,7 @@ pub use common::{
     continuation_semantics_schema, suggested_tool_call_schema, suggested_tool_call_schema_target,
 };
 
-pub fn output_schema_for_tool(name: &str) -> Value {
+fn base_output_schema_for_tool(name: &str) -> Value {
     if let Some(schema) = agent_tasks::output_schema_for_tool(name) {
         return schema;
     }
@@ -114,6 +114,14 @@ pub fn output_schema_for_tool(name: &str) -> Value {
     }
 
     default_output_schema()
+}
+
+pub fn output_schema_for_tool(name: &str) -> Value {
+    let mut schema = base_output_schema_for_tool(name);
+    if crate::runtime_tool_supports_passive_job_attention(name) {
+        common::add_passive_job_attention_to_envelope(&mut schema);
+    }
+    schema
 }
 
 #[cfg(any(test, feature = "root-test-support"))]

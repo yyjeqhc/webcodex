@@ -2448,6 +2448,71 @@ fn default_output_schema_field_names() -> BTreeSet<&'static str> {
 }
 
 #[test]
+fn model_visible_output_schemas_admit_bounded_passive_job_attention() {
+    let attention = json!({
+        "changed": true,
+        "items": [{
+            "job_id": "wc_job_schema",
+            "tool": "cargo_test",
+            "status": "completed",
+            "state": "terminal",
+            "outcome": "passed",
+            "exit_code": 0,
+            "command_ok": true,
+            "validation": {
+                "tool": "cargo_test",
+                "kind": "test",
+                "state": "completed",
+                "passed": null,
+                "source_state": {
+                    "freshness": "unproven",
+                    "observed_mutation_fence": "unknown"
+                }
+            },
+            "details": {
+                "tool": "observe_jobs",
+                "arguments": {"items": [{"job_id": "wc_job_schema"}]}
+            }
+        }]
+    });
+    let specs = registered_tool_specs();
+    for spec in &specs {
+        let fields = output_schema_field_names(spec);
+        assert_eq!(
+            fields.contains("job_attention"),
+            runtime_tool_supports_passive_job_attention(&spec.name),
+            "{} passive-attention schema eligibility must match canonical runtime policy",
+            spec.name
+        );
+    }
+
+    let cargo_check = spec_named(&specs, "cargo_check");
+    let field = cargo_check.output_schema["properties"]["output"]["properties"]
+        .get("job_attention")
+        .expect("cargo_check must declare passive job_attention");
+    test_support::validate_schema_instance(&attention, field)
+        .expect("cargo_check passive job_attention shape must validate");
+    let pending = json!({
+        "success": true,
+        "output": {
+            "execution_state": "pending",
+            "continuation": {
+                "tool": "observe_jobs",
+                "arguments": {
+                    "items": [{"job_id": "wc_job_pending", "after_observation_token": "wj3_AAAAAAAAAAAAAAAAAAAAAA.1.0.0"}],
+                    "wait_secs": 5,
+                    "wake_on": "terminal"
+                }
+            },
+            "job_attention": attention
+        },
+        "error": null
+    });
+    test_support::validate_schema_instance(&pending, &cargo_check.output_schema)
+        .expect("strict cargo_check output must admit the generic passive sidecar");
+}
+
+#[test]
 fn model_facing_output_schemas_do_not_publish_retired_recovery_tool() {
     for spec in registered_tool_specs() {
         let serialized = serde_json::to_string(&spec.output_schema).unwrap();

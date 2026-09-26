@@ -41,25 +41,6 @@ fn attention_tool(job: &ShellJobInfo) -> &str {
         .unwrap_or(job.kind.as_str())
 }
 
-fn is_explicit_job_surface(tool_name: &str) -> bool {
-    matches!(
-        tool_name,
-        "run_job"
-            | "run_detached_process"
-            | "observe_jobs"
-            | "job_tail"
-            | "list_jobs"
-            | "stop_job"
-            | "wait_for_job_terminal"
-            | "present_job_terminal_continuation"
-            | "job_terminal_continuation_bind"
-            | "job_terminal_continuation_state"
-            | "job_terminal_continuation_prepare"
-            | "job_terminal_continuation_finish"
-            | "job_terminal_continuation_unbind"
-    )
-}
-
 #[derive(Clone, Hash, PartialEq, Eq)]
 struct AttentionKey {
     principal_kind: String,
@@ -257,8 +238,7 @@ impl ToolRuntime {
         window: Option<&ClientWindow>,
         auth: Option<&AuthContext>,
     ) {
-        if tool_name == "current_window_activity"
-            || is_explicit_job_surface(tool_name)
+        if !webcodex_tool_contracts::runtime_tool_supports_passive_job_attention(tool_name)
             || !result.success
         {
             return;

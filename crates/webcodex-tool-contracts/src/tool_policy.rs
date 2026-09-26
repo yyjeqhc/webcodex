@@ -408,6 +408,25 @@ pub fn is_model_visible_tool_name(name: &str) -> bool {
     lookup_tool_definition(name).is_some_and(|definition| definition.visibility.is_model_visible())
 }
 
+/// Whether an ordinary model-facing result may carry the passive Job-attention
+/// sidecar. Explicit Job lifecycle/control surfaces and the Window diagnostic
+/// remain self-describing and must not recursively consume the sidecar.
+pub fn runtime_tool_supports_passive_job_attention(name: &str) -> bool {
+    is_model_visible_tool_name(name)
+        && !matches!(
+            name,
+            "current_window_activity"
+                | "plugin_tool"
+                | "run_job"
+                | "run_detached_process"
+                | "observe_jobs"
+                | "list_jobs"
+                | "stop_job"
+                | "wait_for_job_terminal"
+                | "present_job_terminal_continuation"
+        )
+}
+
 #[cfg(any(test, feature = "root-test-support"))]
 pub fn is_model_hidden_tool_name(name: &str) -> bool {
     lookup_tool_definition(name).is_some_and(|definition| definition.visibility.is_model_hidden())

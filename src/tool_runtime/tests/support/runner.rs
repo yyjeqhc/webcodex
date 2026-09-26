@@ -991,12 +991,13 @@ pub(in crate::tool_runtime::tests) async fn probe_agent_request_for_instance(
     None
 }
 
-pub(in crate::tool_runtime::tests) async fn wait_for_runner_request_for_instance(
+pub(in crate::tool_runtime::tests) async fn wait_for_runner_request_for_instance_with_timeout(
     runtime: &ToolRuntime,
     client_id: &str,
     runner_instance_id: &str,
+    timeout: Duration,
 ) -> RunnerRequest {
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + timeout;
     loop {
         if let Some(request) = runtime
             .runner_registry
@@ -1011,11 +1012,26 @@ pub(in crate::tool_runtime::tests) async fn wait_for_runner_request_for_instance
         }
         if Instant::now() >= deadline {
             panic!(
-                "Runner request readiness failed for client {client_id} instance {runner_instance_id} within 10 seconds"
+                "Runner request readiness failed for client {client_id} instance {runner_instance_id} within {} ms",
+                timeout.as_millis()
             );
         }
         tokio::time::sleep(Duration::from_millis(5)).await;
     }
+}
+
+pub(in crate::tool_runtime::tests) async fn wait_for_runner_request_for_instance(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    runner_instance_id: &str,
+) -> RunnerRequest {
+    wait_for_runner_request_for_instance_with_timeout(
+        runtime,
+        client_id,
+        runner_instance_id,
+        Duration::from_secs(10),
+    )
+    .await
 }
 
 pub(in crate::tool_runtime::tests) async fn wait_for_runner_request_for_client(

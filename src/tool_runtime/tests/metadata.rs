@@ -2431,6 +2431,19 @@ async fn runtime_status_with_no_projects_returns_configured_false() {
     assert!(out["pid"].is_i64());
     assert_eq!(out["authority"]["mode"], "trusted_agent");
     assert_eq!(out["authority"]["human_approval_required"], false);
+    let session_store = &out["session_store"];
+    assert_eq!(
+        session_store["max_sessions"],
+        session_store["hot_session_capacity_target"]
+    );
+    assert_eq!(session_store["retained_sessions"], 0);
+    assert_eq!(session_store["active_sessions"], 0);
+    assert_eq!(session_store["closed_sessions"], 0);
+    assert_eq!(session_store["hot_sessions"], 0);
+    assert_eq!(session_store["cold_sessions"], 0);
+    assert_eq!(session_store["historical_session_retention_limit"], 100);
+    assert_eq!(session_store["capacity_evictions"], 0);
+
     assert_eq!(out["projects"]["mode"], "runner_registered");
     assert_eq!(out["projects"]["count"], 0);
     assert!(out["projects"].get("configured").is_none());

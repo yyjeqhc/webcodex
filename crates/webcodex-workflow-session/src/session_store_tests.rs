@@ -1474,6 +1474,55 @@ fn restore_boundary_preserves_older_active_sessions_beyond_hot_target() {
 }
 
 #[test]
+fn restore_prunes_only_old_closed_history_and_keeps_active_identity() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ledger = tmp.path().join("sessions.json");
+    let store = SessionStore::with_persistence_limits(&ledger, 10, 10, 10);
+    let active = store.start_session(
+        Some("agent:test:mixed-restore".to_string()),
+        Some("active".to_string()),
+    );
+    let old_closed = store.start_session(
+        Some("agent:test:mixed-restore".to_string()),
+        Some("old closed".to_string()),
+    );
+    store.close_session(&old_closed.session_id).unwrap();
+    let new_closed = store.start_session(
+        Some("agent:test:mixed-restore".to_string()),
+        Some("new closed".to_string()),
+    );
+    store.close_session(&new_closed.session_id).unwrap();
+    store.flush_persistence();
+    drop(store);
+
+    let restored = SessionStore::with_persistence_limits(&ledger, 1, 1, 10);
+    assert!(restored.contains_session(&active.session_id));
+    assert_eq!(
+        restored.lifecycle_state(&active.session_id),
+        Some(SessionLifecycle::Active)
+    );
+    assert!(
+        !restored.contains_session(&old_closed.session_id),
+        "restore-time historical retention should prune the oldest Closed row"
+    );
+    assert!(restored.contains_session(&new_closed.session_id));
+    assert_eq!(
+        restored.lifecycle_state(&new_closed.session_id),
+        Some(SessionLifecycle::Closed)
+    );
+    let status = restored.status();
+    assert_eq!(status.retained_sessions, 2);
+    assert_eq!(status.restored_sessions, 2);
+    assert_eq!(status.active_sessions, 1);
+    assert_eq!(status.closed_sessions, 1);
+    assert_eq!(status.hot_sessions, 1);
+    assert_eq!(status.cold_sessions, 1);
+    assert_eq!(status.hot_session_capacity_target, 1);
+    assert_eq!(status.historical_session_retention_limit, 1);
+    assert_eq!(status.capacity_evictions, 1);
+}
+
+#[test]
 fn session_message_create_list_and_resolve_contract() {
     let store = SessionStore::default();
     let session = store.start_session(None, None);

@@ -845,8 +845,16 @@ async fn e2a_cpu_timeout_after_child_dispatch_preserves_started_job_truth() {
         .to_string(),
         300,
     );
-    let (request, job_id) =
-        super::validation_handoff::poll_start_validation_job(&runtime, client_id).await;
+    // This case intentionally burns a CPU-time budget after starting the child.
+    // Under a heavily parallel full suite, that CPU budget can span more than
+    // the generic 10-second wall-clock readiness fence. Widen only this positive
+    // dispatch wait; the production timeout contract remains unchanged.
+    let (request, job_id) = super::validation_handoff::poll_start_validation_job_with_timeout(
+        &runtime,
+        client_id,
+        std::time::Duration::from_secs(30),
+    )
+    .await;
     runtime
         .runner_registry
         .update_job(super::validation_handoff::cargo_test_update(

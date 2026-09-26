@@ -33,6 +33,19 @@ pub(super) async fn poll_start_validation_job(
     (request, job_id)
 }
 
+pub(super) async fn poll_start_validation_job_with_timeout(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    timeout: std::time::Duration,
+) -> (crate::runner_protocol::RunnerRequest, String) {
+    let request =
+        wait_for_runner_request_for_instance_with_timeout(runtime, client_id, "inst", timeout)
+            .await;
+    assert_eq!(request.kind, "start_validation_job", "{:?}", request.kind);
+    let job_id = request.job_id.clone().expect("start_validation_job job_id");
+    (request, job_id)
+}
+
 async fn wait_for_runner_request(
     runtime: &ToolRuntime,
     client_id: &str,

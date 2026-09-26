@@ -171,11 +171,15 @@ export function WindowActivityFeed({
                 {call.running ? (
                   <span className="window-call-live-time">{t("Running")} · <strong>{durationText(call.duration)}</strong></span>
                 ) : (
-                  <span>
-                    <time dateTime={new Date(call.startedAt).toISOString()} title={absoluteTime(call.startedAt)}>{clockTime(call.startedAt)}</time>
-                    <span aria-hidden="true"> · </span>
-                    <strong>{durationText(call.duration)}</strong>
-                  </span>
+                  <>
+                    <span className="window-call-clock">
+                      <time dateTime={new Date(call.startedAt).toISOString()} title={absoluteTime(call.startedAt)}>{clockTime(call.startedAt)}</time>
+                    </span>
+                    <span className="window-call-duration">
+                      <small>{t("Duration")}</small>
+                      <strong>{durationText(call.duration)}</strong>
+                    </span>
+                  </>
                 )}
               </div>
             </article>

@@ -4,9 +4,10 @@ import type { RuntimeV2Client } from "../src/runtime-v2/api/client.js";
 import { WindowCollaboration } from "../src/runtime-v2/components/WindowCollaboration.js";
 
 const transcript = { available: true, can_send: true, messages: [
-  { message_id: "wc_msg_operator", source: "operator", direction: "inbound", message: "Check failures", created_at_ms: 1000, requires_ack: true, first_projected_at_ms: null, first_ack_observed_at_ms: null },
-  { message_id: "wc_msg_peer", source: "peer", direction: "inbound", peer_id: "wc_peer_1234567890abcdef", message: "Review done", created_at_ms: 2000, requires_ack: false, first_projected_at_ms: 2000, first_ack_observed_at_ms: null },
-  { message_id: "wc_msg_peer_out", source: "peer", direction: "outbound", peer_id: "wc_peer_fedcba0987654321", message: "Sent to peer", created_at_ms: 3000, requires_ack: false, first_projected_at_ms: 3000, first_ack_observed_at_ms: null },
+  { message_id: "wc_msg_operator", source: "operator", direction: "inbound", message: "Check failures", created_at_ms: 1000, kind: "guidance", priority: "normal", requires_ack: true, first_projected_at_ms: null, first_ack_observed_at_ms: null },
+  { message_id: "wc_msg_window", source: "window", direction: "outbound", message: "Reply from this Window", created_at_ms: 1500, reply_to_message_id: "wc_msg_operator", kind: "answer", priority: "normal", requires_ack: false, first_projected_at_ms: null, first_ack_observed_at_ms: null },
+  { message_id: "wc_msg_peer", source: "peer", direction: "inbound", peer_id: "wc_peer_1234567890abcdef", message: "Review done", created_at_ms: 2000, kind: "progress", priority: "normal", requires_ack: false, first_projected_at_ms: 2000, first_ack_observed_at_ms: null },
+  { message_id: "wc_msg_peer_out", source: "peer", direction: "outbound", peer_id: "wc_peer_fedcba0987654321", message: "Sent to peer", created_at_ms: 3000, kind: "progress", priority: "normal", requires_ack: false, first_projected_at_ms: 3000, first_ack_observed_at_ms: null },
 ], truncated: false };
 
 describe("Window collaboration", () => {
@@ -18,13 +19,26 @@ describe("Window collaboration", () => {
     await screen.findByText("Review done");
     expect(screen.getByText("Sent")).toBeTruthy();
     expect(screen.getByText("Delivered")).toBeTruthy();
-    expect(screen.getByText("3 messages")).toBeTruthy();
+    expect(screen.getByText("4 messages")).toBeTruthy();
+    const windowReply = screen.getByText("Reply from this Window").closest("article");
+    expect(windowReply?.textContent).toContain("This Window");
+    expect(windowReply?.textContent).not.toMatch(/Sent|Delivered|Acknowledged/);
     expect(screen.getByText("⌘/Ctrl + Enter to send")).toBeTruthy();
     const inboundPeer = screen.getByText("Review done").closest("article");
     expect(inboundPeer?.textContent).not.toMatch(/Sent|Delivered|Acknowledged/);
+    fireEvent.change(screen.getByLabelText("Message type"), { target: { value: "question" } });
+    fireEvent.change(screen.getByLabelText("Message priority"), { target: { value: "high" } });
+    fireEvent.click(screen.getByLabelText("Require ACK"));
     fireEvent.change(screen.getByRole("textbox"), { target: { value: "No Session needed" } });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
-    await waitFor(() => expect(post).toHaveBeenCalledWith("window-collaboration-post", expect.objectContaining({ client_window_key: "exact-window", context_session_id: null, message: "No Session needed" })));
+    await waitFor(() => expect(post).toHaveBeenCalledWith("window-collaboration-post", expect.objectContaining({
+      client_window_key: "exact-window",
+      context_session_id: null,
+      message: "No Session needed",
+      kind: "question",
+      priority: "high",
+      requires_ack: false,
+    })));
     await waitFor(() => expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe(""));
     view.rerender(<WindowCollaboration client={client} windowKey="exact-window" selectedSessionId="wc_sess_context" language="en" onUnauthorized={onUnauthorized} />);
     fireEvent.change(screen.getByRole("textbox"), { target: { value: "Context only" } });

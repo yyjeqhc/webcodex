@@ -526,6 +526,21 @@ impl Database {
             CREATE INDEX IF NOT EXISTS idx_window_operator_messages_recipient
                 ON window_operator_messages(principal_kind, principal_id, recipient_window_key, created_at_ms);
 
+            CREATE TABLE IF NOT EXISTS window_model_replies (
+                message_id TEXT PRIMARY KEY,
+                principal_kind TEXT NOT NULL,
+                principal_id TEXT NOT NULL,
+                window_key TEXT NOT NULL,
+                reply_to_message_id TEXT NOT NULL,
+                message TEXT NOT NULL,
+                created_at_ms INTEGER NOT NULL,
+                delivery_key_hash TEXT NOT NULL,
+                delivery_payload_hash TEXT NOT NULL,
+                UNIQUE(principal_kind, principal_id, delivery_key_hash)
+            );
+            CREATE INDEX IF NOT EXISTS idx_window_model_replies_window
+                ON window_model_replies(principal_kind, principal_id, window_key, created_at_ms);
+
             CREATE TABLE IF NOT EXISTS window_peer_messages (
                 message_id TEXT PRIMARY KEY,
                 principal_kind TEXT NOT NULL,

@@ -451,7 +451,7 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
   function validCollaborationMessage(value) {
     if (!value || typeof value !== "object" || Array.isArray(value) || !MESSAGE_ID.test(value.message_id)) return false;
     if (!Number.isSafeInteger(value.created_at_ms) || value.created_at_ms < 0 || typeof value.message !== "string" || Array.from(value.message).length > 8000) return false;
-    if (!["operator", "peer"].includes(value.source) || !["inbound", "outbound"].includes(value.direction)) return false;
+    if (!["operator", "window", "peer"].includes(value.source) || !["inbound", "outbound"].includes(value.direction)) return false;
     if (typeof value.requires_ack !== "boolean") return false;
     if (value.peer_id !== undefined && (typeof value.peer_id !== "string" || !/^wc_peer_[0-9a-f]{32}$/.test(value.peer_id))) return false;
     if (value.context_session_id !== undefined && !SESSION_ID.test(value.context_session_id)) return false;
@@ -818,6 +818,7 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
 
   function deliveryLabel(message) {
     if (message.source === "peer" && message.direction === "inbound") return null;
+    if (message.source === "window") return null;
     if (message.first_ack_observed_at_ms !== null) return "Acknowledged";
     if (message.first_projected_at_ms !== null) return "Delivered";
     return "Sent";
@@ -834,7 +835,11 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
       const copy = document.createElement("div"); copy.className = "message-copy"; copy.textContent = message.message;
       const meta = document.createElement("div"); meta.className = "message-meta";
       const author = document.createElement("strong");
-      author.textContent = message.source === "operator" ? "You" : (message.direction === "outbound" ? "This Window → " : "") + "Window · " + String(message.peer_id || "").slice(8, 16);
+      author.textContent = message.source === "operator"
+        ? "You"
+        : message.source === "window"
+          ? "This Window"
+          : (message.direction === "outbound" ? "This Window → " : "") + "Window · " + String(message.peer_id || "").slice(8, 16);
       const time = document.createElement("span"); time.textContent = formatAge(message.created_at_ms);
       meta.append(author, time);
       const label = deliveryLabel(message);

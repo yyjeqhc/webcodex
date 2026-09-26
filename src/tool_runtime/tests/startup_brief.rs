@@ -151,6 +151,15 @@ fn assert_builtin_workflow(output: &Value) {
     assert!(message_ack_guidance.contains("resolves messages"));
     assert!(message_ack_guidance.contains("grants authority"));
     assert!(message_ack_guidance.contains("gates execution"));
+    let window_reply_guidance = workflow["model_protocol"]["window_reply"]
+        .as_str()
+        .expect("Window reply guidance");
+    assert!(window_reply_guidance.contains("operator_messages"));
+    assert!(window_reply_guidance.contains("window_reply"));
+    assert!(window_reply_guidance.contains("reply_to"));
+    assert!(window_reply_guidance.contains("No recording_session_id"));
+    assert!(window_reply_guidance.contains("ack_session_message_ids"));
+    assert!(window_reply_guidance.contains("post-result"));
     let message_resolution_guidance = workflow["model_protocol"]["session_message_resolution"]
         .as_str()
         .expect("Session message resolution guidance");

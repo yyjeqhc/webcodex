@@ -65,7 +65,8 @@ use tools::{
     mcp_tools_list_payload_with_compact_and_app, mcp_tools_list_payload_with_features_for_auth,
     strip_recording_session_id, strip_stateless_ack_ref, strip_stateless_ack_session_message_ids,
     strip_stateless_context_request, strip_stateless_session_message_resolution,
-    take_last_mcp_host_file_import_trust_decision, HostFileImportTrustReason, McpToolCallParams,
+    strip_stateless_window_reply, take_last_mcp_host_file_import_trust_decision,
+    HostFileImportTrustReason, McpToolCallParams,
 };
 
 /// Hard upper bound on a single MCP JSON-RPC dispatch, applied in `mcp_post`.

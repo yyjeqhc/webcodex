@@ -1,13 +1,18 @@
 import { Bot, CheckCircle2, MessageSquare, Send, UserRound } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { RuntimeV2Client } from "../api/client.js";
-import type { WindowCollaborationMessage } from "../api/windowCollaboration.js";
+import type {
+  WindowCollaborationKind,
+  WindowCollaborationMessage,
+  WindowCollaborationPriority,
+} from "../api/windowCollaboration.js";
 import type { RuntimeLanguage } from "../../runtime_i18n.js";
 import { clockTime, shortId } from "../model/format.js";
 import { useWindowCollaboration } from "../state/useWindowCollaboration.js";
 
 function deliveryLabel(row: WindowCollaborationMessage, zh: boolean): string | null {
   if (row.source === "peer" && row.direction === "inbound") return null;
+  if (row.source === "window") return null;
   if (row.first_ack_observed_at_ms != null) return zh ? "已确认" : "Acknowledged";
   if (row.first_projected_at_ms != null) return zh ? "已送达" : "Delivered";
   return zh ? "已发送" : "Sent";
@@ -15,8 +20,32 @@ function deliveryLabel(row: WindowCollaborationMessage, zh: boolean): string | n
 
 function participantLabel(row: WindowCollaborationMessage, zh: boolean): string {
   if (row.source === "operator") return zh ? "你" : "You";
+  if (row.source === "window") return zh ? "此窗口" : "This Window";
   if (row.direction === "outbound") return zh ? "此窗口 → 其他窗口" : "This Window → Peer Window";
   return zh ? "其他窗口" : "Peer Window";
+}
+
+function kindLabel(kind: WindowCollaborationKind, zh: boolean): string {
+  const labels: Record<WindowCollaborationKind, [string, string]> = {
+    note: ["备注", "Note"],
+    proposal: ["建议", "Proposal"],
+    question: ["问题", "Question"],
+    answer: ["回答", "Answer"],
+    decision: ["决定", "Decision"],
+    risk: ["风险", "Risk"],
+    progress: ["进展", "Progress"],
+    guidance: ["指令", "Guidance"],
+    todo: ["待办", "Todo"],
+  };
+  return labels[kind]?.[zh ? 0 : 1] || kind;
+}
+
+function priorityLabel(priority: WindowCollaborationPriority, zh: boolean): string {
+  return priority === "high"
+    ? (zh ? "高优先级" : "High priority")
+    : priority === "low"
+      ? (zh ? "低优先级" : "Low priority")
+      : (zh ? "普通" : "Normal");
 }
 
 export function WindowCollaboration({ client, windowKey, selectedSessionId, language, onUnauthorized }: {
@@ -28,6 +57,9 @@ export function WindowCollaboration({ client, windowKey, selectedSessionId, lang
 }) {
   const zh = language === "zh-CN";
   const [message, setMessage] = useState("");
+  const [messageKind, setMessageKind] = useState<WindowCollaborationKind>("guidance");
+  const [priority, setPriority] = useState<WindowCollaborationPriority>("normal");
+  const [requiresAck, setRequiresAck] = useState(true);
   const threadRef = useRef<HTMLDivElement | null>(null);
   const state = useWindowCollaboration(client, windowKey, onUnauthorized);
   const sending = state.sendState === "sending";
@@ -52,7 +84,13 @@ export function WindowCollaboration({ client, windowKey, selectedSessionId, lang
   const submit = () => {
     const text = message.trim();
     if (!text || sending || !state.transcript?.can_send) return;
-    void state.send(text, selectedSessionId || null).then(ok => {
+    void state.send(
+      text,
+      selectedSessionId || null,
+      messageKind,
+      priority,
+      requiresAck,
+    ).then(ok => {
       if (ok) setMessage("");
     });
   };
@@ -85,7 +123,8 @@ export function WindowCollaboration({ client, windowKey, selectedSessionId, lang
 
         {messages.map(row => {
           const status = deliveryLabel(row, zh);
-          const outgoing = row.source === "operator" || row.direction === "outbound";
+          const outgoing =
+            row.source === "operator" || (row.source === "peer" && row.direction === "outbound");
           return (
             <article
               className={"window-collaboration-message " + (outgoing ? "outgoing" : "incoming")}
@@ -100,20 +139,29 @@ export function WindowCollaboration({ client, windowKey, selectedSessionId, lang
                   <time>{clockTime(row.created_at_ms)}</time>
                 </header>
                 <p>{row.message}</p>
-                {(status || row.context_session_id) && (
-                  <footer>
-                    {status && (
-                      <span className="window-collaboration-delivery">
-                        <CheckCircle2 size={12} /> {status}
-                      </span>
-                    )}
-                    {row.context_session_id && (
-                      <span className="window-collaboration-session" title={row.context_session_id}>
-                        Session · {shortId(row.context_session_id)}
-                      </span>
-                    )}
-                  </footer>
-                )}
+                <footer>
+                  <span className="window-collaboration-meta-chip">{kindLabel(row.kind, zh)}</span>
+                  {row.priority !== "normal" && (
+                    <span className={"window-collaboration-meta-chip priority-" + row.priority}>
+                      {priorityLabel(row.priority, zh)}
+                    </span>
+                  )}
+                  {status && (
+                    <span className="window-collaboration-delivery">
+                      <CheckCircle2 size={12} /> {status}
+                    </span>
+                  )}
+                  {row.requires_ack && row.first_ack_observed_at_ms == null && (
+                    <span className="window-collaboration-meta-chip ack">
+                      {zh ? "要求确认" : "ACK requested"}
+                    </span>
+                  )}
+                  {row.context_session_id && (
+                    <span className="window-collaboration-session" title={row.context_session_id}>
+                      Session · {shortId(row.context_session_id)}
+                    </span>
+                  )}
+                </footer>
               </div>
             </article>
           );
@@ -141,6 +189,44 @@ export function WindowCollaboration({ client, windowKey, selectedSessionId, lang
         }}
       >
         <div className="window-collaboration-compose-box">
+          <div className="window-collaboration-compose-options">
+            <label>
+              <span>{zh ? "类型" : "Type"}</span>
+              <select
+                aria-label={zh ? "消息类型" : "Message type"}
+                value={messageKind}
+                disabled={sending || uncertain}
+                onChange={event => setMessageKind(event.currentTarget.value as WindowCollaborationKind)}
+              >
+                <option value="guidance">{zh ? "指令" : "Guidance"}</option>
+                <option value="note">{zh ? "备注" : "Note"}</option>
+                <option value="question">{zh ? "问题" : "Question"}</option>
+                <option value="todo">{zh ? "待办" : "Todo"}</option>
+              </select>
+            </label>
+            <label>
+              <span>{zh ? "优先级" : "Priority"}</span>
+              <select
+                aria-label={zh ? "消息优先级" : "Message priority"}
+                value={priority}
+                disabled={sending || uncertain}
+                onChange={event => setPriority(event.currentTarget.value as WindowCollaborationPriority)}
+              >
+                <option value="normal">{zh ? "普通" : "Normal"}</option>
+                <option value="high">{zh ? "高" : "High"}</option>
+                <option value="low">{zh ? "低" : "Low"}</option>
+              </select>
+            </label>
+            <label className="window-collaboration-ack-toggle">
+              <input
+                type="checkbox"
+                checked={requiresAck}
+                disabled={sending || uncertain}
+                onChange={event => setRequiresAck(event.currentTarget.checked)}
+              />
+              <span>{zh ? "要求确认" : "Require ACK"}</span>
+            </label>
+          </div>
           {selectedSessionId && (
             <span className="window-collaboration-compose-context" title={selectedSessionId}>
               {zh ? "关联当前 Session" : "Current Session"} · {shortId(selectedSessionId)}

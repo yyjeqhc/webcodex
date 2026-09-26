@@ -21,8 +21,8 @@ use crate::tool_runtime::model_ergonomics_telemetry::{
 };
 use crate::tool_runtime::specialized::SpecializedGovernanceDenial;
 use crate::tool_runtime::tool_definition::{
-    is_adaptive_runtime_direct_tool, runtime_tool_operator_extension_family,
-    ToolOperatorExtensionFamily,
+    is_adaptive_runtime_direct_tool, is_model_visible_tool_name,
+    runtime_tool_operator_extension_family, ToolOperatorExtensionFamily,
 };
 use crate::tool_runtime::{ToolCall, ToolResult, ToolRuntime, ToolSpec};
 use serde::Deserialize;
@@ -214,6 +214,7 @@ fn unwrap_adaptive_runtime_gateway_arguments(
             crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_MESSAGE_IDS_FIELD,
             crate::tool_runtime::sessions::TOOL_CALL_ACK_REF_FIELD,
             crate::tool_runtime::sessions::TOOL_CALL_SESSION_MESSAGE_RESOLUTION_FIELD,
+            crate::tool_runtime::window_collaboration::TOOL_CALL_WINDOW_REPLY_FIELD,
             crate::tool_runtime::context_projection::TOOL_CALL_CONTEXT_REQUEST_FIELD,
             crate::tool_runtime::control_sidecar::CONTROL_FIELD,
         ]);
@@ -547,6 +548,77 @@ fn add_stateless_session_attention_output_schema(tool: &mut Value) {
     }
 }
 
+fn stateless_window_reply_supported(tool_name: Option<&str>) -> bool {
+    let Some(tool_name) = tool_name else {
+        return false;
+    };
+    if matches!(
+        tool_name,
+        crate::mcp_gateway::MCP_TOOL_NAME
+            | crate::plugin_gateway::PLUGIN_TOOL_NAME
+            | crate::ssh_resource_gateway::SSH_RESOURCE_TOOL_NAME
+    ) {
+        return false;
+    }
+    tool_name == ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME || is_model_visible_tool_name(tool_name)
+}
+
+fn stateless_window_reply_input_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Reply to one Operator message retained in this exact Window; no Workflow Session required. The reply is persisted independently after the main tool result.",
+        "properties": {
+            "reply_to": {
+                "type": "string",
+                "pattern": "^wc_msg_([A-Za-z0-9_-]{16}|[0-9a-f]{32})$"
+            },
+            "message": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": crate::tool_runtime::window_collaboration::MAX_WINDOW_REPLY_CHARS
+            }
+        },
+        "required": ["reply_to", "message"]
+    })
+}
+
+fn stateless_window_reply_output_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+            "success": {"type": "boolean"},
+            "message_id": {"type": "string"},
+            "reply_to": {"type": "string"},
+            "replayed": {"type": "boolean"},
+            "state_changed": {}
+        },
+        "required": ["success", "state_changed"]
+    })
+}
+
+fn add_stateless_window_reply_output_schema(tool: &mut Value) {
+    let Some(output_schema) = tool.get_mut("outputSchema") else {
+        return;
+    };
+    let projection = stateless_window_reply_output_schema();
+    if let Some(output) = output_schema.pointer_mut("/properties/output") {
+        add_wrapper_projection_to_output_shape(output, "window_reply", &projection);
+    }
+    if let Some(conditions) = output_schema.get_mut("allOf").and_then(Value::as_array_mut) {
+        for condition in conditions {
+            for branch_name in ["then", "else"] {
+                if let Some(output) =
+                    condition.pointer_mut(&format!("/{branch_name}/properties/output"))
+                {
+                    add_wrapper_projection_to_output_shape(output, "window_reply", &projection);
+                }
+            }
+        }
+    }
+}
+
 fn insert_stateless_collaboration_ack_property(properties: &mut serde_json::Map<String, Value>) {
     properties.insert(
         crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_MESSAGE_IDS_FIELD.to_string(),
@@ -590,6 +662,12 @@ pub(super) fn add_stateless_workflow_recorder_metadata(payload: &mut Value) {
             }),
         );
         insert_stateless_collaboration_ack_property(properties);
+        if stateless_window_reply_supported(tool_name) {
+            properties.insert(
+                crate::tool_runtime::window_collaboration::TOOL_CALL_WINDOW_REPLY_FIELD.to_string(),
+                stateless_window_reply_input_schema(),
+            );
+        }
         properties.insert(
             crate::tool_runtime::sessions::TOOL_CALL_SESSION_MESSAGE_RESOLUTION_FIELD.to_string(),
             json!({
@@ -654,6 +732,9 @@ pub(super) fn add_stateless_workflow_recorder_metadata(payload: &mut Value) {
         }
         add_stateless_context_projection_output_schema(tool);
         add_stateless_session_attention_output_schema(tool);
+        if stateless_window_reply_supported(tool_name) {
+            add_stateless_window_reply_output_schema(tool);
+        }
     }
 }
 
@@ -1609,6 +1690,51 @@ pub(super) fn strip_stateless_session_message_resolution(
     ))
 }
 
+pub(super) fn strip_stateless_window_reply(
+    arguments: &mut Value,
+) -> Result<Option<crate::tool_runtime::window_collaboration::ToolCallWindowReply>, String> {
+    let Some(object) = arguments.as_object_mut() else {
+        return Ok(None);
+    };
+    let Some(value) =
+        object.remove(crate::tool_runtime::window_collaboration::TOOL_CALL_WINDOW_REPLY_FIELD)
+    else {
+        return Ok(None);
+    };
+    let Value::Object(mut fields) = value else {
+        return Err("field 'window_reply' must be an object with reply_to and message".to_string());
+    };
+    if fields.len() != 2 || !fields.contains_key("reply_to") || !fields.contains_key("message") {
+        return Err("field 'window_reply' accepts exactly reply_to and message".to_string());
+    }
+    let Some(Value::String(reply_to)) = fields.remove("reply_to") else {
+        return Err("window_reply.reply_to must be a wc_msg_* string".to_string());
+    };
+    let reply_to = reply_to.trim().to_string();
+    if !webcodex_core::workflow_session_contract::is_valid_session_message_id(&reply_to) {
+        return Err("window_reply.reply_to must be a valid wc_msg_* id".to_string());
+    }
+    let Some(Value::String(message)) = fields.remove("message") else {
+        return Err("window_reply.message must be a string".to_string());
+    };
+    let message = message.trim().to_string();
+    if message.is_empty() {
+        return Err("window_reply.message must not be empty".to_string());
+    }
+    if message.chars().count() > crate::tool_runtime::window_collaboration::MAX_WINDOW_REPLY_CHARS {
+        return Err(format!(
+            "window_reply.message exceeds {} chars",
+            crate::tool_runtime::window_collaboration::MAX_WINDOW_REPLY_CHARS
+        ));
+    }
+    Ok(Some(
+        crate::tool_runtime::window_collaboration::ToolCallWindowReply {
+            reply_to_message_id: reply_to,
+            message,
+        },
+    ))
+}
+
 pub(super) fn strip_stateless_context_request(
     arguments: &mut Value,
 ) -> Result<Vec<String>, String> {
@@ -1791,6 +1917,38 @@ pub(super) async fn handle_call(
     } else {
         None
     };
+    let window_reply = if stateless_2026 {
+        match strip_stateless_window_reply(&mut params.arguments) {
+            Ok(reply) => reply,
+            Err(message) => {
+                if let Some(lc) = lifecycle.as_deref() {
+                    lc.dispatch_failed("invalid_arguments");
+                    lc.dispatch_finished(false, Some(false), "invalid_arguments");
+                }
+                return McpOutcome::BadRequest(rpc_error(id, -32602, message));
+            }
+        }
+    } else {
+        None
+    };
+    if window_reply.is_some()
+        && matches!(
+            params.name.as_str(),
+            crate::mcp_gateway::MCP_TOOL_NAME
+                | crate::plugin_gateway::PLUGIN_TOOL_NAME
+                | crate::ssh_resource_gateway::SSH_RESOURCE_TOOL_NAME
+        )
+    {
+        if let Some(lc) = lifecycle.as_deref() {
+            lc.dispatch_failed("invalid_arguments");
+            lc.dispatch_finished(false, Some(false), "invalid_arguments");
+        }
+        return McpOutcome::BadRequest(rpc_error(
+            id,
+            -32602,
+            "window_reply is supported only on ordinary model-visible Runtime tools",
+        ));
+    }
     // Strip private control payloads before tracing, canonical argument parsing,
     // specialized dispatch, and audit. Legacy/hidden adapters reject explicitly.
     let control = match crate::tool_runtime::control_sidecar::strip_control_sidecars(
@@ -2399,6 +2557,7 @@ pub(super) async fn handle_call(
                 ack_session_message_ids,
                 ack_ref,
                 session_message_resolution,
+                window_reply,
                 context_request,
             },
             ToolProtocolCapabilities {

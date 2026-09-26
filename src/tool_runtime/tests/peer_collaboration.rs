@@ -1033,9 +1033,22 @@ async fn operator_attention_only_model_activity_consumes_and_acknowledges() {
         &window,
         "runtime_status",
         json!({}),
-        ToolInvocationMetadata::default(),
+        ToolInvocationMetadata {
+            window_reply: Some(
+                crate::tool_runtime::window_collaboration::ToolCallWindowReply {
+                    reply_to_message_id: id.clone(),
+                    message: "Premature reply".to_string(),
+                },
+            ),
+            ..Default::default()
+        },
     )
     .await;
+    assert_eq!(visible.output["window_reply"]["success"], false);
+    assert_eq!(
+        visible.output["window_reply"]["error_kind"],
+        "operator_message_unavailable"
+    );
     assert_eq!(
         visible.output["operator_messages"]["messages"][0]["message_id"],
         id
@@ -1052,6 +1065,12 @@ async fn operator_attention_only_model_activity_consumes_and_acknowledges() {
         json!({}),
         ToolInvocationMetadata {
             ack_session_message_ids: vec![id.clone()],
+            window_reply: Some(
+                crate::tool_runtime::window_collaboration::ToolCallWindowReply {
+                    reply_to_message_id: id.clone(),
+                    message: "Tests are clean.".to_string(),
+                },
+            ),
             ..Default::default()
         },
     )
@@ -1060,9 +1079,15 @@ async fn operator_attention_only_model_activity_consumes_and_acknowledges() {
         ack.output["operator_messages"]["ack"]["accepted_ids"][0],
         id
     );
-    assert!(
-        runtime.window_collaboration(Some(window.key()), Some(&auth), 10)["messages"][0]
-            ["first_ack_observed_at_ms"]
-            .is_number()
-    );
+    assert_eq!(ack.output["window_reply"]["success"], true);
+    assert_eq!(ack.output["window_reply"]["reply_to"], id);
+    assert!(ack.output["window_reply"]["message_id"].is_string());
+    let transcript = runtime.window_collaboration(Some(window.key()), Some(&auth), 10);
+    let messages = transcript["messages"].as_array().unwrap();
+    assert_eq!(messages.len(), 2);
+    assert_eq!(messages[0]["source"], "operator");
+    assert_eq!(messages[1]["source"], "window");
+    assert_eq!(messages[1]["message"], "Tests are clean.");
+    assert_eq!(messages[1]["reply_to_message_id"], id);
+    assert!(transcript["messages"][0]["first_ack_observed_at_ms"].is_number());
 }

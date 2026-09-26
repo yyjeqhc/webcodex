@@ -292,6 +292,7 @@ test("Window messages render sender delivery state but not inbound peer delivery
         { message_id: "wc_msg_sent", created_at_ms: 1_999_999_997_000, message: "sent", source: "operator", direction: "inbound", requires_ack: true, first_projected_at_ms: null, first_ack_observed_at_ms: null },
         { message_id: "wc_msg_seen", created_at_ms: 1_999_999_998_000, message: "seen", source: "operator", direction: "inbound", requires_ack: true, first_projected_at_ms: 1_999_999_999_000, first_ack_observed_at_ms: null },
         { message_id: "wc_msg_handled", created_at_ms: 1_999_999_999_000, message: "acknowledged", source: "operator", direction: "inbound", requires_ack: true, first_projected_at_ms: 1_999_999_999_000, first_ack_observed_at_ms: 2_000_000_000_000 },
+        { message_id: "wc_msg_window_reply", created_at_ms: 1_999_999_999_500, message: "window reply", source: "window", direction: "outbound", reply_to_message_id: "wc_msg_handled", requires_ack: false, first_projected_at_ms: null, first_ack_observed_at_ms: null },
         { message_id: "wc_msg_peer_in", created_at_ms: 2_000_000_000_000, message: "peer inbound", source: "peer", direction: "inbound", peer_id: `wc_peer_${"2".repeat(32)}`, requires_ack: false, first_projected_at_ms: 2_000_000_000_000, first_ack_observed_at_ms: null },
         { message_id: "wc_msg_peer_out", created_at_ms: 2_000_000_001_000, message: "peer outbound", source: "peer", direction: "outbound", peer_id: `wc_peer_${"3".repeat(32)}`, requires_ack: false, first_projected_at_ms: 2_000_000_001_000, first_ack_observed_at_ms: null },
       ],
@@ -306,7 +307,9 @@ test("Window messages render sender delivery state but not inbound peer delivery
   assert.equal(lastMeta(rows[1]), "Delivered");
   assert.equal(lastMeta(rows[2]), "Acknowledged");
   assert.doesNotMatch(lastMeta(rows[3]), /Sent|Delivered|Acknowledged/);
-  assert.equal(lastMeta(rows[4]), "Delivered");
+  assert.equal(rows[3].children[1].children[0].textContent, "This Window");
+  assert.doesNotMatch(lastMeta(rows[4]), /Sent|Delivered|Acknowledged/);
+  assert.equal(lastMeta(rows[5]), "Delivered");
 });
 
 test("card composer retries uncertain delivery with the same payload across context changes", async () => {

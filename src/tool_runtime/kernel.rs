@@ -64,6 +64,7 @@ pub(crate) struct ToolInvocationMetadata {
     pub(crate) ack_session_message_ids: Vec<String>,
     pub(crate) ack_ref: Option<String>,
     pub(crate) session_message_resolution: Option<ToolCallSessionMessageResolution>,
+    pub(crate) window_reply: Option<super::window_collaboration::ToolCallWindowReply>,
     pub(crate) context_request: Vec<String>,
 }
 
@@ -350,6 +351,7 @@ impl ToolRuntime {
             }
         }
         let ack_ref = invocation_metadata.ack_ref.clone();
+        let window_reply = invocation_metadata.window_reply.clone();
         let mut recorder_metadata =
             ToolCallRecorderMetadata::from_business_arguments(&request.arguments);
         recorder_metadata.ack_session_message_ids = invocation_metadata.ack_session_message_ids;
@@ -570,6 +572,12 @@ impl ToolRuntime {
             if super::tool_definition::is_model_visible_tool_name(&request.tool_name) {
                 let peer_project = outcome.project.clone();
                 if let Some(result) = outcome.result.as_mut() {
+                    self.add_window_model_reply_sidecar(
+                        result,
+                        context.auth,
+                        context.window,
+                        window_reply.as_ref(),
+                    );
                     if request.tool_name != "present_work_result" {
                         self.add_window_operator_projection(
                             result,
@@ -1156,6 +1164,12 @@ impl ToolRuntime {
             }
         }
         if super::tool_definition::is_model_visible_tool_name(&request.tool_name) {
+            self.add_window_model_reply_sidecar(
+                &mut result,
+                context.auth,
+                context.window,
+                window_reply.as_ref(),
+            );
             let peer_project = correlation
                 .resolved_project
                 .as_deref()
@@ -1342,6 +1356,7 @@ mod tests {
             crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD,
             crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_MESSAGE_IDS_FIELD,
             crate::tool_runtime::sessions::TOOL_CALL_SESSION_MESSAGE_RESOLUTION_FIELD,
+            crate::tool_runtime::window_collaboration::TOOL_CALL_WINDOW_REPLY_FIELD,
             crate::tool_runtime::context_projection::TOOL_CALL_CONTEXT_REQUEST_FIELD,
         ] {
             assert!(!business_object.contains_key(wrapper));

@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { RuntimeV2Client } from "../api/client.js";
-import { fetchWindowCollaboration, postWindowCollaboration, type WindowCollaborationPost, type WindowCollaborationTranscript } from "../api/windowCollaboration.js";
+import {
+  fetchWindowCollaboration,
+  postWindowCollaboration,
+  type WindowCollaborationKind,
+  type WindowCollaborationPost,
+  type WindowCollaborationPriority,
+  type WindowCollaborationTranscript,
+} from "../api/windowCollaboration.js";
 
 export type WindowCollaborationSendState = "idle" | "sending" | "uncertain" | "error";
 export type WindowCollaborationSendError = "conflict" | "context" | "unavailable" | "failed" | null;
@@ -32,10 +39,24 @@ export function useWindowCollaboration(client: RuntimeV2Client, windowKey: strin
     const timer = setInterval(() => void refresh(controller.signal), 3000);
     return () => { alive.current = false; controller.abort(); clearInterval(timer); };
   }, [refresh]);
-  const send = async (message: string, sessionId: string | null) => {
+  const send = async (
+    message: string,
+    sessionId: string | null,
+    kind: WindowCollaborationKind = "guidance",
+    priority: WindowCollaborationPriority = "normal",
+    requiresAck = true,
+  ) => {
     if (sendState === "sending") return false;
     // Only an uncertain outcome retains exact retry identity. Deterministic failures clear it.
-    pending.current ??= { client_window_key: windowKey, message, context_session_id: sessionId, delivery_key: crypto.randomUUID() };
+    pending.current ??= {
+      client_window_key: windowKey,
+      message,
+      context_session_id: sessionId,
+      kind,
+      priority,
+      requires_ack: requiresAck,
+      delivery_key: crypto.randomUUID(),
+    };
     setSendState("sending");
     setSendError(null);
     try {

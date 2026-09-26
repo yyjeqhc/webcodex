@@ -14,6 +14,10 @@ pub struct WindowCollaborationMessage {
     pub message: String,
     pub created_at_ms: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub reply_to_message_id: Option<String>,
+    pub kind: String,
+    pub priority: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub context_session_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context_project: Option<String>,
@@ -38,6 +42,23 @@ pub struct NewWindowOperatorMessage {
     pub created_at_ms: i64,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct NewWindowModelReply {
+    pub principal_kind: String,
+    pub principal_id: String,
+    pub window_key: String,
+    pub reply_to_message_id: String,
+    pub message: String,
+    #[serde(skip)]
+    pub created_at_ms: i64,
+}
+
+pub enum WindowModelReplyDeliveryOutcome {
+    Delivered { message_id: String, replayed: bool },
+    DeliveryKeyConflict,
+    ReplyTargetNotFound,
+}
+
 pub enum WindowOperatorDeliveryOutcome {
     Delivered { message_id: String, replayed: bool },
     DeliveryKeyConflict,
@@ -58,16 +79,19 @@ fn transcript_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<WindowCollaborati
         peer_id: row.get(3)?,
         message: row.get(4)?,
         created_at_ms: row.get(5)?,
-        context_session_id: row.get(6)?,
-        context_project: row.get(7)?,
-        requires_ack: row.get(8)?,
-        first_projected_at_ms: row.get(9)?,
-        first_ack_observed_at_ms: row.get(10)?,
+        reply_to_message_id: row.get(6)?,
+        kind: row.get(7)?,
+        priority: row.get(8)?,
+        context_session_id: row.get(9)?,
+        context_project: row.get(10)?,
+        requires_ack: row.get(11)?,
+        first_projected_at_ms: row.get(12)?,
+        first_ack_observed_at_ms: row.get(13)?,
     })
 }
 
 const OPERATOR_SELECT: &str = "SELECT message_id, 'operator', 'inbound', NULL, message,
-    created_at_ms, context_session_id, context_project, requires_ack,
+    created_at_ms, NULL, kind, priority, context_session_id, context_project, requires_ack,
     first_projected_at_ms, first_ack_observed_at_ms FROM window_operator_messages";
 
 impl Database {
@@ -141,6 +165,129 @@ impl Database {
         })
     }
 
+    pub fn post_window_model_reply(
+        &self,
+        input: NewWindowModelReply,
+        delivery_key: &str,
+    ) -> anyhow::Result<WindowModelReplyDeliveryOutcome> {
+        anyhow::ensure!(
+            !delivery_key.trim().is_empty() && delivery_key.chars().count() <= 128,
+            "invalid delivery key"
+        );
+        anyhow::ensure!(
+            !input.message.trim().is_empty() && input.message.chars().count() <= 8000,
+            "invalid message"
+        );
+        anyhow::ensure!(
+            webcodex_core::workflow_session_contract::is_valid_session_message_id(
+                &input.reply_to_message_id
+            ),
+            "invalid reply target"
+        );
+        let key_hash = format!("{:x}", Sha256::digest(delivery_key.as_bytes()));
+        let payload_hash = format!("{:x}", Sha256::digest(serde_json::to_vec(&input)?));
+        let mut conn = self.lock_connection(StoreDomain::Communication);
+        let tx = conn.transaction()?;
+        let existing: Option<(String, String)> = tx
+            .query_row(
+                "SELECT message_id, delivery_payload_hash FROM window_model_replies
+                 WHERE principal_kind=?1 AND principal_id=?2 AND delivery_key_hash=?3",
+                params![input.principal_kind, input.principal_id, key_hash],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        if let Some((message_id, previous)) = existing {
+            return Ok(if previous == payload_hash {
+                WindowModelReplyDeliveryOutcome::Delivered {
+                    message_id,
+                    replayed: true,
+                }
+            } else {
+                WindowModelReplyDeliveryOutcome::DeliveryKeyConflict
+            });
+        }
+        let target_exists = tx
+            .query_row(
+                "SELECT 1 FROM window_operator_messages
+                 WHERE message_id=?1 AND principal_kind=?2 AND principal_id=?3
+                 AND recipient_window_key=?4 AND first_projected_at_ms IS NOT NULL LIMIT 1",
+                params![
+                    input.reply_to_message_id,
+                    input.principal_kind,
+                    input.principal_id,
+                    input.window_key
+                ],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some();
+        if !target_exists {
+            return Ok(WindowModelReplyDeliveryOutcome::ReplyTargetNotFound);
+        }
+        let message_id = format!("wc_msg_{}", webcodex_core::compact::random_suffix::<12>());
+        tx.execute(
+            "INSERT INTO window_model_replies (
+                message_id, principal_kind, principal_id, window_key, reply_to_message_id,
+                message, created_at_ms, delivery_key_hash, delivery_payload_hash
+             ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+            params![
+                message_id,
+                input.principal_kind,
+                input.principal_id,
+                input.window_key,
+                input.reply_to_message_id,
+                input.message,
+                input.created_at_ms,
+                key_hash,
+                payload_hash
+            ],
+        )?;
+        tx.execute(
+            "DELETE FROM window_model_replies WHERE rowid IN (
+                SELECT rowid FROM window_model_replies
+                WHERE principal_kind=?1 AND principal_id=?2
+                ORDER BY created_at_ms DESC, message_id DESC LIMIT -1 OFFSET 512
+             )",
+            params![input.principal_kind, input.principal_id],
+        )?;
+        tx.commit()?;
+        Ok(WindowModelReplyDeliveryOutcome::Delivered {
+            message_id,
+            replayed: false,
+        })
+    }
+
+    pub fn list_window_model_replies(
+        &self,
+        kind: &str,
+        principal: &str,
+        window: &str,
+        limit: usize,
+    ) -> anyhow::Result<Vec<WindowCollaborationMessage>> {
+        let conn = self.lock_connection(StoreDomain::Communication);
+        let mut stmt = conn.prepare(
+            "SELECT r.message_id, 'window', 'outbound', NULL, r.message, r.created_at_ms,
+                    r.reply_to_message_id, 'answer', 'normal',
+                    o.context_session_id, o.context_project, 0, NULL, NULL
+             FROM window_model_replies r
+             LEFT JOIN window_operator_messages o
+               ON o.message_id=r.reply_to_message_id
+              AND o.principal_kind=r.principal_kind
+              AND o.principal_id=r.principal_id
+              AND o.recipient_window_key=r.window_key
+             WHERE r.principal_kind=?1 AND r.principal_id=?2 AND r.window_key=?3
+             ORDER BY r.created_at_ms DESC, r.message_id DESC LIMIT ?4",
+        )?;
+        let mut messages = stmt
+            .query_map(
+                params![kind, principal, window, limit.clamp(1, 512) as i64],
+                transcript_row,
+            )?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        messages.reverse();
+        Ok(messages)
+    }
+
     pub fn list_window_operator_messages(
         &self,
         kind: &str,
@@ -174,7 +321,7 @@ impl Database {
         let mut stmt = conn.prepare("SELECT message_id, 'peer',
             CASE WHEN recipient_window_key=?3 THEN 'inbound' ELSE 'outbound' END,
             CASE WHEN recipient_window_key=?3 THEN sender_peer_id ELSE recipient_peer_id END,
-            message, created_at_ms,
+            message, created_at_ms, NULL, kind, priority,
             CASE WHEN sender_window_key=?3 THEN sender_session_id ELSE NULL END,
             CASE WHEN sender_window_key=?3 THEN sender_project ELSE NULL END, requires_ack,
             first_projected_at_ms, first_ack_observed_at_ms FROM window_peer_messages
@@ -200,6 +347,7 @@ impl Database {
         let limit = limit.clamp(1, 100);
         let mut messages =
             self.list_window_operator_messages(kind, principal, window, limit + 1)?;
+        messages.extend(self.list_window_model_replies(kind, principal, window, limit + 1)?);
         messages.extend(self.list_window_peer_messages(kind, principal, window, limit + 1)?);
         messages.sort_by(|a, b| {
             (a.created_at_ms, &a.message_id).cmp(&(b.created_at_ms, &b.message_id))

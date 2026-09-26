@@ -1108,6 +1108,10 @@ Object.assign(RUNTIME_ZH_TEXT, {
   "First active": "首次活跃"
 });
 
+Object.assign(RUNTIME_ZH_TEXT, {
+  "Duration": "耗时"
+});
+
 export function translate(source: string, language: RuntimeLanguage = "en"): string {
   return language === "zh-CN" ? (RUNTIME_ZH_TEXT[source] || source) : source;
 }

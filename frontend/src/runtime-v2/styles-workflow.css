@@ -12,8 +12,19 @@
 .window-call-context, .window-call-timing, .session-work-context { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; }
 .window-call-context .window-project-tag { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 .window-call-timing { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
-.window-call-timing > span { display: inline-flex; align-items: baseline; gap: 0; }
+.window-call-timing > span { display: inline-flex; align-items: center; }
 .window-call-timing strong, .window-call-timing time { color: var(--text); font-weight: 500; }
+.window-call-clock {
+  padding-right: 14px;
+  border-right: 1px solid var(--line);
+}
+.window-call-duration {
+  gap: 6px;
+  border-radius: 999px;
+  padding: 3px 8px;
+  background: var(--surface-muted);
+}
+.window-call-duration small { color: var(--quiet); font-size: 11px; }
 .window-call-live-time { color: var(--text); font-weight: 600; }
 .session-work-context { padding: 12px 0; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
 .session-work-context button { text-align: left; }

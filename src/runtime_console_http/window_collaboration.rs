@@ -15,6 +15,9 @@ struct PostInput {
     message: String,
     delivery_key: String,
     context_session_id: Option<String>,
+    kind: Option<String>,
+    priority: Option<String>,
+    requires_ack: Option<bool>,
 }
 
 pub(super) async fn authorize(
@@ -89,10 +92,13 @@ pub(super) async fn post(req: &mut Request, depot: &mut Depot, res: &mut Respons
         return render_error(res, e);
     }
     let result = runtime
-        .post_window_operator_message(
+        .post_window_operator_message_with_options(
             &input.client_window_key,
             input.context_session_id.as_deref(),
             None,
+            input.kind.as_deref().unwrap_or("guidance"),
+            input.priority.as_deref().unwrap_or("normal"),
+            input.requires_ack.unwrap_or(true),
             input.message,
             input.delivery_key,
             Some(&auth),

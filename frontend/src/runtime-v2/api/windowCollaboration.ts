@@ -1,12 +1,27 @@
 import type { RuntimeV2Client } from "./client.js";
 
+export type WindowCollaborationKind =
+  | "note"
+  | "proposal"
+  | "question"
+  | "answer"
+  | "decision"
+  | "risk"
+  | "progress"
+  | "guidance"
+  | "todo";
+export type WindowCollaborationPriority = "low" | "normal" | "high";
+
 export type WindowCollaborationMessage = {
   message_id: string;
-  source: "operator" | "peer";
+  source: "operator" | "window" | "peer";
   direction: "inbound" | "outbound";
   peer_id?: string;
   message: string;
   created_at_ms: number;
+  reply_to_message_id?: string;
+  kind: WindowCollaborationKind;
+  priority: WindowCollaborationPriority;
   context_session_id?: string;
   context_project?: string;
   requires_ack: boolean;
@@ -24,6 +39,9 @@ export type WindowCollaborationPost = {
   message: string;
   delivery_key: string;
   context_session_id: string | null;
+  kind: WindowCollaborationKind;
+  priority: WindowCollaborationPriority;
+  requires_ack: boolean;
 };
 export type WindowCollaborationPostResult = {
   message_id?: string;

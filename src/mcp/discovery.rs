@@ -35,6 +35,7 @@ pub(super) fn compact_tool(tool: &mut Value) {
     if let Some(schema) = tool.get_mut("inputSchema") {
         compact_input_descriptions(schema);
         compact_control_sidecar(schema);
+        compact_window_reply_sidecar(schema);
         if let Some(properties) = schema.get_mut("properties").and_then(Value::as_object_mut) {
             for (field, property) in properties {
                 if let (Some(description), Some(Value::String(copy))) = (
@@ -74,6 +75,16 @@ pub(super) fn compact_tool(tool: &mut Value) {
         }
         compact_discovery_validation_annotations(schema);
     }
+}
+
+fn compact_window_reply_sidecar(schema: &mut Value) {
+    let Some(reply) = schema
+        .pointer_mut("/properties/window_reply")
+        .filter(|value| value.is_object())
+    else {
+        return;
+    };
+    *reply = serde_json::json!({"type": "object"});
 }
 
 fn compact_control_sidecar(schema: &mut Value) {

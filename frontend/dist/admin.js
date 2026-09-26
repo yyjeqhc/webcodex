@@ -25972,6 +25972,7 @@ function _L({ color: e, onChange: i, label: a, customLabel: r, compact: l = !1, 
   });
 }
 var jn = {
+  "Current Window": "当前窗口",
   "Session activity": "会话活动",
   "Finding linked Windows…": "正在查找关联窗口…",
   "Could not load Session activity.": "无法加载会话活动。",

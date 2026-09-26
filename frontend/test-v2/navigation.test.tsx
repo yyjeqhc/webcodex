@@ -15,7 +15,7 @@ function json(data: unknown, status = 200): Response {
   });
 }
 
-function installFetch(locateResponse?: () => Promise<Response>, windowResponse?: () => Promise<Response>, sessionResponse?: () => Promise<Response>) {
+function installFetch(locateResponse?: () => Promise<Response>, windowResponse?: () => Promise<Response>, sessionResponse?: () => Promise<Response>, inventoryResponse?: () => Promise<Response>) {
   const overview = runtimeOverview();
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
@@ -57,6 +57,7 @@ function installFetch(locateResponse?: () => Promise<Response>, windowResponse?:
     if (url.endsWith("/api/runtime-console/workflow-session")) return json(sessionDetail({ session_id: body.session_id }));
     if (url.endsWith("/api/runtime-console/projects")) return json({ projects: overview.projects, total: 1, truncated: false });
     if (url.endsWith("/api/runtime-console/workflow-sessions")) return json({ sessions: [sessionItem()], total: 1, returned: 1, truncated: false });
+    if (url.endsWith("/api/runtime-console/windows") && inventoryResponse) return await inventoryResponse();
     if (url.endsWith("/api/runtime-console/windows")) return json({
       windows: [{ client_window_key: "a".repeat(64), last_project: "agent:special:webcodex", source: "openai-session", last_seen_at_ms: 1_790_000_000_000, active_count: 0, linked_session_count: 1, recorder_gap_count: 0 }],
       returned: 1,
@@ -114,17 +115,47 @@ describe("Runtime v2 navigation", () => {
   it("opens a Project Session in the current Window workbench, even outside the Window inventory", async () => {
     const key = "b".repeat(64);
     const sessionId = sessionItem().session_id;
-    installFetch(undefined, async () => json(windowDetail({ client_window_key: key })), async () => json(sessionDetail({ linked_windows: [linkedWindow(key)] })));
+    let includeTarget = false;
+    installFetch(undefined, async () => json(windowDetail({ client_window_key: key })), async () => json(sessionDetail({ linked_windows: [linkedWindow(key)] })), async () => json({
+      windows: (includeTarget ? ["a".repeat(64), key] : ["a".repeat(64)]).map(client_window_key => ({ client_window_key, source: "openai-session", last_seen_at_ms: 1, active_count: 0 })),
+      total: includeTarget ? 2 : 1, truncated: !includeTarget,
+    }));
     await openProjectSession();
     expect(await screen.findByTestId("window-primary-workbench")).toBeTruthy();
     await waitFor(() => expect((screen.getByRole("combobox", { name: "Session filter" }) as HTMLSelectElement).value).toBe(sessionId));
     expect(screen.getByText("No calls in this Session")).toBeTruthy();
+    const selectedRow = screen.getByTestId("work-window-row-" + key);
+    expect(selectedRow.getAttribute("aria-current")).toBe("true");
+    expect(selectedRow.closest(".window-current-selection")).toBeTruthy();
+    expect(screen.getByTestId("current-window-identity").getAttribute("title")).toBe(key);
+    expect(screen.getByTestId("work-window-row-" + "a".repeat(64)).getAttribute("aria-current")).toBeNull();
+    includeTarget = true;
+    fireEvent.focus(window);
+    await waitFor(() => expect(screen.getByTestId("work-window-row-" + key).closest(".window-current-selection")).toBeNull());
+    expect(screen.getAllByTestId("work-window-row-" + key)).toHaveLength(1);
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search Windows" }), { target: { value: "no-matching-window" } });
+    expect(screen.getByTestId("work-window-row-" + key).closest(".window-current-selection")).toBeTruthy();
+    expect(screen.getByTestId("current-window-identity").getAttribute("title")).toBe(key);
     expect(screen.queryByRole("searchbox", { name: "Search Sessions" })).toBeNull();
     const calls = vi.mocked(fetch).mock.calls;
     expect(calls.some(([url]) => String(url).endsWith("/project-git") || String(url).endsWith("/workflow-session-messages"))).toBe(false);
     const windowCalls = calls.filter(([url]) => String(url).endsWith("/window"));
     expect(windowCalls.length).toBeGreaterThan(0);
     expect(windowCalls.every(([, init]) => JSON.parse(String(init?.body)).client_window_key === key)).toBe(true);
+  });
+
+  it("represents the exact jump target in the sidebar before detail arrives", async () => {
+    const key = "b".repeat(64);
+    let release!: () => void;
+    const pending = new Promise<void>(resolve => { release = resolve; });
+    installFetch(undefined, async () => { await pending; return json(windowDetail({ client_window_key: key })); }, async () => json(sessionDetail({ linked_windows: [linkedWindow(key)] })));
+    await openProjectSession();
+    const row = await screen.findByTestId("work-window-row-" + key);
+    expect(row.getAttribute("aria-current")).toBe("true");
+    expect(row.textContent).toContain("Loading recent activity…");
+    release();
+    await waitFor(() => expect(screen.getByTestId("current-window-identity").getAttribute("title")).toBe(key));
+    expect(screen.getAllByTestId("work-window-row-" + key)).toHaveLength(1);
   });
 
   it("asks which exact Window to open when a Session has multiple links", async () => {

@@ -37,10 +37,39 @@ try {
     await page.getByRole('combobox', { name: 'Session filter' }).waitFor();
     assert.equal(await page.getByRole('combobox', { name: 'Session filter' }).inputValue(), sessionId);
     await page.getByText('read_files', { exact: true }).waitFor();
+    const selectedRow = page.getByTestId('work-window-row-' + targetKey);
+    assert.equal(await selectedRow.getAttribute('aria-current'), 'true');
+    assert.equal(await page.locator('.window-work-row[aria-current="true"]').count(), 1);
+    assert.equal(await page.getByTestId('current-window-identity').getAttribute('title'), targetKey);
+    assert.equal(await selectedRow.count(), 1);
     assert.equal(await page.getByRole('searchbox', { name: 'Search Sessions' }).count(), 0);
     const bounds = await page.evaluate(() => ({ width: innerWidth, body: document.body.scrollWidth }));
     assert(bounds.body <= bounds.width + 1, JSON.stringify(bounds));
     await page.screenshot({ path: new URL(`session-navigation-${width}.png`, output).pathname, fullPage: true });
+    if (width === 1440) {
+      // A later inventory includes the target below a long list of active Windows.
+      await page.route('**/api/runtime-console/windows', async route => {
+        const data = structuredClone(webResponse('windows', {}));
+        const row = data.windows[0];
+        data.windows = Array.from({ length: 50 }, (_, index) => ({ ...row, client_window_key: index.toString(16).padStart(64, '0'), active_count: 1 }));
+        data.windows.push({ ...row, client_window_key: targetKey, active_count: 0 });
+        data.total = data.returned = data.windows.length;
+        await route.fulfill({ json: data });
+      });
+      await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+      await page.waitForFunction(key => {
+        const row = document.querySelector('[data-testid="work-window-row-' + key + '"]');
+        return row && !row.closest('.window-current-selection');
+      }, targetKey);
+      assert.equal(await selectedRow.count(), 1);
+      assert.equal(await selectedRow.getAttribute('aria-current'), 'true');
+      const position = await selectedRow.evaluate(row => {
+        const bounds = row.getBoundingClientRect();
+        const list = row.closest('.work-list-scroll').getBoundingClientRect();
+        return { top: bounds.top, bottom: bounds.bottom, listTop: list.top, listBottom: list.bottom };
+      });
+      assert(position.top >= position.listTop - 1 && position.bottom <= position.listBottom + 1, JSON.stringify(position));
+    }
     // Revisiting Work and refreshing must keep the same Window-based interface.
     const nav = page.locator(width <= 700 ? '.mobile-primary-nav' : '.app-nav');
     await nav.getByRole('button', { name: /^Work/ }).click();
@@ -48,7 +77,7 @@ try {
     await page.reload();
     await page.getByTestId('window-primary-workbench').waitFor();
     assert.equal(await page.getByRole('searchbox', { name: 'Search Sessions' }).count(), 0);
-    checks.push({ width, linkedWindowOutsideInventory: true, sessionFocused: true, sameWorkbenchAfterReload: true, overflow: false });
+    checks.push({ width, linkedWindowOutsideInventory: true, sessionFocused: true, sidebarMatchesDetail: true, sameWorkbenchAfterReload: true, overflow: false });
     await page.unrouteAll({ behavior: 'wait' });
     await page.close();
   }

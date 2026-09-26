@@ -291,3 +291,5 @@
   .runtime-page .runtime-metrics > div { padding: 12px 8px; border-top: 0; }
   .runtime-page .runtime-metrics > div + div { border-left: 1px solid var(--line); }
 }
+
+.window-current-selection { margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }

@@ -5,6 +5,7 @@ export type RuntimeLanguage = "en" | "zh-CN";
 export const LANGUAGE_STORAGE_KEY = "webcodex.runtime.language.v1";
 
 export const RUNTIME_ZH_TEXT: Record<string, string> = {
+  "Current Window": "当前窗口",
   "Session activity": "会话活动",
   "Finding linked Windows…": "正在查找关联窗口…",
   "Could not load Session activity.": "无法加载会话活动。",

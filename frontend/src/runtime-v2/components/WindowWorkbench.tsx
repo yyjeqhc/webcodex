@@ -9,7 +9,7 @@ import {
   Server,
 } from "lucide-react";
 import { TextInput } from "@mantine/core";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   displayProjectPath,
   projectFamilyId,
@@ -21,7 +21,7 @@ import { ProjectPicker } from "../../ui/ProjectPicker.js";
 import type { RuntimeLanguage } from "../../runtime_i18n.js";
 import { translate } from "../../runtime_i18n.js";
 import type { RuntimeV2Client } from "../api/client.js";
-import { absoluteTime, clockTime, relativeTime } from "../model/format.js";
+import { absoluteTime, clockTime, relativeTime, shortId } from "../model/format.js";
 import type { ProjectRow, WindowSummary } from "../model/types.js";
 
 import { useWindowWorkspace } from "../state/useWindowWorkspace.js";
@@ -41,6 +41,10 @@ type Props = {
   requestedSessionId?: string;
   onRequestedWindowConsumed?: () => void;
 };
+
+type WindowNavigationRow = Pick<WindowSummary,
+  "client_window_key" | "last_project" | "source" | "last_seen_at_ms" |
+  "last_meaningful_activity_at_ms" | "last_activity_name" | "active_count">;
 
 type ProjectFamily = {
   id: string;
@@ -114,6 +118,8 @@ export function WindowWorkbench({
 }: Props) {
   const t = (value: string) => translate(value, language);
   const windows = useWindowWorkspace(client, true, onUnauthorized, { refreshMs: 3_000, loadDetail: true, initialWindowKey: requestedWindowKey });
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const selectedRowRef = useRef<HTMLButtonElement | null>(null);
   const [search, setSearch] = useState("");
   const [projectFamily, setProjectFamily] = useState("");
   const [centerTab, setCenterTab] = useState<"window" | "collaboration">("window");
@@ -181,7 +187,7 @@ export function WindowWorkbench({
     detail?.activity[0]?.method;
   const lastObservedAt = detail?.last_seen_at_ms || selectedSummary?.last_seen_at_ms;
   const firstObservedAt = detail?.first_seen_at_ms || selectedSummary?.first_seen_at_ms;
-  const isActive = Boolean(detail?.active_count || selectedSummary?.active_count);
+  const isActive = (detail?.active_count ?? selectedSummary?.active_count ?? 0) > 0;
   const currentProjectName = currentProject
     ? projectFamilyName(sourceProject || currentProject, projects)
     : undefined;
@@ -194,6 +200,69 @@ export function WindowWorkbench({
   const hasSelectedWindow = Boolean(selectedSummary || detail);
   const visibleActiveCount = detail?.active_count ?? selectedSummary?.active_count ?? 0;
   const visibleActivityCount = (detail?.activity_returned || 0) + visibleActiveCount;
+
+  // Keep the exact selected resource represented even when a bounded inventory
+  // or a user filter omits it. Derive its presentation from the same detail as
+  // the main pane rather than assigning another Window's Project to it.
+  const selectedNavigationRow: WindowNavigationRow | undefined = detail ? {
+    client_window_key: detail.client_window_key,
+    source: detail.source,
+    last_project: currentProjectId,
+    last_seen_at_ms: detail.last_seen_at_ms,
+    last_meaningful_activity_at_ms: detail.last_meaningful_activity_at_ms,
+    last_activity_name: currentActivity,
+    active_count: detail.active_count,
+  } : selectedSummary;
+  const selectedIsPinned = Boolean(windows.selectedKey && !filtered.some(row => row.client_window_key === windows.selectedKey));
+  useEffect(() => {
+    const list = listRef.current;
+    const row = selectedRowRef.current;
+    if (!list || !row || list.scrollHeight <= list.clientHeight) return;
+    const viewport = list.getBoundingClientRect();
+    const bounds = row.getBoundingClientRect();
+    if (bounds.top < viewport.top) list.scrollTop -= viewport.top - bounds.top;
+    else if (bounds.bottom > viewport.bottom) list.scrollTop += bounds.bottom - viewport.bottom;
+  }, [windows.selectedKey, selectedIsPinned, Boolean(selectedNavigationRow)]);
+
+  const renderWindow = (window: WindowNavigationRow) => {
+    const project = projectFor(projects, window.last_project);
+    const source = project ? projectFor(projects, sourceProjectRuntimeId(project)) : undefined;
+    const activity = window.last_activity_name || t("Observed Window");
+    const observedAt = window.last_meaningful_activity_at_ms || window.last_seen_at_ms;
+    const projectLabel = project
+      ? projectFamilyName(source || project, projects)
+      : window.last_project || t("Project information unavailable");
+    const workspaceLabel = project?.lineage ? projectVariantLabel(project) : projectLabel;
+    return (
+      <button
+        type="button"
+        className={"window-work-row" + (windows.selectedKey === window.client_window_key ? " selected" : "")}
+        aria-current={windows.selectedKey === window.client_window_key ? "true" : undefined}
+        ref={windows.selectedKey === window.client_window_key ? selectedRowRef : undefined}
+        onClick={() => windows.select(window.client_window_key)}
+        key={window.client_window_key}
+        data-testid={"work-window-row-" + window.client_window_key}
+      >
+        <span className={"work-state-dot " + (window.active_count ? "running" : "recent")} />
+        <span className="window-work-row-main">
+          <strong>{workspaceLabel}</strong>
+          <small title={window.client_window_key}>{t("Window")} · {shortId(window.client_window_key, 6, 4)}</small>
+          <small>{project?.lineage ? projectLabel + " · " : ""}{activity}</small>
+          <small title={displayProjectPath(project?.path || source?.path)}>
+            {[
+              project?.client_id || t("Runner unavailable"),
+              displayProjectPath(project?.path || source?.path),
+            ].filter(Boolean).join(" · ")}
+          </small>
+        </span>
+        <span className="window-work-row-side">
+          {window.active_count > 0
+            ? <em>{window.active_count} {t("active")}</em>
+            : <time title={absoluteTime(observedAt)}>{relativeTime(observedAt)}</time>}
+        </span>
+      </button>
+    );
+  };
 
   return (
     <div className="work-layout window-primary-workbench" data-testid="window-primary-workbench">
@@ -231,47 +300,26 @@ export function WindowWorkbench({
             placeholder={t("Search windows or projects…")}
           />
         </div>
-        <div className="work-list-scroll">
+        <div className="work-list-scroll" ref={listRef}>
+          {selectedIsPinned && <div className="window-current-selection">
+            <div className="window-list-summary"><span>{t("Current Window")}</span></div>
+            {selectedNavigationRow ? renderWindow(selectedNavigationRow) : (
+              <button className="window-work-row selected" type="button" aria-current="true"
+                ref={selectedRowRef} data-testid={"work-window-row-" + windows.selectedKey}
+                onClick={windows.refresh}>
+                <Monitor size={14} />
+                <span className="window-work-row-main">
+                  <strong title={windows.selectedKey}>{t("Window")} · {shortId(windows.selectedKey, 6, 4)}</strong>
+                  <small role="status">{t(windows.detailAvailability === "error" || windows.detailAvailability === "denied" ? "Window activity unavailable" : "Loading recent activity…")}</small>
+                </span>
+              </button>
+            )}
+          </div>}
           <div className="window-list-summary">
             <span>{filtered.length} {t("Windows")}</span>
             <small>{filtered.filter((row) => row.active_count > 0).length} {t("active")}</small>
           </div>
-          {filtered.map((window) => {
-            const project = projectFor(projects, window.last_project);
-            const source = project ? projectFor(projects, sourceProjectRuntimeId(project)) : undefined;
-            const activity = window.last_activity_name || t("Observed Window");
-            const observedAt = windowObservedAt(window);
-            const projectLabel = project
-              ? projectFamilyName(source || project, projects)
-              : window.last_project || t("Project information unavailable");
-            const workspaceLabel = project?.lineage ? projectVariantLabel(project) : projectLabel;
-            return (
-              <button
-                type="button"
-                className={"window-work-row" + (windows.selectedKey === window.client_window_key ? " selected" : "")}
-                onClick={() => windows.select(window.client_window_key)}
-                key={window.client_window_key}
-                data-testid={"work-window-row-" + window.client_window_key}
-              >
-                <span className={"work-state-dot " + (window.active_count ? "running" : "recent")} />
-                <span className="window-work-row-main">
-                  <strong>{workspaceLabel}</strong>
-                  <small>{project?.lineage ? projectLabel + " · " : ""}{activity}</small>
-                  <small title={displayProjectPath(project?.path || source?.path)}>
-                    {[
-                      project?.client_id || t("Runner unavailable"),
-                      displayProjectPath(project?.path || source?.path),
-                    ].filter(Boolean).join(" · ")}
-                  </small>
-                </span>
-                <span className="window-work-row-side">
-                  {window.active_count > 0
-                    ? <em>{window.active_count} {t("active")}</em>
-                    : <time title={absoluteTime(observedAt)}>{relativeTime(observedAt)}</time>}
-                </span>
-              </button>
-            );
-          })}
+          {filtered.map(row => renderWindow(row.client_window_key === windows.selectedKey && selectedNavigationRow ? selectedNavigationRow : row))}
           {windows.availability === "loading" && <div className="empty-inline">{t("Loading Window activity…")}</div>}
           {windows.availability === "stale" && <div className="inventory-note">{t("Window activity refresh failed; showing previous observations.")}</div>}
           {(windows.availability === "error" || windows.availability === "denied") && <div className="empty-inline">{t("Window activity unavailable")}</div>}
@@ -294,6 +342,10 @@ export function WindowWorkbench({
                 </div>
                 <h2>{currentWorkspaceName || currentActivity || t("Window")}</h2>
                 <div className="window-header-facts">
+                  <span className="window-header-fact" title={windows.selectedKey} data-testid="current-window-identity">
+                    <Monitor size={14} /><small>{t("Window")}</small>
+                    <strong>{shortId(windows.selectedKey, 6, 4)}</strong>
+                  </span>
                   {currentMachine && (
                     <span className="window-header-fact" title={currentMachine}>
                       <Server size={14} />

@@ -33,7 +33,12 @@ are linked, choose one; if no link is retained or Window observation is unavaila
 the dialog offers **View Session record** explicitly. A matching Project alone is
 never used to infer a Window link. A Window omitted from the bounded inventory is
 loaded by its exact key, and unavailable targets never silently select another
-Window. Session details load when opened, not to populate counts in the project list.
+Window. The selected Window remains visible in the sidebar under **Current Window**
+when omitted by the inventory or filters, including a loading/unavailable state
+before detail is known. Sidebar and detail show the same short Window identifier;
+selection scrolls into view without scrolling the whole page. If the inventory
+later includes the target, its entry appears once in the normal list.
+Session details load when opened, not to populate counts in the project list.
 
 **Runtime** contains **Overview**, **Window Activity**, and **Agents**. Overview
 puts Runner availability and running work first, with disconnected or

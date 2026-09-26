@@ -172,7 +172,7 @@ it("shows active Window work without any Workflow Session and keeps observe call
 
   const search = screen.getByRole("searchbox", { name: "Search Windows" });
   fireEvent.change(search, { target: { value: "runtime_status" } });
-  expect(screen.queryByTestId("work-window-row-" + activeKey)).toBeNull();
+  expect(screen.getByTestId("work-window-row-" + activeKey).closest(".window-current-selection")).toBeTruthy();
   expect(screen.getByTestId("work-window-row-" + observeKey)).toBeTruthy();
 });
 

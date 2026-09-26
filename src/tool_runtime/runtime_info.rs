@@ -80,6 +80,13 @@ impl ToolRuntime {
                 "oauth2_enabled": self.runtime_info.oauth2_enabled,
                 "oauth2_shared_key_bridge_enabled": self.runtime_info.oauth2_shared_key_bridge_enabled,
             },
+            "mcp_host": {
+                "profile": self.mcp_host_policy.profile.as_str(),
+                "host_budget_secs": self.mcp_host_policy.host_budget_secs,
+                "initial_job_handoff_secs": self.mcp_host_policy.initial_job_handoff_secs,
+                "max_sync_wait_secs": self.mcp_host_policy.max_sync_wait_secs,
+                "continuation_wait_secs": self.mcp_host_policy.continuation_wait_secs,
+            },
             "tool_request_trace_mode": crate::config::tool_request_trace_mode().as_str(),
         })
     }

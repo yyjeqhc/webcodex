@@ -53,13 +53,26 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                             },
                             "required": ["shared_key_enabled", "anonymous_enabled", "oauth2_enabled", "oauth2_shared_key_bridge_enabled"]
                         },
+                        "mcp_host": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "description": "Effective Server-side MCP Host timing policy. This adapts MCP waiting only; it is not a command runtime timeout or Runner configuration.",
+                            "properties": {
+                                "profile": {"type": "string", "enum": ["direct", "host_code_mode"]},
+                                "host_budget_secs": {"type": "integer", "minimum": 1},
+                                "initial_job_handoff_secs": {"type": "integer", "minimum": 1},
+                                "max_sync_wait_secs": {"type": "integer", "minimum": 1},
+                                "continuation_wait_secs": {"type": "integer", "minimum": 1}
+                            },
+                            "required": ["profile", "host_budget_secs", "initial_job_handoff_secs", "max_sync_wait_secs", "continuation_wait_secs"]
+                        },
                         "tool_request_trace_mode": {
                             "type": "string",
                             "enum": ["off", "metadata", "full"],
                             "description": "Effective bounded tool-request trace mode; no trace paths, request bodies, headers, or environment values are exposed."
                         }
                     },
-                    "required": ["auth", "tool_request_trace_mode"]
+                    "required": ["auth", "mcp_host", "tool_request_trace_mode"]
                 }),
             ),
             ("version", schema_type("string", "Runtime version.")),

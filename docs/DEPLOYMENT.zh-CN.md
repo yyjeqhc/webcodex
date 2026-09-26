@@ -149,6 +149,26 @@ WebSocket continuity，也不宣称 literal zero interruption。
 boundary：installer 会 fail closed，避免与旧进程争抢地址。先停止 legacy Server，再用
 `--overwrite` 重新安装；这次首次迁移本身不保证无 gap。
 
+### MCP Host timing profile
+
+MCP 调用等待属于 Server 侧的 Host 适配，与 Runner execution timeout 分开配置。普通 MCP Host 使用默认的 `direct` profile，通常无需额外配置：
+
+```text
+WEBCODEX_MCP_HOST_PROFILE=direct
+```
+
+如果外部 Host 自带 native Code Mode/orchestration，并且整个 composition 的 wall-clock budget 约为 55 秒，可配置：
+
+```text
+WEBCODEX_MCP_HOST_PROFILE=host_code_mode
+# 可选：host_code_mode 本身默认就是 55 秒。
+WEBCODEX_MCP_HOST_BUDGET_SECS=55
+```
+
+`WEBCODEX_MCP_HOST_BUDGET_SECS` 表示 Host 侧单次 MCP call / composition 的预算，不是 command runtime。工具的 `timeout_secs` 仍表示真实 execution lifetime，可以远大于 Host budget。WebCodex 不会根据 `clientInfo`、User-Agent 或 Host 产品名自动推断 profile。
+
+`host_code_mode` 表示外部 MCP Host 提供的 orchestration，与 WebCodex experimental internal Code Mode 及其自身 nested-execution 防护不是同一个概念。`runtime_status` 会在 `effective_config.mcp_host` 中报告最终生效的非敏感 policy。
+
 ### Tool invocation trace
 
 Tool-request trace 是 **operator diagnostic**，默认关闭。轻量排障使用 metadata 模式；只有明确需要 request/response payload capture 时才使用 `full`：

@@ -51,7 +51,7 @@ describe("Runtime usability", () => {
     expect(hook.result.current.updatedAt).toBeGreaterThan(0);
     act(() => window.dispatchEvent(new Event("focus")));
     await waitFor(() => expect(post).toHaveBeenCalledTimes(2));
-    expect(hook.result.current.refreshing).toBe(false);
+    await waitFor(() => expect(hook.result.current.refreshing).toBe(false));
   });
 
   it("shows effective configuration with readable labels and units", () => {

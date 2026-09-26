@@ -114,7 +114,7 @@ detached-process 行为。
 
 ## Controller（WSL/Linux 初版）
 
-webcodex controller 是 WSL/Linux 场景下的本地终端控制平面。V0 不修改 Desktop，也不改变 Server、Runner 或 OpenAI Tunnel 的下层运行契约；Controller 作为父进程启动并监督这些现有组件。
+webcodex controller 是 WSL/Linux 场景下的终端控制平面。V0 不修改 Desktop，也不改变 Server、Runner 或 OpenAI Tunnel 的下层运行契约。Server 可配置为本地托管或远程观察；Runner 仍在本机由 Controller 托管；OpenAI Tunnel 只适用于本地 Server。
 
     webcodex controller init
     webcodex controller doctor
@@ -132,10 +132,25 @@ webcodex controller 是 WSL/Linux 场景下的本地终端控制平面。V0 不�
     webcodex controller restart tunnel
     webcodex controller logs --lines 100
     webcodex controller stop
+    webcodex controller uninstall --confirm
 
-V0 使用本地 Server 作为依赖根；启用 Runner 或 Tunnel 时必须同时启用 Server。Runner 配置中的 `server_url` 必须与 Controller 管理的 loopback Server 一致；remote Server topology 会在启动 Runner 或使用任何本地 Server credential 之前被拒绝。Controller 不接管已经由 webcodex.service / webcodex.socket / webcodex-runner.service 管理的运行实例，检测到已有服务处于 active 状态时会拒绝启动，避免双重 ownership。
+项目管理：
 
-`controller install` 默认安装 user service 到 `~/.config/systemd/user/webcodex-controller.service`，并通过 `systemctl --user` 管理 Controller 的 start/stop/restart 生命周期。默认可选环境文件是 `~/.config/webcodex/controller.env`；启用 OpenAI Tunnel 且需要长期后台启动时，可将 `CONTROL_PLANE_TUNNEL_ID` 与 `CONTROL_PLANE_API_KEY` 放入该文件。`controller doctor` 会从当前进程环境或指定的 `--environment-file` 检查同一对凭据；Tunnel control-plane credential 不会继续传给受管的 Server/Runner 子进程。Controller service 不直接托管独立的 Server/Runner systemd unit，下层进程仍由 Controller 自己作为父进程管理。
+    webcodex controller project list
+    webcodex controller project register /path/to/project
+    webcodex controller project remove <project-id-or-path>
+
+Controller 的 [server] 支持 mode = "local" 与 mode = "remote"。local 模式要求 env_file，Controller 会启动并监督 webcodex-server；remote 模式要求 url，Controller 只探测远程 Server，不启动本地 Server，也禁止本地 regular Tunnel。两种模式下 Runner 都使用本机 runner.toml，且其中的 server_url 必须与 Controller 配置的 Server 一致。Controller 不接管已经由 webcodex.service / webcodex.socket / webcodex-runner.service 管理的同类本地实例。
+
+`controller install` 默认安装 user service 到 `~/.config/systemd/user/webcodex-controller.service`，并通过 `systemctl --user` 管理 Controller 生命周期。`status` 会优先读取正在运行的 Controller Unix Socket，并同时显示 systemd 状态；Socket 不可用时仍可显示已安装 service 状态。`logs` 优先读取 Controller 内存中的组件日志，Controller 不可达时回退到 user journal。`stop` 会自动识别前台 Controller 与 systemd service；无组件参数的 `restart` 优先重启已安装 service，否则重启前台 runtime。`restart server|runner|tunnel` 始终通过 Controller IPC 操作组件。`uninstall --confirm` 只删除 Controller unit，不删除 controller.toml 或 controller.env。
+
+所有 `controller project` 命令均要求 `runner.enabled=true`，且指定 Runner 在 Server 上在线并对当前凭据可见；Controller 守护进程本身不必运行。Runner 离线、目标不可访问或版本不支持时明确报错，不回退本地 registry，也不自动启动 Runner。
+
+三个命令均支持 `--user-token-file PATH`。未指定时使用匹配 Server/Runner 连接的默认 `webcodex-user-token`，优先选择包含当前 Runner 配置文件的连接。默认连接缺失或存在歧义时要求显式指定；显式文件不可用时不回退其他凭据，Runner transport 和 Tunnel 凭据不能替代用户凭据。
+
+Runner 超过 100 个项目时，可使用 Server 返回的完整项目 ID（例如 `agent:runner-a:demo`）删除，命令会在 Server 侧精确筛选库存。短 ID 和路径匹配要求库存未截断，以便可靠拒绝歧义目标。
+
+`project list` 调用 `list_projects`，仅列出指定 Runner 的可见项目，并显示库存同步及截断状态（最多 100 项）。`project register PATH` 复用在线按路径解析或注册 API，只使用 Runner 当前已有路径权限，不扩展 `[policy].allowed_roots`。`project remove ID-OR-PATH` 从完整库存中解析唯一项目，携带 revision 调用 `unregister_project`；只注销项目，不删除工作目录、不收缩 allowed_roots、不停止 Runner。操作在线生效，无需重启 Runner。revision 冲突直接报错；变更响应丢失时报告结果未知，不自动重试或补删本地文件。使用 `--json` 时，成功 API 结果输出到 stdout，命令失败以 JSON 输出到 stderr 并返回非零退出码。
 
 Windows 支持 `server init`、前台 `server run` 与显式 `share`。受管 service 生命周期（`install`、`start`、`stop`、`restart`、`logs`、`uninstall`）仍只支持 Linux。
 

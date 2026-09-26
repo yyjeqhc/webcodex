@@ -52,6 +52,22 @@ pub fn nullable_schema(kind: &str, description: &str) -> Value {
     })
 }
 
+pub(super) fn pending_job_strategy_schema() -> Value {
+    json!({
+        "type": "object",
+        "description": "Model-facing pending Job policy. Independent work is the default; exact observe_jobs continuation is only for logs/details/recovery, and blocking callers should wait once for terminal state.",
+        "additionalProperties": false,
+        "properties": {
+            "default": {"type": "string", "const": "continue_independent_work"},
+            "passive_terminal_attention": {"type": "boolean", "const": true},
+            "observe_continuation": {"type": "string", "const": "logs_details_recovery_fallback"},
+            "observe_auto_follow": {"type": "boolean", "const": false},
+            "blocked_fallback": {"type": "string", "const": "wait_for_job_terminal"}
+        },
+        "required": ["default", "passive_terminal_attention", "observe_continuation", "observe_auto_follow", "blocked_fallback"]
+    })
+}
+
 pub(super) fn session_mode_schema(description: &str) -> Value {
     input_property_schema_for_tool("start_session", "mode", description)
 }

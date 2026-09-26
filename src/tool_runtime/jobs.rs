@@ -982,9 +982,10 @@ pub(crate) fn observe_job_details_call(job_id: &str) -> Value {
 }
 
 /// Keep the internal handoff receipt intact for recording, then collapse a
-/// normal successful same-execution handoff to one generic pending marker plus
-/// its exact fallback continuation. The continuation retains durable identity;
-/// Job lifecycle/bookkeeping stays in canonical Session/registry state.
+/// normal successful same-execution handoff to one generic pending marker, a
+/// short de-polling strategy, and its exact fallback continuation. The continuation
+/// retains durable identity; Job lifecycle/bookkeeping stays in canonical
+/// Session/registry state.
 pub(super) fn sparsify_job_handoff_model_result(result: &mut ToolResult) {
     if !result.success {
         return;
@@ -1016,6 +1017,16 @@ pub(super) fn sparsify_job_handoff_model_result(result: &mut ToolResult) {
     let continuation = call.clone();
     output.clear();
     output.insert("execution_state".to_string(), json!("pending"));
+    output.insert(
+        "pending_strategy".to_string(),
+        json!({
+            "default": "continue_independent_work",
+            "passive_terminal_attention": true,
+            "observe_continuation": "logs_details_recovery_fallback",
+            "observe_auto_follow": false,
+            "blocked_fallback": "wait_for_job_terminal",
+        }),
+    );
     output.insert("continuation".to_string(), continuation);
 }
 

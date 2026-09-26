@@ -1597,6 +1597,27 @@ fn key_tool_output_schemas_include_expected_fields() {
             .as_array()
             .unwrap()
             .contains(&serde_json::json!("wake_on")));
+        let pending_strategy = output_schema_property(&specs, name, "pending_strategy");
+        assert_eq!(
+            pending_strategy["properties"]["default"]["const"],
+            "continue_independent_work"
+        );
+        assert_eq!(
+            pending_strategy["properties"]["passive_terminal_attention"]["const"],
+            true
+        );
+        assert_eq!(
+            pending_strategy["properties"]["observe_continuation"]["const"],
+            "logs_details_recovery_fallback"
+        );
+        assert_eq!(
+            pending_strategy["properties"]["observe_auto_follow"]["const"],
+            false
+        );
+        assert_eq!(
+            pending_strategy["properties"]["blocked_fallback"]["const"],
+            "wait_for_job_terminal"
+        );
         assert!(
             has_output_field(name, "failure_kind"),
             "{name} missing failure_kind"

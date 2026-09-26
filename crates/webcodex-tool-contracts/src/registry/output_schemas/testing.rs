@@ -2,8 +2,8 @@ use serde_json::{json, Value};
 
 use super::common::{
     cargo_test_count_assertion_schema, job_activity_schema, nullable_schema,
-    observe_job_continuation_schema, open_object_schema, permission_decision_schema, schema_type,
-    session_hint_schema,
+    observe_job_continuation_schema, open_object_schema, pending_job_strategy_schema,
+    permission_decision_schema, schema_type, session_hint_schema,
 };
 
 pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
@@ -111,6 +111,7 @@ fn cargo_output_schema(tool_name: &str) -> Value {
             ("async_handoff_available", schema_type("boolean", "Whether this Runner supports validation Job handoff.")),
             ("detected_summary", open_object_schema("Current bounded validation/progress summary at the initial durable Job handoff; advisory only and never retry authority.")),
             ("continuation", observe_job_continuation_schema()),
+            ("pending_strategy", pending_job_strategy_schema()),
             ("suggested_call", super::jobs::list_jobs_recovery_call_schema(true)),
             ("session_hint", session_hint_schema()),
             ("permission", permission_decision_schema()),
@@ -279,7 +280,7 @@ fn cargo_output_schema(tool_name: &str) -> Value {
                     "success": {"const": true},
                     "error": {"type": "null"},
                     "output": {
-                        "required": ["execution_state", "continuation"],
+                        "required": ["execution_state", "continuation", "pending_strategy"],
                         "properties": {
                             "execution_state": {"const": "pending"},
                             "promoted_to_job": {"enum": []},

@@ -2,8 +2,9 @@ use serde_json::{json, Value};
 
 use super::common::{
     array_schema, cargo_test_count_assertion_schema, job_activity_schema, nullable_schema,
-    observe_job_continuation_schema, permission_decision_schema, recovery_kind_schema, schema_type,
-    session_hint_schema, suggested_tool_call_schema, wrapped_output_schema,
+    observe_job_continuation_schema, pending_job_strategy_schema, permission_decision_schema,
+    recovery_kind_schema, schema_type, session_hint_schema, suggested_tool_call_schema,
+    wrapped_output_schema,
 };
 
 fn validation_job_projection_schema() -> Value {
@@ -179,9 +180,10 @@ fn structured_execution_lifecycle_constraints(execution_source: &str) -> Value {
                 "required": ["execution_state"]
             },
             "then": {
-                "required": ["continuation"],
+                "required": ["continuation", "pending_strategy"],
                 "properties": {
                     "continuation": continuation,
+                    "pending_strategy": pending_job_strategy_schema(),
                     "job_id": {"enum": []},
                     "job_status": {"enum": []},
                     "observation_token": {"enum": []},
@@ -399,6 +401,7 @@ fn structured_continuation_properties() -> Vec<(&'static str, Value)> {
             ),
         ),
         ("continuation", observe_job_continuation_schema()),
+        ("pending_strategy", pending_job_strategy_schema()),
         ("suggested_call", list_jobs_recovery_call_schema(true)),
         ("activity", job_activity_schema()),
         (

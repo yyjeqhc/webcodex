@@ -22,7 +22,7 @@ fn process_argv_helper() -> PathBuf {
         .get_or_init(|| {
             let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("../../tests/fixtures/process_argv_helper.rs");
-            let temp = tempfile::tempdir().unwrap();
+            let temp = crate::tests::executable_tempdir();
             let output = temp.path().join(format!(
                 "process-argv-helper{}",
                 std::env::consts::EXE_SUFFIX
@@ -392,7 +392,7 @@ fn internal_posix_runtime_uses_git_bash_stdin_with_powershell_configured() {
 fn internal_posix_runtime_ignores_configured_shell_on_posix_hosts() {
     use std::os::unix::fs::PermissionsExt;
 
-    let cwd = tempfile::tempdir().unwrap();
+    let cwd = crate::tests::executable_tempdir();
     let project_registry_dir = tempfile::tempdir().unwrap();
     let marker = cwd.path().join("configured-shell-ran");
     let configured_shell = cwd.path().join("configured-shell");
@@ -762,7 +762,7 @@ fn post_spawn_missing_output_pipe_is_outcome_unknown() {
 
 #[test]
 fn explicit_bash_uses_resolved_interpreter_instead_of_configured_powershell() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = crate::tests::executable_tempdir();
     let fake_bash = temp
         .path()
         .join(format!("bash{}", std::env::consts::EXE_SUFFIX));
@@ -1386,7 +1386,7 @@ fn missing_typescript_interpreter_is_prestart_and_does_not_run_script() {
 
 #[test]
 fn javascript_interpreter_resolves_node_from_prepared_profile_path() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = crate::tests::executable_tempdir();
     let node = temp
         .path()
         .join(format!("node{}", std::env::consts::EXE_SUFFIX));
@@ -1413,7 +1413,7 @@ fn javascript_interpreter_resolves_node_from_prepared_profile_path() {
 
 #[test]
 fn typescript_interpreter_resolves_the_same_node_candidate() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = crate::tests::executable_tempdir();
     let node = temp
         .path()
         .join(format!("node{}", std::env::consts::EXE_SUFFIX));
@@ -1439,7 +1439,7 @@ fn typescript_interpreter_resolves_the_same_node_candidate() {
 
 #[test]
 fn javascript_interpreter_accepts_configured_node_executable() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = crate::tests::executable_tempdir();
     let node = temp
         .path()
         .join(format!("node{}", std::env::consts::EXE_SUFFIX));
@@ -1457,7 +1457,7 @@ fn javascript_interpreter_accepts_configured_node_executable() {
 
 #[test]
 fn node_script_languages_do_not_fallback_to_alternate_runtimes() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = crate::tests::executable_tempdir();
     for runtime in ["bun", "deno", "tsx", "npx", "npm"] {
         create_fake_native_executable(
             &temp
@@ -1490,7 +1490,7 @@ fn node_script_languages_do_not_fallback_to_alternate_runtimes() {
 fn arbitrary_configured_shell_is_not_treated_as_a_script_language() {
     use std::os::unix::fs::PermissionsExt;
 
-    let cwd = tempfile::tempdir().unwrap();
+    let cwd = crate::tests::executable_tempdir();
     let marker = cwd.path().join("custom-shell-ran");
     let custom_shell = cwd.path().join("custom-shell");
     std::fs::write(
@@ -1754,7 +1754,7 @@ fn javascript_temp_file_uses_mjs_and_exact_script_bytes() {
 #[test]
 fn python_script_uses_runner_resolved_interpreter_and_py_file() {
     use std::ffi::OsStr;
-    let temp = tempfile::tempdir().unwrap();
+    let temp = crate::tests::executable_tempdir();
     let candidate = if cfg!(windows) { "python" } else { "python3" };
     let interpreter = temp
         .path()
@@ -1947,7 +1947,7 @@ fn runner_real_process_typescript_probe_receives_eof_instead_of_runner_stdin() {
     }
 
     use std::os::unix::fs::PermissionsExt;
-    let root = tempfile::tempdir().unwrap();
+    let root = crate::tests::executable_tempdir();
     let node = root.path().join("node");
     std::fs::write(
         &node,

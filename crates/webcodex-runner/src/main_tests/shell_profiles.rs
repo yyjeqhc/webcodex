@@ -542,7 +542,7 @@ fn prepared_profile_missing_marker_is_reported_without_script_body() {
 fn prepared_profile_env_payload_parse_failure_is_reported() {
     use std::os::unix::fs::PermissionsExt;
 
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = crate::tests::executable_tempdir();
     let bin = tmp.path().join("bin");
     std::fs::create_dir(&bin).unwrap();
     let fake_env = bin.join("env");

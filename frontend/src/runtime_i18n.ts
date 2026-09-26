@@ -1086,6 +1086,12 @@ Object.assign(RUNTIME_ZH_TEXT, {
   "running": "运行中"
 });
 
+Object.assign(RUNTIME_ZH_TEXT, {
+  "Projects": "项目",
+  "All projects": "全部项目",
+  "No Window activity": "暂无窗口活动"
+});
+
 export function translate(source: string, language: RuntimeLanguage = "en"): string {
   return language === "zh-CN" ? (RUNTIME_ZH_TEXT[source] || source) : source;
 }

@@ -38,8 +38,11 @@ type Props = {
 type ProjectFamily = {
   id: string;
   label: string;
-  detail: string;
+  runner: string;
   projectIds: Set<string>;
+  windowCount: number;
+  activeWindowCount: number;
+  lastObservedAt: number;
 };
 
 function windowObservedAt(window: WindowSummary): number {
@@ -54,7 +57,7 @@ function peerId(windowKey: string): string {
   return windowKey.length >= 32 ? "wc_peer_" + windowKey.slice(0, 32) : windowKey;
 }
 
-function buildProjectFamilies(projects: ProjectRow[]): ProjectFamily[] {
+function buildProjectFamilies(projects: ProjectRow[], windows: WindowSummary[]): ProjectFamily[] {
   const groups = new Map<string, ProjectRow[]>();
   for (const project of projects) {
     const id = projectFamilyId(project);
@@ -62,16 +65,33 @@ function buildProjectFamilies(projects: ProjectRow[]): ProjectFamily[] {
     rows.push(project);
     groups.set(id, rows);
   }
-  return [...groups.entries()].map(([id, rows]) => {
+  const families = [...groups.entries()].map(([id, rows]) => {
     const representative = rows.find((row) => row.id === id) || rows[0];
-    const worktrees = rows.filter((row) => row.lineage).length;
     return {
       id,
       label: projectFamilyName(representative, projects),
-      detail: representative.client_id + (worktrees ? " · " + worktrees + " worktree" + (worktrees === 1 ? "" : "s") : ""),
+      runner: representative.client_id,
       projectIds: new Set(rows.map((row) => row.id)),
+      windowCount: 0,
+      activeWindowCount: 0,
+      lastObservedAt: 0,
     };
-  }).sort((a, b) => a.label.localeCompare(b.label));
+  });
+  const byId = new Map(families.map((family) => [family.id, family]));
+  for (const window of windows) {
+    const project = projectFor(projects, window.last_project);
+    if (!project) continue;
+    const family = byId.get(projectFamilyId(project));
+    if (!family) continue;
+    family.windowCount += 1;
+    if (window.active_count > 0) family.activeWindowCount += 1;
+    family.lastObservedAt = Math.max(family.lastObservedAt, windowObservedAt(window));
+  }
+  return families.sort((a, b) =>
+    Number(b.activeWindowCount > 0) - Number(a.activeWindowCount > 0) ||
+    Number(b.windowCount > 0) - Number(a.windowCount > 0) ||
+    b.lastObservedAt - a.lastObservedAt ||
+    a.label.localeCompare(b.label));
 }
 
 export function WindowWorkbench({
@@ -90,7 +110,7 @@ export function WindowWorkbench({
   const [projectFamily, setProjectFamily] = useState("");
   const [centerTab, setCenterTab] = useState<"window" | "collaboration">("window");
   const [selectedSessionId, setSelectedSessionId] = useState("");
-  const families = useMemo(() => buildProjectFamilies(projects), [projects]);
+  const families = useMemo(() => buildProjectFamilies(projects, windows.windows), [projects, windows.windows]);
 
   useEffect(() => {
     if (!requestedWindowKey) return;
@@ -164,13 +184,23 @@ export function WindowWorkbench({
         </div>
         <div className="window-work-filters">
           <ProjectPicker
-            label={t("Project filter")}
-            allLabel={t("All project workspaces")}
+            label={t("Projects")}
+            allLabel={t("All projects")}
             emptyLabel={t("No matching projects")}
             searchLabel={t("Search projects")}
             value={projectFamily}
             onChange={setProjectFamily}
-            options={families.map((row) => ({ value: row.id, label: row.label, detail: row.detail }))}
+            options={families.map((row) => ({
+              value: row.id,
+              label: row.label,
+              detail: row.windowCount
+                ? [
+                    row.activeWindowCount ? row.activeWindowCount + " " + t("active") : "",
+                    row.windowCount + " " + t(row.windowCount === 1 ? "Window" : "Windows"),
+                    row.runner,
+                  ].filter(Boolean).join(" · ")
+                : t("No Window activity") + " · " + row.runner,
+            }))}
           />
           <TextInput
             type="search"
@@ -189,11 +219,12 @@ export function WindowWorkbench({
           {filtered.map((window) => {
             const project = projectFor(projects, window.last_project);
             const source = project ? projectFor(projects, sourceProjectRuntimeId(project)) : undefined;
-            const title = window.last_activity_name || t("Window");
+            const activity = window.last_activity_name || t("Observed Window");
             const observedAt = windowObservedAt(window);
             const projectLabel = project
               ? projectFamilyName(source || project, projects)
               : window.last_project || t("Project information unavailable");
+            const workspaceLabel = project?.lineage ? projectVariantLabel(project) : projectLabel;
             return (
               <button
                 type="button"
@@ -204,8 +235,8 @@ export function WindowWorkbench({
               >
                 <span className={"work-state-dot " + (window.active_count ? "running" : "recent")} />
                 <span className="window-work-row-main">
-                  <strong>{title}</strong>
-                  <small>{projectLabel}{project?.lineage ? " · " + projectVariantLabel(project) : ""}</small>
+                  <strong>{workspaceLabel}</strong>
+                  <small>{project?.lineage ? projectLabel + " · " : ""}{activity}</small>
                   <small>{project?.client_id || t("Runner unavailable")} · {t("Window")} {shortId(window.client_window_key)}</small>
                 </span>
                 <span className="window-work-row-side">

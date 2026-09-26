@@ -1793,6 +1793,18 @@ async fn window_project_visible_cached(
     .await
 }
 
+fn window_summary_internal_tool(tool: Option<&str>) -> bool {
+    matches!(
+        tool,
+        Some(
+            "present_work_result"
+                | "work_result_state"
+                | "work_result_send_message"
+                | "changes_file_diff"
+        )
+    )
+}
+
 async fn visible_window_summary_for_auth(
     runtime: &ToolRuntime,
     auth: &AuthContext,
@@ -1844,6 +1856,9 @@ async fn visible_window_summary_for_auth(
         .await
             || project_filter.is_some_and(|project| event.project.as_deref() != Some(project))
         {
+            continue;
+        }
+        if window_summary_internal_tool(event.operation.as_deref()) {
             continue;
         }
         source = Some(event.client_window_source.clone());
@@ -1921,6 +1936,9 @@ async fn visible_window_summary_for_auth(
         .await
             || project_filter.is_some_and(|project| request.project.as_deref() != Some(project))
         {
+            continue;
+        }
+        if window_summary_internal_tool(request.tool_name.as_deref()) {
             continue;
         }
         source = Some(request.client_window_source.clone());
@@ -4881,6 +4899,55 @@ mod tests {
         assert_eq!(row.active_count, 1);
         assert_eq!(row.last_tool_call_at_ms, Some(1_001));
         assert_eq!(row.last_meaningful_activity_at_ms, Some(1_001));
+    }
+
+    #[tokio::test]
+    async fn window_summary_ignores_legacy_work_result_app_polling() {
+        let (_tmp, db, runtime) = test_runtime_with_window_db();
+        let auth = crate::auth::shared_key_context("window-summary-noise");
+        let project = "agent:window-summary-noise:project";
+        register_project(
+            &runtime,
+            "window-summary-noise",
+            "project",
+            "/private/window-summary-noise",
+            Some(&auth),
+        )
+        .await;
+        let window_key = "9".repeat(64);
+        record_window_event_with_activity(
+            &db,
+            &auth,
+            &window_key,
+            Some(project),
+            None,
+            1_000,
+            "read_files",
+            true,
+        );
+        record_window_event_with_activity(
+            &db,
+            &auth,
+            &window_key,
+            Some(project),
+            None,
+            2_000,
+            "work_result_state",
+            false,
+        );
+
+        let list = windows_for_auth(&runtime, &auth, Some(20), None)
+            .await
+            .unwrap();
+        let row = list
+            .windows
+            .iter()
+            .find(|row| row.client_window_key == window_key)
+            .unwrap();
+        assert_eq!(row.last_activity_name.as_deref(), Some("read_files"));
+        assert_eq!(row.last_seen_at_ms, 1_001);
+        assert_eq!(row.last_tool_call_at_ms, Some(1_001));
+        assert_eq!(row.last_project.as_deref(), Some(project));
     }
 
     #[tokio::test]

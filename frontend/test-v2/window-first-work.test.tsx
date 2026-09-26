@@ -133,10 +133,17 @@ it("shows active Window work without any Workflow Session and keeps observe call
 
   expect(await screen.findByRole("searchbox", { name: "Search Windows" })).toBeTruthy();
   const activeRow = await screen.findByTestId("work-window-row-" + activeKey);
-  expect(within(activeRow).getByText("apply_text_edits")).toBeTruthy();
+  expect(activeRow.textContent).toContain("apply_text_edits");
   expect(activeRow.textContent).toContain("WebCodex");
   expect(activeRow.textContent).toContain("webcodex-activity-fix");
   expect(activeRow.textContent).toContain("1 active");
+  expect(within(activeRow).getByText("webcodex-activity-fix")).toBeTruthy();
+  const projectPicker = screen.getByRole("button", { name: "Projects: All projects" });
+  fireEvent.click(projectPicker);
+  const projectDialog = screen.getByRole("dialog", { name: "Projects" });
+  expect(projectDialog.textContent).toContain("2 Windows");
+  expect(projectDialog.textContent).toContain("1 active");
+  fireEvent.click(projectPicker);
   expect(await screen.findByRole("heading", { name: "webcodex-activity-fix" })).toBeTruthy();
   const header = screen.getByRole("heading", { name: "webcodex-activity-fix" }).closest("header");
   expect(header?.textContent).toContain("WebCodex");

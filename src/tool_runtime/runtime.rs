@@ -110,6 +110,9 @@ pub struct ToolRuntime {
     pub(crate) ssh_resource_gateway: Arc<crate::ssh_resource_gateway::SshResourceGatewayRuntime>,
     pub(crate) coding_agent_runs: Arc<super::coding_agent::CodingAgentServerState>,
     pub runtime_info: Arc<RuntimeInfo>,
+    /// Server-side MCP Host timing policy. This adapts MCP waiting only and is
+    /// never forwarded to Runner execution.
+    pub(crate) mcp_host_policy: crate::mcp_host::McpHostRuntimePolicy,
     #[cfg(feature = "workspace-checkpoints")]
     pub(crate) checkpoint_store: checkpoint::CheckpointStore,
     pub(crate) sessions: sessions::SessionStore,
@@ -217,6 +220,7 @@ impl ToolRuntime {
             ),
             coding_agent_runs: Arc::new(super::coding_agent::CodingAgentServerState::default()),
             runtime_info,
+            mcp_host_policy: crate::mcp_host::McpHostRuntimePolicy::default(),
             #[cfg(feature = "workspace-checkpoints")]
             checkpoint_store: checkpoint::CheckpointStore::default(),
             sessions: sessions::SessionStore::default(),
@@ -278,6 +282,14 @@ impl ToolRuntime {
 
     pub(crate) fn with_window_activity_database(mut self, db: Arc<crate::Database>) -> Self {
         self.window_activity_db = Some(db);
+        self
+    }
+
+    pub(crate) fn with_mcp_host_policy(
+        mut self,
+        policy: crate::mcp_host::McpHostRuntimePolicy,
+    ) -> Self {
+        self.mcp_host_policy = policy;
         self
     }
 

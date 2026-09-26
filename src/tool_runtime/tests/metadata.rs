@@ -2526,7 +2526,7 @@ async fn runtime_status_preserves_allowlisted_effective_config_across_projection
     let config_object = config.as_object().expect("effective_config object");
     assert_eq!(
         config_object.len(),
-        2,
+        3,
         "effective_config must stay allowlisted"
     );
     assert_eq!(config["tool_request_trace_mode"], "full");
@@ -2536,6 +2536,19 @@ async fn runtime_status_preserves_allowlisted_effective_config_across_projection
     assert_eq!(auth["anonymous_enabled"], true);
     assert_eq!(auth["oauth2_enabled"], true);
     assert_eq!(auth["oauth2_shared_key_bridge_enabled"], true);
+    let mcp_host = config["mcp_host"]
+        .as_object()
+        .expect("effective MCP Host policy");
+    assert_eq!(
+        mcp_host.len(),
+        5,
+        "effective MCP Host facts must stay allowlisted"
+    );
+    assert_eq!(mcp_host["profile"], "direct");
+    assert_eq!(mcp_host["host_budget_secs"], 60);
+    assert_eq!(mcp_host["initial_job_handoff_secs"], 10);
+    assert_eq!(mcp_host["max_sync_wait_secs"], 55);
+    assert_eq!(mcp_host["continuation_wait_secs"], 55);
 
     let focused = runtime
         .dispatch(
@@ -2570,6 +2583,26 @@ async fn runtime_status_preserves_allowlisted_effective_config_across_projection
             full.output["configured_public_url"]
         );
     }
+}
+
+#[tokio::test]
+async fn runtime_status_reports_effective_mcp_host_budget_override() {
+    let runtime = test_runtime().with_mcp_host_policy(
+        crate::mcp_host::McpHostConfig {
+            profile: crate::mcp_host::McpHostProfile::HostCodeMode,
+            host_budget_secs: Some(9),
+        }
+        .runtime_policy(),
+    );
+
+    let result = runtime.dispatch(runtime_status_call()).await;
+    assert!(result.success, "{:?}", result.error);
+    let mcp_host = &result.output["effective_config"]["mcp_host"];
+    assert_eq!(mcp_host["profile"], "host_code_mode");
+    assert_eq!(mcp_host["host_budget_secs"], 9);
+    assert_eq!(mcp_host["initial_job_handoff_secs"], 4);
+    assert_eq!(mcp_host["max_sync_wait_secs"], 4);
+    assert_eq!(mcp_host["continuation_wait_secs"], 4);
 }
 
 #[allow(clippy::await_holding_lock)]

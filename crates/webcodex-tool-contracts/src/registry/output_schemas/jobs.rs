@@ -60,8 +60,8 @@ fn job_terminal_host_binding_schema() -> Value {
 fn process_execution_state_schema() -> Value {
     json!({
         "type": "string",
-        "enum": ["not_started", "outcome_unknown", "completed", "timed_out", "queued", "running"],
-        "description": "Canonical lifecycle when explicit: not_started means no command dispatch; outcome_unknown means effects may have occurred and must be reconciled before retry; timed_out is terminal; queued/running appear only for durable Job handoff. Ordinary synchronous success omits this field because outer success already implies completed. Only explicit not_started is structurally safe to retry without first inspecting target state."
+        "enum": ["not_started", "outcome_unknown", "completed", "timed_out", "pending", "queued", "running"],
+        "description": "Model-facing lifecycle when explicit: pending is the normal same-execution durable handoff and carries only an exact fallback continuation; not_started means no command dispatch; outcome_unknown means effects may have occurred and must be reconciled before retry; timed_out is terminal. queued/running remain accepted only on exceptional/legacy receipts. Ordinary synchronous success omits this field because outer success already implies completed."
     })
 }
 
@@ -85,7 +85,7 @@ fn structured_execution_lifecycle_constraints(execution_source: &str) -> Value {
         {
             "if": {
                 "anyOf": [
-                    {"required": ["execution_state"]},
+                    {"properties": {"execution_state": {"not": {"const": "pending"}}}, "required": ["execution_state"]},
                     {"required": ["command_started"]},
                     {"required": ["command_completed"]},
                     {"required": ["command_ok"]},
@@ -170,6 +170,31 @@ fn structured_execution_lifecycle_constraints(execution_source: &str) -> Value {
                         "command_started",
                         "command_completed"
                     ]
+                }
+            }
+        },
+        {
+            "if": {
+                "properties": {"execution_state": {"const": "pending"}},
+                "required": ["execution_state"]
+            },
+            "then": {
+                "required": ["continuation"],
+                "properties": {
+                    "continuation": continuation,
+                    "job_id": {"enum": []},
+                    "job_status": {"enum": []},
+                    "observation_token": {"enum": []},
+                    "terminal": {"enum": []},
+                    "command_started": {"enum": []},
+                    "command_completed": {"enum": []},
+                    "command_ok": {"enum": []},
+                    "promoted_to_job": {"enum": []},
+                    "async_handoff_available": {"enum": []},
+                    "effective_timeout_secs": {"enum": []},
+                    "sync_wait_secs": {"enum": []},
+                    "activity": {"enum": []},
+                    "detected_summary": {"enum": []}
                 }
             }
         },
@@ -342,7 +367,7 @@ fn structured_continuation_properties() -> Vec<(&'static str, Value)> {
             "promoted_to_job",
             schema_type(
                 "boolean",
-                "Exceptional handoff receipt only. Normal durable handoff exposes job_id, job_status, terminal and the parser-ready continuation call.",
+                "Exceptional handoff receipt only. Normal successful durable handoff is execution_state=pending plus one parser-ready fallback continuation; canonical Job identity stays in registry/Session state.",
             ),
         ),
         (
@@ -356,14 +381,14 @@ fn structured_continuation_properties() -> Vec<(&'static str, Value)> {
             "job_id",
             nullable_schema(
                 "string",
-                "Durable continuation Job id. Non-promoted terminal execution may return null or omit this field according to the initiating tool's sparse contract.",
+                "Exceptional/recovery durable Job id. Normal successful pending handoff keeps identity in the continuation and canonical registry/Session state instead of repeating it at top level.",
             ),
         ),
         (
             "job_status",
             nullable_schema(
                 "string",
-                "Authoritative durable Job status. Non-promoted terminal execution may return null or omit this field according to the initiating tool's sparse contract.",
+                "Exceptional/recovery authoritative Job status. Normal successful pending handoff omits top-level Job lifecycle bookkeeping.",
             ),
         ),
         (
@@ -400,7 +425,7 @@ fn structured_continuation_properties() -> Vec<(&'static str, Value)> {
         (
             "detected_summary",
             super::common::open_object_schema(
-                "Current bounded operation/build/check/test summary at the initial durable Job handoff; advisory only and never retry authority.",
+                "Exceptional/recovery bounded operation/build/check/test summary. Normal successful pending handoff omits this duplicated summary and relies on later sparse Job attention or explicit observation.",
             ),
         ),
     ]
@@ -910,7 +935,27 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 "skill_definition_revision",
                 "skill_package_revision",
             ] {
-                require_success_output_field(&mut schema, field);
+                schema["allOf"]
+                    .as_array_mut()
+                    .expect("run_skill_resource top-level constraints")
+                    .push(json!({
+                        "if": {
+                            "properties": {
+                                "success": {"const": true},
+                                "output": {
+                                    "properties": {
+                                        "execution_state": {"not": {"const": "pending"}}
+                                    }
+                                }
+                            },
+                            "required": ["success", "output"]
+                        },
+                        "then": {
+                            "properties": {
+                                "output": {"required": [field]}
+                            }
+                        }
+                    }));
             }
             Some(schema)
         }

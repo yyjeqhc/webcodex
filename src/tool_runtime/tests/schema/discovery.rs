@@ -1882,6 +1882,12 @@ async fn code_mode_exact_manifest_projects_canonical_stage_callable_contracts() 
                 "{tool_name} output projection exceeded its per-tool field bound: {}",
                 output_fields.len()
             );
+            assert!(
+                output_fields.iter().all(|field| field
+                    .as_str()
+                    .is_none_or(|field| !field.contains("job_attention"))),
+                "{tool_name} nested callable projection must not advertise outer-only job_attention"
+            );
             assert_eq!(
                 input["additionalProperties"], canonical.input_schema["additionalProperties"],
                 "{tool_name} closed-object semantics drifted"

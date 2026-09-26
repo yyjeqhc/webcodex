@@ -374,10 +374,20 @@ impl OrchestrationEffectAccumulator {
             }
             return;
         }
-        if output.get("terminal").and_then(Value::as_bool) != Some(true) {
+        let continuation = output
+            .get("continuation")
+            .filter(|value| value["tool"].as_str() == Some("observe_jobs"));
+        let continuation_job_id =
+            continuation.and_then(|value| value["arguments"]["items"][0]["job_id"].as_str());
+        if execution_state == Some("pending")
+            || output.get("terminal").and_then(Value::as_bool) == Some(false)
+        {
             if let (Some(job_id), Some(continuation)) = (
-                output.get("job_id").and_then(Value::as_str),
-                output.get("continuation").filter(|value| value.is_object()),
+                output
+                    .get("job_id")
+                    .and_then(Value::as_str)
+                    .or(continuation_job_id),
+                continuation,
             ) {
                 if let Some(child) = self.children.get_mut(&ordinal) {
                     child.outcome = ConsequentialChildOutcome::JobHandoff;

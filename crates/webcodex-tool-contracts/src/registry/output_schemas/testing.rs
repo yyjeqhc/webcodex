@@ -79,7 +79,7 @@ fn cargo_output_schema(tool_name: &str) -> Value {
             ),
             (
                 "execution_state",
-                schema_type("string", "not_started, outcome_unknown, completed, timed_out, queued, or running. not_started proves pre-execution rejection; outcome_unknown means side effects may have occurred and blind retry is unsafe; queued/running indicate promotion to a Job."),
+                schema_type("string", "pending, not_started, outcome_unknown, completed, or timed_out. pending is the normal same-execution durable handoff and carries one exact fallback continuation; not_started proves pre-execution rejection; outcome_unknown means side effects may have occurred and blind retry is unsafe."),
             ),
             (
                 "job_id",
@@ -279,11 +279,9 @@ fn cargo_output_schema(tool_name: &str) -> Value {
                     "success": {"const": true},
                     "error": {"type": "null"},
                     "output": {
-                        "required": [
-                            "command_summary", "execution_state", "job_id", "job_status",
-                            "activity", "continuation", "effective_timeout_secs"
-                        ],
+                        "required": ["execution_state", "continuation"],
                         "properties": {
+                            "execution_state": {"const": "pending"},
                             "promoted_to_job": {"enum": []},
                             "terminal": {"enum": []},
                             "command_started": {"enum": []},
@@ -294,9 +292,11 @@ fn cargo_output_schema(tool_name: &str) -> Value {
                             "tool_failure": {"enum": []},
                             "project": {"enum": []},
                             "cwd": {"enum": []},
-                            "execution_state": {"enum": ["queued", "running"]},
-                            "job_id": {"type": "string", "minLength": 1},
-                            "job_status": {"type": "string", "minLength": 1},
+                            "command_summary": {"enum": []},
+                            "job_id": {"enum": []},
+                            "job_status": {"enum": []},
+                            "activity": {"enum": []},
+                            "effective_timeout_secs": {"enum": []},
                             "passed": {"enum": []},
                             "failure_kind": {"enum": []},
                             "warnings_count": {"enum": []},

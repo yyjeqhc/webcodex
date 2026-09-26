@@ -251,6 +251,29 @@ restart, upgrade, stop, or replacement; duration alone is not a detach reason.
 Detached recovery preserves the same logical Job/execution fence and does not
 permit duplicate payload dispatch.
 
+For normal sync-first execution, model-facing handoff is intentionally sparse:
+`execution_state=pending` plus one exact fallback continuation. The canonical
+registry and Session ledger retain the Job id, lifecycle, validation identity,
+source fence, and structured execution metadata. A handoff in an exact
+authenticated Window/Project/Workflow Session establishes the passive
+`JobAttentionCursor` baseline without echoing a second active notification.
+Subsequent ordinary coding calls in that same scope may attach `job_attention`
+only when the Server-side registry state changes. Terminal attention contains
+bounded outcome / exit truth, conservative validation/source-freshness truth
+when applicable, and an explicit details call, but never stdout/stderr bodies.
+The same terminal revision is delivered at most once per process-local cursor;
+after Server restart a bounded active-state duplicate is allowed, while
+historical terminal Jobs establish baseline and are not replayed as new
+completions. Passive attention reads only the Server registry and never starts,
+retries, stops, or polls a Runner execution.
+
+This makes the normal same-turn path independent of Host automatic wake:
+pending execution can overlap read/edit/search/review work and a later ordinary
+result can carry its terminal truth. `observe_jobs` remains the explicit path
+for logs, detailed diagnostics, recovery, or cases where sparse terminal truth
+is insufficient. `wait_for_job_terminal` and Host continuation carriers remain
+optional blocked-on-terminal acceleration, not required lifecycle machinery.
+
 Long-running Jobs still occupy the Runner's normal `max_concurrent_jobs`
 execution quota. Detached Jobs remain excluded only from Runner shutdown drain
 because shutdown is not allowed to kill their supervisor-owned payload; they

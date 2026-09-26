@@ -669,10 +669,7 @@ async fn run_script_slow_handoff_keeps_typed_payload_ephemeral_and_safe_metadata
     .await;
     let handoff = task.await.unwrap();
     assert!(handoff.success, "{:?}", handoff.error);
-    assert!(handoff.output.get("promoted_to_job").is_none());
-    assert_observe_job_continuation(&handoff.output);
-    assert_eq!(handoff.output["execution_state"], "running");
-    let job_id = handoff.output["job_id"].as_str().unwrap();
+    let job_id = assert_sparse_pending_job_handoff(&handoff.output);
     assert_eq!(request.job_id.as_deref(), Some(job_id));
 
     let job = runtime.runner_registry.get_job(job_id).await.unwrap();
@@ -854,8 +851,7 @@ async fn python_script_handoff_keeps_one_job_and_redacts_payload() {
     .await;
     let result = task.await.unwrap();
     assert!(result.success, "{result:?}");
-    assert_observe_job_continuation(&result.output);
-    let job_id = result.output["job_id"].as_str().unwrap();
+    let job_id = assert_sparse_pending_job_handoff(&result.output);
     assert_eq!(request.job_id.as_deref(), Some(job_id));
     let job = runtime.runner_registry.get_job(job_id).await.unwrap();
     assert_eq!(
@@ -952,10 +948,7 @@ async fn typescript_slow_handoff_keeps_one_execution_and_safe_durable_metadata()
 
     let handoff = task.await.unwrap();
     assert!(handoff.success, "{:?}", handoff.error);
-    assert!(handoff.output.get("promoted_to_job").is_none());
-    assert_observe_job_continuation(&handoff.output);
-    assert_eq!(handoff.output["execution_state"], "running");
-    let job_id = handoff.output["job_id"].as_str().unwrap();
+    let job_id = assert_sparse_pending_job_handoff(&handoff.output);
     assert_eq!(request.job_id.as_deref(), Some(job_id));
     let job = runtime.runner_registry.get_job(job_id).await.unwrap();
     assert_eq!(job.kind, "run_script");

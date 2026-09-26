@@ -234,6 +234,13 @@ fn collect_code_mode_output_fields(
         return;
     };
     for (name, child) in properties {
+        // Passive Job attention is an outer model-facing Window/Project/Session
+        // decoration. Nested Code Mode children have no Window and can never
+        // receive it, so projecting its fields would teach an impossible child
+        // result shape and needlessly consume the callable-contract budget.
+        if prefix == "output" && name == "job_attention" {
+            continue;
+        }
         let path = if prefix.is_empty() {
             name.to_string()
         } else {
@@ -298,8 +305,8 @@ text({status:status.output?.stdout,file:detail.output.items?.[0]?.output?.text})
         CodeModeCallableStage::Validation => examples.push(json!({
             "name": "validation_job_handoff",
             "source": r#"const check = await tools.cargo_check({});
-if (!check.output?.terminal && check.output?.job_id) {
-  text({job_id:check.output.job_id,continuation:check.output.continuation});
+if (check.output?.execution_state === "pending") {
+  text({execution_state:"pending",continuation:check.output.continuation});
 } else {
   text({passed:check.output?.passed,failure_kind:check.output?.failure_kind,diagnostics:check.output?.diagnostics});
 }"#,
@@ -312,7 +319,7 @@ const revision = read.output.items?.[0]?.output?.read_revision;
 const edit = await tools.apply_text_edits({changes:[{path,old_text:"old",new_text:"new",expected_read_revision:revision}]});
 if (!edit.success || typeof edit.output?.state_changed !== "boolean") throw new Error("inspect edit recovery before validating");
 const check = await tools.cargo_check({});
-text({state_changed:edit.output.state_changed,call_success:check.success,source_state:check.output?.source_state,job_handoff:!!check.output?.job_id});"#,
+text({state_changed:edit.output.state_changed,call_success:check.success,source_state:check.output?.source_state,pending:check.output?.execution_state==="pending"});"#,
         })),
     }
     examples

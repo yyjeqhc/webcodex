@@ -214,6 +214,18 @@ async fn passive_attention_requires_exact_business_relation_and_deduplicates_sta
         "completed"
     );
     assert_eq!(terminal.output["job_attention"]["items"][0]["exit_code"], 0);
+    let terminal_item = &terminal.output["job_attention"]["items"][0];
+    assert_eq!(terminal_item["state"], "terminal");
+    assert_eq!(terminal_item["outcome"], "passed");
+    assert_eq!(terminal_item["command_ok"], true);
+    assert_eq!(terminal_item["details"]["tool"], "observe_jobs");
+    assert_eq!(
+        terminal_item["details"]["arguments"]["items"][0]["job_id"],
+        job_id
+    );
+    assert!(!terminal.output["job_attention"]
+        .to_string()
+        .contains("secret output"));
     assert!(
         attention(&runtime, &project, Some(&session), &window, &auth)
             .await
@@ -235,6 +247,179 @@ async fn passive_attention_requires_exact_business_relation_and_deduplicates_sta
     assert!(!failure.success);
     assert_eq!(failure.error.as_deref(), Some("main failed"));
     assert!(failure.output.get("job_attention").is_none());
+}
+
+#[tokio::test]
+async fn initiating_handoff_is_cursor_baseline_then_terminal_is_delivered_once() {
+    let runtime = ToolRuntime::new_for_tests();
+    let auth = shared_key_auth_context("passive-handoff-owner");
+    let client = "passive-handoff";
+    let project = format!("agent:{client}:repo");
+    register_job_agent_for_auth(&runtime, client, "repo", &auth).await;
+    let session = runtime
+        .sessions
+        .start_session(Some(project.clone()), None)
+        .session_id;
+    let window = ClientWindow::for_test("passive-handoff-window");
+    let job_id =
+        start_agent_runtime_job_in_session(&runtime, client, "repo", Some(&session), &auth).await;
+    assert_eq!(mark_next_agent_job_running(&runtime, client).await, job_id);
+
+    let mut handoff = ToolResult::ok(json!({
+        "execution_state": "pending",
+        "continuation": super::super::jobs::observe_job_continuation(&job_id, None),
+    }));
+    runtime
+        .add_passive_job_attention(
+            &mut handoff,
+            "run_process",
+            Some(&project),
+            Some(&session),
+            Some(&window),
+            Some(&auth),
+        )
+        .await;
+    assert!(
+        handoff.output.get("job_attention").is_none(),
+        "initiating handoff must establish cursor baseline without duplicate active attention"
+    );
+    assert!(
+        attention(&runtime, &project, Some(&session), &window, &auth)
+            .await
+            .output
+            .get("job_attention")
+            .is_none(),
+        "unchanged running execution must stay silent while independent work continues"
+    );
+
+    let job = runtime
+        .runner_registry
+        .get_job_for_auth(Some(&crate::test_support::runner_access(&auth)), &job_id)
+        .await
+        .unwrap();
+    runtime
+        .runner_registry
+        .update_job(RunnerJobUpdateRequest {
+            client_id: client.into(),
+            runner_instance_id: "inst".into(),
+            job_id: job_id.clone(),
+            request_id: job.request_id,
+            update_seq: Some(2),
+            status: "completed".into(),
+            stdout_chunk: Some("PRIVATE_TERMINAL_LOG".into()),
+            stderr_chunk: None,
+            log_snapshot: None,
+            exit_code: Some(0),
+            duration_ms: Some(42),
+            error: None,
+            command_execution_state: None,
+            validation_progress: None,
+            test_count_evidence: None,
+            activity: None,
+            finished: true,
+        })
+        .await
+        .unwrap();
+
+    let ordinary = attention(&runtime, &project, Some(&session), &window, &auth).await;
+    let item = &ordinary.output["job_attention"]["items"][0];
+    assert_eq!(item["job_id"], job_id);
+    assert_eq!(item["state"], "terminal");
+    assert_eq!(item["outcome"], "passed");
+    assert_eq!(item["command_ok"], true);
+    assert_eq!(item["exit_code"], 0);
+    assert_eq!(item["details"]["tool"], "observe_jobs");
+    assert!(
+        !ordinary.output["job_attention"]
+            .to_string()
+            .contains("PRIVATE_TERMINAL_LOG"),
+        "passive terminal truth must never inline Job logs"
+    );
+    assert!(
+        attention(&runtime, &project, Some(&session), &window, &auth)
+            .await
+            .output
+            .get("job_attention")
+            .is_none(),
+        "same terminal transition is delivered at most once per exact cursor key"
+    );
+    assert!(
+        probe_agent_request_for_instance(&runtime, client, "inst")
+            .await
+            .is_none(),
+        "passive observation must never redispatch the execution"
+    );
+}
+
+#[tokio::test]
+async fn passive_attention_projects_process_failure_stop_and_timeout_without_logs() {
+    for (suffix, status, exit_code, expected_outcome) in [
+        ("nonzero", "completed", Some(7), "failed"),
+        ("stopped", "stopped", None, "cancelled"),
+        ("timeout", "timeout", None, "timed_out"),
+    ] {
+        let runtime = ToolRuntime::new_for_tests();
+        let auth = shared_key_auth_context(&format!("passive-{suffix}-owner"));
+        let client = format!("passive-{suffix}");
+        let project = format!("agent:{client}:repo");
+        register_job_agent_for_auth(&runtime, &client, "repo", &auth).await;
+        let session = runtime
+            .sessions
+            .start_session(Some(project.clone()), None)
+            .session_id;
+        let window = ClientWindow::for_test(&format!("passive-{suffix}-window"));
+        let job_id =
+            start_agent_runtime_job_in_session(&runtime, &client, "repo", Some(&session), &auth)
+                .await;
+        assert_eq!(mark_next_agent_job_running(&runtime, &client).await, job_id);
+        let _ = attention(&runtime, &project, Some(&session), &window, &auth).await;
+
+        let job = runtime
+            .runner_registry
+            .get_job_for_auth(Some(&crate::test_support::runner_access(&auth)), &job_id)
+            .await
+            .unwrap();
+        runtime
+            .runner_registry
+            .update_job(RunnerJobUpdateRequest {
+                client_id: client.clone(),
+                runner_instance_id: "inst".into(),
+                job_id: job_id.clone(),
+                request_id: job.request_id,
+                update_seq: Some(2),
+                status: status.into(),
+                stdout_chunk: Some(format!("PRIVATE_{suffix}_LOG")),
+                stderr_chunk: None,
+                log_snapshot: None,
+                exit_code,
+                duration_ms: Some(25),
+                error: None,
+                command_execution_state: None,
+                validation_progress: None,
+                test_count_evidence: None,
+                activity: None,
+                finished: true,
+            })
+            .await
+            .unwrap();
+
+        let terminal = attention(&runtime, &project, Some(&session), &window, &auth).await;
+        let item = &terminal.output["job_attention"]["items"][0];
+        assert_eq!(item["state"], "terminal", "{suffix}");
+        assert_eq!(item["outcome"], expected_outcome, "{suffix}");
+        assert_eq!(item["command_ok"], false, "{suffix}");
+        if let Some(exit_code) = exit_code {
+            assert_eq!(item["exit_code"], exit_code, "{suffix}");
+        } else {
+            assert!(item["exit_code"].is_null(), "{suffix}");
+        }
+        assert!(
+            !terminal.output["job_attention"]
+                .to_string()
+                .contains(&format!("PRIVATE_{suffix}_LOG")),
+            "{suffix}"
+        );
+    }
 }
 
 #[tokio::test]

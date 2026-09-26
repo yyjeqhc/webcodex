@@ -1459,35 +1459,8 @@ async fn run_process_six_hour_handoff_is_queryable_once_and_keeps_the_original_b
     let handoff = task.await.unwrap();
     assert!(started.elapsed() < Duration::from_secs(1));
     assert!(handoff.success, "{:?}", handoff.error);
-    assert!(handoff.output.get("promoted_to_job").is_none());
-    assert_eq!(handoff.output["terminal"], false);
-    assert_eq!(handoff.output["execution_state"], "running");
-    assert_eq!(handoff.output["command_started"], true);
-    assert_eq!(handoff.output["command_completed"], false);
-    assert_eq!(handoff.output["effective_timeout_secs"], 21_600);
-    assert_eq!(handoff.output["sync_wait_secs"], 45);
-    assert_eq!(
-        handoff.output["stdout_tail"],
-        "progress already available\n"
-    );
-    assert_eq!(handoff.output["stdout_lines"], 1);
-    assert_eq!(handoff.output["stdout_truncated"], false);
-    assert_eq!(handoff.output["detected_summary"]["outcome"], "in_progress");
-    assert_eq!(
-        handoff.output["activity"],
-        json!({
-            "state": "working",
-            "phase": "process_running",
-            "source": "runner_execution"
-        })
-    );
-    assert_eq!(
-        handoff.output["detected_summary"]["progress"]["reason_code"],
-        "process_running"
-    );
-    let job_id = handoff.output["job_id"].as_str().unwrap().to_string();
+    let job_id = assert_sparse_pending_job_handoff(&handoff.output).to_string();
     assert_eq!(request.job_id.as_deref(), Some(job_id.as_str()));
-    assert_observe_job_continuation(&handoff.output);
 
     let status = runtime
         .job_status_for_auth(job_id.clone(), false, Some(&auth))
@@ -1495,7 +1468,14 @@ async fn run_process_six_hour_handoff_is_queryable_once_and_keeps_the_original_b
     assert!(status.success, "{:?}", status.error);
     assert_eq!(status.output["job_id"], job_id);
     assert_eq!(status.output["status"], "running");
-    assert_eq!(status.output["activity"], handoff.output["activity"]);
+    assert_eq!(
+        status.output["activity"],
+        json!({
+            "state": "working",
+            "phase": "process_running",
+            "source": "runner_execution"
+        })
+    );
     assert!(status.output["command_execution_state"].is_null());
     assert_eq!(
         status.output["structured_execution"]["execution_source"],
@@ -1663,8 +1643,7 @@ async fn stop_job_stops_the_promoted_process_without_starting_a_replacement() {
     )
     .await;
     let handoff = task.await.unwrap();
-    let job_id = handoff.output["job_id"].as_str().unwrap().to_string();
-    assert!(handoff.output.get("promoted_to_job").is_none());
+    let job_id = assert_sparse_pending_job_handoff(&handoff.output).to_string();
 
     let stopped = runtime
         .dispatch_with_auth(
@@ -1739,7 +1718,7 @@ async fn promoted_process_inherits_the_initiating_session_without_a_second_tool_
     )
     .await;
     let handoff = task.await.unwrap();
-    let job_id = handoff.output["job_id"].as_str().unwrap();
+    let job_id = assert_sparse_pending_job_handoff(&handoff.output);
     let job = runtime.runner_registry.get_job(job_id).await.unwrap();
     assert_eq!(job.session_id.as_deref(), Some(session.session_id.as_str()));
     assert_eq!(job.project_id.as_deref(), Some(project.as_str()));

@@ -100,7 +100,7 @@ fn shell_config_windows_default_prefers_pwsh_and_falls_back() {
 fn shell_config_path_prepend_discovers_fake_executable() {
     use std::os::unix::fs::PermissionsExt;
 
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = crate::tests::executable_tempdir();
     let cfg = test_config(tmp.path().join("config/project-registry"));
     let bin_dir = tmp.path().join("bin");
     std::fs::create_dir(&bin_dir).unwrap();

@@ -2513,6 +2513,38 @@ fn model_visible_output_schemas_admit_bounded_passive_job_attention() {
 }
 
 #[test]
+fn passive_failure_diagnostics_schema_rejects_overflow_and_private_fields() {
+    let schema = output_schema_for_tool("cargo_check");
+    let field = &schema["properties"]["output"]["properties"]["job_attention"]["properties"]
+        ["items"]["items"]["properties"]["validation"]["properties"]["diagnostics"];
+    let safe = json!({"available": true, "diagnostic_count": 1,
+        "diagnostics": [{"severity": "error", "code": "E0308", "file": "src/foo.rs", "line": 123, "column": 9, "message": "expected X, found Y"}],
+        "returned_diagnostic_count": 1, "diagnostics_truncated": false,
+        "failed_test_details": [], "failed_test_details_truncated": false});
+    test_support::validate_schema_instance(&safe, field).unwrap();
+    let mut overflow = safe.clone();
+    overflow["diagnostics"] = json!(vec![safe["diagnostics"][0].clone(); 4]);
+    assert!(test_support::validate_schema_instance(&overflow, field).is_err());
+    for key in [
+        "stdout",
+        "stderr",
+        "command",
+        "argv",
+        "cwd",
+        "env",
+        "observation_token",
+        "provider_payload",
+    ] {
+        let mut leak = safe.clone();
+        leak[key] = json!("private");
+        assert!(
+            test_support::validate_schema_instance(&leak, field).is_err(),
+            "{key}"
+        );
+    }
+}
+
+#[test]
 fn model_facing_output_schemas_do_not_publish_retired_recovery_tool() {
     for spec in registered_tool_specs() {
         let serialized = serde_json::to_string(&spec.output_schema).unwrap();

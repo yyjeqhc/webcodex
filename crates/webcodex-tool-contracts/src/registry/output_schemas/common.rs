@@ -557,6 +557,41 @@ pub fn recovery_kind_schema() -> Value {
     })
 }
 
+fn passive_failure_diagnostics_schema() -> Value {
+    use webcodex_core::validation_evidence::{PASSIVE_MAX_DIAGNOSTICS, PASSIVE_MAX_FAILED_TESTS};
+    let mut schema = super::testing::cargo_test_diagnostics_schema(
+        "Actionable safe parser evidence, at most 8 KiB serialized. Truncation or absent evidence leaves details available through observe_jobs.");
+    let fields = schema["properties"].as_object_mut().unwrap();
+    for field in [
+        "parser",
+        "reason",
+        "invalid_diagnostics_omitted",
+        "truncated",
+    ] {
+        fields.remove(field);
+    }
+    fields.get_mut("diagnostics").unwrap()["maxItems"] = json!(PASSIVE_MAX_DIAGNOSTICS);
+    fields.get_mut("returned_diagnostic_count").unwrap()["maximum"] =
+        json!(PASSIVE_MAX_DIAGNOSTICS);
+    fields.get_mut("failed_test_details").unwrap()["maxItems"] = json!(PASSIVE_MAX_FAILED_TESTS);
+    // The generic decoration appears on many schemas; retain selection/bounds
+    // in one description instead of repeating full explicit-observation prose.
+    for field in fields.values_mut() {
+        if let Some(object) = field.as_object_mut() {
+            object.remove("description");
+        }
+    }
+    schema["required"] = json!([
+        "available",
+        "diagnostics",
+        "returned_diagnostic_count",
+        "diagnostics_truncated",
+        "failed_test_details",
+        "failed_test_details_truncated"
+    ]);
+    schema
+}
+
 pub(super) fn passive_job_attention_schema() -> Value {
     let details = suggested_tool_call_schema(
         "observe_jobs",
@@ -588,7 +623,7 @@ pub(super) fn passive_job_attention_schema() -> Value {
         "description": "Sparse validation truth. Execution pass/fail is historical; source_state independently says whether covered source has crossed a known canonical mutation fence.",
         "properties": {
             "tool": {"type": "string", "maxLength": 64},
-            "kind": {"type": "string", "enum": ["format", "check", "test"]},
+            "kind": {"type": "string", "enum": ["format", "check", "test", "validation", "build", "release"]},
             "state": {"type": "string", "enum": ["pending", "running", "completed", "timed_out", "cancelled", "lost"]},
             "passed": nullable_schema("boolean", "Validation verdict from the available authoritative execution/evidence contract; null means not proven."),
             "tests_detected": nullable_schema("boolean", "Whether authoritative test evidence detected tests."),
@@ -598,7 +633,8 @@ pub(super) fn passive_job_attention_schema() -> Value {
             "require_tests": {"type": "boolean"},
             "no_run": {"type": "boolean"},
             "validation_target_id": {"type": "string", "maxLength": 256},
-            "source_state": validation_source_state_schema()
+            "source_state": validation_source_state_schema(),
+            "diagnostics": passive_failure_diagnostics_schema()
         },
         "required": ["tool", "kind", "state", "passed", "source_state"]
     });

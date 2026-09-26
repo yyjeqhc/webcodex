@@ -36,7 +36,7 @@ where
     }
 }
 
-fn compact_validation_job(
+pub(super) fn compact_validation_job(
     project: &str,
     source_fence: Option<webcodex_core::validation_source::ValidationSourceFence>,
 ) -> crate::runner_protocol::ShellJobInfo {
@@ -162,7 +162,7 @@ fn passive_validation_projection_separates_execution_result_from_source_freshnes
     job.exit_code = Some(0);
 
     let passed = runtime
-        .passive_job_validation_projection(&job)
+        .passive_job_validation_projection(&job, None)
         .expect("structured validation projection");
     assert_eq!(passed["tool"], "cargo_check");
     assert_eq!(passed["passed"], true);
@@ -179,7 +179,7 @@ fn passive_validation_projection_separates_execution_result_from_source_freshnes
         .unwrap()
         .finish(&ToolResult::ok(json!({"state_changed": true})));
     let stale = runtime
-        .passive_job_validation_projection(&job)
+        .passive_job_validation_projection(&job, None)
         .expect("stale structured validation projection");
     assert_eq!(
         stale["passed"], true,
@@ -190,7 +190,7 @@ fn passive_validation_projection_separates_execution_result_from_source_freshnes
 
     job.exit_code = Some(1);
     let failed = runtime
-        .passive_job_validation_projection(&job)
+        .passive_job_validation_projection(&job, None)
         .expect("failed structured validation projection");
     assert_eq!(failed["passed"], false);
 
@@ -200,7 +200,7 @@ fn passive_validation_projection_separates_execution_result_from_source_freshnes
     job.exit_code = Some(0);
     job.test_count_evidence = None;
     let inconclusive = runtime
-        .passive_job_validation_projection(&job)
+        .passive_job_validation_projection(&job, None)
         .expect("test validation projection");
     assert!(
         inconclusive["passed"].is_null(),

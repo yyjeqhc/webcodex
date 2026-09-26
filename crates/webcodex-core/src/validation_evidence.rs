@@ -21,6 +21,11 @@ pub const NO_STABLE_DIAGNOSTICS_REASON: &str = "no stable diagnostics found";
 pub const VALIDATION_OUTPUT_METADATA_ABSENT_REASON: &str =
     "no validation event contains safe bounded output metadata";
 
+// Passive failure detail is a subset of the canonical parser evidence. The
+// serialized diagnostics object has an independent hard byte ceiling.
+pub const PASSIVE_MAX_DIAGNOSTICS: usize = 3;
+pub const PASSIVE_MAX_FAILED_TESTS: usize = 3;
+pub const PASSIVE_MAX_FAILURE_BYTES: usize = 8 * 1024;
 pub const MAX_DIAGNOSTICS: usize = 20;
 pub const MAX_FAILED_TESTS: usize = 20;
 pub const MAX_DIAGNOSTIC_MESSAGE_CHARS: usize = 240;

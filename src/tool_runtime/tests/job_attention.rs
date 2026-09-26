@@ -1,3 +1,5 @@
+mod failures;
+
 use super::jobs::{
     mark_next_agent_job_running, register_job_agent_for_auth,
     register_job_agent_for_auth_with_reconciliation, start_agent_runtime_job_in_session,

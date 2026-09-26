@@ -6,10 +6,74 @@ use crate::runner_protocol::ShellJobInfo;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Mutex;
+use webcodex_runner_registry::JobAttentionSnapshot;
 
 const MAX_CURSOR_KEYS: usize = 128;
 const MAX_JOBS_PER_KEY: usize = 32;
 const MAX_ITEMS: usize = 8;
+
+/// Reuse canonical safe parser fields; never project arbitrary Job payloads.
+pub(crate) fn bounded_failure_diagnostics(mut diagnostics: Value) -> Value {
+    use webcodex_core::validation_evidence::{
+        PASSIVE_MAX_DIAGNOSTICS, PASSIVE_MAX_FAILED_TESTS, PASSIVE_MAX_FAILURE_BYTES,
+    };
+    diagnostics
+        .as_object_mut()
+        .expect("canonical diagnostics")
+        .retain(|key, _| {
+            matches!(
+                key.as_str(),
+                "available"
+                    | "diagnostic_count"
+                    | "diagnostics"
+                    | "returned_diagnostic_count"
+                    | "diagnostics_truncated"
+                    | "test_summary"
+                    | "failed_test_details"
+                    | "failed_test_details_truncated"
+            )
+        });
+    for (field, truncated, limit) in [
+        (
+            "diagnostics",
+            "diagnostics_truncated",
+            PASSIVE_MAX_DIAGNOSTICS,
+        ),
+        (
+            "failed_test_details",
+            "failed_test_details_truncated",
+            PASSIVE_MAX_FAILED_TESTS,
+        ),
+    ] {
+        let items = diagnostics[field]
+            .as_array_mut()
+            .expect("canonical parser list");
+        if items.len() > limit {
+            items.truncate(limit);
+            diagnostics[truncated] = json!(true);
+        }
+    }
+    loop {
+        diagnostics["returned_diagnostic_count"] =
+            json!(diagnostics["diagnostics"].as_array().unwrap().len());
+        if crate::json_measurement::serialized_json_len(&diagnostics)
+            .is_ok_and(|bytes| bytes <= PASSIVE_MAX_FAILURE_BYTES)
+        {
+            return diagnostics;
+        }
+        // Drop whole evidence items rather than changing a location/identity.
+        let (field, truncated) = if !diagnostics["diagnostics"].as_array().unwrap().is_empty() {
+            ("diagnostics", "diagnostics_truncated")
+        } else {
+            ("failed_test_details", "failed_test_details_truncated")
+        };
+        if diagnostics[field].as_array_mut().unwrap().pop().is_none() {
+            return json!({"available": false, "diagnostics": [], "returned_diagnostic_count": 0,
+                "diagnostics_truncated": true, "failed_test_details": [], "failed_test_details_truncated": true});
+        }
+        diagnostics[truncated] = json!(true);
+    }
+}
 
 fn pending_continuation_job_id(result: &ToolResult) -> Option<&str> {
     if result.output["execution_state"].as_str() != Some("pending") {
@@ -91,11 +155,11 @@ impl JobAttentionCursor {
         &self,
         result: &mut ToolResult,
         key: AttentionKey,
-        jobs: &[ShellJobInfo],
+        jobs: &[JobAttentionSnapshot],
         initiating_handoff_job_id: Option<&str>,
         project_item: F,
     ) where
-        F: Fn(&ShellJobInfo) -> Value,
+        F: Fn(&JobAttentionSnapshot) -> Value,
     {
         let Ok(mut inner) = self.0.lock() else {
             return;
@@ -103,13 +167,14 @@ impl JobAttentionCursor {
         let prior = inner.entries.get(&key);
         let items: Vec<Value> = jobs
             .iter()
-            .filter(|job| {
+            .filter(|snapshot| {
+                let job = &snapshot.job;
                 if initiating_handoff_job_id == Some(job.job_id.as_str()) {
                     return false;
                 }
                 let previous = prior.and_then(|entry| entry.states.get(&job.job_id));
                 match previous {
-                    Some(previous) => previous != &JobState::from(*job),
+                    Some(previous) => previous != &JobState::from(job),
                     None => webcodex_runner_registry::job_status_is_active(&job.status),
                 }
             })
@@ -147,11 +212,15 @@ impl JobAttentionCursor {
         let initial = !inner.entries.contains_key(&key);
         let entry = inner.entries.entry(key).or_default();
         entry.last_used = tick;
-        let in_snapshot: HashSet<&str> = jobs.iter().map(|job| job.job_id.as_str()).collect();
+        let in_snapshot: HashSet<&str> = jobs
+            .iter()
+            .map(|snapshot| snapshot.job.job_id.as_str())
+            .collect();
         entry
             .states
             .retain(|id, _| in_snapshot.contains(id.as_str()));
-        for job in jobs.iter().take(MAX_JOBS_PER_KEY) {
+        for snapshot in jobs.iter().take(MAX_JOBS_PER_KEY) {
+            let job = &snapshot.job;
             // Old terminal Jobs establish a baseline on a fresh Window. When
             // more than eight states change, leave unprojected revisions ready
             // for the next ordinary result instead of silently consuming them.
@@ -186,7 +255,8 @@ impl JobAttentionCursor {
 }
 
 impl ToolRuntime {
-    fn passive_job_attention_item(&self, job: &ShellJobInfo) -> Value {
+    pub(crate) fn passive_job_attention_item(&self, snapshot: &JobAttentionSnapshot) -> Value {
+        let job = &snapshot.job;
         let terminal = super::jobs::is_terminal_job_status(&job.status);
         let mut item = json!({
             "job_id": job.job_id,
@@ -218,7 +288,9 @@ impl ToolRuntime {
                 Some("failed" | "timed_out" | "cancelled") => Value::Bool(false),
                 _ => Value::Null,
             };
-            if let Some(validation) = self.passive_job_validation_projection(job) {
+            if let Some(validation) =
+                self.passive_job_validation_projection(job, snapshot.validation_output.as_ref())
+            {
                 item["validation"] = validation;
             }
             item["details"] = super::jobs::observe_job_details_call(&job.job_id);

@@ -844,7 +844,11 @@ impl ToolRuntime {
         summary
     }
 
-    pub(crate) fn passive_job_validation_projection(&self, job: &ShellJobInfo) -> Option<Value> {
+    pub(crate) fn passive_job_validation_projection(
+        &self,
+        job: &ShellJobInfo,
+        output: Option<&webcodex_runner_registry::JobValidationOutput>,
+    ) -> Option<Value> {
         let metadata = job.validation.as_ref();
         let generic_validation = job
             .structured_execution
@@ -859,101 +863,69 @@ impl ToolRuntime {
             return None;
         }
 
-        let mut validation = if let Some(metadata) = metadata {
-            let mut value = validation_job_projection_with_policy(
-                Some(metadata.tool.as_str()),
-                Some(metadata.kind.as_str()),
-                &job.status,
-                job.exit_code.map(i64::from),
-                "",
-                "",
-                true,
-                job.test_count_evidence.as_ref(),
-                metadata.minimum_tests,
-                metadata.require_tests,
-                metadata.no_run,
-            )?;
-            for field in [
-                "diagnostics",
-                "warnings_count",
-                "errors_count",
-                "tests_passed",
-                "tests_failed",
-                "truncated",
-            ] {
-                value
-                    .as_object_mut()
-                    .expect("validation projection object")
-                    .remove(field);
-            }
-            if job.test_count_evidence.is_none() {
-                for field in ["tests_detected", "tests_run_count", "zero_tests_run"] {
-                    value
-                        .as_object_mut()
-                        .expect("validation projection object")
-                        .remove(field);
-                }
-                if metadata.tool == "cargo_test"
-                    && metadata.no_run != Some(true)
-                    && RunnerJobLifecycle::from_wire(&job.status)
-                        == Ok(RunnerJobLifecycle::Completed)
-                    && job.exit_code == Some(0)
-                {
-                    // A successful process exit without Runner-authoritative test-count
-                    // evidence is not validation proof. Detailed observation may recover
-                    // bounded logs/evidence, but passive attention stays conservative.
-                    value["passed"] = Value::Null;
-                }
-            }
-            if let Some(target_id) = metadata.validation_target_id.as_deref() {
-                value["validation_target_id"] = json!(target_id);
-            }
-            value
-        } else {
-            let lifecycle = RunnerJobLifecycle::from_wire(&job.status).ok();
-            let state = if !lifecycle.is_some_and(RunnerJobLifecycle::is_terminal) {
-                if matches!(
-                    lifecycle,
-                    Some(RunnerJobLifecycle::Queued | RunnerJobLifecycle::RunnerQueued)
-                ) {
-                    "pending"
-                } else {
-                    "running"
-                }
-            } else {
-                match lifecycle {
-                    Some(RunnerJobLifecycle::Timeout | RunnerJobLifecycle::TimedOut) => "timed_out",
-                    Some(RunnerJobLifecycle::Stopped | RunnerJobLifecycle::Cancelled) => {
-                        "cancelled"
-                    }
-                    Some(RunnerJobLifecycle::Lost) => "lost",
-                    _ => "completed",
-                }
-            };
-            let passed = if lifecycle == Some(RunnerJobLifecycle::Completed) {
-                job.exit_code
-                    .map(|code| code == 0)
-                    .map(Value::Bool)
-                    .unwrap_or(Value::Null)
-            } else {
-                Value::Null
-            };
-            json!({
-                "tool": job
-                    .structured_execution
+        let tool = metadata
+            .map(|metadata| metadata.tool.as_str())
+            .or_else(|| {
+                job.structured_execution
                     .as_ref()
                     .and_then(|metadata| metadata.validation_tool.as_deref())
-                    .unwrap_or_else(|| {
-                        job.structured_execution
-                            .as_ref()
-                            .map(|metadata| metadata.execution_source.as_str())
-                            .unwrap_or(job.kind.as_str())
-                    }),
-                "kind": job.purpose.as_deref().unwrap_or("validation"),
-                "state": state,
-                "passed": passed,
             })
-        };
+            .unwrap_or_else(|| {
+                job.structured_execution
+                    .as_ref()
+                    .map(|metadata| metadata.execution_source.as_str())
+                    .unwrap_or(job.kind.as_str())
+            });
+        let kind = metadata
+            .map(|metadata| metadata.kind.as_str())
+            .or_else(|| {
+                super::validation_profile::validation_adapter_for_tool(tool)
+                    .map(|adapter| adapter.validation_kind())
+            })
+            .or(job.purpose.as_deref());
+        let mut validation = validation_job_projection_with_policy(
+            Some(tool),
+            kind,
+            &job.status,
+            job.exit_code.map(i64::from),
+            output.map(|output| output.stdout.as_str()).unwrap_or(""),
+            output.map(|output| output.stderr.as_str()).unwrap_or(""),
+            output.is_none_or(|output| output.truncated),
+            job.test_count_evidence.as_ref(),
+            metadata.and_then(|metadata| metadata.minimum_tests),
+            metadata.and_then(|metadata| metadata.require_tests),
+            metadata.and_then(|metadata| metadata.no_run),
+        )?;
+        // Preserve negative test-count assertions. Exit zero alone cannot turn
+        // incomplete parser/Runner evidence into a proven validation pass.
+        if validation["passed"] == true
+            && kind == Some("test")
+            && metadata.and_then(|metadata| metadata.no_run) != Some(true)
+            && validation["tests_run_count"].is_null()
+        {
+            validation["passed"] = Value::Null;
+        }
+        let diagnostics = validation.as_object_mut()?.remove("diagnostics");
+        if validation["passed"] != true {
+            if let Some(diagnostics) = diagnostics {
+                validation["diagnostics"] =
+                    super::job_attention::bounded_failure_diagnostics(diagnostics);
+            }
+        }
+        for field in [
+            "warnings_count",
+            "errors_count",
+            "tests_passed",
+            "tests_failed",
+            "truncated",
+        ] {
+            validation.as_object_mut()?.remove(field);
+        }
+        if let Some(target_id) =
+            metadata.and_then(|metadata| metadata.validation_target_id.as_deref())
+        {
+            validation["validation_target_id"] = json!(target_id);
+        }
 
         let source_state = match job.project_id.as_deref().filter(|value| !value.is_empty()) {
             Some(project) => self.validation_sources.observe(

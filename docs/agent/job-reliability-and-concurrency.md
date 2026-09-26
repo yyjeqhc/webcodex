@@ -92,7 +92,14 @@ reads only the Server's current Job records; unrelated read calls do not poll a
 Runner. The payload is sparse: `job_id`, tool, durable status, active/terminal state,
 recovery codes when present, and on terminal transitions bounded execution outcome,
 exit/command truth, conservative validation/source freshness, plus an exact
-`observe_jobs` details call. It never inlines logs or command bodies. A bounded
+`observe_jobs` details call. Successful validation stays sparse. Failed or unproven validation may include the
+canonical safe `diagnostics` subset (at most three compiler diagnostics and three
+`failed_test_details`, with an 8 KiB serialized detail ceiling). Item or byte
+omissions set the corresponding truncation flag. Counts describe retained parser
+evidence, not a complete log inventory. Exact `details -> observe_jobs` remains
+available for truncated/absent evidence, full logs, and recovery. Evidence comes
+from the same frozen Server record and retained bounded excerpts, never a Runner
+poll. It never inlines logs, panic/assertion bodies, or command bodies. A bounded
 process-local cursor keyed by principal, Window, Project, and business Session emits
 changed states once per observed revision. Server restart may repeat one bounded
 active snapshot; historical terminal records establish a baseline rather than being
@@ -276,7 +283,7 @@ retries, stops, or polls a Runner execution.
 This makes the normal same-turn path independent of Host automatic wake:
 pending execution can overlap read/edit/search/review work and a later ordinary
 result can carry its terminal truth. `observe_jobs` remains the explicit path
-for logs, detailed diagnostics, recovery, or cases where sparse terminal truth
+for logs, additional diagnostics, recovery, or cases where bounded terminal truth
 is insufficient. `wait_for_job_terminal` and Host continuation carriers remain
 optional blocked-on-terminal acceleration, not required lifecycle machinery.
 

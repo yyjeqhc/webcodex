@@ -476,7 +476,7 @@ fn cargo_output_schema(tool_name: &str) -> Value {
     })
 }
 
-fn cargo_test_diagnostics_schema(description: &str) -> Value {
+pub(super) fn cargo_test_diagnostics_schema(description: &str) -> Value {
     json!({
         "type": "object",
         "description": description,

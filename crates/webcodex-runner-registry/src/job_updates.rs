@@ -95,6 +95,21 @@ impl Default for JobLogWait {
     }
 }
 
+/// Frozen, read-only Server record for passive attention. Validation excerpts
+/// stay internal and are bounded by the canonical retained Job log limits.
+#[derive(Debug, Clone)]
+pub struct JobAttentionSnapshot {
+    pub job: ShellJobInfo,
+    pub validation_output: Option<JobValidationOutput>,
+}
+
+#[derive(Debug, Clone)]
+pub struct JobValidationOutput {
+    pub stdout: String,
+    pub stderr: String,
+    pub truncated: bool,
+}
+
 /// Frozen Server-side observation details accompanying one public Job log
 /// projection. The analysis context is bounded by the retained Server log and
 /// is consumed only by validation/summary projection; it is never repeated as
@@ -1786,7 +1801,7 @@ impl RunnerRegistry {
         project_id: &str,
         session_id: &str,
         limit: usize,
-    ) -> Vec<ShellJobInfo> {
+    ) -> Vec<JobAttentionSnapshot> {
         let inner = self.inner.lock().await;
         let mut jobs = inner
             .jobs_by_id
@@ -1804,7 +1819,30 @@ impl RunnerRegistry {
                 .cmp(&b.lifecycle.is_terminal())
                 .then_with(|| b.created_at.cmp(&a.created_at))
         });
-        jobs.into_iter().take(limit.min(32)).map(job_view).collect()
+        jobs.into_iter()
+            .take(limit.min(32))
+            .map(|job| {
+                let validation_output = (job.lifecycle.is_terminal()
+                    && (job.validation.is_some()
+                        || job
+                            .structured_execution
+                            .as_ref()
+                            .and_then(|metadata| metadata.validation_identity.as_ref())
+                            .is_some()))
+                .then(|| JobValidationOutput {
+                    stdout: job.stdout.tail.clone(),
+                    stderr: job.stderr.tail.clone(),
+                    truncated: job.stdout.truncated
+                        || job.stderr.truncated
+                        || job.stdout.first_retained_line > 1
+                        || job.stderr.first_retained_line > 1,
+                });
+                JobAttentionSnapshot {
+                    job: job_view(job),
+                    validation_output,
+                }
+            })
+            .collect()
     }
 
     async fn visible_job_records_for_auth(

@@ -1409,7 +1409,6 @@ impl ToolRuntime {
         let effective_return_timing = return_timing.intersect(
             super::mcp_timing::return_timing_policy(transport, self.mcp_host_policy),
         );
-        super::return_timing::normalize_structured_handoff(&mut call, effective_return_timing);
         super::mcp_timing::normalize_observation_call_timing(
             &mut call,
             transport,
@@ -1684,6 +1683,15 @@ impl ToolRuntime {
                     _ => "run_process_bash_c_to_run_shell",
                 }
             });
+        }
+        // Apply return-latency policy only after Session execution context and
+        // exact shell recovery have resolved whether this call can use the
+        // Runner-owned durable handoff path. Named SSH run_shell is intentionally
+        // direct-only: an omitted legacy sync_wait_secs must stay omitted, while
+        // an explicitly supplied legacy value is still rejected by the SSH
+        // execution contract below.
+        if ssh_resource.is_none() {
+            super::return_timing::normalize_structured_handoff(&mut call, effective_return_timing);
         }
         if let Some(session_id) = session_id.as_deref() {
             // Lifecycle denial is orthogonal to mode/guards and wins first.

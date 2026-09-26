@@ -235,6 +235,7 @@ fn check_session_message_resolution_scope(
 }
 
 impl ToolRuntime {
+    #[cfg(feature = "experimental-code-mode")]
     pub(crate) fn call_tool_with_context_and_return_timing<'a>(
         &'a self,
         request: ToolCallRequest,

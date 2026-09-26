@@ -476,7 +476,7 @@ async fn session_ssh_resource_uses_remote_cwd_and_safe_agent_context_for_shell_a
         let auth = auth.clone();
         async move {
             runtime
-                .dispatch_with_auth(
+                .dispatch_with_auth_transport_options_and_metadata(
                     ToolCall::RunShell {
                         login: false,
                         project,
@@ -489,6 +489,8 @@ async fn session_ssh_resource_uses_remote_cwd_and_safe_agent_context_for_shell_a
                         shell: None,
                     },
                     Some(&auth),
+                    sessions::SessionTransport::Mcp,
+                    sessions::ToolCallRecorderMetadata::default(),
                 )
                 .await
         }

@@ -4,10 +4,7 @@ fn with_mcp_recording_session(mut arguments: Value, session_id: &str) -> Value {
     arguments
         .as_object_mut()
         .expect("tool arguments must be an object")
-        .insert(
-            crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD.to_string(),
-            Value::from(session_id),
-        );
+        .insert("_wc".to_string(), json!({"record": session_id}));
     arguments
 }
 
@@ -66,10 +63,13 @@ async fn stateless_2026_tool_call(
     token: &str,
     id: i64,
     name: &str,
-    arguments: Value,
+    mut arguments: Value,
     legacy_session_id: Option<&str>,
 ) -> (StatusCode, Value) {
-    let (call_name, call_params) = if matches!(
+    let invocation_envelope = arguments
+        .as_object_mut()
+        .and_then(|arguments| arguments.remove("_wc"));
+    let (call_name, mut call_params) = if matches!(
         crate::model_surface::adaptive_runtime_gateway_target_route(name),
         crate::model_surface::AdaptiveRuntimeGatewayTargetRoute::Gateway
     ) {
@@ -80,6 +80,9 @@ async fn stateless_2026_tool_call(
     } else {
         (name, json!({"name": name, "arguments": arguments}))
     };
+    if let Some(envelope) = invocation_envelope {
+        call_params["arguments"]["_wc"] = envelope;
+    }
     stateless_2026_jsonrpc(
         service,
         token,
@@ -308,7 +311,7 @@ async fn stateless_full_trace_preserves_raw_context_request_and_records_clean_ef
     let (_tmp, db) = test_db();
     let runtime = Arc::new(test_runtime());
     let service = Service::new(build_test_router(config, db, runtime));
-    let arguments = json!({"context_request": ["webcodex.workflow"]});
+    let arguments = json!({"_wc": {"context": ["webcodex.workflow"]}});
     let (status, body) = stateless_2026_tool_call(
         &service,
         "secret",
@@ -343,8 +346,9 @@ async fn stateless_full_trace_preserves_raw_context_request_and_records_clean_ef
     };
 
     let raw = read_phase("raw_arguments");
-    assert_eq!(raw["context_request"], json!(["webcodex.workflow"]));
+    assert_eq!(raw["_wc"]["context"], json!(["webcodex.workflow"]));
     let effective = read_phase("effective_arguments");
+    assert!(effective.get("_wc").is_none());
     assert!(effective.get("context_request").is_none());
     assert_eq!(effective, json!({"compact": true}));
     assert!(!effective.to_string().contains("__webcodex_"));
@@ -1189,10 +1193,7 @@ async fn http_mcp_2026_request_scoped_ack_redelivers_until_durable_resolution_bo
         .to_string();
 
     let mut ack_args = with_mcp_recording_session(json!({}), &session_id);
-    ack_args.as_object_mut().unwrap().insert(
-        crate::tool_runtime::sessions::TOOL_CALL_ACK_REF_FIELD.to_string(),
-        json!(first_ack_ref),
-    );
+    ack_args["_wc"]["ack_ref"] = json!(first_ack_ref);
     let (status, ack_body) =
         stateless_2026_tool_call(&service, "secret", 223, "list_tools", ack_args, None).await;
     assert_eq!(status, StatusCode::OK, "{ack_body}");
@@ -1285,10 +1286,7 @@ async fn http_mcp_2026_request_scoped_ack_redelivers_until_durable_resolution_bo
         .to_string();
 
     let mut stale_ref_args = with_mcp_recording_session(json!({}), &session_id);
-    stale_ref_args.as_object_mut().unwrap().insert(
-        crate::tool_runtime::sessions::TOOL_CALL_ACK_REF_FIELD.to_string(),
-        json!(first_ack_ref),
-    );
+    stale_ref_args["_wc"]["ack_ref"] = json!(first_ack_ref);
     let (status, stale_ref_body) =
         stateless_2026_tool_call(&service, "secret", 2271, "list_tools", stale_ref_args, None)
             .await;
@@ -1307,19 +1305,18 @@ async fn http_mcp_2026_request_scoped_ack_redelivers_until_durable_resolution_bo
         "changed Session ACK membership must replace the old ref"
     );
 
-    let mut resolve_with_ack_args = json!({
-        "session_id": session_id,
-        "message_id": second_message_id,
-        "resolution": "handled with same-request ACK"
-    });
-    resolve_with_ack_args.as_object_mut().unwrap().insert(
-        crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_MESSAGE_IDS_FIELD.to_string(),
-        json!([second_message_id]),
+    let mut resolve_with_ack_args = with_mcp_recording_session(
+        json!({
+            "session_id": session_id,
+            "message_id": second_message_id.clone(),
+            "resolution": "handled with same-request ACK"
+        }),
+        &session_id,
     );
-    // Collaboration session_id is business input, not an inner recorder. Carry
-    // the same Session explicitly as wrapper recorder provenance so ACK is
-    // observed before the concrete resolve mutation without conflating roles.
-    let resolve_with_ack_args = with_mcp_recording_session(resolve_with_ack_args, &session_id);
+    resolve_with_ack_args["_wc"]["ack"] = json!([second_message_id]);
+    // Collaboration session_id is business input, not recorder provenance.
+    // Carry the same Session explicitly in _wc.record so ACK is observed before
+    // the concrete resolve mutation without conflating the two roles.
     let (status, resolve_with_ack_body) = stateless_2026_tool_call(
         &service,
         "secret",
@@ -1382,15 +1379,11 @@ async fn http_mcp_2026_request_scoped_ack_redelivers_until_durable_resolution_bo
         .to_string();
     let resolution_text = "handled through ordinary list_tools wrapper metadata";
 
-    let missing_ack_args = with_mcp_recording_session(
-        json!({
-            crate::tool_runtime::sessions::TOOL_CALL_SESSION_MESSAGE_RESOLUTION_FIELD: {
-                "message_id": third_message_id,
-                "resolution": resolution_text
-            }
-        }),
-        &session_id,
-    );
+    let mut missing_ack_args = with_mcp_recording_session(json!({}), &session_id);
+    missing_ack_args["_wc"]["resolve"] = json!({
+        "message_id": third_message_id,
+        "resolution": resolution_text
+    });
     let (status, missing_ack_body) = stateless_2026_tool_call(
         &service,
         "secret",
@@ -1420,19 +1413,12 @@ async fn http_mcp_2026_request_scoped_ack_redelivers_until_durable_resolution_bo
         crate::tool_runtime::sessions::SessionMessageStatus::Open
     );
 
-    let mut piggyback_args = with_mcp_recording_session(
-        json!({
-            crate::tool_runtime::sessions::TOOL_CALL_SESSION_MESSAGE_RESOLUTION_FIELD: {
-                "message_id": third_message_id,
-                "resolution": resolution_text
-            }
-        }),
-        &session_id,
-    );
-    piggyback_args.as_object_mut().unwrap().insert(
-        crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_MESSAGE_IDS_FIELD.to_string(),
-        json!([third_message_id]),
-    );
+    let mut piggyback_args = with_mcp_recording_session(json!({}), &session_id);
+    piggyback_args["_wc"]["resolve"] = json!({
+        "message_id": third_message_id,
+        "resolution": resolution_text
+    });
+    piggyback_args["_wc"]["ack"] = json!([third_message_id]);
     let (status, piggyback_body) = stateless_2026_tool_call(
         &service,
         "secret",
@@ -1499,12 +1485,14 @@ async fn http_mcp_2026_context_request_projects_post_tool_materials_nonfatally()
     let runtime = Arc::new(test_runtime());
     let service = Service::new(build_test_router(config, db, runtime));
     let arguments = json!({
-        crate::tool_runtime::context_projection::TOOL_CALL_CONTEXT_REQUEST_FIELD: [
-            "webcodex.workflow",
-            "future.material",
-            "webcodex.workflow",
-            "project.instructions"
-        ]
+        "_wc": {
+            "context": [
+                "webcodex.workflow",
+                "future.material",
+                "webcodex.workflow",
+                "project.instructions"
+            ]
+        }
     });
     let (status, body) =
         stateless_2026_tool_call(&service, "secret", 226, "list_tools", arguments, None).await;

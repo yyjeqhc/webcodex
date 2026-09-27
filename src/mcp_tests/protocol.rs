@@ -218,18 +218,17 @@ async fn mcp_stateless_tools_list_uses_2026_result_shape() {
                 .iter()
                 .find(|tool| tool["name"] == "read_files")
                 .expect("read_files stateless schema");
-            let ack = &read_files["inputSchema"]["properties"]["ack_session_message_ids"];
+            let envelope = &read_files["inputSchema"]["properties"]["_wc"];
+            assert_eq!(envelope["type"], "object");
+            assert_eq!(envelope["additionalProperties"], false);
+            let ack = &envelope["properties"]["ack"];
             assert_eq!(ack["type"], "array");
             assert_eq!(ack["maxItems"], 8);
             assert!(
                 ack["items"].get("pattern").is_none(),
                 "compact Stateless discovery intentionally omits the opaque wc_msg_* regex"
             );
-            let description = ack["description"].as_str().unwrap();
-            assert!(description.contains("wc_msg_*"));
-            assert!(description.contains("Retained"));
-            assert!(description.contains("does not resolve"));
-            let resolution = &read_files["inputSchema"]["properties"]["session_message_resolution"];
+            let resolution = &envelope["properties"]["resolve"];
             assert_eq!(resolution["type"], "object");
             assert!(
                 resolution["properties"]["message_id"]
@@ -242,20 +241,12 @@ async fn mcp_stateless_tools_list_uses_2026_result_shape() {
                 resolution["properties"]["resolution"]["maxLength"],
                 crate::tool_runtime::sessions::MAX_MESSAGE_RESOLUTION_CHARS
             );
-            let resolution_description = resolution["description"].as_str().unwrap();
-            assert!(resolution_description.contains("non-todo"));
-            assert!(resolution_description.contains("requires recording_session_id"));
-            assert!(!resolution_description.contains("complete_session_message"));
-            let context_request = &read_files["inputSchema"]["properties"]["context_request"];
-            assert_eq!(context_request["type"], "array");
-            assert_eq!(context_request["maxItems"], 8);
-            assert_eq!(context_request["items"]["type"], "string");
-            assert!(context_request["items"].get("enum").is_none());
-            assert_eq!(context_request["items"]["maxLength"], 64);
-            let request_description = context_request["description"].as_str().unwrap();
-            assert!(request_description.contains("Sidecar keys"));
-            assert!(request_description.contains("jobs.attention"));
-            assert!(!request_description.contains("memory_read"));
+            let context = &envelope["properties"]["context"];
+            assert_eq!(context["type"], "array");
+            assert_eq!(context["maxItems"], 8);
+            assert_eq!(context["items"]["type"], "string");
+            assert!(context["items"].get("enum").is_none());
+            assert_eq!(context["items"]["maxLength"], 64);
             assert!(read_files["inputSchema"]["properties"]
                 .get("ack_session_context_revision")
                 .is_none());
@@ -283,30 +274,22 @@ async fn mcp_legacy_tools_list_omits_2026_only_result_fields() {
                 .as_array()
                 .unwrap()
                 .iter()
-                .all(|tool| tool["inputSchema"]["properties"]
-                    .get("ack_session_message_ids")
-                    .is_none()));
-            assert!(value["result"]["tools"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .all(|tool| tool["inputSchema"]["properties"]
-                    .get("session_message_resolution")
-                    .is_none()));
-            assert!(value["result"]["tools"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .all(|tool| tool["inputSchema"]["properties"]
-                    .get("ack_session_context_revision")
-                    .is_none()));
-            assert!(value["result"]["tools"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .all(|tool| tool["inputSchema"]["properties"]
-                    .get("context_request")
-                    .is_none()));
+                .all(|tool| tool["inputSchema"]["properties"].get("_wc").is_none()));
+            for legacy in [
+                "recording_session_id",
+                "ack_session_message_ids",
+                "ack_ref",
+                "window_reply",
+                "session_message_resolution",
+                "context_request",
+                "_control",
+            ] {
+                assert!(value["result"]["tools"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .all(|tool| tool["inputSchema"]["properties"].get(legacy).is_none()));
+            }
         }
         other => panic!("expected Ok for legacy tools/list, got {:?}", other),
     }

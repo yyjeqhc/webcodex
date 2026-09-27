@@ -444,7 +444,7 @@ async fn goal_plan_poll_reads_authoritative_revision_without_ui_request_identity
 }
 
 #[tokio::test]
-async fn goal_plan_sync_discards_unadvertised_recording_session_wrapper() {
+async fn goal_plan_sync_rejects_unadvertised_invocation_envelope_and_legacy_wrapper() {
     let (_temp, _db, runtime) = goal_runtime();
     let owner = goal_auth("goal-plan-wrapper");
     let goal_id = create_goal(&runtime, &owner, "goal-plan-wrapper-goal");
@@ -454,27 +454,39 @@ async fn goal_plan_sync_discards_unadvertised_recording_session_wrapper() {
     );
     let before = runtime.sessions.summary(&session.session_id, None).unwrap();
 
-    let outcome = handle_with_server_apps_enabled(
-        &runtime,
-        rpc(
-            "tools/call",
-            Some(json!(4389)),
-            mcp_2026_ui_params(json!({
-                "name": "goal_plan_sync",
-                "arguments": {
-                    "goal_id": goal_id,
-                    "recording_session_id": "~s01"
-                }
-            })),
+    for (id, arguments, expected) in [
+        (
+            4389,
+            json!({"goal_id": goal_id, "recording_session_id": "~s01"}),
+            "legacy MCP invocation field",
         ),
-        Some(&owner),
-        true,
-    )
-    .await;
-    let McpOutcome::Ok(result) = outcome else {
-        panic!("Goal Plan sync with discarded wrapper must reach the canonical tool");
-    };
-    assert_eq!(result["result"]["structuredContent"]["success"], true);
+        (
+            4390,
+            json!({"goal_id": goal_id, "_wc": {"record": "~s01"}}),
+            "unsupported _wc field",
+        ),
+    ] {
+        let outcome = handle_with_server_apps_enabled(
+            &runtime,
+            rpc(
+                "tools/call",
+                Some(json!(id)),
+                mcp_2026_ui_params(json!({
+                    "name": "goal_plan_sync",
+                    "arguments": arguments
+                })),
+            ),
+            Some(&owner),
+            true,
+        )
+        .await;
+        let McpOutcome::BadRequest(value) = outcome else {
+            panic!("Goal Plan App must reject unadvertised invocation metadata");
+        };
+        assert!(value["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains(expected)));
+    }
 
     let after = runtime.sessions.summary(&session.session_id, None).unwrap();
     assert_eq!(after.events_total, before.events_total);

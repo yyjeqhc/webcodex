@@ -452,13 +452,14 @@ async fn openai_presentation_preserves_plugin_provider_errors_and_projects_gover
     let session =
         start_authorized_test_session(&runtime, &auth, crate::tool_runtime::SessionMode::ReadOnly);
     for client in ["generic-test-client", "openai-mcp"] {
-        let mut params = json!({
-            "name": "plugin_tool", "arguments": {"action": "call", "binding": binding, "arguments": {"query": "probe"}},
+        let params = json!({
+            "name": "plugin_tool",
+            "arguments": {"action": "call", "binding": binding, "arguments": {"query": "probe"}},
             "_meta": {"io.modelcontextprotocol/clientInfo": {"name": client, "version": "2"}},
         });
         let call = handle_mcp_request(
             &runtime,
-            rpc("tools/call", Some(json!(781)), params.clone()),
+            rpc("tools/call", Some(json!(781)), params),
             Some(&auth),
         );
         let complete = async {
@@ -484,10 +485,20 @@ async fn openai_presentation_preserves_plugin_provider_errors_and_projects_gover
             serde_json::to_value(&provider_result).unwrap()
         );
 
-        params["arguments"]["recording_session_id"] = json!(session.session_id);
+        let mut denied_params = mcp_2026_params(json!({
+            "name": "plugin_tool",
+            "arguments": {
+                "action": "call",
+                "binding": binding,
+                "arguments": {"query": "probe"},
+                "_wc": {"record": session.session_id}
+            }
+        }));
+        denied_params["_meta"]["io.modelcontextprotocol/clientInfo"] =
+            json!({"name": client, "version": "2"});
         let denied = handle_mcp_request(
             &runtime,
-            rpc("tools/call", Some(json!(782)), params),
+            rpc("tools/call", Some(json!(782)), denied_params),
             Some(&auth),
         )
         .await;
@@ -731,13 +742,13 @@ async fn read_only_session_allows_plugin_inspect_but_denies_call_before_provider
         rpc(
             "tools/call",
             Some(json!(689)),
-            json!({
+            mcp_2026_params(json!({
                 "name": crate::plugin_gateway::PLUGIN_TOOL_NAME,
                 "arguments": {
                     "action":"list",
-                    "recording_session_id":recorder_ref
+                    "_wc":{"record":recorder_ref}
                 }
-            }),
+            })),
         ),
         Some(&auth),
     )
@@ -752,15 +763,15 @@ async fn read_only_session_allows_plugin_inspect_but_denies_call_before_provider
         rpc(
             "tools/call",
             Some(json!(690)),
-            json!({
+            mcp_2026_params(json!({
                 "name": crate::plugin_gateway::PLUGIN_TOOL_NAME,
                 "arguments": {
                     "action":"call",
                     "binding":"wc_pbind_ASNFZ4mrze8BI0VniavN7w",
                     "arguments":{"query":"must-not-run"},
-                    "recording_session_id":recorder_ref
+                    "_wc":{"record":recorder_ref}
                 }
-            }),
+            })),
         ),
         Some(&auth),
     )
@@ -810,13 +821,13 @@ async fn specialized_recording_session_authority_fails_closed_at_mcp_boundary() 
         rpc(
             "tools/call",
             Some(json!(693)),
-            json!({
+            mcp_2026_params(json!({
                 "name": crate::plugin_gateway::PLUGIN_TOOL_NAME,
                 "arguments": {
                     "action":"list",
-                    "recording_session_id":session.session_id
+                    "_wc":{"record":session.session_id}
                 }
-            }),
+            })),
         ),
         Some(&foreign),
     )
@@ -858,7 +869,7 @@ async fn plugin_tool_accepts_collaboration_ack_but_rejects_other_stateless_wrapp
                 "name": crate::plugin_gateway::PLUGIN_TOOL_NAME,
                 "arguments": {
                     "action":"list",
-                    crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_MESSAGE_IDS_FIELD: ["wc_msg_0123456789abcdef"]
+                    "_wc":{"ack":["wc_msg_0123456789abcdef"]}
                 }
             })),
         ),
@@ -882,23 +893,14 @@ async fn plugin_tool_accepts_collaboration_ack_but_rejects_other_stateless_wrapp
         .unwrap()
         .is_none());
 
-    for (id, arguments) in [
-        (
-            696,
-            json!({
-                "action":"list",
-                crate::tool_runtime::context_projection::TOOL_CALL_CONTEXT_REQUEST_FIELD: ["webcodex.workflow"]
-            }),
-        ),
+    for (id, envelope) in [
+        (696, json!({"context": ["webcodex.workflow"]})),
         (
             697,
-            json!({
-                "action":"list",
-                crate::tool_runtime::sessions::TOOL_CALL_SESSION_MESSAGE_RESOLUTION_FIELD: {
-                    "message_id": "wc_msg_cached",
-                    "resolution": "handled"
-                }
-            }),
+            json!({"resolve": {
+                "message_id": "wc_msg_cached",
+                "resolution": "handled"
+            }}),
         ),
     ] {
         let outcome = handle_mcp_request(
@@ -908,7 +910,7 @@ async fn plugin_tool_accepts_collaboration_ack_but_rejects_other_stateless_wrapp
                 Some(json!(id)),
                 mcp_2026_params(json!({
                     "name": crate::plugin_gateway::PLUGIN_TOOL_NAME,
-                    "arguments": arguments
+                    "arguments": {"action":"list", "_wc": envelope}
                 })),
             ),
             Some(&auth),
@@ -918,7 +920,7 @@ async fn plugin_tool_accepts_collaboration_ack_but_rejects_other_stateless_wrapp
             panic!("specialized plugin_tool must reject non-ACK generic continuity wrappers");
         };
         let encoded = serde_json::to_string(&value).unwrap();
-        assert!(encoded.contains("unknown field"), "{encoded}");
+        assert!(encoded.contains("unsupported _wc field"), "{encoded}");
         assert!(runtime
             .runner_registry
             .poll(RunnerPollRequest {

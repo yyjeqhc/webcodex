@@ -119,6 +119,28 @@ async fn call_in_task(
     })
 }
 
+async fn call_stateless_in_task(
+    runtime: Arc<ToolRuntime>,
+    auth: crate::auth::AuthContext,
+    business_arguments: Value,
+    envelope: Value,
+    id: u64,
+) -> tokio::task::JoinHandle<McpOutcome> {
+    tokio::spawn(async move {
+        let mut params = adaptive_runtime_gateway_params(
+            crate::ssh_resource_gateway::SSH_RESOURCE_TOOL_NAME,
+            business_arguments,
+        );
+        params["arguments"]["_wc"] = envelope;
+        handle_mcp_request(
+            &runtime,
+            rpc("tools/call", Some(json!(id)), mcp_2026_params(params)),
+            Some(&auth),
+        )
+        .await
+    })
+}
+
 fn tool_result(outcome: McpOutcome) -> Value {
     let McpOutcome::Ok(value) = outcome else {
         panic!("expected normal MCP tool result: {outcome:?}");
@@ -406,14 +428,11 @@ async fn read_only_session_allows_ssh_inspect_but_denies_management_before_runne
         .session_reference_for_id(&session.session_id, Some(&auth))
         .expect("authorized SSH recorder should expose a Session ref");
 
-    let list_task = call_in_task(
+    let list_task = call_stateless_in_task(
         Arc::clone(&runtime),
         auth.clone(),
-        json!({
-            "action":"list",
-            "runner":"runner-a",
-            "recording_session_id":recorder_ref
-        }),
+        json!({"action":"list","runner":"runner-a"}),
+        json!({"record":recorder_ref}),
         808,
     )
     .await;
@@ -435,21 +454,22 @@ async fn read_only_session_allows_ssh_inspect_but_denies_management_before_runne
         .unwrap()
         .to_string();
 
+    let mut denied_params = adaptive_runtime_gateway_params(
+        crate::ssh_resource_gateway::SSH_RESOURCE_TOOL_NAME,
+        json!({
+            "action":"register",
+            "binding":binding,
+            "name":"w10",
+            "target":"private-user@private-host"
+        }),
+    );
+    denied_params["arguments"]["_wc"] = json!({"record":recorder_ref});
     let denied = handle_mcp_request(
         &runtime,
         rpc(
             "tools/call",
             Some(json!(809)),
-            adaptive_runtime_gateway_params(
-                crate::ssh_resource_gateway::SSH_RESOURCE_TOOL_NAME,
-                json!({
-                    "action":"register",
-                    "binding":binding,
-                    "name":"w10",
-                    "target":"private-user@private-host",
-                    "recording_session_id":recorder_ref
-                }),
-            ),
+            mcp_2026_params(denied_params),
         ),
         Some(&auth),
     )
@@ -498,14 +518,14 @@ async fn ssh_resource_accepts_collaboration_ack_but_rejects_other_stateless_wrap
                 rpc(
                     "tools/call",
                     Some(json!(811)),
-                    mcp_2026_params(adaptive_runtime_gateway_params(
-                        crate::ssh_resource_gateway::SSH_RESOURCE_TOOL_NAME,
-                        json!({
-                            "action":"list",
-                            "runner":"runner-a",
-                            crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_MESSAGE_IDS_FIELD: ["wc_msg_0123456789abcdef"]
-                        }),
-                    )),
+                    mcp_2026_params({
+                        let mut params = adaptive_runtime_gateway_params(
+                            crate::ssh_resource_gateway::SSH_RESOURCE_TOOL_NAME,
+                            json!({"action":"list","runner":"runner-a"}),
+                        );
+                        params["arguments"]["_wc"] = json!({"ack":["wc_msg_0123456789abcdef"]});
+                        params
+                    }),
                 ),
                 Some(&auth),
             )
@@ -538,25 +558,14 @@ async fn ssh_resource_accepts_collaboration_ack_but_rejects_other_stateless_wrap
     let ack_result = tool_result(ack_task.await.unwrap());
     assert_eq!(ack_result["isError"], false, "{ack_result}");
 
-    for (id, arguments) in [
-        (
-            813,
-            json!({
-                "action":"list",
-                "runner":"runner-a",
-                crate::tool_runtime::context_projection::TOOL_CALL_CONTEXT_REQUEST_FIELD: ["webcodex.workflow"]
-            }),
-        ),
+    for (id, envelope) in [
+        (813, json!({"context": ["webcodex.workflow"]})),
         (
             814,
-            json!({
-                "action":"list",
-                "runner":"runner-a",
-                crate::tool_runtime::sessions::TOOL_CALL_SESSION_MESSAGE_RESOLUTION_FIELD: {
-                    "message_id": "wc_msg_cached",
-                    "resolution": "handled"
-                }
-            }),
+            json!({"resolve": {
+                "message_id": "wc_msg_0123456789abcdef",
+                "resolution": "handled"
+            }}),
         ),
     ] {
         let outcome = handle_mcp_request(
@@ -564,20 +573,24 @@ async fn ssh_resource_accepts_collaboration_ack_but_rejects_other_stateless_wrap
             rpc(
                 "tools/call",
                 Some(json!(id)),
-                mcp_2026_params(adaptive_runtime_gateway_params(
-                    crate::ssh_resource_gateway::SSH_RESOURCE_TOOL_NAME,
-                    arguments,
-                )),
+                mcp_2026_params({
+                    let mut params = adaptive_runtime_gateway_params(
+                        crate::ssh_resource_gateway::SSH_RESOURCE_TOOL_NAME,
+                        json!({"action":"list","runner":"runner-a"}),
+                    );
+                    params["arguments"]["_wc"] = envelope;
+                    params
+                }),
             ),
             Some(&auth),
         )
         .await;
-        let result = tool_result(outcome);
-        assert_eq!(result["isError"], true, "{result}");
-        assert_eq!(
-            result["structuredContent"]["error"]["code"], "ssh_resource_invalid",
-            "non-ACK wrappers must remain invalid specialized SSH arguments"
-        );
+        let McpOutcome::BadRequest(value) = outcome else {
+            panic!("specialized SSH gateway must reject unsupported envelope fields");
+        };
+        assert!(value["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("unsupported _wc field")));
         assert!(runtime
             .runner_registry
             .poll(RunnerPollRequest {

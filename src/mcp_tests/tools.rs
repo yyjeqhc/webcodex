@@ -92,8 +92,22 @@ async fn mcp_tools_list_uses_adaptive_inventory_in_both_schema_modes() {
         assert!(!stateless_names.contains(&"read_tool_trace"));
         for tool in stateless_tools {
             let properties = tool["inputSchema"]["properties"].as_object().unwrap();
-            assert!(properties
-                .contains_key(crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD));
+            assert!(properties.contains_key("_wc"), "{}", tool["name"]);
+            for legacy in [
+                "recording_session_id",
+                "ack_session_message_ids",
+                "ack_ref",
+                "window_reply",
+                "session_message_resolution",
+                "context_request",
+                "_control",
+            ] {
+                assert!(
+                    !properties.contains_key(legacy),
+                    "{} exposes {legacy}",
+                    tool["name"]
+                );
+            }
             if compact {
                 assert!(tool.get("outputSchema").is_none(), "{}", tool["name"]);
             } else {
@@ -140,17 +154,26 @@ async fn stateless_mcp_gateway_advertises_peer_ack_without_session_wrappers() {
     let properties = stateless_mcp_tool["inputSchema"]["properties"]
         .as_object()
         .unwrap();
-    assert!(properties
-        .contains_key(crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_MESSAGE_IDS_FIELD));
+    let envelope_properties = properties["_wc"]["properties"].as_object().unwrap();
+    assert_eq!(
+        envelope_properties
+            .keys()
+            .map(String::as_str)
+            .collect::<std::collections::BTreeSet<_>>(),
+        ["ack", "ack_ref", "record"].into_iter().collect()
+    );
     for field in [
-        crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD,
-        crate::tool_runtime::sessions::TOOL_CALL_SESSION_MESSAGE_RESOLUTION_FIELD,
-        crate::tool_runtime::window_collaboration::TOOL_CALL_WINDOW_REPLY_FIELD,
-        crate::tool_runtime::context_projection::TOOL_CALL_CONTEXT_REQUEST_FIELD,
+        "recording_session_id",
+        "ack_session_message_ids",
+        "ack_ref",
+        "session_message_resolution",
+        "window_reply",
+        "context_request",
+        "_control",
     ] {
         assert!(
             !properties.contains_key(field),
-            "mcp_tool must not advertise unsupported wrapper metadata: {field}"
+            "legacy root wrapper leaked: {field}"
         );
     }
 }
@@ -306,27 +329,26 @@ async fn hidden_extensions_keep_exact_manifest_and_gateway_execution() {
         assert_eq!(output["description"], spec.description);
         assert_eq!(output["input_schema"], spec.input_schema);
     }
-    for (name, arguments) in [
+    for (name, arguments, context) in [
         (
             "memory_set",
             json!({"project": project, "memory_key": "discovery", "summary": "Keep gateway reachability", "bootstrap": true}),
+            false,
         ),
-        (
-            "memory_search",
-            json!({"project": project, "context_request": ["memory.bootstrap"]}),
-        ),
+        ("memory_search", json!({"project": project}), true),
         (
             "memory_read",
             json!({"project": project, "memory_key": "discovery"}),
+            false,
         ),
     ] {
+        let mut params = adaptive_runtime_gateway_params(name, arguments);
+        if context {
+            params["arguments"]["_wc"] = json!({"context": ["memory.bootstrap"]});
+        }
         let McpOutcome::Ok(value) = handle_mcp_request(
             &runtime,
-            rpc(
-                "tools/call",
-                Some(json!(2)),
-                mcp_2026_params(adaptive_runtime_gateway_params(name, arguments)),
-            ),
+            rpc("tools/call", Some(json!(2)), mcp_2026_params(params)),
             Some(&auth),
         )
         .await
@@ -630,11 +652,11 @@ fn stateless_workflow_recorder_metadata_adds_protocol_projection() {
     let read_files_input = read_files["inputSchema"]["properties"]
         .as_object()
         .expect("read_files input properties");
+    let read_files_envelope = &read_files_input["_wc"];
+    assert_eq!(read_files_envelope["additionalProperties"], false);
     assert!(
-        read_files_input
-            .get(crate::tool_runtime::window_collaboration::TOOL_CALL_WINDOW_REPLY_FIELD)
-            .is_some(),
-        "ordinary model-visible tools must advertise Window replies"
+        read_files_envelope["properties"].get("reply").is_some(),
+        "ordinary model-visible tools must advertise Window replies inside _wc"
     );
     assert!(
         read_files_output.contains("\"window_reply\""),
@@ -649,10 +671,10 @@ fn stateless_workflow_recorder_metadata_adds_protocol_projection() {
     });
     add_stateless_workflow_recorder_metadata(&mut gateway_payload);
     assert!(
-        gateway_payload["tools"][0]["inputSchema"]["properties"]
-            .get(crate::tool_runtime::window_collaboration::TOOL_CALL_WINDOW_REPLY_FIELD)
+        gateway_payload["tools"][0]["inputSchema"]["properties"]["_wc"]["properties"]
+            .get("reply")
             .is_some(),
-        "adaptive wrapper must advertise Window reply metadata"
+        "adaptive wrapper must advertise Window reply metadata inside _wc"
     );
     assert!(!serde_json::to_string(&full)
         .unwrap()
@@ -678,8 +700,10 @@ fn stateless_workflow_recorder_metadata_adds_protocol_projection() {
                 tool["name"]
             );
         }
-        assert!(input.get("ack_session_message_ids").is_some());
-        assert!(input.get("ack_ref").is_some());
+        if let Some(envelope) = input.get("_wc") {
+            assert!(envelope["properties"].get("ack").is_some());
+            assert!(envelope["properties"].get("ack_ref").is_some());
+        }
     }
     assert!(!read_files_output.contains("session_continuity"));
     assert!(!read_files_output.contains("session_recovery"));
@@ -864,36 +888,28 @@ fn stateless_invocation_metadata_stays_typed_and_business_arguments_stay_clean()
     let mut arguments = json!({
         "project": "proj",
         "items": [{"path": "src/lib.rs"}],
-        crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD: "wc_sess_adapter",
-        crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_MESSAGE_IDS_FIELD: ["wc_msg_abcd-efgh_ijklmn"],
-        crate::tool_runtime::sessions::TOOL_CALL_ACK_REF_FIELD: "wc_ack1_fixture",
-        crate::tool_runtime::sessions::TOOL_CALL_SESSION_MESSAGE_RESOLUTION_FIELD: {
-            "message_id": "wc_msg_abcd-efgh_ijklmn",
-            "resolution": "handled"
-        },
-        crate::tool_runtime::window_collaboration::TOOL_CALL_WINDOW_REPLY_FIELD: {
-            "reply_to": "wc_msg_abcd-efgh_ijklmn",
-            "message": "Tests are clean"
-        },
-        crate::tool_runtime::context_projection::TOOL_CALL_CONTEXT_REQUEST_FIELD: ["webcodex.workflow"],
+        "_wc": {
+            "record": "wc_sess_adapter",
+            "ack": ["wc_msg_abcd-efgh_ijklmn"],
+            "ack_ref": "wc_ack1_fixture",
+            "resolve": {
+                "message_id": "wc_msg_abcd-efgh_ijklmn",
+                "resolution": "handled"
+            },
+            "reply": {
+                "reply_to": "wc_msg_abcd-efgh_ijklmn",
+                "message": "Tests are clean"
+            },
+            "context": ["webcodex.workflow"]
+        }
     });
-    let recording_session_id = strip_recording_session_id(&mut arguments).unwrap();
-    let ack_session_message_ids = strip_stateless_ack_session_message_ids(&mut arguments).unwrap();
-    let ack_ref = strip_stateless_ack_ref(&mut arguments).unwrap();
-    let session_message_resolution =
-        strip_stateless_session_message_resolution(&mut arguments).unwrap();
-    let window_reply = strip_stateless_window_reply(&mut arguments).unwrap();
-    let context_request = strip_stateless_context_request(&mut arguments).unwrap();
-    let metadata = crate::tool_runtime::kernel::ToolInvocationMetadata {
-        control: None,
-        ack_session_message_ids,
-        ack_ref,
-        session_message_resolution,
-        window_reply,
-        context_request,
-    };
+    let invocation = parse_mcp_invocation_envelope("read_files", &mut arguments, true).unwrap();
+    let metadata = invocation.metadata;
 
-    assert_eq!(recording_session_id.as_deref(), Some("wc_sess_adapter"));
+    assert_eq!(
+        invocation.recording_session_selector.as_deref(),
+        Some("wc_sess_adapter")
+    );
     assert_eq!(
         metadata.ack_session_message_ids,
         vec!["wc_msg_abcd-efgh_ijklmn"]
@@ -908,6 +924,7 @@ fn stateless_invocation_metadata_stays_typed_and_business_arguments_stay_clean()
             .map(|reply| reply.message.as_str()),
         Some("Tests are clean")
     );
+    assert!(arguments.get("_wc").is_none());
     for field in [
         crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD,
         crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_MESSAGE_IDS_FIELD,
@@ -915,15 +932,15 @@ fn stateless_invocation_metadata_stays_typed_and_business_arguments_stay_clean()
         crate::tool_runtime::sessions::TOOL_CALL_SESSION_MESSAGE_RESOLUTION_FIELD,
         crate::tool_runtime::window_collaboration::TOOL_CALL_WINDOW_REPLY_FIELD,
         crate::tool_runtime::context_projection::TOOL_CALL_CONTEXT_REQUEST_FIELD,
+        crate::tool_runtime::control_sidecar::CONTROL_FIELD,
     ] {
         assert!(
             arguments.get(field).is_none(),
-            "wrapper leaked into business args: {field}"
+            "legacy wrapper leaked into business args: {field}"
         );
     }
-    assert!(!arguments.to_string().contains("__webcodex_"));
     crate::tool_runtime::ToolCall::from_tool_name("read_files", arguments)
-        .expect("typed invocation metadata must not be required for concrete ToolCall parsing");
+        .expect("typed invocation metadata must stay outside concrete ToolCall parsing");
 }
 
 #[test]
@@ -1635,22 +1652,14 @@ async fn mcp_compact_preserves_stateless_wrappers_app_metadata_and_exact_manifes
                     if compact {
                         assert!(tool.get("outputSchema").is_none());
                         let properties = &tool["inputSchema"]["properties"];
-                        for (field, hint) in [
-                            ("recording_session_id", "Recorder Session"),
-                            ("ack_session_message_ids", "wc_msg_*"),
-                            ("session_message_resolution", "recording_session_id"),
-                            ("context_request", "jobs.attention"),
-                        ] {
-                            if let Some(property) = properties.get(field) {
-                                assert!(property["description"].as_str().unwrap().contains(hint));
-                            }
-                        }
-                        for pointer in [
-                            "/ack_session_message_ids/items",
-                            "/session_message_resolution/properties/message_id",
-                            "/session_message_resolution/properties/resolution",
-                        ] {
-                            if let Some(property) = properties.pointer(pointer) {
+                        if let Some(envelope) = properties.get("_wc") {
+                            assert_eq!(envelope["type"], "object");
+                            assert_eq!(envelope["additionalProperties"], false);
+                            assert!(envelope["description"]
+                                .as_str()
+                                .unwrap()
+                                .contains("Optional invocation sidecars"));
+                            for property in envelope["properties"].as_object().unwrap().values() {
                                 assert!(property.get("description").is_none());
                             }
                         }
@@ -1727,15 +1736,15 @@ fn assert_compact_tool_diff(full: &Value, compact: &Value) {
     // regex, any other location, or any removed bound must fail equality.
     for (pointer, pattern) in [
         (
-            "/properties/recording_session_id",
+            "/properties/_wc/properties/record",
             "^(~s[1-9][0-9]{0,19}|wc_sess_([A-Za-z0-9_-]{16}|[0-9a-f]{32}))$",
         ),
         (
-            "/properties/ack_session_message_ids/items",
+            "/properties/_wc/properties/ack/items",
             "^wc_msg_([A-Za-z0-9_-]{16}|[0-9a-f]{32})$",
         ),
         (
-            "/properties/session_message_resolution/properties/message_id",
+            "/properties/_wc/properties/resolve/properties/message_id",
             "^wc_msg_([A-Za-z0-9_-]{16}|[0-9a-f]{32})$",
         ),
     ] {
@@ -1753,65 +1762,56 @@ fn assert_compact_tool_diff(full: &Value, compact: &Value) {
             property.as_object_mut().unwrap().remove("pattern");
         }
     }
-    // `_control` is the one intentional structural compacting exception. The
-    // full Stateless MCP schema remains the exact closed operational contract;
-    // compact tools/list keeps only an object selection entry so the same large
-    // canonical sidecar payload schemas are not repeated on every ordinary tool.
-    if let (Some(full_control), Some(compact_control)) = (
-        expected["inputSchema"]
-            .pointer("/properties/_control")
-            .cloned(),
-        actual["inputSchema"]
-            .pointer("/properties/_control")
-            .cloned(),
+    if let (Some(full_envelope), Some(compact_envelope)) = (
+        expected["inputSchema"].pointer("/properties/_wc").cloned(),
+        actual["inputSchema"].pointer("/properties/_wc").cloned(),
     ) {
-        assert_eq!(full_control["type"], "object", "{name}");
-        assert_eq!(full_control["additionalProperties"], false, "{name}");
-        assert_eq!(
-            full_control["properties"]["before"]["maxProperties"], 1,
-            "{name}"
-        );
-        assert_eq!(
-            full_control["properties"]["after_success"]["maxProperties"], 1,
-            "{name}"
-        );
-        assert_eq!(compact_control["type"], "object", "{name}");
-        assert!(compact_control.get("properties").is_none(), "{name}");
-        expected["inputSchema"]["properties"]["_control"] = compact_control;
-    }
-    // window_reply is the other intentional structural compacting exception.
-    // Full discovery owns the exact closed reply contract; compact discovery
-    // keeps only the object entry because startup guidance carries the shape.
-    if let (Some(full_reply), Some(compact_reply)) = (
-        expected["inputSchema"]
-            .pointer("/properties/window_reply")
-            .cloned(),
-        actual["inputSchema"]
-            .pointer("/properties/window_reply")
-            .cloned(),
-    ) {
-        assert_eq!(full_reply["type"], "object", "{name}");
-        assert_eq!(full_reply["additionalProperties"], false, "{name}");
-        assert_eq!(
-            full_reply["properties"]["reply_to"]["pattern"],
-            "^wc_msg_([A-Za-z0-9_-]{16}|[0-9a-f]{32})$",
-            "{name}"
-        );
-        assert_eq!(
-            full_reply["properties"]["message"]["minLength"], 1,
-            "{name}"
-        );
-        assert_eq!(
-            full_reply["properties"]["message"]["maxLength"], 8_000,
-            "{name}"
-        );
-        assert_eq!(
-            full_reply["required"],
-            json!(["reply_to", "message"]),
-            "{name}"
-        );
-        assert_eq!(compact_reply, json!({"type": "object"}), "{name}");
-        expected["inputSchema"]["properties"]["window_reply"] = compact_reply;
+        assert_eq!(full_envelope["type"], "object", "{name}");
+        assert_eq!(full_envelope["additionalProperties"], false, "{name}");
+        if let Some(full_control) = full_envelope.pointer("/properties/control") {
+            assert_eq!(full_control["type"], "object", "{name}");
+            assert_eq!(full_control["additionalProperties"], false, "{name}");
+            assert_eq!(
+                full_control["properties"]["before"]["maxProperties"], 1,
+                "{name}"
+            );
+            assert_eq!(
+                compact_envelope["properties"]["control"],
+                json!({"type": "object"}),
+                "{name}"
+            );
+            expected["inputSchema"]["properties"]["_wc"]["properties"]["control"] =
+                json!({"type": "object"});
+        }
+        if let Some(full_reply) = full_envelope.pointer("/properties/reply") {
+            assert_eq!(full_reply["type"], "object", "{name}");
+            assert_eq!(full_reply["additionalProperties"], false, "{name}");
+            assert_eq!(
+                full_reply["properties"]["reply_to"]["pattern"],
+                "^wc_msg_([A-Za-z0-9_-]{16}|[0-9a-f]{32})$",
+                "{name}"
+            );
+            assert_eq!(
+                full_reply["properties"]["message"]["minLength"], 1,
+                "{name}"
+            );
+            assert_eq!(
+                full_reply["properties"]["message"]["maxLength"], 8_000,
+                "{name}"
+            );
+            assert_eq!(
+                full_reply["required"],
+                json!(["reply_to", "message"]),
+                "{name}"
+            );
+            assert_eq!(
+                compact_envelope["properties"]["reply"],
+                json!({"type": "object"}),
+                "{name}"
+            );
+            expected["inputSchema"]["properties"]["_wc"]["properties"]["reply"] =
+                json!({"type": "object"});
+        }
     }
     for tool in [&mut expected, &mut actual] {
         tool.as_object_mut().unwrap().remove("description");
@@ -1875,25 +1875,27 @@ async fn mcp_compact_preserves_safety_patterns_and_wrapper_bounds() {
         "^wc_sess_([A-Za-z0-9_-]{16}|[0-9a-f]{32})$"
     );
     let properties = &schema("run_process")["properties"];
+    let envelope = &properties["_wc"];
+    assert_eq!(envelope["additionalProperties"], false);
     assert_eq!(
-        properties["ack_session_message_ids"]["maxItems"],
+        envelope["properties"]["ack"]["maxItems"],
         crate::tool_runtime::sessions::MAX_TOOL_CALL_ACK_MESSAGE_IDS
     );
     assert_eq!(
-        properties["session_message_resolution"]["properties"]["resolution"]["minLength"],
+        envelope["properties"]["resolve"]["properties"]["resolution"]["minLength"],
         1
     );
     assert_eq!(
-        properties["session_message_resolution"]["properties"]["resolution"]["maxLength"],
+        envelope["properties"]["resolve"]["properties"]["resolution"]["maxLength"],
         crate::tool_runtime::sessions::MAX_MESSAGE_RESOLUTION_CHARS
     );
     assert_eq!(
-        properties["context_request"]["maxItems"],
+        envelope["properties"]["context"]["maxItems"],
         crate::tool_runtime::context_projection::MAX_CONTEXT_REQUEST_ITEMS
     );
-    assert_eq!(properties["context_request"]["items"]["minLength"], 1);
+    assert_eq!(envelope["properties"]["context"]["items"]["minLength"], 1);
     assert_eq!(
-        properties["context_request"]["items"]["maxLength"],
+        envelope["properties"]["context"]["items"]["maxLength"],
         crate::tool_runtime::context_projection::MAX_CONTEXT_REQUEST_KEY_CHARS
     );
     assert_eq!(properties["timeout_secs"]["minimum"], 1);
@@ -1917,22 +1919,37 @@ fn mcp_compact_opaque_patterns_require_exact_wrapper_location_and_format() {
             json!({"type": "string", "pattern": session_pattern, "minLength": 24, "maxLength": 40});
         let mut tool = json!({"name": "fixture", "inputSchema": {
             "properties": {
-                "recording_session_id": {"type": "string", "pattern": pattern},
+                "_wc": {
+                    "type": "object",
+                    "properties": {
+                        "record": {"type": "string", "pattern": pattern}
+                    }
+                },
                 "session_id": literal,
-                "nested": {"properties": {"recording_session_id": literal}}
+                "nested": {"properties": {"_wc": {"properties": {"record": literal}}}}
             },
             "const": literal, "default": literal, "enum": [literal], "examples": [literal]
         }});
         let original = tool.clone();
         compact_tool(&mut tool);
-        assert_eq!(tool, original, "pattern={pattern}");
+        let expected = &original["inputSchema"]["properties"]["_wc"]["properties"]["record"];
+        assert_eq!(
+            tool["inputSchema"]["properties"]["_wc"]["properties"]["record"], *expected,
+            "pattern={pattern}"
+        );
+        assert_eq!(tool["inputSchema"]["properties"]["session_id"], literal);
     }
     let mut tool = json!({"name": "fixture", "inputSchema": {"properties": {
-        "recording_session_id": {"type": "string", "pattern": session_pattern, "minLength": 24, "maxLength": 40}
+        "_wc": {
+            "type": "object",
+            "properties": {
+                "record": {"type": "string", "pattern": session_pattern, "minLength": 24, "maxLength": 40}
+            }
+        }
     }}});
     compact_tool(&mut tool);
     assert_eq!(
-        tool["inputSchema"]["properties"]["recording_session_id"],
+        tool["inputSchema"]["properties"]["_wc"]["properties"]["record"],
         json!({"type": "string", "minLength": 24, "maxLength": 40})
     );
     let once = tool.clone();
@@ -1951,12 +1968,14 @@ async fn mcp_recording_session_ref_fails_closed_when_malformed() {
         rpc(
             "tools/call",
             Some(json!(1)),
-            mcp_2026_params(adaptive_runtime_gateway_params(
-                "list_projects",
-                json!({
-                    crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD: "~s01"
-                }),
-            )),
+            mcp_2026_params(json!({
+                "name": "call_runtime_tool",
+                "arguments": {
+                    "tool": "list_projects",
+                    "arguments": {},
+                    "_wc": {"record": "~s01"}
+                }
+            })),
         ),
         None,
     )
@@ -1985,16 +2004,11 @@ async fn mcp_compact_stateless_wrapper_ids_still_reject_malformed_invocations() 
             if compact { "true" } else { "false" },
         );
         for malformed in ["not-an-id", "wc_msg_short", "wc_msg_0123456789abcde!"] {
-            for field in [
-                "recording_session_id",
-                "ack_session_message_ids",
-                "session_message_resolution",
-            ] {
-                let mut arguments =
-                    json!({"tool_name": "run_process", "recording_session_id": session.session_id});
-                arguments[field] = match field {
-                    "recording_session_id" => json!(malformed.replace("wc_msg_", "wc_sess_")),
-                    "ack_session_message_ids" => json!([malformed]),
+            for field in ["record", "ack", "resolve"] {
+                let mut envelope = json!({"record": session.session_id});
+                envelope[field] = match field {
+                    "record" => json!(malformed.replace("wc_msg_", "wc_sess_")),
+                    "ack" => json!([malformed]),
                     _ => json!({"message_id": malformed, "resolution": "handled"}),
                 };
                 let outcome = handle_mcp_request(
@@ -2002,15 +2016,19 @@ async fn mcp_compact_stateless_wrapper_ids_still_reject_malformed_invocations() 
                     rpc(
                         "tools/call",
                         Some(json!(1)),
-                        mcp_2026_params(json!({"name": "tool_manifest", "arguments": arguments})),
+                        mcp_2026_params(json!({
+                            "name": "tool_manifest",
+                            "arguments": {
+                                "tool_name": "run_process",
+                                "_wc": envelope
+                            }
+                        })),
                     ),
                     None,
                 )
                 .await;
                 match (field, outcome) {
-                    // Recorder identity is rejected by the existing exact
-                    // Session lookup/authority gate, before business dispatch.
-                    ("recording_session_id", McpOutcome::Ok(value)) => {
+                    ("record", McpOutcome::Ok(value)) => {
                         assert_eq!(value["result"]["isError"], true);
                         assert_eq!(value["result"]["structuredContent"]["success"], false);
                         assert_eq!(
@@ -2018,13 +2036,11 @@ async fn mcp_compact_stateless_wrapper_ids_still_reject_malformed_invocations() 
                             "unknown_session_id"
                         );
                     }
+                    ("record", McpOutcome::BadRequest(value)) => {
+                        assert_eq!(value["error"]["code"], -32602);
+                    }
                     (_, McpOutcome::BadRequest(value)) => {
                         assert_eq!(value["error"]["code"], -32602);
-                        let message = value["error"]["message"].as_str().unwrap();
-                        assert!(
-                            message.contains(field) && message.contains("valid wc_msg_*"),
-                            "{message}"
-                        );
                     }
                     (_, other) => panic!("{field}={malformed}, compact={compact}: {other:?}"),
                 }
@@ -2047,7 +2063,7 @@ async fn mcp_compact_stateless_wrapper_ids_still_reject_malformed_invocations() 
             "tools/call",
             Some(json!(2)),
             mcp_2026_params(json!({"name": "tool_manifest", "arguments": {
-                "tool_name": "run_process", "recording_session_id": session.session_id
+                "tool_name": "run_process", "_wc": {"record": session.session_id}
             }})),
         ),
         None,
@@ -2217,7 +2233,14 @@ fn mcp_compact_descriptions_preserve_selection_and_schema_literals() {
             "required": ["description"],
             "properties": {
                 "description": {"type": "string", "description": long, "minLength": 1, "maxLength": 400, "pattern": "^x"},
-                "context_request": {"type": "array", "description": long}
+                "_wc": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "description": long,
+                    "properties": {
+                        "context": {"type": "array", "description": long}
+                    }
+                }
             },
             "$defs": {"nested": {"description": long}},
             "anyOf": [{"description": long, "properties": {"x": {"enum": ["a", "b"]}}}],
@@ -2229,15 +2252,15 @@ fn mcp_compact_descriptions_preserve_selection_and_schema_literals() {
     });
     let original = tool.clone();
     compact_tool(&mut tool);
-    let context_request_description = tool["inputSchema"]["properties"]["context_request"]
-        ["description"]
+    assert!(tool["inputSchema"]["properties"]["_wc"]["description"]
         .as_str()
-        .unwrap();
+        .unwrap()
+        .contains("Optional invocation sidecars"));
     assert!(
-        context_request_description.contains("jobs.attention"),
-        "{context_request_description}"
+        tool["inputSchema"]["properties"]["_wc"]["properties"]["context"]
+            .get("description")
+            .is_none()
     );
-    assert!(context_request_description.chars().count() <= INPUT_DESCRIPTION_MAX_CHARS);
     for keyword in ["const", "default", "enum", "examples"] {
         assert_eq!(
             tool["inputSchema"][keyword],
@@ -2278,33 +2301,23 @@ fn mcp_compact_descriptions_preserve_selection_and_schema_literals() {
 
 // Test-only deterministic attribution. Byte parts partition the actual descriptor:
 // business includes the schema envelope; residual includes names/annotations.
-const DISCOVERY_WRAPPERS: &[&str] = &[
-    "recording_session_id",
-    "ack_session_message_ids",
-    "ack_ref",
-    "session_message_resolution",
-    "context_request",
-    "window_reply",
-    "_control",
-];
+const DISCOVERY_INVOCATION_ENVELOPE: &str = "_wc";
 
 fn discovery_cost(tool: &Value) -> (usize, usize, usize, usize, usize) {
     let bytes = |value: &Value| serde_json::to_vec(value).unwrap().len();
     let mut business = tool["inputSchema"].clone();
     if let Some(properties) = business["properties"].as_object_mut() {
-        for key in DISCOVERY_WRAPPERS {
-            properties.remove(*key);
-        }
+        properties.remove(DISCOVERY_INVOCATION_ENVELOPE);
     }
     let schema = bytes(&business);
-    let wrappers = bytes(&tool["inputSchema"]) - schema;
+    let envelope = bytes(&tool["inputSchema"]) - schema;
     let mut rest = tool.clone();
     rest.as_object_mut().unwrap().remove("description");
     let description = bytes(tool) - bytes(&rest);
     let before = bytes(&rest);
     rest.as_object_mut().unwrap().remove("_meta");
     let app = before - bytes(&rest);
-    (bytes(tool), description, schema, wrappers, app)
+    (bytes(tool), description, schema, envelope, app)
 }
 
 fn report_discovery_costs(tools: &[Value]) {
@@ -2316,9 +2329,9 @@ fn report_discovery_costs(tools: &[Value]) {
         bc.0.cmp(&ac.0)
             .then_with(|| a["name"].as_str().cmp(&b["name"].as_str()))
     });
-    for (tool, (total, description, business, wrappers, app)) in ranked.iter().take(10) {
-        assert!(*total >= description + business + wrappers + app);
-        eprintln!("MCP_TOP name={} total={total} description={description} business={business} wrappers={wrappers} app={app}", tool["name"]);
+    for (tool, (total, description, business, envelope, app)) in ranked.iter().take(10) {
+        assert!(*total >= description + business + envelope + app);
+        eprintln!("MCP_TOP name={} total={total} description={description} business={business} envelope={envelope} app={app}", tool["name"]);
     }
     for name in [
         "list_jobs",
@@ -2353,13 +2366,14 @@ async fn mcp_tools_list_stateless_serialized_size_budget() {
     ]);
     let mut admin = scoped.clone();
     admin.scopes.push(crate::auth::SCOPE_ADMIN.to_string());
-    // Final Stateless result bytes include wrappers/gateways, not the RPC
-    // envelope. Wrapper compaction and four gateway-only long-tail entries
-    // leave about 82/85/95 KB. Keep small explicit growth headroom.
+    // Final Stateless result bytes include the optional _wc envelope and gateways,
+    // not the RPC envelope. Envelope V2 now leaves about 76/78/87 KB for
+    // anonymous/scoped/admin without Apps; App-on remains roughly +18.5 KB.
+    // Keep small explicit growth headroom around the measured surface.
     for (label, auth, max_tools, max_bytes) in [
-        ("anonymous", None, 30, 84_000),
-        ("scoped", Some(&scoped), 31, 87_000),
-        ("admin", Some(&admin), 37, 97_000),
+        ("anonymous", None, 30, 77_000),
+        ("scoped", Some(&scoped), 31, 79_000),
+        ("admin", Some(&admin), 37, 88_000),
     ] {
         for app_enabled in [false, true] {
             let mut sizes = Vec::new();
@@ -2380,8 +2394,8 @@ async fn mcp_tools_list_stateless_serialized_size_budget() {
                 let bytes = serde_json::to_vec(result).unwrap().len();
                 let tools = result["tools"].as_array().unwrap();
                 if compact {
-                    let wrappers: usize = tools.iter().map(|tool| discovery_cost(tool).3).sum();
-                    eprintln!("MCP_WRAPPERS {label} app={app_enabled} bytes={wrappers}");
+                    let envelope: usize = tools.iter().map(|tool| discovery_cost(tool).3).sum();
+                    eprintln!("MCP_ENVELOPE {label} app={app_enabled} bytes={envelope}");
                     if label == "admin" && app_enabled {
                         report_discovery_costs(tools);
                     }
@@ -2669,11 +2683,9 @@ async fn mcp_tools_call_rejects_legacy_reserved_session_id_before_dispatch() {
         McpOutcome::BadRequest(value) => value,
         other => panic!("expected invalid-params BadRequest, got {other:?}"),
     };
-    assert_eq!(value["error"]["code"], -32602);
     let message = value["error"]["message"].as_str().unwrap();
     assert!(message.contains("_session_id"));
-    assert!(message.contains("no longer supported"));
-    assert!(message.contains("recording_session_id"));
+    assert!(message.contains("unknown field"));
     assert_eq!(
         runtime
             .sessions
@@ -2852,18 +2864,13 @@ async fn stateless_mcp_ack_wrapper_is_removed_before_concrete_dispatch_and_is_re
         .unwrap();
 
     let call = |ack: Option<&str>, id: i64| {
-        let mut arguments = json!({
-            crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD: &session.session_id
-        });
+        let mut envelope = json!({"record": &session.session_id});
         if let Some(message_id) = ack {
-            arguments[crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_MESSAGE_IDS_FIELD] =
-                json!([message_id, message_id]);
+            envelope["ack"] = json!([message_id, message_id]);
         }
-        rpc(
-            "tools/call",
-            Some(Value::from(id)),
-            mcp_2026_params(adaptive_runtime_gateway_params("list_projects", arguments)),
-        )
+        let mut params = adaptive_runtime_gateway_params("list_projects", json!({}));
+        params["arguments"]["_wc"] = envelope;
+        rpc("tools/call", Some(Value::from(id)), mcp_2026_params(params))
     };
 
     let acknowledged =
@@ -2922,13 +2929,14 @@ async fn mcp_tools_call_rejects_legacy_session_alias_even_with_canonical_recorde
         rpc(
             "tools/call",
             Some(Value::from(320)),
-            mcp_2026_params(adaptive_runtime_gateway_params(
-                "list_projects",
-                json!({
-                    crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD: &canonical.session_id,
-                    "_session_id": &canonical.session_id
-                }),
-            )),
+            mcp_2026_params({
+                let mut params = adaptive_runtime_gateway_params(
+                    "list_projects",
+                    json!({"_session_id": &canonical.session_id}),
+                );
+                params["arguments"]["_wc"] = json!({"record": &canonical.session_id});
+                params
+            }),
         ),
         None,
     )
@@ -2937,12 +2945,13 @@ async fn mcp_tools_call_rejects_legacy_session_alias_even_with_canonical_recorde
         McpOutcome::BadRequest(value) => value,
         other => panic!("expected invalid-params BadRequest, got {other:?}"),
     };
-    assert_eq!(value["error"]["code"], -32602);
     assert!(value["error"]["message"]
         .as_str()
         .is_some_and(
-            |message| message.contains("_session_id") && message.contains("no longer supported")
+            |message| message.contains("_session_id") && message.contains("unknown field")
         ));
+    // Explicit recorder provenance still records the rejected canonical tool
+    // attempt; the retired business alias is rejected before any main effect.
     assert_eq!(
         runtime
             .sessions
@@ -2950,7 +2959,7 @@ async fn mcp_tools_call_rejects_legacy_session_alias_even_with_canonical_recorde
             .unwrap()
             .counts
             .tool_calls,
-        0
+        1
     );
 }
 
@@ -2982,12 +2991,11 @@ async fn mcp_tools_call_records_event_with_recording_session_id() {
         rpc(
             "tools/call",
             Some(Value::from(33)),
-            mcp_2026_params(adaptive_runtime_gateway_params(
-                "list_projects",
-                json!({
-                    crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD: session_ref
-                }),
-            )),
+            mcp_2026_params({
+                let mut params = adaptive_runtime_gateway_params("list_projects", json!({}));
+                params["arguments"]["_wc"] = json!({"record": session_ref});
+                params
+            }),
         ),
         None,
     )
@@ -3063,14 +3071,14 @@ async fn mcp_tools_list_hides_testing_metadata_while_raw_call_records_it() {
                 "arguments": {
                     "tool": "stop_job",
                     "arguments": {
-                        crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD: &session.session_id,
                         "project": "agent:nope:nope",
                         "job_id": "missing-job",
                         "confirm": false,
                         "expected_failure": true,
                         "expected_failure_kind": "confirmation_required",
                         "assertion_name": "mcp hidden metadata compatibility"
-                    }
+                    },
+                    "_wc": {"record": &session.session_id}
                 }
             })),
         ),
@@ -3205,10 +3213,10 @@ async fn mcp_show_changes_distinguishes_recording_session_id_from_query_session_
             mcp_2026_params(json!({
                 "name": "show_changes",
                 "arguments": {
-                    crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD: &tracking_session.session_id,
                     "project": project,
                     "session_id": &query_session.session_id,
-                    "include_diff": false
+                    "include_diff": false,
+                    "_wc": {"record": &tracking_session.session_id}
                 }
             })),
         ),
@@ -3685,55 +3693,87 @@ async fn mcp_2026_control_sidecars_gateway_strip_and_closed_schema() {
         "goal_id": goal_id, "expected_revision": 1, "completed_step_ids": ["inspect"],
         "summary": "already inspected", "idempotency_key": "checkpoint"
     }}});
-    for outer in [true, false] {
-        let mut arguments = json!({"tool": "get_goal", "arguments": {"goal_id": goal_id}});
-        if outer {
-            arguments["_control"] = control.clone();
-        } else {
-            arguments["arguments"]["_control"] = control.clone();
-        }
-        let outcome = handle_mcp_request(
-            &runtime,
-            rpc(
-                "tools/call",
-                Some(json!(601)),
-                mcp_2026_params(json!({"name": "call_runtime_tool", "arguments": arguments})),
-            ),
-            None,
-        )
-        .await;
-        let McpOutcome::Ok(value) = outcome else {
-            panic!("expected structured success")
-        };
-        let result = &value["result"]["structuredContent"];
-        assert_eq!(result["success"], true, "{value}");
-        assert_eq!(result["output"]["goal"]["summary"]["revision"], 2);
-        assert_eq!(result["output"]["control"]["before"]["replayed"], !outer);
-        assert_eq!(result["output"]["control"]["before"]["revision"], 2);
-    }
-    let rejected = handle_mcp_request(&runtime, rpc("tools/call", Some(json!(602)), mcp_2026_params(json!({"name": "call_runtime_tool", "arguments": {
-        "tool": "get_goal", "arguments": {"goal_id": goal_id}, "_control": {"before": {"unknown_private_value": {}}}
-    }}))), None).await;
+    let mut arguments = json!({
+        "tool": "get_goal",
+        "arguments": {"goal_id": goal_id},
+        "_wc": {"control": control.clone()}
+    });
+    let outcome = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(601)),
+            mcp_2026_params(json!({"name": "call_runtime_tool", "arguments": arguments})),
+        ),
+        None,
+    )
+    .await;
+    let McpOutcome::Ok(value) = outcome else {
+        panic!("expected structured success")
+    };
+    let result = &value["result"]["structuredContent"];
+    assert_eq!(result["success"], true, "{value}");
+    assert_eq!(result["output"]["goal"]["summary"]["revision"], 2);
+    assert_eq!(result["output"]["control"]["before"]["replayed"], false);
+    assert_eq!(result["output"]["control"]["before"]["revision"], 2);
+
+    arguments = json!({
+        "tool": "get_goal",
+        "arguments": {"goal_id": goal_id, "_wc": {"control": control.clone()}}
+    });
+    let rejected_inner = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(602)),
+            mcp_2026_params(json!({"name": "call_runtime_tool", "arguments": arguments})),
+        ),
+        None,
+    )
+    .await;
+    let McpOutcome::BadRequest(value) = rejected_inner else {
+        panic!("inner _wc must reject ambiguity")
+    };
+    assert!(value["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("canonical business arguments only"));
+
+    let rejected = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(603)),
+            mcp_2026_params(json!({"name": "call_runtime_tool", "arguments": {
+                "tool": "get_goal",
+                "arguments": {"goal_id": goal_id},
+                "_wc": {"control": {"before": {"unknown_private_value": {}}}}
+            }})),
+        ),
+        None,
+    )
+    .await;
     let McpOutcome::BadRequest(value) = rejected else {
-        panic!("closed wrapper must reject")
+        panic!("closed envelope must reject")
     };
     assert!(!value.to_string().contains("unknown_private_value"));
+
     let mut payload = json!({"tools": [
         {"name": "get_goal", "inputSchema": webcodex_tool_contracts::input_schema_for_tool("get_goal"), "outputSchema": crate::tool_runtime::registry::output_schema_for_tool("get_goal")},
         {"name": "goal_plan_sync", "inputSchema": webcodex_tool_contracts::input_schema_for_tool("goal_plan_sync")}
     ]});
     add_stateless_workflow_recorder_metadata(&mut payload);
     assert_eq!(
-        payload["tools"][0]["inputSchema"]["properties"]["_control"]["properties"]["before"]
-            ["maxProperties"],
+        payload["tools"][0]["inputSchema"]["properties"]["_wc"]["properties"]["control"]
+            ["properties"]["before"]["maxProperties"],
         1
     );
     assert!(payload["tools"][1]["inputSchema"]["properties"]
-        .get("_control")
+        .get("_wc")
         .is_none());
     assert!(
         webcodex_tool_contracts::input_schema_for_tool("get_goal")["properties"]
-            .get("_control")
+            .get("_wc")
             .is_none()
     );
 }

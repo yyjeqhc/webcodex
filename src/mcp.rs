@@ -6,6 +6,9 @@ mod resources;
 mod response;
 mod tools;
 
+#[cfg(test)]
+pub(crate) use tools::adaptive_runtime_gateway_input_schema_for_test;
+
 use crate::action_audit::{ActionAudit, ActionAuditRecord};
 use crate::auth::AuthContext;
 use crate::json_error;

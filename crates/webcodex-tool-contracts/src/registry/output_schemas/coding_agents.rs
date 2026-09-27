@@ -1,6 +1,8 @@
 use serde_json::{json, Value};
 
-use super::common::{array_schema, nullable_schema, schema_type, wrapped_output_schema};
+use super::common::{
+    array_schema, nullable_schema, schema_type, suggested_tool_call_schema, wrapped_output_schema,
+};
 
 pub(super) fn provider_inventory_schema() -> Value {
     json!({
@@ -116,16 +118,23 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
     match name {
         "coding_agent_start" => {
             fields.push(("available_providers", provider_inventory_schema()));
-            fields.push(("suggested_call", json!({
-                "type":"object", "additionalProperties":false,
-                "properties": {
-                    "tool":{"type":"string", "const":"runtime_status"},
-                    "arguments":{"type":"object", "additionalProperties":false,
-                        "properties":{"client_id":{"type":"string"},"compact":{"type":"boolean", "const":true}},
-                        "required":["client_id","compact"]}
-                },
-                "required":["tool","arguments"]
-            })));
+            fields.push((
+                "suggested_call",
+                suggested_tool_call_schema(
+                    webcodex_core::runtime_contract::GeneratedFollowUpKind::FallbackRecovery,
+                    "runtime_status",
+                    json!({
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                            "client_id": {"type": "string"},
+                            "compact": {"type": "boolean", "const": true}
+                        },
+                        "required": ["client_id", "compact"]
+                    }),
+                    "Re-observe the exact Runner inventory when the requested logical coding-agent provider is unavailable. This is recovery, not an automatic provider-selection step.",
+                ),
+            ));
             fields.push((
                 "observation_token",
                 schema_type("string", "Opaque Run-bound observation token."),

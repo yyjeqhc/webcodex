@@ -39,6 +39,7 @@ fn structured_execution_output(
     });
     if promoted_to_job {
         instance["output"]["continuation"] = serde_json::json!({
+            "follow_up_kind": "fallback_recovery",
             "tool": "observe_jobs",
             "arguments": {
                 "items": [{
@@ -64,7 +65,25 @@ fn structured_execution_output(
 
 #[test]
 fn suggested_tool_call_schema_recognizer_is_strict_and_structural() {
+    let valid_generated = json!({
+        "follow_up_kind": "mechanically_followable",
+        "tool": "read_files",
+        "arguments": {
+            "project": "agent:test:demo",
+            "items": [{"path": "src/lib.rs"}]
+        }
+    });
+    test_support::validate_generated_tool_call_against_registered_input_schema(&valid_generated)
+        .expect("generated read_files follow-up must pass the current registered inputSchema");
+    let mut host_rejected = valid_generated.clone();
+    host_rejected["arguments"]["unsupported_host_field"] = json!(true);
+    let error =
+        test_support::validate_generated_tool_call_against_registered_input_schema(&host_rejected)
+            .expect_err("registered Host schema must reject generated arguments with drift");
+    assert!(error.contains("registered inputSchema"), "{error}");
+
     let canonical = suggested_tool_call_schema(
+        webcodex_core::runtime_contract::GeneratedFollowUpKind::MechanicallyFollowable,
         "git_log",
         json!({"type": "object", "additionalProperties": false, "properties": {}}),
         "next page",
@@ -72,6 +91,10 @@ fn suggested_tool_call_schema_recognizer_is_strict_and_structural() {
     assert_eq!(
         suggested_tool_call_schema_target(&canonical),
         Some("git_log")
+    );
+    assert_eq!(
+        canonical["properties"]["follow_up_kind"]["const"],
+        "mechanically_followable"
     );
 
     let incidental = json!({
@@ -96,6 +119,124 @@ fn suggested_tool_call_schema_recognizer_is_strict_and_structural() {
         "required": ["tool", "arguments"]
     });
     assert_eq!(suggested_tool_call_schema_target(&open_object), None);
+}
+
+#[test]
+fn registered_generated_next_step_schemas_declare_host_execution_posture() {
+    fn inspect_call_shapes(
+        schema: &serde_json::Value,
+        path: &str,
+        count: &mut usize,
+        failures: &mut Vec<String>,
+    ) {
+        match schema {
+            serde_json::Value::Object(object) => {
+                if let Some(properties) = object
+                    .get("properties")
+                    .and_then(serde_json::Value::as_object)
+                {
+                    if properties.contains_key("tool") && properties.contains_key("arguments") {
+                        *count += 1;
+                        let posture = properties
+                            .get("follow_up_kind")
+                            .and_then(|field| field.get("const"))
+                            .and_then(serde_json::Value::as_str);
+                        if !posture.is_some_and(|value| {
+                            webcodex_core::runtime_contract::GENERATED_FOLLOW_UP_KIND_VALUES
+                                .contains(&value)
+                        }) {
+                            failures.push(format!(
+                                "{path}: generated tool-call schema is missing a canonical follow_up_kind const"
+                            ));
+                        }
+                        let required_has_posture = object
+                            .get("required")
+                            .and_then(serde_json::Value::as_array)
+                            .is_some_and(|required| {
+                                required
+                                    .iter()
+                                    .any(|field| field.as_str() == Some("follow_up_kind"))
+                            });
+                        if !required_has_posture {
+                            failures.push(format!(
+                                "{path}: generated tool-call schema does not require follow_up_kind"
+                            ));
+                        }
+                    }
+                }
+                for (key, child) in object {
+                    inspect_call_shapes(child, &format!("{path}.{key}"), count, failures);
+                }
+            }
+            serde_json::Value::Array(items) => {
+                for (index, child) in items.iter().enumerate() {
+                    inspect_call_shapes(child, &format!("{path}[{index}]"), count, failures);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn visit_generated_edges(
+        schema: &serde_json::Value,
+        path: &str,
+        in_recovery: bool,
+        count: &mut usize,
+        failures: &mut Vec<String>,
+    ) {
+        match schema {
+            serde_json::Value::Object(object) => {
+                for (key, child) in object {
+                    let child_path = format!("{path}.{key}");
+                    let recovery = in_recovery || key == "recovery";
+                    if matches!(
+                        key.as_str(),
+                        "next_call" | "suggested_call" | "continuation"
+                    ) || recovery
+                    {
+                        inspect_call_shapes(child, &child_path, count, failures);
+                    } else {
+                        visit_generated_edges(child, &child_path, recovery, count, failures);
+                    }
+                }
+            }
+            serde_json::Value::Array(items) => {
+                for (index, child) in items.iter().enumerate() {
+                    visit_generated_edges(
+                        child,
+                        &format!("{path}[{index}]"),
+                        in_recovery,
+                        count,
+                        failures,
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let specs = registered_tool_specs();
+    let mut count = 0;
+    let mut failures = Vec::new();
+    for spec in &specs {
+        visit_generated_edges(
+            &spec.output_schema,
+            &spec.name,
+            false,
+            &mut count,
+            &mut failures,
+        );
+    }
+
+    assert!(
+        count >= 10,
+        "generated next-step schema audit unexpectedly covered only {count} call shapes"
+    );
+    assert!(
+        failures.is_empty(),
+        "registered generated next-step schemas must expose explicit Host execution posture:\n{}",
+        failures.join("\n")
+    );
 }
 
 #[test]
@@ -183,7 +324,7 @@ fn git_diff_hunks_recovery_schema_accepts_only_sparse_actionable_lanes() {
     });
     let refine = json!({"current_hunk": {
         "reason_code": "larger_max_hunk_lines_available",
-        "next_call": {"tool": "git_diff_hunks", "arguments": arguments}
+        "next_call": {"follow_up_kind": "mechanically_followable", "tool": "git_diff_hunks", "arguments": arguments}
     }});
     test_support::validate_schema_instance(&refine, schema).unwrap();
     let mut fragment = refine.clone();
@@ -313,6 +454,7 @@ fn search_batch_omitted_summary_schema_is_bounded_and_content_free() {
                 {"index": 3, "success": false, "reason_code": "timeout", "failure_stage": "agent_transport", "detail_code": "timeout"}
             ],
             "suggested_call": {
+                "follow_up_kind": "mechanically_followable",
                 "tool": "search_project_texts",
                 "arguments": {
                     "project": "agent:oe:demo",
@@ -936,7 +1078,7 @@ fn observe_jobs_failure_item_schema_closes_recovery_metadata() {
                 "success": false,
                 "output": null,
                 "error_kind": "unknown_job",
-                "suggested_call": {"tool": "list_jobs", "arguments": {}},
+                "suggested_call": {"follow_up_kind": "fallback_recovery", "tool": "list_jobs", "arguments": {}},
                 "error": "unknown job"
             }],
             "wait": {
@@ -980,7 +1122,7 @@ fn read_continuation_output_schemas_accept_one_action_and_snapshot_truth() {
                 "read_revision": 3817291045227_u64, "start_line": 1, "limit": 100, "total_lines": 200,
                 "returned_lines": 50, "end_line": 50, "has_more": true, "budget_truncated": true}}],
         "output_truncated": true, "truncation_reason": "batch_response_budget",
-        "suggested_call": {"tool": "read_files", "arguments": {"project": "agent:oe:demo", "session_id": "wc_sess_abcdefghijklmnop",
+        "suggested_call": {"follow_up_kind": "mechanically_followable", "tool": "read_files", "arguments": {"project": "agent:oe:demo", "session_id": "wc_sess_abcdefghijklmnop",
             "items": [{"path": "src/0.rs", "start_line": 51, "limit": 50, "expected_read_revision": 3817291045227_u64}, {"path": "src/1.rs"}, {"path": "src/2.rs", "start_line": 4, "limit": 20}]}}
     }});
     test_support::validate_schema_instance(&result, &schema).unwrap();
@@ -2362,6 +2504,7 @@ fn computer_recovery_output_schemas_use_canonical_action_shapes() {
         "success": false,
         "output": {
             "suggested_call": {
+                "follow_up_kind": "fallback_recovery",
                 "tool": "computer_observe",
                 "arguments": {"action": "windows", "client_id": "special"}
             }
@@ -2417,6 +2560,7 @@ fn skill_recovery_output_schema_accepts_canonical_shapes_and_declares_legacy_rej
             "outcome_unknown": true,
             "state_changed": null,
             "suggested_call": {
+                "follow_up_kind": "fallback_recovery",
                 "tool": "skill_versions",
                 "arguments": {
                     "project": "agent:test:demo",
@@ -2500,6 +2644,7 @@ fn model_visible_output_schemas_admit_bounded_passive_job_attention() {
                 }
             },
             "details": {
+                "follow_up_kind": "fallback_recovery",
                 "tool": "observe_jobs",
                 "arguments": {"items": [{"job_id": "wc_job_schema"}]}
             }
@@ -2534,6 +2679,7 @@ fn model_visible_output_schemas_admit_bounded_passive_job_attention() {
                 "blocked_fallback": "wait_for_job_terminal"
             },
             "continuation": {
+                "follow_up_kind": "fallback_recovery",
                 "tool": "observe_jobs",
                 "arguments": {
                     "items": [{"job_id": "wc_job_pending", "after_observation_token": "wj3_AAAAAAAAAAAAAAAAAAAAAA.1.0.0"}],

@@ -1510,12 +1510,17 @@ async fn finish_coding_task_emits_one_parser_ready_changes_presentation_in_full_
         assert_eq!(
             result.output["presentation"]["suggested_call"],
             json!({
+                "follow_up_kind": "fallback_recovery",
                 "tool": "present_work_result",
                 "arguments": {
                     "project": project,
                 }
             })
         );
+        webcodex_tool_contracts::test_support::validate_generated_tool_call_against_registered_input_schema(
+            &result.output["presentation"]["suggested_call"],
+        )
+        .expect("result presentation fallback must pass present_work_result registered inputSchema");
         assert!(result.output["suggested_next_actions"]
             .as_array()
             .unwrap()

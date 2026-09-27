@@ -815,8 +815,11 @@ impl ToolRuntime {
                     if let Some(session_id) = session_id.as_deref() {
                         arguments["session_id"] = json!(session_id);
                     }
-                    obj["suggested_call"] =
-                        SuggestedToolCall::new("read_project_artifact", arguments).to_value();
+                    obj["suggested_call"] = SuggestedToolCall::mechanically_followable(
+                        "read_project_artifact",
+                        arguments,
+                    )
+                    .to_value();
                 }
             }
         }

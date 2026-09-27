@@ -98,7 +98,7 @@ for (const outcome of ["success", "error", "timeout"]) {
         version: 1, kind: "job_observation",
         items: [{
           job_id: "job-missing", error_kind: "unknown_job", recovery_kind: "reobserve",
-          suggested_call: { tool: "list_jobs", arguments: {} },
+          suggested_call: { follow_up_kind: "fallback_recovery", tool: "list_jobs", arguments: {} },
         }],
       };
       const view = app();

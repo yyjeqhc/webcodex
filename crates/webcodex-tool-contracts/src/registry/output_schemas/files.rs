@@ -342,6 +342,7 @@ fn search_project_texts_output_schema() -> Value {
                 "description": "Optional bounded summaries for completed queries at or after the omitted suffix boundary. These facts are supplementary UX only; suggested_call remains the canonical whole-query continuation and starts from the same omitted query."
             },
             "suggested_call": suggested_tool_call_schema(
+                webcodex_core::runtime_contract::GeneratedFollowUpKind::MechanicallyFollowable,
                 "search_project_texts",
                 crate::input_schema_for_tool("search_project_texts"),
                 "Parser-ready whole-query suffix rerun when the complete call itself fits the bounded model result. If it cannot fit, Runtime keeps truncation truthful and exposes no raw cursor or oversized fake call. Zero-progress soft-budget results may raise max_result_bytes; hard-cap zero progress exposes no fake next call."
@@ -555,6 +556,7 @@ fn read_files_output_schema() -> Value {
             "output_truncated": {"type": "boolean"},
             "truncation_reason": {"type": "string", "enum": ["batch_response_budget", "hard_result_cap"]},
             "suggested_call": suggested_tool_call_schema(
+                webcodex_core::runtime_contract::GeneratedFollowUpKind::MechanicallyFollowable,
                 "read_files", suggested_read_files_arguments_schema(),
                 "One parser-ready follow-up: unread returned ranges are fenced to their observed read_revision, followed by unreturned original items. Follow it directly; Runtime rejects a continued item if its file snapshot changed. A zero-progress request may instead raise max_result_bytes; at the hard cap no fake call is offered.",
             ),

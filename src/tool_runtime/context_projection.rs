@@ -3,7 +3,7 @@ use super::startup_brief::{
     builtin_coding_workflow_projection, project_instructions_context_projection,
 };
 use super::tool_inputs::CodingGuidanceProfile;
-use super::{ToolResult, ToolRuntime};
+use super::{SuggestedToolCall, ToolResult, ToolRuntime};
 use crate::auth::AuthContext;
 use crate::json_measurement::serialized_json_len;
 use serde::Serialize;
@@ -468,10 +468,11 @@ impl ToolRuntime {
             let session_selector = candidates[0]
                 .get("session_ref")
                 .unwrap_or(&candidates[0]["session_id"]);
-            projection["suggested_call"] = json!({
-                "tool": "session_handoff_summary",
-                "arguments": {"session_id": session_selector},
-            });
+            projection["suggested_call"] = SuggestedToolCall::fallback_recovery(
+                "session_handoff_summary",
+                json!({"session_id": session_selector}),
+            )
+            .to_value();
         }
         Ok(projection)
     }

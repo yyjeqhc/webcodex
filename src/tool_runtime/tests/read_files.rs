@@ -1230,6 +1230,9 @@ async fn read_file_dispatch_partial_success_keeps_full_range_cursor() {
     assert!(item["output"].get("sha256").is_none());
     assert!((1..=9_007_199_254_740_991).contains(&read_revision));
     assert_eq!(suggested["tool"], "read_files");
+    assert_eq!(suggested["follow_up_kind"], "mechanically_followable");
+    webcodex_tool_contracts::test_support::validate_generated_tool_call_against_registered_input_schema(suggested)
+        .expect("read_files continuation must pass the registered inputSchema");
     assert_eq!(suggested["arguments"]["session_id"], session_id);
     let next_call = ToolCall::from_tool_name(
         suggested["tool"].as_str().unwrap(),

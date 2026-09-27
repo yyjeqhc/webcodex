@@ -845,7 +845,7 @@ fn observe_jobs_compact_projection_preserves_mixed_failure_and_budget_recovery()
         "success": false,
         "output": null,
         "error_kind": "unknown_job",
-        "suggested_call": {"tool": "list_jobs", "arguments": {}},
+        "suggested_call": {"follow_up_kind": "fallback_recovery", "tool": "list_jobs", "arguments": {}},
         "error": "unknown job: missing-job"
     });
     let mixed = canonical_batch(vec![success.clone(), failure], "item_error", 0);
@@ -855,7 +855,7 @@ fn observe_jobs_compact_projection_preserves_mixed_failure_and_budget_recovery()
     );
     assert_eq!(
         mixed.output["items"][1]["suggested_call"],
-        json!({"tool": "list_jobs", "arguments": {}})
+        json!({"follow_up_kind": "fallback_recovery", "tool": "list_jobs", "arguments": {}})
     );
 
     let mut truncated = canonical_batch(vec![success], "immediate", 0);
@@ -988,7 +988,7 @@ fn observe_jobs_projection_reports_deterministic_byte_measurements() {
             json!({
                 "index": 1, "job_id": "missing-measure", "success": false,
                 "output": null, "error_kind": "unknown_job",
-                "suggested_call": {"tool": "list_jobs", "arguments": {}},
+                "suggested_call": {"follow_up_kind": "fallback_recovery", "tool": "list_jobs", "arguments": {}},
                 "error": "unknown job: missing-measure"
             }),
         ],

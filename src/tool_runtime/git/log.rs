@@ -188,7 +188,7 @@ fn git_log_suggested_call(
     if let Some(session_id) = session_id {
         arguments.insert("session_id".to_string(), json!(session_id));
     }
-    SuggestedToolCall::new("git_log", Value::Object(arguments)).to_value()
+    SuggestedToolCall::mechanically_followable("git_log", Value::Object(arguments)).to_value()
 }
 
 impl ToolRuntime {

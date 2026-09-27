@@ -2,8 +2,8 @@ use schemars::JsonSchema;
 use serde_json::{json, Map, Value};
 
 use webcodex_core::runtime_contract::{
-    ContinuationCarrier, ContinuationKind, CONTINUATION_CARRIER_VALUES, CONTINUATION_KIND_VALUES,
-    RECOVERY_KIND_VALUES,
+    ContinuationCarrier, ContinuationKind, GeneratedFollowUpKind, CONTINUATION_CARRIER_VALUES,
+    CONTINUATION_KIND_VALUES, GENERATED_FOLLOW_UP_KIND_VALUES, RECOVERY_KIND_VALUES,
 };
 use webcodex_core::workflow_session_contract::{
     SESSION_INBOX_ACK_REQUIRED_ATTENTION_INSTRUCTION, SESSION_INBOX_ACK_REQUIRED_ATTENTION_REASON,
@@ -127,22 +127,26 @@ pub fn continuation_semantics_schema(
 }
 
 /// Schema for an advisory parser-ready next tool call. The shape never grants
-/// authority or executes the tool; domain schemas remain responsible for the
-/// bounded argument contract.
+/// authority or executes the tool. follow_up_kind is intentionally first-class
+/// because it changes whether a Host may continue mechanically without a new
+/// model decision. Domain schemas remain responsible for bounded arguments.
 pub fn suggested_tool_call_schema(
+    follow_up_kind: GeneratedFollowUpKind,
     tool: &'static str,
     arguments: Value,
     description: &str,
 ) -> Value {
+    debug_assert!(GENERATED_FOLLOW_UP_KIND_VALUES.contains(&follow_up_kind.as_str()));
     json!({
         "type": "object",
         "description": description,
         "additionalProperties": false,
         "properties": {
+            "follow_up_kind": {"type": "string", "const": follow_up_kind.as_str()},
             "tool": {"type": "string", "const": tool},
             "arguments": arguments
         },
-        "required": ["tool", "arguments"]
+        "required": ["follow_up_kind", "tool", "arguments"]
     })
 }
 
@@ -150,8 +154,8 @@ pub fn suggested_tool_call_schema(
 ///
 /// This is intentionally structural rather than a model-visible marker keyword:
 /// adapters use it to project only formally declared action edges and never scan
-/// arbitrary tool output for user/plugin objects that happen to contain `tool`
-/// and `arguments` keys.
+/// arbitrary tool output for user/plugin objects that happen to contain tool
+/// and arguments keys.
 pub fn suggested_tool_call_schema_target(schema: &Value) -> Option<&str> {
     if schema.get("type").and_then(Value::as_str) != Some("object")
         || schema.get("additionalProperties").and_then(Value::as_bool) != Some(false)
@@ -159,18 +163,28 @@ pub fn suggested_tool_call_schema_target(schema: &Value) -> Option<&str> {
         return None;
     }
     let properties = schema.get("properties")?.as_object()?;
-    if properties.len() != 2
+    if properties.len() != 3
+        || !properties.contains_key("follow_up_kind")
         || !properties.contains_key("tool")
         || !properties.contains_key("arguments")
     {
         return None;
     }
     let required = schema.get("required")?.as_array()?;
-    if required.len() != 2
+    if required.len() != 3
+        || !required
+            .iter()
+            .any(|field| field.as_str() == Some("follow_up_kind"))
         || !required.iter().any(|field| field.as_str() == Some("tool"))
         || !required
             .iter()
             .any(|field| field.as_str() == Some("arguments"))
+    {
+        return None;
+    }
+    let follow_up_kind = properties.get("follow_up_kind")?;
+    if follow_up_kind.get("type").and_then(Value::as_str) != Some("string")
+        || !GENERATED_FOLLOW_UP_KIND_VALUES.contains(&follow_up_kind.get("const")?.as_str()?)
     {
         return None;
     }
@@ -180,7 +194,6 @@ pub fn suggested_tool_call_schema_target(schema: &Value) -> Option<&str> {
     }
     tool.get("const").and_then(Value::as_str)
 }
-
 pub fn job_activity_schema() -> Value {
     json!({
         "anyOf": [
@@ -216,6 +229,7 @@ pub fn job_activity_schema() -> Value {
 
 pub fn observe_job_continuation_schema() -> Value {
     suggested_tool_call_schema(
+        GeneratedFollowUpKind::FallbackRecovery,
         "observe_jobs",
         json!({
             "type": "object",
@@ -610,6 +624,7 @@ fn passive_failure_diagnostics_schema() -> Value {
 
 pub(super) fn passive_job_attention_schema() -> Value {
     let details = suggested_tool_call_schema(
+        GeneratedFollowUpKind::FallbackRecovery,
         "observe_jobs",
         json!({
             "type": "object",
@@ -631,7 +646,7 @@ pub(super) fn passive_job_attention_schema() -> Value {
             },
             "required": ["items"]
         }),
-        "Read bounded logs/details for this exact existing Job only when the sparse passive state is insufficient.",
+        "Read this existing Job's bounded details only when sparse passive state is insufficient.",
     );
     let validation = json!({
         "type": "object",

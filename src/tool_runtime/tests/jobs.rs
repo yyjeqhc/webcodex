@@ -1941,9 +1941,11 @@ fn assert_unknown_job(result: ToolResult) {
     assert!(result.output.get("recovery_tool").is_none());
     assert_eq!(
         result.output["suggested_call"],
-        json!({"tool": "list_jobs", "arguments": {}})
+        json!({"follow_up_kind": "fallback_recovery", "tool": "list_jobs", "arguments": {}})
     );
     let suggested = &result.output["suggested_call"];
+    webcodex_tool_contracts::test_support::validate_generated_tool_call_against_registered_input_schema(suggested)
+        .expect("unknown Job recovery must pass list_jobs registered inputSchema");
     let parsed = ToolCall::from_tool_name(
         suggested["tool"].as_str().unwrap(),
         suggested["arguments"].clone(),

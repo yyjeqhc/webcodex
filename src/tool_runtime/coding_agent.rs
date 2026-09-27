@@ -1,4 +1,4 @@
-use super::{RecoveryKind, ToolResult, ToolRuntime};
+use super::{RecoveryKind, SuggestedToolCall, ToolResult, ToolRuntime};
 use crate::auth::{AuthContext, AuthKind};
 use crate::json_digest::update_sha256_with_json;
 use crate::runner_http::RunnerFeature;
@@ -451,10 +451,11 @@ impl ToolRuntime {
                     json!(webcodex_core::coding_agent::safe_provider_inventory(
                         client.coding_agent_providers.as_deref()
                     ));
-                error.output["suggested_call"] = json!({
-                    "tool": "runtime_status",
-                    "arguments": {"client_id": client.client_id, "compact": true},
-                });
+                error.output["suggested_call"] = SuggestedToolCall::fallback_recovery(
+                    "runtime_status",
+                    json!({"client_id": client.client_id, "compact": true}),
+                )
+                .to_value();
                 return Err(error);
             }
         };

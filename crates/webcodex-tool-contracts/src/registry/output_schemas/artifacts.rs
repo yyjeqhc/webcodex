@@ -7,6 +7,7 @@ use super::common::{
 
 fn read_project_artifact_suggested_call_schema() -> Value {
     suggested_tool_call_schema(
+        webcodex_core::runtime_contract::GeneratedFollowUpKind::MechanicallyFollowable,
         "read_project_artifact",
         json!({
             "type": "object",
@@ -41,6 +42,7 @@ fn read_project_artifact_suggested_call_schema() -> Value {
 
 fn project_artifact_suggested_call_schema() -> Value {
     suggested_tool_call_schema(
+        webcodex_core::runtime_contract::GeneratedFollowUpKind::MechanicallyFollowable,
         "project_artifact",
         json!({
             "type": "object",

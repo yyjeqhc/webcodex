@@ -158,6 +158,9 @@ where
                     .get_mut("properties")
                     .and_then(Value::as_object_mut)
                     .expect("recognized SuggestedToolCall schema has properties");
+                let follow_up_kind = properties
+                    .remove("follow_up_kind")
+                    .expect("recognized SuggestedToolCall schema has follow_up_kind");
                 let canonical_tool = properties
                     .remove("tool")
                     .expect("recognized SuggestedToolCall schema has tool");
@@ -168,6 +171,7 @@ where
                     "type": "object",
                     "additionalProperties": false,
                     "properties": {
+                        "follow_up_kind": follow_up_kind,
                         "tool": {"type": "string", "const": gateway},
                         "arguments": {
                             "type": "object",
@@ -179,7 +183,7 @@ where
                             "required": ["tool", "arguments"]
                         }
                     },
-                    "required": ["tool", "arguments"]
+                    "required": ["follow_up_kind", "tool", "arguments"]
                 });
                 if let Some(description) = description {
                     schema["description"] = description;
@@ -189,7 +193,6 @@ where
             SuggestedToolCallRoute::Unavailable => true,
         };
     }
-
     let mut removed_properties = Vec::new();
     if let Some(properties) = schema.get_mut("properties").and_then(Value::as_object_mut) {
         let names = properties.keys().cloned().collect::<Vec<_>>();
@@ -288,6 +291,7 @@ where
     if let Some(target) = webcodex_tool_contracts::suggested_tool_call_schema_target(schema) {
         if value.get("tool").and_then(Value::as_str) != Some(target)
             || value.get("arguments").is_none()
+            || value.get("follow_up_kind").is_none()
         {
             return false;
         }
@@ -297,11 +301,16 @@ where
         return match route_for(target) {
             SuggestedToolCallRoute::Direct => false,
             SuggestedToolCallRoute::Gateway(gateway) => {
+                let follow_up_kind = value
+                    .get_mut("follow_up_kind")
+                    .map(Value::take)
+                    .unwrap_or(Value::Null);
                 let arguments = value
                     .get_mut("arguments")
                     .map(Value::take)
                     .unwrap_or(Value::Null);
                 *value = json!({
+                    "follow_up_kind": follow_up_kind,
                     "tool": gateway,
                     "arguments": {
                         "tool": target,
@@ -680,7 +689,24 @@ mod tests {
                 "representative edge {source_tool}->{target_tool} should remain Adaptive gateway-routed"
             );
             let canonical_schema = webcodex_tool_contracts::output_schema_for_tool(source_tool);
-            let canonical_call = json!({"tool": target_tool, "arguments": arguments});
+            let follow_up_kind = if matches!(source_tool, "work_on_project" | "skill_install") {
+                "fallback_recovery"
+            } else {
+                "mechanically_followable"
+            };
+            let canonical_call = json!({
+                "follow_up_kind": follow_up_kind,
+                "tool": target_tool,
+                "arguments": arguments
+            });
+            webcodex_tool_contracts::test_support::validate_generated_tool_call_against_registered_input_schema(
+                &canonical_call,
+            )
+            .unwrap_or_else(|error| {
+                panic!(
+                    "canonical SuggestedToolCall {source_tool}->{target_tool} must pass the target registered inputSchema unchanged: {error}"
+                )
+            });
             let mut projected_value = json!({
                 "success": false,
                 "output": {"suggested_call": canonical_call.clone()},
@@ -693,11 +719,22 @@ mod tests {
             );
             let projected_call = &projected_value["output"]["suggested_call"];
             assert_eq!(projected_call["tool"], ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME);
+            assert_eq!(projected_call["follow_up_kind"], follow_up_kind);
             assert_eq!(projected_call["arguments"]["tool"], target_tool);
             assert_eq!(
                 projected_call["arguments"]["arguments"],
                 canonical_call["arguments"]
             );
+            let gateway_input_schema = crate::mcp::adaptive_runtime_gateway_input_schema_for_test();
+            crate::tool_runtime::startup_brief::validate_schema_instance_for_test(
+                &projected_call["arguments"],
+                &gateway_input_schema,
+            )
+            .unwrap_or_else(|error| {
+                panic!(
+                    "Adaptive projected SuggestedToolCall {source_tool}->{target_tool} must pass the actual registered call_runtime_tool inputSchema unchanged: {error}"
+                )
+            });
 
             let mut projected_schema = canonical_schema;
             project_suggested_tool_call_schema(&mut projected_schema, &test_suggested_call_route);
@@ -706,6 +743,10 @@ mod tests {
             assert_eq!(
                 suggested_schema["properties"]["tool"]["const"],
                 ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME
+            );
+            assert_eq!(
+                suggested_schema["properties"]["follow_up_kind"]["const"],
+                follow_up_kind
             );
             assert_eq!(
                 suggested_schema["properties"]["arguments"]["properties"]["tool"]["const"],
@@ -727,7 +768,11 @@ mod tests {
     fn unavailable_suggested_call_is_removed_from_value_and_schema() {
         let mut value = json!({
             "type": "result",
-            "next": {"tool": "not_available_here", "arguments": {"x": 1}}
+            "next": {
+                "follow_up_kind": "mechanically_followable",
+                "tool": "not_available_here",
+                "arguments": {"x": 1}
+            }
         });
         let mut schema = json!({
             "type": "object",
@@ -735,6 +780,7 @@ mod tests {
             "properties": {
                 "type": {"type": "string"},
                 "next": webcodex_tool_contracts::suggested_tool_call_schema(
+                    webcodex_core::runtime_contract::GeneratedFollowUpKind::MechanicallyFollowable,
                     "not_available_here",
                     json!({
                         "type": "object",
@@ -766,6 +812,7 @@ mod tests {
         let canonical_schema =
             webcodex_tool_contracts::output_schema_for_tool("finish_coding_task");
         let canonical_call = json!({
+            "follow_up_kind": "mechanically_followable",
             "tool": "git_diff_hunks",
             "arguments": {
                 "project": "demo",
@@ -797,6 +844,7 @@ mod tests {
         let current_call = &current_adaptive["output"]["changes"]["show_changes"]
             ["diff_review_handoff"]["next_call"];
         assert_eq!(current_call["tool"], ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME);
+        assert_eq!(current_call["follow_up_kind"], "mechanically_followable");
         assert_eq!(current_call["arguments"]["tool"], "git_diff_hunks");
         assert_eq!(
             current_call["arguments"]["arguments"], canonical_call["arguments"],

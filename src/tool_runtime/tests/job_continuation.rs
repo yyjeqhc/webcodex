@@ -269,9 +269,11 @@ async fn exercise(tool: &'static str, observation_failure: bool, race: Race) {
             assert!(result.output.get("continuation").is_none());
             assert_eq!(
                 result.output["suggested_call"],
-                json!({"tool": "list_jobs", "arguments": {"project": project}})
+                json!({"follow_up_kind": "fallback_recovery", "tool": "list_jobs", "arguments": {"project": project}})
             );
             let next = &result.output["suggested_call"];
+            webcodex_tool_contracts::test_support::validate_generated_tool_call_against_registered_input_schema(next)
+                .expect("private Job identity recovery must pass list_jobs registered inputSchema");
             let listed = invoke(
                 &runtime,
                 next["tool"].as_str().unwrap(),

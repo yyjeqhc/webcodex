@@ -665,21 +665,25 @@ fn computer_suggested_recovery_schema() -> Value {
     json!({
         "oneOf": [
             suggested_tool_call_schema(
+                webcodex_core::runtime_contract::GeneratedFollowUpKind::FallbackRecovery,
                 "computer_observe",
                 client_arguments("windows"),
                 "Parser-ready advisory window re-observation using the exact Runner already owned by the failed Computer request. It grants no authority and is not an effect retry."
             ),
             suggested_tool_call_schema(
+                webcodex_core::runtime_contract::GeneratedFollowUpKind::FallbackRecovery,
                 "computer_observe",
                 client_arguments("applications"),
                 "Parser-ready advisory application re-observation using the exact Runner already owned by the failed Computer request. It grants no authority and is not an effect retry."
             ),
             suggested_tool_call_schema(
+                webcodex_core::runtime_contract::GeneratedFollowUpKind::FallbackRecovery,
                 "computer_observe",
                 client_arguments("displays"),
                 "Parser-ready advisory display re-observation using the exact Runner already owned by the failed Computer request. It grants no authority and is not an effect retry."
             ),
             suggested_tool_call_schema(
+                webcodex_core::runtime_contract::GeneratedFollowUpKind::FallbackRecovery,
                 "computer_observe",
                 json!({
                     "type": "object",
@@ -694,6 +698,7 @@ fn computer_suggested_recovery_schema() -> Value {
                 "Parser-ready advisory display snapshot re-observation. It intentionally omits the spent snapshot_generation and grants no retry authority."
             ),
             suggested_tool_call_schema(
+                webcodex_core::runtime_contract::GeneratedFollowUpKind::FallbackRecovery,
                 "read_project_artifact_metadata",
                 json!({
                     "type": "object",

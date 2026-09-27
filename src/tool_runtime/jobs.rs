@@ -960,7 +960,7 @@ pub(crate) fn observe_job_continuation(job_id: &str, observation_token: Option<&
     if let Some(token) = observation_token.filter(|token| !token.is_empty()) {
         item["after_observation_token"] = json!(token);
     }
-    super::SuggestedToolCall::new(
+    super::SuggestedToolCall::fallback_recovery(
         "observe_jobs",
         json!({
             "items": [item],
@@ -972,7 +972,7 @@ pub(crate) fn observe_job_continuation(job_id: &str, observation_token: Option<&
 }
 
 pub(crate) fn observe_job_details_call(job_id: &str) -> Value {
-    super::SuggestedToolCall::new(
+    super::SuggestedToolCall::fallback_recovery(
         "observe_jobs",
         json!({
             "items": [{"job_id": job_id}],
@@ -1032,7 +1032,7 @@ pub(super) fn sparsify_job_handoff_model_result(result: &mut ToolResult) {
 
 fn list_jobs_recovery_suggested_call(project: Option<&str>) -> Value {
     let arguments = project.map_or_else(|| json!({}), |project| json!({"project": project}));
-    SuggestedToolCall::new("list_jobs", arguments).to_value()
+    SuggestedToolCall::fallback_recovery("list_jobs", arguments).to_value()
 }
 
 fn invalid_job_observation_result(error_kind: &str, message: String) -> ToolResult {
@@ -2373,9 +2373,11 @@ mod recovery_projection_tests {
         assert!(missing.output.get("recovery_tool").is_none());
         assert_eq!(
             missing.output["suggested_call"],
-            json!({"tool": "list_jobs", "arguments": {"project": "agent:special:demo"}})
+            json!({"follow_up_kind": "fallback_recovery", "tool": "list_jobs", "arguments": {"project": "agent:special:demo"}})
         );
         let suggested = &missing.output["suggested_call"];
+        webcodex_tool_contracts::test_support::validate_generated_tool_call_against_registered_input_schema(suggested)
+            .expect("stop_job identity recovery must pass list_jobs registered inputSchema");
         let parsed = crate::tool_runtime::ToolCall::from_tool_name(
             suggested["tool"].as_str().unwrap(),
             suggested["arguments"].clone(),

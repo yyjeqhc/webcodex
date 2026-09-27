@@ -264,7 +264,7 @@ pub(crate) fn summarize_observe_jobs_result(
             continue;
         }
         compact["logs_omitted"] = json!(omitted);
-        compact["suggested_call"] = SuggestedToolCall::new(
+        compact["suggested_call"] = SuggestedToolCall::fallback_recovery(
             "observe_jobs",
             json!({
                 "items": [observe_jobs_item_argument_value(original)],
@@ -328,7 +328,8 @@ fn batch_item(observed: ObservedJob) -> Value {
             item["observation_ref"] = json!(observation_ref);
         }
         if error_kind == "unknown_job" {
-            item["suggested_call"] = SuggestedToolCall::new("list_jobs", json!({})).to_value();
+            item["suggested_call"] =
+                SuggestedToolCall::fallback_recovery("list_jobs", json!({})).to_value();
         } else {
             item["recovery_kind"] = json!(recovery_kind.as_str());
         }
@@ -425,7 +426,7 @@ fn add_actionable_batch_continuation(
     };
     root.insert(
         "suggested_call".to_string(),
-        SuggestedToolCall::new(
+        SuggestedToolCall::mechanically_followable(
             "observe_jobs",
             json!({
                 "items": remaining.iter().map(observe_jobs_item_argument_value).collect::<Vec<_>>(),
@@ -1198,7 +1199,12 @@ mod tests {
         assert!(missing.get("recovery_kind").is_none());
         assert!(missing.get("recovery_tool").is_none());
         let suggested = &missing["suggested_call"];
-        assert_eq!(suggested, &json!({"tool": "list_jobs", "arguments": {}}));
+        assert_eq!(
+            suggested,
+            &json!({"follow_up_kind": "fallback_recovery", "tool": "list_jobs", "arguments": {}})
+        );
+        webcodex_tool_contracts::test_support::validate_generated_tool_call_against_registered_input_schema(suggested)
+            .expect("unknown Job recovery must pass list_jobs registered inputSchema");
         let parsed = crate::tool_runtime::ToolCall::from_tool_name(
             suggested["tool"].as_str().unwrap(),
             suggested["arguments"].clone(),

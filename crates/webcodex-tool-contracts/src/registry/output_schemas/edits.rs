@@ -298,42 +298,38 @@ fn conflicting_edit_ranges_schema() -> Value {
             },
             "required": ["edit_index", "start_line", "end_line"]
         }),
-        "At most the resolved source-line ranges for conflicting edits; derived from the authoritative transactional edit plan and contains no source or replacement text.",
+        "At most two resolved source ranges for conflicting edits; no source or replacement text.",
     );
     schema["maxItems"] = json!(2);
     schema
 }
 
 fn read_files_recovery_call_schema() -> Value {
-    json!({
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-            "tool": {"type": "string", "const": "read_files"},
-            "arguments": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {
-                    "project": {"type": "string", "minLength": 1},
+    super::common::suggested_tool_call_schema(
+        webcodex_core::runtime_contract::GeneratedFollowUpKind::MechanicallyFollowable,
+        "read_files",
+        json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "project": {"type": "string", "minLength": 1},
+                "items": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 1,
                     "items": {
-                        "type": "array",
-                        "minItems": 1,
-                        "maxItems": 1,
-                        "items": {
-                            "type": "object",
-                            "additionalProperties": false,
-                            "properties": {"path": {"type": "string", "minLength": 1}},
-                            "required": ["path"]
-                        }
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {"path": {"type": "string", "minLength": 1}},
+                        "required": ["path"]
                     }
-                },
-                "required": ["project", "items"]
-            }
-        },
-        "required": ["tool", "arguments"]
-    })
+                }
+            },
+            "required": ["project", "items"]
+        }),
+        "Exact stale-source reread.",
+    )
 }
-
 pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
     match name {
         "apply_unified_diff" => Some(wrapped_output_schema(vec![
@@ -487,7 +483,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                     "minItems": 2,
                     "maxItems": 2,
                     "items": {"type": "integer", "minimum": 0, "maximum": 15},
-                    "description": "Server-preflight indices [first occupant, conflicting change] for a repeated source/destination path. May be equal for a self-conflict. Identifies the conflict, not permission to merge sequential edits."
+                    "description": "Indices [first occupant, conflicting change] for a repeated path; equal means self-conflict."
                 }),
             ),
             (
@@ -513,7 +509,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ("reread_required", schema_type("boolean", "Fresh read required.")),
             (
                 "candidate_ranges",
-                json!({"type":"array","maxItems":webcodex_core::apply_edits_shared::MAX_APPLY_TEXT_CONFLICT_CANDIDATES,"items":edit_candidate_range_schema(),"description":"Bounded candidate ranges; occurrence appears only when retry is revision-safe."}),
+                json!({"type":"array","maxItems":webcodex_core::apply_edits_shared::MAX_APPLY_TEXT_CONFLICT_CANDIDATES,"items":edit_candidate_range_schema(),"description":"Bounded candidates; occurrence only when revision-safe."}),
             ),
             (
                 "candidates_truncated",

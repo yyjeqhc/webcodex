@@ -4,8 +4,9 @@ use serde::Serialize;
 use serde_json::Value;
 
 pub use webcodex_core::runtime_contract::{
-    ContinuationCarrier, ContinuationKind, ContinuationSemantics, CONTINUATION_CARRIER_VALUES,
-    CONTINUATION_KIND_VALUES, RECOVERY_KIND_VALUES,
+    ContinuationCarrier, ContinuationKind, ContinuationSemantics, GeneratedFollowUpKind,
+    CONTINUATION_CARRIER_VALUES, CONTINUATION_KIND_VALUES, GENERATED_FOLLOW_UP_KIND_VALUES,
+    RECOVERY_KIND_VALUES,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,24 +36,38 @@ impl RecoveryKind {
 
 /// Parser-ready advisory expression of one possible next tool call. It carries
 /// no authority, never executes by itself, and is not a retry, cursor, or
-/// idempotency identity. Domain producers remain responsible for bounding and
-/// validating the arguments they place here.
+/// idempotency identity. follow_up_kind is the Host execution posture: only
+/// mechanically_followable may be followed without a new model decision, while
+/// fallback_recovery must remain an explicit recovery/detail/dependency path.
+/// Domain producers remain responsible for bounding and validating arguments.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct SuggestedToolCall {
+    pub follow_up_kind: GeneratedFollowUpKind,
     pub tool: &'static str,
     pub arguments: Value,
 }
 
 impl SuggestedToolCall {
-    pub fn new(tool: &'static str, arguments: Value) -> Self {
-        Self { tool, arguments }
+    pub fn mechanically_followable(tool: &'static str, arguments: Value) -> Self {
+        Self {
+            follow_up_kind: GeneratedFollowUpKind::MechanicallyFollowable,
+            tool,
+            arguments,
+        }
+    }
+
+    pub fn fallback_recovery(tool: &'static str, arguments: Value) -> Self {
+        Self {
+            follow_up_kind: GeneratedFollowUpKind::FallbackRecovery,
+            tool,
+            arguments,
+        }
     }
 
     pub fn to_value(self) -> Value {
         serde_json::to_value(self).expect("SuggestedToolCall serialization is infallible")
     }
 }
-
 #[derive(Debug, Serialize)]
 pub struct ToolResult {
     pub success: bool,
@@ -165,20 +180,25 @@ mod tests {
     }
 
     #[test]
-    fn suggested_tool_call_is_only_a_parser_ready_expression() {
-        let call = SuggestedToolCall::new(
+    fn suggested_tool_call_has_explicit_host_follow_up_posture() {
+        let call = SuggestedToolCall::fallback_recovery(
             "observe_jobs",
             json!({"items": [{"job_id": "job-1"}], "wait_secs": 30}),
         )
         .to_value();
+        assert_eq!(call["follow_up_kind"], "fallback_recovery");
         assert_eq!(call["tool"], "observe_jobs");
         assert_eq!(call["arguments"]["items"][0]["job_id"], "job-1");
-        assert_eq!(call.as_object().unwrap().len(), 2);
+        assert_eq!(call.as_object().unwrap().len(), 3);
         assert!(call.get("authority").is_none());
         assert!(call.get("retry_token").is_none());
         assert!(call.get("continuation_token").is_none());
-    }
 
+        let paging =
+            SuggestedToolCall::mechanically_followable("git_log", json!({"project": "demo"}))
+                .to_value();
+        assert_eq!(paging["follow_up_kind"], "mechanically_followable");
+    }
     #[test]
     fn recovery_metadata_is_bounded_and_never_decorates_success() {
         let success = ToolResult::ok(json!({"value": true})).with_recovery(RecoveryKind::Reobserve);

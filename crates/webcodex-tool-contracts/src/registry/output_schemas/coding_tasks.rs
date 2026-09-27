@@ -1382,26 +1382,21 @@ fn work_on_project_output_schema() -> Value {
         ),
         (
             "suggested_call",
-            json!({
-                "type": "object",
-                "description": "Parser-ready recovery observation emitted when work_on_project can identify one exact safe next call.",
-                "properties": {
-                    "tool": {"type": "string", "const": "list_runners"},
-                    "arguments": {
-                        "type": "object",
-                        "properties": {
-                            "include_projects": {"type": "boolean", "const": false},
-                            "summary_only": {"type": "boolean", "const": true}
-                        },
-                        "required": ["include_projects", "summary_only"],
-                        "additionalProperties": false
-                    }
-                },
-                "required": ["tool", "arguments"],
-                "additionalProperties": false
-            }),
-        ),
-        (
+            super::common::suggested_tool_call_schema(
+                webcodex_core::runtime_contract::GeneratedFollowUpKind::FallbackRecovery,
+                "list_runners",
+                json!({
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "include_projects": {"type": "boolean", "const": false},
+                        "summary_only": {"type": "boolean", "const": true}
+                    },
+                    "required": ["include_projects", "summary_only"]
+                }),
+                "Recovery observation when work_on_project cannot resolve one exact Runner.",
+            ),
+        ),        (
             "suggested_next_actions",
             array_schema(schema_type("string", "Short suggested action."), "Bounded non-default suggested next actions. Omitted when there is nothing more informative than beginning the requested task."),
         ),

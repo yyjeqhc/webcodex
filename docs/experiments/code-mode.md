@@ -417,7 +417,7 @@ Composition performance telemetry is not effect truth. E2a therefore has a separ
       "tool": "cargo_check",
       "outcome": "job_handoff",
       "job_id": "...",
-      "continuation": {"tool": "observe_jobs", "arguments": {}}
+      "continuation": {"follow_up_kind": "fallback_recovery", "tool": "observe_jobs", "arguments": {}}
     }
   ]
 }

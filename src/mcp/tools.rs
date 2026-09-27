@@ -113,6 +113,11 @@ fn adaptive_runtime_gateway_tool_spec() -> ToolSpec {
     }
 }
 
+#[cfg(test)]
+pub(crate) fn adaptive_runtime_gateway_input_schema_for_test() -> Value {
+    adaptive_runtime_gateway_tool_spec().input_schema
+}
+
 fn mcp_adaptive_runtime_gateway_target_route(
     target: &str,
     stateless_2026: bool,
@@ -992,6 +997,7 @@ fn attach_job_terminal_resume_suggested_call_schema(
             "description": "Host-specific parser-ready advisory call for the current MCP App continuation carrier. Present only for a still-waiting Job when this Host can create that carrier; it grants no authority and should be used only when no independent work remains and the current model turn can yield immediately after presentation.",
             "additionalProperties": false,
             "properties": {
+                "follow_up_kind": {"type": "string", "const": "fallback_recovery"},
                 "tool": {"type": "string", "const": "present_job_terminal_continuation"},
                 "arguments": {
                     "type": "object",
@@ -1005,7 +1011,7 @@ fn attach_job_terminal_resume_suggested_call_schema(
                     "required": ["wait_id"]
                 }
             },
-            "required": ["tool", "arguments"]
+            "required": ["follow_up_kind", "tool", "arguments"]
         }),
     );
 }
@@ -1038,7 +1044,7 @@ pub(super) fn project_job_terminal_resume_suggested_call(
     };
     output.insert(
         "suggested_call".to_string(),
-        crate::tool_runtime::SuggestedToolCall::new(
+        crate::tool_runtime::SuggestedToolCall::fallback_recovery(
             "present_job_terminal_continuation",
             json!({"wait_id": wait_id}),
         )

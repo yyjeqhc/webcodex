@@ -311,7 +311,7 @@ fn summary_preserves_mixed_batch_order_errors_and_suffix_preferences() {
         23,
     );
     result.output["output_truncated"] = json!(true);
-    result.output["suggested_call"] = json!({"tool": "observe_jobs", "arguments": {"items": [{"job_id": "next"}], "tail_lines": 40}});
+    result.output["suggested_call"] = json!({"follow_up_kind": "mechanically_followable", "tool": "observe_jobs", "arguments": {"items": [{"job_id": "next"}], "tail_lines": 40}});
     summarize_observe_jobs_result(
         &mut result,
         &[item("good", None), item("failed", None), item("next", None)],
@@ -327,6 +327,14 @@ fn summary_preserves_mixed_batch_order_errors_and_suffix_preferences() {
         result.output["suggested_call"]["arguments"]["summary_only"],
         true
     );
+    assert_eq!(
+        result.output["suggested_call"]["follow_up_kind"],
+        "mechanically_followable"
+    );
+    webcodex_tool_contracts::test_support::validate_generated_tool_call_against_registered_input_schema(
+        &result.output["suggested_call"],
+    )
+    .expect("observe_jobs suffix continuation must pass the registered inputSchema");
     ToolCall::from_tool_name(
         "observe_jobs",
         result.output["suggested_call"]["arguments"].clone(),

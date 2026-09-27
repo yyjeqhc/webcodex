@@ -263,13 +263,13 @@ fn runner_coding_capability_error(client_id: &str, error: String) -> ToolResult 
                 "failure_kind": "unknown_runner",
                 "client_id": client_id,
                 "state_changed": false,
-                "suggested_call": {
-                    "tool": "list_runners",
-                    "arguments": {
+                "suggested_call": super::SuggestedToolCall::fallback_recovery(
+                    "list_runners",
+                    json!({
                         "include_projects": false,
                         "summary_only": true,
-                    }
-                }
+                    }),
+                ).to_value()
             }),
         );
     }
@@ -1756,12 +1756,10 @@ impl ToolRuntime {
             .await
         {
             Ok(true) => Some(json!({
-                "suggested_call": {
-                    "tool": "present_work_result",
-                    "arguments": {
-                        "project": resolved.resolved_id.clone(),
-                    }
-                }
+                "suggested_call": super::SuggestedToolCall::fallback_recovery(
+                    "present_work_result",
+                    json!({"project": resolved.resolved_id.clone()}),
+                ).to_value()
             })),
             Ok(false) => None,
             Err(message) => {
@@ -3623,7 +3621,7 @@ mod startup_runner_tests {
             "changes": {
                 "show_changes": {
                     "diff_review_handoff": {
-                        "next_call": {"tool": "git_diff_hunks", "arguments": {}}
+                        "next_call": {"follow_up_kind": "mechanically_followable", "tool": "git_diff_hunks", "arguments": {}}
                     }
                 }
             },

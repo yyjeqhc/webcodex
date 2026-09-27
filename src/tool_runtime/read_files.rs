@@ -317,7 +317,7 @@ pub(crate) fn add_actionable_read_continuations(
     if !next_items.is_empty() {
         output.insert(
             "suggested_call".to_string(),
-            SuggestedToolCall::new(
+            SuggestedToolCall::mechanically_followable(
                 "read_files",
                 read_files_suggested_arguments(
                     project,

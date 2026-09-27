@@ -2061,7 +2061,7 @@ fn computer_suggested_recovery(
         .expect("Computer recovery output is an object")
         .insert(
             "suggested_call".to_string(),
-            SuggestedToolCall::new(tool, arguments).to_value(),
+            SuggestedToolCall::fallback_recovery(tool, arguments).to_value(),
         );
     result
 }

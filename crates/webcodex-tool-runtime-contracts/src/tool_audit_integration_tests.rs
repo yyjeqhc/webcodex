@@ -96,7 +96,7 @@ fn code_mode_exec_effectful_parses_outer_authority_and_omits_source_from_audit()
                     "tool": "cargo_check",
                     "outcome": "job_handoff",
                     "job_id": "PRIVATE_JOB_ID",
-                    "continuation": {"tool": "observe_jobs", "arguments": {"items": []}}
+                    "continuation": {"follow_up_kind": "fallback_recovery", "tool": "observe_jobs", "arguments": {"items": []}}
                 }]
             }
         }),

@@ -303,6 +303,11 @@ async fn git_log_snapshot_continuation_survives_head_advance_without_gap_or_dupl
     assert_eq!(snapshot.len(), 40);
     let first_next = &first.output["suggested_call"];
     assert_eq!(first_next["tool"], "git_log");
+    assert_eq!(first_next["follow_up_kind"], "mechanically_followable");
+    webcodex_tool_contracts::test_support::validate_generated_tool_call_against_registered_input_schema(
+        first_next,
+    )
+    .expect("git_log paging call must pass the current registered inputSchema");
     assert_eq!(
         first_next["arguments"]["project"],
         agent_test_project_id("git-log-multipage")
@@ -326,6 +331,7 @@ async fn git_log_snapshot_continuation_survives_head_advance_without_gap_or_dupl
         projected_next["tool"],
         crate::model_surface::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME
     );
+    assert_eq!(projected_next["follow_up_kind"], "mechanically_followable");
     assert_eq!(projected_next["arguments"]["tool"], "git_log");
     assert_eq!(
         projected_next["arguments"]["arguments"],
@@ -357,6 +363,11 @@ async fn git_log_snapshot_continuation_survives_head_advance_without_gap_or_dupl
     assert_eq!(second.output["truncated"], true);
     assert_eq!(second.output["next_skip"], 4);
     let second_next = &second.output["suggested_call"];
+    assert_eq!(second_next["follow_up_kind"], "mechanically_followable");
+    webcodex_tool_contracts::test_support::validate_generated_tool_call_against_registered_input_schema(
+        second_next,
+    )
+    .expect("second git_log paging call must pass the current registered inputSchema");
     assert_eq!(second_next["arguments"]["head_commit"], snapshot);
     assert_eq!(second_next["arguments"]["skip"], 4);
     let final_call = ToolCall::from_tool_name(

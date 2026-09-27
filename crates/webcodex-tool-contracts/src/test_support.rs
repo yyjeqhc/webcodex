@@ -10,6 +10,60 @@ pub fn validate_schema_instance(instance: &Value, schema: &Value) -> Result<(), 
     validate_schema_instance_at(instance, schema, "$")
 }
 
+pub fn validate_generated_tool_call_against_registered_input_schema(
+    call: &Value,
+) -> Result<(), String> {
+    let object = call
+        .as_object()
+        .ok_or_else(|| "$: generated follow-up must be an object".to_string())?;
+    let follow_up_kind = object
+        .get("follow_up_kind")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "$.follow_up_kind: missing generated follow-up posture".to_string())?;
+    if !webcodex_core::runtime_contract::GENERATED_FOLLOW_UP_KIND_VALUES.contains(&follow_up_kind) {
+        return Err(format!(
+            "$.follow_up_kind: unsupported generated follow-up posture {follow_up_kind}"
+        ));
+    }
+    let tool = object
+        .get("tool")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "$.tool: missing generated follow-up target".to_string())?;
+    let arguments = object
+        .get("arguments")
+        .ok_or_else(|| "$.arguments: missing generated follow-up arguments".to_string())?;
+    let schema = crate::input_schema_for_tool(tool);
+    validate_schema_instance(arguments, &schema)
+        .map_err(|error| format!("{tool} generated arguments fail registered inputSchema: {error}"))
+}
+
+pub fn validate_generated_tool_calls_in_value(value: &Value) -> Result<usize, String> {
+    fn visit(value: &Value, path: &str, count: &mut usize) -> Result<(), String> {
+        if let Some(object) = value.as_object() {
+            let looks_like_generated_call = object.contains_key("follow_up_kind")
+                && object.contains_key("tool")
+                && object.contains_key("arguments");
+            if looks_like_generated_call {
+                validate_generated_tool_call_against_registered_input_schema(value)
+                    .map_err(|error| format!("{path}: {error}"))?;
+                *count += 1;
+            }
+            for (name, child) in object {
+                visit(child, &format!("{path}.{}", name), count)?;
+            }
+        } else if let Some(array) = value.as_array() {
+            for (index, child) in array.iter().enumerate() {
+                visit(child, &format!("{path}[{index}]"), count)?;
+            }
+        }
+        Ok(())
+    }
+
+    let mut count = 0;
+    visit(value, "$", &mut count)?;
+    Ok(count)
+}
+
 fn validate_schema_instance_at(instance: &Value, schema: &Value, path: &str) -> Result<(), String> {
     if let Some(schemas) = schema.get("allOf").and_then(Value::as_array) {
         for child in schemas {

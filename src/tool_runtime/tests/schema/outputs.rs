@@ -28,6 +28,7 @@ fn computer_control_output_schema_has_closed_native_platforms() {
                 "state_changed": false,
                 "execution_state": "not_started",
                 "suggested_call": {
+                    "follow_up_kind": "fallback_recovery",
                     "tool": "computer_observe",
                     "arguments": {"action": "applications", "client_id": "msi"}
                 }
@@ -209,6 +210,7 @@ fn browser_output_schemas_accept_canonical_results_and_reject_leaked_fields() {
                 "recovery": {
                     "reason": "re-observe before acting",
                     "suggested_call": {
+                        "follow_up_kind": "fallback_recovery",
                         "tool": "browser_observe",
                         "arguments": {
                             "action": "snapshot",

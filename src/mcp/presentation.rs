@@ -381,10 +381,21 @@ fn observed_failure_presentation(item: &Value) -> Option<Value> {
     }
     // Preserve only the exact bounded identity-recovery call. Current model
     // results carry the Adaptive gateway route; cached legacy projections may
-    // still carry the canonical call. Never admit arbitrary calls or arguments.
+    // still carry the canonical call. follow_up_kind is preserved because it is
+    // the Host execution posture, not arbitrary presentation metadata.
     if let Some(call) = item.get("suggested_call").filter(|call| {
-        **call == json!({"tool": "list_jobs", "arguments": {}})
-            || **call == json!({"tool": "call_runtime_tool", "arguments": {"tool": "list_jobs", "arguments": {}}})
+        **call
+            == json!({
+                "follow_up_kind": "fallback_recovery",
+                "tool": "list_jobs",
+                "arguments": {}
+            })
+            || **call
+                == json!({
+                    "follow_up_kind": "fallback_recovery",
+                    "tool": "call_runtime_tool",
+                    "arguments": {"tool": "list_jobs", "arguments": {}}
+                })
     }) {
         output.insert("suggested_call".to_string(), call.clone());
     }

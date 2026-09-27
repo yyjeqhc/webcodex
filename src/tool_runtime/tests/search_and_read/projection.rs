@@ -116,7 +116,7 @@ fn compound_projection_keeps_explicit_timeout_and_batch_continuation() {
     let mut before = canonical_search_batch(2);
     before["items"][0]["output"]["effective_timeout_secs"] = json!(10);
     before["output_truncated"] = json!(true);
-    before["suggested_call"] = json!({"tool": "search_project_texts", "arguments": {"project": "agent:fixture:project", "queries": [{"pattern": "remaining"}]}});
+    before["suggested_call"] = json!({"follow_up_kind": "mechanically_followable", "tool": "search_project_texts", "arguments": {"project": "agent:fixture:project", "queries": [{"pattern": "remaining"}]}});
     let after = compact_compound_search(before.clone(), &[false, true]);
     assert_eq!(after["items"][0]["output"]["effective_timeout_secs"], 10);
     assert_eq!(after["output_truncated"], true);

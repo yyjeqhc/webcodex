@@ -163,6 +163,7 @@ mod tests {
                 "execution_state": "outcome_unknown",
                 "job_id": "job-123",
                 "continuation": {
+                    "follow_up_kind": "fallback_recovery",
                     "tool": "observe_jobs",
                     "arguments": {
                         "items": [{
@@ -189,6 +190,7 @@ mod tests {
     fn generated_continuation_wait_is_transport_aware_without_changing_identity() {
         let mut result = ToolResult::ok(serde_json::json!({
             "continuation": {
+                "follow_up_kind": "fallback_recovery",
                 "tool": "observe_jobs",
                 "arguments": {
                     "items": [{

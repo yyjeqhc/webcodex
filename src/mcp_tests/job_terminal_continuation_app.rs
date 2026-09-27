@@ -73,12 +73,18 @@ fn job_terminal_wait_suggested_call_is_host_specific_and_parser_ready() {
     assert_eq!(
         capable.output["suggested_call"],
         json!({
+            "follow_up_kind": "fallback_recovery",
             "tool": "present_job_terminal_continuation",
             "arguments": {"wait_id": "wc_job_wait_q6urq6urq6urq6ur"}
         })
     );
     assert_eq!(capable.output["automatic_resume_available"], false);
     let suggested = &capable.output["suggested_call"];
+    assert_eq!(suggested["follow_up_kind"], "fallback_recovery");
+    webcodex_tool_contracts::test_support::validate_generated_tool_call_against_registered_input_schema(
+        suggested,
+    )
+    .expect("Host terminal continuation fallback must pass its registered inputSchema");
     crate::tool_runtime::ToolCall::from_tool_name(
         suggested["tool"].as_str().expect("suggested tool name"),
         suggested["arguments"].clone(),
@@ -167,6 +173,12 @@ async fn job_terminal_continuation_app_surface_is_explicit_sparse_and_app_only()
             "/outputSchema/properties/output/properties/suggested_call/properties/tool/const"
         ),
         Some(&json!("present_job_terminal_continuation"))
+    );
+    assert_eq!(
+        full_wait.pointer(
+            "/outputSchema/properties/output/properties/suggested_call/properties/follow_up_kind/const"
+        ),
+        Some(&json!("fallback_recovery"))
     );
     assert!(full_wait
         .pointer("/outputSchema/properties/output/properties/resume_setup")

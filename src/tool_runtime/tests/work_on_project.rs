@@ -2773,6 +2773,14 @@ async fn workflow_resume_context_is_window_principal_scoped_bounded_and_non_auth
         single["suggested_call"]["arguments"]["session_id"],
         first_ref
     );
+    assert_eq!(
+        single["suggested_call"]["follow_up_kind"],
+        "fallback_recovery"
+    );
+    webcodex_tool_contracts::test_support::validate_generated_tool_call_against_registered_input_schema(
+        &single["suggested_call"],
+    )
+    .expect("workflow resume recovery must pass session_handoff_summary registered inputSchema");
 
     let other_window = crate::client_window::ClientWindow::for_test("workflow-resume-other");
     let hidden_by_window = runtime
@@ -2856,6 +2864,10 @@ async fn workflow_resume_context_is_window_principal_scoped_bounded_and_non_auth
     assert_eq!(
         active_only["suggested_call"]["arguments"]["session_id"],
         second_ref
+    );
+    assert_eq!(
+        active_only["suggested_call"]["follow_up_kind"],
+        "fallback_recovery"
     );
 
     let mut newest_session_id = String::new();

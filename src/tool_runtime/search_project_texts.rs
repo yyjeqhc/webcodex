@@ -623,7 +623,7 @@ pub(crate) fn add_actionable_search_continuation(
     {
         output.insert(
             "suggested_call".to_string(),
-            SuggestedToolCall::new(
+            SuggestedToolCall::mechanically_followable(
                 "search_project_texts",
                 search_suggested_arguments(project, remaining, session_id, next_budget),
             )

@@ -281,6 +281,10 @@ fn mcp_suggested_call_output_schema_tracks_adaptive_route() {
     let adaptive_call =
         &adaptive_work["outputSchema"]["properties"]["output"]["properties"]["suggested_call"];
     assert_eq!(
+        adaptive_call["properties"]["follow_up_kind"]["const"],
+        "fallback_recovery"
+    );
+    assert_eq!(
         adaptive_call["properties"]["tool"]["const"],
         crate::mcp::tools::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME
     );
@@ -342,6 +346,7 @@ async fn adaptive_mcp_work_on_project_recovery_is_immediately_gateway_callable()
         other => panic!("expected MCP tool result, got {other:?}"),
     };
     let suggested = &value["result"]["structuredContent"]["output"]["suggested_call"];
+    assert_eq!(suggested["follow_up_kind"], "fallback_recovery");
     assert_eq!(
         suggested["tool"],
         crate::mcp::tools::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME

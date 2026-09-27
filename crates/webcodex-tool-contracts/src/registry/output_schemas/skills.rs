@@ -73,6 +73,7 @@ fn skill_load_candidate_schema() -> Value {
 
 fn skill_versions_recovery_call_schema() -> Value {
     suggested_tool_call_schema(
+        webcodex_core::runtime_contract::GeneratedFollowUpKind::FallbackRecovery,
         "skill_versions",
         json!({
             "type": "object",

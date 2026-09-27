@@ -125,6 +125,9 @@ pub(in crate::tool_runtime::tests) fn assert_observe_job_continuation(output: &V
     use crate::tool_runtime::{ObserveJobsWakeOn, ToolCall};
     let hint = &output["continuation"];
     assert_eq!(hint["tool"], "observe_jobs");
+    assert_eq!(hint["follow_up_kind"], "fallback_recovery");
+    webcodex_tool_contracts::test_support::validate_generated_tool_call_against_registered_input_schema(hint)
+        .expect("Job continuation must pass the registered observe_jobs inputSchema");
     let continuation_job_id = observe_job_continuation_job_id(output);
     if let Some(job_id) = output.get("job_id").and_then(Value::as_str) {
         assert_eq!(continuation_job_id, job_id);

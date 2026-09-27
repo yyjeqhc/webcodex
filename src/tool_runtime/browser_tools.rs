@@ -1002,7 +1002,7 @@ impl BrowserRecoveryContext {
                 "client_id": self.client_id,
             }),
         };
-        SuggestedToolCall::new("browser_observe", arguments)
+        SuggestedToolCall::fallback_recovery("browser_observe", arguments)
     }
 
     fn to_recovery(&self, reason: &str) -> Value {

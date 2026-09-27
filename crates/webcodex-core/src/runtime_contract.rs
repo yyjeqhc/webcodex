@@ -60,6 +60,32 @@ pub const RECOVERY_KIND_VALUES: [&str; 7] = [
     "none",
 ];
 
+pub const GENERATED_FOLLOW_UP_KIND_VALUES: [&str; 2] =
+    ["mechanically_followable", "fallback_recovery"];
+
+/// Host-facing execution posture for a server-generated parser-ready tool call.
+///
+/// MechanicallyFollowable means the Server has already resolved the semantic
+/// choice needed for this exact follow-up, for example deterministic paging.
+/// FallbackRecovery means the call is available only as an explicit recovery,
+/// detail, or blocked-dependency path and must not be auto-followed merely
+/// because it is present.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GeneratedFollowUpKind {
+    MechanicallyFollowable,
+    FallbackRecovery,
+}
+
+impl GeneratedFollowUpKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::MechanicallyFollowable => "mechanically_followable",
+            Self::FallbackRecovery => "fallback_recovery",
+        }
+    }
+}
+
 /// Closed model-facing vocabulary for continuing successful or partial
 /// observations. This is deliberately separate from failure recovery,
 /// authorization, retry/idempotency, execution identity, and resource ownership.
@@ -137,12 +163,11 @@ impl ContinuationSemantics {
 }
 
 pub const BUILTIN_CODING_WORKFLOW_CONTRACT: &str = "webcodex.coding_workflow";
-pub const BUILTIN_CODING_WORKFLOW_VERSION: u64 = 24;
+pub const BUILTIN_CODING_WORKFLOW_VERSION: u64 = 25;
 /// Ergonomic regression targets for built-in model guidance. These are not
 /// wire/schema limits; the serialized startup budget remains the hard bound.
 pub const BUILTIN_CODING_WORKFLOW_GUIDANCE_TARGET_ITEMS: usize = 8;
 pub const BUILTIN_CODING_WORKFLOW_GUIDANCE_TARGET_ITEM_CHARS: usize = 320;
-
 /// Validate a Runner project path without applying host-local filesystem semantics.
 /// The Server may route to an agent on another OS, so both POSIX and Windows
 /// absolute-path shapes are accepted; the Runner remains authoritative for

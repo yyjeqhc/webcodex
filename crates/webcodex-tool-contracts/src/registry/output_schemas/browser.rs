@@ -180,6 +180,7 @@ fn recovery_schema() -> Value {
         "properties": {
             "reason": {"type": "string", "maxLength": 256},
             "suggested_call": suggested_tool_call_schema(
+                webcodex_core::runtime_contract::GeneratedFollowUpKind::FallbackRecovery,
                 "browser_observe",
                 arguments,
                 "Observation-first reconciliation call. It never retries the uncertain Browser effect."

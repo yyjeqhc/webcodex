@@ -235,6 +235,7 @@ fn apply_text_edits_occurrence_and_recovery_schemas_are_model_visible() {
             "direct_retry_safe": false,
             "reread_required": true,
             "recovery": {
+                "follow_up_kind": "mechanically_followable",
                 "tool": "read_files",
                 "arguments": {"project": "agent:r:p", "items": [{"path": "src/lib.rs"}]}
             }

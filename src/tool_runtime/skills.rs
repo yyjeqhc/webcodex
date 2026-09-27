@@ -2409,7 +2409,7 @@ fn skill_error_dynamic(
             if let Some(skill_key) = recovery_skill_key.as_deref() {
                 target.insert(
                     "suggested_call".to_string(),
-                    SuggestedToolCall::new(
+                    SuggestedToolCall::fallback_recovery(
                         "skill_versions",
                         json!({"project": project, "skill_key": skill_key}),
                     )

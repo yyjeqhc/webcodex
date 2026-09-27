@@ -11,12 +11,12 @@ fn compact_model_edit_surface(tool_name: &str) -> bool {
 }
 
 fn read_files_recovery(project: &str, path: &str) -> Value {
-    json!({
-        "tool": "read_files",
-        "arguments": {"project": project, "items": [{"path": path}]}
-    })
+    crate::tool_runtime::SuggestedToolCall::mechanically_followable(
+        "read_files",
+        json!({"project": project, "items": [{"path": path}]}),
+    )
+    .to_value()
 }
-
 fn recoverable_write_rejection(reason: impl AsRef<str>) -> String {
     format!(
         "Rejected before write: {}.\nNo files were modified.\nRetry guidance: read the file again to refresh line numbers/context, then retry with updated guards.",

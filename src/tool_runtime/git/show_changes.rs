@@ -2155,7 +2155,7 @@ fn set_show_changes_verdict(output: &mut Value) {
             .get("project")
             .and_then(Value::as_str)
             .unwrap_or_default();
-        let canonical_recovery_call = SuggestedToolCall::new(
+        let canonical_recovery_call = SuggestedToolCall::mechanically_followable(
             "git_diff_hunks",
             json!({
                 "project": project,

@@ -219,15 +219,21 @@ smaller contract than the underlying status/state variants. Treat such a field a
 an explicit semantic firewall with its own documented invariant, not as a
 convenience duplicate.
 
-In particular, a parser-ready `suggested_call` or continuation call should not
-normally be accompanied by a second classification vocabulary such as
-`kind`/`carrier`, `safe_cursor`, `recommended_order`, or a duplicate raw token
-when those fields merely restate the same next action. Internal continuation and
-recovery taxonomies may remain useful implementation SSOTs without becoming
-per-result concepts the model must learn. Likewise, counts that are exactly an
-array length and success booleans fully implied by one authoritative lifecycle
-state should be omitted unless they carry independent meaning.
+Every server-generated parser-ready tool call has one Host execution posture:
+`follow_up_kind=mechanically_followable` means the Server has already resolved the
+semantic choice for that exact follow-up, while `fallback_recovery` means the
+call is available only for explicit recovery, detail expansion, reconciliation,
+or a blocked dependency. Hosts must not infer execution posture from field names
+such as `next_call`, `suggested_call`, `recovery.*.next_call`, or
+`continuation`.
 
+This posture is an intentional exception to deletion-by-derivation because it
+changes a Host decision: whether an exact generated call may continue without a
+new model decision. Other classification vocabularies such as `kind`/`carrier`,
+`safe_cursor`, `recommended_order`, or duplicate raw tokens should still stay
+internal when they merely restate the same action. In all cases, generated
+`arguments` must validate unchanged against the target tool's current registered
+input schema; Rust deserialization alone is not a contract test.
 Prefer **progressive disclosure**: ordinary success returns sparse business truth
 and one actionable follow-up; reset, truncation, reconciliation, malformed-source,
 or other exceptional paths may expose the additional bounded forensic evidence

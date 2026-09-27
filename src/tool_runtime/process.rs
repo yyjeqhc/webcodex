@@ -413,7 +413,7 @@ impl ToolRuntime {
         }
         // Use the real canonical parser, including wrapper-field validation.
         super::ToolCall::from_tool_name("run_shell", arguments.clone()).ok()?;
-        Some(super::SuggestedToolCall::new("run_shell", arguments).to_value())
+        Some(super::SuggestedToolCall::mechanically_followable("run_shell", arguments).to_value())
     }
 
     #[allow(clippy::too_many_arguments)]

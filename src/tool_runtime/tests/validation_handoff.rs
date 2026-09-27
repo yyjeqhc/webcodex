@@ -3325,6 +3325,7 @@ fn cargo_output_schema_enforces_handoff_terminal_and_rejection_branches() {
                 "blocked_fallback": "wait_for_job_terminal"
             },
             "continuation": {
+                "follow_up_kind": "fallback_recovery",
                 "tool": "observe_jobs",
                 "arguments": {
                     "items": [{

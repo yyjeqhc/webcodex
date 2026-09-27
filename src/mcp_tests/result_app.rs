@@ -675,7 +675,7 @@ fn observe_presentation_preserves_wait_uncertainty_and_unknown_job_without_log_b
                 "success": false,
                 "error_kind": "unknown_job",
                 "recovery_kind": "reobserve",
-                "suggested_call": {"tool": "list_jobs", "arguments": {}},
+                "suggested_call": {"follow_up_kind": "fallback_recovery", "tool": "list_jobs", "arguments": {}},
                 "error": "unbounded internal error text"
             }
         ],
@@ -699,7 +699,7 @@ fn observe_presentation_preserves_wait_uncertainty_and_unknown_job_without_log_b
     assert_eq!(meta["items"][1]["error_kind"], "unknown_job");
     assert_eq!(
         meta["items"][1]["suggested_call"],
-        json!({"tool": "list_jobs", "arguments": {}})
+        json!({"follow_up_kind": "fallback_recovery", "tool": "list_jobs", "arguments": {}})
     );
     let serialized = serde_json::to_string(meta).unwrap();
     for forbidden in [
@@ -2122,7 +2122,7 @@ async fn mcp_job_presentation_tracks_real_running_to_terminal_transition() {
     );
     assert_eq!(
         presentation(&unknown)["items"][0]["suggested_call"],
-        json!({"tool": "call_runtime_tool", "arguments": {"tool": "list_jobs", "arguments": {}}})
+        json!({"follow_up_kind": "fallback_recovery", "tool": "call_runtime_tool", "arguments": {"tool": "list_jobs", "arguments": {}}})
     );
 
     assert!(runtime.runner_registry.remove_job_record(&job_id).await);
@@ -2373,7 +2373,7 @@ fn observe_jobs_item_limit_matches_presentation_bound() {
 #[test]
 fn mcp_job_recovery_presentation_accepts_exact_gateway_and_rejects_extra_arguments() {
     for valid in [true, false] {
-        let mut call = json!({"tool": "call_runtime_tool", "arguments": {"tool": "list_jobs", "arguments": {}}});
+        let mut call = json!({"follow_up_kind": "fallback_recovery", "tool": "call_runtime_tool", "arguments": {"tool": "list_jobs", "arguments": {}}});
         if !valid {
             call["arguments"]["arguments"]["unexpected"] = json!("private");
         }

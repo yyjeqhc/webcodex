@@ -184,8 +184,11 @@ impl StructuredJobHandoffFailure {
                 job.observation_token.as_deref(),
             );
         } else {
-            result.output["suggested_call"] =
-                super::SuggestedToolCall::new("list_jobs", json!({"project": project})).to_value();
+            result.output["suggested_call"] = super::SuggestedToolCall::fallback_recovery(
+                "list_jobs",
+                json!({"project": project}),
+            )
+            .to_value();
         }
         result
     }

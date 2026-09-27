@@ -3281,6 +3281,9 @@ fn assert_git_diff_hunks_sparse_recovery_calls_parse(recovery: &Value) {
                 .keys()
                 .all(|key| key == "next_call" || (lane == "current_hunk" && key == "reason_code")));
             if let Some(call) = value.get("next_call") {
+                assert_eq!(call["follow_up_kind"], "mechanically_followable");
+                webcodex_tool_contracts::test_support::validate_generated_tool_call_against_registered_input_schema(call)
+                    .expect("git_diff_hunks recovery next_call must pass registered inputSchema");
                 ToolCall::from_tool_name(call["tool"].as_str().unwrap(), call["arguments"].clone())
                     .expect("each recovery lane must parse directly");
             }
@@ -3289,6 +3292,9 @@ fn assert_git_diff_hunks_sparse_recovery_calls_parse(recovery: &Value) {
 }
 
 fn assert_git_diff_hunks_recovery_call_parses(recovery: &Value) {
+    assert_eq!(recovery["follow_up_kind"], "mechanically_followable");
+    webcodex_tool_contracts::test_support::validate_generated_tool_call_against_registered_input_schema(recovery)
+        .expect("git_diff_hunks generated follow-up must pass registered inputSchema");
     let tool = recovery["tool"]
         .as_str()
         .expect("recovery tool must be a string");

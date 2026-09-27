@@ -488,6 +488,7 @@ pub(super) fn list_jobs_recovery_call_schema(project: bool) -> Value {
         json!({"type": "object", "additionalProperties": false, "properties": {}})
     };
     suggested_tool_call_schema(
+        webcodex_core::runtime_contract::GeneratedFollowUpKind::FallbackRecovery,
         "list_jobs",
         arguments,
         "Parser-ready advisory list_jobs recovery call. It grants no authority and carries only business identity proven by the producing Job path.",
@@ -654,6 +655,7 @@ fn observe_jobs_output_schema() -> Value {
         ]
     });
     let summary_detail_call = suggested_tool_call_schema(
+        webcodex_core::runtime_contract::GeneratedFollowUpKind::FallbackRecovery,
         "observe_jobs",
         json!({
             "type": "object", "additionalProperties": false,
@@ -797,6 +799,7 @@ fn observe_jobs_output_schema() -> Value {
             "terminal_count": {"type": "integer", "minimum": 0, "maximum": 8},
             "output_truncated": {"type": "boolean"},
             "suggested_call": suggested_tool_call_schema(
+                webcodex_core::runtime_contract::GeneratedFollowUpKind::MechanicallyFollowable,
                 "observe_jobs",
                 observe_jobs_batch_followup_arguments_schema(),
                 "Parser-ready immediate observation of only the whole input suffix omitted by aggregate result packing. It preserves the caller's original Job tokens and intentionally omits wait_secs/wake_on so response-size continuation never starts a second long wait."

@@ -239,10 +239,20 @@ async fn coding_agent_discovery_start_never_falls_back_and_returns_exact_recover
     );
     assert_eq!(error.output["execution_state"], "not_started");
     assert_safe_inventory(&error.output["available_providers"]);
+    let suggested = &error.output["suggested_call"];
+    assert_eq!(suggested["follow_up_kind"], "fallback_recovery");
     assert_eq!(
-        error.output["suggested_call"],
-        json!({"tool":"runtime_status","arguments":{"client_id":"mini","compact":true}})
+        suggested,
+        &json!({
+            "follow_up_kind": "fallback_recovery",
+            "tool":"runtime_status",
+            "arguments":{"client_id":"mini","compact":true}
+        })
     );
+    webcodex_tool_contracts::test_support::validate_generated_tool_call_against_registered_input_schema(
+        suggested,
+    )
+    .expect("coding-agent inventory recovery must pass runtime_status registered inputSchema");
 }
 
 #[test]

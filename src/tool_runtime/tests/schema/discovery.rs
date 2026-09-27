@@ -161,7 +161,7 @@ impl CodeModeHost for CallableExampleHost {
                     "execution_state": "running",
                     "terminal": false,
                     "job_id": "wc_job_example",
-                    "continuation": {"tool": "observe_jobs", "arguments": {}}
+                    "continuation": {"follow_up_kind": "fallback_recovery", "tool": "observe_jobs", "arguments": {}}
                 }),
                 "edit_project_files" => json!({
                     "state_changed": true,

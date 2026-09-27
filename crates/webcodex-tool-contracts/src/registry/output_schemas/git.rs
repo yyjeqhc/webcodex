@@ -4,9 +4,11 @@ use super::common::{
     array_schema, nullable_schema, open_object_schema, schema_type, suggested_tool_call_schema,
     wrapped_output_schema,
 };
+use webcodex_core::runtime_contract::GeneratedFollowUpKind;
 
 fn git_log_suggested_call_schema() -> Value {
     suggested_tool_call_schema(
+        GeneratedFollowUpKind::MechanicallyFollowable,
         "git_log",
         json!({
             "type": "object",
@@ -56,6 +58,7 @@ fn git_diff_hunks_recovery_arguments_schema() -> Value {
 
 fn git_diff_hunks_recovery_call_schema() -> Value {
     suggested_tool_call_schema(
+        GeneratedFollowUpKind::MechanicallyFollowable,
         "git_diff_hunks",
         git_diff_hunks_recovery_arguments_schema(),
         "Parser-ready advisory git_diff_hunks call for later-record continuation, proven bounded parameter refinement, or exact current-hunk fragment continuation. It grants no authority and is not the continuation identity itself.",
@@ -212,7 +215,18 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ("signals", array_schema(open_object_schema("Bounded deterministic or Session review signal."), "Initial-page review signals; continuation pages may return an empty array.")),
             ("diff", nullable_schema("object", "One bounded page from the existing git_diff_hunks engine, preserving its source fences and recovery semantics.")),
             ("continuation", nullable_schema("string", "Opaque same-snapshot review continuation, or null when no bounded page continuation is available.")),
-            ("next_call", nullable_schema("object", "Parser-ready advisory review_changes continuation call using the exact same scope and projection.")),
+            (
+                "next_call",
+                {
+                    let call = suggested_tool_call_schema(
+                        GeneratedFollowUpKind::MechanicallyFollowable,
+                        "review_changes",
+                        crate::input_schema_for_tool("review_changes"),
+                        "Parser-ready same-snapshot review_changes continuation. The Server has already fixed the scope, projection, and continuation identity, so the Host may follow it mechanically while ordinary authorization and stale-snapshot checks still apply.",
+                    );
+                    json!({"anyOf": [call, {"type": "null"}]})
+                },
+            ),
             ("reason_code", nullable_schema("string", "Stable failure/stale reason when review cannot proceed.")),
         ])),
         "git_review_summary" => Some(wrapped_output_schema(vec![
@@ -637,6 +651,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                     "additionalProperties": false,
                     "properties": {
                         "next_call": suggested_tool_call_schema(
+                            GeneratedFollowUpKind::MechanicallyFollowable,
                             "git_diff_hunks",
                             show_changes_handoff_arguments_schema(),
                             "Parser-ready first focused diff-review call. It starts a fresh git_diff_hunks observation and carries no invented continuation identity.",

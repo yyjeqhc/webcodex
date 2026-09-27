@@ -246,7 +246,7 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
       </section>
       <section class="section">
         <div class="section-head"><h2>Window activity</h2><span id="windowCoverage" class="secondary"></span></div>
-        <p class="secondary">Latest Window calls first. Expand a completed call for trace, Session, Job, timing, and transition details.</p>
+        <p class="secondary">Window calls in start-time order. Expand a completed call for trace, Session, Job, timing, and transition details.</p>
         <div id="windowActivity" class="workflow-activity"></div>
         <button id="askActivity" class="refresh" type="button">Send an instruction</button>
       </section>
@@ -1101,7 +1101,7 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
       ...windowActivity.events.map(row => ({ ...row, running: false })),
       ...windowActivity.active_requests.filter(row => !row.server_trace_id || !completed.has(row.server_trace_id))
         .map(row => ({ ...row, running: true })),
-    ].sort((a, b) => b.started_at_ms - a.started_at_ms);
+    ].sort((a, b) => a.started_at_ms - b.started_at_ms);
     for (const row of rows) {
       const details = document.createElement("details"); details.className = "activity-call";
       const key = row.server_trace_id || (row.running ? "active:" : "event:") + row.started_at_ms + ":" + (row.tool_name || row.label);

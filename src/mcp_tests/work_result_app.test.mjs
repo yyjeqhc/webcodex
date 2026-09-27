@@ -904,8 +904,9 @@ test("Activity and Collaboration tabs preserve Window activity and drafts across
   assert.equal(view.nodes.sessionIdentity.textContent, "Session · " + session_id);
   assert.equal(view.nodes.windowSource.textContent, "Source · mcp");
   assert.equal(view.nodes.windowActivity.children.length, 2);
-  assert.equal(view.nodes.windowActivity.children[0].children[0].children[0].children[0].textContent, "show_changes");
-  assert.equal(view.nodes.windowActivity.children[1].children[0].children[1].textContent, "Observe · Succeeded");
+  assert.equal(view.nodes.windowActivity.children[0].children[0].children[0].children[0].textContent, "runtime_status");
+  assert.equal(view.nodes.windowActivity.children[0].children[0].children[1].textContent, "Observe · Succeeded");
+  assert.equal(view.nodes.windowActivity.children[1].children[0].children[0].children[0].textContent, "show_changes");
   assert.equal(view.nodes.windowActivity.children.every(row => row.tagName === "DETAILS" && row.open === false), true);
   assert.equal(view.calls("work_result_activity_detail").length, 0);
   view.nodes.messageInput.value = "Keep my draft";
@@ -994,11 +995,24 @@ for (const receipt of [{}, toolResult({}), toolResult({ message_id: 42 })]) {
   });
 }
 
+test("Window activity renders oldest-first and keeps the latest call last", async () => {
+  const state = { ...baseState, window_activity: { ...baseState.window_activity,
+    active: true,
+    active_requests: [{ label: "Running checks", tool_name: "run_shell", server_trace_id: "trace-running", started_at_ms: 1_999_999_995_000 }],
+  } };
+  const view = app("mcp_work_result_app.html");
+  view.toolResult({ work_result: state });
+  await view.initialize();
+  const titles = view.nodes.windowActivity.children.map(row => row.children[0].children[0].children[0].textContent);
+  assert.deepEqual(titles, ["runtime_status", "show_changes", "run_shell"]);
+  assert.equal(view.nodes.windowActivity.children.at(-1).children[0].children[1].textContent, "Running");
+});
+
 test("completed Window call details are folded and loaded once on first expansion", async () => {
   const view = app("mcp_work_result_app.html");
   view.toolResult({ work_result: baseState });
   await view.initialize();
-  const row = view.nodes.windowActivity.children[0];
+  const row = view.nodes.windowActivity.children.find(item => item.children[0].children[0].children[0].textContent === "show_changes");
   assert.equal(row.tagName, "DETAILS");
   assert.equal(row.open, false);
   assert.equal(view.calls("work_result_activity_detail").length, 0);

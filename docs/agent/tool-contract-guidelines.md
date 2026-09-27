@@ -296,6 +296,7 @@ shared conceptual shape:
 
 ```json
 {
+  "follow_up_kind": "mechanically_followable",
   "tool": "tool_name",
   "arguments": {}
 }

@@ -289,14 +289,22 @@ where
     F: Fn(&str) -> SuggestedToolCallRoute,
 {
     if let Some(target) = webcodex_tool_contracts::suggested_tool_call_schema_target(schema) {
-        if value.get("tool").and_then(Value::as_str) != Some(target)
-            || value.get("arguments").is_none()
-            || value.get("follow_up_kind").is_none()
-        {
-            return false;
-        }
         if !visited.insert(path.to_string()) {
             return false;
+        }
+        let expected_follow_up_kind = schema
+            .pointer("/properties/follow_up_kind/const")
+            .and_then(Value::as_str)
+            .expect("recognized SuggestedToolCall schema has a constant follow_up_kind");
+        if value.get("tool").and_then(Value::as_str) != Some(target)
+            || value.get("arguments").is_none()
+            || value.get("follow_up_kind").and_then(Value::as_str) != Some(expected_follow_up_kind)
+        {
+            // This location is formally declared as a server-generated call. A
+            // runtime target/posture mismatch must not remain machine-actionable:
+            // remove the edge rather than letting a Host infer authority from a
+            // value that contradicts the advertised output contract.
+            return true;
         }
         return match route_for(target) {
             SuggestedToolCallRoute::Direct => false,
@@ -762,6 +770,40 @@ mod tests {
                 )
             });
         }
+    }
+
+    #[test]
+    fn mismatched_generated_follow_up_posture_is_removed_fail_closed() {
+        let mut value = json!({
+            "type": "result",
+            "next": {
+                "follow_up_kind": "mechanically_followable",
+                "tool": "list_runners",
+                "arguments": {"include_projects": false, "summary_only": true}
+            }
+        });
+        let schema = json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "type": {"type": "string"},
+                "next": webcodex_tool_contracts::suggested_tool_call_schema(
+                    webcodex_core::runtime_contract::GeneratedFollowUpKind::FallbackRecovery,
+                    "list_runners",
+                    webcodex_tool_contracts::input_schema_for_tool("list_runners"),
+                    "recovery-only edge"
+                )
+            },
+            "required": ["type"]
+        });
+
+        project_suggested_tool_calls_in_value(&mut value, &schema, &|_| {
+            SuggestedToolCallRoute::Direct
+        });
+
+        assert!(value.get("next").is_none());
+        crate::tool_runtime::startup_brief::validate_schema_instance_for_test(&value, &schema)
+            .expect("removing a mismatched optional generated edge must stay schema-valid");
     }
 
     #[test]

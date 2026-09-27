@@ -66,7 +66,7 @@ When `work_on_project`, `start_session`, `session_summary`, or an explicit hando
 `work_on_project` accepts an optional `guidance_profile`. An explicit value always
 wins. When omitted on MCP, the configured `WEBCODEX_MCP_HOST_PROFILE` supplies the
 model-guidance default; omission on non-MCP/internal calls falls back to `direct`.
-Workflow contract v24 returns shared `guidance`, `model_protocol` and review `roles`,
+Workflow contract v25 returns shared `guidance`, `model_protocol` and review `roles`,
 plus only the selected `tool_strategy`, when explicitly requested through
 `context_request=["webcodex.workflow"]`. The selection is request-local: choose again
 on exact resume without changing Session identity or business state. It is never
@@ -82,15 +82,16 @@ context refreshes use the same effective-profile rule.
   Predetermined independent cross-tool read-only observations may run in parallel;
   after native batches, prefer `Promise.allSettled` when partial evidence remains useful
   and `Promise.all` only for true all-or-nothing fan-out. Result-dependent
-  search/read/branch chains should stay in one Host cell when the next call is
-  mechanically determined. A child ToolResult arriving is not itself a
-  model-turn boundary: return to the model for semantic choices, ambiguity, new user
-  decisions, authority/permission requirements, stale revisions/fences, uncertain outcomes,
-  competing recovery choices, or unresolved mutation intent. A recovery with
-  `reread_required=true` or `direct_retry_safe=false` is a hard boundary for effectful
-  replay: it may identify the next observation, but it is not authority to reread and
-  automatically retry the mutation. Keep full ToolResults in the Host cell and return
-  compact decision evidence. Treat each Host cell as a short dependency
+  search/read/branch chains may stay in one Host cell when the Server returns a parser-ready
+  `follow_up_kind=mechanically_followable`; copy those generated arguments unchanged after
+  current Host input-schema validation. `fallback_recovery` is recovery/detail/dependency
+  evidence and must not be auto-followed merely because it is present. A child ToolResult
+  arriving is not itself a model-turn boundary: return to the model for semantic choices,
+  ambiguity, new user decisions, authority/permission requirements, uncertain outcomes,
+  competing recovery choices, unresolved mutation intent, or any effectful replay after a stale
+  revision/fence. An exact stale-source reread may still be mechanically followable, but
+  `reread_required=true` or `direct_retry_safe=false` is a hard boundary for effectful replay:
+  recovery may identify the next observation; it does not authorize automatic mutation retry.  compact decision evidence. Treat each Host cell as a short dependency
   DAG, not a long-running Job lifetime. After Job handoff, retain exact identity and
   continue already-known independent work; if the remaining work is primarily waiting,
   end the cell and resume from the exact continuation instead of holding it open. Avoid

@@ -83,17 +83,20 @@ describe("workspace configuration boundaries", () => {
     expect(screen.getByText("No custom folders configured.")).toBeInTheDocument();
     expect(screen.getByText("/Users/fixture")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Add folder" }));
-    await waitFor(() => expect(api.updateRunnerAllowedRoots).toHaveBeenCalledWith(target, [], ["/Volumes/Work"]));
+    await waitFor(() => expect(api.updateRunnerAllowedRoots).toHaveBeenCalledWith(target, [], ["/Users/fixture", "/Volumes/Work"]));
     await waitFor(() => expect(screen.getAllByText("/Volumes/Work").length).toBeGreaterThanOrEqual(1));
     fireEvent.click(screen.getByRole("button", { name: "Remove folder: /Volumes/Work" }));
-    await waitFor(() => expect(api.updateRunnerAllowedRoots).toHaveBeenLastCalledWith(target, ["/Volumes/Work"], []));
+    await waitFor(() => expect(api.updateRunnerAllowedRoots).toHaveBeenLastCalledWith(target, ["/Users/fixture", "/Volumes/Work"], ["/Users/fixture"]));
+    expect(screen.queryByRole("button", { name: "Remove folder: /Users/fixture" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Restore default access" }));
+    await waitFor(() => expect(api.updateRunnerAllowedRoots).toHaveBeenLastCalledWith(target, ["/Users/fixture"], []));
   });
 
   it("keeps Runner file-access failures visible and refreshes the canonical settings view", async () => {
     settings.file_access = { configured_roots: ["/fixture/work"], effective_roots: ["/fixture/work"], using_default_roots: false, allow_cwd_anywhere: false };
     api.updateRunnerAllowedRoots.mockRejectedValueOnce({ code: "runner_config_reload_failed", message: "Runner rejected the file access reload", next_action: "The previous on-disk file access configuration was restored." });
     render(wrap(<FileAccessHarness />));
-    fireEvent.click(screen.getByRole("button", { name: "Remove folder: /fixture/work" }));
+    fireEvent.click(screen.getByRole("button", { name: "Restore default access" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Runner rejected the file access reload");
     expect(screen.getByRole("alert")).toHaveTextContent("previous on-disk file access configuration was restored");
     await waitFor(() => expect(api.runnerSettings).toHaveBeenCalled());

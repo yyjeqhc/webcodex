@@ -16,6 +16,7 @@ export const PRODUCT_MESSAGES = {
   effectiveAccess: ["Effective access", "实际访问范围", "Effektiver Zugriff", "Accès effectif", "有効なアクセス範囲", "실제 접근 범위"],
   addFolder: ["Add folder", "添加文件夹", "Ordner hinzufügen", "Ajouter un dossier", "フォルダーを追加", "폴더 추가"],
   removeFolder: ["Remove folder", "移除文件夹", "Ordner entfernen", "Retirer le dossier", "フォルダーを削除", "폴더 제거"],
+  restoreDefaultAccess: ["Restore default access", "恢复默认访问范围", "Standardzugriff wiederherstellen", "Rétablir l’accès par défaut", "デフォルトアクセスに戻す", "기본 접근 복원"],
   fileAccessBroadPolicy: ["Runner policy also allows working directories outside these folders.", "Runner 策略还允许使用这些目录之外的工作目录。", "Die Runner-Richtlinie erlaubt zusätzlich Arbeitsverzeichnisse außerhalb dieser Ordner.", "La politique du Runner autorise aussi des répertoires de travail hors de ces dossiers.", "Runner ポリシーはこれらのフォルダー外の作業ディレクトリも許可しています。", "Runner 정책은 이 폴더 밖의 작업 디렉터리도 허용합니다."],
   serverConnection: ["Server Connection", "Server 连接", "Serververbindung", "Connexion au serveur", "サーバー接続", "서버 연결"],
   screenRecording: ["Screen Recording", "屏幕录制", "Bildschirmaufnahme", "Enregistrement de l’écran", "画面収録", "화면 기록"],

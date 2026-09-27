@@ -42,8 +42,9 @@ export function RunnerFileAccess({
     try {
       const selected = await open({ title: p("addFolder"), directory: true, multiple: false });
       if (typeof selected !== "string") return;
-      if (access?.configured_roots.includes(selected)) return;
-      await apply([...(access?.configured_roots ?? []), selected]);
+      const base = access?.using_default_roots ? access.effective_roots : (access?.configured_roots ?? []);
+      if (base.includes(selected)) return;
+      await apply([...base, selected]);
     } catch (value) {
       setError(normalizeDesktopError(value));
     }
@@ -57,7 +58,8 @@ export function RunnerFileAccess({
     </div>
     {!settings && <p className="workspace-notice">{p("loading")}</p>}
     {settings && access?.using_default_roots && <div className="workspace-notice"><p>{p("noCustomFolders")}</p><strong>{p("currentDefaultAccess")}</strong><PathList paths={access.effective_roots} /></div>}
-    {settings && access && !access.using_default_roots && <PathList paths={access.configured_roots} removable disabled={busy || disabled} onRemove={path => void apply(access.configured_roots.filter(root => root !== path))} />}
+    {settings && access && !access.using_default_roots && <PathList paths={access.configured_roots} removable={access.configured_roots.length > 1} disabled={busy || disabled} onRemove={path => void apply(access.configured_roots.filter(root => root !== path))} />}
+    {settings && access && !access.using_default_roots && <button type="button" className="text-button" disabled={busy || disabled} onClick={() => void apply([])} data-webcodex-action="restore-default-file-access">{p("restoreDefaultAccess")}</button>}
     {settings && access && !access.using_default_roots && <details><summary>{p("effectiveAccess")}</summary><PathList paths={access.effective_roots} /></details>}
     {settings && access?.allow_cwd_anywhere && <p className="workspace-notice" role="note">{p("fileAccessBroadPolicy")}</p>}
     <button type="button" className="secondary-button" disabled={!settings || busy || disabled} onClick={() => void add()} data-webcodex-action="add-allowed-root">{busy ? p("loading") : p("addFolder")}</button>

@@ -1,5 +1,6 @@
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
+use std::time::Instant;
 use webcodex_workspace::file_read_normalize::MODEL_RESULT_ENVELOPE_RESERVE_BYTES;
 use webcodex_workspace::file_read_range::MAX_SERIALIZED_OUTPUT_BYTES;
 
@@ -899,6 +900,7 @@ impl ToolRuntime {
         };
 
         let max_lines = GIT_REVIEW_MAX_FILES;
+        let metadata_started = Instant::now();
         let output = match self
             .run_project_internal_posix_script_capture(
                 &resolved.resolved_id,
@@ -918,6 +920,15 @@ impl ToolRuntime {
             }
         };
         if output.stdout.starts_with(GIT_REVIEW_ERROR_SENTINEL) {
+            tracing::debug!(
+                target: "webcodex::git_review",
+                operation = "git_review_summary_metadata",
+                runner_observation_count = 1u64,
+                metadata_duration_ms = u64::try_from(metadata_started.elapsed().as_millis())
+                    .unwrap_or(u64::MAX),
+                response_bytes = u64::try_from(output.stdout.len()).unwrap_or(u64::MAX),
+                "Git review metadata observation completed"
+            );
             return git_review_failure(&project, &base, &head, "git_diff_failed");
         }
         let Some((name_status, numstat, raw)) = parse_review_metadata_frames(&output.stdout) else {

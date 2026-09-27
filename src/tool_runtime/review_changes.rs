@@ -1,4 +1,5 @@
 use serde_json::{json, Value};
+use std::time::Instant;
 
 use crate::auth::AuthContext;
 use webcodex_tool_contracts::tool_call::GitReviewScopeInput;
@@ -12,6 +13,15 @@ use super::{ToolResult, ToolRuntime};
 const REVIEW_CHANGES_CONTINUATION_PREFIX: &str = "wcrc1.";
 
 fn review_changes_failure(project: &str, reason_code: &'static str) -> ToolResult {
+    tracing::debug!(
+        target: "webcodex::git_review",
+        operation = "review_changes",
+        outcome = "failure",
+        project,
+        reason_code,
+        snapshot_stale = reason_code == "snapshot_stale",
+        "Git review workflow failed"
+    );
     ToolResult::err_with_output(
         format!("review_changes failed: {reason_code}"),
         json!({
@@ -24,6 +34,55 @@ fn review_changes_failure(project: &str, reason_code: &'static str) -> ToolResul
     )
 }
 
+fn elapsed_ms(started: Instant) -> u64 {
+    u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
+}
+
+fn trace_review_changes_success(
+    output: &Value,
+    started: Instant,
+    scope_kind: &'static str,
+    page_kind: &'static str,
+    snapshot_reused: bool,
+    metadata_duration_ms: u64,
+    diff_page_duration_ms: u64,
+) {
+    let response_bytes = serde_json::to_vec(output)
+        .map(|bytes| u64::try_from(bytes.len()).unwrap_or(u64::MAX))
+        .unwrap_or(0);
+    let files_count = output
+        .get("files")
+        .and_then(Value::as_array)
+        .map(|files| u64::try_from(files.len()).unwrap_or(u64::MAX))
+        .unwrap_or(0);
+    let diff = output.get("diff").unwrap_or(&Value::Null);
+    let hunk_count = diff.get("hunk_count").and_then(Value::as_u64).unwrap_or(0);
+    let truncated = diff
+        .get("truncated")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+        || output
+            .pointer("/snapshot/coverage_partial")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+    tracing::debug!(
+        target: "webcodex::git_review",
+        operation = "review_changes",
+        outcome = "success",
+        scope = scope_kind,
+        page = page_kind,
+        snapshot_reused,
+        response_bytes,
+        elapsed_ms = elapsed_ms(started),
+        metadata_duration_ms,
+        diff_page_duration_ms,
+        files_count,
+        hunk_count,
+        truncated,
+        has_continuation = output.get("continuation").is_some_and(|value| !value.is_null()),
+        "Git review workflow completed"
+    );
+}
 fn projection_identity(
     scope: &GitReviewScopeInput,
     paths: &Option<Vec<String>>,
@@ -131,6 +190,16 @@ impl ToolRuntime {
         continuation: Option<String>,
         auth: Option<&AuthContext>,
     ) -> ToolResult {
+        let request_started = Instant::now();
+        let page_kind = if continuation.is_some() {
+            "continuation"
+        } else {
+            "initial"
+        };
+        let scope_kind = match &scope_input {
+            GitReviewScopeInput::Workspace => "workspace",
+            GitReviewScopeInput::Committed { .. } => "committed",
+        };
         let resolved = match self.resolve_project_input(&project).await {
             Ok(resolved) => resolved,
             Err(error) => return error.into_tool_result(),
@@ -190,6 +259,7 @@ impl ToolRuntime {
                     head_commit,
                 } => (Some(base_commit.clone()), Some(head_commit.clone())),
             };
+            let diff_started = Instant::now();
             let diff = self
                 .git_diff_hunks_continued_with_range_and_page_bytes(
                     resolved_project.clone(),
@@ -203,6 +273,7 @@ impl ToolRuntime {
                     Some(inner.to_string()),
                 )
                 .await;
+            let diff_page_duration_ms = elapsed_ms(diff_started);
             if !diff.success {
                 return diff;
             }
@@ -250,6 +321,15 @@ impl ToolRuntime {
                     }
                 });
             }
+            trace_review_changes_success(
+                &output,
+                request_started,
+                scope_kind,
+                page_kind,
+                true,
+                0,
+                diff_page_duration_ms,
+            );
             return ToolResult::ok(output);
         }
 
@@ -262,8 +342,11 @@ impl ToolRuntime {
             coverage_partial,
             metadata_complete,
             diff,
+            metadata_duration_ms,
+            diff_page_duration_ms,
         ) = match scope_input.clone() {
             GitReviewScopeInput::Workspace => {
+                let metadata_started = Instant::now();
                 let before = match self
                     .workspace_review_source_identity(&resolved_project)
                     .await
@@ -289,6 +372,9 @@ impl ToolRuntime {
                 if !summary_result.success {
                     return summary_result;
                 }
+                let metadata_duration_ms = elapsed_ms(metadata_started);
+
+                let diff_started = Instant::now();
                 let diff = self
                     .git_diff_hunks_continued_with_range_and_page_bytes(
                         resolved_project.clone(),
@@ -302,9 +388,11 @@ impl ToolRuntime {
                         None,
                     )
                     .await;
+                let diff_page_duration_ms = elapsed_ms(diff_started);
                 if !diff.success {
                     return diff;
                 }
+
                 let after = match self
                     .workspace_review_source_identity(&resolved_project)
                     .await
@@ -354,12 +442,15 @@ impl ToolRuntime {
                     partial,
                     !partial,
                     diff.output,
+                    metadata_duration_ms,
+                    diff_page_duration_ms,
                 )
             }
             GitReviewScopeInput::Committed {
                 base_commit,
                 head_commit,
             } => {
+                let metadata_started = Instant::now();
                 let summary_result = self
                     .git_review_summary(
                         resolved_project.clone(),
@@ -370,6 +461,7 @@ impl ToolRuntime {
                 if !summary_result.success {
                     return summary_result;
                 }
+                let metadata_duration_ms = elapsed_ms(metadata_started);
                 let Some(source) = source_from_review_summary(&summary_result.output) else {
                     return review_changes_failure(&project, "review_metadata_malformed");
                 };
@@ -387,6 +479,8 @@ impl ToolRuntime {
                         return review_changes_failure(&project, "review_metadata_malformed");
                     }
                 };
+
+                let diff_started = Instant::now();
                 let diff = self
                     .git_diff_hunks_continued_with_range_and_page_bytes(
                         resolved_project.clone(),
@@ -400,6 +494,7 @@ impl ToolRuntime {
                         None,
                     )
                     .await;
+                let diff_page_duration_ms = elapsed_ms(diff_started);
                 if !diff.success {
                     return diff;
                 }
@@ -436,10 +531,11 @@ impl ToolRuntime {
                         .and_then(Value::as_bool)
                         .unwrap_or(true),
                     diff.output,
+                    metadata_duration_ms,
+                    diff_page_duration_ms,
                 )
             }
         };
-
         let snapshot = insert_snapshot(GitReviewSnapshot::new(
             caller,
             resolved_project,
@@ -496,6 +592,15 @@ impl ToolRuntime {
                 }
             });
         }
+        trace_review_changes_success(
+            &output,
+            request_started,
+            scope_kind,
+            page_kind,
+            false,
+            metadata_duration_ms,
+            diff_page_duration_ms,
+        );
         ToolResult::ok(output)
     }
 }

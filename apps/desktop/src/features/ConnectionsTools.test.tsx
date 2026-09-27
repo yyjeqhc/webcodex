@@ -77,6 +77,29 @@ describe("Connections + Tools control surfaces", () => {
     expect(api.restartOwnedRunner).not.toHaveBeenCalled();
   });
 
+  it("offers Direct as a contextual recovery check only when Auto failed through a detected proxy", async () => {
+    const initial = state();
+    initial.tunnel_proxy = { mode: "auto", custom_url: null, effective_source: "system", effective_proxy_present: true, system_proxy_detected: true };
+    api.tunnelProfileAction.mockRejectedValueOnce({ code: "tunnel_unavailable", message: "Tunnel unavailable", next_action: "Retry" });
+    render(<Harness mode="connections" initial={initial} />);
+    fireEvent.click(screen.getByRole("button", { name: "Restart ChatGPT Personal" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Auto is using a detected proxy");
+    expect(alert).toHaveTextContent("If Clash TUN or another local/system proxy is active, try Direct mode");
+    expect(alert).toHaveTextContent("does not identify the root cause");
+  });
+
+  it("does not attribute unrelated Tunnel failures to Clash or proxy detection", async () => {
+    const initial = state();
+    initial.tunnel_proxy = { mode: "auto", custom_url: null, effective_source: "system", effective_proxy_present: true, system_proxy_detected: true };
+    api.tunnelProfileAction.mockRejectedValueOnce({ code: "process_failed", message: "Process failed", next_action: "Retry" });
+    render(<Harness mode="connections" initial={initial} />);
+    fireEvent.click(screen.getByRole("button", { name: "Restart ChatGPT Personal" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert).not.toHaveTextContent("Clash");
+    expect(alert).not.toHaveTextContent("Direct mode");
+  });
+
   it("requires confirmation to delete exactly one profile and leaves other cards", async () => {
     const next = state(); next.connections!.profiles = next.connections!.profiles.filter(p => p.id !== "personal"); next.connections!.running = 1;
     api.tunnelProfileAction.mockResolvedValue(next);

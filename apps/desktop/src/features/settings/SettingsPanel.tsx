@@ -53,6 +53,8 @@ export function SettingsPanel({
   const [savingLaunchAtLogin, setSavingLaunchAtLogin] = useState(false);
   const [launchAtLoginError, setLaunchAtLoginError] = useState<DesktopError | null>(null);
   const operationBusy = Boolean(state.current_operation);
+  const configuredProxyMode = state.tunnel_proxy.mode === "auto" ? t("settings.tunnelProxyAuto") : state.tunnel_proxy.mode === "direct" ? t("settings.tunnelProxyDirect") : t("settings.tunnelProxyCustom");
+  const effectiveProxyPath = state.tunnel_proxy.effective_source === "system" ? p("systemProxy") : state.tunnel_proxy.effective_source === "environment" ? p("environmentProxy") : state.tunnel_proxy.effective_source === "custom" ? p("customProxy") : state.tunnel_proxy.effective_source === "invalid_custom" ? t("settings.tunnelProxyCustom") : t("settings.tunnelProxyDirectValue");
 
   useEffect(() => {
     let cancelled = false;
@@ -115,9 +117,11 @@ export function SettingsPanel({
       <SettingsDisclosure id="desktop-settings-network" label={p("network")} open={networkOpen} onOpenChange={setNetworkOpen}>
         <div className="field-group"><label htmlFor="desktop-tunnel-proxy-mode">{t("settings.tunnelProxy")}</label><select id="desktop-tunnel-proxy-mode" value={proxyMode} onChange={event => setProxyMode(event.target.value as TunnelProxyMode)} disabled={savingProxy || operationBusy} data-webcodex-control="tunnel-proxy-mode"><option value="auto">{t("settings.tunnelProxyAuto")}</option><option value="direct">{t("settings.tunnelProxyDirect")}</option><option value="custom">{t("settings.tunnelProxyCustom")}</option></select></div>
         {proxyMode === "custom" && <div className="field-group"><label htmlFor="desktop-tunnel-proxy-url">{t("settings.tunnelProxyCustomUrl")}</label><input id="desktop-tunnel-proxy-url" value={customProxy} onChange={event => setCustomProxy(event.target.value)} placeholder="http://127.0.0.1:7890" disabled={savingProxy || operationBusy} spellCheck={false} data-webcodex-control="tunnel-proxy-url" /></div>}
-        <dl className="detail-list">
-          <div><dt>{t("settings.tunnelProxyEffective")}</dt><dd>{state.tunnel_proxy.effective_proxy_present ? state.tunnel_proxy.effective_source : t("settings.tunnelProxyDirectValue")}</dd></div>
-          <div><dt>{t("settings.tunnelProxyDetected")}</dt><dd>{state.tunnel_proxy.system_proxy_detected ? p("available") : p("notConfigured")}</dd></div>
+        <dl className="detail-list" data-webcodex-tunnel-routing>
+          <div><dt>{p("configuredMode")}</dt><dd>{configuredProxyMode}</dd></div>
+          <div><dt>{p("detectedProxy")}</dt><dd>{state.tunnel_proxy.system_proxy_detected ? p("systemProxy") : p("notConfigured")}</dd></div>
+          <div><dt>{p("effectiveConnectionPath")}</dt><dd>{effectiveProxyPath}</dd></div>
+          <div><dt>{p("tunnelStatus")}</dt><dd>{state.readiness.exposure}</dd></div>
         </dl>
         <button type="button" className="secondary-button" onClick={() => void saveProxy()} disabled={savingProxy || operationBusy || (proxyMode === "custom" && !customProxy.trim())} data-webcodex-action="save-tunnel-proxy">{savingProxy ? p("loading") : p("saveApply")}</button>
         {proxyError && <SettingsError error={proxyError} />}

@@ -162,6 +162,22 @@ it("keeps the six localized navigation labels and semantically pressable Setting
   expect(screen.getByRole("button", { name: "重新检查 Runtime" })).toBeInTheDocument();
 });
 
+it("explains configured Tunnel mode, detected proxy, and effective Auto connection path", async () => {
+  const networkState = { ...state, tunnel_proxy: { mode: "auto", custom_url: null, effective_source: "system", effective_proxy_present: true, system_proxy_detected: true }, readiness: { ...state.readiness, exposure: "degraded" } } as DesktopState;
+  render(wrap(<SettingsPanel state={networkState} onState={vi.fn()} />));
+  const disclosure = screen.getByRole("button", { name: "Network" });
+  fireEvent.click(disclosure);
+  const panel = document.getElementById("desktop-settings-network") as HTMLElement;
+  const routing = panel.querySelector("[data-webcodex-tunnel-routing]") as HTMLElement;
+  expect(within(routing).getByText("Configured mode")).toBeInTheDocument();
+  expect(within(routing).getByText("Automatic (recommended)")).toBeInTheDocument();
+  expect(within(routing).getByText("Detected proxy")).toBeInTheDocument();
+  expect(within(routing).getAllByText("System proxy")).toHaveLength(2);
+  expect(within(routing).getByText("Effective connection path")).toBeInTheDocument();
+  expect(within(routing).getByText("Tunnel status")).toBeInTheDocument();
+  expect(within(routing).getByText("degraded")).toBeInTheDocument();
+});
+
 it("renders factual handoff uncertainty rather than Host failure", () => {
   const detail = { active_count: 0, activity_truncated: false, activity: [{ meaningful: true, tool_name: "read_files", status: "succeeded", started_at_ms: 100, ended_at_ms: 200 }] } as WindowDetail;
   const value = continuationFromWindow(detail, 400);

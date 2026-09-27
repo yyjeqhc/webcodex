@@ -1832,8 +1832,18 @@ async fn mcp_compact_preserves_safety_patterns_and_wrapper_bounds() {
         panic!("tools/list");
     };
     let tools = value["result"]["tools"].as_array().unwrap();
-    let schema =
-        |name: &str| &tools.iter().find(|tool| tool["name"] == name).unwrap()["inputSchema"];
+    let registered = webcodex_tool_contracts::registered_tool_specs();
+    let schema = |name: &str| -> &Value {
+        if let Some(tool) = tools.iter().find(|tool| tool["name"] == name) {
+            &tool["inputSchema"]
+        } else {
+            &registered
+                .iter()
+                .find(|spec| spec.name == name)
+                .unwrap_or_else(|| panic!("missing canonical schema for {name}"))
+                .input_schema
+        }
+    };
     for (name, field, pattern, min, max) in [
         (
             "project_artifact",
@@ -2368,13 +2378,13 @@ async fn mcp_tools_list_stateless_serialized_size_budget() {
     admin.scopes.push(crate::auth::SCOPE_ADMIN.to_string());
     // Final Stateless result bytes include the optional _wc envelope and gateways,
     // not the RPC envelope. Envelope V2 plus review convergence leave about
-    // 76/78/87 KB for anonymous/scoped/admin without Apps; App-on remains
-    // roughly +20 KB after bounded Work Result readers. Keep small explicit
-    // growth headroom around the measured compact surface.
+    // 76/78/87 KB for anonymous/scoped/admin without Apps; review_changes is
+    // primary, show_changes stays direct for Apps/presentation, and exact legacy
+    // review stays gateway-only. Keep small growth headroom around compact surface.
     for (label, auth, max_tools, max_bytes) in [
-        ("anonymous", None, 28, 77_000),
-        ("scoped", Some(&scoped), 29, 79_000),
-        ("admin", Some(&admin), 35, 88_000),
+        ("anonymous", None, 29, 77_000),
+        ("scoped", Some(&scoped), 30, 79_000),
+        ("admin", Some(&admin), 36, 88_000),
     ] {
         for app_enabled in [false, true] {
             let mut sizes = Vec::new();

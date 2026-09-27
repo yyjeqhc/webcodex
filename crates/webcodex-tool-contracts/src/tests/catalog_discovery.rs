@@ -452,7 +452,7 @@ fn tool_categories_and_recommended_flows_are_well_formed() {
         );
     }
     let git = categories[TOOL_DISCOVERY_GROUP_GIT].as_array().unwrap();
-    for specialist in EXACT_DISCOVERY_SPECIALIST_TOOL_NAMES {
+    for specialist in ORDINARY_DISCOVERY_DEMOTED_REVIEW_TOOL_NAMES {
         assert!(
             !review.iter().any(|value| value == specialist),
             "review category must keep {specialist} exact-discovery-only"
@@ -817,7 +817,7 @@ fn audit_and_exploration_intents_prefer_canonical_batch_and_review_tools() {
         .find(|intent| intent.name == "audit")
         .unwrap();
     assert!(audit.tools.contains(&"review_changes"));
-    for specialist in EXACT_DISCOVERY_SPECIALIST_TOOL_NAMES {
+    for specialist in ORDINARY_DISCOVERY_DEMOTED_REVIEW_TOOL_NAMES {
         assert!(!audit.tools.contains(specialist), "{specialist}");
     }
     assert!(!audit.tools.contains(&"git_diff_summary"));
@@ -827,7 +827,7 @@ fn audit_and_exploration_intents_prefer_canonical_batch_and_review_tools() {
         .find(|intent| intent.name == "release")
         .unwrap();
     assert!(release.tools.contains(&"review_changes"));
-    for specialist in EXACT_DISCOVERY_SPECIALIST_TOOL_NAMES {
+    for specialist in ORDINARY_DISCOVERY_DEMOTED_REVIEW_TOOL_NAMES {
         assert!(!release.tools.contains(specialist), "{specialist}");
     }
     assert!(!release.tools.contains(&"git_diff_summary"));

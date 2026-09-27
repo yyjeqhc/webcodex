@@ -75,6 +75,7 @@ async fn adaptive_tools_list_exposes_ranked_direct_tools_and_gateway() {
         "cargo_check",
         "cargo_test",
         "review_changes",
+        "show_changes",
         "observe_jobs",
         "wait_for_job_terminal",
         "skill_load",

@@ -5454,9 +5454,10 @@ fn show_changes_diff_respects_max_hunks() {
     );
     assert_git_diff_hunks_recovery_call_parses(next_call);
     assert!(
-        crate::tool_runtime::tool_definition::is_adaptive_runtime_direct_tool(
+        !crate::tool_runtime::tool_definition::is_adaptive_runtime_direct_tool(
             next_call["tool"].as_str().unwrap()
-        )
+        ),
+        "git_diff_hunks stays an exact/gateway specialist"
     );
     let actions = output["suggested_next_actions"].as_array().unwrap();
     assert!(!actions
@@ -7406,7 +7407,10 @@ fn git_review_summary_tool_schema_metadata_and_oauth_are_read_only() {
         .expect("git_review_summary public spec");
     assert!(spec
         .description
-        .contains("Deterministic bounded committed-range review map"));
+        .contains("Specialist exact committed-range review map"));
+    assert!(spec
+        .description
+        .contains("Ordinary review uses review_changes"));
     for field in ["base_commit", "head_commit"] {
         assert_eq!(spec.input_schema["properties"][field]["minLength"], 40);
         assert_eq!(spec.input_schema["properties"][field]["maxLength"], 40);

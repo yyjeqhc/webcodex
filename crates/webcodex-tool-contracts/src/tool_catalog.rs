@@ -26,11 +26,14 @@ pub const TOOL_DISCOVERY_GROUP_VALIDATION: &str = "validation";
 pub const EXACT_MANIFEST_SPECIALIST_TOOL_NAMES: &[&str] =
     &["apply_patch", "apply_unified_diff", "write_project_file"];
 
-/// Model-visible read specialists omitted from ordinary discovery/direct routing.
-/// They remain callable after exact-name discovery through the canonical gateway.
+/// Model-visible read specialists omitted from ordinary direct routing.
 pub const EXACT_DISCOVERY_SPECIALIST_TOOL_NAMES: &[&str] =
-    &["git_diff_hunks", "git_review_summary", "show_changes"];
+    &["git_diff_hunks", "git_review_summary"];
 
+/// Legacy review surfaces omitted from ordinary discovery/recommended flows.
+/// show_changes remains Adaptive-direct for established Apps/presentation contracts.
+pub const ORDINARY_DISCOVERY_DEMOTED_REVIEW_TOOL_NAMES: &[&str] =
+    &["git_diff_hunks", "git_review_summary", "show_changes"];
 pub const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
     ToolDiscoveryGroup {
         name: TOOL_DISCOVERY_GROUP_INSPECT,

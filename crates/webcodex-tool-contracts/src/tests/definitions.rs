@@ -813,7 +813,6 @@ fn adaptive_runtime_direct_declarations_are_visible_ranked_and_unique() {
         "go_test",
         "git_diff_hunks",
         "git_review_summary",
-        "show_changes",
     ] {
         let definition = lookup_tool_definition(name).expect("model-visible long-tail definition");
         assert!(definition.visibility.is_model_visible(), "{name}");
@@ -826,7 +825,8 @@ fn adaptive_runtime_direct_declarations_are_visible_ranked_and_unique() {
 
     for (name, expected_rank, expected_authority) in [
         ("session_discussion_summary", 15, RUNTIME_READ),
-        ("review_changes", 135, PROJECT_READ),
+        ("review_changes", 120, PROJECT_READ),
+        ("show_changes", 130, PROJECT_READ),
     ] {
         let definition = derived
             .iter()

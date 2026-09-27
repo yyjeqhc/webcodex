@@ -364,7 +364,8 @@ async fn coding_workflow_full_diagnostic_has_no_binding_projection() {
         .unwrap();
     assert!(contains_string(inspect, "read_files"));
     assert!(contains_string(inspect, "search_project_texts"));
-    assert!(contains_string(inspect, "show_changes"));
+    assert!(contains_string(inspect, "review_changes"));
+    assert!(!contains_string(inspect, "show_changes"));
     assert!(!contains_string(inspect, "read_file"));
     assert!(!contains_string(inspect, "search_project_text"));
     let edit = result.output["recommended_flow"]["edit"]

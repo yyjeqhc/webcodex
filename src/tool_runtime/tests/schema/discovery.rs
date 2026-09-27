@@ -639,7 +639,7 @@ fn tool_discovery_groups_drive_tool_categories() {
 
     let exact_discovery_only = std::iter::once("attach_agent_endpoint")
         .chain(
-            webcodex_tool_contracts::EXACT_DISCOVERY_SPECIALIST_TOOL_NAMES
+            webcodex_tool_contracts::ORDINARY_DISCOVERY_DEMOTED_REVIEW_TOOL_NAMES
                 .iter()
                 .copied(),
         )
@@ -1389,10 +1389,8 @@ async fn audit_and_exploration_intents_exclude_shell_and_jobs() {
                 "read_files",
                 "search_project_texts",
                 "git_status",
-                "git_review_summary",
-                "git_diff_hunks",
                 "git_log",
-                "show_changes",
+                "review_changes",
                 "workspace_hygiene_check",
                 "session_handoff_summary",
                 "finish_coding_task",
@@ -1401,6 +1399,12 @@ async fn audit_and_exploration_intents_exclude_shell_and_jobs() {
                 assert!(
                     names.contains(&required),
                     "audit intent must include {required}: {names:?}"
+                );
+            }
+            for demoted in webcodex_tool_contracts::ORDINARY_DISCOVERY_DEMOTED_REVIEW_TOOL_NAMES {
+                assert!(
+                    !names.contains(demoted),
+                    "audit intent should keep {demoted} out of ordinary review selection: {names:?}"
                 );
             }
             for compatibility_primitive in [
@@ -2460,7 +2464,10 @@ async fn tool_manifest_routing_metadata_uses_canonical_adaptive_routes() {
         ("project_artifact", "direct", None),
         ("session_discussion_summary", "direct", None),
         ("list_jobs", "gateway", Some("call_runtime_tool")),
-        ("git_diff_hunks", "direct", None),
+        ("review_changes", "direct", None),
+        ("show_changes", "direct", None),
+        ("git_diff_hunks", "gateway", Some("call_runtime_tool")),
+        ("git_review_summary", "gateway", Some("call_runtime_tool")),
         ("run_script", "direct", None),
         (
             "workspace_hygiene_check",

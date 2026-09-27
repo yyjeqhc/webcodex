@@ -87,51 +87,53 @@ pub(super) const SUMMARY_DEFINITIONS: &[ToolDefinition] = &[
             .with_composition_policy(super::ToolCompositionPolicy::Parallel),
             "Primary bounded Git review workflow. First call returns an exact snapshot, summary/signals, and first git_diff_hunks page. Continue with the returned opaque token and identical closed scope/paging inputs. Workspace mutation fails closed; committed review stays pinned to exact commits and merge-base.",
         ))),
-        135,
+        120,
     ),
-    change_summary_like(git_like(
-        model_spec(
-            def(
-                "show_changes",
-                super::ToolAuditPolicy::TYPED_CANONICAL.context(
-                    super::ToolAuditContextPolicy::Fields(&[
-                        super::ToolAuditResultField::value("clean"),
-                        super::ToolAuditResultField::value("branch"),
-                        super::ToolAuditResultField::value("head"),
-                        super::ToolAuditResultField::value("upstream"),
-                        super::ToolAuditResultField::value("ahead"),
-                        super::ToolAuditResultField::value("behind"),
-                        super::ToolAuditResultField::value("counts"),
-                        super::ToolAuditResultField::value("changed_files"),
-                    ]),
-                ),
-                ModelVisible,
-                TOOL_CATEGORY_GIT,
-                Some(GitOrShell),
-                TOOL_PROVIDER_RUNNER,
-                super::ToolSemanticContract {
-                    effect: super::ToolEffect::Observe,
-                    risk: Read,
-                    approval: super::ToolApprovalPolicy::None,
-                    idempotency: super::ToolIdempotency::PureRead,
-                },
-                Some(PROJECT_READ),
-                true,
-                NoPath,
-                false,
-                false,
-                super::ToolSessionEvidencePolicy::NONE
-                    .review(super::ToolReviewEvidence::WorkspaceReview)
-                    .diff_review(super::ToolDiffReviewEvidence::ArgumentBool("include_diff")),
+    adaptive_runtime_direct(
+        change_summary_like(git_like(
+            model_spec(
+                def(
+                    "show_changes",
+                    super::ToolAuditPolicy::TYPED_CANONICAL.context(
+                        super::ToolAuditContextPolicy::Fields(&[
+                            super::ToolAuditResultField::value("clean"),
+                            super::ToolAuditResultField::value("branch"),
+                            super::ToolAuditResultField::value("head"),
+                            super::ToolAuditResultField::value("upstream"),
+                            super::ToolAuditResultField::value("ahead"),
+                            super::ToolAuditResultField::value("behind"),
+                            super::ToolAuditResultField::value("counts"),
+                            super::ToolAuditResultField::value("changed_files"),
+                        ]),
+                    ),
+                    ModelVisible,
+                    TOOL_CATEGORY_GIT,
+                    Some(GitOrShell),
+                    TOOL_PROVIDER_RUNNER,
+                    super::ToolSemanticContract {
+                        effect: super::ToolEffect::Observe,
+                        risk: Read,
+                        approval: super::ToolApprovalPolicy::None,
+                        idempotency: super::ToolIdempotency::PureRead,
+                    },
+                    Some(PROJECT_READ),
+                    true,
+                    NoPath,
+                    false,
+                    false,
+                    super::ToolSessionEvidencePolicy::NONE
+                        .review(super::ToolReviewEvidence::WorkspaceReview)
+                        .diff_review(super::ToolDiffReviewEvidence::ArgumentBool("include_diff")),
+                )
+                .with_composition_policy(super::ToolCompositionPolicy::Parallel),
+                "Specialist workspace projection retained for explicit discovery, presentation, Session signals, and closeout internals. Ordinary code review uses review_changes. Read-only; recent Session event history is opt-in.",
             )
-            .with_composition_policy(super::ToolCompositionPolicy::Parallel),
-            "Specialist workspace projection retained for explicit discovery, presentation, Session signals, and closeout internals. Ordinary code review uses review_changes. Read-only; recent Session event history is opt-in.",
-        )
-        .with_gpt_action_description(
-            "Specialist workspace projection for explicit discovery, presentation, Session signals, and closeout internals. Ordinary code review uses review_changes. Read-only.",
-        ),
-    )),
-];
+            .with_gpt_action_description(
+                "Review current worktree changes and optional bounded diff hunks for presentation, Session signals, and closeout internals. Ordinary code review uses review_changes. Read-only.",
+            ),
+        )),
+        130,
+    ),];
 pub(super) const DETAIL_DEFINITIONS: &[ToolDefinition] = &[
     require_all_scopes(git_like(model_spec(
         def(

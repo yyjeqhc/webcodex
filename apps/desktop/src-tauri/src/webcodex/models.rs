@@ -34,6 +34,7 @@ pub struct LoginOutput {
     pub server_url: String,
     pub runner_config: String,
     pub user_token_file: String,
+    pub device: String,
     #[serde(default)]
     pub registered_projects: Vec<RegisteredProjectOutput>,
 }

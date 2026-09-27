@@ -74,12 +74,12 @@ export function FirstRun({ state, onState, chooseModeFirst = false, onComplete }
   };
 
   const run = async () => {
-    if (!mode || !project || mutationBusy) return;
+    if (!mode || mutationBusy || (mode !== "local" && !project)) return;
     setBusy(true);
     setError(null);
     try {
       if (mode === "local") {
-        let next = await desktopApi.configureLocal(project.path);
+        let next = await desktopApi.configureLocal();
         onState(next);
         if (connectAfterSetup && next.openai_tunnel_configured && next.readiness.runtime_ready && !next.connections?.profiles.some(profile => profile.id === "default" && (profile.lifecycle === "starting" || profile.lifecycle === "running"))) {
           next = await desktopApi.startRegularTunnel();
@@ -174,11 +174,11 @@ export function FirstRun({ state, onState, chooseModeFirst = false, onComplete }
       <div className="eyebrow">{modeLabel(mode, t)}</div>
       <h1 id="setup-title">{setupTitle(mode, t)}</h1>
       <p className="lede">{setupDescription(mode, t)}</p>
-      <div className="project-picker-card">
+      {mode !== "local" && <div className="project-picker-card">
         <div>
           <span className="section-kicker">{t("setup.project")}</span>
           <strong>{project ? displayProjectPath(project.path) : t("setup.chooseProject")}</strong>
-          {mode === "local" && !project && (
+          {!project && (
             <span className="project-meta">{t("setup.projectRequired")}</span>
           )}
           {project && (
@@ -193,7 +193,7 @@ export function FirstRun({ state, onState, chooseModeFirst = false, onComplete }
         <button type="button" className="secondary-button" onClick={chooseProject} disabled={mutationBusy} data-webcodex-action="choose-project">
           {project ? t("setup.changeFolder") : t("setup.chooseFolder")}
         </button>
-      </div>
+      </div>}
 
       <PowerShellInstallGuidance state={state} onState={onState} />
 
@@ -334,7 +334,7 @@ export function FirstRun({ state, onState, chooseModeFirst = false, onComplete }
           className="primary-button"
           disabled={
             mutationBusy ||
-            !project ||
+            (mode !== "local" && !project) ||
             (mode === "remote" &&
               (!serverUrl.trim() || (!canReuseRemoteEnrollment && !pairingCode.trim())))
           }

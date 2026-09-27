@@ -57,14 +57,14 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("product workspace task flows", () => {
-  it("shows a read-only Runner inventory and retains Add Project", async () => {
-    const add = vi.fn();
-    render(wrap(<ProjectsPanel onState={vi.fn()} state={state} onChooseProject={add} />));
+  it("shows Runner Projects as read-only observed runtime inventory", async () => {
+    render(wrap(<ProjectsPanel />));
     await screen.findByLabelText("2 active sessions"); expect(await screen.findAllByText("feat/export")).toHaveLength(2);
     expect(screen.getAllByRole("row")).toHaveLength(3);
     for (const row of screen.getAllByRole("row")) expect(within(row).queryByRole("button", { name: /Use project|Select project/ })).not.toBeInTheDocument();
     expect(screen.queryByText("Current")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Add Project" })); expect(add).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("button", { name: "Add Project" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Unregister project/ })).not.toBeInTheDocument();
     fireEvent.change(screen.getByRole("searchbox", { name: "Search projects" }), { target: { value: "ALPHA" } });
     expect(screen.getAllByRole("row")).toHaveLength(2);
   });
@@ -80,7 +80,7 @@ describe("product workspace task flows", () => {
     native.invoke.mockImplementation((name, value) => value.request.kind === "overview"
       ? Promise.resolve({ ...overview, projects: [runner] }) : value.request.kind === "project_git" && !savedId
         ? Promise.reject(new Error("Git metadata unavailable")) : normal(name, value));
-    render(wrap(<ProjectsPanel onState={vi.fn()} state={selected} onChooseProject={vi.fn()} />, selected));
+    render(wrap(<ProjectsPanel />, selected));
     await screen.findByLabelText("2 active sessions");
     const row = screen.getByRole("row", { name: "repo" });
     expect(screen.getAllByRole("row")).toHaveLength(2);
@@ -92,42 +92,9 @@ describe("product workspace task flows", () => {
     expect(rows).toHaveLength(1); expect(rows[0]).toBe(runner);
     expect(sameProject(rows[0], saved)).toBe(true);
   });
-  it("confirms exact registration removal and never activates a row", async () => {
-    const onState = vi.fn();
-    const observed = { target: { config_path: "fixture.toml", client_id: "mini", server_url: "http://localhost" }, project: beta.id, expected_revision: "sha256:" + "a".repeat(64), path: beta.path };
-    api.prepareProjectUnregister.mockResolvedValue(observed);
-    api.unregisterProject.mockResolvedValue(state);
-    render(wrap(<ProjectsPanel state={state} onChooseProject={vi.fn()} onState={onState} />));
-    await screen.findByLabelText("2 active sessions");
-    fireEvent.click(screen.getByRole("button", { name: "Unregister project beta" }));
-    const dialog = await screen.findByRole("dialog", { name: "Unregister project" });
-    expect(dialog).toHaveTextContent("Your folder and Git files are kept");
-    expect(dialog).toHaveTextContent(beta.id);
-    expect(api.unregisterProject).not.toHaveBeenCalled();
-    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
-    expect(api.unregisterProject).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "Unregister project beta" }));
-    const confirmed = await screen.findByRole("dialog", { name: "Unregister project" });
-    fireEvent.click(within(confirmed).getByRole("button", { name: "Unregister project" }));
-    await waitFor(() => expect(onState).toHaveBeenCalledWith(state));
-    expect(api.unregisterProject).toHaveBeenCalledExactlyOnceWith(observed);
-  });
-  it("reports an uncertain unregister without retrying or hiding the row", async () => {
-    api.prepareProjectUnregister.mockResolvedValue({ project: beta.id, path: beta.path });
-    api.unregisterProject.mockRejectedValue({ code: "project_unregister_uncertain" });
-    const onState = vi.fn();
-    render(wrap(<ProjectsPanel state={state} onChooseProject={vi.fn()} onState={onState} />));
-    await screen.findByLabelText("2 active sessions");
-    fireEvent.click(screen.getByRole("button", { name: "Unregister project beta" }));
-    const dialog = await screen.findByRole("dialog", { name: "Unregister project" });
-    fireEvent.click(within(dialog).getByRole("button", { name: "Unregister project" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Unregister was not confirmed");
-    expect(api.unregisterProject).toHaveBeenCalledTimes(1); expect(onState).not.toHaveBeenCalled();
-    expect(screen.getByRole("row", { name: "beta" })).toBeInTheDocument();
-  });
   it("keeps the Runner inventory observable without a Desktop default project", async () => {
     const emptyDefault = { ...state, project: null, saved_projects: [], readiness: { ...state.readiness, project: "none" as const, runtime_ready: false } };
-    render(wrap(<ProjectsPanel state={emptyDefault} onChooseProject={vi.fn()} onState={vi.fn()} />, emptyDefault));
+    render(wrap(<ProjectsPanel />, emptyDefault));
     await screen.findByLabelText("2 active sessions");
     expect(screen.getAllByRole("row")).toHaveLength(3);
   });
@@ -170,10 +137,10 @@ describe("product workspace task flows", () => {
     const delayed = new Promise(resolve => { complete = resolve; }); const normal = native.invoke.getMockImplementation()!;
     let overviewCalls = 0;
     native.invoke.mockImplementation((name, value) => value.request.kind === "overview" && overviewCalls++ === 0 ? delayed : normal(name, value));
-    const view = render(wrap(<ProjectsPanel onState={vi.fn()} state={state} onChooseProject={vi.fn()} />));
+    const view = render(wrap(<ProjectsPanel />));
     await waitFor(() => expect(overviewCalls).toBe(1));
     const switched = { ...state, workspace_runner: { client_id: "mini", server_url: "http://localhost", config_path: "new-runner.toml" } };
-    view.rerender(wrap(<ProjectsPanel onState={vi.fn()} state={switched} onChooseProject={vi.fn()} />, switched));
+    view.rerender(wrap(<ProjectsPanel />, switched));
     await screen.findByLabelText("2 active sessions");
     await act(async () => { complete({ ...overview, projects: [{ ...alpha, id: "agent:old:other", name: "Stale project", path: "/old" }] }); });
     expect(screen.queryByText("Stale project")).not.toBeInTheDocument();
@@ -241,40 +208,26 @@ describe("inventory convergence", () => {
     native.invoke.mockImplementation((command, value) => value.request.kind === "overview"
       ? Promise.resolve({ ...overview, projects: empty ? [] : [beta], visible_project_count: empty ? 0 : 1 }) : normal(command, value));
     const selected = { ...state, project: null };
-    const add = vi.fn();
-    render(wrap(<ProjectsPanel state={selected} onChooseProject={add} onState={vi.fn()} />, selected));
+    render(wrap(<ProjectsPanel />, selected));
     await waitFor(() => expect(screen.queryByRole("row", { name: "alpha" })).not.toBeInTheDocument());
-    if (empty) expect(screen.getByText("This Runner has no projects yet")).toBeInTheDocument();
+    if (empty) expect(screen.getByText("No Runtime projects observed yet")).toBeInTheDocument();
     else expect(screen.getByRole("row", { name: "beta" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Add Project" })); expect(add).toHaveBeenCalledOnce();
-  });
-  it("removes the confirmed row immediately while refresh is pending", async () => {
-    api.prepareProjectUnregister.mockResolvedValue({ project: alpha.id, path: alpha.path });
-    api.unregisterProject.mockResolvedValue({ ...state, project: null, saved_projects: [state.saved_projects![1]] });
-    render(wrap(<ProjectsPanel state={state} onChooseProject={vi.fn()} onState={vi.fn()} />));
-    await screen.findByLabelText("2 active sessions");
-    fireEvent.click(screen.getByRole("button", { name: "Unregister project alpha" }));
-    const dialog = await screen.findByRole("dialog");
-    native.invoke.mockImplementation(() => new Promise(() => {}));
-    fireEvent.click(within(dialog).getByRole("button", { name: "Unregister project" }));
-    await waitFor(() => expect(screen.queryByRole("row", { name: "alpha" })).not.toBeInTheDocument());
-    expect(screen.getByRole("row", { name: "beta" })).toBeInTheDocument();
-    expect(api.unregisterProject).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("button", { name: "Add Project" })).not.toBeInTheDocument();
   });
   it.each([{ projects_truncated: true }, { connected: false }, { projects_available: false }, { visible_project_count: 1 }])("retains history on incomplete observation %s", async flags => {
     native.invoke.mockResolvedValue({ ...overview, ...flags, projects: [], windows: [] });
-    render(wrap(<ProjectsPanel state={state} onChooseProject={vi.fn()} onState={vi.fn()} />));
+    render(wrap(<ProjectsPanel />));
     await waitFor(() => expect(native.invoke).toHaveBeenCalled());
     expect(screen.getByRole("row", { name: "alpha" })).toBeInTheDocument();
   });
 });
 
 it("keeps Runner overview when only the default display Project disappears", async () => {
-  const view = render(wrap(<ProjectsPanel state={state} onChooseProject={vi.fn()} onState={vi.fn()} />));
+  const view = render(wrap(<ProjectsPanel />));
   await screen.findByLabelText("2 active sessions");
   const calls = native.invoke.mock.calls.filter(([, value]) => value.request.kind === "overview").length;
   const projectless = { ...state, project: null, saved_projects: [] };
-  view.rerender(wrap(<ProjectsPanel state={projectless} onChooseProject={vi.fn()} onState={vi.fn()} />, projectless));
+  view.rerender(wrap(<ProjectsPanel />, projectless));
   expect(screen.getByRole("row", { name: "beta" })).toBeInTheDocument();
   expect(native.invoke.mock.calls.filter(([, value]) => value.request.kind === "overview")).toHaveLength(calls);
 });

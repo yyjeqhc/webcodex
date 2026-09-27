@@ -2,46 +2,40 @@
 
 [English](desktop-guide.md) | [简体中文](desktop-guide.zh-CN.md)
 
-Desktop 负责准备本机项目和管理连接；你在 ChatGPT 等 AI 客户端中发起工作。首次安装、Tunnel 配置和系统权限请看[安装与连接指南](desktop-install.zh-CN.md)。
+Desktop 负责启动和维护本机 WebCodex Runtime；用户只需要在 ChatGPT 等 AI 客户端中描述要做的工作。本机使用不需要在 Desktop 里先选择、添加、激活或取消注册 Project。首次安装、Tunnel 配置和系统权限请看[安装与连接指南](desktop-install.zh-CN.md)。
 
 贡献者如果要做 frontend/Tauri 开发、从源码加载 runtime、构建 NSIS/DMG 或运行原生安装 smoke，请看 [Desktop 开发与打包](DESKTOP_DEVELOPMENT.zh-CN.md)。
 
+## Runtime 项目清单
 
-## Runner 项目清单
+**项目**页是当前 Runner 已观察到的 Runtime Project 只读清单，显示 Git 分支、活跃 Session 和最近活动。Runtime Project identity 仍然承担授权、路由、持久化、审计和 Session 边界，但它不是用户需要在 Desktop 中维护的前置资源。
 
-“项目”页列出此 Runner 的项目、Git 分支、活跃 Session 和最近活动。多个项目可以同时使用；模型使用 exact runtime Project ID，不需要先在 Desktop 切换项目。首页的主要展示项目只是 Desktop 的内部默认展示。
+本机 Full Runtime 中，ChatGPT / 模型调用直接提供具体工作目录。`work_on_project(path)` 会复用已经注册的精确 Project；如果尚未注册且 Runner policy 允许，则按需自动注册。多个 Project 可以并发存在，打开一个不会撤销另一个。
 
-“添加项目”保留目录选择与注册流程。Windows 盘符、UNC 和 extended-length 路径的不同写法不会产生重复项目行；用户界面显示普通路径，注册 ID 和 canonical path 不变。
-
-“取消注册”需要确认具体项目，只移除 Runner 注册及对应 Desktop 保存记录，不删除目录或 Git 文件，不撤销或扩大 allowed roots。运行中的 Job 会由服务端拒绝此操作。失败或结果不确定时不会自动重试；先刷新 inventory 再检查。取消首页默认项目后，Desktop 不会自动激活另一个项目；添加目录仍可通过设置流程完成。
+Runner 文件系统 policy 仍然是权限边界。全新 Desktop 的本机 Runner 使用 Runner 的正常默认策略；`allowed_roots` 为空时，其有效范围默认是当前用户的 home 目录。显式 Runner policy 可以进一步收窄范围。Project 注册本身不会扩大这个权限范围。
 
 ## 第一次使用
 
-1. 在欢迎页选择 **在此电脑使用 WebCodex**。这是普通个人使用的推荐入口。
-2. 点击 **选择文件夹**，选择真正要交给 AI 使用的项目。页面首先展示项目路径；确认无误后点击 **配置 WebCodex**。
-3. Tunnel 配置检测位于 **可选：检查 ChatGPT 安全隧道配置** 中。在此填写 Tunnel ID 和 API key 后点击“保存配置”，即可优先使用本机配置文件，无需重启。没有 Tunnel 配置也可以先准备本机项目；配置齐全时，可勾选配置后连接 ChatGPT。
-4. 回到首页，确认当前项目路径与实际工作目录一致。首页的三个步骤依次是 **准备项目 → 连接 AI 客户端 → 开始使用**。
-5. 点击侧栏的 **连接**。选择 **OpenAI Secure Tunnel** 后，再点击 **启动安全隧道**。仅选择连接方式不会启动进程。
-6. 隧道就绪后，按照连接页指引在 ChatGPT 中填入 Tunnel ID，再执行一次真实项目读取。
+1. 启动 WebCodex Desktop。全新本机安装会自动准备 Server 和 Runner，不需要先配置默认 Project。
+2. 直接在 ChatGPT 中描述工作。请求给出工作目录后，Runtime 会在 Runner 允许的范围内自动解析或注册对应 Project。
+3. **项目**页仅用于观察已经出现的 Runtime Project；正常 Desktop UI 不再提供添加、激活、重新激活或取消注册 Project 的流程。
+4. 只有需要让 ChatGPT 从外部访问本机时，才配置 **OpenAI Secure Tunnel**。Tunnel 负责连接，不定义 Project 权限。
+5. 观察到真实项目调用只能证明此前发生过客户端使用，不能证明宿主此刻在线。
 
-**本地隧道就绪不等于 ChatGPT 已连接。** 首页会保留等待验证的状态；只有观察到当前项目的真实调用，才显示使用已验证。
+如果已经有远程 Server，可在设置流程中选择 **连接现有 Server**，填写地址和配对码，并选择该远程 enrollment 使用的本机项目。远程 Runner policy 和外部连接由其管理者负责。
 
-如果已有远程 Server，欢迎页选择 **连接现有 Server**，填写地址和配对码，再选择本机项目。Desktop 连接页会显示远程 Server 信息，外部连接由 Server 管理者负责。
-
-如果只想临时使用一个项目，选择 **快速共享项目**，再选择连接提供方。Quick Share 是独立的临时使用方式；首页提供连接交接信息和停止入口。
+如果只想临时共享一个项目，选择 **快速共享项目** 和连接提供方。Quick Share 仍保留显式项目选择和独立的临时生命周期。
 
 ## 每天从首页开始
 
-首页优先显示整体状态、下一步操作和当前工作项目。运行环境停止时可点击 **启动**；本机项目已就绪且 Tunnel 配置齐全时可点击 **启动安全隧道**。
+首页优先显示 Runtime、Runner、连接以及已观察到的 ChatGPT 状态。本机 Full Runtime 即使没有默认 Project 也属于正常可用状态；Desktop 启动不以 Project readiness 为前置条件。
 
-- **当前工作项目**：展示项目名和完整路径。本机 Full Runtime 已配置时，点击 **选择其他项目** 或 **添加项目** 会直接打开目录选择器，并立即应用这个精确项目，不再需要第二次点击“配置 WebCodex”。
-- **三个步骤**：区分项目就绪、连接准备和实际使用验证；完成后默认折叠。
-- **查看运行诊断**：按需展开 Service、Runner、项目和连接的详细状态及运行控制。
-- **侧栏导航**：进入项目、连接、扩展、活动和设置页面；首页也提供连接和扩展的直接入口。
-- **项目 → 此 Runner 保存的目录**：显示同一 Runner 下之前选择的精确项目根目录。可以切换或添加文件夹，无需另配 MCP 应用；选择一个项目不会撤销其他项目。列表按保存的 Runner 配置隔离。
+- **项目**：只显示已观察到的 Runtime Project。Project 生命周期由模型 / Runtime 的路径解析驱动，而不是 Desktop 按钮。
+- **活动** 与 **扩展**：围绕所选 Session 或已观察上下文关联的 Runtime Project 工作。
+- **连接**：独立管理外部可达性，不改变 Project 权限。
+- **设置**：提供 Runner 配置、诊断和显式运维控制。
 
-切换项目无需先手工停止 Runtime，也无需断开 OpenAI Secure Tunnel。Desktop 会把所选项目的精确根目录加入 Runner policy，在兼容 Runner 上热激活并持久化当前选择，同时保留现有 Service 和 Tunnel；只有旧版或不兼容 Runner 才可能刷新 Desktop 自己管理的 Runner。不要通过扩大允许目录来解决项目加载失败。
-
+ChatGPT 在不同工作目录之间切换时，不需要先停止 Runtime 或 OpenAI Secure Tunnel。Runtime 会根据当前 Runner policy 解析兼容路径，并按需注册 Project。
 ## 连接与故障恢复
 
 连接页靠前位置始终显示 **Tunnel 连接配置**。普通 Tunnel 运行中或停止后均可编辑 ID 与只写 API key。保存后，仅替换本应用正在管理的普通 Tunnel，Server 和 Runner 保持运行；原先停止的 Tunnel 不会因保存而自动启动。API key 留空保留已保存密钥，密钥不会回传到界面。
@@ -52,13 +46,13 @@ Desktop 负责准备本机项目和管理连接；你在 ChatGPT 等 AI 客户�
 
 | 看到的情况 | 下一步 |
 | --- | --- |
-| 本机运行环境未就绪 | 回首页恢复运行环境；需要时重新配置同一个项目 |
+| 本机 Runtime 未就绪 | 回首页恢复或重新打开 Desktop；不需要选择 Project |
+| 请求的工作目录超出 Runner policy | 只为目标工作区调整 Runner 访问范围，然后重新发送自然语言请求 |
 | Tunnel ID 或 API key 未检测到 | 在配置区填写并保存 Tunnel ID 和 API key；仅使用环境变量时才需退出重开 |
-| 启动失败且没有活动隧道 | 保留当前选择，修复配置或网络后再次点击启动 |
+| 启动失败且没有活动隧道 | 修复配置或网络后再次点击启动 |
 | 已有隧道报错 | 点击停止，成功后重新启动；停止失败会保留错误和重试入口 |
 | 隧道就绪但剪贴板交接失败 | 在连接页重试“复制 Tunnel ID”，或选中 ID 手动复制，无需重启 |
-| 隧道就绪，等待 ChatGPT | 在 ChatGPT 配置 Tunnel，并列出所选项目的顶层文件（空目录也可作为结果） |
-
+| 隧道就绪，等待 ChatGPT | 在 ChatGPT 配置 Tunnel，然后直接描述要处理的目标工作目录 |
 **设置 → OpenAI Tunnel 网络** 管理自动、直连和自定义 HTTP 代理。更改运行中隧道的代理前先停止隧道，保存后再启动。
 
 ## 指令、Skills 与原生 Tool Plugins
@@ -89,16 +83,10 @@ macOS 使用 **⌘ + 1–6**，Windows 使用 **Ctrl + 1–6**，依次切换首
 
 首页的运行控制和设置页的技术诊断默认折叠。主动停止后显示“已停止”，点击“启动”继续。活动页优先显示操作结果，勾选“显示进程详情”查看常规进程事件。Tunnel ID 和密钥在连接页配置；API key 不回显。
 
-### 取消注册后的 Runtime 状态
+### 无默认 Project 的 Runtime
 
-Full Runtime 由 Server、Runner 和项目清单组成，Desktop 默认展示项目是可选的。
-取消注册默认项目（包括最后一个项目）后，Runtime 继续可用，只清空该项目的
-ChatGPT 活动观察，不自动选择替代项目。仍可通过“添加项目”注册目录。
-Desktop 重启使用已保存的 Server/Runner 身份恢复 Runtime 和 Connections，
-不会重新登录或自动注册历史项目。
+Full Runtime 由 Server、Runner 和 Runner 已观察到的 Project 清单组成。Desktop 默认展示 Project 是可选状态；全新的本机 Desktop 会刻意在没有默认 Project 的情况下启动。
 
-正常在线且完整的 Runner 项目清单是注册状态的权威来源。Desktop 仅在同一
-Runner 配置和客户端身份下清理失效的注册历史；离线、无访问权限、截断或失败
-的观察不会触发清理。跨越 Desktop 操作的旧响应会被丢弃。仅在历史实际变化或
-需要重试已确认取消注册后的本地写入时保存状态。取消注册仍仅删除注册记录，
-保留项目目录、Git 文件、allowed roots 和运行中的 Server/Runner 进程。
+Desktop 重启会恢复已保存的 Server/Runner 身份和 Connections，不会预先注册 Project。只有模型驱动的工作解析了具体目录时，才会出现对应 Runtime Project。在线且完整的 Runner inventory 是这些注册状态的权威来源；Desktop 可以清理过期的展示历史，但正常 Desktop UI 不负责修改 Project 注册状态。
+
+项目目录、Git 文件和 Runner policy 是彼此独立的边界：按需注册 Project 只是为已经获得授权的路径创建或复用 runtime identity，不会扩大 `allowed_roots`。

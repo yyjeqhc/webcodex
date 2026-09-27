@@ -1,9 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { open } from "@tauri-apps/plugin-dialog";
 import { desktopApi } from "../lib/desktop-api";
 import type { ActivityEntry, DesktopError, DesktopState } from "../models/topology";
-import { useLocale } from "../i18n/locale";
 import { normalizeDesktopError } from "../i18n/presentation";
 import { NAVIGATION, type Navigation } from "../components/Sidebar";
 
@@ -12,7 +10,6 @@ const CHATGPT_ACTIVITY_OBSERVATION_INTERVAL_MS = 30_000;
 const ACTIVE_OPERATION_OBSERVATION_INTERVAL_MS = 1_000;
 
 export function useDesktopWorkspace() {
-  const { t } = useLocale();
   const [state, setState] = useState<DesktopState | null>(null);
   const [activity, setActivity] = useState<ActivityEntry[]>([]);
   const [navigation, setNavigation] = useState<Navigation>("home");
@@ -109,20 +106,39 @@ export function useDesktopWorkspace() {
       try {
         const initial = await desktopApi.getState();
         if (cancelled) return;
-        // Keep first-run setup mounted through intermediate topology snapshots
-        // and the optional Tunnel handoff, including their error/retry paths.
-        if (!initial.topology && !initial.configuration_issue) setShowSetup(true);
+        if (initial.current_operation || initial.configuration_issue) {
+          commitState(initial);
+          return;
+        }
+
+        // Fresh local Desktop is a runtime bootstrap, not a Project setup flow.
+        // Start the local Server/Runner immediately with no default Project.
+        // Concrete project paths are resolved/registered later by model-driven
+        // runtime calls such as work_on_project(path).
+        if (!initial.topology) {
+          setRefreshing(true);
+          try {
+            const next = await desktopApi.configureLocal();
+            if (!cancelled) {
+              commitState(next);
+              setShowSetup(false);
+            }
+          } catch (value) {
+            if (!cancelled) {
+              commitState(initial);
+              setError(normalizeDesktopError(value));
+            }
+          } finally {
+            if (!cancelled) setRefreshing(false);
+          }
+          return;
+        }
+
         commitState(initial);
-        if (initial.current_operation || initial.configuration_issue) return;
         const resumeExisting = Boolean(
-          initial.topology
-          && initial.runtime_autostart
+          initial.runtime_autostart
           && initial.topology.experience === "full",
         );
-        // A fresh Desktop must stay in product setup until the user chooses
-        // the real project and runtime topology. Silently bootstrapping the
-        // Desktop workspace creates a fake "configured" happy path and makes
-        // users configure the product twice before ChatGPT can use their code.
         if (!resumeExisting) return;
 
         setRefreshing(true);
@@ -224,33 +240,6 @@ export function useDesktopWorkspace() {
     }
   };
 
-  const chooseLocalProject = async () => {
-    if (!state || state.current_operation) return;
-    const topology = state.topology;
-    if (
-      !topology ||
-      topology.experience !== "full" ||
-      topology.server.kind !== "local" ||
-      !state.readiness.runtime_ready
-    ) {
-      openSetup();
-      return;
-    }
-    setError(null);
-    try {
-      const selection = await open({
-        directory: true,
-        multiple: false,
-        title: t("setup.chooseProject"),
-      });
-      if (typeof selection !== "string") return;
-      commitState(await desktopApi.activateLocalProject(selection));
-      setShowSetup(false);
-    } catch (value) {
-      setError(normalizeDesktopError(value));
-    }
-  };
-
   const refresh = async () => {
     setRefreshing(true);
     try {
@@ -286,5 +275,5 @@ export function useDesktopWorkspace() {
     }
   };
 
-  return { state, activity, navigation, setNavigation, refreshing, error, setError, cancelSubmittingId, showSetup, setShowSetup, setStartupAttempt, mainRef, commitState, openSetup, chooseLocalProject, refresh, resumeRuntime, cancelCurrentOperation, runStateOperation };
+  return { state, activity, navigation, setNavigation, refreshing, error, setError, cancelSubmittingId, showSetup, setShowSetup, setStartupAttempt, mainRef, commitState, openSetup, refresh, resumeRuntime, cancelCurrentOperation, runStateOperation };
 }

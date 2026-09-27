@@ -34,7 +34,6 @@ export function ReadinessBanner({ state, onState, onDiagnostics, onRuntime, onCo
       {!runtimeReady && stopped && !state.configuration_issue && <button type="button" className="primary-button" disabled={disabled} onClick={() => void run(desktopApi.resumeSavedRuntime)}>{s("Start Runtime")}</button>}
       {runnerProblem && <button type="button" className="primary-button" disabled={disabled} onClick={() => void restartRunner()}>{s("Restart Runner")}</button>}
       {failedConnections.length === 1 && <button type="button" className="secondary-button" disabled={disabled} onClick={() => void run(() => desktopApi.tunnelProfileAction(failedConnections[0].id, "restart"))}>{s("Restart Tunnel")}</button>}
-      {runtimeReady && !projectReady && state.project?.path && <button type="button" className="primary-button" disabled={disabled} onClick={() => void run(() => desktopApi.activateLocalProject(state.project!.path))}>{s("Reactivate project")}</button>}
       {connectionProblem && <button type="button" className="secondary-button" disabled={disabled} onClick={onConnection}>{s("Check connection")}</button>}
       {!runtimeReady && <button type="button" className="secondary-button" onClick={onRuntime}>{s("Select Runtime folder…")}</button>}
       <button type="button" className="secondary-button" onClick={onDiagnostics}>{s("Diagnostics")}</button>

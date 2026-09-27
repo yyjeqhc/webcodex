@@ -149,6 +149,19 @@ const firstRunState: DesktopState = {
   },
 };
 
+const projectlessReadyState: DesktopState = {
+  ...readyState,
+  project: null,
+  saved_projects: [],
+  readiness: {
+    ...readyState.readiness,
+    project: "none",
+    runtime_ready: true,
+    summary: "Runtime ready on this computer",
+    summary_kind: "runtime_ready_local_only",
+  },
+};
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (reason: unknown) => void;
@@ -247,6 +260,7 @@ beforeEach(() => {
     api.openPowerShellInstallGuide.mockResolvedValue(undefined);
     api.setLaunchAtLogin.mockImplementation(async (enabled: boolean) => enabled);
     api.resumeSavedRuntime.mockResolvedValue(readyState);
+    api.configureLocal.mockResolvedValue(projectlessReadyState);
     api.observeChatgptActivity.mockResolvedValue(readyState);
     api.updateTunnelProxy.mockResolvedValue(readyState);
     api.startRegularTunnel.mockResolvedValue(readyState);
@@ -358,16 +372,16 @@ beforeEach(() => {
     expect(api.startRegularTunnel).not.toHaveBeenCalled();
   });
 
-  it("shows the current project before optional diagnostics and handles picker errors", async () => {
+  it("presents Projects as observed runtime state without a manual Add Project action", async () => {
     api.getState.mockResolvedValue(readyState);
-    vi.mocked(open).mockRejectedValueOnce({ code: "project_invalid", message: "Picker unavailable", next_action: "Retry." });
     renderApp(); await screen.findByRole("heading", { level: 3, name: "repo" });
     expect(screen.queryByText("当前项目")).not.toBeInTheDocument();
     expect(screen.queryByText(/responsible process|Runtime Bearer|Runner 中执行/)).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "添加项目" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Picker unavailable");
-    expect(screen.getByRole("heading", { level: 3, name: "repo" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "项目" }));
+    expect(screen.getByRole("heading", { level: 1, name: /已观察到的 Runtime 项目/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "添加项目" })).not.toBeInTheDocument();
     expect(api.configureLocal).not.toHaveBeenCalled();
+    expect(api.activateLocalProject).not.toHaveBeenCalled();
   });
 
   it("saves a selected profile with write-only credentials through one backend mutation", async () => {
@@ -398,10 +412,13 @@ beforeEach(() => {
     expect(api.restartOwnedRunner).not.toHaveBeenCalled();
   });
 
-  it("clears submitted keys on save failure and never submits runtime setup from a credential input", async () => {
-    api.getState.mockResolvedValue(firstRunState);
+  it("clears submitted keys on save failure without submitting local runtime setup", async () => {
+    api.getState.mockResolvedValue(readyState);
     api.updateTunnelConfig.mockRejectedValue({ code: "tunnel_config_save_failed", message: "Could not save", next_action: "Retry." });
-    renderApp(); fireEvent.click(await screen.findByRole("button", { name: /在此电脑使用 WebCodex/ }));
+    renderApp();
+    await screen.findByRole("heading", { level: 1, name: /^(WebCodex|repo)/ });
+    await changeServerConnection();
+    fireEvent.click(screen.getByRole("button", { name: /在此电脑使用 WebCodex/ }));
     fireEvent.click(screen.getByText("可选：检查 ChatGPT 安全隧道配置", { selector: "summary" }));
     const tunnelInput = screen.getByLabelText("Tunnel ID");
     fireEvent.change(tunnelInput, { target: { value: "tunnel_test" } });
@@ -444,55 +461,16 @@ beforeEach(() => {
     expect(screen.getByRole("main")).toHaveFocus();
   });
 
-  it("adds a local project while preserving an active Tunnel", async () => {
-    const tunneledState: DesktopState = {
-      ...readyState,
-      topology: { ...readyState.topology!, exposure: { kind: "open_ai_tunnel" } },
-      connections: connectionSnapshot(connectionFixture()),
-      preferred_connection: "open_ai_tunnel",
-    };
-    const projectC = {
-      path: "C:\\work\\next",
-      allowed_root: "C:\\work\\next",
-      is_git_repository: true,
-      runtime_project_id: "agent:desktop:next",
-    };
-    const switched: DesktopState = { ...tunneledState, project: projectC };
-    api.getState.mockResolvedValue(tunneledState);
-    api.observeChatgptActivity.mockResolvedValue(tunneledState);
-    api.activateLocalProject.mockResolvedValue(switched);
-    vi.mocked(open).mockResolvedValue(projectC.path);
+  it("keeps a ready projectless Runtime usable without exposing project registration controls", async () => {
+    api.getState.mockResolvedValue(projectlessReadyState);
+    api.observeChatgptActivity.mockResolvedValue(projectlessReadyState);
 
     renderApp();
-    fireEvent.click(await screen.findByRole("button", { name: "项目" }));
-    expect(screen.getByRole("heading", { level: 1, name: /此 Runner 的项目/ })).toBeInTheDocument();
-    expect(screen.getByRole("main")).toHaveFocus();
-    expect(screen.queryByRole("button", { name: /切换项目|Use project|Select project/ })).not.toBeInTheDocument();
+    await screen.findByRole("heading", { level: 1, name: "WebCodex" });
+    expect(screen.getByRole("status")).toHaveTextContent("Server运行中Runner运行中");
+    fireEvent.click(screen.getByRole("button", { name: "项目" }));
+    expect(screen.queryByRole("button", { name: /添加项目|切换项目|Use project|Select project/ })).not.toBeInTheDocument();
     expect(api.activateLocalProject).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "添加项目" }));
-
-    await waitFor(() => expect(api.activateLocalProject).toHaveBeenCalledWith(projectC.path));
-    expect(api.configureLocal).not.toHaveBeenCalled();
-    await waitFor(() => expect(screen.getByText(projectC.path)).toBeInTheDocument());
-    expect(screen.queryByRole("button", { name: /在此电脑使用 WebCodex/ })).not.toBeInTheDocument();
-    expect(screen.getByText("连接 · 1 / 1")).toBeInTheDocument();
-    expect(screen.queryByText(/等待 ChatGPT|ChatGPT 未连接/)).not.toBeInTheDocument();
-    expect(api.startRegularTunnel).not.toHaveBeenCalled();
-  });
-
-  it("adds a project to a ready projectless Runtime without opening setup", async () => {
-    const noProject: DesktopState = { ...readyState, project: null, readiness: { ...readyState.readiness, project: "none" } };
-    vi.mocked(open).mockResolvedValue("/tmp/new-project");
-    api.activateLocalProject.mockResolvedValue(readyState);
-    api.getState.mockResolvedValue(noProject);
-    api.observeChatgptActivity.mockResolvedValue(noProject);
-
-    renderApp();
-    fireEvent.click(await screen.findByRole("button", { name: "项目" }));
-    fireEvent.click(screen.getByRole("button", { name: /添加项目/ }));
-
-    await waitFor(() => expect(api.activateLocalProject).toHaveBeenCalledWith("/tmp/new-project"));
-    expect(screen.queryByRole("button", { name: /在此电脑使用 WebCodex/ })).not.toBeInTheDocument();
     expect(api.configureLocal).not.toHaveBeenCalled();
   });
 
@@ -541,37 +519,6 @@ beforeEach(() => {
     await waitFor(() => expect(api.configureRemote).toHaveBeenCalledWith(serverUrl, "", projectB.path));
   });
 
-  it("reports a legacy Runner restart requirement without implicitly restarting any process", async () => {
-    const tunneledState: DesktopState = {
-      ...readyState,
-      topology: { ...readyState.topology!, exposure: { kind: "open_ai_tunnel" } },
-      connections: connectionSnapshot(connectionFixture()),
-      preferred_connection: "open_ai_tunnel",
-    };
-    const projectC = { ...readyState.project!, path: "C:\\work\\legacy", allowed_root: "C:\\work\\legacy" };
-    const switched: DesktopState = { ...tunneledState, project: projectC };
-    api.getState.mockResolvedValue(tunneledState);
-    api.observeChatgptActivity.mockResolvedValue(tunneledState);
-    api.activateLocalProject.mockRejectedValue({
-      code: "project_activation_restart_required",
-      message: "Runner restart required",
-      next_action: "Refresh this Runner.",
-    });
-    api.configureLocal.mockResolvedValue(switched);
-    vi.mocked(open).mockResolvedValue(projectC.path);
-
-    renderApp();
-    fireEvent.click(await screen.findByRole("button", { name: "项目" }));
-    fireEvent.click(screen.getByRole("button", { name: "添加项目" }));
-
-    await waitFor(() => expect(api.activateLocalProject).toHaveBeenCalledWith(projectC.path));
-    expect(await screen.findByRole("alert")).toBeInTheDocument();
-    expect(api.configureLocal).not.toHaveBeenCalled();
-    expect(api.startRegularTunnel).not.toHaveBeenCalled();
-    expect(screen.getByText("连接 · 1 / 1")).toBeInTheDocument();
-    expect(screen.queryByText(/等待 ChatGPT|ChatGPT 未连接/)).not.toBeInTheDocument();
-  });
-
   it("does not start a duplicate Tunnel when local setup runs while one is already active", async () => {
     const tunneledState: DesktopState = {
       ...readyState,
@@ -590,7 +537,7 @@ beforeEach(() => {
     expect(screen.queryByRole("checkbox", { name: "配置完成后连接 ChatGPT" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "配置 WebCodex" }));
 
-    await waitFor(() => expect(api.configureLocal).toHaveBeenCalledWith(tunneledState.project!.path));
+    await waitFor(() => expect(api.configureLocal).toHaveBeenCalledWith());
     expect(api.startRegularTunnel).not.toHaveBeenCalled();
     expect(await screen.findByRole("heading", { level: 1, name: /^(WebCodex|repo)/ })).toBeInTheDocument();
   });
@@ -731,107 +678,59 @@ beforeEach(() => {
     await waitFor(() => expect(launchAtLogin).toBeChecked());
   });
 
-  it("keeps a fresh Desktop in product setup until the user chooses its real project", async () => {
+  it("bootstraps a fresh Desktop locally without project selection or setup interaction", async () => {
     api.getState.mockResolvedValue(firstRunState);
+    api.configureLocal.mockResolvedValue(projectlessReadyState);
     renderApp();
 
-    expect(await screen.findByRole("button", { name: /在此电脑使用 WebCodex/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /连接现有 Server/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /快速共享项目/ })).toBeInTheDocument();
-    expect(api.configureLocal).not.toHaveBeenCalled();
+    await waitFor(() => expect(api.configureLocal).toHaveBeenCalledWith());
+    expect(api.configureLocal).toHaveBeenCalledTimes(1);
     expect(api.resumeSavedRuntime).not.toHaveBeenCalled();
-
-    fireEvent.click(screen.getByRole("button", { name: /在此电脑使用 WebCodex/ }));
-    expect(await screen.findByRole("heading", { level: 1, name: "在此电脑配置 WebCodex" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "选择文件夹" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "配置 WebCodex" })).toBeDisabled();
-    fireEvent.submit(screen.getByRole("button", { name: "配置 WebCodex" }).closest("form")!);
-    expect(api.configureLocal).not.toHaveBeenCalled();
-
-    fireEvent.click(screen.getByRole("button", { name: "← 返回全部配置方式" }));
-    fireEvent.click(screen.getByRole("button", { name: /快速共享项目/ }));
-    expect(screen.getByRole("radiogroup", { name: "Quick Share 连接方式" })).toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: /Cloudflare/ })).toBeChecked();
-    expect(screen.getByRole("radio", { name: /OpenAI Secure Tunnel/ })).not.toBeChecked();
+    expect(await screen.findByRole("heading", { level: 1, name: "WebCodex" })).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Server运行中Runner运行中");
+    expect(screen.queryByRole("button", { name: /在此电脑使用 WebCodex/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "选择文件夹" })).not.toBeInTheDocument();
   });
 
-  it("guides Windows users to PowerShell 7 without blocking the 5.1 fallback", async () => {
+  it("keeps PowerShell 7 guidance available in manual local recovery without requiring a project", async () => {
     const missingPwsh: DesktopState = {
-      ...firstRunState,
+      ...readyState,
       powershell_runtime: {
         pwsh_available: false,
         windows_powershell_available: true,
       },
     };
-    const detectedPwsh: DesktopState = {
-      ...missingPwsh,
-      powershell_runtime: {
-        pwsh_available: true,
-        windows_powershell_available: true,
-      },
-    };
-    api.getState.mockResolvedValueOnce(missingPwsh).mockResolvedValueOnce(detectedPwsh);
+    api.getState.mockResolvedValue(missingPwsh);
     renderApp();
+    await screen.findByRole("heading", { level: 1, name: /^(WebCodex|repo)/ });
 
-    fireEvent.click(await screen.findByRole("button", { name: /在此电脑使用 WebCodex/ }));
+    await changeServerConnection();
+    fireEvent.click(screen.getByRole("button", { name: /在此电脑使用 WebCodex/ }));
     const guidance = screen.getByText("建议安装 PowerShell 7").closest("article");
     expect(guidance).not.toBeNull();
     expect(guidance).toHaveTextContent("Windows PowerShell 5.1");
     expect(guidance).toHaveTextContent("winget install --id Microsoft.PowerShell --source winget");
-    expect(screen.getByRole("button", { name: "配置 WebCodex" })).toBeDisabled();
-
-    vi.mocked(open).mockResolvedValue(readyState.project!.path);
-    api.inspectProject.mockResolvedValue(readyState.project);
-    fireEvent.click(screen.getByRole("button", { name: "选择文件夹" }));
-    await waitFor(() => expect(screen.getByRole("button", { name: "配置 WebCodex" })).toBeEnabled());
+    expect(screen.queryByRole("button", { name: "选择文件夹" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "配置 WebCodex" })).toBeEnabled();
 
     fireEvent.click(within(guidance!).getByRole("button", { name: "打开 Microsoft 安装说明" }));
     await waitFor(() => expect(api.openPowerShellInstallGuide).toHaveBeenCalledTimes(1));
-    fireEvent.click(within(guidance!).getByRole("button", { name: "重新检测" }));
-    await waitFor(() => expect(screen.queryByText("建议安装 PowerShell 7")).not.toBeInTheDocument());
     expect(api.configureLocal).not.toHaveBeenCalled();
   });
 
-  it("keeps first-run errors and the selected project through intermediate polling and Tunnel failure", async () => {
-    vi.useFakeTimers();
-    try {
-      const setupResult = deferred<DesktopState>();
-      api.getState.mockResolvedValue(firstRunState);
-      api.configureLocal.mockReturnValueOnce(setupResult.promise).mockResolvedValue(readyState);
-      api.startRegularTunnel.mockRejectedValue({ code: "tunnel_unavailable", message: "Tunnel failed", next_action: "Retry." });
-      vi.mocked(open).mockResolvedValue(readyState.project!.path);
-      api.inspectProject.mockResolvedValue(readyState.project);
-      const view = renderApp();
-      await act(async () => {});
-      fireEvent.click(screen.getByRole("button", { name: /在此电脑使用 WebCodex/ }));
-      fireEvent.click(screen.getByRole("button", { name: "选择文件夹" }));
-      await act(async () => {});
-      fireEvent.click(screen.getByRole("button", { name: "配置 WebCodex" }));
-      expect(api.configureLocal).toHaveBeenCalledWith(readyState.project!.path);
+  it("surfaces a failed automatic local bootstrap without inventing a default project", async () => {
+    api.getState.mockResolvedValue(firstRunState);
+    api.configureLocal.mockRejectedValue({
+      code: "runner_offline",
+      message: "Runner did not become connected",
+      next_action: "Retry local runtime setup.",
+    });
+    renderApp();
 
-      api.getState.mockResolvedValue(localSetupOperationState());
-      await act(async () => { await vi.advanceTimersByTimeAsync(1_500); });
-      expect(screen.getByRole("heading", { level: 1, name: "在此电脑配置 WebCodex" })).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: "更改文件夹" })).toBeDisabled();
-
-      api.getState.mockResolvedValue(setupState());
-      await act(async () => {
-        setupResult.reject({ code: "project_not_loaded", message: "Project failed", next_action: "Retry." });
-        await vi.advanceTimersByTimeAsync(1_000);
-      });
-      expect(screen.getByRole("alert")).toHaveTextContent("project_not_loaded");
-      fireEvent.click(screen.getByRole("button", { name: "重新激活项目" }));
-      await act(async () => {});
-      expect(screen.getByRole("alert")).toHaveTextContent("tunnel_unavailable");
-      expect(screen.getByRole("heading", { level: 1, name: "在此电脑配置 WebCodex" })).toBeInTheDocument();
-      api.startRegularTunnel.mockResolvedValue(readyState);
-      fireEvent.click(screen.getByRole("button", { name: "配置 WebCodex" }));
-      await act(async () => {});
-      expect(screen.getByRole("heading", { level: 1, name: /^(WebCodex|repo)/ })).toBeInTheDocument();
-      view.unmount();
-    } finally {
-      vi.useRealTimers();
-    }
+    await waitFor(() => expect(api.configureLocal).toHaveBeenCalledWith());
+    expect(await screen.findByRole("alert")).toHaveTextContent("runner_offline");
+    expect(screen.queryByText(readyState.project!.path)).not.toBeInTheDocument();
+    expect(api.activateLocalProject).not.toHaveBeenCalled();
   });
 
   it("shows an initial status failure and retries the complete fresh-start bootstrap", async () => {
@@ -857,11 +756,12 @@ beforeEach(() => {
     expect(screen.queryByRole("button", { name: "重试" })).not.toBeInTheDocument();
     await waitFor(() => expect(api.getState).toHaveBeenCalledTimes(2));
 
+    api.configureLocal.mockResolvedValue(projectlessReadyState);
     await act(async () => {
       retryState.resolve(firstRunState);
     });
-    expect(await screen.findByRole("button", { name: /在此电脑使用 WebCodex/ })).toBeInTheDocument();
-    expect(api.configureLocal).not.toHaveBeenCalled();
+    await waitFor(() => expect(api.configureLocal).toHaveBeenCalledWith());
+    expect(await screen.findByRole("heading", { level: 1, name: "WebCodex" })).toBeInTheDocument();
     expect(api.resumeSavedRuntime).not.toHaveBeenCalled();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
@@ -918,26 +818,19 @@ beforeEach(() => {
     expect(alert).toHaveTextContent("exit code 1");
   });
 
-  it("offers a product recovery action when the selected project did not load", async () => {
-    api.getState.mockResolvedValue(readyState);
-    api.configureLocal
-      .mockRejectedValueOnce({
-        code: "project_not_loaded",
-        message: "The selected project did not become ready in the Desktop-owned Runner",
-        next_action: "Retry project setup.",
-      })
-      .mockResolvedValueOnce(readyState);
+  it("does not expose project reactivation when a historical default project needs attention", async () => {
+    const historicalProjectError: DesktopState = {
+      ...readyState,
+      readiness: {
+        ...readyState.readiness,
+        project: "error",
+      },
+    };
+    api.getState.mockResolvedValue(historicalProjectError);
     renderApp();
     await screen.findByRole("heading", { level: 1, name: /^(WebCodex|repo)/ });
-    await changeServerConnection();
-    fireEvent.click(screen.getByRole("button", { name: /在此电脑使用 WebCodex/ }));
-    fireEvent.click(screen.getByRole("button", { name: "配置 WebCodex" }));
-
-    const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent("项目尚未就绪");
-    expect(alert).not.toHaveTextContent("registry");
-    fireEvent.click(screen.getByRole("button", { name: "重新激活项目" }));
-    await waitFor(() => expect(api.configureLocal).toHaveBeenCalledTimes(2));
+    expect(screen.queryByRole("button", { name: "重新激活项目" })).not.toBeInTheDocument();
+    expect(api.activateLocalProject).not.toHaveBeenCalled();
   });
 
   it("uses the backend restart_quick_share presentation identity after a stopped share", async () => {

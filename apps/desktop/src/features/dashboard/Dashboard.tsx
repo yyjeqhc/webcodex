@@ -11,7 +11,7 @@ import { ProjectRows } from "../projects/ProjectRows";
 interface DashboardProps {
   state: DesktopState; refreshing: boolean; onRefresh: () => void;
   onResumeRuntime: () => void;
-  onChooseProject: () => void; onChangeSetup: () => void;
+  onChangeSetup: () => void;
   onNavigate: (page: "projects" | "connection" | "activity" | "extensions") => void;
   onStopQuickShare: () => void; onStopRuntime: () => void;
 }
@@ -32,10 +32,8 @@ export function Dashboard(props: DashboardProps) {
     <WorkspaceStatus state={state} />
     <div className="workspace-quick-actions">
       <span>{workspace.projects.length} {p("projects")}</span>
-      <Button className={currentProject ? "secondary-button" : "primary-button"} variant={currentProject ? "default" : "filled"} onClick={props.onChooseProject} disabled={busy}>{p("addProject")}</Button>
       <Button className="secondary-button" variant="default" aria-label={`${p("manage")} ${c("connections")}`} onClick={() => onNavigate("connection")}>{c("connections")}</Button>
       {!state.readiness.runtime_ready && <Button className="secondary-button" variant="default" onClick={state.readiness.next_action_kind === "restart_quick_share" ? props.onChangeSetup : props.onResumeRuntime} disabled={busy}>{state.readiness.next_action_kind === "restart_quick_share" ? p("restart") + " Quick Share" : p("start") + " WebCodex"}</Button>}
-      {(state.readiness.project === "error" || state.readiness.project === "reload_required") && <Button className="secondary-button" variant="default" onClick={props.onChooseProject} disabled={busy}>{p("setup")} {p("projects")}</Button>}
     </div>
     <div className="dashboard-content-grid">
     <section className="workspace-section ui-workbench-surface" aria-labelledby="recent-projects-title">

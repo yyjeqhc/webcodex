@@ -293,8 +293,8 @@ assert not ({"Edit", "Read", "Bash", "Write", "NotebookEdit", "Agent"} & names)
 PY
 ok "public MCP tools exclude Claude internals and removed edit tools"
 
-api_get /runtime | grep -q 'WebCodex' || fail "Runtime console readiness probe failed"
-ok "Runtime console readiness remains available"
+api_get /healthz >/dev/null || fail "Server readiness probe failed"
+ok "/healthz readiness remains available"
 
 READ_ARGS="$(python3 - "$RUNTIME_PROJECT" <<'PY'
 import json, sys

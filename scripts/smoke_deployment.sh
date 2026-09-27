@@ -19,7 +19,7 @@ set -euo pipefail
 #   SMOKE_TIMEOUT    per-curl timeout in seconds (default 15)
 #
 # What it checks:
-#   1. GET  /runtime                 -> public Runtime Console shell.
+#   1. GET  /healthz                 -> HTTP success.
 #   2. POST /api/runtime/status      -> success == true.
 #   3. POST /api/tools/call (list_projects)       -> success == true.
 #   4. POST /mcp initialize          -> result.protocolVersion non-empty.
@@ -133,17 +133,15 @@ PY
 }
 
 # ----------------------------------------------------------------------------
-# 1. GET /runtime
+# 1. GET /healthz
 # ----------------------------------------------------------------------------
 
-log "GET /runtime"
-body="$(api_get /runtime || true)"
-if printf '%s' "$body" | grep -q "WebCodex"; then
-    pass "/runtime returns the public console shell"
+log "GET /healthz"
+if api_get /healthz >/dev/null; then
+    pass "/healthz reports Server readiness"
 else
-    fail "/runtime did not return the expected console shell"
+    fail "/healthz did not report Server readiness"
 fi
-
 # ----------------------------------------------------------------------------
 # 2. POST /api/runtime/status
 # ----------------------------------------------------------------------------

@@ -322,7 +322,7 @@ fi
 # ----------------------------------------------------------------------------
 printf '\n[release] ===== all stages passed =====\n'
 if [ "$MODE" = full ]; then
-    ok "workspace boundaries, fmt, check --all-targets, focused metadata/schema/openapi/mcp tests, bash syntax, release tooling self-tests, harness contracts, static checks"
+    ok "workspace boundaries, fmt, check --all-targets, focused metadata/schema/mcp tests, bash syntax, release tooling self-tests, harness contracts, static checks"
     log "final pre-tag acceptance: use exact-source CI evidence plus the release-readiness workflow (see docs/RELEASE_CHECKLIST.md)"
     log "release readiness local check PASSED"
 else

@@ -333,7 +333,7 @@ published image before creating an administrator secret. It then advances the
 private `.webcodex-bootstrap.receipt` through `AssetsPrepared`,
 `SecretCommitted`, `ContainerStarted`, `ServerHealthy`, and `PairingReady`. The
 receipt contains hashes and state, not the administrator token. `.env` is written
-through a 0600 temporary file, synced, and atomically renamed. Success is printed only after the Compose healthcheck and `/runtime` readiness verification succeed; a short-lived pairing code is created only after that readiness barrier.
+through a 0600 temporary file, synced, and atomically renamed. Success is printed only after the Compose healthcheck and `/healthz` readiness verification succeed; a short-lived pairing code is created only after that readiness barrier.
 
 If an install is interrupted or a startup/health check fails, keep `.env` and use
 the same downloaded bootstrap in that directory:

@@ -110,6 +110,11 @@ pub async fn run_regular_server_tunnel_with_stop(
 }
 pub use webcodex_store::models::{ActionEventRecord, ActionSessionRecord};
 
+#[handler]
+async fn healthz(res: &mut Response) {
+    res.status_code(StatusCode::OK);
+}
+
 // ============================================================================
 // Main
 // ============================================================================
@@ -606,6 +611,8 @@ only for local/trusted-network demos."
                 ),
         );
 
+    let health_router = Router::with_path(route_metadata::root_path(RouteId::Healthz)).get(healthz);
+
     #[cfg(feature = "legacy-gpt-actions")]
     let legacy_openapi_router =
         Router::with_path(route_metadata::root_path(RouteId::OpenApiDocument)).get(openapi_json);
@@ -671,6 +678,7 @@ only for local/trusted-network demos."
         .hoop(affix_state::inject(console_asset_source))
         .hoop(cors.into_handler())
         .push(api_router)
+        .push(health_router)
         .push(legacy_openapi_router)
         .push(runtime_console_router)
         .push(admin_router)
@@ -769,6 +777,7 @@ only for local/trusted-network demos."
         mcp_compact_schemas = runtime_info.mcp_compact_schemas,
         "mcp_compact_schemas"
     );
+    tracing::info!("Health: {}/healthz", base);
     #[cfg(feature = "legacy-gpt-actions")]
     tracing::info!("Legacy GPT Actions OpenAPI: {}/openapi.json", base);
     tracing::info!("Runtime console: {}/runtime", base);

@@ -10,7 +10,7 @@ Server:
 
 - `webcodex --version` prints a version.
 - `webcodex server status --env-file /etc/webcodex/webcodex.env` reports the local server reachable.
-- `curl http://127.0.0.1:8080/openapi.json` returns OpenAPI JSON on the server host.
+- `curl -f http://127.0.0.1:8080/healthz` returns HTTP 200 on the server host.
 - Public HTTPS is reachable through nginx or your chosen reverse proxy, if used.
 
 Client:
@@ -219,7 +219,7 @@ Check the local service first, then the reverse proxy:
 ```bash
 systemctl status webcodex
 journalctl -u webcodex
-curl http://127.0.0.1:8080/openapi.json
+curl -f http://127.0.0.1:8080/healthz
 ```
 
 If local HTTP works but public HTTPS does not, check the nginx upstream host/port and TLS configuration. WebCodex CLI does not automate reverse proxy setup.

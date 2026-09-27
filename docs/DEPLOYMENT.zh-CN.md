@@ -293,7 +293,7 @@ bootstrap 现在是可恢复事务，而不是一次性脚本。它会在创建 
 随后通过私有 `.webcodex-bootstrap.receipt` 依次记录 `AssetsPrepared`、
 `SecretCommitted`、`ContainerStarted`、`ServerHealthy`、`PairingReady`。receipt 只保存
 hash 与阶段，不保存 administrator token。`.env` 通过 0600 临时文件写入、sync 后原子 rename。
-只有 Compose healthcheck 与 `/runtime` readiness 都验证通过后才打印成功，并在这个 readiness barrier 之后创建第一枚短期 pairing code。
+只有 Compose healthcheck 与 `/healthz` readiness 都验证通过后才打印成功，并在这个 readiness barrier 之后创建第一枚短期 pairing code。
 
 安装被中断，或 startup/health check 失败时，不要删除 `.env`；在同一目录继续使用同一份
 bootstrap：

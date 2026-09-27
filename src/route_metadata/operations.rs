@@ -5,17 +5,28 @@ use super::{
 };
 use webcodex_core::authority::{OAuthRouteScopePolicy::*, SCOPE_ACCOUNT_MANAGE};
 
-pub(super) const PUBLIC_WEB_ROUTES: &[RouteSpec] = &[route(
-    OpenApiDocument,
-    Get,
-    "/openapi.json",
-    Public,
-    PublicWeb,
-    Hidden,
-    Other,
-    RouteAuth::Public,
-)];
-
+pub(super) const PUBLIC_WEB_ROUTES: &[RouteSpec] = &[
+    route(
+        Healthz,
+        Get,
+        "/healthz",
+        Public,
+        PublicWeb,
+        Hidden,
+        Other,
+        RouteAuth::Public,
+    ),
+    route(
+        OpenApiDocument,
+        Get,
+        "/openapi.json",
+        Public,
+        PublicWeb,
+        Hidden,
+        Other,
+        RouteAuth::Public,
+    ),
+];
 // Admin handlers impose their own admin identity check. Production route
 // scope previously admitted only bootstrap because these paths were unknown;
 // keep that behavior explicit rather than widening authority in this cleanup.

@@ -54,13 +54,13 @@ Preconditions:
 
 Checks covered by active mode:
 
-  1. Bounded discovery works through /api/tools/list and tool_manifest.
-  2. artifact_upload_begin, artifact_upload_chunk, and artifact_upload_finish.
-  3. read_project_artifact_metadata and read_project_artifact.
-  4. artifact_upload_abort cleanup for a second temporary upload.
-  5. delete_project_files cleanup of the committed smoke artifact.
-  6. git_status and show_changes report a clean worktree after cleanup.
-
+  1. GET /healthz reports Server readiness.
+  2. Bounded discovery works through /api/tools/list and tool_manifest.
+  3. artifact_upload_begin, artifact_upload_chunk, and artifact_upload_finish.
+  4. read_project_artifact_metadata and read_project_artifact.
+  5. artifact_upload_abort cleanup for a second temporary upload.
+  6. delete_project_files cleanup of the committed smoke artifact.
+  7. git_status and show_changes report a clean worktree after cleanup.
 Active mode refuses non-smoke project ids unless
 WEBCODEX_SMOKE_ALLOW_NON_SMOKE_PROJECT=1 is set. Custom artifact paths must stay
 under artifacts/smoke/ unless WEBCODEX_SMOKE_ALLOW_CUSTOM_PATHS=1 is set.
@@ -401,6 +401,12 @@ PAYLOAD_BASE64="$(json_get "$payload_info" base64)"
 # ---------------------------------------------------------------------------
 
 log "---- preflight ----"
+
+if api_get /healthz >/dev/null; then
+    pass "/healthz reports Server readiness"
+else
+    fail "/healthz did not report Server readiness"
+fi
 
 body="$(api_post /api/tools/list '{"summary_only":true,"category":"artifact","limit":20}')"
 if json_tools_include "$body" tools \

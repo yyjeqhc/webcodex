@@ -237,7 +237,7 @@ class BootstrapTests(unittest.TestCase):
             f"compose -f {assets.MATERIALIZED_COMPOSE} up -d --no-build --pull never", calls
         )
         self.assertIn("inspect --format", calls)
-        self.assertIn("/runtime", calls)
+        self.assertIn("/healthz", calls)
         self.assertIn("pairing create", calls)
 
         second = self._run(root, env, script)

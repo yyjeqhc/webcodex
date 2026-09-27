@@ -119,7 +119,7 @@ The public ToolSpec must not contain a provenance field. Model JSON must not be 
 
 Dedicated REST adapters may remain only when they serve a real current CLI, product, or external REST consumer. Tests by themselves are not compatibility consumers.
 
-`/api/runtime/status` remains a stable operational/status API for real CLI, deployment, readiness, and diagnostics consumers. `/api/projects/resolve-or-register` remains a hidden internal operator workflow endpoint because it provides atomic exact-path convergence that is intentionally absent from the model-visible tool registry. Ordinary Project lifecycle and Runner-config execution use canonical `/api/tools/call`. These retained compatibility/operator routes are not generic GPT Action operations and stay `Hidden` from `/openapi.json`. Route metadata describes HTTP security/surface facts; it no longer owns a generic `PublicAction` operation registry.
+`/healthz` is the public deployment/readiness probe and must not depend on `legacy-gpt-actions`. `/api/runtime/status` remains a stable authenticated operational/status API for real CLI and diagnostics consumers. `/api/projects/resolve-or-register` remains a hidden internal operator workflow endpoint because it provides atomic exact-path convergence that is intentionally absent from the model-visible tool registry. Ordinary Project lifecycle and Runner-config execution use canonical `/api/tools/call`. These retained compatibility/operator routes are not generic GPT Action operations and stay `Hidden` from `/openapi.json`. Route metadata describes HTTP security/surface facts; it no longer owns a generic `PublicAction` operation registry.
 
 ## 10. Project-scoped runtime boundary
 
@@ -152,6 +152,7 @@ Before landing a deliberate legacy GPT Actions change:
 - inspect the frozen direct and supported snapshots;
 - scan the generated OpenAPI document for description and size limits;
 - verify no management/internal route leaked into the legacy schema;
+- verify `/healthz` remains available in default builds and independent of the legacy Action feature;
 - verify the adapter still delegates authority and execution to ToolRuntime;
 - run the feature-enabled legacy test path.
 

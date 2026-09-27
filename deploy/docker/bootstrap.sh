@@ -588,8 +588,8 @@ wait_for_server_health() {
         health=$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$cid" 2>/dev/null || true)
         case "$health" in
             healthy)
-                compose_full exec -T webcodex curl -fsS http://127.0.0.1:8080/runtime >/dev/null \
-                    || fail "WebCodex healthcheck is healthy but /runtime verification failed"
+                compose_full exec -T webcodex curl -fsS http://127.0.0.1:8080/healthz >/dev/null \
+                    || fail "WebCodex healthcheck is healthy but /healthz verification failed"
                 write_receipt ServerHealthy "$ENV_DIGEST"
                 return 0
                 ;;

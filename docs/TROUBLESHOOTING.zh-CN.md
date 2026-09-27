@@ -10,7 +10,7 @@ Server：
 
 - `webcodex --version` 能打印版本。
 - `webcodex server status --env-file /etc/webcodex/webcodex.env` 报告本地 server reachable。
-- 在 server host 上，`curl http://127.0.0.1:8080/openapi.json` 返回 OpenAPI JSON。
+- 在 server host 上，`curl -f http://127.0.0.1:8080/healthz` 返回 HTTP 200。
 - 如果使用 nginx 或其他 reverse proxy，public HTTPS 可访问。
 
 Client：
@@ -195,7 +195,7 @@ sudo systemctl daemon-reload
 ```bash
 systemctl status webcodex
 journalctl -u webcodex
-curl http://127.0.0.1:8080/openapi.json
+curl -f http://127.0.0.1:8080/healthz
 ```
 
 如果本地 HTTP 正常但 public HTTPS 不通，检查 nginx upstream host/port 和 TLS 配置。WebCodex CLI 不会自动配置 reverse proxy。

@@ -3621,7 +3621,7 @@ mod startup_runner_tests {
     use crate::projects::ProjectConfig;
 
     #[test]
-    fn finish_actions_use_git_diff_hunks_when_nested_show_changes_hands_off() {
+    fn finish_actions_prefer_review_changes_when_nested_show_changes_hands_off() {
         let output = json!({
             "workspace": {"clean": false},
             "changes": {
@@ -3636,9 +3636,9 @@ mod startup_runner_tests {
             "tool_failures": {},
         });
         let actions = finish_suggested_next_actions(&output);
-        assert!(actions
-            .iter()
-            .any(|action| action == "continue the diff review with git_diff_hunks"));
+        assert!(actions.iter().any(|action| {
+            action == "continue the review with review_changes when its continuation is available"
+        }));
         assert_eq!(
             output["changes"]["show_changes"]["diff_review_handoff"]["next_call"]["tool"],
             "git_diff_hunks"

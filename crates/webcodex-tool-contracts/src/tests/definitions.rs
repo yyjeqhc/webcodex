@@ -811,6 +811,9 @@ fn adaptive_runtime_direct_declarations_are_visible_ranked_and_unique() {
         "artifact_upload_finish",
         "artifact_upload_abort",
         "go_test",
+        "git_diff_hunks",
+        "git_review_summary",
+        "show_changes",
     ] {
         let definition = lookup_tool_definition(name).expect("model-visible long-tail definition");
         assert!(definition.visibility.is_model_visible(), "{name}");
@@ -823,7 +826,7 @@ fn adaptive_runtime_direct_declarations_are_visible_ranked_and_unique() {
 
     for (name, expected_rank, expected_authority) in [
         ("session_discussion_summary", 15, RUNTIME_READ),
-        ("git_diff_hunks", 125, PROJECT_READ),
+        ("review_changes", 135, PROJECT_READ),
     ] {
         let definition = derived
             .iter()
@@ -948,8 +951,12 @@ fn adaptive_runtime_direct_declarations_are_visible_ranked_and_unique() {
         .into_iter()
         .find(|spec| spec.name == "git_review_summary")
         .expect("git_review_summary ToolSpec");
-    assert!(git_review.description.contains("git_diff_hunks/read_files"));
-    assert!(!git_review.description.contains("git_diff_hunks/read_file "));
+    assert!(git_review
+        .description
+        .contains("Specialist exact committed-range review map"));
+    assert!(git_review
+        .description
+        .contains("Ordinary review uses review_changes"));
 }
 
 #[test]

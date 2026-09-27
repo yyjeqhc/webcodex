@@ -157,6 +157,11 @@ fn required_runner_capability_matches_metadata_risk_table() {
             RunnerCapabilityRequirement::GitOrShell,
         ),
         (
+            "review_changes",
+            ToolRisk::Read,
+            RunnerCapabilityRequirement::GitOrShell,
+        ),
+        (
             "git_log",
             ToolRisk::Read,
             RunnerCapabilityRequirement::GitOrShell,

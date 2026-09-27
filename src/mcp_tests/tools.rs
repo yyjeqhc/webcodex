@@ -2367,14 +2367,14 @@ async fn mcp_tools_list_stateless_serialized_size_budget() {
     let mut admin = scoped.clone();
     admin.scopes.push(crate::auth::SCOPE_ADMIN.to_string());
     // Final Stateless result bytes include the optional _wc envelope and gateways,
-    // not the RPC envelope. Envelope V2 now leaves about 76/78/87 KB for
-    // anonymous/scoped/admin without Apps; App-on remains roughly +20 KB after
-    // adding the bounded App-only Work Result activity-detail reader.
-    // Keep small explicit growth headroom around the measured surface.
+    // not the RPC envelope. Envelope V2 plus review convergence leave about
+    // 76/78/87 KB for anonymous/scoped/admin without Apps; App-on remains
+    // roughly +20 KB after bounded Work Result readers. Keep small explicit
+    // growth headroom around the measured compact surface.
     for (label, auth, max_tools, max_bytes) in [
-        ("anonymous", None, 30, 77_000),
-        ("scoped", Some(&scoped), 31, 79_000),
-        ("admin", Some(&admin), 37, 88_000),
+        ("anonymous", None, 28, 77_000),
+        ("scoped", Some(&scoped), 29, 79_000),
+        ("admin", Some(&admin), 35, 88_000),
     ] {
         for app_enabled in [false, true] {
             let mut sizes = Vec::new();

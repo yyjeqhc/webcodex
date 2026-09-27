@@ -53,6 +53,16 @@ async fn adaptive_tools_list_exposes_ranked_direct_tools_and_gateway() {
         !names.contains(&"apply_patch"),
         "long-tail tool leaked direct"
     );
+    for specialist in webcodex_tool_contracts::EXACT_DISCOVERY_SPECIALIST_TOOL_NAMES {
+        assert!(
+            !names.contains(specialist),
+            "{specialist} must stay off the ordinary Adaptive direct surface"
+        );
+        assert!(
+            !crate::tool_runtime::tool_definition::is_adaptive_runtime_direct_tool(specialist),
+            "{specialist} must route through exact discovery/gateway"
+        );
+    }
     for required in [
         "work_on_project",
         "read_files",
@@ -64,7 +74,7 @@ async fn adaptive_tools_list_exposes_ranked_direct_tools_and_gateway() {
         "run_shell",
         "cargo_check",
         "cargo_test",
-        "show_changes",
+        "review_changes",
         "observe_jobs",
         "wait_for_job_terminal",
         "skill_load",

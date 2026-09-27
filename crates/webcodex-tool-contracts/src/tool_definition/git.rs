@@ -11,49 +11,45 @@ use crate::metadata::{
 };
 
 pub(super) const SUMMARY_DEFINITIONS: &[ToolDefinition] = &[
-    adaptive_runtime_direct(
-        change_summary_like(git_like(model_spec(
-            def(
-                "git_review_summary",
-                super::ToolAuditPolicy::typed_fields(&[
-                    super::ToolAuditResultField::value("project"),
-                    super::ToolAuditResultField::value("scope"),
-                    super::ToolAuditResultField::value("stats"),
-                    super::ToolAuditResultField::value("coverage"),
-                    super::ToolAuditResultField::value("truncation"),
-                    super::ToolAuditResultField::value("deterministic"),
-                    super::ToolAuditResultField::value("llm_summary"),
-                    super::ToolAuditResultField::value("truncated"),
-                    super::ToolAuditResultField::value("reason_code"),
-                    super::ToolAuditResultField::array_len("signal_count", "signals"),
-                    super::ToolAuditResultField::array_len("file_count", "files"),
-                ])
-                .drop_null_request_values(),
-                ModelVisible,
-                TOOL_CATEGORY_GIT,
-                Some(GitOrShell),
-                TOOL_PROVIDER_RUNNER,
-                super::ToolSemanticContract {
-                    effect: super::ToolEffect::Observe,
-                    risk: Read,
-                    approval: super::ToolApprovalPolicy::None,
-                    idempotency: super::ToolIdempotency::PureRead,
-                },
-                Some(PROJECT_READ),
-                true,
-                NoPath,
-                false,
-                false,
-                super::ToolSessionEvidencePolicy::NONE.review(super::ToolReviewEvidence::ReadOnlyInspection),
-            )
-            .with_composition_policy(super::ToolCompositionPolicy::Parallel)
-            .with_host_orchestration_hint(
-                super::ToolHostOrchestrationHint::independent_parallel_read(),
-            ),
-            "Deterministic bounded committed-range review map for broad or unknown ranges when a file/change map helps choose targeted git_diff_hunks/read_files. Small bounded understood committed diffs may use native Git directly. Does not judge correctness and never mutates the repository.",
-        ))),
-        120,
-    ),
+    change_summary_like(git_like(model_spec(
+        def(
+            "git_review_summary",
+            super::ToolAuditPolicy::typed_fields(&[
+                super::ToolAuditResultField::value("project"),
+                super::ToolAuditResultField::value("scope"),
+                super::ToolAuditResultField::value("stats"),
+                super::ToolAuditResultField::value("coverage"),
+                super::ToolAuditResultField::value("truncation"),
+                super::ToolAuditResultField::value("deterministic"),
+                super::ToolAuditResultField::value("llm_summary"),
+                super::ToolAuditResultField::value("truncated"),
+                super::ToolAuditResultField::value("reason_code"),
+                super::ToolAuditResultField::array_len("signal_count", "signals"),
+                super::ToolAuditResultField::array_len("file_count", "files"),
+            ])
+            .drop_null_request_values(),
+            ModelVisible,
+            TOOL_CATEGORY_GIT,
+            Some(GitOrShell),
+            TOOL_PROVIDER_RUNNER,
+            super::ToolSemanticContract {
+                effect: super::ToolEffect::Observe,
+                risk: Read,
+                approval: super::ToolApprovalPolicy::None,
+                idempotency: super::ToolIdempotency::PureRead,
+            },
+            Some(PROJECT_READ),
+            true,
+            NoPath,
+            false,
+            false,
+            super::ToolSessionEvidencePolicy::NONE
+                .review(super::ToolReviewEvidence::ReadOnlyInspection),
+        )
+        .with_composition_policy(super::ToolCompositionPolicy::Parallel)
+        .with_host_orchestration_hint(super::ToolHostOrchestrationHint::independent_parallel_read()),
+        "Specialist exact committed-range review map retained for explicit discovery. Ordinary review uses review_changes; use this only when a dedicated committed file/class/symbol map is specifically needed. Read-only.",
+    ))),
     adaptive_runtime_direct(
         change_summary_like(git_like(model_spec(
             def(
@@ -66,7 +62,9 @@ pub(super) const SUMMARY_DEFINITIONS: &[ToolDefinition] = &[
                     super::ToolAuditResultField::array_len("signal_count", "signals"),
                     super::ToolAuditResultField::array_len("file_count", "files"),
                 ])
-                .session_input(super::ToolAuditSessionInputPolicy::OmitTopLevel(&["continuation"])),
+                .session_input(super::ToolAuditSessionInputPolicy::OmitTopLevel(&[
+                    "continuation",
+                ])),
                 ModelVisible,
                 TOOL_CATEGORY_GIT,
                 Some(GitOrShell),
@@ -91,8 +89,8 @@ pub(super) const SUMMARY_DEFINITIONS: &[ToolDefinition] = &[
         ))),
         135,
     ),
-    adaptive_runtime_direct(
-        change_summary_like(git_like(model_spec(
+    change_summary_like(git_like(
+        model_spec(
             def(
                 "show_changes",
                 super::ToolAuditPolicy::TYPED_CANONICAL.context(
@@ -122,14 +120,18 @@ pub(super) const SUMMARY_DEFINITIONS: &[ToolDefinition] = &[
                 NoPath,
                 false,
                 false,
-                super::ToolSessionEvidencePolicy::NONE.review(super::ToolReviewEvidence::WorkspaceReview).diff_review(super::ToolDiffReviewEvidence::ArgumentBool("include_diff")),
-            ).with_composition_policy(super::ToolCompositionPolicy::Parallel),
-            "Canonical bounded workspace-wide review when a worktree overview, compact Session signals, or structured closeout evidence is useful; tiny targeted Git observations need not call it first. Read-only; recent Session event history is omitted unless session_event_limit is explicitly positive. If hunks truncate, diff_review_handoff classifies page/line/mixed truncation and provides a parser-ready git_diff_hunks recovery call.",
-        ).with_gpt_action_description("Review current worktree changes and optional bounded diff hunks before handoff. If diff output truncates, follow the returned git_diff_hunks recovery call. Read-only; recent Session event history is opt-in."))),
-        130,
-    ),
+                super::ToolSessionEvidencePolicy::NONE
+                    .review(super::ToolReviewEvidence::WorkspaceReview)
+                    .diff_review(super::ToolDiffReviewEvidence::ArgumentBool("include_diff")),
+            )
+            .with_composition_policy(super::ToolCompositionPolicy::Parallel),
+            "Specialist workspace projection retained for explicit discovery, presentation, Session signals, and closeout internals. Ordinary code review uses review_changes. Read-only; recent Session event history is opt-in.",
+        )
+        .with_gpt_action_description(
+            "Specialist workspace projection for explicit discovery, presentation, Session signals, and closeout internals. Ordinary code review uses review_changes. Read-only.",
+        ),
+    )),
 ];
-
 pub(super) const DETAIL_DEFINITIONS: &[ToolDefinition] = &[
     require_all_scopes(git_like(model_spec(
         def(
@@ -182,8 +184,8 @@ pub(super) const DETAIL_DEFINITIONS: &[ToolDefinition] = &[
         ),
         "Run git status --porcelain for a project.",
     )),
-    adaptive_runtime_direct(
-        change_summary_like(git_like(model_spec(
+    change_summary_like(git_like(
+        model_spec(
             def(
                 "git_diff_hunks",
                 super::ToolAuditPolicy::typed_fields(&[
@@ -217,16 +219,20 @@ pub(super) const DETAIL_DEFINITIONS: &[ToolDefinition] = &[
                 NoPath,
                 false,
                 false,
-                super::ToolSessionEvidencePolicy::NONE.review(super::ToolReviewEvidence::DiffReview).diff_review(super::ToolDiffReviewEvidence::Always),
+                super::ToolSessionEvidencePolicy::NONE
+                    .review(super::ToolReviewEvidence::DiffReview)
+                    .diff_review(super::ToolDiffReviewEvidence::Always),
             )
             .with_composition_policy(super::ToolCompositionPolicy::Parallel)
             .with_host_orchestration_hint(
                 super::ToolHostOrchestrationHint::independent_parallel_read(),
             ),
-            "Targeted/paged diff review with scope/fence-bound opaque continuation for worktree/cached or exact base/head ranges; use when safe bounded traversal matters. max_page_bytes controls the raw producer page and defaults to the input-schema shared safe producer maximum; it is separate from the 512 KiB final model-facing result ceiling. Copy continuation only through the returned parser-ready next_call. recovery.later_hunks.next_call means the next logical diff record, never an intra-hunk cursor. recovery.current_hunk.next_call is current-hunk-only: bounded refinement when independently proven, or the existing exact hunk-fragment token at the next complete diff line. Line-budget and page-byte-budget truncation may both use that fragment only with proven positive complete-line progress; otherwise fixed ceilings advertise no recovery when safe forward progress is not proven. Read-only.",
-        ).with_gpt_action_description("Read bounded diff hunks for worktree/cached or exact base/head ranges. Follow recovery.later_hunks only for the next logical record; use recovery.current_hunk for returned exact complete-line hunk continuation when proven safe. Never guess offsets."))),
-        125,
-    ),
+            "Specialist exact diff paging core retained for explicit discovery and review_changes internals. Preserves source fences, bounded page/hunk continuation, path/range projection, and safe recovery. Read-only.",
+        )
+        .with_gpt_action_description(
+            "Specialist exact bounded diff paging for explicit discovery and review_changes internals. Preserve returned opaque continuation and exact source/paging inputs; never guess offsets.",
+        ),
+    )),
     git_like(model_spec(
         def(
             "git_log",

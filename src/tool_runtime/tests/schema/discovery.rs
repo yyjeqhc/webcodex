@@ -526,6 +526,7 @@ fn expected_cross_listed_discovery_groups(tool: &str) -> Option<&'static [&'stat
         | "save_project_artifact" => Some(&["edit", "file_transfer"]),
         "git_diff_hunks" => Some(&["git", "inspect", "review"]),
         "git_review_summary" => Some(&["git", "inspect", "review"]),
+        "review_changes" => Some(&["git", "inspect", "review"]),
         "git_log" => Some(&["git", "inspect", "review"]),
         "git_restore_paths" => Some(&["cleanup", "git"]),
         "git_status" => Some(&["git", "inspect", "review"]),
@@ -636,8 +637,12 @@ fn tool_discovery_groups_drive_tool_categories() {
         );
     }
 
-    let exact_discovery_only = ["attach_agent_endpoint"]
-        .into_iter()
+    let exact_discovery_only = std::iter::once("attach_agent_endpoint")
+        .chain(
+            webcodex_tool_contracts::EXACT_DISCOVERY_SPECIALIST_TOOL_NAMES
+                .iter()
+                .copied(),
+        )
         .collect::<BTreeSet<_>>();
     let mut omitted_from_groups = BTreeSet::new();
     for definition in model_visible_tool_definitions() {
@@ -676,8 +681,8 @@ fn tool_discovery_groups_drive_tool_categories() {
         "code_mode_exec",
         "discard_untracked",
         "finish_coding_task",
-        "git_diff_hunks",
         "git_log",
+        "review_changes",
         "git_restore_paths",
         "git_status",
         "list_runners",
@@ -687,7 +692,6 @@ fn tool_discovery_groups_drive_tool_categories() {
         "run_process",
         "run_script",
         "runtime_status",
-        "show_changes",
         "work_on_project",
         #[cfg(feature = "workspace-checkpoints")]
         "workspace_checkpoint_create",
@@ -796,7 +800,6 @@ fn tool_manifest_compact_categories_match_single_tool_definition_category() {
             definition.name
         );
     }
-
     let tools = manifest["tools"].as_array().expect("tool_manifest tools");
     assert_eq!(
         tools.len(),
@@ -1236,8 +1239,7 @@ async fn tool_manifest_intent_coding_returns_ranked_compact_tools() {
         "observe_jobs",
         "cargo_check",
         "cargo_test",
-        "show_changes",
-        "git_diff_hunks",
+        "review_changes",
     ] {
         let tool = result.output["tools"]
             .as_array()

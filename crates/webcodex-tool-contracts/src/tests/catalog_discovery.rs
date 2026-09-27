@@ -434,7 +434,7 @@ fn tool_categories_and_recommended_flows_are_well_formed() {
         assert!(validation.iter().any(|value| value == name));
     }
     let review = categories[TOOL_DISCOVERY_GROUP_REVIEW].as_array().unwrap();
-    assert!(review.iter().any(|value| value == "git_diff_hunks"));
+    assert!(review.iter().any(|value| value == "review_changes"));
     assert!(review
         .iter()
         .any(|value| value == "workspace_hygiene_check"));
@@ -444,11 +444,26 @@ fn tool_categories_and_recommended_flows_are_well_formed() {
         "read_files",
         "run_shell",
         "search_project_texts",
-        "show_changes",
+        "review_changes",
     ] {
         assert!(
             inspect.iter().any(|value| value == name),
             "inspect category: {name}"
+        );
+    }
+    let git = categories[TOOL_DISCOVERY_GROUP_GIT].as_array().unwrap();
+    for specialist in EXACT_DISCOVERY_SPECIALIST_TOOL_NAMES {
+        assert!(
+            !review.iter().any(|value| value == specialist),
+            "review category must keep {specialist} exact-discovery-only"
+        );
+        assert!(
+            !inspect.iter().any(|value| value == specialist),
+            "inspect category must keep {specialist} exact-discovery-only"
+        );
+        assert!(
+            !git.iter().any(|value| value == specialist),
+            "git category must keep {specialist} exact-discovery-only"
         );
     }
     for compatibility_primitive in ["git_diff", "git_diff_summary"] {
@@ -456,16 +471,12 @@ fn tool_categories_and_recommended_flows_are_well_formed() {
             !inspect.iter().any(|value| value == compatibility_primitive),
             "inspect category should prefer canonical tools over {compatibility_primitive}"
         );
-    }
-    let git = categories[TOOL_DISCOVERY_GROUP_GIT].as_array().unwrap();
-    for compatibility_primitive in ["git_diff", "git_diff_summary"] {
         assert!(
             !git.iter().any(|value| value == compatibility_primitive),
             "git category should not recommend {compatibility_primitive}"
         );
+        assert!(!review.iter().any(|value| value == compatibility_primitive));
     }
-    assert!(!review.iter().any(|value| value == "git_diff"));
-    assert!(!review.iter().any(|value| value == "git_diff_summary"));
     let edit = categories[TOOL_DISCOVERY_GROUP_EDIT].as_array().unwrap();
     let edit_prefix = edit
         .iter()
@@ -805,15 +816,20 @@ fn audit_and_exploration_intents_prefer_canonical_batch_and_review_tools() {
         .iter()
         .find(|intent| intent.name == "audit")
         .unwrap();
-    assert!(audit.tools.contains(&"show_changes"));
-    assert!(audit.tools.contains(&"git_diff_hunks"));
+    assert!(audit.tools.contains(&"review_changes"));
+    for specialist in EXACT_DISCOVERY_SPECIALIST_TOOL_NAMES {
+        assert!(!audit.tools.contains(specialist), "{specialist}");
+    }
     assert!(!audit.tools.contains(&"git_diff_summary"));
 
     let release = TOOL_MANIFEST_INTENTS
         .iter()
         .find(|intent| intent.name == "release")
         .unwrap();
-    assert!(release.tools.contains(&"show_changes"));
+    assert!(release.tools.contains(&"review_changes"));
+    for specialist in EXACT_DISCOVERY_SPECIALIST_TOOL_NAMES {
+        assert!(!release.tools.contains(specialist), "{specialist}");
+    }
     assert!(!release.tools.contains(&"git_diff_summary"));
 }
 
@@ -867,8 +883,7 @@ fn coding_intent_has_independent_ordered_canonical_selection_surface() {
         "observe_jobs",
         "cargo_check",
         "cargo_test",
-        "show_changes",
-        "git_diff_hunks",
+        "review_changes",
         "workspace_hygiene_check",
         "finish_coding_task",
         "run_script",

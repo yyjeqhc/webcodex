@@ -26,6 +26,11 @@ pub const TOOL_DISCOVERY_GROUP_VALIDATION: &str = "validation";
 pub const EXACT_MANIFEST_SPECIALIST_TOOL_NAMES: &[&str] =
     &["apply_patch", "apply_unified_diff", "write_project_file"];
 
+/// Model-visible read specialists omitted from ordinary discovery/direct routing.
+/// They remain callable after exact-name discovery through the canonical gateway.
+pub const EXACT_DISCOVERY_SPECIALIST_TOOL_NAMES: &[&str] =
+    &["git_diff_hunks", "git_review_summary", "show_changes"];
+
 pub const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
     ToolDiscoveryGroup {
         name: TOOL_DISCOVERY_GROUP_INSPECT,
@@ -55,10 +60,7 @@ pub const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
             "lsp_status",
             "list_project_files",
             "review_changes",
-            "show_changes",
             "git_status",
-            "git_review_summary",
-            "git_diff_hunks",
             "git_log",
             #[cfg(feature = "workspace-checkpoints")]
             "workspace_checkpoint_list",
@@ -142,10 +144,7 @@ pub const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
             "git_commit_paths",
             "review_changes",
             "git_status",
-            "git_review_summary",
-            "git_diff_hunks",
             "git_log",
-            "show_changes",
             "git_restore_paths",
             "discard_untracked",
             #[cfg(feature = "workspace-checkpoints")]
@@ -161,9 +160,6 @@ pub const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
             "present_work_result",
             "review_changes",
             "workspace_hygiene_check",
-            "show_changes",
-            "git_review_summary",
-            "git_diff_hunks",
             "git_log",
             "git_status",
             #[cfg(feature = "workspace-checkpoints")]
@@ -432,7 +428,7 @@ pub const TOOL_RECOMMENDED_FLOWS: &[ToolRecommendedFlow] = &[
             "run_process",
             "run_script",
             "run_shell",
-            "show_changes",
+            "review_changes",
         ],
     },
     ToolRecommendedFlow {
@@ -578,10 +574,8 @@ pub const CODING_INTENT_TOOL_NAMES: &[&str] = &[
     "go_test",
     #[cfg(feature = "experimental-code-mode")]
     "code_mode_exec_effectful",
-    // Worktree and committed-range review.
-    "git_review_summary",
-    "git_diff_hunks",
-    "show_changes",
+    // Primary ordinary review plus authoritative hygiene/closeout.
+    "review_changes",
     "workspace_hygiene_check",
     "finish_coding_task",
 ];
@@ -610,9 +604,7 @@ pub const TOOL_MANIFEST_INTENTS: &[ToolManifestIntent] = &[
             "list_project_files",
             "git_status",
             "git_log",
-            "git_review_summary",
-            "git_diff_hunks",
-            "show_changes",
+            "review_changes",
             "workspace_hygiene_check",
             "finish_coding_task",
             "session_handoff_summary",
@@ -665,7 +657,7 @@ pub const TOOL_MANIFEST_INTENTS: &[ToolManifestIntent] = &[
             "validation_summary",
             "observe_jobs",
             "list_jobs",
-            "show_changes",
+            "review_changes",
             "finish_coding_task",
         ],
     },

@@ -217,18 +217,12 @@ pub(crate) fn supports_control_sidecars(tool: &str) -> bool {
         )
 }
 
-pub(crate) fn strip_control_sidecars(
-    arguments: &mut Value,
-    tool: &str,
+pub(crate) fn parse_control_sidecars(
+    value: Value,
+    _tool: &str,
     admitted: bool,
 ) -> Result<Option<ControlSidecars>, &'static str> {
-    let Some(value) = arguments
-        .as_object_mut()
-        .and_then(|args| args.remove(CONTROL_FIELD))
-    else {
-        return Ok(None);
-    };
-    if !admitted || !supports_control_sidecars(tool) {
+    if !admitted {
         return Err("_control is unavailable on this tool or adapter");
     }
     // Do not interpolate serde errors: unknown fields/variants can contain
@@ -238,6 +232,24 @@ pub(crate) fn strip_control_sidecars(
     })
 }
 
+#[cfg(test)]
+pub(crate) fn strip_control_sidecars(
+    arguments: &mut Value,
+    tool: &str,
+    admitted: bool,
+) -> Result<Option<ControlSidecars>, &'static str> {
+    if !admitted || !supports_control_sidecars(tool) {
+        return Err("_control is unavailable on this tool or adapter");
+    }
+
+    let Some(value) = arguments
+        .as_object_mut()
+        .and_then(|args| args.remove(CONTROL_FIELD))
+    else {
+        return Ok(None);
+    };
+    parse_control_sidecars(value, tool, admitted)
+}
 fn phase_schema(kinds: &[&str]) -> Value {
     let mut properties = serde_json::Map::new();
     for kind in kinds {

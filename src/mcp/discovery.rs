@@ -32,8 +32,7 @@ pub(super) fn compact_tool(tool: &mut Value) {
     }
     if let Some(schema) = tool.get_mut("inputSchema") {
         compact_input_descriptions(schema);
-        compact_control_sidecar(schema);
-        compact_window_reply_sidecar(schema);
+        compact_invocation_envelope(schema);
         if name == "edit_project_files" {
             compact_primary_editor_schema(schema);
         }
@@ -47,23 +46,11 @@ pub(super) fn compact_tool(tool: &mut Value) {
                 }
             }
         }
-        // Only root protocol wrappers: never business session_id, paths, Job
-        // identities or fences. Preserve shapes/requiredness/bounds; remove only
-        // repeated copy. Full discovery and the canonical parser remain strict.
-        for (field, hint) in [
-            ("recording_session_id", "Recorder Session ID/ref; never business authority."),
-            ("ack_session_message_ids", "Retained wc_msg_* IDs to ACK; does not resolve."),
-            ("ack_ref", ""),
-            ("session_message_resolution", "Handled non-todo message; requires recording_session_id."),
-            ("context_request", "Sidecar keys: project.instructions, webcodex.workflow, jobs.attention, skills.catalog, plugins.catalog, memory.bootstrap."),
-        ] {
-            if let Some(property) = schema.pointer_mut(&format!("/properties/{field}")) {
-                let had_description = property.get("description").is_some();
-                strip_wrapper_descriptions(property);
-                if had_description && !hint.is_empty() {
-                    property["description"] = Value::String(hint.into());
-                }
-            }
+        if let Some(envelope) = schema.pointer_mut("/properties/_wc") {
+            strip_wrapper_descriptions(envelope);
+            envelope["description"] = Value::String(
+                "Optional invocation sidecars; omit when unused. Never grants authority.".into(),
+            );
         }
         compact_discovery_validation_annotations(schema);
     }
@@ -144,28 +131,25 @@ fn strip_wrapper_descriptions(schema: &mut Value) {
     }
 }
 
-fn compact_window_reply_sidecar(schema: &mut Value) {
-    let Some(reply) = schema
-        .pointer_mut("/properties/window_reply")
+fn compact_invocation_envelope(schema: &mut Value) {
+    let Some(envelope) = schema
+        .pointer_mut("/properties/_wc")
         .filter(|value| value.is_object())
     else {
         return;
     };
-    *reply = serde_json::json!({"type": "object"});
-}
-
-fn compact_control_sidecar(schema: &mut Value) {
-    let Some(control) = schema
-        .pointer_mut("/properties/_control")
-        .filter(|value| value.is_object())
-    else {
-        return;
-    };
-    // Full MCP discovery retains the exact closed per-kind canonical schemas.
-    // Compact discovery is only a model-selection copy, so do not repeat those
-    // large canonical payload schemas on every ordinary tool. Runtime stripping,
-    // closed enum parsing, and canonical ToolCall parsing remain unchanged.
-    *control = serde_json::json!({"type": "object"});
+    strip_wrapper_descriptions(envelope);
+    if let Some(properties) = envelope
+        .get_mut("properties")
+        .and_then(Value::as_object_mut)
+    {
+        if properties.contains_key("reply") {
+            properties.insert("reply".to_string(), serde_json::json!({"type": "object"}));
+        }
+        if properties.contains_key("control") {
+            properties.insert("control".to_string(), serde_json::json!({"type": "object"}));
+        }
+    }
 }
 
 fn compact_discovery_validation_annotations(schema: &mut Value) {
@@ -175,15 +159,15 @@ fn compact_discovery_validation_annotations(schema: &mut Value) {
     // use their original schemas/parsers, never this owned presentation copy.
     for (pointer, pattern) in [
         (
-            "/properties/recording_session_id",
+            "/properties/_wc/properties/record",
             RECORDING_SESSION_SELECTOR_SCHEMA_PATTERN,
         ),
         (
-            "/properties/ack_session_message_ids/items",
+            "/properties/_wc/properties/ack/items",
             "^wc_msg_([A-Za-z0-9_-]{16}|[0-9a-f]{32})$",
         ),
         (
-            "/properties/session_message_resolution/properties/message_id",
+            "/properties/_wc/properties/resolve/properties/message_id",
             "^wc_msg_([A-Za-z0-9_-]{16}|[0-9a-f]{32})$",
         ),
     ] {

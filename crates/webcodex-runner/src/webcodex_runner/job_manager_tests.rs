@@ -3239,6 +3239,14 @@ fn structured_script_job_keeps_its_temporary_file_until_terminal_then_removes_it
         "the Runner-owned script file was removed while its one execution was still running"
     );
     assert_eq!(std::fs::read_to_string(&marker).unwrap().lines().count(), 1);
+    assert!(
+        wait_until(Duration::from_secs(30), || {
+            manager.inventory().jobs.iter().any(|snapshot| {
+                snapshot.job_id == "structured-script" && snapshot.status == "running"
+            })
+        }),
+        "structured script never published its running lifecycle after the child started"
+    );
     let active = manager
         .inventory()
         .jobs

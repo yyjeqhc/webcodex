@@ -21,7 +21,7 @@ fn tool_specs_describe_default_coding_loop_preferences() {
         "exact resume",
         "active accessible session",
         "never guesses prior session",
-        "context_request",
+        "_wc.context",
         "project.instructions",
         "webcodex.workflow",
         "guidance_profile",

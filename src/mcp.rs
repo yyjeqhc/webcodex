@@ -720,8 +720,9 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
     // The shared kernel timer is authoritative for completed runtime calls. Keep
     // one outer emergency timer only so the MCP hard-timeout path does not erase
     // an otherwise established runtime invocation from ergonomics telemetry.
-    let mut hard_timeout_model_ergonomics =
-        tool_name.as_deref().and_then(ModelErgonomicsTimer::start);
+    let mut hard_timeout_model_ergonomics = tool_name.as_deref().and_then(|name| {
+        ModelErgonomicsTimer::start_with_arguments(name, &request.params["arguments"])
+    });
     let mut tool_correlation = crate::tool_runtime::ToolCallCorrelation::default();
     let mut model_ergonomics = None;
     // Window liveness needs request correlation even when trace retention is off.

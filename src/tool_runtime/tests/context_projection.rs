@@ -315,6 +315,18 @@ async fn work_on_project_static_context_is_explicit_and_primary_output_stays_com
     let workflow = context_material(&requested, "webcodex.workflow");
     assert_eq!(workflow["status"], "available");
     assert_eq!(workflow["projection"]["tool_strategy"]["profile"], "direct");
+    let facts = serde_json::to_value(
+        super::super::model_ergonomics_telemetry::invocation::BootstrapFacts::from_output(
+            &requested.output,
+        ),
+    )
+    .unwrap();
+    assert_eq!(facts["instructions_available"], true);
+    assert_eq!(facts["instructions_content_included"], true);
+    assert_eq!(facts["instructions_truncated"], false);
+    assert_eq!(facts["instruction_source_count"], 1);
+    assert_eq!(facts["workflow_available"], true);
+    assert!(!facts.to_string().contains("WORK_ON_PROJECT_CONTEXT_RULE"));
 }
 
 #[cfg(feature = "experimental-code-mode")]

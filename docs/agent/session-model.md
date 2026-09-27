@@ -138,7 +138,7 @@ Project scope is fail-closed. An explicit project-scoped business Session or rec
 
 The JSON ledger restores only the current version-2 top-level shape and canonical current Session rows. Pre-current ledger versions are rejected rather than migrated. Within v2, fields explicitly declared optional/default may be absent and restore conservatively. The retired `context_revision` members are accepted only through explicit read-only compatibility sinks and are never restored into live Session state or re-emitted; other unknown row members still fail that row closed. General `ClientWindow` support remains available to explicitly designed non-Workflow observations; Workflow Sessions do not use it for selection or authority.
 Optional explicit control mutations may also use the Stateless MCP 2026
-[`_control` sidecar contract](control-sidecars.md). Each phase admits one mutation
+[`_wc.control` sidecar contract](control-sidecars.md). Each phase admits one mutation
 with its canonical authority and replay fences; standalone tools remain valid.
 
 ### Assignment-fenced todo completion
@@ -199,7 +199,7 @@ fences, completion keys, message-observation tokens, and their durable revision
 keep their existing semantics. A handoff neither ACKs nor resolves a message and
 grants no authority.
 
-Stateless MCP 2026 tools also accept an explicit bounded `context_request` wrapper sidecar request. It is independent of collaboration ACKs and handoff recovery and is removed before concrete `ToolCall` parsing. A static canonical material registry authorizes every requested material before its provider is read: `webcodex.workflow` is public; `project.instructions` requires the resolved Project plus `project:read`; `jobs.attention` requires the exact resolved Project plus canonical `runtime:read` and reuses the authorized active-Job summary (at most eight recent Jobs) without selecting a business Session; `skills.catalog` additionally requires the admitted Skill runtime protocol capability; `plugins.catalog` requires the resolved Project plus both `project:read` and `plugin:inspect`; and `memory.bootstrap` requires the admitted Memory protocol capability plus both `project:read` and `memory:read`. Scope or material-capability denial is nonfatal to the main ToolResult and returns a bounded unavailable material without provider content. Unknown material keys are nonfatal and remain open-ended at the MCP schema layer. Sidecar material is projected only after the main tool effect or observation has completed, never grants authority, never retroactively makes requested guidance a precondition of that effect, never records caller-read state, and never infers a Project or model-memory state from a Workflow Session, connection, credential, `Mcp-Session-Id`, or hidden window identity. A model that has lost Project rules or durable Memory guidance must recover `project.instructions` and/or `memory.bootstrap` on an observation call, use `memory_read` when detailed Memory content is needed, reason over that context, and only then issue a later mutation that must obey it. Legacy MCP and generic REST/GPT Actions/OpenAPI do not expose this sidecar request contract.
+Stateless MCP 2026 tools also accept an explicit bounded `_wc.context` envelope sidecar request. It is independent of collaboration ACKs and handoff recovery and is removed before concrete `ToolCall` parsing. A static canonical material registry authorizes every requested material before its provider is read: `webcodex.workflow` is public; `project.instructions` requires the resolved Project plus `project:read`; `jobs.attention` requires the exact resolved Project plus canonical `runtime:read` and reuses the authorized active-Job summary (at most eight recent Jobs) without selecting a business Session; `skills.catalog` additionally requires the admitted Skill runtime protocol capability; `plugins.catalog` requires the resolved Project plus both `project:read` and `plugin:inspect`; and `memory.bootstrap` requires the admitted Memory protocol capability plus both `project:read` and `memory:read`. Scope or material-capability denial is nonfatal to the main ToolResult and returns a bounded unavailable material without provider content. Unknown material keys are nonfatal and remain open-ended at the MCP schema layer. Sidecar material is projected only after the main tool effect or observation has completed, never grants authority, never retroactively makes requested guidance a precondition of that effect, never records caller-read state, and never infers a Project or model-memory state from a Workflow Session, connection, credential, `Mcp-Session-Id`, or hidden window identity. A model that has lost Project rules or durable Memory guidance must recover `project.instructions` and/or `memory.bootstrap` on an observation call, use `memory_read` when detailed Memory content is needed, reason over that context, and only then issue a later mutation that must obey it. Legacy MCP and generic REST/GPT Actions/OpenAPI do not expose this sidecar request contract.
 
 Project Memory is a separate durable knowledge plane from Workflow Session continuity. `memory_search`/`memory_read` require both `project:read` and `memory:read`; `memory_set`/`memory_delete` require both `project:write` and `memory:manage`, with mutations still passing the independent permission evaluator. Direct shared-key runtime credentials explicitly carry both Memory scopes, while Open Anonymous, ProjectCredential, Project Share, and legacy/default OAuth client scope sets do not gain them from project scopes. A Memory `memory_key` is logical semantic identity, `memory_id` identifies the current incarnation, the internal `definition_hash` identifies canonical model-relevant content, and model-facing `revision` is a generation-bound state ETag/CAS identity; delete and identical recreate therefore produce a different `memory_id` and `revision`. Session events never create or consolidate Memory automatically. `ack_session_message_ids` and Session `ack_ref` are limited to ACK-required collaboration messages and never acknowledge Memory. Memory reads/searches may leave bounded metadata-only consequences in Session history, but Memory bodies, summaries, search results, and `memory.bootstrap` projections are not copied into durable Session recovery. Re-registering the same runtime Project id to a different authoritative registered root resolves to a distinct internal Memory scope rather than inheriting the old root's Memory.
 
@@ -450,7 +450,7 @@ same `wc_sess_*` may be explicitly resumed by multiple independent ChatGPT
 conversations. Its primary result therefore stays compact: static Project
 instruction bodies and WebCodex workflow guidance are projected only when the
 caller explicitly requests `project.instructions` and/or `webcodex.workflow`
-through `context_request`. Omission means no static material, not an inferred
+through `_wc.context`. Omission means no static material, not an inferred
 retention state. `include_extension_catalog` remains a separate caller-explicit
 selection-metadata preference.
 
@@ -762,7 +762,7 @@ validation rejects the call before kernel entry or the MCP hard dispatch timeout
 prevents kernel completion. Batch items do not create generic invocation records,
 and hidden/internal helpers do not start this telemetry.
 
-The current durable generic record uses `schema_version = 10`. Older telemetry rows
+The current durable generic record uses `schema_version = 11`. Older telemetry rows
 remain naturally queryable and are not migrated or backfilled. The current
 record contains:
 
@@ -777,7 +777,24 @@ record contains:
   Exact serial predecessor links remain outer Action Audit metadata; they do
   not infer model turns or supply Workflow Session authority.
 
-Context-ACK presence/status and recovery-delta byte/event metrics are retired.
+Invocation behavior is recorded in `invocation`: presence of record/ack/ack_ref/
+reply/resolve/context/control, bounded ACK/request/unknown-key counts, a boolean
+map for the seven known context keys, and closed before/after-success control
+kinds. MCP captures the supplied envelope before stripping it, including explicit
+empty arrays; other kernel adapters project their typed invocation metadata.
+`bootstrap` on work_on_project records final material availability, instruction
+content inclusion/truncation/source count, observed instruction/workspace/semantic
+status and Skills/Plugins availability/count/truncation. Null means unobserved,
+not false. Counts saturate at 1024. `instruction_read` on read_files records only
+AGENTS.md/CLAUDE.md basename booleans, enabling later sequence analysis without
+persisting paths. These are observations, not a Runtime duplicate-call detector.
+
+Metadata trace/ActionAudit retains these facts without full trace. Full trace
+continues to own raw/effective debugging payloads. No Session/message/Goal/task
+IDs, selectors, opaque refs, reply/resolution/control text, unknown key strings,
+paths, branches, hashes, fingerprints, revision or idempotency tokens enter these
+new facts. Request presence never proves successful authorization or delivery;
+use final result/material facts separately. Older rows are not backfilled.
 Generic final-result byte size and latency remain available without retaining
 revision values or recovery bodies.
 

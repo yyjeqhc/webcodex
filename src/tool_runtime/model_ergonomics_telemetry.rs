@@ -4,6 +4,7 @@
 //! latency and transports finalize the record from the exact model-facing
 //! `ToolResult` projection before attaching it to the existing Action Audit row.
 
+pub(crate) mod invocation;
 pub(crate) mod job_convergence;
 
 use super::edit_tool_telemetry::{edit_tool_surface, EditToolSurface};
@@ -87,6 +88,8 @@ pub(crate) struct ModelErgonomicsTimer {
     started: Instant,
     finish_summary_only: Option<bool>,
     work_on_project: Option<WorkOnProjectErgonomicsFacts>,
+    pub(crate) invocation: invocation::InvocationFacts,
+    pub(crate) instruction_read: Option<invocation::InstructionReadFacts>,
     bulk_exact_requested: bool,
 }
 
@@ -97,6 +100,8 @@ pub(crate) struct ModelErgonomicsCompletion {
     duration_ms: u64,
     finish_summary_only: Option<bool>,
     work_on_project: Option<WorkOnProjectErgonomicsFacts>,
+    pub(crate) invocation: invocation::InvocationFacts,
+    pub(crate) instruction_read: Option<invocation::InstructionReadFacts>,
     bulk_exact_requested: bool,
     pub(crate) job_convergence: Option<job_convergence::JobConvergenceRecord>,
 }
@@ -104,6 +109,11 @@ pub(crate) struct ModelErgonomicsCompletion {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub(crate) struct ModelErgonomicsRecord {
     pub(crate) schema_version: u8,
+    pub(crate) invocation: invocation::InvocationFacts,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) instruction_read: Option<invocation::InstructionReadFacts>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) bootstrap: Option<invocation::BootstrapFacts>,
     pub(crate) tool_name: &'static str,
     pub(crate) tool_category: &'static str,
     pub(crate) success: bool,
@@ -166,6 +176,7 @@ impl ModelErgonomicsTimer {
         );
     }
 
+    #[cfg(test)]
     pub(crate) fn start(tool_name: &str) -> Option<Self> {
         Self::start_with_arguments(tool_name, &Value::Null)
     }
@@ -203,6 +214,10 @@ impl ModelErgonomicsTimer {
 
             finish_summary_only,
             work_on_project,
+            invocation: invocation::InvocationFacts::from_arguments(arguments),
+            instruction_read: invocation::InstructionReadFacts::from_arguments(
+                tool_name, arguments,
+            ),
             bulk_exact_requested,
         })
     }
@@ -216,6 +231,8 @@ impl ModelErgonomicsTimer {
 
             finish_summary_only: self.finish_summary_only,
             work_on_project: self.work_on_project,
+            invocation: self.invocation.clone(),
+            instruction_read: self.instruction_read.clone(),
             bulk_exact_requested: self.bulk_exact_requested,
             job_convergence: None,
         }
@@ -230,6 +247,8 @@ impl ModelErgonomicsTimer {
 
             finish_summary_only: self.finish_summary_only,
             work_on_project: self.work_on_project,
+            invocation: self.invocation.clone(),
+            instruction_read: self.instruction_read.clone(),
             bulk_exact_requested: self.bulk_exact_requested,
             job_convergence: None,
         }
@@ -304,7 +323,11 @@ impl ModelErgonomicsCompletion {
         let edit = edit_facts(self.tool_name, success, output);
         let edit_uncertain = edit.outcome.as_deref() == Some("uncertain");
         ModelErgonomicsRecord {
-            schema_version: 10,
+            schema_version: 11,
+            invocation: self.invocation.clone(),
+            instruction_read: self.instruction_read.clone(),
+            bootstrap: (self.tool_name == "work_on_project")
+                .then(|| invocation::BootstrapFacts::from_output(output)),
             tool_name: self.tool_name,
             tool_category: self.tool_category,
             success,
@@ -696,7 +719,7 @@ mod tests {
         let record = completion("tool_manifest", 0)
             .record_for_tool_result(&ToolResult::ok(json!({})))
             .unwrap();
-        assert_eq!(record.schema_version, 10);
+        assert_eq!(record.schema_version, 11);
         assert_eq!(record.work_on_project, None);
         assert!(!serde_json::to_string(&record)
             .unwrap()
@@ -1003,7 +1026,7 @@ mod tests {
             let record = completion("edit_project_files", 0)
                 .record_for_tool_result(&result)
                 .unwrap();
-            assert_eq!(record.schema_version, 10);
+            assert_eq!(record.schema_version, 11);
             assert_eq!(record.edit_surface.as_deref(), Some("structured_or_patch"));
             assert_eq!(record.edit_outcome.as_deref(), outcome);
             assert_eq!(record.edit_conflict_kind.as_deref(), conflict_kind);
@@ -1051,7 +1074,7 @@ mod tests {
                     .finish_after(Duration::ZERO)
                     .record_for_tool_result(&ToolResult::ok(json!({"private_body": "do-not-copy"})))
                     .unwrap();
-            assert_eq!(record.schema_version, 10);
+            assert_eq!(record.schema_version, 11);
             assert_eq!(record.finish_summary_only, Some(expected));
             assert!(record.serialized_result_bytes.is_some());
             let serialized = serde_json::to_string(&record).unwrap();
@@ -1089,3 +1112,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "tests/invocation_ergonomics.rs"]
+mod invocation_tests;

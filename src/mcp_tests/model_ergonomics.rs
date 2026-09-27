@@ -320,7 +320,7 @@ async fn http_mcp_work_on_project_preferences_persist_without_private_request_va
     assert_eq!(events[0].operation.as_deref(), Some("work_on_project"));
     let summary: Value = serde_json::from_str(&events[0].summary_json).unwrap();
     let telemetry = &summary["model_ergonomics"];
-    assert_eq!(telemetry["schema_version"], 10);
+    assert_eq!(telemetry["schema_version"], 11);
     let facts = &telemetry["work_on_project"];
     assert_eq!(facts["resume_requested"], true);
     assert_eq!(facts["source"], "invalid");
@@ -541,4 +541,64 @@ async fn http_mcp_tools_list_audit_sink_failure_is_non_blocking() {
     assert_eq!(effective_status(&response), StatusCode::OK);
     let body: Value = response.take_json().await.unwrap();
     assert!(body["result"]["tools"].is_array());
+}
+
+#[allow(clippy::await_holding_lock)]
+#[tokio::test]
+async fn metadata_audit_retains_envelope_context_without_full_payloads() {
+    let mut env = crate::test_support::TestEnvGuard::new();
+    env.set("WEBCODEX_TOOL_REQUEST_TRACE", "metadata");
+    let config = test_config(Some("secret"));
+    let (_tmp, db) = test_db();
+    let service = Service::new(build_test_router(
+        config,
+        db.clone(),
+        Arc::new(test_runtime()),
+    ));
+    for (id, name, arguments) in [
+        (
+            901,
+            "runtime_status",
+            json!({"_wc": {"context": ["webcodex.workflow", "PRIVATE_UNKNOWN_CONTEXT"], "ack": []}}),
+        ),
+        (
+            902,
+            "work_on_project",
+            json!({"project": "PRIVATE_PROJECT", "instruction": "PRIVATE_PROMPT", "_wc": {"context": ["project.instructions", "webcodex.workflow"]}}),
+        ),
+    ] {
+        let mut response = TestClient::post("http://localhost/mcp")
+            .bearer_auth("secret")
+            .add_header(MCP_PROTOCOL_VERSION_HEADER, MCP_STATELESS_PROTOCOL_VERSION, true)
+            .add_header(MCP_METHOD_HEADER, "tools/call", true)
+            .add_header(MCP_NAME_HEADER, name, true)
+            .add_header("x-action-session-id", "metadata-envelope-audit", true)
+            .json(&json!({"jsonrpc": "2.0", "id": id, "method": "tools/call", "params": mcp_2026_params(json!({"name": name, "arguments": arguments}))}))
+            .send(&service).await;
+        let body: Value = response.take_json().await.unwrap();
+        if name == "runtime_status" {
+            assert_eq!(body["result"]["isError"], false, "{body}");
+        }
+    }
+    let events = db
+        .list_action_events("metadata-envelope-audit", 10)
+        .unwrap();
+    assert_eq!(events.len(), 2);
+    for event in events {
+        let summary: Value = serde_json::from_str(&event.summary_json).unwrap();
+        let facts = &summary["model_ergonomics"]["invocation"];
+        assert_eq!(facts["context_present"], true);
+        assert_eq!(facts["context_requested_count"], 2);
+        assert_eq!(facts["context_known"]["webcodex.workflow"], true);
+        if event.operation.as_deref() == Some("work_on_project") {
+            assert_eq!(facts["context_known"]["project.instructions"], true);
+        } else {
+            assert_eq!(facts["context_unknown_count"], 1);
+            assert_eq!(facts["ack_present"], true);
+            assert_eq!(facts["ack_count"], 0);
+        }
+        assert!(!summary["model_ergonomics"].to_string().contains("PRIVATE"));
+        assert!(summary.get("raw_arguments").is_none());
+        assert!(summary.get("effective_arguments").is_none());
+    }
 }

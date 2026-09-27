@@ -1903,6 +1903,7 @@ pub(super) fn parse_mcp_invocation_envelope(
     }
 
     for legacy in [
+        "_session_id",
         crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD,
         crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_MESSAGE_IDS_FIELD,
         crate::tool_runtime::sessions::TOOL_CALL_ACK_REF_FIELD,
@@ -2544,8 +2545,14 @@ pub(super) async fn handle_call(
             arguments.entry("compact").or_insert(json!(true));
         }
     }
+    let invocation_facts = crate::tool_runtime::model_ergonomics_telemetry::invocation::InvocationFacts::from_arguments(&raw_mcp_arguments);
     let mut pre_kernel_model_ergonomics =
         ModelErgonomicsTimer::start_with_arguments(&params.name, &params.arguments);
+    if stateless_2026 {
+        if let Some(timer) = pre_kernel_model_ergonomics.as_mut() {
+            timer.invocation = invocation_facts.clone();
+        }
+    }
     let artifact_presentation =
         resources::project_artifact_presentation_mode(&params.name, &params.arguments);
     let resource_tool_call = match resources::prepare_tool_call(
@@ -2661,7 +2668,12 @@ pub(super) async fn handle_call(
             },
         )
         .await;
-    let model_ergonomics_completion = outcome.model_ergonomics;
+    let mut model_ergonomics_completion = outcome.model_ergonomics;
+    if stateless_2026 {
+        if let Some(completion) = model_ergonomics_completion.as_mut() {
+            completion.invocation = invocation_facts;
+        }
+    }
     if let Some(slot) = correlation_out.as_deref_mut() {
         *slot = outcome.correlation.clone();
     }

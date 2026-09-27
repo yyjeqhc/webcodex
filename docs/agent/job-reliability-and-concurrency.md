@@ -69,7 +69,7 @@ terminal result reconciles the same Job, exact Project, Session, tool, and
 validation target. A successful replacement execution with a matching target
 must not erase an earlier unknown outcome.
 
-An ordinary observation can request `context_request=["jobs.attention"]`.
+An ordinary observation can request `_wc.context=["jobs.attention"]`.
 This is an explicit post-tool context material, not another execution or a
 business-tool argument. It reuses `active_jobs_summary` for the exact resolved
 Project, requires canonical `runtime:read` independently of `project:read`,
@@ -536,7 +536,7 @@ The current contract is implemented and tested primarily in:
 
 ## Server-only convergence measurement
 
-The existing Action Audit `summary.model_ergonomics` (schema version 10) adds
+The existing Action Audit `summary.model_ergonomics` (schema version 11) adds
 optional `job_convergence`. It records per-invocation `pending_handoff_count`,
 `passive_terminal_delivery_count`, `passive_failure_delivery_count`, and
 `wait_for_job_terminal_count`, plus at most nine bounded events. Wait counts

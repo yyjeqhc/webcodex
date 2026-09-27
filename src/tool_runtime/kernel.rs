@@ -348,6 +348,11 @@ impl ToolRuntime {
             let mut telemetry =
                 ModelErgonomicsTimer::start_with_arguments(&request.tool_name, &request.arguments);
             if let Some(telemetry) = telemetry.as_mut() {
+                telemetry.invocation =
+                    super::model_ergonomics_telemetry::invocation::InvocationFacts::from_metadata(
+                        &invocation_metadata,
+                        context.session_id.is_some(),
+                    );
                 telemetry.resolve_work_on_project_guidance_profile(
                     self.mcp_host_policy,
                     matches!(context.transport, ToolTransport::Mcp),

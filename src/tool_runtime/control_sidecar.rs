@@ -158,7 +158,7 @@ pub(crate) enum AfterSuccessControl {
 }
 
 impl BeforeControl {
-    fn kind(&self) -> &'static str {
+    pub(crate) fn kind(&self) -> &'static str {
         match self {
             Self::GoalProgress { .. } => "goal_progress",
             Self::WakeConsume { .. } => "wake_consume",
@@ -169,7 +169,7 @@ impl BeforeControl {
 }
 
 impl AfterSuccessControl {
-    fn kind(&self) -> &'static str {
+    pub(crate) fn kind(&self) -> &'static str {
         match self {
             Self::GoalCompletion { .. } => "goal_completion",
             Self::SessionClose { .. } => "session_close",

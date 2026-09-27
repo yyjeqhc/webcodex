@@ -337,7 +337,7 @@ The schema-v1 JSON summary reports, when evidence is available:
 - outer model-facing calls: total, meaningful, success/failure, and tool-name
   distribution;
 - Direct and Host Code Mode canonical-call counts from outer `model_ergonomics` records;
-- `host_short_chain`: exact same-Window serial transition count, multi-call chain count, calls participating in those chains, maximum chain length, and observed tool-pair distribution. This is ordering evidence only; `same_model_turn_proven` is always false because ActionAudit has no Host-cell/model-response identity;
+- `host_short_chain`: exact same-Window serial transition count, multi-call chain count, calls participating in those chains, maximum chain length, and observed tool-pair distribution. An exact predecessor outside the selected benchmark run is a chain boundary; a declared serial transition whose exact predecessor cannot be resolved makes the aggregate unavailable. This is ordering evidence only; `same_model_turn_proven` is always false because ActionAudit has no Host-cell/model-response identity;
 - authoritative Code Mode composition: nested calls/successes/failures,
   `max_in_flight`, nested tool counts, consequential known/Job/unknown outcomes,
   internal duration, slot wait, optional program input bytes, and nested raw versus

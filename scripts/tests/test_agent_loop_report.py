@@ -87,6 +87,7 @@ class AgentLoopReportTests(unittest.TestCase):
         window: str = "hashed-window-a",
         principal: str = "principal-a",
         trace_id: str | None = None,
+        previous_trace_id: str | None = None,
         result_bytes: int | None = 100,
         duration_ms: int = 5,
         action_name: str = "toolsCall",
@@ -111,6 +112,8 @@ class AgentLoopReportTests(unittest.TestCase):
                 }
             )
         summary: dict[str, object] = {}
+        if previous_trace_id is not None:
+            summary["previous_meaningful_call"] = previous_trace_id
         if include_telemetry:
             summary["model_ergonomics"] = telemetry
         if composition is not None:
@@ -305,6 +308,47 @@ class AgentLoopReportTests(unittest.TestCase):
             "predecessor continuity evidence",
             result["availability"]["host_short_chain"]["reason"],
         )
+
+    def test_host_short_chain_ignores_serial_predecessor_outside_selected_run(self) -> None:
+        self.insert_event(
+            "outside",
+            tool="tool_manifest",
+            started=50,
+            handed=70,
+            trace_id="trace-outside",
+            link=False,
+        )
+        self.insert_event(
+            "read",
+            tool="read_files",
+            started=100,
+            handed=120,
+            transition="serial",
+            trace_id="trace-read",
+            previous_trace_id="trace-outside",
+        )
+        self.insert_event(
+            "search",
+            tool="search_project_texts",
+            started=150,
+            handed=170,
+            transition="serial",
+        )
+
+        result = self.summarize(variant="host_code_mode")
+        chain = result["host_short_chain"]
+
+        self.assertEqual(chain["serial_transitions"], 1)
+        self.assertEqual(chain["observed_serial_transitions"], 1)
+        self.assertEqual(chain["missing_serial_transitions"], 0)
+        self.assertEqual(chain["multi_call_chains"], 1)
+        self.assertEqual(chain["calls_in_multi_call_chains"], 2)
+        self.assertEqual(chain["max_chain_calls"], 2)
+        self.assertEqual(
+            chain["observed_by_tool_pair"],
+            {"read_files->search_project_texts": 1},
+        )
+        self.assertTrue(result["availability"]["host_short_chain"]["available"])
 
     def test_overlap_is_counted_without_fabricating_negative_gap(self) -> None:
         self.insert_event("read_only", started=100, handed=180)

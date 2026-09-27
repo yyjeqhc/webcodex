@@ -506,6 +506,62 @@ def load_audit_continuity_events(
             if key in keys:
                 by_id[event["event_id"]] = event
 
+        # The first selected call for a Window may serially continue an exact
+        # meaningful predecessor outside the benchmark Session. Resolve that
+        # one persisted predecessor hop by trace id so the summarizer can treat
+        # it as an explicit run boundary instead of missing continuity. Never
+        # widen backwards by time range.
+        first_selected_by_key: dict[tuple[str, str, str], dict[str, Any]] = {}
+        for event in keyed:
+            key = (
+                event["client_window_key"],
+                event["principal_correlation_kind"],
+                event["principal_correlation_id"],
+            )
+            current = first_selected_by_key.get(key)
+            if current is None or event["request_observed_at_ms"] < current["request_observed_at_ms"]:
+                first_selected_by_key[key] = event
+        incoming_predecessors = {
+            previous
+            for event in first_selected_by_key.values()
+            if event.get("window_transition_kind") == "serial"
+            and isinstance(event.get("summary"), dict)
+            and isinstance(
+                previous := event.get("summary", {}).get("previous_meaningful_call"), str
+            )
+            and previous
+        }
+        seen_traces = {
+            event.get("server_trace_id")
+            for event in by_id.values()
+            if isinstance(event.get("server_trace_id"), str)
+            and event.get("server_trace_id")
+        }
+        incoming_predecessors.difference_update(seen_traces)
+        ordered_incoming_predecessors = sorted(incoming_predecessors)
+        for start in range(0, len(ordered_incoming_predecessors), 400):
+            chunk = ordered_incoming_predecessors[start:start + 400]
+            placeholders = ",".join("?" for _ in chunk)
+            sql = f"""
+                SELECT {_CONTINUITY_COLUMNS}
+                FROM action_events e
+                WHERE e.action_name = 'toolsCall'
+                  AND e.window_meaningful = 1
+                  AND e.server_trace_id IN ({placeholders})
+                ORDER BY COALESCE(e.request_observed_at_ms, e.window_started_at_ms, e.started_at * 1000), e.event_id
+            """
+            for row in connection.execute(sql, chunk).fetchall():
+                event = _row_to_continuity_event(row)
+                key = (
+                    event.get("client_window_key"),
+                    event.get("principal_correlation_kind"),
+                    event.get("principal_correlation_id"),
+                )
+                trace = event.get("server_trace_id")
+                if key in keys and isinstance(trace, str) and trace:
+                    by_id[event["event_id"]] = event
+
+
         # Workflow-session links describe business provenance, not every follow-up
         # observation. An exact observe may therefore be the next meaningful call
         # after the final linked row. Follow only the persisted exact predecessor
@@ -947,25 +1003,31 @@ def _summarize_host_short_chains(
             )
             previous_tool = predecessor.get("operation") if predecessor else None
             current_tool = event.get("operation")
-            if (
-                predecessor_selected
-                and predecessor.get("response_streaming") is False
-                and event.get("response_streaming") is False
-                and event.get("window_continuity_eligible") is True
-                and isinstance(previous_tool, str)
-                and previous_tool
-                and isinstance(current_tool, str)
-                and current_tool
-            ):
-                edges.append(
-                    (
-                        str(predecessor["event_id"]),
-                        str(event["event_id"]),
-                        previous_tool,
-                        current_tool,
+            if predecessor_selected:
+                if (
+                    predecessor.get("response_streaming") is False
+                    and event.get("response_streaming") is False
+                    and event.get("window_continuity_eligible") is True
+                    and isinstance(previous_tool, str)
+                    and previous_tool
+                    and isinstance(current_tool, str)
+                    and current_tool
+                ):
+                    edges.append(
+                        (
+                            str(predecessor["event_id"]),
+                            str(event["event_id"]),
+                            previous_tool,
+                            current_tool,
+                        )
                     )
-                )
-            else:
+                else:
+                    missing_serial += 1
+            elif predecessor is None:
+                # A serial transition claims a predecessor. If the continuity
+                # loader cannot resolve that exact predecessor, the aggregate
+                # remains unavailable rather than guessing whether the edge was
+                # inside or outside the selected benchmark run.
                 missing_serial += 1
         if event.get("window_continuity_eligible") is True:
             previous[key] = event

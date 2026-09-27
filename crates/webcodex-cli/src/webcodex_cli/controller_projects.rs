@@ -14,20 +14,26 @@ use webcodex_admin::ServerHttpOptions;
 mod tests;
 
 fn default_token_file(config_path: &Path, view: &RunnerConfigView) -> Result<PathBuf, String> {
-    let config_path = config_path.canonicalize().map_err(|e| e.to_string())?;
+    let config_identity = config_path.canonicalize().map_err(|e| e.to_string())?;
     let default_base = connections::default_base_dir()?;
     let mut bases = vec![default_base];
     // Also support a connection stored under an explicitly chosen login base.
+    // Keep the caller-visible spelling for that base: on Windows, canonicalizing
+    // runner.toml can resolve a junction or add a verbatim prefix and would make
+    // the derived credential path drift away from the connection that owns it.
     if let Some(base) = config_path
         .parent()
         .and_then(Path::parent)
         .and_then(Path::parent)
     {
-        if !bases.iter().any(|candidate| candidate == base) {
+        if !bases
+            .iter()
+            .any(|candidate| webcodex_runner_config::paths::paths_equal(candidate, base))
+        {
             bases.push(base.to_path_buf());
         }
     }
-    select_default_token(&config_path, view, &bases)
+    select_default_token(&config_identity, view, &bases)
 }
 
 fn select_default_token(
@@ -55,7 +61,7 @@ fn select_default_token(
             paths
                 .runner_config
                 .canonicalize()
-                .is_ok_and(|path| path == config_path)
+                .is_ok_and(|path| webcodex_runner_config::paths::paths_equal(&path, config_path))
         })
         .collect::<Vec<_>>();
     if exact.len() == 1 {

@@ -1509,7 +1509,12 @@ impl ToolRuntime {
         include_validation_summary: Option<bool>,
         auth: Option<&AuthContext>,
     ) -> ToolResult {
-        let include_diff = include_diff.unwrap_or(true);
+        // summary_only never returns raw change provenance, so generating bounded
+        // diff bodies cannot make the compact result more decision-complete. Keep
+        // full closeout behavior unchanged while allowing the common compact path
+        // to reuse exact/current review snapshots without fabricating a canonical
+        // show_changes payload from git_diff_hunks output.
+        let include_diff = !summary_only && include_diff.unwrap_or(true);
         let include_workspace = include_workspace.unwrap_or(true);
         let include_hygiene = include_hygiene.unwrap_or(true);
         let include_handoff = include_handoff.unwrap_or(true);
@@ -1552,11 +1557,17 @@ impl ToolRuntime {
             "status": "miss",
             "reason_code": "snapshot_unavailable",
         });
-        let reusable_snapshot = review_caller_fingerprint(auth).ok().and_then(|caller| {
-            latest_workspace_snapshot(&caller, &resolved.resolved_id, Some(&session_id))
-        });
+        let reusable_snapshot = if summary_only {
+            review_caller_fingerprint(auth).ok().and_then(|caller| {
+                latest_workspace_snapshot(&caller, &resolved.resolved_id, Some(&session_id))
+            })
+        } else {
+            review_snapshot_reuse["reason_code"] =
+                json!("full_output_requires_canonical_show_changes");
+            None
+        };
         let reusable_snapshot = if let Some(snapshot) = reusable_snapshot {
-            if !workspace_snapshot_complete_for_closeout(&snapshot, include_diff) {
+            if !workspace_snapshot_complete_for_closeout(&snapshot, false) {
                 review_snapshot_reuse["reason_code"] = json!("snapshot_projection_incomplete");
                 None
             } else {
@@ -1588,9 +1599,8 @@ impl ToolRuntime {
         };
 
         let changes_result = if let Some(snapshot) = reusable_snapshot.as_ref() {
-            ToolResult::ok(show_changes_payload_from_review_snapshot(
+            ToolResult::ok(closeout_workspace_observation_from_review_snapshot(
                 snapshot,
-                include_diff,
             ))
         } else {
             let show_changes_call = ToolCall::ShowChanges {
@@ -2993,33 +3003,19 @@ fn recommended_flow_groups(visible: Option<&HashSet<&str>>) -> Value {
     Value::Object(map)
 }
 
-fn show_changes_payload_from_review_snapshot(
-    snapshot: &GitReviewSnapshot,
-    include_diff: bool,
-) -> Value {
-    let mut payload = json!({
+fn closeout_workspace_observation_from_review_snapshot(snapshot: &GitReviewSnapshot) -> Value {
+    // This is an internal compact-closeout projection, deliberately not a
+    // show_changes result. Full closeout always executes canonical show_changes so
+    // its public nested contract never changes shape on a snapshot reuse hit.
+    json!({
         "clean": snapshot.summary.get("clean").cloned().unwrap_or(Value::Null),
         "git_available": snapshot.summary.get("git_available").cloned().unwrap_or(Value::Null),
         "non_git_project": snapshot.summary.get("non_git_project").cloned().unwrap_or(Value::Null),
-        "branch": snapshot.summary.get("branch").cloned().unwrap_or(Value::Null),
-        "head": snapshot.summary.get("head").cloned().unwrap_or(Value::Null),
         "counts": snapshot.summary.get("counts").cloned().unwrap_or_else(|| json!({})),
-        "diff_stat": snapshot.summary.get("diff_stat").cloned().unwrap_or(Value::Null),
-        "files": snapshot.files,
         "warnings": snapshot.summary.get("warnings").cloned().unwrap_or_else(|| json!([])),
         "review_snapshot_id": snapshot.snapshot_id,
         "review_snapshot_reused": true,
-        "hunks_truncated": false,
-    });
-    if include_diff {
-        payload["diff"] = snapshot.diff_page.clone();
-        payload["hunks_truncated"] = json!(snapshot
-            .diff_page
-            .get("truncated")
-            .and_then(Value::as_bool)
-            .unwrap_or(false));
-    }
-    payload
+    })
 }
 
 fn workspace_payload_from_show_changes(show_changes: &Value) -> Value {

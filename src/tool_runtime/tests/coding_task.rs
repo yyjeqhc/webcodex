@@ -1754,6 +1754,76 @@ async fn finish_coding_task_summary_only_is_compact_for_clean_project() {
 }
 
 #[tokio::test]
+async fn finish_coding_task_summary_only_omits_diff_generation_even_when_requested() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    commit_file(tmp.path(), "README.md", "hello\n", "add readme");
+    let runtime = test_runtime();
+    let project = register_runner_project_at_path(
+        &runtime,
+        "coding-finish-compact-no-diff",
+        "demo",
+        tmp.path(),
+    )
+    .await;
+    let auth = auth_context(None, true);
+    let session = runtime
+        .sessions
+        .start_session(Some(project.clone()), Some("compact no diff".to_string()));
+    let session_id = session.session_id.clone();
+
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        let session_id = session_id.clone();
+        let auth = auth.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::FinishCodingTask {
+                        project,
+                        session_id,
+                        summary_only: true,
+                        include_diff: Some(true),
+                        include_workspace: Some(false),
+                        include_hygiene: Some(false),
+                        include_handoff: Some(false),
+                        include_validation_summary: Some(false),
+                    },
+                    Some(&auth),
+                )
+                .await
+        }
+    });
+    let request = wait_for_patch_agent_request(&runtime, "coding-finish-compact-no-diff").await;
+    assert_internal_posix_script_contains(&request, "git status --porcelain=v1 -b");
+    let script = &request
+        .script
+        .as_ref()
+        .expect("summary_only workspace observation script")
+        .script;
+    assert!(
+        !script.contains("diff_hunks_returned="),
+        "summary_only must not spend a Git observation budget on a diff body it cannot return: {script}"
+    );
+    let show_changes_stdout =
+        crate::tool_runtime::framed_clean_show_changes_test_stdout("add readme", false);
+    complete_patch_agent_request(
+        &runtime,
+        "coding-finish-compact-no-diff",
+        &request.request_id,
+        0,
+        &show_changes_stdout,
+        "",
+    )
+    .await;
+    let result = task.await.unwrap();
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["summary_only"], true);
+    assert!(result.output.get("changes").is_none());
+}
+
+#[tokio::test]
 async fn finish_coding_task_summary_only_uses_review_evidence_without_projecting_it() {
     let tmp = tempfile::tempdir().unwrap();
     init_git_repo(tmp.path());

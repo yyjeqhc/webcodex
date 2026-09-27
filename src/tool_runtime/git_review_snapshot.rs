@@ -302,7 +302,10 @@ pub(crate) fn workspace_snapshot_complete_for_closeout(
         .get("paths")
         .map(|value| value.is_null() || value.as_array().is_some_and(Vec::is_empty))
         .unwrap_or(false);
-    full_paths && snapshot.diff_page.is_object()
+    let diff_complete = snapshot.diff_page.is_object()
+        && snapshot.diff_page.get("truncated").and_then(Value::as_bool) == Some(false)
+        && snapshot.diff_page.get("has_more").and_then(Value::as_bool) == Some(false);
+    full_paths && diff_complete
 }
 
 impl ToolRuntime {
@@ -335,7 +338,7 @@ mod tests {
             json!({"files_changed": 1}),
             json!([]),
             json!([]),
-            json!({"truncated": false}),
+            json!({"truncated": false, "has_more": false}),
             false,
             true,
         )
@@ -381,6 +384,16 @@ mod tests {
         assert!(!workspace_snapshot_complete_for_closeout(&candidate, false));
         candidate.coverage_partial = false;
         candidate.projection_identity["paths"] = json!(["src/lib.rs"]);
+        assert!(!workspace_snapshot_complete_for_closeout(&candidate, true));
+        assert!(workspace_snapshot_complete_for_closeout(&candidate, false));
+
+        candidate.projection_identity["paths"] = json!([]);
+        candidate.diff_page["truncated"] = json!(true);
+        assert!(!workspace_snapshot_complete_for_closeout(&candidate, true));
+        assert!(workspace_snapshot_complete_for_closeout(&candidate, false));
+
+        candidate.diff_page["truncated"] = json!(false);
+        candidate.diff_page["has_more"] = json!(true);
         assert!(!workspace_snapshot_complete_for_closeout(&candidate, true));
         assert!(workspace_snapshot_complete_for_closeout(&candidate, false));
     }

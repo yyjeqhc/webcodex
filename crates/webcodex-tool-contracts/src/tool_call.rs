@@ -1493,7 +1493,9 @@ pub enum ToolCall {
         /// detailed validation history.
         #[serde(default)]
         summary_only: bool,
-        /// Include bounded diff hunks in show_changes. Defaults to true.
+        /// Include bounded diff hunks in the full closeout show_changes payload. Defaults to true for
+        /// full closeout. summary_only never returns raw change provenance and therefore omits diff
+        /// generation regardless of this field.
         #[serde(default)]
         include_diff: Option<bool>,
         /// Defaults to true. When include_handoff=true, controls whether the nested handoff summary

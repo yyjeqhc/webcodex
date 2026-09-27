@@ -101,7 +101,7 @@ test("Window card renders and refreshes before any Workflow Session exists", asy
   assert.equal(view.nodes.collaborationMeta.textContent, "");
   assert.equal(view.nodes.messageInput.disabled, true);
   assert.equal(view.timers.size, 1);
-  await view.fireTimers(2500);
+  await view.fireTimers(10000);
   assert.equal(view.calls("work_result_state").length, 1);
   assert.deepEqual({ ...view.calls("work_result_state")[0].params.arguments }, { project });
 });
@@ -421,18 +421,20 @@ test("live progress performs bounded app-only polling and adapts to visibility",
   view.toolResult({ work_result: baseState });
   await view.initialize();
   assert.equal(view.calls("work_result_state").length, 0);
-  await view.fireTimers(2500);
+  await view.fireTimers(10000);
   assert.equal(view.calls("work_result_state").length, 1);
   assert.deepEqual({ ...view.calls("work_result_state")[0].params.arguments }, { project });
   await view.reply(view.calls("work_result_state")[0], toolResult({ work_result: nextState }));
   assert.equal(view.nodes.activityStatus.textContent, "Running checks");
   assert.equal(view.nodes.activityAge.textContent, "Active now");
   assert.equal(view.nodes.badge.textContent, "Working");
-  await view.fireTimers(2500);
+  await view.fireTimers(10000);
   assert.equal(view.calls("work_result_state").length, 2);
   await view.reply(view.calls("work_result_state")[1], toolResult({ work_result: nextState }));
   await view.visibility(true);
-  assert.equal([...view.timers.values()].some(timer => timer.delay === 12000), true);
+  assert.equal(view.timers.size, 0);
+  await view.fireTimers(10000);
+  assert.equal(view.calls("work_result_state").length, 2);
   await view.visibility(false);
   assert.equal([...view.timers.values()].some(timer => timer.delay === 250), true);
   assert.equal(view.timers.size, 1);
@@ -449,7 +451,7 @@ test("closed linked Session does not stop Window-level automatic polling", async
   view.toolResult({ work_result: closedState });
   await view.initialize();
   assert.equal(view.timers.size, 1);
-  await view.fireTimers(2500);
+  await view.fireTimers(10000);
   assert.equal(view.calls("work_result_state").length, 1);
   assert.deepEqual({ ...view.calls("work_result_state")[0].params.arguments }, { project });
   await view.reply(view.calls("work_result_state")[0], toolResult({ work_result: closedState }));
@@ -475,7 +477,7 @@ test("unchanged active Session pauses automatic polling after bounded idle time 
   assert.equal(view.calls("work_result_state").length, 1);
   await view.reply(view.calls("work_result_state")[0], toolResult({ work_result: baseState }));
   assert.equal(view.nodes.status.textContent, "Up to date");
-  assert.equal([...view.timers.values()].some(timer => timer.delay === 2500), true);
+  assert.equal([...view.timers.values()].some(timer => timer.delay === 10000), true);
 });
 
 test("user Refresh performs one exact state read and updates the snapshot", async () => {
@@ -1024,11 +1026,11 @@ test("long-running calls keep polling and failed automatic reads identify stale 
   const view = app("mcp_work_result_app.html");
   view.toolResult({ work_result: state }); await view.initialize();
   view.advanceTime(31 * 60 * 1000);
-  await view.fireTimers(2500);
+  await view.fireTimers(10000);
   assert.equal(view.calls("work_result_state").length, 1);
   await view.reject(view.calls("work_result_state")[0]);
   assert.match(view.nodes.status.textContent, /Refresh unavailable.*last snapshot/);
-  assert([...view.timers.values()].some(timer => timer.delay === 2500));
+  assert([...view.timers.values()].some(timer => timer.delay === 10000));
 });
 
 test("Results shows live file states and checks, preserving nodes on unrelated refresh", async () => {

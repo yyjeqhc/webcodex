@@ -285,6 +285,15 @@
 .runtime-update-banner { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 18px; margin-bottom: 24px; border: 1px solid var(--ui-border); border-radius: var(--ui-radius-md); }
 .runtime-update-banner p { margin: 5px 0 0; font-size: 12px; color: var(--ui-text-secondary); }
 .runtime-update-banner .shell-actions { margin: 0; }
+.update-workflow { display: grid; gap: 10px; min-width: 0; width: 100%; overflow-wrap: anywhere; }
+.update-workflow p { margin: 0; }
+.update-workflow .shell-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.update-progress { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; font-size: 12px; font-variant-numeric: tabular-nums; }
+.update-progress progress { width: min(100%, 240px); height: 8px; accent-color: var(--ui-accent); }
+.update-preference { display: flex; align-items: center; gap: 10px; margin-block: 18px; font-size: 13px; }
+.update-confirmation { display: grid; gap: 12px; padding: 16px; background: var(--ui-surface-secondary); border: 1px solid var(--ui-border); border-radius: var(--ui-radius-sm); }
+.update-confirmation h3 { margin: 0; }
+.update-error { color: var(--ui-warning); }
 .readiness-banner { margin-bottom: 26px; border-bottom: 1px solid var(--ui-border-subtle); padding-bottom: 18px; }
 .readiness-banner h2 { font-size: 19px; margin: 0 0 8px; }
 .continuation-facts h3 { display: flex; flex-wrap: wrap; gap: 10px; align-items: baseline; }

@@ -54,6 +54,8 @@ cargo build --locked --profile dogfood -p webcodex-cli -p webcodex -p webcodex-r
 
 ## 更新与恢复
 
-UI 就绪后进行非阻塞稳定版更新检查，公开 GitHub 无需认证，超时有界，缓存 24 小时。启动检查失败不影响就绪状态；手动检查可以立即重试。只提示，不自动下载/安装。有效 release manifest 与 Desktop range 相交时提示只更换 Runtime 即可；不相交时提示更新 Desktop；缺失/未知 manifest 只给普通发行版链接，不猜兼容性。
+UI 就绪后进行非阻塞稳定版更新检查，公开 GitHub 无需认证，超时有界，缓存 24 小时。启动检查失败不影响就绪状态；手动检查可以立即重试。Desktop 更新判断比较 release version 与当前 Desktop version，Runtime 兼容性由独立的 `webcodex-release-manifest.json` 判断，缺失/未知时不猜兼容性。
+
+官方统一安装默认自动下载新稳定版安装包，使用已有六平台 `manifest.json` 校验安装包、来源清单与发布身份。可以关闭“自动下载稳定版更新”、取消下载或手动重试；已验证下载会在重启后重新核验并复用。源码、开发、独立安装不会被自动替换，可以手动下载。旧发布缺少安装器清单时仅保留“查看发布”，不当成更新失败。**安装、服务暂停及退出 Desktop 始终需要明确确认，安装器启动不等于安装成功。** “稍后”只隐藏提示一天，不删除已验证的安装包。完整合同和跨平台验收见 [统一自动更新说明](DESKTOP_AUTOMATIC_UPDATES.md)。
 
 现有 Desktop state 原子写入与备份机制继续使用。未来 schema 不支持时保留原文件并进入可诊断状态，不自动以旧备份覆盖；用户确认恢复后仍需明确启动 Runtime。不会通过删除项目、凭据或 Runtime state 来“修复”。

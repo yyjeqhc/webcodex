@@ -49,4 +49,18 @@ export interface DiagnosticSnapshot {
   report: DiagnosticReport; markdown: string;
 }
 export interface ReleaseNotice { version: string; runtime_version: string; release_url: string; compatibility: "runtime_compatible" | "desktop_required" | "unknown" }
-export interface UpdateStatus { state: string; latest: ReleaseNotice | null; update_available: boolean; show_banner: boolean; cached: boolean; last_check_at_ms: number | null; manual_error: string | null }
+export type UpdatePlatform = "linux-x64" | "linux-arm64" | "darwin-x64" | "darwin-arm64" | "win32-x64" | "win32-arm64";
+export type UpdatePhase = "idle" | "checking" | "available" | "downloading" | "verifying" | "ready_to_install" | "preparing" | "installing_or_handed_off" | "failed";
+export type UpdateInstallation = "managed" | "source_build" | "unmanaged_installation" | "environment_not_configured" | "unsupported_platform";
+export type UpdateErrorKind = "network_unavailable" | "manifest_missing" | "manifest_invalid" | "unsupported_platform" | "download_failed" | "download_too_large" | "checksum_mismatch" | "source_manifest_invalid" | "provenance_failed" | "cache_unavailable" | "cancelled" | "upgrade_preflight_failed" | "authorization_required" | "installer_launch_failed" | "upgrade_rolled_back" | "recovery_required";
+export interface UpdateDownloadStatus {
+  phase: UpdatePhase; version: string | null; platform: UpdatePlatform | null;
+  downloaded_bytes: number; total_bytes: number | null; error_kind: UpdateErrorKind | null;
+  installation: UpdateInstallation; can_install: boolean; pending_install: boolean;
+  legacy_release: boolean; cancelled: boolean;
+}
+export interface UpdateStatus {
+  state: string; latest: ReleaseNotice | null; update_available: boolean; show_banner: boolean;
+  cached: boolean; last_check_at_ms: number | null; manual_error: string | null;
+  automatic_download: boolean; download: UpdateDownloadStatus;
+}

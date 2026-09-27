@@ -418,5 +418,6 @@
   "operation.traceUpdate": "正在更新请求追踪设置",
   "operation.configurationRestore": "正在恢复之前的配置",
   "operation.environmentService": "更新本机服务",
+  "operation.desktopUpdate": "正在准备已验证的统一更新",
   "operation.environmentMigration": "正在迁移原有环境"
 }

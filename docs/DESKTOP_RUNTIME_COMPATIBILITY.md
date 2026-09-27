@@ -110,11 +110,13 @@ A completed call without `response_handed_at_ms` is **Execution completed; respo
 
 The canonical `next_call_gap_ms` is attached to the arriving request and measures its gap from a previous non-streaming response. It is **not** evidence that another meaningful call followed the current event. A following meaningful call is only claimed when later canonical activity proves it. The elapsed gap can include networking, Host scheduling, inference, user input, or other time WebCodex cannot observe. The UI does not diagnose “ChatGPT stuck” or model failure from silence.
 
-## Update notifications
+## Stable updates
 
 After the UI is ready, Desktop performs a bounded public GitHub stable-release check without authentication. Startup/network/rate-limit failures are silent and do not change readiness. The existing Desktop state caches attempts for 24 hours; a manual check can retry immediately and reports an ordinary local message on failure.
 
-A valid official `webcodex-release-manifest.json` provides the release/runtime versions and management contract range. Overlap means the current Desktop can continue with the newer Runtime; a disjoint range requires updating Desktop. Missing, malformed, mismatched or unknown manifest data yields only a generic new-release link. Drafts/prereleases are not offered as the stable update. **Nothing is downloaded or installed automatically.** Remind later snoozes the banner for a day.
+A valid official `webcodex-release-manifest.json` provides release/runtime versions and the management contract range. Overlap means the current Desktop remains compatible with that Runtime; a disjoint range requires updating Desktop. Missing, malformed, mismatched or unknown compatibility metadata never guesses compatibility. Desktop update availability compares the release version to the installed Desktop version, separately from Runtime compatibility.
+
+The existing six-platform unified `manifest.json` supplies installers and source-manifest hashes. Official managed installations automatically download a newer stable installer when **Automatically download stable updates** is enabled (the default). Downloads are private, bounded, verified, cancelable and reusable after restart re-verification. Source/development/standalone builds can download explicitly but are not automatically replaced. Legacy releases without the installer manifest retain **View release** without being treated as failures. **Nothing is installed automatically.** Installing and closing Desktop require an explicit confirmation; a launched installer is not reported as an installed update. **Later** snoozes the banner for a day without deleting a verified download. See [the unified update contract and dogfood checklist](DESKTOP_AUTOMATIC_UPDATES.md).
 
 ## Configuration recovery
 

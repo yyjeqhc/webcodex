@@ -256,6 +256,7 @@ const operationKeys: Record<DesktopOperationKind, MessageKey> = {
   trace_update: "operation.traceUpdate",
   configuration_restore: "operation.configurationRestore",
   environment_migration: "operation.environmentMigration",
+  desktop_update: "operation.desktopUpdate",
   environment_service: "operation.environmentService",
   local_setup: "operation.localSetup",
   local_project_activate: "operation.localProjectActivate",

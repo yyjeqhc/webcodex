@@ -126,6 +126,7 @@ export interface TunnelProxySnapshot {
 }
 
 export type DesktopOperationKind =
+  | "desktop_update"
   | "environment_migration"
   | "environment_service"
   | "local_setup"

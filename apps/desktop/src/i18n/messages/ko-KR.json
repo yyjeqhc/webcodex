@@ -418,5 +418,6 @@
   "operation.traceUpdate": "Updating request tracing",
   "operation.configurationRestore": "Restoring previous configuration",
   "operation.environmentService": "로컬 서비스 업데이트 중",
+  "operation.desktopUpdate": "검증된 통합 업데이트 준비 중",
   "operation.environmentMigration": "Migrating previous environment"
 }

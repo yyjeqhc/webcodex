@@ -418,5 +418,6 @@
   "operation.traceUpdate": "Updating request tracing",
   "operation.configurationRestore": "Restoring previous configuration",
   "operation.environmentService": "Lokalen Dienst aktualisieren",
+  "operation.desktopUpdate": "Verifiziertes einheitliches Update vorbereiten",
   "operation.environmentMigration": "Migrating previous environment"
 }

@@ -418,5 +418,6 @@
   "operation.traceUpdate": "Updating request tracing",
   "operation.configurationRestore": "Restoring previous configuration",
   "operation.environmentService": "ローカルサービスを更新中",
+  "operation.desktopUpdate": "検証済みの統合更新を準備中",
   "operation.environmentMigration": "Migrating previous environment"
 }

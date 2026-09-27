@@ -1,4 +1,4 @@
-import type { MachineBuildInfo, RuntimeSettings, RuntimeSource, RuntimeSwitchRequest, RuntimeSwitchResult, DiagnosticSnapshot, DiagnosticResource, TraceUpdate, TraceSettings, UpdateStatus } from "../models/runtime-shell";
+import type { MachineBuildInfo, RuntimeSettings, RuntimeSource, RuntimeSwitchRequest, RuntimeSwitchResult, DiagnosticSnapshot, DiagnosticResource, TraceUpdate, TraceSettings, UpdateStatus, UpdateDownloadStatus } from "../models/runtime-shell";
 import { invoke } from "@tauri-apps/api/core";
 import type {
   ActivityEntry,
@@ -31,6 +31,11 @@ export const desktopApi = {
   exportSupportBundle: (path: string) => invoke<void>("export_support_bundle", { path }),
   restorePreviousConfiguration: (expectedPrimarySha256: string) => invoke<DesktopState>("restore_previous_configuration", { expectedPrimarySha256 }),
   checkForUpdates: (manual = false) => invoke<UpdateStatus>("check_for_updates", { manual }),
+  updateDownloadState: () => invoke<UpdateDownloadStatus>("get_update_download_state"),
+  downloadUpdate: (version: string) => invoke<UpdateStatus>("download_update", { version }),
+  cancelUpdateDownload: () => invoke<UpdateDownloadStatus>("cancel_update_download"),
+  setAutomaticUpdateDownload: (enabled: boolean) => invoke<UpdateStatus>("set_automatic_update_download", { enabled }),
+  installVerifiedUpdate: (version: string, confirmed: boolean) => invoke<void>("install_verified_update", { version, confirmed }),
   remindUpdateLater: () => invoke<UpdateStatus>("remind_update_later"),
   openLatestRelease: () => invoke<void>("open_latest_release"),
   saveCodingAgent: (request: CodingAgentRequest) => invoke<DesktopState>("save_coding_agent", { request }),

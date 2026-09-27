@@ -3007,7 +3007,6 @@ fn show_changes_payload_from_review_snapshot(
         "diff_stat": snapshot.summary.get("diff_stat").cloned().unwrap_or(Value::Null),
         "files": snapshot.files,
         "warnings": snapshot.summary.get("warnings").cloned().unwrap_or_else(|| json!([])),
-        "session": {"signals": snapshot.signals},
         "review_snapshot_id": snapshot.snapshot_id,
         "review_snapshot_reused": true,
         "hunks_truncated": false,

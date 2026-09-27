@@ -147,20 +147,16 @@ impl GitReviewSnapshotRegistry {
 
     fn insert_or_get(&mut self, snapshot: GitReviewSnapshot) -> GitReviewSnapshot {
         self.prune();
-        if let Some(existing) = self
-            .snapshots
-            .iter()
-            .find(|existing| {
-                existing.snapshot_id == snapshot.snapshot_id
-                    && existing.matches_identity(
-                        &snapshot.caller_fingerprint,
-                        &snapshot.project,
-                        snapshot.session_id.as_deref(),
-                    )
-            })
-            .cloned()
-        {
-            return existing;
+        if let Some(index) = self.snapshots.iter().position(|existing| {
+            existing.snapshot_id == snapshot.snapshot_id
+                && existing.matches_identity(
+                    &snapshot.caller_fingerprint,
+                    &snapshot.project,
+                    snapshot.session_id.as_deref(),
+                )
+        }) {
+            self.snapshots[index] = snapshot.clone();
+            return snapshot;
         }
         while self
             .snapshots
@@ -387,6 +383,25 @@ mod tests {
         candidate.projection_identity["paths"] = json!(["src/lib.rs"]);
         assert!(!workspace_snapshot_complete_for_closeout(&candidate, true));
         assert!(workspace_snapshot_complete_for_closeout(&candidate, false));
+    }
+
+    #[test]
+    fn reinserting_same_source_refreshes_snapshot_payload() {
+        let mut first = snapshot("caller-refresh", "project", &"8".repeat(40));
+        first.signals = json!([{"name": "before"}]);
+        let first = insert_snapshot(first);
+        let mut refreshed = snapshot("caller-refresh", "project", &"8".repeat(40));
+        assert_eq!(first.snapshot_id, refreshed.snapshot_id);
+        refreshed.signals = json!([{"name": "after"}]);
+        let refreshed = insert_snapshot(refreshed);
+        let loaded = get_snapshot(
+            &refreshed.snapshot_id,
+            "caller-refresh",
+            "project",
+            Some("wc_sess_test"),
+        )
+        .unwrap();
+        assert_eq!(loaded.signals, json!([{"name": "after"}]));
     }
 
     #[test]

@@ -476,7 +476,7 @@ impl ToolRuntime {
             },
             "summary": summary,
             "files": files,
-            "signals": signals,
+            "signals": snapshot.signals.clone(),
             "diff": diff,
             "continuation": next,
             "reason_code": Value::Null,

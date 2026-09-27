@@ -57,6 +57,43 @@ pub(super) const SUMMARY_DEFINITIONS: &[ToolDefinition] = &[
     adaptive_runtime_direct(
         change_summary_like(git_like(model_spec(
             def(
+                "review_changes",
+                super::ToolAuditPolicy::typed_fields(&[
+                    super::ToolAuditResultField::value("project"),
+                    super::ToolAuditResultField::value("snapshot"),
+                    super::ToolAuditResultField::value("continuation"),
+                    super::ToolAuditResultField::value("reason_code"),
+                    super::ToolAuditResultField::array_len("signal_count", "signals"),
+                    super::ToolAuditResultField::array_len("file_count", "files"),
+                ])
+                .session_input(super::ToolAuditSessionInputPolicy::OmitTopLevel(&["continuation"])),
+                ModelVisible,
+                TOOL_CATEGORY_GIT,
+                Some(GitOrShell),
+                TOOL_PROVIDER_RUNNER,
+                super::ToolSemanticContract {
+                    effect: super::ToolEffect::Observe,
+                    risk: Read,
+                    approval: super::ToolApprovalPolicy::None,
+                    idempotency: super::ToolIdempotency::PureRead,
+                },
+                Some(PROJECT_READ),
+                true,
+                NoPath,
+                false,
+                false,
+                super::ToolSessionEvidencePolicy::NONE
+                    .review(super::ToolReviewEvidence::DiffReview)
+                    .diff_review(super::ToolDiffReviewEvidence::Always),
+            )
+            .with_composition_policy(super::ToolCompositionPolicy::Parallel),
+            "Primary bounded Git review workflow. First call returns an exact snapshot, summary/signals, and first git_diff_hunks page. Continue with the returned opaque token and identical closed scope/paging inputs. Workspace mutation fails closed; committed review stays pinned to exact commits and merge-base.",
+        ))),
+        135,
+    ),
+    adaptive_runtime_direct(
+        change_summary_like(git_like(model_spec(
+            def(
                 "show_changes",
                 super::ToolAuditPolicy::TYPED_CANONICAL.context(
                     super::ToolAuditContextPolicy::Fields(&[

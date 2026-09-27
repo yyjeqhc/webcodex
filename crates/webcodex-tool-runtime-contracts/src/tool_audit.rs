@@ -4276,6 +4276,24 @@ impl ToolCallAuditProjection for ToolCall {
                     "head_commit": head_commit,
                 })
             }
+            Self::ReviewChanges {
+                project,
+                scope,
+                paths,
+                max_hunks,
+                max_hunk_lines,
+                max_page_bytes,
+                continuation,
+                ..
+            } => serde_json::json!({
+                "project": project,
+                "scope": scope,
+                "paths": paths,
+                "max_hunks": max_hunks,
+                "max_hunk_lines": max_hunk_lines,
+                "max_page_bytes": max_page_bytes,
+                "continuation_present": continuation.is_some(),
+            }),
             Self::GitLog {
                 project,
                 head_commit,

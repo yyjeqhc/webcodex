@@ -522,13 +522,16 @@ exit 0
         Ok((resolved.resolved_id, summary, caller_fingerprint))
     }
 
-    pub(crate) async fn freeze_final_workspace_tree(&self, project: &str) -> Result<String, ToolResult> {
+    pub(crate) async fn freeze_workspace_tree_and_head(
+        &self,
+        project: &str,
+    ) -> Result<(Option<String>, String), ToolResult> {
         // A private temporary index snapshots HEAD plus the complete current
         // workspace without touching the real index/ref/worktree. Custom Git
         // clean/process filters and fsmonitor are neutralized because this is a
-        // read-authority presentation path, not repository-configured execution.
+        // read-authority observation path, not repository-configured execution.
         // `git add` may still write immutable blobs/trees to the object database;
-        // the resulting tree is intentionally unreachable presentation state.
+        // the resulting tree is intentionally unreachable observation state.
         let script = format!(
             r#"set -eu
 LC_ALL=C; export LC_ALL
@@ -537,13 +540,16 @@ umask 077
 {safe_config_setup}
 changes_git_tmp_index=$(mktemp "${{TMPDIR:-/tmp}}/webcodex-changes-index.XXXXXX")
 rm -f "$changes_git_tmp_index"
+head=""
 if changes_git rev-parse --verify HEAD >/dev/null 2>&1; then
-  GIT_INDEX_FILE="$changes_git_tmp_index" changes_git read-tree HEAD
+  head=$(changes_git rev-parse --verify HEAD)
+  GIT_INDEX_FILE="$changes_git_tmp_index" changes_git read-tree "$head"
 else
   GIT_INDEX_FILE="$changes_git_tmp_index" changes_git read-tree --empty
 fi
 GIT_INDEX_FILE="$changes_git_tmp_index" changes_git add -A -- .
-GIT_INDEX_FILE="$changes_git_tmp_index" changes_git write-tree
+tree=$(GIT_INDEX_FILE="$changes_git_tmp_index" changes_git write-tree)
+printf 'WEBCODEX_WORKSPACE_HEAD=%s\nWEBCODEX_WORKSPACE_TREE=%s\n' "$head" "$tree"
 "#,
             safe_config_setup = CHANGES_GIT_SAFE_CONFIG_SETUP,
         );
@@ -554,19 +560,49 @@ GIT_INDEX_FILE="$changes_git_tmp_index" changes_git write-tree
         if output.exit_code != Some(0) || output.stdout_truncated {
             return Err(changes_runtime_error(
                 "changes_snapshot_failed",
-                "Git could not freeze the final workspace tree",
+                "Git could not freeze the workspace tree",
             ));
         }
-        let tree = output.stdout.trim();
-        if !valid_git_object_id(tree) {
+        let mut head = None;
+        let mut tree = None;
+        for line in output.stdout.lines() {
+            if let Some(value) = line.strip_prefix("WEBCODEX_WORKSPACE_HEAD=") {
+                if !value.is_empty() {
+                    if !valid_git_object_id(value) {
+                        return Err(changes_runtime_error(
+                            "changes_snapshot_failed",
+                            "Git returned an invalid workspace HEAD id",
+                        ));
+                    }
+                    head = Some(value.to_string());
+                }
+            } else if let Some(value) = line.strip_prefix("WEBCODEX_WORKSPACE_TREE=") {
+                tree = Some(value.to_string());
+            }
+        }
+        let Some(tree) = tree else {
+            return Err(changes_runtime_error(
+                "changes_snapshot_failed",
+                "Git did not return a frozen workspace tree id",
+            ));
+        };
+        if !valid_git_object_id(&tree) {
             return Err(changes_runtime_error(
                 "changes_snapshot_failed",
                 "Git returned an invalid frozen workspace tree id",
             ));
         }
-        Ok(tree.to_string())
+        Ok((head, tree))
     }
 
+    pub(crate) async fn freeze_final_workspace_tree(
+        &self,
+        project: &str,
+    ) -> Result<String, ToolResult> {
+        self.freeze_workspace_tree_and_head(project)
+            .await
+            .map(|(_, tree)| tree)
+    }
     async fn changes_metadata(
         &self,
         project: &str,

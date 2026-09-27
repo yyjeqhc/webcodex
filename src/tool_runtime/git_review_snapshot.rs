@@ -71,6 +71,7 @@ pub(crate) struct GitReviewSnapshot {
     pub(crate) session_id: Option<String>,
     pub(crate) scope: GitReviewScope,
     pub(crate) source: GitReviewSourceIdentity,
+    pub(crate) projection_identity: Value,
     pub(crate) summary: Value,
     pub(crate) files: Value,
     pub(crate) signals: Value,
@@ -86,6 +87,7 @@ impl GitReviewSnapshot {
         session_id: Option<String>,
         scope: GitReviewScope,
         source: GitReviewSourceIdentity,
+        projection_identity: Value,
         summary: Value,
         files: Value,
         signals: Value,
@@ -97,6 +99,7 @@ impl GitReviewSnapshot {
             &project,
             session_id.as_deref(),
             &source,
+            &projection_identity,
         );
         Self {
             snapshot_id,
@@ -105,6 +108,7 @@ impl GitReviewSnapshot {
             session_id,
             scope,
             source,
+            projection_identity,
             summary,
             files,
             signals,
@@ -217,6 +221,7 @@ fn review_snapshot_id(
     project: &str,
     session_id: Option<&str>,
     source: &GitReviewSourceIdentity,
+    projection_identity: &Value,
 ) -> String {
     let mut hasher = Sha256::new();
     hasher.update(b"webcodex.git-review-snapshot.v1\0");
@@ -228,19 +233,12 @@ fn review_snapshot_id(
         serde_json::to_vec(&source.presentation_value())
             .expect("review source identity serializes"),
     );
+    hasher.update(serde_json::to_vec(projection_identity).expect("review projection identity serializes"));
     format!("wc_grs_{:x}", hasher.finalize())
 }
 
 pub(crate) fn committed_source_identity(scope: &CommittedGitScope) -> GitReviewSourceIdentity {
     GitReviewSourceIdentity::Committed {
-        requested_base: scope.requested_base.clone(),
-        requested_head: scope.requested_head.clone(),
-        merge_base: scope.merge_base.clone(),
-    }
-}
-
-pub(crate) fn committed_review_scope(scope: &CommittedGitScope) -> GitReviewScope {
-    GitReviewScope::Committed {
         requested_base: scope.requested_base.clone(),
         requested_head: scope.requested_head.clone(),
         merge_base: scope.merge_base.clone(),
@@ -286,16 +284,14 @@ impl ToolRuntime {
     pub(crate) async fn workspace_review_source_identity(
         &self,
         project: &str,
-        head_commit: Option<String>,
     ) -> Result<GitReviewSourceIdentity, ToolResult> {
-        let frozen_tree = self.freeze_final_workspace_tree(project).await?;
+        let (head_commit, frozen_tree) = self.freeze_workspace_tree_and_head(project).await?;
         Ok(GitReviewSourceIdentity::Workspace {
             head_commit,
             frozen_tree,
         })
     }
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -310,6 +306,7 @@ mod tests {
                 head_commit: Some("a".repeat(40)),
                 frozen_tree: tree.to_string(),
             },
+            json!({"paths": [], "max_hunks": 24}),
             json!({"files_changed": 1}),
             json!([]),
             json!([]),

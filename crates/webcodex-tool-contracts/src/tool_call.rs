@@ -1342,6 +1342,22 @@ fn nullable_stdin_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema 
     })
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum GitReviewScopeInput {
+    /// Review the complete current workspace (tracked, staged, unstaged, and untracked state).
+    Workspace,
+    /// Review one exact committed range, resolved once to a single merge-base.
+    Committed {
+        #[schemars(length(min = 40, max = 40))]
+        #[schemars(regex(pattern = "^[0-9A-Fa-f]{40}$"))]
+        base_commit: String,
+        #[schemars(length(min = 40, max = 40))]
+        #[schemars(regex(pattern = "^[0-9A-Fa-f]{40}$"))]
+        head_commit: String,
+    },
+}
+
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(
     tag = "tool",
@@ -2534,6 +2550,35 @@ pub enum ToolCall {
         /// unlinked to Workflow Session state.
         #[serde(default)]
         session_id: Option<String>,
+    },
+
+    /// Primary bounded Git review workflow over one closed workspace or committed scope.
+    ReviewChanges {
+        /// Runner-registered project id.
+        project: String,
+        /// Closed review scope. Continuation calls must repeat this exact scope.
+        scope: GitReviewScopeInput,
+        /// Optional explicit wc_sess_* Workflow Session id. Snapshot reuse is fenced to this identity.
+        #[serde(default)]
+        session_id: Option<String>,
+        /// Optional project-relative paths to narrow diff paging.
+        #[serde(default)]
+        paths: Option<Vec<String>>,
+        /// Maximum hunks on each bounded diff page.
+        #[serde(default)]
+        max_hunks: Option<usize>,
+        /// Maximum complete lines per returned hunk.
+        #[serde(default)]
+        max_hunk_lines: Option<usize>,
+        /// Raw producer page budget, clamped by the same git_diff_hunks engine.
+        #[schemars(range(min = 0))]
+        #[serde(default)]
+        max_page_bytes: Option<usize>,
+        /// Opaque review_changes continuation. When present, metadata comes only from the exact retained
+        /// snapshot and the underlying diff page continues from the same fenced source.
+        #[schemars(length(max = 384))]
+        #[serde(default)]
+        continuation: Option<String>,
     },
 
     /// Run `cargo fmt` in a Runner-registered Rust project.
@@ -5561,6 +5606,7 @@ impl ToolCall {
             Self::GitStatus { .. } => "git_status",
             Self::GitDiffHunks { .. } => "git_diff_hunks",
             Self::GitReviewSummary { .. } => "git_review_summary",
+            Self::ReviewChanges { .. } => "review_changes",
             Self::GitLog { .. } => "git_log",
             Self::CargoFmt { .. } => "cargo_fmt",
             Self::CargoCheck { .. } => "cargo_check",
@@ -5713,6 +5759,7 @@ impl ToolCall {
             | Self::GitStatus { session_id, .. }
             | Self::GitDiffHunks { session_id, .. }
             | Self::GitReviewSummary { session_id, .. }
+            | Self::ReviewChanges { session_id, .. }
             | Self::GitLog { session_id, .. }
             | Self::CargoFmt { session_id, .. }
             | Self::CargoCheck { session_id, .. }
@@ -5862,6 +5909,7 @@ impl ToolCall {
             | Self::GitStatus { project, .. }
             | Self::GitDiffHunks { project, .. }
             | Self::GitReviewSummary { project, .. }
+            | Self::ReviewChanges { project, .. }
             | Self::GitLog { project, .. }
             | Self::CargoFmt { project, .. }
             | Self::CargoCheck { project, .. }

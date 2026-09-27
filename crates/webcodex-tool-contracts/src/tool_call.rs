@@ -1447,8 +1447,8 @@ pub enum ToolCall {
         /// Model guidance only. An explicit direct, host_code_mode, or feature-gated code_mode
         /// always wins. When omitted on MCP, the configured MCP Host profile supplies the default;
         /// omission on non-MCP/internal calls falls back to direct. No tool admission, authority,
-        /// effects, or Session state changes; explicit resume may choose again. Request
-        /// `context_request=["webcodex.workflow"]` when the current model context needs that guidance.
+        /// effects, or Session state changes; explicit resume may choose again. On MCP, request
+        /// `_wc.context=["webcodex.workflow"]` when the current model context needs that guidance.
         #[serde(
             default,
             deserialize_with = "deserialize_optional_coding_guidance_profile",
@@ -1468,9 +1468,9 @@ pub enum ToolCall {
         /// remains bound to its exact final Project; in worktree mode the Runner re-observes that
         /// registered managed Project and its source provenance instead of creating a second worktree.
         /// Failure never guesses or creates a replacement Session. Supplying session_id does not prove this
-        /// model context still retains project instructions, workflow guidance, or extension metadata. A
-        /// fresh model context should request missing static guidance through context_request. This business
-        /// input is distinct from wrapper recording_session_id.
+        /// model context still retains project instructions, workflow guidance, or extension metadata. On
+        /// MCP, a fresh model context should request missing static guidance through `_wc.context`. This
+        /// business input is distinct from recorder provenance supplied through `_wc.record`.
         #[schemars(regex(pattern = "^wc_sess_([A-Za-z0-9_-]{16}|[0-9a-f]{32})$"))]
         #[serde(default)]
         session_id: Option<String>,

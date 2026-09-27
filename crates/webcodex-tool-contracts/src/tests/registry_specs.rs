@@ -987,12 +987,26 @@ fn session_tool_specs_describe_explicit_targeting() {
         .as_str()
         .expect("work_on_project session_id description")
         .to_lowercase();
-    for phrase in ["does not prove", "fresh model context", "context_request"] {
+    for phrase in [
+        "does not prove",
+        "fresh model context",
+        "_wc.context",
+        "_wc.record",
+    ] {
         assert!(
             session_id_description.contains(phrase),
             "work_on_project session_id description should mention {phrase}: {session_id_description}"
         );
     }
+    let work_schema_text = serde_json::to_string(&work.input_schema).unwrap();
+    for legacy in ["context_request", "recording_session_id"] {
+        assert!(
+            !work_schema_text.contains(legacy),
+            "work_on_project model-facing schema prose leaked legacy wrapper {legacy}: {work_schema_text}"
+        );
+    }
+    assert!(work.description.contains("_wc.context"));
+    assert!(!work.description.contains("context_request"));
     let update_desc = update.description.to_lowercase();
     for phrase in [
         "authorized project",

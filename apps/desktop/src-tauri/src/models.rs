@@ -258,6 +258,7 @@ pub struct QuickShareState {
 #[serde(rename_all = "snake_case")]
 pub enum DesktopOperationKind {
     EnvironmentMigration,
+    DesktopUpdate,
     EnvironmentService,
     LocalSetup,
     LocalProjectActivate,
@@ -284,6 +285,7 @@ impl DesktopOperationKind {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::EnvironmentMigration => "environment_migration",
+            Self::DesktopUpdate => "desktop_update",
             Self::EnvironmentService => "environment_service",
             Self::LocalSetup => "local_setup",
             Self::LocalProjectActivate => "local_project_activate",

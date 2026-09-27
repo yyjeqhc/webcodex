@@ -81,10 +81,12 @@ pub struct AppState {
     shutdown_started: AtomicBool,
     connections: ConnectionRuntimes,
     update_check: tokio::sync::Mutex<()>,
+    updates: Arc<crate::updates::UpdateManager>,
 }
 
 impl AppState {
     pub fn new(data_dir: PathBuf, resource_dir: PathBuf) -> DesktopResult<Self> {
+        let updates = crate::updates::UpdateManager::new(data_dir.clone());
         let core = DesktopCore::new(data_dir, resource_dir)?;
         let published = Arc::clone(&core.published);
         let supervisor = Arc::clone(&core.supervisor);
@@ -101,6 +103,7 @@ impl AppState {
             shutdown_signal: CancellationSignal::new(),
             shutdown_started: AtomicBool::new(false),
             update_check: tokio::sync::Mutex::new(()),
+            updates,
         })
     }
 
@@ -397,6 +400,7 @@ impl AppState {
             return;
         }
         self.shutdown_signal.cancel();
+        self.updates.cancel_download(false);
         self.operations.cancel_active_for_shutdown();
         self.connections.cancel_all();
         self.supervisor.lock().await.stop_all().await;
@@ -460,7 +464,12 @@ impl AppState {
         if result.is_ok() && cancellation.is_cancelled() {
             result = Err(cancelled_error());
         }
-        if result.is_err() && operation.kind == DesktopOperationKind::EnvironmentMigration {
+        if result.is_err()
+            && matches!(
+                operation.kind,
+                DesktopOperationKind::EnvironmentMigration | DesktopOperationKind::DesktopUpdate
+            )
+        {
             // Core's durable migration coordinator owns both restoration and
             // the unknown-result state. Generic supervisor cleanup could kill
             // a successfully restored original generation.

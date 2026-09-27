@@ -583,6 +583,47 @@ pub async fn check_for_updates(
     state.check_for_updates(manual).await
 }
 #[tauri::command]
+pub fn get_update_download_state(state: State<'_, AppState>) -> crate::updates::DownloadStatus {
+    state.get_update_download_state()
+}
+
+#[tauri::command]
+pub async fn download_update(
+    version: String,
+    state: State<'_, AppState>,
+) -> DesktopResult<crate::updates::UpdateStatus> {
+    state.download_update(&version).await
+}
+
+#[tauri::command]
+pub fn cancel_update_download(state: State<'_, AppState>) -> crate::updates::DownloadStatus {
+    state.cancel_update_download()
+}
+
+#[tauri::command]
+pub async fn set_automatic_update_download(
+    enabled: bool,
+    state: State<'_, AppState>,
+) -> DesktopResult<crate::updates::UpdateStatus> {
+    state.set_automatic_update_download(enabled).await
+}
+
+#[tauri::command]
+pub async fn install_verified_update(
+    version: String,
+    confirmed: bool,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> DesktopResult<()> {
+    if state.install_verified_update(&version, confirmed).await? {
+        // Only the explicit Install confirmation authorizes this exit. The
+        // normal exit path closes Desktop-owned processes, not persistent services.
+        app.exit(0);
+    }
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn remind_update_later(
     state: State<'_, AppState>,
 ) -> DesktopResult<crate::updates::UpdateStatus> {

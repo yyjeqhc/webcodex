@@ -1,5 +1,9 @@
-//! Best-effort stable-release discovery. No authentication, installation,
-//! runtime-health changes, or dependency on the availability of GitHub.
+//! Stable discovery plus a private verified unified-installer workflow.
+//! Background checks/downloads never change Runtime health or install anything.
+mod download;
+mod install;
+pub use download::{DownloadStatus, InstallationKind, UpdateManager};
+pub use install::{assess_installation, InstallContext};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use webcodex_core::desktop_runtime_contract::{
@@ -26,12 +30,29 @@ pub struct ReleaseNotice {
     pub compatibility: UpdateCompatibility,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct UpdateCache {
     pub last_check_at_ms: Option<u64>,
     pub last_success_at_ms: Option<u64>,
     pub latest: Option<ReleaseNotice>,
     pub remind_after_ms: Option<u64>,
+    #[serde(default = "automatic_download_default")]
+    pub automatic_download: bool,
+}
+
+fn automatic_download_default() -> bool {
+    true
+}
+impl Default for UpdateCache {
+    fn default() -> Self {
+        Self {
+            last_check_at_ms: None,
+            last_success_at_ms: None,
+            latest: None,
+            remind_after_ms: None,
+            automatic_download: true,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -43,6 +64,8 @@ pub struct UpdateStatus {
     pub cached: bool,
     pub last_check_at_ms: Option<u64>,
     pub manual_error: Option<String>,
+    pub automatic_download: bool,
+    pub download: DownloadStatus,
 }
 
 impl UpdateCache {
@@ -65,7 +88,7 @@ impl UpdateCache {
         let latest = self.latest.clone().filter(valid_notice);
         let update_available = latest
             .as_ref()
-            .is_some_and(|notice| is_newer_stable(&notice.runtime_version, installed));
+            .is_some_and(|notice| is_newer_stable(&notice.version, installed));
         UpdateStatus {
             state: if manual_error.is_some() {
                 "check_failed"
@@ -83,6 +106,8 @@ impl UpdateCache {
             cached,
             last_check_at_ms: self.last_check_at_ms,
             manual_error,
+            automatic_download: self.automatic_download,
+            download: DownloadStatus::default(),
         }
     }
 }
@@ -216,26 +241,12 @@ pub async fn fetch_latest() -> Result<Option<ReleaseNotice>, ()> {
             .connect_timeout(Duration::from_secs(3))
             .timeout(Duration::from_secs(8))
             .redirect(reqwest::redirect::Policy::custom(|attempt| {
-                if attempt.previous().len() > 4 {
-                    return attempt.stop();
-                }
-                let url = attempt.url();
-                if url.scheme() == "https"
-                    && matches!(
-                        url.host_str(),
-                        Some(
-                            "api.github.com"
-                                | "github.com"
-                                | "release-assets.githubusercontent.com"
-                                | "objects.githubusercontent.com"
-                        )
-                    )
-                    && url.username().is_empty()
-                    && url.password().is_none()
+                if attempt.previous().len() < 4
+                    && webcodex_environment::unified_update::trusted_download_url(attempt.url())
                 {
                     attempt.follow()
                 } else {
-                    attempt.stop()
+                    attempt.error("untrusted update redirect")
                 }
             }))
             .build()

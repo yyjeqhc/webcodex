@@ -46,6 +46,9 @@ windows-sys = { version = "0.61.2", features = ["Win32_Storage_FileSystem", "Win
 winreg = "0.55"
 
 
+[dev-dependencies]
+tempfile = "3"
+
 [profile.dogfood]
 inherits = "dev"
 opt-level = 1

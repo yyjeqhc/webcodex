@@ -46,6 +46,7 @@ fn trace_review_changes_success(
     snapshot_reused: bool,
     metadata_duration_ms: u64,
     diff_page_duration_ms: u64,
+    git_internal_observation_count: u64,
 ) {
     let response_bytes = serde_json::to_vec(output)
         .map(|bytes| u64::try_from(bytes.len()).unwrap_or(u64::MAX))
@@ -76,6 +77,7 @@ fn trace_review_changes_success(
         elapsed_ms = elapsed_ms(started),
         metadata_duration_ms,
         diff_page_duration_ms,
+        git_internal_observation_count,
         files_count,
         hunk_count,
         truncated,
@@ -83,6 +85,7 @@ fn trace_review_changes_success(
         "Git review workflow completed"
     );
 }
+
 fn projection_identity(
     scope: &GitReviewScopeInput,
     paths: &Option<Vec<String>>,
@@ -329,6 +332,7 @@ impl ToolRuntime {
                 true,
                 0,
                 diff_page_duration_ms,
+                2,
             );
             return ToolResult::ok(output);
         }
@@ -344,6 +348,7 @@ impl ToolRuntime {
             diff,
             metadata_duration_ms,
             diff_page_duration_ms,
+            git_internal_observation_count,
         ) = match scope_input.clone() {
             GitReviewScopeInput::Workspace => {
                 let metadata_started = Instant::now();
@@ -444,6 +449,7 @@ impl ToolRuntime {
                     diff.output,
                     metadata_duration_ms,
                     diff_page_duration_ms,
+                    4,
                 )
             }
             GitReviewScopeInput::Committed {
@@ -462,6 +468,18 @@ impl ToolRuntime {
                     return summary_result;
                 }
                 let metadata_duration_ms = elapsed_ms(metadata_started);
+                let symbol_observation_attempted = summary_result
+                    .output
+                    .get("files")
+                    .and_then(Value::as_array)
+                    .is_some_and(|files| {
+                        files.iter().any(|file| {
+                            matches!(
+                                file.get("symbol_inspection").and_then(Value::as_str),
+                                Some("inspected" | "unavailable")
+                            )
+                        })
+                    });
                 let Some(source) = source_from_review_summary(&summary_result.output) else {
                     return review_changes_failure(&project, "review_metadata_malformed");
                 };
@@ -533,6 +551,7 @@ impl ToolRuntime {
                     diff.output,
                     metadata_duration_ms,
                     diff_page_duration_ms,
+                    4 + u64::from(symbol_observation_attempted),
                 )
             }
         };
@@ -600,6 +619,7 @@ impl ToolRuntime {
             false,
             metadata_duration_ms,
             diff_page_duration_ms,
+            git_internal_observation_count,
         );
         ToolResult::ok(output)
     }

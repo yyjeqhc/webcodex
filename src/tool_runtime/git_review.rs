@@ -919,16 +919,18 @@ impl ToolRuntime {
                 return git_review_failure(&project, &base, &head, "git_diff_metadata_unavailable")
             }
         };
+        let metadata_duration_ms =
+            u64::try_from(metadata_started.elapsed().as_millis()).unwrap_or(u64::MAX);
+        tracing::debug!(
+            target: "webcodex::git_review",
+            operation = "git_review_summary_metadata",
+            metadata_runner_observation_count = 1u64,
+            metadata_duration_ms,
+            response_bytes = u64::try_from(output.stdout.len()).unwrap_or(u64::MAX),
+            metadata_success = !output.stdout.starts_with(GIT_REVIEW_ERROR_SENTINEL),
+            "Git review metadata observation completed"
+        );
         if output.stdout.starts_with(GIT_REVIEW_ERROR_SENTINEL) {
-            tracing::debug!(
-                target: "webcodex::git_review",
-                operation = "git_review_summary_metadata",
-                runner_observation_count = 1u64,
-                metadata_duration_ms = u64::try_from(metadata_started.elapsed().as_millis())
-                    .unwrap_or(u64::MAX),
-                response_bytes = u64::try_from(output.stdout.len()).unwrap_or(u64::MAX),
-                "Git review metadata observation completed"
-            );
             return git_review_failure(&project, &base, &head, "git_diff_failed");
         }
         let Some((name_status, numstat, raw)) = parse_review_metadata_frames(&output.stdout) else {
@@ -1020,7 +1022,9 @@ impl ToolRuntime {
         let mut total_symbols = 0usize;
         let mut symbols_partial = files_truncated || classification_partial;
         let mut diff_bytes_inspected = 0usize;
+        let mut symbol_observation_count = 0u64;
         if !symbol_paths.is_empty() {
+            symbol_observation_count = 1;
             let output = self
                 .run_project_internal_posix_script_capture(
                     &resolved.resolved_id,
@@ -1064,6 +1068,16 @@ impl ToolRuntime {
             push_warning(&mut warnings, "symbol_hints_partial");
         }
 
+        tracing::debug!(
+            target: "webcodex::git_review",
+            operation = "git_review_summary",
+            scope_runner_observation_count = 1u64,
+            metadata_runner_observation_count = 1u64,
+            symbol_runner_observation_count = symbol_observation_count,
+            runner_observation_count = 2u64 + symbol_observation_count,
+            metadata_duration_ms,
+            "Git review summary observation counts"
+        );
         let coverage_partial = files_truncated || classification_partial;
         let production_changed = files.iter().any(|file| has_class(file, "production"));
         let tests_changed = files.iter().any(|file| has_class(file, "test"));

@@ -165,9 +165,10 @@ async fn result_app_descriptor_and_resource_exposure_require_ui_operator_capabil
     assert_eq!(MCP_RESULT_UI_RESOURCE_URI, "ui://webcodex/changes/v2");
     assert_eq!(
         MCP_WORK_RESULT_UI_RESOURCE_URI,
-        "ui://webcodex/work-result/v10"
+        "ui://webcodex/work-result/v11"
     );
     assert!(MCP_WORK_RESULT_UI_RESOURCE_LEGACY_URIS.contains(&"ui://webcodex/work-result/v9"));
+    assert!(MCP_WORK_RESULT_UI_RESOURCE_LEGACY_URIS.contains(&"ui://webcodex/work-result/v10"));
     assert!(MCP_RESULT_UI_RESOURCE_LEGACY_URIS.contains(&"ui://webcodex/changes/v1"));
     assert!(MCP_RESULT_UI_RESOURCE_LEGACY_URIS.contains(&"ui://webcodex/result/v1"));
     assert!(MCP_RESULT_UI_RESOURCE_LEGACY_URIS.contains(&"ui://webcodex/result/v2"));

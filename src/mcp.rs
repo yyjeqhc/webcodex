@@ -104,6 +104,7 @@ fn work_result_app_internal_tool(tool_name: Option<&str>) -> bool {
         Some(
             "present_work_result"
                 | "work_result_state"
+                | "work_result_activity_detail"
                 | "work_result_send_message"
                 | "changes_file_diff"
         )

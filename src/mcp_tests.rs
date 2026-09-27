@@ -116,6 +116,7 @@ fn work_result_app_internal_tools_do_not_become_window_activity() {
     for tool in [
         "present_work_result",
         "work_result_state",
+        "work_result_activity_detail",
         "work_result_send_message",
         "changes_file_diff",
     ] {

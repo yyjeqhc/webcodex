@@ -2139,6 +2139,14 @@ impl ToolRuntime {
                     .await
             }
 
+            ToolCall::WorkResultActivityDetail {
+                project,
+                server_trace_id,
+            } => {
+                self.work_result_activity_detail(project, server_trace_id, auth, window)
+                    .await
+            }
+
             ToolCall::WorkResultSendMessage {
                 project,
                 session_id,

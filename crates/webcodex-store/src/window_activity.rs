@@ -198,6 +198,61 @@ impl Database {
         collect_window_event_rows(&conn, &mut rows, None)
     }
 
+    /// Exact bounded lookup used by App-only lazy Window detail reads.
+    /// The caller still owns principal and Project visibility authorization.
+    pub fn get_window_activity_event_by_trace(
+        &self,
+        window_key: &str,
+        principal: Option<(&str, &str)>,
+        server_trace_id: &str,
+    ) -> anyhow::Result<Option<WindowActivityEventRecord>> {
+        let conn = self.lock_connection(crate::StoreDomain::WindowActivity);
+        let select = "SELECT e.event_id, e.client_window_key, e.client_window_source,
+                    e.server_trace_id, e.window_started_at_ms, e.window_ended_at_ms,
+                    e.duration_ms, e.action_name, e.operation, e.project, e.status,
+                    e.window_meaningful, e.recorder_gap_session_id,
+                    e.principal_correlation_kind, e.principal_correlation_id,
+                    e.request_observed_at_ms, e.response_handed_at_ms,
+                    e.window_transition_kind, e.response_streaming,
+                    e.window_continuity_eligible, e.http_status, e.ids_json
+             FROM action_events e";
+        let mut records = match principal {
+            Some((kind, id)) => {
+                let sql = format!(
+                    "{select}
+                     WHERE e.client_window_key = ?1
+                       AND e.server_trace_id = ?2
+                       AND e.window_started_at_ms IS NOT NULL
+                       AND e.window_ended_at_ms IS NOT NULL
+                       AND e.principal_correlation_kind = ?3
+                       AND e.principal_correlation_id = ?4
+                     ORDER BY e.event_id DESC
+                     LIMIT 1"
+                );
+                let mut stmt = conn.prepare(&sql)?;
+                collect_window_events(
+                    &conn,
+                    &mut stmt,
+                    params![window_key, server_trace_id, kind, id],
+                    None,
+                )?
+            }
+            None => {
+                let sql = format!(
+                    "{select}
+                     WHERE e.client_window_key = ?1
+                       AND e.server_trace_id = ?2
+                       AND e.window_started_at_ms IS NOT NULL
+                       AND e.window_ended_at_ms IS NOT NULL
+                     ORDER BY e.event_id DESC
+                     LIMIT 1"
+                );
+                let mut stmt = conn.prepare(&sql)?;
+                collect_window_events(&conn, &mut stmt, params![window_key, server_trace_id], None)?
+            }
+        };
+        Ok(records.pop())
+    }
     /// Goal liveness needs the latest meaningful work even after thousands of
     /// transport-only App polls. Reuse the action ledger, with a bounded page of
     /// meaningful events plus the newest observation; never maintain another clock.

@@ -1,7 +1,8 @@
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 
-use crate::auth::AuthContext;
+use crate::auth::{AuthContext, SCOPE_RUNTIME_READ};
 use crate::client_window::ClientWindow;
 use crate::json_digest::update_sha256_with_json;
 
@@ -69,6 +70,90 @@ impl ToolRuntime {
     ) -> ToolResult {
         self.exact_work_result(project, session_id, "work_result_state", auth, window)
             .await
+    }
+
+    pub(crate) async fn work_result_activity_detail(
+        &self,
+        project: String,
+        server_trace_id: String,
+        auth: Option<&AuthContext>,
+        window: Option<&ClientWindow>,
+    ) -> ToolResult {
+        if server_trace_id.trim().is_empty() || server_trace_id.chars().count() > 128 {
+            return ToolResult::err_with_output(
+                "invalid Window activity trace identity",
+                json!({"error_kind":"activity_detail_invalid","state_changed":false}),
+            );
+        }
+        if let Err(result) = self.authorize_work_result_project(&project, auth).await {
+            return result;
+        }
+        let Some(window) = window else {
+            return ToolResult::err_with_output(
+                "stable Window identity required",
+                json!({"error_kind":"window_identity_unavailable","state_changed":false}),
+            );
+        };
+        let Some(auth) = auth.filter(|auth| !auth.is_open_anonymous()) else {
+            return ToolResult::err_with_output(
+                "Window activity principal unavailable",
+                json!({"error_kind":"principal_identity_unavailable","state_changed":false}),
+            );
+        };
+        if !auth.has_scope(SCOPE_RUNTIME_READ) {
+            return ToolResult::err_with_output(
+                "runtime read scope required",
+                json!({"error_kind":"runtime_read_unavailable","state_changed":false}),
+            );
+        }
+        let Ok((principal_kind, principal_id)) =
+            super::session_context::runtime_observation_principal(Some(auth))
+        else {
+            return ToolResult::err_with_output(
+                "Window activity principal unavailable",
+                json!({"error_kind":"principal_identity_unavailable","state_changed":false}),
+            );
+        };
+        let Some(db) = self.window_activity_db.as_ref() else {
+            return ToolResult::err_with_output(
+                "Window activity store unavailable",
+                json!({"error_kind":"activity_store_unavailable","state_changed":false}),
+            );
+        };
+        let event = match db.get_window_activity_event_by_trace(
+            window.key(),
+            Some((principal_kind.as_str(), principal_id.as_str())),
+            &server_trace_id,
+        ) {
+            Ok(Some(event)) => event,
+            Ok(None) => {
+                return ToolResult::err_with_output(
+                    "Window activity detail unavailable",
+                    json!({"error_kind":"activity_detail_unavailable","state_changed":false}),
+                )
+            }
+            Err(_) => {
+                return ToolResult::err_with_output(
+                    "Window activity query unavailable",
+                    json!({"error_kind":"activity_query_unavailable","state_changed":false}),
+                )
+            }
+        };
+        let mut visibility_cache = HashMap::new();
+        let Some(detail) = super::window_activity_projection::project_window_activity(
+            self,
+            auth,
+            &mut visibility_cache,
+            event,
+        )
+        .await
+        else {
+            return ToolResult::err_with_output(
+                "Window activity detail unavailable",
+                json!({"error_kind":"activity_detail_unavailable","state_changed":false}),
+            );
+        };
+        ToolResult::ok(json!({"activity_detail": detail}))
     }
 
     pub(crate) async fn work_result_send_message(
@@ -287,6 +372,13 @@ impl ToolRuntime {
                 },
             })
         };
+
+        if let Some(window) = window {
+            projection["window"] = json!({
+                "key": window.key(),
+                "source": window.source(),
+            });
+        }
 
         projection["collaboration"] = self.window_collaboration(
             window.map(ClientWindow::key),

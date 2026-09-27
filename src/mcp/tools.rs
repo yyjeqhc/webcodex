@@ -2493,6 +2493,8 @@ pub(super) async fn handle_call(
     let job_terminal_continuation_app_admitted = server_mcp_apps_enabled && stateless_2026;
     let app_only_goal_plan_sync = goal_plan_app_admitted && params.name == "goal_plan_sync";
     let app_only_work_result_state = work_result_app_admitted && params.name == "work_result_state";
+    let app_only_work_result_activity_detail =
+        work_result_app_admitted && params.name == "work_result_activity_detail";
     let app_only_work_result_send_message =
         work_result_app_admitted && params.name == "work_result_send_message";
     let app_only_changes_file_diff = work_result_app_admitted && params.name == "changes_file_diff";
@@ -2506,6 +2508,7 @@ pub(super) async fn handle_call(
             .any(|spec| spec.name == params.name);
     let direct_denied = !app_only_goal_plan_sync
         && !app_only_work_result_state
+        && !app_only_work_result_activity_detail
         && !app_only_work_result_send_message
         && !app_only_changes_file_diff
         && !app_only_agent_continuation
@@ -2739,6 +2742,7 @@ pub(super) async fn handle_call(
         }
     };
     if app_only_work_result_state
+        || app_only_work_result_activity_detail
         || app_only_work_result_send_message
         || app_only_changes_file_diff
         || app_only_agent_continuation

@@ -207,6 +207,36 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         super::ToolActivityInteraction::NonMeaningful,
     ),
     def(
+        "work_result_activity_detail",
+        super::ToolAuditPolicy::typed_fields(&[
+            super::ToolAuditResultField::pointer(
+                "server_trace_id",
+                "/activity_detail/server_trace_id",
+            ),
+            super::ToolAuditResultField::value("error_kind"),
+        ]),
+        ModelHidden,
+        "workflow",
+        None,
+        TOOL_PROVIDER_CONTROL,
+        super::ToolSemanticContract {
+            effect: super::ToolEffect::Observe,
+            risk: Read,
+            approval: super::ToolApprovalPolicy::None,
+            idempotency: super::ToolIdempotency::PureRead,
+        },
+        Some(RUNTIME_READ),
+        true,
+        NoPath,
+        false,
+        false,
+        super::ToolSessionEvidencePolicy::NONE,
+    )
+    .with_activity(
+        super::ToolActivityPresentation::Transport,
+        super::ToolActivityInteraction::NonMeaningful,
+    ),
+    def(
         "work_result_send_message",
         super::ToolAuditPolicy::typed_fields(&[
             super::ToolAuditResultField::value("success"),

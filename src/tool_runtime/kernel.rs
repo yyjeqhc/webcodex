@@ -449,7 +449,7 @@ impl ToolRuntime {
         }
         if matches!(
             request.tool_name.as_str(),
-            "work_result_state" | "work_result_send_message"
+            "work_result_state" | "work_result_activity_detail" | "work_result_send_message"
         ) && !capabilities.work_result_app
         {
             return ToolCallOutcome {

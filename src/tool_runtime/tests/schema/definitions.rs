@@ -91,6 +91,7 @@ fn tool_call_parser_name_gate_matches_tool_definitions() {
         "job_tail",
         "goal_plan_sync",
         "work_result_state",
+        "work_result_activity_detail",
         "work_result_send_message",
         "apply_patch",
         "apply_unified_diff",

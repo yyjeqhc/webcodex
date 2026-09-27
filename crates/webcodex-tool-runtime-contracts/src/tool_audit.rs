@@ -5840,6 +5840,13 @@ impl ToolCallAuditProjection for ToolCall {
                 "project": project,
                 "session_id": session_id,
             }),
+            Self::WorkResultActivityDetail {
+                project,
+                server_trace_id,
+            } => serde_json::json!({
+                "project": project,
+                "server_trace_id": server_trace_id,
+            }),
             Self::WorkResultSendMessage {
                 project,
                 session_id,

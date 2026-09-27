@@ -30,6 +30,8 @@ body { padding: 2px; color: CanvasText; }
 button { font: inherit; }
 .card {
   width: 100%;
+  min-width: 0;
+  max-width: 100%;
   overflow: hidden;
   border: 1px solid var(--card-border);
   border-radius: 14px;
@@ -38,9 +40,11 @@ button { font: inherit; }
 }
 .app-header {
   display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 14px;
+  gap: 10px 14px;
   min-height: 66px;
   padding: 11px 13px;
   border-bottom: 1px solid var(--divider);
@@ -62,7 +66,7 @@ button { font: inherit; }
 .brand-copy { display: grid; min-width: 0; gap: 2px; }
 h1 { margin: 0; font-size: 14px; font-weight: 650; line-height: 1.25; letter-spacing: -.01em; }
 .brand-subtitle { overflow: hidden; color: var(--muted); font: 11px/1.35 var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); text-overflow: ellipsis; white-space: nowrap; }
-.actions { display: flex; flex: 0 0 auto; align-items: center; gap: 7px; }
+.actions { display: flex; min-width: 0; max-width: 100%; flex: 0 0 auto; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 7px; }
 .badge, .status-value {
   display: inline-flex;
   align-items: center;
@@ -107,7 +111,8 @@ h1 { margin: 0; font-size: 14px; font-weight: 650; line-height: 1.25; letter-spa
   border-radius: 11px;
   background: color-mix(in srgb, var(--card-body) 88%, transparent);
 }
-.section-head { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 12px; }
+.section-head { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; }
+.section-head > * { min-width: 0; }
 h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color: var(--muted); text-transform: uppercase; }
 .primary { min-width: 0; font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
 .secondary, .status { font-size: 11px; color: var(--muted); overflow-wrap: anywhere; }
@@ -178,26 +183,39 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
 .live-dot { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 999px; background: var(--success); box-shadow: 0 0 0 3px var(--success-soft); }
 @media (max-width: 620px) {
   .app-header { align-items: flex-start; }
-  .actions { flex-direction: column-reverse; align-items: flex-end; }
+  .actions { margin-left: auto; }
   .status-grid { grid-template-columns: 1fr; }
   .brand-icon { width: 36px; height: 36px; }
+  .activity-call > summary { grid-template-columns: minmax(0, 1fr); }
+  .call-outcome { justify-self: start; }
+  .detail-grid { grid-template-columns: 1fr; }
 }
 [hidden] { display: none !important; }
-[hidden] { display: none !important; }
-.task-context { display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 9px 13px; color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
-.card-tabs { display: flex; padding: 0 11px; border-bottom: 1px solid var(--divider); }
+.task-context { display: flex; min-width: 0; flex-wrap: wrap; gap: 4px 14px; padding: 9px 13px; color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+.window-identity { min-width: 0; max-width: 100%; font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); word-break: break-all; user-select: text; }
+.card-tabs { display: flex; min-width: 0; padding: 0 11px; border-bottom: 1px solid var(--divider); }
 .card-tabs button { flex: 1; min-width: 0; min-height: 40px; padding: 7px 4px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--muted); cursor: pointer; }
 .card-tabs button[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); font-weight: 650; }
-.card-tabs button:focus-visible, .workflow-stages button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.card-panel { display: grid; min-width: 0; gap: 10px; }
-.workflow-stages { display: flex; flex-wrap: wrap; gap: 6px; }
-.workflow-stages button { padding: 6px 9px; border: 1px solid var(--divider); border-radius: 9px; color: CanvasText; background: var(--surface); cursor: pointer; }
+.card-tabs button:focus-visible, .workflow-stages button:focus-visible, .activity-call > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.card-panel { display: grid; width: 100%; min-width: 0; max-width: 100%; gap: 10px; }
+.workflow-stages { display: flex; min-width: 0; flex-wrap: wrap; gap: 6px; }
+.workflow-stages button { min-width: 0; padding: 6px 9px; border: 1px solid var(--divider); border-radius: 9px; color: CanvasText; background: var(--surface); cursor: pointer; }
 .workflow-stages button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
-.workflow-activity { display: grid; max-height: 320px; overflow: auto; }
-.workflow-row { display: grid; gap: 4px; padding: 10px 0; border-bottom: 1px solid var(--divider); }
-.workflow-row header { display: flex; gap: 8px; justify-content: space-between; }
-.workflow-row strong { overflow-wrap: anywhere; }
+.workflow-activity { display: grid; min-width: 0; max-width: 100%; max-height: min(420px, 55vh); overflow-x: hidden; overflow-y: auto; scrollbar-gutter: stable; padding-right: 2px; }
+.workflow-row { display: grid; min-width: 0; gap: 4px; padding: 10px 0; border-bottom: 1px solid var(--divider); }
+.workflow-row header { display: flex; min-width: 0; flex-wrap: wrap; gap: 4px 8px; justify-content: space-between; }
+.workflow-row strong { min-width: 0; overflow-wrap: anywhere; }
 .workflow-row time { color: var(--muted); font-size: 11px; }
+.activity-call { display: block; min-width: 0; max-width: 100%; border-bottom: 1px solid var(--divider); }
+.activity-call > summary { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 10px; align-items: center; padding: 10px 1px; cursor: pointer; list-style-position: inside; }
+.activity-call > summary::marker { color: var(--muted); }
+.call-main { display: grid; min-width: 0; gap: 2px; }
+.call-title { min-width: 0; font-weight: 650; overflow-wrap: anywhere; }
+.call-time { min-width: 0; color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+.call-outcome { max-width: 100%; color: var(--muted); font-size: 11px; text-align: right; overflow-wrap: anywhere; }
+.activity-detail { display: grid; min-width: 0; gap: 7px; padding: 0 1px 10px 17px; }
+.activity-detail .detail-grid { padding: 0; }
+.activity-detail-state { color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
 .section p { margin: 0; }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; scroll-behavior: auto !important; } }
 </style>
@@ -211,7 +229,7 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     </div>
     <div class="actions"><button id="refresh" class="refresh" type="button" disabled>Refresh</button><span id="badge" class="badge">Loading</span></div>
   </header>
-  <div class="task-context"><span id="projectIdentity"></span><span id="sessionIdentity"></span></div>
+  <div class="task-context"><span id="projectIdentity" class="window-identity"></span><span id="windowSource"></span><span id="sessionIdentity"></span></div>
   <nav class="card-tabs" role="tablist" aria-label="Window views">
     <button id="tabActivity" type="button" role="tab" aria-selected="true" aria-controls="panelActivity">Activity</button>
     <button id="tabResults" type="button" role="tab" aria-selected="false" aria-controls="panelResults" tabindex="-1">Results</button>
@@ -290,6 +308,7 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
   const MAX_FILES = 8;
   const MAX_TOOLS = 12;
   const SNAPSHOT_ID = /^wc_changes_snapshot_[0-9a-f]{32}$/;
+  const WINDOW_KEY = /^[0-9a-f]{64}$/;
   const MAX_FROZEN_FILES = 24;
   const INITIAL_FROZEN_FILES = 5;
   let snapshot = null;
@@ -298,6 +317,9 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
   let hasRefreshed = false;
   const diffCache = new Map();
   const diffInFlight = new Set();
+  const activityDetailCache = new Map();
+  const activityDetailInFlight = new Set();
+  const expandedActivity = new Set();
   const VALIDATION = new Set(["not_run", "unproven", "passed", "failed", "mixed", "expected", "inconclusive", "stale", "unknown"]);
   let nextId = 1;
   let identity = null;
@@ -357,6 +379,9 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     el("workspaceMeta").textContent = "";
     el("resultChecks").hidden = true;
     diffCache.clear();
+    activityDetailCache.clear();
+    activityDetailInFlight.clear();
+    expandedActivity.clear();
   }
 
   function acceptIdentity(candidate) {
@@ -452,6 +477,12 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     return true;
   }
 
+  function validWindowIdentity(value) {
+    return value === undefined || (!!value && typeof value === "object" && !Array.isArray(value)
+      && typeof value.key === "string" && WINDOW_KEY.test(value.key)
+      && typeof value.source === "string" && value.source.length > 0 && value.source.length <= 64);
+  }
+
   function validWindowActivityRow(value, active = false) {
     if (!value || typeof value !== "object" || Array.isArray(value)) return false;
     if (typeof value.label !== "string" || value.label.length < 1 || value.label.length > 120) return false;
@@ -510,7 +541,7 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     if (!value || typeof value !== "object" || Array.isArray(value) || value.version !== 2) return null;
     if (!validProject(value.project) || typeof value.state_version !== "string" || !STATE_VERSION.test(value.state_version)) return null;
     if (value.session_id !== undefined && !validSession(value.session_id)) return null;
-    if (!validWorkspace(value.workspace) || !validActivity(value.activity) || !validWindowActivity(value.window_activity) || !validCollaboration(value.collaboration)) return null;
+    if (!validWindowIdentity(value.window) || !validWorkspace(value.workspace) || !validActivity(value.activity) || !validWindowActivity(value.window_activity) || !validCollaboration(value.collaboration)) return null;
     if (value.validation !== undefined && !validValidation(value.validation)) return null;
     if (value.review !== undefined && !validReview(value.review)) return null;
     if (value.session !== undefined && !validSessionState(value.session)) return null;
@@ -972,6 +1003,91 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     el("activityAge").textContent = "";
   }
 
+  function validActivityDetail(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+    if (typeof value.server_trace_id !== "string" || !value.server_trace_id.length || value.server_trace_id.length > 128) return false;
+    if (typeof value.method !== "string" || value.method.length > 64 || typeof value.status !== "string" || value.status.length > 32) return false;
+    if (!Number.isSafeInteger(value.started_at_ms) || !Number.isSafeInteger(value.ended_at_ms) || value.ended_at_ms < value.started_at_ms) return false;
+    if (!safeCount(value.duration_ms) || typeof value.meaningful !== "boolean") return false;
+    for (const key of ["tool_name", "project", "activity_presentation", "activity_kind", "window_transition_kind", "async_job_id", "recorder_gap_session_id"]) {
+      if (value[key] != null && (typeof value[key] !== "string" || value[key].length > 512)) return false;
+    }
+    for (const key of ["request_observed_at_ms", "response_handed_at_ms", "service_ms", "next_call_gap_ms", "cycle_ms", "http_status"]) {
+      if (value[key] != null && (!Number.isSafeInteger(value[key]) || value[key] < 0)) return false;
+    }
+    if (value.response_streaming != null && typeof value.response_streaming !== "boolean") return false;
+    const observedJobIds = value.observed_job_ids ?? [];
+    if (!Array.isArray(observedJobIds) || observedJobIds.length > 8 || !observedJobIds.every(id => typeof id === "string" && id.length <= 128)) return false;
+    if (!Array.isArray(value.workflow_sessions) || value.workflow_sessions.length > 32) return false;
+    return value.workflow_sessions.every(item => item && typeof item === "object"
+      && validSession(item.workflow_session_id)
+      && (item.project == null || validProject(item.project))
+      && typeof item.relation === "string" && item.relation.length <= 64);
+  }
+
+  function detailItem(label, value) {
+    const item = document.createElement("div"); item.className = "detail-item";
+    const key = document.createElement("span"); key.textContent = label;
+    const detail = document.createElement("strong"); detail.textContent = String(value);
+    item.append(key, detail);
+    return item;
+  }
+
+  function renderActivityDetail(root, detail) {
+    root.replaceChildren();
+    const grid = document.createElement("div"); grid.className = "detail-grid";
+    grid.append(
+      detailItem("Trace", detail.server_trace_id),
+      detailItem("Method", detail.tool_name || detail.method),
+      detailItem("Status", detail.status),
+    );
+    if (detail.project) grid.append(detailItem("Project", detail.project));
+    if (detail.service_ms != null) grid.append(detailItem("Service time", formatDuration(detail.service_ms)));
+    if (detail.http_status != null) grid.append(detailItem("HTTP", detail.http_status));
+    if (detail.window_transition_kind) grid.append(detailItem("Window transition", detail.window_transition_kind));
+    if (detail.response_handed_at_ms != null) grid.append(detailItem("Response handed off", new Date(detail.response_handed_at_ms).toLocaleString()));
+    if (detail.async_job_id) grid.append(detailItem("Async job", detail.async_job_id));
+    const observedJobIds = detail.observed_job_ids ?? [];
+    if (observedJobIds.length) grid.append(detailItem("Observed jobs", observedJobIds.join(", ")));
+    if (detail.workflow_sessions.length) grid.append(detailItem("Workflow Sessions", detail.workflow_sessions.map(item => item.workflow_session_id).join(", ")));
+    root.append(grid);
+  }
+
+  async function loadActivityDetail(row, root) {
+    const trace = row.server_trace_id;
+    if (!trace || row.running) {
+      root.textContent = row.running ? "Live call · detailed timing is available after completion." : "No trace identity is available for this retained event.";
+      root.className = "activity-detail activity-detail-state";
+      return;
+    }
+    const cached = activityDetailCache.get(trace);
+    if (cached) { root.className = "activity-detail"; renderActivityDetail(root, cached); return; }
+    if (activityDetailInFlight.has(trace)) return;
+    activityDetailInFlight.add(trace);
+    root.className = "activity-detail activity-detail-state";
+    root.textContent = "Loading details…";
+    try {
+      const response = await send("tools/call", {
+        name: "work_result_activity_detail",
+        arguments: { project: lastRenderedState.project, server_trace_id: trace },
+      });
+      if (tornDown) return;
+      const structured = structuredOf(response);
+      const detail = structured?.success === true ? structured.output?.activity_detail : null;
+      if (!validActivityDetail(detail) || detail.server_trace_id !== trace) {
+        root.textContent = "Details unavailable.";
+        return;
+      }
+      activityDetailCache.set(trace, detail);
+      root.className = "activity-detail";
+      renderActivityDetail(root, detail);
+    } catch (_) {
+      if (!tornDown) root.textContent = "Details unavailable.";
+    } finally {
+      activityDetailInFlight.delete(trace);
+    }
+  }
+
   function renderWindowActivity(windowActivity) {
     const root = el("windowActivity"); root.replaceChildren();
     const observed = windowActivity.events_observed;
@@ -987,18 +1103,33 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
         .map(row => ({ ...row, running: true })),
     ].sort((a, b) => a.started_at_ms - b.started_at_ms);
     for (const row of rows) {
-      const article = document.createElement("article"); article.className = "workflow-row";
-      const header = document.createElement("header");
-      const label = document.createElement("strong"); label.textContent = row.tool_name || row.label;
-      const status = document.createElement("span"); status.className = "secondary";
-      const outcome = ({ success: "Succeeded", succeeded: "Succeeded", completed: "Completed", failed: "Failed", timeout: "Timed out", unknown: "Outcome unknown" })[row.status] || row.status;
-      status.textContent = row.running ? "Running" : row.meaningful ? outcome : "Observe · " + outcome;
-      header.append(label, status);
-      const time = document.createElement("time");
+      const details = document.createElement("details"); details.className = "activity-call";
+      const key = row.server_trace_id || (row.running ? "active:" : "event:") + row.started_at_ms + ":" + (row.tool_name || row.label);
+      details.open = expandedActivity.has(key);
+      const summary = document.createElement("summary");
+      const main = document.createElement("span"); main.className = "call-main";
+      const label = document.createElement("span"); label.className = "call-title"; label.textContent = row.tool_name || row.label;
+      const time = document.createElement("time"); time.className = "call-time";
       const elapsed = row.running ? Math.max(0, Date.now() - row.started_at_ms) : row.duration_ms;
       const duration = elapsed == null ? "" : " · " + (elapsed < 1000 ? elapsed + "ms" : (elapsed / 1000).toFixed(1) + "s");
       time.textContent = new Date(row.started_at_ms).toLocaleString() + duration;
-      article.append(header, time); root.append(article);
+      main.append(label, time);
+      const status = document.createElement("span"); status.className = "call-outcome";
+      const outcome = ({ success: "Succeeded", succeeded: "Succeeded", completed: "Completed", failed: "Failed", timeout: "Timed out", unknown: "Outcome unknown" })[row.status] || row.status;
+      status.textContent = row.running ? "Running" : row.meaningful ? outcome : "Observe · " + outcome;
+      summary.append(main, status);
+      const detail = document.createElement("div"); detail.className = "activity-detail activity-detail-state";
+      if (details.open) void loadActivityDetail(row, detail);
+      details.ontoggle = () => {
+        if (details.open) {
+          expandedActivity.add(key);
+          void loadActivityDetail(row, detail);
+        } else {
+          expandedActivity.delete(key);
+        }
+      };
+      details.append(summary, detail);
+      root.append(details);
     }
     if (!root.children.length) {
       const empty = document.createElement("p"); empty.className = "secondary";
@@ -1006,7 +1137,6 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
       root.append(empty);
     }
   }
-
   const panes = ["Activity", "Results", "Collaboration"];
   function selectPane(name, focus = false) {
     if (!panes.includes(name)) return;
@@ -1057,7 +1187,8 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
   function render(state) {
     if (tornDown) return;
     lastRenderedState = state;
-    el("projectIdentity").textContent = "Window activity";
+    el("projectIdentity").textContent = state.window ? "Window · " + state.window.key : "Window identity unavailable";
+    el("windowSource").textContent = state.window ? "Source · " + state.window.source : "";
     el("sessionIdentity").textContent = state.session_id ? "Context · " + state.session_id.slice(8, 14) : "";
     const hasFinalChanges = snapshot !== null || state.final_changes !== undefined;
     el("taskTitle").textContent = state.session?.title || "WebCodex activity";

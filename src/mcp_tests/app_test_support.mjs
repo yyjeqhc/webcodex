@@ -22,7 +22,7 @@ export function app(filename, { deliverToolMeta = true, deliverToolStructuredCon
     const attributes = new Map();
     return {
       tagName: String(tagName).toUpperCase(),
-      textContent: "", hidden: false, children: [], className: "", type: "", onclick: null,
+      textContent: "", hidden: false, open: false, children: [], className: "", type: "", onclick: null, ontoggle: null,
       append(...children) { this.children.push(...children); },
       appendChild(child) { this.children.push(child); return child; },
       replaceChildren(...children) { this.children = [...children]; this.textContent = ""; },

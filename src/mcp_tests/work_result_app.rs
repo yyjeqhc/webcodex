@@ -36,9 +36,10 @@ async fn handle_with_server_apps_enabled(
 async fn work_result_descriptor_is_explicit_sparse_app_only_and_resource_backed() {
     assert_eq!(
         MCP_WORK_RESULT_UI_RESOURCE_URI,
-        "ui://webcodex/work-result/v10"
+        "ui://webcodex/work-result/v11"
     );
     assert!(MCP_WORK_RESULT_UI_RESOURCE_LEGACY_URIS.contains(&"ui://webcodex/work-result/v9"));
+    assert!(MCP_WORK_RESULT_UI_RESOURCE_LEGACY_URIS.contains(&"ui://webcodex/work-result/v10"));
     assert!(MCP_WORK_RESULT_UI_RESOURCE_LEGACY_URIS.contains(&"ui://webcodex/work-result/v4"));
     assert!(MCP_WORK_RESULT_UI_RESOURCE_LEGACY_URIS.contains(&"ui://webcodex/work-result/v5"));
     assert!(MCP_WORK_RESULT_UI_RESOURCE_LEGACY_URIS.contains(&"ui://webcodex/work-result/v6"));
@@ -87,6 +88,20 @@ async fn work_result_descriptor_is_explicit_sparse_app_only_and_resource_backed(
     assert_eq!(state.pointer("/_meta/ui/visibility"), Some(&json!(["app"])));
     assert!(state.pointer("/_meta/ui/resourceUri").is_none());
     assert_eq!(state["inputSchema"]["required"], json!(["project"]));
+    let activity_detail = tool(&ui["result"], "work_result_activity_detail")
+        .expect("app-only work_result_activity_detail");
+    assert_eq!(
+        activity_detail.pointer("/_meta/ui/visibility"),
+        Some(&json!(["app"]))
+    );
+    assert!(activity_detail.pointer("/_meta/ui/resourceUri").is_none());
+    assert_eq!(
+        activity_detail["inputSchema"]["required"],
+        json!(["project", "server_trace_id"])
+    );
+    assert!(!registered_tool_specs()
+        .iter()
+        .any(|spec| spec.name == "work_result_activity_detail"));
     let send =
         tool(&ui["result"], "work_result_send_message").expect("app-only work_result_send_message");
     assert_eq!(send.pointer("/_meta/ui/visibility"), Some(&json!(["app"])));
@@ -180,6 +195,7 @@ async fn work_result_descriptor_is_explicit_sparse_app_only_and_resource_backed(
         panic!("Apps-disabled tools/list failed");
     };
     assert!(tool(&disabled["result"], "work_result_state").is_none());
+    assert!(tool(&disabled["result"], "work_result_activity_detail").is_none());
     assert!(tool(&disabled["result"], "work_result_send_message").is_none());
     assert!(tool(&disabled["result"], "changes_file_diff").is_none());
     assert!(tool(&disabled["result"], "present_work_result")
@@ -192,10 +208,19 @@ async fn work_result_descriptor_is_explicit_sparse_app_only_and_resource_backed(
         .any(|spec| spec.name == "work_result_state"));
     assert!(!registered_tool_specs()
         .iter()
+        .any(|spec| spec.name == "work_result_activity_detail"));
+    assert!(!registered_tool_specs()
+        .iter()
         .any(|spec| spec.name == "work_result_send_message"));
     assert!(
         !super::super::tools::adaptive_runtime_gateway_target_admitted_for_test(
             "work_result_state",
+            true
+        )
+    );
+    assert!(
+        !super::super::tools::adaptive_runtime_gateway_target_admitted_for_test(
+            "work_result_activity_detail",
             true
         )
     );
@@ -521,6 +546,51 @@ fn work_result_html_is_bounded_live_progress_ui() {
             !MCP_WORK_RESULT_APP_HTML.contains(forbidden),
             "Work Result App contains forbidden marker {forbidden}"
         );
+    }
+}
+
+#[tokio::test]
+async fn work_result_activity_detail_call_requires_app_protocol_capability() {
+    let runtime = test_runtime();
+    let args = json!({
+        "name": "work_result_activity_detail",
+        "arguments": {
+            "project": "agent:missing:project",
+            "server_trace_id": "trace-window-detail"
+        }
+    });
+    let app = handle_with_server_apps_enabled(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(5219)),
+            mcp_2026_ui_params(args.clone()),
+        ),
+        None,
+        true,
+    )
+    .await;
+    let McpOutcome::Ok(app) = app else {
+        panic!("App-only activity detail should reach runtime under App capability");
+    };
+    assert_eq!(app["result"]["structuredContent"]["success"], false);
+    let fallback: Value = serde_json::from_str(
+        app["result"]["content"][0]["text"]
+            .as_str()
+            .expect("Work Result activity detail content fallback"),
+    )
+    .unwrap();
+    assert_eq!(fallback, app["result"]["structuredContent"]);
+
+    for params in [mcp_2026_params(args.clone()), mcp_2026_ui_params(args)] {
+        let outcome = handle_with_server_apps_enabled(
+            &runtime,
+            rpc("tools/call", Some(json!(5220)), params),
+            None,
+            false,
+        )
+        .await;
+        assert!(matches!(outcome, McpOutcome::BadRequest(_)));
     }
 }
 

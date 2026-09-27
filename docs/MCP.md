@@ -126,8 +126,12 @@ workspace changes. Refresh uses the existing App-only observation path; opening
 Results adds no tool calls. Automatic refresh pauses while the App document is
 hidden and uses a bounded visible cadence so background cards do not continuously
 exercise the Host tool bridge. Discuss these changes opens the existing composer
-without sending a message. New cards use `ui://webcodex/work-result/v10` so Hosts
-with cached older templates load the reduced-polling behavior.
+without sending a message. Window activity calls are compact, collapsed by default,
+and fetch their sanitized trace/timing details only when expanded. The card header
+shows the canonical hashed Window key used by the Window activity ledger, making
+support traces attributable without exposing the Host's raw Window identifier.
+New cards use `ui://webcodex/work-result/v11` so Hosts with cached older templates
+load the updated activity presentation and lazy-detail contract.
 
 ## Existing Server
 

@@ -33,6 +33,8 @@ pub mod session_service;
 mod storage;
 mod tunnel;
 mod types;
+pub use upgrade::{upgrade_observation, UpgradeObservation, UpgradeOutcome};
+pub mod unified_update;
 mod upgrade;
 pub mod upgrade_transport;
 

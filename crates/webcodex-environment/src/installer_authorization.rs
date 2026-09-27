@@ -47,7 +47,7 @@ fn require_system_installer() -> SetupResultValue<()> {
     ))
 }
 
-fn system_runtime_directory() -> SetupResultValue<PathBuf> {
+pub(crate) fn system_runtime_directory() -> SetupResultValue<PathBuf> {
     #[cfg(target_os = "linux")]
     {
         Ok(PathBuf::from("/usr/lib/webcodex/webcodex-runtime"))
@@ -250,6 +250,31 @@ pub async fn verify_installer_authorization(
     }
     verify_installer_targets(&receipt, &system_runtime_directory()?)?;
     Ok(receipt)
+}
+
+/// A failed launcher may revoke only the authorization it just established.
+/// It cannot discard an unrelated user's pending package transaction.
+#[cfg(unix)]
+pub(crate) fn cancel_matching_authorization(
+    receipt: &PreparedInstallationReceipt,
+) -> SetupResultValue<()> {
+    require_system_installer()?;
+    let store = EnvironmentStore::open(system_directory()?)?;
+    let _lock = store.lock()?;
+    if let Some(saved) = store.read_json::<Authorization>("authorization.json")? {
+        if saved.receipt != *receipt {
+            return Err(diagnostic(
+                "installer_authorization_conflict",
+                "A different prepared operation owns installer authorization",
+            ));
+        }
+        #[cfg(unix)]
+        clear_authorization_under_lock(&store)?;
+        #[cfg(not(unix))]
+        std::fs::remove_file(store.root().join("authorization.json"))
+            .map_err(|_| SetupDiagnostic::io())?;
+    }
+    Ok(())
 }
 
 /// This removes only the package handoff. Service recovery belongs to the

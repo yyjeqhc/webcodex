@@ -3,7 +3,7 @@ use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use webcodex_environment::*;
 
-const USAGE: &str = "webcodex environment <COMMAND>\n\nconfigure [--create | --join URL] [--runner] [--project PATH | --no-project]\n          [--code-stdin | --token-file PATH] [--new-pairing-code]\nresume    [--code-stdin] [--new-pairing-code] [--token-file PATH]\ninvite\nadd-project PATH [--code-stdin] [--new-pairing-code]\nremove-project PROJECT_ID\nstatus|doctor\nstart|stop|restart <server|runner|tunnel> [--profile PROFILE]\nrepair-credential runner\nrepair-user-credential [--token-file PATH]\nuninstall-service <server|runner|tunnel> [--profile PROFILE]\nconfigure-tunnel [PROFILE] [--credentials-file PATH]\ntunnel-status [PROFILE]\nremove-tunnel [PROFILE]\nupgrade-preflight|upgrade-prepare --candidate-dir PATH [--development-build]\nupgrade-finish|upgrade-rollback\nmigrate-legacy-runner --join URL --project PATH --token-file PATH [--profile PROFILE] (Linux)\nmigrate-legacy-server --user NAME --token-file PATH --listen ORIGINAL_ADDR [--server-url URL] (Linux)\ninstaller-authorize --upgrade-receipt PATH --candidate-dir PATH\ninstaller-verify --candidate-dir PATH\ninstaller-verify-same --candidate-dir PATH --expected-runtime-dir PATH\ninstaller-finish|installer-cancel\n\nPublic environment commands accept --json and --environment-dir PATH.\nInstaller finalization uses only the fixed owner authorization.\nAdvanced: --bin-dir PATH (configure and explicit migration).\n--runner enables local work without requiring an initial project.\nViewer-only uses a user credential; pairing codes are only for Runner machines.\nTunnel credentials use hidden input or a protected JSON file with tunnel_id and api_key.\n";
+const USAGE: &str = "webcodex environment <COMMAND>\n\nconfigure [--create | --join URL] [--runner] [--project PATH | --no-project]\n          [--code-stdin | --token-file PATH] [--new-pairing-code]\nresume    [--code-stdin] [--new-pairing-code] [--token-file PATH]\ninvite\nadd-project PATH [--code-stdin] [--new-pairing-code]\nremove-project PROJECT_ID\nstatus|doctor\nstart|stop|restart <server|runner|tunnel> [--profile PROFILE]\nrepair-credential runner\nrepair-user-credential [--token-file PATH]\nuninstall-service <server|runner|tunnel> [--profile PROFILE]\nconfigure-tunnel [PROFILE] [--credentials-file PATH]\ntunnel-status [PROFILE]\nremove-tunnel [PROFILE]\nupgrade-preflight|upgrade-prepare --candidate-dir PATH [--development-build]\nupgrade-finish|upgrade-rollback\nmigrate-legacy-runner --join URL --project PATH --token-file PATH [--profile PROFILE] (Linux)\nmigrate-legacy-server --user NAME --token-file PATH --listen ORIGINAL_ADDR [--server-url URL] (Linux)\ninstaller-authorize --upgrade-receipt PATH --candidate-dir PATH\ninstaller-apply --upgrade-receipt PATH --candidate-dir PATH --installer-file PATH (OS authorization required)\ninstaller-verify --candidate-dir PATH\ninstaller-verify-same --candidate-dir PATH --expected-runtime-dir PATH\ninstaller-finish|installer-cancel\n\nPublic environment commands accept --json and --environment-dir PATH.\nInstaller finalization uses only the fixed owner authorization.\nAdvanced: --bin-dir PATH (configure and explicit migration).\n--runner enables local work without requiring an initial project.\nViewer-only uses a user credential; pairing codes are only for Runner machines.\nTunnel credentials use hidden input or a protected JSON file with tunnel_id and api_key.\n";
 
 #[derive(Default)]
 struct Input {
@@ -25,6 +25,7 @@ struct Input {
     credentials_file: Option<PathBuf>,
     profile: Option<String>,
     upgrade_receipt: Option<PathBuf>,
+    installer_file: Option<PathBuf>,
     expected_runtime_dir: Option<PathBuf>,
     username: Option<String>,
     listen: Option<String>,
@@ -64,6 +65,7 @@ fn parse(args: &[String]) -> Result<Input, String> {
             "--credentials-file" => input.credentials_file = Some(PathBuf::from(value(&mut iter)?)),
             "--profile" => input.profile = Some(value(&mut iter)?),
             "--upgrade-receipt" => input.upgrade_receipt = Some(PathBuf::from(value(&mut iter)?)),
+            "--installer-file" => input.installer_file = Some(PathBuf::from(value(&mut iter)?)),
             "--expected-runtime-dir" => {
                 input.expected_runtime_dir = Some(PathBuf::from(value(&mut iter)?))
             }
@@ -99,6 +101,9 @@ fn parse(args: &[String]) -> Result<Input, String> {
         )
     {
         return Err("--development-build applies only to upgrade candidate verification".into());
+    }
+    if input.installer_file.is_some() && input.command != "installer-apply" {
+        return Err("--installer-file applies only to verified unified installer handoff".into());
     }
     if input.credentials_file.is_some() && input.command != "configure-tunnel" {
         return Err("--credentials-file applies only to configure-tunnel".into());
@@ -156,6 +161,74 @@ async fn run_inner(args: &[String]) -> Result<String, String> {
         return Ok(USAGE.into());
     }
     let mut input = parse(args)?;
+    if input.command == "installer-apply" {
+        #[cfg(unix)]
+        {
+            use webcodex_environment::unified_update::{
+                apply_verified_installer, InstallerLaunchNotice, UpdateError,
+            };
+            let mut options = args.iter().skip(1);
+            while let Some(option) = options.next() {
+                match option.as_str() {
+                    "--json" => {},
+                    "--upgrade-receipt" | "--candidate-dir" | "--installer-file" => {
+                        options.next().ok_or("Missing installer handoff argument")?;
+                    }
+                    _ => return Err("installer-apply accepts only an owner receipt, candidate directory and verified installer file".into()),
+                }
+            }
+            let receipt = absolute(
+                &input
+                    .upgrade_receipt
+                    .take()
+                    .ok_or("--upgrade-receipt is required")?,
+            )?;
+            let candidate = absolute(
+                &input
+                    .candidate_dir
+                    .take()
+                    .ok_or("--candidate-dir is required")?,
+            )?;
+            let installer = absolute(
+                &input
+                    .installer_file
+                    .take()
+                    .ok_or("--installer-file is required")?,
+            )?;
+            let emit = |notice: &InstallerLaunchNotice| {
+                if let Ok(mut bytes) = serde_json::to_vec(notice) {
+                    bytes.push(b'\n');
+                    let mut stdout = std::io::stdout().lock();
+                    // Losing the Desktop acknowledgement must not abort an
+                    // already-running package transaction or its recovery.
+                    let _ = stdout.write_all(&bytes);
+                    let _ = stdout.flush();
+                }
+            };
+            let mut acknowledged = false;
+            let result = apply_verified_installer(&receipt, &candidate, &installer, |notice| {
+                acknowledged = true;
+                emit(&notice);
+            })
+            .await;
+            if !acknowledged {
+                emit(&InstallerLaunchNotice::not_started(
+                    result
+                        .as_ref()
+                        .err()
+                        .copied()
+                        .unwrap_or(UpdateError::RecoveryRequired),
+                ));
+            }
+            return result
+                .map(|()| String::new())
+                .map_err(|kind| serde_json::json!({"ok":false,"error_kind":kind}).to_string());
+        }
+        #[cfg(not(unix))]
+        return Err(
+            "Windows upgrade orchestration belongs to the verified unified NSIS installer".into(),
+        );
+    }
     #[cfg(unix)]
     if input.command == "installer-finish" {
         if args.iter().skip(1).any(|arg| arg != "--json") {

@@ -11,6 +11,8 @@ use std::io::Read;
 use std::path::{Component as PathComponent, Path, PathBuf};
 use webcodex_core::desktop_runtime_contract::{MachineBuildInfo, DESKTOP_RUNTIME_CONTRACT};
 mod desktop_tree;
+mod observation;
+pub use observation::{upgrade_observation, UpgradeObservation, UpgradeOutcome};
 
 const COMPONENTS: [&str; 4] = [
     "webcodex",

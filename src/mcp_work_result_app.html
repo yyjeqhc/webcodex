@@ -280,10 +280,8 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
   const STATE_VERSION = /^wr2_[0-9a-f]{64}$/;
   const MESSAGE_ID = /^wc_msg_[A-Za-z0-9_-]+$/;
   const CALL_TIMEOUT_MS = 10000;
-  const VISIBLE_REFRESH_MS = 2500;
-  const HIDDEN_REFRESH_MS = 12000;
-  const VISIBLE_IDLE_REFRESH_MS = 10000;
-  const HIDDEN_IDLE_REFRESH_MS = 30000;
+  const VISIBLE_REFRESH_MS = 10000;
+  const VISIBLE_IDLE_REFRESH_MS = 30000;
   const IDLE_BACKOFF_AFTER_MS = 60000;
   const ACTIVITY_IDLE_AFTER_MS = 60000;
   const AUTO_REFRESH_IDLE_PAUSE_MS = 30 * 60 * 1000;
@@ -1155,14 +1153,14 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
 
   function automaticRefreshDelay() {
     const idleMs = lastStateChangeAt === null ? 0 : Math.max(0, Date.now() - lastStateChangeAt);
-    if (lastRenderedState?.window_activity.active || idleMs < IDLE_BACKOFF_AFTER_MS) return document.hidden ? HIDDEN_REFRESH_MS : VISIBLE_REFRESH_MS;
-    return document.hidden ? HIDDEN_IDLE_REFRESH_MS : VISIBLE_IDLE_REFRESH_MS;
+    if (lastRenderedState?.window_activity.active || idleMs < IDLE_BACKOFF_AFTER_MS) return VISIBLE_REFRESH_MS;
+    return VISIBLE_IDLE_REFRESH_MS;
   }
 
   function scheduleRefresh(delay) {
     if (refreshTimer !== null) clearTimeout(refreshTimer);
     refreshTimer = null;
-    if (tornDown || !hostInitialized || !identity || lastStateVersion === null) return;
+    if (tornDown || !hostInitialized || !identity || lastStateVersion === null || document.hidden) return;
     if (!lastRenderedState?.window_activity.active && lastStateChangeAt !== null && Date.now() - lastStateChangeAt >= AUTO_REFRESH_IDLE_PAUSE_MS) {
       if (!refreshInFlight) el("status").textContent = "Updates paused · Refresh to check";
       return;
@@ -1329,9 +1327,13 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     updateComposerControl();
   };
   addEventListener("visibilitychange", () => {
-    if (!tornDown && hostInitialized && identity && lastStateVersion !== null) {
-      scheduleRefresh(document.hidden ? HIDDEN_REFRESH_MS : 250);
+    if (tornDown || !hostInitialized || !identity || lastStateVersion === null) return;
+    if (document.hidden) {
+      if (refreshTimer !== null) clearTimeout(refreshTimer);
+      refreshTimer = null;
+      return;
     }
+    scheduleRefresh(250);
   });
   updateRefreshControl();
   addEventListener("pagehide", teardown, { once: true });

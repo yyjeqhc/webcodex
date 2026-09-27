@@ -123,9 +123,11 @@ Linked Session check/review evidence appears when available.
 After closeout, Results also shows the sealed final task changes with on-demand
 per-file diffs. Those diffs keep their original snapshot identity even if the live
 workspace changes. Refresh uses the existing App-only observation path; opening
-Results adds no tool calls. Discuss these changes opens the existing composer
-without sending a message. New cards use `ui://webcodex/work-result/v9` so Hosts
-with cached older templates discover the restored file view.
+Results adds no tool calls. Automatic refresh pauses while the App document is
+hidden and uses a bounded visible cadence so background cards do not continuously
+exercise the Host tool bridge. Discuss these changes opens the existing composer
+without sending a message. New cards use `ui://webcodex/work-result/v10` so Hosts
+with cached older templates load the reduced-polling behavior.
 
 ## Existing Server
 

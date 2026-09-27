@@ -50,7 +50,7 @@ beforeEach(() => {
   api.updateRunnerAllowedRoots.mockImplementation(async (_target, expected, roots) => { expect(expected).toEqual(settings.file_access.configured_roots); settings.file_access = { configured_roots: roots, effective_roots: roots.length ? roots : ["/Users/fixture"], using_default_roots: roots.length === 0, allow_cwd_anywhere: false }; return state; });
   api.addRunnerPlugin.mockImplementation(async (_target, provider) => { settings.plugin_ids.push(provider.id); return state; });
   api.restartOwnedRunner.mockResolvedValue(state); api.getState.mockResolvedValue(state); api.updateTunnelConfig.mockResolvedValue(state);
-  api.computerPermissions.mockResolvedValue({ supported: true, foreground: false, desktop_accessibility: false, desktop_screen_recording: false });
+  api.computerPermissions.mockResolvedValue({ supported: true, foreground: false, execution_process: "WebCodex Runner", execution_path: "/Applications/WebCodex.app/Contents/Resources/webcodex-runner", runner_accessibility: "unknown", runner_screen_recording: "unknown", desktop_accessibility: false, desktop_screen_recording: false });
   Object.defineProperty(HTMLDialogElement.prototype, "showModal", { configurable: true, value() { this.setAttribute("open", ""); } });
   Object.defineProperty(HTMLDialogElement.prototype, "close", { configurable: true, value() { this.removeAttribute("open"); } });
 });
@@ -131,11 +131,32 @@ describe("workspace configuration boundaries", () => {
     expect(args).toHaveValue("[]");
   });
 
+  it("identifies WebCodex Runner as the Computer Use execution owner and keeps Runner TCC status tri-state", async () => {
+    render(wrap(<ComputerPermissions />));
+    expect(await screen.findByText("WebCodex Runner")).toBeInTheDocument();
+    expect(screen.getByText("/Applications/WebCodex.app/Contents/Resources/webcodex-runner")).toBeInTheDocument();
+    const runner = document.querySelector('[data-webcodex-permission-owner="runner"]') as HTMLElement;
+    expect(runner).toHaveTextContent("Not observed here · Requires system check");
+    api.computerPermissions.mockResolvedValueOnce({ supported: true, foreground: false, execution_process: "WebCodex Runner", execution_path: "/Applications/WebCodex.app/Contents/Resources/webcodex-runner", runner_accessibility: "granted", runner_screen_recording: "denied", desktop_accessibility: false, desktop_screen_recording: false });
+    fireEvent.click(screen.getByRole("button", { name: "Recheck permissions" }));
+    await waitFor(() => expect(runner).toHaveTextContent("✓ Granted"));
+    expect(runner).toHaveTextContent("Not granted");
+    expect(screen.getByRole("button", { name: "Show Runner in Finder" })).toBeEnabled();
+  });
+
+  it("does not render macOS Computer Use controls when native permission probing is unsupported", async () => {
+    api.computerPermissions.mockResolvedValue({ supported: false, foreground: false, execution_process: null, execution_path: null, runner_accessibility: "unknown", runner_screen_recording: "unknown", desktop_accessibility: false, desktop_screen_recording: false });
+    render(wrap(<ComputerPermissions />));
+    await waitFor(() => expect(api.computerPermissions).toHaveBeenCalled());
+    await waitFor(() => expect(screen.queryByText("WebCodex Runner")).not.toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: "Show Runner in Finder" })).not.toBeInTheDocument();
+  });
+
   it("opens the permission explanation only after foreground observation, never auto-grants", async () => {
     render(wrap(<ComputerPermissions welcome />));
     await waitFor(() => expect(api.computerPermissions).toHaveBeenCalled());
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    api.computerPermissions.mockResolvedValue({ supported: true, foreground: true, desktop_accessibility: false, desktop_screen_recording: false });
+    api.computerPermissions.mockResolvedValue({ supported: true, foreground: true, execution_process: "WebCodex Runner", execution_path: "/Applications/WebCodex.app/Contents/Resources/webcodex-runner", runner_accessibility: "unknown", runner_screen_recording: "unknown", desktop_accessibility: false, desktop_screen_recording: false });
     fireEvent.focus(window);
     expect(await screen.findByRole("dialog")).toHaveAccessibleName("Computer Use");
     expect(api.requestComputerPermission).not.toHaveBeenCalled();
@@ -151,8 +172,8 @@ describe("workspace configuration boundaries", () => {
     fireEvent.click(screen.getByText("Computer Use permission troubleshooting", { selector: "summary" }));
     fireEvent.click(screen.getByRole("button", { name: "Recheck permissions" }));
     await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
-    expect(screen.getAllByText("Permission needed")).toHaveLength(2);
-    expect(screen.getByRole("button", { name: "Grant Permission · Screen Recording" })).toBeEnabled();
+    expect(screen.getAllByText("Not granted")).toHaveLength(2);
+    expect(screen.getByRole("button", { name: "Grant Permission · Desktop · Screen Recording" })).toBeEnabled();
     expect(api.requestComputerPermission).not.toHaveBeenCalled();
   });
 });

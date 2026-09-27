@@ -239,4 +239,5 @@ export interface RunnerFileAccess { configured_roots: string[]; effective_roots:
 export interface SettingsTarget { config_path: string; client_id: string; server_url: string }
 export interface RunnerSettings { paths: RunnerPaths; file_access: RunnerFileAccess; plugin_ids: string[]; target: SettingsTarget; can_restart: boolean }
 export interface PluginRegistration { id: string; name: string; command: string; args: string[]; cwd: string | null }
-export interface ComputerPermissions { supported: boolean; foreground: boolean; desktop_accessibility: boolean; desktop_screen_recording: boolean }
+export type PermissionStatus = "granted" | "denied" | "unknown";
+export interface ComputerPermissions { supported: boolean; foreground: boolean; execution_process: string | null; execution_path: string | null; runner_accessibility: PermissionStatus; runner_screen_recording: PermissionStatus; desktop_accessibility: boolean; desktop_screen_recording: boolean }

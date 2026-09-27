@@ -40,7 +40,7 @@ beforeEach(() => {
   api.probeRuntime.mockResolvedValue({ ...settings, candidate }); api.recheckRuntime.mockResolvedValue(settings);
   api.switchRuntime.mockResolvedValue({ outcome: "activated", reason_code: null, rollback_reason_code: null, selection_revision: 4, restart_required: false });
   api.diagnostics.mockResolvedValue(structuredClone(diagnostic)); api.setToolRequestTracing.mockResolvedValue({ ...diagnostic.trace, mode: "full", restart_required: true });
-  api.computerPermissions.mockResolvedValue({ supported: true, foreground: true, desktop_accessibility: true, desktop_screen_recording: true });
+  api.computerPermissions.mockResolvedValue({ supported: true, foreground: true, execution_process: "WebCodex Runner", execution_path: "/fixture/runtime/webcodex-runner", runner_accessibility: "unknown", runner_screen_recording: "unknown", desktop_accessibility: true, desktop_screen_recording: true });
   api.openDiagnosticResource.mockResolvedValue(undefined);
   api.getLaunchAtLogin.mockResolvedValue(false); api.desktopBuildInfo.mockResolvedValue(build("webcodex-desktop"));
   dialog.open.mockResolvedValue("/fixture/custom"); dialog.save.mockResolvedValue(null);

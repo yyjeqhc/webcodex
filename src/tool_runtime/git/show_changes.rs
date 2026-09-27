@@ -2531,7 +2531,11 @@ GIT_OPTIONAL_LOCKS=0; export GIT_OPTIONAL_LOCKS
 git() {{
   if [ "$1" = diff ]; then
     shift
-    command git -c include.path="$changes_git_overlay" -c core.fsmonitor=false diff --no-ext-diff --no-textconv "$@"
+    diff_base=HEAD
+    if ! command git -c include.path="$changes_git_overlay" -c core.fsmonitor=false rev-parse --verify HEAD >/dev/null 2>&1; then
+      diff_base=$(printf '' | command git -c include.path="$changes_git_overlay" -c core.fsmonitor=false hash-object -t tree --stdin)
+    fi
+    command git -c include.path="$changes_git_overlay" -c core.fsmonitor=false diff --no-ext-diff --no-textconv "$diff_base" "$@"
   else
     command git -c include.path="$changes_git_overlay" -c core.fsmonitor=false "$@"
   fi

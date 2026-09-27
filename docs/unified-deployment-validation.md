@@ -35,6 +35,8 @@ After integration with upstream `2f5d34b4`, Web runtime coverage is 125 tests pl
 
 After the PR CI failure at `42fedb56`, the native Computer helper exports were restricted to their intended ancestor module, installer test fixtures were isolated from the hosting GitHub Actions identity, and the environment crate/dependencies were registered in the workspace policy. The 11 focused installer tests pass both with and without inherited CI variables; mismatch regressions verify rejection before probing or staging. All 316 release-tooling tests pass with a simulated foreign CI identity. Integration with upstream `adb8c2ae` preserves both the authenticated user and effective configuration in Runtime Console; 139 Web runtime tests, 2 build tests, typecheck, build, `check:dist`, and 47 Runtime Console HTTP tests pass. These local checks do not replace the pending Windows/macOS CI or native acceptance below.
 
+Follow-up CI reached the Windows CLI tests and exposed two outdated legacy-command assertions; the four pure Windows command-guard tests now run on every host and pass with the environment setup guidance. An additional regression exposed a missing GUI-session availability projection: both summary/full Runner lists now preserve `true`/`false` and omit absent legacy metadata. All 48 Runtime Console HTTP tests pass, including authorized overview/detail/list coverage and cross-user isolation. The fixes do not change native installation acceptance.
+
 ## Linux source deployment evidence
 
 On 2026-09-26, Ubuntu 24.04.4 x64 was used for a local source deployment of version `0.4.3`, source `31940d7e8f5786b727735d121cde2738cf07668b`, with `git_dirty: false` on CLI, Server, Runner, and Desktop. This is a development snapshot, not an installer release.
@@ -115,6 +117,8 @@ A successful cross-compiled build or package inspection is useful packaging evid
 合并上游 `2f5d34b4` 后，Web runtime 为 125 项测试和 2 项 build 测试，Runner registry 为 304 项通过，Runtime Console HTTP 为 47 项通过。已重新检查 Web typecheck、build、`check:dist`、Linux Server/CLI/Runner 编译及格式。下文源码部署证据仍对应原始部署修订。 随后合并上游 `20abda57` 时保留了独立的 RuntimeInfo 测试模块，5 项 RuntimeInfo 筛选测试和全部 49 项 metadata 测试通过。已复现的测试环境变量竞争通过现有环境 guard 修复，原断言保持不变。
 
 PR 在 `42fedb56` 的 CI 失败后，已将原生 Computer helper 导出范围修正到所需祖先模块，隔离安装器测试与宿主 GitHub Actions 的构建身份，并登记 environment crate 及其依赖规则。11 项安装器定向测试在有、无继承 CI 变量时均通过；不匹配回归测试验证在探测或暂存前拒绝。模拟外部 CI 身份下，316 项发布工具测试通过。合并上游 `adb8c2ae` 后，Runtime Console 同时保留认证用户与生效配置字段；139 项 Web runtime 测试、2 项构建测试、typecheck、build、`check:dist` 和 47 项 Runtime Console HTTP 测试通过。这些本地检查不替代待运行的 Windows/macOS CI 和下方原生验收。
+
+后续 CI 进入 Windows CLI 测试后发现两项旧命令断言过时；4 项纯 Windows 命令判断测试现已在所有主机运行，并通过 environment 配置指引断言。另一个回归测试发现 GUI 会话可用性投影缺失，Runner 的精简与完整列表现均保留 `true`/`false`，旧版未提供时省略字段。全部 48 项 Runtime Console HTTP 测试通过，包含授权概览、详情、列表及跨用户隔离。这些修正不改变原生安装验收状态。
 
 ### Linux 源码部署证据
 

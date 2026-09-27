@@ -1,9 +1,8 @@
-//! Windows platform-boundary tests: unsupported operations fail with a clear
-//! message before any server/service logic runs, and help still renders.
+//! Windows platform-boundary tests: legacy service operations fail with a clear
+//! environment setup message before dispatch, and help still renders.
 //!
-//! The guard is Windows-only by design; on Unix these commands remain valid.
+//! Guard dispatch is Windows-only; its pure routing rules are tested on all hosts.
 
-#[cfg(windows)]
 mod windows_guard {
     use crate::windows_unsupported_platform_action;
 
@@ -12,7 +11,7 @@ mod windows_guard {
     }
 
     #[test]
-    fn managed_server_lifecycle_fails_closed_on_windows() {
+    fn legacy_server_lifecycle_directs_windows_users_to_environment() {
         for command in [
             vec!["server"],
             vec!["server", "install"],
@@ -23,13 +22,13 @@ mod windows_guard {
             vec!["server", "uninstall", "--confirm"],
         ] {
             let message = windows_unsupported_platform_action(&args(&command))
-                .expect("managed server lifecycle must be blocked on Windows");
+                .expect("legacy server lifecycle must be blocked on Windows");
             assert!(
                 message.contains("webcodex environment start|stop|restart server"),
                 "{command:?}: {message}"
             );
             assert!(
-                message.contains("webcodex server run"),
+                message.contains("webcodex environment configure"),
                 "{command:?}: {message}"
             );
             assert!(
@@ -40,7 +39,7 @@ mod windows_guard {
     }
 
     #[test]
-    fn runner_install_fails_closed_on_windows() {
+    fn legacy_runner_install_directs_windows_users_to_environment() {
         for command in [
             vec!["runner", "install"],
             vec!["runner", "install", "--scope", "user"],
@@ -52,7 +51,7 @@ mod windows_guard {
                 "{command:?}: {message}"
             );
             assert!(
-                message.contains("webcodex runner start --profile"),
+                message.contains("webcodex environment configure"),
                 "{command:?}: {message}"
             );
         }
@@ -76,6 +75,11 @@ mod windows_guard {
     #[test]
     fn supported_windows_commands_are_not_blocked() {
         for command in [
+            vec!["environment", "configure"],
+            vec!["environment", "start", "server"],
+            vec!["environment", "start", "runner"],
+            vec!["environment", "stop", "server"],
+            vec!["environment", "restart", "runner"],
             vec!["server", "init"],
             vec!["server", "run"],
             vec!["server", "run", "--env-file", "C:\\temp\\webcodex.env"],

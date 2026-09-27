@@ -2648,11 +2648,11 @@ where
 
 /// Windows release boundary, evaluated before any command dispatch.
 ///
-/// Windows supports explicit local foreground Server initialization/execution
-/// and the platform-neutral project `share` path. Service-managed Server lifecycle
-/// operations and Runner service install remain unsupported and fail before
-/// platform-specific service logic. `--help` is exempt so help still renders.
-#[cfg(windows)]
+/// Windows supports persistent services through `environment`, foreground Server
+/// execution, and project `share`. Legacy service commands fail before dispatch
+/// and direct users to the shared environment setup/lifecycle path. `--help` is
+/// exempt so help still renders. The pure guard is also compiled in host tests.
+#[cfg(any(windows, test))]
 fn windows_unsupported_platform_action(args: &[String]) -> Option<&'static str> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
         return None;

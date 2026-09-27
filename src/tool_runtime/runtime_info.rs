@@ -185,7 +185,7 @@ impl ToolRuntime {
             clients
                 .iter()
                 .map(|client| {
-                    json!({
+                    let mut value = json!({
                         "client_id": client.client_id,
                         "runner_instance_id": client.runner_instance_id,
                         "display_name": client.display_name,
@@ -201,7 +201,11 @@ impl ToolRuntime {
                         "job_concurrency": job_concurrency_for_client(client, &runner_jobs),
                         "build": client.build,
                         "coding_agent_providers": safe_provider_inventory(client.coding_agent_providers.as_deref()),
-                    })
+                    });
+                    if let Some(availability) = client.computer_session_availability {
+                        value["computer_session_availability"] = json!(availability);
+                    }
+                    value
                 })
                 .collect()
         } else {
@@ -235,6 +239,9 @@ impl ToolRuntime {
                         ),
                         "tool_providers": client.policy.as_ref().and_then(|policy| policy.tool_providers.as_ref()),
                     });
+                    if let Some(availability) = client.computer_session_availability {
+                        value["computer_session_availability"] = json!(availability);
+                    }
                     if include_projects {
                         value["projects"] = json!(client.projects);
                     }

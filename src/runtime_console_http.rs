@@ -3539,13 +3539,32 @@ mod tests {
         private_path: &str,
         auth: Option<&AuthContext>,
     ) {
+        register_project_with_computer_availability(
+            runtime,
+            client_id,
+            project_id,
+            private_path,
+            auth,
+            None,
+        )
+        .await;
+    }
+
+    async fn register_project_with_computer_availability(
+        runtime: &ToolRuntime,
+        client_id: &str,
+        project_id: &str,
+        private_path: &str,
+        auth: Option<&AuthContext>,
+        computer_session_availability: Option<bool>,
+    ) {
         let runner_instance_id = format!("inst-{client_id}");
         let access = auth.map(crate::test_support::runner_access);
         runtime
             .runner_registry
             .register_with_auth(
                 RunnerRegisterRequest {
-                    computer_session_availability: None,
+                    computer_session_availability,
                     process_started_at: None,
                     build: None,
                     job_concurrency_limit: None,
@@ -6376,6 +6395,112 @@ mod tests {
             );
         }
         assert!(!serialized.contains("agent:client-b:proj-b"));
+    }
+
+    #[tokio::test]
+    async fn computer_session_availability_reaches_only_authorized_overview_and_runner_detail() {
+        let runtime = test_runtime();
+        let auth_a = crate::auth::shared_key_context("computer-availability-a");
+        let auth_b = crate::auth::shared_key_context("computer-availability-b");
+        for (client, availability, auth) in [
+            ("available", Some(true), &auth_a),
+            ("unavailable", Some(true), &auth_a),
+            ("legacy", None, &auth_a),
+            ("private", Some(true), &auth_b),
+        ] {
+            register_project_with_computer_availability(
+                &runtime,
+                client,
+                "project",
+                "/private/project",
+                Some(auth),
+                availability,
+            )
+            .await;
+        }
+        runtime
+            .runner_registry
+            .update_computer_session_availability(
+                "unavailable",
+                "inst-unavailable",
+                None,
+                Some(false),
+            )
+            .await
+            .unwrap();
+
+        let overview_view = overview_for_auth(&runtime, &auth_a).await.unwrap();
+        let rows = serde_json::to_value(&overview_view).unwrap()["runners"]
+            .as_array()
+            .unwrap()
+            .clone();
+        assert_eq!(rows.len(), 3);
+        let full = runtime
+            .dispatch_with_auth(
+                ToolCall::ListRunners {
+                    client_id: None,
+                    client_ids: None,
+                    include_projects: Some(false),
+                    summary_only: false,
+                },
+                Some(&auth_a),
+            )
+            .await;
+        assert!(full.success);
+        let full_rows = full.output["runners"].as_array().unwrap();
+        assert_eq!(full_rows.len(), 3);
+        for (client, expected) in [
+            ("available", Some(true)),
+            ("unavailable", Some(false)),
+            ("legacy", None),
+        ] {
+            let row = rows.iter().find(|row| row["client_id"] == client).unwrap();
+            let full_row = full_rows
+                .iter()
+                .find(|row| row["client_id"] == client)
+                .unwrap();
+            assert_eq!(
+                row.get("computer_session_availability")
+                    .and_then(Value::as_bool),
+                expected,
+            );
+            assert_eq!(
+                row.get("computer_session_availability").is_some(),
+                expected.is_some()
+            );
+            assert_eq!(
+                full_row
+                    .get("computer_session_availability")
+                    .and_then(Value::as_bool),
+                expected,
+            );
+            assert_eq!(
+                full_row.get("computer_session_availability").is_some(),
+                expected.is_some(),
+            );
+            let detail = runner_for_auth(&runtime, &auth_a, client, Some(20))
+                .await
+                .unwrap();
+            let detail = serde_json::to_value(detail).unwrap();
+            assert_eq!(
+                detail
+                    .get("computer_session_availability")
+                    .and_then(Value::as_bool),
+                expected,
+            );
+            assert_eq!(
+                detail.get("computer_session_availability").is_some(),
+                expected.is_some(),
+            );
+        }
+        assert_eq!(
+            runner_for_auth(&runtime, &auth_a, "private", Some(20))
+                .await
+                .unwrap_err(),
+            RuntimeConsoleError::NotFound,
+        );
+        assert!(rows.iter().all(|row| row["client_id"] != "private"));
+        assert!(full_rows.iter().all(|row| row["client_id"] != "private"));
     }
 
     #[tokio::test]

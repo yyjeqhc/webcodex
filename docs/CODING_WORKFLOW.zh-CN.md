@@ -44,9 +44,11 @@ Bootstrap 或 discovery 返回 `project_ref` 后，普通 Project-scoped tool ca
   all-or-nothing 才使用 `Promise.all`。对于 result-dependent search/read/branch chain，
   只要下一调用由结果机械确定且没有新的语义判断，就继续留在
   同一个 Host cell。单个 child ToolResult 返回本身不是 model-turn boundary；需要 semantic
-  choice、ambiguous result、新用户决策、authority/permission、uncertain outcome、竞争性
-  recovery 或 mutation intent 尚未确定时才自然回到模型。完整 ToolResult 尽量留在 Host
-  cell，只返回下一次决策需要的紧凑证据。每个 Host cell 应是短生命周期 dependency DAG，
+  choice、ambiguous result、新用户决策、authority/permission、stale revision/fence、
+  uncertain outcome、竞争性 recovery 或 mutation intent 尚未确定时才自然回到模型。
+  `reread_required=true` 或 `direct_retry_safe=false` 是 effectful replay 的硬边界：
+  recovery 可以指出下一步应重新观察什么，但不授权 Host 自动 reread 后重试 mutation。
+  完整 ToolResult 尽量留在 Host cell，只返回下一次决策需要的紧凑证据。每个 Host cell 应是短生命周期 dependency DAG，
   而不是承载长时间 Job lifetime。Job handoff 保存精确 identity 后，先完成已经确定的独立工作；
   如果剩余工作主要只是等待，就结束当前 cell，之后从 exact continuation 恢复，不要让 cell
   持续挂在长等待上，也不要因为 Job 存在就机械 `observe_jobs`。startup

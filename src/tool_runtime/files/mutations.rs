@@ -1965,6 +1965,8 @@ fn sanitize_apply_text_edits_model_recovery(
 
     if error_kind == "sha256_conflict" {
         result.output["error_kind"] = json!("stale_file_revision");
+        result.output["direct_retry_safe"] = json!(false);
+        result.output["reread_required"] = json!(true);
         if let Some(change) = change {
             result.output["path"] = json!(change.path);
             result.output["recovery"] = read_files_recovery(project, &change.path);

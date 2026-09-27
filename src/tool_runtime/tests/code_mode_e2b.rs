@@ -534,6 +534,8 @@ async fn e2b_stale_revision_preserves_newer_workspace_and_recovery() {
             success:edit.success,
             state_changed:edit.output.state_changed,
             error_kind:edit.output.error_kind,
+            direct_retry_safe:edit.output.direct_retry_safe ?? null,
+            reread_required:edit.output.reread_required ?? null,
             recovery:edit.output.recovery ?? null
         }));
     "#;
@@ -557,6 +559,8 @@ async fn e2b_stale_revision_preserves_newer_workspace_and_recovery() {
     assert_eq!(emitted["success"], false);
     assert_eq!(emitted["state_changed"], false);
     assert_eq!(emitted["error_kind"], "stale_file_revision");
+    assert_eq!(emitted["direct_retry_safe"], false);
+    assert_eq!(emitted["reread_required"], true);
     assert!(emitted["recovery"].is_object(), "{emitted}");
     assert!(
         !runtime

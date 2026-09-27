@@ -198,4 +198,4 @@ Codex session 统计的配对规则：只对 name=exec 的 custom_tool_call/func
 
 实测确认现有 `read_files.items`、`search_and_read.queries`、`edit_project_files.changes`、`cargo_check.packages` 与 Host cross-tool orchestration 已足够承载短链路，不需要第二套 batch abstraction。Host 只应在下一步参数和效果已经由当前结构化结果机械确定时继续；多个候选、设计选择、新权限、stale fence、retry/effect uncertainty 或 `outcome_unknown` 都应结束 cell 并返回模型。
 
-审查同时暴露一个具体 model-facing result gap：Runner 的 SHA/revision conflict 已包含 `direct_retry_safe=false`、`reread_required=true`，但 Server 将其投影为 `stale_file_revision` 时当前会移除这些字段，只保留 `error_kind` 与 `read_files` recovery。语义仍然 fail-closed，但 Host 失去统一的机器可判定 stop/replay 信号。下一轮生产修改应补齐该投影，并明确 guidance：stale/revision mismatch 的 recovery 是重新观察入口，不是自动 reread + mutation retry authority。
+审查同时暴露一个具体 model-facing result gap：Runner 的 SHA/revision conflict 已包含 `direct_retry_safe=false`、`reread_required=true`，但基线 Server 将其投影为 `stale_file_revision` 时会移除这两个字段，只保留 `error_kind` 与 `read_files` recovery。语义仍然 fail-closed，但 Host 会失去统一的机器可判定 stop/replay 信号。本分支后续生产修改已在 `edit_project_files` 的 stale projection 补齐这两个字段，并明确 guidance：stale/revision mismatch 的 recovery 是重新观察入口，不是自动 reread + mutation retry authority。

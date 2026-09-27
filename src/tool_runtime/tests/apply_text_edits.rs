@@ -232,6 +232,8 @@ fn apply_text_edits_occurrence_and_recovery_schemas_are_model_visible() {
             "change_index": 0,
             "kind": "edit",
             "path": "src/lib.rs",
+            "direct_retry_safe": false,
+            "reread_required": true,
             "recovery": {
                 "tool": "read_files",
                 "arguments": {"project": "agent:r:p", "items": [{"path": "src/lib.rs"}]}

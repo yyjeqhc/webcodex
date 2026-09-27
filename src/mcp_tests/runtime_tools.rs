@@ -43,13 +43,15 @@ async fn mcp_tools_list_exposes_canonical_coding_bootstrap_and_runtime_status_ux
         "exact git base",
         "fresh workflow session",
         "exact resume",
-        "primary result stays compact",
+        "do not immediately reread",
+        "reuse successful workspace",
         "_wc.context",
         "project.instructions",
         "webcodex.workflow",
         "skills",
         "plugin",
-        "without bypassing project authority",
+        "project authority",
+        "reauthorizes project",
     ] {
         assert!(
             normalized_description.contains(phrase),

@@ -3789,3 +3789,30 @@ async fn mcp_2026_control_sidecars_gateway_strip_and_closed_schema() {
             .is_none()
     );
 }
+
+#[test]
+fn compact_bootstrap_description_teaches_explicit_context_and_reuse() {
+    use crate::mcp::discovery::compact_tool;
+    let mut tool =
+        json!({"name": "work_on_project", "description": "placeholder", "inputSchema": {}});
+    compact_tool(&mut tool);
+    let description = tool["description"].as_str().unwrap();
+    for phrase in [
+        "AGENTS.md/CLAUDE.md",
+        "_wc.context",
+        "project.instructions",
+        "webcodex.workflow",
+        "Reuse complete instruction bodies",
+        "workspace branch/HEAD/status",
+        "semantic navigation",
+        "sufficient catalogs",
+        "stale/incomplete",
+    ] {
+        assert!(
+            description.contains(phrase),
+            "missing {phrase}: {description}"
+        );
+    }
+    assert!(!description.contains("Defaults return"));
+    assert!(!description.contains("context_request"));
+}

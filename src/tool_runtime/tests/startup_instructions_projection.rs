@@ -126,3 +126,29 @@ fn instruction_sidecar_budget_preserves_sources_and_local_guidance() {
             .all(|source| source["content"] == "specific project guidance"));
     }
 }
+
+#[test]
+fn bootstrap_guidance_reuses_observations_with_explicit_freshness_exceptions() {
+    let workflow = super::builtin_coding_workflow_projection(super::CodingGuidanceProfile::Direct);
+    let guidance = workflow["model_protocol"].to_string();
+    for phrase in [
+        "AGENTS.md",
+        "CLAUDE.md",
+        "project.instructions",
+        "_wc.context",
+        "content_included=true",
+        "do not immediately reread",
+        "fingerprints/revisions",
+        "exact source/range",
+        "compaction/context recovery",
+        "reuse retained guidance",
+        "initial branch/HEAD/status observation",
+        "mutation fences",
+        "without lsp_status",
+        "probe_timeout",
+        "complete/sufficient startup Skills/Plugins catalog",
+        "broader/refreshed discovery",
+    ] {
+        assert!(guidance.contains(phrase), "missing {phrase}");
+    }
+}

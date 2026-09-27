@@ -22,6 +22,11 @@ fn tool_specs_describe_default_coding_loop_preferences() {
         "active accessible session",
         "never guesses prior session",
         "_wc.context",
+        "agents.md/claude.md",
+        "do not immediately reread",
+        "reuse successful workspace",
+        "available semantic navigation",
+        "sufficient startup skills/plugins",
         "project.instructions",
         "webcodex.workflow",
         "guidance_profile",
@@ -39,6 +44,8 @@ fn tool_specs_describe_default_coding_loop_preferences() {
             "work_on_project description should mention {phrase}: {work_on_project_desc}"
         );
     }
+
+    assert!(!work_on_project_desc.contains("context_request"));
 
     let read_files_desc = desc("read_files");
     for phrase in [

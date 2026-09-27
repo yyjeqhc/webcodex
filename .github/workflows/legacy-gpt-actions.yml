@@ -1,0 +1,26 @@
+name: Legacy GPT Actions
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 6 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  legacy-gpt-actions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: legacy-gpt-actions
+      - name: Check legacy feature
+        run: cargo check --locked -p webcodex --all-targets --features legacy-gpt-actions
+      - name: Test frozen tool contracts
+        run: cargo test --locked -p webcodex-tool-contracts --features legacy-gpt-actions
+      - name: Test legacy server adapter
+        run: cargo test --locked -p webcodex --lib --features legacy-gpt-actions

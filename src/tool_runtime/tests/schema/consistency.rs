@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn edit_project_files_metadata_mcp_openapi_consistency() {
+fn edit_project_files_metadata_and_mcp_consistency() {
     use crate::tool_runtime::tool_definition::TOOL_DISCOVERY_GROUP_EDIT;
 
     // Known name + spec + metadata coverage. registered_tool_specs() backs
@@ -34,17 +34,20 @@ fn edit_project_files_metadata_mcp_openapi_consistency() {
         .as_array()
         .expect("edit category present");
     assert!(edit.iter().any(|v| v == "edit_project_files"));
-    let openapi = crate::openapi::build_openapi_spec();
-    let action = &openapi["paths"]["/api/actions/edit_project_files"]["post"];
-    assert_eq!(action["operationId"], "edit_project_files");
-    let action_schema = &action["requestBody"]["content"]["application/json"]["schema"];
-    let canonical = specs
-        .iter()
-        .find(|spec| spec.name == "edit_project_files")
-        .unwrap();
-    assert_eq!(
-        action_schema["required"],
-        canonical.input_schema["required"]
-    );
-    assert_eq!(action_schema["additionalProperties"], false);
+    #[cfg(feature = "legacy-gpt-actions")]
+    {
+        let openapi = crate::openapi::build_openapi_spec();
+        let action = &openapi["paths"]["/api/actions/edit_project_files"]["post"];
+        assert_eq!(action["operationId"], "edit_project_files");
+        let action_schema = &action["requestBody"]["content"]["application/json"]["schema"];
+        let canonical = specs
+            .iter()
+            .find(|spec| spec.name == "edit_project_files")
+            .unwrap();
+        assert_eq!(
+            action_schema["required"],
+            canonical.input_schema["required"]
+        );
+        assert_eq!(action_schema["additionalProperties"], false);
+    }
 }

@@ -293,13 +293,8 @@ assert not ({"Edit", "Read", "Bash", "Write", "NotebookEdit", "Agent"} & names)
 PY
 ok "public MCP tools exclude Claude internals and removed edit tools"
 
-api_get /openapi.json | python3 -c '
-import json, sys
-d = json.load(sys.stdin)
-count = sum(len(v) for v in d["paths"].values())
-assert 0 < count < 30, count
-' || fail "OpenAPI operation count exceeded GPT Actions bound"
-ok "OpenAPI operation count remains below GPT Actions limit"
+api_get /runtime | grep -q 'WebCodex' || fail "Runtime console readiness probe failed"
+ok "Runtime console readiness remains available"
 
 READ_ARGS="$(python3 - "$RUNTIME_PROJECT" <<'PY'
 import json, sys

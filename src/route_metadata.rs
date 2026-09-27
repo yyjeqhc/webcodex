@@ -256,7 +256,7 @@ pub(crate) fn spec(id: RouteId) -> &'static RouteSpec {
         .unwrap_or_else(|| panic!("RouteId {id:?} has no canonical RouteSpec"))
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-gpt-actions"))]
 pub(crate) fn path(id: RouteId) -> &'static str {
     spec(id).path
 }

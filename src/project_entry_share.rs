@@ -1174,7 +1174,7 @@ async fn wait_for_cloudflare_forwarding(
         .timeout(Duration::from_secs(2))
         .build()
         .map_err(|_| tunnel_runtime_error())?;
-    let probe_url = format!("{}/openapi.json", public_url.trim_end_matches('/'));
+    let probe_url = format!("{}/runtime", public_url.trim_end_matches('/'));
     loop {
         if let Some(status) = tunnel
             .child

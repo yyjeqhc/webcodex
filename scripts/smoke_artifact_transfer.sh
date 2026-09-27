@@ -20,8 +20,6 @@ set -euo pipefail
 
 DEFAULT_ARTIFACT_PATH="artifacts/smoke/webcodex-artifact-transfer.txt"
 DEFAULT_ABORT_PATH="artifacts/smoke/webcodex-artifact-transfer-abort.txt"
-DEFAULT_EXPECTED_OPERATION_COUNT="25"
-DEFAULT_MAX_OPERATION_COUNT="30"
 
 print_checklist() {
     cat <<EOF
@@ -44,8 +42,6 @@ explicitly registered smoke project.
 Optional environment:
   WEBCODEX_SMOKE_ARTIFACT_PATH   default: $DEFAULT_ARTIFACT_PATH
   WEBCODEX_SMOKE_ABORT_PATH      default: $DEFAULT_ABORT_PATH
-  WEBCODEX_EXPECTED_OPERATION_COUNT default: $DEFAULT_EXPECTED_OPERATION_COUNT
-  WEBCODEX_MAX_OPERATION_COUNT      default: $DEFAULT_MAX_OPERATION_COUNT
   SMOKE_TIMEOUT                  default: 20 seconds per HTTP call
 
 Preconditions:
@@ -58,14 +54,12 @@ Preconditions:
 
 Checks covered by active mode:
 
-  1. GET /openapi.json parses as JSON.
-  2. GPT Action operation_count is <= 30; the current recommended count is 25.
-  3. Bounded discovery works through /api/tools/list and tool_manifest.
-  4. artifact_upload_begin, artifact_upload_chunk, and artifact_upload_finish.
-  5. read_project_artifact_metadata and read_project_artifact.
-  6. artifact_upload_abort cleanup for a second temporary upload.
-  7. delete_project_files cleanup of the committed smoke artifact.
-  8. git_status and show_changes report a clean worktree after cleanup.
+  1. Bounded discovery works through /api/tools/list and tool_manifest.
+  2. artifact_upload_begin, artifact_upload_chunk, and artifact_upload_finish.
+  3. read_project_artifact_metadata and read_project_artifact.
+  4. artifact_upload_abort cleanup for a second temporary upload.
+  5. delete_project_files cleanup of the committed smoke artifact.
+  6. git_status and show_changes report a clean worktree after cleanup.
 
 Active mode refuses non-smoke project ids unless
 WEBCODEX_SMOKE_ALLOW_NON_SMOKE_PROJECT=1 is set. Custom artifact paths must stay
@@ -83,8 +77,6 @@ TOKEN="${WEBCODEX_TOKEN:-${TOKEN:-}}"
 PROJECT_ID="${WEBCODEX_SMOKE_PROJECT_ID:-${PROJECT_ID:-}}"
 ARTIFACT_PATH="${WEBCODEX_SMOKE_ARTIFACT_PATH:-$DEFAULT_ARTIFACT_PATH}"
 ABORT_PATH="${WEBCODEX_SMOKE_ABORT_PATH:-$DEFAULT_ABORT_PATH}"
-EXPECTED_OPERATION_COUNT="${WEBCODEX_EXPECTED_OPERATION_COUNT:-$DEFAULT_EXPECTED_OPERATION_COUNT}"
-MAX_OPERATION_COUNT="${WEBCODEX_MAX_OPERATION_COUNT:-$DEFAULT_MAX_OPERATION_COUNT}"
 TIMEOUT="${SMOKE_TIMEOUT:-20}"
 
 if [ -z "$BASE_URL" ]; then
@@ -348,63 +340,6 @@ print(json.dumps(obj, separators=(",", ":")))
 PY
 }
 
-check_openapi() {
-    local schema="$1"
-    local info
-    info="$(python3 - "$schema" <<'PY'
-import json
-import sys
-
-try:
-    schema = json.loads(sys.argv[1])
-except Exception as exc:
-    print(json.dumps({"ok": False, "error": f"invalid JSON: {exc}"}))
-    sys.exit(0)
-
-paths = schema.get("paths")
-if not isinstance(paths, dict) or not paths:
-    print(json.dumps({"ok": False, "error": "schema has no paths"}))
-    sys.exit(0)
-
-ops = []
-for path, methods in paths.items():
-    if not isinstance(methods, dict):
-        continue
-    for method, operation in methods.items():
-        if isinstance(operation, dict):
-            ops.append(operation.get("operationId") or f"{method} {path}")
-
-print(json.dumps({
-    "ok": True,
-    "paths": len(paths),
-    "operation_count": len(ops),
-}))
-PY
-)"
-
-    if [ "$(json_get "$info" ok)" != "True" ]; then
-        fail "/openapi.json parse failed: $(json_get "$info" error)"
-        return 1
-    fi
-
-    local paths
-    local operation_count
-    paths="$(json_get "$info" paths)"
-    operation_count="$(json_get "$info" operation_count)"
-    pass "/openapi.json parses as JSON with ${paths} path(s)"
-
-    if [ "$operation_count" -le "$MAX_OPERATION_COUNT" ]; then
-        pass "operation_count=${operation_count} is <= ${MAX_OPERATION_COUNT}"
-    else
-        fail "operation_count=${operation_count} exceeds ${MAX_OPERATION_COUNT}"
-    fi
-
-    if [ "$operation_count" -eq "$EXPECTED_OPERATION_COUNT" ]; then
-        pass "operation_count matches current recommendation (${EXPECTED_OPERATION_COUNT})"
-    else
-        warn "operation_count=${operation_count}; current recommendation is ${EXPECTED_OPERATION_COUNT}"
-    fi
-}
 
 check_clean_git_status() {
     local label="$1"
@@ -466,9 +401,6 @@ PAYLOAD_BASE64="$(json_get "$payload_info" base64)"
 # ---------------------------------------------------------------------------
 
 log "---- preflight ----"
-
-schema="$(api_get /openapi.json)"
-check_openapi "$schema" || true
 
 body="$(api_post /api/tools/list '{"summary_only":true,"category":"artifact","limit":20}')"
 if json_tools_include "$body" tools \

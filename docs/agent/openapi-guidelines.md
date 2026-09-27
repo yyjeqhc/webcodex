@@ -1,40 +1,33 @@
 # OpenAPI / GPT Action Guidelines
 
-Product and integration rules for the generic GPT Actions compatibility surface.
+Product and integration rules for the default-off legacy GPT Actions compatibility surface.
 
 Related: [`GPT_ACTIONS.md`](../GPT_ACTIONS.md), [`MCP.md`](../MCP.md), and [`tool-contract-guidelines.md`](tool-contract-guidelines.md).
 
-## 1. Canonical ownership
+## 1. Frozen compatibility ownership
 
-`ToolDefinition` is the single source of truth for runtime tool identity, canonical `ToolSpec`, input/output schemas, semantic contract, scope/authority policy, risk/approval metadata, and Adaptive Runtime direct rank.
+`ToolDefinition` remains the source of truth for runtime tool identity, canonical `ToolSpec`, schemas, semantics, authority, risk, and execution. GPT Actions is no longer a maintained projection of the current Adaptive Runtime surface.
 
-Generic GPT Actions **must not** maintain a second tool registry, operation vocabulary, rank table, permission table, Project-authority table, Runner-capability table, or retry/execution policy.
-
-For a generic runtime Server:
+The legacy adapter owns only two explicit frozen name snapshots:
 
 ```text
-Adaptive Runtime Direct
-  - ToolDefinition.gpt_action_exposure in {Unsupported, GatewayOnly}
-  = GPT Action direct operations
-
-Adaptive Runtime model-visible long tail + definition-owned GatewayOnly
-  + GPT-Action-supported
-  = call_runtime_tool targets
+LEGACY_GPT_ACTION_DIRECT_TOOL_NAMES
+LEGACY_GPT_ACTION_SUPPORTED_TOOL_NAMES
 ```
 
-Tests must lock this relationship, not a hard-coded current direct-tool list. Changing `adaptive_runtime_direct(..., rank)` should automatically change ordinary GPT Action direct exposure unless the same definition declares an explicit exposure exception.
+Those snapshots describe compatibility, not authority. Every admitted call still resolves its canonical `ToolDefinition` and executes through ToolRuntime. New Adaptive Runtime, Host, MCP, Plugin, or Code Mode tools must **not** enter GPT Actions automatically.
 
-## 2. Action-specific state is presentation/transport only
+Tests must lock the frozen snapshots. Changing `adaptive_runtime_direct(..., rank)`, adding a model-visible tool, or changing Host routing must not require a GPT Actions change. Update a frozen snapshot only for a deliberate compatibility fix to an existing legacy deployment.
 
-The only normal GPT Action-specific declarations are:
+## 2. Action-specific state is legacy presentation/transport only
 
-- an optional short presentation description when the canonical description exceeds the Action importer limit;
-- an explicit `Unsupported` exposure exception for a concrete protocol incompatibility;
-- an existing definition-owned `GatewayOnly` policy to preserve the direct-operation budget while retaining the same canonical gateway-callable tool. For example, `stop_job` is MCP/Adaptive direct but GPT Actions gateway-only, with unchanged effect, approval, authority, parser, and handler. All three experimental Code Mode entrypoints use the same gateway-only Actions policy; their ordinary Adaptive directness and nested allowlists are unchanged. Gateway target enums must include definition-owned GatewayOnly entries, not just Adaptive long-tail routes.
+Existing Action-specific declarations may remain for compatibility:
 
-Do not add `gpt_action_rank` or a name-based exposure allowlist. Do not exclude a tool merely because its schema is complex, its canonical description is long, or it is used infrequently.
+- optional compact Action descriptions for frozen direct operations;
+- `Unsupported` for concrete protocol incompatibility;
+- `GatewayOnly` where retained definitions still document historical Action routing.
 
-Protocol-only tools such as MCP App presentation, MCP ResourceLink export, or operations whose useful semantics depend on a separately authorized MCP Host binding may be marked unsupported. The reason must be protocol capability, not model preference.
+Do not add new Action-specific metadata for newly developed tools. Do not move maintained Adaptive Runtime tools merely to satisfy the retiring Action operation budget. Protocol-only tools such as MCP App presentation, MCP ResourceLink export, or Host-bound operations stay outside the frozen snapshot.
 
 ## 3. Canonical operation names and schemas
 
@@ -73,15 +66,13 @@ Compact Action operation copy should prioritize: what the tool does, when to cho
 
 ## 5. Operation budget
 
-Generic GPT Actions must stay below the host's 30-operation limit. The generated surface is Adaptive Direct minus definition-owned `Unsupported` and `GatewayOnly` exceptions plus `call_runtime_tool`.
+The frozen legacy GPT Actions document must remain below the host's 30-operation limit. This is a constraint on the frozen adapter only, not on Adaptive Runtime Direct.
 
-Do not silently truncate operations. CI must fail if the derived projection reaches the limit so the developer explicitly chooses a definition-owned GatewayOnly policy, moves a tool out of Adaptive Direct, or identifies a real protocol incompatibility. Do not raise the budget or add a second name-based registry.
-
-The Custom GPT importer also rejects OpenAPI schemas at 1 MB. Keep the generic Action document comfortably below that host ceiling: CI checks both compact and pretty-printed JSON against an internal 800,000-byte budget. Direct request schemas remain canonical, but response schemas intentionally expose only the real `ToolResult { success, output, error? }` envelope with generic `output`; complete canonical output schemas stay in `ToolSpec`/MCP rather than being duplicated into every Action response.
+Do not silently truncate operations and do not reshape the maintained Host/MCP surface to make the legacy budget fit. The separate legacy CI must fail if the frozen snapshot exceeds the limit. The Custom GPT importer also rejects OpenAPI schemas at 1 MB, so legacy CI keeps compact and pretty-printed JSON below the internal 800,000-byte budget.
 
 ## 6. HTTP adapter and authority
 
-The generic runtime exposes one shared authenticated adapter:
+A Server built with `legacy-gpt-actions` exposes one shared authenticated adapter; default builds do not mount it:
 
 ```text
 POST /api/actions/<canonical_tool_name>
@@ -89,7 +80,7 @@ POST /api/actions/<canonical_tool_name>
 
 OpenAPI enumerates the concrete direct paths plus `/api/actions/call_runtime_tool`; the HTTP router may use one dynamic path handler internally.
 
-Runtime path admission and OpenAPI exposure must consume the same canonical derived surface. A manually constructed `/api/actions/internal_tool` request must not bypass model visibility or GPT Action exposure policy.
+Runtime path admission and OpenAPI exposure must consume the same frozen snapshot. A manually constructed `/api/actions/internal_tool` request must not bypass frozen membership, canonical definition checks, or ToolRuntime authority.
 
 The adapter owns only:
 
@@ -132,38 +123,36 @@ Dedicated REST adapters may remain only when they serve a real current CLI, prod
 
 ## 10. Project-scoped runtime boundary
 
-Project-scoped `share`/`run` authentication does not create another OpenAPI or MCP tool registry. It projects the same canonical Adaptive Runtime and relies on scopes, ProjectGrant Runner visibility, ToolRuntime project resolution, and normal permission policy for authority. Do not introduce a project-share-specific operation vocabulary or compatibility alias layer.
+Project-scoped `share`/`run` authentication does not create another registry. When the binary was built without `legacy-gpt-actions`, no GPT Actions surface is mounted. When the feature is present, the same frozen compatibility snapshot is exposed and ProjectGrant/ToolRuntime policy still supplies authority.
 
 ## 11. Tests that matter
 
-At minimum, keep focused invariants for:
+Legacy compatibility CI should keep focused invariants for:
 
-- GPT Action direct definitions equal current Adaptive Direct definitions minus explicit `Unsupported` definitions, preserving Adaptive rank order;
-- `edit_project_files` is direct while exact-manifest edit specialists such as `apply_patch` stay out of ordinary discovery/direct operations and route through the gateway by exact name;
+- direct operation names equal `LEGACY_GPT_ACTION_DIRECT_TOOL_NAMES`;
+- gateway admission is limited to `LEGACY_GPT_ACTION_SUPPORTED_TOOL_NAMES`;
+- adding an Adaptive Direct or Code Mode tool does not expand either snapshot;
 - unsupported protocol-only tools are neither direct nor gateway-callable;
-- operation IDs are canonical snake_case names and old camelCase IDs are absent;
+- operation IDs remain canonical snake_case and old camelCase IDs stay absent;
 - generated operation count is < 30 with no truncation;
-- compact and pretty-printed generic OpenAPI JSON remain below the internal 800,000-byte import budget;
-- direct request schemas equal canonical ToolSpec input schemas except declared presentation/host overlays;
-- every generated OpenAPI `description` is <= 300 characters while canonical/MCP descriptions retain their independent budget;
-- canonical descriptions over 300 require an explicit Action presentation override;
-- gateway body is exactly `{tool, arguments}`;
-- ModelHidden/unknown/unsupported targets fail closed;
-- direct Action requests enter the same kernel and match MCP authority outcomes for representative read and mutating/execution tools;
-- permission-gate denial remains effective through Action HTTP;
-- GPT Action and MCP file-import provenance cannot be asserted by public JSON;
+- compact and pretty-printed legacy OpenAPI JSON stay below the 800,000-byte budget;
+- direct request schemas retain canonical ToolSpec input semantics except declared host overlays;
+- every generated OpenAPI `description` is <= 300 characters;
+- gateway body remains exactly `{tool, arguments}`;
+- unknown/non-frozen targets fail closed;
+- representative Action calls still enter the same kernel and preserve scope, Project authority, permission, and file-provenance behavior.
 
-Retire tests that only preserve the old camelCase facade, `PublicAction` registry, giant `ToolCallRequest` flattened schema, or flattened manifest guidance. Tests should protect current authority/schema truth, not dead compatibility architecture.
+Ordinary CI should protect canonical ToolRuntime/MCP/Host behavior without enabling `legacy-gpt-actions`. Tests for the retiring adapter belong in the separate legacy lane so unrelated tool development does not inherit its constraints.
 
 ## 12. Review checklist
 
-Before landing a GPT Actions change:
+Before landing a deliberate legacy GPT Actions change:
 
-- inspect generated operation count and names;
-- scan the complete generated OpenAPI document for description length;
-- verify no legacy REST route leaked into generic model-facing OpenAPI;
-- verify no second scope/permission/exposure table was introduced;
-- verify all direct operations still use canonical ToolSpec inputs;
-- verify gateway admission is canonical and fail-closed;
-- verify file provenance remains private adapter metadata;
-- run generic OpenAPI, HTTP Action adapter, MCP surface/scope, project-scoped authority, and file-import focused tests.
+- verify the change is compatibility-driven rather than required by normal tool development;
+- inspect the frozen direct and supported snapshots;
+- scan the generated OpenAPI document for description and size limits;
+- verify no management/internal route leaked into the legacy schema;
+- verify the adapter still delegates authority and execution to ToolRuntime;
+- run the feature-enabled legacy test path.
+
+For ordinary runtime/Host/MCP changes, no GPT Actions review is required unless the code intentionally touches the frozen adapter.

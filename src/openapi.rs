@@ -7,7 +7,7 @@ use crate::model_surface::{
     ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME,
 };
 use webcodex_tool_contracts::{
-    gpt_action_direct_tool_definitions, model_visible_tool_definitions, registered_tool_specs,
+    gpt_action_direct_tool_definitions, gpt_action_supported_tool_names, registered_tool_specs,
     ToolApprovalPolicy, ToolDefinition, ToolSpec, GPT_ACTION_DESCRIPTION_MAX_CHARS,
 };
 
@@ -38,7 +38,7 @@ pub(crate) fn build_openapi_spec() -> Value {
     let operation_count = direct.len() + 1;
     assert!(
         operation_count < GPT_ACTION_OPERATION_LIMIT,
-        "GPT Actions operation budget exceeded: {operation_count} >= {GPT_ACTION_OPERATION_LIMIT}; explicitly move a canonical Adaptive Direct tool behind the gateway or mark a protocol-incompatible tool unsupported"
+        "legacy GPT Actions operation budget exceeded: {operation_count} >= {GPT_ACTION_OPERATION_LIMIT}; adjust the frozen compatibility snapshot rather than the maintained Adaptive Runtime surface"
     );
 
     let mut paths = Map::new();
@@ -64,7 +64,7 @@ pub(crate) fn build_openapi_spec() -> Value {
         "info": {
             "title": "WebCodex GPT Actions",
             "version": env!("CARGO_PKG_VERSION"),
-            "description": "Custom GPT OpenAPI compatibility surface for the canonical WebCodex Adaptive Runtime. Adaptive direct tools are direct operations; supported long-tail tools use call_runtime_tool. MCP remains the primary ChatGPT integration."
+            "description": "Legacy Custom GPT OpenAPI compatibility surface. Direct and gateway tool admission are frozen snapshots; execution still uses canonical WebCodex ToolRuntime. MCP remains the maintained ChatGPT integration."
         },
         "servers": [{"url": public_url(), "description": "WebCodex Server"}],
         "paths": Value::Object(paths),
@@ -100,26 +100,16 @@ fn direct_operation(definition: &ToolDefinition, spec: &ToolSpec) -> Value {
 }
 
 fn gateway_operation() -> Value {
-    let mut targets = model_visible_tool_definitions()
-        .filter(|definition| definition.supports_gpt_actions())
-        .filter(|definition| {
-            gpt_action_gateway_target_route(definition.name)
-                == AdaptiveRuntimeGatewayTargetRoute::Gateway
+    let mut targets = gpt_action_supported_tool_names()
+        .iter()
+        .copied()
+        .filter(|name| webcodex_tool_contracts::gpt_action_tool_supported(name))
+        .filter(|name| {
+            gpt_action_gateway_target_route(name) == AdaptiveRuntimeGatewayTargetRoute::Gateway
         })
-        .map(|definition| definition.name)
         .collect::<Vec<_>>();
-    targets.extend(
-        webcodex_tool_contracts::EXACT_MANIFEST_SPECIALIST_TOOL_NAMES
-            .iter()
-            .copied()
-            .filter(|name| webcodex_tool_contracts::gpt_action_tool_supported(name))
-            .filter(|name| {
-                gpt_action_gateway_target_route(name) == AdaptiveRuntimeGatewayTargetRoute::Gateway
-            }),
-    );
     targets.sort_unstable();
     targets.dedup();
-
     let request_schema = json!({
         "type": "object",
         "additionalProperties": false,
@@ -140,7 +130,7 @@ fn gateway_operation() -> Value {
     let response_schema = action_tool_result_schema(json!({}));
     json!({
         "operationId": ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME,
-        "description": "Call one GPT-Action-supported long-tail tool from the canonical Adaptive Runtime surface. Use direct Action operations for direct tools. This gateway grants no authority and cannot target model-hidden or protocol-unsupported tools.",
+        "description": "Call one long-tail tool from the frozen legacy GPT Actions snapshot. Use direct Action operations for frozen direct tools. This gateway grants no authority and cannot target non-frozen or protocol-unsupported tools.",
         "x-openai-isConsequential": true,
         "requestBody": {
             "required": true,
@@ -388,41 +378,31 @@ mod tests {
     }
 
     #[test]
-    fn gpt_action_direct_surface_follows_adaptive_direct_with_definition_owned_exceptions() {
-        let adaptive = webcodex_tool_contracts::adaptive_runtime_direct_tool_definitions();
-        let expected = adaptive
-            .iter()
-            .copied()
-            .filter(|definition| {
-                definition.supports_gpt_actions()
-                    && definition.gpt_action_exposure()
-                        != webcodex_tool_contracts::ToolGptActionExposure::GatewayOnly
-            })
-            .map(|definition| definition.name)
-            .collect::<Vec<_>>();
+    fn gpt_action_direct_surface_is_frozen() {
         let actual = gpt_action_direct_tool_definitions()
             .into_iter()
             .map(|definition| definition.name)
             .collect::<Vec<_>>();
-        assert_eq!(actual, expected);
-        let ranks = actual
-            .iter()
-            .map(|name| webcodex_tool_contracts::runtime_tool_adaptive_direct_rank(name).unwrap())
-            .collect::<Vec<_>>();
-        assert!(ranks.windows(2).all(|pair| pair[0] < pair[1]));
+        assert_eq!(
+            actual,
+            webcodex_tool_contracts::LEGACY_GPT_ACTION_DIRECT_TOOL_NAMES
+        );
         assert!(actual.contains(&"edit_project_files"));
         assert!(!actual.contains(&"apply_patch"));
+
         #[cfg(feature = "experimental-code-mode")]
         for name in [
             "code_mode_exec",
             "code_mode_exec_effectful",
             "code_mode_exec_mutating",
         ] {
-            assert!(webcodex_tool_contracts::gpt_action_tool_supported(name));
+            assert!(
+                !webcodex_tool_contracts::gpt_action_tool_supported(name),
+                "{name} was added after the frozen legacy snapshot"
+            );
             assert!(!actual.contains(&name));
         }
     }
-
     #[test]
     fn stop_job_remains_gateway_only_without_operation_growth() {
         let definition = webcodex_tool_contracts::lookup_tool_definition("stop_job").unwrap();

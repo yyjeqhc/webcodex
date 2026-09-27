@@ -35,7 +35,7 @@ async fn service_agent_task_until_finished(
 }
 
 #[test]
-fn coding_task_tools_are_registered_in_metadata_and_openapi() {
+fn coding_task_tools_are_registered_in_metadata() {
     let specs = registered_tool_specs();
     let names: Vec<&str> = specs.iter().map(|spec| spec.name.as_str()).collect();
     assert!(
@@ -227,50 +227,53 @@ fn coding_task_tools_are_registered_in_metadata_and_openapi() {
         );
     }
 
-    let openapi = crate::openapi::build_openapi_spec();
-    let work = &openapi["paths"]["/api/actions/work_on_project"]["post"];
-    assert_eq!(work["operationId"], "work_on_project");
-    let work_properties = work["requestBody"]["content"]["application/json"]["schema"]
-        ["properties"]
-        .as_object()
-        .unwrap();
-    for field in ["project", "client_id", "path", "mode", "base_ref"] {
-        assert!(
-            work_properties.contains_key(field),
-            "work_on_project missing {field}"
-        );
-    }
-    for field in [
-        "temporary_project_name",
-        "deny_write_tools",
-        "deny_shell_tools",
-        "detail",
-        "resume_session_id",
-        "bind_current",
-        "new_session",
-    ] {
-        assert!(
-            !work_properties.contains_key(field),
-            "retired work_on_project field {field}"
-        );
-    }
+    #[cfg(feature = "legacy-gpt-actions")]
+    {
+        let openapi = crate::openapi::build_openapi_spec();
+        let work = &openapi["paths"]["/api/actions/work_on_project"]["post"];
+        assert_eq!(work["operationId"], "work_on_project");
+        let work_properties = work["requestBody"]["content"]["application/json"]["schema"]
+            ["properties"]
+            .as_object()
+            .unwrap();
+        for field in ["project", "client_id", "path", "mode", "base_ref"] {
+            assert!(
+                work_properties.contains_key(field),
+                "work_on_project missing {field}"
+            );
+        }
+        for field in [
+            "temporary_project_name",
+            "deny_write_tools",
+            "deny_shell_tools",
+            "detail",
+            "resume_session_id",
+            "bind_current",
+            "new_session",
+        ] {
+            assert!(
+                !work_properties.contains_key(field),
+                "retired work_on_project field {field}"
+            );
+        }
 
-    assert!(
-        openapi["paths"]
-            .get("/api/actions/finish_coding_task")
-            .is_none(),
-        "finish_coding_task is model-visible but intentionally gateway-only"
-    );
+        assert!(
+            openapi["paths"]
+                .get("/api/actions/finish_coding_task")
+                .is_none(),
+            "finish_coding_task is model-visible but intentionally gateway-only"
+        );
+        assert!(webcodex_tool_contracts::gpt_action_tool_supported(
+            "finish_coding_task"
+        ));
+        assert!(openapi["paths"]
+            .get("/api/actions/start_coding_task")
+            .is_none());
+    }
     assert_eq!(
         webcodex_tool_contracts::runtime_tool_adaptive_direct_rank("finish_coding_task"),
         None
     );
-    assert!(webcodex_tool_contracts::gpt_action_tool_supported(
-        "finish_coding_task"
-    ));
-    assert!(openapi["paths"]
-        .get("/api/actions/start_coding_task")
-        .is_none());
 }
 
 #[tokio::test]

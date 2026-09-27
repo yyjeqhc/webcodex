@@ -17,7 +17,7 @@ set -euo pipefail
 #   - Canonical run_job starts an async job on the agent and Job observation
 #     round-trip.
 #   - MCP initialize / tools/list / call_runtime_tool(list_projects) work.
-#   - /openapi.json still exposes the expected GPT Actions operation set and
+#   - default builds keep the retired GPT Actions OpenAPI route disabled and
 #     omits legacy/admin paths.
 #
 # What this does NOT do:
@@ -869,102 +869,17 @@ for retired_patch_tool in apply_patch_checked validate_patch; do
 done
 
 # ----------------------------------------------------------------------------
-# 7. GPT Actions schema smoke (/openapi.json)
+# 7. Default-off legacy GPT Actions surface
 # ----------------------------------------------------------------------------
 
-log "---- GPT Actions schema (/openapi.json) ----"
+log "---- legacy GPT Actions default-off route ----"
 
-SCHEMA="$(api_get /openapi.json)"
-python3 - "$SCHEMA" "$RUNTIME_PROJECT_ID" <<'PY'
-import json, sys
-schema = json.loads(sys.argv[1])
-errors = []
-
-# Collect operation ids.
-ops = []
-for path, methods in schema.get("paths", {}).items():
-    for method, op in methods.items():
-        ops.append(op.get("operationId"))
-ops_set = set(ops)
-
-if "call_runtime_tool" not in ops_set:
-    errors.append("missing canonical call_runtime_tool operation")
-if any(not isinstance(op, str) or any(ch.isupper() for ch in op) for op in ops):
-    errors.append("operationIds must be canonical snake_case runtime tool names")
-if len(ops) >= 30:
-    errors.append(f"too many operations: {len(ops)} (must stay below 30)")
-
-# GPT Actions has a stricter host presentation budget than the canonical tool surface.
-GPT_ACTION_DESCRIPTION_MAX_CHARS = 300
-for path, methods in schema.get("paths", {}).items():
-    for method, op in methods.items():
-        desc = op.get("description", "") or ""
-        if len(desc) > GPT_ACTION_DESCRIPTION_MAX_CHARS:
-            errors.append(
-                f"{method} {path} operationId {op.get('operationId')} "
-                f"description too long: {len(desc)} chars "
-                f"(hard budget {GPT_ACTION_DESCRIPTION_MAX_CHARS})"
-            )
-
-# Forbidden admin/internal paths must not appear in the generic Action schema.
-forbidden = ["/api/audit/sessions", "/api/audit/session", "/api/audit/stats",
-             "/api/projects/replace_in_file", "/api/projects/write_file",
-             "/api/projects/apply_patch", "/api/projects/apply_patch_checked", "/api/projects/validate_patch",
-             "/api/messages", "/api/files", "/api/desktop/task_op", "/api/desktop/task",
-             "/api/shell/run", "/api/shell/job", "/api/shell/file",
-             "/mcp", "/openapi.json", "/runtime", "/runtime/app.js", "/runtime/styles.css"]
-paths = set(schema.get("paths", {}).keys())
-for path in paths:
-    if not path.startswith("/api/actions/"):
-        errors.append(f"non-canonical GPT Action path present: {path}")
-for fp in forbidden:
-    if fp in paths:
-        errors.append(f"forbidden path present in schema: {fp}")
-
-# Legacy /api/codex/* sub-routes and run_codex must remain removed from
-# GPT Actions/OpenAPI.
-legacy_codex = ["/api/codex/command_request_op", "/api/codex/command_request",
-                "/api/codex/context", "/api/codex/context_batch",
-                "/api/codex/apply_patch", "/api/codex/edit",
-                "/api/codex/artifact", "/api/codex/git",
-                "/api/codex/job", "/api/codex/report",
-                "/api/codex/projects", "/api/codex/run"]
-for p in paths:
-    if p in legacy_codex:
-        errors.append(f"legacy codex path present in schema: {p}")
-
-# Descriptions must not claim server-side projects.toml is the runtime source.
-blob = json.dumps(schema)
-if "projects.toml" in blob and "runtime project source" in blob.lower():
-    errors.append("schema mentions projects.toml as runtime project source")
-
-# Every path must be POST-only.
-for path, methods in schema.get("paths", {}).items():
-    for method in methods:
-        if method != "post":
-            errors.append(f"non-POST method '{method}' on path {path}")
-
-# Each operationId must be unique (no duplicates across the schema).
-seen_ids = {}
-for path, methods in schema.get("paths", {}).items():
-    for method, op in methods.items():
-        oid = op.get("operationId")
-        if oid in seen_ids:
-            errors.append(f"duplicate operationId '{oid}' on {method} {path} and {seen_ids[oid]}")
-        else:
-            seen_ids[oid] = f"{method} {path}"
-
-if errors:
-    print("FAIL")
-    for e in errors:
-        print("  - " + e, file=sys.stderr)
-    sys.exit(1)
-print(f"OK ops={len(ops)} paths={len(paths)}")
-PY
-if [ $? -eq 0 ]; then
-    pass "/openapi.json canonical Action paths + snake_case operations + POST-only + bounded descriptions"
+openapi_status="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 \
+    "http://127.0.0.1:${PORT}/openapi.json" 2>/dev/null || true)"
+if [ "$openapi_status" = "404" ]; then
+    pass "default build does not mount /openapi.json"
 else
-    fail "/openapi.json schema checks failed (see stderr above)"
+    fail "default build unexpectedly exposes /openapi.json (status=$openapi_status)"
 fi
 
 # ----------------------------------------------------------------------------

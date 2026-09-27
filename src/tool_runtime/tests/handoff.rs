@@ -3479,7 +3479,7 @@ async fn session_handoff_summary_output_is_bounded() {
 // =========================================================================
 
 #[test]
-fn session_handoff_summary_metadata_mcp_openapi_consistency() {
+fn session_handoff_summary_metadata_and_mcp_consistency() {
     // readOnlyHint must be true.
     let spec = registered_tool_specs()
         .into_iter()
@@ -3545,33 +3545,37 @@ fn session_handoff_summary_metadata_mcp_openapi_consistency() {
         crate::tool_runtime::metadata::ToolAuthorityPolicy::Require("runtime:read")
     );
 
-    let openapi = crate::openapi::build_openapi_spec();
-    let action = &openapi["paths"]["/api/actions/session_handoff_summary"]["post"];
-    assert_eq!(action["operationId"], "session_handoff_summary");
-    let properties = action["requestBody"]["content"]["application/json"]["schema"]["properties"]
-        .as_object()
-        .unwrap();
-    for field in [
-        "session_id",
-        "include_validation",
-        "include_workspace",
-        "include_checkpoints",
-        "diagnostic",
-    ] {
-        assert!(
-            properties.contains_key(field),
-            "session_handoff_summary missing {field}"
-        );
-    }
-    for field in [
-        "expected_failure",
-        "expected_failure_kind",
-        "assertion_name",
-    ] {
-        assert!(
-            !properties.contains_key(field),
-            "unexpected Action field {field}"
-        );
+    #[cfg(feature = "legacy-gpt-actions")]
+    {
+        let openapi = crate::openapi::build_openapi_spec();
+        let action = &openapi["paths"]["/api/actions/session_handoff_summary"]["post"];
+        assert_eq!(action["operationId"], "session_handoff_summary");
+        let properties = action["requestBody"]["content"]["application/json"]["schema"]
+            ["properties"]
+            .as_object()
+            .unwrap();
+        for field in [
+            "session_id",
+            "include_validation",
+            "include_workspace",
+            "include_checkpoints",
+            "diagnostic",
+        ] {
+            assert!(
+                properties.contains_key(field),
+                "session_handoff_summary missing {field}"
+            );
+        }
+        for field in [
+            "expected_failure",
+            "expected_failure_kind",
+            "assertion_name",
+        ] {
+            assert!(
+                !properties.contains_key(field),
+                "unexpected Action field {field}"
+            );
+        }
     }
 }
 

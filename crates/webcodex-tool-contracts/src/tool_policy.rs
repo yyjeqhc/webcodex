@@ -468,32 +468,197 @@ pub fn adaptive_runtime_direct_tool_definitions() -> Vec<&'static ToolDefinition
     definitions
 }
 
-/// GPT Actions ordinary direct exposure follows Adaptive Runtime Direct while
-/// canonical ToolDefinition exposure may route a compatible tool through the
-/// gateway to satisfy a concrete surface budget. There is deliberately no
-/// second rank or operation registry.
+/// Frozen GPT Actions direct operations retained only for the legacy adapter.
+///
+/// This snapshot is intentionally independent from Adaptive Runtime direct ranking:
+/// adding or re-ranking canonical tools must not grow the retiring GPT Action surface.
+pub const LEGACY_GPT_ACTION_DIRECT_TOOL_NAMES: &[&str] = &[
+    "work_on_project",
+    "session_discussion_summary",
+    "session_handoff_summary",
+    "runtime_status",
+    "wait_for_agent_events",
+    "plugin_tool",
+    "skill_load",
+    "tool_manifest",
+    "search_project_texts",
+    "read_files",
+    "search_and_read",
+    "import_conversation_files_to_project",
+    "project_artifact",
+    "edit_project_files",
+    "run_process",
+    "run_skill_resource",
+    "run_script",
+    "run_shell",
+    "wait_for_job_terminal",
+    "observe_jobs",
+    "cargo_check",
+    "cargo_test",
+    "review_changes",
+    "show_changes",
+];
+
+/// Frozen legacy GPT Actions admission snapshot.
+///
+/// New canonical/model-visible tools are deliberately absent until this adapter is
+/// retired; they remain available through the maintained MCP/Host surfaces.
+pub const LEGACY_GPT_ACTION_SUPPORTED_TOOL_NAMES: &[&str] = &[
+    "list_tools",
+    "list_external_observations",
+    "work_on_project",
+    "finish_coding_task",
+    "session_summary",
+    "update_session_context",
+    "close_session",
+    "validation_summary",
+    "post_session_message",
+    "post_peer_message",
+    "list_session_messages",
+    "get_session_assignment",
+    "observe_session_messages",
+    "resolve_session_message",
+    "complete_session_message",
+    "session_discussion_summary",
+    "session_handoff_summary",
+    "create_agent_identity",
+    "list_agent_identities",
+    "update_agent_identity",
+    "attach_agent_endpoint",
+    "bootstrap_agent_conversation",
+    "detach_agent_endpoint",
+    "create_conversation",
+    "list_conversations",
+    "read_conversation",
+    "post_conversation_message",
+    "list_agent_inbox",
+    "consume_agent_deliveries",
+    "consume_agent_wake",
+    "prepare_goal_workflow",
+    "create_goal",
+    "get_goal",
+    "list_goals",
+    "checkpoint_goal",
+    "update_goal",
+    "associate_goal_agent_task",
+    "associate_goal_workflow_session",
+    "create_agent_task",
+    "list_agent_tasks",
+    "read_agent_task",
+    "assign_agent_task",
+    "start_agent_task_attempt",
+    "start_agent_task_endpoint_continuation",
+    "start_agent_task_coding_run",
+    "reconcile_agent_task_coding_run",
+    "heartbeat_agent_task_attempt",
+    "complete_agent_task_attempt",
+    "wait_for_agent_events",
+    "read_agent_wait",
+    "cancel_agent_wait",
+    "skill_load",
+    "run_skill_resource",
+    "workspace_hygiene_check",
+    "coding_agent_start",
+    "coding_agent_observe",
+    "coding_agent_cancel",
+    "browser_observe",
+    "browser_act",
+    "computer_observe",
+    "computer_control",
+    "computer_save_snapshot",
+    "list_projects",
+    "register_project",
+    "unregister_project",
+    "create_project",
+    "list_runners",
+    "runtime_status",
+    "current_window_activity",
+    "tool_manifest",
+    "runner_config_check",
+    "runner_config_reload",
+    "ssh_resource",
+    "plugin_tool",
+    "run_process",
+    "run_detached_process",
+    "run_script",
+    "run_shell",
+    "open_session_shell",
+    "session_shell_exec",
+    "session_shell_status",
+    "close_session_shell",
+    "run_job",
+    "stop_job",
+    "observe_jobs",
+    "wait_for_job_terminal",
+    "project_overview",
+    "list_project_files",
+    "list_project_tracked_files",
+    "search_project_texts",
+    "search_and_read",
+    "git_review_summary",
+    "review_changes",
+    "show_changes",
+    "list_jobs",
+    "read_files",
+    "lsp_status",
+    "document_symbols",
+    "document_diagnostics",
+    "hover",
+    "workspace_symbols",
+    "goto_definition",
+    "find_references",
+    "call_hierarchy",
+    "git_commit_paths",
+    "git_status",
+    "git_diff_hunks",
+    "git_log",
+    "cargo_fmt",
+    "cargo_check",
+    "cargo_test",
+    "go_test",
+    "delete_project_files",
+    "git_restore_paths",
+    "discard_untracked",
+    "save_project_artifact",
+    "import_conversation_files_to_project",
+    "transfer_project_artifact",
+    "project_artifact",
+    "read_project_artifact_metadata",
+    "read_project_artifact",
+    "artifact_upload_begin",
+    "artifact_upload_chunk",
+    "artifact_upload_finish",
+    "artifact_upload_abort",
+    "edit_project_files",
+    "apply_patch",
+    "apply_unified_diff",
+    "write_project_file",
+];
+
 pub fn gpt_action_direct_tool_definitions() -> Vec<&'static ToolDefinition> {
-    adaptive_runtime_direct_tool_definitions()
-        .into_iter()
-        .filter(|definition| {
-            definition.supports_gpt_actions()
-                && definition.gpt_action_exposure() != ToolGptActionExposure::GatewayOnly
-        })
+    LEGACY_GPT_ACTION_DIRECT_TOOL_NAMES
+        .iter()
+        .filter_map(|name| lookup_tool_definition(name))
+        .filter(|definition| definition.supports_gpt_actions())
         .collect()
 }
 
-/// Admission predicate shared by GPT Action direct/gateway adapters. Ordinary
-/// model-visible tools inherit their definition-owned support; exact-manifest
-/// specialists remain gateway-callable without re-entering the ordinary model
-/// surface. Authority and execution remain kernel-owned.
-pub fn gpt_action_tool_supported(tool_name: &str) -> bool {
-    lookup_tool_definition(tool_name).is_some_and(|definition| {
-        definition.supports_gpt_actions()
-            || (super::tool_catalog::EXACT_MANIFEST_SPECIALIST_TOOL_NAMES.contains(&tool_name)
-                && definition.gpt_action_exposure() != ToolGptActionExposure::Unsupported)
-    })
+pub fn gpt_action_tool_is_direct(tool_name: &str) -> bool {
+    LEGACY_GPT_ACTION_DIRECT_TOOL_NAMES.contains(&tool_name) && gpt_action_tool_supported(tool_name)
 }
 
+/// Admission predicate shared by the legacy GPT Action direct/gateway adapters.
+/// Membership is frozen; new canonical tools never enter this surface implicitly.
+pub fn gpt_action_tool_supported(tool_name: &str) -> bool {
+    LEGACY_GPT_ACTION_SUPPORTED_TOOL_NAMES.contains(&tool_name)
+        && lookup_tool_definition(tool_name).is_some_and(|definition| {
+            definition.gpt_action_exposure() != ToolGptActionExposure::Unsupported
+        })
+}
+
+pub fn gpt_action_supported_tool_names() -> &'static [&'static str] {
+    LEGACY_GPT_ACTION_SUPPORTED_TOOL_NAMES
+}
 pub fn model_visible_tool_names_csv() -> String {
     model_visible_tool_definitions()
         .map(|definition| definition.name)

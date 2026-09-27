@@ -24,7 +24,7 @@ services:
     cap_drop:
       - ALL
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/openapi.json"]
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/runtime"]
       interval: 15s
       timeout: 5s
       start_period: 10s

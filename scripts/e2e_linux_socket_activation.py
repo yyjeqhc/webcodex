@@ -34,7 +34,7 @@ from typing import Dict, Optional
 HTTP_FD_NAME = "webcodex-http"
 LISTEN_FD = 3
 HOST = "127.0.0.1"
-PROBE_PATH = "/openapi.json"
+PROBE_PATH = "/runtime"
 TOKEN = "linux-socket-activation-e2e-token"
 RUNNER_CLIENT_ID = "linux-graceful-drain-e2e"
 RUNNER_PROJECT_ID = "graceful-drain"

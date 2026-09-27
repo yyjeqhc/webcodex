@@ -87,22 +87,22 @@ pub(crate) fn adaptive_runtime_gateway_target_route(
     }
 }
 
-/// GPT Actions derives its route from the same definition and Adaptive surface.
-/// GatewayOnly is a transport exposure exception, never an authority change.
+/// Frozen GPT Actions routing. This legacy adapter no longer inherits Adaptive
+/// Runtime additions or rank changes.
+#[cfg(feature = "legacy-gpt-actions")]
 pub(crate) fn gpt_action_gateway_target_route(target: &str) -> AdaptiveRuntimeGatewayTargetRoute {
-    let route = adaptive_runtime_gateway_target_route(target);
-    if route == AdaptiveRuntimeGatewayTargetRoute::Direct
-        && webcodex_tool_contracts::lookup_tool_definition(target).is_some_and(|definition| {
-            definition.gpt_action_exposure()
-                == webcodex_tool_contracts::ToolGptActionExposure::GatewayOnly
-        })
-    {
-        AdaptiveRuntimeGatewayTargetRoute::Gateway
+    if target == ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME {
+        return AdaptiveRuntimeGatewayTargetRoute::Recursive;
+    }
+    if !webcodex_tool_contracts::gpt_action_tool_supported(target) {
+        return AdaptiveRuntimeGatewayTargetRoute::Unknown;
+    }
+    if webcodex_tool_contracts::gpt_action_tool_is_direct(target) {
+        AdaptiveRuntimeGatewayTargetRoute::Direct
     } else {
-        route
+        AdaptiveRuntimeGatewayTargetRoute::Gateway
     }
 }
-
 /// Presentation route for one canonical SuggestedToolCall target. This is not
 /// authority: adapters resolve the route from their already-admitted model
 /// surface and the canonical target still runs through ordinary ToolRuntime
@@ -537,6 +537,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "legacy-gpt-actions")]
     #[test]
     fn job_stop_uses_gateway_on_adaptive_and_actions() {
         assert_eq!(

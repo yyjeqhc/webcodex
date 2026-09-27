@@ -296,12 +296,7 @@ generic Actions surface no longer exposes the retired `listRuntimeTools` facade.
 
 ### GPT Action still uses an old schema
 
-Re-import the OpenAPI schema from the deployed `/openapi.json`, then check the
-operation count. It is derived from the current Adaptive Direct projection plus
-`call_runtime_tool`, so do not compare it with a fixed recommended count. The
-generated surface must remain below the GPT Actions 30-operation ceiling; if it
-reaches that ceiling, change the canonical Adaptive projection or a real protocol
-exception rather than silently truncating the schema.
+First confirm the deployed Server was built with `legacy-gpt-actions`; default builds do not mount `/openapi.json` or `/api/actions/*`. For an intentionally retained legacy deployment, re-import `/openapi.json`. Its operation set is a frozen compatibility snapshot plus `call_runtime_tool`; maintained Adaptive Runtime changes no longer grow it. Run the separate legacy workflow or the feature-enabled tests when changing that adapter.
 
 ### MCP tool list looks stale
 

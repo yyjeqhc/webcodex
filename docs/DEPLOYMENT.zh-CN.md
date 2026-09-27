@@ -13,8 +13,7 @@
 ## 组件
 
 - `webcodex` —— 统一 CLI：项目工作流、Server/Runner 生命周期、接入与运维。
-- `webcodex-server` —— Server 进程：暴露 REST、GPT Actions OpenAPI、MCP 与
-  Runner endpoint。
+- `webcodex-server` —— Server 进程：暴露 REST、MCP 与 Runner endpoint；legacy GPT Actions OpenAPI 只在 feature-enabled build 中提供。
 - `webcodex-runner` —— 运行在持有仓库机器上的长驻 worker。
 
 执行配置属于实际工作的 Runner。旧 Server 的 `CODEX_*` 设置不再用于选择编码代理的可执行文件、审批模式、超时或参数白名单；编码代理应通过 Runner 的 `[acp]` / `[[acp.agents]]` 配置，参见 [ACP 编码代理指南](agent/acp-coding-agent-run.md)。Server 需要可写的数据目录，不需要单独的旧 `uploads` 目录。
@@ -97,8 +96,7 @@ shared-key 自动化场景优先使用 `--key-file <path>`，不要与 `--key` �
 4. 在 server 上创建短期 pairing code，并在持有仓库的机器上运行
    `webcodex login <server-url> --code <code>`。
 5. 在该仓库机器上安装 `webcodex-runner` 服务。
-6. 运行 `webcodex ops status --strict`；之后才导入 GPT Actions schema 或添加
-   MCP connector。
+6. 运行 `webcodex ops status --strict`；之后再添加 MCP connector。只有已有 Custom GPT 仍依赖 legacy Actions adapter 时，才使用 `legacy-gpt-actions` build 并单独导入 schema。
 
 ### Server 设置
 
@@ -295,8 +293,7 @@ bootstrap 现在是可恢复事务，而不是一次性脚本。它会在创建 
 随后通过私有 `.webcodex-bootstrap.receipt` 依次记录 `AssetsPrepared`、
 `SecretCommitted`、`ContainerStarted`、`ServerHealthy`、`PairingReady`。receipt 只保存
 hash 与阶段，不保存 administrator token。`.env` 通过 0600 临时文件写入、sync 后原子 rename。
-只有 Compose healthcheck 与 `/openapi.json` 都验证通过后才打印成功，并在这个 readiness
-barrier 之后创建第一枚短期 pairing code。
+只有 Compose healthcheck 与 `/runtime` readiness 都验证通过后才打印成功，并在这个 readiness barrier 之后创建第一枚短期 pairing code。
 
 安装被中断，或 startup/health check 失败时，不要删除 `.env`；在同一目录继续使用同一份
 bootstrap：
@@ -436,20 +433,12 @@ refresh-token scope，不授予额外 WebCodex 权限。
 
 ## GPT Actions 与 MCP
 
-- **MCP：** 用 user API token（`wc_pat_*`）连接
-  `https://your-domain.example/mcp`；启用 OAuth 时使用 OAuth 流程。MCP 仍是
-  ChatGPT 的主要接入方式。
-- **GPT Actions：** 把 `https://your-domain.example/openapi.json` 以 HTTP Bearer
-  认证导入 Custom GPT。普通 runtime Server 会投影同一个 canonical Adaptive
-  Runtime model surface：当前 Adaptive Direct 工具直接成为 snake_case Action
-  operation，受支持的 long-tail 工具统一通过 `call_runtime_tool`；MCP-only 协议
-  presentation 不会伪装成 Action 能力。
+- **MCP：** 用 user API token（`wc_pat_*`）连接 `https://your-domain.example/mcp`；启用 OAuth 时使用 OAuth 流程。MCP 是正常维护的 ChatGPT 接入方式。
+- **GPT Actions：** 仅为已有 Custom GPT 保留。默认 binary 不挂载 `/openapi.json` 或 `/api/actions/*`；只有使用 `legacy-gpt-actions` 构建时才可导入 `https://your-domain.example/openapi.json`。其 direct/gateway surface 是冻结兼容快照，不再随着 Adaptive Runtime、Host、Plugin 或 Code Mode 新工具变化。
 
-如果是从旧 generic Action facade 升级，请重新导入 `/openapi.json` 获取新的
-canonical operation names。旧 REST route 可以为了兼容继续存在，但不会进入新的
-model-facing schema。
+如果是从旧 generic Action facade 升级，并且仍明确保留这项 legacy feature，请重新导入 `/openapi.json` 获取冻结后的 canonical operation names。
 
-MCP 与 GPT Actions 最终进入同一个 ToolRuntime authority path；GPT Actions 不会建立第二套 scope、Project authority、permission、Runner capability 或 retry policy。Project-scoped `share` / `run` 部署同样暴露普通 Adaptive Runtime，由 ProjectGrant visibility 把访问限制在对应 Project。
+MCP 与启用后的 GPT Actions 最终仍进入同一个 ToolRuntime authority path；legacy adapter 不建立第二套 scope、Project authority、permission、Runner capability 或 retry policy。Project-scoped `share` / `run` 只有在 binary 本身启用 `legacy-gpt-actions` 时才额外暴露该兼容 surface。
 
 详见 [GPT Actions](GPT_ACTIONS.zh-CN.md)、[MCP](MCP.zh-CN.md) 与
 [AI 接入指南](AI_ONBOARDING.zh-CN.md)。

@@ -54,7 +54,7 @@ fn record_correlated_validation_invocation(
 }
 
 #[test]
-fn validation_summary_registration_schema_metadata_and_openapi_are_synchronized() {
+fn validation_summary_registration_schema_and_metadata_are_synchronized() {
     let call = ToolCall::from_tool_name(
         "validation_summary",
         json!({
@@ -128,13 +128,16 @@ fn validation_summary_registration_schema_metadata_and_openapi_are_synchronized(
         OAuthToolScopePolicy::Require(SCOPE_PROJECT_READ)
     );
 
-    let openapi = crate::openapi::build_openapi_spec();
-    assert!(openapi["paths"]
-        .get("/api/actions/validation_summary")
-        .is_none());
-    assert!(webcodex_tool_contracts::gpt_action_tool_supported(
-        "validation_summary"
-    ));
+    #[cfg(feature = "legacy-gpt-actions")]
+    {
+        let openapi = crate::openapi::build_openapi_spec();
+        assert!(openapi["paths"]
+            .get("/api/actions/validation_summary")
+            .is_none());
+        assert!(webcodex_tool_contracts::gpt_action_tool_supported(
+            "validation_summary"
+        ));
+    }
     assert_eq!(
         crate::model_surface::adaptive_runtime_gateway_target_route("validation_summary"),
         crate::model_surface::AdaptiveRuntimeGatewayTargetRoute::Gateway

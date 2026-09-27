@@ -3,9 +3,10 @@ use crate::json_error;
 use crate::tool_request_trace::{
     estimate_json_bytes, new_trace_id, scope_active_trace, ToolRequestLifecycle,
 };
+#[cfg(feature = "legacy-gpt-actions")]
+use crate::tool_runtime::kernel::HostFileImportTrust;
 use crate::tool_runtime::kernel::{
-    HostFileImportTrust, ToolCallContext, ToolCallErrorStatus,
-    ToolCallRequest as KernelToolCallRequest, ToolTransport,
+    ToolCallContext, ToolCallErrorStatus, ToolCallRequest as KernelToolCallRequest, ToolTransport,
 };
 use crate::tool_runtime::model_ergonomics_telemetry::ModelErgonomicsCompletion;
 use crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD;
@@ -553,6 +554,7 @@ fn extract_recording_session_id(body: &Value) -> Option<String> {
         .map(str::to_string)
 }
 
+#[cfg(feature = "legacy-gpt-actions")]
 fn parse_gpt_action_gateway(body: Value) -> Result<(String, Value), String> {
     let mut object = body
         .as_object()
@@ -573,6 +575,7 @@ fn parse_gpt_action_gateway(body: Value) -> Result<(String, Value), String> {
     Ok((tool, arguments))
 }
 
+#[cfg(feature = "legacy-gpt-actions")]
 fn rewrite_gpt_action_file_params(arguments: &mut Value) -> Result<(), String> {
     let object = arguments
         .as_object_mut()
@@ -615,6 +618,7 @@ fn rewrite_gpt_action_file_params(arguments: &mut Value) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(feature = "legacy-gpt-actions")]
 fn gpt_action_admit_target(path_tool: &str, target: &str) -> Result<(), String> {
     use crate::model_surface::AdaptiveRuntimeGatewayTargetRoute;
 
@@ -653,6 +657,7 @@ fn gpt_action_admit_target(path_tool: &str, target: &str) -> Result<(), String> 
     }
 }
 
+#[cfg(feature = "legacy-gpt-actions")]
 fn gpt_action_suggested_tool_call_route(
     target: &str,
 ) -> crate::model_surface::SuggestedToolCallRoute {
@@ -671,6 +676,7 @@ fn gpt_action_suggested_tool_call_route(
     }
 }
 
+#[cfg(feature = "legacy-gpt-actions")]
 #[handler]
 pub async fn gpt_action_invoke(req: &mut Request, depot: &mut Depot, res: &mut Response) {
     let Some(path_tool) = req.param::<String>("tool_name") else {
@@ -841,7 +847,7 @@ pub async fn runtime_status(req: &mut Request, depot: &mut Depot, res: &mut Resp
     render_result(res, &audit, "runtime_status", None, result);
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-gpt-actions"))]
 mod job_action_routing_tests {
     use super::*;
 

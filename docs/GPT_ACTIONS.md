@@ -2,14 +2,13 @@
 
 [English](GPT_ACTIONS.md) | [简体中文](GPT_ACTIONS.zh-CN.md)
 
-Use GPT Actions when a Custom GPT needs the Server's OpenAPI compatibility integration. Use [MCP](MCP.md) when the client supports MCP directly; MCP remains the primary ChatGPT integration.
+GPT Actions are retained only as a legacy compatibility adapter for existing Custom GPT deployments. The adapter is **disabled in default builds**; use [MCP](MCP.md) for maintained ChatGPT integration.
 
-The schema at `/openapi.json` follows one canonical Adaptive Runtime routing policy:
-
-- every runtime Server projects the canonical Adaptive Runtime model contract;
-- project-scoped `share` / `run` credentials restrict authority and visibility without defining another Action surface.
+Build or run the Server with the `legacy-gpt-actions` Cargo feature to expose `/openapi.json` and `/api/actions/{tool_name}`. Without that feature, neither route is mounted. Authorization and execution still use the canonical ToolRuntime.
 
 ## Import the schema
+
+This section applies only to a Server built with `--features legacy-gpt-actions`.
 
 Import:
 
@@ -21,23 +20,22 @@ ChatGPT requires public HTTPS. Configure API-key authentication as HTTP Bearer a
 
 After upgrading a Server that used the older generic GPT Actions schema, **re-import `/openapi.json`**. The generic operation names are now the canonical WebCodex runtime tool names rather than the retired camelCase Action vocabulary.
 
-## Generic runtime Server
+## Frozen legacy runtime surface
 
-Generic GPT Actions do not have an independent tool registry. They are a constrained OpenAPI projection of the same `ToolDefinition` authority used by Adaptive Runtime MCP:
+GPT Actions no longer follows Adaptive Runtime Direct automatically. Its direct and gateway admission sets are frozen compatibility snapshots:
 
 ```text
-ToolDefinition
-  -> Adaptive Runtime direct tools
-      -> direct GPT Action operations
-  -> Adaptive Runtime long tail
-      -> call_runtime_tool
+Frozen legacy GPT Action snapshot
+  -> direct Action operations
+  -> call_runtime_tool for frozen long-tail entries
+  -> canonical ToolRuntime authorization/execution
 ```
 
-A tool marked Adaptive Direct is automatically a direct GPT Action unless its canonical definition explicitly declares that GPT Actions cannot represent its protocol semantics. Adding, removing, or re-ranking Adaptive Direct tools therefore updates GPT Actions automatically; there is no separate GPT Action rank or operation list.
+Adding, removing, or re-ranking a maintained Adaptive Runtime tool does **not** add it to GPT Actions. New Host, MCP, Plugin, or Code Mode tools therefore do not consume the Action operation budget or require Action-specific presentation work. Changes to the frozen snapshot should be limited to deliberate legacy compatibility fixes.
 
-Direct operations use canonical snake_case names and canonical input contracts. Examples include `work_on_project`, `runtime_status`, `tool_manifest`, `search_project_texts`, `read_files`, `edit_project_files`, `run_process`, `run_script`, `run_detached_process`, `run_shell`, `observe_jobs`, `list_jobs`, `cargo_check`, `cargo_test`, `git_review_summary`, `git_diff_hunks`, and `show_changes` when those tools are currently Adaptive Direct; the closeout helpers `workspace_hygiene_check` and `finish_coding_task` are model-visible gateway tools.
+Direct operations keep their canonical snake_case names and canonical input contracts. The frozen snapshot currently includes established operations such as `work_on_project`, `runtime_status`, `tool_manifest`, `search_project_texts`, `read_files`, `edit_project_files`, `run_process`, `run_script`, `run_shell`, `observe_jobs`, `cargo_check`, `cargo_test`, `review_changes`, and `show_changes`.
 
-Long-tail model-visible tools and exact-manifest specialists use the single gateway. Exact-manifest specialists such as `apply_patch`, `apply_unified_diff`, and `write_project_file` are intentionally absent from ordinary discovery/direct operations; callers first select them by exact name (for example through `tool_manifest`) and invoke them through `call_runtime_tool`:
+Frozen long-tail tools and exact-manifest specialists use the single gateway. Exact-manifest specialists such as `apply_patch`, `apply_unified_diff`, and `write_project_file` remain gateway-only:
 
 ```json
 {
@@ -61,17 +59,17 @@ Custom GPT Actions reject operation/tool descriptions above 300 characters. WebC
 
 ### OpenAPI import size
 
-The Custom GPT importer also rejects OpenAPI schemas at 1 MB. WebCodex therefore keeps the generated generic Action document below an internal 800,000-byte JSON budget with CI coverage for compact and pretty-printed serialization. Direct Action request schemas remain the canonical `ToolSpec.input_schema`; response schemas use the real compact `ToolResult` envelope with a generic `output` field instead of inlining each potentially large canonical output schema. This changes only the OpenAPI presentation contract: actual runtime JSON results and canonical/MCP output schemas are unchanged.
+The Custom GPT importer also rejects OpenAPI schemas at 1 MB. WebCodex therefore keeps the generated generic Action document below an internal 800,000-byte JSON budget in the separate legacy compatibility CI. Direct Action request schemas remain the canonical `ToolSpec.input_schema`; response schemas use the real compact `ToolResult` envelope with a generic `output` field instead of inlining each potentially large canonical output schema. This changes only the OpenAPI presentation contract: actual runtime JSON results and canonical/MCP output schemas are unchanged.
 
 ### Conversation file import
 
-`import_conversation_files_to_project` remains a direct generic Action when it is Adaptive Direct. ChatGPT supplies `openaiFileIdRefs`; the HTTP adapter converts the host's Action file-reference shape to the canonical internal shape and attaches private GPT Action host provenance. The model cannot set that provenance itself.
+`import_conversation_files_to_project` remains a direct operation in the frozen legacy snapshot. ChatGPT supplies `openaiFileIdRefs`; the HTTP adapter converts the host's Action file-reference shape to the canonical internal shape and attaches private GPT Action host provenance. The model cannot set that provenance itself.
 
 MCP host-file import remains a separate trusted provenance path. Normal network-accessible Servers require the configured trusted OAuth MCP client; an explicitly opted-in loopback-only OpenAI Secure Tunnel deployment may instead trust an allowed local tunnel credential (a normal user API token or the configured Server bootstrap credential used by the regular Desktop Tunnel). The Action and MCP provenance modes share canonical authorization but are not interchangeable.
 
 ## Project-scoped local `share` / `run`
 
-A Server launched by `webcodex share` or `webcodex run` uses the same generic Adaptive Runtime OpenAPI projection as an ordinary Server. Project-scoped authentication limits the caller to its ProjectGrant; it does not switch schema generation to a separate Connector capability registry.
+A Server launched by `webcodex share` or `webcodex run` exposes the legacy OpenAPI projection only when that binary was built with `legacy-gpt-actions`. Project-scoped authentication limits the caller to its ProjectGrant; it does not switch schema generation to a separate Connector capability registry.
 
 Suggested Custom GPT instructions can therefore use the canonical runtime workflow:
 

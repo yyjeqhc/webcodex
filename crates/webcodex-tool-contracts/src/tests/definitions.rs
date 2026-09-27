@@ -625,7 +625,7 @@ fn every_runtime_tool_has_an_explicit_fail_closed_audit_contract() {
 }
 
 #[test]
-fn stop_job_direct_exposure_preserves_one_canonical_effect_and_gateway_budget() {
+fn stop_job_preserves_one_canonical_effect() {
     let definition = lookup_tool_definition("stop_job").unwrap();
     assert_eq!(
         tool_definitions()
@@ -634,11 +634,14 @@ fn stop_job_direct_exposure_preserves_one_canonical_effect_and_gateway_budget() 
         1
     );
     assert_eq!(definition.adaptive_runtime_direct_rank(), None);
-    assert_eq!(
-        definition.gpt_action_exposure(),
-        ToolGptActionExposure::GatewayOnly
-    );
-    assert!(definition.supports_gpt_actions());
+    #[cfg(feature = "legacy-gpt-actions")]
+    {
+        assert_eq!(
+            definition.gpt_action_exposure(),
+            ToolGptActionExposure::GatewayOnly
+        );
+        assert!(definition.supports_gpt_actions());
+    }
     assert_eq!(definition.metadata.effect, ToolEffect::Mutate);
     assert_eq!(definition.metadata.risk, ToolRisk::JobRun);
     assert_eq!(definition.metadata.approval, ToolApprovalPolicy::Standard);
@@ -650,6 +653,7 @@ fn stop_job_direct_exposure_preserves_one_canonical_effect_and_gateway_budget() 
         definition.metadata.authority,
         ToolAuthorityPolicy::Require(JOB_RUN)
     );
+    #[cfg(feature = "legacy-gpt-actions")]
     assert!(!gpt_action_direct_tool_definitions()
         .iter()
         .any(|item| item.name == "stop_job"));
@@ -847,83 +851,6 @@ fn adaptive_runtime_direct_declarations_are_visible_ranked_and_unique() {
         );
     }
 
-    let gpt_action_direct = gpt_action_direct_tool_definitions();
-    let expected_gpt_action_direct = derived
-        .iter()
-        .copied()
-        .filter(|definition| {
-            definition.supports_gpt_actions()
-                && definition.gpt_action_exposure() != ToolGptActionExposure::GatewayOnly
-        })
-        .map(|definition| definition.name)
-        .collect::<Vec<_>>();
-    assert_eq!(
-        gpt_action_direct
-            .iter()
-            .map(|definition| definition.name)
-            .collect::<Vec<_>>(),
-        expected_gpt_action_direct,
-        "GPT Actions direct exposure must inherit Adaptive Direct ordering minus definition-owned unsupported/gateway-only exceptions"
-    );
-    for specialist in EXACT_MANIFEST_SPECIALIST_TOOL_NAMES {
-        assert!(
-            gpt_action_tool_supported(specialist),
-            "{specialist} must remain GPT-Action gateway-callable by exact name"
-        );
-    }
-    #[cfg(feature = "experimental-code-mode")]
-    {
-        assert!(gpt_action_tool_supported("code_mode_exec_effectful"));
-        assert!(gpt_action_tool_supported("code_mode_exec_mutating"));
-        for name in ["code_mode_exec_effectful", "code_mode_exec_mutating"] {
-            assert!(
-                !gpt_action_direct
-                    .iter()
-                    .any(|definition| definition.name == name),
-                "{name} must stay GPT-Action-supported behind call_runtime_tool to preserve the OpenAPI operation budget"
-            );
-        }
-    }
-    assert!(
-        !gpt_action_direct
-            .iter()
-            .any(|definition| definition.name == "apply_patch"),
-        "apply_patch stays GPT-Action-supported long-tail behind call_runtime_tool"
-    );
-    for name in [
-        "present_goal_plan",
-        "present_agent_continuation",
-        "present_work_result",
-        "rotate_agent_continuation_endpoint",
-    ] {
-        assert!(
-            !gpt_action_tool_supported(name),
-            "{name} depends on MCP-only presentation/resource semantics"
-        );
-    }
-
-    for definition in &gpt_action_direct {
-        let model_spec = definition
-            .model_spec
-            .expect("model-visible direct tool spec");
-        let action_description = definition
-            .gpt_action_description()
-            .expect("GPT Action description projection");
-        assert!(
-            action_description.chars().count() <= GPT_ACTION_DESCRIPTION_MAX_CHARS,
-            "{} GPT Action description exceeds {} characters",
-            definition.name,
-            GPT_ACTION_DESCRIPTION_MAX_CHARS
-        );
-        if model_spec.description.chars().count() > GPT_ACTION_DESCRIPTION_MAX_CHARS {
-            assert!(
-                model_spec.gpt_action_description.is_some(),
-                "{} needs an explicit short GPT Action presentation description",
-                definition.name
-            );
-        }
-    }
-
     let observe_jobs = registered_tool_specs()
         .into_iter()
         .find(|spec| spec.name == "observe_jobs")
@@ -959,6 +886,82 @@ fn adaptive_runtime_direct_declarations_are_visible_ranked_and_unique() {
         .contains("Ordinary review uses review_changes"));
 }
 
+#[cfg(feature = "legacy-gpt-actions")]
+#[test]
+fn legacy_gpt_action_surface_is_frozen() {
+    let direct = gpt_action_direct_tool_definitions();
+    assert_eq!(
+        direct
+            .iter()
+            .map(|definition| definition.name)
+            .collect::<Vec<_>>(),
+        LEGACY_GPT_ACTION_DIRECT_TOOL_NAMES
+    );
+
+    for name in LEGACY_GPT_ACTION_SUPPORTED_TOOL_NAMES {
+        let definition = lookup_tool_definition(name)
+            .unwrap_or_else(|| panic!("frozen GPT Action tool {name} disappeared"));
+        assert!(
+            definition.gpt_action_exposure() != ToolGptActionExposure::Unsupported,
+            "frozen GPT Action tool {name} became unsupported"
+        );
+        assert!(gpt_action_tool_supported(name), "{name}");
+    }
+
+    for specialist in EXACT_MANIFEST_SPECIALIST_TOOL_NAMES {
+        assert!(
+            gpt_action_tool_supported(specialist),
+            "{specialist} must remain legacy GPT-Action gateway-callable"
+        );
+    }
+
+    for definition in &direct {
+        let model_spec = definition
+            .model_spec
+            .expect("legacy direct GPT Action must remain model-visible");
+        let action_description = definition
+            .gpt_action_description()
+            .expect("GPT Action description projection");
+        assert!(
+            action_description.chars().count() <= GPT_ACTION_DESCRIPTION_MAX_CHARS,
+            "{} GPT Action description exceeds {} characters",
+            definition.name,
+            GPT_ACTION_DESCRIPTION_MAX_CHARS
+        );
+        if model_spec.description.chars().count() > GPT_ACTION_DESCRIPTION_MAX_CHARS {
+            assert!(
+                model_spec.gpt_action_description.is_some(),
+                "{} needs an explicit short GPT Action presentation description",
+                definition.name
+            );
+        }
+    }
+
+    for name in [
+        "present_goal_plan",
+        "present_agent_continuation",
+        "present_work_result",
+        "rotate_agent_continuation_endpoint",
+    ] {
+        assert!(
+            !gpt_action_tool_supported(name),
+            "{name} depends on MCP-only presentation/resource semantics"
+        );
+    }
+
+    #[cfg(feature = "experimental-code-mode")]
+    for name in [
+        "code_mode_exec",
+        "code_mode_exec_effectful",
+        "code_mode_exec_mutating",
+    ] {
+        assert!(
+            !gpt_action_tool_supported(name),
+            "{name} must not enter the frozen legacy GPT Action snapshot"
+        );
+    }
+}
+
 #[test]
 fn turn_economy_descriptors_stay_converged_and_bounded() {
     let specs = registered_tool_specs();
@@ -976,11 +979,14 @@ fn turn_economy_descriptors_stay_converged_and_bounded() {
             !spec.description.contains("Use observe_jobs later"),
             "{name}"
         );
-        let action = lookup_tool_definition(name)
-            .unwrap()
-            .gpt_action_description()
-            .expect("execution action description");
-        assert!(!action.contains("Use observe_jobs later"), "{name}");
+        #[cfg(feature = "legacy-gpt-actions")]
+        {
+            let action = lookup_tool_definition(name)
+                .unwrap()
+                .gpt_action_description()
+                .expect("execution action description");
+            assert!(!action.contains("Use observe_jobs later"), "{name}");
+        }
         assert!(
             spec.description.contains("sparse terminal Job attention"),
             "{name}"
@@ -1081,14 +1087,17 @@ fn turn_economy_descriptors_stay_converged_and_bounded() {
             spec.description.chars().count() <= MODEL_TOOL_DESCRIPTION_MAX_CHARS,
             "{name} canonical description budget"
         );
-        let action = lookup_tool_definition(name)
-            .unwrap()
-            .gpt_action_description()
-            .expect("model-facing action description");
-        assert!(
-            action.chars().count() <= GPT_ACTION_DESCRIPTION_MAX_CHARS,
-            "{name} GPT Action description budget"
-        );
+        #[cfg(feature = "legacy-gpt-actions")]
+        {
+            let action = lookup_tool_definition(name)
+                .unwrap()
+                .gpt_action_description()
+                .expect("model-facing action description");
+            assert!(
+                action.chars().count() <= GPT_ACTION_DESCRIPTION_MAX_CHARS,
+                "{name} GPT Action description budget"
+            );
+        }
     }
 }
 
@@ -1253,19 +1262,22 @@ fn run_skill_resource_contract_distinguishes_live_configured_and_managed_fences(
             "run_skill_resource ToolDefinition must describe {phrase:?}: {model_description}"
         );
     }
-    let action_description = definition
-        .gpt_action_description()
-        .expect("run_skill_resource GPT Action description")
-        .to_ascii_lowercase();
-    for phrase in [
-        "configured skills are live",
-        "expected_definition_revision",
-        "managed skills additionally require expected_package_revision",
-    ] {
-        assert!(
-            action_description.contains(phrase),
-            "run_skill_resource GPT Action description must describe {phrase:?}: {action_description}"
-        );
+    #[cfg(feature = "legacy-gpt-actions")]
+    {
+        let action_description = definition
+            .gpt_action_description()
+            .expect("run_skill_resource GPT Action description")
+            .to_ascii_lowercase();
+        for phrase in [
+            "configured skills are live",
+            "expected_definition_revision",
+            "managed skills additionally require expected_package_revision",
+        ] {
+            assert!(
+                action_description.contains(phrase),
+                "run_skill_resource GPT Action description must describe {phrase:?}: {action_description}"
+            );
+        }
     }
 }
 

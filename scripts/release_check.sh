@@ -34,14 +34,12 @@ fi
 #   3. cargo check --workspace --all-targets
 #   4. cargo test -p webcodex --lib metadata -- --nocapture
 #   5. cargo test -p webcodex --lib schema -- --nocapture
-#   6. cargo test -p webcodex --lib openapi -- --nocapture
-#   7. cargo test -p webcodex --lib mcp -- --nocapture
-#   8. bash syntax checks for scripts/*.sh
-#   9. release verification tooling self-tests
-#  10. static: test harnesses use current runtime contracts
-#  11. static: no python runtime helper regressions
-#  12. static: no sensitive files tracked or staged by git
-#
+#   6. cargo test -p webcodex --lib mcp -- --nocapture
+#   7. bash syntax checks for scripts/*.sh
+#   8. release verification tooling self-tests
+#   9. static: test harnesses use current runtime contracts
+#  10. static: no python runtime helper regressions
+#  11. static: no sensitive files tracked or staged by git#
 # Final pre-tag acceptance is orchestrated by .github/workflows/release-readiness.yml.
 # The release operator first binds one successful exact-source source-branch CI run;
 # that CI already owns the deterministic release/static contract, complete Linux
@@ -150,18 +148,12 @@ else
     die "schema tests"
 fi
 
-# ----------------------------------------------------------------------------
-# Stage 6: focused OpenAPI tests
-# ----------------------------------------------------------------------------
-stage_start "cargo test -p webcodex --lib openapi -- --nocapture"
-if cargo test -p webcodex --lib openapi -- --nocapture; then
-    ok "openapi tests"
-else
-    die "openapi tests"
-fi
+# Legacy GPT Actions are default-off and validated separately by
+# .github/workflows/legacy-gpt-actions.yml. Release readiness follows the
+# maintained default server surface and does not compile that adapter.
 
 # ----------------------------------------------------------------------------
-# Stage 7: focused MCP tests
+# Stage 6: focused MCP tests
 # ----------------------------------------------------------------------------
 stage_start "cargo test -p webcodex --lib mcp -- --nocapture"
 if cargo test -p webcodex --lib mcp -- --nocapture; then
@@ -173,7 +165,7 @@ fi
 
 
 # ----------------------------------------------------------------------------
-# Stage 8: bash syntax checks
+# Stage 7: bash syntax checks
 # ----------------------------------------------------------------------------
 stage_start "bash syntax checks"
 for script in scripts/*.sh; do
@@ -185,7 +177,7 @@ for script in scripts/*.sh; do
 done
 
 # ----------------------------------------------------------------------------
-# Stage 9: release verification tooling self-tests
+# Stage 8: release verification tooling self-tests
 # ----------------------------------------------------------------------------
 stage_start "release verification tooling self-tests"
 if bash scripts/test_python_tooling.sh \
@@ -240,7 +232,7 @@ else
 fi
 
 # ----------------------------------------------------------------------------
-# Stage 10: static — test harnesses use current runtime contracts
+# Stage 9: static — test harnesses use current runtime contracts
 # ----------------------------------------------------------------------------
 stage_start "static: current test harness contracts"
 if grep -En -- '--bin webcodex([[:space:]]|`|$)|target/debug/webcodex([^/-]|$)|include_runtime_status|include_git|include_recent_commits|include_rules|process_local_in_memory|output\.content|numbered_text' \
@@ -267,7 +259,7 @@ else
 fi
 
 # ----------------------------------------------------------------------------
-# Stage 11: static — no python runtime helper regressions
+# Stage 10: static — no python runtime helper regressions
 # ----------------------------------------------------------------------------
 stage_start "static: no python runtime helper regressions"
 if grep -R "python3 -c" -n src/tool_runtime src/runner_http crates/webcodex-runner/src; then
@@ -282,7 +274,7 @@ else
 fi
 
 # ----------------------------------------------------------------------------
-# Stage 12: static — no sensitive files tracked or staged by git
+# Stage 11: static — no sensitive files tracked or staged by git
 # ----------------------------------------------------------------------------
 stage_start "static: no sensitive files tracked/staged"
 # These are git-ignored deployment files that must NEVER be committed. We check

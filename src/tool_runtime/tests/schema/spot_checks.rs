@@ -170,16 +170,19 @@ fn tool_specs_structured_validation_schema_and_output() {
             "incomplete_stream"
         ])
     );
-    let openapi = crate::openapi::build_openapi_spec();
-    let action_properties = &openapi["paths"]["/api/actions/cargo_test"]["post"]["requestBody"]
-        ["content"]["application/json"]["schema"]["properties"];
-    assert_eq!(action_properties["require_tests"]["type"], "boolean");
-    assert_eq!(action_properties["min_tests"]["type"], "integer");
-    assert_eq!(action_properties["min_tests"]["minimum"], 1);
-    assert_eq!(
-        action_properties["min_tests"]["maximum"],
-        crate::runner_protocol::CARGO_TEST_MIN_TESTS_MAX
-    );
+    #[cfg(feature = "legacy-gpt-actions")]
+    {
+        let openapi = crate::openapi::build_openapi_spec();
+        let action_properties = &openapi["paths"]["/api/actions/cargo_test"]["post"]["requestBody"]
+            ["content"]["application/json"]["schema"]["properties"];
+        assert_eq!(action_properties["require_tests"]["type"], "boolean");
+        assert_eq!(action_properties["min_tests"]["type"], "integer");
+        assert_eq!(action_properties["min_tests"]["minimum"], 1);
+        assert_eq!(
+            action_properties["min_tests"]["maximum"],
+            crate::runner_protocol::CARGO_TEST_MIN_TESTS_MAX
+        );
+    }
     let go_props = spec_named(&specs, "go_test").input_schema["properties"]
         .as_object()
         .unwrap();

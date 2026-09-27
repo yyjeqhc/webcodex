@@ -268,11 +268,7 @@ Actions surface 已不再暴露退休的 `listRuntimeTools` facade。
 
 ### GPT Action 仍在使用旧 schema
 
-从已部署的 `/openapi.json` 重新导入 OpenAPI schema，然后检查 operation count。
-该数量由当前 Adaptive Direct projection 加 `call_runtime_tool` 动态派生，不应再和
-固定“推荐数量”比较。生成 surface 必须保持在 GPT Actions 的 30-operation ceiling
-以下；如果达到 ceiling，应调整 canonical Adaptive projection 或真实的 protocol
-exception，而不是静默截断 schema。
+先确认部署的 Server 是使用 `legacy-gpt-actions` 构建的；默认构建不会挂载 `/openapi.json` 或 `/api/actions/*`。对于明确保留的 legacy 部署，重新导入 `/openapi.json`。它的 operation set 是冻结兼容快照加 `call_runtime_tool`，正常维护的 Adaptive Runtime 变化不会再扩张该 surface。修改这层 adapter 时运行独立 legacy workflow 或 feature-enabled tests。
 
 ### MCP tool list 看起来是旧的
 
@@ -325,9 +321,7 @@ Runner-backed git project。
 
 ### `operation_count` 超过 30
 
-生成的 GPT Actions surface 必须保持在 30 operations 以下。long-tail runtime
-tools（包括 chunked artifact upload tools）继续通过 `call_runtime_tool` 调用；direct
-operations 从 canonical Adaptive Direct surface 派生，不维护单独的 Actions allowlist。
+只有启用 `legacy-gpt-actions` 的兼容构建才受这项限制。direct operations 来自冻结快照，long-tail entries 通过 `call_runtime_tool`；不要通过普通 Adaptive Runtime 调整来迁就这个 legacy budget。若冻结 surface 本身触及上限，应在 legacy adapter 内做明确兼容性调整，并由独立 legacy CI 验证。
 
 ### `artifact_upload_chunk` 报 `path` 缺失
 

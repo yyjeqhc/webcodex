@@ -34,6 +34,7 @@ mod mcp_host;
 mod model_surface;
 pub(crate) use webcodex_store::models;
 mod oauth_http;
+#[cfg(feature = "legacy-gpt-actions")]
 mod openapi;
 mod pairing_http;
 mod plugin_gateway;
@@ -79,6 +80,7 @@ pub(crate) use config::parse_env_file_line;
 pub use config::Config;
 pub use config::OAuth2Config;
 pub use db::{Database, RotateResult};
+#[cfg(feature = "legacy-gpt-actions")]
 pub(crate) use openapi::openapi_json;
 pub(crate) use runner_http::{
     runner_job_update, runner_offline, runner_persistent_shell_result, runner_poll,
@@ -406,6 +408,13 @@ only for local/trusted-network demos."
         }
     }
 
+    #[cfg(feature = "legacy-gpt-actions")]
+    let legacy_gpt_action_router =
+        Router::with_path(route_metadata::api_path(RouteId::GptActionsInvoke))
+            .post(runtime_http::gpt_action_invoke);
+    #[cfg(not(feature = "legacy-gpt-actions"))]
+    let legacy_gpt_action_router = Router::new();
+
     let authed_api_router = Router::new()
         .hoop(AuthMiddleware)
         .push(runtime_console_http::routes())
@@ -418,10 +427,7 @@ only for local/trusted-network demos."
             Router::with_path(route_metadata::api_path(RouteId::ToolsCall))
                 .post(runtime_http::tools_call),
         )
-        .push(
-            Router::with_path(route_metadata::api_path(RouteId::GptActionsInvoke))
-                .post(runtime_http::gpt_action_invoke),
-        )
+        .push(legacy_gpt_action_router)
         .push(
             Router::with_path(route_metadata::api_path(RouteId::ArtifactsImport))
                 .post(runtime_http::import_conversation_files_to_project),
@@ -600,8 +606,11 @@ only for local/trusted-network demos."
                 ),
         );
 
-    let openapi_router =
+    #[cfg(feature = "legacy-gpt-actions")]
+    let legacy_openapi_router =
         Router::with_path(route_metadata::root_path(RouteId::OpenApiDocument)).get(openapi_json);
+    #[cfg(not(feature = "legacy-gpt-actions"))]
+    let legacy_openapi_router = Router::new();
 
     let runtime_root = RouteId::RuntimeWebRoot;
     let runtime_console_router = Router::with_path(route_metadata::root_path(runtime_root))
@@ -662,7 +671,7 @@ only for local/trusted-network demos."
         .hoop(affix_state::inject(console_asset_source))
         .hoop(cors.into_handler())
         .push(api_router)
-        .push(openapi_router)
+        .push(legacy_openapi_router)
         .push(runtime_console_router)
         .push(admin_router)
         // OAuth2 token, revocation, and discovery endpoints — public, no
@@ -760,7 +769,8 @@ only for local/trusted-network demos."
         mcp_compact_schemas = runtime_info.mcp_compact_schemas,
         "mcp_compact_schemas"
     );
-    tracing::info!("OpenAPI (GPT Actions): {}/openapi.json", base);
+    #[cfg(feature = "legacy-gpt-actions")]
+    tracing::info!("Legacy GPT Actions OpenAPI: {}/openapi.json", base);
     tracing::info!("Runtime console: {}/runtime", base);
     tracing::info!("Runtime status: {}/api/runtime/status", base);
     tracing::info!("Runner WebSocket: {}/api/agents/ws", base);

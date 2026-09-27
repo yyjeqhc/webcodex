@@ -474,6 +474,7 @@ pub(crate) async fn pairing_enroll(req: &mut Request, depot: &mut Depot, res: &m
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "legacy-gpt-actions")]
     use crate::openapi::build_openapi_spec;
     use crate::Database;
     use salvo::prelude::affix_state;
@@ -813,6 +814,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "legacy-gpt-actions")]
     #[test]
     fn pairing_endpoints_are_absent_from_openapi() {
         let spec = build_openapi_spec();

@@ -111,7 +111,7 @@ The lanes above define test semantics; workflows decide when to run them.
   only an untrustworthy changed-path inventory falls back to the complete native
   matrix. The contract lane always owns workspace-boundary self-test/checks,
   formatting, the heuristic test-inventory self-test/report (without count thresholds),
-  and focused registry/OpenAPI/MCP schema and metadata parity. Main and Desktop
+  and focused registry/MCP schema and metadata parity. Main and Desktop
   frontend dependency installation/type/test/build steps run only when the classifier
   selects their respective frontend surface; full-native invocations select both.
 - The heavy Linux Rust matrix `test-linux-rust` and Linux tooling lane
@@ -144,6 +144,13 @@ The lanes above define test semantics; workflows decide when to run them.
   abnormal/infrastructure runs, stale or changed classifications, and unclassified
   new failures are merge-blocking. See [`MCP_CONFORMANCE.md`](MCP_CONFORMANCE.md)
   for baseline semantics.
+- GPT Actions are a default-off legacy compatibility surface. Ordinary PR,
+  merge-queue, main-push, and release-readiness CI do not enable
+  `legacy-gpt-actions` and therefore do not compile or test its OpenAPI/HTTP
+  adapter. `.github/workflows/legacy-gpt-actions.yml` runs the feature weekly
+  and on manual dispatch, including the frozen surface contract and the
+  feature-enabled Server tests. For local compatibility work use
+  `cargo test -p webcodex --lib --features legacy-gpt-actions`.
 - Linux Rust execution remains package-sharded: the server package `webcodex`, the
   Runner/LSP packages, and the remaining workspace crates run in parallel. The
   Runner/LSP shard compiles with `--features runner-real-process-tests` to prevent

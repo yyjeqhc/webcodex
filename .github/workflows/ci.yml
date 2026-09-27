@@ -219,10 +219,9 @@ jobs:
       - name: Check schema and metadata contracts
         run: |
           python3 scripts/tests/test_runner_observability_contract.py
-          cargo test --locked -p webcodex --lib openapi
           cargo test --locked -p webcodex --lib mcp_tools_list
-          cargo test --locked -p webcodex --lib tool_definition_surface_counts_and_action_projection_stay_canonical
-          cargo test --locked -p webcodex --lib external_provider_discovery_cannot_change_public_tool_or_openapi_surface
+          cargo test --locked -p webcodex --lib tool_definition_surface_counts_stay_canonical
+          cargo test --locked -p webcodex --lib external_provider_discovery_cannot_change_public_tool_surface
 
   mcp-conformance:
     # Dated MCP wire evidence is independent from ordinary unit/integration tests.

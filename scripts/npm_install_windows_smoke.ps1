@@ -335,7 +335,7 @@ try {
                 if ($null -ne $child) { $ServerChildPid = [int]$child.ProcessId }
             }
             try {
-                $response = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$ServerPort/openapi.json" -TimeoutSec 1
+                $response = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$ServerPort/runtime" -TimeoutSec 1
                 if ($response.StatusCode -eq 200) {
                     $ready = $true
                     break
@@ -346,7 +346,7 @@ try {
             Start-Sleep -Milliseconds 100
         }
         if (-not $ready) {
-            throw "foreground Windows Server did not reach /openapi.json readiness before the absolute deadline"
+            throw "foreground Windows Server did not reach /runtime readiness before the absolute deadline"
         }
         while ($null -eq $ServerChildPid -and $deadline.Elapsed -lt [TimeSpan]::FromSeconds(20)) {
             $child = Get-CimInstance Win32_Process -Filter "ParentProcessId=$($ServerCliProcess.Id)" -ErrorAction SilentlyContinue |

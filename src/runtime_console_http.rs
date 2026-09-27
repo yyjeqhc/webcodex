@@ -6764,10 +6764,13 @@ mod tests {
             .unwrap_err(),
             RuntimeConsoleError::Invalid
         );
-        let openapi = crate::openapi::build_openapi_spec();
-        assert!(openapi["paths"]
-            .get("/api/runtime-console/workflow-session-post-message")
-            .is_none());
+        #[cfg(feature = "legacy-gpt-actions")]
+        {
+            let openapi = crate::openapi::build_openapi_spec();
+            assert!(openapi["paths"]
+                .get("/api/runtime-console/workflow-session-post-message")
+                .is_none());
+        }
     }
 
     #[tokio::test]
@@ -7098,16 +7101,19 @@ mod tests {
         assert!(body.contains("Outcome may have happened"));
         assert!(body.contains("refresh retained messages before retrying"));
 
-        let openapi = crate::openapi::build_openapi_spec();
-        for id in [
-            crate::route_metadata::RouteId::RuntimeConsoleWorkflowSessionWithdrawMessage,
-            crate::route_metadata::RouteId::RuntimeConsoleWorkflowSessionReplaceMessage,
-        ] {
-            let path = crate::route_metadata::path(id);
-            assert!(
-                openapi["paths"].get(path).is_none(),
-                "{path} leaked into OpenAPI"
-            );
+        #[cfg(feature = "legacy-gpt-actions")]
+        {
+            let openapi = crate::openapi::build_openapi_spec();
+            for id in [
+                crate::route_metadata::RouteId::RuntimeConsoleWorkflowSessionWithdrawMessage,
+                crate::route_metadata::RouteId::RuntimeConsoleWorkflowSessionReplaceMessage,
+            ] {
+                let path = crate::route_metadata::path(id);
+                assert!(
+                    openapi["paths"].get(path).is_none(),
+                    "{path} leaked into OpenAPI"
+                );
+            }
         }
     }
 

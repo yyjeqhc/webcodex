@@ -14,8 +14,7 @@ The npm/runtime archive, Docker, and platform-specific procedures below are reta
 
 - `webcodex` — the unified CLI for project workflows, Server/Runner lifecycle,
   enrollment, and operations.
-- `webcodex-server` — the Server process exposing REST, GPT Actions OpenAPI,
-  MCP, and Runner endpoints.
+- `webcodex-server` — the Server process exposing REST, MCP, and Runner endpoints; the legacy GPT Actions OpenAPI adapter is available only in feature-enabled builds.
 - `webcodex-runner` — the long-lived worker on the machine that owns the
   repositories.
 
@@ -114,8 +113,7 @@ minimum production path:
    `webcodex login <server-url> --code <code>` on the machine that owns the
    repositories.
 5. Install the `webcodex-runner` service on that repository machine.
-6. Run `webcodex ops status --strict`; only then import the GPT Actions schema
-   or add the MCP connector.
+6. Run `webcodex ops status --strict`; only then add the MCP connector. If an existing Custom GPT still requires the legacy Actions adapter, use a `legacy-gpt-actions` build and import its schema separately.
 
 ### Server setup
 
@@ -335,9 +333,7 @@ published image before creating an administrator secret. It then advances the
 private `.webcodex-bootstrap.receipt` through `AssetsPrepared`,
 `SecretCommitted`, `ContainerStarted`, `ServerHealthy`, and `PairingReady`. The
 receipt contains hashes and state, not the administrator token. `.env` is written
-through a 0600 temporary file, synced, and atomically renamed. Success is printed
-only after the Compose healthcheck and `/openapi.json` verification succeed; a
-short-lived pairing code is created only after that readiness barrier.
+through a 0600 temporary file, synced, and atomically renamed. Success is printed only after the Compose healthcheck and `/runtime` readiness verification succeed; a short-lived pairing code is created only after that readiness barrier.
 
 If an install is interrupted or a startup/health check fails, keep `.env` and use
 the same downloaded bootstrap in that directory:
@@ -499,23 +495,21 @@ protocol-level refresh-token scope and grants no extra WebCodex permission.
 
 ## GPT Actions and MCP
 
-- **MCP:** connect a client to `https://your-domain.example/mcp` with a user
-  API token (`wc_pat_*`) or, when OAuth is enabled, the OAuth flow. MCP remains
-  the primary ChatGPT integration.
-- **GPT Actions:** import `https://your-domain.example/openapi.json` into a
-  Custom GPT with HTTP Bearer authentication. On a generic runtime Server this
-  projects the same canonical Adaptive Runtime model surface: current Adaptive
-  Direct tools become direct snake_case Action operations and supported long-tail
-  tools use `call_runtime_tool`. MCP-only protocol presentation is excluded.
+- **MCP:** remains the maintained ChatGPT integration.
+- **GPT Actions:** retained only for existing Custom GPT deployments. Default
+  binaries do not mount `/openapi.json` or `/api/actions/*`; build with
+  `legacy-gpt-actions` only when that compatibility surface is still required.
+  Its direct and gateway tool sets are frozen and no longer grow with Adaptive
+  Runtime, Host, Plugin, or Code Mode development.
 
-After upgrading from the older generic Action facade, re-import `/openapi.json`
-to pick up the canonical operation names. Existing legacy REST routes may remain
-for compatibility but are not part of the new model-facing schema.
+If an older generic Action deployment is intentionally retained, rebuild with
+`legacy-gpt-actions` and re-import `/openapi.json` to pick up the frozen
+canonical operation names.
 
-Both integrations enter the same ToolRuntime authority path. GPT Actions does not
-introduce a separate scope, Project-authority, permission, Runner-capability, or
-retry policy. Project-scoped `share`/`run` deployments expose the same ordinary
-Adaptive Runtime while ProjectGrant visibility keeps them bound to their Project.
+When enabled, GPT Actions still enters the same ToolRuntime authority path and
+does not introduce separate scope, Project-authority, permission,
+Runner-capability, or retry policy. Project-scoped `share`/`run` deployments
+expose this compatibility surface only when the binary includes the feature.
 
 See [GPT Actions](GPT_ACTIONS.md), [MCP](MCP.md), and [AI Onboarding](AI_ONBOARDING.md).
 

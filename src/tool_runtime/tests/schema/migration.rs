@@ -136,51 +136,8 @@ fn tool_definition_metadata_fallback_facade_is_unknown_only() {
 }
 
 #[test]
-fn tool_definition_surface_counts_and_action_projection_stay_canonical() {
+fn tool_definition_surface_counts_stay_canonical() {
     use crate::tool_runtime::tool_definition::{lookup_tool_definition, model_hidden_tool_names};
-
-    let openapi = crate::openapi::build_openapi_spec();
-    let operation_ids = openapi["paths"]
-        .as_object()
-        .unwrap()
-        .values()
-        .flat_map(|methods| methods.as_object().unwrap().values())
-        .map(|operation| operation["operationId"].as_str().unwrap())
-        .collect::<BTreeSet<_>>();
-    let expected = webcodex_tool_contracts::gpt_action_direct_tool_definitions()
-        .into_iter()
-        .map(|definition| definition.name)
-        .chain(std::iter::once(
-            crate::model_surface::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME,
-        ))
-        .collect::<BTreeSet<_>>();
-    assert_eq!(
-        operation_ids, expected,
-        "generic OpenAPI must derive from Adaptive Direct plus gateway"
-    );
-    assert!(
-        operation_ids.len() < 30,
-        "GPT Action operation budget exceeded"
-    );
-    assert!(openapi["components"].get("schemas").is_none());
-    for forbidden in [
-        "runCodex",
-        "RunCodex",
-        "sessionHandoffSummary",
-        "SessionHandoff",
-        "applyTextEdits",
-        "ApplyTextEdits",
-        "artifactUpload",
-        "ArtifactUpload",
-        "callRuntimeTool",
-    ] {
-        assert!(
-            !operation_ids
-                .iter()
-                .any(|operation_id| operation_id.contains(forbidden)),
-            "retired GPT Action vocabulary leaked: {forbidden}: {operation_ids:?}"
-        );
-    }
 
     let model_facing_names = registered_tool_names();
     assert!(
@@ -260,18 +217,21 @@ fn assert_model_facing_surfaces_do_not_list_name(name: &str) {
         "{name} must not appear in MCP tools/list names"
     );
 
-    let openapi = crate::openapi::build_openapi_spec();
-    let action_ids = openapi["paths"]
-        .as_object()
-        .unwrap()
-        .values()
-        .flat_map(|methods| methods.as_object().unwrap().values())
-        .filter_map(|operation| operation["operationId"].as_str())
-        .collect::<BTreeSet<_>>();
-    assert!(
-        !action_ids.contains(name),
-        "{name} must not appear as a direct GPT Action operation"
-    );
+    #[cfg(feature = "legacy-gpt-actions")]
+    {
+        let openapi = crate::openapi::build_openapi_spec();
+        let action_ids = openapi["paths"]
+            .as_object()
+            .unwrap()
+            .values()
+            .flat_map(|methods| methods.as_object().unwrap().values())
+            .filter_map(|operation| operation["operationId"].as_str())
+            .collect::<BTreeSet<_>>();
+        assert!(
+            !action_ids.contains(name),
+            "{name} must not appear as a direct GPT Action operation"
+        );
+    }
 
     let runtime = test_runtime();
     let manifest = runtime.compact_tool_manifest_payload();

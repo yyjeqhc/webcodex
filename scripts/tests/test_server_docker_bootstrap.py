@@ -86,7 +86,7 @@ class BootstrapTests(unittest.TestCase):
             '    if [ "${FAKE_UP_LEAVES_CONTAINER:-0}" = 1 ]; then : > "$FAKE_CONTAINER_STATE"; fi\n'
             '    if [ "${FAKE_UP_EXIT:-0}" != 0 ]; then exit "$FAKE_UP_EXIT"; fi\n'
             '    : > "$FAKE_CONTAINER_STATE"; exit 0 ;;\n'
-            '  *" exec -T webcodex curl "*) exit "${FAKE_OPENAPI_EXIT:-0}" ;;\n'
+            '  *" exec -T webcodex curl "*) exit "${FAKE_RUNTIME_EXIT:-0}" ;;\n'
             '  *" exec -T webcodex sh -lc "*)\n'
             '    if [ "${FAKE_PAIRING_EXIT:-0}" != 0 ]; then exit "$FAKE_PAIRING_EXIT"; fi\n'
             '    printf "wc_pair_test_123\\n"; exit 0 ;;\n'
@@ -237,7 +237,7 @@ class BootstrapTests(unittest.TestCase):
             f"compose -f {assets.MATERIALIZED_COMPOSE} up -d --no-build --pull never", calls
         )
         self.assertIn("inspect --format", calls)
-        self.assertIn("openapi.json", calls)
+        self.assertIn("/runtime", calls)
         self.assertIn("pairing create", calls)
 
         second = self._run(root, env, script)

@@ -485,6 +485,10 @@ fn work_result_html_is_bounded_live_progress_ui() {
         "work_result_send_message",
         "wc_changes_snapshot_",
         "Window activity",
+        "id=\"windowIdentity\"",
+        "Project · ",
+        "Session · ",
+        "Latest Window calls first.",
         "Activity",
         "Collaboration",
         "Final changes",
@@ -509,6 +513,8 @@ fn work_result_html_is_bounded_live_progress_ui() {
         "VISIBLE_REFRESH_MS",
         "VISIBLE_IDLE_REFRESH_MS",
         "Observe · ",
+        "async_job_id",
+        "observed_job_ids",
     ] {
         assert!(
             MCP_WORK_RESULT_APP_HTML.contains(required),
@@ -536,7 +542,6 @@ fn work_result_html_is_bounded_live_progress_ui() {
         "fetch(",
         "WebSocket",
         "ui/message",
-        "job_id",
         "continuationToken",
         "authority_fingerprint",
         "baseline_tree",

@@ -192,7 +192,7 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
 }
 [hidden] { display: none !important; }
 .task-context { display: flex; min-width: 0; flex-wrap: wrap; gap: 4px 14px; padding: 9px 13px; color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
-.window-identity { min-width: 0; max-width: 100%; font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); word-break: break-all; user-select: text; }
+.diagnostic-identity { min-width: 0; max-width: 100%; font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); word-break: break-all; user-select: text; }
 .card-tabs { display: flex; min-width: 0; padding: 0 11px; border-bottom: 1px solid var(--divider); }
 .card-tabs button { flex: 1; min-width: 0; min-height: 40px; padding: 7px 4px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--muted); cursor: pointer; }
 .card-tabs button[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); font-weight: 650; }
@@ -229,7 +229,7 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     </div>
     <div class="actions"><button id="refresh" class="refresh" type="button" disabled>Refresh</button><span id="badge" class="badge">Loading</span></div>
   </header>
-  <div class="task-context"><span id="projectIdentity" class="window-identity"></span><span id="windowSource"></span><span id="sessionIdentity"></span></div>
+  <div class="task-context"><span id="projectIdentity" class="diagnostic-identity"></span><span id="windowIdentity" class="diagnostic-identity"></span><span id="sessionIdentity" class="diagnostic-identity"></span><span id="windowSource"></span></div>
   <nav class="card-tabs" role="tablist" aria-label="Window views">
     <button id="tabActivity" type="button" role="tab" aria-selected="true" aria-controls="panelActivity">Activity</button>
     <button id="tabResults" type="button" role="tab" aria-selected="false" aria-controls="panelResults" tabindex="-1">Results</button>
@@ -246,7 +246,7 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
       </section>
       <section class="section">
         <div class="section-head"><h2>Window activity</h2><span id="windowCoverage" class="secondary"></span></div>
-        <p class="secondary">Window calls in start-time order, oldest first. Observe and diagnostic actions remain visible.</p>
+        <p class="secondary">Latest Window calls first. Expand a completed call for trace, Session, Job, timing, and transition details.</p>
         <div id="windowActivity" class="workflow-activity"></div>
         <button id="askActivity" class="refresh" type="button">Send an instruction</button>
       </section>
@@ -1101,7 +1101,7 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
       ...windowActivity.events.map(row => ({ ...row, running: false })),
       ...windowActivity.active_requests.filter(row => !row.server_trace_id || !completed.has(row.server_trace_id))
         .map(row => ({ ...row, running: true })),
-    ].sort((a, b) => a.started_at_ms - b.started_at_ms);
+    ].sort((a, b) => b.started_at_ms - a.started_at_ms);
     for (const row of rows) {
       const details = document.createElement("details"); details.className = "activity-call";
       const key = row.server_trace_id || (row.running ? "active:" : "event:") + row.started_at_ms + ":" + (row.tool_name || row.label);
@@ -1187,9 +1187,10 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
   function render(state) {
     if (tornDown) return;
     lastRenderedState = state;
-    el("projectIdentity").textContent = state.window ? "Window · " + state.window.key : "Window identity unavailable";
+    el("projectIdentity").textContent = "Project · " + state.project;
+    el("windowIdentity").textContent = state.window ? "Window · " + state.window.key : "Window · unavailable";
+    el("sessionIdentity").textContent = state.session_id ? "Session · " + state.session_id : "Session · not linked yet";
     el("windowSource").textContent = state.window ? "Source · " + state.window.source : "";
-    el("sessionIdentity").textContent = state.session_id ? "Context · " + state.session_id.slice(8, 14) : "";
     const hasFinalChanges = snapshot !== null || state.final_changes !== undefined;
     el("taskTitle").textContent = state.session?.title || "WebCodex activity";
     renderWindowCurrentActivity(state.activity);

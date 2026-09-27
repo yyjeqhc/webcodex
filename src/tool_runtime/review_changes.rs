@@ -102,6 +102,25 @@ fn projection_identity(
     })
 }
 
+fn review_next_call(
+    project: &str,
+    session_id: Option<&str>,
+    projection: &Value,
+    continuation: &str,
+) -> Value {
+    let mut arguments = projection
+        .as_object()
+        .expect("review projection is an object")
+        .clone();
+    arguments.insert("project".to_string(), json!(project));
+    arguments.insert("session_id".to_string(), json!(session_id));
+    arguments.insert("continuation".to_string(), json!(continuation));
+    // Optional inputs are omitted, not nullable in the published tool schema.
+    // Preserve explicit zero/empty values and the exact snapshot-bound scope.
+    arguments.retain(|_, value| !value.is_null());
+    json!({"tool": "review_changes", "arguments": arguments})
+}
+
 fn encode_review_continuation(snapshot_id: &str, inner: &str) -> Option<String> {
     let value = format!("{REVIEW_CHANGES_CONTINUATION_PREFIX}{snapshot_id}.{inner}");
     (value.len() <= 384).then_some(value)
@@ -280,6 +299,23 @@ impl ToolRuntime {
             if !diff.success {
                 return diff;
             }
+            // Fence the returned page as well as admission: the workspace may
+            // change while the Runner is producing the continuation diff.
+            if matches!(snapshot.scope, GitReviewScope::Workspace) {
+                match self
+                    .workspace_review_source_identity(&resolved_project)
+                    .await
+                {
+                    Ok(current) if current == snapshot.source => {}
+                    Ok(_) => return review_changes_failure(&project, "snapshot_stale"),
+                    Err(_) => {
+                        return review_changes_failure(
+                            &project,
+                            "workspace_source_identity_unavailable",
+                        )
+                    }
+                }
+            }
             if matches!(snapshot.scope, GitReviewScope::Committed { .. })
                 && !committed_diff_matches_source(&diff.output, &snapshot.source)
             {
@@ -310,19 +346,8 @@ impl ToolRuntime {
                 "reason_code": Value::Null,
             });
             if let Some(next) = output["continuation"].as_str() {
-                output["next_call"] = json!({
-                    "tool": "review_changes",
-                    "arguments": {
-                        "project": project,
-                        "scope": scope_input,
-                        "session_id": session_id,
-                        "paths": projection["paths"],
-                        "max_hunks": projection["max_hunks"],
-                        "max_hunk_lines": projection["max_hunk_lines"],
-                        "max_page_bytes": projection["max_page_bytes"],
-                        "continuation": next,
-                    }
-                });
+                output["next_call"] =
+                    review_next_call(&project, session_id.as_deref(), &projection, next);
             }
             trace_review_changes_success(
                 &output,
@@ -332,7 +357,11 @@ impl ToolRuntime {
                 true,
                 0,
                 diff_page_duration_ms,
-                2,
+                if matches!(snapshot.scope, GitReviewScope::Workspace) {
+                    3
+                } else {
+                    2
+                },
             );
             return ToolResult::ok(output);
         }
@@ -596,19 +625,8 @@ impl ToolRuntime {
             "reason_code": Value::Null,
         });
         if let Some(next) = output["continuation"].as_str() {
-            output["next_call"] = json!({
-                "tool": "review_changes",
-                "arguments": {
-                    "project": project,
-                    "scope": scope_input,
-                    "session_id": session_id,
-                    "paths": projection["paths"],
-                    "max_hunks": projection["max_hunks"],
-                    "max_hunk_lines": projection["max_hunk_lines"],
-                    "max_page_bytes": projection["max_page_bytes"],
-                    "continuation": next,
-                }
-            });
+            output["next_call"] =
+                review_next_call(&project, session_id.as_deref(), &projection, next);
         }
         trace_review_changes_success(
             &output,
@@ -627,6 +645,23 @@ impl ToolRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn review_snapshot_next_call_preserves_explicit_optional_values() {
+        let projection = projection_identity(
+            &GitReviewScopeInput::Workspace,
+            &Some(vec![]),
+            Some(0),
+            Some(0),
+            Some(0),
+        );
+        let next = review_next_call("project", Some("wc_sess_test"), &projection, "exact-token");
+        let mut expected = projection;
+        expected["project"] = json!("project");
+        expected["session_id"] = json!("wc_sess_test");
+        expected["continuation"] = json!("exact-token");
+        assert_eq!(next["arguments"], expected);
+    }
 
     #[test]
     fn continuation_round_trip_is_snapshot_bound() {

@@ -31,6 +31,7 @@ pub(crate) enum GitReviewSourceIdentity {
     Workspace {
         head_commit: Option<String>,
         frozen_tree: String,
+        status_fingerprint: String,
     },
     Committed {
         requested_base: String,
@@ -45,10 +46,12 @@ impl GitReviewSourceIdentity {
             Self::Workspace {
                 head_commit,
                 frozen_tree,
+                status_fingerprint,
             } => json!({
                 "kind": "workspace",
                 "head_commit": head_commit,
                 "frozen_tree": frozen_tree,
+                "status_fingerprint": status_fingerprint,
             }),
             Self::Committed {
                 requested_base,
@@ -310,10 +313,14 @@ impl ToolRuntime {
         &self,
         project: &str,
     ) -> Result<GitReviewSourceIdentity, ToolResult> {
-        let (head_commit, frozen_tree) = self.freeze_workspace_tree_and_head(project).await?;
+        let (head_commit, frozen_tree, status_fingerprint) =
+            self.freeze_workspace_git_state(project, true).await?;
+        let status_fingerprint = status_fingerprint
+            .ok_or_else(|| ToolResult::err("workspace review status identity unavailable"))?;
         Ok(GitReviewSourceIdentity::Workspace {
             head_commit,
             frozen_tree,
+            status_fingerprint,
         })
     }
 }
@@ -330,6 +337,7 @@ mod tests {
             GitReviewSourceIdentity::Workspace {
                 head_commit: Some("a".repeat(40)),
                 frozen_tree: tree.to_string(),
+                status_fingerprint: "0".repeat(64),
             },
             json!({"paths": [], "max_hunks": 24}),
             json!({"files_changed": 1}),

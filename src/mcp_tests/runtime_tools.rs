@@ -44,7 +44,7 @@ async fn mcp_tools_list_exposes_canonical_coding_bootstrap_and_runtime_status_ux
         "fresh workflow session",
         "exact resume",
         "primary result stays compact",
-        "context_request",
+        "_wc.context",
         "project.instructions",
         "webcodex.workflow",
         "skills",

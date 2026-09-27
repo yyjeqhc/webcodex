@@ -1832,7 +1832,10 @@ mod tests {
             "_wc.context",
             "_wc.control",
         ] {
-            assert!(protocol.contains(field), "missing model-facing envelope guidance for {field}");
+            assert!(
+                protocol.contains(field),
+                "missing model-facing envelope guidance for {field}"
+            );
         }
         for legacy in [
             "recording_session_id",
@@ -1842,7 +1845,10 @@ mod tests {
             "context_request=",
             "_control",
         ] {
-            assert!(!protocol.contains(legacy), "legacy root wrapper guidance leaked: {legacy}");
+            assert!(
+                !protocol.contains(legacy),
+                "legacy root wrapper guidance leaked: {legacy}"
+            );
         }
     }
 

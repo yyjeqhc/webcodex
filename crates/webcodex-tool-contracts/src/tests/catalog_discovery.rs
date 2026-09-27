@@ -342,7 +342,8 @@ fn edit_recommended_flow_converges_on_one_primary_editor() {
         "show_changes",
         "git_review_summary",
         "git_diff_hunks",
-    ] {        assert!(
+    ] {
+        assert!(
             guidance.contains(phrase),
             "edit flow should mention {phrase}: {guidance}"
         );
@@ -602,7 +603,8 @@ fn recommended_flows_encode_simplest_sufficient_selection_without_old_rituals() 
         "same-snapshot token",
         "old review tools remain specialists",
         "hygiene stays authoritative and separate",
-    ] {        assert!(review.contains(phrase), "review selection: {phrase}");
+    ] {
+        assert!(review.contains(phrase), "review selection: {phrase}");
     }
 
     let all = TOOL_RECOMMENDED_FLOWS

@@ -208,10 +208,14 @@ impl GitReviewSnapshotRegistry {
         session_id: Option<&str>,
     ) -> Option<GitReviewSnapshot> {
         self.prune();
-        self.snapshots.iter().rev().find(|snapshot| {
-            matches!(snapshot.scope, GitReviewScope::Workspace)
-                && snapshot.matches_identity(caller_fingerprint, project, session_id)
-        }).cloned()
+        self.snapshots
+            .iter()
+            .rev()
+            .find(|snapshot| {
+                matches!(snapshot.scope, GitReviewScope::Workspace)
+                    && snapshot.matches_identity(caller_fingerprint, project, session_id)
+            })
+            .cloned()
     }
 }
 
@@ -237,7 +241,9 @@ fn review_snapshot_id(
         serde_json::to_vec(&source.presentation_value())
             .expect("review source identity serializes"),
     );
-    hasher.update(serde_json::to_vec(projection_identity).expect("review projection identity serializes"));
+    hasher.update(
+        serde_json::to_vec(projection_identity).expect("review projection identity serializes"),
+    );
     format!("wc_grs_{:x}", hasher.finalize())
 }
 
@@ -335,7 +341,8 @@ mod tests {
             json!([]),
             json!({"truncated": false}),
             false,
-            true,        )
+            true,
+        )
     }
 
     #[test]

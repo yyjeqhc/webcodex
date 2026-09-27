@@ -42,7 +42,6 @@ pub(crate) use git::{framed_clean_show_changes_test_stdout, framed_show_changes_
 mod git_committed;
 mod git_review;
 mod git_review_snapshot;
-mod review_changes;
 mod git_tools;
 mod goal;
 mod handoff;
@@ -58,6 +57,7 @@ mod jobs;
 pub(crate) mod kernel;
 mod lsp_tools;
 mod mcp_timing;
+mod review_changes;
 pub(crate) use lsp_tools::runner_local_project_id;
 pub(crate) mod memory;
 pub(crate) mod model_ergonomics_telemetry;

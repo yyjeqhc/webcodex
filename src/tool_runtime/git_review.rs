@@ -914,12 +914,7 @@ impl ToolRuntime {
         {
             Ok(output) if output.exit_code == Some(0) && output.error.is_none() => output,
             _ => {
-                return git_review_failure(
-                    &project,
-                    &base,
-                    &head,
-                    "git_diff_metadata_unavailable",
-                )
+                return git_review_failure(&project, &base, &head, "git_diff_metadata_unavailable")
             }
         };
         if output.stdout.starts_with(GIT_REVIEW_ERROR_SENTINEL) {
@@ -1237,11 +1232,7 @@ mod tests {
         assert_eq!(names, "M\ta.rs");
         assert_eq!(numstat, "1\t2\ta.rs");
         assert!(raw.contains("100644"));
-        assert!(parse_review_metadata_frames(&framed.replace(
-            GIT_REVIEW_END_FRAME,
-            ""
-        ))
-        .is_none());
+        assert!(parse_review_metadata_frames(&framed.replace(GIT_REVIEW_END_FRAME, "")).is_none());
         assert!(parse_review_metadata_frames(&format!(
             "{framed}{name}",
             name = GIT_REVIEW_NAME_STATUS_FRAME

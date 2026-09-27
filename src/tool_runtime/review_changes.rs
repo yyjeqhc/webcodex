@@ -107,8 +107,12 @@ fn committed_diff_matches_source(diff: &Value, source: &GitReviewSourceIdentity)
     else {
         return false;
     };
-    diff.pointer("/scope/requested_base").and_then(Value::as_str) == Some(requested_base.as_str())
-        && diff.pointer("/scope/requested_head").and_then(Value::as_str)
+    diff.pointer("/scope/requested_base")
+        .and_then(Value::as_str)
+        == Some(requested_base.as_str())
+        && diff
+            .pointer("/scope/requested_head")
+            .and_then(Value::as_str)
             == Some(requested_head.as_str())
         && diff.pointer("/scope/merge_base").and_then(Value::as_str) == Some(merge_base.as_str())
 }
@@ -249,179 +253,192 @@ impl ToolRuntime {
             return ToolResult::ok(output);
         }
 
-        let (internal_scope, source, summary, files, signals, coverage_partial, metadata_complete, diff) =
-            match scope_input.clone() {
-                GitReviewScopeInput::Workspace => {
-                    let before = match self
-                        .workspace_review_source_identity(&resolved_project)
-                        .await
-                    {
-                        Ok(value) => value,
-                        Err(_) => {
-                            return review_changes_failure(
-                                &project,
-                                "workspace_source_identity_unavailable",
-                            )
-                        }
-                    };
-                    let summary_result = self
-                        .show_changes(
-                            resolved_project.clone(),
-                            session_id.clone(),
-                            Some(false),
-                            None,
-                            None,
-                            Some(0),
+        let (
+            internal_scope,
+            source,
+            summary,
+            files,
+            signals,
+            coverage_partial,
+            metadata_complete,
+            diff,
+        ) = match scope_input.clone() {
+            GitReviewScopeInput::Workspace => {
+                let before = match self
+                    .workspace_review_source_identity(&resolved_project)
+                    .await
+                {
+                    Ok(value) => value,
+                    Err(_) => {
+                        return review_changes_failure(
+                            &project,
+                            "workspace_source_identity_unavailable",
                         )
-                        .await;
-                    if !summary_result.success {
-                        return summary_result;
                     }
-                    let diff = self
-                        .git_diff_hunks_continued_with_range_and_page_bytes(
-                            resolved_project.clone(),
-                            paths.clone(),
-                            max_hunks,
-                            max_hunk_lines,
-                            max_page_bytes,
-                            Some(false),
-                            None,
-                            None,
-                            None,
+                };
+                let summary_result = self
+                    .show_changes(
+                        resolved_project.clone(),
+                        session_id.clone(),
+                        Some(false),
+                        None,
+                        None,
+                        Some(0),
+                    )
+                    .await;
+                if !summary_result.success {
+                    return summary_result;
+                }
+                let diff = self
+                    .git_diff_hunks_continued_with_range_and_page_bytes(
+                        resolved_project.clone(),
+                        paths.clone(),
+                        max_hunks,
+                        max_hunk_lines,
+                        max_page_bytes,
+                        Some(false),
+                        None,
+                        None,
+                        None,
+                    )
+                    .await;
+                if !diff.success {
+                    return diff;
+                }
+                let after = match self
+                    .workspace_review_source_identity(&resolved_project)
+                    .await
+                {
+                    Ok(value) => value,
+                    Err(_) => {
+                        return review_changes_failure(
+                            &project,
+                            "workspace_source_identity_unavailable",
                         )
-                        .await;
-                    if !diff.success {
-                        return diff;
                     }
-                    let after = match self
-                        .workspace_review_source_identity(&resolved_project)
-                        .await
-                    {
-                        Ok(value) => value,
-                        Err(_) => {
-                            return review_changes_failure(
-                                &project,
-                                "workspace_source_identity_unavailable",
-                            )
-                        }
-                    };
-                    if before != after {
-                        return review_changes_failure(&project, "snapshot_stale");
+                };
+                if before != after {
+                    return review_changes_failure(&project, "snapshot_stale");
+                }
+                let summary = json!({
+                    "branch": summary_result.output.get("branch").cloned().unwrap_or(Value::Null),
+                    "head": summary_result.output.get("head").cloned().unwrap_or(Value::Null),
+                    "counts": summary_result.output.get("counts").cloned().unwrap_or(Value::Null),
+                    "diff_stat": summary_result.output.get("diff_stat").cloned().unwrap_or(Value::Null),
+                    "clean": summary_result.output.get("clean").cloned().unwrap_or(Value::Null),
+                    "git_available": summary_result.output.get("git_available").cloned().unwrap_or(Value::Null),
+                    "non_git_project": summary_result.output.get("non_git_project").cloned().unwrap_or(Value::Null),
+                    "warnings": summary_result.output.get("warnings").cloned().unwrap_or_else(|| json!([])),
+                });
+                let files = summary_result
+                    .output
+                    .get("files")
+                    .cloned()
+                    .unwrap_or_else(|| json!([]));
+                let signals = summary_result
+                    .output
+                    .pointer("/session/signals")
+                    .cloned()
+                    .unwrap_or_else(|| json!([]));
+                let partial = summary_result
+                    .output
+                    .get("files_truncated")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(true);
+                (
+                    GitReviewScope::Workspace,
+                    after,
+                    summary,
+                    files,
+                    signals,
+                    partial,
+                    !partial,
+                    diff.output,
+                )
+            }
+            GitReviewScopeInput::Committed {
+                base_commit,
+                head_commit,
+            } => {
+                let summary_result = self
+                    .git_review_summary(
+                        resolved_project.clone(),
+                        base_commit.clone(),
+                        head_commit.clone(),
+                    )
+                    .await;
+                if !summary_result.success {
+                    return summary_result;
+                }
+                let Some(source) = source_from_review_summary(&summary_result.output) else {
+                    return review_changes_failure(&project, "review_metadata_malformed");
+                };
+                let internal_scope = match &source {
+                    GitReviewSourceIdentity::Committed {
+                        requested_base,
+                        requested_head,
+                        merge_base,
+                    } => GitReviewScope::Committed {
+                        requested_base: requested_base.clone(),
+                        requested_head: requested_head.clone(),
+                        merge_base: merge_base.clone(),
+                    },
+                    GitReviewSourceIdentity::Workspace { .. } => {
+                        return review_changes_failure(&project, "review_metadata_malformed");
                     }
-                    let summary = json!({
-                        "branch": summary_result.output.get("branch").cloned().unwrap_or(Value::Null),
-                        "head": summary_result.output.get("head").cloned().unwrap_or(Value::Null),
-                        "counts": summary_result.output.get("counts").cloned().unwrap_or(Value::Null),
-                        "diff_stat": summary_result.output.get("diff_stat").cloned().unwrap_or(Value::Null),
-                        "clean": summary_result.output.get("clean").cloned().unwrap_or(Value::Null),
-                        "git_available": summary_result.output.get("git_available").cloned().unwrap_or(Value::Null),
-                        "non_git_project": summary_result.output.get("non_git_project").cloned().unwrap_or(Value::Null),
-                        "warnings": summary_result.output.get("warnings").cloned().unwrap_or_else(|| json!([])),
-                    });
-                    let files = summary_result
+                };
+                let diff = self
+                    .git_diff_hunks_continued_with_range_and_page_bytes(
+                        resolved_project.clone(),
+                        paths.clone(),
+                        max_hunks,
+                        max_hunk_lines,
+                        max_page_bytes,
+                        Some(false),
+                        Some(base_commit),
+                        Some(head_commit),
+                        None,
+                    )
+                    .await;
+                if !diff.success {
+                    return diff;
+                }
+                if !committed_diff_matches_source(&diff.output, &source) {
+                    return review_changes_failure(&project, "snapshot_stale");
+                }
+                let partial = summary_result
+                    .output
+                    .pointer("/coverage/partial")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(true);
+                (
+                    internal_scope,
+                    source,
+                    summary_result
+                        .output
+                        .get("stats")
+                        .cloned()
+                        .unwrap_or(Value::Null),
+                    summary_result
                         .output
                         .get("files")
                         .cloned()
-                        .unwrap_or_else(|| json!([]));
-                    let signals = summary_result
+                        .unwrap_or_else(|| json!([])),
+                    summary_result
                         .output
-                        .pointer("/session/signals")
+                        .get("signals")
                         .cloned()
-                        .unwrap_or_else(|| json!([]));
-                    let partial = summary_result
+                        .unwrap_or_else(|| json!([])),
+                    partial,
+                    !summary_result
                         .output
-                        .get("files_truncated")
+                        .get("truncated")
                         .and_then(Value::as_bool)
-                        .unwrap_or(true);
-                    (
-                        GitReviewScope::Workspace,
-                        after,
-                        summary,
-                        files,
-                        signals,
-                        partial,
-                        !partial,
-                        diff.output,
-                    )
-                }
-                GitReviewScopeInput::Committed {
-                    base_commit,
-                    head_commit,
-                } => {
-                    let summary_result = self
-                        .git_review_summary(
-                            resolved_project.clone(),
-                            base_commit.clone(),
-                            head_commit.clone(),
-                        )
-                        .await;
-                    if !summary_result.success {
-                        return summary_result;
-                    }
-                    let Some(source) = source_from_review_summary(&summary_result.output) else {
-                        return review_changes_failure(&project, "review_metadata_malformed");
-                    };
-                    let internal_scope = match &source {
-                        GitReviewSourceIdentity::Committed {
-                            requested_base,
-                            requested_head,
-                            merge_base,
-                        } => GitReviewScope::Committed {
-                            requested_base: requested_base.clone(),
-                            requested_head: requested_head.clone(),
-                            merge_base: merge_base.clone(),
-                        },
-                        GitReviewSourceIdentity::Workspace { .. } => {
-                            return review_changes_failure(&project, "review_metadata_malformed");
-                        }
-                    };                    let diff = self
-                        .git_diff_hunks_continued_with_range_and_page_bytes(
-                            resolved_project.clone(),
-                            paths.clone(),
-                            max_hunks,
-                            max_hunk_lines,
-                            max_page_bytes,
-                            Some(false),
-                            Some(base_commit),
-                            Some(head_commit),
-                            None,
-                        )
-                        .await;
-                    if !diff.success {
-                        return diff;
-                    }
-                    if !committed_diff_matches_source(&diff.output, &source) {
-                        return review_changes_failure(&project, "snapshot_stale");
-                    }
-                    let partial = summary_result
-                        .output
-                        .pointer("/coverage/partial")
-                        .and_then(Value::as_bool)
-                        .unwrap_or(true);
-                    (
-                        internal_scope,
-                        source,
-                        summary_result.output.get("stats").cloned().unwrap_or(Value::Null),
-                        summary_result
-                            .output
-                            .get("files")
-                            .cloned()
-                            .unwrap_or_else(|| json!([])),
-                        summary_result
-                            .output
-                            .get("signals")
-                            .cloned()
-                            .unwrap_or_else(|| json!([])),
-                        partial,
-                        !summary_result
-                            .output
-                            .get("truncated")
-                            .and_then(Value::as_bool)
-                            .unwrap_or(true),
-                        diff.output,
-                    )
-                }
-            };
+                        .unwrap_or(true),
+                    diff.output,
+                )
+            }
+        };
 
         let snapshot = insert_snapshot(GitReviewSnapshot::new(
             caller,
@@ -435,7 +452,8 @@ impl ToolRuntime {
             signals.clone(),
             diff.clone(),
             coverage_partial,
-            metadata_complete,        ));
+            metadata_complete,
+        ));
         let next = preferred_diff_continuation(&diff)
             .and_then(|inner| encode_review_continuation(&snapshot.snapshot_id, inner));
         let mut output = json!({

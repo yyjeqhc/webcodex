@@ -14,6 +14,10 @@ use super::continuation_feedback::{
     not_applicable_continuation_feedback_value, ContinuationFeedbackInput,
     ContinuationToolFailureSnapshot,
 };
+use super::git_review_snapshot::{
+    caller_fingerprint as review_caller_fingerprint, latest_workspace_snapshot,
+    workspace_snapshot_complete_for_closeout, GitReviewSnapshot,
+};
 use super::handoff::{
     actionable_unexpected_failure_count, apply_compact_workflow_outcomes, closeout_work_projection,
     compact_jobs, compact_review_evidence, compact_tool_failures, compact_validation,
@@ -21,10 +25,6 @@ use super::handoff::{
     validation_has_cargo_test_zero_tests,
 };
 use super::handoff_brief::{build_handoff_brief, HandoffBriefInput};
-use super::git_review_snapshot::{
-    caller_fingerprint as review_caller_fingerprint, latest_workspace_snapshot,
-    workspace_snapshot_complete_for_closeout, GitReviewSnapshot,
-};
 use super::permissions::{
     authority_profile_payload, permission_summary_from_events, PermissionDecision,
 };
@@ -1552,15 +1552,9 @@ impl ToolRuntime {
             "status": "miss",
             "reason_code": "snapshot_unavailable",
         });
-        let reusable_snapshot = review_caller_fingerprint(auth)
-            .ok()
-            .and_then(|caller| {
-                latest_workspace_snapshot(
-                    &caller,
-                    &resolved.resolved_id,
-                    Some(&session_id),
-                )
-            });
+        let reusable_snapshot = review_caller_fingerprint(auth).ok().and_then(|caller| {
+            latest_workspace_snapshot(&caller, &resolved.resolved_id, Some(&session_id))
+        });
         let reusable_snapshot = if let Some(snapshot) = reusable_snapshot {
             if !workspace_snapshot_complete_for_closeout(&snapshot, include_diff) {
                 review_snapshot_reuse["reason_code"] = json!("snapshot_projection_incomplete");
@@ -3517,7 +3511,10 @@ fn finish_suggested_next_actions(output: &Value) -> Vec<String> {
             .and_then(Value::as_str)
             == Some("git_diff_hunks")
         {
-            push(&mut actions, "continue the review with review_changes when its continuation is available");
+            push(
+                &mut actions,
+                "continue the review with review_changes when its continuation is available",
+            );
         } else {
             push(&mut actions, "review workspace changes with review_changes");
         }

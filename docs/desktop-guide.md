@@ -12,7 +12,7 @@ For contributor workflows—frontend/Tauri development, source runtime resolutio
 
 For local Full Runtime, ChatGPT/model-driven calls supply the concrete workspace path. `work_on_project(path)` reuses the exact registered Project when present or registers it on demand when Runner policy permits. Multiple Projects can remain active concurrently; opening one does not revoke another.
 
-The Runner filesystem policy remains the authority boundary. A fresh Desktop local Runner uses the normal Runner policy defaults; an empty `allowed_roots` resolves to the user's home directory. Explicit Runner policy can narrow that scope. Project registration never expands it.
+The Runner filesystem policy remains the authority boundary. A fresh Desktop local Runner uses the normal Runner policy defaults; an empty `allowed_roots` resolves to the user's home directory. Explicit Runner policy can narrow that scope. This is Runner-level authority, separate from Runtime Project identity: a Project on one drive or root does not authorize another drive or unrelated path unless that target is also inside `allowed_roots`. Project registration never expands this scope.
 
 ## First use
 

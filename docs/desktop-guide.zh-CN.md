@@ -12,7 +12,7 @@ Desktop 负责启动和维护本机 WebCodex Runtime；用户只需要在 ChatGP
 
 本机 Full Runtime 中，ChatGPT / 模型调用直接提供具体工作目录。`work_on_project(path)` 会复用已经注册的精确 Project；如果尚未注册且 Runner policy 允许，则按需自动注册。多个 Project 可以并发存在，打开一个不会撤销另一个。
 
-Runner 文件系统 policy 仍然是权限边界。全新 Desktop 的本机 Runner 使用 Runner 的正常默认策略；`allowed_roots` 为空时，其有效范围默认是当前用户的 home 目录。显式 Runner policy 可以进一步收窄范围。Project 注册本身不会扩大这个权限范围。
+Runner 文件系统 policy 仍然是权限边界。全新 Desktop 的本机 Runner 使用 Runner 的正常默认策略；`allowed_roots` 为空时，其有效范围默认是当前用户的 home 目录。显式 Runner policy 可以进一步收窄范围。这个范围是 Runner 级授权，与 Runtime Project identity 分开：例如 E 盘中的 Project 不会因此获得 F 盘访问权，只有 F 盘目标路径也落在 `allowed_roots` 内时，Runtime 才能在那里解析或注册 Project。Project 注册本身不会扩大这个权限范围。
 
 ## 第一次使用
 

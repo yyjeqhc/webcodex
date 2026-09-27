@@ -4,6 +4,7 @@
 //! authorization, admission, retry, Job, Session, or Window truth and must
 //! never affect a tool result.
 
+use super::model_ergonomics_telemetry::invocation::InstructionReadTarget;
 use super::model_ergonomics_telemetry::ModelErgonomicsRecord;
 use super::window_activity::WindowLoopTransition;
 
@@ -93,6 +94,7 @@ pub(crate) trait RuntimeMetrics: std::fmt::Debug + Send + Sync {
     fn observe_tool_call(&self, record: &ModelErgonomicsRecord);
     fn observe_mcp_call(&self, observation: McpCallMetricObservation);
     fn observe_skill_source(&self, observation: SkillSourceMetricObservation);
+    fn observe_instruction_read_after_complete_bootstrap(&self, target: InstructionReadTarget);
     fn observe_window_transition(&self, transition: WindowLoopTransition);
     #[cfg(feature = "experimental-code-mode")]
     fn observe_code_mode_composition(
@@ -127,6 +129,15 @@ pub(crate) fn observe_skill_source(
     observation: SkillSourceMetricObservation,
 ) {
     observe_fail_open("skill_source", || metrics.observe_skill_source(observation));
+}
+
+pub(crate) fn observe_instruction_read_after_complete_bootstrap(
+    metrics: &dyn RuntimeMetrics,
+    target: InstructionReadTarget,
+) {
+    observe_fail_open("instruction_bootstrap_reuse", || {
+        metrics.observe_instruction_read_after_complete_bootstrap(target)
+    });
 }
 
 pub(crate) fn observe_window_transition(
@@ -266,6 +277,17 @@ impl RuntimeMetrics for TracingRuntimeMetrics {
         }
     }
 
+    fn observe_instruction_read_after_complete_bootstrap(&self, target: InstructionReadTarget) {
+        tracing::info!(
+            metric = "instruction_read_after_complete_bootstrap_total",
+            value = 1_u64,
+            target = target.as_str(),
+            classification = "candidate_redundant",
+            transport = "mcp",
+            "runtime_metric"
+        );
+    }
+
     fn observe_window_transition(&self, transition: WindowLoopTransition) {
         match transition {
             WindowLoopTransition::Serial { gap_ms } => tracing::info!(
@@ -378,6 +400,13 @@ mod tests {
         }
 
         fn observe_skill_source(&self, _observation: SkillSourceMetricObservation) {
+            panic!("test metrics sink failure");
+        }
+
+        fn observe_instruction_read_after_complete_bootstrap(
+            &self,
+            _target: InstructionReadTarget,
+        ) {
             panic!("test metrics sink failure");
         }
 

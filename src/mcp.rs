@@ -133,6 +133,15 @@ fn finalize_mcp_tool_observability(
         .is_some_and(|(event, _)| event.window_meaningful);
 
     if let Some(record) = model_ergonomics {
+        if let Some(target) = live_window_request
+            .as_ref()
+            .and_then(|active| active.instruction_read_after_complete_bootstrap(record))
+        {
+            crate::tool_runtime::runtime_metrics::observe_instruction_read_after_complete_bootstrap(
+                runtime.metrics.as_ref(),
+                target,
+            );
+        }
         crate::tool_runtime::runtime_metrics::observe_tool_call(runtime.metrics.as_ref(), record);
     }
     if audit_event.is_some() {

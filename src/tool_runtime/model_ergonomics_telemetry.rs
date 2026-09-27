@@ -153,6 +153,21 @@ impl ModelErgonomicsRecord {
             "failure"
         }
     }
+
+    pub(crate) fn complete_instruction_bootstrap(&self) -> bool {
+        self.tool_name == "work_on_project"
+            && self.success
+            && self
+                .bootstrap
+                .as_ref()
+                .is_some_and(invocation::BootstrapFacts::complete_instruction_body)
+    }
+
+    pub(crate) fn instruction_read_target(&self) -> Option<invocation::InstructionReadTarget> {
+        self.instruction_read
+            .as_ref()
+            .and_then(invocation::InstructionReadFacts::target)
+    }
 }
 
 impl ModelErgonomicsTimer {

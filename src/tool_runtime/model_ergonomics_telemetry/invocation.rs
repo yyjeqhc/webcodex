@@ -214,6 +214,30 @@ impl BootstrapFacts {
             ),
         }
     }
+
+    pub(crate) fn complete_instruction_body(&self) -> bool {
+        self.instructions_available == Some(true)
+            && self.instructions_content_included == Some(true)
+            && self.instructions_truncated == Some(false)
+            && self.instruction_source_count.is_some_and(|count| count > 0)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum InstructionReadTarget {
+    AgentsMd,
+    ClaudeMd,
+    Both,
+}
+
+impl InstructionReadTarget {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::AgentsMd => "agents_md",
+            Self::ClaudeMd => "claude_md",
+            Self::Both => "both",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -239,5 +263,14 @@ impl InstructionReadFacts {
             agents_md: reads("AGENTS.md"),
             claude_md: reads("CLAUDE.md"),
         })
+    }
+
+    pub(crate) fn target(&self) -> Option<InstructionReadTarget> {
+        match (self.agents_md, self.claude_md) {
+            (true, true) => Some(InstructionReadTarget::Both),
+            (true, false) => Some(InstructionReadTarget::AgentsMd),
+            (false, true) => Some(InstructionReadTarget::ClaudeMd),
+            (false, false) => None,
+        }
     }
 }

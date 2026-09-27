@@ -345,8 +345,14 @@ fn assert_builtin_workflow(output: &Value) {
     assert!(!review_guidance.is_empty());
     assert!(
         review_guidance.len()
-            <= crate::tool_runtime::startup_brief::BUILTIN_CODING_WORKFLOW_MAX_GUIDANCE_ITEMS
+            <= crate::tool_runtime::startup_brief::BUILTIN_CODING_WORKFLOW_GUIDANCE_TARGET_ITEMS
     );
+    assert!(review_guidance.iter().all(|item| {
+        item.as_str().is_some_and(|text| {
+            text.chars().count()
+                <= crate::tool_runtime::startup_brief::BUILTIN_CODING_WORKFLOW_GUIDANCE_TARGET_ITEM_CHARS
+        })
+    }));
     let serialized = workflow.to_string().replace("Stalled is not offline", "");
     for forbidden in ["ChatGPT", "browser", "another window", "online", "offline"] {
         assert!(

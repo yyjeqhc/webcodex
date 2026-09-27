@@ -199,3 +199,9 @@ Codex session 统计的配对规则：只对 name=exec 的 custom_tool_call/func
 实测确认现有 `read_files.items`、`search_and_read.queries`、`edit_project_files.changes`、`cargo_check.packages` 与 Host cross-tool orchestration 已足够承载短链路，不需要第二套 batch abstraction。Host 只应在下一步参数和效果已经由当前结构化结果机械确定时继续；多个候选、设计选择、新权限、stale fence、retry/effect uncertainty 或 `outcome_unknown` 都应结束 cell 并返回模型。
 
 审查同时暴露一个具体 model-facing result gap：Runner 的 SHA/revision conflict 已包含 `direct_retry_safe=false`、`reread_required=true`，但基线 Server 将其投影为 `stale_file_revision` 时会移除这两个字段，只保留 `error_kind` 与 `read_files` recovery。语义仍然 fail-closed，但 Host 会失去统一的机器可判定 stop/replay 信号。本分支后续生产修改已在 `edit_project_files` 的 stale projection 补齐这两个字段，并明确 guidance：stale/revision mismatch 的 recovery 是重新观察入口，不是自动 reread + mutation retry authority。
+
+## 10. Host guidance bound 验证
+
+随后在 OE `mcp-tool-surface-probe` 增加独立 `guidance-limits` profile，并通过 sf 公网路由在刷新后的 ChatGPT Host 中验证。无 `maxItems/maxLength` 的结果从 `8×320` 一直到 `64×4096`（262,144 item chars）都完整返回，首尾 sentinel 保持一致。更关键的是，另一个工具的 `outputSchema` 明确声明 `maxItems=8`、item `maxLength=320` 后，Host 仍完整返回 `9×320`、`8×321`、`16×512` 等故意违反声明约束的 `structuredContent`；没有 outer exception、截断或自动修剪。
+
+因此 WebCodex 原有 `8 items / 320 chars` 是自身的 ergonomic hard contract，不是该 ChatGPT Host result path 的要求。本分支把它降级为内部 soft regression target：当前内建 guidance 仍应保持约 `≤8` 项、单项 `≤320` 字符，但这两个数字不再发布为 workflow output schema 的 wire rejection。真正的硬边界继续由 startup/model-facing serialized byte budget 与具体 correctness/resource contracts承担。该结论只针对本次实测 Host surface，不推断所有未来 Host 版本。

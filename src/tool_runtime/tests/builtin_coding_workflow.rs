@@ -1,7 +1,8 @@
 use crate::tool_runtime::registry;
 use crate::tool_runtime::startup_brief::{
     builtin_coding_workflow_projection, validate_schema_instance_for_test,
-    BUILTIN_CODING_WORKFLOW_MAX_GUIDANCE_ITEMS,
+    BUILTIN_CODING_WORKFLOW_GUIDANCE_TARGET_ITEMS,
+    BUILTIN_CODING_WORKFLOW_GUIDANCE_TARGET_ITEM_CHARS,
 };
 use serde_json::{json, Value};
 
@@ -16,8 +17,23 @@ fn workflow_schema() -> Value {
         .clone()
 }
 
+fn assert_guidance_within_soft_target(guidance: &Value) {
+    let guidance = guidance.as_array().expect("guidance array");
+    assert!(
+        guidance.len() <= BUILTIN_CODING_WORKFLOW_GUIDANCE_TARGET_ITEMS,
+        "built-in guidance exceeded soft item-count target"
+    );
+    for item in guidance {
+        assert!(
+            item.as_str().expect("guidance string").chars().count()
+                <= BUILTIN_CODING_WORKFLOW_GUIDANCE_TARGET_ITEM_CHARS,
+            "built-in guidance exceeded soft per-item character target"
+        );
+    }
+}
+
 #[test]
-fn builtin_coding_workflow_defaults_are_required_and_bounded() {
+fn builtin_coding_workflow_defaults_are_required_but_soft_budgets_are_not_wire_limits() {
     let workflow = builtin_coding_workflow_projection(Default::default());
     assert!(workflow["model_protocol"]["context_sidecar"]
         .as_str()
@@ -26,18 +42,33 @@ fn builtin_coding_workflow_defaults_are_required_and_bounded() {
     let schema = workflow_schema();
     validate_schema_instance_for_test(&workflow, &schema).unwrap();
 
+    assert_guidance_within_soft_target(&workflow["guidance"]);
+    assert_guidance_within_soft_target(&workflow["tool_strategy"]["guidance"]);
+    assert_guidance_within_soft_target(&workflow["roles"]["independent_review"]["guidance"]);
+
     let mut missing = workflow.clone();
     missing.as_object_mut().unwrap().remove("guidance");
     assert!(validate_schema_instance_for_test(&missing, &schema).is_err());
 
-    for guidance in [
-        json!([]),
-        json!(vec!["rule"; BUILTIN_CODING_WORKFLOW_MAX_GUIDANCE_ITEMS + 1]),
-        json!(["x".repeat(321)]),
+    let mut empty = workflow.clone();
+    empty["guidance"] = json!([]);
+    assert!(validate_schema_instance_for_test(&empty, &schema).is_err());
+
+    let overflow = json!(vec![
+        "x".repeat(
+            BUILTIN_CODING_WORKFLOW_GUIDANCE_TARGET_ITEM_CHARS + 1
+        );
+        BUILTIN_CODING_WORKFLOW_GUIDANCE_TARGET_ITEMS + 1
+    ]);
+    for pointer in [
+        "/guidance",
+        "/tool_strategy/guidance",
+        "/roles/independent_review/guidance",
     ] {
-        let mut invalid = workflow.clone();
-        invalid["guidance"] = guidance;
-        assert!(validate_schema_instance_for_test(&invalid, &schema).is_err());
+        let mut relaxed = workflow.clone();
+        *relaxed.pointer_mut(pointer).expect("guidance path") = overflow.clone();
+        validate_schema_instance_for_test(&relaxed, &schema)
+            .unwrap_or_else(|error| panic!("{pointer} retained ergonomic hard bound: {error}"));
     }
 
     let mut legacy_role = workflow.clone();
@@ -192,6 +223,7 @@ fn host_code_mode_strategy_is_bounded_guidance_only() {
     let mut direct = builtin_coding_workflow_projection(CodingGuidanceProfile::Direct);
     let mut host = builtin_coding_workflow_projection(CodingGuidanceProfile::HostCodeMode);
     validate_schema_instance_for_test(&host, &workflow_schema()).unwrap();
+    assert_guidance_within_soft_target(&host["tool_strategy"]["guidance"]);
     assert_eq!(host["tool_strategy"]["profile"], "host_code_mode");
     let strategy = strategy_text(&host);
     for phrase in [

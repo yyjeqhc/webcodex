@@ -138,7 +138,10 @@ impl ContinuationSemantics {
 
 pub const BUILTIN_CODING_WORKFLOW_CONTRACT: &str = "webcodex.coding_workflow";
 pub const BUILTIN_CODING_WORKFLOW_VERSION: u64 = 23;
-pub const BUILTIN_CODING_WORKFLOW_MAX_GUIDANCE_ITEMS: usize = 8;
+/// Ergonomic regression targets for built-in model guidance. These are not
+/// wire/schema limits; the serialized startup budget remains the hard bound.
+pub const BUILTIN_CODING_WORKFLOW_GUIDANCE_TARGET_ITEMS: usize = 8;
+pub const BUILTIN_CODING_WORKFLOW_GUIDANCE_TARGET_ITEM_CHARS: usize = 320;
 
 /// Validate a Runner project path without applying host-local filesystem semantics.
 /// The Server may route to an agent on another OS, so both POSIX and Windows

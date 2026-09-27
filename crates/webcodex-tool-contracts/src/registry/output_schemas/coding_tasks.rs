@@ -17,8 +17,7 @@ use super::files::{
 };
 #[cfg(any(test, feature = "root-test-support"))]
 use webcodex_core::runtime_contract::{
-    BUILTIN_CODING_WORKFLOW_CONTRACT, BUILTIN_CODING_WORKFLOW_MAX_GUIDANCE_ITEMS,
-    BUILTIN_CODING_WORKFLOW_VERSION,
+    BUILTIN_CODING_WORKFLOW_CONTRACT, BUILTIN_CODING_WORKFLOW_VERSION,
 };
 
 fn finish_changes_schema() -> Value {
@@ -522,8 +521,7 @@ fn startup_workflow_schema() -> Value {
                     "type": "array",
                     "description": "Default behavior for every coding/review task, including tasks without a named role. Guidance never grants authority.",
                     "minItems": 1,
-                    "maxItems": BUILTIN_CODING_WORKFLOW_MAX_GUIDANCE_ITEMS,
-                    "items": {"type": "string", "maxLength": 320}
+                    "items": {"type": "string"}
                 },
                 "tool_strategy": {
                     "type": "object",
@@ -533,8 +531,7 @@ fn startup_workflow_schema() -> Value {
                         "guidance": {
                             "type": "array",
                             "minItems": 1,
-                            "maxItems": BUILTIN_CODING_WORKFLOW_MAX_GUIDANCE_ITEMS,
-                            "items": {"type": "string", "maxLength": 320}
+                            "items": {"type": "string"}
                         }
     ,
                         "host_orchestration": {
@@ -619,8 +616,7 @@ fn startup_workflow_role_schema() -> Value {
             "guidance": {
                 "type": "array",
                 "minItems": 1,
-                "maxItems": BUILTIN_CODING_WORKFLOW_MAX_GUIDANCE_ITEMS,
-                "items": {"type": "string", "maxLength": 320}
+                "items": {"type": "string"}
             }
         },
         "required": ["purpose", "guidance"],

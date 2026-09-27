@@ -313,6 +313,10 @@ impl ToolRuntime {
                         "head": summary_result.output.get("head").cloned().unwrap_or(Value::Null),
                         "counts": summary_result.output.get("counts").cloned().unwrap_or(Value::Null),
                         "diff_stat": summary_result.output.get("diff_stat").cloned().unwrap_or(Value::Null),
+                        "clean": summary_result.output.get("clean").cloned().unwrap_or(Value::Null),
+                        "git_available": summary_result.output.get("git_available").cloned().unwrap_or(Value::Null),
+                        "non_git_project": summary_result.output.get("non_git_project").cloned().unwrap_or(Value::Null),
+                        "warnings": summary_result.output.get("warnings").cloned().unwrap_or_else(|| json!([])),
                     });
                     let files = summary_result
                         .output
@@ -429,9 +433,9 @@ impl ToolRuntime {
             summary.clone(),
             files.clone(),
             signals.clone(),
+            diff.clone(),
             coverage_partial,
-            metadata_complete,
-        ));
+            metadata_complete,        ));
         let next = preferred_diff_continuation(&diff)
             .and_then(|inner| encode_review_continuation(&snapshot.snapshot_id, inner));
         let mut output = json!({

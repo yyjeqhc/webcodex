@@ -7,6 +7,7 @@ use sha2::{Digest, Sha256};
 
 use crate::auth::AuthContext;
 
+#[cfg(test)]
 use super::git_committed::CommittedGitScope;
 use super::session_context::workflow_session_authority_fingerprint;
 use super::{ToolResult, ToolRuntime};
@@ -75,6 +76,7 @@ pub(crate) struct GitReviewSnapshot {
     pub(crate) summary: Value,
     pub(crate) files: Value,
     pub(crate) signals: Value,
+    pub(crate) diff_page: Value,
     pub(crate) coverage_partial: bool,
     pub(crate) metadata_complete: bool,
     expires_at: Instant,
@@ -91,6 +93,7 @@ impl GitReviewSnapshot {
         summary: Value,
         files: Value,
         signals: Value,
+        diff_page: Value,
         coverage_partial: bool,
         metadata_complete: bool,
     ) -> Self {
@@ -112,6 +115,7 @@ impl GitReviewSnapshot {
             summary,
             files,
             signals,
+            diff_page,
             coverage_partial,
             metadata_complete,
             expires_at: Instant::now() + REVIEW_SNAPSHOT_TTL,
@@ -237,6 +241,7 @@ fn review_snapshot_id(
     format!("wc_grs_{:x}", hasher.finalize())
 }
 
+#[cfg(test)]
 pub(crate) fn committed_source_identity(scope: &CommittedGitScope) -> GitReviewSourceIdentity {
     GitReviewSourceIdentity::Committed {
         requested_base: scope.requested_base.clone(),
@@ -280,6 +285,24 @@ pub(crate) fn latest_workspace_snapshot(
         .latest_workspace(caller_fingerprint, project, session_id)
 }
 
+pub(crate) fn workspace_snapshot_complete_for_closeout(
+    snapshot: &GitReviewSnapshot,
+    include_diff: bool,
+) -> bool {
+    if !snapshot.metadata_complete || snapshot.coverage_partial {
+        return false;
+    }
+    if !include_diff {
+        return true;
+    }
+    let full_paths = snapshot
+        .projection_identity
+        .get("paths")
+        .map(|value| value.is_null() || value.as_array().is_some_and(Vec::is_empty))
+        .unwrap_or(false);
+    full_paths && snapshot.diff_page.is_object()
+}
+
 impl ToolRuntime {
     pub(crate) async fn workspace_review_source_identity(
         &self,
@@ -310,9 +333,9 @@ mod tests {
             json!({"files_changed": 1}),
             json!([]),
             json!([]),
+            json!({"truncated": false}),
             false,
-            true,
-        )
+            true,        )
     }
 
     #[test]
@@ -345,6 +368,18 @@ mod tests {
                 "merge_base": "3".repeat(40),
             })
         );
+    }
+
+    #[test]
+    fn closeout_reuse_requires_complete_full_workspace_projection_for_diff() {
+        let mut candidate = snapshot("caller", "project", &"9".repeat(40));
+        assert!(workspace_snapshot_complete_for_closeout(&candidate, true));
+        candidate.coverage_partial = true;
+        assert!(!workspace_snapshot_complete_for_closeout(&candidate, false));
+        candidate.coverage_partial = false;
+        candidate.projection_identity["paths"] = json!(["src/lib.rs"]);
+        assert!(!workspace_snapshot_complete_for_closeout(&candidate, true));
+        assert!(workspace_snapshot_complete_for_closeout(&candidate, false));
     }
 
     #[test]

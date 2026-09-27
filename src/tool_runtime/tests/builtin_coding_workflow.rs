@@ -375,15 +375,13 @@ fn code_mode_strategy_changes_only_guidance_and_teaches_compact_composition() {
 }
 
 #[test]
-fn tool_strategy_schema_requires_one_known_bounded_profile() {
+fn tool_strategy_schema_requires_one_known_profile_and_closed_shape() {
     let workflow = builtin_coding_workflow_projection(Default::default());
     let schema = workflow_schema();
     for strategy in [
         json!({}),
         json!({"profile":"unknown","guidance":["rule"]}),
         json!({"profile":"direct","guidance":[]}),
-        json!({"profile":"direct","guidance":["x".repeat(321)]}),
-        json!({"profile":"direct","guidance":vec!["rule"; 9]}),
         json!({"profile":"direct","guidance":["rule"],"code_mode":{}}),
     ] {
         let mut invalid = workflow.clone();

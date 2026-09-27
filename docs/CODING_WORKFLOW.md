@@ -66,7 +66,7 @@ When `work_on_project`, `start_session`, `session_summary`, or an explicit hando
 `work_on_project` accepts an optional `guidance_profile`. An explicit value always
 wins. When omitted on MCP, the configured `WEBCODEX_MCP_HOST_PROFILE` supplies the
 model-guidance default; omission on non-MCP/internal calls falls back to `direct`.
-Workflow contract v21 returns shared `guidance`, `model_protocol` and review `roles`,
+Workflow contract v24 returns shared `guidance`, `model_protocol` and review `roles`,
 plus only the selected `tool_strategy`, when explicitly requested through
 `context_request=["webcodex.workflow"]`. The selection is request-local: choose again
 on exact resume without changing Session identity or business state. It is never

@@ -137,7 +137,7 @@ impl ContinuationSemantics {
 }
 
 pub const BUILTIN_CODING_WORKFLOW_CONTRACT: &str = "webcodex.coding_workflow";
-pub const BUILTIN_CODING_WORKFLOW_VERSION: u64 = 23;
+pub const BUILTIN_CODING_WORKFLOW_VERSION: u64 = 24;
 /// Ergonomic regression targets for built-in model guidance. These are not
 /// wire/schema limits; the serialized startup budget remains the hard bound.
 pub const BUILTIN_CODING_WORKFLOW_GUIDANCE_TARGET_ITEMS: usize = 8;

@@ -31,7 +31,7 @@ Bootstrap 或 discovery 返回 `project_ref` 后，普通 Project-scoped tool ca
 
 `work_on_project` 的 `guidance_profile` 是可选的：显式值始终优先；MCP 调用省略时
 使用已配置的 `WEBCODEX_MCP_HOST_PROFILE` 作为 model-guidance 默认值；非 MCP/internal
-调用省略时仍回退到 `direct`。Workflow contract v21 保持共享的 `guidance`、
+调用省略时仍回退到 `direct`。Workflow contract v24 保持共享的 `guidance`、
 `model_protocol` 和 review `roles`，并在显式 `context_request=["webcodex.workflow"]`
 时通过 `tool_strategy` 返回本次请求选中的 effective 策略。
 

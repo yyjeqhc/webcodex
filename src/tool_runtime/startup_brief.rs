@@ -1553,7 +1553,10 @@ fn enforce_hard_size_limit(brief: &mut Value) {
     // larger guidance projection could trim unrelated instructions/evidence.
     let workflow_budget = serialized_len(&builtin_coding_workflow_projection(
         CodingGuidanceProfile::Direct,
-    ));
+    ))
+    .max(serialized_len(&builtin_coding_workflow_projection(
+        CodingGuidanceProfile::HostCodeMode,
+    )));
     #[cfg(feature = "experimental-code-mode")]
     let workflow_budget = workflow_budget.max(serialized_len(&builtin_coding_workflow_projection(
         CodingGuidanceProfile::CodeMode,
@@ -1562,6 +1565,46 @@ fn enforce_hard_size_limit(brief: &mut Value) {
         .saturating_sub(workflow_budget.saturating_sub(serialized_len(&brief["workflow"])));
     if serialized_len(brief) <= max_bytes {
         return;
+    }
+
+    // Extension entries are optional selection metadata and can be recovered
+    // through explicit discovery. Under aggregate startup pressure, trim them
+    // before repository facts or project instruction prose.
+    const EXTENSION_CATALOGS: &[(&str, &str)] = &[
+        (
+            "/extensions/skills",
+            "Use skills.catalog or skill_list for broader or refreshed discovery.",
+        ),
+        (
+            "/extensions/plugins",
+            "Use plugins.catalog or explicit plugin_tool list and describe for broader or current schema discovery.",
+        ),
+    ];
+    loop {
+        if serialized_len(brief) <= max_bytes {
+            return;
+        }
+        let mut removed = false;
+        for (pointer, discovery_hint) in EXTENSION_CATALOGS {
+            let Some(catalog) = brief.pointer_mut(pointer).and_then(Value::as_object_mut) else {
+                continue;
+            };
+            let Some(entries) = catalog.get_mut("entries").and_then(Value::as_array_mut) else {
+                continue;
+            };
+            if !entries.is_empty() {
+                entries.pop();
+                let returned_count = entries.len();
+                catalog.insert("returned_count".to_string(), json!(returned_count));
+                catalog.insert("truncated".to_string(), json!(true));
+                catalog.insert("discovery_hint".to_string(), json!(discovery_hint));
+                removed = true;
+                break;
+            }
+        }
+        if !removed {
+            break;
+        }
     }
 
     // Repository metadata is lower priority than rule prose: drop optional
@@ -2448,6 +2491,16 @@ mod tests {
         };
         let first = build(CodingGuidanceProfile::Direct);
         let second = build(CodingGuidanceProfile::Direct);
+        let host = build(CodingGuidanceProfile::HostCodeMode);
+        assert!(startup_brief_size(&host) <= STANDARD_STARTUP_HARD_MAX_BYTES);
+        let mut direct_facts = first.clone();
+        let mut host_facts = host.clone();
+        direct_facts.as_object_mut().unwrap().remove("workflow");
+        host_facts.as_object_mut().unwrap().remove("workflow");
+        assert_eq!(
+            direct_facts, host_facts,
+            "HostCodeMode guidance must not change which startup facts fit the byte budget"
+        );
         #[cfg(feature = "experimental-code-mode")]
         {
             let composed = build(CodingGuidanceProfile::CodeMode);

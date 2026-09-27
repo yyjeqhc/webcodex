@@ -663,8 +663,13 @@ fn runner_view(path: &Path) -> Result<RunnerConfigView, String> {
 }
 
 fn same_server_origin(left: &str, right: &str) -> bool {
-    left.trim_end_matches('/')
-        .eq_ignore_ascii_case(right.trim_end_matches('/'))
+    match (
+        super::connections::canonical_server_url(left),
+        super::connections::canonical_server_url(right),
+    ) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => false,
+    }
 }
 
 fn validate_runner_target(
@@ -1935,6 +1940,12 @@ mod tests {
             client_id: "special".into(),
         };
         validate_runner_target(&matching, "http://127.0.0.1:8080").unwrap();
+
+        let canonical_remote = RunnerConfigView {
+            server_url: "https://RUNTIME.example.test:443/".into(),
+            client_id: "special".into(),
+        };
+        validate_runner_target(&canonical_remote, "https://runtime.example.test").unwrap();
 
         let remote = RunnerConfigView {
             server_url: "https://runtime.example.test".into(),

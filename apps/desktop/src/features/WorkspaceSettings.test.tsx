@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { useState } from "react";
 import { MantineProvider } from "@mantine/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { WorkspaceProvider } from "./workspace/WorkspaceContext";
@@ -6,12 +7,15 @@ import { LocaleProvider } from "../i18n/locale";
 import type { DesktopState, RunnerSettings } from "../models/topology";
 import { ExtensionsPanel } from "./extensions/ExtensionsPanel";
 import { ComputerPermissions } from "./settings/ComputerPermissions";
+import { RunnerFileAccess } from "./settings/RunnerFileAccess";
 import { TunnelConfigDiagnostics } from "./connection/TunnelConfigDiagnostics";
 
 const native = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: native.invoke }));
 
-const api = vi.hoisted(() => ({ runnerCapabilityAuthorization: vi.fn(), authorizeRunnerCapabilities: vi.fn(), sshResources: vi.fn(), runnerSettings: vi.fn(), updateRunnerSettings: vi.fn(), restartOwnedRunner: vi.fn(), addRunnerPlugin: vi.fn(), computerPermissions: vi.fn(), requestComputerPermission: vi.fn(), updateTunnelConfig: vi.fn(), getState: vi.fn() }));
+const api = vi.hoisted(() => ({ runnerCapabilityAuthorization: vi.fn(), authorizeRunnerCapabilities: vi.fn(), sshResources: vi.fn(), runnerSettings: vi.fn(), updateRunnerSettings: vi.fn(), updateRunnerAllowedRoots: vi.fn(), restartOwnedRunner: vi.fn(), addRunnerPlugin: vi.fn(), computerPermissions: vi.fn(), requestComputerPermission: vi.fn(), updateTunnelConfig: vi.fn(), getState: vi.fn() }));
+const dialog = vi.hoisted(() => ({ open: vi.fn() }));
+vi.mock("@tauri-apps/plugin-dialog", () => dialog);
 vi.mock("../lib/desktop-api", () => ({ desktopApi: api }));
 const state: DesktopState = {
   project: { path: "/fixture/alpha", allowed_root: "/fixture/alpha", is_git_repository: false, runtime_project_id: "agent:fixture-runner:alpha" },
@@ -25,6 +29,10 @@ const target = { config_path: "/fixture/runner.toml", client_id: "fixture-runner
 let settings: RunnerSettings;
 const onState = vi.fn();
 const wrap = (element: React.ReactNode) => <MantineProvider><LocaleProvider><WorkspaceProvider state={state}>{element}</WorkspaceProvider></LocaleProvider></MantineProvider>;
+function FileAccessHarness() {
+  const [current, setCurrent] = useState(settings);
+  return <RunnerFileAccess settings={current} disabled={false} onState={onState} onSettings={next => { settings = next; setCurrent(next); }} />;
+}
 
 beforeEach(() => {
   vi.clearAllMocks(); localStorage.clear(); localStorage.setItem("webcodex.desktop.locale", "en-US");
@@ -33,12 +41,13 @@ beforeEach(() => {
     if (args.request.kind === "windows") return { windows: [] };
     return { instructions: { files: [], scan_complete: true }, skills: { available: true, catalog: { skills: [] } }, plugins: { available: true, catalog: { plugins: [] } }, can_reload_plugins: true };
   });
-  settings = { target, paths: { instruction_files: ["/fixture/global.md"], skill_roots: ["/fixture/skills"] }, plugin_ids: ["existing"], can_restart: true };
+  settings = { target, paths: { instruction_files: ["/fixture/global.md"], skill_roots: ["/fixture/skills"] }, file_access: { configured_roots: [], effective_roots: ["/Users/fixture"], using_default_roots: true, allow_cwd_anywhere: false }, plugin_ids: ["existing"], can_restart: true };
   api.runnerSettings.mockImplementation(async () => structuredClone(settings));
   api.runnerCapabilityAuthorization.mockResolvedValue({ target, can_authorize: true, coding_agents: true, ssh_resources: true });
   api.authorizeRunnerCapabilities.mockResolvedValue({ target, can_authorize: true, coding_agents: true, ssh_resources: true });
   api.sshResources.mockResolvedValue({ runner: target.client_id, available: true, observation_id: "observed", resources: [], error_kind: null });
   api.updateRunnerSettings.mockImplementation(async (_target, _expected, paths) => { settings.paths = paths; return state; });
+  api.updateRunnerAllowedRoots.mockImplementation(async (_target, expected, roots) => { expect(expected).toEqual(settings.file_access.configured_roots); settings.file_access = { configured_roots: roots, effective_roots: roots.length ? roots : ["/Users/fixture"], using_default_roots: roots.length === 0, allow_cwd_anywhere: false }; return state; });
   api.addRunnerPlugin.mockImplementation(async (_target, provider) => { settings.plugin_ids.push(provider.id); return state; });
   api.restartOwnedRunner.mockResolvedValue(state); api.getState.mockResolvedValue(state); api.updateTunnelConfig.mockResolvedValue(state);
   api.computerPermissions.mockResolvedValue({ supported: true, foreground: false, desktop_accessibility: false, desktop_screen_recording: false });
@@ -66,6 +75,28 @@ describe("workspace configuration boundaries", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Configuration saved, but the tunnel needs recovery");
     await waitFor(() => expect(api.getState).toHaveBeenCalledTimes(1));
     expect(api.updateTunnelConfig).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows default effective file access, then adds and removes an allowed folder online", async () => {
+    dialog.open.mockResolvedValue("/Volumes/Work");
+    render(wrap(<FileAccessHarness />));
+    expect(screen.getByText("No custom folders configured.")).toBeInTheDocument();
+    expect(screen.getByText("/Users/fixture")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Add folder" }));
+    await waitFor(() => expect(api.updateRunnerAllowedRoots).toHaveBeenCalledWith(target, [], ["/Volumes/Work"]));
+    await waitFor(() => expect(screen.getAllByText("/Volumes/Work").length).toBeGreaterThanOrEqual(1));
+    fireEvent.click(screen.getByRole("button", { name: "Remove folder: /Volumes/Work" }));
+    await waitFor(() => expect(api.updateRunnerAllowedRoots).toHaveBeenLastCalledWith(target, ["/Volumes/Work"], []));
+  });
+
+  it("keeps Runner file-access failures visible and refreshes the canonical settings view", async () => {
+    settings.file_access = { configured_roots: ["/fixture/work"], effective_roots: ["/fixture/work"], using_default_roots: false, allow_cwd_anywhere: false };
+    api.updateRunnerAllowedRoots.mockRejectedValueOnce({ code: "runner_config_reload_failed", message: "Runner rejected the file access reload", next_action: "The previous on-disk file access configuration was restored." });
+    render(wrap(<FileAccessHarness />));
+    fireEvent.click(screen.getByRole("button", { name: "Remove folder: /fixture/work" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Runner rejected the file access reload");
+    expect(screen.getByRole("alert")).toHaveTextContent("previous on-disk file access configuration was restored");
+    await waitFor(() => expect(api.runnerSettings).toHaveBeenCalled());
   });
 
   it("saves exact-target instruction and Skill paths and fences Runner restart", async () => {

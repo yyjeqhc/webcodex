@@ -95,6 +95,100 @@ fn settings_preserve_credentials_policy_plugins_and_comments() {
 }
 
 #[test]
+fn file_access_reports_configured_and_effective_roots_and_preserves_unrelated_config() {
+    let f = Fixture::new();
+    let before = read(f.runtime.runner_config.as_ref().unwrap()).unwrap();
+    let projection = inspect(&f.runtime, false).unwrap();
+    assert_eq!(projection.file_access.configured_roots, vec!["/exact"]);
+    assert_eq!(projection.file_access.effective_roots, vec!["/exact"]);
+    assert!(!projection.file_access.using_default_roots);
+    assert!(!projection.file_access.allow_cwd_anywhere);
+
+    let allowed = f.dir.join("allowed");
+    std::fs::create_dir_all(&allowed).unwrap();
+    let edit = stage_allowed_roots_update(
+        &f.runtime,
+        AllowedRootsUpdate {
+            target: target(&f.runtime).unwrap(),
+            expected: vec!["/exact".into()],
+            roots: vec![allowed.to_string_lossy().into_owned()],
+        },
+    )
+    .unwrap();
+    assert!(edit.candidate_unchanged().unwrap());
+    let updated = read(f.runtime.runner_config.as_ref().unwrap()).unwrap();
+    assert!(updated.contains("# keep this comment"));
+    assert!(updated.contains("token = 'fixture-secret'"));
+    assert!(updated.contains("args = ['fixture-secret']"));
+    let projection = inspect(&f.runtime, false).unwrap();
+    assert_eq!(
+        projection.file_access.configured_roots,
+        vec![allowed.to_string_lossy()]
+    );
+    assert_eq!(
+        projection.file_access.effective_roots,
+        vec![allowed.to_string_lossy()]
+    );
+    assert!(edit.rollback_if_unchanged().unwrap());
+    assert_eq!(
+        read(f.runtime.runner_config.as_ref().unwrap()).unwrap(),
+        before
+    );
+}
+
+#[test]
+fn file_access_empty_configuration_reports_home_default_and_rejects_missing_root() {
+    let f = Fixture::new();
+    let path = f.runtime.runner_config.as_ref().unwrap();
+    let original = read(path).unwrap();
+    let empty = original.replace("allowed_roots = ['/exact']", "allowed_roots = []");
+    persist_text(path, &original, &empty).unwrap();
+    let projection = inspect(&f.runtime, false).unwrap();
+    assert!(projection.file_access.configured_roots.is_empty());
+    assert!(projection.file_access.using_default_roots);
+    assert_eq!(
+        projection.file_access.effective_roots,
+        webcodex_runner_config::home_allowed_root()
+            .into_iter()
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect::<Vec<_>>()
+    );
+    let before = read(path).unwrap();
+    assert!(stage_allowed_roots_update(
+        &f.runtime,
+        AllowedRootsUpdate {
+            target: target(&f.runtime).unwrap(),
+            expected: vec![],
+            roots: vec![f.dir.join("does-not-exist").to_string_lossy().into_owned()],
+        },
+    )
+    .is_err());
+    assert_eq!(read(path).unwrap(), before);
+}
+
+#[cfg(windows)]
+#[test]
+fn file_access_accepts_existing_windows_drive_root() {
+    let f = Fixture::new();
+    let drive_root = std::env::current_dir()
+        .unwrap()
+        .ancestors()
+        .last()
+        .unwrap()
+        .to_path_buf();
+    assert!(drive_root.is_absolute() && drive_root.is_dir());
+    stage_allowed_roots_update(
+        &f.runtime,
+        AllowedRootsUpdate {
+            target: target(&f.runtime).unwrap(),
+            expected: vec!["/exact".into()],
+            roots: vec![drive_root.to_string_lossy().into_owned()],
+        },
+    )
+    .expect("an existing Windows drive root is a valid explicit allowed root");
+}
+
+#[test]
 fn settings_reject_identity_changes_traversal_duplicates_and_bounds() {
     let mut f = Fixture::new();
     for invalid in [

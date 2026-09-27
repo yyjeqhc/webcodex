@@ -6,6 +6,7 @@ import { desktopErrorPresentation, normalizeDesktopError } from "../../i18n/pres
 import { useProduct } from "../../i18n/product";
 import type { RunnerSettings } from "../../models/topology";
 import { ComputerPermissions } from "./ComputerPermissions";
+import { RunnerFileAccess } from "./RunnerFileAccess";
 import { PowerShellInstallGuidance } from "./PowerShellInstallGuidance";
 import { APPEARANCES, useAppearance } from "../../hooks/useAppearance";
 import { AccentPicker } from "../../components/AccentPicker";
@@ -103,6 +104,7 @@ export function SettingsPanel({
         {launchAtLoginError && <SettingsError error={launchAtLoginError} />}
         <div className="setting-row"><span>{p("background")}</span><span className="setting-value">{p("keepRunning")}</span></div>
       </section>
+      <RunnerFileAccess settings={runnerSettings} disabled={operationBusy} onState={onState} onSettings={setRunnerSettings} />
       <ComputerPermissions />
       <SettingsDisclosure id="desktop-settings-diagnostics" label={s("Troubleshooting")} open={diagnosticsOpen} onOpenChange={setDiagnosticsOpen}>
         <DiagnosticsPanel state={state} onState={onState} />

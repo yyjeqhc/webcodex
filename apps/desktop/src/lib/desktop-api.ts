@@ -50,6 +50,7 @@ export const desktopApi = {
   removeMcpProvider: (id: string, expectedRevision: number) => invoke<DesktopState>("remove_mcp_provider", { id, expectedRevision }),
   runnerSettings: () => invoke<RunnerSettings>("get_runner_settings"),
   updateRunnerSettings: (target: SettingsTarget, expected: RunnerPaths, paths: RunnerPaths) => invoke<DesktopState>("update_runner_settings", { request: { target, expected, paths } }),
+  updateRunnerAllowedRoots: (target: SettingsTarget, expected: string[], roots: string[]) => invoke<DesktopState>("update_runner_allowed_roots", { request: { target, expected, roots } }),
   restartOwnedRunner: (target: SettingsTarget) => invoke<DesktopState>("restart_owned_runner", { target }),
   addRunnerPlugin: (target: SettingsTarget, provider: PluginRegistration) => invoke<DesktopState>("add_runner_plugin", { request: { target, provider } }),
   computerPermissions: () => invoke<ComputerPermissions>("get_computer_permissions"),

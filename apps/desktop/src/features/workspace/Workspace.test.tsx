@@ -65,7 +65,7 @@ describe("product workspace task flows", () => {
     expect(screen.queryByText("Current")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Add Project" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Unregister project/ })).not.toBeInTheDocument();
-    expect(screen.getByText("Runner allowed roots define filesystem access. Runtime Projects appear automatically when AI opens an authorized folder.")).toBeInTheDocument();
+    expect(screen.getByText("Runner allowed folders in Settings → File access define filesystem access. Runtime Projects are observed identity and appear automatically when AI opens an authorized folder.")).toBeInTheDocument();
     fireEvent.change(screen.getByRole("searchbox", { name: "Search projects" }), { target: { value: "ALPHA" } });
     expect(screen.getAllByRole("row")).toHaveLength(2);
   });

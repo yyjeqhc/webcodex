@@ -374,6 +374,15 @@ pub async fn update_runner_settings(
 ) -> Result<DesktopStateSnapshot, DesktopError> {
     project_state_result(&app, state.update_runner_settings(request).await)
 }
+
+#[tauri::command]
+pub async fn update_runner_allowed_roots(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: crate::webcodex::settings::AllowedRootsUpdate,
+) -> Result<DesktopStateSnapshot, DesktopError> {
+    project_state_result(&app, state.update_runner_allowed_roots(request).await)
+}
 #[tauri::command]
 pub async fn restart_owned_runner(
     app: AppHandle,

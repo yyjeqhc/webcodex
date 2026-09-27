@@ -35,7 +35,7 @@ const diagnostic = { schema_version: 1, observed_at_ms: Date.now(), trace: { mod
 function wrap(child: React.ReactNode) { return <LocaleProvider><DesktopMantineProvider>{child}</DesktopMantineProvider></LocaleProvider>; }
 beforeEach(() => {
   vi.resetAllMocks(); localStorage.clear(); localStorage.setItem("webcodex.desktop.locale", "en-US");
-  api.runnerSettings.mockResolvedValue({ target: { client_id: "fixture", config_path: "/fixture/runner.toml", server_url: "http://127.0.0.1:1" }, paths: { instruction_files: [], skill_roots: [] }, plugin_ids: [], can_restart: true });
+  api.runnerSettings.mockResolvedValue({ target: { client_id: "fixture", config_path: "/fixture/runner.toml", server_url: "http://127.0.0.1:1" }, paths: { instruction_files: [], skill_roots: [] }, file_access: { configured_roots: [], effective_roots: ["/Users/fixture"], using_default_roots: true, allow_cwd_anywhere: false }, plugin_ids: [], can_restart: true });
   api.runtimeSettings.mockResolvedValue(structuredClone(settings)); api.getState.mockResolvedValue(state);
   api.probeRuntime.mockResolvedValue({ ...settings, candidate }); api.recheckRuntime.mockResolvedValue(settings);
   api.switchRuntime.mockResolvedValue({ outcome: "activated", reason_code: null, rollback_reason_code: null, selection_revision: 4, restart_required: false });

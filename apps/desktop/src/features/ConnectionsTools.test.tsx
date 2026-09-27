@@ -15,7 +15,7 @@ const api = vi.hoisted(() => ({ saveTunnelProfile: vi.fn(), tunnelProfileAction:
 vi.mock("../lib/desktop-api", () => ({ desktopApi: api }));
 vi.mock("@tauri-apps/plugin-clipboard-manager", () => ({ writeText: vi.fn() }));
 const target = { config_path: "/fixture/runner.toml", client_id: "fixture", server_url: "http://127.0.0.1:62645" };
-const settings: RunnerSettings = { target, paths: { instruction_files: [], skill_roots: [] }, plugin_ids: [], can_restart: true };
+const settings: RunnerSettings = { target, paths: { instruction_files: [], skill_roots: [] }, file_access: { configured_roots: [], effective_roots: ["/fixture"], using_default_roots: true, allow_cwd_anywhere: false }, plugin_ids: [], can_restart: true };
 function state(): DesktopState {
   return {
     topology: { experience: "full", server: { kind: "local" }, runner: { kind: "local" }, exposure: { kind: "none" }, enrollment: { kind: "managed_pairing" } },

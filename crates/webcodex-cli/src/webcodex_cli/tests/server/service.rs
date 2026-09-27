@@ -756,9 +756,10 @@ fn generated_server_and_runner_units_pass_systemd_analyze_verify() {
 #[cfg(target_os = "linux")]
 #[test]
 fn special_supported_paths_pass_systemd_analyze_verify() {
-    let tmp = executable_test_tempdir();
-    let server_bin = tmp.path().join("webcodex server%p");
-    let runner_bin = tmp.path().join("webcodex runner%p");
+    let tmp = tempfile::tempdir().unwrap();
+    let executable_tmp = executable_test_tempdir();
+    let server_bin = executable_tmp.path().join("webcodex server%p");
+    let runner_bin = executable_tmp.path().join("webcodex runner%p");
     make_executable(&server_bin);
     make_executable(&runner_bin);
 

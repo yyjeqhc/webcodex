@@ -448,7 +448,7 @@ mod tests {
             .get_or_init(|| {
                 let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                     .join("src/webcodex_runner/validation/validation_tree_helper.rs");
-                let temp = tempfile::tempdir().unwrap();
+                let temp = crate::tests::executable_tempdir();
                 let output = temp.path().join(format!(
                     "validation-tree-helper{}",
                     std::env::consts::EXE_SUFFIX

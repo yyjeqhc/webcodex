@@ -12,33 +12,60 @@ import {
 export type WindowCollaborationSendState = "idle" | "sending" | "uncertain" | "error";
 export type WindowCollaborationSendError = "conflict" | "context" | "unavailable" | "failed" | null;
 
-export function useWindowCollaboration(client: RuntimeV2Client, windowKey: string, onUnauthorized: () => void) {
+function pageIsHidden(): boolean {
+  return document.visibilityState === "hidden";
+}
+
+export function useWindowCollaboration(client: RuntimeV2Client, windowKey: string, onUnauthorized: () => void, active = true) {
   const [transcript, setTranscript] = useState<WindowCollaborationTranscript | null>(null);
   const [error, setError] = useState(false);
   const [sendState, setSendState] = useState<WindowCollaborationSendState>("idle");
   const [sendError, setSendError] = useState<WindowCollaborationSendError>(null);
   const pending = useRef<WindowCollaborationPost | null>(null);
   const alive = useRef(true);
-  const inFlight = useRef(false);
-  const refresh = useCallback(async (signal?: AbortSignal) => {
-    if (inFlight.current) return;
-    inFlight.current = true;
+  const activeRef = useRef(active);
+  activeRef.current = active;
+  const inFlight = useRef<AbortController | null>(null);
+  const refresh = useCallback(async () => {
+    if (!alive.current || !activeRef.current || pageIsHidden() || inFlight.current) return;
+    const controller = new AbortController();
+    const { signal } = controller;
+    inFlight.current = controller;
     try {
       const response = await fetchWindowCollaboration(client, windowKey, signal);
-      if (!alive.current || signal?.aborted) return;
+      if (!alive.current || !activeRef.current || pageIsHidden() || signal.aborted || inFlight.current !== controller) return;
       if (response?.status === 401) onUnauthorized();
       if (response?.ok && response.data) { setTranscript(response.data); setError(false); }
       else { setError(true); if (response?.status === 403 || response?.status === 404) setTranscript(null); }
-    } catch { if (alive.current && !signal?.aborted) setError(true); }
-    finally { inFlight.current = false; }
+    } catch { if (alive.current && !signal.aborted) setError(true); }
+    finally { if (inFlight.current === controller) inFlight.current = null; }
   }, [client, windowKey, onUnauthorized]);
   useEffect(() => {
     alive.current = true;
-    const controller = new AbortController();
-    void refresh(controller.signal);
-    const timer = setInterval(() => void refresh(controller.signal), 3000);
-    return () => { alive.current = false; controller.abort(); clearInterval(timer); };
-  }, [refresh]);
+    // Hiding the panel pauses reads, but an outstanding send must still settle.
+    return () => { alive.current = false; };
+  }, []);
+  useEffect(() => {
+    let timer: ReturnType<typeof setInterval> | undefined;
+    const stop = () => {
+      clearInterval(timer);
+      timer = undefined;
+      inFlight.current?.abort();
+      inFlight.current = null;
+    };
+    const updateVisibility = () => {
+      stop();
+      if (!active || pageIsHidden()) return;
+      void refresh();
+      timer = setInterval(() => void refresh(), 3000);
+    };
+    updateVisibility();
+    document.addEventListener("visibilitychange", updateVisibility);
+    return () => {
+      stop();
+      document.removeEventListener("visibilitychange", updateVisibility);
+    };
+  }, [active, refresh]);
   const send = async (
     message: string,
     sessionId: string | null,

@@ -26,7 +26,7 @@ fn session_tool_contract(tool_name: &str) -> SessionToolContract {
     let (read_like, write_like, shell_like, path_hint) = match tool_name {
         "read_file" => (true, false, false, SessionPathHint::SinglePath),
         "write_project_file" => (false, true, false, SessionPathHint::SinglePath),
-        "apply_text_edits" => (false, true, false, SessionPathHint::PathList),
+        "edit_project_files" => (false, true, false, SessionPathHint::PathList),
         "run_shell" | "session_shell_exec" | "cargo_check" => {
             (false, false, true, SessionPathHint::None)
         }
@@ -369,9 +369,9 @@ fn coding_git_baseline_and_repository_edit_fact_persist_resume_and_default_legac
         .record_tool_call_started(
             Some(&session_id),
             SessionTransport::Mcp,
-            "apply_text_edits",
+            "edit_project_files",
             &json!({"project": "agent:oe:private-drop", "path": "src/lib.rs"}),
-            session_tool_contract("apply_text_edits"),
+            session_tool_contract("edit_project_files"),
         )
         .unwrap();
     store
@@ -2508,4 +2508,71 @@ fn retained_project_selection_preserves_global_edit_and_only_persists_metadata()
     ] {
         assert!(!durable.contains(hidden));
     }
+}
+
+#[test]
+fn console_lists_batch_preserves_project_bounds_order_and_cold_history() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ledger = tmp.path().join("batch-console.json");
+    let store = SessionStore::with_persistence_limits(&ledger, 20, 20, 10);
+    let mut expected = std::collections::HashMap::new();
+    for project in ["project-a", "project-b", "private-project"] {
+        let mut rows = Vec::new();
+        for index in 0..3 {
+            let session =
+                store.start_session(Some(project.into()), Some(format!("{project}-{index}")));
+            store.close_session(&session.session_id).unwrap();
+            let summary = store.summary(&session.session_id, Some(1)).unwrap();
+            rows.push((summary.session_id, summary.updated_at));
+        }
+        rows.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| b.0.cmp(&a.0)));
+        expected.insert(project, rows);
+    }
+    store.flush_persistence();
+    drop(store);
+    let store = SessionStore::with_persistence_limits(&ledger, 1, 20, 10);
+    assert!(store.status().cold_sessions > 0);
+    let validation = ConsoleValidationHooks {
+        event_observes_validation_activity: |_| false,
+        validation_summary_from_events: |_, _| json!({}),
+    };
+    for limit in [Some(1), Some(2), None] {
+        let lists = store.console_lists_for_projects(
+            &["project-a", "project-b", "empty-project", "project-a"],
+            limit,
+            validation,
+        );
+        assert_eq!(lists.len(), 3);
+        assert!(!lists.contains_key("private-project"));
+        for project in ["project-a", "project-b"] {
+            let list = &lists[project];
+            let returned = limit.unwrap_or(3);
+            assert_eq!(list.total, 3);
+            assert_eq!(list.returned, returned);
+            assert_eq!(list.truncated, returned < 3);
+            assert_eq!(
+                list.sessions
+                    .iter()
+                    .map(|s| &s.session_id)
+                    .collect::<Vec<_>>(),
+                expected[project]
+                    .iter()
+                    .take(returned)
+                    .map(|s| &s.0)
+                    .collect::<Vec<_>>()
+            );
+            assert!(list.sessions.iter().all(|s| s.lifecycle == "closed"));
+            assert_eq!(
+                serde_json::to_value(list).unwrap(),
+                serde_json::to_value(store.console_list_for_project(project, limit, validation))
+                    .unwrap()
+            );
+        }
+        assert_eq!(lists["empty-project"].total, 0);
+        assert_eq!(lists["empty-project"].returned, 0);
+        assert!(!lists["empty-project"].truncated);
+    }
+    assert!(store
+        .console_lists_for_projects(&[], None, validation)
+        .is_empty());
 }

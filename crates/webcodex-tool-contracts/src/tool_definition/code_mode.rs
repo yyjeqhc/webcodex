@@ -105,7 +105,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                     true,
                     super::ToolSessionEvidencePolicy::NONE,
                 ), &[PROJECT_WRITE, JOB_RUN]),
-                "Bounded coding Code Mode: adaptive E1 reads, at most one canonical apply_text_edits attempt, then cargo_check/cargo_test only after a successful known edit. Requires project:write and job:run; child authority remains canonical. Execution pass is not current-source proof: inspect source_state. Continue Jobs outside the cell using exact effect_receipt children. No shell/process, nested Jobs, alternate writes, gateways, recursion or whole-program retry.",
+                "Bounded coding Code Mode: adaptive E1 reads, at most one canonical edit_project_files attempt, then cargo_check/cargo_test only after a successful known edit. Requires project:write and job:run; child authority remains canonical. Execution pass is not current-source proof: inspect source_state. Continue Jobs outside the cell using exact effect_receipt children. No shell/process, nested Jobs, alternate writes, gateways, recursion or whole-program retry.",
             ).with_gpt_action_description("Bounded adaptive read -> one canonical edit -> cargo_check/cargo_test. Requires write and Job scopes; child authority stays canonical. Source freshness may be unproven. Continue handed-off Jobs outside the cell; never retry the whole program. No shell, alternate writes or recursion.").with_gpt_action_gateway_only()),
             PERMISSION_RISK_WRITE,
         ),

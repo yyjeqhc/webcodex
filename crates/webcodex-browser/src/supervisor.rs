@@ -279,7 +279,7 @@ impl BrowserSupervisor {
             .into_iter()
             .filter(|node| {
                 effective_mode != SnapshotMode::Interactive
-                    || (node.capability.admits_any() && node.backend_node_id.is_some())
+                    || retained_in_interactive_snapshot(node)
             })
             .collect::<Vec<_>>();
         let mut nodes = Vec::new();
@@ -1040,6 +1040,13 @@ impl BrowserRuntime {
     }
 }
 
+fn retained_in_interactive_snapshot(node: &BackendNode) -> bool {
+    if node.select_choice {
+        return true;
+    }
+    node.capability.admits_any() && node.backend_node_id.is_some()
+}
+
 fn should_auto_compact_snapshot(
     nodes: &[BackendNode],
     backend_truncated: bool,
@@ -1198,6 +1205,7 @@ mod tests {
             read_only: None,
             backend_node_id,
             capability,
+            select_choice: false,
         }
     }
 
@@ -1229,6 +1237,7 @@ mod tests {
         fail_pages_after_create: bool,
         page_created: bool,
         structured_controls: bool,
+        compact_select_page: bool,
     }
 
     impl FakeBackend {
@@ -1254,7 +1263,14 @@ mod tests {
                 fail_pages_after_create: false,
                 page_created: false,
                 structured_controls: false,
+                compact_select_page: false,
             }
+        }
+
+        fn with_compact_select_page() -> Self {
+            let mut backend = Self::new();
+            backend.compact_select_page = true;
+            backend
         }
 
         fn with_structured_controls() -> Self {
@@ -1315,6 +1331,17 @@ mod tests {
             _target_id: &str,
             _max_depth: u32,
         ) -> BrowserResult<BackendSnapshot> {
+            if self.compact_select_page {
+                let (nodes, truncated) = crate::cdp::project_ax_nodes(
+                    &compact_select_ax_nodes(),
+                    Some(&compact_select_dom()),
+                );
+                return Ok(BackendSnapshot {
+                    document_id: format!("doc-{}", self.document_generation),
+                    nodes,
+                    truncated,
+                });
+            }
             if self.structured_controls {
                 return Ok(BackendSnapshot {
                     document_id: format!("doc-{}", self.document_generation),
@@ -1353,6 +1380,7 @@ mod tests {
                         disabled: None,
                         read_only: None,
                         backend_node_id: actionable.then_some(index as i64 + 7),
+                        select_choice: false,
                         capability: if actionable {
                             ControlCapability::click()
                         } else {
@@ -1575,6 +1603,133 @@ mod tests {
         }
         fn shutdown(&mut self, _timeout: Duration) -> BrowserResult<()> {
             Ok(())
+        }
+    }
+
+    fn compact_select_dom() -> serde_json::Value {
+        let mut children = vec![
+            serde_json::json!({
+                "nodeType": 1,
+                "localName": "select",
+                "backendNodeId": 10,
+                "attributes": ["aria-label", "Fruit"],
+                "children": [
+                    {
+                        "nodeType": 1,
+                        "localName": "option",
+                        "backendNodeId": 11,
+                        "attributes": ["value", "a"]
+                    },
+                    {
+                        "nodeType": 1,
+                        "localName": "option",
+                        "backendNodeId": 12,
+                        "attributes": ["value", "b"]
+                    },
+                    {
+                        "nodeType": 1,
+                        "localName": "optgroup",
+                        "backendNodeId": 13,
+                        "attributes": ["label", "More"],
+                        "children": [{
+                            "nodeType": 1,
+                            "localName": "option",
+                            "backendNodeId": 14,
+                            "attributes": ["value", "c"]
+                        }]
+                    }
+                ]
+            }),
+            serde_json::json!({
+                "nodeType": 1,
+                "localName": "div",
+                "backendNodeId": 20
+            }),
+            serde_json::json!({
+                "nodeType": 1,
+                "localName": "input",
+                "backendNodeId": 30,
+                "attributes": ["type", "date", "aria-label", "When"],
+                "shadowRoots": [{
+                    "nodeType": 11,
+                    "shadowRootType": "user-agent",
+                    "children": [{
+                        "nodeType": 1,
+                        "localName": "button",
+                        "backendNodeId": 31
+                    }]
+                }]
+            }),
+        ];
+        for index in 0..130 {
+            children.push(serde_json::json!({
+                "nodeType": 1,
+                "localName": "p",
+                "backendNodeId": 1000 + index
+            }));
+        }
+        serde_json::json!({
+            "nodeType": 9,
+            "children": [{
+                "nodeType": 1,
+                "localName": "body",
+                "backendNodeId": 1,
+                "children": children
+            }]
+        })
+    }
+
+    fn compact_select_ax_node(
+        name: &str,
+        role: &str,
+        backend_node_id: i64,
+        value: Option<&str>,
+        parent_id: Option<&str>,
+    ) -> serde_json::Value {
+        let mut node = serde_json::json!({
+            "nodeId": format!("ax-{name}"),
+            "role": {"value": role},
+            "name": {"value": name},
+            "backendDOMNodeId": backend_node_id
+        });
+        if let Some(value) = value {
+            node["value"] = serde_json::json!({"value": value});
+        }
+        if let Some(parent_id) = parent_id {
+            node["parentId"] = serde_json::json!(parent_id);
+        }
+        node
+    }
+
+    fn compact_select_ax_nodes() -> Vec<serde_json::Value> {
+        let mut nodes = vec![
+            compact_select_ax_node("Fruit", "combobox", 10, None, Some("ax-root")),
+            compact_select_ax_node("Apple", "option", 11, Some("a"), Some("ax-Fruit")),
+            compact_select_ax_node("Beta", "option", 12, Some("b"), Some("ax-Fruit")),
+            compact_select_ax_node("Cherry", "option", 14, Some("c"), Some("ax-Fruit")),
+            compact_select_ax_node("Stray", "option", 20, Some("nope"), Some("ax-root")),
+            compact_select_ax_node("When", "Date", 30, None, Some("ax-root")),
+            compact_select_ax_node("Open calendar", "button", 31, None, Some("ax-When")),
+        ];
+        for index in 0..130 {
+            nodes.push(compact_select_ax_node(
+                &format!("Static {index}"),
+                "paragraph",
+                1000 + index,
+                None,
+                Some("ax-root"),
+            ));
+        }
+        nodes
+    }
+
+    struct CompactSelectFactory;
+    impl BackendFactory for CompactSelectFactory {
+        fn available(&self) -> bool {
+            true
+        }
+        fn launch(&self) -> BrowserResult<Box<dyn BrowserBackend>> {
+            Ok(Box::new(FakeBackend::with_compact_select_page()))
         }
     }
 
@@ -1875,6 +2030,102 @@ mod tests {
         assert_eq!(interactive.snapshot_mode, "interactive");
         assert_eq!(interactive.node_count, 3);
         assert!(interactive.nodes.iter().all(|node| node.actionable));
+    }
+
+    #[test]
+    fn compact_snapshot_keeps_native_select_options_without_giving_them_effects() {
+        let supervisor = BrowserSupervisor::with_factory(Arc::new(CompactSelectFactory));
+        let browser = supervisor.launch().unwrap();
+        let page = supervisor.pages(&browser.browser_id, 8).unwrap().remove(0);
+        let full = supervisor
+            .snapshot(
+                &browser.browser_id,
+                &page.page_id,
+                SnapshotMode::Full,
+                MAX_SNAPSHOT_NODES,
+                DEFAULT_SNAPSHOT_DEPTH,
+            )
+            .unwrap();
+        assert!(full.node_count > AUTO_SNAPSHOT_COMPACT_NODES);
+        assert!(full
+            .nodes
+            .iter()
+            .any(|node| node.name.as_deref() == Some("Stray")));
+        assert!(full
+            .nodes
+            .iter()
+            .any(|node| node.name.as_deref() == Some("Open calendar")));
+
+        let snapshot = supervisor
+            .snapshot(
+                &browser.browser_id,
+                &page.page_id,
+                SnapshotMode::Auto,
+                MAX_SNAPSHOT_NODES,
+                DEFAULT_SNAPSHOT_DEPTH,
+            )
+            .unwrap();
+        assert_eq!(snapshot.snapshot_mode, "interactive");
+        assert!(snapshot.auto_compacted);
+        assert!(!snapshot.truncated);
+        let find = |name: &str| {
+            snapshot
+                .nodes
+                .iter()
+                .find(|node| node.name.as_deref() == Some(name))
+                .unwrap_or_else(|| panic!("missing {name}"))
+        };
+        let fruit = find("Fruit");
+        assert_eq!(fruit.role, "combobox");
+        assert_eq!(fruit.actions, ["select_option"]);
+        assert!(fruit.element_id.is_some());
+        assert!(fruit.actionable);
+        for (name, value) in [("Apple", "a"), ("Beta", "b"), ("Cherry", "c")] {
+            let option = find(name);
+            assert_eq!(option.role, "option");
+            assert_eq!(option.value.as_deref(), Some(value));
+            assert!(option.element_id.is_none(), "{name} must stay semantic");
+            assert!(option.actions.is_empty(), "{name} must not admit an effect");
+            assert!(
+                !option.actionable,
+                "{name} must not receive element authority"
+            );
+        }
+        let when = find("When");
+        assert_eq!(when.actions, ["set_value"]);
+        assert!(snapshot
+            .nodes
+            .iter()
+            .all(|node| node.name.as_deref() != Some("Stray")));
+        assert!(snapshot
+            .nodes
+            .iter()
+            .all(|node| node.name.as_deref() != Some("Open calendar")));
+        assert!(snapshot.nodes.iter().all(|node| node
+            .name
+            .as_deref()
+            .is_none_or(|name| !name.starts_with("Static "))));
+
+        let interactive = supervisor
+            .snapshot(
+                &browser.browser_id,
+                &page.page_id,
+                SnapshotMode::Interactive,
+                MAX_SNAPSHOT_NODES,
+                DEFAULT_SNAPSHOT_DEPTH,
+            )
+            .unwrap();
+        assert!(interactive
+            .nodes
+            .iter()
+            .any(|node| node.name.as_deref() == Some("Apple") && node.actions.is_empty()));
+        assert!(
+            interactive
+                .nodes
+                .iter()
+                .any(|node| node.name.as_deref() == Some("Fruit")
+                    && node.actions == ["select_option"])
+        );
     }
 
     #[test]

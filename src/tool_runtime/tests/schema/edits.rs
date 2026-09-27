@@ -16,7 +16,7 @@ fn apply_text_edits_tool_call_parser_accepts_object_edits_and_rejects_stringifie
             }]
         }]
     });
-    ToolCall::from_tool_name("apply_text_edits", object_args)
+    ToolCall::from_tool_name("edit_project_files", object_args)
         .expect("apply_text_edits should deserialize object edit inputs");
 
     let string_args = json!({
@@ -24,7 +24,7 @@ fn apply_text_edits_tool_call_parser_accepts_object_edits_and_rejects_stringifie
         "changes": ["{\"kind\":\"edit\",\"path\":\"src/lib.rs\"}"]
     });
     assert!(
-        ToolCall::from_tool_name("apply_text_edits", string_args).is_err(),
+        ToolCall::from_tool_name("edit_project_files", string_args).is_err(),
         "apply_text_edits should reject stringified edit objects"
     );
 }

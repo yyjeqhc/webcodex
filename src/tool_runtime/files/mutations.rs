@@ -7,7 +7,7 @@ pub(crate) const MAX_WRITE_CONTENT_BYTES: usize = 256 * 1024; // 256 KiB
 pub(crate) const MAX_APPLY_FILE_CHANGES_BYTES: usize = 1024 * 1024;
 
 fn compact_model_edit_surface(tool_name: &str) -> bool {
-    matches!(tool_name, "apply_text_edits" | "write_project_file")
+    matches!(tool_name, "edit_project_files" | "write_project_file")
 }
 
 fn read_files_recovery(project: &str, path: &str) -> Value {
@@ -287,6 +287,23 @@ fn apply_text_edit_line_scope_capability_rejection(reason: impl AsRef<str>) -> T
     )
 }
 
+fn apply_text_edit_range_capability_rejection(reason: impl AsRef<str>) -> ToolResult {
+    let reason = reason.as_ref();
+    ToolResult::err_with_output(
+        format!(
+            "Rejected before write: {reason}.\nNo files were modified.\nRetry guidance: reconnect a Runner that explicitly supports apply_text_edit_range before retrying this revision-fenced range edit."
+        ),
+        json!({
+            "changed": false,
+            "state_changed": false,
+            "execution_state": "not_started",
+            "error_kind": "agent_capability_unavailable",
+            "failure_kind": "capability_unavailable",
+            "capability": crate::runner_protocol::RUNNER_CAPABILITY_APPLY_TEXT_EDIT_RANGE
+        }),
+    )
+}
+
 fn apply_patch_capability_rejection(
     reason: impl AsRef<str>,
     capability: &'static str,
@@ -398,6 +415,27 @@ fn validate_apply_text_edit(
         }
     }
     match edit.kind {
+        ApplyTextEditKind::ReplaceRange => {
+            if edit.line_scope.is_none() {
+                return Err(format!(
+                    "change {change_index} edit {edit_index} (replace_range): start_line/end_line are required"
+                ));
+            }
+            if edit.new_text.is_none() {
+                return Err(format!(
+                    "change {change_index} edit {edit_index} (replace_range): new_text is required"
+                ));
+            }
+            if edit.old_text.is_some()
+                || edit.anchor_text.is_some()
+                || edit.occurrence.is_some()
+                || edit.expected_match_count.is_some()
+            {
+                return Err(format!(
+                    "change {change_index} edit {edit_index} (replace_range): old_text, anchor_text, occurrence, and expected_match_count are not allowed"
+                ));
+            }
+        }
         ApplyTextEditKind::ReplaceExact => {
             if edit
                 .old_text
@@ -530,7 +568,7 @@ fn validate_apply_file_change(
                     });
                 }
             }
-            valid_revision(positional_edit_index.is_some(), positional_edit_index)?;
+            valid_revision(true, positional_edit_index)?;
         }
         ApplyFileChangeKind::Create => {
             if change.to_path.is_some()
@@ -635,7 +673,7 @@ fn transactional_edit_agent_stdout_result(
     let applied_count = obj.get("applied_count").and_then(Value::as_u64);
     let changed = obj.get("changed").and_then(Value::as_bool);
     let would_change = obj.get("would_change").and_then(Value::as_bool);
-    let expected_applied = if tool_name == "apply_text_edits"
+    let expected_applied = if tool_name == "edit_project_files"
         && expected_dry_run
         && obj.get("planned_count").is_some()
     {
@@ -645,7 +683,7 @@ fn transactional_edit_agent_stdout_result(
     };
     let valid = dry_run == Some(expected_dry_run)
         && applied_count == Some(expected_applied)
-        && (tool_name != "apply_text_edits"
+        && (tool_name != "edit_project_files"
             || obj.get("planned_count").is_none()
             || obj.get("planned_count").and_then(Value::as_u64)
                 == Some(expected_change_count as u64))
@@ -2130,7 +2168,7 @@ fn apply_text_edits_agent_stdout_result(
 ) -> ToolResult {
     let mut result = sanitize_apply_text_edits_model_recovery(
         transactional_edit_agent_stdout_result(
-            "apply_text_edits",
+            "edit_project_files",
             stdout,
             expected_change_count,
             expected_dry_run,
@@ -2146,7 +2184,7 @@ fn apply_text_edits_agent_stdout_result(
         return result;
     }
     structured_edit_outcome_unknown_result(
-        "apply_text_edits",
+        "edit_project_files",
         "the Runner success payload contained invalid or contradictory file-result metadata",
         json!({}),
     )
@@ -2435,7 +2473,46 @@ pub(crate) fn apply_text_edits_to_string(
                 .validate()
                 .map_err(|reason| edit_field_error(index, kind, reason))?;
         }
+        if kind == ApplyTextEditKind::ReplaceRange {
+            if edit.old_text.is_some()
+                || edit.anchor_text.is_some()
+                || edit.occurrence.is_some()
+                || edit.expected_match_count.is_some()
+            {
+                return Err(edit_field_error(
+                    index,
+                    kind,
+                    "old_text, anchor_text, occurrence, and expected_match_count are not allowed",
+                ));
+            }
+            let range = edit
+                .line_scope
+                .ok_or_else(|| edit_field_error(index, kind, "start_line/end_line are required"))?;
+            let replacement = edit
+                .new_text
+                .as_deref()
+                .ok_or_else(|| edit_field_error(index, kind, "new_text is required"))?;
+            if replacement.contains('\0') {
+                return Err(edit_field_error(
+                    index,
+                    kind,
+                    "edit text cannot contain NUL bytes",
+                ));
+            }
+            if replacement.len() > MAX_APPLY_TEXT_EDIT_FIELD_BYTES {
+                return Err(edit_field_error(index, kind, "edit field is too large"));
+            }
+            let replacement = canonicalize_apply_text_line_endings(replacement, line_ending)
+                .map_err(|reason| edit_field_error(index, kind, reason))?
+                .into_owned();
+            let (start, end) =
+                crate::apply_edits_shared::resolve_apply_text_line_range(original, range)
+                    .map_err(|reason| edit_field_error(index, kind, reason))?;
+            ops.push((start, end, replacement, index));
+            continue;
+        }
         let (needle, replacement): (&str, String) = match kind {
+            ApplyTextEditKind::ReplaceRange => unreachable!("handled above"),
             ApplyTextEditKind::ReplaceExact => {
                 let old = edit
                     .old_text
@@ -3294,7 +3371,7 @@ impl ToolRuntime {
             .await
         else {
             return structured_edit_not_started_result(
-                "apply_text_edits",
+                "edit_project_files",
                 "the resolved Runner became unavailable before mutation admission",
             );
         };
@@ -3302,7 +3379,7 @@ impl ToolRuntime {
             crate::tool_runtime::runner_local_project_id(&resolved.resolved_id)
         else {
             return structured_edit_not_started_result(
-                "apply_text_edits",
+                "edit_project_files",
                 "the resolved Project identity could not be bound to a Runner-local project id",
             );
         };
@@ -3445,6 +3522,14 @@ impl ToolRuntime {
             Err(error)
                 if error.starts_with("capability_unavailable:")
                     && error.contains(
+                        crate::runner_protocol::RUNNER_CAPABILITY_APPLY_TEXT_EDIT_RANGE,
+                    ) =>
+            {
+                return apply_text_edit_range_capability_rejection(error)
+            }
+            Err(error)
+                if error.starts_with("capability_unavailable:")
+                    && error.contains(
                         crate::runner_protocol::RUNNER_CAPABILITY_APPLY_TEXT_EDIT_OCCURRENCE,
                     ) =>
             {
@@ -3463,13 +3548,13 @@ impl ToolRuntime {
                     return result;
                 }
                 return structured_edit_not_started_result(
-                    "apply_text_edits",
+                    "edit_project_files",
                     "the exact Runner changed before the local edit could be dispatched; reread before retrying",
                 );
             }
             Err(_) => {
                 return structured_edit_not_started_result(
-                    "apply_text_edits",
+                    "edit_project_files",
                     "the Runner queue rejected the request before dispatch",
                 )
             }
@@ -3479,7 +3564,7 @@ impl ToolRuntime {
             &request_id,
             rx,
             wait_timeout,
-            "apply_text_edits",
+            "edit_project_files",
         )
         .await
         {

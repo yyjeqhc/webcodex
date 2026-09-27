@@ -293,7 +293,7 @@ fn npm_cafile_is_bounded_and_errors_do_not_expose_paths_or_ca_content() {
 async fn npm_config_query_uses_fixed_argv_and_normalizes_null() {
     use std::os::unix::fs::PermissionsExt;
 
-    let temp = tempfile::tempdir().unwrap();
+    let temp = crate::test_support::executable_tempdir();
     let npm = temp.path().join("fake-npm");
     fs::write(
         &npm,
@@ -356,7 +356,7 @@ async fn managed_binary_is_downloaded_verified_and_reused_without_network() {
     let script = format!("#!/bin/sh\necho 'cloudflared version {CLOUDFLARED_VERSION} (test)'\n");
     let bytes = script.into_bytes();
     let asset = test_asset(&bytes, false);
-    let state = tempfile::tempdir().unwrap();
+    let state = crate::test_support::executable_tempdir();
     let (url, requests, server) = serve_once(bytes.clone()).await;
 
     let installed = ensure_managed_cloudflared_at(state.path(), asset, &url)
@@ -434,7 +434,7 @@ async fn verified_darwin_style_archive_extracts_only_before_binary_verification(
         binary_sha256: binary_hash,
         gzip_archive: true,
     };
-    let state = tempfile::tempdir().unwrap();
+    let state = crate::test_support::executable_tempdir();
     let (url, _requests, server) = serve_once(archive_bytes).await;
 
     let installed = ensure_managed_cloudflared_at(state.path(), asset, &url)

@@ -17,6 +17,7 @@ pub(super) fn compact_tool(tool: &mut Value) {
             "work_on_project" => "Start ordinary coding/review with project or client_id+path. Omit session_id for a fresh Workflow Session; supply it only for exact resume. Defaults return project instructions, workflow and extension guidance. Use mode=worktree for an isolated Git worktree.",
             "tool_manifest" => "Discover tools by intent/category, or pass tool_name for one exact canonical contract plus route.primary/route.fallback. Discovery never registers a new Host tool. If a direct callable is absent, follow the exact gateway fallback when it is allowed.",
             "call_runtime_tool" => "Call one admitted runtime tool with its exact arguments. Use tool_manifest to discover the contract. Prefer an available direct callable; ordinary direct tools may fall back here when unavailable, but MCP App presentation tools must use their direct callable while Apps are enabled. Target validation and authority checks still apply.",
+            "edit_project_files" => "Primary project editor after read_files. Existing-file edit/delete/rename require expected_read_revision; create requires content. Use exact edits for unique text or replace_range for known 1-based inclusive lines, then review and validate.",
             "run_process" => "Run one native executable with literal argv. Use run_shell for shell grammar or a short related command chain. Long work continues as the same Runner-owned Job through observe_jobs; retain the returned continuation instead of redispatching.",
             "run_shell" => "Run shell grammar or a short related command chain. Use run_process for one native executable with literal argv. Long work continues as the same Runner-owned Job through observe_jobs; retain the returned continuation instead of redispatching.",
             "observe_jobs" => "Continue known Jobs by job_id; do not list first. Pass observation_token unchanged as after_observation_token. Follow the returned continuation for more output; observation never redispatches work. Use wait_for_job_terminal when blocked only on terminal completion.",
@@ -31,8 +32,10 @@ pub(super) fn compact_tool(tool: &mut Value) {
     }
     if let Some(schema) = tool.get_mut("inputSchema") {
         compact_input_descriptions(schema);
-        compact_control_sidecar(schema);
-        compact_window_reply_sidecar(schema);
+        compact_invocation_envelope(schema);
+        if name == "edit_project_files" {
+            compact_primary_editor_schema(schema);
+        }
         if let Some(properties) = schema.get_mut("properties").and_then(Value::as_object_mut) {
             for (field, property) in properties {
                 if let (Some(description), Some(Value::String(copy))) = (
@@ -43,25 +46,73 @@ pub(super) fn compact_tool(tool: &mut Value) {
                 }
             }
         }
-        // Only root protocol wrappers: never business session_id, paths, Job
-        // identities or fences. Preserve shapes/requiredness/bounds; remove only
-        // repeated copy. Full discovery and the canonical parser remain strict.
-        for (field, hint) in [
-            ("recording_session_id", "Recorder Session ID/ref; never business authority."),
-            ("ack_session_message_ids", "Retained wc_msg_* IDs to ACK; does not resolve."),
-            ("ack_ref", ""),
-            ("session_message_resolution", "Handled non-todo message; requires recording_session_id."),
-            ("context_request", "Sidecar keys: project.instructions, webcodex.workflow, jobs.attention, skills.catalog, plugins.catalog, memory.bootstrap."),
-        ] {
-            if let Some(property) = schema.pointer_mut(&format!("/properties/{field}")) {
-                let had_description = property.get("description").is_some();
-                strip_wrapper_descriptions(property);
-                if had_description && !hint.is_empty() {
-                    property["description"] = Value::String(hint.into());
-                }
-            }
+        if let Some(envelope) = schema.pointer_mut("/properties/_wc") {
+            strip_wrapper_descriptions(envelope);
+            envelope["description"] = Value::String(
+                "Optional invocation sidecars; omit when unused. Never grants authority.".into(),
+            );
         }
         compact_discovery_validation_annotations(schema);
+    }
+}
+
+fn compact_primary_editor_schema(schema: &mut Value) {
+    // `tools/list` is only the model-selection copy. The direct editor already
+    // carries one bounded top-level purpose, while the discriminated `changes`
+    // variants repeat explanatory prose across edit/create/delete/rename and
+    // nested exact/range edit forms. Keep every structural constraint, bound,
+    // required field and discriminator, but omit that duplicated nested copy.
+    // Canonical/full discovery and ToolRuntime parsing retain the exact schema.
+    if let Some(changes) = schema.pointer_mut("/properties/changes/items") {
+        strip_schema_descriptions(changes);
+    }
+}
+
+fn strip_schema_descriptions(schema: &mut Value) {
+    let Some(object) = schema.as_object_mut() else {
+        return;
+    };
+    object.remove("description");
+    for keyword in [
+        "properties",
+        "patternProperties",
+        "$defs",
+        "definitions",
+        "dependentSchemas",
+        "dependencies",
+    ] {
+        if let Some(children) = object.get_mut(keyword).and_then(Value::as_object_mut) {
+            for child in children.values_mut() {
+                strip_schema_descriptions(child);
+            }
+        }
+    }
+    for keyword in [
+        "items",
+        "prefixItems",
+        "allOf",
+        "anyOf",
+        "oneOf",
+        "additionalItems",
+        "additionalProperties",
+        "unevaluatedItems",
+        "unevaluatedProperties",
+        "propertyNames",
+        "contains",
+        "not",
+        "if",
+        "then",
+        "else",
+    ] {
+        if let Some(child) = object.get_mut(keyword) {
+            if let Some(children) = child.as_array_mut() {
+                for child in children {
+                    strip_schema_descriptions(child);
+                }
+            } else {
+                strip_schema_descriptions(child);
+            }
+        }
     }
 }
 
@@ -80,28 +131,25 @@ fn strip_wrapper_descriptions(schema: &mut Value) {
     }
 }
 
-fn compact_window_reply_sidecar(schema: &mut Value) {
-    let Some(reply) = schema
-        .pointer_mut("/properties/window_reply")
+fn compact_invocation_envelope(schema: &mut Value) {
+    let Some(envelope) = schema
+        .pointer_mut("/properties/_wc")
         .filter(|value| value.is_object())
     else {
         return;
     };
-    *reply = serde_json::json!({"type": "object"});
-}
-
-fn compact_control_sidecar(schema: &mut Value) {
-    let Some(control) = schema
-        .pointer_mut("/properties/_control")
-        .filter(|value| value.is_object())
-    else {
-        return;
-    };
-    // Full MCP discovery retains the exact closed per-kind canonical schemas.
-    // Compact discovery is only a model-selection copy, so do not repeat those
-    // large canonical payload schemas on every ordinary tool. Runtime stripping,
-    // closed enum parsing, and canonical ToolCall parsing remain unchanged.
-    *control = serde_json::json!({"type": "object"});
+    strip_wrapper_descriptions(envelope);
+    if let Some(properties) = envelope
+        .get_mut("properties")
+        .and_then(Value::as_object_mut)
+    {
+        if properties.contains_key("reply") {
+            properties.insert("reply".to_string(), serde_json::json!({"type": "object"}));
+        }
+        if properties.contains_key("control") {
+            properties.insert("control".to_string(), serde_json::json!({"type": "object"}));
+        }
+    }
 }
 
 fn compact_discovery_validation_annotations(schema: &mut Value) {
@@ -111,15 +159,15 @@ fn compact_discovery_validation_annotations(schema: &mut Value) {
     // use their original schemas/parsers, never this owned presentation copy.
     for (pointer, pattern) in [
         (
-            "/properties/recording_session_id",
+            "/properties/_wc/properties/record",
             RECORDING_SESSION_SELECTOR_SCHEMA_PATTERN,
         ),
         (
-            "/properties/ack_session_message_ids/items",
+            "/properties/_wc/properties/ack/items",
             "^wc_msg_([A-Za-z0-9_-]{16}|[0-9a-f]{32})$",
         ),
         (
-            "/properties/session_message_resolution/properties/message_id",
+            "/properties/_wc/properties/resolve/properties/message_id",
             "^wc_msg_([A-Za-z0-9_-]{16}|[0-9a-f]{32})$",
         ),
     ] {

@@ -1588,7 +1588,7 @@ fn logical_search_matches(result: &ToolResult) -> Vec<(u64, String)> {
 #[cfg(unix)]
 #[test]
 fn search_project_text_command_prefers_rg_backend_when_available() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = crate::test_support::executable_tempdir();
     let bin = tmp.path().join("bin");
     let root = tmp.path().join("project");
     std::fs::create_dir_all(&bin).unwrap();
@@ -1631,7 +1631,7 @@ fn search_project_text_command_prefers_rg_backend_when_available() {
 #[cfg(unix)]
 #[test]
 fn search_project_text_command_falls_back_to_grep_without_rg() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = crate::test_support::executable_tempdir();
     let bin = tmp.path().join("bin");
     let root = tmp.path().join("project");
     std::fs::create_dir_all(&bin).unwrap();
@@ -2685,7 +2685,7 @@ fn search_count_uses_backend_evidence_without_claiming_filtered_absence() {
 #[cfg(unix)]
 #[test]
 fn search_command_preserves_rg_exit_2_despite_head() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = crate::test_support::executable_tempdir();
     let bin = tmp.path().join("bin");
     let root = tmp.path().join("project");
     std::fs::create_dir_all(&bin).unwrap();
@@ -2715,7 +2715,7 @@ fn search_command_preserves_rg_exit_2_despite_head() {
 #[cfg(unix)]
 #[test]
 fn search_command_preserves_rg_exit_1_as_success_empty() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = crate::test_support::executable_tempdir();
     let bin = tmp.path().join("bin");
     let root = tmp.path().join("project");
     std::fs::create_dir_all(&bin).unwrap();
@@ -2744,7 +2744,7 @@ fn search_command_preserves_rg_exit_1_as_success_empty() {
 #[cfg(unix)]
 #[test]
 fn search_command_preserves_grep_exit_2_despite_head() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = crate::test_support::executable_tempdir();
     let bin = tmp.path().join("bin");
     let root = tmp.path().join("project");
     std::fs::create_dir_all(&bin).unwrap();
@@ -2829,7 +2829,7 @@ fn count_webcodex_search_status_files(dir: &std::path::Path) -> usize {
 #[cfg(unix)]
 #[test]
 fn search_status_tmpdir_relative_does_not_use_worktree() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = crate::test_support::executable_tempdir();
     let bin = tmp.path().join("bin");
     let root = tmp.path().join("project");
     let rel_tmp = root.join("rel-status-tmp");
@@ -2863,7 +2863,7 @@ fn search_status_tmpdir_relative_does_not_use_worktree() {
 #[cfg(unix)]
 #[test]
 fn search_status_tmpdir_project_root_does_not_use_worktree() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = crate::test_support::executable_tempdir();
     let bin = tmp.path().join("bin");
     let root = tmp.path().join("project");
     let safe_tmp = tmp.path().join("safe-tmp");
@@ -2898,7 +2898,7 @@ fn search_status_tmpdir_project_root_does_not_use_worktree() {
 #[test]
 fn search_status_tmpdir_symlink_into_worktree_is_rejected() {
     // Outside symlink → inside worktree dir must not bypass physical-path checks.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = crate::test_support::executable_tempdir();
     let bin = tmp.path().join("bin");
     let root = tmp.path().join("project");
     let inside = root.join("inner-tmp");
@@ -2938,7 +2938,7 @@ fn search_status_tmpdir_symlink_into_worktree_is_rejected() {
 #[cfg(unix)]
 #[test]
 fn search_status_file_is_removed_after_successful_run() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = crate::test_support::executable_tempdir();
     let bin = tmp.path().join("bin");
     let root = tmp.path().join("project");
     let safe_tmp = tmp.path().join("safe-tmp");
@@ -2978,7 +2978,7 @@ fn search_early_stop_reaps_process_group_and_status_files() {
     // wrapper process group (rg + the two head stages + the wrapper shell)
     // must be reaped and the status file removed — nothing is left behind to
     // be cleaned up by a later request.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = crate::test_support::executable_tempdir();
     let bin = tmp.path().join("bin");
     let root = tmp.path().join("project");
     let safe_tmp = tmp.path().join("safe-tmp");
@@ -3047,7 +3047,7 @@ exit 1
 
 #[test]
 fn resolve_search_head_command_prefers_path_then_absolute() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = crate::test_support::executable_tempdir();
     let bin = tmp.path().join("bin");
     std::fs::create_dir_all(&bin).unwrap();
     #[cfg(unix)]
@@ -3076,7 +3076,7 @@ fn resolve_search_head_command_prefers_path_then_absolute() {
 #[cfg(unix)]
 #[test]
 fn search_command_fails_when_head_unavailable() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = crate::test_support::executable_tempdir();
     let bin = tmp.path().join("bin");
     let root = tmp.path().join("project");
     std::fs::create_dir_all(&bin).unwrap();
@@ -3106,7 +3106,7 @@ fn search_command_fails_when_head_unavailable() {
 #[cfg(unix)]
 #[test]
 fn search_command_fails_when_head_exits_nonzero_even_if_backend_succeeds() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = crate::test_support::executable_tempdir();
     let bin = tmp.path().join("bin");
     let root = tmp.path().join("project");
     std::fs::create_dir_all(&bin).unwrap();
@@ -3137,7 +3137,7 @@ fn search_command_fails_when_head_exits_nonzero_even_if_backend_succeeds() {
 #[cfg(unix)]
 #[test]
 fn search_command_keeps_success_when_head_is_available() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = crate::test_support::executable_tempdir();
     let bin = tmp.path().join("bin");
     let root = tmp.path().join("project");
     std::fs::create_dir_all(&bin).unwrap();
@@ -3205,7 +3205,7 @@ fn search_small_limit_stops_unbounded_backend_early() {
     // command timeout. Deterministic: no reliance on machine speed — the fake
     // either keeps streaming (and the truncating head closes it) or the test
     // times out.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = crate::test_support::executable_tempdir();
     let bin = tmp.path().join("bin");
     let root = tmp.path().join("project");
     std::fs::create_dir_all(&bin).unwrap();
@@ -3255,7 +3255,7 @@ fn search_overlong_match_line_does_not_overflow_byte_budget() {
     // with truncation_reason = "output_bytes" instead of surfacing a half
     // record. The fake `head` delegates to the real system head so the byte
     // boundary cut is byte-accurate and deterministic.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = crate::test_support::executable_tempdir();
     let bin = tmp.path().join("bin");
     let root = tmp.path().join("project");
     std::fs::create_dir_all(&bin).unwrap();
@@ -3793,7 +3793,7 @@ async fn search_agent_request_dropped_returns_structured_error() {
 #[cfg(unix)]
 #[tokio::test]
 async fn search_timeout_only_without_rg_still_allows_grep_fallback() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = crate::test_support::executable_tempdir();
     let root = tmp.path().join("project");
     let bin = tmp.path().join("bin");
     std::fs::create_dir_all(&root).unwrap();
@@ -3960,7 +3960,7 @@ fn search_audit_arguments_record_bounded_feature_summary_without_pattern_or_glob
 #[cfg(unix)]
 #[test]
 fn search_command_passes_shell_metacharacter_globs_as_one_literal_argument() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = crate::test_support::executable_tempdir();
     let bin = tmp.path().join("bin");
     let root = tmp.path().join("project");
     std::fs::create_dir_all(&bin).unwrap();

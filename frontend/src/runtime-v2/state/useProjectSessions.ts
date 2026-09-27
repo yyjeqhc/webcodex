@@ -80,8 +80,17 @@ export function useProjectSessions(
 
   useEffect(() => {
     if (!enabled || !projectId) return;
-    const timer = window.setInterval(refresh, 15_000);
-    return () => window.clearInterval(timer);
+    const refreshVisible = () => {
+      if (document.visibilityState !== "hidden") refresh();
+    };
+    const timer = window.setInterval(refreshVisible, 5_000);
+    window.addEventListener("focus", refreshVisible);
+    document.addEventListener("visibilitychange", refreshVisible);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refreshVisible);
+      document.removeEventListener("visibilitychange", refreshVisible);
+    };
   }, [enabled, projectId, refresh]);
 
   return { availability, sessions, total, truncated };

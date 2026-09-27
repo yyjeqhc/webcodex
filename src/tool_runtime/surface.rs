@@ -12,7 +12,10 @@ use super::kernel::ToolProtocolCapabilities;
 use super::metadata::ToolAuthorityPolicy;
 #[cfg(feature = "experimental-code-mode")]
 use super::orchestration_host::is_server_owned_orchestration_argument;
-use super::registry::{registered_tool_specs, stateless_operator_extension_tool_specs};
+use super::registry::{
+    exact_manifest_specialist_tool_specs, registered_tool_specs,
+    stateless_operator_extension_tool_specs,
+};
 use super::runtime::ToolRuntime;
 use super::tool_definition::{
     available_tool_manifest_intent_names, is_model_visible_tool_name, resolve_tool_manifest_intent,
@@ -316,7 +319,7 @@ if (check.output?.execution_state === "pending") {
             "source": r#"const path = "src/example.rs";
 const read = await tools.read_files({items:[{path,start_line:1,limit:120}]});
 const revision = read.output.items?.[0]?.output?.read_revision;
-const edit = await tools.apply_text_edits({changes:[{path,old_text:"old",new_text:"new",expected_read_revision:revision}]});
+const edit = await tools.edit_project_files({changes:[{kind:"edit",path,expected_read_revision:revision,edits:[{kind:"replace_exact",old_text:"old",new_text:"new"}]}]});
 if (!edit.success || typeof edit.output?.state_changed !== "boolean") throw new Error("inspect edit recovery before validating");
 const check = await tools.cargo_check({});
 text({state_changed:edit.output.state_changed,call_success:check.success,source_state:check.output?.source_state,pending:check.output?.execution_state==="pending"});"#,
@@ -400,6 +403,9 @@ pub(crate) fn registered_tool_categories() -> Value {
             .filter(|name| is_model_visible_tool_name(name))
             .map(|name| Value::String((*name).to_string()))
             .collect::<Vec<_>>();
+        if tools.is_empty() {
+            continue;
+        }
         categories.insert(group.name.to_string(), Value::Array(tools));
     }
     Value::Object(categories)
@@ -639,8 +645,13 @@ impl ToolRuntime {
             return Err(unknown_tool_manifest_tool_result(tool_name));
         }
         let specs = tool_manifest_specs(protocol_capabilities);
+        let specialist_specs = exact_manifest_specialist_tool_specs();
         let tool_count = specs.len();
-        let Some(spec) = specs.iter().find(|spec| spec.name == tool_name) else {
+        let Some(spec) = specs
+            .iter()
+            .chain(specialist_specs.iter())
+            .find(|spec| spec.name == tool_name)
+        else {
             return Err(unknown_tool_manifest_tool_result(tool_name));
         };
         let category = runtime_tool_category(spec.name.as_str());

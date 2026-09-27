@@ -374,6 +374,8 @@ const APPLY_TEXT_EDITS_MAX_FILE_BYTES: usize = 2 * 1024 * 1024; // 2 MiB
 // The edit wire types, batch/edit limits, and the sensitive-path guard are
 // shared verbatim with the host write path via `apply_edits_shared`; use the
 // neutral shared type names directly rather than preserving Runner-local aliases.
+#[cfg(test)]
+use crate::apply_edits_shared::ApplyTextLineScope;
 use crate::apply_edits_shared::{
     canonicalize_apply_text_line_endings, detect_apply_text_line_ending,
     is_lowercase_hex_sha256 as is_hex_sha256, is_sensitive_edit_path,
@@ -538,7 +540,49 @@ fn edit_plan(
                 .validate()
                 .map_err(|reason| EditPlanError::plain(index, kind.as_str(), reason))?;
         }
+        if *kind == ApplyTextEditKind::ReplaceRange {
+            if edit.old_text.is_some()
+                || edit.anchor_text.is_some()
+                || edit.occurrence.is_some()
+                || edit.expected_match_count.is_some()
+            {
+                return Err(EditPlanError::plain(
+                    index,
+                    kind.as_str(),
+                    "old_text, anchor_text, occurrence, and expected_match_count are not allowed",
+                ));
+            }
+            let range = edit.line_scope.ok_or_else(|| {
+                EditPlanError::plain(index, kind.as_str(), "start_line/end_line are required")
+            })?;
+            let replacement = edit.new_text.as_deref().ok_or_else(|| {
+                EditPlanError::plain(index, kind.as_str(), "new_text is required")
+            })?;
+            if replacement.contains('\0') {
+                return Err(EditPlanError::plain(
+                    index,
+                    kind.as_str(),
+                    "edit text cannot contain NUL bytes",
+                ));
+            }
+            if replacement.len() > APPLY_TEXT_EDITS_MAX_FIELD_BYTES {
+                return Err(EditPlanError::plain(
+                    index,
+                    kind.as_str(),
+                    "edit field is too large",
+                ));
+            }
+            let replacement = canonicalize_apply_text_line_endings(replacement, line_ending)
+                .map_err(|error| EditPlanError::plain(index, kind.as_str(), error))?
+                .into_owned();
+            let (start, end) =
+                webcodex_core::apply_edits_shared::resolve_apply_text_line_range(original, range)
+                    .map_err(|error| EditPlanError::plain(index, kind.as_str(), error))?;
+            ops.push((start, end, replacement.into(), index));
+            continue;
+        }
         let (needle, replacement): (&str, String) = match kind {
+            ApplyTextEditKind::ReplaceRange => unreachable!("handled above"),
             ApplyTextEditKind::ReplaceExact => {
                 let old = edit
                     .old_text
@@ -643,7 +687,7 @@ fn edit_plan(
                     }),
                 });
             }
-            bulk_matches[index] = Some((matches.match_count, matches.candidate_ranges));
+            bulk_matches[index] = Some((matches.match_count, matches.evidence_ranges));
             let replacement: Arc<str> = replacement.into();
             for (start, end) in matches.ranges {
                 ops.push((start, end, replacement.clone(), index));
@@ -2272,6 +2316,45 @@ pub(crate) fn handle_apply_text_edits_file_request(
 #[cfg(test)]
 mod write_project_file_effect_tests {
     use super::*;
+
+    fn range_edit(start_line: usize, end_line: usize, new_text: &str) -> ApplyTextEditInput {
+        ApplyTextEditInput {
+            kind: ApplyTextEditKind::ReplaceRange,
+            old_text: None,
+            new_text: Some(new_text.to_string()),
+            anchor_text: None,
+            occurrence: None,
+            line_scope: Some(ApplyTextLineScope {
+                start_line,
+                end_line,
+            }),
+            expected_match_count: None,
+        }
+    }
+
+    #[test]
+    fn edit_plan_replace_range_is_original_snapshot_based_and_crlf_preserving() {
+        let edits = vec![range_edit(2, 2, "B\n"), range_edit(4, 4, "D")];
+        let (updated, summaries) = edit_plan("a\r\nb\r\nc\r\nd", &edits).unwrap();
+        assert_eq!(updated, "a\r\nB\r\nc\r\nD");
+        assert_eq!(summaries.len(), 2);
+        assert_eq!(summaries[0]["kind"], "replace_range");
+        assert_eq!(summaries[0]["old_start_line"], 2);
+        assert_eq!(summaries[0]["old_end_line"], 2);
+        assert_eq!(summaries[1]["old_start_line"], 4);
+        assert_eq!(summaries[1]["old_end_line"], 4);
+
+        let overlap = edit_plan(
+            "a\nb\nc\nd\n",
+            &[range_edit(2, 3, "X\n"), range_edit(3, 4, "Y\n")],
+        )
+        .expect_err("overlapping original ranges must fail closed");
+        assert_eq!(overlap.edit_index, 1);
+        assert!(matches!(
+            overlap.conflict,
+            Some(EditPlanConflict::Overlap { .. })
+        ));
+    }
 
     #[test]
     fn file_write_project_file_create_commit_preserves_concurrent_file() {

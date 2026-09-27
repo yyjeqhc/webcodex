@@ -7,7 +7,7 @@ use crate::tool_runtime::code_mode::{code_mode_orchestration_policy, CodeModeCal
 const EDIT: &str = r#"
 const read = await tools.read_files({items:[{path:"src/example.rs"}]});
 const revision = read.output.items[0].output.read_revision;
-const edit = await tools.apply_text_edits({changes:[{
+const edit = await tools.edit_project_files({changes:[{
   kind:"edit",path:"src/example.rs",expected_read_revision:revision,
   edits:[{kind:"replace_exact",old_text:"before",new_text:"after"}]
 }]});
@@ -201,11 +201,14 @@ async fn direct_edit(
     old: &str,
     new: &str,
 ) {
+    let revision = seed_read_revision(runtime, project, "src/example.rs", &"a".repeat(64)).await;
     let rt = runtime.clone();
     let args = json!({"project":project,"session_id":session,"changes":[{
-        "path":"src/example.rs","old_text":old,"new_text":new
+        "kind":"edit","path":"src/example.rs","expected_read_revision":revision,"edits":[{
+            "kind":"replace_exact","old_text":old,"new_text":new
+        }]
     }]});
-    let task = tokio::spawn(async move { canonical_call(&rt, "apply_text_edits", args).await });
+    let task = tokio::spawn(async move { canonical_call(&rt, "edit_project_files", args).await });
     assert_eq!(
         service_e2b_call(
             runtime,
@@ -384,7 +387,7 @@ async fn e2c_expired_read_revision_rejected_before_write_dispatch_blocks_ignored
     assert!(emitted["blocked"]
         .as_str()
         .unwrap()
-        .contains("successful canonical apply_text_edits"));
+        .contains("successful canonical edit_project_files"));
     assert!(
         probe_patch_agent_request(&runtime, client).await.is_none(),
         "neither edit nor validator may reach Runner"
@@ -489,7 +492,7 @@ async fn e2c_validator_requires_edit_and_second_mutation_is_pre_dispatch_rejecte
         );
         assert!(probe_patch_agent_request(&runtime, client).await.is_none());
     }
-    let source = format!("{EDIT} await tools.cargo_check({{}}); await tools.apply_text_edits({{changes:[{{path:'src/example.rs',old_text:'after',new_text:'twice'}}]}});");
+    let source = format!("{EDIT} await tools.cargo_check({{}}); await tools.edit_project_files({{changes:[{{kind:'edit',path:'src/example.rs',expected_read_revision:revision,edits:[{{kind:'replace_exact',old_text:'after',new_text:'twice'}}]}}]}});");
     let task = spawn_e2b_call(&runtime, &project, &session, &source, None);
     let request = reach_validation(&runtime, client, &task, MutationFixtureReply::ApplyExact).await;
     validation_reply(&runtime, client, &request, Some(0)).await;

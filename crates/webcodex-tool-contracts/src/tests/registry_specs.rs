@@ -3,8 +3,10 @@ use super::*;
 #[test]
 fn tool_specs_describe_default_coding_loop_preferences() {
     let specs = registered_tool_specs();
+    let specialists = exact_manifest_specialist_tool_specs();
 
     let desc = |name: &str| spec_named(&specs, name).description.to_lowercase();
+    let specialist_desc = |name: &str| spec_named(&specialists, name).description.to_lowercase();
 
     let work_on_project_desc = desc("work_on_project");
     for phrase in [
@@ -338,7 +340,7 @@ fn tool_specs_describe_default_coding_loop_preferences() {
     }
 
     // Patch input remains available without becoming the default recovery path.
-    let apply_patch_desc = desc("apply_patch");
+    let apply_patch_desc = specialist_desc("apply_patch");
     for phrase in [
         "naturally patch-shaped",
         "genuinely the clearest reliable representation",
@@ -362,22 +364,18 @@ fn tool_specs_describe_default_coding_loop_preferences() {
     }
     assert!(!apply_patch_desc.contains("prefer apply_patch"));
 
-    let apply_text_edits_desc = desc("apply_text_edits");
+    let apply_text_edits_desc = desc("edit_project_files");
     for phrase in [
-        "transactional structured option",
-        "small/local exact edits",
-        "globally unique",
-        "may omit expected_read_revision",
-        "occurrence or line_scope",
-        "requires expected_read_revision",
-        "revisions fence whole-file snapshots",
-        "model input never needs a digest",
+        "primary project editor",
+        "read_files",
+        "expected_read_revision",
+        "exact edits fail closed on ambiguity",
+        "replace_range",
+        "same original snapshot",
         "preflighted transactionally",
-        "conflicts fail closed",
-        "rechecks source before mutation",
-        "one parser-ready read_files recovery call",
-        "inspect the resulting diff",
-        "validate the final source",
+        "runner rechecks source",
+        "stale state returns read_files recovery",
+        "outcome_unknown",
     ] {
         assert!(
             apply_text_edits_desc.contains(phrase),
@@ -388,7 +386,7 @@ fn tool_specs_describe_default_coding_loop_preferences() {
     assert!(!apply_text_edits_desc.contains("expected_sha256"));
     assert!(!apply_text_edits_desc.contains("prefer apply_patch"));
 
-    let unified_diff_desc = desc("apply_unified_diff");
+    let unified_diff_desc = specialist_desc("apply_unified_diff");
     for phrase in [
         "external raw unified-diff mutation path",
         "input is already a standard unified diff",
@@ -403,7 +401,7 @@ fn tool_specs_describe_default_coding_loop_preferences() {
         );
     }
 
-    let write_file_desc = desc("write_project_file");
+    let write_file_desc = specialist_desc("write_project_file");
     for phrase in [
         "create a new file",
         "intentional whole-file replacement",
@@ -787,22 +785,22 @@ fn call_hierarchy_schema_keeps_traversal_strict_and_result_budget_clamped() {
 }
 
 #[test]
-fn edit_tool_surface_keeps_mutation_options_visible_and_schemas_stable() {
+fn edit_tool_surface_keeps_one_primary_editor_and_exact_specialists_stable() {
     let specs = registered_tool_specs();
+    let specialist_specs = exact_manifest_specialist_tool_specs();
     let names: std::collections::BTreeSet<&str> =
         specs.iter().map(|spec| spec.name.as_str()).collect();
 
-    for required in [
-        "apply_text_edits",
-        "apply_patch",
-        "apply_unified_diff",
-        "write_project_file",
-    ] {
+    assert!(names.contains("edit_project_files"));
+    for hidden in EXACT_MANIFEST_SPECIALIST_TOOL_NAMES {
+        assert!(!names.contains(hidden), "{hidden} must stay model-hidden");
+    }
+    for required in EXACT_MANIFEST_SPECIALIST_TOOL_NAMES {
         assert!(
-            names.contains(required),
-            "edit surface must keep {required} model-visible"
+            specialist_specs.iter().any(|spec| spec.name == *required),
+            "exact-manifest surface must keep {required}"
         );
-        let spec = spec_named(&specs, required);
+        let spec = spec_named(&specialist_specs, required);
         assert!(
             spec.input_schema.is_object(),
             "{required} must keep an object input schema"
@@ -814,22 +812,22 @@ fn edit_tool_surface_keeps_mutation_options_visible_and_schemas_stable() {
     }
 
     // Parameter surface smoke checks (names only; not full-schema snapshots).
-    let text_edits = &spec_named(&specs, "apply_text_edits").input_schema["properties"];
+    let text_edits = &spec_named(&specs, "edit_project_files").input_schema["properties"];
     for field in ["project", "changes", "dry_run"] {
         assert!(
             text_edits.get(field).is_some(),
             "apply_text_edits must keep field {field}"
         );
     }
-    let text_edit_output =
-        &spec_named(&specs, "apply_text_edits").output_schema["properties"]["output"]["properties"];
+    let text_edit_output = &spec_named(&specs, "edit_project_files").output_schema["properties"]
+        ["output"]["properties"];
     let text_edit_file_properties = text_edit_output["files"]["items"]["properties"]
         .as_object()
         .expect("apply_text_edits file summary properties");
     assert!(text_edit_file_properties.contains_key("read_revision"));
     assert!(!text_edit_file_properties.contains_key("old_sha256"));
     assert!(!text_edit_file_properties.contains_key("new_sha256"));
-    let codex_patch = &spec_named(&specs, "apply_patch").input_schema["properties"];
+    let codex_patch = &spec_named(&specialist_specs, "apply_patch").input_schema["properties"];
     for field in ["project", "patch", "dry_run", "matching_mode"] {
         assert!(
             codex_patch.get(field).is_some(),
@@ -854,7 +852,7 @@ fn edit_tool_surface_keeps_mutation_options_visible_and_schemas_stable() {
         codex_patch.get("strict_matching").is_none(),
         "legacy strict_matching must not remain model-facing"
     );
-    let patch_spec = spec_named(&specs, "apply_patch");
+    let patch_spec = spec_named(&specialist_specs, "apply_patch");
     assert!(patch_spec.description.contains("naturally patch-shaped"));
     assert!(patch_spec
         .description
@@ -950,7 +948,8 @@ fn edit_tool_surface_keeps_mutation_options_visible_and_schemas_stable() {
     assert!(patch_spec.description.contains("Transactional"));
     assert!(patch_spec.description.contains("matching_mode_rejected"));
     assert!(patch_spec.description.contains("weakening the guard"));
-    let unified_diff = &spec_named(&specs, "apply_unified_diff").input_schema["properties"];
+    let unified_diff =
+        &spec_named(&specialist_specs, "apply_unified_diff").input_schema["properties"];
     for field in ["project", "diff", "deny_sensitive_paths"] {
         assert!(
             unified_diff.get(field).is_some(),
@@ -958,7 +957,8 @@ fn edit_tool_surface_keeps_mutation_options_visible_and_schemas_stable() {
         );
     }
     assert!(unified_diff.get("patch").is_none());
-    let write_file = &spec_named(&specs, "write_project_file").input_schema["properties"];
+    let write_file =
+        &spec_named(&specialist_specs, "write_project_file").input_schema["properties"];
     for field in ["project", "path", "content"] {
         assert!(
             write_file.get(field).is_some(),

@@ -139,7 +139,7 @@ Project-scoped `share`/`run` authentication does not create another OpenAPI or M
 At minimum, keep focused invariants for:
 
 - GPT Action direct definitions equal current Adaptive Direct definitions minus explicit `Unsupported` definitions, preserving Adaptive rank order;
-- `apply_text_edits` is direct while an ordinary long-tail tool such as `apply_patch` routes through the gateway;
+- `edit_project_files` is direct while exact-manifest edit specialists such as `apply_patch` stay out of ordinary discovery/direct operations and route through the gateway by exact name;
 - unsupported protocol-only tools are neither direct nor gateway-callable;
 - operation IDs are canonical snake_case names and old camelCase IDs are absent;
 - generated operation count is < 30 with no truncation;

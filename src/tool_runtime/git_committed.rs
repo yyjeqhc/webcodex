@@ -40,11 +40,15 @@ pub(crate) fn committed_git_isolated_view_setup(head: &str, failure: &str) -> St
             "view=$(mktemp -d /tmp/webcodex-git-review.XXXXXX 2>/dev/null) || {{ {failure}; }}; ",
             "cleanup_git_review_view() {{ rm -rf -- \"$view\"; }}; ",
             "trap cleanup_git_review_view EXIT; trap 'exit 130' HUP INT TERM; ",
-            "mkdir -p \"$view/refs\" \"$view/objects/info\" || {{ {failure}; }}; ",
+            "mkdir -p \"$view/refs\" \"$view/objects/info\" \"$view/worktree\" || {{ {failure}; }}; ",
             "printf 'ref: refs/heads/unused\\n' >\"$view/HEAD\" || {{ {failure}; }}; ",
             "printf '[core]\\n\\trepositoryformatversion = 0\\n\\tbare = true\\n\\tattributesFile = /dev/null\\n' >\"$view/config\" || {{ {failure}; }}; ",
-            "export GIT_DIR=\"$view\" GIT_OBJECT_DIRECTORY=\"$object_dir\" GIT_ATTR_SOURCE={head_q} ",
-            "GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null GIT_CONFIG_NOSYSTEM=1; "
+            "export GIT_DIR=\"$view\" GIT_OBJECT_DIRECTORY=\"$object_dir\" GIT_INDEX_FILE=\"$view/index\" GIT_WORK_TREE=\"$view/worktree\" ",
+            "GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null GIT_CONFIG_NOSYSTEM=1; ",
+            "git read-tree {head_q} >/dev/null 2>&1 || {{ {failure}; }}; ",
+            "git ls-files -z -- .gitattributes ':(glob)**/.gitattributes' >\"$view/attr.paths\" || {{ {failure}; }}; ",
+            "git checkout-index -z --stdin --prefix=\"$view/worktree/\" <\"$view/attr.paths\" || {{ {failure}; }}; ",
+            "cd \"$view/worktree\" || {{ {failure}; }}; "
         ),
         failure = failure,
         head_q = shell_escape_simple(head),
@@ -82,7 +86,7 @@ pub(crate) fn committed_git_scope_command(base: &str, head: &str) -> String {
         committed_git_isolated_view_setup(head, "printf 'status=git_view_unavailable\\n'; exit 0");
     let head_q = shell_escape_simple(head);
     let stats_producer = format!(
-        "git --no-pager -c core.quotePath=false -c attr.tree={head_q} diff --no-ext-diff --no-textconv --find-renames --numstat \"$merge_base\" {head_q}"
+        "git --no-pager -c core.quotePath=false diff --no-ext-diff --no-textconv --find-renames --numstat \"$merge_base\" {head_q}"
     );
     let stats_pipeline = checked_git_pipeline_to_file(
         &stats_producer,
@@ -94,11 +98,11 @@ pub(crate) fn committed_git_scope_command(base: &str, head: &str) -> String {
         concat!(
             "{prefix}",
             "if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then printf 'status=not_git\\n'; exit 0; fi; ",
-            "{isolated_view}",
             "base_type=$(git cat-file -t {base_q} 2>/dev/null || true); ",
             "if [ \"$base_type\" != commit ]; then printf 'status=base_not_commit\\n'; exit 0; fi; ",
             "head_type=$(git cat-file -t {head_q} 2>/dev/null || true); ",
             "if [ \"$head_type\" != commit ]; then printf 'status=head_not_commit\\n'; exit 0; fi; ",
+            "{isolated_view}",
             "merge_bases=$(git merge-base --all {base_q} {head_q} 2>/dev/null || true); ",
             "if [ -z \"$merge_bases\" ]; then printf 'status=no_merge_base\\n'; exit 0; fi; ",
             "merge_base_count=$(printf '%s\\n' \"$merge_bases\" | awk 'NF{{n++}} END{{print n+0}}'); ",

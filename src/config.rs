@@ -1,14 +1,33 @@
 use serde::Serialize;
+use std::fmt;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Config {
     pub addr: String,
     pub data_dir: PathBuf,
     pub token: Option<String>,
     pub max_text_size: usize,
     pub oauth2: OAuth2Config,
+}
+
+impl fmt::Debug for Config {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Config")
+            .field("addr", &self.addr)
+            .field("data_dir", &self.data_dir)
+            .field("token", &self.token.as_ref().map(|_| "[REDACTED]"))
+            .field("max_text_size", &self.max_text_size)
+            .field("oauth2_enabled", &self.oauth2.enabled)
+            .field("oauth2_issuer", &self.oauth2.issuer)
+            .field("oauth2_require_pkce", &self.oauth2.require_pkce)
+            .field(
+                "oauth2_shared_key_bridge_enabled",
+                &self.oauth2.shared_key_bridge_enabled,
+            )
+            .finish()
+    }
 }
 
 /// Server-side QUIC Runner transport configuration. Sourced from
@@ -384,7 +403,7 @@ pub(crate) fn load_startup_env_files() -> Result<Vec<EnvFileLoad>, String> {
 ///
 /// The first OAuth2 implementation uses opaque DB-backed tokens. JWT/JWKS/OIDC
 /// can be added later as an extension.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct OAuth2Config {
     /// Public issuer URL for `/.well-known/*` metadata. Defaults to
     /// `WEBCODEX_OAUTH2_ISSUER`, falling back to `WEBCODEX_PUBLIC_URL`.
@@ -418,6 +437,39 @@ pub struct OAuth2Config {
     /// Ephemeral share-session fence. A new `webcodex share --auth oauth`
     /// process uses a new value, invalidating every older project-share grant.
     pub project_share_session_id: Option<String>,
+}
+
+impl fmt::Debug for OAuth2Config {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("OAuth2Config")
+            .field("issuer", &self.issuer)
+            .field("enabled", &self.enabled)
+            .field("access_token_ttl_secs", &self.access_token_ttl_secs)
+            .field("refresh_token_ttl_secs", &self.refresh_token_ttl_secs)
+            .field(
+                "authorization_code_ttl_secs",
+                &self.authorization_code_ttl_secs,
+            )
+            .field("require_pkce", &self.require_pkce)
+            .field("shared_key_bridge_enabled", &self.shared_key_bridge_enabled)
+            .field(
+                "trusted_mcp_file_client_ids_count",
+                &self.trusted_mcp_file_client_ids.len(),
+            )
+            .field(
+                "trust_loopback_api_token_mcp_file_import",
+                &self.trust_loopback_api_token_mcp_file_import,
+            )
+            .field(
+                "project_share_grant_id",
+                &self.project_share_grant_id.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field(
+                "project_share_session_id",
+                &self.project_share_session_id.as_ref().map(|_| "[REDACTED]"),
+            )
+            .finish()
+    }
 }
 
 impl Default for OAuth2Config {
@@ -736,6 +788,45 @@ mod tests {
         assert!(!cfg.shared_key_bridge_enabled);
         assert!(cfg.trusted_mcp_file_client_ids.is_empty());
         assert!(!cfg.trust_loopback_api_token_mcp_file_import);
+    }
+
+    #[test]
+    fn config_debug_redacts_bootstrap_token() {
+        let mut oauth2 = OAuth2Config::default();
+        oauth2.project_share_session_id = Some("private-session-fence".to_string());
+        let config = Config {
+            addr: "127.0.0.1:8080".to_string(),
+            data_dir: PathBuf::from("./data"),
+            token: Some("super-secret-bootstrap-token".to_string()),
+            max_text_size: 2 * 1024 * 1024,
+            oauth2,
+        };
+        let rendered = format!("{config:?}");
+        assert!(!rendered.contains("super-secret-bootstrap-token"));
+        assert!(!rendered.contains("private-session-fence"));
+        assert!(rendered.contains("[REDACTED]"));
+        assert!(rendered.contains("127.0.0.1:8080"));
+    }
+
+    #[test]
+    fn oauth2_config_debug_redacts_project_share_identity_and_client_ids() {
+        let oauth2 = OAuth2Config {
+            issuer: Some("https://issuer.example.com".to_string()),
+            enabled: true,
+            trusted_mcp_file_client_ids: vec!["wc_client_private-client-sentinel".to_string()],
+            project_share_grant_id: Some("private-project-grant-sentinel".to_string()),
+            project_share_session_id: Some("private-session-fence-sentinel".to_string()),
+            ..OAuth2Config::default()
+        };
+        let rendered = format!("{oauth2:?}");
+        assert!(!rendered.contains("private-client-sentinel"));
+        assert!(!rendered.contains("private-project-grant-sentinel"));
+        assert!(!rendered.contains("private-session-fence-sentinel"));
+        assert!(rendered.contains("project_share_grant_id: Some(\"[REDACTED]\")"));
+        assert!(rendered.contains("project_share_session_id: Some(\"[REDACTED]\")"));
+        assert!(rendered.contains("trusted_mcp_file_client_ids_count: 1"));
+        assert!(rendered.contains("https://issuer.example.com"));
+        assert!(rendered.contains("require_pkce: true"));
     }
 
     #[test]

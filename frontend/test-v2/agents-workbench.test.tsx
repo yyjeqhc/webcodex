@@ -123,3 +123,97 @@ it("hides Agent actions when communication read access is denied", async () => {
   expect(screen.queryByRole("button", { name: "Connect as this Agent" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Send message" })).toBeNull();
 });
+
+it.each(["detached", "replaced"])("ignores renewal responses after the Endpoint is %s", async (mode) => {
+  vi.useFakeTimers();
+  try {
+    let resolveRenew!: (value: unknown) => void;
+    const renewal = new Promise(resolve => { resolveRenew = resolve; });
+    let renewSignal: AbortSignal | undefined;
+    let generation = 0;
+    const endpoint = () => ({ endpoint_id: `endpoint-${generation}`, controller_generation: generation, lifecycle: "attached" });
+    const client = clientFor(() => ok({ messages: [] }), (path) => {
+      if (path === "communication/endpoint/attach") { generation++; return ok({ endpoint: endpoint() }); }
+      return ok({});
+    });
+    const originalPost = client.post;
+    client.post = vi.fn((path, payload, signal) => {
+      if (path === "communication/endpoint/renew") { renewSignal = signal; return renewal; }
+      return originalPost(path, payload, signal);
+    }) as RuntimeV2Client["post"];
+    const unauthorized = vi.fn();
+    const { result, unmount } = renderHook(() => useAgentWorkspace(client, true, unauthorized));
+    await act(async () => {});
+    await act(async () => { expect(await result.current.attach()).toBe(true); });
+    const oldEndpoint = result.current.endpoint;
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    expect(vi.mocked(client.post).mock.calls.filter(([path]) => path === "communication/endpoint/renew")).toHaveLength(1);
+    await act(async () => { expect(await result.current.detach()).toBe(true); });
+    if (mode === "replaced") {
+      await act(async () => { expect(await result.current.attach()).toBe(true); });
+    }
+    const expectedEndpoint = result.current.endpoint;
+    await act(async () => resolveRenew(mode === "detached" ? ok({ endpoint: oldEndpoint }) : { ok: false, status: 404, data: null }));
+    expect(result.current.endpoint).toEqual(expectedEndpoint);
+    expect(renewSignal?.aborted).toBe(true);
+    expect(unauthorized).not.toHaveBeenCalled();
+    unmount();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("does not overlap slow renewals and ignores their responses after disable", async () => {
+  vi.useFakeTimers();
+  try {
+    let resolveRenew!: (value: unknown) => void;
+    const renewal = new Promise(resolve => { resolveRenew = resolve; });
+    const attached = { endpoint_id: "endpoint-1", controller_generation: 1, lifecycle: "attached" };
+    const client = clientFor(() => ok({ messages: [] }), path => {
+      if (path === "communication/endpoint/attach") return ok({ endpoint: attached });
+      if (path === "communication/endpoint/renew") return renewal;
+      return ok({});
+    });
+    const unauthorized = vi.fn();
+    const { result, rerender, unmount } = renderHook(({ enabled }) => useAgentWorkspace(client, enabled, unauthorized), { initialProps: { enabled: true } });
+    await act(async () => {});
+    await act(async () => { await result.current.attach(); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(61_000); });
+    expect(vi.mocked(client.post).mock.calls.filter(([path]) => path === "communication/endpoint/renew")).toHaveLength(1);
+    rerender({ enabled: false });
+    await act(async () => resolveRenew({ ok: false, status: 401, data: null }));
+    expect(unauthorized).not.toHaveBeenCalled();
+    expect(result.current.endpoint).toEqual(attached);
+    unmount();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("continues renewing the current Endpoint after a successful heartbeat", async () => {
+  vi.useFakeTimers();
+  try {
+    const attached = { endpoint_id: "endpoint-1", controller_generation: 1, lifecycle: "attached", lease_expires_at_unix_ms: 100 };
+    let renewals = 0;
+    const client = clientFor(() => ok({ messages: [] }), path => {
+      if (path === "communication/endpoint/attach") return ok({ endpoint: attached });
+      if (path === "communication/endpoint/renew") {
+        renewals++;
+        return ok({ endpoint: { ...attached, lease_expires_at_unix_ms: 100 + renewals } });
+      }
+      return ok({});
+    });
+    const unauthorized = vi.fn();
+    const { result, unmount } = renderHook(() => useAgentWorkspace(client, true, unauthorized));
+    await act(async () => {});
+    await act(async () => { await result.current.attach(); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    expect(result.current.endpoint?.lease_expires_at_unix_ms).toBe(101);
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    expect(result.current.endpoint?.lease_expires_at_unix_ms).toBe(102);
+    expect(renewals).toBe(2);
+    unmount();
+  } finally {
+    vi.useRealTimers();
+  }
+});

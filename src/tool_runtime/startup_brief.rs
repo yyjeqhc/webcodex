@@ -160,15 +160,15 @@ fn host_orchestration_catalog() -> Value {
 fn tool_strategy_guidance(profile: CodingGuidanceProfile) -> &'static [&'static str] {
     match profile {
         CodingGuidanceProfile::Direct => &[
-            "Project source mutation: prefer canonical structured editors—apply_text_edits for exact transactional edits, expected_match_count=N for bounded repetitive exact replacement, and apply_patch for patch-shaped changes.",
-            "Use run_script/Python for computation, inspection, generation, non-source transforms, or when structured editing cannot express the change; never use it to bypass revision/SHA fences, rollback, or sensitive-path policy.",
-            "Coalesce known work: read_files(items), search_project_texts(queries), search_and_read for search→source inspection, cargo_check(packages), and one apply_text_edits batch. Keep result-dependent operations sequential; avoid ritual model turns.",
+            "Project source mutation: read_files → edit_project_files. Existing-file edits use expected_read_revision; choose exact edits for unique text and replace_range for deterministic whole-line rewrites from that same snapshot.",
+            "Use run_script/Python for computation, inspection, generation, or non-source transforms; never use it to bypass edit_project_files revision fences, rollback, or sensitive-path policy.",
+            "Coalesce known work: read_files(items), search_project_texts(queries), search_and_read for search→source inspection, cargo_check(packages), and one edit_project_files batch. Keep result-dependent operations sequential; avoid ritual model turns.",
             "Simple observation: direct primitive. Batch predetermined independent observations; adaptive follow-ups stay sequential across model calls.",
             "Known target: bounded targeted reads. Broad discovery: small files/count search then targeted reads. Avoid ritual turns.",
         ],
         CodingGuidanceProfile::HostCodeMode => &[
             "Host-native Code Mode is model guidance only. It grants no WebCodex capability/authority, changes no effects/retry/idempotency, and does not require WebCodex nested Code Mode.",
-            "Known same-kind inputs: prefer native batches such as read_files(items), search_project_texts(queries), cargo_check(packages), or one apply_text_edits batch; do not Promise.all same-kind micro-calls.",
+            "Known same-kind inputs: prefer native batches such as read_files(items), search_project_texts(queries), cargo_check(packages), or one edit_project_files batch; do not Promise.all same-kind micro-calls.",
             "Known independent cross-tool read-only observations: native batches first. For remaining fan-out, use Host Promise.allSettled when partial evidence is useful; use Promise.all only for true all-or-nothing. Prefer search_and_read for search→read; keep result-dependent chains in one Host cell when mechanically determined.",
             "Do not return to the model merely because one child ToolResult arrived. If the next call is mechanically determined with no unresolved semantic choice/uncertainty/authority need, stay in the Host cell and return compact evidence for the next decision.",
             "Natural model-turn boundaries are semantic choice, ambiguous result, new user decision, authority/permission, outcome_unknown or competing recovery, or unresolved mutation intent—not child-call completion.",

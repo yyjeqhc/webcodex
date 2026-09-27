@@ -998,8 +998,6 @@ fn git_diff_hunks_committed_command(
         "--no-pager".to_string(),
         "-c".to_string(),
         "core.quotePath=false".to_string(),
-        "-c".to_string(),
-        format!("attr.tree={head_q}"),
         "diff".to_string(),
         "--no-ext-diff".to_string(),
         "--no-textconv".to_string(),

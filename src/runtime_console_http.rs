@@ -324,6 +324,7 @@ struct WorkflowSessionReplaceMessageInput {
 #[derive(Debug, Serialize)]
 struct RuntimeConsoleOverview {
     authenticated_user: Option<String>,
+    effective_config: Value,
     service: Option<String>,
     version: Option<String>,
     build_git_commit: Option<String>,
@@ -1158,9 +1159,18 @@ fn scan_runtime_home(
         visible.truncated || visible.projects.len().min(HOME_PROJECT_SCAN_LIMIT) < visible.total;
     let mut session_scan_truncated = running_jobs.truncated;
 
+    let project_ids = visible
+        .projects
+        .iter()
+        .take(HOME_PROJECT_SCAN_LIMIT)
+        .map(|project| project.id.as_str())
+        .collect::<Vec<_>>();
+    let mut lists = runtime
+        .workflow_sessions_console_lists(&project_ids, Some(HOME_SESSIONS_PER_PROJECT_LIMIT));
     for project in visible.projects.iter().take(HOME_PROJECT_SCAN_LIMIT) {
-        let mut list = runtime
-            .workflow_sessions_console_list(&project.id, Some(HOME_SESSIONS_PER_PROJECT_LIMIT));
+        let mut list = lists
+            .remove(&project.id)
+            .expect("visible project has a console list");
         apply_running_jobs_to_list(&mut list, &project.id, running_jobs);
         let aggregate = aggregate_console_list(&list);
         add_console_aggregate(&mut workflow, &aggregate);
@@ -2808,8 +2818,10 @@ async fn overview_for_auth(
     auth: &AuthContext,
 ) -> Result<RuntimeConsoleOverview, RuntimeConsoleError> {
     require_runtime_read(auth)?;
-    let status = runtime_status_value(runtime, auth, None).await?;
-    let runners_value = list_runners_value(runtime, auth, None).await?;
+    let (status, runners_value) = tokio::try_join!(
+        runtime_status_value(runtime, auth, None),
+        list_runners_value(runtime, auth, None),
+    )?;
     let summary = runners_value.get("summary").unwrap_or(&Value::Null);
     let build = status.get("build").unwrap_or(&Value::Null);
     let status_clients = status
@@ -2869,6 +2881,7 @@ async fn overview_for_auth(
     let active_windows = active_window_count_for_auth(runtime, auth).await?;
     Ok(RuntimeConsoleOverview {
         authenticated_user: auth.username.clone(),
+        effective_config: runtime.effective_config_status(),
         service: safe_string(status.get("service"), 80),
         version: safe_string(status.get("version"), 80),
         build_git_commit: safe_string(build.get("git_commit"), 80),
@@ -6308,6 +6321,25 @@ mod tests {
         assert_eq!(overview_view.runner_count, 1);
         assert_eq!(overview_view.visible_projects, 1);
         assert!(!overview_view.projects_truncated);
+        assert_eq!(
+            overview_view.effective_config,
+            runtime.effective_config_status()
+        );
+        assert_eq!(
+            overview_view
+                .effective_config
+                .as_object()
+                .unwrap()
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            vec!["auth", "mcp_host", "tool_request_trace_mode"]
+        );
+        assert!(overview_view.effective_config["auth"]
+            .as_object()
+            .unwrap()
+            .values()
+            .all(Value::is_boolean));
 
         let runner_view = runner_for_auth(&runtime, &auth_a, "client-a", Some(20))
             .await

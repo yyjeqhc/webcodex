@@ -21,7 +21,7 @@ belongs so those boundaries do not leak into unrelated mechanical friction.
 
 ### Bounded bulk exact edits
 
-For repetitive mechanical changes in an explicit file, `apply_text_edits` accepts
+For repetitive mechanical changes in an explicit file, `edit_project_files` accepts
 `replace_exact` with `expected_match_count=N` (1..=1024) and a current
 `expected_read_revision`. The Runner replaces every fully contained exact match
 only when the observed count equals N. `occurrence` selects one match and cannot
@@ -34,7 +34,7 @@ Servers reject bulk requests before dispatch to an older Runner that lacks it;
 requests without the field keep their existing admission and unique-match behavior.
 
 For nontrivial bulk changes, read the file and revision, optionally call
-`apply_text_edits(dry_run=true)`, inspect the bounded `match_count` and
+`edit_project_files(dry_run=true)`, inspect the bounded `match_count` and
 `match_ranges`, then send an independent actual request with the still-valid
 guard. The actual request resolves all matches and fences again. A simple,
 obvious bulk edit may be applied directly. Dry-run creates no future mutation

@@ -295,9 +295,11 @@ mod tests {
                 .and_then(Value::as_object)
                 .unwrap_or_else(|| panic!("{name} business schema must expose object properties"));
             for wrapper in [
+                "_wc",
                 "recording_session_id",
                 "ack_session_message_ids",
                 "ack_ref",
+                "window_reply",
                 "context_request",
                 "session_message_resolution",
                 "_control",

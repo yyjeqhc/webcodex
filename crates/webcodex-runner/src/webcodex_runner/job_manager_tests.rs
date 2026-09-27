@@ -1055,7 +1055,7 @@ fn structured_process_helper() -> Arc<StructuredProcessHelper> {
         .get_or_init(|| {
             let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("../../tests/fixtures/process_argv_helper.rs");
-            let temp = tempfile::tempdir().unwrap();
+            let temp = crate::tests::executable_tempdir();
             let output = temp.path().join(format!(
                 "structured-process-helper{}",
                 std::env::consts::EXE_SUFFIX
@@ -4357,7 +4357,7 @@ fn job_tree_helper() -> Arc<JobTreeHelper> {
         .get_or_init(|| {
             let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("../webcodex-process/src/bin/process_tree_helper.rs");
-            let temp = tempfile::tempdir().unwrap();
+            let temp = crate::tests::executable_tempdir();
             let output = temp.path().join(format!(
                 "process-tree-helper{}",
                 std::env::consts::EXE_SUFFIX
@@ -5464,7 +5464,11 @@ fn assert_local_job_stdin_isolated(test_name: &str, validation: bool) {
     const FIXTURE_ENV: &str = "WEBCODEX_TEST_JOB_STDIN_FIXTURE";
     const PARENT_INPUT: &str = "parent-liveness-input-must-not-reach-jobs\n";
     if std::env::var(FIXTURE_ENV).as_deref() == Ok(test_name) {
-        let root = tempfile::tempdir().unwrap();
+        let root = if validation {
+            crate::tests::executable_tempdir()
+        } else {
+            tempfile::tempdir().unwrap()
+        };
         let mut shell = ShellConfig::default();
         #[cfg(windows)]
         let probe =

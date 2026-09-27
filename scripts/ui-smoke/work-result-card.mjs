@@ -7,7 +7,8 @@ import { baseState } from '../../src/mcp_tests/work_result_app_fixture.mjs';
 const html = fs.readFileSync(new URL('../../src/mcp_work_result_app.html', import.meta.url), 'utf8');
 const output = new URL('../../artifacts/projects-runtime/card-review/', import.meta.url);
 fs.mkdirSync(output, { recursive: true });
-const browser = await chromium.launch({ headless: true });
+const chrome = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+const browser = await chromium.launch({ headless: true, ...(fs.existsSync(chrome) ? { executablePath: chrome } : {}) });
 try {
   for (const width of [800, 390]) {
     const page = await browser.newPage({ viewport: { width, height: 1000 }, reducedMotion: 'reduce' });
@@ -50,7 +51,23 @@ try {
     assert.equal(await card.getByText('Running', { exact: true }).count(), 2);
     assert(await card.locator('body').evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
     await page.screenshot({ path: new URL(`work-result-activity-${width}.png`, output).pathname, fullPage: true });
-    await card.getByRole('tab', { name: 'Collaboration', exact: true }).click();
+    await card.getByRole('tab', { name: 'Results', exact: true }).click();
+    await card.getByText('src/a.rs', { exact: true }).waitFor();
+    await card.getByText('Modified · Unstaged', { exact: true }).waitFor();
+    await card.getByText('Checks passed', { exact: true }).waitFor();
+    assert.equal(await card.locator('#finalChanges').isVisible(), false);
+    assert(await card.locator('body').evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
+    await card.locator('#workspaceFiles code').evaluate(node => {
+      window.originalFile = node;
+      const range = document.createRange(); range.selectNodeContents(node);
+      getSelection().removeAllRanges(); getSelection().addRange(range);
+    });
+    await page.evaluate(() => { window.fixtureState.state_version = 'wr2_' + 'c'.repeat(64); });
+    await card.locator('#refresh').evaluate(node => node.click());
+    await card.getByRole('button', { name: 'Refresh', exact: true }).waitFor();
+    assert(await card.locator('#workspaceFiles code').evaluate(node => node === window.originalFile && getSelection().toString() === node.textContent));
+    await page.screenshot({ path: new URL(`work-result-files-${width}.png`, output).pathname, fullPage: true });
+    await card.getByRole('button', { name: 'Discuss these changes', exact: true }).click();
     await card.getByText('Saved', { exact: true }).waitFor();
     await card.locator('#messages .message-copy').evaluate(node => {
       window.originalMessage = node;
@@ -75,5 +92,5 @@ try {
     assert.deepEqual(errors, []);
     await page.close();
   }
-  console.log('Work Result card: selection preservation, exact retry, reduced motion and narrow layout passed at 800 / 390 px.');
+  console.log('Work Result card: live files, Results navigation, selection preservation, exact retry, reduced motion and narrow layout passed at 800 / 390 px.');
 } finally { await browser.close(); }

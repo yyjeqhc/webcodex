@@ -21,7 +21,7 @@ mod e2c;
 const E2B_MUTATION_ONLY_POLICY: OrchestrationPolicy = OrchestrationPolicy {
     frontend: "code_mode_e2b_test",
     policy_name: "Code Mode E2b test",
-    admitted_tools: &["apply_text_edits"],
+    admitted_tools: &["edit_project_files"],
     denied_tools: &["code_mode_exec_mutating"],
     additional_forbidden_argument_fields: &[],
     child_return_timing: crate::tool_runtime::return_timing::ToolReturnTimingPolicy::unconstrained(
@@ -321,6 +321,16 @@ async fn service_e2b_call(
     mutation_requests
 }
 
+async fn wait_for_mutation_request(runtime: &ToolRuntime, client_id: &str) -> RunnerRequest {
+    loop {
+        let request = wait_for_patch_agent_request(runtime, client_id).await;
+        if request.kind == "file_apply_text_edits" {
+            return request;
+        }
+        complete_agent_request_by_running_locally(runtime, client_id, request).await;
+    }
+}
+
 async fn service_tool_task(runtime: &ToolRuntime, client_id: &str, task: &JoinHandle<ToolResult>) {
     let deadline = Instant::now() + Duration::from_secs(20);
     while !task.is_finished() {
@@ -375,7 +385,7 @@ async fn e2b_read_guarded_edit_post_read_preserves_canonical_mutation_truth() {
     let source = r#"
         const before = await tools.read_files({items:[{path:"src/example.rs"}]});
         const revision = before.output.items[0].output.read_revision;
-        const edit = await tools.apply_text_edits({changes:[{
+        const edit = await tools.edit_project_files({changes:[{
             kind:"edit", path:"src/example.rs", expected_read_revision:revision,
             edits:[{kind:"replace_exact", old_text:"{ 1 }", new_text:"{ 2 }"}]
         }]});
@@ -409,7 +419,7 @@ async fn e2b_read_guarded_edit_post_read_preserves_canonical_mutation_truth() {
     assert_eq!(receipt["consequential_calls"], 1);
     assert_eq!(receipt["known_results"], 1);
     assert_eq!(receipt["outcome_unknown"], 0);
-    assert_eq!(receipt["children"][0]["tool"], "apply_text_edits");
+    assert_eq!(receipt["children"][0]["tool"], "edit_project_files");
     assert_eq!(receipt["children"][0]["state_changed"], true);
     assert!(
         runtime
@@ -426,7 +436,7 @@ async fn e2b_noop_mutation_is_known_false_without_edit_provenance() {
     let source = r#"
         const before = await tools.read_files({items:[{path:"src/example.rs"}]});
         const revision = before.output.items[0].output.read_revision;
-        const edit = await tools.apply_text_edits({changes:[{
+        const edit = await tools.edit_project_files({changes:[{
             kind:"edit", path:"src/example.rs", expected_read_revision:revision,
             edits:[{kind:"replace_exact", old_text:"same", new_text:"same"}]
         }]});
@@ -466,7 +476,7 @@ async fn e2b_dry_run_is_known_false_and_never_creates_edit_provenance() {
     let source = r#"
         const before = await tools.read_files({items:[{path:"src/example.rs"}]});
         const revision = before.output.items[0].output.read_revision;
-        const edit = await tools.apply_text_edits({
+        const edit = await tools.edit_project_files({
             dry_run:true,
             changes:[{
                 kind:"edit", path:"src/example.rs", expected_read_revision:revision,
@@ -516,7 +526,7 @@ async fn e2b_stale_revision_preserves_newer_workspace_and_recovery() {
     let source = r#"
         const before = await tools.read_files({items:[{path:"src/example.rs"}]});
         const revision = before.output.items[0].output.read_revision;
-        const edit = await tools.apply_text_edits({changes:[{
+        const edit = await tools.edit_project_files({changes:[{
             kind:"edit", path:"src/example.rs", expected_read_revision:revision,
             edits:[{kind:"replace_exact", old_text:"old", new_text:"bad"}]
         }]});
@@ -562,14 +572,16 @@ async fn e2b_ambiguous_exact_match_fails_closed_and_consumes_mutation_attempt() 
     let (root, runtime, project, session_id) =
         e2b_fixture("e2b-ambiguous", "dup\nother\ndup\n").await;
     let source = r#"
-        const first = await tools.apply_text_edits({changes:[{
-            kind:"edit", path:"src/example.rs",
+        const before = await tools.read_files({items:[{path:"src/example.rs"}]});
+        const revision = before.output.items[0].output.read_revision;
+        const first = await tools.edit_project_files({changes:[{
+            kind:"edit", path:"src/example.rs", expected_read_revision:revision,
             edits:[{kind:"replace_exact", old_text:"dup", new_text:"one"}]
         }]});
         let second_error = null;
         try {
-            await tools.apply_text_edits({changes:[{
-                kind:"edit", path:"src/example.rs",
+            await tools.edit_project_files({changes:[{
+                kind:"edit", path:"src/example.rs", expected_read_revision:revision,
                 edits:[{kind:"replace_exact", old_text:"other", new_text:"two"}]
             }]});
         } catch (error) { second_error = String(error); }
@@ -608,7 +620,7 @@ async fn e2b_js_failure_after_successful_write_keeps_known_true_receipt() {
     let source = r#"
         const before = await tools.read_files({items:[{path:"src/example.rs"}]});
         const revision = before.output.items[0].output.read_revision;
-        await tools.apply_text_edits({changes:[{
+        await tools.edit_project_files({changes:[{
             kind:"edit", path:"src/example.rs", expected_read_revision:revision,
             edits:[{kind:"replace_exact", old_text:"before", new_text:"after"}]
         }]});
@@ -645,9 +657,11 @@ async fn e2b_js_failure_after_successful_write_keeps_known_true_receipt() {
 async fn e2b_promise_all_never_dispatches_two_mutations() {
     let (root, runtime, project, session_id) = e2b_fixture("e2b-two-edits", "one\n").await;
     let source = r#"
+        const before = await tools.read_files({items:[{path:"src/example.rs"}]});
+        const revision = before.output.items[0].output.read_revision;
         await Promise.all([
-            tools.apply_text_edits({changes:[{kind:"edit",path:"src/example.rs",edits:[{kind:"replace_exact",old_text:"one",new_text:"first"}]}]}),
-            tools.apply_text_edits({changes:[{kind:"edit",path:"src/example.rs",edits:[{kind:"replace_exact",old_text:"one",new_text:"second"}]}]})
+            tools.edit_project_files({changes:[{kind:"edit",path:"src/example.rs",expected_read_revision:revision,edits:[{kind:"replace_exact",old_text:"one",new_text:"first"}]}]}),
+            tools.edit_project_files({changes:[{kind:"edit",path:"src/example.rs",expected_read_revision:revision,edits:[{kind:"replace_exact",old_text:"one",new_text:"second"}]}]})
         ]);
     "#;
     let task = spawn_e2b_call(&runtime, &project, &session_id, source, None);
@@ -674,17 +688,18 @@ async fn e2b_promise_all_never_dispatches_two_mutations() {
 async fn e2b_timeout_after_mutation_dispatch_reconciles_known_true_result() {
     let (root, runtime, project, session_id) = e2b_fixture("e2b-timeout-known", "before\n").await;
     let source = r#"
-        tools.apply_text_edits({changes:[{
-            kind:"edit", path:"src/example.rs",
+        const before = await tools.read_files({items:[{path:"src/example.rs"}]});
+        const revision = before.output.items[0].output.read_revision;
+        tools.edit_project_files({changes:[{
+            kind:"edit", path:"src/example.rs", expected_read_revision:revision,
             edits:[{kind:"replace_exact", old_text:"before", new_text:"after"}]
         }]});
         while (true) {}
     "#;
     // Keep the frontend deadline above host scheduling jitter so this test
     // exercises timeout only after the mutation has entered canonical dispatch.
-    let task = spawn_e2b_call(&runtime, &project, &session_id, source, Some(1000));
-    let request = wait_for_patch_agent_request(&runtime, "e2b-timeout-known").await;
-    assert_eq!(request.kind, "file_apply_text_edits");
+    let task = spawn_e2b_call(&runtime, &project, &session_id, source, Some(3000));
+    let request = wait_for_mutation_request(&runtime, "e2b-timeout-known").await;
     tokio::time::sleep(Duration::from_millis(100)).await;
     complete_mutation_fixture(
         &runtime,
@@ -722,8 +737,10 @@ async fn e2b_timeout_after_mutation_dispatch_reconciles_known_true_result() {
 async fn e2b_mutation_stall_beyond_bounded_drain_returns_outcome_unknown() {
     let (root, runtime, project, session_id) = e2b_fixture("e2b-timeout-unknown", "before\n").await;
     let source = r#"
-        tools.apply_text_edits({changes:[{
-            kind:"edit", path:"src/example.rs",
+        const before = await tools.read_files({items:[{path:"src/example.rs"}]});
+        const revision = before.output.items[0].output.read_revision;
+        tools.edit_project_files({changes:[{
+            kind:"edit", path:"src/example.rs", expected_read_revision:revision,
             edits:[{kind:"replace_exact", old_text:"before", new_text:"after"}]
         }]});
         while (true) {}
@@ -731,8 +748,7 @@ async fn e2b_mutation_stall_beyond_bounded_drain_returns_outcome_unknown() {
     // Keep the frontend deadline above host scheduling jitter so the child
     // reaches canonical dispatch before bounded drain is exercised.
     let task = spawn_e2b_call(&runtime, &project, &session_id, source, Some(1000));
-    let request = wait_for_patch_agent_request(&runtime, "e2b-timeout-unknown").await;
-    assert_eq!(request.kind, "file_apply_text_edits");
+    let request = wait_for_mutation_request(&runtime, "e2b-timeout-unknown").await;
     let result = tokio::time::timeout(Duration::from_secs(8), task)
         .await
         .expect("E2b must return after the bounded five-second reconciliation")
@@ -767,6 +783,11 @@ async fn e2b_mutation_stall_beyond_bounded_drain_returns_outcome_unknown() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn e2b_same_project_mutation_fence_serializes_independent_hosts() {
     let (root, runtime, project, first_session_id) = e2b_fixture("e2b-fence-same", "one\n").await;
+    fs::write(root.path().join("src/other.rs"), "two\n").unwrap();
+    let first_revision =
+        seed_read_revision(&runtime, &project, "src/example.rs", &"a".repeat(64)).await;
+    let second_revision =
+        seed_read_revision(&runtime, &project, "src/other.rs", &"b".repeat(64)).await;
     let second_session = runtime
         .sessions
         .start_session(Some(project.clone()), Some("second E2b host".to_string()));
@@ -794,8 +815,8 @@ async fn e2b_same_project_mutation_fence_serializes_independent_hosts() {
         async move {
             host.invoke_tool(
                 1,
-                "apply_text_edits".to_string(),
-                json!({"changes":[{"kind":"edit","path":"src/example.rs","edits":[{"kind":"replace_exact","old_text":"one","new_text":"first"}]}]}),
+                "edit_project_files".to_string(),
+                json!({"changes":[{"kind":"edit","path":"src/example.rs","expected_read_revision":first_revision,"edits":[{"kind":"replace_exact","old_text":"one","new_text":"first"}]}]}),
             )
             .await
         }
@@ -816,8 +837,8 @@ async fn e2b_same_project_mutation_fence_serializes_independent_hosts() {
         async move {
             host.invoke_tool(
                 1,
-                "apply_text_edits".to_string(),
-                json!({"changes":[{"kind":"edit","path":"src/example.rs","edits":[{"kind":"replace_exact","old_text":"first","new_text":"second"}]}]}),
+                "edit_project_files".to_string(),
+                json!({"changes":[{"kind":"edit","path":"src/other.rs","expected_read_revision":second_revision,"edits":[{"kind":"replace_exact","old_text":"two","new_text":"second"}]}]}),
             )
             .await
         }
@@ -856,6 +877,10 @@ async fn e2b_same_project_mutation_fence_serializes_independent_hosts() {
     assert!(second.await.unwrap().unwrap().success);
     assert_eq!(
         fs::read_to_string(root.path().join("src/example.rs")).unwrap(),
+        "first\n"
+    );
+    assert_eq!(
+        fs::read_to_string(root.path().join("src/other.rs")).unwrap(),
         "second\n"
     );
 }
@@ -888,6 +913,8 @@ async fn e2b_mutation_fence_is_project_scoped_not_process_global() {
     let session_two = runtime
         .sessions
         .start_session(Some(project_two.clone()), Some("P2 E2b host".to_string()));
+    let project_two_revision =
+        seed_read_revision(&runtime, &project_two, "src/example.rs", &"c".repeat(64)).await;
     let project_one_guard = runtime
         .orchestration_mutation_fences
         .hold_project_for_test(&project_one)
@@ -906,8 +933,8 @@ async fn e2b_mutation_fence_is_project_scoped_not_process_global() {
         async move {
             host.invoke_tool(
                 1,
-                "apply_text_edits".to_string(),
-                json!({"changes":[{"kind":"edit","path":"src/example.rs","edits":[{"kind":"replace_exact","old_text":"two","new_text":"changed"}]}]}),
+                "edit_project_files".to_string(),
+                json!({"changes":[{"kind":"edit","path":"src/example.rs","expected_read_revision":project_two_revision,"edits":[{"kind":"replace_exact","old_text":"two","new_text":"changed"}]}]}),
             )
             .await
         }
@@ -1100,7 +1127,7 @@ async fn e2b_nested_edit_drives_real_final_changes_baseline_to_full_final_worksp
     let source = r#"
         const before=await tools.read_files({items:[{path:"README.md"}]});
         const revision=before.output.items[0].output.read_revision;
-        const edit=await tools.apply_text_edits({changes:[{
+        const edit=await tools.edit_project_files({changes:[{
             kind:"edit",path:"README.md",expected_read_revision:revision,
             edits:[{kind:"replace_exact",old_text:"base readme",new_text:"E2b readme"}]
         }]});
@@ -1249,7 +1276,7 @@ async fn e2b_outer_only_noop_and_prestart_failure_do_not_create_final_changes_el
         &runtime,
         &project,
         &noop.session_id,
-        "const r=await tools.apply_text_edits({changes:[{kind:'edit',path:'README.md',edits:[{kind:'replace_exact',old_text:'base',new_text:'base'}]}]}); text(String(r.output.state_changed));",
+        "const before=await tools.read_files({items:[{path:'README.md'}]}); const revision=before.output.items[0].output.read_revision; const r=await tools.edit_project_files({changes:[{kind:'edit',path:'README.md',expected_read_revision:revision,edits:[{kind:'replace_exact',old_text:'base',new_text:'base'}]}]}); text(String(r.output.state_changed));",
         None,
     );
     service_e2b_call(
@@ -1278,7 +1305,7 @@ async fn e2b_outer_only_noop_and_prestart_failure_do_not_create_final_changes_el
         &runtime,
         &project,
         &prestart.session_id,
-        "await tools.apply_text_edits({changes:[]});",
+        "await tools.edit_project_files({changes:[]});",
         None,
     )
     .await
@@ -1300,8 +1327,9 @@ async fn e2b_outer_only_noop_and_prestart_failure_do_not_create_final_changes_el
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn direct_apply_text_edits_does_not_acquire_experimental_orchestration_fence() {
+async fn direct_edit_project_files_does_not_acquire_experimental_orchestration_fence() {
     let (root, runtime, project, session_id) = e2b_fixture("e2b-direct-unlocked", "before\n").await;
+    let revision = seed_read_revision(&runtime, &project, "src/example.rs", &"a".repeat(64)).await;
     let project_guard = runtime
         .orchestration_mutation_fences
         .hold_project_for_test(&project)
@@ -1311,20 +1339,22 @@ async fn direct_apply_text_edits_does_not_acquire_experimental_orchestration_fen
         let project = project.clone();
         let session_id = session_id.clone();
         async move {
+            let mut change = edit_change(
+                "src/example.rs",
+                &"a".repeat(64),
+                vec![text_edit(
+                    crate::tool_runtime::ApplyTextEditKind::ReplaceExact,
+                    Some("before"),
+                    Some("direct"),
+                    None,
+                )],
+            );
+            change.expected_read_revision = Some(revision);
             runtime
                 .dispatch_with_auth(
                     ToolCall::ApplyTextEdits {
                         project,
-                        changes: vec![edit_change(
-                            "src/example.rs",
-                            &"a".repeat(64),
-                            vec![text_edit(
-                                crate::tool_runtime::ApplyTextEditKind::ReplaceExact,
-                                Some("before"),
-                                Some("direct"),
-                                None,
-                            )],
-                        )],
+                        changes: vec![change],
                         dry_run: None,
                         session_id: Some(session_id),
                     },
@@ -1344,7 +1374,7 @@ async fn direct_apply_text_edits_does_not_acquire_experimental_orchestration_fen
     .await;
     let result = tokio::time::timeout(Duration::from_secs(2), direct)
         .await
-        .expect("direct apply_text_edits must ignore the E2b orchestration fence")
+        .expect("direct edit_project_files must ignore the E2b orchestration fence")
         .unwrap();
     assert!(result.success, "{result:?}");
     drop(project_guard);
@@ -1369,13 +1399,13 @@ async fn e1_and_e2a_remain_unable_to_dispatch_apply_text_edits_after_e2b() {
                     "code_mode_exec" => ToolCall::CodeModeExec {
                         project: project.clone(),
                         session_id: session.session_id,
-                        source: "try { await tools.apply_text_edits({changes:[{kind:'create',path:'forbidden.txt',content:'x'}]}); } catch (e) { text(String(e)); }".to_string(),
+                        source: "try { await tools.edit_project_files({changes:[{kind:'create',path:'forbidden.txt',content:'x'}]}); } catch (e) { text(String(e)); }".to_string(),
                         timeout_ms: Some(2_000),
                     },
                     _ => ToolCall::CodeModeExecEffectful {
                         project: project.clone(),
                         session_id: session.session_id,
-                        source: "try { await tools.apply_text_edits({changes:[{kind:'create',path:'forbidden.txt',content:'x'}]}); } catch (e) { text(String(e)); }".to_string(),
+                        source: "try { await tools.edit_project_files({changes:[{kind:'create',path:'forbidden.txt',content:'x'}]}); } catch (e) { text(String(e)); }".to_string(),
                         timeout_ms: Some(2_000),
                     },
                 },
@@ -1411,7 +1441,7 @@ async fn e2b_parent_omits_retired_continuity_overlays_after_nested_edit() {
                     arguments: json!({
                         "project": project_for_call,
                         "session_id": session_for_call,
-                        "source": "const e=await tools.apply_text_edits({changes:[{kind:'edit',path:'src/example.rs',edits:[{kind:'replace_exact',old_text:'before',new_text:'after'}]}]}); text(String(e.output.state_changed));"
+                        "source": "const before=await tools.read_files({items:[{path:'src/example.rs'}]}); const revision=before.output.items[0].output.read_revision; const e=await tools.edit_project_files({changes:[{kind:'edit',path:'src/example.rs',expected_read_revision:revision,edits:[{kind:'replace_exact',old_text:'before',new_text:'after'}]}]}); text(String(e.output.state_changed));"
                     }),
                 },
                 ToolCallContext {
@@ -1430,7 +1460,7 @@ async fn e2b_parent_omits_retired_continuity_overlays_after_nested_edit() {
             )
             .await
     });
-    let request = wait_for_patch_agent_request(&runtime, "e2b-session-continuity").await;
+    let request = wait_for_mutation_request(&runtime, "e2b-session-continuity").await;
     complete_mutation_fixture(
         &runtime,
         "e2b-session-continuity",
@@ -1502,7 +1532,7 @@ async fn e2b_missing_outer_write_scope_rejects_before_nested_dispatch() {
                 arguments: json!({
                     "project": project,
                     "session_id": session_id,
-                    "source": "await tools.apply_text_edits({changes:[{kind:'create',path:'x.txt',content:'x'}]})"
+                    "source": "await tools.edit_project_files({changes:[{kind:'create',path:'x.txt',content:'x'}]})"
                 }),
             },
             ToolCallContext {
@@ -1547,7 +1577,7 @@ async fn e2b_child_permission_denial_is_canonical_and_non_effectful() {
     let nested = host
         .invoke_tool(
             1,
-            "apply_text_edits".to_string(),
+            "edit_project_files".to_string(),
             json!({"changes":[{"kind":"create","path":"blocked.txt","content":"x"}]}),
         )
         .await
@@ -1585,7 +1615,7 @@ async fn e2b_runner_capability_failure_never_claims_mutation() {
     let source = r#"
         const before=await tools.read_files({items:[{path:"example.rs"}]});
         const revision=before.output.items[0].output.read_revision;
-        const r=await tools.apply_text_edits({changes:[{
+        const r=await tools.edit_project_files({changes:[{
             kind:"edit",path:"example.rs",expected_read_revision:revision,
             edits:[{kind:"replace_exact",old_text:"dup",new_text:"x",line_scope:{start_line:1,end_line:1}}]
         }]});

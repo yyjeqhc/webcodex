@@ -233,32 +233,53 @@ export function useAgentWorkspace(
 
   useEffect(() => {
     if (!enabled || !endpoints.size) return;
+    const controller = new AbortController();
+    let renewing = false;
     const timer = window.setInterval(() => {
+      if (renewing) return;
+      renewing = true;
       void (async () => {
-        for (const [agentId, value] of Array.from(endpoints.entries())) {
-          const response = await renewEndpoint(client, value.endpoint_id, value.controller_generation);
-          if (response?.status === 401) {
-            onUnauthorized();
-            return;
+        try {
+          for (const [agentId, value] of Array.from(endpoints.entries())) {
+            const response = await renewEndpoint(client, value.endpoint_id, value.controller_generation, controller.signal);
+            // Ignore heartbeats from a detached/replaced Endpoint or disposed view.
+            if (controller.signal.aborted) return;
+            if (response?.status === 401) {
+              onUnauthorized();
+              return;
+            }
+            if (response?.status === 403) {
+              setManageAvailable(false);
+              return;
+            }
+            if (response?.status === 400 || response?.status === 404) {
+              setEndpoints((current) => {
+                const latest = current.get(agentId);
+                if (latest?.endpoint_id !== value.endpoint_id ||
+                    latest.controller_generation !== value.controller_generation) return current;
+                const updated = new Map(current);
+                updated.delete(agentId);
+                return updated;
+              });
+            } else if (response?.ok && response.data?.endpoint) {
+              setManageAvailable(true);
+              setEndpoints((current) => {
+                const latest = current.get(agentId);
+                if (latest?.endpoint_id !== value.endpoint_id ||
+                    latest.controller_generation !== value.controller_generation) return current;
+                return new Map(current).set(agentId, response.data!.endpoint!);
+              });
+            }
           }
-          if (response?.status === 403) {
-            setManageAvailable(false);
-            return;
-          }
-          if (response?.status === 400 || response?.status === 404) {
-            setEndpoints((current) => {
-              const updated = new Map(current);
-              updated.delete(agentId);
-              return updated;
-            });
-          } else if (response?.ok && response.data?.endpoint) {
-            setManageAvailable(true);
-            setEndpoints((current) => new Map(current).set(agentId, response.data!.endpoint!));
-          }
+        } finally {
+          renewing = false;
         }
       })();
     }, 30_000);
-    return () => window.clearInterval(timer);
+    return () => {
+      window.clearInterval(timer);
+      controller.abort();
+    };
   }, [client, enabled, endpoints, onUnauthorized]);
 
   const createAgentAction = useCallback(async (input: {

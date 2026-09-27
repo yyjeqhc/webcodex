@@ -357,6 +357,7 @@ export function App() {
             onOpenWindow={openWindow}
             onOpenSession={openSession}
             onLocateSession={locateExactSession}
+            onOpenSessionRecord={openSessionRecord}
             requestedWindowKey={workWindowTarget?.windowKey}
             requestedSessionId={workWindowTarget?.sessionId}
             onRequestedWindowConsumed={() => setWorkWindowTarget(null)}
@@ -379,6 +380,9 @@ export function App() {
             language={language}
             overview={overview}
             overviewAvailability={overviewState.availability}
+            onRefresh={overviewState.refresh}
+            updatedAt={overviewState.updatedAt}
+            refreshing={overviewState.refreshing}
             onOpenWork={() => { setWorkSurface("windows"); setView("work"); }}
             onUnauthorized={handleUnauthorized}
             target={runtimeTarget}

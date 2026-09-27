@@ -28,14 +28,20 @@ export function useGoalWorkspace(
   const [truncated, setTruncated] = useState(false);
   const [selectedGoalId, setSelectedGoalId] = useState("");
   const [detail, setDetail] = useState<GoalDetailResponse | null>(null);
-  const [revision, setRevision] = useState(0);
+  const [listRevision, setListRevision] = useState(0);
+  const [detailRevision, setDetailRevision] = useState(0);
   const listRequest = useRef<AbortController | null>(null);
   const detailRequest = useRef<AbortController | null>(null);
   const loadedGoal = useRef("");
-  const refresh = useCallback(() => setRevision((value) => value + 1), []);
+  const refresh = useCallback(() => {
+    // A slow resource must not block its peer or be canceled by the next poll.
+    if (!listRequest.current) setListRevision((value) => value + 1);
+    if (!detailRequest.current) setDetailRevision((value) => value + 1);
+  }, []);
 
   useEffect(() => {
     listRequest.current?.abort();
+    listRequest.current = null;
     if (!enabled) {
       setAvailability("idle");
       return;
@@ -44,7 +50,7 @@ export function useGoalWorkspace(
     listRequest.current = controller;
     setAvailability((value) => value === "idle" ? "loading" : value);
     void fetchGoals(client, undefined, controller.signal).then((response) => {
-      if (listRequest.current !== controller || !response) return;
+      if (listRequest.current !== controller || controller.signal.aborted || !response) return;
       listRequest.current = null;
       if (response.status === 401) {
         onUnauthorized();
@@ -76,11 +82,15 @@ export function useGoalWorkspace(
         ? current
         : rows[0]?.goal_id || "");
     });
-    return () => controller.abort();
-  }, [client, enabled, onUnauthorized, revision]);
+    return () => {
+      controller.abort();
+      if (listRequest.current === controller) listRequest.current = null;
+    };
+  }, [client, enabled, onUnauthorized, listRevision]);
 
   useEffect(() => {
     detailRequest.current?.abort();
+    detailRequest.current = null;
     if (!enabled || !selectedGoalId) {
       loadedGoal.current = "";
       setDetail(null);
@@ -96,7 +106,7 @@ export function useGoalWorkspace(
     const controller = new AbortController();
     detailRequest.current = controller;
     void fetchGoal(client, selectedGoalId, controller.signal).then((response) => {
-      if (detailRequest.current !== controller || !response) return;
+      if (detailRequest.current !== controller || controller.signal.aborted || !response) return;
       detailRequest.current = null;
       if (response.status === 401) {
         onUnauthorized();
@@ -114,8 +124,11 @@ export function useGoalWorkspace(
       setDetail(response.data);
       setDetailAvailability("available");
     });
-    return () => controller.abort();
-  }, [client, enabled, onUnauthorized, revision, selectedGoalId]);
+    return () => {
+      controller.abort();
+      if (detailRequest.current === controller) detailRequest.current = null;
+    };
+  }, [client, enabled, onUnauthorized, detailRevision, selectedGoalId]);
 
   useEffect(() => {
     if (!enabled) return;

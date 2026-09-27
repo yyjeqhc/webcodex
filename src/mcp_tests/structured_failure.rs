@@ -360,7 +360,7 @@ async fn wait_for_failure_request(runtime: &ToolRuntime) -> crate::runner_protoc
 
 async fn complete_failure_request(runtime: &ToolRuntime, tool: &str) {
     let request = wait_for_failure_request(runtime).await;
-    let edit = tool == "apply_text_edits";
+    let edit = tool == "edit_project_files";
     assert_eq!(
         request.kind,
         if edit {
@@ -624,15 +624,39 @@ async fn http_mcp_passthrough_preserves_mixed_image_content_order() {
     }
 }
 
+async fn seed_failure_edit_revision(runtime: &ToolRuntime) -> u64 {
+    let resolved = runtime
+        .resolve_project_input("agent:failure-runner:probe")
+        .await
+        .unwrap();
+    let runner = runtime
+        .runner_registry
+        .get_runner_view(&resolved.config.client_id)
+        .await
+        .expect("failure Runner");
+    runtime.read_revisions.observe(
+        crate::tool_runtime::ReadRevisionTarget {
+            project_id: resolved.resolved_id,
+            path: "probe.txt".to_string(),
+            client_id: resolved.config.client_id,
+            runner_instance_id: runner.runner_instance_id,
+            project_root: resolved.config.path,
+            root_fingerprint: resolved.root_fingerprint,
+        },
+        "a".repeat(64),
+    )
+}
+
 #[allow(clippy::await_holding_lock)]
 #[tokio::test]
-async fn http_apply_text_edits_and_process_failures_preserve_canonical_output() {
+async fn http_edit_project_files_and_process_failures_preserve_canonical_output() {
     let _env = crate::auth::AuthEnvGuard::new();
     _env.enable_direct_shared_key();
     _env.disable_open_anonymous();
     let (_tmp, db) = test_db();
     let runtime = Arc::new(test_runtime());
     register_failure_runner(&runtime).await;
+    let edit_revision = seed_failure_edit_revision(&runtime).await;
     let service = Service::new(build_test_router(
         test_config(Some("secret")),
         db,
@@ -640,8 +664,8 @@ async fn http_apply_text_edits_and_process_failures_preserve_canonical_output() 
     ));
     for (tool, arguments) in [
         (
-            "apply_text_edits",
-            json!({"project": "agent:failure-runner:probe", "changes": [{"kind": "edit", "path": "probe.txt", "edits": [{"kind": "replace_exact", "old_text": "dup", "new_text": "replacement"}]}]}),
+            "edit_project_files",
+            json!({"project": "agent:failure-runner:probe", "changes": [{"kind": "edit", "path": "probe.txt", "expected_read_revision": edit_revision, "edits": [{"kind": "replace_exact", "old_text": "dup", "new_text": "replacement"}]}]}),
         ),
         (
             "run_process",
@@ -662,19 +686,21 @@ async fn http_apply_text_edits_and_process_failures_preserve_canonical_output() 
             let (status, mut body) = response;
             assert_eq!(status, StatusCode::OK, "{body}");
             let output = assert_failure(&body, client != "openai-mcp");
-            if tool == "apply_text_edits" {
+            if tool == "edit_project_files" {
                 assert_eq!(output["error_kind"], "multiple_matches");
                 assert_eq!(output["state_changed"], false);
                 assert_eq!(output["execution_state"], "not_started");
                 assert_eq!(output["match_count"], 2);
                 assert_eq!(
                     output["candidate_ranges"],
-                    json!([{"start_line": 10, "end_line": 10}, {"start_line": 20, "end_line": 20}])
+                    json!([
+                        {"occurrence": 1, "start_line": 10, "end_line": 10},
+                        {"occurrence": 2, "start_line": 20, "end_line": 20}
+                    ])
                 );
-                assert_eq!(output["recovery"]["tool"], "read_files");
-                assert_eq!(
-                    output["recovery"]["arguments"]["items"][0]["path"],
-                    "probe.txt"
+                assert!(
+                    output.get("recovery").is_none(),
+                    "same guarded snapshot can retry by occurrence/range without rereading"
                 );
             } else {
                 assert_eq!(output["execution_state"], "completed");

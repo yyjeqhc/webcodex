@@ -7,7 +7,8 @@ import { startFixtureServer } from './server.mjs';
 const output = new URL('../../artifacts/runtime-call-stream/', import.meta.url);
 fs.mkdirSync(output, { recursive: true });
 const fixture = await startFixtureServer();
-const browser = await chromium.launch({ headless: true });
+const chrome = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+const browser = await chromium.launch({ headless: true, ...(fs.existsSync(chrome) ? { executablePath: chrome } : {}) });
 const errors = [];
 const checks = [];
 try {
@@ -111,7 +112,7 @@ try {
         assert(headerText.includes('/fixture/alpha'), headerText);
         assert(headerText.includes('agent:fixture-runner:alpha'), headerText);
         assert(headerText.includes(zh ? '首次活跃' : 'First active'), headerText);
-        assert(!headerText.includes('47004700'), headerText);
+        assert(headerText.includes('47004700'), headerText);
         const selectedRowText = (await page.locator('.window-work-row.selected').textContent()) || '';
         assert(!selectedRowText.includes('47004700'), selectedRowText);
         await page.getByText(zh ? '正在加载历史记录…' : 'Loading history…', { exact: true }).waitFor();

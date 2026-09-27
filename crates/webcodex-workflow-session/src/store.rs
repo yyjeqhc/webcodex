@@ -969,37 +969,68 @@ impl SessionStore {
         limit: Option<usize>,
         validation: ConsoleValidationHooks,
     ) -> WorkflowSessionConsoleList {
+        self.console_lists_for_projects(&[project], limit, validation)
+            .remove(project)
+            .expect("requested project has a console list")
+    }
+
+    /// Scan retained identities once for an already-authorized set of projects.
+    /// Each project keeps its own ordering and limit; no cross-request cache is kept.
+    pub fn console_lists_for_projects(
+        &self,
+        projects: &[&str],
+        limit: Option<usize>,
+        validation: ConsoleValidationHooks,
+    ) -> HashMap<String, WorkflowSessionConsoleList> {
         let limit = normalize_console_session_limit(limit);
-        let (candidates, total) = {
-            let inner = self.inner.lock().expect("session store mutex poisoned");
-            let mut candidates = inner
-                .sessions
-                .values()
-                .filter(|session| session.project() == Some(project))
-                .map(|session| (session.session_id().to_string(), session.updated_at()))
-                .collect::<Vec<_>>();
-            candidates
-                .sort_by(|left, right| right.1.cmp(&left.1).then_with(|| right.0.cmp(&left.0)));
-            let total = candidates.len();
-            candidates.truncate(limit);
-            (candidates, total)
-        };
-        let sessions = candidates
-            .into_iter()
-            .filter_map(|(session_id, _)| {
-                self.with_record_for_query(&session_id, |record, _| {
-                    (record.project.as_deref() == Some(project))
-                        .then(|| build_console_list_item(record, project, validation))
-                })
-                .flatten()
-            })
-            .collect::<Vec<_>>();
-        WorkflowSessionConsoleList {
-            returned: sessions.len(),
-            truncated: total > limit,
-            total,
-            sessions,
+        let mut candidates: HashMap<&str, Vec<(String, i64)>> = projects
+            .iter()
+            .map(|project| (*project, Vec::new()))
+            .collect();
+        if candidates.is_empty() {
+            return HashMap::new();
         }
+        {
+            let inner = self.inner.lock().expect("session store mutex poisoned");
+            for session in inner.sessions.values() {
+                if let Some(rows) = session
+                    .project()
+                    .and_then(|project| candidates.get_mut(project))
+                {
+                    rows.push((session.session_id().to_string(), session.updated_at()));
+                }
+            }
+        }
+        // Sort and materialize outside the inventory lock. Cold records retain
+        // their ordinary query path, including the exact-project recheck.
+        candidates
+            .into_iter()
+            .map(|(project, mut candidates)| {
+                candidates
+                    .sort_by(|left, right| right.1.cmp(&left.1).then_with(|| right.0.cmp(&left.0)));
+                let total = candidates.len();
+                candidates.truncate(limit);
+                let sessions = candidates
+                    .into_iter()
+                    .filter_map(|(session_id, _)| {
+                        self.with_record_for_query(&session_id, |record, _| {
+                            (record.project.as_deref() == Some(project))
+                                .then(|| build_console_list_item(record, project, validation))
+                        })
+                        .flatten()
+                    })
+                    .collect::<Vec<_>>();
+                (
+                    project.to_string(),
+                    WorkflowSessionConsoleList {
+                        returned: sessions.len(),
+                        truncated: total > limit,
+                        total,
+                        sessions,
+                    },
+                )
+            })
+            .collect()
     }
 
     /// Bounded, read-only human timeline for one exact project-scoped Session.

@@ -1178,7 +1178,7 @@ fn extract_tool_call_accepts_explicit_checkpoint_restore_params() {
 #[test]
 fn extract_tool_call_accepts_explicit_apply_text_edits_params() {
     let (tool, params) = extract_tool_call(&json!({
-        "tool": "apply_text_edits",
+        "tool": "edit_project_files",
         "params": {
             "project": "agent:special:test",
             "dry_run": true,
@@ -1192,7 +1192,7 @@ fn extract_tool_call_accepts_explicit_apply_text_edits_params() {
     }))
     .unwrap();
 
-    assert_eq!(tool, "apply_text_edits");
+    assert_eq!(tool, "edit_project_files");
     assert_eq!(params["project"], "agent:special:test");
     assert_eq!(params["dry_run"], true);
     let changes = params["changes"].as_array().unwrap();
@@ -2769,10 +2769,15 @@ async fn http_tools_list_includes_phase4_edit_tools() {
     ] {
         assert!(!names.iter().any(|n| n == removed));
     }
-    assert!(names.iter().any(|n| n == "write_project_file"));
+    for hidden in webcodex_tool_contracts::EXACT_MANIFEST_SPECIALIST_TOOL_NAMES {
+        assert!(
+            !names.iter().any(|n| n == hidden),
+            "exact-manifest specialist leaked into ordinary tools/list: {hidden}"
+        );
+    }
     assert_eq!(body["count"], names.len());
     let tools = body["tools"].as_array().unwrap();
-    for name in ["read_files", "run_shell", "write_project_file"] {
+    for name in ["read_files", "run_shell", "edit_project_files"] {
         let tool = tools
             .iter()
             .find(|tool| tool["name"] == name)

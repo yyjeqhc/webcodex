@@ -11,6 +11,111 @@ const transcript = { available: true, can_send: true, messages: [
 ], truncated: false };
 
 describe("Window collaboration", () => {
+  it("polls only while visible and refreshes immediately on return", async () => {
+    vi.useFakeTimers();
+    let visibility: DocumentVisibilityState = "visible";
+    vi.spyOn(document, "visibilityState", "get").mockImplementation(() => visibility);
+    const post = vi.fn(async () => ({ ok: true, status: 200, data: transcript }));
+    const client = { post } as unknown as RuntimeV2Client;
+    const onUnauthorized = vi.fn();
+    const panel = (active: boolean) => <WindowCollaboration client={client} windowKey="exact-window" selectedSessionId="" language="en" onUnauthorized={onUnauthorized} active={active} />;
+    const view = render(panel(false));
+    try {
+      await act(async () => { await vi.advanceTimersByTimeAsync(9000); });
+      expect(post).not.toHaveBeenCalled();
+      await act(async () => { view.rerender(panel(true)); });
+      expect(post).toHaveBeenCalledTimes(1);
+      fireEvent.change(screen.getByRole("textbox"), { target: { value: "Keep my draft" } });
+      await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
+      expect(post).toHaveBeenCalledTimes(2);
+      view.rerender(panel(false));
+      await act(async () => { await vi.advanceTimersByTimeAsync(9000); });
+      expect(post).toHaveBeenCalledTimes(2);
+      await act(async () => { view.rerender(panel(true)); });
+      expect(post).toHaveBeenCalledTimes(3);
+      expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe("Keep my draft");
+      visibility = "hidden";
+      fireEvent(document, new Event("visibilitychange"));
+      await act(async () => { await vi.advanceTimersByTimeAsync(9000); });
+      expect(post).toHaveBeenCalledTimes(3);
+      visibility = "visible";
+      await act(async () => { fireEvent(document, new Event("visibilitychange")); });
+      expect(post).toHaveBeenCalledTimes(4);
+    } finally {
+      view.unmount();
+      vi.useRealTimers();
+    }
+  });
+
+  it("aborts hidden reads and ignores their late responses after reopening", async () => {
+    const reads: { signal?: AbortSignal; resolve: (response: any) => void }[] = [];
+    const post = vi.fn((_path: string, _payload: unknown, signal?: AbortSignal) =>
+      new Promise(resolve => { reads.push({ signal, resolve }); }));
+    const client = { post } as unknown as RuntimeV2Client;
+    const onUnauthorized = vi.fn();
+    const panel = (active: boolean) => <WindowCollaboration client={client} windowKey="exact-window" selectedSessionId="" language="en" onUnauthorized={onUnauthorized} active={active} />;
+    const view = render(panel(true));
+    expect(reads).toHaveLength(1);
+    view.rerender(panel(false));
+    expect(reads[0].signal?.aborted).toBe(true);
+    view.rerender(panel(true));
+    expect(reads).toHaveLength(2);
+    await act(async () => { reads[1].resolve({ ok: true, status: 200, data: transcript }); });
+    expect(screen.getByText("Review done")).toBeTruthy();
+    await act(async () => { reads[0].resolve({ ok: false, status: 403, data: null }); });
+    expect(screen.getByText("Review done")).toBeTruthy();
+    view.unmount();
+  });
+
+  it("ignores a read that resolves after the page becomes hidden but before the visibility event", async () => {
+    let visibility: DocumentVisibilityState = "visible";
+    vi.spyOn(document, "visibilityState", "get").mockImplementation(() => visibility);
+    const reads: { signal?: AbortSignal; resolve: (response: any) => void }[] = [];
+    const post = vi.fn((_path: string, _payload: unknown, signal?: AbortSignal) =>
+      new Promise(resolve => { reads.push({ signal, resolve }); }));
+    const client = { post } as unknown as RuntimeV2Client;
+    const view = render(<WindowCollaboration client={client} windowKey="exact-window" selectedSessionId="" language="en" onUnauthorized={vi.fn()} />);
+    expect(reads).toHaveLength(1);
+
+    visibility = "hidden";
+    expect(reads[0].signal?.aborted).toBe(false);
+    await act(async () => { reads[0].resolve({ ok: true, status: 200, data: transcript }); });
+    expect(screen.queryByText("Review done")).toBeNull();
+
+    visibility = "visible";
+    fireEvent(document, new Event("visibilitychange"));
+    expect(reads).toHaveLength(2);
+    await act(async () => { reads[1].resolve({ ok: true, status: 200, data: transcript }); });
+    expect(screen.getByText("Review done")).toBeTruthy();
+    view.unmount();
+  });
+
+  it("retains an in-flight send and its retry identity while hidden", async () => {
+    let finishSend!: (value: any) => void;
+    const writes: unknown[] = [];
+    const post = vi.fn(async (path: string, payload: unknown) => {
+      if (path === "window-collaboration") return { ok: true, status: 200, data: transcript };
+      writes.push(payload);
+      if (writes.length === 1) return new Promise(resolve => { finishSend = resolve; });
+      return { ok: true, status: 200, data: { message_id: "wc_msg_retry" } };
+    });
+    const client = { post } as unknown as RuntimeV2Client;
+    const onUnauthorized = vi.fn();
+    const panel = (active: boolean) => <WindowCollaboration client={client} windowKey="exact-window" selectedSessionId="" language="en" onUnauthorized={onUnauthorized} active={active} />;
+    const view = render(panel(true));
+    await screen.findByText("Review done");
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "Retry exactly" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    view.rerender(panel(false));
+    await act(async () => { finishSend({ ok: false, status: 503, data: null }); });
+    view.rerender(panel(true));
+    fireEvent.click(await screen.findByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(writes).toHaveLength(2));
+    expect(writes[1]).toEqual(writes[0]);
+    await waitFor(() => expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe(""));
+    view.unmount();
+  });
+
   it("sends before a Session exists and keeps Window identity when context changes", async () => {
     const post = vi.fn(async (path: string) => ({ ok: true, status: 200, data: path === "window-collaboration" ? transcript : { message_id: "wc_msg_new" } }));
     const client = { post } as unknown as RuntimeV2Client;

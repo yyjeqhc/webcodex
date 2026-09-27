@@ -482,11 +482,16 @@ pub fn gpt_action_direct_tool_definitions() -> Vec<&'static ToolDefinition> {
         .collect()
 }
 
-/// Admission predicate shared by GPT Action direct/gateway adapters. It says
-/// only that the canonical model-visible tool is protocol-compatible with GPT
-/// Actions; authority and execution remain kernel-owned.
+/// Admission predicate shared by GPT Action direct/gateway adapters. Ordinary
+/// model-visible tools inherit their definition-owned support; exact-manifest
+/// specialists remain gateway-callable without re-entering the ordinary model
+/// surface. Authority and execution remain kernel-owned.
 pub fn gpt_action_tool_supported(tool_name: &str) -> bool {
-    lookup_tool_definition(tool_name).is_some_and(|definition| definition.supports_gpt_actions())
+    lookup_tool_definition(tool_name).is_some_and(|definition| {
+        definition.supports_gpt_actions()
+            || (super::tool_catalog::EXACT_MANIFEST_SPECIALIST_TOOL_NAMES.contains(&tool_name)
+                && definition.gpt_action_exposure() != ToolGptActionExposure::Unsupported)
+    })
 }
 
 pub fn model_visible_tool_names_csv() -> String {

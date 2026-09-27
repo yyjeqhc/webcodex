@@ -1,5 +1,5 @@
 use super::RunnerCapabilityRequirement::FileWrite;
-use super::ToolVisibility::ModelVisible;
+use super::ToolVisibility::{ModelHidden, ModelVisible};
 use super::{
     adaptive_runtime_direct, def, model_spec, permission_risk, ToolDefinition,
     PERMISSION_RISK_WRITE, TOOL_CATEGORY_EDIT,
@@ -16,7 +16,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             def(
             "write_project_file",
             super::ToolAuditPolicy::TYPED_CANONICAL,
-            ModelVisible,
+            ModelHidden,
             TOOL_CATEGORY_EDIT,
             Some(FileWrite),
             TOOL_PROVIDER_RUNNER,
@@ -41,7 +41,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         permission_risk(
             model_spec(
                 def(
-                "apply_text_edits",
+                "edit_project_files",
                 super::ToolAuditPolicy::TYPED_CANONICAL,
                 ModelVisible,
                 TOOL_CATEGORY_EDIT,
@@ -65,8 +65,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                     super::ToolHostOrchestrationHint::sequential()
                         .with_native_batch_field("changes"),
                 ),
-                "Small/local exact edits use a transactional structured option: use ONE change per file with edits. Globally unique edits may omit expected_read_revision; occurrence or line_scope requires expected_read_revision; occurrence selects one match in global source order; revisions fence whole-file snapshots; model input never needs a digest. For same old_text in an explicit bounded file when exact cardinality is known, use replace_exact expected_match_count=N (1..=1024), scoped if needed; never occurrence. If uncertain, optional dry_run; if obvious, apply directly—dry_run is not ritual. Batches are preflighted transactionally; conflicts fail closed; Runner rechecks source before mutation. change_summary/changed_files/resolved_matches confirm mechanical scope; do not diff only to recount. Summary is not semantic review: use show_changes, git_diff_hunks, or git_review_summary. On stale state use one parser-ready read_files recovery call; inspect the resulting diff if review is needed; validate the final source.",
-            ).with_gpt_action_description("Transactional exact edits. Known same old_text + bounded exact cardinality: expected_match_count=N; uncertain count/range: optional dry_run; obvious count: apply directly. change_summary is mechanical scope only; use Git review tools for semantic review. Canonical guards and rollback remain."),
+                "Primary project editor: read_files → edit_project_files → show_changes → structured validation. Use ONE change per file. edit/delete/rename require expected_read_revision; create requires content. Exact edits fail closed on ambiguity; replace_range edits 1-based inclusive lines from the same original snapshot. Batches are preflighted transactionally and the Runner rechecks source before mutation. dry_run plans only. Stale state returns read_files recovery; outcome_unknown requires workspace observation before another write.",
+            ).with_gpt_action_description("Read files, then edit/create/delete/rename transactionally. Existing sources require expected_read_revision. Exact edits fail closed on ambiguity; stale source requires reread. Optional dry_run. Review changes and validate. Unknown outcomes require workspace observation before another write."),
             PERMISSION_RISK_WRITE,
         ),
         60,

@@ -1198,10 +1198,18 @@ fn file_apply_text_edits_structured_multiple_match_recovery_is_bounded() {
     assert_eq!(recovery["occurrence_selector_supported"], true);
     assert_eq!(recovery["direct_retry_safe"], true);
     assert_eq!(recovery["reread_required"], false);
-    assert_eq!(recovery["candidate_ranges"].as_array().unwrap().len(), 8);
+    assert_eq!(
+        recovery["candidate_ranges"].as_array().unwrap().len(),
+        webcodex_core::apply_edits_shared::MAX_APPLY_TEXT_CONFLICT_CANDIDATES
+    );
     assert_eq!(recovery["candidate_ranges"][0]["occurrence"], 1);
     assert_eq!(recovery["candidate_ranges"][0]["start_line"], 2);
-    assert_eq!(recovery["candidate_ranges"][7]["occurrence"], 8);
+    assert_eq!(
+        recovery["candidate_ranges"]
+            [webcodex_core::apply_edits_shared::MAX_APPLY_TEXT_CONFLICT_CANDIDATES - 1]
+            ["occurrence"],
+        webcodex_core::apply_edits_shared::MAX_APPLY_TEXT_CONFLICT_CANDIDATES
+    );
     assert_eq!(recovery["candidates_truncated"], true);
     let error = out["error"].as_str().unwrap();
     assert!(error.contains("choose an advertised occurrence"));

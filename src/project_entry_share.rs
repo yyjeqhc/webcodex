@@ -1597,7 +1597,7 @@ mod tests {
     #[cfg(unix)]
     fn fake_cloudflared(script: &str) -> (tempfile::TempDir, PathBuf) {
         use std::os::unix::fs::PermissionsExt;
-        let temp = tempfile::tempdir().unwrap();
+        let temp = crate::test_support::executable_tempdir();
         let path = temp.path().join("cloudflared");
         fs::write(&path, script).unwrap();
         fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();

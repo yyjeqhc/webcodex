@@ -3431,7 +3431,7 @@ for line in sys.stdin:
         scenario: &str,
         config: BTreeMap<String, CodingAgentConfigValue>,
     ) -> (Arc<CodingAgentManager>, String, CodingAgentObserveResult) {
-        let temp = TempDir::new().unwrap();
+        let temp = crate::tests::executable_tempdir();
         let (exe, args) = fake_agent(&temp, scenario);
         let cfg = fake_config(exe, args);
         let projects = project_fixture(&temp);
@@ -3740,7 +3740,7 @@ for line in sys.stdin:
     #[test]
     #[cfg(unix)]
     fn completed_terminal_is_persisted_before_live_publication_and_restart() {
-        let temp = TempDir::new().unwrap();
+        let temp = crate::tests::executable_tempdir();
         let (exe, args) = fake_agent(&temp, "end");
         let cfg = fake_config(exe, args);
         let projects = project_fixture(&temp);
@@ -3814,7 +3814,7 @@ for line in sys.stdin:
     #[test]
     #[cfg(unix)]
     fn completion_persistence_failure_publishes_only_lost_and_never_redispatches() {
-        let temp = TempDir::new().unwrap();
+        let temp = crate::tests::executable_tempdir();
         let (exe, args) = fake_agent(&temp, "end");
         let cfg = fake_config(exe, args);
         let projects = project_fixture(&temp);
@@ -3878,7 +3878,7 @@ for line in sys.stdin:
     #[test]
     #[cfg(unix)]
     fn pre_prompt_cancel_persistence_failure_is_failed_and_restart_never_prompts() {
-        let temp = TempDir::new().unwrap();
+        let temp = crate::tests::executable_tempdir();
         let (exe, args) = fake_agent(&temp, "block_initialize");
         let cfg = fake_config(exe, args);
         let projects = project_fixture(&temp);
@@ -4048,7 +4048,7 @@ for line in sys.stdin:
     #[test]
     #[cfg(unix)]
     fn acp_v1_sequence_cwd_config_and_normalized_updates_are_exact() {
-        let temp = TempDir::new().unwrap();
+        let temp = crate::tests::executable_tempdir();
         let (exe, args) = fake_agent(&temp, "end");
         let cfg = fake_config(exe, args);
         let projects = project_fixture(&temp);
@@ -4121,7 +4121,7 @@ for line in sys.stdin:
     #[test]
     #[cfg(unix)]
     fn explicit_config_is_ordered_and_invalid_config_never_prompts() {
-        let temp = TempDir::new().unwrap();
+        let temp = crate::tests::executable_tempdir();
         let (exe, args) = fake_agent(&temp, "end");
         let cfg = fake_config(exe, args);
         let projects = project_fixture(&temp);
@@ -4152,7 +4152,7 @@ for line in sys.stdin:
             ]
         );
 
-        let temp = TempDir::new().unwrap();
+        let temp = crate::tests::executable_tempdir();
         let (exe, args) = fake_agent(&temp, "end");
         let cfg = fake_config(exe, args);
         let projects = project_fixture(&temp);
@@ -4186,7 +4186,7 @@ for line in sys.stdin:
     #[test]
     #[cfg(unix)]
     fn cancel_permission_and_unsupported_requests_are_fail_closed() {
-        let temp = TempDir::new().unwrap();
+        let temp = crate::tests::executable_tempdir();
         let (exe, args) = fake_agent(&temp, "permission_hold");
         let cfg = fake_config(exe, args);
         let projects = project_fixture(&temp);
@@ -4234,7 +4234,7 @@ for line in sys.stdin:
             "pending permission must be completed before prompt cancel"
         );
 
-        let temp = TempDir::new().unwrap();
+        let temp = crate::tests::executable_tempdir();
         let (exe, args) = fake_agent(&temp, "unsupported_callback");
         let cfg = fake_config(exe, args);
         let projects = project_fixture(&temp);
@@ -4290,7 +4290,7 @@ for line in sys.stdin:
     #[test]
     #[cfg(unix)]
     fn event_ring_capacity_and_continuation_are_bounded() {
-        let temp = TempDir::new().unwrap();
+        let temp = crate::tests::executable_tempdir();
         let (exe, args) = fake_agent(&temp, "many_events");
         let cfg = fake_config(exe, args);
         let projects = project_fixture(&temp);
@@ -4343,7 +4343,7 @@ for line in sys.stdin:
     #[test]
     #[cfg(unix)]
     fn concurrent_duplicate_start_admission_creates_exactly_one_prompt() {
-        let temp = TempDir::new().unwrap();
+        let temp = crate::tests::executable_tempdir();
         let (exe, args) = fake_agent(&temp, "wait_cancel");
         let cfg = fake_config(exe, args);
         let projects = project_fixture(&temp);
@@ -4399,7 +4399,7 @@ for line in sys.stdin:
     #[test]
     #[cfg(unix)]
     fn concurrent_capacity_admission_never_exceeds_configured_limit() {
-        let temp = TempDir::new().unwrap();
+        let temp = crate::tests::executable_tempdir();
         let (exe, args) = fake_agent(&temp, "wait_cancel");
         let cfg = fake_config(exe, args);
         let projects = project_fixture(&temp);
@@ -4485,7 +4485,7 @@ for line in sys.stdin:
     #[test]
     #[cfg(unix)]
     fn initialize_wait_consumes_total_run_deadline() {
-        let temp = TempDir::new().unwrap();
+        let temp = crate::tests::executable_tempdir();
         let (exe, args) = fake_agent(&temp, "block_initialize");
         let cfg = fake_config(exe, args);
         let projects = project_fixture(&temp);
@@ -4526,7 +4526,7 @@ for line in sys.stdin:
     #[test]
     #[cfg(unix)]
     fn forced_config_is_applied_before_prompt() {
-        let temp = TempDir::new().unwrap();
+        let temp = crate::tests::executable_tempdir();
         let (exe, args) = fake_agent(&temp, "forced_configs");
         let mut cfg = fake_config(exe, args);
         force_policy(&mut cfg);
@@ -4562,7 +4562,7 @@ for line in sys.stdin:
     #[test]
     #[cfg(unix)]
     fn missing_forced_config_fails_without_prompt() {
-        let temp = TempDir::new().unwrap();
+        let temp = crate::tests::executable_tempdir();
         let (exe, args) = fake_agent(&temp, "end");
         let mut cfg = fake_config(exe, args);
         cfg.forced_config.insert(
@@ -4601,7 +4601,7 @@ for line in sys.stdin:
     #[test]
     #[cfg(unix)]
     fn forced_config_must_be_reflected_by_provider() {
-        let temp = TempDir::new().unwrap();
+        let temp = crate::tests::executable_tempdir();
         let (exe, args) = fake_agent(&temp, "forced_not_applied");
         let mut cfg = fake_config(exe, args);
         cfg.forced_config.insert(
@@ -4640,7 +4640,7 @@ for line in sys.stdin:
     #[test]
     #[cfg(unix)]
     fn caller_may_repeat_but_not_override_forced_config() {
-        let temp = TempDir::new().unwrap();
+        let temp = crate::tests::executable_tempdir();
         let (exe, args) = fake_agent(&temp, "forced_configs");
         let mut cfg = fake_config(exe, args);
         cfg.forced_config.insert(
@@ -4671,7 +4671,7 @@ for line in sys.stdin:
             CodingAgentRunState::Completed
         );
 
-        let temp = TempDir::new().unwrap();
+        let temp = crate::tests::executable_tempdir();
         let (exe, args) = fake_agent(&temp, "forced_configs");
         let mut cfg = fake_config(exe, args);
         cfg.forced_config.insert(
@@ -4720,7 +4720,7 @@ for line in sys.stdin:
     #[test]
     #[cfg(unix)]
     fn forced_config_is_reasserted_after_caller_side_effects() {
-        let temp = TempDir::new().unwrap();
+        let temp = crate::tests::executable_tempdir();
         let (exe, args) = fake_agent(&temp, "forced_reset_by_caller");
         let mut cfg = fake_config(exe, args);
         force_policy(&mut cfg);
@@ -4762,7 +4762,7 @@ for line in sys.stdin:
     #[test]
     #[cfg(unix)]
     fn global_forced_config_is_multi_provider_admission_policy() {
-        let temp = TempDir::new().unwrap();
+        let temp = crate::tests::executable_tempdir();
         let (exe, args) = fake_agent(&temp, "forced_configs");
         let mut cfg = fake_config(exe.clone(), args);
         cfg.forced_config.insert(
@@ -4845,7 +4845,7 @@ for line in sys.stdin:
     #[test]
     #[cfg(unix)]
     fn forced_boolean_config_is_applied_before_prompt() {
-        let temp = TempDir::new().unwrap();
+        let temp = crate::tests::executable_tempdir();
         let (exe, args) = fake_agent(&temp, "forced_configs");
         let mut cfg = fake_config(exe, args);
         cfg.forced_config.insert(
@@ -4890,7 +4890,7 @@ for line in sys.stdin:
     #[test]
     #[cfg(unix)]
     fn duplicate_forced_config_id_fails_closed_without_prompt() {
-        let temp = TempDir::new().unwrap();
+        let temp = crate::tests::executable_tempdir();
         let (exe, args) = fake_agent(&temp, "forced_duplicate");
         let mut cfg = fake_config(exe, args);
         cfg.forced_config.insert(
@@ -4930,7 +4930,7 @@ for line in sys.stdin:
     #[test]
     #[cfg(unix)]
     fn illegal_forced_select_value_fails_without_prompt() {
-        let temp = TempDir::new().unwrap();
+        let temp = crate::tests::executable_tempdir();
         let (exe, args) = fake_agent(&temp, "forced_configs");
         let mut cfg = fake_config(exe, args);
         cfg.forced_config.insert(
@@ -4970,7 +4970,7 @@ for line in sys.stdin:
     #[test]
     #[cfg(unix)]
     fn config_setup_cumulatively_consumes_total_run_deadline() {
-        let temp = TempDir::new().unwrap();
+        let temp = crate::tests::executable_tempdir();
         let (exe, args) = fake_agent(&temp, "slow_configs");
         let mut cfg = fake_config(exe, args);
         cfg.agents[0].allowed_config_options = ["one", "two", "three", "four"]
@@ -5032,7 +5032,7 @@ for line in sys.stdin:
     #[test]
     #[cfg(unix)]
     fn deadline_after_durable_prompt_barrier_still_prevents_prompt_write() {
-        let temp = TempDir::new().unwrap();
+        let temp = crate::tests::executable_tempdir();
         let (exe, args) = fake_agent(&temp, "end");
         let cfg = fake_config(exe, args);
         let projects = project_fixture(&temp);
@@ -5074,7 +5074,7 @@ for line in sys.stdin:
     #[test]
     #[cfg(unix)]
     fn blocked_max_prompt_write_respects_total_deadline_and_reaps_tree() {
-        let temp = TempDir::new().unwrap();
+        let temp = crate::tests::executable_tempdir();
         let (exe, args) = fake_agent(&temp, "block_after_session_new_tree");
         let cfg = fake_config(exe, args);
         let projects = project_fixture(&temp);
@@ -5141,7 +5141,7 @@ for line in sys.stdin:
     #[test]
     #[cfg(unix)]
     fn cancel_returns_while_max_prompt_write_is_blocked() {
-        let temp = TempDir::new().unwrap();
+        let temp = crate::tests::executable_tempdir();
         let (exe, args) = fake_agent(&temp, "block_after_session_new_tree");
         let cfg = fake_config(exe, args);
         let projects = project_fixture(&temp);
@@ -5200,7 +5200,7 @@ for line in sys.stdin:
     #[test]
     #[cfg(unix)]
     fn shutdown_remains_bounded_while_max_prompt_write_is_blocked() {
-        let temp = TempDir::new().unwrap();
+        let temp = crate::tests::executable_tempdir();
         let (exe, args) = fake_agent(&temp, "block_after_session_new_tree");
         let cfg = fake_config(exe, args);
         let projects = project_fixture(&temp);
@@ -5247,7 +5247,7 @@ for line in sys.stdin:
     #[test]
     #[cfg(unix)]
     fn blocked_cancel_notification_is_bounded_by_cancel_grace() {
-        let temp = TempDir::new().unwrap();
+        let temp = crate::tests::executable_tempdir();
         let (exe, args) = fake_agent(&temp, "block_cancel_write");
         let cfg = fake_config(exe, args);
         let projects = project_fixture(&temp);
@@ -5334,7 +5334,7 @@ for line in sys.stdin:
     #[test]
     #[cfg(unix)]
     fn cancel_during_initialize_never_dispatches_prompt() {
-        let temp = TempDir::new().unwrap();
+        let temp = crate::tests::executable_tempdir();
         let (exe, args) = fake_agent(&temp, "block_initialize");
         let cfg = fake_config(exe, args);
         let projects = project_fixture(&temp);
@@ -5400,7 +5400,7 @@ for line in sys.stdin:
     #[test]
     #[cfg(unix)]
     fn cancel_and_prompt_gate_race_has_only_linearized_outcomes() {
-        let temp = TempDir::new().unwrap();
+        let temp = crate::tests::executable_tempdir();
         let (exe, args) = fake_agent(&temp, "wait_cancel");
         let cfg = fake_config(exe, args);
         let projects = project_fixture(&temp);
@@ -5470,7 +5470,7 @@ for line in sys.stdin:
     #[test]
     #[cfg(unix)]
     fn shutdown_during_admission_catches_published_run_before_prompt() {
-        let temp = TempDir::new().unwrap();
+        let temp = crate::tests::executable_tempdir();
         let (exe, args) = fake_agent(&temp, "wait_cancel");
         let cfg = fake_config(exe, args);
         let projects = project_fixture(&temp);
@@ -5533,7 +5533,7 @@ for line in sys.stdin:
     #[test]
     #[cfg(unix)]
     fn shutdown_drains_setup_worker_and_reaps_provider_tree() {
-        let temp = TempDir::new().unwrap();
+        let temp = crate::tests::executable_tempdir();
         let (exe, args) = fake_agent(&temp, "block_initialize_tree");
         let cfg = fake_config(exe, args);
         let projects = project_fixture(&temp);
@@ -5587,7 +5587,7 @@ for line in sys.stdin:
     #[test]
     #[cfg(unix)]
     fn capacity_stale_provider_and_replay_are_fenced_before_duplicate_prompt() {
-        let temp = TempDir::new().unwrap();
+        let temp = crate::tests::executable_tempdir();
         let (exe, args) = fake_agent(&temp, "wait_cancel");
         let cfg = fake_config(exe, args);
         let projects = project_fixture(&temp);
@@ -5634,7 +5634,7 @@ for line in sys.stdin:
         );
         wait_for_snapshot(&manager, first_run, |snapshot| snapshot.state.terminal());
 
-        let temp = TempDir::new().unwrap();
+        let temp = crate::tests::executable_tempdir();
         let (exe, args) = fake_agent(&temp, "end");
         let cfg = fake_config(exe, args);
         let projects = project_fixture(&temp);
@@ -5669,7 +5669,7 @@ for line in sys.stdin:
     #[test]
     #[cfg(unix)]
     fn corrupt_durable_record_after_possible_dispatch_fails_closed_without_redispatch() {
-        let temp = TempDir::new().unwrap();
+        let temp = crate::tests::executable_tempdir();
         let (exe, args) = fake_agent(&temp, "end");
         let cfg = fake_config(exe, args);
         let projects = project_fixture(&temp);
@@ -5937,7 +5937,7 @@ for line in sys.stdin:
         let _env = crate::tests::EnvGuard::new()
             .set("WEBCODEX_TEST_ACP_VISIBLE", "visible-value")
             .set("WEBCODEX_TEST_ACP_HIDDEN", "must-not-reach-child");
-        let temp = TempDir::new().unwrap();
+        let temp = crate::tests::executable_tempdir();
         let (exe, args) = fake_agent(&temp, "end");
         let mut cfg = fake_config(exe, args);
         cfg.agents[0].env_from_env = BTreeMap::from([(
@@ -5962,7 +5962,7 @@ for line in sys.stdin:
             .unwrap();
         assert_eq!(startup["env_keys"], json!(["ACP_VISIBLE"]));
 
-        let temp = TempDir::new().unwrap();
+        let temp = crate::tests::executable_tempdir();
         let (exe, args) = fake_agent(&temp, "end");
         let mut cfg = fake_config(exe, args);
         cfg.agents[0].env_from_env = BTreeMap::from([(
@@ -5994,7 +5994,7 @@ for line in sys.stdin:
     #[test]
     #[cfg(unix)]
     fn pre_barrier_restart_is_not_started_and_child_tree_is_reaped() {
-        let temp = TempDir::new().unwrap();
+        let temp = crate::tests::executable_tempdir();
         let (exe, args) = fake_agent(&temp, "end");
         let cfg = fake_config(exe, args);
         let store_root = temp.path().join("store");
@@ -6034,7 +6034,7 @@ for line in sys.stdin:
             CodingAgentExecutionState::NotStarted
         );
 
-        let temp = TempDir::new().unwrap();
+        let temp = crate::tests::executable_tempdir();
         let (exe, args) = fake_agent(&temp, "spawn_descendant");
         let cfg = fake_config(exe, args);
         let projects = project_fixture(&temp);

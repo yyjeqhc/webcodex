@@ -36,8 +36,9 @@ async fn handle_with_server_apps_enabled(
 async fn work_result_descriptor_is_explicit_sparse_app_only_and_resource_backed() {
     assert_eq!(
         MCP_WORK_RESULT_UI_RESOURCE_URI,
-        "ui://webcodex/work-result/v8"
+        "ui://webcodex/work-result/v10"
     );
+    assert!(MCP_WORK_RESULT_UI_RESOURCE_LEGACY_URIS.contains(&"ui://webcodex/work-result/v9"));
     assert!(MCP_WORK_RESULT_UI_RESOURCE_LEGACY_URIS.contains(&"ui://webcodex/work-result/v4"));
     assert!(MCP_WORK_RESULT_UI_RESOURCE_LEGACY_URIS.contains(&"ui://webcodex/work-result/v5"));
     assert!(MCP_WORK_RESULT_UI_RESOURCE_LEGACY_URIS.contains(&"ui://webcodex/work-result/v6"));
@@ -462,6 +463,10 @@ fn work_result_html_is_bounded_live_progress_ui() {
         "Activity",
         "Collaboration",
         "Final changes",
+        "id=\"tabResults\"",
+        "id=\"workspaceFiles\"",
+        "Workspace changes",
+        "Checks and review",
         "Message this Window",
         "No messages yet",
         "Acknowledged",
@@ -477,7 +482,7 @@ fn work_result_html_is_bounded_live_progress_ui() {
         "Current activity",
         "visibilitychange",
         "VISIBLE_REFRESH_MS",
-        "HIDDEN_REFRESH_MS",
+        "VISIBLE_IDLE_REFRESH_MS",
         "Observe · ",
     ] {
         assert!(
@@ -485,12 +490,17 @@ fn work_result_html_is_bounded_live_progress_ui() {
             "missing {required}"
         );
     }
+    assert!(MCP_WORK_RESULT_APP_HTML.contains("const VISIBLE_REFRESH_MS = 10000;"));
+    assert!(MCP_WORK_RESULT_APP_HTML.contains("const VISIBLE_IDLE_REFRESH_MS = 30000;"));
+    assert!(MCP_WORK_RESULT_APP_HTML.contains("lastStateVersion === null || document.hidden"));
+    assert!(MCP_WORK_RESULT_APP_HTML.contains("if (document.hidden) {"));
+    assert!(!MCP_WORK_RESULT_APP_HTML.contains("HIDDEN_REFRESH_MS"));
+    assert!(!MCP_WORK_RESULT_APP_HTML.contains("HIDDEN_IDLE_REFRESH_MS"));
     for forbidden in [
         "Linked work conversation",
         "No linked work conversation",
         "A linked Workflow Session has not appeared",
         "Task workflow",
-        "Checks and review",
         "Result · Ready",
         "setInterval",
         "clearInterval",

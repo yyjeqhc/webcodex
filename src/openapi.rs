@@ -108,6 +108,15 @@ fn gateway_operation() -> Value {
         })
         .map(|definition| definition.name)
         .collect::<Vec<_>>();
+    targets.extend(
+        webcodex_tool_contracts::EXACT_MANIFEST_SPECIALIST_TOOL_NAMES
+            .iter()
+            .copied()
+            .filter(|name| webcodex_tool_contracts::gpt_action_tool_supported(name))
+            .filter(|name| {
+                gpt_action_gateway_target_route(name) == AdaptiveRuntimeGatewayTargetRoute::Gateway
+            }),
+    );
     targets.sort_unstable();
     targets.dedup();
 
@@ -401,7 +410,7 @@ mod tests {
             .map(|name| webcodex_tool_contracts::runtime_tool_adaptive_direct_rank(name).unwrap())
             .collect::<Vec<_>>();
         assert!(ranks.windows(2).all(|pair| pair[0] < pair[1]));
-        assert!(actual.contains(&"apply_text_edits"));
+        assert!(actual.contains(&"edit_project_files"));
         assert!(!actual.contains(&"apply_patch"));
         #[cfg(feature = "experimental-code-mode")]
         for name in [
@@ -434,9 +443,25 @@ mod tests {
             targets.contains(&json!("stop_job")),
             "GatewayOnly tools must be parser-ready gateway targets"
         );
+        for specialist in webcodex_tool_contracts::EXACT_MANIFEST_SPECIALIST_TOOL_NAMES {
+            assert!(
+                webcodex_tool_contracts::gpt_action_tool_supported(specialist),
+                "{specialist} must remain supported through the generic gateway"
+            );
+            assert!(
+                targets.contains(&json!(specialist)),
+                "exact-manifest specialist {specialist} must be a parser-ready gateway target"
+            );
+        }
         let ids = operation_ids(&build_openapi_spec());
         assert!(!ids.contains("stop_job"));
         assert!(!ids.contains("cancel_job"));
+        for specialist in webcodex_tool_contracts::EXACT_MANIFEST_SPECIALIST_TOOL_NAMES {
+            assert!(
+                !ids.contains(*specialist),
+                "exact-manifest specialist {specialist} must not consume a direct operation"
+            );
+        }
         assert!(ids.contains(ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME));
         assert!(ids.len() < GPT_ACTION_OPERATION_LIMIT);
         assert_eq!(ids.len(), gpt_action_direct_tool_definitions().len() + 1);

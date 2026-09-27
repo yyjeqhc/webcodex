@@ -42,7 +42,7 @@ impl EditToolSurface {
 /// tracked by this phase-1 telemetry.
 pub(crate) fn edit_tool_surface(tool_name: &str) -> Option<EditToolSurface> {
     match tool_name {
-        "apply_text_edits" | "apply_patch" | "apply_unified_diff" => {
+        "edit_project_files" | "apply_patch" | "apply_unified_diff" => {
             Some(EditToolSurface::StructuredOrPatch)
         }
         "write_project_file" => Some(EditToolSurface::WholeFile),
@@ -457,7 +457,7 @@ mod tests {
     #[test]
     fn classifies_known_edit_tools_by_mutation_form() {
         assert_eq!(
-            edit_tool_surface("apply_text_edits"),
+            edit_tool_surface("edit_project_files"),
             Some(EditToolSurface::StructuredOrPatch)
         );
         assert_eq!(
@@ -548,12 +548,12 @@ mod tests {
     #[test]
     fn guard_emits_one_event_with_correct_name_and_surface() {
         clear_test_edit_tool_usage();
-        let mut guard = start_edit_tool_usage("apply_text_edits").expect("edit tool");
+        let mut guard = start_edit_tool_usage("edit_project_files").expect("edit tool");
         guard.finish_with_result(&ToolResult::ok(json!({ "ok": true })));
         drop(guard);
         let events = take_test_edit_tool_usage();
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0].tool_name, "apply_text_edits");
+        assert_eq!(events[0].tool_name, "edit_project_files");
         assert_eq!(events[0].category, "edit");
         assert_eq!(events[0].edit_surface, EditToolSurface::StructuredOrPatch);
         assert!(events[0].success);

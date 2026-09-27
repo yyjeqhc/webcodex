@@ -324,10 +324,11 @@ fn apply_unified_diff_schema_matches_flat_runtime_contract_and_old_tools_are_abs
     use crate::tool_runtime::tool_definition::is_known_tool_name;
 
     let specs = registered_tool_specs();
-    let spec = specs
+    let specialist_specs = crate::tool_runtime::registry::exact_manifest_specialist_tool_specs();
+    let spec = specialist_specs
         .iter()
         .find(|spec| spec.name == "apply_unified_diff")
-        .expect("canonical unified diff spec");
+        .expect("exact-manifest unified diff spec");
     let input = spec.input_schema["properties"].as_object().unwrap();
     assert!(input.contains_key("project"));
     assert!(input.contains_key("diff"));
@@ -358,14 +359,21 @@ fn apply_unified_diff_schema_matches_flat_runtime_contract_and_old_tools_are_abs
         "recovery_kind",
         "session_hint",
         "trace_ref",
-        "job_attention",
     ]
     .into_iter()
     .collect();
     assert_eq!(actual, expected);
 
     assert!(is_known_tool_name("apply_patch"));
-    assert!(specs.iter().any(|spec| spec.name == "apply_patch"));
+    assert!(specialist_specs
+        .iter()
+        .any(|spec| spec.name == "apply_patch"));
+    for hidden in ["apply_patch", "apply_unified_diff", "write_project_file"] {
+        assert!(
+            specs.iter().all(|spec| spec.name != hidden),
+            "{hidden} must stay out of ordinary registered ToolSpecs"
+        );
+    }
 
     for removed in ["apply_patch_checked", "validate_patch"] {
         assert!(!is_known_tool_name(removed), "{removed} must be removed");

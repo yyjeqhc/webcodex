@@ -100,6 +100,9 @@ pub(crate) struct BackendNode {
     pub(crate) read_only: Option<bool>,
     pub(crate) backend_node_id: Option<i64>,
     pub(crate) capability: ControlCapability,
+    /// Light-DOM `<option>` of a `<select>` that admits `select_option`.
+    /// Compact snapshots keep the label and value, and still issue no element id.
+    pub(crate) select_choice: bool,
 }
 
 #[derive(Debug)]
@@ -1442,13 +1445,17 @@ fn parse_ax_snapshot_nodes(raw_nodes: &[Value]) -> (Vec<BackendNode>, bool) {
             read_only,
             backend_node_id,
             capability: ControlCapability::default(),
+            select_choice: false,
         });
     }
     let truncated = nodes.len() > MAX_SNAPSHOT_NODES || estimated_bytes > MAX_SNAPSHOT_BYTES;
     (nodes, truncated)
 }
 
-fn project_ax_nodes(raw_nodes: &[Value], dom_root: Option<&Value>) -> (Vec<BackendNode>, bool) {
+pub(crate) fn project_ax_nodes(
+    raw_nodes: &[Value],
+    dom_root: Option<&Value>,
+) -> (Vec<BackendNode>, bool) {
     let (mut nodes, truncated) = parse_ax_snapshot_nodes(raw_nodes);
     apply_dom_capabilities(&mut nodes, raw_nodes, dom_root);
     (nodes, truncated)
@@ -1459,6 +1466,7 @@ struct DomControlFacts {
     local_name: String,
     input_type: Option<String>,
     in_native_control_shadow: bool,
+    owning_select_backend_id: Option<i64>,
     host_backend_node_id: Option<i64>,
     host_local_name: Option<String>,
     host_input_type: Option<String>,
@@ -1564,6 +1572,37 @@ fn apply_dom_capabilities(
     for (offset, (index_in_snapshot, projected)) in additions.into_iter().enumerate() {
         nodes.insert(index_in_snapshot + offset, projected);
     }
+    mark_native_select_choices(nodes, index);
+}
+
+fn mark_native_select_choices(nodes: &mut [BackendNode], index: &HashMap<i64, DomControlFacts>) {
+    let admitted_selects = nodes
+        .iter()
+        .filter(|node| node.capability.select_option)
+        .filter_map(|node| node.backend_node_id)
+        .filter(|backend_node_id| {
+            index.get(backend_node_id).is_some_and(|facts| {
+                facts.local_name == "select" && !facts.in_native_control_shadow
+            })
+        })
+        .collect::<HashSet<_>>();
+    for node in nodes.iter_mut() {
+        if node.role != "option" {
+            continue;
+        }
+        let Some(backend_node_id) = node.backend_node_id else {
+            continue;
+        };
+        let Some(facts) = index.get(&backend_node_id) else {
+            continue;
+        };
+        if facts.local_name != "option" || facts.in_native_control_shadow {
+            continue;
+        }
+        node.select_choice = facts
+            .owning_select_backend_id
+            .is_some_and(|select_id| admitted_selects.contains(&select_id));
+    }
 }
 
 fn capability_for_ax_node(
@@ -1611,6 +1650,7 @@ fn host_projection(facts: &DomControlFacts, capability: ControlCapability) -> Op
         read_only: None,
         backend_node_id: facts.host_backend_node_id,
         capability,
+        select_choice: false,
     })
 }
 
@@ -1728,13 +1768,14 @@ fn shadow_owner_promotion_rank(role: &str) -> u8 {
 
 fn index_dom_controls(root: &Value) -> HashMap<i64, DomControlFacts> {
     let mut index = HashMap::new();
-    walk_dom_controls(root, None, &mut index);
+    walk_dom_controls(root, None, None, &mut index);
     index
 }
 
 fn walk_dom_controls(
     node: &Value,
     host: Option<&ShadowHost>,
+    owning_select: Option<i64>,
     index: &mut HashMap<i64, DomControlFacts>,
 ) {
     let node_type = node.get("nodeType").and_then(Value::as_i64).unwrap_or(0);
@@ -1742,7 +1783,8 @@ fn walk_dom_controls(
     if is_shadow_root {
         if let Some(children) = node.get("children").and_then(Value::as_array) {
             for child in children {
-                walk_dom_controls(child, host, index);
+                // Shadow contents are not light-DOM choices of an enclosing select.
+                walk_dom_controls(child, host, None, index);
             }
         }
         return;
@@ -1750,7 +1792,7 @@ fn walk_dom_controls(
     if node_type != 1 {
         if let Some(children) = node.get("children").and_then(Value::as_array) {
             for child in children {
-                walk_dom_controls(child, host, index);
+                walk_dom_controls(child, host, owning_select, index);
             }
         }
         return;
@@ -1773,6 +1815,13 @@ fn walk_dom_controls(
         .as_ref()
         .is_some_and(|host| matches!(host.local_name.as_str(), "input" | "select" | "textarea"));
     let backend_node_id = node.get("backendNodeId").and_then(Value::as_i64);
+    let child_owning_select = if local_name == "select" && !in_native_control_shadow {
+        backend_node_id
+    } else if in_native_control_shadow {
+        None
+    } else {
+        owning_select
+    };
     if let Some(backend_node_id) = backend_node_id {
         index.insert(
             backend_node_id,
@@ -1780,6 +1829,11 @@ fn walk_dom_controls(
                 local_name: local_name.clone(),
                 input_type: input_type.clone(),
                 in_native_control_shadow,
+                owning_select_backend_id: if local_name == "option" && !in_native_control_shadow {
+                    owning_select
+                } else {
+                    None
+                },
                 host_backend_node_id: host.and_then(|host| host.backend_node_id),
                 host_local_name: host.map(|host| host.local_name.clone()),
                 host_input_type: host.and_then(|host| host.input_type.clone()),
@@ -1797,12 +1851,12 @@ fn walk_dom_controls(
     };
     if let Some(children) = node.get("children").and_then(Value::as_array) {
         for child in children {
-            walk_dom_controls(child, host, index);
+            walk_dom_controls(child, host, child_owning_select, index);
         }
     }
     if let Some(shadow_roots) = node.get("shadowRoots").and_then(Value::as_array) {
         for shadow_root in shadow_roots {
-            walk_dom_controls(shadow_root, Some(&next_host), index);
+            walk_dom_controls(shadow_root, Some(&next_host), None, index);
         }
     }
 }

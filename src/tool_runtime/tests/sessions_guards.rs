@@ -1085,7 +1085,7 @@ fn project_tool_schemas_include_optional_session_id() {
     for name in [
         "read_files",
         "run_shell",
-        "write_project_file",
+        "edit_project_files",
         "git_status",
         "git_log",
         "show_changes",
@@ -1108,6 +1108,22 @@ fn project_tool_schemas_include_optional_session_id() {
                 .iter()
                 .any(|field| field == "session_id"),
             "{name} schema must not require session_id"
+        );
+    }
+    let specialist_specs = crate::tool_runtime::registry::exact_manifest_specialist_tool_specs();
+    for name in ["apply_patch", "apply_unified_diff", "write_project_file"] {
+        let spec = spec_named(&specialist_specs, name);
+        assert!(
+            spec.input_schema["properties"].get("session_id").is_some(),
+            "{name} exact specialist schema missing session_id"
+        );
+        assert!(
+            !spec.input_schema["required"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|field| field == "session_id"),
+            "{name} exact specialist schema must not require session_id"
         );
     }
     let assert_session_hint_contract = |session_hint: &serde_json::Value| {
@@ -1155,12 +1171,17 @@ fn project_tool_schemas_include_optional_session_id() {
         assert_session_hint_contract(&output["properties"]["session_hint"]);
     }
 
-    for name in ["run_shell", "write_project_file"] {
-        let spec = spec_named(&specs, name);
-        let properties = &spec.output_schema["properties"]["output"]["properties"];
-        assert!(properties.get("session_recorded").is_none());
-        assert!(properties.get("session_event_id").is_none());
-        assert!(properties.get("session_id").is_none());
-        assert_session_hint_contract(&properties["session_hint"]);
-    }
+    let run_shell = spec_named(&specs, "run_shell");
+    let properties = &run_shell.output_schema["properties"]["output"]["properties"];
+    assert!(properties.get("session_recorded").is_none());
+    assert!(properties.get("session_event_id").is_none());
+    assert!(properties.get("session_id").is_none());
+    assert_session_hint_contract(&properties["session_hint"]);
+
+    let write_project_file = spec_named(&specialist_specs, "write_project_file");
+    let properties = &write_project_file.output_schema["properties"]["output"]["properties"];
+    assert!(properties.get("session_recorded").is_none());
+    assert!(properties.get("session_event_id").is_none());
+    assert!(properties.get("session_id").is_none());
+    assert_session_hint_contract(&properties["session_hint"]);
 }

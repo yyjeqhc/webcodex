@@ -56,12 +56,12 @@ fn record_first_class_edit(runtime: &ToolRuntime, session_id: &str, project: &st
     let start = runtime.sessions.record_tool_call_started(
         Some(session_id),
         SessionTransport::Mcp,
-        "apply_text_edits",
+        "edit_project_files",
         &json!({
             "project": project,
             "changes": [{"kind": "edit", "path": path}]
         }),
-        crate::tool_runtime::sessions::session_tool_contract("apply_text_edits"),
+        crate::tool_runtime::sessions::session_tool_contract("edit_project_files"),
     );
     runtime.sessions.record_tool_call_finished(
         start,

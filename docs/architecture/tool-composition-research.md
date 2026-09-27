@@ -281,7 +281,7 @@ ToolCompositionPolicy::Sequential
 ToolCompositionPolicy::Parallel
 ```
 
-This policy is canonical `ToolDefinition` metadata. The default, including unknown/future tools, is `Denied`. The exact E1 read allowlist is `Parallel`; `cargo_check`, `cargo_test`, and `apply_text_edits` are `Sequential`; everything else remains denied unless deliberately reviewed later. Frontend admission is separate and explicit: composition policy never makes a tool reachable and grants no scope, permission, Project, Runner, retry, or idempotency authority. E1 still admits only reads, E2a admits reads plus the two validators, and E2b admits reads plus only `apply_text_edits`.
+This policy is canonical `ToolDefinition` metadata. The default, including unknown/future tools, is `Denied`. The exact E1 read allowlist is `Parallel`; `cargo_check`, `cargo_test`, and `edit_project_files` are `Sequential`; everything else remains denied unless deliberately reviewed later. Frontend admission is separate and explicit: composition policy never makes a tool reachable and grants no scope, permission, Project, Runner, retry, or idempotency authority. E1 still admits only reads, E2a admits reads plus the two validators, and E2b admits reads plus only `edit_project_files`.
 
 `CanonicalOrchestrationHost` enforces the policy with one composition-local shared/exclusive scheduling fence. `Parallel` canonical child invocation intervals can overlap; `Sequential` is exclusive against every child interval. The fence ends when canonical ToolRuntime invocation returns, including an existing same-execution Job handoff. Durable Jobs then own their ordinary lifetime independently, so two predetermined E2a validators can enter sequentially yet later run concurrently as Jobs.
 
@@ -318,7 +318,7 @@ recorder context to admitted child calls, but each child must record through the
 same existing Session path it would use directly. The composition wrapper must
 not become a second authoritative business event that double-counts the children.
 
-E1 read-only/re-observable children established the first slice. E2a proves the consequential validation rule: every child records through its ordinary canonical Session path; the parent does not become a fake validation identity or transaction. E2b applies the same rule to mutation: the nested canonical `apply_text_edits` event owns first-class Edit provenance and state-change evidence, while the outer `code_mode_exec_mutating` wrapper emits no generic top-level `state_changed` and does not independently set `repository_edit_observed`. No-op, dry-run, and provably pre-start edits remain non-provenance; a successful nested edit with canonical `state_changed=true` qualifies exactly as a direct edit would. Final Changes continues to compare the Session Git baseline with the complete final workspace, not with a Code Mode-local diff.
+E1 read-only/re-observable children established the first slice. E2a proves the consequential validation rule: every child records through its ordinary canonical Session path; the parent does not become a fake validation identity or transaction. E2b applies the same rule to mutation: the nested canonical `edit_project_files` event owns first-class Edit provenance and state-change evidence, while the outer `code_mode_exec_mutating` wrapper emits no generic top-level `state_changed` and does not independently set `repository_edit_observed`. No-op, dry-run, and provably pre-start edits remain non-provenance; a successful nested edit with canonical `state_changed=true` qualifies exactly as a direct edit would. Final Changes continues to compare the Session Git baseline with the complete final workspace, not with a Code Mode-local diff.
 
 Once all already-started children have drained to a known result, same-execution Job handoff, or truthful uncertainty, a consequential parent is decorated from the latest monotonic Session state. It accepts only trusted outer ACK metadata, never lets JavaScript ACK guidance, and never compresses child revisions or evidence into a synthetic event.
 
@@ -390,7 +390,7 @@ The experiment now uses these concrete stage names:
 ```text
 E1   read-only orchestration
 E2a  structured validation + Job/effect foundation
-E2b  guarded structured mutation: E1 reads + one apply_text_edits attempt
+E2b  guarded structured mutation: E1 reads + one edit_project_files attempt
 E2c  decide whether validation and mutation should coexist in one cell;
      consider selective generic process/shell only if telemetry justifies it
 E3   implemented generic asynchronous Job terminal attention v1
@@ -422,12 +422,12 @@ E2a closes the correctness prerequisites that were previously future work:
 
 ### E2b — implemented guarded structured mutation
 
-`code_mode_exec_mutating` is feature-gated and conservatively declares `Mutate / ProjectWrite / Standard / NonIdempotent / project:write`. It admits the E1 read set plus only canonical `apply_text_edits`; validators, `apply_patch`, whole-file write, generic process/shell, Job observation, gateways, Computer control, Git/Session mutation, and recursive Code Mode remain excluded.
+`code_mode_exec_mutating` is feature-gated and conservatively declares `Mutate / ProjectWrite / Standard / NonIdempotent / project:write`. It admits the E1 read set plus only canonical `edit_project_files`; validators, `apply_patch`, whole-file write, generic process/shell, Job observation, gateways, Computer control, Git/Session mutation, and recursive Code Mode remain excluded.
 
 The first-version mutation contract is intentionally narrow:
 
 - one E2b cell may cross the canonical mutation boundary at most once, counted by canonical `ToolEffect::Mutate` rather than a tool-name registry;
-- the one mutation may still use `apply_text_edits`' existing transactional multi-file batch and `read_revision` guards;
+- the one mutation may still use `edit_project_files`' existing transactional multi-file batch and `read_revision` guards;
 - a guarded `replace_exact` may state `expected_match_count` for repetitive exact text, with optional `line_scope`; dry-run match evidence is bounded and does not authorize the later actual request;
 - a second mutation attempt is rejected before canonical business dispatch and cannot reach the Runner;
 - same-Project E2b mutations are serialized by the process-local Project fence described above; different Projects may proceed independently;
@@ -436,7 +436,7 @@ The first-version mutation contract is intentionally narrow:
 - JavaScript failure or timeout after dispatch preserves completed mutation truth, while unresolved work after the existing bounded five-second reconciliation remains `outcome_unknown`;
 - E2b adds no retry engine, mutation transaction coordinator, JS patch parser, filesystem API, or second write protocol.
 
-The primary adaptive workflow is therefore `canonical read -> JavaScript decision -> one canonical apply_text_edits -> canonical post-edit inspection`. Validation is intentionally outside the mutation-capable cell. Combining validation Jobs and later mutation would otherwise make validation freshness ambiguous without a workspace-snapshot fence; that question is deferred rather than hidden.
+The primary adaptive workflow is therefore `canonical read -> JavaScript decision -> one canonical edit_project_files -> canonical post-edit inspection`. Validation is intentionally outside the mutation-capable cell. Combining validation Jobs and later mutation would otherwise make validation freshness ambiguous without a workspace-snapshot fence; that question is deferred rather than hidden.
 
 ### E3 — implemented generic Job terminal attention v1
 
@@ -503,7 +503,7 @@ A production-ready first slice should satisfy all of the following:
   exposing raw host identity or payload bodies;
 - direct tools continue to work unchanged;
 - no Workflow Session is selected from Window identity;
-- guarded mutation reuses canonical `apply_text_edits`, allows at most one mutation attempt per cell, preserves exact state-change/uncertainty truth, and leaves direct mutation semantics unchanged.
+- guarded mutation reuses canonical `edit_project_files`, allows at most one mutation attempt per cell, preserves exact state-change/uncertainty truth, and leaves direct mutation semantics unchanged.
 
 ## Open design questions
 

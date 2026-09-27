@@ -4,7 +4,8 @@ use super::*;
 fn tool_specs_annotations_are_canonical_semantic_projections() {
     use crate::metadata::{ToolApprovalPolicy, ToolEffect, ToolIdempotency, ToolRisk};
 
-    let specs = registered_tool_specs();
+    let mut specs = registered_tool_specs();
+    specs.extend(exact_manifest_specialist_tool_specs());
     for spec in &specs {
         let metadata = lookup_tool_metadata(&spec.name)
             .unwrap_or_else(|| panic!("{} missing metadata", spec.name));
@@ -91,7 +92,7 @@ fn tool_specs_annotations_are_canonical_semantic_projections() {
 
     for name in [
         "apply_patch",
-        "apply_text_edits",
+        "edit_project_files",
         "apply_unified_diff",
         "write_project_file",
         #[cfg(feature = "workspace-checkpoints")]

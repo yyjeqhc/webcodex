@@ -16,7 +16,7 @@ pub(super) fn fake_server_path() -> &'static Path {
         .get_or_init(|| {
             let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
             let source = manifest.join("../webcodex-lsp/src/fake_server.rs");
-            let temp = tempfile::tempdir().unwrap();
+            let temp = crate::tests::executable_tempdir();
             let path = temp
                 .path()
                 .join(format!("webcodex-lsp-fake{}", env::consts::EXE_SUFFIX));

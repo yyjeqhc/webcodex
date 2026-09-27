@@ -1,26 +1,31 @@
 # Optional control-plane sidecars
 
-Stateless MCP 2026 model calls may carry `_control` wrapper metadata. The
-adapter strips it before canonical business parsing and payload tracing. Generic
-`call_runtime_tool` accepts it either outside or inside `arguments`, never both.
+Stateless MCP 2026 model calls carry this metadata as `_wc.control`. The MCP
+adapter strips the outer `_wc` envelope before canonical business parsing; the
+control payload is then parsed through the existing typed sidecar contract. Generic
+`call_runtime_tool` accepts `_wc.control` only on the outer gateway call; nested
+target `arguments` remain canonical business arguments and reject a second `_wc`.
 Legacy MCP, HTTP Actions, internal callers without the explicit capability,
 ModelHidden/App calls and specialized Plugin/SSH/Browser/Computer gateways do not
-accept this v1 contract. Canonical standalone tools remain fully available.
+accept this Stateless 2026 envelope contract. Canonical standalone tools remain
+fully available.
 
 ```json
 {
   "project": "agent:runner:project",
   "executable": "cargo",
   "args": ["test", "focused_filter"],
-  "_control": {
-    "before": {
-      "goal_progress": {
-        "goal_id": "wc_goal_abcdefghijklmnop",
-        "expected_revision": 3,
-        "idempotency_key": "implementation-complete",
-        "completed_step_ids": ["implement"],
-        "current_step_id": "tests",
-        "summary": "Implementation complete; begin focused tests"
+  "_wc": {
+    "control": {
+      "before": {
+        "goal_progress": {
+          "goal_id": "wc_goal_abcdefghijklmnop",
+          "expected_revision": 3,
+          "idempotency_key": "implementation-complete",
+          "completed_step_ids": ["implement"],
+          "current_step_id": "tests",
+          "summary": "Implementation complete; begin focused tests"
+        }
       }
     }
   }
@@ -47,7 +52,7 @@ transition or renew a lease.
 
 The envelope and payloads are closed. A present phase has exactly one mutation;
 there is no operation list. Existing `session_message_resolution` is also an
-effectful before mutation, so combining it with `_control.before` is rejected.
+effectful before mutation, so combining it with `_wc.control.before` is rejected.
 ACK and context material requests do not count. Goal completion and Session close
 are admitted only on `finish_coding_task`; it must succeed with explicit
 `task_outcome.blocking=false`. Todo completion also requires a known successful
@@ -74,7 +79,7 @@ inherits main scope/permission or recursively propagates sidecars/capabilities.
 
 ## Result and recovery
 
-Only requests carrying `_control` receive `output.control`. Top-level `success`
+Only Stateless MCP requests carrying `_wc.control` receive `output.control`. Top-level `success`
 still reports **main** success; post failure never turns an already-successful
 main effect into an overall failure. `control.main.execution_state` distinguishes
 `succeeded`, `failed`, `started`, `outcome_unknown`, and

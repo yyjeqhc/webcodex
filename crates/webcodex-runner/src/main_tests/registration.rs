@@ -68,6 +68,17 @@ fn current_runner_registration_advertises_v2_and_complete_generation_baseline() 
         "line scope is additive and must not become a generation-2 registration baseline"
     );
     assert!(
+        !RUNNER_PROTOCOL_GENERATION_V2_BASELINE_CAPABILITY_NAMES.contains(&"apply_text_edit_range"),
+        "range edits are additive and must not become a generation-2 registration baseline"
+    );
+    assert_eq!(
+        capabilities
+            .get("apply_text_edit_range")
+            .and_then(serde_json::Value::as_bool),
+        Some(true),
+        "current Runner must explicitly advertise deterministic range edits"
+    );
+    assert!(
         !RUNNER_PROTOCOL_GENERATION_V2_BASELINE_CAPABILITY_NAMES
             .contains(&"apply_text_edit_local_guard_without_sha"),
         "SHA-less local exact edit proof is additive and must not become a generation-2 registration baseline"

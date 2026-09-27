@@ -7,6 +7,8 @@ export type RuntimeOverviewState = {
   availability: Availability;
   data: RuntimeOverview | null;
   refresh: () => void;
+  updatedAt: number | null;
+  refreshing: boolean;
 };
 
 export function useRuntimeOverview(
@@ -16,16 +18,22 @@ export function useRuntimeOverview(
 ): RuntimeOverviewState {
   const [availability, setAvailability] = useState<Availability>("idle");
   const [data, setData] = useState<RuntimeOverview | null>(null);
+  const [updatedAt, setUpdatedAt] = useState<number | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
   const [revision, setRevision] = useState(0);
   const current = useRef<AbortController | null>(null);
 
-  const refresh = useCallback(() => setRevision((value) => value + 1), []);
+  const refresh = useCallback(() => {
+    if (!current.current) setRevision((value) => value + 1);
+  }, []);
 
   useEffect(() => {
     if (!enabled) {
       current.current?.abort();
       current.current = null;
       setData(null);
+      setUpdatedAt(null);
+      setRefreshing(false);
       setAvailability("idle");
       return;
     }
@@ -33,11 +41,13 @@ export function useRuntimeOverview(
     const controller = new AbortController();
     current.current?.abort();
     current.current = controller;
+    setRefreshing(true);
     setAvailability((value) => (value === "idle" ? "loading" : value));
 
     void fetchRuntimeOverview(client, controller.signal).then((response) => {
       if (disposed || current.current !== controller || !response) return;
       current.current = null;
+      setRefreshing(false);
       if (response.status === 401) {
         onUnauthorized();
         return;
@@ -52,20 +62,33 @@ export function useRuntimeOverview(
         return;
       }
       setData(response.data);
+      setUpdatedAt(Date.now());
       setAvailability("available");
     });
 
     return () => {
       disposed = true;
       controller.abort();
+      if (current.current === controller) current.current = null;
     };
   }, [client, enabled, onUnauthorized, revision]);
 
   useEffect(() => {
     if (!enabled) return;
-    const timer = window.setInterval(refresh, 30_000);
-    return () => window.clearInterval(timer);
+    const refreshVisible = () => {
+      if (document.visibilityState !== "hidden") refresh();
+    };
+    const timer = window.setInterval(refreshVisible, 5_000);
+    window.addEventListener("focus", refreshVisible);
+    document.addEventListener("visibilitychange", refreshVisible);
+    window.addEventListener("online", refreshVisible);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refreshVisible);
+      document.removeEventListener("visibilitychange", refreshVisible);
+      window.removeEventListener("online", refreshVisible);
+    };
   }, [enabled, refresh]);
 
-  return { availability, data, refresh };
+  return { availability, data, refresh, updatedAt, refreshing };
 }

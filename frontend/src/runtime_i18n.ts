@@ -5,6 +5,25 @@ export type RuntimeLanguage = "en" | "zh-CN";
 export const LANGUAGE_STORAGE_KEY = "webcodex.runtime.language.v1";
 
 export const RUNTIME_ZH_TEXT: Record<string, string> = {
+  "Some linked Sessions are not available in this view.": "此视图仅展示部分已关联的 Session。",
+  "Copy unavailable; select the text to copy.": "无法自动复制，请选中文字复制。",
+  "This Session is linked to the Window but has no retained calls.": "此 Session 已关联到窗口，但没有保留的调用记录。",
+  "Last synced": "上次同步",
+  "Server configuration": "服务器配置",
+  "Effective server parameters. Credentials are never displayed.": "服务器当前生效的配置参数，不展示凭据。",
+  "Configuration is unavailable from this server version.": "此服务器版本未提供配置信息。",
+  "Request tracing": "请求跟踪",
+  "seconds": "秒",
+  "Shared key authentication": "共享密钥认证",
+  "Anonymous access": "匿名访问",
+  "OAuth2 authentication": "OAuth2 认证",
+  "OAuth2 shared key bridge": "OAuth2 共享密钥桥接",
+  "MCP host profile": "MCP 主机配置",
+  "Host request budget": "主机请求预算",
+  "Initial job handoff wait": "首次任务交接等待",
+  "Maximum synchronous wait": "同步等待上限",
+  "Continuation wait": "后续等待时长",
+
   "Some running calls are not shown.": "运行中调用仅显示部分记录。",
   "Conversation refresh failed; previous messages retained.": "对话刷新失败，保留上次加载的消息。",
   "Messages unavailable. Refresh to retry.": "消息暂不可用，请刷新重试。",

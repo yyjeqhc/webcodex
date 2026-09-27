@@ -130,7 +130,7 @@ fn experimental_code_mode_mutating_has_conservative_e2c_combined_authority_envel
     assert_eq!(metadata.idempotency, ToolIdempotency::NonIdempotent);
     assert!(
         metadata.destructive,
-        "E2c can create/edit/delete/rename through canonical apply_text_edits"
+        "E2c can create/edit/delete/rename through canonical edit_project_files"
     );
     assert_eq!(
         metadata.authority,
@@ -187,7 +187,7 @@ fn code_mode_composition_policy_is_canonical_closed_and_independent_from_fronten
         assert_eq!(metadata.risk, ToolRisk::Read, "{name}");
     }
 
-    for name in ["cargo_check", "cargo_test", "apply_text_edits"] {
+    for name in ["cargo_check", "cargo_test", "edit_project_files"] {
         assert_eq!(
             runtime_tool_composition_policy(name),
             ToolCompositionPolicy::Sequential,
@@ -283,7 +283,7 @@ fn tool_definitions_are_activity_semantics_ssot() {
     for (name, presentation, interaction, kind) in [
         ("read_files", Work, Meaningful, Read),
         ("search_project_texts", Work, Meaningful, Search),
-        ("apply_text_edits", Work, Meaningful, Edit),
+        ("edit_project_files", Work, Meaningful, Edit),
         ("run_process", Work, Meaningful, Run),
         ("run_shell", Work, Meaningful, Run),
         ("cargo_test", Work, Meaningful, Test),
@@ -441,7 +441,7 @@ fn execution_selection_contract_is_canonical_closed_and_sparse() {
 
     for name in [
         "read_files",
-        "apply_text_edits",
+        "edit_project_files",
         "show_changes",
         "observe_jobs",
         "stop_job",
@@ -509,7 +509,7 @@ fn host_orchestration_hints_are_static_guidance_independent_from_nested_composit
         ),
         ("cargo_test", Sequential, HostSequential, None, false),
         (
-            "apply_text_edits",
+            "edit_project_files",
             Sequential,
             HostSequential,
             Some("changes"),
@@ -665,7 +665,7 @@ fn stop_job_direct_exposure_preserves_one_canonical_effect_and_gateway_budget() 
         "read_files",
         "search_project_texts",
         "git_status",
-        "apply_text_edits",
+        "edit_project_files",
     ] {
         let schema = input_schema_for_tool(name);
         let properties = schema["properties"].as_object().unwrap();
@@ -757,16 +757,16 @@ fn adaptive_runtime_direct_declarations_are_visible_ranked_and_unique() {
     }
     assert_eq!(derived.len(), seen_ranks.len());
     let apply_patch = lookup_tool_definition("apply_patch").expect("apply_patch definition");
-    assert!(apply_patch.visibility.is_model_visible());
+    assert!(apply_patch.visibility.is_model_hidden());
     assert_eq!(
         apply_patch.adaptive_runtime_direct_rank(),
         None,
-        "specialized patching should stay ModelVisible but use Adaptive discovery/gateway"
+        "specialized patching is exact-manifest gateway-only"
     );
     assert!(
         derived
             .iter()
-            .any(|definition| definition.name == "apply_text_edits"),
+            .any(|definition| definition.name == "edit_project_files"),
         "canonical ordinary edits must remain adaptive-direct"
     );
 
@@ -804,7 +804,6 @@ fn adaptive_runtime_direct_declarations_are_visible_ranked_and_unique() {
         "session_shell_status",
         "close_session_shell",
         "attach_agent_endpoint",
-        "apply_patch",
         "save_project_artifact",
         "read_project_artifact",
         "artifact_upload_begin",
@@ -863,7 +862,12 @@ fn adaptive_runtime_direct_declarations_are_visible_ranked_and_unique() {
         expected_gpt_action_direct,
         "GPT Actions direct exposure must inherit Adaptive Direct ordering minus definition-owned unsupported/gateway-only exceptions"
     );
-    assert!(gpt_action_tool_supported("apply_patch"));
+    for specialist in EXACT_MANIFEST_SPECIALIST_TOOL_NAMES {
+        assert!(
+            gpt_action_tool_supported(specialist),
+            "{specialist} must remain GPT-Action gateway-callable by exact name"
+        );
+    }
     #[cfg(feature = "experimental-code-mode")]
     {
         assert!(gpt_action_tool_supported("code_mode_exec_effectful"));
@@ -1032,22 +1036,22 @@ fn turn_economy_descriptors_stay_converged_and_bounded() {
         .description
         .contains("observe_jobs only when logs/details/recovery are needed"));
 
-    let edits = spec_named(&specs, "apply_text_edits");
+    let edits = spec_named(&specs, "edit_project_files");
     for phrase in [
-        "expected_match_count=N",
-        "exact cardinality is known",
-        "optional dry_run",
-        "dry_run is not ritual",
-        "change_summary",
-        "mechanical scope",
-        "not semantic review",
+        "read_files",
+        "expected_read_revision",
+        "Exact edits fail closed on ambiguity",
+        "replace_range",
+        "same original snapshot",
+        "preflighted transactionally",
+        "dry_run",
         "show_changes",
-        "git_diff_hunks",
-        "git_review_summary",
+        "structured validation",
+        "outcome_unknown",
     ] {
         assert!(
             edits.description.contains(phrase),
-            "apply_text_edits: {phrase}"
+            "edit_project_files: {phrase}"
         );
     }
     assert!(spec_named(&specs, "cargo_check")
@@ -1063,7 +1067,7 @@ fn turn_economy_descriptors_stay_converged_and_bounded() {
         "list_jobs",
         "cargo_check",
         "cargo_test",
-        "apply_text_edits",
+        "edit_project_files",
     ] {
         let spec = spec_named(&specs, name);
         assert!(
@@ -1268,7 +1272,7 @@ fn code_mode_discovery_ranks_inspection_before_specialized_effects_without_chang
             .unwrap()
     };
     assert!(position("code_mode_exec") < position("code_mode_exec_mutating"));
-    assert!(position("apply_text_edits") < position("code_mode_exec_mutating"));
+    assert!(position("edit_project_files") < position("code_mode_exec_mutating"));
     assert!(position("code_mode_exec") < position("code_mode_exec_effectful"));
     assert!(position("cargo_test") < position("code_mode_exec_effectful"));
     for (name, group) in [

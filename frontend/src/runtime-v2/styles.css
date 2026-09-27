@@ -420,3 +420,11 @@ code, kbd { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospac
   .project-workspace-row .workspace-branch { display: none; }
   .page { padding: 28px 16px 50px; }
 }
+
+/* Exact identities remain readable/selectable on narrow screens. */
+.copy-identity { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px; min-width: 0; max-width: 100%; }
+.copy-identity code { overflow-wrap: anywhere; white-space: normal; user-select: text; }
+.copy-identity button { flex-shrink: 0; display: inline-flex; padding: 5px; color: var(--muted); background: transparent; border: 1px solid var(--line); border-radius: 6px; cursor: pointer; }
+.copy-identity small { color: var(--muted); }
+.window-header-fact:has(.copy-identity) { white-space: normal; border-radius: 12px; }
+.runtime-sync-status { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; color: var(--muted); margin: 12px 0; }

@@ -80,7 +80,7 @@ the static WebCodex tool definitions only. Claude `tools/list` output is never
 inserted into those registries. A Claude upgrade may therefore add `Read`,
 `Bash`, `Write`, `Edit`, or other names to provider discovery without making
 any of them visible to an external WebCodex client. Public names and input
-schemas, including `write_project_file` and `apply_text_edits`, are identical
+schemas, including `write_project_file` and `edit_project_files`, are identical
 with the provider disabled or enabled.
 
 The bounded version reported by MCP `initialize.serverInfo` is exposed in

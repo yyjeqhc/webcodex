@@ -35,9 +35,9 @@ ToolDefinition
 
 A tool marked Adaptive Direct is automatically a direct GPT Action unless its canonical definition explicitly declares that GPT Actions cannot represent its protocol semantics. Adding, removing, or re-ranking Adaptive Direct tools therefore updates GPT Actions automatically; there is no separate GPT Action rank or operation list.
 
-Direct operations use canonical snake_case names and canonical input contracts. Examples include `work_on_project`, `runtime_status`, `tool_manifest`, `search_project_texts`, `read_files`, `apply_text_edits`, `run_process`, `run_script`, `run_detached_process`, `run_shell`, `observe_jobs`, `list_jobs`, `cargo_check`, `cargo_test`, `git_review_summary`, `git_diff_hunks`, and `show_changes` when those tools are currently Adaptive Direct; the closeout helpers `workspace_hygiene_check` and `finish_coding_task` are model-visible gateway tools.
+Direct operations use canonical snake_case names and canonical input contracts. Examples include `work_on_project`, `runtime_status`, `tool_manifest`, `search_project_texts`, `read_files`, `edit_project_files`, `run_process`, `run_script`, `run_detached_process`, `run_shell`, `observe_jobs`, `list_jobs`, `cargo_check`, `cargo_test`, `git_review_summary`, `git_diff_hunks`, and `show_changes` when those tools are currently Adaptive Direct; the closeout helpers `workspace_hygiene_check` and `finish_coding_task` are model-visible gateway tools.
 
-Long-tail model-visible tools use the single gateway:
+Long-tail model-visible tools and exact-manifest specialists use the single gateway. Exact-manifest specialists such as `apply_patch`, `apply_unified_diff`, and `write_project_file` are intentionally absent from ordinary discovery/direct operations; callers first select them by exact name (for example through `tool_manifest`) and invoke them through `call_runtime_tool`:
 
 ```json
 {
@@ -49,7 +49,7 @@ Long-tail model-visible tools use the single gateway:
 }
 ```
 
-The operation name is `call_runtime_tool`. It accepts only `tool` and `arguments`; there is no `params` envelope and no flattened union of every runtime tool's fields. A currently direct tool should use its own direct Action operation. Model-hidden tools, unknown tools, and tools explicitly unsupported by GPT Actions fail closed.
+The operation name is `call_runtime_tool`. It accepts only `tool` and `arguments`; there is no `params` envelope and no flattened union of every runtime tool's fields. A currently direct tool should use its own direct Action operation. Model-hidden tools fail closed unless they are an explicitly admitted exact-manifest specialist; unknown tools and tools explicitly unsupported by GPT Actions always fail closed.
 
 Protocol-only MCP presentation is not emulated through Actions. For example, Goal Plan / Agent continuation / Work Result App presentation, MCP ResourceLink artifact export, and continuation Endpoint rotation that depends on a separately authorized MCP Host binding are excluded from GPT Actions.
 

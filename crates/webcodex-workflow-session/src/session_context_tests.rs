@@ -3,7 +3,7 @@ use crate::*;
 use serde_json::{json, Value};
 
 fn session_tool_contract(tool_name: &str) -> SessionToolContract {
-    let write_like = matches!(tool_name, "apply_text_edits" | "run_process");
+    let write_like = matches!(tool_name, "edit_project_files" | "run_process");
     SessionToolContract {
         risk_class: if write_like { "write" } else { "read" },
         read_like: !write_like,
@@ -11,7 +11,7 @@ fn session_tool_contract(tool_name: &str) -> SessionToolContract {
         shell_like: tool_name == "run_process",
         git_like: false,
         change_summary_like: false,
-        project_write: tool_name == "apply_text_edits",
+        project_write: tool_name == "edit_project_files",
         path_hint: SessionPathHint::None,
     }
 }
@@ -68,7 +68,7 @@ fn dry_run_project_edits_do_not_record_session_changed_paths() {
         .record_tool_call_started(
             Some(&session.session_id),
             SessionTransport::Mcp,
-            "apply_text_edits",
+            "edit_project_files",
             &json!({
                 "project": "proj",
                 "dry_run": true,
@@ -119,7 +119,7 @@ fn dry_run_project_edits_do_not_record_session_changed_paths() {
         .record_tool_call_started(
             Some(&session.session_id),
             SessionTransport::Mcp,
-            "apply_text_edits",
+            "edit_project_files",
             &json!({
                 "project": "proj",
                 "dry_run": false,
@@ -169,7 +169,7 @@ fn retained_changed_path_evidence_uses_proven_effects_and_fails_closed_at_durabl
             .record_tool_call_started(
                 Some(&session.session_id),
                 SessionTransport::Mcp,
-                "apply_text_edits",
+                "edit_project_files",
                 &json!({"project": "proj", "changes": changes}),
                 contract,
             )
@@ -216,7 +216,7 @@ fn repository_edit_observed_is_canonical_sticky_and_survives_event_eviction() {
     let session = store.start_session(Some("proj".to_string()), Some("sticky edit".to_string()));
 
     let record = |tool_name: &str, success: bool, state_changed: bool| {
-        let contract = if tool_name == "apply_text_edits" {
+        let contract = if tool_name == "edit_project_files" {
             project_edit_contract(SessionPathHint::PathList)
         } else {
             session_tool_contract(tool_name)
@@ -241,7 +241,7 @@ fn repository_edit_observed_is_canonical_sticky_and_survives_event_eviction() {
             .expect("tool finish");
     };
 
-    record("apply_text_edits", true, false);
+    record("edit_project_files", true, false);
     assert!(
         !store
             .summary(&session.session_id, None)
@@ -259,7 +259,7 @@ fn repository_edit_observed_is_canonical_sticky_and_survives_event_eviction() {
             .repository_edit_observed
     );
 
-    record("apply_text_edits", false, true);
+    record("edit_project_files", false, true);
     assert!(
         !store
             .summary(&session.session_id, None)
@@ -267,7 +267,7 @@ fn repository_edit_observed_is_canonical_sticky_and_survives_event_eviction() {
             .repository_edit_observed
     );
 
-    record("apply_text_edits", true, true);
+    record("edit_project_files", true, true);
     assert!(
         store
             .summary(&session.session_id, None)
@@ -296,7 +296,7 @@ fn repository_edit_observed_is_canonical_sticky_and_survives_event_eviction() {
     assert!(summary
         .events
         .iter()
-        .all(|event| event.tool_name != "apply_text_edits"));
+        .all(|event| event.tool_name != "edit_project_files"));
 }
 
 #[test]

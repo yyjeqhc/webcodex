@@ -75,6 +75,8 @@ mod projects;
 mod read_cache;
 mod read_files;
 mod read_revisions;
+#[cfg(test)]
+pub(crate) use read_revisions::ReadRevisionTarget;
 mod return_timing;
 mod runtime;
 mod runtime_info;

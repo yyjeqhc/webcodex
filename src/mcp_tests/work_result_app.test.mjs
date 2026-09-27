@@ -101,7 +101,7 @@ test("Window card renders and refreshes before any Workflow Session exists", asy
   assert.equal(view.nodes.collaborationMeta.textContent, "");
   assert.equal(view.nodes.messageInput.disabled, true);
   assert.equal(view.timers.size, 1);
-  await view.fireTimers(2500);
+  await view.fireTimers(10000);
   assert.equal(view.calls("work_result_state").length, 1);
   assert.deepEqual({ ...view.calls("work_result_state")[0].params.arguments }, { project });
 });
@@ -122,7 +122,7 @@ test("missing initial machine result recovers once through app-only content fall
   assert.match(view.nodes.status.textContent, /Updated|Up to date|Live/);
 });
 
-test("primary task card hides raw tool and live file details while keeping semantic activity", async () => {
+test("Activity stays focused while Results exposes live files", async () => {
   const view = app("mcp_work_result_app.html");
   view.toolResult({ work_result: baseState });
   await view.initialize();
@@ -131,7 +131,8 @@ test("primary task card hides raw tool and live file details while keeping seman
   assert.doesNotMatch(view.nodes.activityStatus.textContent, /show_changes|session event/i);
   assert.equal(view.nodes.windowCoverage.textContent, "2 observed events");
   assert.equal(view.nodes.windowActivity.children.length, 2);
-  assert.equal(view.nodes.files, undefined);
+  assert.equal(view.nodes.panelResults.hidden, true);
+  assert.equal(view.nodes.workspaceFiles.children[0].children[0].textContent, "src/a.rs");
   assert.equal(view.nodes.collaborationMeta.textContent, "");
 });
 
@@ -420,18 +421,20 @@ test("live progress performs bounded app-only polling and adapts to visibility",
   view.toolResult({ work_result: baseState });
   await view.initialize();
   assert.equal(view.calls("work_result_state").length, 0);
-  await view.fireTimers(2500);
+  await view.fireTimers(10000);
   assert.equal(view.calls("work_result_state").length, 1);
   assert.deepEqual({ ...view.calls("work_result_state")[0].params.arguments }, { project });
   await view.reply(view.calls("work_result_state")[0], toolResult({ work_result: nextState }));
   assert.equal(view.nodes.activityStatus.textContent, "Running checks");
   assert.equal(view.nodes.activityAge.textContent, "Active now");
   assert.equal(view.nodes.badge.textContent, "Working");
-  await view.fireTimers(2500);
+  await view.fireTimers(10000);
   assert.equal(view.calls("work_result_state").length, 2);
   await view.reply(view.calls("work_result_state")[1], toolResult({ work_result: nextState }));
   await view.visibility(true);
-  assert.equal([...view.timers.values()].some(timer => timer.delay === 12000), true);
+  assert.equal(view.timers.size, 0);
+  await view.fireTimers(10000);
+  assert.equal(view.calls("work_result_state").length, 2);
   await view.visibility(false);
   assert.equal([...view.timers.values()].some(timer => timer.delay === 250), true);
   assert.equal(view.timers.size, 1);
@@ -448,7 +451,7 @@ test("closed linked Session does not stop Window-level automatic polling", async
   view.toolResult({ work_result: closedState });
   await view.initialize();
   assert.equal(view.timers.size, 1);
-  await view.fireTimers(2500);
+  await view.fireTimers(10000);
   assert.equal(view.calls("work_result_state").length, 1);
   assert.deepEqual({ ...view.calls("work_result_state")[0].params.arguments }, { project });
   await view.reply(view.calls("work_result_state")[0], toolResult({ work_result: closedState }));
@@ -474,7 +477,7 @@ test("unchanged active Session pauses automatic polling after bounded idle time 
   assert.equal(view.calls("work_result_state").length, 1);
   await view.reply(view.calls("work_result_state")[0], toolResult({ work_result: baseState }));
   assert.equal(view.nodes.status.textContent, "Up to date");
-  assert.equal([...view.timers.values()].some(timer => timer.delay === 2500), true);
+  assert.equal([...view.timers.values()].some(timer => timer.delay === 10000), true);
 });
 
 test("user Refresh performs one exact state read and updates the snapshot", async () => {
@@ -906,6 +909,8 @@ test("Activity and Collaboration tabs preserve Window activity and drafts across
   assert.equal(view.calls("work_result_send_message").length, 0);
   assert.equal(view.calls("work_result_state").length, 0);
   view.nodes.tabCollaboration.onkeydown({ key: "ArrowLeft", preventDefault() {} });
+  assert.equal(view.nodes.tabResults.getAttribute("aria-selected"), "true");
+  view.nodes.tabResults.onkeydown({ key: "ArrowLeft", preventDefault() {} });
   assert.equal(view.nodes.tabActivity.getAttribute("aria-selected"), "true");
   view.nodes.refresh.onclick(); await flush();
   await view.reply(view.calls("work_result_state")[0], toolResult({ work_result: nextState }));
@@ -1021,9 +1026,98 @@ test("long-running calls keep polling and failed automatic reads identify stale 
   const view = app("mcp_work_result_app.html");
   view.toolResult({ work_result: state }); await view.initialize();
   view.advanceTime(31 * 60 * 1000);
-  await view.fireTimers(2500);
+  await view.fireTimers(10000);
   assert.equal(view.calls("work_result_state").length, 1);
   await view.reject(view.calls("work_result_state")[0]);
   assert.match(view.nodes.status.textContent, /Refresh unavailable.*last snapshot/);
-  assert([...view.timers.values()].some(timer => timer.delay === 2500));
+  assert([...view.timers.values()].some(timer => timer.delay === 10000));
+});
+
+test("Results shows live file states and checks, preserving nodes on unrelated refresh", async () => {
+  const view = app("mcp_work_result_app.html");
+  const state = structuredClone(baseState);
+  state.workspace.files = [
+    { path: 'src/new.rs', old_path: 'src/old.rs', status: 'renamed', staged: true, unstaged: true, additions: 3, deletions: 2 },
+    { path: 'notes/<draft>.md', status: 'untracked' },
+    { path: 'src/gone.rs', status: 'deleted', unstaged: true, additions: 0, deletions: 8 },
+  ];
+  state.workspace.files_total = 12;
+  state.workspace.truncated = true;
+  view.toolResult({ work_result: state }); await view.initialize();
+  view.nodes.viewResults.onclick();
+  assert.equal(view.nodes.panelResults.hidden, false);
+  assert.equal(view.nodes.workspaceFiles.children.length, 3);
+  const row = view.nodes.workspaceFiles.children[0];
+  assert.equal(row.children[0].textContent, 'src/old.rs → src/new.rs');
+  assert.equal(row.children[1].textContent, 'Renamed · Staged + unstaged');
+  assert.equal(view.nodes.workspaceFiles.children[1].children[0].textContent, 'notes/<draft>.md');
+  assert.equal(view.nodes.workspaceFiles.children[1].children[2].textContent, 'Line counts unavailable');
+  assert.match(view.nodes.workspaceMeta.textContent, /3 of 12/);
+  assert.equal(view.nodes.validationStatus.textContent, 'Checks passed');
+  assert.equal(view.nodes.finalChanges.hidden, true);
+  assert.equal(view.calls('work_result_state').length, 0);
+  view.nodes.refresh.onclick(); await flush();
+  await view.reply(view.calls('work_result_state')[0], toolResult({ work_result: { ...state, state_version: `wr2_${'b'.repeat(64)}` } }));
+  assert.equal(view.nodes.workspaceFiles.children[0], row);
+  assert.equal(view.nodes.panelResults.hidden, false);
+  view.nodes.messageInput.value = 'Existing draft';
+  view.nodes.discussResults.onclick();
+  assert.equal(view.nodes.panelCollaboration.hidden, false);
+  assert.equal(view.nodes.messageInput.value, 'Existing draft');
+  assert.equal(view.calls('work_result_send_message').length, 0);
+});
+
+test("clean workspace refresh removes old files without claiming success", async () => {
+  const view = app("mcp_work_result_app.html");
+  view.toolResult({ work_result: baseState }); await view.initialize();
+  view.nodes.tabResults.onclick();
+  view.nodes.refresh.onclick(); await flush();
+  await view.reply(view.calls('work_result_state')[0], toolResult({ work_result: nextState }));
+  assert.equal(view.nodes.workspaceFiles.children.length, 0);
+  assert.equal(view.nodes.workspaceStatus.textContent, 'No uncommitted changes');
+  assert.equal(view.nodes.validationStatus.textContent, 'Checks need attention');
+  assert.equal(view.nodes.finalChanges.hidden, true);
+});
+
+for (const reason of ['workspace_unavailable', 'non_git_project']) test(`unavailable files are explicit: ${reason}`, async () => {
+  const view = app("mcp_work_result_app.html");
+  view.toolResult({ work_result: { ...baseState, workspace: { ...baseState.workspace, git_available: false, reason_code: reason } } });
+  await view.initialize();
+  assert.equal(view.nodes.workspaceFiles.children.length, 0);
+  assert.match(view.nodes.workspaceStatus.textContent, /unavailable|not a Git repository/);
+  assert.equal(view.nodes.workspaceStats.children.length, 0);
+});
+
+test("Results works without a Session and does not invent check evidence", async () => {
+  const view = app("mcp_work_result_app.html");
+  const { session, session_id, validation, review, ...state } = baseState;
+  view.toolResult({ work_result: state }); await view.initialize();
+  view.nodes.tabResults.onclick();
+  assert.equal(view.nodes.workspaceFiles.children.length, 1);
+  assert.equal(view.nodes.resultChecks.hidden, true);
+});
+
+test("final results and current workspace remain separate across refresh", async () => {
+  const view = await frozenView();
+  view.nodes.viewResults.onclick();
+  const frozen = frozenNodes(view);
+  assert.equal(view.nodes.panelResults.hidden, false);
+  assert.equal(view.nodes.finalChanges.hidden, false);
+  assert.equal(view.nodes.workspaceFiles.children[0].children[0].textContent, 'src/a.rs');
+  view.nodes.refresh.onclick(); await flush();
+  await view.reply(view.calls('work_result_state')[0], toolResult({ work_result: { ...nextState, final_changes: finalChanges } }));
+  assert.equal(frozenNodes(view).root, frozen.root);
+  assert.equal(view.nodes.workspaceFiles.children.length, 0);
+  assert.equal(view.nodes.finalChanges.hidden, false);
+  assert.equal(view.calls('changes_file_diff').length, 0);
+});
+
+test("unsafe live file paths fail closed and clear previously displayed results", async () => {
+  const view = app("mcp_work_result_app.html");
+  view.toolResult({ work_result: baseState }); await view.initialize();
+  view.nodes.refresh.onclick(); await flush();
+  await view.reply(view.calls('work_result_state')[0], toolResult({ work_result: { ...nextState, workspace: { ...baseState.workspace, files: [{ path: '../private' }] } } }));
+  assert.equal(view.nodes.workspaceFiles.children.length, 0);
+  assert.equal(view.nodes.workspaceStatus.textContent, 'Changes unavailable');
+  assert.equal(view.nodes.refresh.disabled, true);
 });

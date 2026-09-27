@@ -25,6 +25,7 @@ type Props = {
   onOpenAgent?: (agentId: string) => void;
   onOpenWindow?: (windowKey: string) => void;
   onOpenSession: (location: SessionLocation) => void;
+  onOpenSessionRecord?: (location: SessionLocation) => void;
   onLocateSession: (sessionId: string) => Promise<boolean>;
   onUnauthorized: () => void;
   requestedWindowKey?: string;
@@ -44,6 +45,7 @@ export function WorkView({
   onOpenAgent = () => {},
   onOpenWindow = () => {},
   onOpenSession,
+  onOpenSessionRecord,
   onLocateSession,
   onUnauthorized,
   requestedWindowKey,
@@ -82,6 +84,10 @@ export function WorkView({
         surface={surface}
         onSurfaceChange={onSurfaceChange}
         onUnauthorized={onUnauthorized}
+        onOpenSessionRecord={onOpenSessionRecord ? (projectId, sessionId) => {
+          const project = projects.find(row => row.id === projectId);
+          onOpenSessionRecord({ projectId, sessionId, projectName: project?.name || projectId, runner: project?.client_id || "" });
+        } : undefined}
         requestedWindowKey={requestedWindowKey}
         requestedSessionId={requestedSessionId}
         onRequestedWindowConsumed={onRequestedWindowConsumed}

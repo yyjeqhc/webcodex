@@ -35,9 +35,9 @@ ToolDefinition
 
 一个工具被标记为 Adaptive Direct 后，默认会自动成为 direct GPT Action；只有 canonical definition 明确声明 GPT Actions 无法表达其协议语义时才排除。因此以后增删或重新排序 Adaptive Direct 工具时，GPT Actions 会自动跟随，不存在第二套 GPT Action rank 或 operation list。
 
-Direct operation 直接使用 canonical snake_case 名称和 canonical input contract。例如 `work_on_project`、`runtime_status`、`tool_manifest`、`search_project_texts`、`read_files`、`apply_text_edits`、`run_process`、`run_script`、`run_detached_process`、`run_shell`、`observe_jobs`、`list_jobs`、`cargo_check`、`cargo_test`、`git_review_summary`、`git_diff_hunks`、`show_changes` 等会按当前定义自动投影；收尾辅助工具 `workspace_hygiene_check` 与 `finish_coding_task` 是 model-visible long-tail 工具，统一通过 `call_runtime_tool` 调用。
+Direct operation 直接使用 canonical snake_case 名称和 canonical input contract。例如 `work_on_project`、`runtime_status`、`tool_manifest`、`search_project_texts`、`read_files`、`edit_project_files`、`run_process`、`run_script`、`run_detached_process`、`run_shell`、`observe_jobs`、`list_jobs`、`cargo_check`、`cargo_test`、`git_review_summary`、`git_diff_hunks`、`show_changes` 等会按当前定义自动投影；收尾辅助工具 `workspace_hygiene_check` 与 `finish_coding_task` 是 model-visible long-tail 工具，统一通过 `call_runtime_tool` 调用。
 
-Long-tail model-visible 工具统一通过：
+Long-tail model-visible 工具与 exact-manifest specialist 统一通过 gateway。`apply_patch`、`apply_unified_diff`、`write_project_file` 这类 specialist 故意不进入普通 discovery/direct operation；调用方先按精确名称选择（例如通过 `tool_manifest`），再通过 `call_runtime_tool` 调用：
 
 ```json
 {
@@ -49,7 +49,7 @@ Long-tail model-visible 工具统一通过：
 }
 ```
 
-operation 名就是 `call_runtime_tool`。它只接受 `tool` 与 `arguments`，不再有 `params`，也没有把所有 runtime tool 参数铺平到顶层的巨大 union。当前 direct tool 应优先调用自己的 direct Action。ModelHidden、未知工具以及显式 GPT-Action-unsupported 工具都会 fail closed。
+operation 名就是 `call_runtime_tool`。它只接受 `tool` 与 `arguments`，不再有 `params`，也没有把所有 runtime tool 参数铺平到顶层的巨大 union。当前 direct tool 应优先调用自己的 direct Action。ModelHidden 工具默认 fail closed，只有显式列入 exact-manifest specialist 的例外可通过 gateway 调用；未知工具以及显式 GPT-Action-unsupported 工具始终 fail closed。
 
 MCP-only presentation 不会伪装成 Action 能力。例如 Goal Plan / Agent continuation / Work Result App presentation、基于 MCP ResourceLink 的 artifact export，以及依赖另外授权 MCP Host binding 的 continuation Endpoint rotation 都不会出现在 GPT Actions 中。
 

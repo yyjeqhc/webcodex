@@ -22,7 +22,7 @@ fn fake_binary() -> Arc<FakeBinary> {
     if let Some(binary) = cached.upgrade() {
         return binary;
     }
-    let temp = tempfile::tempdir().unwrap();
+    let temp = crate::tests::executable_tempdir();
     let output = temp.path().join(format!(
         "webcodex-plugin-check-fake{}",
         env::consts::EXE_SUFFIX

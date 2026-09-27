@@ -551,7 +551,7 @@ isolation unless WebCodex separately enforces such isolation.
 
 The P1 product description should therefore say **operator-configured delegated
 local coding agent**. It must not promise parity with WebCodex `read_files` /
-`apply_text_edits` filesystem isolation.
+`edit_project_files` filesystem isolation.
 
 ## 8. Permission-request exceptional path
 

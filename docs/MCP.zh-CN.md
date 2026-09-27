@@ -222,7 +222,7 @@ Grok Custom MCP UI 与可用范围以 xAI 的
 ```text
 work_on_project
 → read_files / search_project_texts / 按需语义导航
-→ apply_text_edits 或其它 canonical edit 工具
+→ edit_project_files 或其它 canonical edit 工具
 → substantial work 进入真实状态后调用一次 present_work_result
 → 按需 run_process / run_shell / focused validation
 → show_changes

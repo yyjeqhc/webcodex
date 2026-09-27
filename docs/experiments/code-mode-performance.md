@@ -22,7 +22,7 @@ other changes below are proposals with explicit validation boundaries.
 | Execution | One-shot Server-side V8; child tools re-enter canonical ToolRuntime | `crates/webcodex-code-mode/src/runtime.rs`, `src/tool_runtime/orchestration_host.rs` |
 | E1 | Read-only adaptive and parallel orchestration | `src/tool_runtime/code_mode.rs` |
 | E2a | E1 reads plus `cargo_check` / `cargo_test`, canonical Job handoff and effect receipts | `src/tool_runtime/code_mode.rs` |
-| E2b | E1 reads plus one `apply_text_edits` attempt; no validation in the mutation cell | `src/tool_runtime/code_mode.rs` |
+| E2b | E1 reads plus one `edit_project_files` attempt; no validation in the mutation cell | `src/tool_runtime/code_mode.rs` |
 | Job continuation | E3 terminal attention and H1 Job-native Host carrier source; not nested Code Mode tools | `docs/experiments/code-mode.md` |
 | Scheduling | Canonical Denied / Sequential / Parallel policy; a per-cell shared/exclusive fence | `src/tool_runtime/orchestration_host.rs` |
 | Capacity | Two active cells by default, eight child futures per cell, 32 child calls per cell | `crates/webcodex-code-mode/src/lib.rs` |

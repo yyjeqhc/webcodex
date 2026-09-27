@@ -7,6 +7,45 @@ use super::communication::{
 use super::Database;
 use rusqlite::params;
 
+#[test]
+fn latest_wake_lookup_avoids_history_sort_after_open_and_upgrade() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("latest-wake-index.db");
+    let db = Database::open(&path).unwrap();
+
+    let check_plan = |db: &Database| {
+        let conn = db.conn_for_tests();
+        // These are the two latest-Wake projections used by Agent inventory.
+        for column in ["wake_id", "state"] {
+            let sql = format!(
+                "EXPLAIN QUERY PLAN SELECT {column} FROM wc_agent_wakes
+                 WHERE target_agent_id = ?1
+                 ORDER BY created_at_unix_ms DESC, wake_id DESC LIMIT 1"
+            );
+            let plan = conn
+                .prepare(&sql)
+                .unwrap()
+                .query_map(["agent"], |row| row.get::<_, String>(3))
+                .unwrap()
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .unwrap();
+            assert!(
+                plan.iter().any(|line| line.contains("SEARCH"))
+                    && !plan.iter().any(|line| line.contains("TEMP B-TREE")),
+                "latest {column} must seek without sorting history: {plan:?}"
+            );
+        }
+    };
+    check_plan(&db);
+    // Simulate a database created before the additional index existed.
+    db.conn_for_tests()
+        .execute_batch("DROP INDEX idx_wc_agent_wakes_target_created")
+        .unwrap();
+    drop(db);
+    let reopened = Database::open(&path).unwrap();
+    check_plan(&reopened);
+}
+
 #[derive(Clone)]
 struct Fixture {
     owner: CommunicationPrincipal,

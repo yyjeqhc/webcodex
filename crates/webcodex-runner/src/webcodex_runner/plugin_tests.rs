@@ -27,7 +27,7 @@ fn fake_binary() -> Arc<FakeBinary> {
     if let Some(binary) = cached.upgrade() {
         return binary;
     }
-    let temp = tempfile::tempdir().unwrap();
+    let temp = crate::tests::executable_tempdir();
     let output = temp
         .path()
         .join(format!("webcodex-plugin-fake{}", env::consts::EXE_SUFFIX));
@@ -887,7 +887,7 @@ fn prepared_environment_reuses_shell_env_default_profile_and_clears_sensitive_va
 #[ignore = "manual real-process startup: provider readiness depends on host scheduling"]
 fn runner_real_process_bare_plugin_command_resolves_from_prepared_path_with_explicit_profile() {
     use super::super::config::ShellProfileConfig;
-    let temp = tempfile::tempdir().unwrap();
+    let temp = crate::tests::executable_tempdir();
     let bin = temp.path().join("bin");
     fs::create_dir_all(&bin).unwrap();
     let fake = fake_binary();

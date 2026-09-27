@@ -250,16 +250,6 @@ fn job_activity_is_required_nullable_on_explicit_job_observation_surfaces() {
 #[test]
 fn tool_specs_schema_spot_checks() {
     let cases: Vec<(&str, Vec<&str>, Vec<&str>)> = vec![
-        (
-            "apply_patch",
-            vec!["project", "patch"],
-            vec!["dry_run", "matching_mode", "session_id"],
-        ),
-        (
-            "apply_unified_diff",
-            vec!["project", "diff"],
-            vec!["deny_sensitive_paths", "session_id"],
-        ),
         ("delete_project_files", vec!["project", "paths"], vec![]),
         ("git_restore_paths", vec!["project", "paths"], vec![]),
         ("discard_untracked", vec!["project", "paths"], vec![]),
@@ -307,6 +297,38 @@ fn tool_specs_schema_spot_checks() {
                 <= crate::tool_runtime::MODEL_TOOL_DESCRIPTION_MAX_CHARS,
             "{name}: description too long"
         );
+    }
+
+    let specialists = crate::tool_runtime::registry::exact_manifest_specialist_tool_specs();
+    for (name, expected_required, expected_optional) in [
+        (
+            "apply_patch",
+            vec!["project", "patch"],
+            vec!["dry_run", "matching_mode", "session_id"],
+        ),
+        (
+            "apply_unified_diff",
+            vec!["project", "diff"],
+            vec!["deny_sensitive_paths", "session_id"],
+        ),
+    ] {
+        let spec = spec_named(&specialists, name);
+        let required = required_fields(spec);
+        assert_eq!(
+            required
+                .into_iter()
+                .collect::<std::collections::BTreeSet<_>>(),
+            expected_required
+                .into_iter()
+                .map(str::to_string)
+                .collect::<std::collections::BTreeSet<_>>()
+        );
+        for field in expected_optional {
+            assert!(
+                spec.input_schema["properties"].get(field).is_some(),
+                "{name}.{field}"
+            );
+        }
     }
 
     let spec = spec_named(&specs, "search_project_texts");

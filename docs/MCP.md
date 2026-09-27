@@ -111,6 +111,24 @@ disabling the underlying tools.
 
 The current Result App is intentionally static. September 2026 Host experiments proved that a separately designed MCP App controller can poll server-owned state and request later ChatGPT model turns, including a bounded foreground autonomous multi-turn loop, but background-tab model-turn scheduling is not an immediate guarantee. Those findings and the production design constraints are recorded in [`agent/mcp-app-continuation-experiments.md`](agent/mcp-app-continuation-experiments.md); they do not change the current Result App contract.
 
+### Live Work Result card
+
+`present_work_result` opens the separate Window work card with Activity, Results,
+and Collaboration tabs. Results shows the current Project's uncommitted files,
+rename paths, staging state, and available line counts while work is in progress.
+The bounded workspace snapshot can include changes from other work; partial file
+lists and missing line counts are labelled. A clean workspace is not task success.
+Linked Session check/review evidence appears when available.
+
+After closeout, Results also shows the sealed final task changes with on-demand
+per-file diffs. Those diffs keep their original snapshot identity even if the live
+workspace changes. Refresh uses the existing App-only observation path; opening
+Results adds no tool calls. Automatic refresh pauses while the App document is
+hidden and uses a bounded visible cadence so background cards do not continuously
+exercise the Host tool bridge. Discuss these changes opens the existing composer
+without sending a message. New cards use `ui://webcodex/work-result/v10` so Hosts
+with cached older templates load the reduced-polling behavior.
+
 ## Existing Server
 
 For an existing hosted Server intentionally configured for shared-key clients,
@@ -261,7 +279,7 @@ A typical coding flow is:
 ```text
 work_on_project
 → read_files / search_project_texts / semantic navigation as needed
-→ apply_text_edits or other canonical edit tools
+→ edit_project_files or other canonical edit tools
 → present_work_result once when substantial work becomes materially stateful
 → run_process / run_shell / focused validation tools as needed
 → show_changes
@@ -366,20 +384,18 @@ and execution keep the direct `skill_load` and `run_skill_resource` paths.
 The optional closeout helpers `workspace_hygiene_check` and `finish_coding_task`
 are model-visible gateway tools; review/coding catalogs still recommend them.
 
+Stateless MCP 2026 exposes common untrusted invocation metadata only through one optional closed `_wc` envelope. Depending on the tool, the envelope may admit `record`, `ack`, `ack_ref`, `resolve`, `reply`, `context`, and `control`. These are adapter metadata only: they never become canonical ToolCall business arguments or grant authority. Legacy flat root wrappers such as `recording_session_id`, `ack_session_message_ids`, `ack_ref`, `session_message_resolution`, `window_reply`, `context_request`, and `_control` are rejected on this Stateless 2026 surface; legacy/non-stateless transports keep their existing contracts. `call_runtime_tool` carries `_wc` only on the outer gateway call; the nested target `arguments` remain canonical business arguments and reject a second `_wc`.
+
 `WEBCODEX_MCP_COMPACT_SCHEMAS` defaults to `true`. Compact `tools/list` omits
 `outputSchema` and projects shorter MCP-specific tool/input descriptions for
 selection: purpose, nearby tool distinctions, and essential continuation guidance.
-Repeated Session/context wrapper and audited common-argument copy is shortened
-too. Compact discovery omits the repeated `ack_ref` description while preserving
-its exact field and length bound; the full manifest retains the complete Session-only
-ACK-set contract. It also omits only the exact opaque-ID regexes on
-`recording_session_id`, `ack_session_message_ids.items`, and
-`session_message_resolution.message_id`; their existing parent descriptions keep
-the `wc_sess_*` / `wc_msg_*` type hints. Copy the exact returned values.
-Business-ID, hash/Git fence and resource-path patterns, all bounds, field names,
-required fields, enums, object/union shape, annotations, and MCP App/file metadata
-are preserved. This is discovery presentation only; runtime argument validation
-and execution authority do not change.
+Repeated `_wc` copy is shortened too. Compact discovery preserves the envelope
+shape and bounds while omitting only repeated prose and exact opaque-ID regexes on
+`_wc.record`, `_wc.ack.items`, and `_wc.resolve.message_id`; the full manifest
+retains the complete contracts. Business-ID, hash/Git fence and resource-path
+patterns, all bounds, required fields, enums, object/union shape, annotations, and
+MCP App/file metadata are preserved. This is discovery presentation only; runtime
+argument validation and execution authority do not change.
 
 Use `tool_manifest(tool_name=...)` for the full exact input contract and operational
 description, or set compact schemas to `false` for full discovery schemas.

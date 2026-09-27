@@ -285,8 +285,10 @@ describe("Project / Session / Window relationships", () => {
     const rendered = render(<WorkView {...props} />);
     expect(await screen.findByText("/root/git/webcodex")).toBeTruthy();
     fireEvent.click(await screen.findByRole("tab", { name: "Evidence" }));
-    expect(within(screen.getByRole("complementary", { name: "Session context" })).getByText(/Window 1111111111/)).toBeTruthy();
-    expect(within(screen.getByRole("complementary", { name: "Session context" })).getByText(/Window 2222222222/)).toBeTruthy();
+    const sessionContext = within(screen.getByRole("complementary", { name: "Session context" }));
+    expect(sessionContext.getByText("1".repeat(64))).toBeTruthy();
+    expect(sessionContext.getByText("2".repeat(64))).toBeTruthy();
+    expect(sessionContext.getAllByRole("button", { name: "Copy Window" })).toHaveLength(2);
     expect(screen.getAllByText(/A very long Session title A very long Session title/).length).toBeGreaterThan(0);
 
     rendered.unmount();

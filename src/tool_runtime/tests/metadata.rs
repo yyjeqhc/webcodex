@@ -484,6 +484,7 @@ async fn register_agent_projects_for_auth(
                         structured_file_delete: false,
                         apply_text_edit_occurrence: false,
                         apply_text_edit_line_scope: false,
+                        apply_text_edit_range: false,
                         apply_text_edit_expected_match_count: false,
                         apply_text_edit_local_guard_without_sha: false,
                         apply_patch: false,
@@ -2383,9 +2384,7 @@ async fn tool_manifest_recommends_default_remote_coding_loop() {
         "import_conversation_files_to_project",
         "project_artifact",
         "show_changes",
-        "apply_text_edits",
-        "apply_unified_diff",
-        "write_project_file",
+        "edit_project_files",
         "cargo_check",
         "cargo_test",
         "git_diff_hunks",
@@ -2404,7 +2403,8 @@ async fn tool_manifest_recommends_default_remote_coding_loop() {
             "recommended_flows should not rank retired edit tool {tool}: {serialized}"
         );
     }
-    // The edit flow must expose only the canonical unified-diff mutation, never retired patch names.
+    // Ordinary edit routing exposes one read-native editor; exact-name mutation
+    // specialists remain discoverable only through exact tool_manifest lookup.
     let edit_tools = result.output["recommended_flows"]
         .as_array()
         .unwrap()
@@ -2414,8 +2414,17 @@ async fn tool_manifest_recommends_default_remote_coding_loop() {
         .as_array()
         .cloned()
         .unwrap_or_default();
-    assert!(edit_tools.iter().any(|tool| tool == "apply_unified_diff"));
-    assert!(edit_tools.iter().any(|tool| tool == "apply_patch"));
+    assert!(edit_tools.iter().any(|tool| tool == "edit_project_files"));
+    for specialist in ["apply_patch", "apply_unified_diff", "write_project_file"] {
+        assert!(
+            !edit_tools.iter().any(|tool| tool == specialist),
+            "ordinary edit flow must not rank exact specialist {specialist}: {edit_tools:?}"
+        );
+        assert!(
+            !serialized.contains(&format!("\"{specialist}\"")),
+            "ordinary recommended flows must not expose exact specialist {specialist}: {serialized}"
+        );
+    }
     for removed in ["apply_patch_checked", "validate_patch"] {
         assert!(
             !edit_tools.iter().any(|tool| tool == removed),
@@ -3114,9 +3123,9 @@ async fn external_provider_discovery_cannot_change_public_tool_or_openapi_surfac
         .collect::<BTreeSet<_>>();
     // Snapshot a model-visible tool's schema as the baseline that external
     // provider discovery must not perturb.
-    let write_schema_before = before
+    let edit_schema_before = before
         .iter()
-        .find(|spec| spec.name == "write_project_file")
+        .find(|spec| spec.name == "edit_project_files")
         .unwrap()
         .input_schema
         .clone();
@@ -3168,10 +3177,10 @@ async fn external_provider_discovery_cannot_change_public_tool_or_openapi_surfac
     assert_eq!(
         after
             .iter()
-            .find(|spec| spec.name == "write_project_file")
+            .find(|spec| spec.name == "edit_project_files")
             .unwrap()
             .input_schema,
-        write_schema_before
+        edit_schema_before
     );
     let openapi_after = crate::openapi::build_openapi_spec();
     let operation_ids_after = openapi_after["paths"]

@@ -163,7 +163,7 @@ impl CodeModeHost for CallableExampleHost {
                     "job_id": "wc_job_example",
                     "continuation": {"tool": "observe_jobs", "arguments": {}}
                 }),
-                "apply_text_edits" => json!({
+                "edit_project_files" => json!({
                     "state_changed": true,
                     "execution_state": "completed",
                     "error_kind": null,
@@ -669,7 +669,6 @@ fn tool_discovery_groups_drive_tool_categories() {
     );
 
     for allowed in [
-        "apply_unified_diff",
         "cargo_check",
         "cargo_fmt",
         "cargo_test",
@@ -1207,7 +1206,6 @@ async fn tool_manifest_intent_coding_returns_ranked_compact_tools() {
         );
     }
     for gateway_specialist in [
-        "apply_patch",
         "cargo_fmt",
         "go_test",
         "workspace_hygiene_check",
@@ -1231,7 +1229,7 @@ async fn tool_manifest_intent_coding_returns_ranked_compact_tools() {
         "search_project_texts",
         "search_and_read",
         "read_files",
-        "apply_text_edits",
+        "edit_project_files",
         "run_process",
         "run_script",
         "run_shell",
@@ -1641,12 +1639,12 @@ async fn filtered_tool_manifest_recommended_flows_only_reference_returned_tools(
         .filter_map(|tool| tool["name"].as_str())
         .collect();
     assert!(
-        coding_names.contains(&"apply_text_edits"),
+        coding_names.contains(&"edit_project_files"),
         "coding intent tools should expose canonical precise edits: {coding_names:?}"
     );
     assert!(
-        coding_names.contains(&"apply_patch"),
-        "coding intent tools should expose model-generated Codex patch mutation: {coding_names:?}"
+        !coding_names.contains(&"apply_patch"),
+        "exact-manifest patch specialist should stay outside ordinary coding intent: {coding_names:?}"
     );
     assert!(
         !coding_names.contains(&"apply_unified_diff"),
@@ -1733,8 +1731,8 @@ async fn filtered_tool_manifest_recommended_flows_only_reference_returned_tools(
         .filter_map(|tool| tool["name"].as_str())
         .collect();
     assert!(
-        with_patch_tools.contains(&"apply_patch"),
-        "with patch category, tools should include apply_patch: {with_patch_tools:?}"
+        !with_patch_tools.contains(&"apply_patch"),
+        "coding intent must not reintroduce exact-manifest apply_patch even when patch category is requested: {with_patch_tools:?}"
     );
     assert!(
         !with_patch_tools.contains(&"apply_unified_diff"),
@@ -1751,8 +1749,8 @@ async fn filtered_tool_manifest_recommended_flows_only_reference_returned_tools(
             .as_array()
             .unwrap()
             .iter()
-            .any(|tool| tool == "apply_patch"),
-        "with patch category, edit flow may include apply_patch: {edit_flow}"
+            .all(|tool| tool != "apply_patch"),
+        "filtered coding edit flow must not reintroduce exact-manifest apply_patch: {edit_flow}"
     );
     assert!(
         edit_flow["tools"]
@@ -2040,7 +2038,7 @@ async fn code_mode_callable_projection_preserves_key_input_constraints_and_outpu
         .unwrap();
     let edit = guarded_tools
         .iter()
-        .find(|tool| tool["tool"] == "apply_text_edits")
+        .find(|tool| tool["tool"] == "edit_project_files")
         .expect("apply_text_edits projection");
     assert_eq!(edit["input"]["properties"]["changes"]["maxItems"], 16);
     assert!(edit["input"]["properties"].get("project").is_none());
@@ -2221,7 +2219,7 @@ async fn exact_tool_manifest_projects_bounded_host_orchestration_from_tool_defin
         "search_project_texts",
         "search_and_read",
         "cargo_check",
-        "apply_text_edits",
+        "edit_project_files",
     ] {
         let serialized = serde_json::to_string(spec_named(&specs, tool_name)).unwrap();
         assert!(

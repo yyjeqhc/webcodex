@@ -180,3 +180,22 @@ Codex session 统计的配对规则：只对 name=exec 的 custom_tool_call/func
 ## 8. 未做的工作
 
 没有对 517 个文件逐一审计，没有做可归因的 Host A/B，也没有定位所有长 gap 的根因。该审查报告生成时没有修改 `/root/git/codex`、sf 数据或服务配置，也尚未 push、创建 PR、部署或重启。后续独立 review/交付动作不改变上述审查时点。该分支提供已测试的正确性修复和可实施的下一轮设计，不宣称已经取得线上性能提升。
+
+## 9. 第二轮：Host Short-Chain Replay 实测
+
+同日继续在 OE 的独立实验仓库 `/root/git/mcp-tool-surface-probe` 验证 Host-native orchestration。实验开始和结束时仓库都保持 clean；分支为 `feat/invocation-meta-deadline-probes`，实验基线 HEAD 为 `16ce8a63137240bbebbfa496eee996c5564e979e`。测试只创建临时 fixture，结束前全部删除，没有修改 WebCodex 主仓库、部署或服务配置。
+
+这轮不增加 MCP/WebCodex 工具，而是让当前 Host JavaScript cell 直接组合现有 canonical tools，验证“机械依赖留在 cell，语义依赖返回模型”的边界：
+
+| Case | 实际结果 |
+| --- | --- |
+| unique search → exact read → guarded edit | `search_project_texts` 唯一命中后，在同一个 Host cell 内继续 `read_files` 获取 `read_revision`，再执行 `edit_project_files(dry_run=true)`；`resolved_matches=1`、`would_change=true`，中间无需模型回合。 |
+| multiple search matches | fixture 中得到 2 个候选后立即停止链路，没有继续 read/edit；候选身份作为 compact evidence 返回模型。 |
+| exact edit cardinality mismatch | `edit_project_files` 返回结构化 `match_count_mismatch`，`actual_match_count=2`、`direct_retry_safe=false`、`reread_required=true`、`execution_state=not_started`、`state_changed=false`；没有 Host 外层异常，也没有写入。 |
+| stale revision replay | 先读取 revision N，随后真实修改文件，再用旧 revision N 发起第二次 mutation；结果为结构化 `stale_file_revision`、`execution_state=not_started`、`state_changed=false`，旧请求没有重放。实验随后使用新 snapshot 恢复 fixture。 |
+| independent cross-tool reads | 一个 `read_files` 与一个 `search_project_texts` 通过 Host `Promise.allSettled` 同 cell 并发完成，两个 settlement 都成功。观察到约 1.25 秒墙钟只用于证明调用确实完成，不作为性能 benchmark。 |
+| validation failure | 用确定退出 1 的 native process control 验证失败语义：返回 `exit_code=1`、`failure_kind=command_exit_nonzero`、`tool_failure=false` 的结构化结果，而不是 orchestration exception。 |
+
+实测确认现有 `read_files.items`、`search_and_read.queries`、`edit_project_files.changes`、`cargo_check.packages` 与 Host cross-tool orchestration 已足够承载短链路，不需要第二套 batch abstraction。Host 只应在下一步参数和效果已经由当前结构化结果机械确定时继续；多个候选、设计选择、新权限、stale fence、retry/effect uncertainty 或 `outcome_unknown` 都应结束 cell 并返回模型。
+
+审查同时暴露一个具体 model-facing result gap：Runner 的 SHA/revision conflict 已包含 `direct_retry_safe=false`、`reread_required=true`，但 Server 将其投影为 `stale_file_revision` 时当前会移除这些字段，只保留 `error_kind` 与 `read_files` recovery。语义仍然 fail-closed，但 Host 失去统一的机器可判定 stop/replay 信号。下一轮生产修改应补齐该投影，并明确 guidance：stale/revision mismatch 的 recovery 是重新观察入口，不是自动 reread + mutation retry authority。

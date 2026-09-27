@@ -30,6 +30,8 @@ LEGACY_CODE_MODE_SURFACE_ALIASES = {
     "e2b": "guarded_edit",
 }
 CODE_MODE_SURFACE_CHOICES = (*CANONICAL_CODE_MODE_SURFACES, *LEGACY_CODE_MODE_SURFACE_ALIASES)
+HOST_CODE_MODE_SURFACE = "host_code_mode"
+BENCHMARK_VARIANTS = ("direct", "host_code_mode", "code_mode")
 RUN_ANNOTATION_SCHEMA_VERSION = 1
 REPAIR_REASONS = frozenset((
     "invalid_arguments",
@@ -187,12 +189,15 @@ def validate_run_annotation(value: Any) -> dict[str, Any]:
         raise ReportError("unsupported run annotation schema_version")
     _require_nonempty_string(value.get("case_id"), "run annotation case_id")
     variant = value.get("variant")
-    if variant not in ("direct", "code_mode"):
-        raise ReportError("run annotation variant must be direct or code_mode")
+    if variant not in BENCHMARK_VARIANTS:
+        raise ReportError("run annotation variant must be direct, host_code_mode, or code_mode")
     surface = value.get("surface")
     if variant == "direct":
         if surface != "direct":
             raise ReportError("direct run annotation requires surface=direct")
+    elif variant == "host_code_mode":
+        if surface != HOST_CODE_MODE_SURFACE:
+            raise ReportError("host_code_mode run annotation requires surface=host_code_mode")
     elif _canonical_code_mode_surface(surface) is None:
         raise ReportError("code_mode run annotation requires surface=read_only, validation, or guarded_edit")
     if not _is_exact_git_revision(value.get("base_revision")):
@@ -309,7 +314,7 @@ e.window_continuity_eligible, e.window_meaningful, e.started_at
 """.strip()
 
 _CONTINUITY_COLUMNS = """
-e.event_id, e.action_name, e.client_window_key,
+e.event_id, e.operation, e.action_name, e.client_window_key,
 e.principal_correlation_kind, e.principal_correlation_id,
 e.window_started_at_ms, e.request_observed_at_ms, e.response_handed_at_ms,
 e.window_transition_kind, e.window_continuity_eligible,
@@ -377,6 +382,7 @@ def _row_to_continuity_event(row: sqlite3.Row) -> dict[str, Any]:
             "model_ergonomics": {"schema_version": row["model_ergonomics_version"], "job_convergence": _parse_json_object(row["job_convergence_json"] or "{}", "job_convergence", str(row["event_id"]))},
         },
         "event_id": str(row["event_id"]),
+        "operation": row["operation"],
         "action_name": row["action_name"],
         "client_window_key": row["client_window_key"],
         "principal_correlation_kind": row["principal_correlation_kind"],
@@ -820,9 +826,9 @@ def _summarize_code_mode_composition(
             "no Code Mode outer ActionAudit row was selected; benchmark calls must link their outer "
             "ActionAudit rows with recording_session_id"
         )
-    elif variant == "direct" and code_mode_outer:
+    elif variant in ("direct", "host_code_mode") and code_mode_outer:
         missing = max(missing, 1)
-        reason = "a direct report selected one or more Code Mode outer calls"
+        reason = f"a {variant} report selected one or more Code Mode outer calls"
     elif missing:
         reason = "one or more Code Mode outer calls lack a valid code_mode_composition summary"
 
@@ -907,6 +913,103 @@ def _window_timing(
     return _metric_distribution(gaps, missing=missing_serial), overlap_count, missing_serial
 
 
+def _summarize_host_short_chains(
+    outer: list[dict[str, Any]],
+    continuity_events: list[dict[str, Any]] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Summarize exact serial Window chains without inferring Host/model turns."""
+    selected_ids = {str(event["event_id"]) for event in outer}
+    previous: dict[tuple[str, str, str], dict[str, Any]] = {}
+    edges: list[tuple[str, str, str, str]] = []
+    missing_serial = 0
+    source = continuity_events if continuity_events is not None else outer
+    for event in sorted(source, key=_audit_sort_key):
+        if not event.get("window_meaningful"):
+            continue
+        selected = str(event["event_id"]) in selected_ids
+        window_key = event.get("client_window_key")
+        principal_kind = event.get("principal_correlation_kind")
+        principal_id = event.get("principal_correlation_id")
+        transition = event.get("window_transition_kind")
+        if not all(
+            isinstance(value, str) and value
+            for value in (window_key, principal_kind, principal_id)
+        ):
+            if selected and transition == "serial":
+                missing_serial += 1
+            continue
+        key = (window_key, principal_kind, principal_id)
+        predecessor = previous.pop(key, None)
+        if selected and transition == "serial":
+            predecessor_selected = (
+                predecessor is not None
+                and str(predecessor["event_id"]) in selected_ids
+            )
+            previous_tool = predecessor.get("operation") if predecessor else None
+            current_tool = event.get("operation")
+            if (
+                predecessor_selected
+                and predecessor.get("response_streaming") is False
+                and event.get("response_streaming") is False
+                and event.get("window_continuity_eligible") is True
+                and isinstance(previous_tool, str)
+                and previous_tool
+                and isinstance(current_tool, str)
+                and current_tool
+            ):
+                edges.append(
+                    (
+                        str(predecessor["event_id"]),
+                        str(event["event_id"]),
+                        previous_tool,
+                        current_tool,
+                    )
+                )
+            else:
+                missing_serial += 1
+        if event.get("window_continuity_eligible") is True:
+            previous[key] = event
+
+    successor = {before: after for before, after, _, _ in edges}
+    starts = sorted(set(successor) - set(successor.values()))
+    chain_lengths: list[int] = []
+    for start in starts:
+        seen = {start}
+        current = start
+        length = 1
+        while current in successor:
+            current = successor[current]
+            if current in seen:
+                break
+            seen.add(current)
+            length += 1
+        if length > 1:
+            chain_lengths.append(length)
+    pair_counts = Counter(
+        f"{before_tool}->{after_tool}" for _, _, before_tool, after_tool in edges
+    )
+    complete = missing_serial == 0
+    summary = {
+        "serial_transitions": len(edges) if complete else None,
+        "observed_serial_transitions": len(edges),
+        "missing_serial_transitions": missing_serial,
+        "multi_call_chains": len(chain_lengths) if complete else None,
+        "calls_in_multi_call_chains": sum(chain_lengths) if complete else None,
+        "max_chain_calls": max(chain_lengths, default=0) if complete else None,
+        "observed_by_tool_pair": dict(sorted(pair_counts.items())),
+        "same_model_turn_proven": False,
+    }
+    availability = {
+        "available": complete,
+        "reason": (
+            None
+            if complete
+            else "one or more selected serial Window transitions lack exact predecessor continuity evidence"
+        ),
+    }
+    return summary, availability
+
+
 def _observed_span_ms(outer: list[dict[str, Any]]) -> int | None:
     starts = [event["request_observed_at_ms"] for event in outer if isinstance(event.get("request_observed_at_ms"), int)]
     ends = [event["response_handed_at_ms"] for event in outer if event.get("response_streaming") is False and isinstance(event.get("response_handed_at_ms"), int)]
@@ -957,9 +1060,12 @@ def _summarize_audit(
                 counter[item] += 1
 
     gaps, overlap_count, missing_serial = _window_timing(outer, continuity_events)
+    host_short_chain, host_short_chain_availability = _summarize_host_short_chains(
+        outer, continuity_events
+    )
     canonical_observed = len(present_telemetries)
     canonical_by_name = Counter(value["tool_name"] for _, value in present_telemetries if isinstance(value.get("tool_name"), str) and value["tool_name"])
-    if variant == "direct":
+    if variant in ("direct", "host_code_mode"):
         canonical_total = canonical_observed if canonical_observed == len(outer) else None
         canonical_reason = None if canonical_total is not None else "one or more outer calls lack ModelErgonomics evidence"
     elif variant == "code_mode":
@@ -967,7 +1073,7 @@ def _summarize_audit(
         canonical_reason = "canonical_calls.total keeps the outer/direct counting contract; use composition.nested_calls for persisted Code Mode child-call totals"
     else:
         canonical_total = None
-        canonical_reason = "declare --variant direct or code_mode before interpreting canonical call count"
+        canonical_reason = "declare --variant direct, host_code_mode, or code_mode before interpreting canonical call count"
 
     return {
         "observed_span_ms": _observed_span_ms(outer),
@@ -988,6 +1094,7 @@ def _summarize_audit(
             "by_name": dict(sorted(canonical_by_name.items())),
         },
         "composition": composition,
+        "host_short_chain": host_short_chain,
         "child_calls": {
             "failed": failed_child_calls,
             "failure_kind_by_name": None,
@@ -1033,6 +1140,11 @@ def _summarize_audit(
             "window_timing": {"available": missing_serial == 0, "reason": None if missing_serial == 0 else "one or more canonical serial transitions lack the predecessor timestamps needed for a gap"},
             "canonical_calls": {"available": canonical_total is not None, "reason": canonical_reason},
             "code_mode_composition": composition_availability,
+            "host_short_chain": host_short_chain_availability,
+            "host_same_model_turn_identity": {
+                "available": False,
+                "reason": "serial ClientWindow continuity proves call ordering, not that calls came from one Host cell or one model response",
+            },
             "serialized_tool_result_bytes": {"available": result_byte_metric["total"] is not None, "reason": None if result_byte_metric["total"] is not None else "one or more outer calls lack a serialized ToolResult byte count; missing values are not treated as zero"},
             "resolved_recoveries": {"available": False, "reason": "recovery_kind is guidance metadata, not proof that a later call resolved the failure"},
         },
@@ -1078,6 +1190,8 @@ def _summarize_trace_only(trace_events: list[dict[str, Any]], variant: str | Non
         "webcodex_service_timing": {"available": False, "reason": "tool_handler_returned duration is not the canonical request-observed to response-handoff service interval"},
         "tool_runtime_timing": {"available": False, "reason": "events.jsonl does not persist canonical ModelErgonomics runtime duration evidence"},
         "window_timing": {"available": False, "reason": "events.jsonl does not persist canonical meaningful/continuity transition facts"},
+        "host_short_chain": {"available": False, "reason": "events.jsonl does not persist canonical serial ClientWindow continuity"},
+        "host_same_model_turn_identity": {"available": False, "reason": "trace lifecycle metadata has no Host cell or model response identity"},
         "canonical_calls": {"available": False, "reason": "outer trace lifecycle metadata is not a complete canonical nested-call ledger"},
         "serialized_tool_result_bytes": {"available": False, "reason": "estimated HTTP response bytes are not ToolResult serialized bytes"},
         "resolved_recoveries": {"available": False, "reason": "trace lifecycle metadata does not prove recovery completion"},
@@ -1090,6 +1204,16 @@ def _summarize_trace_only(trace_events: list[dict[str, Any]], variant: str | Non
         "tools": {"outer_by_name": dict(sorted(tools.items()))},
         "canonical_calls": {"total": None, "observed_outer_runtime_records": None, "by_name": {}},
         "composition": composition,
+        "host_short_chain": {
+            "serial_transitions": None,
+            "observed_serial_transitions": None,
+            "missing_serial_transitions": None,
+            "multi_call_chains": None,
+            "calls_in_multi_call_chains": None,
+            "max_chain_calls": None,
+            "observed_by_tool_pair": {},
+            "same_model_turn_proven": False,
+        },
         "child_calls": {"failed": None, "failure_kind_by_name": None},
         "timing": {
             "webcodex_service_ms": _metric_distribution([], missing=len(handlers)),
@@ -1187,6 +1311,11 @@ def _benchmark_metadata(*, case_manifest: Path | None, case_id: str | None, vari
             surface = "direct"
         elif surface != "direct":
             raise ReportError("--variant direct requires --surface direct")
+    elif variant == "host_code_mode":
+        if surface is None:
+            surface = HOST_CODE_MODE_SURFACE
+        elif surface != HOST_CODE_MODE_SURFACE:
+            raise ReportError("--variant host_code_mode requires --surface host_code_mode")
     elif variant == "code_mode":
         if surface is None:
             raise ReportError("--variant code_mode benchmark runs require --surface read_only, validation, or guarded_edit")
@@ -1404,6 +1533,8 @@ _COMPARISON_METRICS = [
     "timing.tool_runtime_ms.total", "timing.outside_webcodex_gap_ms.total",
     "timing.outside_webcodex_gap_ms.p50", "timing.outside_webcodex_gap_ms.p95",
     "timing.overlap_count", "results.serialized_tool_result_bytes.total",
+    "host_short_chain.serial_transitions", "host_short_chain.multi_call_chains",
+    "host_short_chain.calls_in_multi_call_chains", "host_short_chain.max_chain_calls",
     "jobs.handoffs", "jobs.terminal",
     "job_convergence.pending_handoff_count",
     "job_convergence.pending_followed_immediately_by_observe_count",
@@ -1463,13 +1594,18 @@ def _pair_compatibility(
             "comparable": False,
             "reason": "baseline must be the direct variant with surface=direct",
         }
-    if (
-        right.get("variant") != "code_mode"
-        or _canonical_code_mode_surface(right.get("surface")) is None
-    ):
+    candidate_variant = right.get("variant")
+    candidate_surface = right.get("surface")
+    candidate_ok = (
+        candidate_variant == "host_code_mode" and candidate_surface == HOST_CODE_MODE_SURFACE
+    ) or (
+        candidate_variant == "code_mode"
+        and _canonical_code_mode_surface(candidate_surface) is not None
+    )
+    if not candidate_ok:
         return {
             "comparable": False,
-            "reason": "candidate must be code_mode with explicit surface=read_only, validation, or guarded_edit",
+            "reason": "candidate must be host_code_mode with surface=host_code_mode or code_mode with surface=read_only, validation, or guarded_edit",
         }
     return {"comparable": True, "reason": None}
 
@@ -1572,6 +1708,11 @@ def compare_reports(baseline: dict[str, Any], candidate: dict[str, Any]) -> dict
             "baseline_by_reason": _get_path(baseline, "repair_turns.by_reason") or {},
             "candidate_by_reason": _get_path(candidate, "repair_turns.by_reason") or {},
         },
+        "host_short_chain": {
+            "baseline_observed_by_tool_pair": _get_path(baseline, "host_short_chain.observed_by_tool_pair") or {},
+            "candidate_observed_by_tool_pair": _get_path(candidate, "host_short_chain.observed_by_tool_pair") or {},
+            "same_model_turn_proven": False,
+        },
         "contract_surface_evidence": {
             "baseline": {
                 "error_kind_by_name": _get_path(baseline, "failures.error_kind_by_name") or {},
@@ -1619,8 +1760,8 @@ def _build_parser() -> argparse.ArgumentParser:
     summarize_parser.add_argument("--workflow-session-id")
     summarize_parser.add_argument("--case-manifest", type=Path)
     summarize_parser.add_argument("--case-id")
-    summarize_parser.add_argument("--variant", choices=("direct", "code_mode"))
-    summarize_parser.add_argument("--surface", choices=("direct", *CODE_MODE_SURFACE_CHOICES))
+    summarize_parser.add_argument("--variant", choices=BENCHMARK_VARIANTS)
+    summarize_parser.add_argument("--surface", choices=("direct", HOST_CODE_MODE_SURFACE, *CODE_MODE_SURFACE_CHOICES))
     summarize_parser.add_argument("--base-revision")
     summarize_parser.add_argument("--run-annotation", type=Path)
     summarize_parser.add_argument("--output", type=Path)

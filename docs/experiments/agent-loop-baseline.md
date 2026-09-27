@@ -168,8 +168,9 @@ is `null`; missing evidence is never substituted with zero.
 
 [`scripts/agent_loop_cases.json`](../../scripts/agent_loop_cases.json) is the
 authoritative case manifest. Each run starts from a fresh clean target at an exact
-Git base revision. Direct and Code Mode runs must use the same case id, exact
-40-hex base revision, prompt/correctness definition, and validation expectation.
+Git base revision. Direct, Host Code Mode, and Code Mode runs must use the same
+case id, exact 40-hex base revision, prompt/correctness definition, and validation
+expectation.
 The profiler includes a deterministic case fingerprint so changed case definitions
 cannot silently compare as the same pair.
 
@@ -210,12 +211,13 @@ declares a surface rejects a Code Mode run labeled with another surface.
 
 ## Paired run protocol
 
-For one case, the Direct and Code Mode runs must satisfy all of these constraints:
+For one case, Direct, Host Code Mode, and Code Mode runs must satisfy all of these constraints:
 
 - same exact case definition and 40-hex Git base revision;
 - fresh clean workspace for each run;
 - same user task prompt and correctness expectations;
 - Direct uses `guidance_profile=direct`;
+- Host Code Mode uses `guidance_profile=host_code_mode` and is reported as `variant=host_code_mode`, `surface=host_code_mode`;
 - Code Mode uses `guidance_profile=code_mode`;
 - new Code Mode captures record `surface=read_only`, `validation`, or `guarded_edit` explicitly; historical schema-v1 `e1` / `e2a` / `e2b` labels remain replay-compatible aliases;
 - the only intended experimental variable is the guidance/surface behavior being
@@ -292,6 +294,20 @@ python3 scripts/agent_loop_report.py summarize \
   --output <direct-report.json>
 ```
 
+A Host Code Mode summary:
+
+```bash
+python3 scripts/agent_loop_report.py summarize \
+  --audit-db <server-sqlite-db> \
+  --workflow-session-id <workflow-session-id> \
+  --case-id <case-id> \
+  --variant host_code_mode \
+  --surface host_code_mode \
+  --base-revision <40-hex-base> \
+  --run-annotation <host-code-mode-run-annotation.json> \
+  --output <host-code-mode-report.json>
+```
+
 A Code Mode summary:
 
 ```bash
@@ -320,7 +336,8 @@ The schema-v1 JSON summary reports, when evidence is available:
   as an explicit round-trip-pressure proxy. Nested Code Mode children never count.
 - outer model-facing calls: total, meaningful, success/failure, and tool-name
   distribution;
-- Direct canonical-call count from outer `model_ergonomics` records;
+- Direct and Host Code Mode canonical-call counts from outer `model_ergonomics` records;
+- `host_short_chain`: exact same-Window serial transition count, multi-call chain count, calls participating in those chains, maximum chain length, and observed tool-pair distribution. This is ordering evidence only; `same_model_turn_proven` is always false because ActionAudit has no Host-cell/model-response identity;
 - authoritative Code Mode composition: nested calls/successes/failures,
   `max_in_flight`, nested tool counts, consequential known/Job/unknown outcomes,
   internal duration, slot wait, optional program input bytes, and nested raw versus
@@ -343,9 +360,9 @@ rather than assuming an absent metric is zero.
 
 **Authoritative from ActionAudit:** meaningful outer calls (also reported as the
 `model_round_trip_proxy`), outer success/failure/tool distribution, service timing
-when timestamps exist,
-serialized result bytes when persisted, canonical serial gaps when continuity
-evidence exists, and Code Mode composition counts/timing/bytes/concurrency.
+when timestamps exist, serialized result bytes when persisted, canonical serial gaps
+and Host short-chain ordering evidence when continuity evidence exists, and Code Mode
+composition counts/timing/bytes/concurrency.
 
 **Manual bounded annotation:** repair turns, full task wall time, and final
 correctness/validation verdicts.
@@ -355,6 +372,7 @@ correctness/validation verdicts.
 - exact model round trips. ActionAudit can prove meaningful model-facing outer tool
   calls and overlap, but it does not persist the model response/turn identity needed
   to prove how many inference round trips produced those calls.
+- whether two serial Host Code Mode calls came from one JavaScript cell or one model response. `host_short_chain` intentionally does not infer that fact;
 - per-child Code Mode failure-kind distribution. Current composition persists the
   authoritative nested failure count but not each child failure category.
 - native batch item counts. A `read_files` or `search_project_texts` child call
@@ -383,11 +401,13 @@ python3 scripts/agent_loop_report.py compare \
   --output <comparison.json>
 ```
 
-JSON is the authoritative comparison shape. Numeric entries carry baseline,
-candidate, candidate-minus-baseline delta, and a `comparable` flag. The paired
-output includes at least:
+JSON is the authoritative comparison shape. A Direct baseline can be paired with
+either a Host Code Mode candidate or a typed Code Mode candidate. Numeric entries
+carry baseline, candidate, candidate-minus-baseline delta, and a `comparable` flag.
+The paired output includes at least:
 
 - meaningful outer-call/`model_round_trip_proxy` delta;
+- Host short-chain serial-transition, multi-call-chain, participating-call, maximum-chain-length deltas, plus side-by-side observed tool-pair distributions;
 - repair-turn delta and side-by-side repair reason counts;
 - failed outer-call delta;
 - failed Code Mode child calls;
@@ -399,9 +419,9 @@ output includes at least:
 - full evidence availability for both runs.
 
 `case_compatibility` requires the same case id, exact base revision, and exact
-case fingerprint. `pair_compatibility` additionally requires Direct as the
-baseline and Code Mode with an explicit `read_only`, `validation`, or
-`guarded_edit` surface as the candidate.
+case fingerprint. `pair_compatibility` additionally requires Direct as the baseline
+and either Host Code Mode with `surface=host_code_mode`, or Code Mode with an
+explicit `read_only`, `validation`, or `guarded_edit` surface, as the candidate.
 `correctness_compatibility` requires both runs to pass the case correctness gate
 and any required validation. `throughput_compatibility` is true only when both
 the pair and correctness gates pass.

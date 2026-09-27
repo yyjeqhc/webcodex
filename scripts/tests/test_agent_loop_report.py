@@ -246,6 +246,66 @@ class AgentLoopReportTests(unittest.TestCase):
         self.assertEqual(gap["p50"], 30)
         self.assertEqual(result["canonical_calls"]["total"], 3)
 
+    def test_host_short_chain_reports_exact_serial_window_evidence(self) -> None:
+        self.insert_event("read", tool="read_files", started=100, handed=120)
+        self.insert_event(
+            "search",
+            tool="search_project_texts",
+            started=150,
+            handed=170,
+            transition="serial",
+        )
+        self.insert_event(
+            "edit",
+            tool="edit_project_files",
+            started=200,
+            handed=230,
+            transition="serial",
+        )
+
+        result = self.summarize(variant="host_code_mode")
+        chain = result["host_short_chain"]
+
+        self.assertEqual(result["canonical_calls"]["total"], 3)
+        self.assertEqual(chain["serial_transitions"], 2)
+        self.assertEqual(chain["multi_call_chains"], 1)
+        self.assertEqual(chain["calls_in_multi_call_chains"], 3)
+        self.assertEqual(chain["max_chain_calls"], 3)
+        self.assertEqual(
+            chain["observed_by_tool_pair"],
+            {
+                "read_files->search_project_texts": 1,
+                "search_project_texts->edit_project_files": 1,
+            },
+        )
+        self.assertFalse(chain["same_model_turn_proven"])
+        self.assertTrue(result["availability"]["host_short_chain"]["available"])
+        self.assertFalse(
+            result["availability"]["host_same_model_turn_identity"]["available"]
+        )
+
+    def test_host_short_chain_fails_closed_when_serial_predecessor_is_missing(self) -> None:
+        self.insert_event(
+            "search",
+            tool="search_project_texts",
+            started=150,
+            handed=170,
+            transition="serial",
+        )
+
+        result = self.summarize(variant="host_code_mode")
+        chain = result["host_short_chain"]
+
+        self.assertIsNone(chain["serial_transitions"])
+        self.assertEqual(chain["observed_serial_transitions"], 0)
+        self.assertEqual(chain["missing_serial_transitions"], 1)
+        self.assertIsNone(chain["multi_call_chains"])
+        self.assertFalse(result["availability"]["host_short_chain"]["available"])
+        self.assertIn(
+            "predecessor continuity evidence",
+            result["availability"]["host_short_chain"]["reason"],
+        )
+
     def test_overlap_is_counted_without_fabricating_negative_gap(self) -> None:
         self.insert_event("read_only", started=100, handed=180)
         self.insert_event("e2", started=150, handed=190, transition="overlap")
@@ -563,6 +623,8 @@ class AgentLoopReportTests(unittest.TestCase):
         self.assertFalse(result["availability"]["window_timing"]["available"])
         self.assertIsNone(result["timing"]["webcodex_service_ms"]["total"])
         self.assertFalse(result["availability"]["webcodex_service_timing"]["available"])
+        self.assertFalse(result["availability"]["host_short_chain"]["available"])
+        self.assertFalse(result["host_short_chain"]["same_model_turn_proven"])
 
     def test_code_mode_canonical_count_stays_separate_from_persisted_child_count(self) -> None:
         self.insert_event(
@@ -832,6 +894,25 @@ class AgentLoopReportTests(unittest.TestCase):
         )
         self.assertEqual(metadata["surface"], "direct")
 
+    def test_benchmark_host_code_mode_surface_is_inferred(self) -> None:
+        metadata = report._benchmark_metadata(
+            case_manifest=None,
+            case_id="readonly_review",
+            variant="host_code_mode",
+            surface=None,
+            base_revision="a" * 40,
+        )
+        self.assertEqual(metadata["surface"], "host_code_mode")
+
+        with self.assertRaisesRegex(report.ReportError, "surface.*host_code_mode"):
+            report._benchmark_metadata(
+                case_manifest=None,
+                case_id="readonly_review",
+                variant="host_code_mode",
+                surface="direct",
+                base_revision="a" * 40,
+            )
+
     def test_run_annotation_validation_is_bounded_and_payload_safe(self) -> None:
         value = {
             "schema_version": 1,
@@ -864,6 +945,11 @@ class AgentLoopReportTests(unittest.TestCase):
         legacy["variant"] = "code_mode"
         legacy["surface"] = "e1"
         self.assertEqual(report.validate_run_annotation(copy.deepcopy(legacy)), legacy)
+
+        host = copy.deepcopy(value)
+        host["variant"] = "host_code_mode"
+        host["surface"] = "host_code_mode"
+        self.assertEqual(report.validate_run_annotation(copy.deepcopy(host)), host)
 
         leaked = copy.deepcopy(value)
         leaked["session_id"] = "wc_sess_should_not_be_stored"
@@ -1041,6 +1127,10 @@ class AgentLoopReportTests(unittest.TestCase):
         self.assertTrue(
             report.compare_reports(direct, legacy_code)["pair_compatibility"]["comparable"]
         )
+        host = copy.deepcopy(direct)
+        host["benchmark"]["variant"] = "host_code_mode"
+        host["benchmark"]["surface"] = "host_code_mode"
+        self.assertTrue(report.compare_reports(direct, host)["pair_compatibility"]["comparable"])
         self.assertTrue(comparison["correctness_compatibility"]["comparable"])
         self.assertTrue(comparison["throughput_compatibility"]["comparable"])
         self.assertFalse(metrics["model_round_trips"]["comparable"])

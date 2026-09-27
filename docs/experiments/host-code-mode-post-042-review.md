@@ -149,11 +149,11 @@ cell 内保留完整 ToolResult、revision、cursor 和恢复数据；给模型�
 
 ### C. 用现有数据验证收益，再决定是否需要新观测能力
 
-默认不增加 telemetry 表、持续扫描或生产采样负担。先离线复用上述 ActionAudit 字段、Job convergence、现有 Host session 和 source/build 信息。缺少可靠关联时保留未知，不把 server gap 改名为 model turns。
+默认不增加 telemetry 表、持续扫描或生产采样负担。先离线复用上述 ActionAudit 字段、Job convergence、现有 Host session 和 source/build 信息。缺少可靠关联时保留未知，不把 server gap 改名为 model turns。本分支因此扩展现有 `scripts/agent_loop_report.py`，直接增加 `host_code_mode` variant 和 Host short-chain 聚合，而不增加生产热路径埋点。
 
 对照任务至少包括：独立多文件读取、确定性 search/read 后的 guarded edit、长测试 Job handoff、三页 Git review、取消/结果未知恢复。长 Job 场景应单独比较 `pending → 独立 DAG → passive attention`、`pending → 一次 wait_for_job_terminal → Host continuation` 与错误基线 `pending → 多次 observe_jobs/多次模型重入`；不要把同一 cell 的 observe 轮询当成目标架构。固定源代码、Host/profile、任务、缓存条件和运行次序；不要把冷 Cargo 编译与热缓存任务直接比较。
 
-评价优先级：任务正确完成和安全边界不退化，其次是端到端耗时、实际可观察的模型决策轮次、结果输出体积、有效与无变化的 observation。继续观察 60/90 分钟工作窗口，但必须标注用户继续、暂停和版本切换，不用窗口跨度替代单次不中断执行。
+评价优先级：任务正确完成和安全边界不退化，其次是端到端耗时、实际可观察的模型决策轮次、结果输出体积、有效与无变化的 observation。当前 ActionAudit 仍不能证明 exact model response/turn identity，因此报告保留 `model_round_trips=null`，只把 meaningful outer calls 作为显式 proxy；新增的 `host_short_chain` 仅表示同 Window canonical serial ordering，不声称来自同一 Host cell。继续观察 60/90 分钟工作窗口，但必须标注用户继续、暂停和版本切换，不用窗口跨度替代单次不中断执行。
 
 Work Result state 请求单独评估：检查现有可见性、后台暂停和状态变化后的刷新策略，再判断是否需要额外 backoff。不要把 App 刷新请求计作模型 turn，也不要假定 #712 等已部署到所有历史样本。
 
@@ -197,6 +197,8 @@ Codex session 统计的配对规则：只对 name=exec 的 custom_tool_call/func
 | validation failure | 用确定退出 1 的 native process control 验证失败语义：返回 `exit_code=1`、`failure_kind=command_exit_nonzero`、`tool_failure=false` 的结构化结果，而不是 orchestration exception。 |
 
 实测确认现有 `read_files.items`、`search_and_read.queries`、`edit_project_files.changes`、`cargo_check.packages` 与 Host cross-tool orchestration 已足够承载短链路，不需要第二套 batch abstraction。Host 只应在下一步参数和效果已经由当前结构化结果机械确定时继续；多个候选、设计选择、新权限、stale fence、retry/effect uncertainty 或 `outcome_unknown` 都应结束 cell 并返回模型。
+
+对应的离线指标现在定义为：`outer_calls`/`canonical_calls` 看实际工具调用量，`results.serialized_tool_result_bytes` 看模型可见结果体积，`timing` 看 WebCodex 服务时间和 canonical serial gap，`host_short_chain` 看同 Window 的 serial transition、multi-call chain、参与调用数、最大链长和 tool-pair 分布；`repair_turns`、完整 task wall time 与 correctness 继续来自 bounded run annotation。`host_short_chain.same_model_turn_proven` 固定为 `false`，防止把调用连续性包装成模型回合证据。
 
 审查同时暴露一个具体 model-facing result gap：Runner 的 SHA/revision conflict 已包含 `direct_retry_safe=false`、`reread_required=true`，但基线 Server 将其投影为 `stale_file_revision` 时会移除这两个字段，只保留 `error_kind` 与 `read_files` recovery。语义仍然 fail-closed，但 Host 会失去统一的机器可判定 stop/replay 信号。本分支后续生产修改已在 `edit_project_files` 的 stale projection 补齐这两个字段，并明确 guidance：stale/revision mismatch 的 recovery 是重新观察入口，不是自动 reread + mutation retry authority。
 

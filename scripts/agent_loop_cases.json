@@ -10,6 +10,7 @@
     "fresh_clean_workspace_per_run": true,
     "variants": [
       "direct",
+      "host_code_mode",
       "code_mode"
     ]
   },

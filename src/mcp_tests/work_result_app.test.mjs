@@ -1097,8 +1097,14 @@ test("Results shows live file states and checks, preserving nodes on unrelated r
   const view = app("mcp_work_result_app.html");
   const state = structuredClone(baseState);
   state.workspace.files = [
-    { path: 'src/new.rs', old_path: 'src/old.rs', status: 'renamed', staged: true, unstaged: true, additions: 3, deletions: 2 },
-    { path: 'notes/<draft>.md', status: 'untracked' },
+    {
+      path: 'src/new.rs', old_path: 'src/old.rs', status: 'renamed', staged: true, unstaged: true, additions: 3, deletions: 2,
+      content_kind: 'diff', content: '@@ -1 +1 @@\n-old\n+new\n', content_truncated: false,
+    },
+    {
+      path: 'notes/<draft>.md', status: 'untracked',
+      content_kind: 'preview', content: '<not markup>\nsecond line', content_truncated: true,
+    },
     { path: 'src/gone.rs', status: 'deleted', unstaged: true, additions: 0, deletions: 8 },
   ];
   state.workspace.files_total = 12;
@@ -1112,6 +1118,12 @@ test("Results shows live file states and checks, preserving nodes on unrelated r
   assert.equal(row.children[1].textContent, 'Renamed · Staged + unstaged');
   assert.equal(view.nodes.workspaceFiles.children[1].children[0].textContent, 'notes/<draft>.md');
   assert.equal(view.nodes.workspaceFiles.children[1].children[2].textContent, 'Line counts unavailable');
+  assert.equal(row.children[3].textContent, 'Changed content');
+  assert.equal(row.children[4].children[1].textContent, '-old');
+  assert.equal(row.children[4].children[2].textContent, '+new');
+  assert.equal(view.nodes.workspaceFiles.children[1].children[3].textContent, 'New file preview · partial');
+  assert.equal(view.nodes.workspaceFiles.children[1].children[4].children[0].textContent, '<not markup>');
+  assert.equal(view.nodes.workspaceFiles.children[1].children[4].children[1].textContent, 'second line');
   assert.match(view.nodes.workspaceMeta.textContent, /3 of 12/);
   assert.equal(view.nodes.validationStatus.textContent, 'Checks passed');
   assert.equal(view.nodes.finalChanges.hidden, true);

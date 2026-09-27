@@ -591,6 +591,7 @@ fn sparse_success_item(item: &Value) -> Option<Value> {
     sparse.insert("changed".to_string(), json!(changed));
     sparse.insert("log_delta_status".to_string(), json!(log_delta_status));
     sparse.insert("observation_token".to_string(), json!(observation_token));
+    copy_non_null(observation, &mut sparse, "project");
     if let Some(observation_ref) = item.get("observation_ref").and_then(Value::as_str) {
         sparse.insert("observation_ref".to_string(), json!(observation_ref));
     }

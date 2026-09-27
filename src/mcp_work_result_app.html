@@ -134,8 +134,9 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
   overflow-wrap: anywhere;
   font: 11px/1.6 var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
 }
-.workspace-files { display: grid; gap: 6px; max-height: 320px; overflow: auto; }
+.workspace-files { display: grid; gap: 6px; max-height: 320px; overflow: auto; scrollbar-gutter: stable; box-sizing: border-box; padding-right: 10px; }
 .workspace-file { display: grid; gap: 4px; padding: 9px 10px; border: 1px solid var(--divider); border-radius: 9px; }
+.workspace-file > .diff { margin-top: 4px; }
 .workspace-file code { font: 12px/1.5 var(--font-mono, ui-monospace, monospace); white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
 .frozen-file { overflow: hidden; border: 1px solid var(--divider); border-radius: 9px; background: color-mix(in srgb, Canvas 94%, CanvasText 6%); }
 .frozen-file + .frozen-file { margin-top: 6px; }
@@ -201,13 +202,13 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
 .workflow-stages { display: flex; min-width: 0; flex-wrap: wrap; gap: 6px; }
 .workflow-stages button { min-width: 0; padding: 6px 9px; border: 1px solid var(--divider); border-radius: 9px; color: CanvasText; background: var(--surface); cursor: pointer; }
 .workflow-stages button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
-.workflow-activity { display: grid; min-width: 0; max-width: 100%; max-height: min(420px, 55vh); overflow-x: hidden; overflow-y: auto; scrollbar-gutter: stable; padding-right: 2px; }
+.workflow-activity { display: grid; min-width: 0; max-width: 100%; max-height: min(420px, 55vh); overflow-x: hidden; overflow-y: auto; scrollbar-gutter: stable; box-sizing: border-box; padding-right: 10px; }
 .workflow-row { display: grid; min-width: 0; gap: 4px; padding: 10px 0; border-bottom: 1px solid var(--divider); }
 .workflow-row header { display: flex; min-width: 0; flex-wrap: wrap; gap: 4px 8px; justify-content: space-between; }
 .workflow-row strong { min-width: 0; overflow-wrap: anywhere; }
 .workflow-row time { color: var(--muted); font-size: 11px; }
 .activity-call { display: block; min-width: 0; max-width: 100%; border-bottom: 1px solid var(--divider); }
-.activity-call > summary { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 10px; align-items: center; padding: 10px 1px; cursor: pointer; list-style-position: inside; }
+.activity-call > summary { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 10px; align-items: center; padding: 10px 6px 10px 1px; cursor: pointer; list-style-position: inside; }
 .activity-call > summary::marker { color: var(--muted); }
 .call-main { display: grid; min-width: 0; gap: 2px; }
 .call-title { min-width: 0; font-weight: 650; overflow-wrap: anywhere; }
@@ -306,6 +307,7 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
   const MAX_PROJECT = 512;
   const MAX_PATH = 512;
   const MAX_FILES = 8;
+  const MAX_FILE_CONTENT_CHARS = 12000;
   const MAX_TOOLS = 12;
   const SNAPSHOT_ID = /^wc_changes_snapshot_[0-9a-f]{32}$/;
   const WINDOW_KEY = /^[0-9a-f]{64}$/;
@@ -412,6 +414,11 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     for (const key of ["additions", "deletions"]) if (value[key] !== undefined && !safeCount(value[key])) return false;
     for (const key of ["staged", "unstaged"]) if (value[key] !== undefined && typeof value[key] !== "boolean") return false;
     for (const key of ["status", "kind"]) if (value[key] !== undefined && (typeof value[key] !== "string" || value[key].length > 32)) return false;
+    if (value.content_kind !== undefined && !["diff", "preview"].includes(value.content_kind)) return false;
+    if (value.content !== undefined && (typeof value.content !== "string" || value.content.length === 0 || Array.from(value.content).length > MAX_FILE_CONTENT_CHARS || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(value.content))) return false;
+    if ((value.content_kind === undefined) !== (value.content === undefined)) return false;
+    if (value.content_truncated !== undefined && typeof value.content_truncated !== "boolean") return false;
+    if (value.content === undefined && value.content_truncated !== undefined) return false;
     return true;
   }
 
@@ -687,18 +694,22 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     return value;
   }
 
+  function renderDiffText(pre, text, styled) {
+    pre.replaceChildren();
+    for (const value of text.split("\n")) {
+      const line = document.createElement("span");
+      const kind = styled ? (value.startsWith("@@") ? "hunk" : value.startsWith("+") && !value.startsWith("+++") ? "added"
+        : value.startsWith("-") && !value.startsWith("---") ? "deleted" : "") : "";
+      line.className = `diff-line ${kind}`;
+      line.textContent = value;
+      pre.appendChild(line);
+    }
+  }
+
   function renderFrozenDiff(state, pre, diff) {
     state.textContent = `${diff.binary ? "Binary file" : "File changes"}${diff.truncated
       ? ` · partial (${diff.lines_returned}/${diff.lines_total} lines)` : ""}`;
-    pre.replaceChildren();
-    for (const text of diff.diff.split("\n")) {
-      const line = document.createElement("span");
-      const kind = text.startsWith("@@") ? "hunk" : text.startsWith("+") && !text.startsWith("+++") ? "added"
-        : text.startsWith("-") && !text.startsWith("---") ? "deleted" : "";
-      line.className = `diff-line ${kind}`;
-      line.textContent = text;
-      pre.appendChild(line);
-    }
+    renderDiffText(pre, diff.diff, true);
   }
 
   async function loadFrozenDiff(file, state, pre) {
@@ -827,7 +838,17 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
       const stats = document.createElement("span"); stats.className = "stats-inline";
       if (safeCount(file.additions) && safeCount(file.deletions)) renderLineStats(stats, file.additions, file.deletions);
       else stats.textContent = "Line counts unavailable";
-      row.append(path, meta, stats); root.append(row);
+      row.append(path, meta, stats);
+      if (typeof file.content === "string") {
+        const contentState = document.createElement("div"); contentState.className = "secondary";
+        contentState.textContent = file.content_kind === "preview"
+          ? `New file preview${file.content_truncated ? " · partial" : ""}`
+          : `Changed content${file.content_truncated ? " · partial" : ""}`;
+        const content = document.createElement("pre"); content.className = "diff";
+        renderDiffText(content, file.content, file.content_kind === "diff");
+        row.append(contentState, content);
+      }
+      root.append(row);
     }
     if (workspace.truncated || workspace.files_total > workspace.files.length) {
       el("workspaceMeta").textContent = `Showing ${workspace.files.length} of ${workspace.files_total} files · limited snapshot`;

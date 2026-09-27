@@ -2492,7 +2492,7 @@ impl ToolRuntime {
         &self,
         project: String,
     ) -> ToolResult {
-        self.show_changes_observation(project, None, Some(false), None, None, None, true)
+        self.show_changes_observation(project, None, Some(true), Some(16), Some(80), None, true)
             .await
     }
 

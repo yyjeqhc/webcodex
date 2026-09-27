@@ -108,6 +108,60 @@ fn work_result_projection_is_sparse_bounded_and_honest() {
 }
 
 #[test]
+fn work_result_projection_restores_bounded_live_diff_and_untracked_preview_content() {
+    let long_tail = "x".repeat(13_000);
+    let projected = build_work_result_projection(
+        "agent:special:demo",
+        "wc_sess_0123456789abcdef",
+        true,
+        &json!({
+            "git_available": true,
+            "clean": false,
+            "counts": counts(0),
+            "files_total": 3,
+            "files": [
+                {"path": "src/lib.rs", "status": "modified", "kind": "tracked", "additions": 1, "deletions": 1},
+                {"path": "notes/new.txt", "status": "untracked", "kind": "untracked"},
+                {"path": "src/large.rs", "status": "modified", "kind": "tracked"}
+            ],
+            "hunks": [
+                {"path": "src/lib.rs", "hunks": [
+                    {"diff": "@@ -1 +1 @@\n-old\n+new\n", "source_completeness": "complete"}
+                ]},
+                {"path": "src/large.rs", "hunks": [
+                    {"diff": long_tail, "source_completeness": "complete"}
+                ]}
+            ],
+            "hunks_truncated": false,
+            "untracked_previews": [
+                {"path": "notes/new.txt", "kind": "text", "truncated": false, "lines": [
+                    {"line": 1, "text": "hello"},
+                    {"line": 2, "text": "<safe text>"}
+                ]}
+            ]
+        }),
+        &validation("not_run", "not_run", 0, 0),
+        &current_validation("unproven", 0, 0),
+        &review(0),
+        false,
+    );
+
+    let files = projected["workspace"]["files"].as_array().unwrap();
+    assert_eq!(files[0]["content_kind"], "diff");
+    assert_eq!(files[0]["content"], "@@ -1 +1 @@\n-old\n+new\n");
+    assert_eq!(files[0]["content_truncated"], false);
+    assert_eq!(files[1]["content_kind"], "preview");
+    assert_eq!(files[1]["content"], "hello\n<safe text>");
+    assert_eq!(files[1]["content_truncated"], false);
+    assert_eq!(files[2]["content_kind"], "diff");
+    assert_eq!(
+        files[2]["content"].as_str().unwrap().chars().count(),
+        12_000
+    );
+    assert_eq!(files[2]["content_truncated"], true);
+}
+
+#[test]
 fn work_result_preserves_unproven_source_without_hiding_historical_execution_success() {
     let projected = build_work_result_projection(
         "agent:special:demo",

@@ -509,6 +509,7 @@ fn observe_jobs_output_schema() -> Value {
         "additionalProperties": true,
         "properties": {
             "job_id": schema_type("string", "Runtime Job id."),
+            "project": nullable_schema("string", "Project id recorded on the observed Job, when available."),
             "status": schema_type("string", "Canonical current Job status."),
             "exit_code": nullable_schema("integer", "Process exit code, when terminal and available."),
             "command_execution_state": job_command_execution_state_schema(),
@@ -588,6 +589,7 @@ fn observe_jobs_output_schema() -> Value {
         "additionalProperties": false,
         "properties": {
             "job_id": schema_type("string", "Runtime Job id."),
+            "project": nullable_schema("string", "Project id retained for Window/Job correlation when available."),
             "status": schema_type("string", "Canonical current Job status."),
             "terminal": schema_type("boolean", "Stable terminal/nonterminal abstraction over Job lifecycle variants; never inferred from batch counts."),
             "changed": schema_type("boolean", "Whether lifecycle revision or Server epoch differs from the supplied observation token."),

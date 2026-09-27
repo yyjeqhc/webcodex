@@ -527,6 +527,15 @@ fn work_result_html_is_bounded_live_progress_ui() {
     assert!(MCP_WORK_RESULT_APP_HTML.contains("if (document.hidden) {"));
     assert!(!MCP_WORK_RESULT_APP_HTML.contains("HIDDEN_REFRESH_MS"));
     assert!(!MCP_WORK_RESULT_APP_HTML.contains("HIDDEN_IDLE_REFRESH_MS"));
+    assert!(
+        MCP_WORK_RESULT_APP_HTML
+            .contains("scrollbar-gutter: stable; box-sizing: border-box; padding-right: 10px"),
+        "scrolling Work Result regions must reserve content space beside the scrollbar"
+    );
+    assert!(
+        MCP_WORK_RESULT_APP_HTML.contains("Changed content"),
+        "live workspace file contents should be rendered in Results"
+    );
     for forbidden in [
         "Linked work conversation",
         "No linked work conversation",

@@ -333,10 +333,11 @@ pub async fn mcp_info(req: &mut Request, depot: &mut Depot, res: &mut Response) 
     })));
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 struct McpToolJobAuditCorrelation {
     async_job_id: Option<String>,
     observed_job_ids: Vec<String>,
+    resolved_project: Option<String>,
 }
 
 fn safe_audit_job_id(value: Option<&Value>) -> Option<String> {
@@ -344,6 +345,18 @@ fn safe_audit_job_id(value: Option<&Value>) -> Option<String> {
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|job_id| webcodex_core::workflow_session_contract::is_safe_job_id(job_id))
+        .map(str::to_string)
+}
+
+fn safe_audit_project(value: Option<&Value>) -> Option<String> {
+    value
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|project| {
+            !project.is_empty()
+                && project.chars().count() <= 512
+                && !project.chars().any(char::is_control)
+        })
         .map(str::to_string)
 }
 
@@ -356,15 +369,34 @@ fn mcp_tool_job_audit_correlation(
     };
     if tool_name == Some("observe_jobs") {
         let mut observed_job_ids = Vec::new();
+        let mut resolved_project: Option<String> = None;
+        let mut project_ambiguous = false;
         if let Some(items) = output.get("items").and_then(Value::as_array) {
             for item in items.iter().take(8) {
+                let item_output = item.get("output").filter(|value| value.is_object());
                 let job_id = safe_audit_job_id(
                     item.get("job_id")
-                        .or_else(|| item.get("output").and_then(|output| output.get("job_id"))),
+                        .or_else(|| item_output.and_then(|output| output.get("job_id"))),
                 );
                 if let Some(job_id) = job_id {
                     if !observed_job_ids.contains(&job_id) {
                         observed_job_ids.push(job_id);
+                    }
+                    let project = safe_audit_project(
+                        item_output
+                            .and_then(|output| output.get("project"))
+                            .or_else(|| item.get("project")),
+                    );
+                    match (resolved_project.as_deref(), project.as_deref()) {
+                        (None, Some(project)) if !project_ambiguous => {
+                            resolved_project = Some(project.to_string());
+                        }
+                        (Some(existing), Some(project)) if existing == project => {}
+                        (_, None) | (Some(_), Some(_)) => {
+                            resolved_project = None;
+                            project_ambiguous = true;
+                        }
+                        (None, Some(_)) => {}
                     }
                 }
             }
@@ -372,6 +404,7 @@ fn mcp_tool_job_audit_correlation(
         return McpToolJobAuditCorrelation {
             async_job_id: None,
             observed_job_ids,
+            resolved_project: (!project_ambiguous).then_some(resolved_project).flatten(),
         };
     }
 
@@ -385,9 +418,9 @@ fn mcp_tool_job_audit_correlation(
     McpToolJobAuditCorrelation {
         async_job_id: safe_audit_job_id(output.get("job_id")),
         observed_job_ids: Vec::new(),
+        resolved_project: None,
     }
 }
-
 fn mcp_tool_action_audit_ids(
     success: bool,
     observed_goal_plan_id: Option<&str>,
@@ -818,6 +851,14 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
         }
     };
 
+    let job_correlation = match &outcome {
+        McpOutcome::Ok(body) => mcp_tool_job_audit_correlation(tool_name.as_deref(), body),
+        _ => McpToolJobAuditCorrelation::default(),
+    };
+    if tool_correlation.resolved_project.is_none() {
+        tool_correlation.resolved_project = job_correlation.resolved_project.clone();
+    }
+
     if let (Some(active), Some(project)) = (
         live_window_request.as_ref(),
         tool_correlation.resolved_project.as_deref(),
@@ -903,7 +944,6 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
                 .and_then(|s| s.get("success").or_else(|| s.get("ok")))
                 .and_then(|v| v.as_bool());
             let audit_success = tool_success.unwrap_or(true);
-            let job_correlation = mcp_tool_job_audit_correlation(tool_name.as_deref(), &body);
             let audit_event = build_audit_event(
                 audit_success,
                 StatusCode::OK,

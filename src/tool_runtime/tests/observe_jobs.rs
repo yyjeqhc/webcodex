@@ -558,6 +558,7 @@ fn observe_jobs_compact_projection_single_running_unchanged_keeps_actionable_sta
         false,
     );
     observation["activity"] = serde_json::to_value(process_activity()).unwrap();
+    observation["project"] = json!("agent:special:observe-kernel-projection");
     let token = observation["observation_token"].clone();
     let canonical = canonical_batch(vec![canonical_success_item(0, observation)], "immediate", 0);
     assert_eq!(
@@ -584,6 +585,7 @@ fn observe_jobs_compact_projection_single_running_unchanged_keeps_actionable_sta
     assert!(projected.output["wait"].get("waited_ms").is_none());
     let item = &projected.output["items"][0];
     assert_eq!(item["job_id"], "job-unchanged");
+    assert_eq!(item["project"], "agent:special:observe-kernel-projection");
     assert_eq!(item["status"], "running");
     assert_eq!(item["terminal"], false);
     assert_eq!(item["changed"], false);

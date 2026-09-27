@@ -1786,6 +1786,7 @@ impl ToolRuntime {
                 }
                 ToolResult::ok(json!({
                     "job_id": job.job_id,
+                    "project": job.project_id,
                     "status": job.status,
                     "exit_code": job.exit_code,
                     "command_execution_state": job.command_execution_state,

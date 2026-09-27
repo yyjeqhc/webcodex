@@ -563,7 +563,6 @@ impl ToolRuntime {
             source,
             projection.clone(),
             summary.clone(),
-            files.clone(),
             signals.clone(),
             diff.clone(),
             coverage_partial,

@@ -97,7 +97,7 @@ class ManifestTests(unittest.TestCase):
         names = [verifier.canonical_archive_name(version, platform) for platform in verifier.PLATFORMS]
         names += [verifier.canonical_installer_name(version, platform) for platform in verifier.PLATFORMS]
         names += [verifier.canonical_source_manifest_name(version, platform) for platform in verifier.PLATFORMS]
-        names.append("SHA256SUMS")
+        names += ["SHA256SUMS", "manifest.json"]
         release = {
             "tag_name": f"v{version}", "draft": False, "prerelease": False,
             "assets": [{"name": name, "state": "uploaded", "browser_download_url": "https://example.invalid/" + name} for name in names],
@@ -114,8 +114,9 @@ class ManifestTests(unittest.TestCase):
         filenames = [verifier.canonical_archive_name(version, platform) for platform in verifier.PLATFORMS]
         filenames += [verifier.canonical_installer_name(version, platform) for platform in verifier.PLATFORMS]
         filenames += [verifier.canonical_source_manifest_name(version, platform) for platform in verifier.PLATFORMS]
+        filenames.append("manifest.json")
         text = "\n".join(f"{'a' * 64}  {name}" for name in filenames) + "\n"
-        self.assertEqual(len(verifier.parse_sha256sums(text, version, unified_installers=True)), 18)
+        self.assertEqual(len(verifier.parse_sha256sums(text, version, unified_installers=True)), 19)
         with self.assertRaises(verifier.VerificationError):
             verifier.parse_sha256sums(text, version)
 

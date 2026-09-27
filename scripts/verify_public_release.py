@@ -368,6 +368,7 @@ def parse_sha256sums(text: str, version: str, *, runtime_manifest: bool = False,
         expected_names.add("webcodex-release-manifest.json")
     if unified_installers:
         expected_names.update(canonical_installer_name(version, platform) for platform in PLATFORMS)
+        expected_names.add("manifest.json")
         expected_names.update(canonical_source_manifest_name(version, platform) for platform in PLATFORMS)
     result: dict[str, str] = {}
     for raw_line in text.splitlines():
@@ -385,6 +386,41 @@ def parse_sha256sums(text: str, version: str, *, runtime_manifest: bool = False,
             f"SHA256SUMS has an unexpected downloadable release artifact set: {sorted(result)}"
         )
     return result
+
+
+def _unique_json_object(pairs: list[tuple[str, object]]) -> dict:
+    result: dict = {}
+    for key, value in pairs:
+        if key in result:
+            raise VerificationError(f"duplicate manifest field: {key}")
+        result[key] = value
+    return result
+
+
+def verify_public_installer_manifest(
+    assets: dict[str, dict], sums: dict[str, str], npm_manifest: dict,
+    version: str, timeout: float,
+) -> None:
+    """Verify the exact public updater source, not only its npm copy."""
+    asset = assets.get("manifest.json")
+    url = f"https://github.com/{REPO}/releases/download/v{version}/manifest.json"
+    if asset is None or asset.get("browser_download_url") != url:
+        raise VerificationError("GitHub unified installer manifest is missing or non-canonical")
+    raw = fetch_bytes(url, 256 * 1024, timeout)
+    digest = hashlib.sha256(raw).hexdigest()
+    if sums.get("manifest.json") != digest or (
+        _asset_digest(asset) is not None and _asset_digest(asset) != digest
+    ) or asset.get("size") != len(raw):
+        raise VerificationError("unified installer manifest SHA-256/size mismatch")
+    try:
+        manifest = json.loads(raw, object_pairs_hook=_unique_json_object)
+    except (ValueError, UnicodeError) as exc:
+        raise VerificationError("unified installer manifest is malformed") from exc
+    if not isinstance(manifest, dict) or manifest != npm_manifest:
+        raise VerificationError("public unified installer manifest differs from retained npm manifest")
+    validate_public_manifest(manifest, version)
+    if not validate_public_installers(manifest, version):
+        raise VerificationError("public updater manifest is missing the six unified installers")
 
 
 def validate_server_image_metadata(value: dict, version: str) -> dict[str, str]:
@@ -512,6 +548,7 @@ def validate_github_assets(release: dict, version: str, *, unified_installers: b
         unified_installers = has_installer
     if unified_installers:
         required.update(installer_names)
+        required.add("manifest.json")
         required.update(source_names)
     elif has_installer:
         raise VerificationError("GitHub Release contains installers but the manifest does not")
@@ -875,6 +912,8 @@ def verify_public_release(version: str, timeout: float) -> None:
             raise VerificationError("SHA256SUMS is not ASCII") from exc
         runtime_asset = assets.get("webcodex-release-manifest.json")
         sums = parse_sha256sums(sums_text, version, runtime_manifest=runtime_asset is not None, unified_installers=bool(manifest_installers))
+        if manifest_installers:
+            verify_public_installer_manifest(assets, sums, manifest, version, timeout)
         if runtime_asset is not None:
             try:
                 from .desktop_runtime_manifest import validate, ManifestError

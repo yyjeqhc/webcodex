@@ -736,9 +736,14 @@ def verify_bundle_directory(
     downloadable = set(artifact_files.values()) | set(desktop_files.values())
     downloadable.update(installer_files.values())
     downloadable.update(source_manifest_files.values())
+    if installer_files and build_kind == "release":
+        downloadable.add("manifest.json")
     if runtime_manifest is not None:
         downloadable.add(runtime_manifest["filename"])
     sums = _parse_sha256sums(sums_text, downloadable)
+    if installer_files and build_kind == "release":
+        if sums["manifest.json"] != sha256_file(root / "manifest.json"):
+            raise CollectionError("unified installer manifest SHA-256 mismatch")
     if runtime_manifest is not None:
         try:
             from .desktop_runtime_manifest import validate, ManifestError

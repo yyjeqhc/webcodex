@@ -125,6 +125,9 @@ def _write_bundle(root: Path, tag: str, build_kind: str, *, unified: bool = Fals
             },
         }
         (root / "manifest.json").write_text(json.dumps(manifest) + "\n", encoding="utf-8")
+        if unified:
+            checksum_lines.append(f"{collector.sha256_file(root / 'manifest.json')}  manifest.json")
+            (root / "SHA256SUMS").write_text("\n".join(checksum_lines) + "\n", encoding="ascii")
     return stem, artifact_hashes
 
 

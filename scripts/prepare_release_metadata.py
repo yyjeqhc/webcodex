@@ -230,7 +230,12 @@ def main() -> int:
     if installers:
         manifest["installers"] = installers
 
-    atomic_write(args.output_dir / "manifest.json", json.dumps(manifest, indent=2) + "\n")
+    manifest_path = args.output_dir / "manifest.json"
+    atomic_write(manifest_path, json.dumps(manifest, indent=2) + "\n")
+    if installers:
+        # The same retained bytes serve npm, the download page, and Desktop.
+        # Legacy runtime-only manifests remain outside the public asset set.
+        checksum_lines.append(f"{sha256(manifest_path)}  manifest.json")
     atomic_write(args.output_dir / "SHA256SUMS", "\n".join(checksum_lines) + "\n")
 
     print(f"release metadata prepared for {version}")

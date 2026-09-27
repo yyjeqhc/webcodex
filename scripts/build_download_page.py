@@ -38,6 +38,12 @@ def validate_manifest(value: object) -> dict:
             raise ValueError(f"non-canonical installer filename or URL for {platform}")
         if not isinstance(item.get("sha256"), str) or not SHA256_RE.fullmatch(item["sha256"]):
             raise ValueError(f"invalid installer SHA-256 for {platform}")
+        source_name = f"webcodex-source-v{version}-{platform}.json"
+        source_url = f"https://github.com/yyjeqhc/webcodex/releases/download/v{version}/{source_name}"
+        if item.get("source_manifest_url") != source_url:
+            raise ValueError(f"non-canonical source manifest URL for {platform}")
+        if not isinstance(item.get("source_manifest_sha256"), str) or not SHA256_RE.fullmatch(item["source_manifest_sha256"]):
+            raise ValueError(f"invalid source manifest SHA-256 for {platform}")
     return value
 
 

@@ -25,6 +25,8 @@ class BuildDownloadPageTests(unittest.TestCase):
                     "filename": filename("1.2.3", platform),
                     "url": f"https://github.com/yyjeqhc/webcodex/releases/download/v1.2.3/{filename('1.2.3', platform)}",
                     "sha256": hashlib.sha256(platform.encode()).hexdigest(),
+                    "source_manifest_url": f"https://github.com/yyjeqhc/webcodex/releases/download/v1.2.3/webcodex-source-v1.2.3-{platform}.json",
+                    "source_manifest_sha256": "a" * 64,
                 }
                 for platform in PLATFORMS
             },

@@ -57,6 +57,7 @@ class PrepareReleaseMetadataInstallerTests(unittest.TestCase):
         manifest = json.loads((self.output / "manifest.json").read_text())
         self.assertEqual(set(manifest["installers"]), set(metadata.PLATFORMS))
         sums = (self.output / "SHA256SUMS").read_text()
+        self.assertIn(f"{metadata.sha256(self.output / 'manifest.json')}  manifest.json\n", sums)
         self.assertTrue(all(metadata.installer_filename("0.3.0", platform) in sums for platform in metadata.PLATFORMS))
         self.assertTrue(all(manifest["installers"][platform]["source_manifest_sha256"] for platform in metadata.PLATFORMS))
 

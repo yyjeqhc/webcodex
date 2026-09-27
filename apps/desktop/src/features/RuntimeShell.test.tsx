@@ -178,6 +178,16 @@ it("explains configured Tunnel mode, detected proxy, and effective Auto connecti
   expect(within(routing).getByText("degraded")).toBeInTheDocument();
 });
 
+it("shows an environment proxy as detected when Auto selects it", async () => {
+  const networkState = { ...state, tunnel_proxy: { mode: "auto", custom_url: null, effective_source: "environment", effective_proxy_present: true, system_proxy_detected: false } } as DesktopState;
+  render(wrap(<SettingsPanel state={networkState} onState={vi.fn()} />));
+  fireEvent.click(screen.getByRole("button", { name: "Network" }));
+  const panel = document.getElementById("desktop-settings-network") as HTMLElement;
+  const routing = panel.querySelector("[data-webcodex-tunnel-routing]") as HTMLElement;
+  expect(within(routing).getAllByText("Desktop proxy environment")).toHaveLength(2);
+  expect(within(routing).queryByText("Not configured")).not.toBeInTheDocument();
+});
+
 it("renders factual handoff uncertainty rather than Host failure", () => {
   const detail = { active_count: 0, activity_truncated: false, activity: [{ meaningful: true, tool_name: "read_files", status: "succeeded", started_at_ms: 100, ended_at_ms: 200 }] } as WindowDetail;
   const value = continuationFromWindow(detail, 400);

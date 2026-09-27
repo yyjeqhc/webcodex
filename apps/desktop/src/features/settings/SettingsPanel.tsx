@@ -55,6 +55,7 @@ export function SettingsPanel({
   const operationBusy = Boolean(state.current_operation);
   const configuredProxyMode = state.tunnel_proxy.mode === "auto" ? t("settings.tunnelProxyAuto") : state.tunnel_proxy.mode === "direct" ? t("settings.tunnelProxyDirect") : t("settings.tunnelProxyCustom");
   const effectiveProxyPath = state.tunnel_proxy.effective_source === "system" ? p("systemProxy") : state.tunnel_proxy.effective_source === "environment" ? p("environmentProxy") : state.tunnel_proxy.effective_source === "custom" ? p("customProxy") : state.tunnel_proxy.effective_source === "invalid_custom" ? t("settings.tunnelProxyCustom") : t("settings.tunnelProxyDirectValue");
+  const detectedProxy = state.tunnel_proxy.effective_source === "environment" ? p("environmentProxy") : state.tunnel_proxy.system_proxy_detected ? p("systemProxy") : p("notConfigured");
 
   useEffect(() => {
     let cancelled = false;
@@ -119,7 +120,7 @@ export function SettingsPanel({
         {proxyMode === "custom" && <div className="field-group"><label htmlFor="desktop-tunnel-proxy-url">{t("settings.tunnelProxyCustomUrl")}</label><input id="desktop-tunnel-proxy-url" value={customProxy} onChange={event => setCustomProxy(event.target.value)} placeholder="http://127.0.0.1:7890" disabled={savingProxy || operationBusy} spellCheck={false} data-webcodex-control="tunnel-proxy-url" /></div>}
         <dl className="detail-list" data-webcodex-tunnel-routing>
           <div><dt>{p("configuredMode")}</dt><dd>{configuredProxyMode}</dd></div>
-          <div><dt>{p("detectedProxy")}</dt><dd>{state.tunnel_proxy.system_proxy_detected ? p("systemProxy") : p("notConfigured")}</dd></div>
+          <div><dt>{p("detectedProxy")}</dt><dd>{detectedProxy}</dd></div>
           <div><dt>{p("effectiveConnectionPath")}</dt><dd>{effectiveProxyPath}</dd></div>
           <div><dt>{p("tunnelStatus")}</dt><dd>{state.readiness.exposure}</dd></div>
         </dl>

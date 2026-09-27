@@ -697,6 +697,14 @@ fn runtime_has_online_runner(output: &Value, client_id: &str) -> bool {
         })
 }
 
+fn runner_phase_after_start(online_verified: bool) -> &'static str {
+    if online_verified {
+        "ready"
+    } else {
+        "running_unverified"
+    }
+}
+
 fn controller_environment_value(path: &Path, key: &str) -> Result<Option<String>, String> {
     if let Ok(value) = std::env::var(key) {
         if !value.trim().is_empty() {
@@ -921,8 +929,8 @@ impl ControllerRuntime {
                 remove_controller_tunnel_credentials(&mut command);
                 self.runner.process =
                     Some(spawn_process(command, "runner", self.log.clone(), None)?);
-                self.wait_runner_ready(&view, &server_url).await?;
-                self.runner.phase = "ready";
+                let online_verified = self.wait_runner_startup(&view, &server_url).await?;
+                self.runner.phase = runner_phase_after_start(online_verified);
             }
             Component::Tunnel => {
                 if !self.config.server.is_local() {
@@ -960,10 +968,15 @@ impl ControllerRuntime {
                 self.tunnel.phase = "ready";
             }
         }
+        let phase = match component {
+            Component::Server => self.server.phase,
+            Component::Runner => self.runner.phase,
+            Component::Tunnel => self.tunnel.phase,
+        };
         log_line(
             &self.log,
             "controller",
-            format!("{} ready", component.as_str()),
+            format!("{} {phase}", component.as_str()),
         );
         Ok(())
     }
@@ -1040,17 +1053,18 @@ impl ControllerRuntime {
             wait_remote_server_reachable(&base).await
         }
     }
-    async fn wait_runner_ready(
+    async fn wait_runner_startup(
         &mut self,
         view: &RunnerConfigView,
         server_url: &str,
-    ) -> Result<(), String> {
+    ) -> Result<bool, String> {
         if self.config.server.is_local() {
             let token = server_token(self.config.server.local_env_file()?)?;
-            return wait_runtime_status(server_url, token.as_deref(), |output| {
+            wait_runtime_status(server_url, token.as_deref(), |output| {
                 runtime_has_online_runner(output, &view.client_id)
             })
-            .await;
+            .await?;
+            return Ok(true);
         }
         let deadline = Instant::now() + Duration::from_secs(3);
         while Instant::now() < deadline {
@@ -1064,7 +1078,11 @@ impl ControllerRuntime {
             }
             tokio::time::sleep(Duration::from_millis(200)).await;
         }
-        Ok(())
+        // Without a user Runtime credential the Controller cannot prove that
+        // a remote Server has registered this Runner. Surviving startup only
+        // proves the local process is stable; project commands perform the
+        // authoritative online check before any project operation.
+        Ok(false)
     }
     async fn wait_tunnel_ready(&mut self) -> Result<(), String> {
         let Some(mut rx) = self.tunnel_ready_rx.clone() else {
@@ -1931,6 +1949,12 @@ mod tests {
             }
         });
         assert!(!runtime_has_online_runner(&legacy, "special"));
+    }
+
+    #[test]
+    fn remote_runner_process_stability_is_not_online_readiness() {
+        assert_eq!(runner_phase_after_start(true), "ready");
+        assert_eq!(runner_phase_after_start(false), "running_unverified");
     }
 
     #[test]

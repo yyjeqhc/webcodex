@@ -68,7 +68,7 @@ mod macos {
                 })
     }
 
-    pub(super) fn exchange(
+    pub(in super::super) fn exchange(
         config: &ClientConfig,
         request: WireRequest,
         timeout: Duration,
@@ -94,7 +94,7 @@ mod macos {
             .map_err(|e| e.to_string())
     }
 
-    pub(super) fn run_helper(dir: &Path) -> Result<(), String> {
+    pub(in super::super) fn run_helper(dir: &Path) -> Result<(), String> {
         use fs2::FileExt;
         use std::os::unix::fs::PermissionsExt;
         let lock = std::fs::OpenOptions::new()
@@ -198,7 +198,7 @@ mod macos {
         enabled
     }
 
-    pub(super) fn native_session_available() -> bool {
+    pub(in super::super) fn native_session_available() -> bool {
         let mut console_uid = u32::MAX;
         let mut console_gid = u32::MAX;
         let user = unsafe {

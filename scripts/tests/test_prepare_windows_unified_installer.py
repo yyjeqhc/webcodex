@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -23,6 +24,11 @@ BOOTSTRAP_SPEC.loader.exec_module(bootstrap)
 
 SOURCE = "b" * 40
 CONTRACT = {"min_generation": 1, "max_generation": 1}
+CI_CONTEXT = {
+    "GITHUB_RUN_ID": "787654321",
+    "GITHUB_WORKFLOW_REF": "yyjeqhc/webcodex/.github/workflows/release-build.yml@refs/tags/v0.9.0",
+    "GITHUB_SHA": SOURCE,
+}
 
 
 def pe(machine: int) -> bytes:
@@ -35,6 +41,10 @@ def pe(machine: int) -> bytes:
 
 
 class WindowsUnifiedNsisTests(unittest.TestCase):
+    def setUp(self):
+        # Fixture provenance must not inherit the CI job running this test.
+        self.enterContext(mock.patch.dict(os.environ, CI_CONTEXT))
+
     def fixture(self, root: Path) -> dict:
         bin_dir = root / "artifacts" / "bin"
         bin_dir.mkdir(parents=True)
@@ -60,8 +70,8 @@ class WindowsUnifiedNsisTests(unittest.TestCase):
         payload_hash = nsis.collector.package.tree_digest(bin_dir / "webcodex-desktop.exe")
         manifest = {
             "schema_version": 1, "version": "0.9.0", "source_sha": SOURCE,
-            "source_workflow_run_id": 787654321,
-            "source_workflow_ref": "yyjeqhc/webcodex/.github/workflows/release-build.yml@refs/tags/v0.9.0",
+            "source_workflow_run_id": int(CI_CONTEXT["GITHUB_RUN_ID"]),
+            "source_workflow_ref": CI_CONTEXT["GITHUB_WORKFLOW_REF"],
             "platform": "win32-x64", "target": "x86_64-pc-windows-msvc", "architecture": "x86_64",
             "desktop_runtime_contract": CONTRACT, "artifacts": records,
             "desktop_payload": {
@@ -97,6 +107,19 @@ class WindowsUnifiedNsisTests(unittest.TestCase):
                 sorted(nsis.MANAGED_INSTALL_FILES),
             )
             self.assertNotIn("installerHooks", overlay["bundle"]["windows"]["nsis"])
+
+    def test_rejects_mismatched_ci_context_before_probing_or_staging(self):
+        for variable in CI_CONTEXT:
+            with self.subTest(variable=variable), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp) / "candidate"
+                root.mkdir()
+                self.fixture(root)
+                stage = Path(temp) / "stage"
+                with mock.patch.dict(os.environ, {variable: "mismatched-context"}), mock.patch.object(nsis.collector, "probe") as probe:
+                    with self.assertRaisesRegex(ValueError, variable + " does not match GitHub Actions context"):
+                        nsis.prepare(root, stage, "win32-x64")
+                probe.assert_not_called()
+                self.assertFalse(stage.exists())
 
     def test_rejects_unmanaged_windows_desktop_payload_path(self):
         with tempfile.TemporaryDirectory() as temp:

@@ -171,7 +171,7 @@ fn exchange_inner(config: &ClientConfig, request: WireRequest) -> Result<WireRes
 
 static IN_FLIGHT: AtomicBool = AtomicBool::new(false);
 
-pub(super) fn exchange(
+pub(in super::super) fn exchange(
     config: &ClientConfig,
     request: WireRequest,
     timeout: Duration,
@@ -192,7 +192,7 @@ pub(super) fn exchange(
         .map_err(|_| "computer session operation deadline exceeded".to_string())?
 }
 
-pub(super) fn native_session_available() -> bool {
+pub(in super::super) fn native_session_available() -> bool {
     let active = unsafe { WTSGetActiveConsoleSessionId() };
     if active == 0
         || active == u32::MAX
@@ -220,7 +220,7 @@ pub(super) fn native_session_available() -> bool {
     ok && String::from_utf16_lossy(&name[..end]).eq_ignore_ascii_case("Default")
 }
 
-pub(super) fn run_helper(dir: &Path) -> Result<(), String> {
+pub(in super::super) fn run_helper(dir: &Path) -> Result<(), String> {
     let name = pipe_name(dir);
     // Only LocalSystem may connect. The creating user receives the server
     // handle directly and needs no DACL access. Reject remote pipe clients.

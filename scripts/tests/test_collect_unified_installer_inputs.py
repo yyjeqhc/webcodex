@@ -20,8 +20,17 @@ SPEC.loader.exec_module(collector)
 
 SOURCE = "b" * 40
 CONTRACT = {"min_generation": 1, "max_generation": 1}
+CI_CONTEXT = {
+    "GITHUB_RUN_ID": "787654321",
+    "GITHUB_WORKFLOW_REF": "yyjeqhc/webcodex/.github/workflows/release-build.yml@refs/tags/v0.9.0",
+    "GITHUB_SHA": SOURCE,
+}
 
 class NativeManifestCollectorTests(unittest.TestCase):
+    def setUp(self):
+        # Fixture provenance must not inherit the CI job running this test.
+        self.enterContext(mock.patch.dict(os.environ, CI_CONTEXT))
+
     def fixture(self, root: Path, *, dirty: bool = False, target: str = "x86_64-unknown-linux-gnu", architecture: str = "x86_64", suffix: str = "") -> dict[str, Path]:
         paths = {}
         (root / "bin").mkdir()
@@ -49,8 +58,8 @@ class NativeManifestCollectorTests(unittest.TestCase):
             "--desktop-payload", relative["webcodex-desktop"],
             "--desktop-executable", desktop_executable,
             "--version", "0.9.0", "--source-sha", SOURCE,
-            "--workflow-run-id", "787654321",
-            "--workflow-ref", "yyjeqhc/webcodex/.github/workflows/release-build.yml@refs/tags/v0.9.0",
+            "--workflow-run-id", CI_CONTEXT["GITHUB_RUN_ID"],
+            "--workflow-ref", CI_CONTEXT["GITHUB_WORKFLOW_REF"],
             "--output-dir", str(out),
         ])
 
@@ -71,6 +80,18 @@ class NativeManifestCollectorTests(unittest.TestCase):
                 manifest_path, output / "SHA256SUMS", output, "linux-x64"
             )
             self.assertEqual(validated["source_sha"], SOURCE)
+
+    def test_rejects_mismatched_ci_context_before_probing_or_publishing(self):
+        for variable in CI_CONTEXT:
+            with self.subTest(variable=variable), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                paths = self.fixture(root)
+                output = root / "installer-input"
+                with mock.patch.dict(os.environ, {variable: "mismatched-context"}), mock.patch.object(collector, "probe") as probe:
+                    with self.assertRaisesRegex(collector.CollectionError, "does not match GitHub Actions context"):
+                        collector.collect(self.args(root, paths, output))
+                probe.assert_not_called()
+                self.assertFalse(output.exists())
 
     def test_rejects_dirty_build_from_actual_binary_probe(self):
         with tempfile.TemporaryDirectory() as temp:

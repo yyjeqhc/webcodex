@@ -384,20 +384,18 @@ and execution keep the direct `skill_load` and `run_skill_resource` paths.
 The optional closeout helpers `workspace_hygiene_check` and `finish_coding_task`
 are model-visible gateway tools; review/coding catalogs still recommend them.
 
+Stateless MCP 2026 exposes common untrusted invocation metadata only through one optional closed `_wc` envelope. Depending on the tool, the envelope may admit `record`, `ack`, `ack_ref`, `resolve`, `reply`, `context`, and `control`. These are adapter metadata only: they never become canonical ToolCall business arguments or grant authority. Legacy flat root wrappers such as `recording_session_id`, `ack_session_message_ids`, `ack_ref`, `session_message_resolution`, `window_reply`, `context_request`, and `_control` are rejected on this Stateless 2026 surface; legacy/non-stateless transports keep their existing contracts. `call_runtime_tool` carries `_wc` only on the outer gateway call; the nested target `arguments` remain canonical business arguments and reject a second `_wc`.
+
 `WEBCODEX_MCP_COMPACT_SCHEMAS` defaults to `true`. Compact `tools/list` omits
 `outputSchema` and projects shorter MCP-specific tool/input descriptions for
 selection: purpose, nearby tool distinctions, and essential continuation guidance.
-Repeated Session/context wrapper and audited common-argument copy is shortened
-too. Compact discovery omits the repeated `ack_ref` description while preserving
-its exact field and length bound; the full manifest retains the complete Session-only
-ACK-set contract. It also omits only the exact opaque-ID regexes on
-`recording_session_id`, `ack_session_message_ids.items`, and
-`session_message_resolution.message_id`; their existing parent descriptions keep
-the `wc_sess_*` / `wc_msg_*` type hints. Copy the exact returned values.
-Business-ID, hash/Git fence and resource-path patterns, all bounds, field names,
-required fields, enums, object/union shape, annotations, and MCP App/file metadata
-are preserved. This is discovery presentation only; runtime argument validation
-and execution authority do not change.
+Repeated `_wc` copy is shortened too. Compact discovery preserves the envelope
+shape and bounds while omitting only repeated prose and exact opaque-ID regexes on
+`_wc.record`, `_wc.ack.items`, and `_wc.resolve.message_id`; the full manifest
+retains the complete contracts. Business-ID, hash/Git fence and resource-path
+patterns, all bounds, required fields, enums, object/union shape, annotations, and
+MCP App/file metadata are preserved. This is discovery presentation only; runtime
+argument validation and execution authority do not change.
 
 Use `tool_manifest(tool_name=...)` for the full exact input contract and operational
 description, or set compact schemas to `false` for full discovery schemas.

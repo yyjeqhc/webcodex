@@ -323,7 +323,9 @@ fn edit_recommended_flow_converges_on_one_primary_editor() {
         .expect("edit recommended flow");
     assert_eq!(flow.tools.first().copied(), Some("read_files"));
     assert_eq!(flow.tools.get(1).copied(), Some("edit_project_files"));
-    assert_eq!(flow.tools.get(2).copied(), Some("show_changes"));
+    assert_eq!(flow.tools.get(2).copied(), Some("cargo_check"));
+    assert!(flow.tools.contains(&"review_changes"));
+    assert!(flow.tools.contains(&"finish_coding_task"));
     for specialist in EXACT_MANIFEST_SPECIALIST_TOOL_NAMES {
         assert!(!flow.tools.contains(specialist), "{specialist}");
     }
@@ -332,16 +334,15 @@ fn edit_recommended_flow_converges_on_one_primary_editor() {
         "read_files",
         "edit_project_files",
         "read_revision",
-        "exact edits",
-        "replace_range",
-        "same transactional editor",
-        "show_changes",
-        "git_diff_hunks",
+        "exact and deterministic range edits share one primary editor",
         "structured validation",
+        "review_changes",
+        "finish_coding_task",
         "exact-name specialists",
-        "not ordinary coding routing or recovery",
-    ] {
-        assert!(
+        "show_changes",
+        "git_review_summary",
+        "git_diff_hunks",
+    ] {        assert!(
             guidance.contains(phrase),
             "edit flow should mention {phrase}: {guidance}"
         );
@@ -534,10 +535,9 @@ fn tool_categories_and_recommended_flows_are_well_formed() {
         "inspect for one bounded segment",
         "export for complete resourcelink delivery",
         "copy show_changes.head.commit",
-        "review: small bounded git observations may use native git",
-        "git_review_summary to map broad or unknown committed ranges",
-        "git_diff_hunks for fenced, paged, or continued review",
-        "handoff/recovery only",
+        "review: use review_changes as the primary ordinary workspace or committed review surface",
+        "same-snapshot token",
+        "old review tools remain specialists",        "handoff/recovery only",
         "session_handoff_summary only for missing task context",
         "never routine progress polling",
     ] {
@@ -597,12 +597,12 @@ fn recommended_flows_encode_simplest_sufficient_selection_without_old_rituals() 
     )
     .to_lowercase();
     for phrase in [
-        "small bounded git observations may use native git",
-        "workspace-wide review",
-        "broad/unknown committed-range mapping",
-        "scope/fence-bound paging",
-    ] {
-        assert!(review.contains(phrase), "review selection: {phrase}");
+        "review_changes",
+        "primary ordinary workspace or committed review surface",
+        "same-snapshot token",
+        "old review tools remain specialists",
+        "hygiene stays authoritative and separate",
+    ] {        assert!(review.contains(phrase), "review selection: {phrase}");
     }
 
     let all = TOOL_RECOMMENDED_FLOWS

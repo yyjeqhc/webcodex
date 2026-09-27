@@ -54,6 +54,7 @@ pub const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
             "call_hierarchy",
             "lsp_status",
             "list_project_files",
+            "review_changes",
             "show_changes",
             "git_status",
             "git_review_summary",
@@ -139,6 +140,7 @@ pub const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
         name: TOOL_DISCOVERY_GROUP_GIT,
         tools: &[
             "git_commit_paths",
+            "review_changes",
             "git_status",
             "git_review_summary",
             "git_diff_hunks",
@@ -157,10 +159,11 @@ pub const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
         tools: &[
             "finish_coding_task",
             "present_work_result",
+            "review_changes",
+            "workspace_hygiene_check",
             "show_changes",
             "git_review_summary",
             "git_diff_hunks",
-            "workspace_hygiene_check",
             "git_log",
             "git_status",
             #[cfg(feature = "workspace-checkpoints")]
@@ -435,16 +438,16 @@ pub const TOOL_RECOMMENDED_FLOWS: &[ToolRecommendedFlow] = &[
     ToolRecommendedFlow {
         name: "edit",
         summary:
-            "Edit: read_files → edit_project_files → show_changes or git_diff_hunks → structured validation. Existing-file changes use read_revision fences; exact and deterministic range edits share one primary editor. Other edit specialists require exact-name discovery.",
+            "Edit: read_files → edit_project_files → structured validation → review_changes → finish_coding_task. Existing-file changes use read_revision fences; exact and deterministic range edits share one primary editor; legacy Git review specialists require exact-name discovery.",
         manifest_purpose:
-            "Use read_files to obtain the exact source snapshot and read_revision, then use edit_project_files for edit/create/delete/rename. Exact edits and replace_range share the same transactional editor and original-snapshot semantics. Existing-file mutations fail closed when the revision is stale. Review with show_changes or git_diff_hunks, then use structured validation. Patch, unified-diff, and whole-file primitives are exact-name specialists for already patch/diff/whole-file-shaped inputs, not ordinary coding routing or recovery.",
+            "Use read_files for the exact source/read_revision, edit_project_files for mutation, structured validation for execution evidence, then review_changes for one authoritative Git snapshot and bounded diff page before finish_coding_task. show_changes, git_review_summary, and git_diff_hunks remain exact-name specialists/internal building blocks rather than ordinary routing choices.",
         tools: &[
             "read_files",
             "edit_project_files",
-            "show_changes",
-            "git_diff_hunks",
             "cargo_check",
             "cargo_test",
+            "review_changes",
+            "finish_coding_task",
         ],
     },
     ToolRecommendedFlow {
@@ -509,12 +512,10 @@ pub const TOOL_RECOMMENDED_FLOWS: &[ToolRecommendedFlow] = &[
     },
     ToolRecommendedFlow {
         name: "review",
-        summary: "Review: small bounded Git observations may use native Git. Use show_changes for workspace-wide overview/Session signals, git_review_summary to map broad or unknown committed ranges, and git_diff_hunks for fenced, paged, or continued review; check hygiene before final response.",
-        manifest_purpose: "Small predictable Git observations may use native git through run_process. Use structured review when its independent semantics materially help: show_changes for bounded workspace-wide review and Session signals, git_review_summary for broad/unknown committed-range mapping, and git_diff_hunks for scope/fence-bound paging, safe continuation, and long-hunk fragmentation. Review the resulting diff before closeout and check workspace hygiene.",
+        summary: "Review: use review_changes as the primary ordinary workspace or committed review surface; continue only with its same-snapshot token when needed. Old review tools remain specialists; hygiene stays authoritative and separate.",
+        manifest_purpose: "Use review_changes for ordinary read-only Git review: one exact snapshot returns summary, signals, file metadata, and the first bounded diff page; follow only its returned continuation. show_changes, git_review_summary, and git_diff_hunks remain exact-discovery specialists/internal projections. workspace_hygiene_check remains separate and authoritative.",
         tools: &[
-            "git_review_summary",
-            "show_changes",
-            "git_diff_hunks",
+            "review_changes",
             "workspace_hygiene_check",
             "run_process",
         ],

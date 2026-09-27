@@ -3517,9 +3517,9 @@ fn finish_suggested_next_actions(output: &Value) -> Vec<String> {
             .and_then(Value::as_str)
             == Some("git_diff_hunks")
         {
-            push(&mut actions, "continue the diff review with git_diff_hunks");
+            push(&mut actions, "continue the review with review_changes when its continuation is available");
         } else {
-            push(&mut actions, "review workspace changes with show_changes");
+            push(&mut actions, "review workspace changes with review_changes");
         }
     }
     if output

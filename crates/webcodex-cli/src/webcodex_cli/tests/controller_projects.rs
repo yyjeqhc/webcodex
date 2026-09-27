@@ -443,12 +443,12 @@ async fn explicit_invalid_credentials_never_fall_back_to_default() {
         .await
         .unwrap_err()
         .contains("Runner transport token"));
-    assert_eq!(
-        default_token_file(
+    assert!(webcodex_runner_config::paths::paths_equal(
+        &default_token_file(
             &paths.runner_config,
             &runner_view(&paths.runner_config).unwrap()
         )
         .unwrap(),
-        paths.user_token
-    );
+        &paths.user_token
+    ));
 }

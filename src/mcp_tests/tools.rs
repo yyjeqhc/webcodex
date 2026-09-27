@@ -2368,7 +2368,8 @@ async fn mcp_tools_list_stateless_serialized_size_budget() {
     admin.scopes.push(crate::auth::SCOPE_ADMIN.to_string());
     // Final Stateless result bytes include the optional _wc envelope and gateways,
     // not the RPC envelope. Envelope V2 now leaves about 76/78/87 KB for
-    // anonymous/scoped/admin without Apps; App-on remains roughly +18.5 KB.
+    // anonymous/scoped/admin without Apps; App-on remains roughly +20 KB after
+    // adding the bounded App-only Work Result activity-detail reader.
     // Keep small explicit growth headroom around the measured surface.
     for (label, auth, max_tools, max_bytes) in [
         ("anonymous", None, 30, 77_000),
@@ -2414,9 +2415,10 @@ async fn mcp_tools_list_stateless_serialized_size_budget() {
                 } else {
                     0
                 };
-                // Work Result v3 adds one bounded App-only collaboration adapter
-                // alongside the existing Goal Plan/continuation/read helpers.
-                let count_budget = max_tools + if app_enabled { 17 } else { 0 } + feature_tools;
+                // Work Result v3 adds bounded App-only collaboration and lazy
+                // Window activity-detail adapters alongside the existing Goal
+                // Plan/continuation/read helpers.
+                let count_budget = max_tools + if app_enabled { 18 } else { 0 } + feature_tools;
                 let byte_budget =
                     max_bytes + if app_enabled { 19_000 } else { 0 } + feature_tools * 4096;
                 if feature_tools == 0 {

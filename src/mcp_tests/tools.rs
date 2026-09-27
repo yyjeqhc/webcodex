@@ -26,19 +26,10 @@ async fn wait_for_mcp_agent_request(
     }
 }
 
-// The compact switch is read per tools/list request, so `WEBCODEX_MCP_COMPACT_SCHEMAS`
-// must stay stable (and serialized against other env-mutating tests) for the whole
-// async body below. Adaptive Runtime is fixed; only schema projection varies.
-#[allow(clippy::await_holding_lock)]
 #[tokio::test]
 async fn mcp_tools_list_uses_adaptive_inventory_in_both_schema_modes() {
-    let mut env = crate::test_support::TestEnvGuard::new();
-    let runtime = test_runtime();
     for compact in [false, true] {
-        env.set(
-            "WEBCODEX_MCP_COMPACT_SCHEMAS",
-            if compact { "true" } else { "false" },
-        );
+        let runtime = test_runtime_with_mcp_settings(compact, true);
         let outcome = handle_mcp_request(
             &runtime,
             rpc("tools/list", Some(Value::from(3)), json!({})),
@@ -1626,12 +1617,9 @@ fn mcp_tools_list_inputs_equal_canonical_except_descriptions_and_host_file_overl
 }
 
 // The exact manifest must stay canonical even when the request adapter reads
-// compact=true, so hold the existing environment guard through the calls.
-#[allow(clippy::await_holding_lock)]
+// compact=true; the explicit flag below covers both projections.
 #[tokio::test]
 async fn mcp_compact_preserves_stateless_wrappers_app_metadata_and_exact_manifest() {
-    let mut env = crate::test_support::TestEnvGuard::new();
-    env.set("WEBCODEX_MCP_COMPACT_SCHEMAS", "true");
     let mut auth = crate::auth::shared_key_context("compact-overlays-test");
     auth.scopes.push(crate::auth::SCOPE_ADMIN.to_string());
     for stateless in [false, true] {
@@ -1834,8 +1822,18 @@ async fn mcp_compact_preserves_safety_patterns_and_wrapper_bounds() {
         panic!("tools/list");
     };
     let tools = value["result"]["tools"].as_array().unwrap();
-    let schema =
-        |name: &str| &tools.iter().find(|tool| tool["name"] == name).unwrap()["inputSchema"];
+    let registered = webcodex_tool_contracts::registered_tool_specs();
+    let schema = |name: &str| -> &Value {
+        if let Some(tool) = tools.iter().find(|tool| tool["name"] == name) {
+            &tool["inputSchema"]
+        } else {
+            &registered
+                .iter()
+                .find(|spec| spec.name == name)
+                .unwrap_or_else(|| panic!("missing canonical schema for {name}"))
+                .input_schema
+        }
+    };
     for (name, field, pattern, min, max) in [
         (
             "project_artifact",
@@ -1992,19 +1990,13 @@ async fn mcp_recording_session_ref_fails_closed_when_malformed() {
         .is_some_and(|message| message.contains("unknown_session_ref")));
 }
 
-#[allow(clippy::await_holding_lock)]
 #[tokio::test]
 async fn mcp_compact_stateless_wrapper_ids_still_reject_malformed_invocations() {
-    let mut env = crate::test_support::TestEnvGuard::new();
-    let runtime = test_runtime();
-    let session = runtime
-        .sessions
-        .start_session(None, Some("compact wrapper validation".to_string()));
     for compact in [false, true] {
-        env.set(
-            "WEBCODEX_MCP_COMPACT_SCHEMAS",
-            if compact { "true" } else { "false" },
-        );
+        let runtime = test_runtime_with_mcp_settings(compact, true);
+        let session = runtime
+            .sessions
+            .start_session(None, Some("compact wrapper validation".to_string()));
         for malformed in ["not-an-id", "wc_msg_short", "wc_msg_0123456789abcde!"] {
             for field in ["record", "ack", "resolve"] {
                 let mut envelope = json!({"record": session.session_id});
@@ -2048,33 +2040,33 @@ async fn mcp_compact_stateless_wrapper_ids_still_reject_malformed_invocations() 
                 }
             }
         }
+        assert!(
+            runtime
+                .sessions
+                .summary(&session.session_id, Some(20))
+                .unwrap()
+                .events
+                .is_empty(),
+            "rejected invocations must not reach the recorder ledger"
+        );
+        // A real server-generated recorder remains usable in either projection.
+        let McpOutcome::Ok(value) = handle_mcp_request(
+            &runtime,
+            rpc(
+                "tools/call",
+                Some(json!(2)),
+                mcp_2026_params(json!({"name": "tool_manifest", "arguments": {
+                    "tool_name": "run_process", "_wc": {"record": session.session_id}
+                }})),
+            ),
+            None,
+        )
+        .await
+        else {
+            panic!("valid recorder");
+        };
+        assert_eq!(value["result"]["structuredContent"]["success"], true);
     }
-    assert!(
-        runtime
-            .sessions
-            .summary(&session.session_id, Some(20))
-            .unwrap()
-            .events
-            .is_empty(),
-        "rejected invocations must not reach the recorder ledger"
-    );
-    // A real server-generated recorder remains usable with compact=true.
-    let McpOutcome::Ok(value) = handle_mcp_request(
-        &runtime,
-        rpc(
-            "tools/call",
-            Some(json!(2)),
-            mcp_2026_params(json!({"name": "tool_manifest", "arguments": {
-                "tool_name": "run_process", "_wc": {"record": session.session_id}
-            }})),
-        ),
-        None,
-    )
-    .await
-    else {
-        panic!("valid recorder");
-    };
-    assert_eq!(value["result"]["structuredContent"]["success"], true);
 }
 
 #[test]
@@ -2369,13 +2361,14 @@ async fn mcp_tools_list_stateless_serialized_size_budget() {
     let mut admin = scoped.clone();
     admin.scopes.push(crate::auth::SCOPE_ADMIN.to_string());
     // Final Stateless result bytes include the optional _wc envelope and gateways,
-    // not the RPC envelope. Envelope V2 now leaves about 76/78/87 KB for
-    // anonymous/scoped/admin without Apps; App-on remains roughly +18.5 KB.
-    // Keep small explicit growth headroom around the measured surface.
+    // not the RPC envelope. Envelope V2 plus review convergence leave about
+    // 76/78/87 KB for anonymous/scoped/admin without Apps; review_changes is
+    // primary, show_changes stays direct for Apps/presentation, and exact legacy
+    // review stays gateway-only. Keep small growth headroom around compact surface.
     for (label, auth, max_tools, max_bytes) in [
-        ("anonymous", None, 30, 77_000),
-        ("scoped", Some(&scoped), 31, 79_000),
-        ("admin", Some(&admin), 37, 88_000),
+        ("anonymous", None, 29, 77_000),
+        ("scoped", Some(&scoped), 30, 79_000),
+        ("admin", Some(&admin), 36, 88_000),
     ] {
         for app_enabled in [false, true] {
             let mut sizes = Vec::new();
@@ -2416,9 +2409,10 @@ async fn mcp_tools_list_stateless_serialized_size_budget() {
                 } else {
                     0
                 };
-                // Work Result v3 adds one bounded App-only collaboration adapter
-                // alongside the existing Goal Plan/continuation/read helpers.
-                let count_budget = max_tools + if app_enabled { 17 } else { 0 } + feature_tools;
+                // Work Result v3 adds bounded App-only collaboration and lazy
+                // Window activity-detail adapters alongside the existing Goal
+                // Plan/continuation/read helpers.
+                let count_budget = max_tools + if app_enabled { 18 } else { 0 } + feature_tools;
                 let byte_budget =
                     max_bytes + if app_enabled { 19_000 } else { 0 } + feature_tools * 4096;
                 if feature_tools == 0 {
@@ -2452,14 +2446,10 @@ async fn mcp_tools_list_stateless_serialized_size_budget() {
 }
 
 // The compact switch is the tested product behavior: `tools/call` must be
-// unaffected while `WEBCODEX_MCP_COMPACT_SCHEMAS` is set, so the env must stay
-// stable (and serialized against other env-mutating tests) for the whole call.
-#[allow(clippy::await_holding_lock)]
+// unaffected while the Runtime's snapshot reads compact=true.
 #[tokio::test]
 async fn mcp_tools_call_still_returns_structured_content_under_compact_flag() {
-    let mut env = crate::test_support::TestEnvGuard::new();
-    env.set("WEBCODEX_MCP_COMPACT_SCHEMAS", "true");
-    let runtime = test_runtime();
+    let runtime = test_runtime_with_mcp_settings(true, true);
     let outcome = handle_mcp_request(
         &runtime,
         rpc(
@@ -2476,6 +2466,39 @@ async fn mcp_tools_call_still_returns_structured_content_under_compact_flag() {
     assert!(value["result"]["content"].is_array());
     assert!(value["result"]["structuredContent"].is_object());
     assert!(value["result"]["structuredContent"]["success"].is_boolean());
+}
+
+#[tokio::test]
+async fn mcp_text_json_compat_uses_runtime_snapshot() {
+    let runtime_off = test_runtime_with_mcp_snapshot(true, true, false);
+    let runtime_on = test_runtime_with_mcp_snapshot(true, true, true);
+    let request = || {
+        rpc(
+            "tools/call",
+            Some(json!(3003)),
+            adaptive_runtime_gateway_params("list_projects", json!({})),
+        )
+    };
+
+    let McpOutcome::Ok(off) = handle_mcp_request(&runtime_off, request(), None).await else {
+        panic!("text-JSON compat OFF call failed");
+    };
+    let McpOutcome::Ok(on) = handle_mcp_request(&runtime_on, request(), None).await else {
+        panic!("text-JSON compat ON call failed");
+    };
+
+    assert_eq!(
+        off["result"]["content"][0]["text"],
+        "WebCodex tool completed successfully."
+    );
+    assert_eq!(
+        on["result"]["content"][0]["text"],
+        serde_json::to_string(&on["result"]["structuredContent"]).unwrap()
+    );
+    assert_eq!(
+        off["result"]["structuredContent"], on["result"]["structuredContent"],
+        "the snapshot changes only the compatibility text projection"
+    );
 }
 
 #[tokio::test]
@@ -3781,4 +3804,31 @@ async fn mcp_2026_control_sidecars_gateway_strip_and_closed_schema() {
             .get("_wc")
             .is_none()
     );
+}
+
+#[test]
+fn compact_bootstrap_description_teaches_explicit_context_and_reuse() {
+    use crate::mcp::discovery::compact_tool;
+    let mut tool =
+        json!({"name": "work_on_project", "description": "placeholder", "inputSchema": {}});
+    compact_tool(&mut tool);
+    let description = tool["description"].as_str().unwrap();
+    for phrase in [
+        "AGENTS.md/CLAUDE.md",
+        "_wc.context",
+        "project.instructions",
+        "webcodex.workflow",
+        "Reuse complete instruction bodies",
+        "workspace branch/HEAD/status",
+        "semantic navigation",
+        "sufficient catalogs",
+        "stale/incomplete",
+    ] {
+        assert!(
+            description.contains(phrase),
+            "missing {phrase}: {description}"
+        );
+    }
+    assert!(!description.contains("Defaults return"));
+    assert!(!description.contains("context_request"));
 }

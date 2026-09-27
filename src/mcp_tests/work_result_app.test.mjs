@@ -84,6 +84,7 @@ test("Window card renders and refreshes before any Workflow Session exists", asy
     version: 2,
     project,
     state_version: `wr2_${"7".repeat(64)}`,
+    window: baseState.window,
     workspace: baseState.workspace,
     activity: baseState.activity,
     window_activity: baseState.window_activity,
@@ -94,8 +95,10 @@ test("Window card renders and refreshes before any Workflow Session exists", asy
   view.toolResult({ work_result: windowOnlyState });
   await view.initialize();
   assert.equal(view.nodes.taskTitle.textContent, "WebCodex activity");
-  assert.equal(view.nodes.projectIdentity.textContent, "Window activity");
-  assert.equal(view.nodes.sessionIdentity.textContent, "");
+  assert.equal(view.nodes.projectIdentity.textContent, "Project · " + project);
+  assert.equal(view.nodes.windowIdentity.textContent, "Window · " + "f".repeat(64));
+  assert.equal(view.nodes.sessionIdentity.textContent, "Session · not linked yet");
+  assert.equal(view.nodes.windowSource.textContent, "Source · mcp");
   assert.equal(view.nodes.windowCoverage.textContent, "2 observed events");
   assert.equal(view.nodes.windowActivity.children.length, 2);
   assert.equal(view.nodes.collaborationMeta.textContent, "");
@@ -896,11 +899,16 @@ test("Activity and Collaboration tabs preserve Window activity and drafts across
   const view = app("mcp_work_result_app.html");
   view.toolResult({ work_result: baseState });
   await view.initialize();
-  assert.equal(view.nodes.projectIdentity.textContent, "Window activity");
-  assert.equal(view.nodes.sessionIdentity.textContent, "Context · " + session_id.slice(8, 14));
+  assert.equal(view.nodes.projectIdentity.textContent, "Project · " + project);
+  assert.equal(view.nodes.windowIdentity.textContent, "Window · " + "f".repeat(64));
+  assert.equal(view.nodes.sessionIdentity.textContent, "Session · " + session_id);
+  assert.equal(view.nodes.windowSource.textContent, "Source · mcp");
   assert.equal(view.nodes.windowActivity.children.length, 2);
-  assert.equal(view.nodes.windowActivity.children[1].children[0].children[0].textContent, "Reviewed changes");
+  assert.equal(view.nodes.windowActivity.children[0].children[0].children[0].children[0].textContent, "runtime_status");
   assert.equal(view.nodes.windowActivity.children[0].children[0].children[1].textContent, "Observe · Succeeded");
+  assert.equal(view.nodes.windowActivity.children[1].children[0].children[0].children[0].textContent, "show_changes");
+  assert.equal(view.nodes.windowActivity.children.every(row => row.tagName === "DETAILS" && row.open === false), true);
+  assert.equal(view.calls("work_result_activity_detail").length, 0);
   view.nodes.messageInput.value = "Keep my draft";
   view.nodes.tabCollaboration.onclick();
   assert.equal(view.nodes.panelCollaboration.hidden, false);
@@ -987,6 +995,58 @@ for (const receipt of [{}, toolResult({}), toolResult({ message_id: 42 })]) {
   });
 }
 
+test("Window activity renders oldest-first and keeps the latest call last", async () => {
+  const state = { ...baseState, window_activity: { ...baseState.window_activity,
+    active: true,
+    active_requests: [{ label: "Running checks", tool_name: "run_shell", server_trace_id: "trace-running", started_at_ms: 1_999_999_995_000 }],
+  } };
+  const view = app("mcp_work_result_app.html");
+  view.toolResult({ work_result: state });
+  await view.initialize();
+  const titles = view.nodes.windowActivity.children.map(row => row.children[0].children[0].children[0].textContent);
+  assert.deepEqual(titles, ["runtime_status", "show_changes", "run_shell"]);
+  assert.equal(view.nodes.windowActivity.children.at(-1).children[0].children[1].textContent, "Running");
+});
+
+test("completed Window call details are folded and loaded once on first expansion", async () => {
+  const view = app("mcp_work_result_app.html");
+  view.toolResult({ work_result: baseState });
+  await view.initialize();
+  const row = view.nodes.windowActivity.children.find(item => item.children[0].children[0].children[0].textContent === "show_changes");
+  assert.equal(row.tagName, "DETAILS");
+  assert.equal(row.open, false);
+  assert.equal(view.calls("work_result_activity_detail").length, 0);
+  row.open = true;
+  row.ontoggle();
+  await flush();
+  assert.equal(view.calls("work_result_activity_detail").length, 1);
+  assert.deepEqual(
+    { ...view.calls("work_result_activity_detail")[0].params.arguments },
+    { project, server_trace_id: "trace-reviewed" },
+  );
+  await view.reply(view.calls("work_result_activity_detail")[0], toolResult({
+    activity_detail: {
+      server_trace_id: "trace-reviewed",
+      started_at_ms: 1_999_999_989_000,
+      ended_at_ms: 1_999_999_990_000,
+      duration_ms: 1000,
+      service_ms: 740,
+      method: "tools/call",
+      tool_name: "show_changes",
+      project,
+      status: "success",
+      meaningful: true,
+      observed_job_ids: [],
+      workflow_sessions: [{ workflow_session_id: session_id, project, relation: "recorded" }],
+    },
+  }));
+  assert.equal(row.children[1].children[0].className, "detail-grid");
+  row.open = false; row.ontoggle();
+  row.open = true; row.ontoggle();
+  await flush();
+  assert.equal(view.calls("work_result_activity_detail").length, 1);
+});
+
 test("card renders each concurrent call and reconciles completion by exact trace", async () => {
   const completed = { ...baseState.window_activity.events[0], tool_name: "read_files", server_trace_id: "trace-completed" };
   const state = { ...baseState, window_activity: { ...baseState.window_activity,
@@ -1001,7 +1061,7 @@ test("card renders each concurrent call and reconciles completion by exact trace
   view.toolResult({ work_result: state }); await view.initialize();
   const rows = view.nodes.windowActivity.children;
   assert.equal(rows.length, 3);
-  assert(rows.every(row => row.children[0].children[0].textContent === "read_files"));
+  assert(rows.every(row => row.children[0].children[0].children[0].textContent === "read_files"));
   assert.equal(rows.filter(row => row.children[0].children[1].textContent === "Running").length, 2);
 });
 

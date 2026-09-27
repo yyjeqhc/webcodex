@@ -59,6 +59,10 @@ pub fn work_result_app_tool_specs() -> Vec<ToolSpec> {
             "App-only exact live Work Result refresh. Re-authorizes the exact Project and optional context session_id and never consumes message attention or records into a Session. It returns Window activity and read-only Window collaboration, optional Session evidence plus any retained immutable final-changes snapshot already sealed by a non-blocking finish_coding_task closeout; the refresh never creates or replaces that snapshot.",
         ),
         tool_spec(
+            "work_result_activity_detail",
+            "Work Result App-only lazy detail read for one completed call identified by server_trace_id in the current canonical Host Window. The Window identity comes only from Host sideband; every read re-authorizes runtime visibility, returns bounded sanitized timing/correlation metadata, grants no authority, and never records the expansion as Window or Session activity.",
+        ),
+        tool_spec(
             "work_result_send_message",
             "Work Result App-only Operator-to-Window message. Routes to the current stable ClientWindow, never a Session or peer sender. Project authorization and session:collaborate scope are required; optional session_id is exact, visible, explicitly linked context only. Stores a bounded durable message without consuming model attention or creating a Session. Retry uncertain results with the same delivery_key and payload; conflicting reuse is rejected.",
         ),

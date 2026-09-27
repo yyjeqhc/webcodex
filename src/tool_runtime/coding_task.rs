@@ -14,6 +14,10 @@ use super::continuation_feedback::{
     not_applicable_continuation_feedback_value, ContinuationFeedbackInput,
     ContinuationToolFailureSnapshot,
 };
+use super::git_review_snapshot::{
+    caller_fingerprint as review_caller_fingerprint, latest_workspace_snapshot,
+    workspace_snapshot_complete_for_closeout, GitReviewSnapshot,
+};
 use super::handoff::{
     actionable_unexpected_failure_count, apply_compact_workflow_outcomes, closeout_work_projection,
     compact_jobs, compact_review_evidence, compact_tool_failures, compact_validation,
@@ -1505,7 +1509,12 @@ impl ToolRuntime {
         include_validation_summary: Option<bool>,
         auth: Option<&AuthContext>,
     ) -> ToolResult {
-        let include_diff = include_diff.unwrap_or(true);
+        // summary_only never returns raw change provenance, so generating bounded
+        // diff bodies cannot make the compact result more decision-complete. Keep
+        // full closeout behavior unchanged while allowing the common compact path
+        // to reuse exact/current review snapshots without fabricating a canonical
+        // show_changes payload from git_diff_hunks output.
+        let include_diff = !summary_only && include_diff.unwrap_or(true);
         let include_workspace = include_workspace.unwrap_or(true);
         let include_hygiene = include_hygiene.unwrap_or(true);
         let include_handoff = include_handoff.unwrap_or(true);
@@ -1544,38 +1553,96 @@ impl ToolRuntime {
         }
         let mut final_warnings = Vec::new();
 
-        let show_changes_call = ToolCall::ShowChanges {
-            project: resolved.resolved_id.clone(),
-            session_id: Some(session_id.clone()),
-            include_diff: Some(include_diff),
-            max_hunks: None,
-            max_hunk_lines: None,
-            session_event_limit: Some(50),
+        let mut review_snapshot_reuse = json!({
+            "status": "miss",
+            "reason_code": "snapshot_unavailable",
+        });
+        let reusable_snapshot = if summary_only {
+            review_caller_fingerprint(auth).ok().and_then(|caller| {
+                latest_workspace_snapshot(&caller, &resolved.resolved_id, Some(&session_id))
+            })
+        } else {
+            review_snapshot_reuse["reason_code"] =
+                json!("full_output_requires_canonical_show_changes");
+            None
         };
-        let show_changes_start = self.sessions.record_tool_call_started_with_options(
-            Some(&session_id),
-            SessionTransport::Api,
-            show_changes_call.tool_name(),
-            &show_changes_call.session_log_arguments(),
-            Some(resolved.resolved_id.clone()),
-            super::sessions::session_tool_contract(show_changes_call.tool_name()),
-        );
-        let changes_result = self
-            .show_changes(
-                resolved.resolved_id.clone(),
-                Some(session_id.clone()),
-                Some(include_diff),
+        let reusable_snapshot = if let Some(snapshot) = reusable_snapshot {
+            if !workspace_snapshot_complete_for_closeout(&snapshot, false) {
+                review_snapshot_reuse["reason_code"] = json!("snapshot_projection_incomplete");
+                None
+            } else {
+                match self
+                    .workspace_review_source_identity(&resolved.resolved_id)
+                    .await
+                {
+                    Ok(current) if current == snapshot.source => {
+                        review_snapshot_reuse = json!({
+                            "status": "hit",
+                            "reason_code": Value::Null,
+                            "snapshot_id": snapshot.snapshot_id,
+                        });
+                        Some(snapshot)
+                    }
+                    Ok(_) => {
+                        review_snapshot_reuse["reason_code"] = json!("snapshot_stale");
+                        None
+                    }
+                    Err(_) => {
+                        review_snapshot_reuse["reason_code"] =
+                            json!("snapshot_freshness_unavailable");
+                        None
+                    }
+                }
+            }
+        } else {
+            None
+        };
+
+        let changes_result = if let Some(snapshot) = reusable_snapshot.as_ref() {
+            ToolResult::ok(closeout_workspace_observation_from_review_snapshot(
+                snapshot,
+            ))
+        } else {
+            let show_changes_call = ToolCall::ShowChanges {
+                project: resolved.resolved_id.clone(),
+                session_id: Some(session_id.clone()),
+                include_diff: Some(include_diff),
+                max_hunks: None,
+                max_hunk_lines: None,
+                session_event_limit: Some(50),
+            };
+            let show_changes_start = self.sessions.record_tool_call_started_with_options(
+                Some(&session_id),
+                SessionTransport::Api,
+                show_changes_call.tool_name(),
+                &show_changes_call.session_log_arguments(),
+                Some(resolved.resolved_id.clone()),
+                super::sessions::session_tool_contract(show_changes_call.tool_name()),
+            );
+            let result = self
+                .show_changes(
+                    resolved.resolved_id.clone(),
+                    Some(session_id.clone()),
+                    Some(include_diff),
+                    None,
+                    None,
+                    Some(50),
+                )
+                .await;
+            self.sessions.record_tool_call_finished(
+                show_changes_start,
+                result.success,
+                &result.output,
+                result.error.as_deref(),
                 None,
-                None,
-                Some(50),
-            )
-            .await;
-        self.sessions.record_tool_call_finished(
-            show_changes_start,
-            changes_result.success,
-            &changes_result.output,
-            changes_result.error.as_deref(),
-            None,
+            );
+            result
+        };
+        tracing::debug!(
+            target: "webcodex::git_review",
+            closeout_review_snapshot_reuse = %review_snapshot_reuse["status"],
+            closeout_review_snapshot_reason = %review_snapshot_reuse["reason_code"],
+            "finish_coding_task Git review snapshot reuse"
         );
         if !changes_result.success {
             final_warnings.push(json!({
@@ -1585,7 +1652,6 @@ impl ToolRuntime {
         }
         let workspace = workspace_payload_from_show_changes(&changes_result.output);
         append_workspace_warnings(&workspace, &mut final_warnings);
-
         let permissions = permission_summary_from_events(
             &session_summary.events,
             super::permissions::DEFAULT_PERMISSION_RECENT_LIMIT,
@@ -1789,6 +1855,7 @@ impl ToolRuntime {
             "workspace": workspace,
             "changes": {
                 "show_changes": changes_result.output,
+                "review_snapshot_reuse": review_snapshot_reuse,
                 "hunks_truncated": changes_result.output
                     .get("hunks_truncated")
                     .and_then(Value::as_bool)
@@ -2936,6 +3003,21 @@ fn recommended_flow_groups(visible: Option<&HashSet<&str>>) -> Value {
     Value::Object(map)
 }
 
+fn closeout_workspace_observation_from_review_snapshot(snapshot: &GitReviewSnapshot) -> Value {
+    // This is an internal compact-closeout projection, deliberately not a
+    // show_changes result. Full closeout always executes canonical show_changes so
+    // its public nested contract never changes shape on a snapshot reuse hit.
+    json!({
+        "clean": snapshot.summary.get("clean").cloned().unwrap_or(Value::Null),
+        "git_available": snapshot.summary.get("git_available").cloned().unwrap_or(Value::Null),
+        "non_git_project": snapshot.summary.get("non_git_project").cloned().unwrap_or(Value::Null),
+        "counts": snapshot.summary.get("counts").cloned().unwrap_or_else(|| json!({})),
+        "warnings": snapshot.summary.get("warnings").cloned().unwrap_or_else(|| json!([])),
+        "review_snapshot_id": snapshot.snapshot_id,
+        "review_snapshot_reused": true,
+    })
+}
+
 fn workspace_payload_from_show_changes(show_changes: &Value) -> Value {
     let counts = show_changes
         .get("counts")
@@ -3424,9 +3506,12 @@ fn finish_suggested_next_actions(output: &Value) -> Vec<String> {
             .and_then(Value::as_str)
             == Some("git_diff_hunks")
         {
-            push(&mut actions, "continue the diff review with git_diff_hunks");
+            push(
+                &mut actions,
+                "continue the review with review_changes when its continuation is available",
+            );
         } else {
-            push(&mut actions, "review workspace changes with show_changes");
+            push(&mut actions, "review workspace changes with review_changes");
         }
     }
     if output
@@ -3532,7 +3617,7 @@ mod startup_runner_tests {
     use crate::projects::ProjectConfig;
 
     #[test]
-    fn finish_actions_use_git_diff_hunks_when_nested_show_changes_hands_off() {
+    fn finish_actions_prefer_review_changes_when_nested_show_changes_hands_off() {
         let output = json!({
             "workspace": {"clean": false},
             "changes": {
@@ -3547,9 +3632,9 @@ mod startup_runner_tests {
             "tool_failures": {},
         });
         let actions = finish_suggested_next_actions(&output);
-        assert!(actions
-            .iter()
-            .any(|action| action == "continue the diff review with git_diff_hunks"));
+        assert!(actions.iter().any(|action| {
+            action == "continue the review with review_changes when its continuation is available"
+        }));
         assert_eq!(
             output["changes"]["show_changes"]["diff_review_handoff"]["next_call"]["tool"],
             "git_diff_hunks"

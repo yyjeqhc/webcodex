@@ -404,6 +404,15 @@ pub async fn update_runner_settings(
 ) -> Result<DesktopStateSnapshot, DesktopError> {
     project_state_result(&app, state.update_runner_settings(request).await)
 }
+
+#[tauri::command]
+pub async fn update_runner_allowed_roots(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: crate::webcodex::settings::AllowedRootsUpdate,
+) -> Result<DesktopStateSnapshot, DesktopError> {
+    project_state_result(&app, state.update_runner_allowed_roots(request).await)
+}
 #[tauri::command]
 pub async fn restart_owned_runner(
     app: AppHandle,
@@ -416,9 +425,29 @@ pub async fn restart_owned_runner(
 #[tauri::command]
 pub fn get_computer_permissions(
     app: AppHandle,
+    state: State<'_, AppState>,
+) -> crate::platform::permissions::ComputerPermissions {
+    computer_permissions_snapshot(&app, &state)
+}
+
+#[tauri::command]
+pub fn request_computer_permission(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    action: crate::platform::permissions::PermissionAction,
+) -> Result<crate::platform::permissions::ComputerPermissions, DesktopError> {
+    let runner_path = runner_execution_path(&state);
+    crate::platform::permissions::request(action, runner_path.as_deref())?;
+    Ok(computer_permissions_snapshot(&app, &state))
+}
+
+fn computer_permissions_snapshot(
+    app: &AppHandle,
+    state: &AppState,
 ) -> crate::platform::permissions::ComputerPermissions {
     use tauri::Manager;
-    let mut permissions = crate::platform::permissions::probe();
+    let runner_path = runner_execution_path(state);
+    let mut permissions = crate::platform::permissions::probe_for_runner(runner_path.as_deref());
     permissions.foreground = app
         .get_webview_window(crate::desktop_shell::MAIN_WINDOW_LABEL)
         .is_some_and(|window| {
@@ -426,15 +455,15 @@ pub fn get_computer_permissions(
         });
     permissions
 }
-#[tauri::command]
-pub fn request_computer_permission(
-    app: AppHandle,
-    action: crate::platform::permissions::PermissionAction,
-) -> Result<crate::platform::permissions::ComputerPermissions, DesktopError> {
-    crate::platform::permissions::request(action)?;
-    Ok(get_computer_permissions(app))
-}
 
+fn runner_execution_path(state: &AppState) -> Option<std::path::PathBuf> {
+    let directory = state.get_state().binaries?.directory;
+    #[cfg(target_os = "windows")]
+    let binary = "webcodex-runner.exe";
+    #[cfg(not(target_os = "windows"))]
+    let binary = "webcodex-runner";
+    Some(std::path::PathBuf::from(directory).join(binary))
+}
 #[tauri::command]
 pub async fn add_runner_plugin(
     app: AppHandle,

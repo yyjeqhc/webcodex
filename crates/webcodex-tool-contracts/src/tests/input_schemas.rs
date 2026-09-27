@@ -852,7 +852,9 @@ fn heartbeat_agent_task_attempt_active_turn_proof_is_paired_and_server_timed() {
     let heartbeat = spec_named(&specs, "heartbeat_agent_task_attempt");
     assert_eq!(heartbeat.input_schema["additionalProperties"], false);
     let required = required_fields(heartbeat);
+    let properties = heartbeat.input_schema["properties"].as_object().unwrap();
     for field in [
+        "attempt_ref",
         "task_id",
         "attempt_id",
         "assignee_agent_id",
@@ -860,8 +862,12 @@ fn heartbeat_agent_task_attempt_active_turn_proof_is_paired_and_server_timed() {
         "attempt_controller_generation",
     ] {
         assert!(
-            required.contains(&field.to_string()),
-            "missing required {field}"
+            properties.contains_key(field),
+            "missing selector field {field}"
+        );
+        assert!(
+            !required.contains(&field.to_string()),
+            "{field} stays optional so attempt_ref and the explicit tuple are alternatives"
         );
     }
     for optional in ["active_turn_wake_id", "active_turn_consume_token"] {
@@ -875,7 +881,6 @@ fn heartbeat_agent_task_attempt_active_turn_proof_is_paired_and_server_timed() {
         heartbeat.input_schema["properties"]["active_turn_consume_token"]["pattern"],
         "^wc_wake_consume_[A-Za-z0-9_-]{21}[AQgw]$"
     );
-    let properties = heartbeat.input_schema["properties"].as_object().unwrap();
     for forbidden in [
         "lease_ms",
         "lease_duration_ms",
@@ -898,6 +903,11 @@ fn heartbeat_agent_task_attempt_active_turn_proof_is_paired_and_server_timed() {
         "attempt_controller_generation": 7,
     });
     assert!(test_support::validate_schema_instance(&base, &heartbeat.input_schema).is_ok());
+    assert!(test_support::validate_schema_instance(
+        &json!({"attempt_ref": "~ta1"}),
+        &heartbeat.input_schema
+    )
+    .is_ok());
 
     let mut wake_only = base.clone();
     wake_only["active_turn_wake_id"] = json!("wc_wake_VVVVVVVVVVVVVVVV".to_string());

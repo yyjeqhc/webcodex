@@ -51,7 +51,7 @@ transition or renew a lease.
 | `after_success.todo_completion` | `complete_session_message`, including the unchanged exact assignment fence |
 
 The envelope and payloads are closed. A present phase has exactly one mutation;
-there is no operation list. Existing `session_message_resolution` is also an
+there is no operation list. Existing `_wc.resolve` is also an
 effectful before mutation, so combining it with `_wc.control.before` is rejected.
 ACK and context material requests do not count. Goal completion and Session close
 are admitted only on `finish_coding_task`; it must succeed with explicit

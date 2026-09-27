@@ -131,51 +131,55 @@ fn assert_builtin_workflow(output: &Value) {
         .as_str()
         .expect("Session recording guidance");
     assert!(recording_guidance.contains("work_on_project creates or resumes"));
-    assert!(recording_guidance.contains("recording_session_id"));
+    assert!(recording_guidance.contains("_wc.record"));
     assert!(recording_guidance.contains("prefer its returned session_ref"));
     assert!(recording_guidance.contains("canonical wc_sess_* remains valid"));
     assert!(recording_guidance.contains("recorder provenance only"));
     assert!(recording_guidance.contains("business session_id may target another Session"));
     assert!(recording_guidance.contains("grants no authority"));
+    assert!(!recording_guidance.contains("recording_session_id"));
     let message_ack_guidance = workflow["model_protocol"]["session_message_ack"]
         .as_str()
         .expect("Session message ACK guidance");
     assert!(message_ack_guidance.contains("session_attention"));
     assert!(message_ack_guidance.contains("requires_ack"));
-    assert!(message_ack_guidance.contains("ack_session_message_ids"));
+    assert!(message_ack_guidance.contains("_wc.ack"));
     assert!(message_ack_guidance.contains("operator_messages"));
     assert!(message_ack_guidance.contains("peer_messages"));
-    assert!(message_ack_guidance.contains("historical wrapper name"));
-    assert!(message_ack_guidance.contains("ack_ref remains Session-only"));
+    assert!(message_ack_guidance.contains("_wc.ack_ref remains Session-only"));
     assert!(message_ack_guidance.contains("model-context retention"));
-    assert!(message_ack_guidance.contains("resolves messages"));
+    assert!(message_ack_guidance.contains("never resolves messages"));
     assert!(message_ack_guidance.contains("grants authority"));
     assert!(message_ack_guidance.contains("gates execution"));
+    assert!(!message_ack_guidance.contains("ack_session_message_ids"));
     let window_reply_guidance = workflow["model_protocol"]["window_reply"]
         .as_str()
         .expect("Window reply guidance");
     assert!(window_reply_guidance.contains("operator_messages"));
-    assert!(window_reply_guidance.contains("window_reply"));
+    assert!(window_reply_guidance.contains("_wc.reply"));
     assert!(window_reply_guidance.contains("reply_to"));
-    assert!(window_reply_guidance.contains("No recording_session_id"));
-    assert!(window_reply_guidance.contains("ack_session_message_ids"));
+    assert!(window_reply_guidance.contains("No _wc.record"));
+    assert!(window_reply_guidance.contains("_wc.ack"));
     assert!(window_reply_guidance.contains("post-result"));
+    assert!(!window_reply_guidance.contains("window_reply={"));
     let message_resolution_guidance = workflow["model_protocol"]["session_message_resolution"]
         .as_str()
         .expect("Session message resolution guidance");
-    assert!(message_resolution_guidance.contains("session_message_resolution"));
+    assert!(message_resolution_guidance.contains("_wc.resolve"));
     assert!(message_resolution_guidance.contains("next ordinary call"));
-    assert!(message_resolution_guidance.contains("recording_session_id"));
-    assert!(message_resolution_guidance.contains("ack_session_message_ids"));
-    assert!(message_resolution_guidance.contains("cannot predict the main call"));
+    assert!(message_resolution_guidance.contains("_wc.record"));
+    assert!(message_resolution_guidance.contains("_wc.ack"));
+    assert!(message_resolution_guidance.contains("Resolve cannot predict"));
     assert!(message_resolution_guidance.contains("complete_session_message"));
+    assert!(!message_resolution_guidance.contains("session_message_resolution on"));
     let sidecar_guidance = workflow["model_protocol"]["context_sidecar"]
         .as_str()
         .expect("context sidecar guidance");
-    assert!(sidecar_guidance.contains("context_request"));
-    assert!(sidecar_guidance.contains("after the main tool"));
+    assert!(sidecar_guidance.contains("_wc.context"));
+    assert!(sidecar_guidance.contains("post-result context request"));
     assert!(sidecar_guidance.contains("never authorizes"));
     assert!(sidecar_guidance.contains("observation call before dependent mutation"));
+    assert!(!sidecar_guidance.contains("context_request"));
     let runner_targeting_guidance = workflow["model_protocol"]["runner_targeting"]
         .as_str()
         .expect("exact Runner targeting guidance");
@@ -302,7 +306,7 @@ fn assert_builtin_workflow(output: &Value) {
         .unwrap();
     for phrase in [
         "After a plan phase completes",
-        "_control.before.goal_progress",
+        "_wc.control.before.goal_progress",
         "facts already true",
         "never pre-complete tests",
         "checkpoint_goal remains valid standalone",

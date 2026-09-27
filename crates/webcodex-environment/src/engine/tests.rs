@@ -66,6 +66,7 @@ fn request(create: bool, project: bool) -> SetupRequest {
         },
         server_url: "http://127.0.0.1:8080".into(),
         project: project.then(|| "/projects/one".into()),
+        runner: None,
         account: LocalAccount {
             name: "alice".into(),
             identity: "1000".into(),
@@ -83,7 +84,7 @@ fn request(create: bool, project: bool) -> SetupRequest {
 async fn four_paths_share_one_core_and_viewers_never_enroll() {
     for create in [false, true] {
         for project in [false, true] {
-            let dir = tempfile::tempdir().unwrap();
+            let dir = crate::test_tempdir().unwrap();
             let store = EnvironmentStore::open(dir.path().join("environment")).unwrap();
             let intent = request(create, project);
             let mut setup = EnvironmentSetup::new(Host::default());
@@ -114,6 +115,59 @@ async fn four_paths_share_one_core_and_viewers_never_enroll() {
 }
 
 #[tokio::test]
+async fn projectless_runners_install_without_registering_a_default_project() {
+    for create in [false, true] {
+        let dir = crate::test_tempdir().unwrap();
+        let store = EnvironmentStore::open(dir.path().join("environment")).unwrap();
+        let mut intent = request(create, false);
+        intent.runner = Some(true);
+        let mut setup = EnvironmentSetup::new(Host::default());
+        let result = setup
+            .configure(&store, intent, &SetupSecrets::default(), |_| {})
+            .await
+            .unwrap();
+        assert_eq!(result.observation.runner_online, Some(true));
+        assert!(result.environment.projects.is_empty());
+        assert!(setup
+            .backend
+            .effects
+            .contains(&SetupStep::RunnerConfiguration));
+        assert!(setup
+            .backend
+            .effects
+            .contains(&SetupStep::RunnerServiceStart));
+        assert!(!setup
+            .backend
+            .effects
+            .contains(&SetupStep::ProjectRegistration));
+        assert_eq!(
+            setup.backend.effects.contains(&SetupStep::RunnerEnrollment),
+            !create
+        );
+        let effects = setup.backend.effects.clone();
+        setup
+            .resume(&store, &SetupSecrets::default(), |_| {})
+            .await
+            .unwrap();
+        assert_eq!(setup.backend.effects, effects);
+    }
+}
+
+#[test]
+fn old_setup_journals_preserve_their_machine_role() {
+    for create in [false, true] {
+        for project in [false, true] {
+            let original = request(create, project);
+            let value = serde_json::to_value(&original).unwrap();
+            assert!(value.get("runner").is_none());
+            let restored: SetupRequest = serde_json::from_value(value).unwrap();
+            assert_eq!(restored, original);
+            assert_eq!(restored.local_runner(), project);
+        }
+    }
+}
+
+#[tokio::test]
 async fn every_effect_boundary_is_reconciled_before_recovery() {
     for intent in [
         request(true, true),
@@ -121,7 +175,7 @@ async fn every_effect_boundary_is_reconciled_before_recovery() {
         request(false, false),
     ] {
         for boundary in intent.steps() {
-            let dir = tempfile::tempdir().unwrap();
+            let dir = crate::test_tempdir().unwrap();
             let store = EnvironmentStore::open(dir.path().join("environment")).unwrap();
             let mut setup = EnvironmentSetup::new(Host {
                 fail_after: Some(boundary),
@@ -154,7 +208,7 @@ async fn every_effect_boundary_is_reconciled_before_recovery() {
 
 #[tokio::test]
 async fn unpersisted_enrollment_never_automatically_redeems_again() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::test_tempdir().unwrap();
     let store = EnvironmentStore::open(dir.path().join("environment")).unwrap();
     let mut setup = EnvironmentSetup::new(Host {
         fail_after: Some(SetupStep::RunnerEnrollment),
@@ -206,7 +260,7 @@ async fn unpersisted_enrollment_never_automatically_redeems_again() {
 
 #[tokio::test]
 async fn another_target_or_account_cannot_rebind_saved_setup() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::test_tempdir().unwrap();
     let store = EnvironmentStore::open(dir.path().join("environment")).unwrap();
     let mut setup = EnvironmentSetup::new(Host::default());
     let original = request(false, true);
@@ -235,7 +289,7 @@ async fn another_target_or_account_cannot_rebind_saved_setup() {
 
 #[test]
 fn independent_frontends_cannot_hold_the_same_setup_lock() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::test_tempdir().unwrap();
     let desktop = EnvironmentStore::open(dir.path().join("environment")).unwrap();
     let cli = EnvironmentStore::open(dir.path().join("environment")).unwrap();
     let _held = desktop.lock().unwrap();
@@ -245,8 +299,8 @@ fn independent_frontends_cannot_hold_the_same_setup_lock() {
 #[cfg(unix)]
 #[test]
 fn linked_state_is_not_followed() {
-    let dir = tempfile::tempdir().unwrap();
-    let foreign = tempfile::tempdir().unwrap();
+    let dir = crate::test_tempdir().unwrap();
+    let foreign = crate::test_tempdir().unwrap();
     std::os::unix::fs::symlink(foreign.path(), dir.path().join("linked")).unwrap();
     assert!(EnvironmentStore::open(dir.path().join("linked")).is_err());
 }

@@ -104,6 +104,7 @@ fn work_result_app_internal_tool(tool_name: Option<&str>) -> bool {
         Some(
             "present_work_result"
                 | "work_result_state"
+                | "work_result_activity_detail"
                 | "work_result_send_message"
                 | "changes_file_diff"
         )
@@ -132,6 +133,15 @@ fn finalize_mcp_tool_observability(
         .is_some_and(|(event, _)| event.window_meaningful);
 
     if let Some(record) = model_ergonomics {
+        if let Some(target) = live_window_request
+            .as_ref()
+            .and_then(|active| active.instruction_read_after_complete_bootstrap(record))
+        {
+            crate::tool_runtime::runtime_metrics::observe_instruction_read_after_complete_bootstrap(
+                runtime.metrics.as_ref(),
+                target,
+            );
+        }
         crate::tool_runtime::runtime_metrics::observe_tool_call(runtime.metrics.as_ref(), record);
     }
     if audit_event.is_some() {
@@ -697,10 +707,8 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
     } else {
         None
     };
-    let compact_schemas = crate::model_surface::effective_mcp_compact_schemas(
-        crate::config::mcp_compact_schemas_override(),
-    );
-    let server_mcp_apps_enabled = crate::config::mcp_apps_enabled();
+    let compact_schemas = runtime.runtime_info.mcp_compact_schemas;
+    let server_mcp_apps_enabled = runtime.runtime_info.mcp_apps_enabled;
 
     let config = crate::auth::get_config(depot);
     let db = crate::auth::get_db(depot);
@@ -719,8 +727,9 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
     // The shared kernel timer is authoritative for completed runtime calls. Keep
     // one outer emergency timer only so the MCP hard-timeout path does not erase
     // an otherwise established runtime invocation from ergonomics telemetry.
-    let mut hard_timeout_model_ergonomics =
-        tool_name.as_deref().and_then(ModelErgonomicsTimer::start);
+    let mut hard_timeout_model_ergonomics = tool_name.as_deref().and_then(|name| {
+        ModelErgonomicsTimer::start_with_arguments(name, &request.params["arguments"])
+    });
     let mut tool_correlation = crate::tool_runtime::ToolCallCorrelation::default();
     let mut model_ergonomics = None;
     // Window liveness needs request correlation even when trace retention is off.
@@ -1068,10 +1077,8 @@ async fn handle_mcp_request(
     auth: Option<&AuthContext>,
 ) -> McpOutcome {
     let protocol_era = inferred_protocol_era(&request);
-    let compact_schemas = crate::model_surface::effective_mcp_compact_schemas(
-        crate::config::mcp_compact_schemas_override(),
-    );
-    let server_mcp_apps_enabled = crate::config::mcp_apps_enabled();
+    let compact_schemas = runtime.runtime_info.mcp_compact_schemas;
+    let server_mcp_apps_enabled = runtime.runtime_info.mcp_apps_enabled;
     let outcome = handle_mcp_request_with_lifecycle(
         runtime,
         request,

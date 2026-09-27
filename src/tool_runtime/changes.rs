@@ -213,10 +213,12 @@ struct ChangesTotals {
 pub(super) const CHANGES_GIT_SAFE_CONFIG_SETUP: &str = r#"changes_git_overlay=$(mktemp "${TMPDIR:-/tmp}/webcodex-changes-config.XXXXXX")
 changes_git_filter_keys=$(mktemp "${TMPDIR:-/tmp}/webcodex-changes-filter-keys.XXXXXX")
 changes_git_tmp_index=
+changes_git_review_status_tmp=
 changes_git_untracked_tmp=
 changes_git_cleanup() {
   rm -f -- "$changes_git_overlay" "$changes_git_filter_keys"
   if [ -n "$changes_git_tmp_index" ]; then rm -f -- "$changes_git_tmp_index"; fi
+  if [ -n "$changes_git_review_status_tmp" ]; then rm -f -- "$changes_git_review_status_tmp"; fi
   if [ -n "$changes_git_untracked_tmp" ]; then rm -f -- "$changes_git_untracked_tmp"; fi
 }
 trap changes_git_cleanup 0 HUP INT TERM
@@ -522,13 +524,17 @@ exit 0
         Ok((resolved.resolved_id, summary, caller_fingerprint))
     }
 
-    async fn freeze_final_workspace_tree(&self, project: &str) -> Result<String, ToolResult> {
+    pub(crate) async fn freeze_workspace_git_state(
+        &self,
+        project: &str,
+        capture_review_status: bool,
+    ) -> Result<(Option<String>, String, Option<String>), ToolResult> {
         // A private temporary index snapshots HEAD plus the complete current
         // workspace without touching the real index/ref/worktree. Custom Git
         // clean/process filters and fsmonitor are neutralized because this is a
-        // read-authority presentation path, not repository-configured execution.
+        // read-authority observation path, not repository-configured execution.
         // `git add` may still write immutable blobs/trees to the object database;
-        // the resulting tree is intentionally unreachable presentation state.
+        // the resulting tree is intentionally unreachable observation state.
         let script = format!(
             r#"set -eu
 LC_ALL=C; export LC_ALL
@@ -537,15 +543,31 @@ umask 077
 {safe_config_setup}
 changes_git_tmp_index=$(mktemp "${{TMPDIR:-/tmp}}/webcodex-changes-index.XXXXXX")
 rm -f "$changes_git_tmp_index"
+head=""
 if changes_git rev-parse --verify HEAD >/dev/null 2>&1; then
-  GIT_INDEX_FILE="$changes_git_tmp_index" changes_git read-tree HEAD
+  head=$(changes_git rev-parse --verify HEAD)
+  GIT_INDEX_FILE="$changes_git_tmp_index" changes_git read-tree "$head"
 else
   GIT_INDEX_FILE="$changes_git_tmp_index" changes_git read-tree --empty
 fi
 GIT_INDEX_FILE="$changes_git_tmp_index" changes_git add -A -- .
-GIT_INDEX_FILE="$changes_git_tmp_index" changes_git write-tree
+tree=$(GIT_INDEX_FILE="$changes_git_tmp_index" changes_git write-tree)
+printf 'WEBCODEX_WORKSPACE_HEAD=%s\nWEBCODEX_WORKSPACE_TREE=%s\n' "$head" "$tree"
+{review_status}
 "#,
             safe_config_setup = CHANGES_GIT_SAFE_CONFIG_SETUP,
+            // Porcelain v2 includes branch identity, staged object ids, modes,
+            // conflicts and untracked classification. The frozen worktree alone
+            // cannot fence metadata/diffs after staging or a same-HEAD switch.
+            // Keep this in the same Runner request and do not refresh the real index.
+            review_status = if capture_review_status {
+                r#"changes_git_review_status_tmp=$(mktemp "${TMPDIR:-/tmp}/webcodex-review-status.XXXXXX")
+changes_git --no-optional-locks status --porcelain=v2 --branch --untracked-files=all --ignore-submodules=none >"$changes_git_review_status_tmp"
+status_fingerprint=$(changes_git hash-object --no-filters -- "$changes_git_review_status_tmp")
+printf 'WEBCODEX_WORKSPACE_STATUS=%s\n' "$status_fingerprint""#
+            } else {
+                ""
+            },
         );
         let output = self
             .run_project_internal_posix_script_capture(project, script.to_string(), 60, None)
@@ -554,19 +576,64 @@ GIT_INDEX_FILE="$changes_git_tmp_index" changes_git write-tree
         if output.exit_code != Some(0) || output.stdout_truncated {
             return Err(changes_runtime_error(
                 "changes_snapshot_failed",
-                "Git could not freeze the final workspace tree",
+                "Git could not freeze the workspace tree",
             ));
         }
-        let tree = output.stdout.trim();
-        if !valid_git_object_id(tree) {
+        let mut head = None;
+        let mut tree = None;
+        let mut status_fingerprint = None;
+        for line in output.stdout.lines() {
+            if let Some(value) = line.strip_prefix("WEBCODEX_WORKSPACE_HEAD=") {
+                if !value.is_empty() {
+                    if !valid_git_object_id(value) {
+                        return Err(changes_runtime_error(
+                            "changes_snapshot_failed",
+                            "Git returned an invalid workspace HEAD id",
+                        ));
+                    }
+                    head = Some(value.to_string());
+                }
+            } else if let Some(value) = line.strip_prefix("WEBCODEX_WORKSPACE_TREE=") {
+                tree = Some(value.to_string());
+            } else if let Some(value) = line.strip_prefix("WEBCODEX_WORKSPACE_STATUS=") {
+                if !valid_git_object_id(value) {
+                    return Err(changes_runtime_error(
+                        "changes_snapshot_failed",
+                        "Git returned an invalid review status fingerprint",
+                    ));
+                }
+                status_fingerprint = Some(value.to_string());
+            }
+        }
+        let Some(tree) = tree else {
+            return Err(changes_runtime_error(
+                "changes_snapshot_failed",
+                "Git did not return a frozen workspace tree id",
+            ));
+        };
+        if !valid_git_object_id(&tree) {
             return Err(changes_runtime_error(
                 "changes_snapshot_failed",
                 "Git returned an invalid frozen workspace tree id",
             ));
         }
-        Ok(tree.to_string())
+        if capture_review_status && status_fingerprint.is_none() {
+            return Err(changes_runtime_error(
+                "changes_snapshot_failed",
+                "Git did not return workspace review status",
+            ));
+        }
+        Ok((head, tree, status_fingerprint))
     }
 
+    pub(crate) async fn freeze_final_workspace_tree(
+        &self,
+        project: &str,
+    ) -> Result<String, ToolResult> {
+        self.freeze_workspace_git_state(project, false)
+            .await
+            .map(|(_, tree, _)| tree)
+    }
     async fn changes_metadata(
         &self,
         project: &str,

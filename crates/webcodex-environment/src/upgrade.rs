@@ -2824,6 +2824,7 @@ mod tests {
                     mode: EnvironmentMode::Join,
                     server_url: "http://127.0.0.1:1".into(),
                     project: None,
+                    runner: None,
                     account,
                     binaries,
                 },
@@ -2847,7 +2848,7 @@ mod tests {
 
     #[test]
     fn final_decision_is_durable_before_gate_can_be_released() {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = crate::test_tempdir().unwrap();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -2870,7 +2871,7 @@ mod tests {
 
     #[tokio::test]
     async fn recovered_final_decisions_never_restore_old_data() {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = crate::test_tempdir().unwrap();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -2892,7 +2893,7 @@ mod tests {
 
     #[test]
     fn privileged_restore_rejects_wrong_operation_and_request_owner_before_effects() {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = crate::test_tempdir().unwrap();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -2922,7 +2923,7 @@ mod tests {
 
     #[test]
     fn receipt_binds_original_owner_environment_and_program_targets() {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = crate::test_tempdir().unwrap();
         let root = directory.path();
         let mut journal = fixture(root, Phase::SnapshotReady);
         journal.programs.push(ProgramBackup {
@@ -2947,7 +2948,7 @@ mod tests {
 
     #[test]
     fn unfinished_upgrade_blocks_other_store_mutations_after_recovery() {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = crate::test_tempdir().unwrap();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -3000,7 +3001,7 @@ mod tests {
 
     #[test]
     fn malformed_candidate_metadata_fails_before_artifact_execution() {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = crate::test_tempdir().unwrap();
         std::fs::write(
             directory.path().join("source-manifest.json"),
             br#"{"schema_version":1,"version":"1.0.0","source_sha":"invalid"}"#,
@@ -3016,7 +3017,7 @@ mod tests {
     #[test]
     fn desktop_restore_replaces_only_the_recorded_payload() {
         use std::os::unix::fs::PermissionsExt;
-        let directory = tempfile::tempdir().unwrap();
+        let directory = crate::test_tempdir().unwrap();
         let target = directory.path().join("Desktop.app");
         let backup = directory.path().join("desktop-backup.app");
         std::fs::create_dir(&target).unwrap();
@@ -3061,7 +3062,7 @@ mod tests {
     #[test]
     fn linux_desktop_file_hash_is_stable_across_backup_and_restore_names() {
         use std::os::unix::fs::PermissionsExt;
-        let directory = tempfile::tempdir().unwrap();
+        let directory = crate::test_tempdir().unwrap();
         let target = directory.path().join("webcodex-desktop");
         let backup = directory.path().join("desktop");
         std::fs::write(&target, b"old executable").unwrap();

@@ -26,6 +26,14 @@ pub const TOOL_DISCOVERY_GROUP_VALIDATION: &str = "validation";
 pub const EXACT_MANIFEST_SPECIALIST_TOOL_NAMES: &[&str] =
     &["apply_patch", "apply_unified_diff", "write_project_file"];
 
+/// Model-visible read specialists omitted from ordinary direct routing.
+pub const EXACT_DISCOVERY_SPECIALIST_TOOL_NAMES: &[&str] =
+    &["git_diff_hunks", "git_review_summary"];
+
+/// Legacy review surfaces omitted from ordinary discovery/recommended flows.
+/// show_changes remains Adaptive-direct for established Apps/presentation contracts.
+pub const ORDINARY_DISCOVERY_DEMOTED_REVIEW_TOOL_NAMES: &[&str] =
+    &["git_diff_hunks", "git_review_summary", "show_changes"];
 pub const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
     ToolDiscoveryGroup {
         name: TOOL_DISCOVERY_GROUP_INSPECT,
@@ -54,10 +62,8 @@ pub const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
             "call_hierarchy",
             "lsp_status",
             "list_project_files",
-            "show_changes",
+            "review_changes",
             "git_status",
-            "git_review_summary",
-            "git_diff_hunks",
             "git_log",
             #[cfg(feature = "workspace-checkpoints")]
             "workspace_checkpoint_list",
@@ -139,11 +145,9 @@ pub const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
         name: TOOL_DISCOVERY_GROUP_GIT,
         tools: &[
             "git_commit_paths",
+            "review_changes",
             "git_status",
-            "git_review_summary",
-            "git_diff_hunks",
             "git_log",
-            "show_changes",
             "git_restore_paths",
             "discard_untracked",
             #[cfg(feature = "workspace-checkpoints")]
@@ -157,9 +161,7 @@ pub const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
         tools: &[
             "finish_coding_task",
             "present_work_result",
-            "show_changes",
-            "git_review_summary",
-            "git_diff_hunks",
+            "review_changes",
             "workspace_hygiene_check",
             "git_log",
             "git_status",
@@ -429,22 +431,22 @@ pub const TOOL_RECOMMENDED_FLOWS: &[ToolRecommendedFlow] = &[
             "run_process",
             "run_script",
             "run_shell",
-            "show_changes",
+            "review_changes",
         ],
     },
     ToolRecommendedFlow {
         name: "edit",
         summary:
-            "Edit: read_files → edit_project_files → show_changes or git_diff_hunks → structured validation. Existing-file changes use read_revision fences; exact and deterministic range edits share one primary editor. Other edit specialists require exact-name discovery.",
+            "Edit: read_files → edit_project_files → structured validation → review_changes → finish_coding_task. Existing-file changes use read_revision fences; exact and deterministic range edits share one primary editor; legacy Git review specialists require exact-name discovery.",
         manifest_purpose:
-            "Use read_files to obtain the exact source snapshot and read_revision, then use edit_project_files for edit/create/delete/rename. Exact edits and replace_range share the same transactional editor and original-snapshot semantics. Existing-file mutations fail closed when the revision is stale. Review with show_changes or git_diff_hunks, then use structured validation. Patch, unified-diff, and whole-file primitives are exact-name specialists for already patch/diff/whole-file-shaped inputs, not ordinary coding routing or recovery.",
+            "Use read_files for the exact source/read_revision, edit_project_files for mutation, structured validation for execution evidence, then review_changes for one authoritative Git snapshot and bounded diff page before finish_coding_task. show_changes, git_review_summary, and git_diff_hunks remain exact-name specialists/internal building blocks rather than ordinary routing choices.",
         tools: &[
             "read_files",
             "edit_project_files",
-            "show_changes",
-            "git_diff_hunks",
             "cargo_check",
             "cargo_test",
+            "review_changes",
+            "finish_coding_task",
         ],
     },
     ToolRecommendedFlow {
@@ -483,7 +485,7 @@ pub const TOOL_RECOMMENDED_FLOWS: &[ToolRecommendedFlow] = &[
     ToolRecommendedFlow {
         name: "browser",
         summary: "Browser/CDP runtime: discover Browser-capable Runners, launch an owned ephemeral Browser, use adaptive semantic snapshots and diagnostic deltas, act only through opaque identities, then re-observe after navigation or uncertain effects.",
-        manifest_purpose: "Use browser_observe for targets/browsers/pages/snapshot/screenshot/diagnostics and browser_act for launch/new_page/navigate/reload/click/input_text/select_option/set_value/upload_file/key/clear_diagnostics/close. Call an element effect only when that snapshot node lists it in actions. Snapshot auto mode reduces large pages to actionable controls; diagnostics since_cursor returns only later events. Successful page effects include bounded stability observation but still require a fresh snapshot before reusing element authority. Browser/Page/Element ids are opaque; navigation stales element ids. Never retry an outcome_unknown effect blindly: follow the returned browser_observe reconciliation call.",
+        manifest_purpose: "Use browser_observe for targets/browsers/pages/snapshot/screenshot/diagnostics and browser_act for launch/new_page/navigate/reload/click/input_text/select_option/set_value/upload_file/key/clear_diagnostics/close. Call an element effect only when that snapshot node lists it in actions. Snapshot auto mode reduces large pages to admitted controls and semantic choices such as native select options; diagnostics since_cursor returns only later events. Successful page effects include bounded stability observation but still require a fresh snapshot before reusing element authority. Browser/Page/Element ids are opaque; navigation stales element ids. Never retry an outcome_unknown effect blindly: follow the returned browser_observe reconciliation call.",
         tools: &["browser_observe", "browser_act"],
     },
     ToolRecommendedFlow {
@@ -509,12 +511,10 @@ pub const TOOL_RECOMMENDED_FLOWS: &[ToolRecommendedFlow] = &[
     },
     ToolRecommendedFlow {
         name: "review",
-        summary: "Review: small bounded Git observations may use native Git. Use show_changes for workspace-wide overview/Session signals, git_review_summary to map broad or unknown committed ranges, and git_diff_hunks for fenced, paged, or continued review; check hygiene before final response.",
-        manifest_purpose: "Small predictable Git observations may use native git through run_process. Use structured review when its independent semantics materially help: show_changes for bounded workspace-wide review and Session signals, git_review_summary for broad/unknown committed-range mapping, and git_diff_hunks for scope/fence-bound paging, safe continuation, and long-hunk fragmentation. Review the resulting diff before closeout and check workspace hygiene.",
+        summary: "Review: use review_changes as the primary ordinary workspace or committed review surface; continue only with its same-snapshot token when needed. Old review tools remain specialists; hygiene stays authoritative and separate.",
+        manifest_purpose: "Use review_changes for ordinary read-only Git review: one exact snapshot returns summary, signals, file metadata, and the first bounded diff page; follow only its returned continuation. show_changes, git_review_summary, and git_diff_hunks remain exact-discovery specialists/internal projections. workspace_hygiene_check remains separate and authoritative.",
         tools: &[
-            "git_review_summary",
-            "show_changes",
-            "git_diff_hunks",
+            "review_changes",
             "workspace_hygiene_check",
             "run_process",
         ],
@@ -577,10 +577,8 @@ pub const CODING_INTENT_TOOL_NAMES: &[&str] = &[
     "go_test",
     #[cfg(feature = "experimental-code-mode")]
     "code_mode_exec_effectful",
-    // Worktree and committed-range review.
-    "git_review_summary",
-    "git_diff_hunks",
-    "show_changes",
+    // Primary ordinary review plus authoritative hygiene/closeout.
+    "review_changes",
     "workspace_hygiene_check",
     "finish_coding_task",
 ];
@@ -609,9 +607,7 @@ pub const TOOL_MANIFEST_INTENTS: &[ToolManifestIntent] = &[
             "list_project_files",
             "git_status",
             "git_log",
-            "git_review_summary",
-            "git_diff_hunks",
-            "show_changes",
+            "review_changes",
             "workspace_hygiene_check",
             "finish_coding_task",
             "session_handoff_summary",
@@ -664,7 +660,7 @@ pub const TOOL_MANIFEST_INTENTS: &[ToolManifestIntent] = &[
             "validation_summary",
             "observe_jobs",
             "list_jobs",
-            "show_changes",
+            "review_changes",
             "finish_coding_task",
         ],
     },

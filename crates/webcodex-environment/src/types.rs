@@ -29,6 +29,10 @@ pub struct SetupRequest {
     pub mode: EnvironmentMode,
     pub server_url: String,
     pub project: Option<PathBuf>,
+    /// Explicit machine role, independent of an optional initial project.
+    /// Older journals infer the role from `project`; absence preserves that intent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runner: Option<bool>,
     pub account: LocalAccount,
     pub binaries: RuntimeBinaries,
 }
@@ -54,7 +58,7 @@ impl SetupRequest {
     }
 
     pub fn local_runner(&self) -> bool {
-        self.project.is_some()
+        self.runner.unwrap_or(self.project.is_some())
     }
 
     pub fn steps(&self) -> Vec<SetupStep> {
@@ -74,12 +78,11 @@ impl SetupRequest {
             UserAuthentication
         });
         if self.local_runner() {
-            steps.extend([
-                RunnerConfiguration,
-                ProjectRegistration,
-                RunnerServiceInstall,
-                RunnerServiceStart,
-            ]);
+            steps.push(RunnerConfiguration);
+            if self.project.is_some() {
+                steps.push(ProjectRegistration);
+            }
+            steps.extend([RunnerServiceInstall, RunnerServiceStart]);
         }
         steps.push(Readiness);
         steps

@@ -138,6 +138,28 @@ pub(crate) fn ensure_private_directory(path: &Path) -> SetupResultValue<()> {
     Ok(())
 }
 
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::symlink;
+
+    #[test]
+    fn private_store_still_rejects_symlinked_ancestors() {
+        let temp = crate::test_tempdir().unwrap();
+        let real = temp.path().join("real");
+        ensure_private_directory(&real).unwrap();
+        let alias = temp.path().join("alias");
+        symlink(&real, &alias).unwrap();
+        assert_eq!(
+            ensure_private_directory(&alias.join("environment"))
+                .unwrap_err()
+                .code,
+            "unsafe_path"
+        );
+        assert!(!real.join("environment").exists());
+    }
+}
+
 fn is_link(metadata: &std::fs::Metadata) -> bool {
     #[cfg(windows)]
     {

@@ -1,5 +1,6 @@
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
+use std::time::Instant;
 use webcodex_workspace::file_read_normalize::MODEL_RESULT_ENVELOPE_RESERVE_BYTES;
 use webcodex_workspace::file_read_range::MAX_SERIALIZED_OUTPUT_BYTES;
 
@@ -96,53 +97,86 @@ fn git_review_failure(
     )
 }
 
-fn bounded_review_diff_command(
-    merge_base: &str,
-    head: &str,
-    mode: &str,
-    max_lines: usize,
-) -> String {
-    let mode = match mode {
-        "name_status" => "--name-status",
-        "numstat" => "--numstat",
-        "raw" => "--raw",
-        _ => unreachable!("closed git review diff mode"),
-    };
+const GIT_REVIEW_NAME_STATUS_FRAME: &str = "@@WEBCODEX_GIT_REVIEW_NAME_STATUS@@";
+const GIT_REVIEW_NUMSTAT_FRAME: &str = "@@WEBCODEX_GIT_REVIEW_NUMSTAT@@";
+const GIT_REVIEW_RAW_FRAME: &str = "@@WEBCODEX_GIT_REVIEW_RAW@@";
+const GIT_REVIEW_END_FRAME: &str = "@@WEBCODEX_GIT_REVIEW_END@@";
+
+fn bounded_review_metadata_command(merge_base: &str, head: &str, max_lines: usize) -> String {
     let failure = format!("printf '{}\\n'; exit 0", GIT_REVIEW_ERROR_SENTINEL);
     let isolated_view = committed_git_isolated_view_setup(head, &failure);
-    let producer = format!(
-        "git --no-pager -c core.quotePath=false diff --no-ext-diff --no-textconv --find-renames {mode} {base_q} {head_q}",
-        head_q = shell_escape_simple(head),
-        mode = mode,
-        base_q = shell_escape_simple(merge_base),
-    );
-    let consumer = format!(
-        concat!(
-            "awk -v max_lines={max_lines} -v max_bytes={max_bytes} '",
-            "BEGIN{{n=0;b=0;emit=1}} ",
-            "{{s=length($0)+1; if (emit && n<max_lines && b+s<=max_bytes) ",
-            "{{print; n++; b+=s}} else emit=0}}'"
-        ),
-        max_lines = max_lines,
-        max_bytes = GIT_REVIEW_METADATA_BYTES,
-    );
-    let pipeline = checked_git_pipeline_to_file(&producer, &consumer, "metadata", &failure);
+    let bounded_pipeline = |mode: &str, stem: &str| {
+        let producer = format!(
+            "git --no-pager -c core.quotePath=false diff --no-ext-diff --no-textconv --find-renames {mode} {base_q} {head_q}",
+            mode = mode,
+            base_q = shell_escape_simple(merge_base),
+            head_q = shell_escape_simple(head),
+        );
+        let consumer = format!(
+            concat!(
+                "awk -v max_lines={max_lines} -v max_bytes={max_bytes} '",
+                "BEGIN{{n=0;b=0;emit=1}} ",
+                "{{s=length($0)+1; if (emit && n<max_lines && b+s<=max_bytes) ",
+                "{{print; n++; b+=s}} else emit=0}}'"
+            ),
+            max_lines = max_lines,
+            max_bytes = GIT_REVIEW_METADATA_BYTES,
+        );
+        checked_git_pipeline_to_file(&producer, &consumer, stem, &failure)
+    };
+    let name_status = bounded_pipeline("--name-status", "name_status");
+    let numstat = bounded_pipeline("--numstat", "numstat");
+    let raw = bounded_pipeline("--raw", "raw");
     format!(
         concat!(
             "{prefix}",
             "if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then printf '{error}\\n'; exit 0; fi; ",
             "{isolated_view}",
-            "{pipeline}",
-            "cat \"$view/metadata.out\" 2>/dev/null || {{ {failure}; }}"
+            "{name_status}{numstat}{raw}",
+            "printf '{name_frame}\\n'; cat \"$view/name_status.out\" || {{ {failure}; }}; ",
+            "printf '{numstat_frame}\\n'; cat \"$view/numstat.out\" || {{ {failure}; }}; ",
+            "printf '{raw_frame}\\n'; cat \"$view/raw.out\" || {{ {failure}; }}; ",
+            "printf '{end_frame}\\n'"
         ),
         prefix = committed_git_discovery_prefix(),
         isolated_view = isolated_view,
-        pipeline = pipeline,
+        name_status = name_status,
+        numstat = numstat,
+        raw = raw,
         error = GIT_REVIEW_ERROR_SENTINEL,
         failure = failure,
+        name_frame = GIT_REVIEW_NAME_STATUS_FRAME,
+        numstat_frame = GIT_REVIEW_NUMSTAT_FRAME,
+        raw_frame = GIT_REVIEW_RAW_FRAME,
+        end_frame = GIT_REVIEW_END_FRAME,
     )
 }
 
+fn parse_review_metadata_frames(stdout: &str) -> Option<(&str, &str, &str)> {
+    if stdout.contains(GIT_REVIEW_ERROR_SENTINEL)
+        || stdout.matches(GIT_REVIEW_NAME_STATUS_FRAME).count() != 1
+        || stdout.matches(GIT_REVIEW_NUMSTAT_FRAME).count() != 1
+        || stdout.matches(GIT_REVIEW_RAW_FRAME).count() != 1
+        || stdout.matches(GIT_REVIEW_END_FRAME).count() != 1
+    {
+        return None;
+    }
+    let (_, after_names_marker) = stdout.split_once(GIT_REVIEW_NAME_STATUS_FRAME)?;
+    let after_names_marker = after_names_marker.strip_prefix('\n')?;
+    let (names, after_numstat_marker) = after_names_marker.split_once(GIT_REVIEW_NUMSTAT_FRAME)?;
+    let after_numstat_marker = after_numstat_marker.strip_prefix('\n')?;
+    let (numstat, after_raw_marker) = after_numstat_marker.split_once(GIT_REVIEW_RAW_FRAME)?;
+    let after_raw_marker = after_raw_marker.strip_prefix('\n')?;
+    let (raw, after_end_marker) = after_raw_marker.split_once(GIT_REVIEW_END_FRAME)?;
+    if !after_end_marker.trim().is_empty() {
+        return None;
+    }
+    Some((
+        names.strip_suffix('\n').unwrap_or(names),
+        numstat.strip_suffix('\n').unwrap_or(numstat),
+        raw.strip_suffix('\n').unwrap_or(raw),
+    ))
+}
 fn bounded_output_path(path: String) -> (Option<String>, bool) {
     if path.len() > GIT_REVIEW_MAX_PATH_BYTES {
         (None, true)
@@ -866,41 +900,45 @@ impl ToolRuntime {
         };
 
         let max_lines = GIT_REVIEW_MAX_FILES;
-        let mut observations = Vec::new();
-        for mode in ["name_status", "numstat", "raw"] {
-            let output = match self
-                .run_project_internal_posix_script_capture(
-                    &resolved.resolved_id,
-                    bounded_review_diff_command(
-                        &scope.merge_base,
-                        &scope.requested_head,
-                        mode,
-                        max_lines,
-                    ),
-                    30,
-                    None,
-                )
-                .await
-            {
-                Ok(output) if output.exit_code == Some(0) && output.error.is_none() => output,
-                _ => {
-                    return git_review_failure(
-                        &project,
-                        &base,
-                        &head,
-                        "git_diff_metadata_unavailable",
-                    )
-                }
-            };
-            if output.stdout.starts_with(GIT_REVIEW_ERROR_SENTINEL) {
-                return git_review_failure(&project, &base, &head, "git_diff_failed");
+        let metadata_started = Instant::now();
+        let output = match self
+            .run_project_internal_posix_script_capture(
+                &resolved.resolved_id,
+                bounded_review_metadata_command(
+                    &scope.merge_base,
+                    &scope.requested_head,
+                    max_lines,
+                ),
+                30,
+                None,
+            )
+            .await
+        {
+            Ok(output) if output.exit_code == Some(0) && output.error.is_none() => output,
+            _ => {
+                return git_review_failure(&project, &base, &head, "git_diff_metadata_unavailable")
             }
-            observations.push(output.stdout);
+        };
+        let metadata_duration_ms =
+            u64::try_from(metadata_started.elapsed().as_millis()).unwrap_or(u64::MAX);
+        tracing::debug!(
+            target: "webcodex::git_review",
+            operation = "git_review_summary_metadata",
+            metadata_runner_observation_count = 1u64,
+            metadata_duration_ms,
+            response_bytes = u64::try_from(output.stdout.len()).unwrap_or(u64::MAX),
+            metadata_success = !output.stdout.starts_with(GIT_REVIEW_ERROR_SENTINEL),
+            "Git review metadata observation completed"
+        );
+        if output.stdout.starts_with(GIT_REVIEW_ERROR_SENTINEL) {
+            return git_review_failure(&project, &base, &head, "git_diff_failed");
         }
-        let (names, name_partial) = parse_name_status(&observations[0]);
-        let (numstats, numstat_partial) = parse_numstat(&observations[1]);
-        let (raw_modes, raw_partial) = parse_raw_modes(&observations[2]);
-
+        let Some((name_status, numstat, raw)) = parse_review_metadata_frames(&output.stdout) else {
+            return git_review_failure(&project, &base, &head, "git_diff_metadata_malformed");
+        };
+        let (names, name_partial) = parse_name_status(name_status);
+        let (numstats, numstat_partial) = parse_numstat(numstat);
+        let (raw_modes, raw_partial) = parse_raw_modes(raw);
         let files_total = usize::try_from(scope.files_changed).unwrap_or(usize::MAX);
         let mut warnings = Vec::new();
         let files_truncated = names.len() < files_total || files_total > GIT_REVIEW_MAX_FILES;
@@ -984,7 +1022,9 @@ impl ToolRuntime {
         let mut total_symbols = 0usize;
         let mut symbols_partial = files_truncated || classification_partial;
         let mut diff_bytes_inspected = 0usize;
+        let mut symbol_observation_count = 0u64;
         if !symbol_paths.is_empty() {
+            symbol_observation_count = 1;
             let output = self
                 .run_project_internal_posix_script_capture(
                     &resolved.resolved_id,
@@ -1028,6 +1068,16 @@ impl ToolRuntime {
             push_warning(&mut warnings, "symbol_hints_partial");
         }
 
+        tracing::debug!(
+            target: "webcodex::git_review",
+            operation = "git_review_summary",
+            scope_runner_observation_count = 1u64,
+            metadata_runner_observation_count = 1u64,
+            symbol_runner_observation_count = symbol_observation_count,
+            runner_observation_count = 2u64 + symbol_observation_count,
+            metadata_duration_ms,
+            "Git review summary observation counts"
+        );
         let coverage_partial = files_truncated || classification_partial;
         let production_changed = files.iter().any(|file| has_class(file, "production"));
         let tests_changed = files.iter().any(|file| has_class(file, "test"));
@@ -1179,6 +1229,41 @@ use super::git_committed::{
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn git_review_summary_metadata_command_frames_three_modes_in_one_observation() {
+        let command = bounded_review_metadata_command(&"a".repeat(40), &"b".repeat(40), 80);
+        for mode in ["--name-status", "--numstat", "--raw"] {
+            assert!(command.contains(mode), "missing metadata mode {mode}");
+        }
+        assert!(command.contains("--no-ext-diff"));
+        assert!(command.contains("--no-textconv"));
+        assert!(command.contains(GIT_REVIEW_NAME_STATUS_FRAME));
+        assert!(command.contains(GIT_REVIEW_NUMSTAT_FRAME));
+        assert!(command.contains(GIT_REVIEW_RAW_FRAME));
+        assert!(command.contains(GIT_REVIEW_END_FRAME));
+    }
+
+    #[test]
+    fn git_review_summary_metadata_frames_fail_closed() {
+        let framed = format!(
+            "{names}\nM\ta.rs\n{numstat}\n1\t2\ta.rs\n{raw}\n:100644 100644 abcdef0 abcdef1 M\ta.rs\n{end}\n",
+            names = GIT_REVIEW_NAME_STATUS_FRAME,
+            numstat = GIT_REVIEW_NUMSTAT_FRAME,
+            raw = GIT_REVIEW_RAW_FRAME,
+            end = GIT_REVIEW_END_FRAME,
+        );
+        let (names, numstat, raw) = parse_review_metadata_frames(&framed).unwrap();
+        assert_eq!(names, "M\ta.rs");
+        assert_eq!(numstat, "1\t2\ta.rs");
+        assert!(raw.contains("100644"));
+        assert!(parse_review_metadata_frames(&framed.replace(GIT_REVIEW_END_FRAME, "")).is_none());
+        assert!(parse_review_metadata_frames(&format!(
+            "{framed}{name}",
+            name = GIT_REVIEW_NAME_STATUS_FRAME
+        ))
+        .is_none());
+    }
 
     #[test]
     fn git_review_summary_exact_commit_validation_is_narrow() {

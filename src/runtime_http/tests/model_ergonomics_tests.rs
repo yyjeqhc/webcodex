@@ -45,7 +45,7 @@ async fn api_model_ergonomics_success_is_exact_and_queryable() {
     assert_eq!(body["success"], true);
 
     let telemetry = single_model_ergonomics(&db, "ergonomics-success", "tool_manifest");
-    assert_eq!(telemetry["schema_version"], 10);
+    assert_eq!(telemetry["schema_version"], 11);
     assert_eq!(telemetry["tool_name"], "tool_manifest");
     assert_eq!(telemetry["tool_category"], "runtime");
     assert_eq!(telemetry["success"], true);
@@ -213,7 +213,7 @@ async fn api_work_on_project_preferences_persist_as_privacy_bounded_action_audit
     assert_eq!(body["success"], true, "{body}");
 
     let telemetry = single_model_ergonomics(&db, "ergonomics-work-on-project", "work_on_project");
-    assert_eq!(telemetry["schema_version"], 10);
+    assert_eq!(telemetry["schema_version"], 11);
     let facts = &telemetry["work_on_project"];
     assert_eq!(facts["resume_requested"], false);
     assert_eq!(facts["source"], "project");
@@ -224,6 +224,16 @@ async fn api_work_on_project_preferences_persist_as_privacy_bounded_action_audit
     assert_eq!(facts["guidance_profile_explicit"], true);
     assert_eq!(facts["include_extension_catalog"], false);
     assert_eq!(facts["include_extension_catalog_explicit"], true);
+    let invocation = &telemetry["invocation"];
+    assert_eq!(invocation["context_present"], false);
+    assert_eq!(invocation["control_present"], false);
+    let bootstrap = &telemetry["bootstrap"];
+    assert!(bootstrap.is_object());
+    assert!(bootstrap["instructions_available"].is_null());
+    assert!(bootstrap["workflow_available"].is_null());
+    assert!(bootstrap["instruction_observation_status"].is_string());
+    assert!(bootstrap["workspace_status"].is_string());
+    assert!(bootstrap["semantic_supported"].is_boolean());
     let serialized = serde_json::to_string(&telemetry).unwrap();
     for forbidden in [private_instruction, project] {
         assert!(

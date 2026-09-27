@@ -224,6 +224,79 @@ fn browser_output_schemas_accept_canonical_results_and_reject_leaked_fields() {
     .unwrap();
     validate_act(&stale).unwrap();
 
+    let compact = serde_json::to_value(crate::tool_runtime::tool_result::ToolResult::ok(json!({
+        "execution_state": "completed",
+        "state_changed": false,
+        "browser_id": "browser_abcdefghijklmnop",
+        "page_id": "page_abcdefghijklmnop",
+        "snapshot_generation": 4,
+        "snapshot_mode": "interactive",
+        "auto_compacted": true,
+        "max_nodes": 256,
+        "max_depth": 32,
+        "node_count": 2,
+        "truncated": false,
+        "nodes": [
+            {
+                "role": "combobox",
+                "name": "Fruit",
+                "disabled": false,
+                "element_id": "element_abcdefghijklmnop",
+                "actions": ["select_option"],
+                "actionable": true
+            },
+            {
+                "role": "option",
+                "name": "Apple",
+                "value": "a",
+                "group_id": "group_1",
+                "group_role": "combobox",
+                "group_label": "Fruit",
+                "selected": true,
+                "disabled": false,
+                "read_only": false,
+                "actionable": false
+            }
+        ]
+    })))
+    .unwrap();
+    validate_observe(&compact).unwrap();
+    let mut leaked_backend = compact;
+    leaked_backend["output"]["nodes"][1]["backend_node_id"] = json!(11);
+    assert!(validate_observe(&leaked_backend).is_err());
+
+    let diagnostics_delta =
+        serde_json::to_value(crate::tool_runtime::tool_result::ToolResult::ok(json!({
+            "execution_state": "completed",
+            "state_changed": false,
+            "cursor": 5,
+            "since_cursor": 3,
+            "delta_truncated": false,
+            "new_console_errors": 1,
+            "new_console_warnings": 0,
+            "new_failed_requests": 0,
+            "new_4xx": 0,
+            "new_5xx": 0,
+            "console_retained": 0,
+            "console_count": 0,
+            "console_truncated": false,
+            "console": [],
+            "network_retained": 0,
+            "network_count": 0,
+            "network_truncated": false,
+            "network": []
+        })))
+        .unwrap();
+    validate_observe(&diagnostics_delta).unwrap();
+
+    let effect = serde_json::to_value(crate::tool_runtime::tool_result::ToolResult::ok(json!({
+        "execution_state": "completed",
+        "state_changed": true,
+        "stability": {"stable": false, "waited_ms": 250, "reason": "deadline"}
+    })))
+    .unwrap();
+    validate_act(&effect).unwrap();
+
     let mut leaked = snapshot;
     leaked["output"]["target_id"] = json!("private-cdp-target");
     assert!(validate_observe(&leaked).is_err());

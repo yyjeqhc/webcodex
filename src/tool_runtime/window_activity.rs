@@ -1,6 +1,8 @@
 use crate::auth::AuthContext;
 use crate::client_window::ClientWindow;
 use crate::tool_request_trace::RequestCompletionTiming;
+use crate::tool_runtime::model_ergonomics_telemetry::invocation::InstructionReadTarget;
+use crate::tool_runtime::model_ergonomics_telemetry::ModelErgonomicsRecord;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex};
 
@@ -135,6 +137,9 @@ struct WindowActivityRegistryInner {
     completion_coverage_gaps: BTreeMap<WindowContinuityKey, i64>,
     completion_coverage_overflow: bool,
     previous_meaningful: BTreeMap<WindowContinuityKey, CompletedMeaningfulCall>,
+    // Process-local ergonomics hint only: one complete instruction body delivered
+    // by work_on_project for this exact principal+Window+Project continuity.
+    complete_instruction_bootstrap: BTreeMap<WindowContinuityKey, String>,
     // Active requests evicted by the global bounded registry are still owned by
     // their RAII guards. Keep a bounded principal-scoped count so one caller's
     // overflow does not normally degrade another caller's liveness projection.
@@ -341,6 +346,49 @@ impl WindowActivityRegistry {
         if let Some(project) = project {
             request.project = Some(project.to_string());
         }
+    }
+
+    fn observe_instruction_bootstrap_reuse(
+        &self,
+        server_trace_id: &str,
+        continuity_key: Option<&WindowContinuityKey>,
+        record: &ModelErgonomicsRecord,
+    ) -> Option<InstructionReadTarget> {
+        let continuity_key = continuity_key?;
+        let mut inner = self.inner.lock().ok()?;
+        let project = inner
+            .by_trace
+            .get(server_trace_id)
+            .and_then(|request| request.project.clone());
+
+        if record.tool_name == "work_on_project" {
+            inner.complete_instruction_bootstrap.remove(continuity_key);
+            if record.complete_instruction_bootstrap() {
+                if let Some(project) = project {
+                    inner
+                        .complete_instruction_bootstrap
+                        .insert(continuity_key.clone(), project);
+                    while inner.complete_instruction_bootstrap.len() > MAX_WINDOW_LOOP_CONTINUITIES
+                    {
+                        let Some(oldest) =
+                            inner.complete_instruction_bootstrap.keys().next().cloned()
+                        else {
+                            break;
+                        };
+                        inner.complete_instruction_bootstrap.remove(&oldest);
+                    }
+                }
+            }
+            return None;
+        }
+
+        let target = record.instruction_read_target()?;
+        let project = project?;
+        inner
+            .complete_instruction_bootstrap
+            .get(continuity_key)
+            .is_some_and(|bootstrap_project| bootstrap_project == &project)
+            .then_some(target)
     }
 
     pub(crate) fn list_for_window(
@@ -712,6 +760,17 @@ impl WindowActivityGuard {
         self.transition
     }
 
+    pub(crate) fn instruction_read_after_complete_bootstrap(
+        &self,
+        record: &ModelErgonomicsRecord,
+    ) -> Option<InstructionReadTarget> {
+        self.registry.observe_instruction_bootstrap_reuse(
+            &self.server_trace_id,
+            self.continuity_key.as_ref(),
+            record,
+        )
+    }
+
     pub(crate) fn complete(
         mut self,
         timing: RequestCompletionTiming,
@@ -753,6 +812,20 @@ impl Drop for WindowActivityGuard {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tool_runtime::model_ergonomics_telemetry::ModelErgonomicsTimer;
+    use serde_json::json;
+
+    fn ergonomics_record(
+        tool: &str,
+        arguments: serde_json::Value,
+        output: serde_json::Value,
+    ) -> ModelErgonomicsRecord {
+        ModelErgonomicsTimer::start_with_arguments(tool, &arguments)
+            .expect("model-visible tool")
+            .finish()
+            .record_for_tool_result(&crate::tool_runtime::ToolResult::ok(output))
+            .expect("serializable ergonomics record")
+    }
 
     fn window(key: &str) -> ClientWindow {
         ClientWindow::for_test(key)
@@ -808,6 +881,99 @@ mod tests {
         );
         drop(second);
         assert!(registry.counts_by_window(None).is_empty());
+    }
+
+    #[test]
+    fn complete_instruction_bootstrap_marks_later_rule_read_as_reuse_candidate() {
+        let registry = WindowActivityRegistry::default();
+        let bootstrap = ergonomics_record(
+            "work_on_project",
+            json!({}),
+            json!({
+                "context_projection": {"materials": [{
+                    "key": "project.instructions",
+                    "status": "available",
+                    "projection": {
+                        "content_included": true,
+                        "truncated": false,
+                        "sources": [{"path": "AGENTS.md"}]
+                    }
+                }]}
+            }),
+        );
+        let first = registry.start(
+            &window("w"),
+            "trace-bootstrap",
+            "tools/call",
+            Some(("username", "alice")),
+        );
+        first.update(Some("work_on_project"), Some("agent:r:p"));
+        assert_eq!(
+            first.instruction_read_after_complete_bootstrap(&bootstrap),
+            None
+        );
+        drop(first);
+
+        let read = ergonomics_record(
+            "read_files",
+            json!({"items": [{"path": "AGENTS.md"}]}),
+            json!({}),
+        );
+        let second = registry.start(
+            &window("w"),
+            "trace-read",
+            "tools/call",
+            Some(("username", "alice")),
+        );
+        second.update(Some("read_files"), Some("agent:r:p"));
+        assert_eq!(
+            second.instruction_read_after_complete_bootstrap(&read),
+            Some(InstructionReadTarget::AgentsMd)
+        );
+        drop(second);
+
+        let other_project = registry.start(
+            &window("w"),
+            "trace-other",
+            "tools/call",
+            Some(("username", "alice")),
+        );
+        other_project.update(Some("read_files"), Some("agent:r:other"));
+        assert_eq!(
+            other_project.instruction_read_after_complete_bootstrap(&read),
+            None
+        );
+        drop(other_project);
+
+        let incomplete = ergonomics_record(
+            "work_on_project",
+            json!({}),
+            json!({"instructions": {"status": "loaded", "sources": [{"path": "AGENTS.md"}]}}),
+        );
+        let refresh = registry.start(
+            &window("w"),
+            "trace-refresh",
+            "tools/call",
+            Some(("username", "alice")),
+        );
+        refresh.update(Some("work_on_project"), Some("agent:r:p"));
+        assert_eq!(
+            refresh.instruction_read_after_complete_bootstrap(&incomplete),
+            None
+        );
+        drop(refresh);
+
+        let after_incomplete = registry.start(
+            &window("w"),
+            "trace-after-incomplete",
+            "tools/call",
+            Some(("username", "alice")),
+        );
+        after_incomplete.update(Some("read_files"), Some("agent:r:p"));
+        assert_eq!(
+            after_incomplete.instruction_read_after_complete_bootstrap(&read),
+            None
+        );
     }
 
     #[test]

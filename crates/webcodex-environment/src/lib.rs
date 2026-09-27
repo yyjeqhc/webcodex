@@ -2,6 +2,16 @@
 //! Runtime observations and authorization remain the Server's responsibility.
 #![allow(async_fn_in_trait)]
 
+#[cfg(test)]
+fn test_tempdir() -> std::io::Result<tempfile::TempDir> {
+    // macOS exposes TMPDIR through /var -> /private/var. Use the real OS temp
+    // root in fixtures, without weakening production no-symlink protections.
+    #[cfg(target_os = "macos")]
+    return tempfile::Builder::new().tempdir_in(std::env::temp_dir().canonicalize()?);
+    #[cfg(not(target_os = "macos"))]
+    tempfile::tempdir()
+}
+
 mod engine;
 mod installer_authorization;
 #[cfg(unix)]

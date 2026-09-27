@@ -1183,11 +1183,12 @@ pub(super) fn mcp_runtime_tool_result(
         artifact_presentation,
         result,
         resources::McpResourceToolCallContext::default(),
+        false,
         result_presentation,
     ) {
         resources::McpResourceToolResultAdaptation::Framed(value) => value,
         resources::McpResourceToolResultAdaptation::Unhandled(result) => {
-            mcp_runtime_tool_result_fallback(result, result_presentation)
+            mcp_runtime_tool_result_fallback(result, false, result_presentation)
         }
     }
 }
@@ -1903,6 +1904,7 @@ pub(super) fn parse_mcp_invocation_envelope(
     }
 
     for legacy in [
+        "_session_id",
         crate::tool_runtime::sessions::TOOL_CALL_RECORDING_SESSION_ID_FIELD,
         crate::tool_runtime::sessions::TOOL_CALL_ACK_SESSION_MESSAGE_IDS_FIELD,
         crate::tool_runtime::sessions::TOOL_CALL_ACK_REF_FIELD,
@@ -2092,6 +2094,7 @@ pub(super) async fn handle_call(
                 }
                 let rendered = mcp_runtime_tool_result_fallback(
                     adaptive_runtime_gateway_unknown_target(&target),
+                    runtime.runtime_info.mcp_text_json_compat_enabled,
                     result_presentation,
                 );
                 return McpOutcome::Ok(rpc_result(
@@ -2245,7 +2248,11 @@ pub(super) async fn handle_call(
                     &ack_session_message_ids,
                 );
 
-                let result = mcp_runtime_tool_result_fallback(result, result_presentation);
+                let result = mcp_runtime_tool_result_fallback(
+                    result,
+                    runtime.runtime_info.mcp_text_json_compat_enabled,
+                    result_presentation,
+                );
                 return McpOutcome::Ok(rpc_result(
                     id,
                     if stateless_2026 {
@@ -2428,7 +2435,11 @@ pub(super) async fn handle_call(
                     &ack_session_message_ids,
                 );
 
-                let result = mcp_runtime_tool_result_fallback(result, result_presentation);
+                let result = mcp_runtime_tool_result_fallback(
+                    result,
+                    runtime.runtime_info.mcp_text_json_compat_enabled,
+                    result_presentation,
+                );
                 return McpOutcome::Ok(rpc_result(
                     id,
                     if stateless_2026 {
@@ -2493,6 +2504,8 @@ pub(super) async fn handle_call(
     let job_terminal_continuation_app_admitted = server_mcp_apps_enabled && stateless_2026;
     let app_only_goal_plan_sync = goal_plan_app_admitted && params.name == "goal_plan_sync";
     let app_only_work_result_state = work_result_app_admitted && params.name == "work_result_state";
+    let app_only_work_result_activity_detail =
+        work_result_app_admitted && params.name == "work_result_activity_detail";
     let app_only_work_result_send_message =
         work_result_app_admitted && params.name == "work_result_send_message";
     let app_only_changes_file_diff = work_result_app_admitted && params.name == "changes_file_diff";
@@ -2506,6 +2519,7 @@ pub(super) async fn handle_call(
             .any(|spec| spec.name == params.name);
     let direct_denied = !app_only_goal_plan_sync
         && !app_only_work_result_state
+        && !app_only_work_result_activity_detail
         && !app_only_work_result_send_message
         && !app_only_changes_file_diff
         && !app_only_agent_continuation
@@ -2541,8 +2555,14 @@ pub(super) async fn handle_call(
             arguments.entry("compact").or_insert(json!(true));
         }
     }
+    let invocation_facts = crate::tool_runtime::model_ergonomics_telemetry::invocation::InvocationFacts::from_arguments(&raw_mcp_arguments);
     let mut pre_kernel_model_ergonomics =
         ModelErgonomicsTimer::start_with_arguments(&params.name, &params.arguments);
+    if stateless_2026 {
+        if let Some(timer) = pre_kernel_model_ergonomics.as_mut() {
+            timer.invocation = invocation_facts.clone();
+        }
+    }
     let artifact_presentation =
         resources::project_artifact_presentation_mode(&params.name, &params.arguments);
     let resource_tool_call = match resources::prepare_tool_call(
@@ -2658,7 +2678,12 @@ pub(super) async fn handle_call(
             },
         )
         .await;
-    let model_ergonomics_completion = outcome.model_ergonomics;
+    let mut model_ergonomics_completion = outcome.model_ergonomics;
+    if stateless_2026 {
+        if let Some(completion) = model_ergonomics_completion.as_mut() {
+            completion.invocation = invocation_facts;
+        }
+    }
     if let Some(slot) = correlation_out.as_deref_mut() {
         *slot = outcome.correlation.clone();
     }
@@ -2728,6 +2753,7 @@ pub(super) async fn handle_call(
         artifact_presentation,
         result,
         resource_tool_call,
+        runtime.runtime_info.mcp_text_json_compat_enabled,
         result_presentation,
     ) {
         resources::McpResourceToolResultAdaptation::Framed(value) => value,
@@ -2735,10 +2761,15 @@ pub(super) async fn handle_call(
             // App-only tools use the standard CallToolResult channel too. Their
             // visibility/admission boundary, not custom result metadata, keeps
             // continuation protocol data out of ordinary model tool results.
-            mcp_runtime_tool_result_fallback(result, result_presentation)
+            mcp_runtime_tool_result_fallback(
+                result,
+                runtime.runtime_info.mcp_text_json_compat_enabled,
+                result_presentation,
+            )
         }
     };
     if app_only_work_result_state
+        || app_only_work_result_activity_detail
         || app_only_work_result_send_message
         || app_only_changes_file_diff
         || app_only_agent_continuation

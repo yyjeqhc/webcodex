@@ -46,6 +46,29 @@ fn business_choices_and_resume_are_unambiguous() {
     }
 }
 
+#[test]
+fn projectless_runner_is_explicit_and_does_not_change_legacy_viewer_defaults() {
+    let local = input(&["configure", "--create", "--runner"]).unwrap();
+    assert!(local.runner && local.project.is_none());
+    let remote = input(&[
+        "configure",
+        "--join",
+        "https://server.example",
+        "--runner",
+        "--code-stdin",
+    ])
+    .unwrap();
+    assert!(remote.runner && remote.project.is_none() && remote.code_stdin);
+    assert!(
+        !input(&["configure", "--create", "--no-project"])
+            .unwrap()
+            .runner
+    );
+    for command in ["status", "resume", "doctor", "start"] {
+        assert!(input(&[command, "--runner"]).is_err());
+    }
+}
+
 #[tokio::test]
 async fn json_argument_errors_are_structured_and_do_not_echo_inputs() {
     let args = vec!["configure", "--api-key=private-fixture-value", "--json"]

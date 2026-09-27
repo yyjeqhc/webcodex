@@ -136,15 +136,19 @@ fn agent_task_error(
 fn serialized_task_success<T: Serialize>(value: T) -> ToolResult {
     match to_value(value) {
         Ok(value) => ToolResult::ok(value),
-        Err(error) => ToolResult::err_with_output(
-            format!("Failed to serialize durable AgentTask result: {error}"),
-            json!({
-                "error_kind": "agent_task_result_serialization_failed",
-                "state_changed": false,
-            }),
-        )
-        .with_recovery(RecoveryKind::NoAction),
+        Err(error) => agent_task_serialization_error(error),
     }
+}
+
+fn agent_task_serialization_error(error: impl std::fmt::Display) -> ToolResult {
+    ToolResult::err_with_output(
+        format!("Failed to serialize durable AgentTask result: {error}"),
+        json!({
+            "error_kind": "agent_task_result_serialization_failed",
+            "state_changed": false,
+        }),
+    )
+    .with_recovery(RecoveryKind::NoAction)
 }
 
 fn coding_run_replay_key(attempt_id: &str) -> String {
@@ -422,7 +426,21 @@ impl ToolRuntime {
         }
         let limit = limit.min(MAX_AGENT_TASK_LIST_LIMIT);
         match db.list_agent_tasks(&principal, assignee_agent_id.as_deref(), offset, limit) {
-            Ok(result) => serialized_task_success(result),
+            Ok(result) => {
+                let mut output = match to_value(&result) {
+                    Ok(value) => value,
+                    Err(error) => return agent_task_serialization_error(error),
+                };
+                if let Some(tasks) = output.get_mut("tasks").and_then(Value::as_array_mut) {
+                    for task in tasks {
+                        let Some(summary) = task.as_object_mut() else {
+                            continue;
+                        };
+                        self.attach_live_attempt_ref(&principal, summary);
+                    }
+                }
+                ToolResult::ok(output)
+            }
             Err(error) => agent_task_error(error, RecoveryKind::Reobserve),
         }
     }
@@ -440,7 +458,19 @@ impl ToolRuntime {
             return agent_task_store_unavailable();
         };
         match db.read_agent_task(&principal, &task_id) {
-            Ok(task) => serialized_task_success(json!({"task": task})),
+            Ok(task) => {
+                let mut output = match to_value(&json!({"task": task})) {
+                    Ok(value) => value,
+                    Err(error) => return agent_task_serialization_error(error),
+                };
+                if let Some(summary) = output
+                    .pointer_mut("/task/summary")
+                    .and_then(Value::as_object_mut)
+                {
+                    self.attach_live_attempt_ref(&principal, summary);
+                }
+                ToolResult::ok(output)
+            }
             Err(error) => agent_task_error(error, RecoveryKind::Reobserve),
         }
     }
@@ -557,8 +587,74 @@ impl ToolRuntime {
         }
     }
 
+    fn attach_live_attempt_ref(
+        &self,
+        principal: &crate::db::CommunicationPrincipal,
+        summary: &mut serde_json::Map<String, Value>,
+    ) {
+        let Some(task_id) = summary
+            .get("task_id")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+        else {
+            return;
+        };
+        let Some(attempt) = summary.get("latest_attempt").and_then(Value::as_object) else {
+            return;
+        };
+        if attempt.get("lease_active").and_then(Value::as_bool) != Some(true) {
+            return;
+        }
+        let Some(attempt_id) = attempt.get("attempt_id").and_then(Value::as_str) else {
+            return;
+        };
+        let Some(assignee_agent_id) = attempt.get("assignee_agent_id").and_then(Value::as_str)
+        else {
+            return;
+        };
+        let Some(generation) = attempt
+            .get("attempt_controller_generation")
+            .and_then(Value::as_i64)
+        else {
+            return;
+        };
+        let Some(db) = self.communication_db.as_ref() else {
+            return;
+        };
+        let pin = match db.live_agent_task_attempt_pin(principal, &task_id) {
+            Ok(pin) => pin,
+            Err(error) => {
+                tracing::warn!(
+                    error_kind = error.code(),
+                    "agent task attempt ref was not issued for the observed Task"
+                );
+                return;
+            }
+        };
+        let Some(pin) = pin else {
+            return;
+        };
+        if pin.attempt_id != attempt_id
+            || pin.assignee_agent_id != assignee_agent_id
+            || pin.attempt_controller_generation != generation
+        {
+            return;
+        }
+        let Some(attempt_ref) = self.issue_agent_task_attempt_ref(
+            principal,
+            &task_id,
+            &pin.attempt_id,
+            &pin.assignee_agent_id,
+            &pin.attempt_fence,
+            pin.attempt_controller_generation,
+        ) else {
+            return;
+        };
+        summary.insert("attempt_ref".to_string(), Value::String(attempt_ref));
+    }
+
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn start_agent_task_endpoint_continuation_with_selector(
+    fn resolve_agent_task_attempt_selector(
         &self,
         auth: Option<&AuthContext>,
         attempt_ref: Option<String>,
@@ -567,7 +663,7 @@ impl ToolRuntime {
         assignee_agent_id: Option<String>,
         attempt_fence: Option<String>,
         attempt_controller_generation: Option<i64>,
-    ) -> ToolResult {
+    ) -> Result<(String, String, String, String, i64), ToolResult> {
         let tuple_supplied = task_id.is_some()
             || attempt_id.is_some()
             || assignee_agent_id.is_some()
@@ -575,45 +671,44 @@ impl ToolRuntime {
             || attempt_controller_generation.is_some();
         if let Some(attempt_ref) = attempt_ref {
             if tuple_supplied {
-                return attempt_selector_error(
+                return Err(attempt_selector_error(
                     "ambiguous_agent_task_attempt_selector",
                     "Pass attempt_ref or the exact task_id, attempt_id, assignee_agent_id, attempt_fence, and attempt_controller_generation, not both.",
-                );
+                ));
             }
             let ref_index = match parse_agent_task_attempt_ref(&attempt_ref) {
                 Some(index) => index,
                 None => {
-                    return attempt_selector_error(
+                    return Err(attempt_selector_error(
                         "invalid_agent_task_attempt_ref",
-                        "attempt_ref must be a server-issued ~ta selector from start_agent_task_attempt.",
-                    )
+                        "attempt_ref must be a server-issued ~ta selector from start_agent_task_attempt, read_agent_task, or list_agent_tasks.",
+                    ))
                 }
             };
             let principal = match task_principal(auth) {
                 Ok(principal) => principal,
-                Err(result) => return result,
+                Err(result) => return Err(result),
             };
             let Some(db) = self.communication_db.as_ref() else {
-                return agent_task_store_unavailable();
+                return Err(agent_task_store_unavailable());
             };
             let record = match db.lookup_agent_task_attempt_reference(&principal, ref_index) {
                 Ok(record) => record,
-                Err(error) => return agent_task_error(error, RecoveryKind::UserAction),
+                Err(error) => return Err(agent_task_error(error, RecoveryKind::UserAction)),
             };
             let Some(record) = record else {
-                return attempt_selector_error(
+                return Err(attempt_selector_error(
                     "unknown_agent_task_attempt_ref",
-                    "attempt_ref does not name an Attempt for this caller. Call start_agent_task_attempt again.",
-                );
+                    "attempt_ref does not name an Attempt for this caller. Read the owned Task or call start_agent_task_attempt again.",
+                ));
             };
-            return self.start_agent_task_endpoint_continuation(
-                auth,
+            return Ok((
                 record.task_id,
                 record.attempt_id,
                 record.assignee_agent_id,
                 record.attempt_fence,
                 record.attempt_controller_generation,
-            );
+            ));
         }
         match (
             task_id,
@@ -628,19 +723,52 @@ impl ToolRuntime {
                 Some(assignee_agent_id),
                 Some(attempt_fence),
                 Some(attempt_controller_generation),
-            ) => self.start_agent_task_endpoint_continuation(
-                auth,
+            ) => Ok((
                 task_id,
                 attempt_id,
                 assignee_agent_id,
                 attempt_fence,
                 attempt_controller_generation,
-            ),
-            _ => attempt_selector_error(
+            )),
+            _ => Err(attempt_selector_error(
                 "incomplete_agent_task_attempt_selector",
                 "Pass attempt_ref or all of task_id, attempt_id, assignee_agent_id, attempt_fence, and attempt_controller_generation.",
-            ),
+            )),
         }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn start_agent_task_endpoint_continuation_with_selector(
+        &self,
+        auth: Option<&AuthContext>,
+        attempt_ref: Option<String>,
+        task_id: Option<String>,
+        attempt_id: Option<String>,
+        assignee_agent_id: Option<String>,
+        attempt_fence: Option<String>,
+        attempt_controller_generation: Option<i64>,
+    ) -> ToolResult {
+        let (task_id, attempt_id, assignee_agent_id, attempt_fence, attempt_controller_generation) =
+            match self.resolve_agent_task_attempt_selector(
+                auth,
+                attempt_ref,
+                task_id,
+                attempt_id,
+                assignee_agent_id,
+                attempt_fence,
+                attempt_controller_generation,
+            ) {
+                Ok(selector) => selector,
+                Err(result) => return result,
+            };
+        self.start_agent_task_endpoint_continuation(
+            auth,
+            task_id,
+            attempt_id,
+            assignee_agent_id,
+            attempt_fence,
+            attempt_controller_generation,
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -939,6 +1067,44 @@ impl ToolRuntime {
     }
 
     #[allow(clippy::too_many_arguments)]
+    pub(crate) fn heartbeat_agent_task_attempt_with_selector(
+        &self,
+        auth: Option<&AuthContext>,
+        attempt_ref: Option<String>,
+        task_id: Option<String>,
+        attempt_id: Option<String>,
+        assignee_agent_id: Option<String>,
+        attempt_fence: Option<String>,
+        attempt_controller_generation: Option<i64>,
+        active_turn_wake_id: Option<String>,
+        active_turn_consume_token: Option<String>,
+    ) -> ToolResult {
+        let (task_id, attempt_id, assignee_agent_id, attempt_fence, attempt_controller_generation) =
+            match self.resolve_agent_task_attempt_selector(
+                auth,
+                attempt_ref,
+                task_id,
+                attempt_id,
+                assignee_agent_id,
+                attempt_fence,
+                attempt_controller_generation,
+            ) {
+                Ok(selector) => selector,
+                Err(result) => return result,
+            };
+        self.heartbeat_agent_task_attempt(
+            auth,
+            task_id,
+            attempt_id,
+            assignee_agent_id,
+            attempt_fence,
+            attempt_controller_generation,
+            active_turn_wake_id,
+            active_turn_consume_token,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn heartbeat_agent_task_attempt(
         &self,
         auth: Option<&AuthContext>,
@@ -980,6 +1146,48 @@ impl ToolRuntime {
             Ok(result) => serialized_task_success(result),
             Err(error) => agent_task_error(error, RecoveryKind::Reconcile),
         }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn complete_agent_task_attempt_with_selector(
+        &self,
+        auth: Option<&AuthContext>,
+        attempt_ref: Option<String>,
+        task_id: Option<String>,
+        attempt_id: Option<String>,
+        assignee_agent_id: Option<String>,
+        attempt_fence: Option<String>,
+        attempt_controller_generation: Option<i64>,
+        outcome: String,
+        terminal_result: Option<String>,
+        terminal_reason: Option<String>,
+        completion_key: String,
+    ) -> ToolResult {
+        let (task_id, attempt_id, assignee_agent_id, attempt_fence, attempt_controller_generation) =
+            match self.resolve_agent_task_attempt_selector(
+                auth,
+                attempt_ref,
+                task_id,
+                attempt_id,
+                assignee_agent_id,
+                attempt_fence,
+                attempt_controller_generation,
+            ) {
+                Ok(selector) => selector,
+                Err(result) => return result,
+            };
+        self.complete_agent_task_attempt(
+            auth,
+            task_id,
+            attempt_id,
+            assignee_agent_id,
+            attempt_fence,
+            attempt_controller_generation,
+            outcome,
+            terminal_result,
+            terminal_reason,
+            completion_key,
+        )
     }
 
     #[allow(clippy::too_many_arguments)]

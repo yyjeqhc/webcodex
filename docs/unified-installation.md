@@ -11,7 +11,7 @@ Get published files from [GitHub Releases](https://github.com/yyjeqhc/webcodex/r
 The following workflow applies when a validated installer for your platform is available; source previews are documented separately above.
 
 1. Install the platform package and open WebCodex Desktop.
-2. Choose **Create** and select the project directory, or choose no project yet.
+2. Choose **Use WebCodex on this computer**, keep **Allow AI to work on this computer** enabled, and confirm setup. No project selection is required. Disable local work only for an intentional Server-only machine.
 3. Confirm Server, Runner, and project status in Desktop. Desktop, CLI, and the web runtime use the same Server-authorized view. Open `SERVER_URL/runtime` in a browser and use an existing user credential to view authorized Runners, projects, and status.
 4. Configure the existing ChatGPT MCP/Tunnel connection through the Server. ChatGPT remains connected to the central Server. A remote project path belongs to its Runner machine; it is not a local path on the Server computer.
 
@@ -29,13 +29,13 @@ On the central Server machine, create an environment:
 webcodex environment configure --create --project PATH
 ```
 
-Use `--no-project` if that machine has no repository. On each repository machine, join the Server:
+Use `--no-project` if that machine has no repository. To enable AI work without choosing a default repository, use `webcodex environment configure --create --runner` instead. A remote machine can likewise use `webcodex environment configure --join https://server.example --runner --code-stdin`. Existing environments retain their saved role; use Desktop's explicit local-work option or the CLI's `add-project` transition to enable a viewer's first Runner. On each repository machine, join the Server:
 
 ```text
 webcodex environment configure --join https://server.example --project PATH
 ```
 
-Use `--no-project` to join as a viewer without configuring a local Server or Runner. The two setup choices are create/join and project/skip; the selected flow then requests the Server address, authentication, and any required system authorization. Joining as a viewer uses the user's personal access token, entered through secure hidden input or a protected `--token-file`; it does not use a pairing code. For example, import an existing user API credential from a protected file:
+Use `--no-project` to join as a viewer without configuring a local Server or Runner. Desktop separates create/join from whether this computer permits local work. In the CLI, `--runner` enables a Runner without an initial project, while legacy `--project PATH` still enables a Runner and registers that explicit project. The selected flow requests the Server address, authentication, and any required system authorization. Joining as a viewer uses the user's personal access token, entered through secure hidden input or a protected `--token-file`; it does not use a pairing code. For example, import an existing user API credential from a protected file:
 
 ```text
 webcodex environment configure --join https://server.example --no-project --token-file PATH

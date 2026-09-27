@@ -43,6 +43,253 @@ async fn register_structured_git_agent_at_path(
     crate::tool_runtime::runner_project_runtime_id(client_id, project_id)
 }
 
+async fn collect_review_task(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    task: tokio::task::JoinHandle<ToolResult>,
+) -> ToolResult {
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
+    while !task.is_finished() {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "review fixture timed out"
+        );
+        if let Some(request) = probe_patch_agent_request(runtime, client_id).await {
+            complete_agent_request_by_running_locally(runtime, client_id, request).await;
+        } else {
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    }
+    task.await.unwrap()
+}
+
+async fn observe_review_source(runtime: &ToolRuntime, project: &str) -> Value {
+    let client_id = project.split(':').nth(1).unwrap();
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.to_string();
+        async move {
+            match runtime.workspace_review_source_identity(&project).await {
+                Ok(source) => ToolResult::ok(source.presentation_value()),
+                Err(error) => error,
+            }
+        }
+    });
+    let result = collect_review_task(runtime, client_id, task).await;
+    assert!(result.success, "{result:?}");
+    result.output
+}
+
+#[tokio::test]
+async fn review_snapshot_identity_fences_index_only_changes() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    fs::write(tmp.path().join("a.txt"), "base\n").unwrap();
+    git_test_command_ok(tmp.path(), "git add a.txt && git commit -m base");
+    fs::write(tmp.path().join("a.txt"), "worktree\n").unwrap();
+    let runtime = test_runtime();
+    let project =
+        register_structured_git_agent_at_path(&runtime, "review-index-fence", "repo", tmp.path())
+            .await;
+    let index_before = fs::read(tmp.path().join(".git/index")).unwrap();
+    let unstaged = observe_review_source(&runtime, &project).await;
+    assert_eq!(
+        index_before,
+        fs::read(tmp.path().join(".git/index")).unwrap()
+    );
+    assert_eq!(unstaged, observe_review_source(&runtime, &project).await);
+    git_test_command_ok(tmp.path(), "git add a.txt");
+    let staged = observe_review_source(&runtime, &project).await;
+    assert_eq!(unstaged["head_commit"], staged["head_commit"]);
+    assert_eq!(unstaged["frozen_tree"], staged["frozen_tree"]);
+    assert_ne!(
+        unstaged, staged,
+        "staging must invalidate cached review metadata"
+    );
+
+    fs::write(tmp.path().join("a.txt"), "index-one\n").unwrap();
+    git_test_command_ok(tmp.path(), "git add a.txt");
+    fs::write(tmp.path().join("a.txt"), "worktree\n").unwrap();
+    let first = observe_review_source(&runtime, &project).await;
+    fs::write(tmp.path().join("a.txt"), "index-two\n").unwrap();
+    git_test_command_ok(tmp.path(), "git add a.txt");
+    fs::write(tmp.path().join("a.txt"), "worktree\n").unwrap();
+    let second = observe_review_source(&runtime, &project).await;
+    assert_eq!(first["frozen_tree"], second["frozen_tree"]);
+    assert_ne!(
+        first, second,
+        "equal MM status still needs staged object identity"
+    );
+}
+
+#[tokio::test]
+async fn review_snapshot_status_fingerprint_keeps_large_status_bounded() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    for n in 0..1024 {
+        fs::write(
+            tmp.path().join(format!("{n:04}-{}.txt", "x".repeat(96))),
+            "content\n",
+        )
+        .unwrap();
+    }
+    let runtime = test_runtime();
+    let project =
+        register_structured_git_agent_at_path(&runtime, "review-large-status", "repo", tmp.path())
+            .await;
+    let source = observe_review_source(&runtime, &project).await;
+    assert!(
+        source["head_commit"].is_null(),
+        "unborn HEAD stays supported"
+    );
+    assert!(source["status_fingerprint"].as_str().is_some());
+    assert!(serde_json::to_vec(&source).unwrap().len() < 512);
+    assert!(
+        !tmp.path().join(".git/index").exists(),
+        "observation must not create the real index"
+    );
+}
+
+#[tokio::test]
+async fn review_snapshot_identity_fences_branch_only_changes() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    fs::write(tmp.path().join("a.txt"), "base\n").unwrap();
+    git_test_command_ok(tmp.path(), "git add a.txt && git commit -m base");
+    let runtime = test_runtime();
+    let project =
+        register_structured_git_agent_at_path(&runtime, "review-branch-fence", "repo", tmp.path())
+            .await;
+    let before = observe_review_source(&runtime, &project).await;
+    git_test_command_ok(tmp.path(), "git switch -c review-other-branch");
+    let after = observe_review_source(&runtime, &project).await;
+    assert_eq!(before["head_commit"], after["head_commit"]);
+    assert_eq!(before["frozen_tree"], after["frozen_tree"]);
+    assert_ne!(
+        before, after,
+        "branch changes must invalidate cached branch metadata"
+    );
+}
+
+fn start_review_page(
+    runtime: &ToolRuntime,
+    project: &str,
+    continuation: Option<String>,
+) -> tokio::task::JoinHandle<ToolResult> {
+    let runtime = runtime.clone();
+    let project = project.to_string();
+    tokio::spawn(async move {
+        runtime
+            .review_changes(
+                project,
+                webcodex_tool_contracts::tool_call::GitReviewScopeInput::Workspace,
+                None,
+                None,
+                Some(1),
+                None,
+                None,
+                continuation,
+                None,
+            )
+            .await
+    })
+}
+
+fn review_paging_repo() -> tempfile::TempDir {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    for name in ["a.txt", "b.txt", "c.txt"] {
+        fs::write(tmp.path().join(name), "base\n").unwrap();
+    }
+    git_test_command_ok(
+        tmp.path(),
+        "git add a.txt b.txt c.txt && git commit -m base",
+    );
+    for name in ["a.txt", "b.txt", "c.txt"] {
+        fs::write(tmp.path().join(name), "changed\n").unwrap();
+    }
+    tmp
+}
+
+#[tokio::test]
+async fn review_snapshot_next_call_omits_absent_optional_arguments() {
+    let tmp = review_paging_repo();
+    let runtime = test_runtime();
+    let project =
+        register_structured_git_agent_at_path(&runtime, "review-next-call", "repo", tmp.path())
+            .await;
+    let schema = registered_tool_specs()
+        .into_iter()
+        .find(|spec| spec.name == "review_changes")
+        .unwrap()
+        .input_schema;
+    let mut continuation = None;
+    for page in 0..3 {
+        let task = start_review_page(&runtime, &project, continuation);
+        let result = collect_review_task(&runtime, "review-next-call", task).await;
+        assert!(result.success, "{result:?}");
+        if page == 2 {
+            assert!(result.output["continuation"].is_null(), "{result:?}");
+            break;
+        }
+        let arguments = &result.output["next_call"]["arguments"];
+        for (key, value) in arguments.as_object().unwrap() {
+            assert!(
+                !value.is_null(),
+                "generated next_call violates non-null schema: {key}"
+            );
+        }
+        crate::tool_runtime::startup_brief::validate_schema_instance_for_test(arguments, &schema)
+            .unwrap_or_else(|error| panic!("next_call is not directly callable: {error}"));
+        ToolCall::from_tool_name("review_changes", arguments.clone()).unwrap();
+        continuation = Some(arguments["continuation"].as_str().unwrap().to_string());
+    }
+}
+
+#[tokio::test]
+async fn review_snapshot_continuation_rechecks_source_after_diff() {
+    let tmp = review_paging_repo();
+    let runtime = test_runtime();
+    let client = "review-page-race";
+    let project = register_structured_git_agent_at_path(&runtime, client, "repo", tmp.path()).await;
+    let first = collect_review_task(
+        &runtime,
+        client,
+        start_review_page(&runtime, &project, None),
+    )
+    .await;
+    assert!(first.success, "{first:?}");
+    let continuation = first.output["continuation"].as_str().unwrap().to_string();
+    let next = start_review_page(&runtime, &project, Some(continuation));
+    let before = wait_for_patch_agent_request(&runtime, client).await;
+    assert!(before
+        .script
+        .as_ref()
+        .unwrap()
+        .script
+        .contains("WEBCODEX_WORKSPACE_STATUS="));
+    complete_agent_request_by_running_locally(&runtime, client, before).await;
+    let diff = wait_for_patch_agent_request(&runtime, client).await;
+    let (exit_code, stdout, stderr) = run_runner_shell_request_locally(&diff);
+    assert_eq!(exit_code, 0, "{stderr}");
+    // Change only the branch after the page was produced, before its response
+    // reaches Runtime. Neither the worktree nor the inner diff cursor changes.
+    git_test_command_ok(tmp.path(), "git switch -c review-concurrent-branch");
+    complete_patch_agent_request(
+        &runtime,
+        client,
+        &diff.request_id,
+        exit_code,
+        &stdout,
+        &stderr,
+    )
+    .await;
+    let result = collect_review_task(&runtime, client, next).await;
+    assert!(!result.success, "{result:?}");
+    assert_eq!(result.output["reason_code"], "snapshot_stale");
+    assert!(result.output["diff"].is_null());
+}
+
 async fn run_runner_git_commit_paths(
     runtime: &ToolRuntime,
     client_id: &str,
@@ -5454,9 +5701,10 @@ fn show_changes_diff_respects_max_hunks() {
     );
     assert_git_diff_hunks_recovery_call_parses(next_call);
     assert!(
-        crate::tool_runtime::tool_definition::is_adaptive_runtime_direct_tool(
+        !crate::tool_runtime::tool_definition::is_adaptive_runtime_direct_tool(
             next_call["tool"].as_str().unwrap()
-        )
+        ),
+        "git_diff_hunks stays an exact/gateway specialist"
     );
     let actions = output["suggested_next_actions"].as_array().unwrap();
     assert!(!actions
@@ -7406,7 +7654,10 @@ fn git_review_summary_tool_schema_metadata_and_oauth_are_read_only() {
         .expect("git_review_summary public spec");
     assert!(spec
         .description
-        .contains("Deterministic bounded committed-range review map"));
+        .contains("Specialist exact committed-range review map"));
+    assert!(spec
+        .description
+        .contains("Ordinary review uses review_changes"));
     for field in ["base_commit", "head_commit"] {
         assert_eq!(spec.input_schema["properties"][field]["minLength"], 40);
         assert_eq!(spec.input_schema["properties"][field]["maxLength"], 40);

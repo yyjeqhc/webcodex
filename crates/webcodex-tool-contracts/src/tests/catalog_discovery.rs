@@ -323,7 +323,9 @@ fn edit_recommended_flow_converges_on_one_primary_editor() {
         .expect("edit recommended flow");
     assert_eq!(flow.tools.first().copied(), Some("read_files"));
     assert_eq!(flow.tools.get(1).copied(), Some("edit_project_files"));
-    assert_eq!(flow.tools.get(2).copied(), Some("show_changes"));
+    assert_eq!(flow.tools.get(2).copied(), Some("cargo_check"));
+    assert!(flow.tools.contains(&"review_changes"));
+    assert!(flow.tools.contains(&"finish_coding_task"));
     for specialist in EXACT_MANIFEST_SPECIALIST_TOOL_NAMES {
         assert!(!flow.tools.contains(specialist), "{specialist}");
     }
@@ -332,14 +334,14 @@ fn edit_recommended_flow_converges_on_one_primary_editor() {
         "read_files",
         "edit_project_files",
         "read_revision",
-        "exact edits",
-        "replace_range",
-        "same transactional editor",
-        "show_changes",
-        "git_diff_hunks",
+        "exact and deterministic range edits share one primary editor",
         "structured validation",
+        "review_changes",
+        "finish_coding_task",
         "exact-name specialists",
-        "not ordinary coding routing or recovery",
+        "show_changes",
+        "git_review_summary",
+        "git_diff_hunks",
     ] {
         assert!(
             guidance.contains(phrase),
@@ -432,7 +434,7 @@ fn tool_categories_and_recommended_flows_are_well_formed() {
         assert!(validation.iter().any(|value| value == name));
     }
     let review = categories[TOOL_DISCOVERY_GROUP_REVIEW].as_array().unwrap();
-    assert!(review.iter().any(|value| value == "git_diff_hunks"));
+    assert!(review.iter().any(|value| value == "review_changes"));
     assert!(review
         .iter()
         .any(|value| value == "workspace_hygiene_check"));
@@ -442,11 +444,26 @@ fn tool_categories_and_recommended_flows_are_well_formed() {
         "read_files",
         "run_shell",
         "search_project_texts",
-        "show_changes",
+        "review_changes",
     ] {
         assert!(
             inspect.iter().any(|value| value == name),
             "inspect category: {name}"
+        );
+    }
+    let git = categories[TOOL_DISCOVERY_GROUP_GIT].as_array().unwrap();
+    for specialist in ORDINARY_DISCOVERY_DEMOTED_REVIEW_TOOL_NAMES {
+        assert!(
+            !review.iter().any(|value| value == specialist),
+            "review category must keep {specialist} exact-discovery-only"
+        );
+        assert!(
+            !inspect.iter().any(|value| value == specialist),
+            "inspect category must keep {specialist} exact-discovery-only"
+        );
+        assert!(
+            !git.iter().any(|value| value == specialist),
+            "git category must keep {specialist} exact-discovery-only"
         );
     }
     for compatibility_primitive in ["git_diff", "git_diff_summary"] {
@@ -454,16 +471,12 @@ fn tool_categories_and_recommended_flows_are_well_formed() {
             !inspect.iter().any(|value| value == compatibility_primitive),
             "inspect category should prefer canonical tools over {compatibility_primitive}"
         );
-    }
-    let git = categories[TOOL_DISCOVERY_GROUP_GIT].as_array().unwrap();
-    for compatibility_primitive in ["git_diff", "git_diff_summary"] {
         assert!(
             !git.iter().any(|value| value == compatibility_primitive),
             "git category should not recommend {compatibility_primitive}"
         );
+        assert!(!review.iter().any(|value| value == compatibility_primitive));
     }
-    assert!(!review.iter().any(|value| value == "git_diff"));
-    assert!(!review.iter().any(|value| value == "git_diff_summary"));
     let edit = categories[TOOL_DISCOVERY_GROUP_EDIT].as_array().unwrap();
     let edit_prefix = edit
         .iter()
@@ -534,10 +547,9 @@ fn tool_categories_and_recommended_flows_are_well_formed() {
         "inspect for one bounded segment",
         "export for complete resourcelink delivery",
         "copy show_changes.head.commit",
-        "review: small bounded git observations may use native git",
-        "git_review_summary to map broad or unknown committed ranges",
-        "git_diff_hunks for fenced, paged, or continued review",
-        "handoff/recovery only",
+        "review: use review_changes as the primary ordinary workspace or committed review surface",
+        "same-snapshot token",
+        "old review tools remain specialists",        "handoff/recovery only",
         "session_handoff_summary only for missing task context",
         "never routine progress polling",
     ] {
@@ -597,10 +609,11 @@ fn recommended_flows_encode_simplest_sufficient_selection_without_old_rituals() 
     )
     .to_lowercase();
     for phrase in [
-        "small bounded git observations may use native git",
-        "workspace-wide review",
-        "broad/unknown committed-range mapping",
-        "scope/fence-bound paging",
+        "review_changes",
+        "primary ordinary workspace or committed review surface",
+        "same-snapshot token",
+        "old review tools remain specialists",
+        "hygiene stays authoritative and separate",
     ] {
         assert!(review.contains(phrase), "review selection: {phrase}");
     }
@@ -803,15 +816,20 @@ fn audit_and_exploration_intents_prefer_canonical_batch_and_review_tools() {
         .iter()
         .find(|intent| intent.name == "audit")
         .unwrap();
-    assert!(audit.tools.contains(&"show_changes"));
-    assert!(audit.tools.contains(&"git_diff_hunks"));
+    assert!(audit.tools.contains(&"review_changes"));
+    for specialist in ORDINARY_DISCOVERY_DEMOTED_REVIEW_TOOL_NAMES {
+        assert!(!audit.tools.contains(specialist), "{specialist}");
+    }
     assert!(!audit.tools.contains(&"git_diff_summary"));
 
     let release = TOOL_MANIFEST_INTENTS
         .iter()
         .find(|intent| intent.name == "release")
         .unwrap();
-    assert!(release.tools.contains(&"show_changes"));
+    assert!(release.tools.contains(&"review_changes"));
+    for specialist in ORDINARY_DISCOVERY_DEMOTED_REVIEW_TOOL_NAMES {
+        assert!(!release.tools.contains(specialist), "{specialist}");
+    }
     assert!(!release.tools.contains(&"git_diff_summary"));
 }
 
@@ -865,8 +883,7 @@ fn coding_intent_has_independent_ordered_canonical_selection_surface() {
         "observe_jobs",
         "cargo_check",
         "cargo_test",
-        "show_changes",
-        "git_diff_hunks",
+        "review_changes",
         "workspace_hygiene_check",
         "finish_coding_task",
         "run_script",

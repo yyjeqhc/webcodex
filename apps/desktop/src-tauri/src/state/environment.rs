@@ -334,7 +334,12 @@ impl DesktopCore {
         let project = input
             .project_path
             .as_deref()
-            .filter(|path| !path.trim().is_empty());
+            .filter(|path| !path.trim().is_empty())
+            .or_else(|| {
+                legacy
+                    .then(|| self.config.project.as_ref().map(|p| p.path.as_str()))
+                    .flatten()
+            });
         let project = match project {
             Some(path) => Some(std::fs::canonicalize(path).map_err(|_| {
                 DesktopError::new(
@@ -374,8 +379,14 @@ impl DesktopCore {
                         .as_ref()
                         .map(|runtime| runtime.server_url.clone())
                         .ok_or_else(migration_target_conflict)?
+                } else if let Some(journal) = store()?.load_journal().map_err(desktop_error)? {
+                    if !journal.environment.request.local_server() {
+                        return Err(migration_target_conflict());
+                    }
+                    // Retry the exact saved listener after a partially completed setup.
+                    journal.environment.request.server_url
                 } else {
-                    "http://127.0.0.1:8080".to_owned()
+                    format!("http://{}", reserve_loopback_address()?)
                 };
                 let parsed = url::Url::parse(&old_url).map_err(|_| migration_target_conflict())?;
                 let listen = format!(
@@ -412,8 +423,10 @@ impl DesktopCore {
                     .config
                     .project
                     .as_ref()
-                    .map(|value| std::fs::canonicalize(&value.path).ok())
-                    != Some(project.clone())
+                    .map(|value| std::fs::canonicalize(&value.path))
+                    .transpose()
+                    .map_err(|_| migration_target_conflict())?
+                    != project
             {
                 return Err(migration_target_conflict());
             }
@@ -422,6 +435,15 @@ impl DesktopCore {
         crate::runtime_selection::verify_resolved_files(&binaries).await?;
         self.snapshot.binaries = Some(binaries.info());
         let request = SetupRequest {
+            runner: input.runner.or_else(|| {
+                self.config
+                    .topology
+                    .as_ref()
+                    .filter(|topology| topology.experience == Experience::Full)
+                    .map(|topology| {
+                        matches!(topology.runner, RunnerTopology::Local) || project.is_some()
+                    })
+            }),
             mode,
             server_url,
             project,
@@ -467,31 +489,36 @@ impl DesktopCore {
                 return Err(migration_target_conflict());
             }
             let mut setup = EnvironmentSetup::new(NativeEnvironment::new().map_err(desktop_error)?);
-            let result = match request.project {
-                Some(project) if saved.runner_client_id.is_none() => {
-                    setup
-                        .enable_runner(&store, project, &secrets, self.setup_progress_sink())
-                        .await
-                }
-                Some(project) if saved.request.project.as_ref() != Some(&project) => {
-                    setup.backend.add_project(&store, &project).await
-                }
-                Some(_) => {
-                    setup
-                        .resume(&store, &secrets, self.setup_progress_sink())
-                        .await
-                }
-                None if saved.request.project == request.project => {
-                    setup
-                        .resume(&store, &secrets, self.setup_progress_sink())
-                        .await
-                }
-                None => {
-                    return Err(DesktopError::new(
-                        "project_removal_explicit",
-                        "Skipping the folder cannot remove a saved Runner project",
-                        "Use the confirmed project removal control instead.",
-                    ))
+            if !request.local_runner()
+                && (saved.runner_client_id.is_some() || request.project.is_some())
+            {
+                return Err(DesktopError::new(
+                    "runner_removal_explicit",
+                    "Setup cannot remove an existing local Runner",
+                    "Use the explicit local service controls in Settings.",
+                ));
+            }
+            let result = if request.local_runner() && saved.runner_client_id.is_none() {
+                setup
+                    .enable_runner(
+                        &store,
+                        request.project,
+                        &secrets,
+                        self.setup_progress_sink(),
+                    )
+                    .await
+            } else {
+                match request.project {
+                    Some(project) if saved.request.project.as_ref() != Some(&project) => {
+                        setup.backend.add_project(&store, &project).await
+                    }
+                    // An omitted folder is not a request to remove or register a project.
+                    // Resume the original journal, including any explicit removal receipts.
+                    _ => {
+                        setup
+                            .resume(&store, &secrets, self.setup_progress_sink())
+                            .await
+                    }
                 }
             }
             .map_err(desktop_error)?;
@@ -552,7 +579,7 @@ impl DesktopCore {
             setup
                 .enable_runner(
                     &store,
-                    PathBuf::from(project_path),
+                    Some(PathBuf::from(project_path)),
                     &SetupSecrets::default(),
                     self.setup_progress_sink(),
                 )
@@ -693,9 +720,10 @@ impl DesktopCore {
                 path: std::fs::canonicalize(path).map_err(|_| migration_target_conflict())?,
             });
         }
-        if !projects
-            .iter()
-            .any(|project| Some(&project.path) == request.project.as_ref())
+        if request.project.is_some()
+            && !projects
+                .iter()
+                .any(|project| Some(&project.path) == request.project.as_ref())
         {
             return Err(migration_target_conflict());
         }

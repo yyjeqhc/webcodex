@@ -4,15 +4,10 @@ use super::*;
 // runtime_status via MCP tools/list and tools/call
 // =========================================================================
 
-// An explicit compact-schema=false override keeps full outputSchema projection.
-// Serialize it with process-global env tests so a concurrent override cannot
-// change the observed contract.
-#[allow(clippy::await_holding_lock)]
+// An explicit compact-schema=false snapshot keeps full outputSchema projection.
 #[tokio::test]
 async fn mcp_tools_list_exposes_canonical_coding_bootstrap_and_runtime_status_ux_flags() {
-    let mut env = crate::test_support::TestEnvGuard::new();
-    env.set("WEBCODEX_MCP_COMPACT_SCHEMAS", "false");
-    let runtime = test_runtime();
+    let runtime = test_runtime_with_mcp_settings(false, true);
     let outcome = handle_mcp_request(
         &runtime,
         rpc("tools/list", Some(Value::from(10)), json!({})),
@@ -43,13 +38,15 @@ async fn mcp_tools_list_exposes_canonical_coding_bootstrap_and_runtime_status_ux
         "exact git base",
         "fresh workflow session",
         "exact resume",
-        "primary result stays compact",
-        "context_request",
+        "do not immediately reread",
+        "reuse successful workspace",
+        "_wc.context",
         "project.instructions",
         "webcodex.workflow",
         "skills",
         "plugin",
-        "without bypassing project authority",
+        "project authority",
+        "reauthorizes project",
     ] {
         assert!(
             normalized_description.contains(phrase),

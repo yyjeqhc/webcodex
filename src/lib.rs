@@ -757,9 +757,7 @@ only for local/trusted-network demos."
         "tool_request_trace"
     );
     tracing::info!(
-        mcp_compact_schemas = crate::model_surface::effective_mcp_compact_schemas(
-            crate::config::mcp_compact_schemas_override(),
-        ),
+        mcp_compact_schemas = runtime_info.mcp_compact_schemas,
         "mcp_compact_schemas"
     );
     tracing::info!("OpenAPI (GPT Actions): {}/openapi.json", base);

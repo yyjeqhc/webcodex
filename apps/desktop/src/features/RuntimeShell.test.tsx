@@ -35,12 +35,12 @@ const diagnostic = { schema_version: 1, observed_at_ms: Date.now(), trace: { mod
 function wrap(child: React.ReactNode) { return <LocaleProvider><DesktopMantineProvider>{child}</DesktopMantineProvider></LocaleProvider>; }
 beforeEach(() => {
   vi.resetAllMocks(); localStorage.clear(); localStorage.setItem("webcodex.desktop.locale", "en-US");
-  api.runnerSettings.mockResolvedValue({ target: { client_id: "fixture", config_path: "/fixture/runner.toml", server_url: "http://127.0.0.1:1" }, paths: { instruction_files: [], skill_roots: [] }, plugin_ids: [], can_restart: true });
+  api.runnerSettings.mockResolvedValue({ target: { client_id: "fixture", config_path: "/fixture/runner.toml", server_url: "http://127.0.0.1:1" }, paths: { instruction_files: [], skill_roots: [] }, file_access: { configured_roots: [], effective_roots: ["/Users/fixture"], using_default_roots: true, allow_cwd_anywhere: false }, plugin_ids: [], can_restart: true });
   api.runtimeSettings.mockResolvedValue(structuredClone(settings)); api.getState.mockResolvedValue(state);
   api.probeRuntime.mockResolvedValue({ ...settings, candidate }); api.recheckRuntime.mockResolvedValue(settings);
   api.switchRuntime.mockResolvedValue({ outcome: "activated", reason_code: null, rollback_reason_code: null, selection_revision: 4, restart_required: false });
   api.diagnostics.mockResolvedValue(structuredClone(diagnostic)); api.setToolRequestTracing.mockResolvedValue({ ...diagnostic.trace, mode: "full", restart_required: true });
-  api.computerPermissions.mockResolvedValue({ supported: true, foreground: true, desktop_accessibility: true, desktop_screen_recording: true });
+  api.computerPermissions.mockResolvedValue({ supported: true, foreground: true, execution_process: "WebCodex Runner", execution_path: "/fixture/runtime/webcodex-runner", runner_accessibility: "unknown", runner_screen_recording: "unknown", desktop_accessibility: true, desktop_screen_recording: true });
   api.openDiagnosticResource.mockResolvedValue(undefined);
   api.getLaunchAtLogin.mockResolvedValue(false); api.desktopBuildInfo.mockResolvedValue(build("webcodex-desktop"));
   dialog.open.mockResolvedValue("/fixture/custom"); dialog.save.mockResolvedValue(null);
@@ -160,6 +160,32 @@ it("keeps the six localized navigation labels and semantically pressable Setting
   expect(await screen.findByRole("button", { name: "选择 Runtime 文件夹…" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "使用内置 Runtime" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "重新检查 Runtime" })).toBeInTheDocument();
+});
+
+it("explains configured Tunnel mode, detected proxy, and effective Auto connection path", async () => {
+  const networkState = { ...state, tunnel_proxy: { mode: "auto", custom_url: null, effective_source: "system", effective_proxy_present: true, system_proxy_detected: true }, readiness: { ...state.readiness, exposure: "degraded" } } as DesktopState;
+  render(wrap(<SettingsPanel state={networkState} onState={vi.fn()} />));
+  const disclosure = screen.getByRole("button", { name: "Network" });
+  fireEvent.click(disclosure);
+  const panel = document.getElementById("desktop-settings-network") as HTMLElement;
+  const routing = panel.querySelector("[data-webcodex-tunnel-routing]") as HTMLElement;
+  expect(within(routing).getByText("Configured mode")).toBeInTheDocument();
+  expect(within(routing).getByText("Automatic (recommended)")).toBeInTheDocument();
+  expect(within(routing).getByText("Detected proxy")).toBeInTheDocument();
+  expect(within(routing).getAllByText("System proxy")).toHaveLength(2);
+  expect(within(routing).getByText("Effective connection path")).toBeInTheDocument();
+  expect(within(routing).getByText("Tunnel status")).toBeInTheDocument();
+  expect(within(routing).getByText("degraded")).toBeInTheDocument();
+});
+
+it("shows an environment proxy as detected when Auto selects it", async () => {
+  const networkState = { ...state, tunnel_proxy: { mode: "auto", custom_url: null, effective_source: "environment", effective_proxy_present: true, system_proxy_detected: false } } as DesktopState;
+  render(wrap(<SettingsPanel state={networkState} onState={vi.fn()} />));
+  fireEvent.click(screen.getByRole("button", { name: "Network" }));
+  const panel = document.getElementById("desktop-settings-network") as HTMLElement;
+  const routing = panel.querySelector("[data-webcodex-tunnel-routing]") as HTMLElement;
+  expect(within(routing).getAllByText("Desktop proxy environment")).toHaveLength(2);
+  expect(within(routing).queryByText("Not configured")).not.toBeInTheDocument();
 });
 
 it("renders factual handoff uncertainty rather than Host failure", () => {

@@ -265,6 +265,7 @@ impl AppState {
             mode: "create".into(),
             server_url: None,
             project_path: project_path.map(str::to_owned),
+            runner: Some(true),
             pairing_code: None,
             user_token: None,
             replace_pairing_code: false,
@@ -327,6 +328,7 @@ impl AppState {
             mode: "join".into(),
             server_url: Some(server_url.to_owned()),
             project_path: Some(project_path.to_owned()),
+            runner: Some(true),
             pairing_code: Some(pairing_code.to_owned()),
             user_token: None,
             replace_pairing_code: false,
@@ -1249,17 +1251,10 @@ impl DesktopCore {
         cancellation: &CancellationContext,
     ) -> DesktopResult<DesktopStateSnapshot> {
         cancellation.check()?;
-        let project_path = project_path
-            .map(str::trim)
-            .filter(|path| !path.is_empty())
-            .ok_or_else(|| {
-                DesktopError::new(
-                    "project_not_ready",
-                    "Local setup requires an explicit project folder",
-                    "Choose the project folder that this Runner should manage, then retry setup.",
-                )
-            })?;
-        let project = self.adapter.inspect_project(project_path).await?;
+        let project = match project_path.map(str::trim).filter(|path| !path.is_empty()) {
+            Some(path) => Some(self.adapter.inspect_project(path).await?),
+            None => None,
+        };
         cancellation.check()?;
         let binaries = self.adapter.ensure_binaries(cancellation).await?.clone();
         self.snapshot.binaries = Some(binaries.info());
@@ -1277,12 +1272,21 @@ impl DesktopCore {
             exposure: Exposure::None,
             enrollment: Enrollment::ManagedPairing,
         });
-        self.stage_project_scope(project.clone());
+        if let Some(project) = project.clone() {
+            self.stage_project_scope(project);
+        } else {
+            self.snapshot.project = None;
+            self.snapshot.chatgpt_activity = None;
+        }
         self.snapshot.readiness = aggregate_readiness(
             ServerReadiness::Starting,
             RunnerReadiness::Stopped,
             ExposureReadiness::Disabled,
-            ProjectReadiness::Configured,
+            if project.is_some() {
+                ProjectReadiness::Configured
+            } else {
+                ProjectReadiness::None
+            },
         );
         self.publish_snapshot();
 
@@ -1432,41 +1436,58 @@ impl DesktopCore {
                 .ok(),
             None => None,
         };
-        let (identity, identity_replaced, runner_client_id) =
+        let (runner_identity, identity_replaced, runner_client_id) =
             match (reusable_identity, reusable_observation) {
                 (Some(identity), Some(observation)) => (identity, false, observation.client_id),
                 _ => {
-                    // Login publishes with --overwrite. Keep the saved connection's
-                    // files intact until activation and config persistence succeed.
+                    // Fresh local enrollment is Runner-scoped. A default Project is
+                    // optional: without one, the Runner keeps the normal empty
+                    // allowed_roots configuration whose effective policy defaults to
+                    // the user's home directory. Model-driven path resolution can
+                    // register concrete Projects later.
                     let connections_dir = local_enrollment_directory(&self.data_dir, &self.config);
                     let pairing_code = self
                         .adapter
                         .create_local_pairing(&server_url, &env_file, cancellation)
                         .await?;
-                    let project_identity = self
-                        .adapter
-                        .login_with_pairing(
-                            &server_url,
-                            &pairing_code,
-                            &connections_dir,
-                            &project,
-                            cancellation,
-                        )
-                        .await?;
+                    let identity = match project.as_ref() {
+                        Some(project) => {
+                            self.adapter
+                                .login_with_pairing(
+                                    &server_url,
+                                    &pairing_code,
+                                    &connections_dir,
+                                    project,
+                                    cancellation,
+                                )
+                                .await?
+                                .runner
+                        }
+                        None => {
+                            self.adapter
+                                .login_runner_with_pairing(
+                                    &server_url,
+                                    &pairing_code,
+                                    &connections_dir,
+                                    cancellation,
+                                )
+                                .await?
+                        }
+                    };
                     drop(pairing_code);
                     cancellation.check()?;
                     let observation = self
                         .adapter
-                        .observe_runner_connection(&project_identity, None, cancellation)
+                        .observe_runner_connection(&identity, None, cancellation)
                         .await?;
-                    (project_identity.runner, true, observation.client_id)
+                    (identity, true, observation.client_id)
                 }
             };
 
         let replacing_owned_runner = identity_replaced
             && process_is_active(self.process_snapshot(ProcessKey::LocalRunner).await);
         let runner_deadline = Deadline::after(RUNNER_READY_TIMEOUT);
-        let activation: DesktopResult<(bool, ProjectRuntimeIdentity)> = async {
+        let activation: DesktopResult<(bool, Option<ProjectRuntimeIdentity>)> = async {
             if replacing_owned_runner {
                 // A Desktop-owned Runner can only serve the exact config it was
                 // started with. Replace that owned process transactionally while
@@ -1476,8 +1497,8 @@ impl DesktopCore {
                 if runner_deadline.is_elapsed() {
                     return Err(readiness_timeout_error(
                         "runner_offline",
-                        "Desktop could not stop its previous Runner before changing projects",
-                        "Retry project setup. Desktop will only replace the Runner it owns.",
+                        "Desktop could not stop its previous Runner before refreshing local runtime configuration",
+                        "Retry local runtime setup. Desktop will only replace the Runner it owns.",
                     ));
                 }
                 cancellation.check()?;
@@ -1490,7 +1511,7 @@ impl DesktopCore {
                 false
             } else {
                 self.adapter
-                    .runner_ready_until(&identity, cancellation, runner_deadline)
+                    .runner_ready_until(&runner_identity, cancellation, runner_deadline)
                     .await
                     .unwrap_or(false)
             };
@@ -1500,23 +1521,34 @@ impl DesktopCore {
                     return Err(readiness_timeout_error(
                         "runner_offline",
                         "Runner did not become connected",
-                        "Retry project setup to restart Desktop's Runner.",
+                        "Retry local runtime setup to restart Desktop's Runner.",
                     ));
                 }
                 self.snapshot.readiness.runner = RunnerReadiness::Connecting;
                 self.publish_snapshot();
-                self.spawn_configured_runner(&identity, cancellation).await?;
+                self.spawn_configured_runner(&runner_identity, cancellation)
+                    .await?;
                 true
             } else {
                 false
             };
-            self.wait_for_runner(&identity, cancellation, runner_deadline, runner_started)
-                .await?;
+            self.wait_for_runner(
+                &runner_identity,
+                cancellation,
+                runner_deadline,
+                runner_started,
+            )
+            .await?;
             self.snapshot.readiness.runner = RunnerReadiness::Ready;
             self.publish_snapshot();
+
+            let Some(project) = project.as_ref() else {
+                cancellation.check()?;
+                return Ok((runner_started, None));
+            };
             let project_identity = match self
                 .adapter
-                .activate_project(&identity, &runner_client_id, &project, cancellation)
+                .activate_project(&runner_identity, &runner_client_id, project, cancellation)
                 .await
             {
                 Ok(identity) => identity,
@@ -1532,16 +1564,16 @@ impl DesktopCore {
                     ) {
                         return Err(DesktopError::new(
                             "project_activation_legacy_runner",
-                            "This Runner needs to be refreshed before the new project can be activated",
-                            "Refresh the Runner, then select this project again.",
+                            "This Runner needs to be refreshed before the selected project can be activated",
+                            "Refresh the Runner, then retry the project.",
                         ));
                     }
                     let legacy_identity = self
                         .adapter
                         .legacy_register_project(
-                            &identity,
+                            &runner_identity,
                             &runner_client_id,
-                            &project,
+                            project,
                             cancellation,
                         )
                         .await?;
@@ -1552,10 +1584,11 @@ impl DesktopCore {
                         return Err(readiness_timeout_error(
                             "runner_offline",
                             "Desktop could not refresh its legacy Runner",
-                            "Retry project setup after checking Runner diagnostics.",
+                            "Retry local runtime setup after checking Runner diagnostics.",
                         ));
                     }
-                    self.spawn_configured_runner(&legacy_identity, cancellation).await?;
+                    self.spawn_configured_runner(&legacy_identity, cancellation)
+                        .await?;
                     self.wait_for_runner(&legacy_identity, cancellation, legacy_deadline, true)
                         .await?;
                     runner_started = true;
@@ -1565,10 +1598,10 @@ impl DesktopCore {
             };
             self.wait_for_project(&project_identity, cancellation).await?;
             cancellation.check()?;
-            Ok((runner_started, project_identity))
+            Ok((runner_started, Some(project_identity)))
         }
         .await;
-        let (runner_started, identity) = match activation {
+        let (runner_started, project_identity) = match activation {
             Ok(result) => result,
             Err(error) => {
                 if replacing_owned_runner {
@@ -1595,23 +1628,36 @@ impl DesktopCore {
             }
         };
 
-        // Commit the visible/saved project only after the new Runner and exact
-        // project have both reached readiness. Until this point the previous
-        // stored project remains the recovery authority.
         let previous_config = self.config.clone();
-        let mut committed_project = project.clone();
-        committed_project.runtime_project_id = Some(identity.runtime_project_id.clone());
+        let committed_project = match (project.clone(), project_identity.as_ref()) {
+            (Some(mut project), Some(identity)) => {
+                project.runtime_project_id = Some(identity.runtime_project_id.clone());
+                Some(project)
+            }
+            (None, None) => None,
+            _ => {
+                return Err(DesktopError::new(
+                    "desktop_runtime_contract_invalid",
+                    "Local runtime project state is inconsistent",
+                    "Open Diagnostics and retry local runtime setup.",
+                ))
+            }
+        };
         self.config.topology = self.snapshot.topology.clone();
-        self.config.project = Some(committed_project.clone());
+        self.config.project = committed_project.clone();
         self.config.runtime_autostart = Some(true);
         self.config.runtime = Some(StoredRuntime {
-            server_url: identity.server_url.clone(),
+            server_url: runner_identity.server_url.clone(),
             server_env_file: Some(env_file.clone()),
-            runner_config: Some(identity.runner_config.clone()),
-            user_token_file: Some(identity.user_token_file.clone()),
+            runner_config: Some(runner_identity.runner_config.clone()),
+            user_token_file: Some(runner_identity.user_token_file.clone()),
             runner_client_id: Some(runner_client_id.clone()),
-            project_id: Some(identity.project_id.clone()),
-            runtime_project_id: Some(identity.runtime_project_id.clone()),
+            project_id: project_identity
+                .as_ref()
+                .map(|identity| identity.project_id.clone()),
+            runtime_project_id: project_identity
+                .as_ref()
+                .map(|identity| identity.runtime_project_id.clone()),
         });
         if let Err(error) = self.save_config().await {
             self.config = previous_config;
@@ -1652,12 +1698,16 @@ impl DesktopCore {
             self.publish_snapshot();
             return Err(error);
         }
-        self.snapshot.project = Some(committed_project);
+        self.snapshot.project = committed_project;
         self.snapshot.readiness = aggregate_readiness(
             ServerReadiness::Ready,
             RunnerReadiness::Ready,
             ExposureReadiness::LocalReady,
-            ProjectReadiness::Ready,
+            if project_identity.is_some() {
+                ProjectReadiness::Ready
+            } else {
+                ProjectReadiness::None
+            },
         );
         self.activity.push(
             ActivityEventKind::LocalRuntimeReady,
@@ -1668,8 +1718,6 @@ impl DesktopCore {
         self.autostart_connections(cancellation).await?;
         self.get_state().await
     }
-
-    #[cfg(test)]
     pub async fn configure_remote_setup(
         &mut self,
         server_url: &str,
@@ -3296,21 +3344,6 @@ fn same_project(left: &str, right: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[tokio::test]
-    async fn local_setup_never_uses_the_install_directory_as_an_implicit_project() {
-        let data = unique_state_dir("explicit-local-project");
-        let resources = data.join("Relocated WebCodex Install");
-        std::fs::create_dir_all(&resources).unwrap();
-        let mut core = DesktopCore::new(data.clone(), resources).unwrap();
-        let error = core
-            .configure_local_setup(None, &CancellationContext::never())
-            .await
-            .unwrap_err();
-        assert_eq!(error.code, "project_not_ready");
-        assert!(core.snapshot.project.is_none());
-        let _ = std::fs::remove_dir_all(data);
-    }
 
     #[test]
     fn desktop_server_defaults_append_missing_values_and_preserve_explicit_config() {

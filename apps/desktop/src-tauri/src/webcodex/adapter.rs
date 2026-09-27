@@ -435,6 +435,56 @@ impl WebCodexAdapter {
         Ok(output.pairing_code)
     }
 
+    pub async fn login_runner_with_pairing(
+        &mut self,
+        server_url: &str,
+        pairing_code: &str,
+        connections_dir: &Path,
+        cancellation: &CancellationContext,
+    ) -> DesktopResult<RunnerRuntimeIdentity> {
+        validate_server_url(server_url)?;
+        if pairing_code.trim().is_empty() {
+            return Err(DesktopError::new(
+                "pairing_code_invalid",
+                "One-time login code is empty",
+                "Retry local runtime setup.",
+            ));
+        }
+        let webcodex = self.ensure_binaries(cancellation).await?.webcodex.clone();
+        cancellation.check()?;
+        tokio::fs::create_dir_all(connections_dir)
+            .await
+            .map_err(|_| {
+                DesktopError::new(
+                    "desktop_state_unavailable",
+                    "Desktop could not prepare its protected connection directory",
+                    "Check local app-data permissions and retry.",
+                )
+            })?;
+        let mut args = vec![
+            "login".into(),
+            server_url.into(),
+            "--code-stdin".into(),
+            "--dir".into(),
+            connections_dir.to_string_lossy().to_string(),
+            "--overwrite".into(),
+            "--json".into(),
+        ];
+        if server_url_is_loopback(server_url) {
+            args.push("--no-system-proxy".into());
+        }
+        let output: LoginOutput = run_json(
+            &webcodex,
+            &args,
+            Some(pairing_code.as_bytes()),
+            true,
+            CliCommandContext::new("login", "login"),
+            cancellation,
+        )
+        .await?;
+        validate_runner_login_output(&output)
+    }
+
     pub async fn login_with_pairing(
         &mut self,
         server_url: &str,
@@ -907,40 +957,43 @@ fn ops_project_is_ready(
         && candidate.agent_status.as_deref() == Some("online")
 }
 
+fn validate_runner_login_output(output: &LoginOutput) -> DesktopResult<RunnerRuntimeIdentity> {
+    if output.server_url.trim().is_empty()
+        || output.runner_config.trim().is_empty()
+        || output.user_token_file.trim().is_empty()
+        || output.device.trim().is_empty()
+    {
+        return Err(invalid_contract("login"));
+    }
+    Ok(RunnerRuntimeIdentity {
+        client_id: output.device.clone(),
+        runner_config: PathBuf::from(&output.runner_config),
+        user_token_file: PathBuf::from(&output.user_token_file),
+        server_url: output.server_url.clone(),
+    })
+}
+
 fn validate_login_output(
     output: &LoginOutput,
     project: &ProjectSelection,
 ) -> DesktopResult<ProjectRuntimeIdentity> {
-    if output.server_url.trim().is_empty()
-        || output.runner_config.trim().is_empty()
-        || output.user_token_file.trim().is_empty()
-    {
-        return Err(invalid_contract("login"));
-    }
+    let runner = validate_runner_login_output(output)?;
     let registered = output
         .registered_projects
         .iter()
         .find(|candidate| same_path(&candidate.path, &project.path))
         .ok_or_else(|| invalid_contract("login project registration"))?;
-    if registered.id.trim().is_empty() || registered.runtime_project.trim().is_empty() {
+    if registered.id.trim().is_empty()
+        || registered.runtime_project.trim().is_empty()
+        || registered.runtime_project != format!("agent:{}:{}", runner.client_id, registered.id)
+    {
         return Err(invalid_contract("login project identity"));
     }
     Ok(ProjectRuntimeIdentity {
         project_id: registered.id.clone(),
         runtime_project_id: registered.runtime_project.clone(),
         project_path: registered.path.clone(),
-        runner: RunnerRuntimeIdentity {
-            client_id: registered
-                .runtime_project
-                .strip_prefix("agent:")
-                .and_then(|id| id.strip_suffix(&format!(":{}", registered.id)))
-                .filter(|id| !id.is_empty())
-                .ok_or_else(|| invalid_contract("login Runner identity"))?
-                .to_string(),
-            runner_config: PathBuf::from(&output.runner_config),
-            user_token_file: PathBuf::from(&output.user_token_file),
-            server_url: output.server_url.clone(),
-        },
+        runner,
     })
 }
 
@@ -1326,11 +1379,29 @@ mod tests {
     }
 
     #[test]
+    fn projectless_login_keeps_runner_identity_without_inventing_a_project() {
+        let output = LoginOutput {
+            server_url: "http://127.0.0.1:7891".to_string(),
+            runner_config: "runner.toml".to_string(),
+            user_token_file: "user-token".to_string(),
+            device: "desktop-mini".to_string(),
+            registered_projects: Vec::new(),
+        };
+        let identity = validate_runner_login_output(&output).unwrap();
+        assert_eq!(identity.client_id, "desktop-mini");
+        assert_eq!(identity.server_url, "http://127.0.0.1:7891");
+        assert_eq!(identity.runner_config, PathBuf::from("runner.toml"));
+        assert_eq!(identity.user_token_file, PathBuf::from("user-token"));
+        assert!(output.registered_projects.is_empty());
+    }
+
+    #[test]
     fn login_identity_fails_closed_when_registered_project_is_missing() {
         let output = LoginOutput {
             server_url: "https://example.com".to_string(),
             runner_config: "runner.toml".to_string(),
             user_token_file: "user-token".to_string(),
+            device: "desktop".to_string(),
             registered_projects: Vec::new(),
         };
         let project = ProjectSelection {

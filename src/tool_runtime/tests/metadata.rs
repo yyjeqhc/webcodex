@@ -2522,9 +2522,7 @@ async fn runtime_status_includes_build_metadata() {
     assert!(result.output.get("runtime_exposure").is_none());
     assert_eq!(
         result.output["mcp_compact_schemas"],
-        crate::model_surface::effective_mcp_compact_schemas(
-            crate::config::mcp_compact_schemas_override(),
-        )
+        runtime.runtime_info.mcp_compact_schemas
     );
     let build = &result.output["build"];
     assert!(build.is_object());
@@ -2641,24 +2639,29 @@ async fn runtime_status_reports_effective_mcp_host_budget_override() {
     assert_eq!(mcp_host["continuation_wait_secs"], 4);
 }
 
-#[allow(clippy::await_holding_lock)]
 #[tokio::test]
 async fn runtime_status_reports_effective_mcp_compact_schema_policy() {
-    let mut env = crate::test_support::TestEnvGuard::new();
-    env.remove("WEBCODEX_MCP_COMPACT_SCHEMAS");
-    let runtime = test_runtime();
+    // Production-style capture: build each Runtime while its env guard is held,
+    // then drop the guard so no process-global env lock is held across the
+    // async requests below. The reported value is the startup snapshot.
+    let runtime_false = {
+        let mut env = crate::test_support::TestEnvGuard::new();
+        env.set("WEBCODEX_MCP_COMPACT_SCHEMAS", "false");
+        runtime_with_info(RuntimeInfo::from_env())
+    };
+    let runtime_true = {
+        let mut env = crate::test_support::TestEnvGuard::new();
+        env.set("WEBCODEX_MCP_COMPACT_SCHEMAS", "true");
+        runtime_with_info(RuntimeInfo::from_env())
+    };
+    // Both guards are dropped now; the snapshots outlive the env mutations.
 
-    let default = runtime.dispatch(runtime_status_call()).await;
-    assert!(default.success, "{:?}", default.error);
-    assert_eq!(default.output["mcp_compact_schemas"], true);
-    assert!(default.output.get("runtime_exposure").is_none());
-
-    env.set("WEBCODEX_MCP_COMPACT_SCHEMAS", "false");
-    let full = runtime.dispatch(runtime_status_call()).await;
+    let full = runtime_false.dispatch(runtime_status_call()).await;
+    assert!(full.success, "{:?}", full.error);
     assert_eq!(full.output["mcp_compact_schemas"], false);
+    assert!(full.output.get("runtime_exposure").is_none());
 
-    env.set("WEBCODEX_MCP_COMPACT_SCHEMAS", "true");
-    let compact = runtime.dispatch(runtime_status_call()).await;
+    let compact = runtime_true.dispatch(runtime_status_call()).await;
     assert_eq!(compact.output["mcp_compact_schemas"], true);
 }
 
@@ -2769,6 +2772,7 @@ async fn runtime_status_does_not_expose_tokens_or_secrets() {
         quic: Some(Arc::new(std::sync::Mutex::new(
             crate::config::QuicServerConfig::default().runtime_status(),
         ))),
+        ..RuntimeInfo::default()
     };
     let runtime = runtime_with_info(info);
     let result = runtime.dispatch(runtime_status_call()).await;
@@ -2834,6 +2838,7 @@ async fn runtime_status_quic_enabled_error_is_sanitized() {
         quic: Some(status),
         oauth2_enabled: false,
         oauth2_shared_key_bridge_enabled: false,
+        ..RuntimeInfo::default()
     });
     let result = runtime.dispatch(runtime_status_call()).await;
     assert!(result.success);
@@ -2865,6 +2870,7 @@ async fn runtime_status_quic_started_reports_listen_and_alpn() {
         quic: Some(status),
         oauth2_enabled: false,
         oauth2_shared_key_bridge_enabled: false,
+        ..RuntimeInfo::default()
     });
     let result = runtime.dispatch(runtime_status_call()).await;
     assert!(result.success);
@@ -2887,6 +2893,7 @@ async fn runtime_status_auth_enabled_reflects_runtime_info() {
         quic: Some(Arc::new(std::sync::Mutex::new(
             crate::config::QuicServerConfig::default().runtime_status(),
         ))),
+        ..RuntimeInfo::default()
     });
     let result = runtime.dispatch(runtime_status_call()).await;
     assert!(result.success);
@@ -2901,6 +2908,7 @@ async fn runtime_status_auth_enabled_reflects_runtime_info() {
         quic: Some(Arc::new(std::sync::Mutex::new(
             crate::config::QuicServerConfig::default().runtime_status(),
         ))),
+        ..RuntimeInfo::default()
     });
     let result = runtime.dispatch(runtime_status_call()).await;
     assert!(result.success);
@@ -2932,6 +2940,29 @@ fn runtime_info_from_env_reads_effective_server_config() {
     let info = RuntimeInfo::from_env();
     assert!(!info.oauth2_enabled);
     assert!(!info.oauth2_shared_key_bridge_enabled);
+
+    // MCP settings follow the same capture-once rule: a RuntimeInfo resolves
+    // the effective env exactly once, at construction.
+    env.set("WEBCODEX_MCP_COMPACT_SCHEMAS", "false");
+    env.set("WEBCODEX_MCP_APPS_ENABLED", "false");
+    env.set("WEBCODEX_MCP_TEXT_JSON_COMPAT", "false");
+    let frozen = RuntimeInfo::from_env();
+    assert!(!frozen.mcp_compact_schemas);
+    assert!(!frozen.mcp_apps_enabled);
+    assert!(!frozen.mcp_text_json_compat_enabled);
+
+    // Mutating the environment must NOT mutate an already-built snapshot; only
+    // a new construction reads the new values.
+    env.set("WEBCODEX_MCP_COMPACT_SCHEMAS", "true");
+    env.set("WEBCODEX_MCP_APPS_ENABLED", "true");
+    env.set("WEBCODEX_MCP_TEXT_JSON_COMPAT", "true");
+    assert!(!frozen.mcp_compact_schemas);
+    assert!(!frozen.mcp_apps_enabled);
+    assert!(!frozen.mcp_text_json_compat_enabled);
+    let refreshed = RuntimeInfo::from_env();
+    assert!(refreshed.mcp_compact_schemas);
+    assert!(refreshed.mcp_apps_enabled);
+    assert!(refreshed.mcp_text_json_compat_enabled);
 }
 
 #[tokio::test]

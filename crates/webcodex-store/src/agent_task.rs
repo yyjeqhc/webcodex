@@ -348,6 +348,16 @@ pub struct AgentTaskCodingRunReconcileMutation {
     pub wait_target_agent_ids: Vec<String>,
 }
 
+/// Internal pin for issuing `attempt_ref`. The fence never leaves the store API
+/// through a model-facing Task summary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LiveAgentTaskAttemptPin {
+    pub attempt_id: String,
+    pub assignee_agent_id: String,
+    pub attempt_fence: String,
+    pub attempt_controller_generation: i64,
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct AgentTaskAttemptRecord {
     pub attempt_id: String,
@@ -959,6 +969,43 @@ impl Database {
         task_id: &str,
     ) -> Result<AgentTaskDetail, CommunicationStoreError> {
         self.read_agent_task_at(principal, task_id, now_unix_ms())
+    }
+
+    /// The current Attempt pin when that Attempt is the task assignee's live lease.
+    /// Expired, terminal, or assignee-mismatched Attempts return `None` and never
+    /// publish the fence on a Task summary.
+    pub fn live_agent_task_attempt_pin(
+        &self,
+        principal: &CommunicationPrincipal,
+        task_id: &str,
+    ) -> Result<Option<LiveAgentTaskAttemptPin>, CommunicationStoreError> {
+        self.live_agent_task_attempt_pin_at(principal, task_id, now_unix_ms())
+    }
+
+    pub(crate) fn live_agent_task_attempt_pin_at(
+        &self,
+        principal: &CommunicationPrincipal,
+        task_id: &str,
+        now: i64,
+    ) -> Result<Option<LiveAgentTaskAttemptPin>, CommunicationStoreError> {
+        validate_communication_principal(principal)?;
+        validate_id(task_id, AGENT_TASK_ID_PREFIX, "invalid_agent_task_id")?;
+        let conn = self.lock_connection(crate::StoreDomain::AgentTask);
+        let task = load_owned_task(&conn, principal, task_id, now)?;
+        let Some(attempt) = task.latest_attempt.as_ref() else {
+            return Ok(None);
+        };
+        if attempt.effective_state(now) != AgentTaskAttemptState::Active
+            || task.assignee_agent_id.as_deref() != Some(attempt.assignee_agent_id.as_str())
+        {
+            return Ok(None);
+        }
+        Ok(Some(LiveAgentTaskAttemptPin {
+            attempt_id: attempt.attempt_id.clone(),
+            assignee_agent_id: attempt.assignee_agent_id.clone(),
+            attempt_fence: attempt.attempt_fence.clone(),
+            attempt_controller_generation: attempt.attempt_controller_generation,
+        }))
     }
 
     pub(crate) fn read_agent_task_at(

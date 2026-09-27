@@ -111,13 +111,10 @@ pub(super) fn mcp_runtime_tool_result_fallback_with_compat(
 
 pub(super) fn mcp_runtime_tool_result_fallback(
     result: ToolResult,
+    text_json_compat: bool,
     presentation: McpToolResultPresentation,
 ) -> Value {
-    mcp_runtime_tool_result_fallback_with_compat(
-        result,
-        crate::config::mcp_text_json_compat_enabled(),
-        presentation,
-    )
+    mcp_runtime_tool_result_fallback_with_compat(result, text_json_compat, presentation)
 }
 
 pub(super) fn rpc_result(id: Option<Value>, result: Value) -> Value {

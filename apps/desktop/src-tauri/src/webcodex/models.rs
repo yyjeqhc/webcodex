@@ -34,6 +34,7 @@ pub struct LoginOutput {
     pub server_url: String,
     pub runner_config: String,
     pub user_token_file: String,
+    pub device: String,
     #[serde(default)]
     pub registered_projects: Vec<RegisteredProjectOutput>,
 }
@@ -155,11 +156,13 @@ mod tests {
                 "server_url":"https://example.test",
                 "runner_config":"C:\\state\\runner.toml",
                 "user_token_file":"C:\\state\\user-token",
+                "device":"desktop-runner",
                 "future_metadata":{"generation":3}
             }"#,
         )
         .unwrap();
         assert!(login.registered_projects.is_empty());
+        assert_eq!(login.device, "desktop-runner");
 
         let runner: RunnerStatusOutput = serde_json::from_str(
             r#"{
@@ -197,6 +200,15 @@ mod tests {
 
     #[test]
     fn json_contracts_fail_closed_when_required_identity_is_missing() {
+        let missing_device = serde_json::from_str::<LoginOutput>(
+            r#"{
+                "server_url":"https://example.test",
+                "runner_config":"C:\\state\\runner.toml",
+                "user_token_file":"C:\\state\\user-token"
+            }"#,
+        );
+        assert!(missing_device.is_err());
+
         let invalid = serde_json::from_str::<RunnerStatusOutput>(
             r#"{
                 "config":{

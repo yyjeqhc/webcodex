@@ -387,6 +387,98 @@ mod tests {
     use super::*;
 
     #[test]
+    fn canonical_observation_json_publishes_model_facing_fields_only() {
+        let snapshot = SemanticSnapshot {
+            browser_id: "browser_abcdefghijklmnop".to_string(),
+            page_id: "page_abcdefghijklmnop".to_string(),
+            snapshot_generation: 4,
+            snapshot_mode: SnapshotMode::Interactive.as_str().to_string(),
+            auto_compacted: true,
+            max_nodes: 256,
+            max_depth: 32,
+            node_count: 2,
+            truncated: false,
+            nodes: vec![
+                SemanticNode {
+                    role: "combobox".to_string(),
+                    name: Some("Fruit".to_string()),
+                    description: None,
+                    value: None,
+                    group_id: None,
+                    group_role: None,
+                    group_label: None,
+                    checked: None,
+                    selected: None,
+                    required: Some(true),
+                    disabled: Some(false),
+                    read_only: None,
+                    element_id: Some("element_abcdefghijklmnop".to_string()),
+                    actions: vec!["select_option".to_string()],
+                    actionable: true,
+                },
+                SemanticNode {
+                    role: "option".to_string(),
+                    name: Some("Apple".to_string()),
+                    description: None,
+                    value: Some("a".to_string()),
+                    group_id: Some("group_1".to_string()),
+                    group_role: Some("combobox".to_string()),
+                    group_label: Some("Fruit".to_string()),
+                    checked: None,
+                    selected: Some(true),
+                    required: None,
+                    disabled: Some(false),
+                    read_only: None,
+                    element_id: None,
+                    actions: Vec::new(),
+                    actionable: false,
+                },
+            ],
+        };
+        let value = serde_json::to_value(&snapshot).unwrap();
+        let object = value.as_object().unwrap();
+        for field in [
+            "snapshot_mode",
+            "auto_compacted",
+            "max_nodes",
+            "max_depth",
+            "nodes",
+        ] {
+            assert!(object.contains_key(field), "missing {field}");
+        }
+        for forbidden in ["target_id", "backend_node_id", "document_id"] {
+            assert!(!object.contains_key(forbidden), "leaked {forbidden}");
+        }
+        assert_eq!(value["snapshot_mode"], "interactive");
+        assert_eq!(value["auto_compacted"], true);
+        let option = &value["nodes"][1];
+        assert_eq!(option["name"], "Apple");
+        assert_eq!(option["value"], "a");
+        assert_eq!(option["group_label"], "Fruit");
+        assert_eq!(option["selected"], true);
+        assert_eq!(option["disabled"], false);
+        assert_eq!(option["actionable"], false);
+        assert!(option.get("actions").is_none());
+        assert!(option.get("element_id").is_none());
+        assert!(option.get("backend_node_id").is_none());
+
+        let stability = serde_json::to_value(BrowserStability {
+            stable: false,
+            waited_ms: 250,
+            reason: "dom_quiet_with_long_lived_network".to_string(),
+        })
+        .unwrap();
+        let mut stability_fields = stability
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        stability_fields.sort_unstable();
+        assert_eq!(stability_fields, ["reason", "stable", "waited_ms"]);
+    }
+
+    #[test]
     fn navigation_policy_is_http_https_only() {
         for denied in [
             "file:///tmp/a",

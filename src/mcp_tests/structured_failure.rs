@@ -175,11 +175,12 @@ fn resource_failure_fallbacks_use_canonical_presentation_policy() {
                 json!({"execution_state": "outcome_unknown", "recovery": "inspect state"}),
             )
         };
-        let expected = mcp_runtime_tool_result_fallback(failed(), policy);
+        let expected = mcp_runtime_tool_result_fallback(failed(), false, policy);
         assert_eq!(
             mcp_artifact_export_tool_result(
                 failed(),
                 McpArtifactExportCallerBinding::Bootstrap,
+                false,
                 policy
             ),
             expected
@@ -190,7 +191,14 @@ fn resource_failure_fallbacks_use_canonical_presentation_policy() {
             "read_project_artifact",
         ] {
             assert_eq!(
-                mcp_runtime_tool_result_with_snapshot_resource(tool, true, failed(), None, policy),
+                mcp_runtime_tool_result_with_snapshot_resource(
+                    tool,
+                    true,
+                    failed(),
+                    None,
+                    false,
+                    policy,
+                ),
                 expected
             );
             let invalid_image = mcp_runtime_tool_result_with_snapshot_resource(
@@ -198,6 +206,7 @@ fn resource_failure_fallbacks_use_canonical_presentation_policy() {
                 true,
                 ToolResult::ok(json!({})),
                 None,
+                false,
                 policy,
             );
             assert_eq!(invalid_image["structuredContent"]["success"], false);
@@ -209,6 +218,7 @@ fn resource_failure_fallbacks_use_canonical_presentation_policy() {
         let invalid_export = mcp_artifact_export_tool_result(
             ToolResult::ok(json!({})),
             McpArtifactExportCallerBinding::Bootstrap,
+            false,
             policy,
         );
         assert_eq!(invalid_export["structuredContent"]["success"], false);

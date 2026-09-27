@@ -112,11 +112,10 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 super::ToolActivityPresentation::Support,
                 super::ToolActivityInteraction::Meaningful,
             ),
-            "Canonical bootstrap for ordinary coding/review. Prefer project_ref; project or client_id+path work. Omit session_id for a fresh Workflow Session; it does not imply a fresh model context. Exact resume accepts session_ref or canonical session_id, requires an active accessible Session, and never guesses prior Session. Exact resume may return sparse owner-scoped goal_context for correlated active Goals; reuse one exact candidate or choose explicitly among multiple. It grants no authority and never selects/binds a Goal. For fresh or uncertain model context, request project.instructions/webcodex.workflow via context_request. Runtime re-observes instruction files; primary result stays compact. guidance_profile is model guidance only. project_ref is principal-scoped/non-authoritative; each use reauthorizes Project. include_extension_catalog controls bounded Skills/Plugins. Checkout does not require Git; mode=worktree creates an isolated worktree from an exact Git base without bypassing Project authority.",
-        ).with_gpt_action_description("Start/resume exact Project work. Prefer project_ref; canonical id or client_id+path also work. Exact Session resume accepts session_ref or canonical session_id; sparse goal_context supports explicit Goal reuse without granting authority. Request project.instructions/webcodex.workflow as needed."),
+            "Canonical bootstrap for ordinary coding/review. Prefer project_ref (principal-scoped; reauthorizes Project), project or client_id+path. Omit session_id for a fresh Workflow Session; does not imply a fresh model context. Exact resume requires an active accessible Session; never guesses prior Session. goal_context reuses one exact Goal; no authority. Read/follow AGENTS.md/CLAUDE.md or repository rules: request _wc.context=[\"project.instructions\"]; Runtime re-observes instruction files. Available complete body satisfies reading; do not immediately reread. For fresh or uncertain model context, request webcodex.workflow via _wc.context; reuse retained guidance. Reuse successful workspace branch/HEAD/status, available semantic navigation, sufficient startup Skills/Plugins; refresh stale/incomplete facts or for detail/fences. guidance_profile guides; include_extension_catalog controls catalogs. mode=worktree creates an isolated worktree from an exact Git base with Project authority; checkout does not require Git.",
+        ).with_gpt_action_description("Start/resume exact Project work. Prefer project_ref; canonical id or client_id+path also work. Exact resume accepts session_ref/session_id; sparse goal_context supports explicit Goal reuse. MCP context sidecars are unavailable here."),
         10,
-    ),
-    requires_explicit_business_session(model_spec(
+    ),    requires_explicit_business_session(model_spec(
         def(
             "finish_coding_task",
             super::ToolAuditPolicy::TYPED_CANONICAL,
@@ -196,6 +195,36 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             idempotency: super::ToolIdempotency::PureRead,
         },
         Some(PROJECT_READ),
+        true,
+        NoPath,
+        false,
+        false,
+        super::ToolSessionEvidencePolicy::NONE,
+    )
+    .with_activity(
+        super::ToolActivityPresentation::Transport,
+        super::ToolActivityInteraction::NonMeaningful,
+    ),
+    def(
+        "work_result_activity_detail",
+        super::ToolAuditPolicy::typed_fields(&[
+            super::ToolAuditResultField::pointer(
+                "server_trace_id",
+                "/activity_detail/server_trace_id",
+            ),
+            super::ToolAuditResultField::value("error_kind"),
+        ]),
+        ModelHidden,
+        "workflow",
+        None,
+        TOOL_PROVIDER_CONTROL,
+        super::ToolSemanticContract {
+            effect: super::ToolEffect::Observe,
+            risk: Read,
+            approval: super::ToolApprovalPolicy::None,
+            idempotency: super::ToolIdempotency::PureRead,
+        },
+        Some(RUNTIME_READ),
         true,
         NoPath,
         false,

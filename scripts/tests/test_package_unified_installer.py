@@ -180,7 +180,10 @@ class UnifiedInstallerTests(unittest.TestCase):
                 "sha256": pkg.sha256_file(path),
                 "build_info": info,
                 "build_info_sha256": pkg.canonical_digest(info),
-                "probe": "local-executable" if platform_name == "linux-x64" and name in pkg.RUNTIMES else "native-build-job",
+                # Fixture artifacts model their native build job regardless of
+                # the host running these packaging tests. Matching hosts still
+                # re-probe real fixture executables in validate_manifest.
+                "probe": "native-build-job",
             }
         manifest = {
             "schema_version": 1, "version": "0.8.1", "source_sha": SOURCE,

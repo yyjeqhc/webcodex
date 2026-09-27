@@ -355,3 +355,329 @@ fn agent_task_attempt_ref_does_not_retarget_after_generation_expiry_or_takeover(
     assert!(continued.success, "{:?}", continued.output);
     assert_eq!(continued.output["execution"]["attempt_id"], new_attempt);
 }
+
+fn heartbeat_ref(
+    runtime: &ToolRuntime,
+    auth: Option<&crate::auth::AuthContext>,
+    attempt_ref: Option<&str>,
+    task_id: Option<&str>,
+    attempt_id: Option<&str>,
+    assignee: Option<&str>,
+    fence: Option<&str>,
+    generation: Option<i64>,
+    wake_id: Option<&str>,
+    consume_token: Option<&str>,
+) -> crate::tool_runtime::ToolResult {
+    runtime.heartbeat_agent_task_attempt_with_selector(
+        auth,
+        attempt_ref.map(str::to_string),
+        task_id.map(str::to_string),
+        attempt_id.map(str::to_string),
+        assignee.map(str::to_string),
+        fence.map(str::to_string),
+        generation,
+        wake_id.map(str::to_string),
+        consume_token.map(str::to_string),
+    )
+}
+
+#[test]
+fn read_and_list_reissue_the_live_attempt_ref_for_heartbeat_and_completion() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (db, runtime) = runtime_with_db(&tmp.path().join("recover-attempt-refs.db"));
+    let alice = auth_context(Some("alice"), false);
+    let bob = auth_context(Some("bob"), false);
+    let assignee = create_agent(&runtime, Some(&alice), "owner");
+    let task_id = create_task(&runtime, Some(&alice), &assignee, "recover-task");
+    let started = start_attempt(&runtime, Some(&alice), &task_id, &assignee, "recover-start");
+    let attempt_ref = started["attempt_ref"].as_str().unwrap().to_string();
+    let fence = started["attempt_fence"].as_str().unwrap().to_string();
+    let attempt_id = started["attempt"]["attempt_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let generation = started["attempt"]["attempt_controller_generation"]
+        .as_i64()
+        .unwrap();
+
+    let read = runtime.read_agent_task(Some(&alice), task_id.clone());
+    assert!(read.success, "{:?}", read.output);
+    assert_eq!(
+        read.output["task"]["summary"]["attempt_ref"], attempt_ref,
+        "a live read reissues the same selector"
+    );
+    assert!(read.output["task"]["summary"]
+        .get("attempt_fence")
+        .is_none());
+    assert!(read.output["task"]["summary"]["latest_attempt"]
+        .get("attempt_fence")
+        .is_none());
+    let listed = runtime.list_agent_tasks(Some(&alice), Some(assignee.clone()), None, Some(10));
+    assert!(listed.success, "{:?}", listed.output);
+    let listed_task = listed.output["tasks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|task| task["task_id"] == task_id)
+        .unwrap();
+    assert_eq!(listed_task["attempt_ref"], attempt_ref);
+    assert!(listed_task.get("attempt_fence").is_none());
+
+    let by_tuple = heartbeat_ref(
+        &runtime,
+        Some(&alice),
+        None,
+        Some(&task_id),
+        Some(&attempt_id),
+        Some(&assignee),
+        Some(&fence),
+        Some(generation),
+        None,
+        None,
+    );
+    assert!(by_tuple.success, "{:?}", by_tuple.output);
+    assert_eq!(by_tuple.output["attempt"]["attempt_id"], attempt_id);
+    assert!(by_tuple.output.get("attempt_fence").is_none());
+    let by_ref = heartbeat_ref(
+        &runtime,
+        Some(&alice),
+        Some(&attempt_ref),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    );
+    assert!(by_ref.success, "{:?}", by_ref.output);
+    assert_eq!(by_ref.output["attempt"]["attempt_id"], attempt_id);
+
+    let ambiguous = heartbeat_ref(
+        &runtime,
+        Some(&alice),
+        Some(&attempt_ref),
+        Some(&task_id),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    );
+    assert_eq!(
+        ambiguous.output["error_kind"],
+        "ambiguous_agent_task_attempt_selector"
+    );
+    let partial = heartbeat_ref(
+        &runtime,
+        Some(&alice),
+        None,
+        Some(&task_id),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    );
+    assert_eq!(
+        partial.output["error_kind"],
+        "incomplete_agent_task_attempt_selector"
+    );
+    let foreign = heartbeat_ref(
+        &runtime,
+        Some(&bob),
+        Some(&attempt_ref),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    );
+    assert_eq!(
+        foreign.output["error_kind"],
+        "unknown_agent_task_attempt_ref"
+    );
+    assert!(!foreign.output.to_string().contains(&fence));
+
+    let proof_by_ref = heartbeat_ref(
+        &runtime,
+        Some(&alice),
+        Some(&attempt_ref),
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some("wc_wake_VVVVVVVVVVVVVVVV"),
+        Some("wc_wake_consume_ZmZmZmZmZmZmZmZmZmZmZg"),
+    );
+    let proof_by_tuple = heartbeat_ref(
+        &runtime,
+        Some(&alice),
+        None,
+        Some(&task_id),
+        Some(&attempt_id),
+        Some(&assignee),
+        Some(&fence),
+        Some(generation),
+        Some("wc_wake_VVVVVVVVVVVVVVVV"),
+        Some("wc_wake_consume_ZmZmZmZmZmZmZmZmZmZmZg"),
+    );
+    assert!(!proof_by_ref.success);
+    assert_eq!(
+        proof_by_ref.output["error_kind"], proof_by_tuple.output["error_kind"],
+        "active-turn proof stays on the existing heartbeat path"
+    );
+
+    db.conn_for_tests()
+        .execute(
+            "UPDATE wc_agent_task_attempts SET attempt_controller_generation = 2 WHERE attempt_id = ?1",
+            [attempt_id.as_str()],
+        )
+        .unwrap();
+    let stale_generation = heartbeat_ref(
+        &runtime,
+        Some(&alice),
+        Some(&attempt_ref),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    );
+    assert_eq!(
+        stale_generation.output["error_kind"],
+        "agent_task_attempt_stale"
+    );
+    let reread = runtime.read_agent_task(Some(&alice), task_id.clone());
+    let current_ref = reread.output["task"]["summary"]["attempt_ref"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_ne!(current_ref, attempt_ref);
+    let current = heartbeat_ref(
+        &runtime,
+        Some(&alice),
+        Some(&current_ref),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    );
+    assert!(current.success, "{:?}", current.output);
+    assert_eq!(
+        current.output["attempt"]["attempt_controller_generation"],
+        2
+    );
+
+    let expiring_task = create_task(&runtime, Some(&alice), &assignee, "expire-recover");
+    let expiring = start_attempt(
+        &runtime,
+        Some(&alice),
+        &expiring_task,
+        &assignee,
+        "expire-recover-start",
+    );
+    let expired_ref = expiring["attempt_ref"].as_str().unwrap().to_string();
+    let expired_attempt = expiring["attempt"]["attempt_id"].as_str().unwrap();
+    db.conn_for_tests()
+        .execute(
+            "UPDATE wc_agent_task_attempts SET lease_expires_at_unix_ms = 0 WHERE attempt_id = ?1",
+            [expired_attempt],
+        )
+        .unwrap();
+    let expired_read = runtime.read_agent_task(Some(&alice), expiring_task);
+    assert!(expired_read.success, "{:?}", expired_read.output);
+    assert!(expired_read.output["task"]["summary"]
+        .get("attempt_ref")
+        .is_none());
+    assert!(!expired_read.output.to_string().contains("attempt_fence"));
+    let expired = heartbeat_ref(
+        &runtime,
+        Some(&alice),
+        Some(&expired_ref),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    );
+    assert_eq!(expired.output["error_kind"], "agent_task_attempt_stale");
+
+    let terminal_task = create_task(&runtime, Some(&alice), &assignee, "complete-recover");
+    let terminal = start_attempt(
+        &runtime,
+        Some(&alice),
+        &terminal_task,
+        &assignee,
+        "complete-start",
+    );
+    let terminal_ref = terminal["attempt_ref"].as_str().unwrap().to_string();
+    let by_ref = runtime.complete_agent_task_attempt_with_selector(
+        Some(&alice),
+        Some(terminal_ref.clone()),
+        None,
+        None,
+        None,
+        None,
+        None,
+        "succeeded".to_string(),
+        None,
+        None,
+        "complete-by-ref".to_string(),
+    );
+    assert!(by_ref.success, "{:?}", by_ref.output);
+    assert_eq!(by_ref.output["attempt"]["state"], "succeeded");
+    assert!(by_ref.output.get("attempt_fence").is_none());
+    let replay_by_ref = runtime.complete_agent_task_attempt_with_selector(
+        Some(&alice),
+        Some(terminal_ref),
+        None,
+        None,
+        None,
+        None,
+        None,
+        "succeeded".to_string(),
+        None,
+        None,
+        "complete-by-ref".to_string(),
+    );
+    assert!(replay_by_ref.success, "{:?}", replay_by_ref.output);
+    assert_eq!(replay_by_ref.output["replayed"], true);
+    assert_eq!(replay_by_ref.output["state_changed"], false);
+    assert_eq!(replay_by_ref.output["attempt"]["state"], "succeeded");
+    let other_task = create_task(&runtime, Some(&alice), &assignee, "complete-tuple");
+    let other = start_attempt(
+        &runtime,
+        Some(&alice),
+        &other_task,
+        &assignee,
+        "complete-tuple-start",
+    );
+    let by_tuple = runtime.complete_agent_task_attempt_with_selector(
+        Some(&alice),
+        None,
+        Some(other_task),
+        Some(other["attempt"]["attempt_id"].as_str().unwrap().to_string()),
+        Some(assignee),
+        Some(other["attempt_fence"].as_str().unwrap().to_string()),
+        other["attempt"]["attempt_controller_generation"].as_i64(),
+        "failed".to_string(),
+        None,
+        None,
+        "complete-by-tuple".to_string(),
+    );
+    assert!(by_tuple.success, "{:?}", by_tuple.output);
+    assert_eq!(by_tuple.output["attempt"]["state"], "failed");
+}

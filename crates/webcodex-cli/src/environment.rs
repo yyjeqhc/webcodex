@@ -3,7 +3,7 @@ use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use webcodex_environment::*;
 
-const USAGE: &str = "webcodex environment <COMMAND>\n\nconfigure [--create | --join URL] [--project PATH | --no-project]\n          [--code-stdin | --token-file PATH] [--new-pairing-code]\nresume    [--code-stdin] [--new-pairing-code] [--token-file PATH]\ninvite\nadd-project PATH [--code-stdin] [--new-pairing-code]\nremove-project PROJECT_ID\nstatus|doctor\nstart|stop|restart <server|runner|tunnel> [--profile PROFILE]\nrepair-credential runner\nrepair-user-credential [--token-file PATH]\nuninstall-service <server|runner|tunnel> [--profile PROFILE]\nconfigure-tunnel [PROFILE] [--credentials-file PATH]\ntunnel-status [PROFILE]\nremove-tunnel [PROFILE]\nupgrade-preflight|upgrade-prepare --candidate-dir PATH [--development-build]\nupgrade-finish|upgrade-rollback\nmigrate-legacy-runner --join URL --project PATH --token-file PATH [--profile PROFILE] (Linux)\nmigrate-legacy-server --user NAME --token-file PATH --listen ORIGINAL_ADDR [--server-url URL] (Linux)\ninstaller-authorize --upgrade-receipt PATH --candidate-dir PATH\ninstaller-verify --candidate-dir PATH\ninstaller-verify-same --candidate-dir PATH --expected-runtime-dir PATH\ninstaller-finish|installer-cancel\n\nPublic environment commands accept --json and --environment-dir PATH.\nInstaller finalization uses only the fixed owner authorization.\nAdvanced: --bin-dir PATH (configure and explicit migration).\nViewer-only uses a user credential; pairing codes are only for project machines.\nTunnel credentials use hidden input or a protected JSON file with tunnel_id and api_key.\n";
+const USAGE: &str = "webcodex environment <COMMAND>\n\nconfigure [--create | --join URL] [--runner] [--project PATH | --no-project]\n          [--code-stdin | --token-file PATH] [--new-pairing-code]\nresume    [--code-stdin] [--new-pairing-code] [--token-file PATH]\ninvite\nadd-project PATH [--code-stdin] [--new-pairing-code]\nremove-project PROJECT_ID\nstatus|doctor\nstart|stop|restart <server|runner|tunnel> [--profile PROFILE]\nrepair-credential runner\nrepair-user-credential [--token-file PATH]\nuninstall-service <server|runner|tunnel> [--profile PROFILE]\nconfigure-tunnel [PROFILE] [--credentials-file PATH]\ntunnel-status [PROFILE]\nremove-tunnel [PROFILE]\nupgrade-preflight|upgrade-prepare --candidate-dir PATH [--development-build]\nupgrade-finish|upgrade-rollback\nmigrate-legacy-runner --join URL --project PATH --token-file PATH [--profile PROFILE] (Linux)\nmigrate-legacy-server --user NAME --token-file PATH --listen ORIGINAL_ADDR [--server-url URL] (Linux)\ninstaller-authorize --upgrade-receipt PATH --candidate-dir PATH\ninstaller-verify --candidate-dir PATH\ninstaller-verify-same --candidate-dir PATH --expected-runtime-dir PATH\ninstaller-finish|installer-cancel\n\nPublic environment commands accept --json and --environment-dir PATH.\nInstaller finalization uses only the fixed owner authorization.\nAdvanced: --bin-dir PATH (configure and explicit migration).\n--runner enables local work without requiring an initial project.\nViewer-only uses a user credential; pairing codes are only for Runner machines.\nTunnel credentials use hidden input or a protected JSON file with tunnel_id and api_key.\n";
 
 #[derive(Default)]
 struct Input {
@@ -12,6 +12,7 @@ struct Input {
     join: Option<String>,
     project: Option<PathBuf>,
     no_project: bool,
+    runner: bool,
     directory: Option<PathBuf>,
     bin_dir: Option<PathBuf>,
     token_file: Option<PathBuf>,
@@ -55,6 +56,7 @@ fn parse(args: &[String]) -> Result<Input, String> {
             "--join" => input.join = Some(value(&mut iter)?),
             "--project" => input.project = Some(PathBuf::from(value(&mut iter)?)),
             "--no-project" => input.no_project = true,
+            "--runner" => input.runner = true,
             "--environment-dir" => input.directory = Some(PathBuf::from(value(&mut iter)?)),
             "--bin-dir" => input.bin_dir = Some(PathBuf::from(value(&mut iter)?)),
             "--candidate-dir" => input.candidate_dir = Some(PathBuf::from(value(&mut iter)?)),
@@ -86,6 +88,9 @@ fn parse(args: &[String]) -> Result<Input, String> {
         return Err(
             "Provide the credential for the selected path: a pairing code or a user token".into(),
         );
+    }
+    if input.runner && input.command != "configure" {
+        return Err("--runner applies only to environment configure".into());
     }
     if input.development_build
         && !matches!(
@@ -312,6 +317,7 @@ async fn run_inner(args: &[String]) -> Result<String, String> {
                 )
                 .map_err(|e| e.to_string())?,
                 project: None,
+                runner: None,
                 account: current_account().map_err(|e| e.to_string())?,
                 binaries: discover_binaries(input.bin_dir.as_deref())?,
             };
@@ -357,6 +363,7 @@ async fn run_inner(args: &[String]) -> Result<String, String> {
                         .canonicalize()
                         .map_err(|_| "The original project is unavailable")?,
                 ),
+                runner: None,
                 account: current_account().map_err(|e| e.to_string())?,
                 binaries: discover_binaries(input.bin_dir.as_deref())?,
             };
@@ -434,9 +441,9 @@ async fn run_inner(args: &[String]) -> Result<String, String> {
                         _ => return Err("Choose create or join".into()),
                     }
                 }
-                if input.project.is_none() && !input.no_project {
+                if input.project.is_none() && !input.no_project && !input.runner {
                     if !interactive {
-                        return Err("Specify --project PATH or --no-project".into());
+                        return Err("Specify --runner, --project PATH, or --no-project".into());
                     }
                     let path = prompt("Project folder on this machine (leave empty to skip): ")?;
                     if path.is_empty() {
@@ -467,6 +474,7 @@ async fn run_inner(args: &[String]) -> Result<String, String> {
                     },
                     server_url,
                     project,
+                    runner: input.runner.then_some(true),
                     account: current_account().map_err(|e| e.to_string())?,
                     binaries,
                 }
@@ -476,7 +484,7 @@ async fn run_inner(args: &[String]) -> Result<String, String> {
                 ..Default::default()
             };
             if input.code_stdin && (request.local_server() || !request.local_runner()) {
-                return Err("Runner pairing is only used when joining with a local project".into());
+                return Err("Runner pairing is only used when joining with a local Runner".into());
             }
             if input.token_file.is_some() && (request.local_server() || request.local_runner()) {
                 return Err(
@@ -679,7 +687,7 @@ async fn run_inner(args: &[String]) -> Result<String, String> {
             let result = core
                 .enable_runner(
                     &store,
-                    PathBuf::from(project),
+                    Some(PathBuf::from(project)),
                     &secrets,
                     progress_sink(input.json),
                 )

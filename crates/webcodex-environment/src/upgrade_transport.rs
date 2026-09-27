@@ -345,7 +345,7 @@ mod tests {
 
     #[test]
     fn protected_lease_file_requires_nonce_and_consistent_complete_state() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = crate::test_tempdir().unwrap();
         let store = EnvironmentStore::open(temp.path().join("env")).unwrap();
         let pending = SavedLease {
             server_url: "https://example.invalid".into(),

@@ -204,6 +204,17 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ("stdout", schema_type("string", "Git command stdout.")),
             ("stderr", schema_type("string", "Git command stderr.")),
         ])),
+        "review_changes" => Some(wrapped_output_schema(vec![
+            ("project", schema_type("string", "Runtime project input.")),
+            ("snapshot", nullable_schema("object", "Exact retained Git review snapshot identity, scope/source fence, completeness, and reuse state.")),
+            ("summary", nullable_schema("object", "Initial-page bounded review summary; continuation pages may omit it.")),
+            ("files", array_schema(open_object_schema("Bounded changed-file metadata."), "Initial-page changed files; continuation pages may return an empty array.")),
+            ("signals", array_schema(open_object_schema("Bounded deterministic or Session review signal."), "Initial-page review signals; continuation pages may return an empty array.")),
+            ("diff", nullable_schema("object", "One bounded page from the existing git_diff_hunks engine, preserving its source fences and recovery semantics.")),
+            ("continuation", nullable_schema("string", "Opaque same-snapshot review continuation, or null when no bounded page continuation is available.")),
+            ("next_call", nullable_schema("object", "Parser-ready advisory review_changes continuation call using the exact same scope and projection.")),
+            ("reason_code", nullable_schema("string", "Stable failure/stale reason when review cannot proceed.")),
+        ])),
         "git_review_summary" => Some(wrapped_output_schema(vec![
             ("project", schema_type("string", "Runtime project input.")),
             (

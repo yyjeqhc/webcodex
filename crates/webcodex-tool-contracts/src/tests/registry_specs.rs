@@ -21,7 +21,12 @@ fn tool_specs_describe_default_coding_loop_preferences() {
         "exact resume",
         "active accessible session",
         "never guesses prior session",
-        "context_request",
+        "_wc.context",
+        "agents.md/claude.md",
+        "do not immediately reread",
+        "reuse successful workspace",
+        "available semantic navigation",
+        "sufficient startup skills/plugins",
         "project.instructions",
         "webcodex.workflow",
         "guidance_profile",
@@ -39,6 +44,8 @@ fn tool_specs_describe_default_coding_loop_preferences() {
             "work_on_project description should mention {phrase}: {work_on_project_desc}"
         );
     }
+
+    assert!(!work_on_project_desc.contains("context_request"));
 
     let read_files_desc = desc("read_files");
     for phrase in [
@@ -245,58 +252,42 @@ fn tool_specs_describe_default_coding_loop_preferences() {
 
     let show_changes_desc = desc("show_changes");
     for phrase in [
-        "canonical bounded workspace-wide review",
-        "worktree overview",
-        "compact session signals",
-        "structured closeout evidence",
-        "tiny targeted git observations need not call it first",
-        "diff_review_handoff",
-        "git_diff_hunks",
+        "specialist workspace projection",
+        "explicit discovery",
+        "presentation",
+        "session signals",
+        "closeout internals",
+        "ordinary code review uses review_changes",
     ] {
         assert!(
             show_changes_desc.contains(phrase),
             "show_changes description should mention {phrase}: {show_changes_desc}"
         );
     }
-
     let git_diff_hunks = spec_named(&specs, "git_diff_hunks");
     assert!(!show_changes_desc.contains("default inspect/review tool before final response"));
 
     let git_review_summary_desc = desc("git_review_summary");
     for phrase in [
-        "broad or unknown ranges",
-        "file/change map",
-        "targeted git_diff_hunks/read_files",
-        "small bounded understood committed diffs may use native git directly",
-        "never mutates",
+        "specialist exact committed-range review map",
+        "explicit discovery",
+        "ordinary review uses review_changes",
+        "read-only",
     ] {
         assert!(
             git_review_summary_desc.contains(phrase),
             "git_review_summary description should mention {phrase}: {git_review_summary_desc}"
         );
     }
-
     let git_diff_hunks_desc = git_diff_hunks.description.to_lowercase();
     for phrase in [
-        "targeted/paged",
-        "scope/fence-bound opaque continuation",
-        "safe bounded traversal",
-        "max_page_bytes",
-        "raw producer page",
-        "shared safe producer maximum",
-        "512 kib",
-        "final model-facing",
-        "parser-ready next_call",
-        "recovery.later_hunks.next_call",
-        "next logical diff record",
-        "never an intra-hunk cursor",
-        "recovery.current_hunk.next_call",
-        "bounded refinement",
-        "exact hunk-fragment token",
-        "next complete diff line",
-        "line-budget and page-byte-budget truncation",
-        "positive complete-line progress",
-        "safe forward progress is not proven",
+        "specialist exact diff paging core",
+        "explicit discovery",
+        "review_changes internals",
+        "source fences",
+        "bounded page/hunk continuation",
+        "path/range projection",
+        "safe recovery",
     ] {
         assert!(
             git_diff_hunks_desc.contains(phrase),
@@ -1003,12 +994,26 @@ fn session_tool_specs_describe_explicit_targeting() {
         .as_str()
         .expect("work_on_project session_id description")
         .to_lowercase();
-    for phrase in ["does not prove", "fresh model context", "context_request"] {
+    for phrase in [
+        "does not prove",
+        "fresh model context",
+        "_wc.context",
+        "_wc.record",
+    ] {
         assert!(
             session_id_description.contains(phrase),
             "work_on_project session_id description should mention {phrase}: {session_id_description}"
         );
     }
+    let work_schema_text = serde_json::to_string(&work.input_schema).unwrap();
+    for legacy in ["context_request", "recording_session_id"] {
+        assert!(
+            !work_schema_text.contains(legacy),
+            "work_on_project model-facing schema prose leaked legacy wrapper {legacy}: {work_schema_text}"
+        );
+    }
+    assert!(work.description.contains("_wc.context"));
+    assert!(!work.description.contains("context_request"));
     let update_desc = update.description.to_lowercase();
     for phrase in [
         "authorized project",

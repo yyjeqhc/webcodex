@@ -793,13 +793,14 @@ mod tests {
             &canonical_schema,
             &|target| suggested_tool_call_route(target, false),
         );
+        let current_call = &current_adaptive["output"]["changes"]["show_changes"]
+            ["diff_review_handoff"]["next_call"];
+        assert_eq!(current_call["tool"], ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME);
+        assert_eq!(current_call["arguments"]["tool"], "git_diff_hunks");
         assert_eq!(
-            current_adaptive["output"]["changes"]["show_changes"]["diff_review_handoff"]
-                ["next_call"],
-            canonical_call,
-            "current Adaptive direct routing must preserve the canonical nested call"
+            current_call["arguments"]["arguments"], canonical_call["arguments"],
+            "current Adaptive routing must gateway-wrap the exact specialist recovery call"
         );
-
         let synthetic_gateway_route = |target: &str| {
             if target == "git_diff_hunks" {
                 SuggestedToolCallRoute::Gateway(ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME)

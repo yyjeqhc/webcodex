@@ -6,6 +6,7 @@ export const baseState = {
   project,
   session_id,
   state_version: `wr2_${"a".repeat(64)}`,
+  window: { key: "f".repeat(64), source: "mcp" },
   workspace: {
     git_available: true,
     clean: false,
@@ -48,8 +49,8 @@ export const baseState = {
     events_returned: 2, events_observed: 2, truncated: false,
     last_activity_at_ms: 1_999_999_990_000,
     events: [
-      { label: "Reviewed changes", kind: "review", status: "success", meaningful: true, started_at_ms: 1_999_999_989_000, ended_at_ms: 1_999_999_990_000, duration_ms: 1000 },
-      { label: "Observed Runtime status", kind: null, status: "success", meaningful: false, started_at_ms: 1_999_999_980_000, ended_at_ms: 1_999_999_980_100, duration_ms: 100 },
+      { label: "Reviewed changes", tool_name: "show_changes", server_trace_id: "trace-reviewed", kind: "review", status: "success", meaningful: true, started_at_ms: 1_999_999_989_000, ended_at_ms: 1_999_999_990_000, duration_ms: 1000 },
+      { label: "Observed Runtime status", tool_name: "runtime_status", server_trace_id: "trace-runtime", kind: null, status: "success", meaningful: false, started_at_ms: 1_999_999_980_000, ended_at_ms: 1_999_999_980_100, duration_ms: 100 },
     ],
   },
   collaboration: { available: true, can_send: true, messages: [] },

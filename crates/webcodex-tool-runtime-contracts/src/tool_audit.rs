@@ -605,16 +605,17 @@ fn typed_agent_task_request_audit(kind: AgentTaskRequestAudit, arguments: &Value
             copy_keys(obj, &mut out, &["task_id", "attempt_id"]);
         }
         AgentTaskRequestAudit::HeartbeatAttempt => {
-            copy_keys(
-                obj,
-                &mut out,
-                &[
-                    "task_id",
-                    "attempt_id",
-                    "assignee_agent_id",
-                    "attempt_controller_generation",
-                ],
-            );
+            for key in [
+                "attempt_ref",
+                "task_id",
+                "attempt_id",
+                "assignee_agent_id",
+                "attempt_controller_generation",
+            ] {
+                if let Some(value) = obj.get(key).filter(|value| !value.is_null()) {
+                    out.insert((*key).to_string(), value.clone());
+                }
+            }
             out.insert(
                 "attempt_fence_present".to_string(),
                 Value::Bool(obj.get("attempt_fence").and_then(Value::as_str).is_some()),
@@ -633,17 +634,18 @@ fn typed_agent_task_request_audit(kind: AgentTaskRequestAudit, arguments: &Value
             );
         }
         AgentTaskRequestAudit::CompleteAttempt => {
-            copy_keys(
-                obj,
-                &mut out,
-                &[
-                    "task_id",
-                    "attempt_id",
-                    "assignee_agent_id",
-                    "attempt_controller_generation",
-                    "outcome",
-                ],
-            );
+            for key in [
+                "attempt_ref",
+                "task_id",
+                "attempt_id",
+                "assignee_agent_id",
+                "attempt_controller_generation",
+                "outcome",
+            ] {
+                if let Some(value) = obj.get(key).filter(|value| !value.is_null()) {
+                    out.insert((*key).to_string(), value.clone());
+                }
+            }
             out.insert(
                 "attempt_fence_present".to_string(),
                 Value::Bool(obj.get("attempt_fence").and_then(Value::as_str).is_some()),
@@ -2591,11 +2593,12 @@ mod computer_privacy_tests {
         }
 
         let typed = ToolCall::HeartbeatAgentTaskAttempt {
-            task_id: "wc_agent_task_iavN7wEjRWeJq83v".to_string(),
-            attempt_id: "wc_agent_task_attempt_iavN7wEjRWeJq83v".to_string(),
-            assignee_agent_id: "wc_dagent_iavN7wEjRWeJq83v".to_string(),
-            attempt_fence: PRIVATE_FENCE.to_string(),
-            attempt_controller_generation: 9,
+            attempt_ref: None,
+            task_id: Some("wc_agent_task_iavN7wEjRWeJq83v".to_string()),
+            attempt_id: Some("wc_agent_task_attempt_iavN7wEjRWeJq83v".to_string()),
+            assignee_agent_id: Some("wc_dagent_iavN7wEjRWeJq83v".to_string()),
+            attempt_fence: Some(PRIVATE_FENCE.to_string()),
+            attempt_controller_generation: Some(9),
             active_turn_wake_id: Some(PRIVATE_WAKE.to_string()),
             active_turn_consume_token: Some(PRIVATE_TOKEN.to_string()),
         }
@@ -4276,6 +4279,24 @@ impl ToolCallAuditProjection for ToolCall {
                     "head_commit": head_commit,
                 })
             }
+            Self::ReviewChanges {
+                project,
+                scope,
+                paths,
+                max_hunks,
+                max_hunk_lines,
+                max_page_bytes,
+                continuation,
+                ..
+            } => serde_json::json!({
+                "project": project,
+                "scope": scope,
+                "paths": paths,
+                "max_hunks": max_hunks,
+                "max_hunk_lines": max_hunk_lines,
+                "max_page_bytes": max_page_bytes,
+                "continuation_present": continuation.is_some(),
+            }),
             Self::GitLog {
                 project,
                 head_commit,
@@ -4690,6 +4711,7 @@ impl ToolCallAuditProjection for ToolCall {
                 }),
             ),
             Self::HeartbeatAgentTaskAttempt {
+                attempt_ref,
                 task_id,
                 attempt_id,
                 assignee_agent_id,
@@ -4700,6 +4722,7 @@ impl ToolCallAuditProjection for ToolCall {
             } => typed_agent_task_request_audit(
                 AgentTaskRequestAudit::HeartbeatAttempt,
                 &serde_json::json!({
+                    "attempt_ref": attempt_ref,
                     "task_id": task_id,
                     "attempt_id": attempt_id,
                     "assignee_agent_id": assignee_agent_id,
@@ -4710,6 +4733,7 @@ impl ToolCallAuditProjection for ToolCall {
                 }),
             ),
             Self::CompleteAgentTaskAttempt {
+                attempt_ref,
                 task_id,
                 attempt_id,
                 assignee_agent_id,
@@ -4722,6 +4746,7 @@ impl ToolCallAuditProjection for ToolCall {
             } => typed_agent_task_request_audit(
                 AgentTaskRequestAudit::CompleteAttempt,
                 &serde_json::json!({
+                    "attempt_ref": attempt_ref,
                     "task_id": task_id,
                     "attempt_id": attempt_id,
                     "assignee_agent_id": assignee_agent_id,
@@ -5839,6 +5864,13 @@ impl ToolCallAuditProjection for ToolCall {
             } => serde_json::json!({
                 "project": project,
                 "session_id": session_id,
+            }),
+            Self::WorkResultActivityDetail {
+                project,
+                server_trace_id,
+            } => serde_json::json!({
+                "project": project,
+                "server_trace_id": server_trace_id,
             }),
             Self::WorkResultSendMessage {
                 project,

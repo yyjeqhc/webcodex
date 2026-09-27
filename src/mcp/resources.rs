@@ -60,12 +60,13 @@ pub(super) const MCP_RESULT_UI_RESOURCE_LEGACY_URIS: &[&str] = &[
     "ui://webcodex/result/v2",
     "ui://webcodex/result/v3",
 ];
-pub(super) const MCP_WORK_RESULT_UI_RESOURCE_URI: &str = "ui://webcodex/work-result/v10";
+pub(super) const MCP_WORK_RESULT_UI_RESOURCE_URI: &str = "ui://webcodex/work-result/v11";
 // Hosts can retain previously shipped Work Result / Changes resources across
 // deploys. Keep those URIs readable with the current safe template, but only the
-// canonical v10 descriptor admits a new card. Legacy payloads are never promoted
+// canonical v11 descriptor admits a new card. Legacy payloads are never promoted
 // into authoritative Work Result state.
 pub(super) const MCP_WORK_RESULT_UI_RESOURCE_LEGACY_URIS: &[&str] = &[
+    "ui://webcodex/work-result/v10",
     "ui://webcodex/work-result/v9",
     "ui://webcodex/work-result/v8",
     "ui://webcodex/work-result/v7",
@@ -732,16 +733,18 @@ pub(super) fn mcp_issue_artifact_export(
 pub(super) fn mcp_artifact_export_tool_result(
     result: ToolResult,
     caller: McpArtifactExportCallerBinding,
+    text_json_compat: bool,
     result_presentation: McpToolResultPresentation,
 ) -> Value {
     if !result.success {
-        return mcp_runtime_tool_result_fallback(result, result_presentation);
+        return mcp_runtime_tool_result_fallback(result, text_json_compat, result_presentation);
     }
     let (uri, snapshot) = match mcp_issue_artifact_export(caller, &result) {
         Ok(value) => value,
         Err(error) => {
             return mcp_runtime_tool_result_fallback(
                 ToolResult::err(format!("cannot frame artifact export resource: {error}")),
+                text_json_compat,
                 result_presentation,
             )
         }
@@ -780,6 +783,7 @@ pub(super) fn mcp_runtime_tool_result_with_snapshot_resource(
     as_image_requested: bool,
     mut result: ToolResult,
     snapshot_caller: Option<McpArtifactExportCallerBinding>,
+    text_json_compat: bool,
     result_presentation: McpToolResultPresentation,
 ) -> Value {
     let native_image_requested = as_image_requested
@@ -796,7 +800,7 @@ pub(super) fn mcp_runtime_tool_result_with_snapshot_resource(
         }
     }
 
-    mcp_runtime_tool_result_fallback(result, result_presentation)
+    mcp_runtime_tool_result_fallback(result, text_json_compat, result_presentation)
 }
 
 pub(super) fn mcp_native_image_tool_result(
@@ -1796,6 +1800,7 @@ pub(super) fn adapt_tool_result(
     artifact_presentation: ProjectArtifactPresentationMode,
     result: ToolResult,
     context: McpResourceToolCallContext,
+    text_json_compat: bool,
     result_presentation: McpToolResultPresentation,
 ) -> McpResourceToolResultAdaptation {
     if artifact_presentation == ProjectArtifactPresentationMode::Export {
@@ -1804,6 +1809,7 @@ pub(super) fn adapt_tool_result(
             context
                 .artifact_export_caller
                 .expect("validated artifact export caller binding"),
+            text_json_compat,
             result_presentation,
         ));
     }
@@ -1816,6 +1822,7 @@ pub(super) fn adapt_tool_result(
                 artifact_presentation == ProjectArtifactPresentationMode::Image,
                 result,
                 context.snapshot_resource_caller,
+                text_json_compat,
                 result_presentation,
             ),
         );

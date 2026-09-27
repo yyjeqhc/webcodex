@@ -63,7 +63,16 @@ fn node_schema() -> Value {
         "properties": {
             "role": {"type": "string", "maxLength": 64},
             "name": {"anyOf": [{"type": "string", "maxLength": 512}, {"type": "null"}]},
+            "description": {"anyOf": [{"type": "string", "maxLength": 512}, {"type": "null"}]},
             "value": {"anyOf": [{"type": "string", "maxLength": 512}, {"type": "null"}]},
+            "group_id": {"anyOf": [{"type": "string", "maxLength": 32}, {"type": "null"}]},
+            "group_role": {"anyOf": [{"type": "string", "maxLength": 64}, {"type": "null"}]},
+            "group_label": {"anyOf": [{"type": "string", "maxLength": 512}, {"type": "null"}]},
+            "checked": {"anyOf": [{"type": "string", "maxLength": 32}, {"type": "null"}]},
+            "selected": {"anyOf": [{"type": "boolean"}, {"type": "null"}]},
+            "required": {"anyOf": [{"type": "boolean"}, {"type": "null"}]},
+            "disabled": {"anyOf": [{"type": "boolean"}, {"type": "null"}]},
+            "read_only": {"anyOf": [{"type": "boolean"}, {"type": "null"}]},
             "element_id": {"anyOf": [{"type": "string", "minLength": 1, "maxLength": 128}, {"type": "null"}]},
             "actions": {
                 "type": "array",
@@ -78,6 +87,23 @@ fn node_schema() -> Value {
         },
         "required": ["role", "actionable"]
     })
+}
+
+fn stability_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "stable": {"type": "boolean"},
+            "waited_ms": {"type": "integer", "minimum": 0},
+            "reason": {"type": "string", "maxLength": 64}
+        },
+        "required": ["stable", "waited_ms", "reason"]
+    })
+}
+
+fn bounded_count(maximum: u64) -> Value {
+    json!({"type": "integer", "minimum": 0, "maximum": maximum})
 }
 
 fn console_entry_schema() -> Value {
@@ -200,6 +226,27 @@ pub fn output_schema_for_tool(name: &str) -> Option<Value> {
                 ("total_count", json!({"type": "integer", "minimum": 0})),
                 ("truncated", json!({"type": "boolean"})),
                 (
+                    "snapshot_mode",
+                    json!({"type": "string", "enum": ["full", "interactive"]}),
+                ),
+                ("auto_compacted", json!({"type": "boolean"})),
+                (
+                    "max_nodes",
+                    json!({"type": "integer", "minimum": 1, "maximum": 256}),
+                ),
+                (
+                    "max_depth",
+                    json!({"type": "integer", "minimum": 1, "maximum": 32}),
+                ),
+                ("cursor", json!({"type": "integer", "minimum": 0})),
+                ("since_cursor", json!({"type": "integer", "minimum": 0})),
+                ("delta_truncated", json!({"type": "boolean"})),
+                ("new_console_errors", bounded_count(200)),
+                ("new_console_warnings", bounded_count(200)),
+                ("new_failed_requests", bounded_count(300)),
+                ("new_4xx", bounded_count(300)),
+                ("new_5xx", bounded_count(300)),
+                (
                     "retained_count",
                     json!({"type": "integer", "minimum": 0, "maximum": 300}),
                 ),
@@ -303,6 +350,7 @@ pub fn output_schema_for_tool(name: &str) -> Option<Value> {
                 ),
                 ("title", json!({"type": "string", "maxLength": 256})),
                 ("url", json!({"type": "string", "maxLength": 2048})),
+                ("stability", stability_schema()),
             ]);
             let mut schema = wrapped_output_schema(fields);
             schema["properties"]["output"]["additionalProperties"] = json!(false);

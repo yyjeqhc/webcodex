@@ -1889,6 +1889,18 @@ pub(crate) fn validate_request_with_preserved_listen(
     if canonical_server_url(&request.server_url)? != request.server_url {
         return Err(diagnostic("server_url", "Use the canonical Server address"));
     }
+    if request.project.is_some() && !request.local_runner() {
+        return Err(diagnostic(
+            "runner_required",
+            "A local project requires a local Runner",
+        ));
+    }
+    if request.local_runner() && request.account.identity == "0" {
+        return Err(diagnostic(
+            "project_user_required",
+            "Persistent Runner must run as the user who owns the projects",
+        ));
+    }
     if let Some(project) = &request.project {
         webcodex_runner_config::paths::validate_project_path_ingress(project)
             .map_err(|_| diagnostic("project_path", "This project path is not supported"))?;
@@ -1915,12 +1927,6 @@ pub(crate) fn validate_request_with_preserved_listen(
                 "The selected directory is not an allowed project root",
             )
         })?;
-        if request.account.identity == "0" {
-            return Err(diagnostic(
-                "project_user_required",
-                "Persistent Runner must run as the user who owns the projects",
-            ));
-        }
     }
     if let EnvironmentMode::Create { listen } = &request.mode {
         let socket: std::net::SocketAddr = listen

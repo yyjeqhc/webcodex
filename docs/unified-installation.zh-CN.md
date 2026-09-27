@@ -11,7 +11,7 @@
 以下流程适用于对应平台的安装包已经验收并发布之后；源码预览请使用上文单独列出的开发流程。
 
 1. 安装对应平台的安装包并打开 WebCodex Desktop。
-2. 选择**创建环境**并选择项目目录，也可以暂时不选项目。
+2. 选择**在此电脑使用 WebCodex**，保留**允许 AI 在此电脑上工作**并确认配置，无需选择项目。只有明确仅运行 Server 时才取消允许本机工作。
 3. 在 Desktop 确认 Server、Runner 和项目状态。Desktop、CLI 与网页使用同一 Server 的授权视图。浏览器打开 `SERVER_URL/runtime`，使用现有用户凭据查看获授权的 Runner、项目和状态。
 4. 通过 Server 配置现有 ChatGPT MCP/Tunnel 连接。ChatGPT 始终连接中心 Server。远程项目路径属于 Runner 所在机器，不是 Server 机器上的本地路径。
 
@@ -29,13 +29,13 @@
 webcodex environment configure --create --project PATH
 ```
 
-如果该机器没有仓库，使用 `--no-project`。在每台仓库机器加入 Server：
+如果该机器没有仓库，使用 `--no-project`。如果希望允许 AI 工作但不选默认仓库，改用 `webcodex environment configure --create --runner`；远程机器可用 `webcodex environment configure --join https://server.example --runner --code-stdin`。既有环境保留原角色；首次为 viewer 启用 Runner 时，通过 Desktop 明确勾选允许本机工作，或使用 CLI 的 `add-project` 转换。在每台仓库机器加入 Server：
 
 ```text
 webcodex environment configure --join https://server.example --project PATH
 ```
 
-使用 `--no-project` 可仅作为查看端加入，不配置本机 Server 或 Runner。两项业务选择是创建/加入和项目/跳过；随后按所选流程收集 Server 地址、认证信息和必要的系统授权。以 viewer 身份加入时，使用用户个人访问 token，通过隐藏输入或受保护的 `--token-file` 提供；不使用 pairing code。例如，从受保护文件导入已有用户 API 凭据：
+使用 `--no-project` 可仅作为查看端加入，不配置本机 Server 或 Runner。Desktop 将创建/加入与是否允许本机工作分开。CLI 的 `--runner` 可启用 Runner 而不选默认项目；兼容的 `--project PATH` 仍表示启用 Runner 并注册该明确项目。随后按所选流程收集 Server 地址、认证信息和必要的系统授权。以 viewer 身份加入时，使用用户个人访问 token，通过隐藏输入或受保护的 `--token-file` 提供；不使用 pairing code。例如，从受保护文件导入已有用户 API 凭据：
 
 ```text
 webcodex environment configure --join https://server.example --no-project --token-file PATH

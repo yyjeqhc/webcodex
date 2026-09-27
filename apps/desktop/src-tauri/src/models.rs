@@ -555,6 +555,8 @@ pub struct EnvironmentInput {
     pub mode: String,
     pub server_url: Option<String>,
     pub project_path: Option<String>,
+    /// Missing preserves older callers; normal Desktop setup explicitly enables work.
+    pub runner: Option<bool>,
     pub pairing_code: Option<String>,
     pub user_token: Option<String>,
     #[serde(default)]

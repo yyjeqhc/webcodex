@@ -3,7 +3,7 @@ use crate::error::{DesktopError, DesktopResult};
 use crate::models::StoredRuntime;
 use serde::{Deserialize, Serialize};
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use toml_edit::{Array, ArrayOfTables, DocumentMut, Item, Table};
 use webcodex_core::plugin::{validate_provider_id, validate_provider_name, PLUGIN_MAX_PROVIDERS};
 
@@ -19,6 +19,15 @@ const MAX_BYTES: u64 = 256 * 1024;
 pub struct RunnerPaths {
     pub instruction_files: Vec<String>,
     pub skill_roots: Vec<String>,
+}
+
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct RunnerFileAccess {
+    pub configured_roots: Vec<String>,
+    pub effective_roots: Vec<String>,
+    pub using_default_roots: bool,
+    pub allow_cwd_anywhere: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -51,6 +60,7 @@ pub fn verify_target(runtime: &StoredRuntime, expected: &SettingsTarget) -> Desk
 #[derive(Serialize)]
 pub struct RunnerSettings {
     pub paths: RunnerPaths,
+    pub file_access: RunnerFileAccess,
     pub plugin_ids: Vec<String>,
     pub target: SettingsTarget,
     pub can_restart: bool,
@@ -62,6 +72,35 @@ pub struct SettingsUpdate {
     pub target: SettingsTarget,
     pub expected: RunnerPaths,
     pub paths: RunnerPaths,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AllowedRootsUpdate {
+    pub target: SettingsTarget,
+    pub expected: Vec<String>,
+    pub roots: Vec<String>,
+}
+
+pub struct PendingAllowedRootsEdit {
+    path: PathBuf,
+    original: String,
+    candidate: String,
+}
+
+impl PendingAllowedRootsEdit {
+    pub fn candidate_unchanged(&self) -> DesktopResult<bool> {
+        Ok(read(&self.path)? == self.candidate)
+    }
+
+    pub fn rollback_if_unchanged(&self) -> DesktopResult<bool> {
+        let current = read(&self.path)?;
+        if current != self.candidate {
+            return Ok(false);
+        }
+        persist_text(&self.path, &self.candidate, &self.original)?;
+        Ok(true)
+    }
 }
 
 fn error() -> DesktopError {
@@ -119,6 +158,57 @@ fn paths(doc: &DocumentMut) -> DesktopResult<RunnerPaths> {
     })
 }
 
+fn string_list(doc: &DocumentMut, section: &str, key: &str) -> DesktopResult<Vec<String>> {
+    let Some(section) = doc.get(section) else {
+        return Ok(Vec::new());
+    };
+    if !section.is_table_like() {
+        return Err(error());
+    }
+    let Some(value) = section.get(key) else {
+        return Ok(Vec::new());
+    };
+    value
+        .as_array()
+        .ok_or_else(error)?
+        .iter()
+        .map(|v| v.as_str().map(str::to_string).ok_or_else(error))
+        .collect()
+}
+
+fn configured_allowed_roots(doc: &DocumentMut) -> DesktopResult<Vec<String>> {
+    string_list(doc, "policy", "allowed_roots")
+}
+
+fn file_access(doc: &DocumentMut) -> DesktopResult<RunnerFileAccess> {
+    let configured_roots = configured_allowed_roots(doc)?;
+    let allow_cwd_anywhere = match doc.get("policy") {
+        None => false,
+        Some(policy) if policy.is_table_like() => policy
+            .get("allow_cwd_anywhere")
+            .map(|value| value.as_bool().ok_or_else(error))
+            .transpose()?
+            .unwrap_or(false),
+        Some(_) => return Err(error()),
+    };
+    let configured_paths = configured_roots
+        .iter()
+        .map(PathBuf::from)
+        .collect::<Vec<_>>();
+    let effective_roots =
+        webcodex_runner_config::effective_allowed_roots(&configured_paths, allow_cwd_anywhere)
+            .map_err(|_| error())?
+            .into_iter()
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect();
+    Ok(RunnerFileAccess {
+        using_default_roots: configured_roots.is_empty(),
+        configured_roots,
+        effective_roots,
+        allow_cwd_anywhere,
+    })
+}
+
 fn validate(paths: &[String]) -> DesktopResult<()> {
     if paths.len() > 16 {
         return Err(error());
@@ -140,11 +230,23 @@ fn validate(paths: &[String]) -> DesktopResult<()> {
     Ok(())
 }
 
+fn validate_allowed_roots(roots: &[String]) -> DesktopResult<()> {
+    validate(roots)?;
+    for root in roots {
+        let canonical = Path::new(root).canonicalize().map_err(|_| error())?;
+        if !canonical.is_dir() {
+            return Err(error());
+        }
+    }
+    Ok(())
+}
+
 pub fn inspect(runtime: &StoredRuntime, can_restart: bool) -> DesktopResult<RunnerSettings> {
     let path = runtime.runner_config.as_ref().ok_or_else(error)?;
     let doc = parse(&read(path)?, runtime)?;
     Ok(RunnerSettings {
         paths: paths(&doc)?,
+        file_access: file_access(&doc)?,
         plugin_ids: plugin_ids(&doc)?,
         target: target(runtime)?,
         can_restart,
@@ -191,6 +293,28 @@ fn plugin_ids(doc: &DocumentMut) -> DesktopResult<Vec<String>> {
     Ok(ids)
 }
 
+pub fn stage_allowed_roots_update(
+    runtime: &StoredRuntime,
+    request: AllowedRootsUpdate,
+) -> DesktopResult<PendingAllowedRootsEdit> {
+    verify_target(runtime, &request.target)?;
+    validate_allowed_roots(&request.roots)?;
+    let path = runtime.runner_config.as_ref().ok_or_else(error)?;
+    let original = read(path)?;
+    let mut doc = parse(&original, runtime)?;
+    if configured_allowed_roots(&doc)? != request.expected {
+        return Err(error());
+    }
+    doc["policy"]["allowed_roots"] = toml_edit::value(request.roots.into_iter().collect::<Array>());
+    let candidate = doc.to_string();
+    persist_text(path, &original, &candidate)?;
+    Ok(PendingAllowedRootsEdit {
+        path: path.clone(),
+        original,
+        candidate,
+    })
+}
+
 pub fn update(runtime: &StoredRuntime, request: SettingsUpdate) -> DesktopResult<()> {
     verify_target(runtime, &request.target)?;
     validate(&request.paths.instruction_files)?;
@@ -212,7 +336,10 @@ pub fn update(runtime: &StoredRuntime, request: SettingsUpdate) -> DesktopResult
 }
 
 fn persist(path: &Path, original: &str, doc: &DocumentMut) -> DesktopResult<()> {
-    let updated = doc.to_string();
+    persist_text(path, original, &doc.to_string())
+}
+
+fn persist_text(path: &Path, original: &str, updated: &str) -> DesktopResult<()> {
     if updated.len() as u64 > MAX_BYTES {
         return Err(error());
     }

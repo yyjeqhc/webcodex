@@ -168,15 +168,56 @@ fn start_agent_task_endpoint_continuation_parses_ref_or_explicit_tuple() {
         }),
     )
     .is_err());
-    assert!(ToolCall::from_tool_name(
+    let heartbeat_by_ref = ToolCall::from_tool_name(
         "heartbeat_agent_task_attempt",
+        json!({"attempt_ref": "~ta1"}),
+    )
+    .unwrap();
+    assert!(matches!(
+        heartbeat_by_ref,
+        ToolCall::HeartbeatAgentTaskAttempt {
+            attempt_ref: Some(ref selector),
+            task_id: None,
+            attempt_fence: None,
+            active_turn_wake_id: None,
+            active_turn_consume_token: None,
+            ..
+        } if selector == "~ta1"
+    ));
+    let completion_by_ref = ToolCall::from_tool_name(
+        "complete_agent_task_attempt",
         json!({
             "attempt_ref": "~ta1",
+            "outcome": "succeeded",
+            "completion_key": "completion-by-ref"
+        }),
+    )
+    .unwrap();
+    assert!(matches!(
+        completion_by_ref,
+        ToolCall::CompleteAgentTaskAttempt {
+            attempt_ref: Some(ref selector),
+            task_id: None,
+            attempt_id: None,
+            assignee_agent_id: None,
+            attempt_fence: None,
+            attempt_controller_generation: None,
+            ref outcome,
+            ref completion_key,
+            ..
+        } if selector == "~ta1" && outcome == "succeeded" && completion_key == "completion-by-ref"
+    ));
+    assert!(ToolCall::from_tool_name(
+        "start_agent_task_coding_run",
+        json!({
+            "attempt_ref": "~ta1",
+            "project": "agent:special:task-project",
             "task_id": "wc_agent_task_ERERERERERERERER",
             "attempt_id": "wc_agent_task_attempt_IiIiIiIiIiIiIiIi",
             "assignee_agent_id": "wc_dagent_MzMzMzMzMzMzMzMz",
             "attempt_fence": "wc_agent_task_fence_RERERERERERERERERERERA",
-            "attempt_controller_generation": 1
+            "attempt_controller_generation": 1,
+            "provider_id": "codex"
         }),
     )
     .is_err());

@@ -30,6 +30,7 @@ fn canonical_execution_project_binding(
     match call {
         ToolCall::GitDiffHunks { project, .. }
         | ToolCall::GitReviewSummary { project, .. }
+        | ToolCall::ReviewChanges { project, .. }
         | ToolCall::ShowChanges { project, .. }
         | ToolCall::WorkspaceHygieneCheck { project, .. } => {
             Some((project, CanonicalProjectOutput::Requested))
@@ -2139,6 +2140,14 @@ impl ToolRuntime {
                     .await
             }
 
+            ToolCall::WorkResultActivityDetail {
+                project,
+                server_trace_id,
+            } => {
+                self.work_result_activity_detail(project, server_trace_id, auth, window)
+                    .await
+            }
+
             ToolCall::WorkResultSendMessage {
                 project,
                 session_id,
@@ -2764,6 +2773,7 @@ impl ToolRuntime {
             } => Box::pin(self.reconcile_agent_task_coding_run(auth, task_id, attempt_id)).await,
 
             ToolCall::HeartbeatAgentTaskAttempt {
+                attempt_ref,
                 task_id,
                 attempt_id,
                 assignee_agent_id,
@@ -2771,8 +2781,9 @@ impl ToolRuntime {
                 attempt_controller_generation,
                 active_turn_wake_id,
                 active_turn_consume_token,
-            } => self.heartbeat_agent_task_attempt(
+            } => self.heartbeat_agent_task_attempt_with_selector(
                 auth,
+                attempt_ref,
                 task_id,
                 attempt_id,
                 assignee_agent_id,
@@ -2783,6 +2794,7 @@ impl ToolRuntime {
             ),
 
             ToolCall::CompleteAgentTaskAttempt {
+                attempt_ref,
                 task_id,
                 attempt_id,
                 assignee_agent_id,
@@ -2792,8 +2804,9 @@ impl ToolRuntime {
                 terminal_result,
                 terminal_reason,
                 completion_key,
-            } => self.complete_agent_task_attempt(
+            } => self.complete_agent_task_attempt_with_selector(
                 auth,
+                attempt_ref,
                 task_id,
                 attempt_id,
                 assignee_agent_id,
@@ -3281,8 +3294,9 @@ impl ToolRuntime {
             | ToolCall::GitStatus { .. }
             | ToolCall::GitDiffHunks { .. }
             | ToolCall::GitReviewSummary { .. }
+            | ToolCall::ReviewChanges { .. }
             | ToolCall::GitLog { .. }
-            | ToolCall::ShowChanges { .. }) => self.dispatch_git_tool(call).await,
+            | ToolCall::ShowChanges { .. }) => self.dispatch_git_tool(call, auth).await,
 
             call @ (ToolCall::CargoFmt { .. }
             | ToolCall::CargoCheck { .. }

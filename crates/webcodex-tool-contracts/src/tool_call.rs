@@ -1342,6 +1342,22 @@ fn nullable_stdin_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema 
     })
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum GitReviewScopeInput {
+    /// Review the complete current workspace (tracked, staged, unstaged, and untracked state).
+    Workspace,
+    /// Review one exact committed range, resolved once to a single merge-base.
+    Committed {
+        #[schemars(length(min = 40, max = 40))]
+        #[schemars(regex(pattern = "^[0-9A-Fa-f]{40}$"))]
+        base_commit: String,
+        #[schemars(length(min = 40, max = 40))]
+        #[schemars(regex(pattern = "^[0-9A-Fa-f]{40}$"))]
+        head_commit: String,
+    },
+}
+
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(
     tag = "tool",
@@ -1431,8 +1447,8 @@ pub enum ToolCall {
         /// Model guidance only. An explicit direct, host_code_mode, or feature-gated code_mode
         /// always wins. When omitted on MCP, the configured MCP Host profile supplies the default;
         /// omission on non-MCP/internal calls falls back to direct. No tool admission, authority,
-        /// effects, or Session state changes; explicit resume may choose again. Request
-        /// `context_request=["webcodex.workflow"]` when the current model context needs that guidance.
+        /// effects, or Session state changes; explicit resume may choose again. On MCP, request
+        /// `_wc.context=["webcodex.workflow"]` when the current model context needs that guidance.
         #[serde(
             default,
             deserialize_with = "deserialize_optional_coding_guidance_profile",
@@ -1452,9 +1468,9 @@ pub enum ToolCall {
         /// remains bound to its exact final Project; in worktree mode the Runner re-observes that
         /// registered managed Project and its source provenance instead of creating a second worktree.
         /// Failure never guesses or creates a replacement Session. Supplying session_id does not prove this
-        /// model context still retains project instructions, workflow guidance, or extension metadata. A
-        /// fresh model context should request missing static guidance through context_request. This business
-        /// input is distinct from wrapper recording_session_id.
+        /// model context still retains project instructions, workflow guidance, or extension metadata. On
+        /// MCP, a fresh model context should request missing static guidance through `_wc.context`. This
+        /// business input is distinct from recorder provenance supplied through `_wc.record`.
         #[schemars(regex(pattern = "^wc_sess_([A-Za-z0-9_-]{16}|[0-9a-f]{32})$"))]
         #[serde(default)]
         session_id: Option<String>,
@@ -1477,7 +1493,9 @@ pub enum ToolCall {
         /// detailed validation history.
         #[serde(default)]
         summary_only: bool,
-        /// Include bounded diff hunks in show_changes. Defaults to true.
+        /// Include bounded diff hunks in the full closeout show_changes payload. Defaults to true for
+        /// full closeout. summary_only never returns raw change provenance and therefore omits diff
+        /// generation regardless of this field.
         #[serde(default)]
         include_diff: Option<bool>,
         /// Defaults to true. When include_handoff=true, controls whether the nested handoff summary
@@ -1517,6 +1535,14 @@ pub enum ToolCall {
         #[serde(default)]
         #[schemars(regex(pattern = "^wc_sess_([A-Za-z0-9_-]{16}|[0-9a-f]{32})$"))]
         session_id: Option<String>,
+    },
+
+    /// Work Result App-only lazy read of one completed call in the current
+    /// canonical Host Window. The Window identity is supplied only by Host sideband.
+    WorkResultActivityDetail {
+        project: String,
+        #[schemars(length(min = 1, max = 128))]
+        server_trace_id: String,
     },
 
     /// Work Result App-only collaboration write. The App fixes the business kind
@@ -2528,6 +2554,35 @@ pub enum ToolCall {
         session_id: Option<String>,
     },
 
+    /// Primary bounded Git review workflow over one closed workspace or committed scope.
+    ReviewChanges {
+        /// Runner-registered project id.
+        project: String,
+        /// Closed review scope. Continuation calls must repeat this exact scope.
+        scope: GitReviewScopeInput,
+        /// Optional explicit wc_sess_* Workflow Session id. Snapshot reuse is fenced to this identity.
+        #[serde(default)]
+        session_id: Option<String>,
+        /// Optional project-relative paths to narrow diff paging.
+        #[serde(default)]
+        paths: Option<Vec<String>>,
+        /// Maximum hunks on each bounded diff page.
+        #[serde(default)]
+        max_hunks: Option<usize>,
+        /// Maximum complete lines per returned hunk.
+        #[serde(default)]
+        max_hunk_lines: Option<usize>,
+        /// Raw producer page budget, clamped by the same git_diff_hunks engine.
+        #[schemars(range(min = 0))]
+        #[serde(default)]
+        max_page_bytes: Option<usize>,
+        /// Opaque review_changes continuation. When present, metadata comes only from the exact retained
+        /// snapshot and the underlying diff page continues from the same fenced source.
+        #[schemars(length(max = 384))]
+        #[serde(default)]
+        continuation: Option<String>,
+    },
+
     /// Run `cargo fmt` in a Runner-registered Rust project.
     CargoFmt {
         /// Runner-registered project id.
@@ -3358,24 +3413,34 @@ pub enum ToolCall {
 
     /// Renew only the exact latest unexpired fenced AgentTaskAttempt.
     HeartbeatAgentTaskAttempt {
-        /// Canonical durable AgentTask id. It is not a credential or Connector Task id.
+        /// Server-issued ~ta selector for one exact task, attempt, assignee, fence, and generation.
+        /// Not a credential. Omit it when passing the explicit tuple.
+        #[schemars(regex(pattern = "^~ta[1-9][0-9]{0,18}$"))]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        attempt_ref: Option<String>,
+        /// Canonical durable AgentTask id. Required with the explicit tuple. Omit it when using attempt_ref.
         #[schemars(regex(pattern = "^wc_agent_task_[A-Za-z0-9_-]{16}$"))]
-        task_id: String,
-        /// Exact durable AgentTaskAttempt id.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        task_id: Option<String>,
+        /// Exact durable AgentTaskAttempt id. Required with the explicit tuple. Omit it with attempt_ref.
         #[schemars(regex(pattern = "^wc_agent_task_attempt_[A-Za-z0-9_-]{16}$"))]
-        attempt_id: String,
-        /// Explicit current durable Agent assignee. Agent identity does not grant Project or executor
-        /// authority.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        attempt_id: Option<String>,
+        /// Explicit current durable Agent assignee. Required with the explicit tuple. Agent identity does
+        /// not grant Project or executor authority. Omit it when using attempt_ref.
         #[schemars(regex(pattern = "^wc_dagent_[A-Za-z0-9_-]{16}$"))]
-        assignee_agent_id: String,
-        /// Opaque exact-Attempt freshness fence returned by start_agent_task_attempt. It is not a bearer
-        /// credential or idempotency key.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        assignee_agent_id: Option<String>,
+        /// Opaque exact-Attempt freshness fence returned by start_agent_task_attempt. Required with the
+        /// explicit tuple. Not a bearer credential. Omit it when using attempt_ref.
         #[schemars(regex(pattern = "^wc_agent_task_fence_[A-Za-z0-9_-]{21}[AQgw]$"))]
-        attempt_fence: String,
-        /// Exact current Attempt-local controller generation. Carrier replacement increments it without
-        /// creating a new Attempt.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        attempt_fence: Option<String>,
+        /// Exact current Attempt-local controller generation. Required with the explicit tuple. Stale
+        /// generations fail closed. Omit it when using attempt_ref.
         #[schemars(range(min = 1))]
-        attempt_controller_generation: i64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        attempt_controller_generation: Option<i64>,
         /// Optional exact consumed A4b agent_task_attempt Wake proving this model-turn lineage. It grants
         /// no Task, Project, Runner, Goal, Session, or Endpoint authority and must be paired with
         /// active_turn_consume_token.
@@ -3392,24 +3457,34 @@ pub enum ToolCall {
 
     /// Commit exact fenced terminal AgentTaskAttempt truth with independent keyed replay.
     CompleteAgentTaskAttempt {
-        /// Canonical durable AgentTask id. It is not a credential or Connector Task id.
+        /// Server-issued ~ta selector for one exact task, attempt, assignee, fence, and generation.
+        /// Not a credential. Omit it when passing the explicit tuple.
+        #[schemars(regex(pattern = "^~ta[1-9][0-9]{0,18}$"))]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        attempt_ref: Option<String>,
+        /// Canonical durable AgentTask id. Required with the explicit tuple. Omit it when using attempt_ref.
         #[schemars(regex(pattern = "^wc_agent_task_[A-Za-z0-9_-]{16}$"))]
-        task_id: String,
-        /// Exact durable AgentTaskAttempt id.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        task_id: Option<String>,
+        /// Exact durable AgentTaskAttempt id. Required with the explicit tuple. Omit it with attempt_ref.
         #[schemars(regex(pattern = "^wc_agent_task_attempt_[A-Za-z0-9_-]{16}$"))]
-        attempt_id: String,
-        /// Explicit current durable Agent assignee. Agent identity does not grant Project or executor
-        /// authority.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        attempt_id: Option<String>,
+        /// Explicit current durable Agent assignee. Required with the explicit tuple. Agent identity does
+        /// not grant Project or executor authority. Omit it when using attempt_ref.
         #[schemars(regex(pattern = "^wc_dagent_[A-Za-z0-9_-]{16}$"))]
-        assignee_agent_id: String,
-        /// Opaque exact-Attempt freshness fence returned by start_agent_task_attempt. It is not a bearer
-        /// credential or idempotency key.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        assignee_agent_id: Option<String>,
+        /// Opaque exact-Attempt freshness fence returned by start_agent_task_attempt. Required with the
+        /// explicit tuple. Not a bearer credential. Omit it when using attempt_ref.
         #[schemars(regex(pattern = "^wc_agent_task_fence_[A-Za-z0-9_-]{21}[AQgw]$"))]
-        attempt_fence: String,
-        /// Exact current Attempt-local controller generation. Carrier replacement increments it without
-        /// creating a new Attempt.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        attempt_fence: Option<String>,
+        /// Exact current Attempt-local controller generation. Required with the explicit tuple. Stale
+        /// generations fail closed. Omit it when using attempt_ref.
         #[schemars(range(min = 1))]
-        attempt_controller_generation: i64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        attempt_controller_generation: Option<i64>,
         /// Terminal AgentTask outcome. In A3, failed completion is terminal; only lease expiry before
         /// completion permits a later Attempt.
         outcome: String,
@@ -5498,6 +5573,7 @@ impl ToolCall {
             Self::FinishCodingTask { .. } => "finish_coding_task",
             Self::PresentWorkResult { .. } => "present_work_result",
             Self::WorkResultState { .. } => "work_result_state",
+            Self::WorkResultActivityDetail { .. } => "work_result_activity_detail",
             Self::WorkResultSendMessage { .. } => "work_result_send_message",
             Self::ChangesFileDiff { .. } => "changes_file_diff",
             Self::SessionSummary { .. } => "session_summary",
@@ -5552,6 +5628,7 @@ impl ToolCall {
             Self::GitStatus { .. } => "git_status",
             Self::GitDiffHunks { .. } => "git_diff_hunks",
             Self::GitReviewSummary { .. } => "git_review_summary",
+            Self::ReviewChanges { .. } => "review_changes",
             Self::GitLog { .. } => "git_log",
             Self::CargoFmt { .. } => "cargo_fmt",
             Self::CargoCheck { .. } => "cargo_check",
@@ -5704,6 +5781,7 @@ impl ToolCall {
             | Self::GitStatus { session_id, .. }
             | Self::GitDiffHunks { session_id, .. }
             | Self::GitReviewSummary { session_id, .. }
+            | Self::ReviewChanges { session_id, .. }
             | Self::GitLog { session_id, .. }
             | Self::CargoFmt { session_id, .. }
             | Self::CargoCheck { session_id, .. }
@@ -5760,6 +5838,7 @@ impl ToolCall {
             // evidence. An optional Session selector is association evidence only.
             Self::PresentWorkResult { .. }
             | Self::WorkResultState { .. }
+            | Self::WorkResultActivityDetail { .. }
             | Self::WorkResultSendMessage { .. }
             | Self::ChangesFileDiff { .. }
             | Self::SessionHandoffState { .. } => None,
@@ -5852,6 +5931,7 @@ impl ToolCall {
             | Self::GitStatus { project, .. }
             | Self::GitDiffHunks { project, .. }
             | Self::GitReviewSummary { project, .. }
+            | Self::ReviewChanges { project, .. }
             | Self::GitLog { project, .. }
             | Self::CargoFmt { project, .. }
             | Self::CargoCheck { project, .. }
@@ -5911,6 +5991,7 @@ impl ToolCall {
             Self::FinishCodingTask { project, .. }
             | Self::PresentWorkResult { project, .. }
             | Self::WorkResultState { project, .. }
+            | Self::WorkResultActivityDetail { project, .. }
             | Self::WorkResultSendMessage { project, .. }
             | Self::ChangesFileDiff { project, .. } => Some(project.as_str()),
             Self::UpdateSessionContext { project, .. }

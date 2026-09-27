@@ -30,6 +30,9 @@ class NativeManifestCollectorTests(unittest.TestCase):
     def setUp(self):
         # Fixture provenance must not inherit the CI job running this test.
         self.enterContext(mock.patch.dict(os.environ, CI_CONTEXT))
+        # These executable-script fixtures model a Linux native build job on
+        # every test host; individual Windows cases override the target.
+        self.enterContext(mock.patch.object(collector, "detect_platform", return_value="linux-x64"))
 
     def fixture(self, root: Path, *, dirty: bool = False, target: str = "x86_64-unknown-linux-gnu", architecture: str = "x86_64", suffix: str = "") -> dict[str, Path]:
         paths = {}
@@ -136,7 +139,11 @@ class NativeManifestCollectorTests(unittest.TestCase):
             root = Path(temp)
             paths = self.fixture(root, target="x86_64-pc-windows-msvc", architecture="x86_64", suffix=".exe")
             source = paths["webcodex-desktop"]
-            renamed = source.with_name("WebCodex.exe")
+            # Desktop and CLI are separate build outputs. On case-insensitive
+            # macOS/Windows volumes WebCodex.exe aliases bin/webcodex.exe.
+            desktop_dir = root / "desktop-output"
+            desktop_dir.mkdir()
+            renamed = desktop_dir / "WebCodex.exe"
             source.rename(renamed)
             paths["webcodex-desktop"] = renamed
             output = root / "installer-input"

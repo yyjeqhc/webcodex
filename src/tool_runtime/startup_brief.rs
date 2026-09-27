@@ -71,21 +71,23 @@ pub(crate) fn builtin_coding_workflow_projection(profile: CodingGuidanceProfile)
             "Ordinary implementation is default: map cross-layer changes end to end; use compiler/schema/exhaustiveness failures for gaps; minimize concepts, avoid speculative redesign.",
             "Validation failure is evidence, not queue cleanliness. Fix dependent blockers; continue otherwise. Reuse assertion_name; outcome_unknown fails closed. After Rust stabilizes, format once. Development validation may overlap independent work; covered-source edits make it stale for final evidence.",
             "For closeout evidence, freeze source covered by final validation. Continue read-only review/docs/external inspection; if covered source must change, invalidate that evidence and rerun the appropriate final validation.",
-            "Keep one execution/Job; execution_state=pending means exact continuation, not redispatch. Continue independent work; passive Job attention may surface.",
-            "observe_jobs is for logs/details/recovery; list_jobs is identity recovery. Use wait_for_job_terminal only when terminal outcome is a true dependency and no independent work remains."
+            "Keep one execution/Job. execution_state=pending preserves the exact continuation as fallback state, not a next-action command or retry. A continuation is not mechanically required just because it is present. Continue independent work; passive Job attention may surface.",
+            "observe_jobs is for logs/details/recovery, never a heartbeat. Do not immediately follow or repeatedly poll the same pending continuation. list_jobs is identity recovery. Use wait_for_job_terminal only when terminal outcome is a true dependency and no independent work remains; do not poll or rearm it."
         ],
         "tool_strategy": tool_strategy_projection(profile),
         "model_protocol": {
             "goal_workflow": "On exact Session re-entry, honor work_on_project.goal_context: reuse one exact active Goal with get_goal/present_goal_plan; choose explicitly among multiple candidates; never infer from Project/Window/title/recency. For ordinary new substantial multi-step/cross-turn work with no reusable Goal, call prepare_goal_workflow with the exact current Workflow Session, bounded completion_conditions/steps, and optional explicit controller Agent, then present_goal_plan. available=false never proves no Goal. Host continuation setup/readiness remains separate. Low-level create_goal and associate_goal_workflow_session remain available. Tiny one-step lookups/trivial edits need no Goal. This applies independently of AGENTS.md.",
             "goal_continuation": "Automatic continuation needs an exact explicit durable controller Agent and the existing production Host carrier. Reuse the same Agent already made callable by explicit setup or exact Wake context; never infer Agent identity from a Window or create a second Goal-only identity. An Agent may be both Task assignee and Goal controller: Tasks/Attempts own execution, the controller routes next reasoning only. Goal Plan detects; the separate Agent Continuation card carries turns. Stalled is not offline; dispatch acceptance is not resume. An exact stall Wake requires bootstrap, immediate consume, get_goal and exact Session handoff recovery; never retry an uncertain prior effect.",
-            "goal_checkpoint": "After a plan phase completes, prefer _control.before.goal_progress on the next ordinary call: mark the previous phase complete and next phase current with exact revision/key. Record only facts already true; never pre-complete tests or defer checkpoints to closeout. checkpoint_goal remains valid standalone. Complete all steps and verify/review before explicit update_goal or finish_coding_task + goal_completion; the Server cannot judge natural-language conditions.",
-            "handoff_recovery": "Use handoff recovery only after task-context loss/compaction/restart, explicit cross-window/Agent handoff, or user-requested recovery. Never use it for routine progress/baselines. A frontend timeout alone does not imply Workflow Session loss. If task context is genuinely lost and the exact session_id is unknown, request context_request=[\"workflow.resume\"], choose an exact authorized candidate, call session_handoff_summary with the exact session_id, check basis completeness, then resume with work_on_project(project=..., session_id=...). A dirty workspace after context loss is not evidence of external or concurrent modification by itself. Recover exact Workflow Session evidence first.",
-            "session_recording": "When work_on_project creates or resumes, prefer its returned session_ref as recording_session_id for recorder provenance only; canonical wc_sess_* remains valid. business session_id may target another Session; it grants no authority.",
-            "session_message_ack": "For any retained collaboration message with requires_ack=true projected in session_attention, peer_messages, or operator_messages, echo its wc_msg_* id in ack_session_message_ids on the next ordinary model-visible call. The historical wrapper name is shared across Session, Peer, and Operator messages; compact ack_ref remains Session-only. ACK proves model-context retention only; it never resolves messages, grants authority, or gates execution.",
-            "window_reply": "After handling an operator_messages item, reply textually by attaching window_reply={reply_to:<wc_msg_*>,message:<text>} to the next ordinary model-visible WebCodex call in the same Window. No recording_session_id or business session_id is required. If requires_ack=true, also echo the same id in ack_session_message_ids. The reply is a post-result collaboration sidecar: it never authorizes, predicts, or changes the main tool effect.",
-            "session_message_resolution": "For a handled non-todo, send session_message_resolution on the next ordinary call with recording_session_id; if requires_ack, also send ack_session_message_ids. It cannot predict the main call. Todos use complete_session_message.",
-            "control_sidecars": "_control is optional: piggyback an established transition only when an ordinary call is already needed; otherwise omit it or use the standalone canonical tool. before supports goal_progress, wake_consume, attempt_heartbeat, session_context_update; after_success supports todo_completion, plus goal_completion/session_close on non-blocking finish_coding_task. One mutation per phase, independently authorized; no automatic transitions. Post failure preserves main success. session_context_update is fail-closed pending CAS/replay support.",
-            "context_sidecar": "context_request after the main tool; never authorizes. jobs.attention is Project-level, not Session/control; workflow.resume is Window/principal-scoped recovery evidence only and never selects or resumes a Session. Recover project.instructions by observation call before dependent mutation.",
+            "goal_checkpoint": "After a plan phase completes, prefer _wc.control.before.goal_progress on the next ordinary call: mark the previous phase complete and next phase current with exact revision/key. Record only facts already true; never pre-complete tests or defer checkpoints to closeout. checkpoint_goal remains valid standalone. Complete all steps and verify/review before explicit update_goal or finish_coding_task + goal_completion; the Server cannot judge natural-language conditions.",
+            "handoff_recovery": "Use handoff recovery only after task-context loss/compaction/restart, explicit cross-window/Agent handoff, or user-requested recovery. Never use it for routine progress/baselines. A frontend timeout alone does not imply Workflow Session loss. If task context is genuinely lost and the exact session_id is unknown, attach _wc.context=[\"workflow.resume\"] to an ordinary call, choose an exact authorized candidate, call session_handoff_summary with the exact session_id, check basis completeness, then resume with work_on_project(project=..., session_id=...). A dirty workspace after context loss is not evidence of external or concurrent modification by itself. Recover exact Workflow Session evidence first.",
+            "session_recording": "When work_on_project creates or resumes, prefer its returned session_ref as _wc.record on the next ordinary model-visible call for recorder provenance only; canonical wc_sess_* remains valid. business session_id may target another Session; _wc.record grants no authority.",
+            "session_message_ack": "For any retained collaboration message with requires_ack=true projected in session_attention, peer_messages, or operator_messages, attach _wc.ack=[<wc_msg_*>] on the next ordinary model-visible call. Compact _wc.ack_ref remains Session-only. ACK proves model-context retention only; it never resolves messages, grants authority, or gates execution.",
+            "window_reply": "After handling an operator_messages item, reply textually by attaching _wc.reply={reply_to:<wc_msg_*>,message:<text>} to the next ordinary model-visible WebCodex call in the same Window. No _wc.record or business session_id is required. If requires_ack=true, also include the same id in _wc.ack. The reply is a post-result collaboration sidecar: it never authorizes, predicts, or changes the main tool effect.",
+            "session_message_resolution": "For a handled non-todo, attach _wc.resolve={message_id:<wc_msg_*>,resolution:<text>} on the next ordinary call together with _wc.record; if requires_ack, also include the id in _wc.ack. Resolve cannot predict or change the main call. Todos use complete_session_message.",
+            "control_sidecars": "_wc.control is optional: piggyback an established transition only when an ordinary call is already needed; otherwise omit it or use the standalone canonical tool. before supports goal_progress, wake_consume, attempt_heartbeat, session_context_update; after_success supports todo_completion, plus goal_completion/session_close on non-blocking finish_coding_task. One mutation per phase, independently authorized; the sidecar itself never authorizes and there are no automatic transitions. Post failure preserves main success. session_context_update is fail-closed pending CAS/replay support.",
+            "context_sidecar": "_wc.context is an optional post-result context request; it never authorizes. jobs.attention is Project-level, not Session/control; workflow.resume is Window/principal-scoped recovery evidence only and never selects or resumes a Session. Recover project.instructions by observation call before dependent mutation.",
+            "bootstrap_reuse": "For read/follow AGENTS.md, CLAUDE.md, repository instructions/project rules/local coding rules, or instruction-dependent tasks, request _wc.context=[\"project.instructions\"] on the first suitable work_on_project. instructions.status=loaded means source observed, not body included. status=available material with content_included=true and no truncation/incompleteness satisfies reading instructions; do not immediately reread via read_files. Reread unavailable/truncated/incomplete sources, changed fingerprints/revisions, possible post-bootstrap edits, or exact source/range needs. Request _wc.context=[\"webcodex.workflow\"] for fresh/uncertain model context, compaction/context recovery, or explicit workflow requests when guidance is missing; reuse retained guidance.",
+            "bootstrap_observations": "Treat successful work_on_project.workspace as the initial branch/HEAD/status observation; avoid immediate git_status/rev-parse/branch for identical facts. Inspect changed paths, staged/unstaged detail, diffs/hunks/commit ranges or refresh after mutation, stale/unknown/unavailable state, and for fresh mutation fences. semantic_navigation supported=true/available=true allows direct navigation without lsp_status; diagnose null/probe_timeout/probe_failed/unavailable or provider issues. Reuse a complete/sufficient startup Skills/Plugins catalog; use skills.catalog, skill_list, plugin_tool list/describe for truncated/unavailable catalogs, missing task capabilities, changed revision/runtime, or explicit broader/refreshed discovery.",
             "runner_targeting": "For exact Runner client_id, use runtime_status(client_id=...) or list_projects(client_id=...) before treating it as absent.",
             "persistent_shell": "Local: run_process=literal argv; run_shell=shell grammar/short chains; run_script=program-like scripts; specialize for added semantics. Persistent shell only for repeated named-SSH state or local same-process state.",
             "work_result_presentation": "For substantial Project work in a stable client Window, call present_work_result(project) exactly once immediately after the first successful project-scoped WebCodex action. Do not wait for work_on_project, a Workflow Session, mutation, validation, or closeout. The mounted card refreshes the same Window ActionAudit activity as WebUI, including observe/diagnostic actions; optional linked Session collaboration and final changes may appear later. Never repeat presentation or model-poll it in the same Window. Tiny one-step/read-only lookups may skip it; finish may suggest it only as a fallback if no card was presented.",
@@ -173,7 +175,7 @@ fn tool_strategy_guidance(profile: CodingGuidanceProfile) -> &'static [&'static 
             "Do not return to the model merely because one child ToolResult arrived. If the next call is mechanically determined with no unresolved semantic choice/uncertainty/authority need, stay in the Host cell and return compact evidence for the next decision.",
             "Natural model-turn boundaries are semantic choice, ambiguous result, new user decision, authority/permission, outcome_unknown or competing recovery, or unresolved mutation intent—not child-call completion.",
             "Keep full ToolResults in the Host cell when possible; preserve revisions, exact pending continuations, observation_ref/read_revision, and failure/recovery fields. Normal pending results may intentionally hide top-level Job bookkeeping. Avoid text(JSON.stringify(fullResult)) dumps.",
-            "Host cells are short dependency DAGs. On execution_state=pending, keep the continuation and finish independent calls. Later outer results may carry terminal job_attention. Observe only for details/recovery; wait only when terminal outcome blocks all useful progress.",
+            "On execution_state=pending, retain the continuation as fallback and finish independent calls. Its presence does not make observe_jobs mechanically determined. Do not keep a Host cell alive with repeated same-Job polling; return when useful DAG work is exhausted. Arm one terminal wait only when terminal blocks progress.",
             "Development validation may overlap independent work. For final evidence freeze covered source; covered-source edits invalidate that evidence and require rerun. Host support is supplied by the Host, not verified by WebCodex.",
         ],
         #[cfg(feature = "experimental-code-mode")]
@@ -1818,6 +1820,39 @@ mod tests {
     use crate::tool_runtime::project_instructions::LoadedInstructionCandidate;
     use crate::tool_runtime::sessions::SessionGuards;
     use crate::tool_runtime::{SessionMode, ToolRuntime};
+
+    #[test]
+    fn model_protocol_teaches_only_common_invocation_envelope_sidecars() {
+        let workflow = builtin_coding_workflow_projection(CodingGuidanceProfile::Direct);
+        let protocol = workflow["model_protocol"].to_string();
+        for field in [
+            "_wc.record",
+            "_wc.ack",
+            "_wc.ack_ref",
+            "_wc.reply",
+            "_wc.resolve",
+            "_wc.context",
+            "_wc.control",
+        ] {
+            assert!(
+                protocol.contains(field),
+                "missing model-facing envelope guidance for {field}"
+            );
+        }
+        for legacy in [
+            "recording_session_id",
+            "ack_session_message_ids",
+            "window_reply=",
+            "session_message_resolution on",
+            "context_request=",
+            "_control",
+        ] {
+            assert!(
+                !protocol.contains(legacy),
+                "legacy root wrapper guidance leaked: {legacy}"
+            );
+        }
+    }
 
     #[test]
     fn semantic_navigation_projection_preserves_probe_timeout_as_unknown() {

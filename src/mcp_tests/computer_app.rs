@@ -351,6 +351,7 @@ async fn mcp_computer_snapshot_resource_links_are_unique_caller_bound_and_scope_
                 "content_base64": encoded,
             })),
             Some(caller.clone()),
+            false,
             response::McpToolResultPresentation::Standard,
         );
         assert_eq!(framed["isError"], false);
@@ -451,6 +452,7 @@ async fn mcp_computer_snapshot_resource_links_are_unique_caller_bound_and_scope_
             "content_base64": encoded,
         })),
         Some(window_caller),
+        false,
         response::McpToolResultPresentation::Standard,
     );
     assert_eq!(window["content"][0]["type"], "resource_link");

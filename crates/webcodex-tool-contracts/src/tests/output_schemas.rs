@@ -527,8 +527,16 @@ fn start_agent_task_attempt_schema_returns_ref_without_replacing_fence() {
         .unwrap()
         .contains("Not a credential"));
     let read = output_schema_for_tool("read_agent_task");
-    let latest_attempt = &read["properties"]["output"]["properties"]["task"]["properties"]
-        ["summary"]["properties"]["latest_attempt"]["anyOf"][0];
+    let summary = &read["properties"]["output"]["properties"]["task"]["properties"]["summary"];
+    let summary_properties = summary["properties"].as_object().unwrap();
+    assert!(summary_properties.contains_key("attempt_ref"));
+    assert!(!summary["required"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|field| field == "attempt_ref"));
+    assert!(!summary_properties.contains_key("attempt_fence"));
+    let latest_attempt = &summary_properties["latest_attempt"]["anyOf"][0];
     let read_properties = latest_attempt["properties"].as_object().unwrap();
     assert!(!read_properties.contains_key("attempt_ref"));
     assert!(!read_properties.contains_key("attempt_fence"));
@@ -3185,4 +3193,148 @@ fn run_skill_resource_success_requires_provenance_and_keeps_lifecycle_constraint
         test_support::validate_schema_instance(&contradictory_lifecycle, schema).is_err(),
         "run_skill_resource must retain structured execution lifecycle constraints"
     );
+}
+
+#[test]
+fn browser_observation_schema_accepts_canonical_runner_output_and_rejects_private_ids() {
+    let observe = crate::output_schema_for_tool("browser_observe");
+    let act = crate::output_schema_for_tool("browser_act");
+    let observe_ok = |output: Value| {
+        test_support::validate_schema_instance(
+            &json!({"success": true, "output": output, "error": null}),
+            &observe,
+        )
+    };
+    let act_ok = |output: Value| {
+        test_support::validate_schema_instance(
+            &json!({"success": true, "output": output, "error": null}),
+            &act,
+        )
+    };
+
+    let snapshot = json!({
+        "execution_state": "completed",
+        "state_changed": false,
+        "browser_id": "browser_abcdefghijklmnop",
+        "page_id": "page_abcdefghijklmnop",
+        "snapshot_generation": 4,
+        "snapshot_mode": "interactive",
+        "auto_compacted": true,
+        "max_nodes": 256,
+        "max_depth": 32,
+        "node_count": 3,
+        "truncated": false,
+        "nodes": [
+            {
+                "role": "combobox",
+                "name": "Fruit",
+                "description": "Choose one",
+                "required": true,
+                "disabled": false,
+                "element_id": "element_abcdefghijklmnop",
+                "actions": ["select_option"],
+                "actionable": true
+            },
+            {
+                "role": "option",
+                "name": "Apple",
+                "value": "a",
+                "group_id": "group_1",
+                "group_role": "combobox",
+                "group_label": "Fruit",
+                "selected": true,
+                "disabled": false,
+                "actionable": false
+            },
+            {
+                "role": "checkbox",
+                "name": "Agree",
+                "checked": "true",
+                "read_only": true,
+                "disabled": false,
+                "element_id": "element_bbcdefghijklmnop",
+                "actions": ["click"],
+                "actionable": true
+            }
+        ]
+    });
+    observe_ok(snapshot.clone()).expect("canonical compact snapshot");
+
+    let diagnostics = json!({
+        "execution_state": "completed",
+        "state_changed": false,
+        "cursor": 5,
+        "since_cursor": 3,
+        "delta_truncated": false,
+        "new_console_errors": 1,
+        "new_console_warnings": 0,
+        "new_failed_requests": 0,
+        "new_4xx": 1,
+        "new_5xx": 0,
+        "console_retained": 1,
+        "console_count": 1,
+        "console_truncated": false,
+        "console": [{"level": "error", "text": "boom", "source": null, "timestamp": 1.0}],
+        "network_retained": 1,
+        "network_count": 1,
+        "network_truncated": false,
+        "network": [{
+            "method": "GET",
+            "url": "https://example.test/api",
+            "resource_type": "Fetch",
+            "status": 404,
+            "failed_reason": null,
+            "timestamp": 2.0
+        }]
+    });
+    observe_ok(diagnostics).expect("canonical diagnostics delta");
+
+    let console = json!({
+        "execution_state": "completed",
+        "state_changed": false,
+        "cursor": 3,
+        "retained_count": 1,
+        "count": 1,
+        "truncated": false,
+        "entries": [{"level": "warning", "text": "warn", "source": null, "timestamp": 1.0}]
+    });
+    observe_ok(console).expect("canonical console observation");
+
+    let effect = json!({
+        "execution_state": "completed",
+        "state_changed": true,
+        "stability": {
+            "stable": false,
+            "waited_ms": 250,
+            "reason": "dom_quiet_with_long_lived_network"
+        }
+    });
+    act_ok(effect.clone()).expect("canonical effect stability");
+
+    let mut leaked_target = snapshot.clone();
+    leaked_target["target_id"] = json!("private-cdp-target");
+    assert!(observe_ok(leaked_target).is_err());
+    let mut leaked_backend = snapshot;
+    leaked_backend["nodes"][1]["backend_node_id"] = json!(11);
+    assert!(observe_ok(leaked_backend).is_err());
+    let mut unknown_action = json!({
+        "execution_state": "completed",
+        "state_changed": false,
+        "browser_id": "browser_abcdefghijklmnop",
+        "page_id": "page_abcdefghijklmnop",
+        "snapshot_generation": 1,
+        "node_count": 1,
+        "truncated": false,
+        "nodes": [{
+            "role": "button",
+            "actions": ["spinbutton"],
+            "actionable": true
+        }]
+    });
+    assert!(observe_ok(unknown_action.clone()).is_err());
+    unknown_action["nodes"][0]["actions"] = json!(["click"]);
+    observe_ok(unknown_action).expect("known click action");
+    let mut leaked_endpoint = effect;
+    leaked_endpoint["debug_endpoint"] = json!("ws://127.0.0.1/devtools");
+    assert!(act_ok(leaked_endpoint).is_err());
 }

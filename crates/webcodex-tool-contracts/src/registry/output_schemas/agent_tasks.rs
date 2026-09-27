@@ -46,7 +46,7 @@ fn attempt_schema() -> Value {
 fn nullable_attempt_schema() -> Value {
     json!({
         "anyOf": [attempt_schema(), {"type": "null"}],
-        "description": "Latest durable Attempt, if one has ever started. Generic read/list never returns attempt_fence."
+        "description": "Latest durable Attempt, if one has ever started. Generic read/list never returns attempt_fence. A live lease may also carry attempt_ref on the Task summary."
     })
 }
 
@@ -63,7 +63,8 @@ fn task_summary_properties() -> serde_json::Map<String, Value> {
             "created_at_unix_ms": schema_type("integer", "Task creation time."),
             "updated_at_unix_ms": schema_type("integer", "Latest durable Task/Attempt ownership update time."),
             "terminal_at_unix_ms": nullable_integer("Task terminal time, or null while nonterminal."),
-            "latest_attempt": nullable_attempt_schema()
+            "latest_attempt": nullable_attempt_schema(),
+            "attempt_ref": schema_type("string", "Server-issued ~ta selector for this exact live Attempt lease. Present only while that lease is active. Not a credential and not attempt_fence.")
             ,"execution_bound": schema_type("boolean", "True when the latest AgentTaskAttempt has a durable concrete execution backend binding (CodingAgentRun or Agent Endpoint continuation). This high-level projection grants no execution authority."),
             "execution_kind": {
                 "anyOf": [
@@ -206,8 +207,8 @@ pub fn output_schema_for_tool(name: &str) -> Option<Value> {
         "start_agent_task_attempt" => wrapped_output_schema(vec![
             ("task", task_summary_schema()),
             ("attempt", attempt_schema()),
-            ("attempt_fence", schema_type("string", "Opaque exact-Attempt freshness fence required for heartbeat/completion. It is returned only by exact start/replay, not generic list/read.")),
-            ("attempt_ref", schema_type("string", "Server-issued ~ta selector pinned to this exact Attempt fence and controller generation. Not a credential. Heartbeat, completion, and coding-run still use the explicit tuple.")),
+            ("attempt_fence", schema_type("string", "Opaque exact-Attempt freshness fence used by the explicit-tuple heartbeat/completion path and required by coding-run admission. Heartbeat/completion may instead use attempt_ref. The fence is returned only by exact start/replay, not generic list/read.")),
+            ("attempt_ref", schema_type("string", "Server-issued ~ta selector pinned to this exact Attempt fence and controller generation. Not a credential. Heartbeat and completion accept this ref or the explicit tuple. Coding-run still uses the explicit tuple.")),
             ("replayed", schema_type("boolean", "True for exact keyed Attempt-start replay.")),
             ("state_changed", schema_type("boolean", "Whether this call first created the Attempt.")),
         ]),

@@ -106,6 +106,7 @@ fn record(
             mode,
             server_url,
             project,
+            runner: None,
             account: current_account().unwrap(),
             binaries: RuntimeBinaries {
                 cli: binary.clone(),
@@ -121,6 +122,69 @@ fn record(
 }
 
 #[tokio::test]
+async fn projectless_runner_keeps_bounded_default_policy_and_an_empty_registry() {
+    let temp = crate::test_tempdir().unwrap();
+    let store = EnvironmentStore::open(temp.path().join("environment")).unwrap();
+    let mut saved = record("https://server.example".into(), None, EnvironmentMode::Join);
+    saved.request.runner = Some(true);
+    saved.runner_client_id = Some("existing-runner".into());
+    saved.username = Some("alice".into());
+    store
+        .write_json(
+            "enrollment-recovery.json",
+            &Enrollment {
+                server_url: saved.request.server_url.clone(),
+                client_id: "existing-runner".into(),
+                username: "alice".into(),
+                user_token: "wc_user_fixture".into(),
+                runner_token: "wc_agent_fixture".into(),
+            },
+        )
+        .unwrap();
+    NativeEnvironment::new()
+        .unwrap()
+        .configure_runner(&store, &mut saved)
+        .await
+        .unwrap();
+    let config: toml::Value =
+        toml::from_str(&std::fs::read_to_string(store.root().join("runner.toml")).unwrap())
+            .unwrap();
+    assert_eq!(config["client_id"].as_str(), Some("existing-runner"));
+    assert_eq!(
+        config["policy"]["allow_cwd_anywhere"].as_bool(),
+        Some(false)
+    );
+    assert_eq!(
+        config["policy"]["allowed_roots"].as_array().unwrap().len(),
+        1
+    );
+    assert!(saved.projects.is_empty());
+    assert_eq!(
+        std::fs::read_dir(store.root().join("project-registry"))
+            .unwrap()
+            .count(),
+        0
+    );
+}
+
+#[test]
+fn projectless_runner_still_rejects_root_and_project_without_runner() {
+    let mut saved = record("https://server.example".into(), None, EnvironmentMode::Join);
+    saved.request.runner = Some(true);
+    saved.request.account.identity = "0".into();
+    assert_eq!(
+        validate_request(&saved.request).unwrap_err().code,
+        "project_user_required"
+    );
+    saved.request.runner = Some(false);
+    saved.request.project = Some(std::env::current_dir().unwrap());
+    assert_eq!(
+        validate_request(&saved.request).unwrap_err().code,
+        "runner_required"
+    );
+}
+
+#[tokio::test]
 async fn credential_repair_rejects_another_server_user_without_changing_saved_state() {
     let (url, requests, server) = fixture(1, |_| {
         (
@@ -129,7 +193,7 @@ async fn credential_repair_rejects_another_server_user_without_changing_saved_st
             json!({"service":"webcodex","authenticated_user":"bob"}),
         )
     });
-    let temp = tempfile::tempdir().unwrap();
+    let temp = crate::test_tempdir().unwrap();
     let store = EnvironmentStore::open(temp.path().join("environment")).unwrap();
     let mut saved = record(url, None, EnvironmentMode::Join);
     saved.username = Some("alice".into());
@@ -187,7 +251,7 @@ async fn credential_repair_updates_recovery_before_active_token_without_changing
             json!({"service":"webcodex","authenticated_user":"alice"}),
         )
     });
-    let temp = tempfile::tempdir().unwrap();
+    let temp = crate::test_tempdir().unwrap();
     let store = EnvironmentStore::open(temp.path().join("environment")).unwrap();
     let mut saved = record(url.clone(), None, EnvironmentMode::Join);
     saved.username = Some("alice".into());
@@ -245,7 +309,7 @@ async fn credential_repair_updates_recovery_before_active_token_without_changing
 
 #[tokio::test]
 async fn credential_repair_rejects_changed_environment_and_missing_frozen_user_before_network() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = crate::test_tempdir().unwrap();
     let store = EnvironmentStore::open(temp.path().join("environment")).unwrap();
     let mut saved = record("http://127.0.0.1:1".into(), None, EnvironmentMode::Join);
     saved.configured = true;
@@ -287,7 +351,7 @@ async fn credential_repair_rejects_changed_environment_and_missing_frozen_user_b
 #[tokio::test]
 async fn credential_repair_requires_server_to_attest_user_identity() {
     let (url, _, server) = fixture(1, |_| (200, vec![], json!({"service":"webcodex"})));
-    let temp = tempfile::tempdir().unwrap();
+    let temp = crate::test_tempdir().unwrap();
     let store = EnvironmentStore::open(temp.path().join("environment")).unwrap();
     let mut saved = record(url, None, EnvironmentMode::Join);
     saved.username = Some("alice".into());
@@ -323,7 +387,7 @@ async fn viewer_credential_repair_replaces_only_user_token_without_enrollment() 
             json!({"service":"webcodex","authenticated_user":"alice"}),
         )
     });
-    let temp = tempfile::tempdir().unwrap();
+    let temp = crate::test_tempdir().unwrap();
     let store = EnvironmentStore::open(temp.path().join("environment")).unwrap();
     let mut saved = record(url, None, EnvironmentMode::Join);
     saved.username = Some("alice".into());
@@ -360,7 +424,7 @@ async fn viewer_credential_repair_replaces_only_user_token_without_enrollment() 
 
 #[tokio::test]
 async fn service_control_rejects_changed_environment_before_native_service_access() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = crate::test_tempdir().unwrap();
     let store = EnvironmentStore::open(temp.path().join("environment")).unwrap();
     let mut saved = record("http://127.0.0.1:1".into(), None, EnvironmentMode::Join);
     saved.configured = true;
@@ -396,7 +460,7 @@ async fn viewer_configure_uses_only_read_only_overview_and_keeps_runner_identity
         ),
         other => panic!("unexpected viewer route: {other}"),
     });
-    let temp = tempfile::tempdir().unwrap();
+    let temp = crate::test_tempdir().unwrap();
     let store = EnvironmentStore::open(temp.path().join("environment")).unwrap();
     let request = record(url, None, EnvironmentMode::Join).request;
     let mut setup = EnvironmentSetup::new(NativeEnvironment::new().unwrap());
@@ -466,7 +530,7 @@ async fn older_server_viewer_works_but_runner_transition_requires_user_identity(
         }
         other => panic!("unexpected old-server viewer route: {other}"),
     });
-    let temp = tempfile::tempdir().unwrap();
+    let temp = crate::test_tempdir().unwrap();
     let store = EnvironmentStore::open(temp.path().join("environment")).unwrap();
     let request = record(url, None, EnvironmentMode::Join).request;
     let mut setup = EnvironmentSetup::new(NativeEnvironment::new().unwrap());
@@ -525,7 +589,7 @@ async fn doctor_reports_viewer_auth_and_protocol_without_requiring_local_runner(
             json!({"service":"webcodex","version":"fixture","authenticated_user":"alice"}),
         )
     });
-    let temp = tempfile::tempdir().unwrap();
+    let temp = crate::test_tempdir().unwrap();
     let store = EnvironmentStore::open(temp.path().join("environment")).unwrap();
     let mut environment = record(url, None, EnvironmentMode::Join);
     environment.configured = true;
@@ -597,7 +661,7 @@ async fn uncertain_user_auth_does_not_reregister_saved_credential() {
         "/api/runtime-console/overview" => (503, vec![], json!({"error":"unavailable"})),
         other => panic!("unexpected mutating retry: {other}"),
     });
-    let temp = tempfile::tempdir().unwrap();
+    let temp = crate::test_tempdir().unwrap();
     let store = EnvironmentStore::open(temp.path().join("environment")).unwrap();
     ensure_private_directory(&store.root().join("server")).unwrap();
     atomic_private_write(
@@ -659,7 +723,7 @@ async fn first_user_creation_registers_only_hash_after_auth_rejection() {
         ),
         other => panic!("unexpected user provisioning route: {other}"),
     });
-    let temp = tempfile::tempdir().unwrap();
+    let temp = crate::test_tempdir().unwrap();
     let store = EnvironmentStore::open(temp.path().join("environment")).unwrap();
     ensure_private_directory(&store.root().join("server")).unwrap();
     atomic_private_write(
@@ -723,7 +787,7 @@ async fn pairing_conflict_preserves_viewer_identity_and_saves_recovery_credentia
             json!({"success":true,"client_id":"alice-client","username":"bob","user_token":"wc_pat_bob","agent_token":"wc_agent_bob"}),
         )
     });
-    let temp = tempfile::tempdir().unwrap();
+    let temp = crate::test_tempdir().unwrap();
     let store = EnvironmentStore::open(temp.path().join("environment")).unwrap();
     atomic_private_write(&store.root().join("webcodex-user-token"), b"wc_pat_alice").unwrap();
     let mut environment = record(url, Some(temp.path().to_path_buf()), EnvironmentMode::Join);
@@ -789,7 +853,7 @@ async fn uncertain_project_removal_is_not_dispatched_again() {
         ),
         other => panic!("unexpected removal route: {other}"),
     });
-    let temp = tempfile::tempdir().unwrap();
+    let temp = crate::test_tempdir().unwrap();
     let store = EnvironmentStore::open(temp.path().join("environment")).unwrap();
     atomic_private_write(&store.root().join("webcodex-user-token"), b"wc_pat_alice").unwrap();
     let mut environment = record(url, Some(temp.path().to_path_buf()), EnvironmentMode::Join);
@@ -854,7 +918,7 @@ async fn uncertain_project_addition_is_not_dispatched_again() {
         "/api/projects/resolve-or-register" => (503, vec![], json!({"error":"uncertain"})),
         other => panic!("unexpected addition route: {other}"),
     });
-    let temp = tempfile::tempdir().unwrap();
+    let temp = crate::test_tempdir().unwrap();
     let store = EnvironmentStore::open(temp.path().join("environment")).unwrap();
     atomic_private_write(&store.root().join("webcodex-user-token"), b"wc_pat_alice").unwrap();
     let mut environment = record(

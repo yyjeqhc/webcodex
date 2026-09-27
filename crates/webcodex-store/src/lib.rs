@@ -59,8 +59,8 @@ pub use self::agent_task::{
     AgentTaskCodingRunDispatchState, AgentTaskCodingRunObservation, AgentTaskCodingRunPrepared,
     AgentTaskCodingRunReconcileMutation, AgentTaskCodingRunStartContext, AgentTaskDetail,
     AgentTaskExecutionKind, AgentTaskExecutionRecoveryKind, AgentTaskExecutionStatus,
-    AgentTaskMutation, AgentTaskPage, AgentTaskState, AgentTaskSummary, NewAgentTask,
-    MAX_AGENT_TASK_LIST_LIMIT, MAX_AGENT_TASK_TERMINAL_TEXT_BYTES,
+    AgentTaskMutation, AgentTaskPage, AgentTaskState, AgentTaskSummary, LiveAgentTaskAttemptPin,
+    NewAgentTask, MAX_AGENT_TASK_LIST_LIMIT, MAX_AGENT_TASK_TERMINAL_TEXT_BYTES,
 };
 pub use self::agent_task_attempt_reference::AgentTaskAttemptReferenceRecord;
 pub use self::agent_wait::{

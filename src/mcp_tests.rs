@@ -116,6 +116,7 @@ fn work_result_app_internal_tools_do_not_become_window_activity() {
     for tool in [
         "present_work_result",
         "work_result_state",
+        "work_result_activity_detail",
         "work_result_send_message",
         "changes_file_diff",
     ] {
@@ -134,6 +135,28 @@ fn work_result_app_internal_tools_do_not_become_window_activity() {
 
 fn test_runtime() -> ToolRuntime {
     ToolRuntime::new_for_tests()
+}
+
+/// Build a runtime with an explicit MCP startup snapshot, so tests assert the
+/// frozen values instead of holding process-global env guards across requests.
+fn test_runtime_with_mcp_snapshot(
+    compact_schemas: bool,
+    apps_enabled: bool,
+    text_json_compat_enabled: bool,
+) -> ToolRuntime {
+    ToolRuntime::new(
+        std::sync::Arc::new(crate::runner_http::RunnerRegistry::default()),
+        std::sync::Arc::new(crate::tool_runtime::RuntimeInfo {
+            mcp_compact_schemas: compact_schemas,
+            mcp_apps_enabled: apps_enabled,
+            mcp_text_json_compat_enabled: text_json_compat_enabled,
+            ..Default::default()
+        }),
+    )
+}
+
+fn test_runtime_with_mcp_settings(compact_schemas: bool, apps_enabled: bool) -> ToolRuntime {
+    test_runtime_with_mcp_snapshot(compact_schemas, apps_enabled, false)
 }
 
 fn test_runtime_with_public_url(public_url: &str) -> ToolRuntime {

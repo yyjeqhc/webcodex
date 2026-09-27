@@ -702,10 +702,10 @@ fn validate_import(request: &SetupRequest, import: &LegacyImport) -> SetupResult
             "Original component files do not match the requested ownership",
         ));
     }
-    if request.local_runner() && import.projects.is_empty() {
+    if !request.local_runner() && !import.projects.is_empty() {
         return Err(diagnostic(
-            "legacy_project_required",
-            "The original Runner has no confirmed project registration",
+            "legacy_project_identity",
+            "A viewer cannot import local project registrations",
         ));
     }
     if import.projects.iter().any(|project| {
@@ -722,7 +722,7 @@ fn validate_import(request: &SetupRequest, import: &LegacyImport) -> SetupResult
             "The original project registration is incomplete",
         ));
     }
-    if request.local_runner()
+    if request.project.is_some()
         && !import
             .projects
             .iter()
@@ -1158,7 +1158,7 @@ mod tests {
 
     #[test]
     fn imports_existing_runner_identity_but_redirects_registry_to_core() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = crate::test_tempdir().unwrap();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -1192,6 +1192,7 @@ mod tests {
             mode: EnvironmentMode::Join,
             server_url: "https://server.example".into(),
             project: Some(project.clone()),
+            runner: None,
             account: crate::LocalAccount {
                 name: "alice".into(),
                 identity: "1001".into(),
@@ -1227,6 +1228,16 @@ mod tests {
             },
             last_diagnostic: None,
         };
+        // Default/display project absence must not invalidate a real saved Runner.
+        let mut projectless = migration.request.clone();
+        projectless.project = None;
+        projectless.runner = Some(true);
+        let mut empty_import = migration.import.clone();
+        empty_import.projects.clear();
+        validate_import(&projectless, &empty_import).unwrap();
+        projectless.runner = Some(false);
+        assert!(validate_import(&projectless, &empty_import).is_err());
+
         let lock = store.lock().unwrap();
         import_original_files(&store, &lock, &migration).unwrap();
         let imported: toml::Value =

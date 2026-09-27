@@ -413,7 +413,12 @@ fn tool_definitions_drive_session_and_permission_policy() {
         .collect::<Vec<_>>();
     assert_eq!(
         change_summary_tools,
-        vec!["git_review_summary", "show_changes", "git_diff_hunks",]
+        vec![
+            "git_review_summary",
+            "review_changes",
+            "show_changes",
+            "git_diff_hunks",
+        ]
     );
 
     let validation_output_tools = tool_definitions()
@@ -716,6 +721,11 @@ fn required_runner_capability_matches_metadata_risk_table() {
         ),
         (
             "git_review_summary",
+            ToolRisk::Read,
+            RunnerCapabilityRequirement::GitOrShell,
+        ),
+        (
+            "review_changes",
             ToolRisk::Read,
             RunnerCapabilityRequirement::GitOrShell,
         ),

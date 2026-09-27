@@ -161,12 +161,12 @@ impl<B: EnvironmentBackend> EnvironmentSetup<B> {
 }
 
 impl EnvironmentSetup<NativeEnvironment> {
-    /// Explicitly add this machine's first project without rebinding the
-    /// existing Server or replacing its user identity.
+    /// Explicitly enable this machine for work, optionally registering an initial
+    /// project, without rebinding the Server or replacing its user identity.
     pub async fn enable_runner(
         &mut self,
         store: &EnvironmentStore,
-        project: std::path::PathBuf,
+        project: Option<std::path::PathBuf>,
         secrets: &SetupSecrets,
         progress: impl FnMut(SetupProgress),
     ) -> SetupResultValue<SetupResult> {
@@ -181,11 +181,17 @@ impl EnvironmentSetup<NativeEnvironment> {
         })?;
         if record.runner_client_id.is_some() {
             drop(lock);
-            return self.backend.add_project(store, &project).await;
+            return match project {
+                Some(project) => self.backend.add_project(store, &project).await,
+                None => self.backend.status(store).await,
+            };
         }
-        let project = project.canonicalize().map_err(|_| SetupDiagnostic::io())?;
+        let project = project
+            .map(|path| path.canonicalize().map_err(|_| SetupDiagnostic::io()))
+            .transpose()?;
         let mut request = record.request.clone();
-        request.project = Some(project);
+        request.project = project;
+        request.runner = Some(true);
         crate::native::validate_existing_request(store, &request)?;
         let mut journal = store.load_journal()?.ok_or_else(SetupDiagnostic::io)?;
         if journal.environment.request != record.request && journal.environment.request != request {

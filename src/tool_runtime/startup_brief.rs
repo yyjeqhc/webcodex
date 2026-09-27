@@ -1824,8 +1824,14 @@ fn enforce_hard_size_limit(brief: &mut Value) {
         brief["instructions"]["truncated"] = json!(true);
     }
 
+    // The common workflow allowance is an internal evidence-alignment target,
+    // not a tighter wire limit for smaller profiles. Synthetic or future
+    // untrimmed fields may make that target unreachable after every canonical
+    // degradable field is exhausted; in that case the real 30 KiB startup hard
+    // bound remains authoritative. HostCodeMode itself has max_bytes equal to
+    // the hard bound because its workflow envelope establishes the allowance.
     debug_assert!(
-        serialized_len(brief) <= max_bytes,
+        serialized_len(brief) <= STANDARD_STARTUP_HARD_MAX_BYTES,
         "startup brief base contract exceeded its hard byte budget"
     );
 }

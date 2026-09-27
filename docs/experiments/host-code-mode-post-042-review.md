@@ -143,7 +143,7 @@ WebCodex 的 `src/mcp_host.rs` 已有 host_code_mode profile：默认 Host budge
 
 独立只读的跨工具调用可以有限 fan-out，并分别处理失败；相同文件的修改保持有序，Cargo validation 保持串行。native batch 优先于多个独立请求。不要修改 ToolCompositionPolicy 或 nested admission 来实现 Host 指导。
 
-Job 首次返回 pending 后保存同一个 Job identity，继续不依赖该结果的工作。普通响应已提供 terminal attention 时不再重复观察；需要日志、恢复或终态确实成为硬依赖时才走对应入口。不得重新执行命令冒充 continuation，也不得在 cell 中堆积轮询循环。
+Job 首次返回 pending 后保存同一个 Job identity，继续不依赖该结果的工作。普通响应已提供 terminal attention 时不再重复观察。没有独立工作且终态确实成为硬依赖时，优先只注册一次 `wait_for_job_terminal`（仅当存在真实 Host carrier），随后 yield/end 当前 turn，等待 Host continuation；不要把 5 秒 `observe_jobs` 切片改写成同一 cell 内的轮询循环，也不要每个切片都返回模型再重新进入 Code Mode。只有需要日志、诊断或恢复时才显式 `observe_jobs`。不得重新执行命令冒充 continuation。
 
 cell 内保留完整 ToolResult、revision、cursor 和恢复数据；给模型输出决策所需证据。压缩时必须保留失败、截断、缺失和待确认状态，不能用只剩 success=true 的摘要掩盖不完整结果。
 
@@ -151,7 +151,7 @@ cell 内保留完整 ToolResult、revision、cursor 和恢复数据；给模型�
 
 默认不增加 telemetry 表、持续扫描或生产采样负担。先离线复用上述 ActionAudit 字段、Job convergence、现有 Host session 和 source/build 信息。缺少可靠关联时保留未知，不把 server gap 改名为 model turns。
 
-对照任务至少包括：独立多文件读取、确定性 search/read 后的 guarded edit、长测试 Job handoff、三页 Git review、取消/结果未知恢复。固定源代码、Host/profile、任务、缓存条件和运行次序；不要把冷 Cargo 编译与热缓存任务直接比较。
+对照任务至少包括：独立多文件读取、确定性 search/read 后的 guarded edit、长测试 Job handoff、三页 Git review、取消/结果未知恢复。长 Job 场景应单独比较 `pending → 独立 DAG → passive attention`、`pending → 一次 wait_for_job_terminal → Host continuation` 与错误基线 `pending → 多次 observe_jobs/多次模型重入`；不要把同一 cell 的 observe 轮询当成目标架构。固定源代码、Host/profile、任务、缓存条件和运行次序；不要把冷 Cargo 编译与热缓存任务直接比较。
 
 评价优先级：任务正确完成和安全边界不退化，其次是端到端耗时、实际可观察的模型决策轮次、结果输出体积、有效与无变化的 observation。继续观察 60/90 分钟工作窗口，但必须标注用户继续、暂停和版本切换，不用窗口跨度替代单次不中断执行。
 
@@ -179,4 +179,4 @@ Codex session 统计的配对规则：只对 name=exec 的 custom_tool_call/func
 
 ## 8. 未做的工作
 
-没有对 517 个文件逐一审计，没有做可归因的 Host A/B，也没有定位所有长 gap 的根因。本次没有修改 `/root/git/codex`、sf 数据或服务配置，没有 push、创建 PR、部署或重启。该分支提供已测试的正确性修复和可实施的下一轮设计，不宣称已经取得线上性能提升。
+没有对 517 个文件逐一审计，没有做可归因的 Host A/B，也没有定位所有长 gap 的根因。该审查报告生成时没有修改 `/root/git/codex`、sf 数据或服务配置，也尚未 push、创建 PR、部署或重启。后续独立 review/交付动作不改变上述审查时点。该分支提供已测试的正确性修复和可实施的下一轮设计，不宣称已经取得线上性能提升。

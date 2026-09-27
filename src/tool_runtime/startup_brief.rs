@@ -71,8 +71,8 @@ pub(crate) fn builtin_coding_workflow_projection(profile: CodingGuidanceProfile)
             "Ordinary implementation is default: map cross-layer changes end to end; use compiler/schema/exhaustiveness failures for gaps; minimize concepts, avoid speculative redesign.",
             "Validation failure is evidence, not queue cleanliness. Fix dependent blockers; continue otherwise. Reuse assertion_name; outcome_unknown fails closed. After Rust stabilizes, format once. Development validation may overlap independent work; covered-source edits make it stale for final evidence.",
             "For closeout evidence, freeze source covered by final validation. Continue read-only review/docs/external inspection; if covered source must change, invalidate that evidence and rerun the appropriate final validation.",
-            "Keep one execution/Job. execution_state=pending is fallback state, not a next-action command or retry. A continuation is not mechanically required just because it is present. Continue independent work; passive Job attention may surface.",
-            "observe_jobs is explicit logs/details/recovery, never a heartbeat. Do not immediately follow or repeatedly poll the same pending continuation, including in Host Code Mode. list_jobs is identity recovery. Arm one terminal wait only when terminal outcome blocks all useful work; do not poll it."
+            "Keep one execution/Job. execution_state=pending preserves the exact continuation as fallback state, not a next-action command or retry. A continuation is not mechanically required just because it is present. Continue independent work; passive Job attention may surface.",
+            "observe_jobs is for logs/details/recovery, never a heartbeat. Do not immediately follow or repeatedly poll the same pending continuation. list_jobs is identity recovery. Use wait_for_job_terminal only when terminal outcome is a true dependency and no independent work remains; do not poll or rearm it."
         ],
         "tool_strategy": tool_strategy_projection(profile),
         "model_protocol": {

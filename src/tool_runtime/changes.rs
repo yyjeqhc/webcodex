@@ -522,7 +522,7 @@ exit 0
         Ok((resolved.resolved_id, summary, caller_fingerprint))
     }
 
-    async fn freeze_final_workspace_tree(&self, project: &str) -> Result<String, ToolResult> {
+    pub(crate) async fn freeze_final_workspace_tree(&self, project: &str) -> Result<String, ToolResult> {
         // A private temporary index snapshots HEAD plus the complete current
         // workspace without touching the real index/ref/worktree. Custom Git
         // clean/process filters and fsmonitor are neutralized because this is a

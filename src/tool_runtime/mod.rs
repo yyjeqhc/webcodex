@@ -41,6 +41,7 @@ mod runner_instructions;
 pub(crate) use git::{framed_clean_show_changes_test_stdout, framed_show_changes_test_block};
 mod git_committed;
 mod git_review;
+mod git_review_snapshot;
 mod git_tools;
 mod goal;
 mod handoff;

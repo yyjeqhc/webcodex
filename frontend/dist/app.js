@@ -32352,7 +32352,7 @@ function av() {
   return document.visibilityState === "hidden";
 }
 function Z9(e, n, a, r = !0) {
-  const [l, d] = (0, x.useState)(null), [u, h] = (0, x.useState)(!1), [p, g] = (0, x.useState)("idle"), [b, v] = (0, x.useState)(null), y = (0, x.useRef)(null), w = (0, x.useRef)(!0), _ = (0, x.useRef)(r);
+  const [l, d] = (0, x.useState)(null), [u, h] = (0, x.useState)(null), [p, g] = (0, x.useState)("idle"), [b, v] = (0, x.useState)(null), y = (0, x.useRef)(null), w = (0, x.useRef)(!0), _ = (0, x.useRef)(r);
   _.current = r;
   const S = (0, x.useRef)(null), C = (0, x.useCallback)(async () => {
     if (!w.current || !_.current || av() || S.current) return;
@@ -32361,9 +32361,9 @@ function Z9(e, n, a, r = !0) {
     try {
       const D = await X9(e, n, T);
       if (!w.current || !_.current || av() || T.aborted || S.current !== N) return;
-      D?.status === 401 && a(), D?.ok && D.data ? (d(D.data), h(!1)) : (h(!0), (D?.status === 403 || D?.status === 404) && d(null));
+      D?.status === 401 && a(), D?.ok && D.data ? (d(D.data), h(null)) : (h(D?.status === 403 ? "access" : D?.status === 404 ? "unavailable" : "failed"), (D?.status === 403 || D?.status === 404) && d(null));
     } catch {
-      w.current && !T.aborted && h(!0);
+      w.current && !T.aborted && h("failed");
     } finally {
       S.current === N && (S.current = null);
     }
@@ -32388,7 +32388,8 @@ function Z9(e, n, a, r = !0) {
     };
   }, [r, C]), {
     transcript: l,
-    error: u,
+    error: u !== null,
+    readError: u,
     sendState: p,
     sendError: b,
     send: async (N, T, D = "guidance", P = "normal", R = !0) => {
@@ -32498,7 +32499,7 @@ function i7({ client: e, windowKey: n, selectedSessionId: a, language: r, onUnau
           T.error && /* @__PURE__ */ (0, c.jsx)("div", {
             className: "window-collaboration-banner",
             role: "status",
-            children: u ? "暂时无法刷新消息。" : "Messages could not be refreshed."
+            children: T.readError === "access" ? u ? "当前访问密钥没有协作权限（需要 session:collaborate）。请使用支持协作的访问密钥重新连接。" : "The current access key cannot collaborate (session:collaborate is required). Reconnect with a collaboration-enabled key." : T.readError === "unavailable" ? u ? "此窗口对当前访问密钥不可用。" : "This Window is not available to the current access key." : u ? "暂时无法刷新消息。" : "Messages could not be refreshed."
           }),
           R.map((z) => {
             const L = J9(z, u), W = z.source === "operator" || z.source === "peer" && z.direction === "outbound";

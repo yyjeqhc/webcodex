@@ -10,7 +10,7 @@ Session identifies related work and must be visible and explicitly linked to
 that Window. Neither context changes the recipient or creates a Session.
 
 Operator messages use the independent durable `window_operator_messages` store,
-with exact principal isolation, 512 retained messages per principal, and a
+with exact recipient-principal isolation, 512 retained messages per principal, and a
 principal-scoped delivery key. Within retention, exact retries return the same
 message ID; changing recipient, context, or content with the same key conflicts.
 An uncertain write must retain the complete payload and key when retried.
@@ -20,10 +20,14 @@ optional `limit` (1–100). The read-only transcript merges inbound Operator,
 inbound peer, and outbound peer messages, oldest first within the latest bounded
 slice. `POST /api/runtime-console/window-collaboration-post` accepts that exact
 Window key, `message`, `delivery_key`, and optional `context_session_id`. Both
-require `runtime:read`, `session:collaborate`, and a Window visible under the
-caller's exact observation principal; the wider Console inventory is not write
-authority. The card uses its Host-derived current ClientWindow and independently
-authorizes its Project.
+require `runtime:read`, `session:collaborate`, and an exact Window currently
+visible through the caller's Runtime Console Project authority. The Console resolves
+the Window's latest actual recipient principal and stores/reads the transcript in
+that recipient namespace, so rotating the operator WebUI token does not disconnect
+collaboration. A newer Window activity that is not visible to the caller fails closed
+instead of falling back to older visible history. Project-scoped model credentials
+remain exact-principal bounded. The card uses its Host-derived current ClientWindow
+and independently authorizes its Project.
 
 Transcript reads never consume attention. Only model-visible tool activity
 projects pending Operator messages and updates projection timestamps;

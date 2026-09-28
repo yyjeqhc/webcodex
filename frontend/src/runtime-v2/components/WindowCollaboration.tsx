@@ -132,7 +132,13 @@ export function WindowCollaboration({ client, windowKey, selectedSessionId, lang
       }}>
         {state.error && (
           <div className="window-collaboration-banner" role="status">
-            {zh ? "暂时无法刷新消息。" : "Messages could not be refreshed."}
+            {state.readError === "access"
+              ? (zh
+                ? "当前访问密钥没有协作权限（需要 session:collaborate）。请使用支持协作的访问密钥重新连接。"
+                : "The current access key cannot collaborate (session:collaborate is required). Reconnect with a collaboration-enabled key.")
+              : state.readError === "unavailable"
+                ? (zh ? "此窗口对当前访问密钥不可用。" : "This Window is not available to the current access key.")
+                : (zh ? "暂时无法刷新消息。" : "Messages could not be refreshed.")}
           </div>
         )}
 

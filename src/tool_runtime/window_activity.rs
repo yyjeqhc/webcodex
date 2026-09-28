@@ -115,6 +115,13 @@ impl ActiveWindowRequest {
     pub(crate) fn is_meaningful(&self) -> bool {
         self.meaningful
     }
+
+    pub(crate) fn principal_correlation(&self) -> Option<(&str, &str)> {
+        Some((
+            self.principal_correlation_kind.as_deref()?,
+            self.principal_correlation_id.as_deref()?,
+        ))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

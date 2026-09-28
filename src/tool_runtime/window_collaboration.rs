@@ -84,6 +84,42 @@ impl ToolRuntime {
         if !auth.is_some_and(|a| a.has_scope(SCOPE_SESSION_COLLABORATE)) {
             return ToolResult::err("collaboration scope required");
         }
+        let Ok((kind, principal)) = super::runtime_observation_principal(auth) else {
+            return ToolResult::err("collaboration principal unavailable");
+        };
+        self.post_window_operator_message_with_options_for_principal(
+            target_window_key,
+            context_session_id,
+            context_project,
+            message_kind,
+            priority,
+            requires_ack,
+            message,
+            delivery_key,
+            &kind,
+            &principal,
+            auth,
+        )
+        .await
+    }
+
+    pub(crate) async fn post_window_operator_message_with_options_for_principal(
+        &self,
+        target_window_key: &str,
+        context_session_id: Option<&str>,
+        context_project: Option<&str>,
+        message_kind: &str,
+        priority: &str,
+        requires_ack: bool,
+        message: String,
+        delivery_key: String,
+        recipient_principal_kind: &str,
+        recipient_principal_id: &str,
+        auth: Option<&AuthContext>,
+    ) -> ToolResult {
+        if !auth.is_some_and(|a| a.has_scope(SCOPE_SESSION_COLLABORATE)) {
+            return ToolResult::err("collaboration scope required");
+        }
         if !valid_window_message_kind(message_kind) || !valid_window_message_priority(priority) {
             return ToolResult::err_with_output(
                 "invalid Window collaboration metadata",
@@ -95,9 +131,6 @@ impl ToolRuntime {
                 }),
             );
         }
-        let Ok((kind, principal)) = super::runtime_observation_principal(auth) else {
-            return ToolResult::err("collaboration principal unavailable");
-        };
         if message.trim().is_empty()
             || message.chars().count() > super::sessions::MAX_MESSAGE_CHARS
             || delivery_key.trim().is_empty()
@@ -123,8 +156,13 @@ impl ToolRuntime {
                 );
             }
             let related = self.window_activity_db.as_ref().is_some_and(|db| {
-                db.window_has_session_context(&kind, &principal, target_window_key, session)
-                    .unwrap_or(false)
+                db.window_has_session_context(
+                    recipient_principal_kind,
+                    recipient_principal_id,
+                    target_window_key,
+                    session,
+                )
+                .unwrap_or(false)
             });
             if !related {
                 return invalid_window_context(
@@ -152,8 +190,8 @@ impl ToolRuntime {
             return ToolResult::err("Window collaboration unavailable");
         };
         let input = webcodex_store::NewWindowOperatorMessage {
-            principal_kind: kind,
-            principal_id: principal,
+            principal_kind: recipient_principal_kind.to_string(),
+            principal_id: recipient_principal_id.to_string(),
             recipient_window_key: target_window_key.to_string(),
             context_session_id: context_session_id.map(str::to_string),
             context_project: canonical_context_project,
@@ -272,14 +310,31 @@ impl ToolRuntime {
         if !auth.is_some_and(|a| a.has_scope(SCOPE_SESSION_COLLABORATE)) {
             return unavailable();
         }
-        let (Some(window), Some(db), Ok((kind, principal))) = (
-            window_key,
-            self.communication_db.as_ref(),
-            super::runtime_observation_principal(auth),
-        ) else {
+        let (Some(window), Ok((kind, principal))) =
+            (window_key, super::runtime_observation_principal(auth))
+        else {
             return unavailable();
         };
-        match db.window_collaboration_transcript(&kind, &principal, window, limit) {
+        self.window_collaboration_for_principal(window, &kind, &principal, limit)
+    }
+
+    pub(crate) fn window_collaboration_for_principal(
+        &self,
+        window: &str,
+        recipient_principal_kind: &str,
+        recipient_principal_id: &str,
+        limit: usize,
+    ) -> serde_json::Value {
+        let unavailable = || json!({"available":false,"can_send":false,"messages":[]});
+        let Some(db) = self.communication_db.as_ref() else {
+            return unavailable();
+        };
+        match db.window_collaboration_transcript(
+            recipient_principal_kind,
+            recipient_principal_id,
+            window,
+            limit,
+        ) {
             Ok((messages, truncated)) => {
                 json!({"available":true,"can_send":true,"returned":messages.len(),"messages":messages,"truncated":truncated})
             }

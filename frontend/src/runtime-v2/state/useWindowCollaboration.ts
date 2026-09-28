@@ -11,6 +11,7 @@ import {
 
 export type WindowCollaborationSendState = "idle" | "sending" | "uncertain" | "error";
 export type WindowCollaborationSendError = "conflict" | "context" | "unavailable" | "failed" | null;
+export type WindowCollaborationReadError = "access" | "unavailable" | "failed" | null;
 
 function pageIsHidden(): boolean {
   return document.visibilityState === "hidden";
@@ -18,7 +19,7 @@ function pageIsHidden(): boolean {
 
 export function useWindowCollaboration(client: RuntimeV2Client, windowKey: string, onUnauthorized: () => void, active = true) {
   const [transcript, setTranscript] = useState<WindowCollaborationTranscript | null>(null);
-  const [error, setError] = useState(false);
+  const [readError, setReadError] = useState<WindowCollaborationReadError>(null);
   const [sendState, setSendState] = useState<WindowCollaborationSendState>("idle");
   const [sendError, setSendError] = useState<WindowCollaborationSendError>(null);
   const pending = useRef<WindowCollaborationPost | null>(null);
@@ -35,9 +36,14 @@ export function useWindowCollaboration(client: RuntimeV2Client, windowKey: strin
       const response = await fetchWindowCollaboration(client, windowKey, signal);
       if (!alive.current || !activeRef.current || pageIsHidden() || signal.aborted || inFlight.current !== controller) return;
       if (response?.status === 401) onUnauthorized();
-      if (response?.ok && response.data) { setTranscript(response.data); setError(false); }
-      else { setError(true); if (response?.status === 403 || response?.status === 404) setTranscript(null); }
-    } catch { if (alive.current && !signal.aborted) setError(true); }
+      if (response?.ok && response.data) {
+        setTranscript(response.data);
+        setReadError(null);
+      } else {
+        setReadError(response?.status === 403 ? "access" : response?.status === 404 ? "unavailable" : "failed");
+        if (response?.status === 403 || response?.status === 404) setTranscript(null);
+      }
+    } catch { if (alive.current && !signal.aborted) setReadError("failed"); }
     finally { if (inFlight.current === controller) inFlight.current = null; }
   }, [client, windowKey, onUnauthorized]);
   useEffect(() => {
@@ -124,5 +130,5 @@ export function useWindowCollaboration(client: RuntimeV2Client, windowKey: strin
       return false;
     }
   };
-  return { transcript, error, sendState, sendError, send };
+  return { transcript, error: readError !== null, readError, sendState, sendError, send };
 }

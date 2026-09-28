@@ -67,6 +67,14 @@ describe("Window collaboration", () => {
     view.unmount();
   });
 
+  it("explains collaboration scope failures instead of silently disabling input", async () => {
+    const post = vi.fn(async () => ({ ok: false, status: 403, data: null }));
+    const view = render(<WindowCollaboration client={{ post } as unknown as RuntimeV2Client} windowKey="exact-window" selectedSessionId="" language="en" onUnauthorized={vi.fn()} />);
+    expect(await screen.findByText(/session:collaborate is required/)).toBeTruthy();
+    expect((screen.getByRole("textbox") as HTMLTextAreaElement).disabled).toBe(true);
+    view.unmount();
+  });
+
   it("ignores a read that resolves after the page becomes hidden but before the visibility event", async () => {
     let visibility: DocumentVisibilityState = "visible";
     vi.spyOn(document, "visibilityState", "get").mockImplementation(() => visibility);

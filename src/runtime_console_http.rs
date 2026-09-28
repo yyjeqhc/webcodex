@@ -228,7 +228,10 @@ struct WorkflowSessionInput {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct OverviewInput {}
+struct OverviewInput {
+    #[serde(default)]
+    include_sessions: Option<bool>,
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -323,6 +326,7 @@ struct WorkflowSessionReplaceMessageInput {
 
 #[derive(Debug, Serialize)]
 struct RuntimeConsoleOverview {
+    detail_level: &'static str,
     authenticated_user: Option<String>,
     effective_config: Value,
     service: Option<String>,
@@ -2809,9 +2813,18 @@ async fn list_runners_value(
         .ok_or(RuntimeConsoleError::Internal)
 }
 
+#[cfg(test)]
 async fn overview_for_auth(
     runtime: &ToolRuntime,
     auth: &AuthContext,
+) -> Result<RuntimeConsoleOverview, RuntimeConsoleError> {
+    overview_for_auth_detail(runtime, auth, true).await
+}
+
+async fn overview_for_auth_detail(
+    runtime: &ToolRuntime,
+    auth: &AuthContext,
+    include_sessions: bool,
 ) -> Result<RuntimeConsoleOverview, RuntimeConsoleError> {
     require_runtime_read(auth)?;
     let (status, runners_value) = tokio::try_join!(
@@ -2853,7 +2866,7 @@ async fn overview_for_auth(
     } else {
         None
     };
-    let running_jobs = if visible.is_some() {
+    let running_jobs = if include_sessions && visible.is_some() {
         running_jobs_for_auth(runtime, auth, None).await?
     } else {
         RunningJobSnapshot::default()
@@ -2867,7 +2880,25 @@ async fn overview_for_auth(
             runner_projects_scanned: HashMap::new(),
             project_scan_truncated: false,
         },
-        |visible| scan_runtime_home(runtime, visible, &running_jobs),
+        |visible| {
+            if include_sessions {
+                scan_runtime_home(runtime, visible, &running_jobs)
+            } else {
+                // Registry-only first paint. Unscanned Sessions are not proven empty.
+                RuntimeConsoleHomeScan {
+                    workflow: RuntimeConsoleWorkflowAggregate {
+                        projects_total: visible.total,
+                        truncated: visible.total > 0,
+                        ..Default::default()
+                    },
+                    recent_sessions: finalize_recent_sessions(Vec::new(), visible.total > 0),
+                    projects: visible.projects.clone(),
+                    runner_sessions: HashMap::new(),
+                    runner_projects_scanned: HashMap::new(),
+                    project_scan_truncated: visible.truncated,
+                }
+            }
+        },
     );
     let runners = runner_fleet_rows(&runners_value, &status_clients, &home);
     let runner_count = safe_usize(summary.get("count")).max(runners.len());
@@ -2876,6 +2907,7 @@ async fn overview_for_auth(
     let unavailable = runner_count.saturating_sub(online.saturating_add(stale));
     let active_windows = active_window_count_for_auth(runtime, auth).await?;
     Ok(RuntimeConsoleOverview {
+        detail_level: if include_sessions { "full" } else { "primary" },
         authenticated_user: auth.username.clone(),
         effective_config: runtime.effective_config_status(),
         service: safe_string(status.get("service"), 80),
@@ -3260,10 +3292,11 @@ async fn overview(req: &mut Request, depot: &mut Depot, res: &mut Response) {
         Ok(value) => value,
         Err(error) => return render_error(res, error),
     };
-    if req.parse_json::<OverviewInput>().await.is_err() {
-        return render_error(res, RuntimeConsoleError::Invalid);
-    }
-    match overview_for_auth(&runtime, &auth).await {
+    let input = match req.parse_json::<OverviewInput>().await {
+        Ok(input) => input,
+        Err(_) => return render_error(res, RuntimeConsoleError::Invalid),
+    };
+    match overview_for_auth_detail(&runtime, &auth, input.include_sessions.unwrap_or(true)).await {
         Ok(output) => res.render(Json(output)),
         Err(error) => render_error(res, error),
     }
@@ -4501,6 +4534,44 @@ mod tests {
                 .send(&service)
                 .await;
         assert_eq!(cross_origin.status_code, Some(StatusCode::FORBIDDEN));
+    }
+
+    #[tokio::test]
+    async fn runtime_home_primary_skips_session_hydration_but_keeps_visibility_and_partial_truth() {
+        let runtime = test_runtime();
+        let auth = crate::auth::shared_key_context("primary-home");
+        let foreign = crate::auth::shared_key_context("foreign-home");
+        register_project(&runtime, "own", "one", "/private/own", Some(&auth)).await;
+        register_project(
+            &runtime,
+            "foreign",
+            "one",
+            "/private/foreign",
+            Some(&foreign),
+        )
+        .await;
+        start_authorized_session(&runtime, "agent:own:one", &auth);
+        let primary = overview_for_auth_detail(&runtime, &auth, false)
+            .await
+            .unwrap();
+        assert_eq!(primary.detail_level, "primary");
+        assert_eq!(primary.projects.len(), 1);
+        assert_eq!(primary.workflow_sessions.projects_scanned, 0);
+        assert!(primary.workflow_sessions.truncated);
+        assert!(primary.recent_sessions.sessions.is_empty());
+        assert!(primary
+            .projects
+            .iter()
+            .all(|project| project.sessions.is_none()));
+        assert!(!serde_json::to_string(&primary)
+            .unwrap()
+            .contains("/private/foreign"));
+        let full = overview_for_auth_detail(&runtime, &auth, true)
+            .await
+            .unwrap();
+        assert_eq!(full.detail_level, "full");
+        assert_eq!(full.recent_sessions.sessions.len(), 1);
+        assert_eq!(full.workflow_sessions.projects_scanned, 1);
     }
 
     #[tokio::test]

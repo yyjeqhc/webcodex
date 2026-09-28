@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchRuntimeOverview } from "../api/runtime.js";
 import type { RuntimeV2Client } from "../api/client.js";
 import type { Availability, RuntimeOverview } from "../model/types.js";
+import { useVisibleRefresh } from "./useVisibleRefresh.js";
 
 export type RuntimeOverviewState = {
   availability: Availability;
@@ -15,6 +16,7 @@ export function useRuntimeOverview(
   client: RuntimeV2Client,
   enabled: boolean,
   onUnauthorized: () => void,
+  includeSessions = true,
 ): RuntimeOverviewState {
   const [availability, setAvailability] = useState<Availability>("idle");
   const [data, setData] = useState<RuntimeOverview | null>(null);
@@ -22,73 +24,54 @@ export function useRuntimeOverview(
   const [refreshing, setRefreshing] = useState(false);
   const [revision, setRevision] = useState(0);
   const current = useRef<AbortController | null>(null);
-
+  const observed = useRef<RuntimeOverview | null>(null);
+  const owner = useRef(client);
   const refresh = useCallback(() => {
-    if (!current.current) setRevision((value) => value + 1);
+    if (!current.current) setRevision(value => value + 1);
   }, []);
 
   useEffect(() => {
+    if (owner.current !== client) {
+      owner.current = client; observed.current = null;
+      setData(null); setUpdatedAt(null); setAvailability("idle");
+    }
     if (!enabled) {
-      current.current?.abort();
-      current.current = null;
-      setData(null);
-      setUpdatedAt(null);
-      setRefreshing(false);
-      setAvailability("idle");
+      current.current?.abort(); current.current = null; observed.current = null;
+      setData(null); setUpdatedAt(null); setRefreshing(false); setAvailability("idle");
       return;
     }
-    let disposed = false;
     const controller = new AbortController();
-    current.current?.abort();
-    current.current = controller;
+    current.current?.abort(); current.current = controller;
+    let hydration: ReturnType<typeof setTimeout> | undefined;
     setRefreshing(true);
-    setAvailability((value) => (value === "idle" ? "loading" : value));
-
-    void fetchRuntimeOverview(client, controller.signal).then((response) => {
-      if (disposed || current.current !== controller || !response) return;
-      current.current = null;
-      setRefreshing(false);
-      if (response.status === 401) {
-        onUnauthorized();
-        return;
-      }
+    setAvailability(value => value === "idle" ? "loading" : value);
+    const failed = () => setAvailability(value => value === "available" || value === "stale" ? "stale" : "error");
+    // Render registry facts first. Only the Session/Runtime surfaces need the
+    // more expensive fleet-wide retained-Session aggregation, never Window work.
+    const full = includeSessions && observed.current !== null;
+    void fetchRuntimeOverview(client, controller.signal, full).then(response => {
+      if (controller.signal.aborted || current.current !== controller) return;
+      current.current = null; setRefreshing(false);
+      if (!response) { failed(); return; }
+      if (response.status === 401) { onUnauthorized(); return; }
       if (response.status === 403) {
-        setData(null);
-        setAvailability("denied");
-        return;
+        observed.current = null; setData(null); setAvailability("denied"); return;
       }
-      if (!response.ok || !response.data) {
-        setAvailability((value) => value === "available" || value === "stale" ? "stale" : "error");
-        return;
-      }
-      setData(response.data);
-      setUpdatedAt(Date.now());
-      setAvailability("available");
+      if (!response.ok || !response.data) { failed(); return; }
+      observed.current = response.data;
+      setData(response.data); setUpdatedAt(Date.now()); setAvailability("available");
+      if (includeSessions && response.data.detail_level === "primary") hydration = setTimeout(refresh, 0);
+    }).catch(() => {
+      if (controller.signal.aborted || current.current !== controller) return;
+      current.current = null; setRefreshing(false); failed();
     });
-
     return () => {
-      disposed = true;
       controller.abort();
+      if (hydration !== undefined) clearTimeout(hydration);
       if (current.current === controller) current.current = null;
     };
-  }, [client, enabled, onUnauthorized, revision]);
+  }, [client, enabled, onUnauthorized, revision, includeSessions, refresh]);
 
-  useEffect(() => {
-    if (!enabled) return;
-    const refreshVisible = () => {
-      if (document.visibilityState !== "hidden") refresh();
-    };
-    const timer = window.setInterval(refreshVisible, 5_000);
-    window.addEventListener("focus", refreshVisible);
-    document.addEventListener("visibilitychange", refreshVisible);
-    window.addEventListener("online", refreshVisible);
-    return () => {
-      window.clearInterval(timer);
-      window.removeEventListener("focus", refreshVisible);
-      document.removeEventListener("visibilitychange", refreshVisible);
-      window.removeEventListener("online", refreshVisible);
-    };
-  }, [enabled, refresh]);
-
+  useVisibleRefresh(enabled, refresh, includeSessions ? 30_000 : 10_000);
   return { availability, data, refresh, updatedAt, refreshing };
 }

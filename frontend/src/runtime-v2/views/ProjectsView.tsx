@@ -245,9 +245,12 @@ export function ProjectsView({ client, language, runners, onOpenSession, onOpenW
           {projectsState.availability === "available" && !families.length && (
             <div className="empty-panel wide"><Folder size={19} /><strong>{t("No matching projects")}</strong></div>
           )}
-          {projectsState.truncated && (
-            <div className="inventory-note wide">{t("Project inventory is bounded. Narrow the search to find omitted Projects.")}</div>
-          )}
+          <div className="inventory-note wide" role="status">
+            {projectsState.projects.length} / {projectsState.total} {t("workspaces")}
+            {projectsState.truncated && <button type="button" className="text-button" disabled={projectsState.refreshing} onClick={projectsState.loadMore}>{t("Load more")}</button>}
+            {projectsState.canShowLess && <button type="button" className="text-button" disabled={projectsState.refreshing} onClick={projectsState.showLess}>{t("Show less")}</button>}
+            {projectsState.refreshing && <span>{t("Loading projects…")}</span>}
+          </div>
 
         </aside>
         {selectedFamily && selectedProject && (

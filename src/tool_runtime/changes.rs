@@ -22,6 +22,7 @@ const CHANGES_SNAPSHOT_TTL: Duration = Duration::from_secs(24 * 60 * 60);
 const MAX_CHANGES_SNAPSHOTS: usize = 32;
 const MAX_CHANGES_SNAPSHOTS_PER_CALLER: usize = 8;
 const MAX_CHANGES_FILES: usize = 24;
+const MAX_STORED_CHANGES_FILES: usize = 2_000;
 const MAX_CHANGES_PATH_CHARS: usize = 1024;
 const CHANGES_METADATA_SOURCE_BYTES: usize = 32 * 1024;
 const CHANGES_DIFF_MAX_BYTES: usize = 48 * 1024;
@@ -69,7 +70,7 @@ struct ChangesSnapshot {
     snapshot_id: String,
     caller_fingerprint: String,
     project: String,
-    session_id: String,
+    session_id: Option<String>,
     attempt_key: String,
     baseline_tree: String,
     final_tree: String,
@@ -81,9 +82,13 @@ struct ChangesSnapshot {
 
 impl ChangesSnapshot {
     fn matches_identity(&self, caller_fingerprint: &str, project: &str, session_id: &str) -> bool {
-        self.caller_fingerprint == caller_fingerprint
+        self.matches_context(caller_fingerprint, project, Some(session_id))
+    }
+
+    fn matches_context(&self, caller: &str, project: &str, session: Option<&str>) -> bool {
+        self.caller_fingerprint == caller
             && self.project == project
-            && self.session_id == session_id
+            && self.session_id.as_deref() == session
     }
 
     fn matches_attempt(
@@ -104,9 +109,9 @@ impl ChangesSnapshot {
             "additions": self.totals.additions,
             "deletions": self.totals.deletions,
             "files_total": self.totals.files,
-            "files_returned": self.files.len(),
-            "files_truncated": self.files_truncated,
-            "files": self.files.iter().map(ChangesFileMetadata::to_value).collect::<Vec<_>>(),
+            "files_returned": self.files.len().min(MAX_CHANGES_FILES),
+            "files_truncated": self.files_truncated || self.files.len() > MAX_CHANGES_FILES,
+            "files": self.files.iter().take(MAX_CHANGES_FILES).map(ChangesFileMetadata::to_value).collect::<Vec<_>>(),
         })
     }
 }
@@ -144,12 +149,11 @@ impl ChangesSnapshotRegistry {
             .snapshots
             .iter()
             .find(|candidate| {
-                candidate.matches_attempt(
+                candidate.matches_context(
                     &snapshot.caller_fingerprint,
                     &snapshot.project,
-                    &snapshot.session_id,
-                    &snapshot.attempt_key,
-                )
+                    snapshot.session_id.as_deref(),
+                ) && candidate.attempt_key == snapshot.attempt_key
             })
             .cloned()
         {
@@ -403,7 +407,7 @@ exit 0
             snapshot_id,
             caller_fingerprint,
             project: project.to_string(),
-            session_id: summary.session_id.clone(),
+            session_id: Some(summary.session_id.clone()),
             attempt_key: attempt_key.to_string(),
             baseline_tree: baseline_tree.to_string(),
             final_tree,
@@ -418,6 +422,143 @@ exit 0
             .insert_or_get(snapshot);
 
         Ok(Some(snapshot.presentation_value()))
+    }
+
+    /// Shared lazy UI reader: exact caller/Project/optional Session, immutable
+    /// source, bounded pages, and the same safe per-file diff producer as finals.
+    pub(crate) async fn work_result_files(
+        &self,
+        project: String,
+        session_id: Option<String>,
+        request: webcodex_tool_contracts::WorkResultFilesRequest,
+        auth: Option<&AuthContext>,
+    ) -> ToolResult {
+        if request.offset > MAX_STORED_CHANGES_FILES
+            || request
+                .path
+                .as_deref()
+                .is_some_and(|path| !valid_changes_path(path))
+            || (request.path.is_some() && (request.snapshot_id.is_none() || request.offset != 0))
+            || (request.snapshot_id.is_none() && (session_id.is_some() || request.offset != 0))
+        {
+            return changes_identity_error("changes_page_invalid");
+        }
+        let caller = match workflow_session_authority_fingerprint(auth) {
+            Ok(caller) => caller,
+            Err(_) => return changes_identity_error("session_authority_denied"),
+        };
+        let resolved = match self.resolve_project_input_for_auth(&project, auth).await {
+            Ok(resolved) if resolved.resolved_id == project => resolved,
+            _ => return changes_identity_error("changes_project_not_exact"),
+        };
+        if let Some(session) = session_id.as_deref() {
+            if let Err(result) = self
+                .authorize_exact_changes_context(&project, session, "changes_file_diff", auth)
+                .await
+            {
+                return result;
+            }
+        }
+        let snapshot = if let Some(id) = request.snapshot_id {
+            let found = changes_snapshots()
+                .lock()
+                .expect("Changes registry")
+                .get(&id);
+            match found {
+                Some(snapshot)
+                    if snapshot.matches_context(&caller, &project, session_id.as_deref()) =>
+                {
+                    snapshot
+                }
+                _ => return changes_identity_error("changes_snapshot_unavailable"),
+            }
+        } else {
+            let (head, tree, _) = match self
+                .freeze_workspace_git_state(&resolved.resolved_id, false)
+                .await
+            {
+                Ok(value) => value,
+                Err(result) => return result,
+            };
+            let baseline = match head {
+                Some(head) => head,
+                None => {
+                    let empty = self
+                        .run_project_internal_posix_script_capture(
+                            &project,
+                            "printf '' | git hash-object -t tree --stdin".into(),
+                            10,
+                            None,
+                        )
+                        .await;
+                    match empty {
+                        Ok(output)
+                            if output.exit_code == Some(0)
+                                && valid_git_object_id(output.stdout.trim()) =>
+                        {
+                            output.stdout.trim().to_string()
+                        }
+                        _ => return changes_identity_error("changes_snapshot_failed"),
+                    }
+                }
+            };
+            let (totals, files, files_truncated) =
+                match self.changes_metadata(&project, &baseline, &tree).await {
+                    Ok(value) => value,
+                    Err(result) => return result,
+                };
+            let attempt_key = format!("workspace:{baseline}:{tree}");
+            let snapshot = ChangesSnapshot {
+                snapshot_id: changes_snapshot_id(
+                    &caller,
+                    &project,
+                    "",
+                    &attempt_key,
+                    &baseline,
+                    &tree,
+                ),
+                caller_fingerprint: caller,
+                project: project.clone(),
+                session_id: None,
+                attempt_key,
+                baseline_tree: baseline,
+                final_tree: tree,
+                totals,
+                files,
+                files_truncated,
+                expires_at: Instant::now() + CHANGES_SNAPSHOT_TTL,
+            };
+            changes_snapshots()
+                .lock()
+                .expect("Changes registry")
+                .insert_or_get(snapshot)
+        };
+        if let Some(path) = request.path {
+            let Some(file) = snapshot.files.iter().find(|file| file.path == path) else {
+                return changes_identity_error("changes_snapshot_path_not_allowed");
+            };
+            let diff = match self.frozen_changes_file_diff(&snapshot, file).await {
+                Ok(diff) => diff,
+                Err(result) => return result,
+            };
+            return ToolResult::ok(json!({"work_result_files": {
+                "project": project, "session_id": session_id, "snapshot_id": snapshot.snapshot_id,
+                "path": path, "diff": diff.text, "truncated": diff.truncated,
+            }}));
+        }
+        if request.offset > snapshot.files.len() {
+            return changes_identity_error("changes_page_invalid");
+        }
+        let end = request
+            .offset
+            .saturating_add(MAX_CHANGES_FILES)
+            .min(snapshot.files.len());
+        ToolResult::ok(json!({"work_result_files": {
+            "project": project, "session_id": session_id, "snapshot_id": snapshot.snapshot_id,
+            "offset": request.offset, "next_offset": (end < snapshot.files.len()).then_some(end),
+            "files_total": snapshot.totals.files, "source_truncated": snapshot.files_truncated,
+            "files": snapshot.files[request.offset..end].iter().map(ChangesFileMetadata::to_value).collect::<Vec<_>>(),
+        }}))
     }
 
     pub(crate) async fn changes_file_diff(
@@ -678,7 +819,7 @@ printf 'WEBCODEX_WORKSPACE_STATUS=%s\n' "$status_fingerprint""#
         let statuses = parse_name_status_z(&name_status);
         let stats = parse_numstat_z(&numstat);
         let mut files = Vec::new();
-        for mut file in statuses.into_iter().take(MAX_CHANGES_FILES) {
+        for mut file in statuses.into_iter().take(MAX_STORED_CHANGES_FILES) {
             if let Some(stat) = stats.get(&file.path) {
                 file.additions = stat.additions;
                 file.deletions = stat.deletions;
@@ -886,14 +1027,14 @@ fn valid_changes_path(path: &str) -> bool {
     if path.split(['/', '\\']).any(|component| component == "..") {
         return false;
     }
-    validate_project_relative_path(path).is_ok()
+    !crate::sensitive_paths::is_secret_path(path) && validate_project_relative_path(path).is_ok()
 }
 
 fn parse_name_status_z(source: &str) -> Vec<ChangesFileMetadata> {
     let fields = complete_nul_prefix(source).split('\0').collect::<Vec<_>>();
     let mut index = 0;
     let mut files = Vec::new();
-    while index < fields.len() && files.len() < MAX_CHANGES_FILES {
+    while index < fields.len() && files.len() < MAX_STORED_CHANGES_FILES {
         let status = fields[index];
         index += 1;
         if status.is_empty() {
@@ -1007,7 +1148,7 @@ mod tests {
             snapshot_id: id.to_string(),
             caller_fingerprint: caller.to_string(),
             project: "agent:runner:project".to_string(),
-            session_id: "session".to_string(),
+            session_id: Some("session".to_string()),
             attempt_key: format!("attempt-{id}"),
             baseline_tree: "a".repeat(40),
             final_tree: "b".repeat(40),

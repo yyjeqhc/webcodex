@@ -125,7 +125,8 @@ export function App() {
     lock(translate("Your access key is no longer valid. Connect again.", language));
   }, [language, lock]);
 
-  const overviewState = useRuntimeOverview(client, Boolean(token), handleUnauthorized);
+  const overviewState = useRuntimeOverview(client, Boolean(token), handleUnauthorized,
+    view === "runtime" || (view === "work" && workSurface === "session"));
   const overview = overviewState.data;
   const visibleProjectFamilyCount = useMemo(
     () => new Set((overview?.projects || []).map(projectFamilyId)).size,
@@ -351,6 +352,7 @@ export function App() {
             projects={overview?.projects || []}
             language={language}
             inventoryIncomplete={Boolean(overview?.recent_sessions.truncated || overview?.recent_sessions.scan_truncated)}
+            hydratingSessions={overviewState.refreshing && overview?.detail_level === "primary"}
             surface={workSurface}
             onSurfaceChange={setWorkSurface}
             onOpenAgent={openAgent}

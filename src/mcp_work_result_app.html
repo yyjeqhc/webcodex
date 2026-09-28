@@ -259,6 +259,8 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
         <div id="frozenSummary" class="primary"></div>
         <div id="frozenFiles"></div>
         <button id="frozenMore" class="refresh" type="button" hidden></button>
+        <button id="frozenLess" class="refresh" type="button" hidden>Show fewer files</button>
+        <button id="frozenCollapse" class="refresh" type="button">Collapse all files</button>
         <div id="frozenFooter" class="secondary"></div>
       </section>
       <section class="section">
@@ -266,6 +268,10 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
         <div id="workspaceStatus" class="primary">Waiting for files…</div>
         <p class="secondary">Current uncommitted changes in this Project, including other work. Final task changes are shown separately above.</p>
         <div id="workspaceFiles" class="workspace-files" role="list" aria-label="Changed files"></div>
+        <button id="workspaceMore" class="refresh" type="button" hidden>Show more files</button>
+        <button id="workspaceLess" class="refresh" type="button" hidden>Show fewer files</button>
+        <button id="workspaceCollapse" class="refresh" type="button">Collapse all files</button>
+        <button id="workspaceReload" class="refresh" type="button" hidden>Refresh file snapshot</button>
         <div id="workspaceMeta" class="secondary"></div>
       </section>
       <section id="resultChecks" class="section">
@@ -328,6 +334,8 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
   let lastStateVersion = null;
   let hostInitialized = false;
   let refreshInFlight = false;
+  let unchangedRefreshes = 0;
+  let refreshFailures = 0;
   let refreshTimer = null;
   let lastStateChangeAt = null;
   let lastRenderedState = null;
@@ -340,14 +348,14 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
   const pending = new Map();
   const el = id => document.getElementById(id);
 
-  function send(method, params) {
+  function send(method, params, timeoutMs = CALL_TIMEOUT_MS) {
     if (tornDown) return Promise.reject(new Error("App torn down"));
     const id = nextId++;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         pending.delete(id);
         reject(new Error("Host request timed out"));
-      }, CALL_TIMEOUT_MS);
+      }, timeoutMs);
       pending.set(id, { resolve, reject, timer });
       parent.postMessage({ jsonrpc: "2.0", id, method, params }, "*");
     });
@@ -656,9 +664,9 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     if (suffix) { const meta = document.createElement("span"); meta.className = "secondary"; meta.textContent = suffix; target.append(meta); }
   }
 
-  function acceptFrozen(value) {
+  function acceptFrozen(value, sessionId) {
     if (value === undefined) return true;
-    const key = frozenKey(value);
+    const key = JSON.stringify([sessionId, frozenKey(value)]);
     if (acceptedFrozenKey !== null) {
       if (key !== acceptedFrozenKey) { failClosed("Conflicting sealed Work identity"); return false; }
       return true;
@@ -666,6 +674,9 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     acceptedFrozenKey = key;
     snapshot = {
       snapshot_id: value.snapshot_id, files_total: value.files_total, files_truncated: value.files_truncated,
+      session_id: sessionId,
+      next_offset: value.files_returned < value.files_total ? value.files_returned : null,
+      source_truncated: false,
       files: value.files.map(file => ({ path: file.path, previous_path: file.previous_path, kind: file.kind,
         additions: file.additions, deletions: file.deletions, binary: file.binary })),
     };
@@ -679,7 +690,7 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
   function extractFrozenDiff(result, file) {
     const structured = structuredOf(result);
     const value = structured && structured.output && structured.output.changes_file_diff;
-    if (!value || value.version !== 1 || value.project !== identity.project || value.session_id !== lastRenderedState?.session_id
+    if (!value || value.version !== 1 || value.project !== identity.project || value.session_id !== snapshot.session_id
       || value.snapshot_id !== snapshot.snapshot_id || value.path !== file.path || value.kind !== file.kind
       || (value.previous_path ?? null) !== (file.previous_path ?? null)) return null;
     if (value.binary !== null && typeof value.binary !== "boolean") return null;
@@ -720,7 +731,7 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     state.textContent = "Loading changes…";
     try {
       const response = await send("tools/call", { name: "changes_file_diff", arguments: {
-        project: identity.project, session_id: lastRenderedState.session_id, snapshot_id: snapshot.snapshot_id, path: file.path,
+        project: identity.project, session_id: snapshot.session_id, snapshot_id: snapshot.snapshot_id, path: file.path,
       } });
       if (tornDown) return;
       const structured = structuredOf(response);
@@ -737,35 +748,46 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     }
   }
 
-  function frozenFileNode(file) {
+  // Both live and final file rows share keyboard, folding and lazy-DOM behavior.
+  function collapsibleFileNode(file, load) {
     const root = document.createElement("div"); root.className = "frozen-file";
     const button = document.createElement("button"); button.className = "file-toggle"; button.type = "button";
-    const path = file.previous_path ? `${file.previous_path} → ${file.path}` : file.path;
-    const stats = file.binary ? "binary" : file.additions === null || file.deletions === null ? "line stats unavailable" : `+${file.additions} −${file.deletions}`;
-    button.textContent = `${({added: "A", modified: "M", deleted: "D", renamed: "R"})[file.kind]} ${path} · ${stats}`;
+    const previous = file.previous_path || file.old_path;
+    const path = previous ? `${previous} → ${file.path}` : file.path;
+    const stats = file.binary ? "binary" : !safeCount(file.additions) || !safeCount(file.deletions) ? "line counts unavailable" : `+${file.additions} −${file.deletions}`;
+    button.textContent = `${path} · ${stats}`;
     button.setAttribute("aria-expanded", "false");
     const wrap = document.createElement("div"); wrap.hidden = true;
     const state = document.createElement("div"); state.className = "secondary";
-    const pre = document.createElement("pre"); pre.className = "diff";
-    wrap.append(state, pre); root.append(button, wrap);
+    let pre = null;
+    wrap.append(state); root.append(button, wrap);
+    root.collapse = () => { wrap.hidden = true; button.setAttribute("aria-expanded", "false"); };
     button.onclick = () => {
       if (tornDown || !hostInitialized) return;
       wrap.hidden = !wrap.hidden;
       button.setAttribute("aria-expanded", String(!wrap.hidden));
-      if (!wrap.hidden) void loadFrozenDiff(file, state, pre);
+      if (!wrap.hidden) {
+        if (!pre) { pre = document.createElement("pre"); pre.className = "diff"; wrap.append(pre); }
+        void load(file, state, pre);
+      }
     };
     return root;
   }
+
+  function frozenFileNode(file) { return collapsibleFileNode(file, loadFrozenDiff); }
 
   function appendFrozenFiles(limit) {
     if (tornDown || !snapshot) return;
     // Append only: refresh/Show more cannot detach an in-flight diff's nodes.
     const end = Math.min(limit, snapshot.files.length);
-    while (visibleCount < end) el("frozenFiles").appendChild(frozenFileNode(snapshot.files[visibleCount++]));
-    el("frozenMore").hidden = visibleCount >= snapshot.files.length;
-    el("frozenMore").textContent = `Show ${snapshot.files.length - visibleCount} more files`;
-    el("frozenFooter").textContent = `Final result · select a file to inspect its changes${snapshot.files_truncated
-      ? ` · showing ${snapshot.files.length} of ${snapshot.files_total} files` : ""}`;
+    const root = el("frozenFiles");
+    while (root.children.length < end) root.appendChild(frozenFileNode(snapshot.files[root.children.length]));
+    visibleCount = end;
+    Array.from(root.children).forEach((row, index) => { row.hidden = index >= end; });
+    el("frozenMore").hidden = visibleCount >= snapshot.files.length && snapshot.next_offset === null;
+    el("frozenMore").textContent = "Show more files";
+    el("frozenLess").hidden = visibleCount <= INITIAL_FROZEN_FILES;
+    el("frozenFooter").textContent = `Final result · showing ${visibleCount} of ${snapshot.files_total} files${snapshot.source_truncated ? " · limited by source bounds or path policy" : ""}`;
   }
 
   function changeCode(file) {
@@ -807,6 +829,129 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     return `${days}d ${hours % 24}h`;
   }
 
+  let workspaceSnapshot = null;
+  let workspaceSeed = null;
+  let workspaceEpoch = 0;
+  let workspacePagePromise = null;
+  let workspaceVisible = INITIAL_FROZEN_FILES;
+  const workspaceNodes = new Map();
+  const workspaceDiffCache = new Map();
+  const workspaceDiffPending = new Set();
+
+  function resetWorkspaceFiles() {
+    workspaceEpoch++; workspaceSnapshot = null; workspacePagePromise = null;
+    workspaceVisible = INITIAL_FROZEN_FILES;
+    workspaceNodes.clear(); workspaceDiffCache.clear(); workspaceDiffPending.clear();
+    el("workspaceMore").disabled = false;
+  }
+
+  async function readFilesPage(current, session, offset) {
+    const response = await send("tools/call", { name: "work_result_state", arguments: {
+      project: identity.project, ...(session ? { session_id: session } : {}),
+      files: { ...(current ? { snapshot_id: current.snapshot_id } : {}), offset },
+    } }, 60000);
+    const structured = structuredOf(response);
+    const page = structured?.success !== false && structured?.output?.work_result_files;
+    if (tornDown || !page || page.project !== identity.project || (page.session_id ?? null) !== (session ?? null)
+      || !SNAPSHOT_ID.test(page.snapshot_id) || (current && page.snapshot_id !== current.snapshot_id)
+      || page.offset !== offset || !safeCount(page.files_total) || typeof page.source_truncated !== "boolean"
+      || !Array.isArray(page.files) || page.files.length > MAX_FROZEN_FILES || !page.files.every(validFrozenFile)
+      || new Set(page.files.map(file => file.path)).size !== page.files.length
+      || offset + page.files.length > page.files_total || (current && page.files_total !== current.files_total)
+      || (page.next_offset !== null && (page.next_offset !== offset + page.files.length || page.files.length === 0))) throw new Error("Invalid file page");
+    return page;
+  }
+
+  async function ensureWorkspaceSnapshot() {
+    if (workspaceSnapshot) return workspaceSnapshot;
+    if (workspacePagePromise) return workspacePagePromise;
+    const epoch = workspaceEpoch;
+    const pendingPage = readFilesPage(null, null, 0).then(page => {
+      if (tornDown || epoch !== workspaceEpoch) throw new Error("File view replaced");
+      workspaceSnapshot = page;
+      el("workspaceReload").hidden = false;
+      return page;
+    });
+    workspacePagePromise = pendingPage;
+    try { return await pendingPage; }
+    finally { if (workspacePagePromise === pendingPage) workspacePagePromise = null; }
+  }
+
+  async function loadWorkspaceDiff(file, state, pre) {
+    if (typeof file.content === "string") {
+      state.textContent = `${file.content_kind === "preview" ? "New file preview" : "Changed content"}${file.content_truncated ? " · partial" : ""}`;
+      renderDiffText(pre, file.content, file.content_kind === "diff"); return;
+    }
+    if (workspaceDiffCache.has(file.path)) {
+      const cached = workspaceDiffCache.get(file.path);
+      state.textContent = cached.truncated ? "File changes · partial" : "File changes";
+      renderDiffText(pre, cached.diff, true); return;
+    }
+    if (workspaceDiffPending.has(file.path)) return;
+    const epoch = workspaceEpoch;
+    workspaceDiffPending.add(file.path); state.textContent = "Loading changes…";
+    try {
+      const source = await ensureWorkspaceSnapshot();
+      if (tornDown || epoch !== workspaceEpoch) return;
+      const response = await send("tools/call", { name: "work_result_state", arguments: {
+        project: identity.project, files: { snapshot_id: source.snapshot_id, path: file.path },
+      } }, 60000);
+      if (tornDown || epoch !== workspaceEpoch) return;
+      const structured = structuredOf(response);
+      const diff = structured?.success !== false && structured?.output?.work_result_files;
+      if (!diff || diff.project !== identity.project || diff.session_id != null || diff.snapshot_id !== source.snapshot_id
+        || diff.path !== file.path || typeof diff.diff !== "string" || typeof diff.truncated !== "boolean"
+        || new TextEncoder().encode(diff.diff).length > 48 * 1024 || diff.diff.split("\n").length > 1201) throw new Error("Invalid file diff");
+      workspaceDiffCache.set(file.path, diff);
+      state.textContent = diff.truncated ? "File changes · partial" : "File changes";
+      renderDiffText(pre, diff.diff, true);
+    } catch (_) {
+      if (!tornDown && epoch === workspaceEpoch) state.textContent = "Changes unavailable or no net working-tree diff · collapse and expand to retry";
+    } finally {
+      if (epoch === workspaceEpoch) workspaceDiffPending.delete(file.path);
+    }
+  }
+
+  function renderWorkspaceRows() {
+    const source = workspaceSnapshot || workspaceSeed;
+    const root = el("workspaceFiles");
+    if (!source) return;
+    const end = Math.min(workspaceVisible, source.files.length);
+    const rows = source.files.slice(0, end).map(file => {
+      if (!workspaceNodes.has(file.path)) workspaceNodes.set(file.path, collapsibleFileNode(file, loadWorkspaceDiff));
+      return workspaceNodes.get(file.path);
+    });
+    root.replaceChildren(...rows);
+    el("workspaceMore").hidden = end >= source.files.length && (workspaceSnapshot ? source.next_offset === null : !source.truncated);
+    el("workspaceLess").hidden = end <= INITIAL_FROZEN_FILES;
+    el("workspaceMeta").textContent = `Showing ${end} of ${source.files_total} files${workspaceSnapshot
+      ? " · pinned net working-tree snapshot; refresh files for newer edits" : ""}${source.source_truncated ? " · limited by source bounds or path policy" : ""}`;
+  }
+
+  async function showMoreFiles(final) {
+    if (tornDown || !hostInitialized) return;
+    const button = el(final ? "frozenMore" : "workspaceMore");
+    if (button.disabled) return;
+    button.disabled = true;
+    const epoch = workspaceEpoch;
+    try {
+      let source = final ? snapshot : await ensureWorkspaceSnapshot();
+      if (!source) return;
+      const shown = final ? visibleCount : workspaceVisible;
+      if (shown >= source.files.length && source.next_offset !== null) {
+        const page = await readFilesPage(source, final ? source.session_id : null, source.next_offset);
+        if (tornDown || (!final && epoch !== workspaceEpoch)) return;
+        const paths = new Set(source.files.map(file => file.path));
+        if (page.files.some(file => paths.has(file.path)) || source.files.length + page.files.length > 2000) throw new Error("Repeated file page");
+        source.files.push(...page.files); source.next_offset = page.next_offset; source.source_truncated = page.source_truncated;
+      }
+      if (final) appendFrozenFiles(shown + INITIAL_FROZEN_FILES);
+      else { workspaceVisible = shown + INITIAL_FROZEN_FILES; renderWorkspaceRows(); }
+    } catch (_) {
+      if (!tornDown && (final || epoch === workspaceEpoch)) el(final ? "frozenFooter" : "workspaceMeta").textContent = "File page unavailable · retry or refresh the file snapshot";
+    } finally { if (final || epoch === workspaceEpoch) button.disabled = false; }
+  }
+
   let renderedWorkspace = null;
   function renderWorkspace(workspace) {
     el("branch").textContent = workspace.branch || "Window activity";
@@ -814,13 +959,17 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     if (fingerprint === renderedWorkspace) return;
     renderedWorkspace = fingerprint;
     const root = el("workspaceFiles");
-    root.replaceChildren();
+    if (!workspaceSnapshot || workspace.clean || !workspace.git_available) {
+      resetWorkspaceFiles(); workspaceSeed = workspace; root.replaceChildren();
+      el("workspaceReload").hidden = true;
+    }
     el("workspaceStats").replaceChildren();
     el("workspaceMeta").textContent = "";
     if (!workspace.git_available) {
       el("workspaceStatus").textContent = workspace.reason_code === "non_git_project"
         ? "This Project is not a Git repository" : "Workspace changes unavailable";
       el("workspaceMeta").textContent = "File changes cannot be determined from this snapshot.";
+      el("workspaceMore").hidden = true; el("workspaceLess").hidden = true;
       return;
     }
     el("workspaceStatus").textContent = workspace.clean ? "No uncommitted changes"
@@ -828,33 +977,7 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     if (safeCount(workspace.additions) && safeCount(workspace.deletions)) {
       renderLineStats(el("workspaceStats"), workspace.additions, workspace.deletions, workspace.line_stats_partial ? "partial" : "");
     }
-    for (const file of workspace.files) {
-      const row = document.createElement("div"); row.className = "workspace-file"; row.setAttribute("role", "listitem");
-      const path = document.createElement("code"); path.textContent = file.old_path ? `${file.old_path} → ${file.path}` : file.path;
-      const meta = document.createElement("div"); meta.className = "secondary";
-      const kind = ({ modified: "Modified", added: "Added", deleted: "Deleted", renamed: "Renamed", copied: "Copied", untracked: "Untracked", conflicted: "Conflict" })[file.status] || "Changed";
-      const staging = file.staged && file.unstaged ? "Staged + unstaged" : file.staged ? "Staged" : file.unstaged ? "Unstaged" : "";
-      meta.textContent = [kind, staging].filter(Boolean).join(" · ");
-      const stats = document.createElement("span"); stats.className = "stats-inline";
-      if (safeCount(file.additions) && safeCount(file.deletions)) renderLineStats(stats, file.additions, file.deletions);
-      else stats.textContent = "Line counts unavailable";
-      row.append(path, meta, stats);
-      if (typeof file.content === "string") {
-        const contentState = document.createElement("div"); contentState.className = "secondary";
-        contentState.textContent = file.content_kind === "preview"
-          ? `New file preview${file.content_truncated ? " · partial" : ""}`
-          : `Changed content${file.content_truncated ? " · partial" : ""}`;
-        const content = document.createElement("pre"); content.className = "diff";
-        renderDiffText(content, file.content, file.content_kind === "diff");
-        row.append(contentState, content);
-      }
-      root.append(row);
-    }
-    if (workspace.truncated || workspace.files_total > workspace.files.length) {
-      el("workspaceMeta").textContent = `Showing ${workspace.files.length} of ${workspace.files_total} files · limited snapshot`;
-    } else if (workspace.line_stats_partial) {
-      el("workspaceMeta").textContent = "Line counts are incomplete.";
-    }
+    renderWorkspaceRows();
   }
 
   function validationLabel(validation) {
@@ -1306,8 +1429,10 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
 
   function automaticRefreshDelay() {
     const idleMs = lastStateChangeAt === null ? 0 : Math.max(0, Date.now() - lastStateChangeAt);
-    if (lastRenderedState?.window_activity.active || idleMs < IDLE_BACKOFF_AFTER_MS) return VISIBLE_REFRESH_MS;
-    return VISIBLE_IDLE_REFRESH_MS;
+    const active = lastRenderedState?.window_activity.active;
+    const base = active || idleMs < IDLE_BACKOFF_AFTER_MS ? VISIBLE_REFRESH_MS : VISIBLE_IDLE_REFRESH_MS;
+    const steady = Math.min(active ? 60000 : 120000, base * 2 ** Math.min(unchangedRefreshes, 4));
+    return Math.max(steady, Math.min(120000, VISIBLE_REFRESH_MS * 2 ** Math.min(refreshFailures, 4)));
   }
 
   function scheduleRefresh(delay) {
@@ -1328,6 +1453,9 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     if (tornDown || !hostInitialized || !identity || refreshInFlight) return;
     const hadSnapshot = lastStateVersion !== null;
     refreshInFlight = true;
+    if (refreshTimer !== null) clearTimeout(refreshTimer);
+    refreshTimer = null;
+    refreshFailures++;
     updateRefreshControl();
     if (!automatic) el("status").textContent = "Refreshing…";
     try {
@@ -1348,11 +1476,13 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
         return;
       }
       const hadFrozen = snapshot !== null;
-      if (!acceptFrozen(state.final_changes)) return;
+      if (!acceptFrozen(state.final_changes, state.session_id)) return;
       const completedNow = !hadFrozen && snapshot !== null;
       hasRefreshed = true;
       initialResultTransportMissing = false;
       const changed = state.state_version !== lastStateVersion;
+      refreshFailures = 0;
+      unchangedRefreshes = changed || !automatic ? 0 : unchangedRefreshes + 1;
       if (changed) {
         lastStateVersion = state.state_version;
         lastStateChangeAt = Date.now();
@@ -1397,7 +1527,7 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     }
     initialResultTransportMissing = false;
     const hadFrozen = snapshot !== null;
-    if (!acceptFrozen(state.final_changes)) return;
+    if (!acceptFrozen(state.final_changes, state.session_id)) return;
     const adoptedFinal = !hadFrozen && snapshot !== null;
     if (!hasRefreshed && state.state_version !== lastStateVersion) {
       lastStateVersion = state.state_version;
@@ -1469,7 +1599,16 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
   el("discussResults").onclick = () => { selectPane("Collaboration"); el("messageInput").focus?.(); };
   selectPane("Activity");
   el("refresh").onclick = () => { void refresh(false); };
-  el("frozenMore").onclick = () => { if (snapshot) appendFrozenFiles(snapshot.files.length); };
+  el("frozenMore").onclick = () => { void showMoreFiles(true); };
+  el("frozenLess").onclick = () => appendFrozenFiles(INITIAL_FROZEN_FILES);
+  el("frozenCollapse").onclick = () => { for (const row of el("frozenFiles").children) row.collapse?.(); };
+  el("workspaceMore").onclick = () => { void showMoreFiles(false); };
+  el("workspaceLess").onclick = () => { workspaceVisible = INITIAL_FROZEN_FILES; renderWorkspaceRows(); };
+  el("workspaceCollapse").onclick = () => { for (const row of el("workspaceFiles").children) row.collapse?.(); };
+  el("workspaceReload").onclick = () => {
+    resetWorkspaceFiles(); renderedWorkspace = null;
+    if (lastRenderedState) renderWorkspace(lastRenderedState.workspace);
+  };
   el("composer").onsubmit = event => { event.preventDefault(); void sendMessageFromCard(); };
   el("messageInput").oninput = () => {
     if (collaborationSendState !== "uncertain" && pendingSend && pendingSend.message !== String(el("messageInput").value || "").trim()) pendingSend = null;

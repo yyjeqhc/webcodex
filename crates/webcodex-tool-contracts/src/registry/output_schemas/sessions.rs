@@ -453,7 +453,15 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ),
         ])),
         "validation_summary" => Some(validation_summary_tool_output_schema()),
-        "present_work_result" | "work_result_state" => Some(wrapped_output_schema(vec![(
+        "work_result_state" => {
+            let mut schema = wrapped_output_schema(vec![("work_result", open_object_schema("Lightweight card state."))]);
+            let output = &mut schema["properties"]["output"];
+            output["properties"]["work_result_files"] = open_object_schema("Explicit bounded immutable file page or per-file diff; identity reauthorized on every request.");
+            output.as_object_mut().expect("output object").remove("required");
+            output["oneOf"] = json!([{ "required": ["work_result"] }, { "required": ["work_result_files"] }]);
+            Some(schema)
+        },
+        "present_work_result" => Some(wrapped_output_schema(vec![(
             "work_result",
             open_object_schema("Bounded persistent card state for one exact Project and current client Window. Presentation and App refreshes expose the same bounded Window ActionAudit activity used by WebUI, including observe/diagnostic actions; Window collaboration is a read-only Operator/peer transcript independent of Sessions; linked Session evidence and sealed final_changes are optional."),
         )])),        "work_result_send_message" => Some(wrapped_output_schema(vec![

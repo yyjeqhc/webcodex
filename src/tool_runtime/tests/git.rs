@@ -7841,7 +7841,7 @@ async fn run_show_changes_for_presentation_via_agent(
     let runtime_for_task = runtime.clone();
     let task = tokio::spawn(async move {
         runtime_for_task
-            .show_changes_for_presentation(project)
+            .workspace_metadata_for_presentation(project)
             .await
     });
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
@@ -8438,7 +8438,7 @@ async fn show_changes_real_git_repo_include_diff_true_matches_schema() {
 }
 
 #[tokio::test]
-async fn show_changes_presentation_includes_staged_only_diff() {
+async fn show_changes_presentation_preserves_staging_without_eager_diff() {
     let tmp = tempfile::tempdir().unwrap();
     init_git_repo(tmp.path());
     commit_file(tmp.path(), "README.md", "hello\n", "initial");
@@ -8454,9 +8454,9 @@ async fn show_changes_presentation_includes_staged_only_diff() {
     assert_eq!(result.output["clean"], false);
     assert_eq!(result.output["files"][0]["path"], "README.md");
     assert_eq!(result.output["files"][0]["staged"], true);
-    assert!(result.output["hunk_count"].as_u64().unwrap_or(0) > 0);
-    let serialized_hunks = serde_json::to_string(&result.output["hunks"]).unwrap();
-    assert!(serialized_hunks.contains("+staged"), "{serialized_hunks}");
+    assert_eq!(result.output["hunk_count"].as_u64().unwrap_or(0), 0);
+    assert!(result.output["hunks"].as_array().is_none_or(Vec::is_empty));
+    assert!(!result.output.to_string().contains("+staged"));
 }
 
 #[tokio::test]

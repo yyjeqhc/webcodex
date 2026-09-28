@@ -20,6 +20,7 @@ type Props = {
   projects: ProjectRow[];
   language: RuntimeLanguage;
   inventoryIncomplete: boolean;
+  hydratingSessions?: boolean;
   surface?: WorkSurface;
   onSurfaceChange?: (surface: WorkSurface) => void;
   onOpenAgent?: (agentId: string) => void;
@@ -40,6 +41,7 @@ export function WorkView({
   projects,
   language,
   inventoryIncomplete,
+  hydratingSessions = false,
   surface = "windows",
   onSurfaceChange = () => {},
   onOpenAgent = () => {},
@@ -181,7 +183,7 @@ export function WorkView({
         <main className="session-main ui-workbench-surface">
           <div className="empty-work">
             <CircleDot size={22} />
-            <h2>{t("Select a work Session")}</h2>
+            <h2>{t(hydratingSessions ? "Loading work Sessions…" : "Select a work Session")}</h2>
             <p>{t("Running work and attention requests appear first. Raw evidence stays one level deeper.")}</p>
           </div>
         </main>

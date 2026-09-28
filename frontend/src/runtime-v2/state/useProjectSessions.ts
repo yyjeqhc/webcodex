@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchProjectSessions } from "../api/sessions.js";
+import { useVisibleRefresh } from "./useVisibleRefresh.js";
 import type { RuntimeV2Client } from "../api/client.js";
 import type { Availability, SessionListItem } from "../model/types.js";
 
@@ -50,8 +51,12 @@ export function useProjectSessions(
     const controller = new AbortController();
     listRequest.current = controller;
     void fetchProjectSessions(client, projectId, controller.signal).then((response) => {
-      if (controller.signal.aborted || listRequest.current !== controller || !response) return;
+      if (controller.signal.aborted || listRequest.current !== controller) return;
       listRequest.current = null;
+      if (!response) {
+        setAvailability(value => value === "available" || value === "stale" ? "stale" : "error");
+        return;
+      }
       if (response.status === 401) {
         onUnauthorized();
         return;
@@ -71,6 +76,10 @@ export function useProjectSessions(
       setTotal(Math.max(response.data.total || 0, response.data.sessions?.length || 0));
       setTruncated(Boolean(response.data.truncated));
       setAvailability("available");
+    }).catch(() => {
+      if (controller.signal.aborted || listRequest.current !== controller) return;
+      listRequest.current = null;
+      setAvailability(value => value === "available" || value === "stale" ? "stale" : "error");
     });
     return () => {
       controller.abort();
@@ -78,20 +87,7 @@ export function useProjectSessions(
     };
   }, [client, enabled, onUnauthorized, projectId, revision]);
 
-  useEffect(() => {
-    if (!enabled || !projectId) return;
-    const refreshVisible = () => {
-      if (document.visibilityState !== "hidden") refresh();
-    };
-    const timer = window.setInterval(refreshVisible, 5_000);
-    window.addEventListener("focus", refreshVisible);
-    document.addEventListener("visibilitychange", refreshVisible);
-    return () => {
-      window.clearInterval(timer);
-      window.removeEventListener("focus", refreshVisible);
-      document.removeEventListener("visibilitychange", refreshVisible);
-    };
-  }, [enabled, projectId, refresh]);
+  useVisibleRefresh(enabled && Boolean(projectId), refresh, 10_000);
 
   return { availability, sessions, total, truncated };
 }

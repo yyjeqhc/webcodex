@@ -276,6 +276,18 @@ impl SearchPatternMode {
     }
 }
 
+/// App-only inspection of a pinned Work Result file snapshot.
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct WorkResultFilesRequest {
+    #[serde(default)]
+    pub snapshot_id: Option<String>,
+    #[serde(default)]
+    pub offset: usize,
+    #[serde(default)]
+    pub path: Option<String>,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ReadFilesItem {
@@ -1553,6 +1565,9 @@ pub enum ToolCall {
         #[serde(default)]
         #[schemars(regex(pattern = "^wc_sess_([A-Za-z0-9_-]{16}|[0-9a-f]{32})$"))]
         session_id: Option<String>,
+        /// Explicit file page or lazy diff; omission keeps lightweight card state.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        files: Option<WorkResultFilesRequest>,
     },
 
     /// Work Result App-only lazy read of one completed call in the current

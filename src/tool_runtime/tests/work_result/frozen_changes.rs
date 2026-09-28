@@ -231,6 +231,187 @@ fn file_by_path<'a>(result: &'a Value, path: &str) -> &'a Value {
         .unwrap_or_else(|| panic!("missing {path}: {result}"))
 }
 
+async fn ui_files(
+    runtime: &ToolRuntime,
+    client: &str,
+    project: &str,
+    session: Option<String>,
+    request: webcodex_tool_contracts::WorkResultFilesRequest,
+    auth: &crate::auth::AuthContext,
+) -> ToolResult {
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.to_string();
+        let auth = auth.clone();
+        async move {
+            runtime
+                .work_result_files(project, session, request, Some(&auth))
+                .await
+        }
+    });
+    service_agent_task(runtime, client, &task).await;
+    task.await.unwrap()
+}
+
+#[tokio::test]
+async fn work_result_file_pages_share_frozen_source_and_never_require_a_session() {
+    use webcodex_tool_contracts::WorkResultFilesRequest;
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    commit_file(tmp.path(), "README.md", "base\n", "base");
+    for index in 0..40 {
+        fs::write(
+            tmp.path().join(format!("file_{index:02}.txt")),
+            "original\n",
+        )
+        .unwrap();
+    }
+    fs::write(tmp.path().join(".env"), "PRIVATE_SECRET=do-not-return\n").unwrap();
+    let runtime = test_runtime();
+    let auth = auth_context(None, true);
+    let client = "paged-result";
+    let project =
+        register_runner_project_at_path_with_auth(&runtime, client, "demo", tmp.path(), &auth)
+            .await;
+    let first = ui_files(
+        &runtime,
+        client,
+        &project,
+        None,
+        WorkResultFilesRequest {
+            snapshot_id: None,
+            offset: 0,
+            path: None,
+        },
+        &auth,
+    )
+    .await;
+    assert!(first.success, "{:?}", first.error);
+    let page = &first.output["work_result_files"];
+    assert_eq!(page["files"].as_array().unwrap().len(), 24);
+    assert_eq!(page["next_offset"], 24);
+    let snapshot = page["snapshot_id"].as_str().unwrap().to_string();
+    fs::write(tmp.path().join("file_39.txt"), "later-work\n").unwrap();
+    let second = ui_files(
+        &runtime,
+        client,
+        &project,
+        None,
+        WorkResultFilesRequest {
+            snapshot_id: Some(snapshot.clone()),
+            offset: 24,
+            path: None,
+        },
+        &auth,
+    )
+    .await;
+    assert!(second.success, "{:?}", second.error);
+    assert_eq!(
+        second.output["work_result_files"]["files"]
+            .as_array()
+            .unwrap()
+            .len(),
+        16
+    );
+    assert!(second.output["work_result_files"]["next_offset"].is_null());
+    assert!(!first.output.to_string().contains("PRIVATE_SECRET"));
+    assert!(!second.output.to_string().contains(".env"));
+    let diff = ui_files(
+        &runtime,
+        client,
+        &project,
+        None,
+        WorkResultFilesRequest {
+            snapshot_id: Some(snapshot.clone()),
+            offset: 0,
+            path: Some("file_39.txt".into()),
+        },
+        &auth,
+    )
+    .await;
+    assert!(diff.success, "{:?}", diff.error);
+    assert!(diff.output["work_result_files"]["diff"]
+        .as_str()
+        .unwrap()
+        .contains("+original"));
+    assert!(!diff.output.to_string().contains("later-work"));
+    for path in ["../outside", ".env", "absent.txt"] {
+        let denied = ui_files(
+            &runtime,
+            client,
+            &project,
+            None,
+            WorkResultFilesRequest {
+                snapshot_id: Some(snapshot.clone()),
+                offset: 0,
+                path: Some(path.into()),
+            },
+            &auth,
+        )
+        .await;
+        assert!(!denied.success, "{path}");
+    }
+    let baseline = git(tmp.path(), &["rev-parse", "HEAD^{tree}"]);
+    let session = start_changes_session(&runtime, &auth, &project, baseline);
+    record_first_class_edit(&runtime, &session.session_id, &project, "file_00.txt");
+    let sealed = seal_successful_closeout(&runtime, client, &project, &session.session_id, &auth)
+        .await
+        .unwrap();
+    assert_eq!(sealed["files"].as_array().unwrap().len(), 24);
+    let final_id = sealed["snapshot_id"].as_str().unwrap().to_string();
+    let final_page = ui_files(
+        &runtime,
+        client,
+        &project,
+        Some(session.session_id.clone()),
+        WorkResultFilesRequest {
+            snapshot_id: Some(final_id.clone()),
+            offset: 24,
+            path: None,
+        },
+        &auth,
+    )
+    .await;
+    assert!(final_page.success, "{:?}", final_page.error);
+    assert_eq!(
+        final_page.output["work_result_files"]["files"]
+            .as_array()
+            .unwrap()
+            .len(),
+        16
+    );
+    let wrong_scope = runtime
+        .work_result_files(
+            project.clone(),
+            None,
+            WorkResultFilesRequest {
+                snapshot_id: Some(final_id),
+                offset: 0,
+                path: None,
+            },
+            Some(&auth),
+        )
+        .await;
+    assert!(
+        !wrong_scope.success,
+        "final snapshots cannot be read as unassociated workspace views"
+    );
+    let foreign = crate::auth::shared_key_context("other-ui-principal");
+    let denied = runtime
+        .work_result_files(
+            project,
+            None,
+            WorkResultFilesRequest {
+                snapshot_id: Some(snapshot),
+                offset: 24,
+                path: None,
+            },
+            Some(&foreign),
+        )
+        .await;
+    assert!(!denied.success);
+}
+
 #[tokio::test]
 async fn final_changes_uses_startup_tree_whole_final_workspace_and_frozen_lazy_diff() {
     let tmp = tempfile::tempdir().unwrap();

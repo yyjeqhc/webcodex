@@ -135,7 +135,7 @@ test("Activity stays focused while Results exposes live files", async () => {
   assert.equal(view.nodes.windowCoverage.textContent, "2 observed events");
   assert.equal(view.nodes.windowActivity.children.length, 2);
   assert.equal(view.nodes.panelResults.hidden, true);
-  assert.equal(view.nodes.workspaceFiles.children[0].children[0].textContent, "src/a.rs");
+  assert.match(view.nodes.workspaceFiles.children[0].children[0].textContent, /src\/a.rs/);
   assert.equal(view.nodes.collaborationMeta.textContent, "");
 });
 
@@ -654,6 +654,26 @@ test("invalid Project input never refreshes", async () => {
   }
 });
 
+test("idle unchanged polling backs off without losing hidden-tab teardown", async () => {
+  const view = app("mcp_work_result_app.html");
+  view.toolResult({ work_result: baseState }); await view.initialize();
+  let elapsed = 0;
+  while (true) {
+    const timers = [...view.timers.values()];
+    assert.equal(timers.length, 1);
+    const delay = timers[0].delay;
+    if (elapsed + delay > 600000) break;
+    elapsed += delay; view.advanceTime(delay); await view.fireTimers(delay);
+    const call = view.calls("work_result_state").at(-1);
+    await view.reply(call, toolResult({ work_result: baseState }));
+  }
+  assert(view.calls("work_result_state").length <= 8, "steady idle card should not poll every 10/30 seconds forever");
+  assert([...view.timers.values()].some(timer => timer.delay === 120000));
+  await view.visibility(true);
+  assert.equal(view.timers.size, 0);
+  await view.teardown();
+});
+
 // Frozen final changes are a domain of the same Work Result, not a second App.
 const snapshot_id = `wc_changes_snapshot_${"2".repeat(32)}`;
 function frozenFile(index, overrides = {}) {
@@ -675,7 +695,7 @@ const frozenWork = (overrides = {}) => ({ ...baseState, final_changes: { ...fina
 function frozenNodes(view, index = 0) {
   const root = view.nodes.frozenFiles.children[index];
   const button = root.children[0], wrap = root.children[1];
-  return { root, button, wrap, state: wrap.children[0], pre: wrap.children[1] };
+  return { root, button, wrap, state: wrap.children[0], get pre() { return wrap.children[1]; } };
 }
 function frozenDiff(overrides = {}) {
   const diff = overrides.diff ?? "diff --git a/src/file_0.rs b/src/file_0.rs\n@@ -1 +1 @@\n-old\n+new\n";
@@ -706,12 +726,129 @@ for (const first of ["input", "result"]) {
     assert.equal(view.nodes.finalChanges.hidden, false);
     assert.equal(view.nodes.frozenSummary.textContent, "Changed 7 files");
     assert.equal(view.nodes.frozenFiles.children.length, 5);
-    assert.equal(view.nodes.frozenMore.textContent, "Show 2 more files");
+    assert.equal(view.nodes.frozenMore.textContent, "Show more files");
+    assert.equal(frozenNodes(view).pre, undefined, "no diff DOM before expansion");
     assert.match(frozenNodes(view, 3).button.textContent, /src\/old_name.rs → src\/new_name.rs/);
     assert.match(frozenNodes(view, 4).button.textContent, /binary/);
     assert.equal(view.timers.size, 1);
   });
 }
+
+test("both file lists fold independently and show-less preserves cached final nodes", async () => {
+  const view = await frozenView();
+  const row = frozenNodes(view);
+  view.nodes.frozenMore.onclick(); await flush();
+  assert.equal(view.nodes.frozenFiles.children.length, 7);
+  view.nodes.frozenLess.onclick();
+  assert.equal(view.nodes.frozenFiles.children.filter(node => !node.hidden).length, 5);
+  assert.equal(view.nodes.frozenMore.hidden, false);
+  assert.equal(frozenNodes(view).root, row.root);
+  row.button.onclick(); await flush();
+  view.nodes.frozenCollapse.onclick();
+  assert.equal(row.wrap.hidden, true);
+  assert.equal(row.button.getAttribute("aria-expanded"), "false");
+  await view.reply(view.calls("changes_file_diff")[0], frozenDiff());
+  row.button.onclick(); await flush();
+  assert.equal(view.calls("changes_file_diff").length, 1);
+});
+
+test("final file metadata loads subsequent pages only after explicit more", async () => {
+  const files = Array.from({ length: 24 }, (_, index) => frozenFile(index));
+  const view = await frozenView("input", frozenWork({ files, files_total: 30, files_changed: 30, files_returned: 24, files_truncated: true }));
+  for (let i = 0; i < 4; i++) { view.nodes.frozenMore.onclick(); await flush(); }
+  assert.equal(view.calls("work_result_state").length, 0);
+  view.nodes.frozenMore.onclick(); await flush();
+  const request = view.calls("work_result_state")[0];
+  assert.equal(request.params.arguments.files.offset, 24);
+  assert.equal(request.params.arguments.files.snapshot_id, snapshot_id);
+  assert.equal(request.params.arguments.session_id, session_id);
+  await view.reply(request, toolResult({ work_result_files: {
+    project, session_id, snapshot_id, offset: 24, next_offset: null, files_total: 30, source_truncated: false,
+    files: Array.from({ length: 6 }, (_, i) => frozenFile(i + 24)),
+  } }));
+  view.nodes.frozenMore.onclick(); await flush();
+  assert.equal(view.nodes.frozenFiles.children.length, 30);
+  assert.equal(view.nodes.frozenMore.hidden, true);
+  assert.equal(view.calls("changes_file_diff").length, 0);
+});
+
+test("live rows share one snapshot acquisition, load one diff, and keep collapse cached", async () => {
+  const state = structuredClone(baseState);
+  state.workspace.files = Array.from({ length: 8 }, (_, i) => ({ path: `src/file_${i}.rs`, status: "modified" }));
+  state.workspace.files_total = 30; state.workspace.truncated = true;
+  const view = app("mcp_work_result_app.html");
+  view.toolResult({ work_result: state }); await view.initialize();
+  const first = view.nodes.workspaceFiles.children[0];
+  assert.equal(first.children[1].children.length, 1);
+  assert.equal(view.calls("work_result_state").length, 0);
+  first.children[0].onclick(); first.children[0].onclick(); first.children[0].onclick(); await flush();
+  assert.equal(view.calls("work_result_state").length, 1);
+  await view.reply(view.calls("work_result_state")[0], toolResult({ work_result_files: {
+    project, session_id: null, snapshot_id, offset: 0, next_offset: 24, files_total: 30, source_truncated: false,
+    files: Array.from({ length: 24 }, (_, i) => frozenFile(i)),
+  } }));
+  const diff = view.calls("work_result_state")[1];
+  assert.equal(diff.params.arguments.files.path, "src/file_0.rs");
+  assert.equal(diff.params.arguments.files.snapshot_id, snapshot_id);
+  await view.reply(diff, toolResult({ work_result_files: {
+    project, session_id: null, snapshot_id, path: "src/file_0.rs", diff: "+literal <text>\n", truncated: false,
+  } }));
+  first.children[0].onclick(); first.children[0].onclick(); await flush();
+  assert.equal(view.calls("work_result_state").length, 2);
+  assert.equal(first.children[1].children[1].children[0].textContent, "+literal <text>");
+  view.nodes.workspaceMore.onclick(); await flush();
+  assert.equal(view.nodes.workspaceFiles.children.length, 10);
+  view.nodes.workspaceLess.onclick();
+  assert.equal(view.nodes.workspaceFiles.children.length, 5);
+  assert.equal(view.nodes.workspaceFiles.children[0], first);
+  view.nodes.workspaceCollapse.onclick();
+  assert.equal(first.children[1].hidden, true);
+  assert.equal(view.calls("work_result_state").length, 2);
+});
+
+test("refreshing file snapshot ignores an older page and leaves the new more button usable", async () => {
+  const state = structuredClone(baseState);
+  state.workspace.files_total = 30; state.workspace.truncated = true;
+  const view = app("mcp_work_result_app.html");
+  view.toolResult({ work_result: state }); await view.initialize();
+  view.nodes.workspaceMore.onclick(); await flush();
+  await view.reply(view.calls("work_result_state")[0], toolResult({ work_result_files: {
+    project, session_id: null, snapshot_id, offset: 0, next_offset: 24, files_total: 30, source_truncated: false,
+    files: Array.from({ length: 24 }, (_, i) => frozenFile(i)),
+  } }));
+  for (let i = 0; i < 4; i++) { view.nodes.workspaceMore.onclick(); await flush(); }
+  const oldPage = view.calls("work_result_state")[1];
+  assert.equal(oldPage.params.arguments.files.offset, 24);
+  assert.equal(view.nodes.workspaceMore.disabled, true);
+  view.nodes.workspaceReload.onclick();
+  const row = view.nodes.workspaceFiles.children[0];
+  assert.equal(view.nodes.workspaceMore.disabled, false);
+  await view.reply(oldPage, toolResult({ work_result_files: {
+    project, session_id: null, snapshot_id, offset: 24, next_offset: null, files_total: 30, source_truncated: false,
+    files: Array.from({ length: 6 }, (_, i) => frozenFile(i + 24)),
+  } }));
+  assert.equal(view.nodes.workspaceFiles.children[0], row);
+  assert.equal(view.nodes.workspaceMore.disabled, false);
+  assert.equal(view.calls("work_result_state").length, 2);
+  assert.doesNotMatch(view.nodes.workspaceMeta.textContent, /unavailable/);
+});
+
+test("a file page cannot replace its Project and sealed changes cannot retarget their Session", async () => {
+  const view = await frozenView();
+  view.nodes.workspaceMore.hidden = false;
+  view.nodes.workspaceMore.onclick(); await flush();
+  await view.reply(view.calls("work_result_state")[0], toolResult({ work_result_files: {
+    project: "agent:special:foreign", session_id: null, snapshot_id, offset: 0, next_offset: null,
+    files_total: 1, source_truncated: false, files: [frozenFile(0)],
+  } }));
+  assert.match(view.nodes.workspaceMeta.textContent, /unavailable/);
+  assert.equal(view.calls("work_result_state").length, 1);
+  view.toolResult({ work_result: { ...frozenWork(), session_id: `wc_sess_${"3".repeat(32)}` } });
+  await flush();
+  assert.equal(view.nodes.status.textContent, "This task card is unavailable");
+  assert.equal(view.nodes.refresh.disabled, true);
+  assert.equal(view.calls("changes_file_diff").length, 0);
+});
 
 test("frozen expansion reads the exact four-part identity once and re-expansion uses the local cache", async () => {
   const view = await frozenView();
@@ -784,7 +921,7 @@ test("live progress card adopts the first sealed final snapshot from a later sta
 
 test("metadata and lazy diff truncation remain truthful within bounded initial rows", async () => {
   const view = await frozenView("result", frozenWork({ files_changed: 30, files_total: 30, files_truncated: true }));
-  assert.match(view.nodes.frozenFooter.textContent, /showing 7 of 30 files/);
+  assert.match(view.nodes.frozenFooter.textContent, /showing 5 of 30 files/);
   frozenNodes(view).button.onclick(); await flush();
   await view.reply(view.calls("changes_file_diff")[0], frozenDiff({ truncated: true, bytes_total: 50000, lines_total: 2000 }));
   assert.match(frozenNodes(view).state.textContent, /partial \(\d+\/2000 lines\)/);
@@ -1090,7 +1227,7 @@ test("long-running calls keep polling and failed automatic reads identify stale 
   assert.equal(view.calls("work_result_state").length, 1);
   await view.reject(view.calls("work_result_state")[0]);
   assert.match(view.nodes.status.textContent, /Refresh unavailable.*last snapshot/);
-  assert([...view.timers.values()].some(timer => timer.delay === 10000));
+  assert([...view.timers.values()].some(timer => timer.delay === 20000));
 });
 
 test("Results shows live file states and checks, preserving nodes on unrelated refresh", async () => {
@@ -1114,17 +1251,17 @@ test("Results shows live file states and checks, preserving nodes on unrelated r
   assert.equal(view.nodes.panelResults.hidden, false);
   assert.equal(view.nodes.workspaceFiles.children.length, 3);
   const row = view.nodes.workspaceFiles.children[0];
-  assert.equal(row.children[0].textContent, 'src/old.rs → src/new.rs');
-  assert.equal(row.children[1].textContent, 'Renamed · Staged + unstaged');
-  assert.equal(view.nodes.workspaceFiles.children[1].children[0].textContent, 'notes/<draft>.md');
-  assert.equal(view.nodes.workspaceFiles.children[1].children[2].textContent, 'Line counts unavailable');
-  assert.equal(row.children[3].textContent, 'Changed content');
-  assert.equal(row.children[4].children[1].textContent, '-old');
-  assert.equal(row.children[4].children[2].textContent, '+new');
-  assert.equal(view.nodes.workspaceFiles.children[1].children[3].textContent, 'New file preview · partial');
-  assert.equal(view.nodes.workspaceFiles.children[1].children[4].children[0].textContent, '<not markup>');
-  assert.equal(view.nodes.workspaceFiles.children[1].children[4].children[1].textContent, 'second line');
-  assert.match(view.nodes.workspaceMeta.textContent, /3 of 12/);
+  assert.match(row.children[0].textContent, /src\/old.rs → src\/new.rs/);
+  assert.equal(row.children[0].getAttribute('aria-expanded'), 'false');
+  assert.equal(row.children[1].children.length, 1, 'no eager diff DOM');
+  row.children[0].onclick(); await flush();
+  const preview = view.nodes.workspaceFiles.children[1];
+  preview.children[0].onclick(); await flush();
+  assert.equal(row.children[1].children[0].textContent, 'Changed content');
+  assert.equal(row.children[1].children[1].children[1].textContent, '-old');
+  assert.equal(row.children[1].children[1].children[2].textContent, '+new');
+  assert.equal(preview.children[1].children[0].textContent, 'New file preview · partial');
+  assert.equal(preview.children[1].children[1].children[0].textContent, '<not markup>');
   assert.equal(view.nodes.validationStatus.textContent, 'Checks passed');
   assert.equal(view.nodes.finalChanges.hidden, true);
   assert.equal(view.calls('work_result_state').length, 0);
@@ -1175,7 +1312,7 @@ test("final results and current workspace remain separate across refresh", async
   const frozen = frozenNodes(view);
   assert.equal(view.nodes.panelResults.hidden, false);
   assert.equal(view.nodes.finalChanges.hidden, false);
-  assert.equal(view.nodes.workspaceFiles.children[0].children[0].textContent, 'src/a.rs');
+  assert.match(view.nodes.workspaceFiles.children[0].children[0].textContent, /src\/a.rs/);
   view.nodes.refresh.onclick(); await flush();
   await view.reply(view.calls('work_result_state')[0], toolResult({ work_result: { ...nextState, final_changes: finalChanges } }));
   assert.equal(frozenNodes(view).root, frozen.root);

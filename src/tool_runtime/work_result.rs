@@ -293,7 +293,7 @@ impl ToolRuntime {
         // The Results pane uses current Project changes and, when linked, Session
         // check/review evidence separately from sealed final task changes.
         let workspace_result = self
-            .show_changes_for_presentation(resolved_project.clone())
+            .workspace_metadata_for_presentation(resolved_project.clone())
             .await;
         let mut projection = if let Some(summary) = summary.as_ref() {
             let projection_summary = self.refresh_validation_source_summary(summary);

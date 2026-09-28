@@ -2201,9 +2201,15 @@ impl ToolRuntime {
             ToolCall::WorkResultState {
                 project,
                 session_id,
+                files,
             } => {
-                self.work_result_state_for_window(project, session_id, auth, window)
-                    .await
+                if let Some(files) = files {
+                    self.work_result_files(project, session_id, files, auth)
+                        .await
+                } else {
+                    self.work_result_state_for_window(project, session_id, auth, window)
+                        .await
+                }
             }
 
             ToolCall::WorkResultActivityDetail {
@@ -3455,6 +3461,7 @@ mod structured_execution_sparse_projection_tests {
         assert_eq!(work_on_project.project(), Some("~p7"));
 
         let mut work_result = ToolCall::WorkResultState {
+            files: None,
             project: "demo".to_string(),
             session_id: Some("wc_sess_x".to_string()),
         };

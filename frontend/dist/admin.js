@@ -25972,6 +25972,8 @@ function _L({ color: e, onChange: i, label: a, customLabel: r, compact: l = !1, 
   });
 }
 var jn = {
+  "Load more": "加载更多",
+  "Show less": "收起更多",
   "Some linked Sessions are not available in this view.": "此视图仅展示部分已关联的 Session。",
   "Copy unavailable; select the text to copy.": "无法自动复制，请选中文字复制。",
   "This Session is linked to the Window but has no retained calls.": "此 Session 已关联到窗口，但没有保留的调用记录。",

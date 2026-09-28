@@ -2484,13 +2484,13 @@ impl ToolRuntime {
         .await
     }
 
-    /// Presentation must not execute repository-configured filters or hooks.
-    /// Reuse the ordinary bounded producer/parser without recording a Session.
-    pub(in crate::tool_runtime) async fn show_changes_for_presentation(
+    /// Passive card refresh is metadata-only; file content is explicitly lazy.
+    /// Keep the shared safe configuration and do not record a Session.
+    pub(in crate::tool_runtime) async fn workspace_metadata_for_presentation(
         &self,
         project: String,
     ) -> ToolResult {
-        self.show_changes_observation(project, None, Some(true), Some(16), Some(80), None, true)
+        self.show_changes_observation(project, None, Some(false), None, None, None, true)
             .await
     }
 

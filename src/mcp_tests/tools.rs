@@ -3515,6 +3515,8 @@ async fn project_grant_authority_is_identical_for_project_credential_and_share_o
                         None,
                         "grant-scope-test-op".to_string(),
                         None,
+                        None,
+                        None,
                         Some(auth),
                     )
                     .await,

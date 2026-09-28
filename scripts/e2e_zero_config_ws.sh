@@ -1217,6 +1217,103 @@ else
     fail "callRuntimeTool(finish_coding_task) skipped: work_on_project did not return a session_id"
 fi
 
+# Canonical managed-worktree dogfood: a registered Project is sufficient input.
+# The model-facing flow must not reconstruct client_id/source path or select a
+# managed destination. Continue exclusively through the returned Project/ref.
+log "---- canonical project + mode=worktree smoke ----"
+managed_body="$(runtime_tool_call "work_on_project" "{\"project\":\"$RUNTIME_PROJECT_ID\",\"mode\":\"worktree\",\"instruction\":\"e2e isolated managed worktree smoke\"}")"
+managed_fields="$(python3 - "$managed_body" "$RUNTIME_PROJECT_ID" <<'PY'
+import json, sys
+data = json.loads(sys.argv[1])
+source = sys.argv[2]
+out = data.get("output") if isinstance(data, dict) else {}
+out = out if isinstance(out, dict) else {}
+errors = []
+project = out.get("project")
+project_ref = out.get("project_ref")
+session_id = out.get("session_id")
+worktree = out.get("worktree") if isinstance(out.get("worktree"), dict) else {}
+resolution = out.get("project_resolution") if isinstance(out.get("project_resolution"), dict) else {}
+if data.get("success") is not True:
+    errors.append("success must be true")
+if not isinstance(project, str) or not project.startswith("agent:") or project == source:
+    errors.append("output.project must be a distinct canonical managed Project")
+if not isinstance(project_ref, str) or not project_ref.startswith("~p"):
+    errors.append("output.project_ref must be a short Project ref")
+if not isinstance(session_id, str) or not session_id.startswith("wc_sess_"):
+    errors.append("output.session_id must be a Workflow Session")
+if out.get("resolved_project") != project:
+    errors.append("resolved_project must equal managed Project")
+if worktree.get("managed") is not True:
+    errors.append("worktree.managed must be true")
+if resolution.get("source") != "managed_worktree":
+    errors.append("project_resolution.source must be managed_worktree")
+if errors:
+    print("; ".join(errors), file=sys.stderr)
+    sys.exit(1)
+print(project)
+print(project_ref)
+print(session_id)
+PY
+)" || managed_fields=""
+if [ -n "$managed_fields" ]; then
+    MANAGED_PROJECT_ID="$(printf '%s\n' "$managed_fields" | sed -n '1p')"
+    MANAGED_PROJECT_REF="$(printf '%s\n' "$managed_fields" | sed -n '2p')"
+    MANAGED_SESSION_ID="$(printf '%s\n' "$managed_fields" | sed -n '3p')"
+    pass "work_on_project(project, mode=worktree) returns managed Project/ref/Session"
+else
+    MANAGED_PROJECT_ID=""
+    MANAGED_PROJECT_REF=""
+    MANAGED_SESSION_ID=""
+    fail "canonical project + mode=worktree bootstrap failed (body: \${managed_body:0:500})"
+fi
+
+if [ -n "$MANAGED_PROJECT_REF" ]; then
+    body="$(runtime_tool_call "read_files" "{\"project\":\"$MANAGED_PROJECT_REF\",\"session_id\":\"$MANAGED_SESSION_ID\",\"items\":[{\"path\":\"README.md\",\"limit\":20}]}")"
+    if [ "$(json_get "$body" success)" = "True" ] && echo "$(json_get "$body" output.items.0.output.text)" | grep -q "Smoke Project"; then
+        pass "managed Project ref supports read_files"
+    else
+        fail "managed Project ref read_files failed (body: \${body:0:300})"
+    fi
+
+    body="$(runtime_tool_call "search_project_texts" "{\"project\":\"$MANAGED_PROJECT_REF\",\"session_id\":\"$MANAGED_SESSION_ID\",\"queries\":[{\"pattern\":\"Smoke Project\",\"path\":\"README.md\",\"pattern_mode\":\"literal\",\"limit\":5}]}")"
+    if [ "$(json_get "$body" success)" = "True" ]; then
+        pass "managed Project ref supports search_project_texts"
+    else
+        fail "managed Project ref search_project_texts failed (body: \${body:0:300})"
+    fi
+
+    body="$(runtime_tool_call "write_project_file" "{\"project\":\"$MANAGED_PROJECT_REF\",\"session_id\":\"$MANAGED_SESSION_ID\",\"path\":\"MANAGED_WORKTREE_PROBE.txt\",\"content\":\"managed-worktree-probe\\n\"}")"
+    if [ "$(json_get "$body" success)" = "True" ]; then
+        pass "managed Project accepts harmless isolated edit"
+    else
+        fail "managed Project harmless edit failed (body: \${body:0:300})"
+    fi
+
+    body="$(runtime_tool_call "show_changes" "{\"project\":\"$MANAGED_PROJECT_REF\",\"session_id\":\"$MANAGED_SESSION_ID\",\"include_diff\":false}")"
+    if [ "$(json_get "$body" success)" = "True" ] && [ "$(json_get "$body" output.clean)" = "False" ]; then
+        pass "managed Project status observes isolated edit"
+    else
+        fail "managed Project status did not observe isolated edit (body: \${body:0:300})"
+    fi
+
+    body="$(runtime_tool_call "delete_project_files" "{\"project\":\"$MANAGED_PROJECT_REF\",\"session_id\":\"$MANAGED_SESSION_ID\",\"paths\":[\"MANAGED_WORKTREE_PROBE.txt\"]}")"
+    if [ "$(json_get "$body" success)" = "True" ]; then
+        pass "managed Project probe cleanup succeeds"
+    else
+        fail "managed Project probe cleanup failed (body: \${body:0:300})"
+    fi
+
+    body="$(show_changes_call)"
+    if [ "$(json_get "$body" success)" = "True" ] && [ "$(json_get "$body" output.clean)" = "True" ]; then
+        pass "source Project remains clean after managed worktree dogfood"
+    else
+        fail "source Project changed during managed worktree dogfood (body: \${body:0:300})"
+    fi
+else
+    fail "managed Project follow-up smoke skipped: bootstrap did not return a Project ref"
+fi
+
 body="$(runtime_tool_call "finish_coding_task" "{\"project\":\"$RUNTIME_PROJECT_ID\"}")"
 missing_session_status="$(json_get "$body" status)"
 missing_session_error="$(json_get "$body" error)"

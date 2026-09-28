@@ -1216,6 +1216,26 @@ fn managed_worktree_request(
     )
 }
 
+fn managed_worktree_request_with_source_identity(
+    source: &Path,
+    base_ref: serde_json::Value,
+    operation_id: &str,
+    source_project_id: &str,
+    source_root_fingerprint: &str,
+) -> RunnerRequest {
+    project_request(
+        "prepare_managed_worktree",
+        serde_json::json!({
+            "path": source.to_string_lossy(),
+            "base_ref": base_ref,
+            "operation_id": operation_id,
+            "resume_project_id": null,
+            "expected_source_project_id": source_project_id,
+            "expected_source_root_fingerprint": source_root_fingerprint,
+        }),
+    )
+}
+
 #[test]
 fn project_root_fingerprint_uses_platform_path_identity_rules() {
     #[cfg(windows)]
@@ -1259,6 +1279,90 @@ fn managed_worktree_network_source_requires_runner_authority_before_resolution()
     let result = handle_prepare_managed_worktree(&policy, &registry, &request);
     assert_eq!(project_err(result), "path_outside_allowed_roots");
     assert!(!registry.exists());
+}
+
+#[test]
+fn managed_worktree_uses_source_parent_namespace_without_expanding_path_authority() {
+    let tmp = tempfile::tempdir().unwrap();
+    let source = tmp.path().join("repo");
+    let arbitrary = tmp.path().join("arbitrary");
+    let registry = tmp.path().join("project-registry");
+    seed_managed_worktree_repo(&source);
+    std::fs::create_dir(&arbitrary).unwrap();
+    register_managed_source_project(&registry, &source);
+
+    // Deliberately authorize only the source checkout itself. The Runner-owned
+    // managed namespace is a sibling and must not become a generic allowed root.
+    let policy = project_policy(&source);
+    let created = project_ok(handle_prepare_managed_worktree(
+        &policy,
+        &registry,
+        &managed_worktree_request(
+            &source,
+            serde_json::Value::Null,
+            "10101010-1010-4010-8010-101010101010",
+            None,
+        ),
+    ));
+    let worktree = PathBuf::from(created["path"].as_str().unwrap());
+    let expected_namespace = tmp
+        .path()
+        .join(".webcodex-worktrees")
+        .canonicalize()
+        .unwrap();
+    assert_eq!(
+        worktree.parent().unwrap().canonicalize().unwrap(),
+        expected_namespace
+    );
+    assert_ne!(
+        worktree.canonicalize().unwrap(),
+        source.canonicalize().unwrap()
+    );
+
+    let denied = project_error_value(handle_resolve_or_register_project(
+        &policy,
+        &registry,
+        &project_request(
+            "resolve_or_register_project",
+            serde_json::json!({"path": arbitrary.to_string_lossy()}),
+        ),
+    ));
+    assert_eq!(denied["error_code"], "path_outside_allowed_roots");
+    assert_eq!(
+        load_runner_project_summaries_from_dir(&registry).len(),
+        2,
+        "the denied arbitrary sibling must not become a Project"
+    );
+}
+
+#[test]
+fn managed_worktree_expected_source_identity_is_revalidated_before_creation() {
+    let tmp = tempfile::tempdir().unwrap();
+    let source = tmp.path().join("source");
+    let registry = tmp.path().join("project-registry");
+    seed_managed_worktree_repo(&source);
+    register_managed_source_project(&registry, &source);
+    let policy = project_policy(&source);
+    let mismatched_fingerprint = format!("wc_projroot_{}", "f".repeat(64));
+
+    let error = project_error_value(handle_prepare_managed_worktree(
+        &policy,
+        &registry,
+        &managed_worktree_request_with_source_identity(
+            &source,
+            serde_json::Value::Null,
+            "20202020-2020-4020-8020-202020202020",
+            "source",
+            &mismatched_fingerprint,
+        ),
+    ));
+    assert_eq!(
+        error["error_code"],
+        "managed_worktree_source_identity_changed"
+    );
+    assert_eq!(error["state_changed"], false);
+    assert_eq!(error["source_project_id"], "source");
+    assert!(!tmp.path().join(".webcodex-worktrees").exists());
 }
 
 #[test]
@@ -1454,6 +1558,44 @@ fn managed_worktree_explicit_ref_preserves_dirty_source_and_resume_survives_sour
     assert_eq!(resumed["outcome"], "managed_worktree_recovered");
     assert_eq!(resumed["registered"], false);
     assert_eq!(load_runner_project_summaries_from_dir(&registry).len(), 2);
+}
+
+#[test]
+fn managed_worktree_invalid_and_missing_base_refs_fail_deterministically() {
+    let tmp = tempfile::tempdir().unwrap();
+    let source = tmp.path().join("source");
+    let registry = tmp.path().join("project-registry");
+    seed_managed_worktree_repo(&source);
+    register_managed_source_project(&registry, &source);
+    let policy = project_policy(&source);
+
+    let invalid = project_error_value(handle_prepare_managed_worktree(
+        &policy,
+        &registry,
+        &managed_worktree_request(
+            &source,
+            serde_json::json!(42),
+            "30303030-3030-4030-8030-303030303030",
+            None,
+        ),
+    ));
+    assert_eq!(invalid["error_code"], "invalid_base_ref");
+    assert_eq!(invalid["state_changed"], false);
+
+    let missing = project_error_value(handle_prepare_managed_worktree(
+        &policy,
+        &registry,
+        &managed_worktree_request(
+            &source,
+            serde_json::json!("refs/heads/does-not-exist"),
+            "40404040-4040-4040-8040-404040404040",
+            None,
+        ),
+    ));
+    assert_eq!(missing["error_code"], "base_ref_resolution_failed");
+    assert_eq!(missing["state_changed"], false);
+    assert_eq!(missing["base_ref"], "refs/heads/does-not-exist");
+    assert!(!tmp.path().join(".webcodex-worktrees").exists());
 }
 
 #[test]

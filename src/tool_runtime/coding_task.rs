@@ -303,6 +303,136 @@ fn attach_project_resolution(
     attach_permission(result, resolution.permission.as_ref())
 }
 
+fn project_resolution_from_runner_result(
+    resolved: ToolResult,
+    managed_requested: bool,
+    permission: Option<PermissionDecision>,
+) -> Result<(String, ProjectResolutionMetadata), ToolResult> {
+    if !resolved.success {
+        return Err(attach_permission(resolved, permission.as_ref()));
+    }
+    let Some(project) = resolved
+        .output
+        .get("id")
+        .and_then(Value::as_str)
+        .filter(|id| !id.trim().is_empty())
+        .map(str::to_string)
+    else {
+        return Err(attach_permission(
+            ToolResult::err_with_output(
+                "Runner returned a path resolution without a runtime project id",
+                json!({
+                    "error_kind": "operation_failed",
+                    "failure_kind": "operation_failed",
+                    "state_changed": resolved.output["registered"]
+                        .as_bool()
+                        .unwrap_or(false),
+                }),
+            ),
+            permission.as_ref(),
+        ));
+    };
+    let outcome = resolved
+        .output
+        .get("outcome")
+        .and_then(Value::as_str)
+        .filter(|outcome| {
+            if managed_requested {
+                matches!(
+                    *outcome,
+                    "managed_worktree_created" | "managed_worktree_recovered"
+                )
+            } else {
+                matches!(*outcome, "reused_existing_registration" | "auto_registered")
+            }
+        })
+        .map(str::to_string);
+    let registered = resolved.output.get("registered").and_then(Value::as_bool);
+    let (Some(outcome), Some(registered)) = (outcome, registered) else {
+        return Err(attach_permission(
+            ToolResult::err_with_output(
+                "Runner returned malformed path resolution metadata",
+                json!({
+                    "error_kind": "operation_failed",
+                    "failure_kind": "operation_failed",
+                    "state_changed": resolved.output["registered"]
+                        .as_bool()
+                        .unwrap_or(false),
+                }),
+            ),
+            permission.as_ref(),
+        ));
+    };
+    if !managed_requested && registered != (outcome == "auto_registered") {
+        return Err(attach_permission(
+            ToolResult::err_with_output(
+                "Runner returned inconsistent path resolution metadata",
+                json!({
+                    "error_kind": "operation_failed",
+                    "failure_kind": "operation_failed",
+                    "state_changed": registered,
+                }),
+            ),
+            permission.as_ref(),
+        ));
+    }
+    let worktree = if managed_requested {
+        let base_ref = resolved
+            .output
+            .get("base_ref")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        let base_sha = resolved
+            .output
+            .get("base_sha")
+            .and_then(Value::as_str)
+            .filter(|sha| {
+                matches!(sha.len(), 40 | 64) && sha.bytes().all(|byte| byte.is_ascii_hexdigit())
+            })
+            .map(str::to_string);
+        let source_dirty = resolved.output.get("source_dirty").and_then(Value::as_bool);
+        let managed = resolved.output.get("managed").and_then(Value::as_bool);
+        match (managed, base_ref, base_sha, source_dirty) {
+            (Some(true), Some(base_ref), Some(base_sha), Some(source_dirty)) => {
+                Some(ManagedWorktreeProjection {
+                    managed: true,
+                    base_ref,
+                    base_sha,
+                    source_dirty,
+                })
+            }
+            _ => {
+                return Err(attach_permission(
+                    ToolResult::err_with_output(
+                        "Runner returned malformed managed worktree metadata",
+                        json!({
+                            "error_kind": "operation_failed",
+                            "failure_kind": "operation_failed",
+                            "state_changed": true,
+                        }),
+                    ),
+                    permission.as_ref(),
+                ));
+            }
+        }
+    } else {
+        None
+    };
+    let resolution = ProjectResolutionMetadata {
+        source: if managed_requested {
+            "managed_worktree".to_string()
+        } else {
+            "path".to_string()
+        },
+        outcome,
+        resolved_project: project.clone(),
+        registered,
+        worktree,
+        permission,
+    };
+    Ok((project, resolution))
+}
+
 impl ToolRuntime {
     async fn require_runner_coding_capability(
         &self,
@@ -514,15 +644,132 @@ impl ToolRuntime {
         };
         let (project, mut project_resolution) = match project_source {
             CodingProjectSource::Existing { project } => {
-                let resolution = ProjectResolutionMetadata {
-                    source: "project".to_string(),
-                    outcome: "resolved_existing_project".to_string(),
-                    resolved_project: String::new(),
-                    registered: false,
-                    worktree: None,
-                    permission: None,
-                };
-                (project, resolution)
+                if let Some(worktree) = managed_worktree.as_ref() {
+                    let source = match self.resolve_project_input_for_auth(&project, auth).await {
+                        Ok(source) => source,
+                        Err(error) => return error.into_tool_result(),
+                    };
+                    if let Some(session_id) = resume_session_id.as_deref() {
+                        return session_project_mismatch_result(
+                            session_id,
+                            startup.tool_name,
+                            &SessionProjectMismatch {
+                                session_project: resume_session_project
+                                    .as_ref()
+                                    .map(|project| project.resolved_id.clone())
+                                    .unwrap_or_else(|| "<unscoped>".to_string()),
+                                request_project: format!(
+                                    "managed_worktree_from:{}",
+                                    source.resolved_id
+                                ),
+                            },
+                        );
+                    }
+                    if let Some(recording_session_id) = trusted_recording_session_id {
+                        return session_project_mismatch_result(
+                            recording_session_id,
+                            startup.tool_name,
+                            &SessionProjectMismatch {
+                                session_project: trusted_recording_session_resolved_project
+                                    .as_ref()
+                                    .map(|project| project.resolved_id.clone())
+                                    .unwrap_or_else(|| "<unscoped>".to_string()),
+                                request_project: format!(
+                                    "managed_worktree_from:{}",
+                                    source.resolved_id
+                                ),
+                            },
+                        );
+                    }
+                    if let Some(result) =
+                        registration_scope_denied(auth, "managed worktree project registration")
+                    {
+                        return result;
+                    }
+                    let permission = super::permissions::evaluate_permission_for_tool(
+                        &self.permission_evaluator,
+                        "register_project",
+                        None,
+                    );
+                    if let Some(decision) = permission.as_ref() {
+                        if !decision.allows_execution() {
+                            let mut result =
+                                super::permissions::permission_execution_denied_result(decision);
+                            super::permissions::add_permission_to_result(&mut result, decision);
+                            return result;
+                        }
+                    }
+                    if let Err(result) = self
+                        .require_runner_coding_capability(&source.config.client_id, auth)
+                        .await
+                    {
+                        return attach_permission(result, permission.as_ref());
+                    }
+                    let Some(source_project_id) =
+                        super::lsp_tools::runner_local_project_id(&source.resolved_id)
+                            .map(str::to_string)
+                    else {
+                        return attach_permission(
+                            ToolResult::err_with_output(
+                                "managed worktree source must resolve to one Runner project",
+                                json!({
+                                    "error_kind": "managed_worktree_source_identity_unavailable",
+                                    "failure_kind": "operation_failed",
+                                    "source_project": source.resolved_id,
+                                    "state_changed": false,
+                                }),
+                            )
+                            .with_recovery(RecoveryKind::Reobserve),
+                            permission.as_ref(),
+                        );
+                    };
+                    let Some(source_root_fingerprint) = source.root_fingerprint.clone() else {
+                        return attach_permission(
+                            ToolResult::err_with_output(
+                                "managed worktree source root identity is unavailable",
+                                json!({
+                                    "error_kind": "managed_worktree_source_identity_unavailable",
+                                    "failure_kind": "operation_failed",
+                                    "source_project": source.resolved_id,
+                                    "state_changed": false,
+                                }),
+                            )
+                            .with_recovery(RecoveryKind::Reobserve),
+                            permission.as_ref(),
+                        );
+                    };
+                    let source_runtime_id = source.resolved_id.clone();
+                    let mut resolved = self
+                        .prepare_managed_worktree(
+                            source.config.client_id.clone(),
+                            source.config.path.clone(),
+                            worktree.base_ref.clone(),
+                            worktree.operation_id.clone(),
+                            None,
+                            Some(source_project_id),
+                            Some(source_root_fingerprint.clone()),
+                            auth,
+                        )
+                        .await;
+                    if !resolved.success {
+                        resolved.output["source_project"] = json!(source_runtime_id);
+                        resolved.output["source_root_fingerprint"] = json!(source_root_fingerprint);
+                    }
+                    match project_resolution_from_runner_result(resolved, true, permission) {
+                        Ok(resolved) => resolved,
+                        Err(result) => return result,
+                    }
+                } else {
+                    let resolution = ProjectResolutionMetadata {
+                        source: "project".to_string(),
+                        outcome: "resolved_existing_project".to_string(),
+                        resolved_project: String::new(),
+                        registered: false,
+                        worktree: None,
+                        permission: None,
+                    };
+                    (project, resolution)
+                }
             }
             CodingProjectSource::RunnerPath { client_id, path } => {
                 if managed_worktree.is_none() {
@@ -602,6 +849,8 @@ impl ToolRuntime {
                         worktree.base_ref.clone(),
                         worktree.operation_id.clone(),
                         worktree.resume_project_id.clone(),
+                        None,
+                        None,
                         auth,
                     )
                     .await
@@ -609,130 +858,11 @@ impl ToolRuntime {
                     self.resolve_or_register_project(client_id, path, auth)
                         .await
                 };
-                if !resolved.success {
-                    return attach_permission(resolved, permission.as_ref());
+                match project_resolution_from_runner_result(resolved, managed_requested, permission)
+                {
+                    Ok(resolved) => resolved,
+                    Err(result) => return result,
                 }
-                let Some(project) = resolved
-                    .output
-                    .get("id")
-                    .and_then(Value::as_str)
-                    .filter(|id| !id.trim().is_empty())
-                    .map(str::to_string)
-                else {
-                    return attach_permission(
-                        ToolResult::err_with_output(
-                            "Runner returned a path resolution without a runtime project id",
-                            json!({
-                                "error_kind": "operation_failed",
-                                "failure_kind": "operation_failed",
-                                "state_changed": resolved.output["registered"]
-                                    .as_bool()
-                                    .unwrap_or(false),
-                            }),
-                        ),
-                        permission.as_ref(),
-                    );
-                };
-                let outcome = resolved
-                    .output
-                    .get("outcome")
-                    .and_then(Value::as_str)
-                    .filter(|outcome| {
-                        if managed_requested {
-                            matches!(
-                                *outcome,
-                                "managed_worktree_created" | "managed_worktree_recovered"
-                            )
-                        } else {
-                            matches!(*outcome, "reused_existing_registration" | "auto_registered")
-                        }
-                    })
-                    .map(str::to_string);
-                let registered = resolved.output.get("registered").and_then(Value::as_bool);
-                let (Some(outcome), Some(registered)) = (outcome, registered) else {
-                    return attach_permission(
-                        ToolResult::err_with_output(
-                            "Runner returned malformed path resolution metadata",
-                            json!({
-                                "error_kind": "operation_failed",
-                                "failure_kind": "operation_failed",
-                                "state_changed": resolved.output["registered"]
-                                    .as_bool()
-                                    .unwrap_or(false),
-                            }),
-                        ),
-                        permission.as_ref(),
-                    );
-                };
-                if !managed_requested && registered != (outcome == "auto_registered") {
-                    return attach_permission(
-                        ToolResult::err_with_output(
-                            "Runner returned inconsistent path resolution metadata",
-                            json!({
-                                "error_kind": "operation_failed",
-                                "failure_kind": "operation_failed",
-                                "state_changed": registered,
-                            }),
-                        ),
-                        permission.as_ref(),
-                    );
-                }
-                let worktree = if managed_requested {
-                    let base_ref = resolved
-                        .output
-                        .get("base_ref")
-                        .and_then(Value::as_str)
-                        .map(str::to_string);
-                    let base_sha = resolved
-                        .output
-                        .get("base_sha")
-                        .and_then(Value::as_str)
-                        .filter(|sha| {
-                            matches!(sha.len(), 40 | 64)
-                                && sha.bytes().all(|byte| byte.is_ascii_hexdigit())
-                        })
-                        .map(str::to_string);
-                    let source_dirty = resolved.output.get("source_dirty").and_then(Value::as_bool);
-                    let managed = resolved.output.get("managed").and_then(Value::as_bool);
-                    match (managed, base_ref, base_sha, source_dirty) {
-                        (Some(true), Some(base_ref), Some(base_sha), Some(source_dirty)) => {
-                            Some(ManagedWorktreeProjection {
-                                managed: true,
-                                base_ref,
-                                base_sha,
-                                source_dirty,
-                            })
-                        }
-                        _ => {
-                            return attach_permission(
-                                ToolResult::err_with_output(
-                                    "Runner returned malformed managed worktree metadata",
-                                    json!({
-                                        "error_kind": "operation_failed",
-                                        "failure_kind": "operation_failed",
-                                        "state_changed": true,
-                                    }),
-                                ),
-                                permission.as_ref(),
-                            )
-                        }
-                    }
-                } else {
-                    None
-                };
-                let resolution = ProjectResolutionMetadata {
-                    source: if managed_requested {
-                        "managed_worktree".to_string()
-                    } else {
-                        "path".to_string()
-                    },
-                    outcome,
-                    resolved_project: project.clone(),
-                    registered,
-                    worktree,
-                    permission,
-                };
-                (project, resolution)
             }
         };
         // `detail` is the single startup projection control: full keeps the
@@ -1380,12 +1510,7 @@ impl ToolRuntime {
                 );
             }
         }
-        if mode == "worktree" && matches!(project_source, CodingProjectSource::Existing { .. }) {
-            return invalid_project_source(
-                "mode='worktree' requires client_id + path source checkout",
-                json!({"field": "mode", "required_with": "client_id + path"}),
-            );
-        }
+        let managed_worktree_requested = mode == "worktree";
         let managed_worktree = (mode == "worktree").then(|| ManagedWorktreeRequest {
             base_ref,
             operation_id: uuid::Uuid::new_v4().to_string(),
@@ -1460,11 +1585,11 @@ impl ToolRuntime {
         if !result.success {
             return result;
         }
-        let projected_project = if project.is_empty() {
+        let projected_project = if project.is_empty() || managed_worktree_requested {
             startup_brief_from_output(&result.output)
                 .and_then(|brief| {
                     brief
-                        .pointer("/project_resolution/resolved_project")
+                        .pointer("/project/resolved_id")
                         .and_then(Value::as_str)
                 })
                 .unwrap_or_default()

@@ -1427,9 +1427,13 @@ pub enum ToolCall {
         path: Option<String>,
         #[schemars(extend("default" = "checkout"))]
         #[schemars(with = "Option<WorkOnProjectMode>")]
-        /// Optional bootstrap mode. Omitted or checkout preserves existing behavior exactly. worktree is
-        /// supported only with client_id + path and asks the Runner to create/recover an isolated managed
-        /// detached worktree, register it as an ordinary Project, then start the Workflow Session.
+        /// Optional bootstrap mode. Omitted or checkout preserves existing behavior exactly. With an
+        /// existing registered Project, worktree is the canonical model-facing path: the Server reauthorizes
+        /// that Project and derives the authoritative Runner/source checkout before asking the Runner to create
+        /// an isolated managed detached worktree. client_id + path remains a compatibility/bootstrap form and
+        /// keeps ordinary path authority checks. The managed destination is always Runner-owned and is never
+        /// supplied by the caller. The new worktree is registered as an ordinary Project before its fresh
+        /// Workflow Session starts.
         #[serde(default)]
         mode: Option<String>,
         /// Optional Git ref only for mode=worktree. The Runner resolves it inside the source repository to
@@ -1465,9 +1469,11 @@ pub enum ToolCall {
         #[serde(default = "default_true")]
         include_extension_catalog: bool,
         /// Optional explicit Workflow Session to continue exactly. It must be active and accessible and
-        /// remains bound to its exact final Project; in worktree mode the Runner re-observes that
-        /// registered managed Project and its source provenance instead of creating a second worktree.
-        /// Failure never guesses or creates a replacement Session. Supplying session_id does not prove this
+        /// remains bound to its exact Project. Creating a managed worktree from an existing source Project is
+        /// a fresh-Session transition: omit session_id, then continue using the returned managed Project/ref
+        /// and its Session. A source Session is never retargeted to the new Project. The legacy client_id +
+        /// path worktree form may re-observe an already registered managed Project on exact resume. Failure
+        /// never guesses or creates a replacement Session. Supplying session_id does not prove this
         /// model context still retains project instructions, workflow guidance, or extension metadata. On
         /// MCP, a fresh model context should request missing static guidance through `_wc.context`. This
         /// business input is distinct from recorder provenance supplied through `_wc.record`.

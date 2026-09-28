@@ -639,6 +639,8 @@ impl ToolRuntime {
         base_ref: Option<String>,
         operation_id: String,
         resume_project_id: Option<String>,
+        expected_source_project_id: Option<String>,
+        expected_source_root_fingerprint: Option<String>,
         auth: Option<&AuthContext>,
     ) -> ToolResult {
         if let Err(error) = validate_project_op_path(&path) {
@@ -686,12 +688,30 @@ impl ToolRuntime {
             }
         }
         let fresh_managed_bootstrap = resume_project_id.is_none();
-        let payload = json!({
+        let mut payload = json!({
             "path": path,
             "base_ref": base_ref,
             "operation_id": operation_id,
             "resume_project_id": resume_project_id,
         });
+        match (expected_source_project_id, expected_source_root_fingerprint) {
+            (Some(project_id), Some(root_fingerprint)) => {
+                payload["expected_source_project_id"] = json!(project_id);
+                payload["expected_source_root_fingerprint"] = json!(root_fingerprint);
+            }
+            (None, None) => {}
+            _ => {
+                return ToolResult::err_with_output(
+                    "managed worktree source identity must be complete",
+                    json!({
+                        "error_kind": "managed_worktree_source_identity_unavailable",
+                        "failure_kind": "operation_failed",
+                        "state_changed": false,
+                    }),
+                )
+                .with_recovery(RecoveryKind::Reobserve);
+            }
+        }
         let first = self
             .submit_project_op(
                 "prepare_managed_worktree",

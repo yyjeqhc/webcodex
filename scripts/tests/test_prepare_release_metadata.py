@@ -27,7 +27,15 @@ class PrepareReleaseMetadataInstallerTests(unittest.TestCase):
             (self.artifacts / metadata.desktop_filename("0.3.0", platform)).write_bytes(b"desktop fixture")
         for platform in metadata.PLATFORMS:
             source_sha = "a" * 40
-            records = {name: {"build_info": {"version": "0.3.0", "source_sha": source_sha, "environment_data_format": 1}} for name in ("webcodex", "webcodex-server", "webcodex-runner", "webcodex-desktop")}
+            records = {
+                name: {"build_info": {
+                    "schema_version": 1, "binary": name, "version": "0.3.0",
+                    "git_commit": source_sha, "git_dirty": False, "built_at": "123",
+                    "target": "fixture", "architecture": platform.split("-")[1],
+                    "desktop_runtime_contract": {}, "environment_data_format": 1,
+                }}
+                for name in ("webcodex", "webcodex-server", "webcodex-runner", "webcodex-desktop")
+            }
             value = {"schema_version": 1, "version": "0.3.0", "source_sha": source_sha, "source_workflow_run_id": 123, "source_workflow_ref": "repo/.github/workflows/release-build.yml@refs/tags/v0.3.0", "platform": platform, "target": "fixture", "architecture": platform.split("-")[1], "desktop_runtime_contract": {}, "artifacts": records, "desktop_payload": {}}
             (self.artifacts / metadata.source_manifest_filename("0.3.0", platform)).write_text(json.dumps(value), encoding="utf-8")
         self.package = self.root / "package.json"
@@ -80,6 +88,27 @@ class PrepareReleaseMetadataInstallerTests(unittest.TestCase):
         result = self.prepare()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("CI provenance mismatch", result.stderr)
+
+    def test_rejects_component_build_info_from_different_source_or_dirty_build(self):
+        for platform in metadata.PLATFORMS:
+            (self.artifacts / metadata.installer_filename("0.3.0", platform)).write_bytes(
+                (b"!<arch>\n" if platform.startswith("linux-") else b"xar!" if platform.startswith("darwin-") else b"MZ") + b"fixture"
+            )
+        path = self.artifacts / metadata.source_manifest_filename("0.3.0", metadata.PLATFORMS[0])
+        value = json.loads(path.read_text())
+        info = value["artifacts"]["webcodex"]["build_info"]
+        info["git_commit"] = "b" * 40
+        path.write_text(json.dumps(value), encoding="utf-8")
+        result = self.prepare()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("component provenance/data format mismatch", result.stderr)
+
+        info["git_commit"] = "a" * 40
+        info["git_dirty"] = True
+        path.write_text(json.dumps(value), encoding="utf-8")
+        result = self.prepare()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("component provenance/data format mismatch", result.stderr)
 
 
 if __name__ == "__main__":

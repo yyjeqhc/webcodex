@@ -56,7 +56,8 @@ def validate_source_manifest(path: Path, version: str, platform: str, source_sha
         if not isinstance(record, dict) or not isinstance(record.get("build_info"), dict):
             raise SystemExit(f"source manifest build identity is invalid: {path}: {name}")
         info = record["build_info"]
-        if info.get("version") != version or info.get("source_sha") != value["source_sha"] or info.get("environment_data_format") != 1:
+        if (info.get("version") != version or info.get("git_commit") != value["source_sha"]
+                or info.get("git_dirty") is not False or info.get("environment_data_format") != 1):
             raise SystemExit(f"source manifest component provenance/data format mismatch: {path}: {name}")
     return value
 

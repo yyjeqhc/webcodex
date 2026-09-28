@@ -505,6 +505,7 @@ fn expected_cross_listed_discovery_groups(tool: &str) -> Option<&'static [&'stat
     match tool {
         "apply_patch" => Some(&["edit", "patch"]),
         "apply_unified_diff" => Some(&["edit", "patch"]),
+        "project_validate" => Some(&["shell", "validation"]),
         "cargo_check" => Some(&["shell", "validation"]),
         "cargo_fmt" => Some(&["shell", "validation"]),
         "cargo_test" => Some(&["shell", "validation"]),
@@ -1341,7 +1342,13 @@ async fn tool_manifest_intent_can_combine_with_category_filter() {
     // validation_summary remains available through exact/category discovery.
     assert_eq!(
         names,
-        vec!["cargo_fmt", "cargo_check", "cargo_test", "go_test"]
+        vec![
+            "project_validate",
+            "cargo_fmt",
+            "cargo_check",
+            "cargo_test",
+            "go_test"
+        ]
     );
 }
 

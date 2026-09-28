@@ -15,6 +15,7 @@ fn snapshot(
     job.exit_code = Some(1);
     let metadata = job.validation.as_mut().unwrap();
     metadata.tool = tool.into();
+    metadata.adapter = tool.into();
     metadata.kind = kind.into();
     JobAttentionSnapshot {
         recovery: None,

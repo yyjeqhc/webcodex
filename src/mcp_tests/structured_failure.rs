@@ -735,36 +735,64 @@ async fn http_edit_project_files_and_process_failures_preserve_canonical_output(
 
 #[tokio::test]
 async fn http_mcp_execution_compaction_keeps_sparse_serialization() {
-    let (_tmp, db) = test_db();
-    let runtime = Arc::new(test_runtime());
-    register_failure_runner(&runtime).await;
-    let service = Service::new(build_test_router(test_config(Some("secret")), db, runtime.clone()));
-    let runner = async {
-        let request = wait_for_failure_request(&runtime).await;
-        assert_eq!(request.kind, "run_process");
-        runtime.runner_registry.complete(RunnerResultPayload {
-            result: RunnerResultRequest {
-                client_id: "failure-runner".into(), runner_instance_id: "inst".into(),
-                request_id: request.request_id, exit_code: Some(0),
-                stdout: Some("output witness".into()), stderr: Some(String::new()),
-                stdout_truncated: false, stderr_truncated: false, duration_ms: Some(1), error: None,
-            },
-            command_execution_state: Some(ShellCommandExecutionState::Completed),
-            mcp_gateway: None, plugin_gateway: None, coding_agent: None,
-        }).await.unwrap();
-    };
-    let ((status, body), ()) = tokio::join!(http_call(
-        &service,
-        json!({"name":"run_process", "arguments":{"project":"agent:failure-runner:probe", "executable":"probe", "args":[], "timeout_secs":30, "sync_wait_secs":30}}),
-        client_meta("generic-test-client", "2"), true,
-    ), runner);
-    assert_eq!(status, StatusCode::OK, "{body}");
-    let result = &body["result"]["structuredContent"];
-    assert_eq!(result["success"], true, "{body}");
-    assert!(result["output"].get("execution_state").is_none());
-    assert!(result["output"].get("command_completed").is_none());
-    assert_eq!(result["output"]["stdout_tail"], "output witness");
-    crate::tool_runtime::startup_brief::validate_schema_instance_for_test(
-        result, &crate::tool_runtime::registry::output_schema_for_tool("run_process"),
-    ).unwrap();
+    for tool in ["run_process", "run_shell"] {
+        let (_tmp, db) = test_db();
+        let runtime = Arc::new(test_runtime());
+        register_failure_runner(&runtime).await;
+        let service = Service::new(build_test_router(
+            test_config(Some("secret")),
+            db,
+            runtime.clone(),
+        ));
+        let runner = async {
+            let request = wait_for_failure_request(&runtime).await;
+            assert_eq!(request.process.is_some(), tool == "run_process");
+            runtime
+                .runner_registry
+                .complete(RunnerResultPayload {
+                    result: RunnerResultRequest {
+                        client_id: "failure-runner".into(),
+                        runner_instance_id: "inst".into(),
+                        request_id: request.request_id,
+                        exit_code: Some(0),
+                        stdout: Some("output witness".into()),
+                        stderr: Some(String::new()),
+                        stdout_truncated: false,
+                        stderr_truncated: false,
+                        duration_ms: Some(1),
+                        error: None,
+                    },
+                    command_execution_state: Some(ShellCommandExecutionState::Completed),
+                    mcp_gateway: None,
+                    plugin_gateway: None,
+                    coding_agent: None,
+                })
+                .await
+                .unwrap();
+        };
+        let ((status, body), ()) = tokio::join!(
+            http_call(
+                &service,
+                json!({"name":tool, "arguments": if tool == "run_process" {
+                    json!({"project":"agent:failure-runner:probe", "executable":"probe", "args":[], "timeout_secs":30, "sync_wait_secs":30})
+                } else {
+                    json!({"project":"agent:failure-runner:probe", "command":"printf witness", "timeout_secs":30, "sync_wait_secs":30})
+                }}),
+                client_meta("generic-test-client", "2"),
+                true,
+            ),
+            runner
+        );
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let result = &body["result"]["structuredContent"];
+        assert_eq!(result["success"], true, "{body}");
+        assert!(result["output"].get("execution_state").is_none());
+        assert!(result["output"].get("command_completed").is_none());
+        assert_eq!(result["output"]["stdout_tail"], "output witness");
+        crate::tool_runtime::startup_brief::validate_schema_instance_for_test(
+            result,
+            &crate::tool_runtime::registry::output_schema_for_tool(tool),
+        )
+        .unwrap();
+    }
 }

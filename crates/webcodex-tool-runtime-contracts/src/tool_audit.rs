@@ -1165,8 +1165,17 @@ pub fn canonical_execution_audit_result_for_tool(tool_name: &str, output: &Value
     // Canonical ledger evidence is borrowed only; never clone that raw body
     // into ActionAudit. The definition still owns execution eligibility.
     let mut result = serde_json::Map::new();
-    for key in ["command_started", "command_completed", "command_ok", "passed",
-        "terminal", "promoted_to_job", "changed", "state_changed", "tool_failure"] {
+    for key in [
+        "command_started",
+        "command_completed",
+        "command_ok",
+        "passed",
+        "terminal",
+        "promoted_to_job",
+        "changed",
+        "state_changed",
+        "tool_failure",
+    ] {
         if let Some(value) = output.get(key).filter(|value| value.is_boolean()) {
             result.insert(key.to_string(), value.clone());
         }
@@ -1175,22 +1184,40 @@ pub fn canonical_execution_audit_result_for_tool(tool_name: &str, output: &Value
         result.insert("exit_code".to_string(), value.clone());
     }
     if let Some(state) = output.get("execution_state").and_then(Value::as_str) {
-        if matches!(state, "completed" | "not_started" | "outcome_unknown" | "timed_out" | "pending" | "queued" | "running" | "started") {
-            result.insert("execution_state".to_string(), Value::String(state.to_string()));
+        if matches!(
+            state,
+            "completed"
+                | "not_started"
+                | "outcome_unknown"
+                | "timed_out"
+                | "pending"
+                | "queued"
+                | "running"
+                | "started"
+        ) {
+            result.insert(
+                "execution_state".to_string(),
+                Value::String(state.to_string()),
+            );
         }
     }
     if let Some(source) = output.get("source_state") {
         // Only closed source classifications, never the fence/epoch identity.
         if let (Some(freshness), Some(fence)) = (
             source.get("freshness").and_then(Value::as_str),
-            source.get("observed_mutation_fence").and_then(Value::as_str),
+            source
+                .get("observed_mutation_fence")
+                .and_then(Value::as_str),
         ) {
             if matches!(freshness, "unproven" | "stale")
                 && matches!(fence, "uncrossed" | "crossed" | "unknown")
             {
-                result.insert("source_state".to_string(), serde_json::json!({
-                    "freshness": freshness, "observed_mutation_fence": fence,
-                }));
+                result.insert(
+                    "source_state".to_string(),
+                    serde_json::json!({
+                        "freshness": freshness, "observed_mutation_fence": fence,
+                    }),
+                );
             }
         }
     }

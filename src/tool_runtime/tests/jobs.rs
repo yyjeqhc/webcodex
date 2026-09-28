@@ -749,12 +749,23 @@ async fn long_run_shell_fast_terminal_returns_ordinary_result_without_visible_jo
     )
     .await;
     let project = agent_test_project_id(client_id);
+    let session = runtime.sessions.start_session(Some(project.clone()), None);
+    let session_id = session.session_id.clone();
     let task = tokio::spawn({
         let runtime = runtime.clone();
+        let session_id = session_id.clone();
         async move {
-            runtime
-                .run_shell(project, "printf fast".to_string(), Some(600), None)
-                .await
+            let auth = auth_context(None, true);
+            runtime.dispatch_with_auth_transport_options_and_metadata_with_recording_mode_and_context_with_result_projection(
+                ToolCall::RunShell {
+                    project, command: "printf fast".to_string(), timeout_secs: Some(600),
+                    sync_wait_secs: None, cwd: None, purpose: None, shell: None,
+                    session_id: Some(session_id), login: false,
+                },
+                Some(&auth), sessions::SessionTransport::Api, Default::default(),
+                None, true, Vec::new(), Default::default(), Default::default(),
+                super::super::return_timing::ToolReturnTimingPolicy::unconstrained(),
+            ).await
         }
     });
     let start = wait_for_patch_agent_request(&runtime, client_id).await;
@@ -769,12 +780,12 @@ async fn long_run_shell_fast_terminal_returns_ordinary_result_without_visible_jo
         Some(ShellCommandExecutionState::Completed),
         Some(0),
         Some("fast\n"),
-        None,
+        Some("warning\n"),
         None,
         true,
     )
     .await;
-    let result = task.await.unwrap();
+    let (mut result, projection, _) = task.await.unwrap();
     assert!(result.success, "{:?}", result.error);
     assert_eq!(result.output["execution_state"], "completed");
     assert_eq!(result.output["promoted_to_job"], false);
@@ -783,6 +794,76 @@ async fn long_run_shell_fast_terminal_returns_ordinary_result_without_visible_jo
     assert_eq!(result.output["effective_timeout_secs"], 600);
     assert_eq!(result.output["sync_wait_secs"], 10);
     assert_run_shell_result_matches_schema(&result);
+    let before = serde_json::to_vec(&result).unwrap().len();
+    let audit = super::super::tool_audit::canonical_execution_audit_result_for_tool(
+        "run_shell",
+        &result.output,
+    );
+    for key in [
+        "command_started",
+        "command_completed",
+        "command_ok",
+        "terminal",
+    ] {
+        assert_eq!(audit[key], true);
+    }
+    assert_eq!(audit["execution_state"], "completed");
+    assert!(audit.get("stdout_tail").is_none());
+    assert!(audit.get("stderr_tail").is_none());
+    let mut timer =
+        super::super::model_ergonomics_telemetry::ModelErgonomicsTimer::start_with_arguments(
+            "run_shell",
+            &serde_json::json!({}),
+        )
+        .unwrap();
+    timer.capture_canonical_result(&result);
+    projection.project(&mut result);
+    let after = serde_json::to_vec(&result).unwrap().len();
+    eprintln!("run_shell terminal success: {before} -> {after} bytes");
+    assert!(
+        after + 300 < before,
+        "lifecycle bookkeeping should be compacted"
+    );
+    for key in [
+        "execution_state",
+        "command_started",
+        "command_completed",
+        "command_ok",
+        "exit_code",
+        "promoted_to_job",
+        "terminal",
+        "job_id",
+        "job_status",
+        "duration_ms",
+        "effective_timeout_secs",
+        "sync_wait_secs",
+        "failure_kind",
+        "tool_failure",
+        "executor",
+    ] {
+        assert!(result.output.get(key).is_none(), "{key}");
+    }
+    assert_eq!(result.output["stdout_tail"], "fast\n");
+    assert_eq!(result.output["stderr_tail"], "warning\n");
+    assert_eq!(result.output["command_summary"], "printf fast");
+    assert!(result.output["cwd"].is_string());
+    assert!(result.output["shell"].is_string());
+    assert_run_shell_result_matches_schema(&result);
+    let completion = timer.finish();
+    let metrics = completion.record_for_tool_result(&result).unwrap();
+    assert_eq!(metrics.execution_state.as_deref(), Some("completed"));
+    assert_eq!(metrics.serialized_result_bytes, Some(after as u64));
+    let summary = runtime.sessions.summary(&session_id, Some(20)).unwrap();
+    let finished = summary
+        .events
+        .iter()
+        .find(|event| event.kind == "tool_call_finished" && event.tool_name == "run_shell")
+        .unwrap();
+    assert_eq!(finished.exit_code, Some(0));
+    let evidence = finished.effect_evidence.as_ref().unwrap();
+    assert_eq!(evidence.execution_state.as_deref(), Some("completed"));
+    assert_eq!(evidence.command_started, Some(true));
+    assert_eq!(evidence.command_completed, Some(true));
     assert!(runtime.runner_registry.list_jobs(Some(10)).await.is_empty());
 }
 
@@ -2948,4 +3029,31 @@ fn pending_happy_path_serialized_result_bytes_regression() {
         after_bytes * 100 < before_bytes * 50,
         "happy-path receipt unexpectedly grew: {before_bytes} -> {after_bytes}"
     );
+}
+
+#[test]
+fn run_shell_recovered_terminal_snapshot_stays_rich_after_projection() {
+    let mut job = compact_validation_job("agent:test:project", None);
+    job.command_execution_state = Some(ShellCommandExecutionState::Completed);
+    job.exit_code = Some(0);
+    job.recovery_state = Some("reconciled".to_string());
+    job.recovered_after_server_restart = true;
+    job.reconciled_at = Some(42);
+    let mut result =
+        ToolRuntime::run_shell_terminal_job_result(&job, "witness".into(), String::new(), 60);
+    super::super::process::add_structured_continuation_facts(&mut result, 60, 10, true);
+    result.output["executor"] = json!("agent");
+    result.output["execution_source"] = json!("run_shell");
+    let before = result.output.clone();
+    let call = ToolCall::from_tool_name(
+        "run_shell",
+        json!({"project":"agent:test:project", "command":"true"}),
+    )
+    .unwrap();
+    super::super::dispatch::ModelFacingProjectionPlan::capture(&call).project(&mut result);
+    assert_eq!(result.output, before);
+    assert_eq!(result.output["recovery_state"], "reconciled");
+    assert_eq!(result.output["reconciled_at"], 42);
+    assert_eq!(result.output["recovered_after_server_restart"], true);
+    assert_run_shell_result_matches_schema(&result);
 }

@@ -1305,10 +1305,18 @@ async fn run_process_terminal_success_is_sparse_after_full_session_effect_record
     assert_eq!(result.output["command_started"], true);
     assert_eq!(result.output["command_completed"], true);
     assert_eq!(result.output["command_ok"], true);
-    let audit = super::super::tool_audit::canonical_execution_audit_result_for_tool("run_process", &result.output);
+    let audit = super::super::tool_audit::canonical_execution_audit_result_for_tool(
+        "run_process",
+        &result.output,
+    );
     assert_eq!(audit["command_ok"], true);
     assert_eq!(audit["execution_state"], "completed");
-    let mut timer = super::super::model_ergonomics_telemetry::ModelErgonomicsTimer::start_with_arguments("run_process", &json!({})).unwrap();
+    let mut timer =
+        super::super::model_ergonomics_telemetry::ModelErgonomicsTimer::start_with_arguments(
+            "run_process",
+            &json!({}),
+        )
+        .unwrap();
     timer.capture_canonical_result(&result);
     projection.project(&mut result);
     let metrics = timer.finish().record_for_tool_result(&result).unwrap();

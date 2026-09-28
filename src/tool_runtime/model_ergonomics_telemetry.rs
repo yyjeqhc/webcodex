@@ -437,7 +437,10 @@ impl ModelErgonomicsCompletion {
             error_kind,
             failure_kind,
             recovery_kind,
-            execution_state: self.canonical_execution_state.clone().or(edit.execution_state),
+            execution_state: self
+                .canonical_execution_state
+                .clone()
+                .or(edit.execution_state),
             finish_summary_only: self.finish_summary_only,
             edit_surface: edit.surface,
             edit_outcome: edit.outcome,

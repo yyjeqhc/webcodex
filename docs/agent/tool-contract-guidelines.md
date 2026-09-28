@@ -513,6 +513,17 @@ ready Job ids/status/outcomes and pending ids remain, including terminal failure
 Passive `job_attention` presence with nonempty `items` represents changed delivery
 without a second `changed=true` flag.
 
+Execution/validation success compaction shares this late boundary: Session and
+source consumers see canonical results, then definition-owned privacy projections
+and generic telemetry capture bounded facts, then the model receipt is compacted.
+Existing process/script/Skill and validation success shapes are unchanged.
+`run_shell` removes lifecycle/Job/timing bookkeeping only for proven synchronous
+exit-zero completion without Job/recovery identity or observation ambiguity. It
+retains runtime-selected `command_summary`, `cwd`, `shell`, any `ssh_resource`,
+nonempty output, truncation/loss, expectations, normalization and sidecars. Failure,
+timeout, uncertainty and exceptional handoff remain rich; normal pending receipts
+still contain `execution_state=pending` and the exact continuation.
+
 ### Runtime status projections
 
 Canonical `runtime_status` and HTTP/API omission retain full diagnostic output.

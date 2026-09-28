@@ -1216,14 +1216,19 @@ impl ToolRuntime {
         }
         let canonical_audit_output = match request.tool_name.as_str() {
             "run_process" | "run_script" | "run_skill_resource" | "run_shell"
-            | "project_validate" | "cargo_fmt" | "cargo_check" | "cargo_test" | "go_test" => {
-                Some(super::tool_audit::canonical_execution_audit_result_for_tool(
-                    &request.tool_name, &result.output,
-                ))
-            }
-            "edit_project_files" | "read_files" | "search_project_texts" | "wait_for_job_readiness" => {
-                Some(session_log_result_for_tool(&request.tool_name, &result.output))
-            }
+            | "project_validate" | "cargo_fmt" | "cargo_check" | "cargo_test" | "go_test" => Some(
+                super::tool_audit::canonical_execution_audit_result_for_tool(
+                    &request.tool_name,
+                    &result.output,
+                ),
+            ),
+            "edit_project_files"
+            | "read_files"
+            | "search_project_texts"
+            | "wait_for_job_readiness" => Some(session_log_result_for_tool(
+                &request.tool_name,
+                &result.output,
+            )),
             _ => None,
         };
         result_projection.project(&mut result);

@@ -762,7 +762,7 @@ validation rejects the call before kernel entry or the MCP hard dispatch timeout
 prevents kernel completion. Batch items do not create generic invocation records,
 and hidden/internal helpers do not start this telemetry.
 
-The current durable generic record uses `schema_version = 11`. Older telemetry rows
+The current durable generic record uses `schema_version = 12`. Older telemetry rows
 remain naturally queryable and are not migrated or backfilled. The current
 record contains:
 
@@ -772,6 +772,10 @@ record contains:
 - optional `finish_summary_only` and bounded `work_on_project` request-shape facts;
 - optional edit measurement fields: `edit_surface`, `edit_outcome`, and
   `edit_conflict_kind`.
+- optional `readiness` summary for successful transient waits: `mode`,
+  `requested_jobs`, `unique_jobs`, `waited_ms`, `wait_state`, `ready_count`,
+  `pending_count`. It retains no logs, paths, credentials, or observation tokens;
+  sub-millisecond waits are not mislabeled as already-ready.
 - optional bounded Job convergence counts and salted exact-relation events;
   see [Server-only convergence measurement](job-reliability-and-concurrency.md#server-only-convergence-measurement).
   Exact serial predecessor links remain outer Action Audit metadata; they do

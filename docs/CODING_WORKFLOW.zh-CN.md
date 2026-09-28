@@ -31,7 +31,7 @@ Bootstrap 或 discovery 返回 `project_ref` 后，普通 Project-scoped tool ca
 
 `work_on_project` 的 `guidance_profile` 是可选的：显式值始终优先；MCP 调用省略时
 使用已配置的 `WEBCODEX_MCP_HOST_PROFILE` 作为 model-guidance 默认值；非 MCP/internal
-调用省略时仍回退到 `direct`。Workflow contract v25 保持共享的 `guidance`、
+调用省略时仍回退到 `direct`。Workflow contract v26 保持共享的 `guidance`、
 `model_protocol` 和 review `roles`，并在显式 `context_request=["webcodex.workflow"]`
 时通过 `tool_strategy` 返回本次请求选中的 effective 策略。
 
@@ -52,8 +52,14 @@ Bootstrap 或 discovery 返回 `project_ref` 后，普通 Project-scoped tool ca
   `reread_required=true` 或 `direct_retry_safe=false` 是 effectful replay 的硬边界，
   recovery 可以指出下一步应重新观察什么，但不授权 Host 自动重试 mutation。  完整 ToolResult 尽量留在 Host cell，只返回下一次决策需要的紧凑证据。每个 Host cell 应是短生命周期 dependency DAG，
   而不是承载长时间 Job lifetime。Job handoff 保存精确 identity 后，先完成已经确定的独立工作；
-  如果剩余工作主要只是等待，就结束当前 cell，之后从 exact continuation 恢复，不要让 cell
-  持续挂在长等待上，也不要因为 Job 存在就机械 `observe_jobs`。startup
+  执行所有 ready independent work 和明确 `mechanically_followable` 的续作，直到 quiescent。
+  只剩 pending Job dependencies 时，把整个 exact Job set 交给一次
+  `wait_for_job_readiness(job_ids, mode=any|all, wait_secs)`；不能为每个 Job 开一个长 wait，
+  也不能用 `Promise.race` 模拟 any-ready。按当前 cell 剩余预算保守选择约 10–15 秒，
+  保留 5 秒 return guard；ready 后继续 same cell，deadline 或预算 guard 时 yield。
+  Job terminal 不等于 mechanically_followable；fallback_recovery、authority change、
+  ambiguous result、outcome_unknown 和 effect uncertainty 仍回模型。需要跨 turn 的硬依赖
+  使用 `wait_for_job_terminal`。不要用 `observe_jobs` heartbeat 保活。startup
   `tool_strategy.host_orchestration` catalog 与 exact
   `tool_manifest(tool_name=...)` hint 都从 canonical `ToolDefinition` metadata 派生；
   它们只提供 guidance，不改变 `ToolCompositionPolicy`、authority、effect、permission、

@@ -66,7 +66,7 @@ When `work_on_project`, `start_session`, `session_summary`, or an explicit hando
 `work_on_project` accepts an optional `guidance_profile`. An explicit value always
 wins. When omitted on MCP, the configured `WEBCODEX_MCP_HOST_PROFILE` supplies the
 model-guidance default; omission on non-MCP/internal calls falls back to `direct`.
-Workflow contract v25 returns shared `guidance`, `model_protocol` and review `roles`,
+Workflow contract v26 returns shared `guidance`, `model_protocol` and review `roles`,
 plus only the selected `tool_strategy`, when explicitly requested through
 `context_request=["webcodex.workflow"]`. The selection is request-local: choose again
 on exact resume without changing Session identity or business state. It is never
@@ -91,11 +91,16 @@ context refreshes use the same effective-profile rule.
   competing recovery choices, unresolved mutation intent, or any effectful replay after a stale
   revision/fence. An exact stale-source reread may still be mechanically followable, but
   `reread_required=true` or `direct_retry_safe=false` is a hard boundary for effectful replay:
-  recovery may identify the next observation; it does not authorize automatic mutation retry.  compact decision evidence. Treat each Host cell as a short dependency
-  DAG, not a long-running Job lifetime. After Job handoff, retain exact identity and
-  continue already-known independent work; if the remaining work is primarily waiting,
-  end the cell and resume from the exact continuation instead of holding it open. Avoid
-  mechanical `observe_jobs` polling. The
+  recovery may identify the next observation; it does not authorize automatic mutation retry.
+  Keep full results in the Host cell and emit compact decision evidence. Run ready independent
+  work and explicit mechanical continuations to quiescence. Only when pending Job dependencies
+  remain, pass the entire blocked exact set to one `wait_for_job_readiness` request (`any`/`all`).
+  Never create per-Job long waits or use `Promise.race` for first-ready aggregation. Budget from
+  remaining cell time (initially prefer 10–15s and preserve the 5s return guard); continue newly
+  ready work in the same cell, yield on deadline/budget guard. Job terminal does not imply
+  mechanically_followable; fallback recovery, authority changes, ambiguity, outcome_unknown and
+  effect uncertainty still return to the model. Use `wait_for_job_terminal` for a future activation
+  when terminal is a hard dependency. Do not use `observe_jobs` heartbeat polling. The
   startup `tool_strategy.host_orchestration` catalog and exact
   `tool_manifest(tool_name=...)` hint are both derived from canonical
   `ToolDefinition` metadata. They are guidance only and do not alter

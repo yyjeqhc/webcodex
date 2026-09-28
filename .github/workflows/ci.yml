@@ -537,6 +537,7 @@ jobs:
             test "$actual" = "$expected"
             test "$(/usr/bin/lipo -archs "$binary")" = "$EXPECTED_FILE_ARCH"
           done
+          bash scripts/macos_sign_runner.sh target/dogfood/webcodex-runner -
           {
             echo "source=$source_sha"
             echo "short=$short_source"

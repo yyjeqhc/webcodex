@@ -214,6 +214,9 @@ class PathRiskFixtureTests(unittest.TestCase):
         for path in (
             ".github/workflows/release-build.yml",
             "scripts/macos_sign_local_runner.sh",
+            "scripts/macos_ci_developer_id_setup.sh",
+            "scripts/macos_sign_runner.sh",
+            "scripts/verify_macos_desktop_identity.sh",
         ):
             with self.subTest(path=path):
                 result = classify(path)

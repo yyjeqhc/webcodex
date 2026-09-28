@@ -80,7 +80,7 @@ Download the matching Desktop artifact from the [GitHub Releases](https://github
 - **Windows:** use the installer matching your architecture, x64 or ARM64. Windows ARM64 Desktop is part of the v0.4.2+ release build path.
 - **macOS:** use the DMG matching your Mac architecture, Intel or Apple Silicon.
 
-Current macOS builds are ad-hoc signed and are not notarized. If Gatekeeper blocks the first launch of a newly downloaded build, open **System Settings → Privacy & Security → Open Anyway**, then confirm **Open**. Do not disable Gatekeeper globally.
+Published v0.4.3 macOS builds are ad-hoc signed and are not notarized, so Gatekeeper may require **System Settings → Privacy & Security → Open Anyway**. The formal release pipeline after the macOS TCC signing fix requires Developer ID Application signing and notarization; local source/dogfood builds may still be ad-hoc signed. Do not disable Gatekeeper globally.
 
 Launch WebCodex Desktop after installation.
 

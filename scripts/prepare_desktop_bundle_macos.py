@@ -131,7 +131,7 @@ def stage(args: argparse.Namespace) -> dict:
                 "filename": name,
                 "size": destination_stat.st_size,
                 "source_sha256": source_digest,
-                "staged_unsigned_sha256": destination_digest,
+                "staged_input_sha256": destination_digest,
             }
 
         macos: dict[str, object] = {}
@@ -150,14 +150,14 @@ def stage(args: argparse.Namespace) -> dict:
         overlay_path.write_text(json.dumps(overlay, indent=2) + "\n", encoding="utf-8")
 
         metadata = {
-            "schema_version": 2,
+            "schema_version": 3,
             "platform": args.platform,
             "version": args.version,
             "source_sha": args.source_sha.lower(),
             "built_at": args.built_at,
             "signing_mode": args.signing_mode,
             "resource_dir": "resources/webcodex-runtime",
-            "provenance": "same_unsigned_runtime_input_before_platform_signing",
+            "provenance": "same_runtime_input_before_bundle_signing",
             "files": files,
         }
         metadata_path = output_dir / "desktop-bundle.json"

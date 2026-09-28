@@ -392,6 +392,15 @@ jobs:
             frontend/package-lock.json
             apps/desktop/package-lock.json
 
+      - name: Configure Developer ID release signing
+        if: needs.prepare.outputs.build_kind == 'release'
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: bash scripts/macos_ci_developer_id_setup.sh
+
       - name: Build and verify native macOS candidate
         shell: bash
         run: |
@@ -434,6 +443,12 @@ jobs:
           done
 
           mkdir -p dist
+          runner_signing_identity="-"
+          if [ "$BUILD_KIND" = release ]; then
+            runner_signing_identity="$APPLE_SIGNING_IDENTITY"
+          fi
+          bash scripts/macos_sign_runner.sh target/release/webcodex-runner "$runner_signing_identity"
+
           scripts/package_release_artifact.sh dist
           canonical_archive="dist/webcodex-v$VERSION-$WEBCODEX_RELEASE_PLATFORM.tar.gz"
           archive="dist/$ARCHIVE_STEM-$WEBCODEX_RELEASE_PLATFORM.tar.gz"
@@ -461,6 +476,7 @@ jobs:
           stage="$RUNNER_TEMP/webcodex-desktop-$WEBCODEX_RELEASE_PLATFORM-bundle"
           signing_mode=adhoc
           if [ "$BUILD_KIND" = release ]; then
+            signing_mode=developer-id
             desktop_name="webcodex-desktop-v$VERSION-$WEBCODEX_RELEASE_PLATFORM.dmg"
           else
             desktop_name="webcodex-desktop-$INPUT_TAG-${SOURCE_SHA:0:12}-v$VERSION-$WEBCODEX_RELEASE_PLATFORM.dmg"
@@ -480,16 +496,26 @@ jobs:
             echo "desktop_name=$desktop_name"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Build ad-hoc signed native macOS Desktop DMG
+      - name: Build signed native macOS Desktop DMG
         if: matrix.platform == 'darwin-arm64' || needs.prepare.outputs.desktop_darwin_x64_supplemental != 'true'
         id: desktop_dmg
         working-directory: apps/desktop
         shell: bash
         env:
           CI: "true"
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
-          export APPLE_SIGNING_IDENTITY="-"
+          if [ "$BUILD_KIND" = release ]; then
+            for name in APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+              [ -n "${!name:-}" ] || { echo "$name is required for a formal macOS release" >&2; exit 1; }
+            done
+          else
+            unset APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID
+            export APPLE_SIGNING_IDENTITY="-"
+          fi
 
           export CARGO_TARGET_DIR="$RUNNER_TEMP/webcodex-desktop-$WEBCODEX_RELEASE_PLATFORM-tauri"
           npm exec tauri -- build \
@@ -899,6 +925,7 @@ jobs:
       WEBCODEX_RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
       ARCHIVE_STEM: ${{ needs.prepare.outputs.archive_stem }}
       PLATFORM: ${{ matrix.platform }}
+      BUILD_KIND: ${{ needs.prepare.outputs.build_kind }}
       INPUT_TAG: ${{ inputs.tag }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -918,6 +945,14 @@ jobs:
         with:
           name: ${{ needs.prepare.outputs.archive_stem }}-${{ matrix.platform }}
           path: runtime-input
+      - name: Configure Developer ID signing for macOS unified installer
+        if: matrix.os == 'macos' && needs.prepare.outputs.build_kind == 'release'
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: bash scripts/macos_ci_developer_id_setup.sh
       - name: Build and package Linux installer in Ubuntu 22.04 native container
         if: matrix.os == 'linux'
         shell: bash
@@ -1015,7 +1050,6 @@ jobs:
           export WEBCODEX_RELEASE_PLATFORM="$PLATFORM"
           export WEBCODEX_RELEASE_VERSION="$VERSION"
           export WEBCODEX_BUILT_AT
-          if [ "$PLATFORM" = darwin-arm64 ]; then arch=arm64; else arch=x86_64; fi
           cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml --locked --release --features tauri/custom-protocol
           desktop="target/release/webcodex-desktop"
           test -x "$desktop"
@@ -1023,20 +1057,46 @@ jobs:
       - name: Collect and package macOS installer
         if: matrix.os == 'macos'
         shell: bash
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
           export CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target"
+          signing_mode=adhoc
+          if [ "$BUILD_KIND" = release ]; then
+            signing_mode=developer-id
+            for name in APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+              [ -n "${!name:-}" ] || { echo "$name is required for a formal macOS release" >&2; exit 1; }
+            done
+          else
+            unset APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID
+            export APPLE_SIGNING_IDENTITY="-"
+          fi
           stage="$RUNNER_TEMP/unified-macos-stage"
           python3 scripts/prepare_desktop_bundle_macos.py \
             --bin-dir native-input/artifacts/bin --version "$VERSION" --source-sha "$SOURCE_SHA" \
             --built-at "$WEBCODEX_BUILT_AT" --platform "$PLATFORM" \
-            --signing-mode adhoc --output-dir "$stage"
+            --signing-mode "$signing_mode" --output-dir "$stage"
           # Tauri's native app bundle is used as the Desktop payload in the package manifest.
           export WEBCODEX_RELEASE_PLATFORM="$PLATFORM"
           export CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target"
           npm exec --prefix apps/desktop tauri -- build --bundles app --config "$stage/tauri.bundle.conf.json" --ci -- --locked
-          app="target/release/bundle/macos/WebCodex.app"
-          test -d "$app"
+          bundle_dir="target/release/bundle/macos"
+          shopt -s nullglob
+          apps=("$bundle_dir"/*.app)
+          shopt -u nullglob
+          [ "${#apps[@]}" -eq 1 ] || {
+            echo "Expected exactly one macOS app bundle, found ${#apps[@]} in $bundle_dir." >&2
+            exit 1
+          }
+          app="${apps[0]}"
+          bash scripts/verify_macos_desktop_identity.sh "$app" "$signing_mode"
+          if [ "$signing_mode" = developer-id ]; then
+            spctl --assess --type execute --verbose=2 "$app"
+            xcrun stapler validate "$app"
+          fi
           rm native-input/artifacts/bin/webcodex-desktop
           cp "$app/Contents/MacOS/WebCodex" native-input/artifacts/bin/webcodex-desktop
           mkdir -p native-input/artifacts/desktop

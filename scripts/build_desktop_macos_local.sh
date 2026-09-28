@@ -82,6 +82,8 @@ cargo build --locked --profile dogfood \
     -p webcodex-cli \
     -p webcodex-runner
 
+bash scripts/macos_sign_runner.sh target/dogfood/webcodex-runner -
+
 mkdir -p "$ROOT/target" "$OUTPUT_DIR" "$TAURI_TARGET"
 WORK_DIR="$(mktemp -d "$ROOT/target/desktop-local-stage.XXXXXX")"
 cleanup() { rm -rf "$WORK_DIR"; }

@@ -203,6 +203,9 @@ def _release_tooling(path: str) -> bool:
             "stage_npm_release.sh",
             "verify_public_release.py",
             "macos_sign_local_runner.sh",
+            "macos_ci_developer_id_setup.sh",
+            "macos_sign_runner.sh",
+            "verify_macos_desktop_identity.sh",
         }
     )
 

@@ -157,8 +157,16 @@ def _workflow_contract(root: Path) -> str:
             ("-Installer $env:DESKTOP_INSTALLER_PATH", build),
             ("dist/webcodex-desktop-*.dmg", build),
             ("dist/webcodex-desktop-*-${{ matrix.platform }}-setup.exe", build),
-            ("signing_mode=adhoc", build),
-            ('export APPLE_SIGNING_IDENTITY="-"', build),
+            ("macos_ci_developer_id_setup.sh", build),
+            ("macos_sign_runner.sh", build),
+            ("verify_macos_desktop_identity.sh", build),
+            ("signing_mode=developer-id", build),
+            ("secrets.APPLE_CERTIFICATE", build),
+            ("secrets.APPLE_CERTIFICATE_PASSWORD", build),
+            ("secrets.APPLE_SIGNING_IDENTITY", build),
+            ("secrets.APPLE_ID", build),
+            ("secrets.APPLE_PASSWORD", build),
+            ("secrets.APPLE_TEAM_ID", build),
         ),
         "release-desktop-darwin-x64.yml": (
             ("types: [published]", intel_desktop),
@@ -169,6 +177,14 @@ def _workflow_contract(root: Path) -> str:
             ("SHA256SUMS", intel_desktop),
             ("gh release upload", intel_desktop),
             ("desktop_install_macos_smoke.sh", intel_desktop),
+            ("macos_ci_developer_id_setup.sh", intel_desktop),
+            ("macos_sign_runner.sh", intel_desktop),
+            ("developer-id", intel_desktop),
+            ("secrets.APPLE_CERTIFICATE", intel_desktop),
+            ("secrets.APPLE_ID", intel_desktop),
+            ("needs.resolve.outputs.version != '0.4.3'", intel_desktop),
+            ('if [ "$VERSION" = "0.4.3" ]', intel_desktop),
+            ("a notarized DMG cannot be reconstructed byte-for-byte", intel_desktop),
         ),
     }
     missing = []
@@ -186,9 +202,13 @@ def _workflow_contract(root: Path) -> str:
         raise DoctorError("release-readiness gained publication/upload authority")
     if "prepare_desktop_bundle.ps1" in readiness_workflow or "tauri" in readiness_workflow.lower():
         raise DoctorError("release-readiness gained Desktop candidate build responsibility")
-    if "secrets.APPLE_" in build:
-        raise DoctorError("release-build unexpectedly depends on paid Apple signing credentials")
-    return "main/release-branch CI, extended-native readiness, and tag-bound authoritative build contracts are consistent"
+    if (
+        "secrets.APPLE_" in ci
+        or "secrets.APPLE_" in extended
+        or "secrets.APPLE_" in readiness_workflow
+    ):
+        raise DoctorError("ordinary/readiness CI unexpectedly depends on Apple release-signing credentials")
+    return "main/release-branch CI, extended-native readiness, Developer ID release signing, and tag-bound authoritative build contracts are consistent"
 
 
 def _compile_verifiers(root: Path) -> str:

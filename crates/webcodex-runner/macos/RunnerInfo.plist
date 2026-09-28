@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key>
+  <string>dev.webcodex.runner</string>
+  <key>CFBundleName</key>
+  <string>WebCodex Runner</string>
+  <key>CFBundleDisplayName</key>
+  <string>WebCodex Runner</string>
+  <key>NSScreenCaptureUsageDescription</key>
+  <string>WebCodex Runner captures the selected screen or application window only when you ask an AI client to inspect your desktop.</string>
+  <key>NSAccessibilityUsageDescription</key>
+  <string>WebCodex Runner uses macOS Accessibility only when you authorize an AI client to inspect or control desktop UI.</string>
+</dict>
+</plist>

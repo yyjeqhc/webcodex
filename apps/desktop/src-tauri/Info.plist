@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>NSScreenCaptureUsageDescription</key>
+  <string>WebCodex uses screen recording access only when you request Computer Use through its local Runner.</string>
+  <key>NSAccessibilityUsageDescription</key>
+  <string>WebCodex uses Accessibility only when you request Computer Use through its local Runner.</string>
+</dict>
+</plist>

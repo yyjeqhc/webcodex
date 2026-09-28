@@ -299,7 +299,7 @@ smoke 会真正走 native installer，并验证包内 runtime identity。Windows
 
 ## 在 macOS 本地构建 DMG
 
-当前公开 macOS 分发包使用 ad-hoc signing，不做 notarization。
+本地开发 DMG 仍使用 ad-hoc signing，不做 notarization。正式 macOS release workflow 使用 Developer ID Application 签名和 notarization，使包内 Runner 获得稳定的 TCC code identity。
 
 普通本地打包优先使用仓库已经提供的一条完整 helper：
 

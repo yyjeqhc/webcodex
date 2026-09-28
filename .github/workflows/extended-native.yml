@@ -134,6 +134,7 @@ jobs:
             test "$actual" = "$expected"
             test "$(/usr/bin/lipo -archs "$binary")" = x86_64
           done
+          bash scripts/macos_sign_runner.sh target/dogfood/webcodex-runner -
           {
             echo "source=$source_sha"
             echo "version=$version"

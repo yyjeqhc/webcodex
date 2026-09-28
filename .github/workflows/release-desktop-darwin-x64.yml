@@ -152,6 +152,15 @@ jobs:
             frontend/package-lock.json
             apps/desktop/package-lock.json
 
+      - name: Configure Developer ID release signing
+        if: needs.resolve.outputs.version != '0.4.3'
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: bash scripts/macos_ci_developer_id_setup.sh
+
       - name: Download and verify immutable darwin-x64 runtime
         shell: bash
         env:
@@ -213,6 +222,9 @@ jobs:
             test "$("$binary" --version)" = "$expected_version"
             file "$binary" | grep -Fq x86_64
           done
+          if [ "$VERSION" != "0.4.3" ]; then
+            bash scripts/macos_sign_runner.sh "$runtime_dir/webcodex-runner" "$APPLE_SIGNING_IDENTITY"
+          fi
           echo "RUNTIME_DIR=$runtime_dir" >> "$GITHUB_ENV"
 
       - name: Install Desktop dependencies
@@ -226,28 +238,43 @@ jobs:
         run: |
           set -euo pipefail
           stage="$RUNNER_TEMP/webcodex-desktop-$PLATFORM-bundle"
+          signing_mode=developer-id
+          if [ "$VERSION" = "0.4.3" ]; then
+            signing_mode=adhoc
+          fi
           python3 scripts/prepare_desktop_bundle_macos.py \
             --bin-dir "$RUNTIME_DIR" \
             --version "$VERSION" \
             --source-sha "$SOURCE_SHA" \
             --built-at "$WEBCODEX_BUILT_AT" \
             --platform "$PLATFORM" \
-            --signing-mode adhoc \
+            --signing-mode "$signing_mode" \
             --output-dir "$stage"
           {
             echo "config=$stage/tauri.bundle.conf.json"
             echo "metadata=$stage/desktop-bundle.json"
+            echo "signing_mode=$signing_mode"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Build ad-hoc signed macOS Intel Desktop DMG
+      - name: Build signed macOS Intel Desktop DMG
         id: desktop_dmg
         working-directory: apps/desktop
         shell: bash
         env:
           CI: "true"
-          APPLE_SIGNING_IDENTITY: "-"
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
+          if [ "${{ steps.desktop_bundle.outputs.signing_mode }}" = developer-id ]; then
+            for name in APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+              [ -n "${!name:-}" ] || { echo "$name is required for macOS release signing" >&2; exit 1; }
+            done
+          else
+            unset APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID
+            export APPLE_SIGNING_IDENTITY="-"
+          fi
           export CARGO_TARGET_DIR="$RUNNER_TEMP/webcodex-desktop-$PLATFORM-tauri"
           npm exec tauri -- build \
             --bundles dmg \
@@ -280,7 +307,7 @@ jobs:
             --built-at "$WEBCODEX_BUILT_AT" \
             --platform "$PLATFORM" \
             --stage-metadata "${{ steps.desktop_bundle.outputs.metadata }}" \
-            --signing-mode adhoc \
+            --signing-mode "${{ steps.desktop_bundle.outputs.signing_mode }}" \
             --evidence "$RUNNER_TEMP/webcodex-desktop-v$VERSION-$PLATFORM.dmg.evidence.json"
 
       - name: Reconcile immutable supplemental Release assets
@@ -296,37 +323,52 @@ jobs:
 
           compare_dir="$RUNNER_TEMP/existing-supplemental-assets"
           mkdir -p "$compare_dir"
-          # Publish the checksum first. If this workflow is interrupted between
-          # uploads, the public Release never exposes an Intel DMG without its
-          # verification sidecar; a rerun reconciles the first byte-for-byte.
-          for asset in "$checksum" "$dmg"; do
-            asset_name="$(basename "$asset")"
-            asset_count="$(python3 - "$release_json" "$asset_name" <<'PY'
+          dmg_name="$(basename "$dmg")"
+          checksum_name="$(basename "$checksum")"
+          read -r dmg_count checksum_count < <(python3 - "$release_json" "$dmg_name" "$checksum_name" <<'PY'
           import json
           import sys
 
           release = json.load(open(sys.argv[1], encoding="utf-8"))
-          name = sys.argv[2]
-          print(sum(1 for item in release.get("assets", []) if item.get("name") == name))
+          names = sys.argv[2:]
+          counts = [sum(1 for item in release.get("assets", []) if item.get("name") == name) for name in names]
+          print(*counts)
           PY
-            )"
-            case "$asset_count" in
-              0)
-                gh release upload "$TAG" "$asset" --repo "$GITHUB_REPOSITORY"
-                ;;
-              1)
-                gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$asset_name" --dir "$compare_dir"
-                if ! cmp -s "$asset" "$compare_dir/$asset_name"; then
-                  echo "$asset_name differs from the existing immutable supplemental Release asset." >&2
-                  exit 1
-                fi
-                ;;
-              *)
-                echo "Refusing duplicate macOS Intel Desktop Release asset: $asset_name" >&2
+          )
+          if [ "$dmg_count" -gt 1 ] || [ "$checksum_count" -gt 1 ]; then
+            echo "Refusing duplicate macOS Intel Desktop Release assets." >&2
+            exit 1
+          fi
+
+          if [ "$dmg_count" -eq 1 ]; then
+            gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$dmg_name" --dir "$compare_dir"
+            existing_dmg="$compare_dir/$dmg_name"
+            existing_digest="$(shasum -a 256 "$existing_dmg" | awk '{print $1}')"
+            printf '%s  %s\n' "$existing_digest" "$dmg_name" > "$compare_dir/$checksum_name.expected"
+
+            if [ "$checksum_count" -eq 1 ]; then
+              gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$checksum_name" --dir "$compare_dir"
+              if ! cmp -s "$compare_dir/$checksum_name.expected" "$compare_dir/$checksum_name"; then
+                echo "$checksum_name does not describe the existing immutable $dmg_name." >&2
                 exit 1
-                ;;
-            esac
-          done
+              fi
+            else
+              # Developer ID timestamps/notarization make a rebuilt DMG intentionally
+              # non-byte-reproducible. Recover a partial upload from the immutable DMG
+              # itself instead of comparing it with this run's newly signed candidate.
+              cp "$compare_dir/$checksum_name.expected" "$compare_dir/$checksum_name"
+              gh release upload "$TAG" "$compare_dir/$checksum_name" --repo "$GITHUB_REPOSITORY"
+            fi
+          elif [ "$checksum_count" -eq 1 ]; then
+            echo "Found orphan $checksum_name without $dmg_name; a notarized DMG cannot be reconstructed byte-for-byte. Reconcile manually instead of replacing the immutable checksum." >&2
+            exit 1
+          else
+            # Upload the non-reproducible signed/notarized DMG first. If the second
+            # upload is interrupted, a rerun can derive the missing sidecar from the
+            # already-immutable DMG bytes.
+            gh release upload "$TAG" "$dmg" --repo "$GITHUB_REPOSITORY"
+            gh release upload "$TAG" "$checksum" --repo "$GITHUB_REPOSITORY"
+          fi
 
           {
             echo "### Published supplemental macOS Intel Desktop"

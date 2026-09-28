@@ -315,7 +315,7 @@ installation rather than disturbing a daily-use installation.
 
 ## Build a macOS DMG locally
 
-The current public macOS distribution is ad-hoc signed and not notarized.
+The local development DMG remains ad-hoc signed and is not notarized. Formal macOS release workflows use Developer ID Application signing and notarization so the packaged Runner has a stable TCC code identity.
 
 For the normal local path, the repository already provides a complete helper:
 

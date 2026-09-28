@@ -19,8 +19,8 @@ use super::tool_result::ToolResult;
 use super::validation_profile::ValidationCommandOptions;
 use super::validation_profile::{
     requires_multi_package_cargo_check, runtime_profile, validation_adapter_for_tool,
-    CargoReadOnlyValidationOperation, GoReadOnlyValidationOperation, ReadOnlyValidationOperation,
-    ValidationAdapter, ValidationFailureEvidence,
+    CargoReadOnlyValidationOperation, ReadOnlyValidationOperation, ValidationAdapter,
+    ValidationFailureEvidence,
 };
 use super::ToolRuntime;
 use crate::auth::AuthContext;

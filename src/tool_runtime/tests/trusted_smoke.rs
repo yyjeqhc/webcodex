@@ -211,8 +211,10 @@ async fn trusted_agent_smoke_full_chain_has_zero_approval_interruptions() {
     .await;
     track(&failing);
     assert_no_approval_interruption(&failing, "run_shell (failing validation)");
-    assert_ne!(
-        failing.output["exit_code"], 0,
+    assert!(!failing.success, "{:?}", failing.output);
+    assert_eq!(failing.output["execution_state"], "completed");
+    assert_eq!(
+        failing.output["exit_code"], 1,
         "first validation run must fail: {:?}",
         failing.output
     );
@@ -255,7 +257,11 @@ async fn trusted_agent_smoke_full_chain_has_zero_approval_interruptions() {
     track(&passing);
     assert!(passing.success, "{:?}", passing.error);
     assert_no_approval_interruption(&passing, "run_shell (passing validation)");
-    assert_eq!(passing.output["exit_code"], 0);
+    // Proven synchronous exit-zero success omits redundant lifecycle facts.
+    // Pending and uncertain results retain an explicit execution_state.
+    assert!(passing.error.is_none(), "{:?}", passing.error);
+    assert!(passing.output.get("execution_state").is_none());
+    assert!(passing.output.get("exit_code").is_none());
 
     // 6. Git review.
     let changes = dispatch_with_local_agent(

@@ -613,8 +613,17 @@ fn validation_success_evidence_schema(tool: &str, rich_required: &[Value]) -> Va
         return json!({});
     }
     let mut rich_required = rich_required.to_vec();
+    // Every terminal-success validation receipt, compact or rich, must preserve
+    // the independent source-coverage proposition. Exceptional success cannot
+    // fall back to a schema shape that silently permits source_state to vanish.
+    rich_required.push(json!("source_state"));
     if tool == "project_validate" {
-        rich_required.push(json!("action"));
+        rich_required.extend([
+            json!("backend"),
+            json!("action"),
+            json!("adapter"),
+            json!("validation_target_id"),
+        ]);
     }
     let mut rich = json!({
         "required": rich_required,

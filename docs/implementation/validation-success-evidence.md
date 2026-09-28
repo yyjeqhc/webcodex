@@ -138,7 +138,12 @@ Focused package test builds cover the implementation and schema integration:
 
 Separate diff review checked canonical recording order, authority/effect scope,
 loss/staleness gates, sparse-shape ambiguity and rich exception schema retention.
-No real-process/E2E, release build, deployment or external mutation was needed.
+The review also tightened the published rich-success schema so `source_state` is
+mandatory for every non-format validation success, and `project_validate` rich
+success additionally requires its canonical backend/action/adapter/target identity;
+Runtime already emitted those facts, so this closes schema drift without changing
+model receipts. No real-process/E2E, release build, deployment or external mutation
+was needed.
 
 The three propositions remain distinct: terminal validator success; sufficient
 executed-test or compile-only/explicit-opt-out proof; and current source coverage.

@@ -408,4 +408,35 @@ fn validation_success_schema_rejects_duplicate_parser_and_assertion_fragments() 
             "{key}"
         );
     }
+
+    // A rich successful receipt (for example unknown source coverage) still
+    // carries source_state as independent correctness evidence. The strict
+    // published schema must not accept a presentation that drops it.
+    let mut rich = fixture("cargo_test", "cargo_test", default, CARGO, "");
+    rich.output["source_state"]["observed_mutation_fence"] = json!("unknown");
+    project("cargo_test", default, &mut rich);
+    assert!(rich.output.get("tests_detected").is_some());
+    validate("cargo_test", &rich).unwrap();
+    rich.output.as_object_mut().unwrap().remove("source_state");
+    assert!(validate("cargo_test", &rich).is_err());
+
+    let mut project_rich = fixture("project_validate", "cargo_check", default, "", "");
+    project_rich.output["source_state"]["observed_mutation_fence"] = json!("unknown");
+    project("project_validate", default, &mut project_rich);
+    validate("project_validate", &project_rich).unwrap();
+    let canonical_rich = project_rich.output.clone();
+    for key in [
+        "source_state",
+        "backend",
+        "action",
+        "adapter",
+        "validation_target_id",
+    ] {
+        project_rich.output = canonical_rich.clone();
+        project_rich.output.as_object_mut().unwrap().remove(key);
+        assert!(
+            validate("project_validate", &project_rich).is_err(),
+            "rich project_validate success accepted missing {key}"
+        );
+    }
 }

@@ -2848,15 +2848,12 @@ fn stored_coding_run_snapshot(
                 "CodingAgent binding observation revision lacks run state",
             )
         })?,
-        execution_state: binding
-            .last_observed_execution_state
-            .clone()
-            .ok_or_else(|| {
-                CommunicationStoreError::new(
-                    "agent_task_storage_invariant",
-                    "CodingAgent binding observation revision lacks execution state",
-                )
-            })?,
+        execution_state: binding.last_observed_execution_state.ok_or_else(|| {
+            CommunicationStoreError::new(
+                "agent_task_storage_invariant",
+                "CodingAgent binding observation revision lacks execution state",
+            )
+        })?,
         observation_revision: revision,
         terminal_stop_reason: binding.terminal_stop_reason.clone(),
         terminal_error_code: binding.terminal_error_code.clone(),
@@ -3307,7 +3304,7 @@ fn load_coding_run_binding_for_attempt(
                     .get::<_, Option<String>>(10)?
                     .as_deref()
                     .map(|value| {
-                        CodingAgentRunState::from_str(value).ok_or_else(|| {
+                        CodingAgentRunState::from_wire(value).ok_or_else(|| {
                             rusqlite::Error::FromSqlConversionFailure(
                                 10,
                                 Type::Text,
@@ -3321,7 +3318,7 @@ fn load_coding_run_binding_for_attempt(
                     .get::<_, Option<String>>(11)?
                     .as_deref()
                     .map(|value| {
-                        CodingAgentExecutionState::from_str(value).ok_or_else(|| {
+                        CodingAgentExecutionState::from_wire(value).ok_or_else(|| {
                             rusqlite::Error::FromSqlConversionFailure(
                                 11,
                                 Type::Text,

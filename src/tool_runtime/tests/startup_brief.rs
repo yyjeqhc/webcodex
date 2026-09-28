@@ -215,9 +215,14 @@ fn assert_builtin_workflow(output: &Value) {
         "passive Job attention",
         "observe_jobs is for logs/details/recovery",
         "list_jobs is identity recovery",
-        "same-cell blocked dependencies use one wait_for_job_readiness set",
-        "for a future activation use wait_for_job_terminal only on a hard terminal dependency",
-        "Do not poll or rearm durable waits",
+        "Pending: retain Job identity",
+        "finish ready work",
+        "one wait_for_job_readiness join",
+        "any may unblock a branch",
+        "all requires every blocker",
+        "Deadline recomputes work/set",
+        "Future activation: wait_for_job_terminal",
+        "Never retry/redispatch",
     ] {
         assert!(defaults.contains(phrase), "workflow guidance: {phrase}");
     }

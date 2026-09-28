@@ -1228,7 +1228,7 @@ impl McpArtifactExportBase64Encoder {
             self.carry_len += take;
             index += take;
             if self.carry_len == 3 {
-                general_purpose::STANDARD.encode_string(&self.carry, &mut output);
+                general_purpose::STANDARD.encode_string(self.carry, &mut output);
                 self.carry_len = 0;
             }
         }

@@ -97,13 +97,19 @@ context refreshes use the same effective-profile rule.
   recovery may identify the next observation; it does not authorize automatic mutation retry.
   Keep full results in the Host cell and emit compact decision evidence. Run ready independent
   work and explicit mechanical continuations to quiescence. Only when pending Job dependencies
-  remain, pass the entire blocked exact set to one `wait_for_job_readiness` request (`any`/`all`).
-  Never create per-Job long waits or use `Promise.race` for first-ready aggregation. Budget from
-  remaining cell time (initially prefer 10–15s and preserve the 5s return guard); continue newly
-  ready work in the same cell, yield on deadline/budget guard. Job terminal does not imply
-  mechanically_followable; fallback recovery, authority changes, ambiguity, outcome_unknown and
-  effect uncertainty still return to the model. Use `wait_for_job_terminal` for a future activation
-  when terminal is a hard dependency. Do not use `observe_jobs` heartbeat polling. The
+  really block further useful progress, pass the entire blocked exact set to one
+  `wait_for_job_readiness` join barrier. Use `any` when one terminal Job can unlock a useful
+  dependent branch, then recompute ready/blocked work; use `all` only at a true join where every
+  blocked dependency is required. Never create per-Job long waits or use `Promise.race` for
+  first-ready aggregation. Choose `wait_secs` as the largest safe value from the remaining Host
+  activation budget after preserving its return guard, capped by the canonical 45s maximum; do not
+  prefer fixed 10/15/20s slices. Continue newly ready work in the same cell. After a deadline,
+  recompute ready work and the blocked set; if neither changed and no new semantic information
+  exists, do not mechanically repeat the same-set wait and yield near the budget boundary. Job
+  terminal does not imply mechanically_followable; fallback recovery, authority changes, ambiguity,
+  outcome_unknown and effect uncertainty still return to the model. Use `wait_for_job_terminal`
+  for a future activation when terminal is a hard dependency. Do not use `observe_jobs` heartbeat
+  polling. The
   startup `tool_strategy.host_orchestration` catalog and exact
   `tool_manifest(tool_name=...)` hint are both derived from canonical
   `ToolDefinition` metadata. They are guidance only and do not alter

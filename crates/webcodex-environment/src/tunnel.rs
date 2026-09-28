@@ -508,10 +508,10 @@ mod tests {
             running: Some(true),
             detail: None,
         };
-        assert_eq!(tunnel_install_required(&status).unwrap(), false);
+        assert!(!tunnel_install_required(&status).unwrap());
         status.running = Some(false);
         status.enabled = Some(false);
-        assert_eq!(tunnel_install_required(&status).unwrap(), true);
+        assert!(tunnel_install_required(&status).unwrap());
         status.running = Some(true);
         assert_eq!(
             tunnel_install_required(&status).unwrap_err().code,

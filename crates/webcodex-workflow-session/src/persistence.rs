@@ -842,12 +842,12 @@ pub fn sanitize_persisted_message(
             }
         }
     }
-    message.completion_id = message.completion_id.and_then(|completion_id| {
+    message.completion_id = message.completion_id.map(|completion_id| {
         let completion_id = completion_id.trim().to_ascii_lowercase();
         if is_valid_completion_id(&completion_id) {
-            Some(completion_id)
+            completion_id
         } else {
-            Some("invalid".to_string())
+            "invalid".to_string()
         }
     });
     message.resolution = message

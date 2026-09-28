@@ -593,9 +593,8 @@ impl ElementRegistry {
         let stale_ids: Vec<String> = self
             .entries
             .iter()
-            .filter_map(|(element_id, record)| {
-                (record.surface_id == surface_id).then(|| element_id.clone())
-            })
+            .filter(|&(_element_id, record)| record.surface_id == surface_id)
+            .map(|(element_id, _record)| element_id.clone())
             .collect();
         for element_id in &stale_ids {
             self.entries.remove(element_id);
@@ -1077,6 +1076,8 @@ impl ComputerRuntime {
             .cloned()
             .ok_or_else(|| "stale_display: unknown or stale display_id".to_string())?;
         ensure_raw_capture_bound(record.width, record.height)?;
+        // The unsupported-platform image stub is (), but native targets carry pixels.
+        #[cfg_attr(not(any(target_os = "macos", windows)), allow(clippy::let_unit_value))]
         let image = platform::capture_display(&record)?;
         let captured_at_unix_ms = current_unix_ms()?;
         let (image, _full_region) = transform_snapshot_image(
@@ -1457,6 +1458,8 @@ impl ComputerRuntime {
             return Err("invalid_request: snapshot output dimension bound is invalid".to_string());
         }
         let region = resolve_snapshot_region(record.width, record.height, region)?;
+        // Preserve the native image value even when checking the Linux stub.
+        #[cfg_attr(not(any(target_os = "macos", windows)), allow(clippy::let_unit_value))]
         let image = platform::capture_window(&record)?;
         let captured_at_unix_ms = current_unix_ms()?;
         let (image, region) = transform_snapshot_image(

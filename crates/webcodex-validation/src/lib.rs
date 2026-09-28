@@ -4,8 +4,12 @@
 //! validation adapters, and Workflow Session ledger-to-evidence semantics. It
 //! never authorizes callers, starts Jobs, executes commands, or mutates a
 //! Workflow Session store.
+//!
+//! Recipes and execution adapters are available by default. Server-side ledger
+//! projection requires `session-evidence`; Runner builds do not need that graph.
 
 mod adapters;
+#[cfg(any(feature = "session-evidence", test))]
 mod evidence;
 mod recipe;
 
@@ -24,6 +28,7 @@ pub use adapters::{
     ReadOnlyValidationPlan, ValidationAdapter, ValidationCommandOptions,
     ValidationCompatibilityProfile, ValidationFailureEvidence,
 };
+#[cfg(any(feature = "session-evidence", test))]
 pub use evidence::{
     current_validation_evidence_for_session, event_is_job_acceptance_only,
     event_observes_validation_activity, extract_validation_events, skipped_validation_summary,

@@ -152,7 +152,7 @@ impl ToolRuntime {
                     destination_path,
                     overwrite,
                     auth,
-                    transport.clone(),
+                    transport,
                 )
                 .await
             }

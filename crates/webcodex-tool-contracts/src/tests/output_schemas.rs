@@ -1795,6 +1795,26 @@ fn key_tool_output_schemas_include_expected_fields() {
             pending_strategy["properties"]["blocked_fallback"]["const"],
             "wait_for_job_terminal"
         );
+        assert_eq!(
+            pending_strategy["properties"]["readiness"]["properties"]["kind"]["const"],
+            "join_barrier"
+        );
+        assert_eq!(
+            pending_strategy["properties"]["readiness"]["properties"]["when"]["const"],
+            "ready_work_exhausted"
+        );
+        assert_eq!(
+            pending_strategy["properties"]["readiness"]["properties"]["mode"]["const"],
+            "any_unblocks_branch_all_requires_every_dependency"
+        );
+        assert_eq!(
+            pending_strategy["properties"]["readiness"]["properties"]["deadline"]["const"],
+            "recompute_then_yield_if_unchanged"
+        );
+        assert_eq!(
+            pending_strategy["properties"]["execution_replay"]["const"],
+            "never_retry_or_redispatch"
+        );
         assert!(
             has_output_field(name, "failure_kind"),
             "{name} missing failure_kind"
@@ -2698,13 +2718,7 @@ fn model_visible_output_schemas_admit_bounded_passive_job_attention() {
         "success": true,
         "output": {
             "execution_state": "pending",
-            "pending_strategy": {
-                "default": "continue_independent_work",
-                "passive_terminal_attention": "same_scope_may_surface",
-                "observe_continuation": "logs_details_recovery_fallback",
-                "observe_auto_follow": false,
-                "blocked_fallback": "wait_for_job_terminal"
-            },
+            "pending_strategy": crate::tool_call::pending_job_strategy_value(),
             "continuation": {
                 "follow_up_kind": "fallback_recovery",
                 "tool": "observe_jobs",

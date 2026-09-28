@@ -77,13 +77,21 @@ fn final_wake_reason(
     wake_on: ObserveJobsWakeOn,
     wait_reason: WakeReason,
 ) -> WakeReason {
-    final_readiness_reason(
+    let reason = final_readiness_reason(
         observed_has_error(observed),
         observed_terminal_satisfied(observed, wake_on),
         observed_has_change(observed),
         wake_on,
         wait_reason,
-    )
+    );
+    if reason == WakeReason::Timeout
+        && wake_on == ObserveJobsWakeOn::MeaningfulChange
+        && observed_has_meaningful_change(observed)
+    {
+        WakeReason::Updated
+    } else {
+        reason
+    }
 }
 
 // Shared final-snapshot rule, including the existing any/all deadline asymmetry.
@@ -115,6 +123,12 @@ fn observed_has_change(observed: &[ObservedJob]) -> bool {
     observed
         .iter()
         .any(|item| item.result.output["changed"].as_bool() == Some(true))
+}
+
+fn observed_has_meaningful_change(observed: &[ObservedJob]) -> bool {
+    observed
+        .iter()
+        .any(|item| item.result.output["meaningful_changed"].as_bool() == Some(true))
 }
 
 fn bounded_error(error: Option<&str>) -> String {
@@ -575,6 +589,8 @@ fn sparse_success_item(item: &Value) -> Option<Value> {
     let status = observation.get("status")?.as_str()?.to_string();
     let terminal = observation.get("terminal")?.as_bool()?;
     let changed = observation.get("changed")?.as_bool()?;
+    let meaningful_changed = observation.get("meaningful_changed")?.as_bool()?;
+    let heartbeat_changed = observation.get("heartbeat_changed")?.as_bool()?;
     let log_delta_status = observation.get("log_delta_status")?.as_str()?;
     if !matches!(
         log_delta_status,
@@ -606,6 +622,8 @@ fn sparse_success_item(item: &Value) -> Option<Value> {
     sparse.insert("status".to_string(), json!(status));
     sparse.insert("terminal".to_string(), json!(terminal));
     sparse.insert("changed".to_string(), json!(changed));
+    sparse.insert("meaningful_changed".to_string(), json!(meaningful_changed));
+    sparse.insert("heartbeat_changed".to_string(), json!(heartbeat_changed));
     sparse.insert("log_delta_status".to_string(), json!(log_delta_status));
     sparse.insert("observation_token".to_string(), json!(observation_token));
     copy_non_null(observation, &mut sparse, "project");
@@ -927,6 +945,11 @@ impl ToolRuntime {
                     if wake_on == ObserveJobsWakeOn::Change {
                         return Ok(WakeReason::Updated);
                     }
+                    if wake_on == ObserveJobsWakeOn::MeaningfulChange
+                        && observation.meaningful_changed
+                    {
+                        return Ok(WakeReason::Updated);
+                    }
                     // Private cursor only; detailed observation still uses the original token.
                     let token = job
                         .observation_token
@@ -1207,6 +1230,10 @@ impl ToolRuntime {
             } else if observed_terminal_satisfied(&initial, wake_on) {
                 Some(WakeReason::Terminal)
             } else if wake_on == ObserveJobsWakeOn::Change && observed_has_change(&initial) {
+                Some(WakeReason::Updated)
+            } else if wake_on == ObserveJobsWakeOn::MeaningfulChange
+                && observed_has_meaningful_change(&initial)
+            {
                 Some(WakeReason::Updated)
             } else {
                 None

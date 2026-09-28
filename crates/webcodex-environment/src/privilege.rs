@@ -282,7 +282,8 @@ fn apply(
     }
     #[cfg(not(windows))]
     let _ = project;
-    let result = match operation {
+
+    match operation {
         ServiceOperation::PrepareRunner => {
             #[cfg(windows)]
             {
@@ -348,8 +349,7 @@ fn apply(
             })?;
             ServiceManager::update_credential(spec, credential).map_err(service_error)
         }
-    };
-    result
+    }
 }
 
 /// Internal CLI entrypoint. This never opens a network connection or starts an

@@ -2139,9 +2139,7 @@ fn set_show_changes_verdict(output: &mut Value) {
         let page_truncated = diff_truncation_reasons
             .iter()
             .any(|reason| matches!(*reason, "diff_hunk_count_limit" | "diff_byte_budget"));
-        let hunk_line_truncated = diff_truncation_reasons
-            .iter()
-            .any(|reason| *reason == "diff_hunk_line_limit");
+        let hunk_line_truncated = diff_truncation_reasons.contains(&"diff_hunk_line_limit");
         // show_changes currently reports line truncation at the aggregate diff
         // level, not as authoritative per-hunk provenance. Keep whole-worktree
         // scope rather than guessing which returned path owns the omitted lines.

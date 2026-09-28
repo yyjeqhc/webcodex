@@ -103,20 +103,9 @@ pub(in crate::tool_runtime::tests) fn assert_sparse_pending_job_handoff(output: 
             .collect(),
         "normal model-facing pending handoff must stay sparse"
     );
-    let pending_strategy = &output["pending_strategy"];
-    assert_eq!(pending_strategy["default"], "continue_independent_work");
     assert_eq!(
-        pending_strategy["passive_terminal_attention"],
-        "same_scope_may_surface"
-    );
-    assert_eq!(
-        pending_strategy["observe_continuation"],
-        "logs_details_recovery_fallback"
-    );
-    assert_eq!(pending_strategy["observe_auto_follow"], false);
-    assert_eq!(
-        pending_strategy["blocked_fallback"],
-        "wait_for_job_terminal"
+        output["pending_strategy"],
+        webcodex_tool_contracts::tool_call::pending_job_strategy_value()
     );
     observe_job_continuation_job_id(output)
 }

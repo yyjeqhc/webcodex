@@ -224,7 +224,7 @@ pub(super) fn create_agent_task_terminal_attention_in_transaction(
             schedule_agent_ids.push(target_agent_id.to_string());
         }
         let event_id = allocate_identity(
-            &transaction,
+            transaction,
             AGENT_ATTENTION_EVENT_ID_PREFIX,
             "SELECT EXISTS(SELECT 1 FROM wc_agent_attention_events WHERE event_id = ?1)",
         )?;
@@ -262,7 +262,7 @@ pub(super) fn insert_attention_wake_in_transaction(
     now: i64,
 ) -> Result<String, CommunicationStoreError> {
     let wake_id = allocate_identity(
-        &transaction,
+        transaction,
         AGENT_WAKE_ID_PREFIX,
         "SELECT EXISTS(SELECT 1 FROM wc_agent_wakes WHERE wake_id = ?1)",
     )?;

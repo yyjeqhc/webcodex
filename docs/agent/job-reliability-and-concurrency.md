@@ -25,20 +25,22 @@ long tool -> same durable Job -> exact continuation retained
 ```
 
 `wait_for_job_readiness(job_ids, mode, wait_secs)` is a transient, sequential
-Host wait barrier. Finish ready independent work first, then pass the whole
-blocked exact set in one request. Stable deduplication preserves order; 1..8
-unique public Jobs and 1..45 seconds are required. Every Job is independently
-re-authorized before waiting; an invalid/invisible target fails the entire set
-without partial evidence. It shares `observe_jobs`' canonical Notify/revision
-waiter, private cursors and one absolute deadline. Nonterminal updates do not
-satisfy readiness or extend the deadline. `any` returns on first terminal;
-`all` requires the whole set. The final snapshot reports only ready
-`job_id/status/outcome` and `pending_job_ids`, plus `mode`, `wait_state` and
-`waited_ms`. Failed, stopped, lost and timed-out Jobs are terminal-ready.
-`deadline` is successful observation of an unsatisfied bounded wait, not Job
-failure. Existing observation deadline semantics apply: an expired `all` wait
-stays deadline even if its final snapshot races completion; `any` can recognize
-terminal truth in that final snapshot.
+Host **join barrier**, not a pending-Job observer. Finish every currently-ready
+independent action first, then pass the whole exact set that really blocks further
+useful progress in one request. Use `any` when one terminal Job can unlock a useful
+dependent branch and recompute the ready/blocked sets after it returns; use `all`
+only at a true join where every blocked dependency is required. Stable
+deduplication preserves order; 1..8 unique public Jobs and 1..45 seconds are
+required. Every Job is independently re-authorized before waiting; an
+invalid/invisible target fails the entire set without partial evidence. It shares
+`observe_jobs`' canonical Notify/revision waiter, private cursors and one absolute
+deadline. Nonterminal updates do not satisfy readiness or extend the deadline.
+The final snapshot reports only ready `job_id/status/outcome` and
+`pending_job_ids`, plus `mode`, `wait_state` and `waited_ms`. Failed, stopped,
+lost and timed-out Jobs are terminal-ready. `deadline` is successful observation
+of an unsatisfied bounded wait, not Job failure. Existing observation deadline
+semantics apply: an expired `all` wait stays deadline even if its final snapshot
+races completion; `any` can recognize terminal truth in that final snapshot.
 
 For Window activity only, a readiness set whose exact caller-authorized Job records
 all carry the same canonical Project is attributed to that Project before the wait
@@ -53,10 +55,22 @@ Cancellation/restart drops the wait; the existing Job lifecycle survives on its
 own terms. Never use parallel per-Job long waits or `Promise.race`. Resume ready
 work in the same cell, but terminal status never authorizes a mechanical
 follow-up: only an explicit `follow_up_kind=mechanically_followable` does.
-Use remaining Host budget (initially prefer 10–15s waits with the 5s return guard)
-and yield on deadline or guard. Generic 5s handoff/continuation slices and Job
-lifetimes are unchanged. This tool is ordinary MCP/Adaptive Runtime only;
+Choose `wait_secs` as the largest safe value from the remaining Host activation
+budget after preserving its return guard, capped at 45 seconds; there is no fixed
+10/15/20-second preferred slice. After `deadline`, recompute ready work and the
+blocked set. If neither changed and no new semantic information appeared, do not
+mechanically refill the same wait; yield near the activation boundary. Generic 5s
+handoff/continuation slices and Job lifetimes are unchanged. This tool is ordinary
+MCP/Adaptive Runtime only;
 no nested Code Mode admission or frozen legacy Actions membership is added.
+
+`observe_jobs` keeps `wake_on=change` backward-compatible: any accepted observation
+revision, including sequence-only Runner liveness, may wake it. Use
+`wake_on=meaningful_change` only when sequence-only liveness should be skipped; it
+advances a private wait cursor across those revisions while preserving one absolute
+deadline, and still wakes for logs, lifecycle, activity, recovery, epoch/reset, or
+terminal changes. Returned `meaningful_changed` and `heartbeat_changed` classify the
+observed revision without changing the opaque observation-token contract.
 
 `wait_for_job_terminal(job_id="<job>", idempotency_key="<wait-key>")` registers
 bounded one-shot terminal attention. Prefer it when progress genuinely depends

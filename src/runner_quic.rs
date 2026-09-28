@@ -668,7 +668,7 @@ mod tests {
                 owner: Some("tester".to_string()),
                 hostname: None,
                 host_context: None,
-                capabilities: capabilities,
+                capabilities,
                 policy: None,
             },
             auth_token,

@@ -143,7 +143,7 @@ WebCodex 的 `src/mcp_host.rs` 已有 host_code_mode profile：默认 Host budge
 
 独立只读的跨工具调用可以有限 fan-out，并分别处理失败；相同文件的修改保持有序，Cargo validation 保持串行。native batch 优先于多个独立请求。不要修改 ToolCompositionPolicy 或 nested admission 来实现 Host 指导。
 
-Job 首次返回 pending 后保存同一个 Job identity，继续不依赖该结果的工作。普通响应已提供 terminal attention 时不再重复观察。没有独立工作且终态确实成为硬依赖时，优先只注册一次 `wait_for_job_terminal`（仅当存在真实 Host carrier），随后 yield/end 当前 turn，等待 Host continuation；不要把 5 秒 `observe_jobs` 切片改写成同一 cell 内的轮询循环，也不要每个切片都返回模型再重新进入 Code Mode。只有需要日志、诊断或恢复时才显式 `observe_jobs`。不得重新执行命令冒充 continuation。
+Job 首次返回 pending 后保存同一个 Job identity/continuation，把它视为 background execution，继续不依赖该结果的 ready work。普通响应已提供 terminal attention 时不再重复观察。同一 Host activation 内只有在 ready work 真正耗尽、后续确实依赖 Job terminal outcome 时，才把整个 exact blocked set 交给一次 `wait_for_job_readiness` join barrier：某个 Job terminal 即可解锁有用 branch 时用 `any`，只有真正需要全部依赖的 join point 才用 `all`。wait_secs 使用保留 return guard 后的最大安全剩余 activation budget，并受 45 秒上限约束，不偏好固定 slice。deadline 后先重新计算 ready work / blocked set；没有新语义时不机械续杯。若硬依赖必须跨 turn，才使用一次 `wait_for_job_terminal`（仅当存在真实 Host carrier）并 yield/end 当前 turn。不要把 `observe_jobs` 当 heartbeat/readiness substitute；只有需要日志、诊断或恢复时才显式调用。不得重新执行命令冒充 continuation。
 
 cell 内保留完整 ToolResult、revision、cursor 和恢复数据；给模型输出决策所需证据。压缩时必须保留失败、截断、缺失和待确认状态，不能用只剩 success=true 的摘要掩盖不完整结果。
 
@@ -204,7 +204,7 @@ Codex session 统计的配对规则：只对 name=exec 的 custom_tool_call/func
 
 ## 9.5 第三轮：Host Job Readiness Reactor 实测
 
-2026-09-28 的 OE readiness probe 已验证当前 ChatGPT Host 可以在同一 functions.exec cell 中 await 一个真正由 Server event 唤醒的 MCP request，并在返回后继续 dependent child call；同时也验证多个并发 long-lived MCP calls 的 Promise.race 不能作为可靠的 low-latency any-ready primitive。最新 main 的 observe_jobs 内部已经使用 canonical Notify + revision recheck multi-Job waiter，因此下一步应提取一个薄的 transient wait_for_job_readiness facade，而不是新增第二套 reactor/scheduler。完整实验数据与设计见 [Host Job Readiness Reactor](host-job-readiness-reactor.md)。
+2026-09-28 的 OE readiness probe 已验证当前 ChatGPT Host 可以在同一 functions.exec cell 中 await 一个真正由 Server event 唤醒的 MCP request，并在返回后继续 dependent child call；同时也验证多个并发 long-lived MCP calls 的 Promise.race 不能作为可靠的 low-latency any-ready primitive。后续 main 已基于 observe_jobs 的 canonical Notify + revision recheck multi-Job waiter加入薄的 transient `wait_for_job_readiness` facade，没有新增第二套 reactor/scheduler。本轮继续把它收敛为“ready work 耗尽后的 join barrier”，并明确 `any/all`、剩余 Host budget 与 deadline 后不机械 rewait 的调度语义。完整实验数据与设计见 [Host Job Readiness Reactor](host-job-readiness-reactor.md)。
 
 ## 10. Host guidance bound 验证
 

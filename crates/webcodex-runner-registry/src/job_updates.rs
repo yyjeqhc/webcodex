@@ -3,8 +3,8 @@ use super::access_control::{
 };
 use super::jobs::{
     append_log_limited, assert_active_instance_locked, command_preview, is_final_job_status,
-    job_view, notify_job_update, observe_job_terminal, parse_job_lifecycle, process_preview,
-    refresh_job_status_locked, script_preview, select_log_lines,
+    job_view, notify_job_heartbeat, notify_job_update, observe_job_terminal, parse_job_lifecycle,
+    process_preview, refresh_job_status_locked, script_preview, select_log_lines,
 };
 use super::reconciliation::validate_stream_snapshot;
 use super::requests::{
@@ -80,6 +80,12 @@ pub struct JobLogWait {
     /// Whether the job changed relative to the supplied `after_observation_token`.
     /// Always false when no `after_observation_token` was provided.
     pub changed: bool,
+    /// Whether a semantic/log/activity/lifecycle/recovery change happened after
+    /// the supplied observation token. False for a sequence-only heartbeat.
+    pub meaningful_changed: bool,
+    /// Whether the only observed revision advance since the supplied token was
+    /// sequence-only liveness traffic.
+    pub heartbeat_changed: bool,
     /// Whether the job is terminal per the canonical job terminal definition.
     pub terminal: bool,
 }
@@ -90,9 +96,32 @@ impl Default for JobLogWait {
             wait_outcome: JobLogWaitOutcome::Immediate,
             waited_ms: 0,
             changed: false,
+            meaningful_changed: false,
+            heartbeat_changed: false,
             terminal: false,
         }
     }
+}
+
+fn observation_change_flags(
+    job: &ShellJobRecord,
+    after: Option<&webcodex_core::job_observation::JobObservationToken>,
+) -> (bool, bool, bool) {
+    let Some(token) = after else {
+        return (false, false, false);
+    };
+    let parent_changed = !token.matches_parent(&job.job_id, &job.observation.epoch);
+    let revision = job.observation.revision.load(Ordering::Relaxed);
+    let changed = parent_changed || token.revision != revision;
+    let meaningful_changed = changed
+        && (parent_changed
+            || job
+                .observation
+                .last_meaningful_revision
+                .load(Ordering::Relaxed)
+                > token.revision);
+    let heartbeat_changed = changed && !meaningful_changed;
+    (changed, meaningful_changed, heartbeat_changed)
 }
 
 pub const MAX_JOB_TELEMETRY_SNAPSHOTS: usize = 9;
@@ -206,7 +235,7 @@ fn frozen_shell_job_log_projection(
         let mut view = job_view(job);
         view.observation_token = webcodex_core::job_observation::JobObservationToken::new_baseline(
             job.job_id.clone(),
-            job.observation.epoch.to_string(),
+            &job.observation.epoch,
             job.observation.revision.load(Ordering::Relaxed),
         )
         .ok()
@@ -279,7 +308,7 @@ fn frozen_shell_job_log_projection(
     let mut view = job_view(job);
     view.observation_token = webcodex_core::job_observation::JobObservationToken::new(
         job.job_id.clone(),
-        job.observation.epoch.to_string(),
+        &job.observation.epoch,
         job.observation.revision.load(Ordering::Relaxed),
         stdout.next_line as u64,
         stderr.next_line as u64,
@@ -1942,7 +1971,7 @@ impl RunnerRegistry {
                 .filter_map(|id| {
                     let job = inner.jobs_by_id.get(*id)?;
                     if job.visibility != ShellJobVisibility::Public
-                        || !shell_job_visible_to_auth(auth, &inner, job)
+                        || !shell_job_visible_to_auth(auth, inner, job)
                     {
                         return None;
                     }
@@ -2165,11 +2194,8 @@ impl RunnerRegistry {
             {
                 return Err(format!("unknown shell job: {}", job_id));
             }
-            let revision = job.observation.revision.load(Ordering::Relaxed);
-            let changed = after.as_ref().is_some_and(|token| {
-                !token.matches_parent(&job.job_id, &job.observation.epoch)
-                    || token.revision != revision
-            });
+            let (changed, meaningful_changed, heartbeat_changed) =
+                observation_change_flags(job, after.as_ref());
             let terminal = job.lifecycle.is_terminal();
             if wait_secs.is_none() || after.is_none() || changed || terminal {
                 let wait_outcome = if changed {
@@ -2187,6 +2213,8 @@ impl RunnerRegistry {
                     wait_outcome,
                     waited_ms,
                     changed,
+                    meaningful_changed,
+                    heartbeat_changed,
                     terminal,
                 };
                 return Ok(frozen_shell_job_log_projection(
@@ -2213,11 +2241,8 @@ impl RunnerRegistry {
             {
                 return Err(format!("unknown shell job: {}", job_id));
             }
-            let revision = job.observation.revision.load(Ordering::Relaxed);
-            let changed = after.as_ref().is_some_and(|token| {
-                !token.matches_parent(&job.job_id, &job.observation.epoch)
-                    || token.revision != revision
-            });
+            let (changed, meaningful_changed, heartbeat_changed) =
+                observation_change_flags(job, after.as_ref());
             let terminal = job.lifecycle.is_terminal();
             if changed || terminal {
                 let wait = JobLogWait {
@@ -2228,6 +2253,8 @@ impl RunnerRegistry {
                     },
                     waited_ms,
                     changed,
+                    meaningful_changed,
+                    heartbeat_changed,
                     terminal,
                 };
                 return Ok(frozen_shell_job_log_projection(
@@ -2260,11 +2287,8 @@ impl RunnerRegistry {
                 {
                     return Err(format!("unknown shell job: {}", job_id));
                 }
-                let revision = job.observation.revision.load(Ordering::Relaxed);
-                let changed = after.as_ref().is_some_and(|token| {
-                    !token.matches_parent(&job.job_id, &job.observation.epoch)
-                        || token.revision != revision
-                });
+                let (changed, meaningful_changed, heartbeat_changed) =
+                    observation_change_flags(job, after.as_ref());
                 let terminal = job.lifecycle.is_terminal();
                 let wait = JobLogWait {
                     wait_outcome: if terminal {
@@ -2276,6 +2300,8 @@ impl RunnerRegistry {
                     },
                     waited_ms,
                     changed,
+                    meaningful_changed,
+                    heartbeat_changed,
                     terminal,
                 };
                 return Ok(frozen_shell_job_log_projection(
@@ -2652,8 +2678,15 @@ impl RunnerRegistry {
             if let Some(sequence) = incoming_seq {
                 job.last_update_seq = sequence;
             }
-            if public_mutation_signature(job) != before {
-                notify_job_update(job);
+            let after = public_mutation_signature(job);
+            if after != before {
+                let mut without_sequence = after.clone();
+                without_sequence.last_update_seq = before.last_update_seq;
+                if without_sequence == before {
+                    notify_job_heartbeat(job);
+                } else {
+                    notify_job_update(job);
+                }
             }
             remove_cleanup_terminal =
                 job.visibility == ShellJobVisibility::CleanupPending && job.lifecycle.is_terminal();

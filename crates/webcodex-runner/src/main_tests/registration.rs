@@ -192,6 +192,7 @@ fn computer_register_request_announces_platform_capabilities_and_generation() {
     assert!(caps.structured_cargo_test_execution_policy);
     assert!(caps.structured_cargo_test_lib);
     assert!(caps.structured_cargo_check_packages);
+    assert!(caps.supports(RunnerCapabilityId::ProjectValidation));
     assert!(caps.structured_go_test_json);
     assert!(caps.structured_go_test_tool);
     assert!(caps.structured_go_test_packages);
@@ -335,4 +336,47 @@ fn register_request_carries_sanitized_shell_profiles_summary() {
     let rendered = serde_json::to_string(summary).unwrap();
     assert!(!rendered.contains(secret_env), "{rendered}");
     assert!(!rendered.contains(secret_script), "{rendered}");
+}
+
+#[test]
+fn capability_catalog_does_not_enable_configured_off_implementations() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut cfg = test_config(tmp.path().join("config/project-registry"));
+    cfg.capabilities = Some(RunnerCapabilities {
+        shell: false,
+        git: false,
+        ..Default::default()
+    });
+    let capabilities = runner_register_capabilities(&cfg);
+    assert!(!capabilities.supports(RunnerCapabilityId::Shell));
+    assert!(!capabilities.supports(RunnerCapabilityId::Git));
+    assert!(capabilities.supports(RunnerCapabilityId::ProjectValidation));
+    assert!(capabilities.supports(RunnerCapabilityId::StructuredProcessArgv));
+    assert_eq!(
+        capabilities.supports(RunnerCapabilityId::BrowserObserve),
+        webcodex_browser::discover_chromium_executable().is_some()
+    );
+    assert_eq!(
+        capabilities.supports(RunnerCapabilityId::ComputerControl),
+        cfg!(any(target_os = "macos", windows))
+    );
+}
+
+#[test]
+fn configured_capabilities_cannot_grant_provider_support() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut cfg = test_config(tmp.path().join("config/project-registry"));
+    let mut configured = RunnerCapabilities::default();
+    for id in RunnerCapabilityId::all() {
+        configured.set(*id, true);
+    }
+    cfg.capabilities = Some(configured);
+    let capabilities = runner_register_capabilities(&cfg);
+    assert!(capabilities.supports(RunnerCapabilityId::Shell));
+    assert!(capabilities.supports(RunnerCapabilityId::Git));
+    assert!(!capabilities.supports(RunnerCapabilityId::CodingAgentRuns));
+    let body = build_register_request(&cfg, "no-provider-instance", 0);
+    assert!(!body
+        .capabilities
+        .supports(RunnerCapabilityId::CodingAgentRuns));
 }

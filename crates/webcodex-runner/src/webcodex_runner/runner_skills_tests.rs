@@ -313,7 +313,7 @@ fn managed_only_runtime_resolve_read_and_explicit_revision_checks_are_preserved(
             "SKILL.md",
             1,
             20,
-            Some(&"wc_skillpkg___________________________________________8".to_string()),
+            Some("wc_skillpkg___________________________________________8"),
             None,
         )
         .unwrap_err(),
@@ -352,13 +352,11 @@ fn mixed_list_keeps_configured_and_managed_source_identity_explicit() {
         .iter()
         .any(|skill| skill.skill_id() == managed.skill_id()
             && skill.source() == RunnerSkillSource::Managed));
-    assert!(resolve_runner_skill(
-        &config,
-        &store,
-        &"wc_skill_AAAAAAAAAAAAAAAAAAAAAA".to_string()
-    )
-    .unwrap()
-    .is_none());
+    assert!(
+        resolve_runner_skill(&config, &store, "wc_skill_AAAAAAAAAAAAAAAAAAAAAA")
+            .unwrap()
+            .is_none()
+    );
 }
 
 #[test]

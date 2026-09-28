@@ -465,7 +465,7 @@ async fn runner_supports_recognizes_all_protocol_capability_names() {
             owner: None,
             hostname: None,
             host_context: None,
-            capabilities: crate::capabilities::all_enabled_capabilities(),
+            capabilities: all_enabled_capabilities(),
             policy: Some(crate::runner_protocol::RunnerPolicySummary {
                 ..Default::default()
             }),

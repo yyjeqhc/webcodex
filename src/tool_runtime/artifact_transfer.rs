@@ -139,7 +139,7 @@ impl ToolRuntime {
                     overwrite,
                 },
                 auth,
-                transport.clone(),
+                transport,
             )
             .await;
         if !begin.success {
@@ -156,7 +156,7 @@ impl ToolRuntime {
                         &destination_path,
                         upload_id,
                         auth,
-                        transport.clone(),
+                        transport,
                     )
                     .await
                 } else {
@@ -227,7 +227,7 @@ impl ToolRuntime {
                             &destination_path,
                             &upload_id,
                             auth,
-                            transport.clone(),
+                            transport,
                         )
                         .await;
                     return ToolResult::err_with_output(
@@ -257,7 +257,7 @@ impl ToolRuntime {
                         &destination_path,
                         &upload_id,
                         auth,
-                        transport.clone(),
+                        transport,
                     )
                     .await;
                 return ToolResult::err_with_output(
@@ -283,7 +283,7 @@ impl ToolRuntime {
                             &destination_path,
                             &upload_id,
                             auth,
-                            transport.clone(),
+                            transport,
                         )
                         .await;
                     return ToolResult::err_with_output(
@@ -308,7 +308,7 @@ impl ToolRuntime {
                             &destination_path,
                             &upload_id,
                             auth,
-                            transport.clone(),
+                            transport,
                         )
                         .await;
                     return ToolResult::err_with_output(
@@ -354,7 +354,7 @@ impl ToolRuntime {
                         &destination_path,
                         &upload_id,
                         auth,
-                        transport.clone(),
+                        transport,
                     )
                     .await;
                 return ToolResult::err_with_output(
@@ -381,7 +381,7 @@ impl ToolRuntime {
                         session_id: None,
                     },
                     auth,
-                    transport.clone(),
+                    transport,
                 )
                 .await;
             if !write.success {
@@ -392,7 +392,7 @@ impl ToolRuntime {
                         &destination_path,
                         &upload_id,
                         auth,
-                        transport.clone(),
+                        transport,
                     )
                     .await
                 } else {
@@ -426,7 +426,7 @@ impl ToolRuntime {
                         &destination_path,
                         &upload_id,
                         auth,
-                        transport.clone(),
+                        transport,
                     )
                     .await;
                 return ToolResult::err_with_output(
@@ -453,7 +453,7 @@ impl ToolRuntime {
                     session_id: None,
                 },
                 auth,
-                transport.clone(),
+                transport,
             )
             .await;
         if !finish.success {

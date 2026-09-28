@@ -1189,11 +1189,11 @@ async fn handle_mcp_request_with_lifecycle(
     protocol_era: McpProtocolEra,
     host_file_import_trust: HostFileImportTrust,
     window: Option<&crate::client_window::ClientWindow>,
-    mut lifecycle: Option<&mut ToolRequestLifecycle>,
-    mut model_ergonomics_out: Option<&mut Option<ModelErgonomicsRecord>>,
+    lifecycle: Option<&mut ToolRequestLifecycle>,
+    model_ergonomics_out: Option<&mut Option<ModelErgonomicsRecord>>,
     compact_schemas: bool,
     server_mcp_apps_enabled: bool,
-    mut correlation_out: Option<&mut crate::tool_runtime::ToolCallCorrelation>,
+    correlation_out: Option<&mut crate::tool_runtime::ToolCallCorrelation>,
 ) -> McpOutcome {
     let stateless_2026 = protocol_era == McpProtocolEra::Stateless2026;
     let resource_read_bypasses_runtime_read = stateless_2026
@@ -1299,9 +1299,9 @@ async fn handle_mcp_request_with_lifecycle(
                 server_mcp_apps_enabled,
                 host_file_import_trust,
                 window,
-                lifecycle.as_deref_mut(),
-                model_ergonomics_out.as_deref_mut(),
-                correlation_out.as_deref_mut(),
+                lifecycle,
+                model_ergonomics_out,
+                correlation_out,
             )
             .await;
         }

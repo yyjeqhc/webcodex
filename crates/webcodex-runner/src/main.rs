@@ -30,10 +30,10 @@ use webcodex_workspace::project_overview;
 use webcodex_workspace::workspace_checkpoint;
 
 use runner_protocol::{
-    validation_infrastructure_failure_code, RunnerCapabilities, RunnerPolicySummary,
-    RunnerPollPayload, RunnerPollRequest, RunnerPollResponse, RunnerProjectSummary,
-    RunnerRegisterRequest, RunnerRegisterResponse, RunnerRequest, ShellJobInventory,
-    ShellJobTestCountEvidence, ShellJobValidationStep, ShellProfileSummaryEntry,
+    validation_infrastructure_failure_code, RunnerCapabilities, RunnerCapabilityId,
+    RunnerPolicySummary, RunnerPollPayload, RunnerPollRequest, RunnerPollResponse,
+    RunnerProjectSummary, RunnerRegisterRequest, RunnerRegisterResponse, RunnerRequest,
+    ShellJobInventory, ShellJobTestCountEvidence, ShellJobValidationStep, ShellProfileSummaryEntry,
     ShellProfilesSummary, ShellProjectInventoryPage, ShellProjectInventoryStatus,
     RUNNER_PROTOCOL_GENERATION_V2, VALIDATION_STEP_WAIT_FAILED_CODE,
 };
@@ -1448,129 +1448,147 @@ fn disable_job_state_reconciliation_for_test() -> bool {
 }
 
 fn runner_register_capabilities(cfg: &RunnerConfig) -> RunnerCapabilities {
-    let mut capabilities = cfg.capabilities.clone().unwrap_or_default();
+    let configured = cfg.capabilities.clone().unwrap_or_default();
+    let mut capabilities = RunnerCapabilities::default();
+    // Only these legacy implementation switches come from configuration. Do not
+    // copy the whole catalog: a future wire field is not implemented merely
+    // because a configuration advertises it. Provider capabilities are observed
+    // separately when building the registration request.
+    capabilities.set(RunnerCapabilityId::Shell, configured.shell);
+    capabilities.set(RunnerCapabilityId::Git, configured.git);
     // This binary accepts a structured local sh/bash selector on raw shell
     // requests. Older Runners omit the bit so current Servers fail closed.
-    capabilities.explicit_shell_selection = true;
-    capabilities.bash_login_shell = true;
-    capabilities.jobs = true;
-    capabilities.file_read = true;
-    capabilities.file_write = true;
+    capabilities.set(RunnerCapabilityId::ExplicitShellSelection, true);
+    capabilities.set(RunnerCapabilityId::BashLoginShell, true);
+    capabilities.set(RunnerCapabilityId::Jobs, true);
+    capabilities.set(RunnerCapabilityId::FileRead, true);
+    capabilities.set(RunnerCapabilityId::FileWrite, true);
     // This binary implements the narrow internal seek/read export-chunk path.
     // Older binaries omit the field so Control uses the existing slow fallback.
-    capabilities.artifact_export_chunk_read = true;
+    capabilities.set(RunnerCapabilityId::ArtifactExportChunkRead, true);
     // Large export metadata (size/SHA/MIME) is verified with bounded streaming
     // I/O. Keep this separate from chunk-read support for rolling upgrades.
-    capabilities.artifact_export_streaming_metadata = true;
+    capabilities.set(RunnerCapabilityId::ArtifactExportStreamingMetadata, true);
     // This binary implements the complete bounded structured delete contract.
     // Older binaries omit the field and therefore keep using the Server's legacy path.
-    capabilities.structured_file_delete = true;
+    capabilities.set(RunnerCapabilityId::StructuredFileDelete, true);
     // This binary enforces ApplyTextEditInput.occurrence exactly. Older binaries
     // omit this additive effect-semantics capability and must not receive selectors.
-    capabilities.apply_text_edit_occurrence = true;
+    capabilities.set(RunnerCapabilityId::ApplyTextEditOccurrence, true);
     // Unique exact local edits may be preflighted against current content
     // without a historical whole-file SHA. The transactional source-SHA fence
     // before mutation remains mandatory.
-    capabilities.apply_text_edit_local_guard_without_sha = true;
+    capabilities.set(RunnerCapabilityId::ApplyTextEditLocalGuardWithoutSha, true);
     // Line scopes are an additive rolling-upgrade fence: advertise only because
     // this binary resolves full-match containment before any mutation.
-    capabilities.apply_text_edit_line_scope = true;
+    capabilities.set(RunnerCapabilityId::ApplyTextEditLineScope, true);
     // Deterministic whole-line range replacement is an additive rolling-upgrade
     // capability and must never be inferred from generic line_scope support.
-    capabilities.apply_text_edit_range = true;
+    capabilities.set(RunnerCapabilityId::ApplyTextEditRange, true);
     // This binary proves explicit all-match cardinality before any file write.
-    capabilities.apply_text_edit_expected_match_count = true;
+    capabilities.set(RunnerCapabilityId::ApplyTextEditExpectedMatchCount, true);
     // Codex Patch is an additive request kind with Runner-authoritative parsing and
     // transaction semantics. Older Runners omit it and must fail closed.
-    capabilities.apply_patch = true;
+    capabilities.set(RunnerCapabilityId::ApplyPatch, true);
     // WebCodex 0.4 requires every successful patch to expose the complete bounded
     // patch-plan/match metadata consumed by Server validation. Older apply_patch
     // implementations omit this capability and are rejected before dispatch.
-    capabilities.apply_patch_match_metadata = true;
+    capabilities.set(RunnerCapabilityId::ApplyPatchMatchMetadata, true);
     // Enum-based matching is the 0.4 model-facing authority. Older Runners omit
     // it, so current Servers fail closed instead of falling back to old defaults.
-    capabilities.apply_patch_matching_mode = true;
-    capabilities.async_jobs = true;
-    capabilities.async_shell_jobs = true;
+    capabilities.set(RunnerCapabilityId::ApplyPatchMatchingMode, true);
+    capabilities.set(RunnerCapabilityId::AsyncJobs, true);
+    capabilities.set(RunnerCapabilityId::AsyncShellJobs, true);
     // SSH support intentionally depends on the local OpenSSH executable.
     // Authentication and Host aliases remain entirely Runner-local.
-    capabilities.ssh_shell = SshConnectionPool::is_available();
+    capabilities.set(
+        RunnerCapabilityId::SshShell,
+        SshConnectionPool::is_available(),
+    );
     // This binary installs the bounded, process-local persistent-shell
     // manager. Older binaries omit this field and therefore fail closed.
-    capabilities.persistent_shell = webcodex_persistent_shell::local_shell_supported();
+    capabilities.set(
+        RunnerCapabilityId::PersistentShell,
+        webcodex_persistent_shell::local_shell_supported(),
+    );
     // SSH persistent shells reuse the same OpenSSH executable as `ssh_shell`.
     // Older binaries omit this field and therefore fail closed; it is never
     // inferred from `ssh_shell` + `persistent_shell`.
-    capabilities.ssh_persistent_shell = SshConnectionPool::persistent_shell_available();
-    capabilities.structured_validation_argv = true;
+    capabilities.set(
+        RunnerCapabilityId::SshPersistentShell,
+        SshConnectionPool::persistent_shell_available(),
+    );
+    capabilities.set(RunnerCapabilityId::StructuredValidationArgv, true);
     // This binary durably round-trips Cargo test-count assertions with
     // validation Job context and reconciliation snapshots.
-    capabilities.structured_cargo_test_count_assertion = true;
+    capabilities.set(RunnerCapabilityId::StructuredCargoTestCountAssertion, true);
     // Explicit require_tests/no_run policy changes validation proof semantics,
     // so advertise durable preservation independently from the older count
     // assertion capability for rolling upgrades.
-    capabilities.structured_cargo_test_execution_policy = true;
+    capabilities.set(RunnerCapabilityId::StructuredCargoTestExecutionPolicy, true);
     // `--lib` expands the older structured Cargo test argv vocabulary, so
     // advertise it separately for mixed Server/Runner rolling upgrades.
-    capabilities.structured_cargo_test_lib = true;
+    capabilities.set(RunnerCapabilityId::StructuredCargoTestLib, true);
     // Repeated `-p` selectors expand the older single-package Cargo check argv
     // vocabulary, so advertise this independently for rolling upgrades.
-    capabilities.structured_cargo_check_packages = true;
+    capabilities.set(RunnerCapabilityId::StructuredCargoCheckPackages, true);
     // This binary accepts both legacy Go validation argv from old Servers and
     // the current machine-readable JSON argv. Do not trust static config or
     // infer this from generic structured validation support.
-    capabilities.structured_go_test_json = true;
-    capabilities.project_validation_v1 = true;
+    capabilities.set(RunnerCapabilityId::StructuredGoTestJson, true);
+    capabilities.set(RunnerCapabilityId::ProjectValidation, true);
     // Portable package scope is additive to project_validation_v1 so mixed
     // Server/Runner deployments fail closed before sending the expanded request.
-    capabilities.project_validation_package_scope_v1 = true;
+    capabilities.set(RunnerCapabilityId::ProjectValidationPackageScope, true);
     // This binary also understands the first-class go_test durable metadata
     // identity. Keep this independent from JSON parsing so an old Runner that
     // supported Connector Go evidence cannot be mistaken for a first-class
     // go_test executor by a newer Server.
-    capabilities.structured_go_test_tool = true;
+    capabilities.set(RunnerCapabilityId::StructuredGoTestTool, true);
     // Focused first-class go_test packages extend the older fixed `./...`
     // wire shape, so advertise them independently for rolling upgrades.
-    capabilities.structured_go_test_packages = true;
-    capabilities.structured_process_argv = true;
-    capabilities.structured_script_payload = true;
+    capabilities.set(RunnerCapabilityId::StructuredGoTestPackages, true);
+    capabilities.set(RunnerCapabilityId::StructuredProcessArgv, true);
+    capabilities.set(RunnerCapabilityId::StructuredScriptPayload, true);
     // JavaScript extends the older typed-script wire enum. Advertise it
     // separately so a newer Server never sends that variant to an older Runner
     // which already advertised structured_script_payload.
-    capabilities.structured_script_javascript = true;
+    capabilities.set(RunnerCapabilityId::StructuredScriptJavascript, true);
     // TypeScript extends the same typed-script wire enum independently from
     // JavaScript. This bit means the binary understands the semantic protocol;
     // local Node availability/version is resolved only when execution starts.
-    capabilities.structured_script_typescript = true;
-    capabilities.structured_script_python = true;
-    capabilities.internal_posix_script = true;
-    capabilities.structured_execution_jobs = true;
+    capabilities.set(RunnerCapabilityId::StructuredScriptTypescript, true);
+    capabilities.set(RunnerCapabilityId::StructuredScriptPython, true);
+    capabilities.set(RunnerCapabilityId::InternalPosixScript, true);
+    capabilities.set(RunnerCapabilityId::StructuredExecutionJobs, true);
     // Detached process ownership is an independent additive authority. Until
     // each native backend is implemented and dogfooded it must fail closed
     // rather than being inferred from structured process + durable Jobs.
-    capabilities.detached_process_jobs =
-        cfg!(any(target_os = "linux", target_os = "macos", windows));
-    capabilities.project_lifecycle = true;
+    capabilities.set(
+        RunnerCapabilityId::DetachedProcessJobs,
+        cfg!(any(target_os = "linux", target_os = "macos", windows)),
+    );
+    capabilities.set(RunnerCapabilityId::ProjectLifecycle, true);
     // This binary implements resolve_or_register_project; do not trust config to
     // advertise a capability that the binary does not implement.
-    capabilities.project_path_registration = true;
-    capabilities.managed_worktree = true;
+    capabilities.set(RunnerCapabilityId::ProjectPathRegistration, true);
+    capabilities.set(RunnerCapabilityId::ManagedWorktree, true);
     // Configured live roots and managed active Skills share one Runner-local runtime
     // boundary; managed lifecycle authority remains independently advertised.
-    capabilities.skill_runtime = true;
-    capabilities.skill_resource_execution = true;
-    capabilities.skill_management = true;
+    capabilities.set(RunnerCapabilityId::SkillRuntime, true);
+    capabilities.set(RunnerCapabilityId::SkillResourceExecution, true);
+    capabilities.set(RunnerCapabilityId::SkillManagement, true);
     // Native Tool Plugins are a separate Runner-local gateway capability. Keep
     // this explicit even when zero Plugins are configured so cross-platform
     // `plugin_tool reload` can target the exact Runner.
-    capabilities.native_tool_plugins = true;
-    capabilities.managed_ssh_resources = true;
+    capabilities.set(RunnerCapabilityId::NativeToolPlugins, true);
+    capabilities.set(RunnerCapabilityId::ManagedSshResources, true);
     // Formal config check/reload is implemented directly against this process's
     // startup-bound runner.toml path on every supported platform. Unix SIGHUP is
     // only an additional trigger and is not part of this capability contract.
-    capabilities.runner_config_control = true;
+    capabilities.set(RunnerCapabilityId::RunnerConfigControl, true);
     // Configured instruction files are observed only through the narrow Runner-owned snapshot boundary.
-    capabilities.instruction_runtime = true;
+    capabilities.set(RunnerCapabilityId::InstructionRuntime, true);
     // MCP gateway support is fenced by the validated provider inventory in
     // registration rather than a separate capability bit. Older binaries omit
     // that inventory, so a newer Server will never target them.
@@ -1584,64 +1602,115 @@ fn runner_register_capabilities(cfg: &RunnerConfig) -> RunnerCapabilities {
     // Runner-local Chromium-family discovery result. The Server must never infer
     // them from OS, protocol generation, shell, or Computer capabilities.
     let browser_available = webcodex_browser::discover_chromium_executable().is_some();
-    capabilities.browser_observe = browser_available;
-    capabilities.browser_control = browser_available;
+    capabilities.set(RunnerCapabilityId::BrowserObserve, browser_available);
+    capabilities.set(RunnerCapabilityId::BrowserControl, browser_available);
     // This binary publishes exact snapshot node `actions` and enforces the same
     // admission set before element effects. Keep it separate from generic Browser
     // control so a new Server cannot dispatch the stricter contract to an older Runner.
-    capabilities.browser_element_action_admission = browser_available;
-    capabilities.browser_launch = browser_available;
+    capabilities.set(
+        RunnerCapabilityId::BrowserElementActionAdmission,
+        browser_available,
+    );
+    capabilities.set(RunnerCapabilityId::BrowserLaunch, browser_available);
     // Native read-only desktop observation is implemented only on macOS and
     // Windows. Unsupported platforms advertise false and fail closed.
-    capabilities.computer_observe = cfg!(any(target_os = "macos", windows));
+    capabilities.set(
+        RunnerCapabilityId::ComputerObserve,
+        cfg!(any(target_os = "macos", windows)),
+    );
     // Installed-application discovery and exact launch are native macOS/Windows
     // additive capabilities. Neither is inferred from observation/control or
     // from each other.
-    capabilities.computer_application_discovery = cfg!(any(target_os = "macos", windows));
-    capabilities.computer_application_launch = cfg!(any(target_os = "macos", windows));
+    capabilities.set(
+        RunnerCapabilityId::ComputerApplicationDiscovery,
+        cfg!(any(target_os = "macos", windows)),
+    );
+    capabilities.set(
+        RunnerCapabilityId::ComputerApplicationLaunch,
+        cfg!(any(target_os = "macos", windows)),
+    );
     // Exact full-display discovery/snapshot is independently implemented by
     // the native macOS and Windows backends; unsupported platforms fail closed.
-    capabilities.computer_display_observe = cfg!(any(target_os = "macos", windows));
+    capabilities.set(
+        RunnerCapabilityId::ComputerDisplayObserve,
+        cfg!(any(target_os = "macos", windows)),
+    );
     // Snapshot-fenced exact coordinate pointer input is independently implemented by
     // the native macOS and Windows backends; unsupported platforms fail closed.
-    capabilities.computer_pointer_control = cfg!(any(target_os = "macos", windows));
+    capabilities.set(
+        RunnerCapabilityId::ComputerPointerControl,
+        cfg!(any(target_os = "macos", windows)),
+    );
     // Bounded Unicode-text clipboard observation/replacement are separate
     // native capabilities on macOS and Windows.
-    capabilities.computer_clipboard_read = cfg!(any(target_os = "macos", windows));
-    capabilities.computer_clipboard_write = cfg!(any(target_os = "macos", windows));
+    capabilities.set(
+        RunnerCapabilityId::ComputerClipboardRead,
+        cfg!(any(target_os = "macos", windows)),
+    );
+    capabilities.set(
+        RunnerCapabilityId::ComputerClipboardWrite,
+        cfg!(any(target_os = "macos", windows)),
+    );
     // Region/downscale snapshot requests use a distinct additive wire fence so
     // old Runners that support only whole-window snapshots fail closed.
-    capabilities.computer_snapshot_region = cfg!(any(target_os = "macos", windows));
+    capabilities.set(
+        RunnerCapabilityId::ComputerSnapshotRegion,
+        cfg!(any(target_os = "macos", windows)),
+    );
     // Accessibility inspection is a separate read-only semantic capability.
     // macOS AX and Windows UI Automation share the same model-facing tree;
     // observation authority never implies computer-control authority.
-    capabilities.computer_accessibility_observe = cfg!(any(target_os = "macos", windows));
+    capabilities.set(
+        RunnerCapabilityId::ComputerAccessibilityObserve,
+        cfg!(any(target_os = "macos", windows)),
+    );
     // Normalized element-state observation is a separate rolling-upgrade wire
     // capability implemented by the same native read-only backends.
-    capabilities.computer_element_state = cfg!(any(target_os = "macos", windows));
+    capabilities.set(
+        RunnerCapabilityId::ComputerElementState,
+        cfg!(any(target_os = "macos", windows)),
+    );
     // Accessibility control is independently fenced and implemented by the
     // native macOS AX and Windows UI Automation backends.
-    capabilities.computer_control = cfg!(any(target_os = "macos", windows));
+    capabilities.set(
+        RunnerCapabilityId::ComputerControl,
+        cfg!(any(target_os = "macos", windows)),
+    );
     // Semantic native scroll-to-visible is independently fenced for rolling upgrades;
     // existing computer_control support never implies it.
-    capabilities.computer_scroll_to_element = cfg!(any(target_os = "macos", windows));
+    capabilities.set(
+        RunnerCapabilityId::ComputerScrollToElement,
+        cfg!(any(target_os = "macos", windows)),
+    );
     // Closed key input is a separate effect/wire capability implemented by the
     // native macOS and Windows paths and is never implied by control.
-    capabilities.computer_key_input = cfg!(any(target_os = "macos", windows));
+    capabilities.set(
+        RunnerCapabilityId::ComputerKeyInput,
+        cfg!(any(target_os = "macos", windows)),
+    );
     // Exact window activation is a separate effect/wire capability. It is
     // independently advertised by native macOS and Windows implementations.
-    capabilities.computer_window_activate = cfg!(any(target_os = "macos", windows));
+    capabilities.set(
+        RunnerCapabilityId::ComputerWindowActivate,
+        cfg!(any(target_os = "macos", windows)),
+    );
     // Bounded Accessibility text input is a separate rolling-upgrade fence;
     // older native Runners with computer_control must not be treated as capable.
-    capabilities.computer_text_input = cfg!(any(target_os = "macos", windows));
-    capabilities.job_state_reconciliation = !disable_job_state_reconciliation_for_test();
+    capabilities.set(
+        RunnerCapabilityId::ComputerTextInput,
+        cfg!(any(target_os = "macos", windows)),
+    );
+    capabilities.set(
+        RunnerCapabilityId::JobStateReconciliation,
+        !disable_job_state_reconciliation_for_test(),
+    );
 
     // New agents always advertise read-only LSP navigation. Older agents omit
     // the field and deserialize as false on the server.
-    capabilities.lsp_read_only_navigation = true;
+    capabilities.set(RunnerCapabilityId::LspReadOnlyNavigation, true);
     // Advertise the distinct capability only because this binary installs the
     // bounded typed prepare/incoming/outgoing traversal implementation.
-    capabilities.lsp_call_hierarchy = true;
+    capabilities.set(RunnerCapabilityId::LspCallHierarchy, true);
     capabilities
 }
 
@@ -1684,7 +1753,10 @@ fn build_register_request_with_provider_status(
         .map(|manager| manager.providers())
         .unwrap_or_default();
     let coding_agent_inventory = runtime.coding_agents().map(|manager| manager.inventory());
-    capabilities.coding_agent_runs = !coding_agent_providers.is_empty();
+    capabilities.set(
+        RunnerCapabilityId::CodingAgentRuns,
+        !coding_agent_providers.is_empty(),
+    );
     let (mut tool_providers, revision) = hot.external_tools.registration_status();
     tool_providers.config_reload = hot.reload_status();
     (

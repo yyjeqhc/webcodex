@@ -1756,13 +1756,13 @@ fn drain_sync_receiver(
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, windows))]
 thread_local! {
     static TEST_COMMAND_TOKEN: std::cell::RefCell<Option<String>> =
         const { std::cell::RefCell::new(None) };
 }
 
-#[cfg(test)]
+#[cfg(all(test, windows))]
 fn set_test_command_token(token: Option<&str>) {
     TEST_COMMAND_TOKEN.with(|slot| {
         *slot.borrow_mut() = token.map(str::to_string);
@@ -1770,7 +1770,7 @@ fn set_test_command_token(token: Option<&str>) {
 }
 
 fn command_token() -> String {
-    #[cfg(test)]
+    #[cfg(all(test, windows))]
     if let Some(token) = TEST_COMMAND_TOKEN.with(|slot| slot.borrow().clone()) {
         return token;
     }

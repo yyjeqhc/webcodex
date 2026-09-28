@@ -7,8 +7,9 @@ use super::super::kernel::{HostFileImportTrust, ToolCallContext, ToolCallRequest
 use super::super::*;
 use super::support::*;
 use crate::runner_protocol::{
-    RunnerCapabilities, RunnerJobUpdateRequest, RunnerRequest, ShellJobActivity,
-    ShellJobActivityPhase, ShellJobActivitySource, ShellJobActivityState,
+    RunnerCapabilities, RunnerJobUpdateRequest, RunnerRegisterRequest, RunnerRequest,
+    ShellJobActivity, ShellJobActivityPhase, ShellJobActivitySource, ShellJobActivityState,
+    ShellJobInventory,
 };
 use crate::tool_runtime::tool_audit::ToolCallAuditProjection;
 use serde_json::{json, Value};
@@ -45,6 +46,75 @@ async fn register_and_start_agent_job(
         ..Default::default()
     };
     register_agent(runtime, client_id, None, caps).await;
+    let auth = bootstrap_auth_context();
+    let started = runtime
+        .dispatch_with_auth(
+            ToolCall::RunJob {
+                project: agent_test_project_id(client_id),
+                command: format!("echo {client_id}"),
+                session_id: None,
+                timeout_secs: Some(60),
+                cwd: None,
+                purpose: Some(ExecutionPurpose::Diagnostic),
+                shell: None,
+            },
+            Some(&auth),
+        )
+        .await;
+    assert!(started.success, "{:?}", started.error);
+    let job_id = started.output["job_id"].as_str().unwrap().to_string();
+    let request = wait_for_patch_agent_request(runtime, client_id).await;
+    assert_eq!(request.job_id.as_deref(), Some(job_id.as_str()));
+    (job_id, request, auth)
+}
+
+async fn register_and_start_sequenced_agent_job(
+    runtime: &ToolRuntime,
+    client_id: &str,
+) -> (
+    String,
+    crate::runner_protocol::RunnerRequest,
+    crate::auth::AuthContext,
+) {
+    let caps = RunnerCapabilities {
+        async_jobs: true,
+        async_shell_jobs: true,
+        jobs: true,
+        job_state_reconciliation: true,
+        ..Default::default()
+    };
+    runtime
+        .runner_registry
+        .register(RunnerRegisterRequest {
+            computer_session_availability: None,
+            process_started_at: None,
+            build: None,
+            job_concurrency_limit: None,
+            job_inventory: Some(ShellJobInventory {
+                active_complete: true,
+                jobs: Vec::new(),
+            }),
+            coding_agent_providers: None,
+            coding_agent_inventory: None,
+            client_id: client_id.to_string(),
+            runner_instance_id: "inst".to_string(),
+            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
+            display_name: None,
+            owner: None,
+            hostname: None,
+            host_context: None,
+            capabilities: crate::test_support::current_runner_capabilities(caps),
+            policy: None,
+        })
+        .await
+        .unwrap();
+    crate::test_support::apply_project_inventory_snapshot(
+        &runtime.runner_registry,
+        client_id,
+        "inst",
+        vec![registered_project("agent-proj", "/tmp/agent-proj")],
+    )
+    .await;
     let auth = bootstrap_auth_context();
     let started = runtime
         .dispatch_with_auth(
@@ -109,6 +179,38 @@ async fn update_observed_job(
         .unwrap();
 }
 
+async fn update_sequenced_observed_job(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    request: &RunnerRequest,
+    sequence: u64,
+    stdout_chunk: Option<&str>,
+) {
+    runtime
+        .runner_registry
+        .update_job(RunnerJobUpdateRequest {
+            client_id: client_id.to_string(),
+            runner_instance_id: "inst".to_string(),
+            update_seq: Some(sequence),
+            job_id: request.job_id.clone().expect("Job request id"),
+            request_id: Some(request.request_id.clone()),
+            status: "running".to_string(),
+            stdout_chunk: stdout_chunk.map(str::to_string),
+            stderr_chunk: None,
+            log_snapshot: None,
+            exit_code: None,
+            duration_ms: None,
+            error: None,
+            command_execution_state: None,
+            validation_progress: None,
+            test_count_evidence: None,
+            activity: None,
+            finished: false,
+        })
+        .await
+        .unwrap();
+}
+
 async fn observation_token(
     runtime: &ToolRuntime,
     job_id: &str,
@@ -167,6 +269,8 @@ fn canonical_observation(
         "last_update_seq": 7,
         "cursor": {"stdout": 5, "stderr": 3},
         "changed": changed,
+        "meaningful_changed": changed,
+        "heartbeat_changed": false,
         "terminal": terminal,
         "executor": "agent",
         "session_id": null,
@@ -1475,6 +1579,69 @@ async fn observe_jobs_one_item_update_wakes_shared_wait_and_refreshes_all_snapsh
     for item in result.output["items"].as_array().unwrap() {
         assert_item_has_no_wait_metadata(item);
     }
+}
+
+#[tokio::test]
+async fn observe_jobs_meaningful_change_suppresses_heartbeat_then_change_reports_it() {
+    let runtime = test_runtime();
+    let client_id = "observe-meaningful-heartbeat";
+    let (job_id, request, auth) = register_and_start_sequenced_agent_job(&runtime, client_id).await;
+    update_sequenced_observed_job(&runtime, client_id, &request, 1, Some("baseline\n")).await;
+    let token = observation_token(&runtime, &job_id, &auth).await;
+
+    let waiting_runtime = runtime.clone();
+    let waiting_auth = auth.clone();
+    let waiting_job = job_id.clone();
+    let meaningful = waiting_runtime.observe_jobs_for_auth(
+        vec![item(&waiting_job, Some(token))],
+        40,
+        Some(5),
+        ObserveJobsWakeOn::MeaningfulChange,
+        Some(&waiting_auth),
+    );
+    tokio::pin!(meaningful);
+    assert!(futures_util::poll!(&mut meaningful).is_pending());
+
+    update_sequenced_observed_job(&runtime, client_id, &request, 2, None).await;
+    tokio::time::sleep(Duration::from_millis(75)).await;
+    assert!(
+        futures_util::poll!(&mut meaningful).is_pending(),
+        "sequence-only revision must not satisfy meaningful_change"
+    );
+
+    update_sequenced_observed_job(&runtime, client_id, &request, 3, Some("meaningful\n")).await;
+    let result = tokio::time::timeout(Duration::from_secs(1), meaningful)
+        .await
+        .expect("meaningful output must wake promptly");
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["wait"]["outcome"], "updated");
+    let output = &result.output["items"][0]["output"];
+    assert_eq!(output["changed"], true);
+    assert_eq!(output["meaningful_changed"], true);
+    assert_eq!(output["heartbeat_changed"], false);
+    assert_eq!(output["stdout_tail"], "meaningful\n");
+    let token = output["observation_token"].as_str().unwrap().to_string();
+
+    let change = runtime.observe_jobs_for_auth(
+        vec![item(&job_id, Some(token))],
+        40,
+        Some(5),
+        ObserveJobsWakeOn::Change,
+        Some(&auth),
+    );
+    tokio::pin!(change);
+    assert!(futures_util::poll!(&mut change).is_pending());
+    update_sequenced_observed_job(&runtime, client_id, &request, 4, None).await;
+    let result = tokio::time::timeout(Duration::from_secs(1), change)
+        .await
+        .expect("change policy must expose sequence-only liveness");
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["wait"]["outcome"], "updated");
+    let output = &result.output["items"][0]["output"];
+    assert_eq!(output["changed"], true);
+    assert_eq!(output["meaningful_changed"], false);
+    assert_eq!(output["heartbeat_changed"], true);
+    assert_eq!(output["stdout_tail"], "");
 }
 
 #[tokio::test]

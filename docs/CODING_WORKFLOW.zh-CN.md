@@ -56,13 +56,18 @@ Bootstrap 或 discovery 返回 `project_ref` 后，普通 Project-scoped tool ca
   recovery 可以指出下一步应重新观察什么，但不授权 Host 自动重试 mutation。  完整 ToolResult 尽量留在 Host cell，只返回下一次决策需要的紧凑证据。每个 Host cell 应是短生命周期 dependency DAG，
   而不是承载长时间 Job lifetime。Job handoff 保存精确 identity 后，先完成已经确定的独立工作；
   执行所有 ready independent work 和明确 `mechanically_followable` 的续作，直到 quiescent。
-  只剩 pending Job dependencies 时，把整个 exact Job set 交给一次
-  `wait_for_job_readiness(job_ids, mode=any|all, wait_secs)`；不能为每个 Job 开一个长 wait，
-  也不能用 `Promise.race` 模拟 any-ready。按当前 cell 剩余预算保守选择约 10–15 秒，
-  保留 5 秒 return guard；ready 后继续 same cell，deadline 或预算 guard 时 yield。
-  Job terminal 不等于 mechanically_followable；fallback_recovery、authority change、
-  ambiguous result、outcome_unknown 和 effect uncertainty 仍回模型。需要跨 turn 的硬依赖
-  使用 `wait_for_job_terminal`。不要用 `observe_jobs` heartbeat 保活。startup
+  只剩真正阻塞后续有效工作的 pending Job dependencies 时，把整个 exact Job set 交给一次
+  `wait_for_job_readiness(job_ids, mode=any|all, wait_secs)` join barrier；任意一个 Job terminal
+  就能解锁有用的独立后续 branch 时使用 `any`，只有真正需要全部 blocked dependency 的
+  join point 才使用 `all`。不能为每个 Job 开一个长 wait，也不能用 `Promise.race`
+  模拟 any-ready。应在保留 Host return guard 后，从当前 activation 剩余安全预算中选择
+  尽可能大的 `wait_secs`，同时受 canonical 45 秒上限约束；不再偏好固定 10/15/20 秒
+  slice。ready 后重新计算 ready/blocked work 并继续 same cell。deadline 后也先重新计算；
+  如果 ready work、blocked set 和 semantic information 都没有变化，不要机械续同一组 wait，
+  接近预算边界时正常 yield。Job terminal 不等于 mechanically_followable；
+  fallback_recovery、authority change、ambiguous result、outcome_unknown 和 effect uncertainty
+  仍回模型。需要跨 turn 的硬依赖使用 `wait_for_job_terminal`。不要用 `observe_jobs`
+  heartbeat 保活。startup
   `tool_strategy.host_orchestration` catalog 与 exact
   `tool_manifest(tool_name=...)` hint 都从 canonical `ToolDefinition` metadata 派生；
   它们只提供 guidance，不改变 `ToolCompositionPolicy`、authority、effect、permission、

@@ -2,35 +2,6 @@ use super::*;
 use webcodex_core::runner_protocol::RAW_SHELL_COMMAND_MAX_BYTES;
 use webcodex_core::workflow_session_contract::EXECUTION_PURPOSE_VALUES;
 
-macro_rules! assert_schema_fields {
-    (
-        $properties:expr,
-        $context:expr,
-        present: [$($present:expr),* $(,)?]
-        $(, absent: [$($absent:expr),* $(,)?])?
-        $(,)?
-    ) => {{
-        let properties = $properties;
-        let context = $context;
-        $(
-            assert!(
-                properties.contains_key($present),
-                "{context}: missing schema field {}",
-                $present
-            );
-        )*
-        $(
-            $(
-                assert!(
-                    !properties.contains_key($absent),
-                    "{context}: unexpected schema field {}",
-                    $absent
-                );
-            )*
-        )?
-    }};
-}
-
 #[test]
 fn tool_specs_names_are_unique() {
     let specs = registered_tool_specs();

@@ -1374,7 +1374,7 @@ mod tests {
         let input = "界".repeat(67);
         let truncated = truncate_for_error(&input);
         assert!(truncated.ends_with('…'));
-        assert_eq!(truncated.trim_end_matches('…').as_bytes().len(), 198);
+        assert_eq!(truncated.trim_end_matches('…').len(), 198);
     }
 
     #[test]

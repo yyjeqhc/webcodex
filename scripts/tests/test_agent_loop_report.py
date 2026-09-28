@@ -95,9 +95,12 @@ class AgentLoopReportTests(unittest.TestCase):
         link: bool = True,
         ids: dict[str, object] | None = None,
         composition: dict[str, object] | None = None,
+        readiness: dict[str, object] | None = None,
+        job_convergence: dict[str, object] | None = None,
+        schema_version: int = 12,
     ) -> None:
         telemetry: dict[str, object] = {
-            "schema_version": 5,
+            "schema_version": schema_version,
             "tool_name": tool,
             "success": success,
             "duration_ms": duration_ms,
@@ -111,6 +114,10 @@ class AgentLoopReportTests(unittest.TestCase):
                     "recovery_kind": "inspect_diagnostic",
                 }
             )
+        if readiness is not None:
+            telemetry["readiness"] = readiness
+        if job_convergence is not None:
+            telemetry["job_convergence"] = job_convergence
         summary: dict[str, object] = {}
         if previous_trace_id is not None:
             summary["previous_meaningful_call"] = previous_trace_id
@@ -631,6 +638,139 @@ class AgentLoopReportTests(unittest.TestCase):
         self.assertEqual(metric["observed_total"], 40)
         self.assertEqual(metric["samples"], 1)
         self.assertEqual(metric["missing"], 1)
+
+
+    def test_job_scheduling_reports_pending_independent_join_modes_and_rewait(self) -> None:
+        def convergence(kind: str | None, relation: str) -> dict[str, object]:
+            event = {"kind": kind, "relation": relation} if kind is not None else None
+            return {
+                "pending_handoff_count": int(kind == "pending_handoff"),
+                "passive_terminal_delivery_count": 0,
+                "passive_failure_delivery_count": 0,
+                "wait_for_job_terminal_count": 0,
+                "correlation_complete": True,
+                "events": [event] if event is not None else [],
+            }
+
+        def readiness(mode: str, state: str, waited_ms: int) -> dict[str, object]:
+            return {
+                "mode": mode,
+                "requested_jobs": 2,
+                "unique_jobs": 2,
+                "waited_ms": waited_ms,
+                "wait_state": state,
+                "ready_count": 1 if state == "ready" else 0,
+                "pending_count": 1 if state == "ready" else 2,
+            }
+
+        relation_a, relation_b, relation_c = "a" * 64, "b" * 64, "c" * 64
+        self.insert_event(
+            "p1", tool="cargo_check", trace_id="p1", started=100, handed=120,
+            job_convergence=convergence("pending_handoff", relation_a),
+        )
+        self.insert_event(
+            "read1", tool="read_files", trace_id="read1", previous_trace_id="p1",
+            started=130, handed=140, transition="serial",
+        )
+        self.insert_event(
+            "w1", tool="wait_for_job_readiness", trace_id="w1", previous_trace_id="read1",
+            started=150, handed=160, transition="serial", readiness=readiness("any", "ready", 1000),
+        )
+        self.insert_event(
+            "p2", tool="cargo_test", trace_id="p2", previous_trace_id="w1",
+            started=170, handed=180, transition="serial",
+            job_convergence=convergence("pending_handoff", relation_b),
+        )
+        self.insert_event(
+            "w2", tool="wait_for_job_readiness", trace_id="w2", previous_trace_id="p2",
+            started=190, handed=200, transition="serial", readiness=readiness("all", "deadline", 4000),
+        )
+        self.insert_event(
+            "w3", tool="wait_for_job_readiness", trace_id="w3", previous_trace_id="w2",
+            started=210, handed=220, transition="serial", readiness=readiness("all", "ready", 2000),
+        )
+        self.insert_event(
+            "p3", tool="cargo_check", trace_id="p3", previous_trace_id="w3",
+            started=230, handed=240, transition="serial",
+            job_convergence=convergence("pending_handoff", relation_c),
+        )
+        self.insert_event(
+            "obs", tool="observe_jobs", trace_id="obs", previous_trace_id="p3",
+            started=250, handed=260, transition="serial",
+            job_convergence=convergence("explicit_observe", relation_c),
+        )
+
+        result = self.summarize(variant="host_code_mode")
+        scheduling = result["job_scheduling"]
+        self.assertEqual(scheduling["pending_handoffs"], 3)
+        self.assertEqual(scheduling["pending_then_independent_work"], 1)
+        self.assertEqual(scheduling["pending_then_immediate_readiness"], 1)
+        self.assertEqual(scheduling["pending_then_immediate_observe"], 1)
+        self.assertEqual(scheduling["readiness_calls"], 3)
+        self.assertEqual(scheduling["readiness_measured_calls"], 3)
+        self.assertEqual(scheduling["readiness_ready"], 2)
+        self.assertEqual(scheduling["readiness_deadline"], 1)
+        self.assertEqual(scheduling["readiness_any"], 1)
+        self.assertEqual(scheduling["readiness_all"], 2)
+        self.assertEqual(scheduling["deadline_then_nearby_rewait"], 1)
+        self.assertEqual(
+            scheduling["nearby_rewait_max_gap_ms"],
+            report.JOB_SCHEDULING_NEARBY_REWAIT_MAX_GAP_MS,
+        )
+        self.assertEqual(scheduling["readiness_waited_ms"]["samples"], 3)
+        self.assertFalse(scheduling["same_model_turn_proven"])
+        self.assertFalse(scheduling["same_blocked_set_proven"])
+        self.assertTrue(result["availability"]["job_scheduling"]["available"])
+
+    def test_job_scheduling_nearby_rewait_excludes_far_serial_followup(self) -> None:
+        def readiness(state: str) -> dict[str, object]:
+            return {
+                "mode": "all",
+                "requested_jobs": 1,
+                "unique_jobs": 1,
+                "waited_ms": 45_000,
+                "wait_state": state,
+                "ready_count": int(state == "ready"),
+                "pending_count": int(state != "ready"),
+            }
+
+        self.insert_event(
+            "deadline",
+            tool="wait_for_job_readiness",
+            trace_id="deadline",
+            started=100,
+            handed=200,
+            readiness=readiness("deadline"),
+        )
+        self.insert_event(
+            "later",
+            tool="wait_for_job_readiness",
+            trace_id="later",
+            previous_trace_id="deadline",
+            started=200 + report.JOB_SCHEDULING_NEARBY_REWAIT_MAX_GAP_MS + 1,
+            handed=200 + report.JOB_SCHEDULING_NEARBY_REWAIT_MAX_GAP_MS + 10,
+            transition="serial",
+            readiness=readiness("ready"),
+        )
+
+        scheduling = self.summarize(variant="host_code_mode")["job_scheduling"]
+        self.assertEqual(scheduling["deadline_then_nearby_rewait"], 0)
+        self.assertFalse(scheduling["same_model_turn_proven"])
+        self.assertFalse(scheduling["same_blocked_set_proven"])
+
+    def test_job_scheduling_missing_readiness_telemetry_stays_unknown(self) -> None:
+        self.insert_event(
+            "wait", tool="wait_for_job_readiness", trace_id="wait", started=100, handed=120
+        )
+        result = self.summarize(variant="host_code_mode")
+        scheduling = result["job_scheduling"]
+        self.assertEqual(scheduling["readiness_calls"], 1)
+        self.assertEqual(scheduling["readiness_measured_calls"], 0)
+        self.assertIsNone(scheduling["readiness_ready"])
+        self.assertIsNone(scheduling["readiness_deadline"])
+        self.assertEqual(scheduling["readiness_waited_ms"]["samples"], 0)
+        self.assertEqual(scheduling["readiness_waited_ms"]["missing"], 1)
+        self.assertFalse(result["availability"]["job_scheduling"]["available"])
 
     def test_trace_only_marks_window_bytes_and_canonical_calls_unavailable(self) -> None:
         trace_root = self.write_trace(

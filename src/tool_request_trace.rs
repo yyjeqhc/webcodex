@@ -131,7 +131,7 @@ struct TraceWriter {
     sender: mpsc::SyncSender<TraceWrite>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct TraceStoreAccounting {
     config: Option<TraceStoreConfig>,
     initialized: bool,
@@ -140,20 +140,6 @@ struct TraceStoreAccounting {
     last_reconcile: Option<Instant>,
     #[cfg(test)]
     filesystem_scans: u64,
-}
-
-impl Default for TraceStoreAccounting {
-    fn default() -> Self {
-        Self {
-            config: None,
-            initialized: false,
-            total_bytes: 0,
-            traces: HashMap::new(),
-            last_reconcile: None,
-            #[cfg(test)]
-            filesystem_scans: 0,
-        }
-    }
 }
 
 impl TraceStoreAccounting {
@@ -2694,7 +2680,7 @@ mod tests {
         );
         env.set(
             "WEBCODEX_TOOL_REQUEST_TRACE_MAX_TOTAL_BYTES",
-            &(line_len * 2).to_string(),
+            (line_len * 2).to_string(),
         );
         reset_trace_store_accounting();
 
@@ -2732,7 +2718,7 @@ mod tests {
         );
         env.set(
             "WEBCODEX_TOOL_REQUEST_TRACE_MAX_TOTAL_BYTES",
-            &line_len.to_string(),
+            line_len.to_string(),
         );
         reset_trace_store_accounting();
 
@@ -2756,7 +2742,7 @@ mod tests {
         );
         env.set(
             "WEBCODEX_TOOL_REQUEST_TRACE_MAX_TOTAL_BYTES",
-            &line_len.to_string(),
+            line_len.to_string(),
         );
         reset_trace_store_accounting();
 

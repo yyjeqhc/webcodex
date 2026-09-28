@@ -321,6 +321,7 @@ e.window_transition_kind, e.window_continuity_eligible,
 e.window_meaningful, e.started_at, e.server_trace_id, e.response_streaming,
 CASE WHEN json_valid(e.summary_json) THEN json_extract(e.summary_json, '$.model_ergonomics.schema_version') END AS model_ergonomics_version,
 CASE WHEN json_valid(e.summary_json) THEN json_extract(e.summary_json, '$.model_ergonomics.job_convergence') END AS job_convergence_json,
+CASE WHEN json_valid(e.summary_json) THEN json_extract(e.summary_json, '$.model_ergonomics.readiness') END AS readiness_json,
 CASE WHEN json_valid(e.summary_json) THEN json_extract(e.summary_json, '$.previous_meaningful_call') END AS previous_meaningful_call
 """.strip()
 
@@ -379,7 +380,11 @@ def _row_to_continuity_event(row: sqlite3.Row) -> dict[str, Any]:
         "response_streaming": None if row["response_streaming"] is None else bool(row["response_streaming"]),
         "summary": {
             "previous_meaningful_call": row["previous_meaningful_call"],
-            "model_ergonomics": {"schema_version": row["model_ergonomics_version"], "job_convergence": _parse_json_object(row["job_convergence_json"] or "{}", "job_convergence", str(row["event_id"]))},
+            "model_ergonomics": {
+                "schema_version": row["model_ergonomics_version"],
+                "job_convergence": _parse_json_object(row["job_convergence_json"] or "{}", "job_convergence", str(row["event_id"])),
+                "readiness": _parse_json_object(row["readiness_json"] or "{}", "readiness", str(row["event_id"])),
+            },
         },
         "event_id": str(row["event_id"]),
         "operation": row["operation"],
@@ -778,6 +783,233 @@ def _summarize_job_convergence(selected: list[dict[str, Any]], context: list[dic
                     else:
                         timing_missing += 1
     return {**counts, "pending_to_terminal_ms": _metric_distribution(timings, missing=timing_missing)}
+
+
+
+JOB_SCHEDULING_NEARBY_REWAIT_MAX_GAP_MS = 120_000
+
+
+_JOB_SCHEDULING_INDEPENDENT_TOOLS = frozenset(
+    {
+        "read_files",
+        "search_project_texts",
+        "search_and_read",
+        "review_changes",
+        "show_changes",
+        "git_log",
+        "git_status",
+        "git_diff_hunks",
+        "git_review_summary",
+        "project_artifact",
+    }
+)
+
+
+def _readiness_facts(event: dict[str, Any]) -> dict[str, Any] | None:
+    value = (_telemetry(event) or {}).get("readiness")
+    if not isinstance(value, dict):
+        return None
+    mode = value.get("mode")
+    wait_state = value.get("wait_state")
+    numeric = {
+        field: value.get(field)
+        for field in ("requested_jobs", "unique_jobs", "waited_ms", "ready_count", "pending_count")
+    }
+    if mode not in ("any", "all") or wait_state not in ("ready", "deadline"):
+        return None
+    if any(isinstance(item, bool) or not isinstance(item, int) or item < 0 for item in numeric.values()):
+        return None
+    return {
+        "mode": mode,
+        "wait_state": wait_state,
+        **numeric,
+    }
+
+
+def _job_scheduling_pending_relations(event: dict[str, Any]) -> set[str]:
+    telemetry = _telemetry(event) or {}
+    version = telemetry.get("schema_version")
+    facts = telemetry.get("job_convergence")
+    if not isinstance(version, int) or version < 10 or not isinstance(facts, dict):
+        return set()
+    if facts.get("correlation_complete") is False:
+        return set()
+    raw = facts.get("events")
+    if not isinstance(raw, list) or len(raw) > 9:
+        return set()
+    return {
+        relation
+        for item in raw
+        if isinstance(item, dict)
+        and item.get("kind") == "pending_handoff"
+        and _is_exact_sha256(relation := item.get("relation"))
+    }
+
+def _summarize_job_scheduling(
+    selected: list[dict[str, Any]],
+    context: list[dict[str, Any]],
+    job_convergence: dict[str, Any] | None = None,
+    *,
+    action_audit_available: bool = True,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Summarize pending/readiness scheduling without claiming Host-turn identity.
+
+    Serial adjacency is exact ClientWindow continuity only. Readiness telemetry is
+    identity-free, so deadline->rewait cannot prove that the blocked Job set is
+    unchanged; that limitation is explicit in the result.
+    """
+    if not action_audit_available:
+        unavailable = {
+            "pending_handoffs": None,
+            "pending_followup_known": None,
+            "pending_then_independent_work": None,
+            "pending_then_immediate_readiness": None,
+            "pending_then_immediate_observe": None,
+            "readiness_calls": None,
+            "readiness_measured_calls": None,
+            "readiness_ready": None,
+            "readiness_deadline": None,
+            "readiness_any": None,
+            "readiness_all": None,
+            "deadline_then_nearby_rewait": None,
+            "nearby_rewait_max_gap_ms": JOB_SCHEDULING_NEARBY_REWAIT_MAX_GAP_MS,
+            "readiness_waited_ms": _metric_distribution([]),
+            "same_model_turn_proven": False,
+            "same_blocked_set_proven": False,
+        }
+        return unavailable, {
+            "available": False,
+            "reason": "job scheduling analysis requires ActionAudit ModelErgonomics and serial ClientWindow continuity",
+        }
+
+    selected_outer = [row for row in selected if row.get("action_name") == "toolsCall"]
+    if len(selected_outer) + len(context) > 100_000:
+        raise ReportError("Job scheduling analysis exceeds 100000 audit rows")
+    if job_convergence is None:
+        job_convergence = _summarize_job_convergence(selected, context)
+
+    readiness_rows = [
+        row for row in selected_outer if row.get("operation") == "wait_for_job_readiness"
+    ]
+    readiness = [(row, _readiness_facts(row)) for row in readiness_rows]
+    measured = [(row, facts) for row, facts in readiness if facts is not None]
+    readiness_complete = len(measured) == len(readiness_rows)
+    waits = [facts["waited_ms"] for _, facts in measured]
+    ready_observed = sum(facts["wait_state"] == "ready" for _, facts in measured)
+    deadline_observed = sum(facts["wait_state"] == "deadline" for _, facts in measured)
+    any_observed = sum(facts["mode"] == "any" for _, facts in measured)
+    all_observed = sum(facts["mode"] == "all" for _, facts in measured)
+
+    rows: dict[str, dict[str, Any]] = {}
+    for row in context + selected:
+        trace = row.get("server_trace_id")
+        if isinstance(trace, str) and trace:
+            rows[trace] = row
+    selected_traces = {
+        row["server_trace_id"]
+        for row in selected_outer
+        if isinstance(row.get("server_trace_id"), str) and row["server_trace_id"]
+    }
+
+    def predecessor(row: dict[str, Any]) -> dict[str, Any] | None:
+        if row.get("window_transition_kind") != "serial":
+            return None
+        previous_trace = row.get("summary", {}).get("previous_meaningful_call")
+        previous = rows.get(previous_trace)
+        if previous is None:
+            return None
+        for field in ("client_window_key", "principal_correlation_kind", "principal_correlation_id"):
+            if not row.get(field) or row.get(field) != previous.get(field):
+                return None
+        if any(
+            call.get("window_continuity_eligible") is not True
+            or call.get("response_streaming") is not False
+            for call in (row, previous)
+        ):
+            return None
+        started = row.get("request_observed_at_ms")
+        handed = previous.get("response_handed_at_ms")
+        if not isinstance(started, int) or not isinstance(handed, int) or started < handed:
+            return None
+        return previous
+
+    independent_observed = 0
+    immediate_readiness_observed = 0
+    deadline_rewait_observed = 0
+    chain_missing = 0
+    for row in selected_outer:
+        if row.get("window_transition_kind") != "serial":
+            continue
+        operation = row.get("operation")
+        relevant = (
+            operation in _JOB_SCHEDULING_INDEPENDENT_TOOLS
+            or operation == "wait_for_job_readiness"
+        )
+        if not relevant:
+            continue
+        previous = predecessor(row)
+        if previous is None:
+            chain_missing += 1
+            continue
+        if previous.get("server_trace_id") not in selected_traces:
+            continue
+        pending_relations = _job_scheduling_pending_relations(previous)
+        if pending_relations:
+            if operation in _JOB_SCHEDULING_INDEPENDENT_TOOLS:
+                independent_observed += 1
+            elif operation == "wait_for_job_readiness":
+                immediate_readiness_observed += 1
+        if (
+            operation == "wait_for_job_readiness"
+            and (previous_readiness := _readiness_facts(previous)) is not None
+            and previous_readiness["wait_state"] == "deadline"
+        ):
+            started = row.get("request_observed_at_ms")
+            handed = previous.get("response_handed_at_ms")
+            if (
+                isinstance(started, int)
+                and isinstance(handed, int)
+                and 0 <= started - handed <= JOB_SCHEDULING_NEARBY_REWAIT_MAX_GAP_MS
+            ):
+                deadline_rewait_observed += 1
+
+    chain_complete = chain_missing == 0
+    pending_handoffs = job_convergence.get("pending_handoff_count")
+    pending_followup_known = job_convergence.get("pending_followup_known_count")
+    pending_immediate_observe = job_convergence.get(
+        "pending_followed_immediately_by_observe_count"
+    )
+
+    summary = {
+        "pending_handoffs": pending_handoffs,
+        "pending_followup_known": pending_followup_known,
+        "pending_then_independent_work": independent_observed if chain_complete else None,
+        "pending_then_immediate_readiness": immediate_readiness_observed if chain_complete else None,
+        "pending_then_immediate_observe": pending_immediate_observe,
+        "readiness_calls": len(readiness_rows),
+        "readiness_measured_calls": len(measured),
+        "readiness_ready": ready_observed if readiness_complete else None,
+        "readiness_deadline": deadline_observed if readiness_complete else None,
+        "readiness_any": any_observed if readiness_complete else None,
+        "readiness_all": all_observed if readiness_complete else None,
+        "deadline_then_nearby_rewait": deadline_rewait_observed if chain_complete else None,
+        "nearby_rewait_max_gap_ms": JOB_SCHEDULING_NEARBY_REWAIT_MAX_GAP_MS,
+        "readiness_waited_ms": _metric_distribution(
+            waits, missing=len(readiness_rows) - len(measured)
+        ),
+        "same_model_turn_proven": False,
+        "same_blocked_set_proven": False,
+    }
+    complete = readiness_complete and chain_complete
+    reasons = []
+    if not readiness_complete:
+        reasons.append("one or more readiness calls lack complete ModelErgonomics readiness telemetry")
+    if not chain_complete:
+        reasons.append("one or more relevant serial calls lack exact predecessor continuity evidence")
+    return summary, {
+        "available": complete,
+        "reason": None if complete else "; ".join(reasons),
+    }
 
 
 def _code_mode_composition(event: dict[str, Any]) -> dict[str, Any] | None:
@@ -1533,7 +1765,16 @@ def summarize(*, trace_root: Path | None, audit_db: Path | None, workflow_sessio
     jobs, jobs_availability = _job_summary(trace_events, trace_metadata_present)
     core["runner"] = runner
     core["jobs"] = jobs
-    core["job_convergence"] = _summarize_job_convergence(audit_events, continuity_events or [])
+    job_convergence = _summarize_job_convergence(audit_events, continuity_events or [])
+    core["job_convergence"] = job_convergence
+    job_scheduling, job_scheduling_availability = _summarize_job_scheduling(
+        audit_events,
+        continuity_events or [],
+        job_convergence,
+        action_audit_available=audit_db is not None,
+    )
+    core["job_scheduling"] = job_scheduling
+    core["availability"]["job_scheduling"] = job_scheduling_availability
     core["availability"]["runner_requests"] = runner_availability
     core["availability"]["job_handoffs"] = jobs_availability
     benchmark = _benchmark_metadata(case_manifest=case_manifest, case_id=case_id, variant=variant, surface=surface, base_revision=base_revision)
@@ -1564,6 +1805,8 @@ def summarize(*, trace_root: Path | None, audit_db: Path | None, workflow_sessio
             "Runner request counts are observed enqueue events, not an asserted complete total",
             "repair_turns come only from the bounded run annotation sidecar and are never inferred from model text or private reasoning",
             "task_wall_time_ms is reported only when the sidecar supplies explicit independent task start/end timestamps",
+            "job_scheduling.pending_then_independent_work counts only exact immediate serial follow-up calls from a conservative read/review allowlist; generic process/script work is not inferred to be independent",
+            "job_scheduling.deadline_then_nearby_rewait counts only exact serial readiness adjacency within the reported nearby_rewait_max_gap_ms; it does not prove one Host turn or the same blocked Job set",
         ],
     }
 
@@ -1610,6 +1853,19 @@ _COMPARISON_METRICS = [
     "job_convergence.terminal_validation_failure_followed_by_observe_count",
     "job_convergence.pending_to_terminal_ms.p50",
     "job_convergence.pending_to_terminal_ms.p95",
+    "job_scheduling.pending_handoffs",
+    "job_scheduling.pending_followup_known",
+    "job_scheduling.pending_then_independent_work",
+    "job_scheduling.pending_then_immediate_readiness",
+    "job_scheduling.pending_then_immediate_observe",
+    "job_scheduling.readiness_calls",
+    "job_scheduling.readiness_ready",
+    "job_scheduling.readiness_deadline",
+    "job_scheduling.readiness_any",
+    "job_scheduling.readiness_all",
+    "job_scheduling.deadline_then_nearby_rewait",
+    "job_scheduling.readiness_waited_ms.p50",
+    "job_scheduling.readiness_waited_ms.p95",
 ]
 
 

@@ -76,16 +76,44 @@ pub fn safe_provider_inventory(
         .collect()
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CodingAgentRunState {
-    Starting,
-    Running,
-    WaitingPermission,
-    Completed,
-    Failed,
-    Cancelled,
-    Lost,
+// Keep each persisted/wire spelling in one place. This local table generates
+// both serde's vocabulary and the explicit, strict wire conversion helpers.
+macro_rules! coding_agent_state {
+    ($(#[$meta:meta])* $name:ident { $($variant:ident => $wire:literal),+ $(,)? }) => {
+        $(#[$meta])*
+        pub enum $name {
+            $(#[serde(rename = $wire)] $variant),+
+        }
+
+        impl $name {
+            pub const fn as_str(&self) -> &'static str {
+                match self { $(Self::$variant => $wire),+ }
+            }
+
+            pub fn from_wire(value: &str) -> Option<Self> {
+                match value { $($wire => Some(Self::$variant),)+ _ => None }
+            }
+
+            // Preserve the pre-SSOT public helper while keeping the wire table
+            // above as the only vocabulary source.
+            pub fn from_str(value: &str) -> Option<Self> {
+                Self::from_wire(value)
+            }
+        }
+    };
+}
+
+coding_agent_state! {
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    CodingAgentRunState {
+        Starting => "starting",
+        Running => "running",
+        WaitingPermission => "waiting_permission",
+        Completed => "completed",
+        Failed => "failed",
+        Cancelled => "cancelled",
+        Lost => "lost",
+    }
 }
 
 impl CodingAgentRunState {
@@ -95,60 +123,15 @@ impl CodingAgentRunState {
             Self::Completed | Self::Failed | Self::Cancelled | Self::Lost
         )
     }
-
-    pub const fn as_str(&self) -> &'static str {
-        match self {
-            Self::Starting => "starting",
-            Self::Running => "running",
-            Self::WaitingPermission => "waiting_permission",
-            Self::Completed => "completed",
-            Self::Failed => "failed",
-            Self::Cancelled => "cancelled",
-            Self::Lost => "lost",
-        }
-    }
-
-    pub fn from_str(value: &str) -> Option<Self> {
-        Some(match value {
-            "starting" => Self::Starting,
-            "running" => Self::Running,
-            "waiting_permission" => Self::WaitingPermission,
-            "completed" => Self::Completed,
-            "failed" => Self::Failed,
-            "cancelled" => Self::Cancelled,
-            "lost" => Self::Lost,
-            _ => return None,
-        })
-    }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CodingAgentExecutionState {
-    NotStarted,
-    Started,
-    OutcomeUnknown,
-    Completed,
-}
-
-impl CodingAgentExecutionState {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::NotStarted => "not_started",
-            Self::Started => "started",
-            Self::OutcomeUnknown => "outcome_unknown",
-            Self::Completed => "completed",
-        }
-    }
-
-    pub fn from_str(value: &str) -> Option<Self> {
-        Some(match value {
-            "not_started" => Self::NotStarted,
-            "started" => Self::Started,
-            "outcome_unknown" => Self::OutcomeUnknown,
-            "completed" => Self::Completed,
-            _ => return None,
-        })
+coding_agent_state! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+    CodingAgentExecutionState {
+        NotStarted => "not_started",
+        Started => "started",
+        OutcomeUnknown => "outcome_unknown",
+        Completed => "completed",
     }
 }
 
@@ -1006,10 +989,17 @@ mod tests {
             (CodingAgentRunState::Lost, "lost"),
         ] {
             assert_eq!(state.as_str(), expected);
+            assert_eq!(
+                CodingAgentRunState::from_wire(expected),
+                Some(state.clone())
+            );
             assert_eq!(CodingAgentRunState::from_str(expected), Some(state.clone()));
             assert_eq!(serde_json::to_value(&state).unwrap(), expected);
+            assert_eq!(
+                serde_json::from_value::<CodingAgentRunState>(expected.into()).unwrap(),
+                state
+            );
         }
-        assert!(CodingAgentRunState::from_str("future_state").is_none());
 
         for (state, expected) in [
             (CodingAgentExecutionState::NotStarted, "not_started"),
@@ -1018,10 +1008,20 @@ mod tests {
             (CodingAgentExecutionState::Completed, "completed"),
         ] {
             assert_eq!(state.as_str(), expected);
+            assert_eq!(CodingAgentExecutionState::from_wire(expected), Some(state));
             assert_eq!(CodingAgentExecutionState::from_str(expected), Some(state));
             assert_eq!(serde_json::to_value(state).unwrap(), expected);
+            assert_eq!(
+                serde_json::from_value::<CodingAgentExecutionState>(expected.into()).unwrap(),
+                state
+            );
         }
-        assert!(CodingAgentExecutionState::from_str("future_state").is_none());
+        for invalid in ["future_state", "Completed", " completed", "completed ", ""] {
+            assert!(CodingAgentRunState::from_wire(invalid).is_none());
+            assert!(CodingAgentExecutionState::from_wire(invalid).is_none());
+            assert!(serde_json::from_value::<CodingAgentRunState>(invalid.into()).is_err());
+            assert!(serde_json::from_value::<CodingAgentExecutionState>(invalid.into()).is_err());
+        }
     }
 
     #[test]

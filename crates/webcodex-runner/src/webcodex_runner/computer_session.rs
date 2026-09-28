@@ -2,24 +2,33 @@
 //! The login-session helper has no Server connection, token, shell, or generic
 //! Runner request decoder. Its only authority is the closed Computer operation.
 
+#[cfg(any(target_os = "macos", windows, test))]
 use super::computer::handle_computer_operation_with_runtime;
 use super::{err_cmd, CommandResult};
+#[cfg(any(target_os = "macos", windows, test))]
 use crate::artifact_policy::MAX_MCP_IMAGE_BYTES;
+#[cfg(any(target_os = "macos", windows, test))]
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
+#[cfg(any(target_os = "macos", windows, test))]
 use webcodex_computer::{ComputerConfig, ComputerRuntime};
-use webcodex_core::runner_operation::{RunnerComputerOperation, RunnerComputerOperationKind};
+use webcodex_core::runner_operation::RunnerComputerOperation;
+#[cfg(any(target_os = "macos", windows, test))]
+use webcodex_core::runner_operation::RunnerComputerOperationKind;
 
+#[cfg(any(target_os = "macos", windows, test))]
 const REQUEST_MAX_BYTES: usize = 160 * 1024;
+#[cfg(any(target_os = "macos", windows, test))]
 const RESPONSE_MAX_BYTES: usize = 6 * 1024 * 1024;
 const PROBE_TIMEOUT: Duration = Duration::from_millis(750);
 const MAX_OPERATION_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Clone)]
 struct ClientConfig {
+    #[cfg(any(target_os = "macos", windows))]
     dir: PathBuf,
     runner_epoch: String,
     helper_epoch: Arc<Mutex<Option<String>>>,
@@ -61,6 +70,7 @@ pub(crate) fn configure(dir: PathBuf, runner_epoch: String) -> Result<(), String
     }
     CLIENT
         .set(ClientConfig {
+            #[cfg(any(target_os = "macos", windows))]
             dir,
             runner_epoch,
             helper_epoch: Arc::new(Mutex::new(None)),
@@ -219,6 +229,7 @@ struct WireResult {
 }
 
 impl WireResult {
+    #[cfg(any(target_os = "macos", windows, test))]
     fn from_command_result(value: CommandResult) -> Self {
         Self {
             exit_code: value.exit_code,
@@ -239,6 +250,7 @@ impl WireResult {
     }
 }
 
+#[cfg(any(target_os = "macos", windows, test))]
 struct HelperState {
     runner_epoch: Option<String>,
     runner_pid: Option<u32>,
@@ -248,6 +260,7 @@ struct HelperState {
     observed_invalidation: u64,
 }
 
+#[cfg(any(target_os = "macos", windows, test))]
 impl HelperState {
     fn new() -> Self {
         Self {
@@ -367,6 +380,7 @@ impl HelperState {
     }
 }
 
+#[cfg(any(target_os = "macos", windows, test))]
 fn read_frame(stream: &mut impl Read, max: usize) -> Result<Vec<u8>, String> {
     let mut length = [0; 4];
     stream.read_exact(&mut length).map_err(|e| e.to_string())?;
@@ -379,6 +393,7 @@ fn read_frame(stream: &mut impl Read, max: usize) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
+#[cfg(any(target_os = "macos", windows, test))]
 fn write_frame(stream: &mut impl Write, bytes: &[u8], max: usize) -> Result<(), String> {
     if bytes.is_empty() || bytes.len() > max {
         return Err("computer session frame exceeds bound".to_string());

@@ -6,6 +6,9 @@ use std::path::PathBuf;
 mod job;
 mod transport;
 
+#[cfg(test)]
+mod tests;
+
 pub use job::{
     normalize_cargo_packages, normalize_cargo_value, normalize_go_test_packages,
     normalize_rust_test_filter, valid_rust_test_filter, RunnerJobLogRequest, RunnerJobLogResponse,
@@ -141,250 +144,6 @@ pub const RUNNER_PROTOCOL_GENERATION_V2: RunnerProtocolGenerationNumber =
 
 pub const RUNNER_QUIC_ALPN_V1: &str = "webcodex-runner/1";
 
-pub const RUNNER_CAPABILITY_SHELL: &str = "shell";
-/// Structured local `sh`/`bash` selection on raw shell requests. Missing on
-/// older Runners is false; current Servers fail closed rather than sending a
-/// POSIX `exec ... -c` wrapper to an unrelated configured shell.
-pub const RUNNER_CAPABILITY_EXPLICIT_SHELL_SELECTION: &str = "explicit_shell_selection";
-pub const RUNNER_CAPABILITY_BASH_LOGIN_SHELL: &str = "bash_login_shell";
-pub const RUNNER_CAPABILITY_FILE_READ: &str = "file_read";
-pub const RUNNER_CAPABILITY_FILE_WRITE: &str = "file_write";
-/// The Runner implements a narrow internal project-artifact export chunk read
-/// that seeks and reads only the requested bounded segment. Missing on older
-/// Runners is false and must never be inferred from ordinary file_read.
-pub const RUNNER_CAPABILITY_ARTIFACT_EXPORT_CHUNK_READ: &str = "artifact_export_chunk_read";
-/// The Runner computes artifact-export metadata for files above the whole-payload
-/// limit with bounded streaming I/O. This is separate from chunk-read support:
-/// older optimized-export Runners may advertise chunk reads while still
-/// materializing metadata up to the caller-provided bound.
-pub const RUNNER_CAPABILITY_ARTIFACT_EXPORT_STREAMING_METADATA: &str =
-    "artifact_export_streaming_metadata";
-/// The Runner implements bounded, project-root-enforced structured file deletion.
-/// Missing on older Runners and false; never inferred from file_write, shell,
-/// protocol version, transport, or operating system.
-pub const RUNNER_CAPABILITY_STRUCTURED_FILE_DELETE: &str = "structured_file_delete";
-/// The Runner understands and enforces the optional 1-based exact occurrence
-/// selector in ApplyTextEditInput. Missing on older Runners is false and is
-/// never inferred from other file capabilities, protocol, build, transport, or OS.
-pub const RUNNER_CAPABILITY_APPLY_TEXT_EDIT_OCCURRENCE: &str = "apply_text_edit_occurrence";
-/// The Runner can prove globally unique exact local edit targets against its
-/// current file content without requiring a historical whole-file SHA guard.
-/// Missing on older Runners is false and is never inferred from file_write,
-/// occurrence/line_scope support, protocol generation, build, transport, or OS.
-pub const RUNNER_CAPABILITY_APPLY_TEXT_EDIT_LOCAL_GUARD_WITHOUT_SHA: &str =
-    "apply_text_edit_local_guard_without_sha";
-/// The Runner understands and enforces ApplyTextEditInput.line_scope as a
-/// 1-based inclusive full-match containment fence. Missing on older Runners is
-/// false and is never inferred from occurrence, protocol generation, file_write,
-/// version, transport, OS, or build identity.
-pub const RUNNER_CAPABILITY_APPLY_TEXT_EDIT_LINE_SCOPE: &str = "apply_text_edit_line_scope";
-/// The Runner understands deterministic revision-fenced whole-line replacement
-/// edits (`replace_range`). Missing on older Runners is false and is never
-/// inferred from line_scope support or protocol generation.
-pub const RUNNER_CAPABILITY_APPLY_TEXT_EDIT_RANGE: &str = "apply_text_edit_range";
-/// Runner enforces explicit bounded all-match cardinality against one original
-/// source snapshot. Missing on older Runners is false; never inferred.
-pub const RUNNER_CAPABILITY_APPLY_TEXT_EDIT_EXPECTED_MATCH_COUNT: &str =
-    "apply_text_edit_expected_match_count";
-/// Authoritative Runner-side Codex Patch parsing plus bounded transactional apply.
-/// Missing on older Runners is false and is never inferred from file_write or
-/// protocol generation, so a new Server cannot send this request kind to an old Runner.
-pub const RUNNER_CAPABILITY_APPLY_PATCH: &str = "apply_patch";
-/// The Runner returns the complete trusted apply_patch patch-plan/match metadata
-/// required by the 0.4 success contract. Missing on older Runners is false; a
-/// current Server must reject apply_patch before dispatch rather than accepting a
-/// legacy success shape.
-pub const RUNNER_CAPABILITY_APPLY_PATCH_MATCH_METADATA: &str = "apply_patch_match_metadata";
-/// The Runner understands the 0.4 model-facing apply_patch matching_mode enum
-/// (`first_match`, `unique`, `exact_unique`) and returns metadata bound to the
-/// requested mode. Missing on older Runners is false; current Servers fail
-/// closed instead of silently falling back to legacy permissive positioning.
-pub const RUNNER_CAPABILITY_APPLY_PATCH_MATCHING_MODE: &str = "apply_patch_matching_mode";
-pub const RUNNER_CAPABILITY_GIT: &str = "git";
-pub const RUNNER_CAPABILITY_JOBS: &str = "jobs";
-pub const RUNNER_CAPABILITY_ASYNC_JOBS: &str = "async_jobs";
-pub const RUNNER_CAPABILITY_ASYNC_SHELL_JOBS: &str = "async_shell_jobs";
-/// Runner-side one-shot/background SSH shell execution for Workflow Session
-/// resources. This is deliberately separate from persistent SSH support: older
-/// runners must reject such a Session-bound SSH request rather than silently
-/// running it on their local project checkout.
-pub const RUNNER_CAPABILITY_SSH_SHELL: &str = "ssh_shell";
-/// Command-oriented, long-lived shell processes owned by one Workflow Session.
-/// Missing on older runners and therefore fails closed.
-pub const RUNNER_CAPABILITY_PERSISTENT_SHELL: &str = "persistent_shell";
-/// Long-lived persistent shells opened on a Workflow Session's SSH resource.
-/// This is additive to `persistent_shell` and independent of the one-shot
-/// `ssh_shell` capability; older runners that predate it must reject the request
-/// rather than silently opening a local shell.
-pub const RUNNER_CAPABILITY_SSH_PERSISTENT_SHELL: &str = "ssh_persistent_shell";
-pub const RUNNER_CAPABILITY_STRUCTURED_VALIDATION_ARGV: &str = "structured_validation_argv";
-/// The Runner preserves the optional Cargo test-count postcondition in durable
-/// validation Job metadata and returns it unchanged through reconciliation.
-/// Missing on older Runners is false; Control must not start a validation Job
-/// whose assertion could disappear after a Server restart.
-pub const RUNNER_CAPABILITY_STRUCTURED_CARGO_TEST_COUNT_ASSERTION: &str =
-    "structured_cargo_test_count_assertion";
-/// The Runner durably preserves explicit Cargo validation execution-policy
-/// metadata (`require_tests` / `no_run`) through the Job lifecycle and
-/// reconciliation. Older Runners already advertised the count-assertion
-/// capability, so this is a separate additive rolling-upgrade fence and is
-/// never inferred from protocol generation or other structured validation bits.
-pub const RUNNER_CAPABILITY_STRUCTURED_CARGO_TEST_EXECUTION_POLICY: &str =
-    "structured_cargo_test_execution_policy";
-/// The Runner accepts Cargo test validation argv containing the first-class
-/// `--lib` selector. Older Runners may already support structured Cargo argv
-/// without this additive selector, so newer Servers must fence it explicitly.
-pub const RUNNER_CAPABILITY_STRUCTURED_CARGO_TEST_LIB: &str = "structured_cargo_test_lib";
-/// The Runner accepts one canonical Cargo check validation step containing
-/// repeated `-p <package>` selectors. Older Runners accepted at most one
-/// package even when they advertised generic structured validation argv.
-pub const RUNNER_CAPABILITY_STRUCTURED_CARGO_CHECK_PACKAGES: &str =
-    "structured_cargo_check_packages";
-/// The Runner accepts the canonical machine-readable `go test -json` validation
-/// shape. Older implementations may support only the historical fixed `./...`
-/// scope; expanded caller-selected packages are fenced separately.
-pub const RUNNER_CAPABILITY_PROJECT_VALIDATION: &str = "project_validation_v1";
-/// The Runner understands the additive portable package scope carried by
-/// project validation requests. Older project_validation_v1 Runners reject
-/// scoped requests before dispatch rather than interpreting an unknown field.
-pub const RUNNER_CAPABILITY_PROJECT_VALIDATION_PACKAGE_SCOPE: &str =
-    "project_validation_package_scope_v1";
-
-pub const RUNNER_CAPABILITY_STRUCTURED_GO_TEST_JSON: &str = "structured_go_test_json";
-/// The Runner understands the first-class model-facing `go_test` tool identity
-/// and its durable `ShellJobValidationMetadata` contract. This is deliberately
-/// separate from Go JSON parsing support: older Runners may advertise
-/// `structured_go_test_json` for Connector validation without understanding
-/// first-class `validation.tool = "go_test"` metadata.
-pub const RUNNER_CAPABILITY_STRUCTURED_GO_TEST_TOOL: &str = "structured_go_test_tool";
-/// The Runner accepts the expanded first-class `go_test` argv shape with
-/// caller-selected bounded project-relative package patterns. Older Runners
-/// already advertised the JSON/tool capabilities for fixed `./...`, so this
-/// must remain a separate additive rolling-upgrade fence.
-pub const RUNNER_CAPABILITY_STRUCTURED_GO_TEST_PACKAGES: &str = "structured_go_test_packages";
-/// General model-facing native process execution with a typed executable and
-/// argv. This is deliberately independent from structured Cargo validation:
-/// older Runners may support validation argv without accepting arbitrary
-/// process argv.
-pub const RUNNER_CAPABILITY_STRUCTURED_PROCESS_ARGV: &str = "structured_process_argv";
-/// Model-facing bounded script content carried as typed protocol data. This is
-/// deliberately independent from raw shell and native process argv support:
-/// older Runners must fail closed rather than interpreting script text through
-/// the legacy command channel.
-pub const RUNNER_CAPABILITY_STRUCTURED_SCRIPT_PAYLOAD: &str = "structured_script_payload";
-/// The Runner understands the additive `javascript` semantic language in typed
-/// `run_script` payloads. Older generation-2 Runners already advertise
-/// `structured_script_payload` while accepting only sh/bash/PowerShell, so this
-/// remains a separate rolling-upgrade fence. It describes script protocol
-/// semantics, not local Node.js executable availability.
-pub const RUNNER_CAPABILITY_STRUCTURED_SCRIPT_JAVASCRIPT: &str = "structured_script_javascript";
-/// The Runner understands the additive `typescript` semantic language in typed
-/// `run_script` payloads. Older Runners may understand generic typed scripts or
-/// JavaScript without understanding this newer wire enum variant. This bit
-/// describes protocol semantics, not local Node.js executable/version support.
-pub const RUNNER_CAPABILITY_STRUCTURED_SCRIPT_TYPESCRIPT: &str = "structured_script_typescript";
-/// Additive typed Python script language; missing on older Runners is false.
-pub const RUNNER_CAPABILITY_STRUCTURED_SCRIPT_PYTHON: &str = "structured_script_python";
-/// Runner-owned WebCodex-generated POSIX programs execute through an explicit
-/// internal runtime instead of the configured interactive shell. Missing on
-/// older Runners is false so Control never sends the dedicated request kind to
-/// a Runner that could fall through to legacy shell dispatch.
-pub const RUNNER_CAPABILITY_INTERNAL_POSIX_SCRIPT: &str = "internal_posix_script";
-/// Durable Job execution for both typed native processes and typed script
-/// payloads. This is deliberately independent from the synchronous structured
-/// execution and legacy async-shell capabilities: older B1/B2 Runners may
-/// advertise those capabilities without understanding typed Job starts.
-pub const RUNNER_CAPABILITY_STRUCTURED_EXECUTION_JOBS: &str = "structured_execution_jobs";
-/// Explicit authority for durable detached native-process Jobs whose payload tree is
-/// handed off to the detached supervisor. Missing on older Runners is false and
-/// is never inferred from structured process argv or ordinary durable Job support.
-pub const RUNNER_CAPABILITY_DETACHED_PROCESS_JOBS: &str = "detached_process_jobs";
-/// Explicit capability for Runner-side read-only LSP navigation. Missing on
-/// older Runners and defaults to `false` so the server never dispatches typed
-/// LSP requests to Runners that cannot handle them.
-pub const RUNNER_CAPABILITY_LSP_READ_ONLY_NAVIGATION: &str = "lsp_read_only_navigation";
-/// Bounded typed call-hierarchy traversal. Missing on older Runners and false;
-/// never inferred from general LSP navigation or protocol version.
-pub const RUNNER_CAPABILITY_LSP_CALL_HIERARCHY: &str = "lsp_call_hierarchy";
-pub const RUNNER_CAPABILITY_PROJECT_LIFECYCLE: &str = "project_lifecycle";
-/// Resolve an absolute canonical project path to an existing registration or
-/// atomically persist a new project registration record. Missing on older runners and
-/// therefore fails closed.
-pub const RUNNER_CAPABILITY_PROJECT_PATH_REGISTRATION: &str = "project_path_registration";
-/// Runner-owned managed detached-worktree bootstrap. The Runner resolves the
-/// source/ref and owns the filesystem destination; missing on older Runners is
-/// false and is never inferred from generic Git or path-registration support.
-pub const RUNNER_CAPABILITY_MANAGED_WORKTREE: &str = "managed_worktree";
-/// Runner-global Skill catalog observation, exact resolution, and source-pinned read.
-/// Configured and managed sources share this cross-process runtime capability.
-pub const RUNNER_CAPABILITY_SKILL_RUNTIME: &str = "skill_runtime";
-/// Runner-owned package-context execution for trusted Skill resources.
-/// Missing on older Runners is false; never infer it from generic process support.
-pub const RUNNER_CAPABILITY_SKILL_RESOURCE_EXECUTION: &str = "skill_resource_execution";
-/// Runner-global managed Skill lifecycle and revision inventory. This is an
-/// independent consequential capability and is never inferred from Skill runtime access.
-pub const RUNNER_CAPABILITY_SKILL_MANAGEMENT: &str = "skill_management";
-/// Same-process async job recovery across server restarts and transport
-/// reconnects. Missing on older runners and therefore defaults to `false`.
-/// Read-only native desktop/window observation. Missing on older Runners and
-/// false; never inferred from shell or file capabilities.
-pub const RUNNER_CAPABILITY_BROWSER_OBSERVE: &str = "browser_observe";
-/// Runner-owned Browser effects against opaque Browser/Page/Element identities.
-/// Missing on older Runners is false and is never inferred from Browser observation,
-/// Computer control, OS identity, protocol generation, or shell support.
-pub const RUNNER_CAPABILITY_BROWSER_CONTROL: &str = "browser_control";
-/// The Runner projects exact per-element Browser actions from the current semantic
-/// snapshot and enforces the same action admission before each element effect.
-/// Missing on older Runners is false and is never inferred from browser_control.
-pub const RUNNER_CAPABILITY_BROWSER_ELEMENT_ACTION_ADMISSION: &str =
-    "browser_element_action_admission";
-/// Runner-owned creation of an ephemeral Chromium-family Browser runtime. Missing
-/// on older Runners is false and is never inferred from executable/platform facts.
-pub const RUNNER_CAPABILITY_BROWSER_LAUNCH: &str = "browser_launch";
-pub const RUNNER_CAPABILITY_COMPUTER_OBSERVE: &str = "computer_observe";
-/// Bounded installed-application discovery. Missing on older Runners is false
-/// and is never inferred from desktop observation or launch authority.
-pub const RUNNER_CAPABILITY_COMPUTER_APPLICATION_DISCOVERY: &str = "computer_application_discovery";
-/// Exact native application launch for a fresh opaque discovery handle. Missing
-/// on older Runners is false and is never inferred from discovery or control.
-pub const RUNNER_CAPABILITY_COMPUTER_APPLICATION_LAUNCH: &str = "computer_application_launch";
-/// Exact full-display discovery and snapshot observation. Missing on older
-/// Runners is false and is never inferred from window observation, region
-/// snapshots, or platform identity.
-pub const RUNNER_CAPABILITY_COMPUTER_DISPLAY_OBSERVE: &str = "computer_display_observe";
-/// Snapshot-fenced exact coordinate pointer input. Missing on older Runners is
-/// false and is never inferred from control, display observation, or platform.
-pub const RUNNER_CAPABILITY_COMPUTER_POINTER_CONTROL: &str = "computer_pointer_control";
-/// Native bounded Unicode-text clipboard observation. Missing is false and is never
-/// inferred from Computer read/control/platform capabilities.
-pub const RUNNER_CAPABILITY_COMPUTER_CLIPBOARD_READ: &str = "computer_clipboard_read";
-/// Native bounded Unicode-text clipboard replacement. Missing is false and is never
-/// inferred from clipboard read or other Computer effect capabilities.
-pub const RUNNER_CAPABILITY_COMPUTER_CLIPBOARD_WRITE: &str = "computer_clipboard_write";
-/// Bounded surface-relative region/downscale snapshot requests. Missing on older
-/// Runners is false and is never inferred from whole-window observation support.
-pub const RUNNER_CAPABILITY_COMPUTER_SNAPSHOT_REGION: &str = "computer_snapshot_region";
-/// Native read-only semantic accessibility inspection. Missing on older Runners
-/// is false and is never inferred from screenshot/window observation.
-pub const RUNNER_CAPABILITY_COMPUTER_ACCESSIBILITY_OBSERVE: &str = "computer_accessibility_observe";
-/// Native read-only normalized state for one exact observed Accessibility element.
-/// Missing on older Runners is false and is never inferred from tree observation.
-pub const RUNNER_CAPABILITY_COMPUTER_ELEMENT_STATE: &str = "computer_element_state";
-/// Native bounded accessibility control. Missing on older Runners is false and
-/// is never inferred from either observation capability.
-pub const RUNNER_CAPABILITY_COMPUTER_CONTROL: &str = "computer_control";
-/// Native semantic scroll-to-visible on one exact observed Accessibility element.
-/// Missing on older Runners is false and is never inferred from computer_control.
-pub const RUNNER_CAPABILITY_COMPUTER_SCROLL_TO_ELEMENT: &str = "computer_scroll_to_element";
-/// Native closed-vocabulary key input to one exact already-focused window surface.
-/// Missing on older Runners is false and is never inferred from computer_control.
-pub const RUNNER_CAPABILITY_COMPUTER_KEY_INPUT: &str = "computer_key_input";
-/// Native exact-window activation/raise. Missing on older Runners is false and
-/// is never inferred from accessibility control, observation, or platform.
-pub const RUNNER_CAPABILITY_COMPUTER_WINDOW_ACTIVATE: &str = "computer_window_activate";
-/// Native bounded Accessibility text input. Missing on older Runners is false
-/// and is never inferred from accessibility observation or computer control.
-pub const RUNNER_CAPABILITY_COMPUTER_TEXT_INPUT: &str = "computer_text_input";
 /// Baseline bounded JSON payload size for typed computer requests carried in stdin.
 pub const SHELL_COMPUTER_REQUEST_PAYLOAD_MAX_BYTES: usize = 4096;
 /// Text input needs a larger wire envelope because valid caller text may expand
@@ -403,20 +162,6 @@ pub fn shell_computer_request_payload_max_bytes(kind: &str) -> usize {
         SHELL_COMPUTER_REQUEST_PAYLOAD_MAX_BYTES
     }
 }
-pub const RUNNER_CAPABILITY_JOB_STATE_RECONCILIATION: &str = "job_state_reconciliation";
-pub const RUNNER_CAPABILITY_CODING_AGENT_RUNS: &str = "coding_agent_runs";
-/// Runner-owned native Tool Plugin gateway and explicit dynamic reload support.
-/// Missing on older Runners is false and is never inferred from MCP inventory.
-pub const RUNNER_CAPABILITY_NATIVE_TOOL_PLUGINS: &str = "native_tool_plugins";
-/// Runner-local durable managed SSH resource registry. Missing on older Runners
-/// is false and is never inferred from one-shot or persistent SSH execution.
-pub const RUNNER_CAPABILITY_MANAGED_SSH_RESOURCES: &str = "managed_ssh_resources";
-/// First-class read/check and fenced activation of the exact Runner process's
-/// startup-bound configuration path. Missing on older Runners is false; Servers
-/// must never fall back to PID/signal emulation for this operation.
-pub const RUNNER_CAPABILITY_RUNNER_CONFIG_CONTROL: &str = "runner_config_control";
-/// Narrow Runner-owned observation of configured instruction files. Missing on older Runners is false.
-pub const RUNNER_CAPABILITY_INSTRUCTION_RUNTIME: &str = "instruction_runtime";
 pub const RUNNER_CONFIG_REQUEST_KIND: &str = "runner_config";
 pub const RUNNER_CONFIG_REQUEST_MAX_BYTES: usize = 512;
 pub const RUNNER_CONFIG_RESPONSE_MAX_BYTES: usize = 4096;
@@ -438,113 +183,6 @@ pub const RUNNER_CONFIG_RESTART_REQUIRED_FIELDS: &[&str] = &[
     "transport",
     "websocket_connect_timeout_secs",
 ];
-/// Capabilities guaranteed by every accepted protocol-generation-2 Runner.
-/// These explicit bools remain wire facts shared by Server and Runner, but a
-/// missing/false baseline bit rejects registration. Downstream consumers may
-/// retain atomic invariant checks; they must not select old-Runner fallbacks.
-/// Server authority still uses its typed RunnerFeature classification and verifies
-/// this list cannot drift.
-pub const RUNNER_PROTOCOL_GENERATION_V2_BASELINE_CAPABILITY_NAMES: &[&str] = &[
-    RUNNER_CAPABILITY_FILE_READ,
-    RUNNER_CAPABILITY_FILE_WRITE,
-    RUNNER_CAPABILITY_ARTIFACT_EXPORT_CHUNK_READ,
-    RUNNER_CAPABILITY_ARTIFACT_EXPORT_STREAMING_METADATA,
-    RUNNER_CAPABILITY_STRUCTURED_FILE_DELETE,
-    RUNNER_CAPABILITY_APPLY_TEXT_EDIT_OCCURRENCE,
-    RUNNER_CAPABILITY_JOBS,
-    RUNNER_CAPABILITY_ASYNC_JOBS,
-    RUNNER_CAPABILITY_ASYNC_SHELL_JOBS,
-    RUNNER_CAPABILITY_STRUCTURED_VALIDATION_ARGV,
-    RUNNER_CAPABILITY_STRUCTURED_CARGO_TEST_COUNT_ASSERTION,
-    RUNNER_CAPABILITY_STRUCTURED_GO_TEST_JSON,
-    RUNNER_CAPABILITY_STRUCTURED_GO_TEST_TOOL,
-    RUNNER_CAPABILITY_STRUCTURED_GO_TEST_PACKAGES,
-    RUNNER_CAPABILITY_STRUCTURED_PROCESS_ARGV,
-    RUNNER_CAPABILITY_STRUCTURED_SCRIPT_PAYLOAD,
-    RUNNER_CAPABILITY_INTERNAL_POSIX_SCRIPT,
-    RUNNER_CAPABILITY_STRUCTURED_EXECUTION_JOBS,
-    RUNNER_CAPABILITY_LSP_READ_ONLY_NAVIGATION,
-    RUNNER_CAPABILITY_LSP_CALL_HIERARCHY,
-    RUNNER_CAPABILITY_PROJECT_LIFECYCLE,
-    RUNNER_CAPABILITY_PROJECT_PATH_REGISTRATION,
-];
-
-pub const RUNNER_CAPABILITY_NAMES: &[&str] = &[
-    RUNNER_CAPABILITY_SHELL,
-    RUNNER_CAPABILITY_EXPLICIT_SHELL_SELECTION,
-    RUNNER_CAPABILITY_BASH_LOGIN_SHELL,
-    RUNNER_CAPABILITY_FILE_READ,
-    RUNNER_CAPABILITY_FILE_WRITE,
-    RUNNER_CAPABILITY_ARTIFACT_EXPORT_CHUNK_READ,
-    RUNNER_CAPABILITY_ARTIFACT_EXPORT_STREAMING_METADATA,
-    RUNNER_CAPABILITY_STRUCTURED_FILE_DELETE,
-    RUNNER_CAPABILITY_APPLY_TEXT_EDIT_OCCURRENCE,
-    RUNNER_CAPABILITY_APPLY_TEXT_EDIT_LOCAL_GUARD_WITHOUT_SHA,
-    RUNNER_CAPABILITY_APPLY_TEXT_EDIT_LINE_SCOPE,
-    RUNNER_CAPABILITY_APPLY_TEXT_EDIT_RANGE,
-    RUNNER_CAPABILITY_APPLY_TEXT_EDIT_EXPECTED_MATCH_COUNT,
-    RUNNER_CAPABILITY_APPLY_PATCH,
-    RUNNER_CAPABILITY_APPLY_PATCH_MATCH_METADATA,
-    RUNNER_CAPABILITY_APPLY_PATCH_MATCHING_MODE,
-    RUNNER_CAPABILITY_GIT,
-    RUNNER_CAPABILITY_JOBS,
-    RUNNER_CAPABILITY_ASYNC_JOBS,
-    RUNNER_CAPABILITY_ASYNC_SHELL_JOBS,
-    RUNNER_CAPABILITY_SSH_SHELL,
-    RUNNER_CAPABILITY_PERSISTENT_SHELL,
-    RUNNER_CAPABILITY_SSH_PERSISTENT_SHELL,
-    RUNNER_CAPABILITY_STRUCTURED_VALIDATION_ARGV,
-    RUNNER_CAPABILITY_STRUCTURED_CARGO_TEST_COUNT_ASSERTION,
-    RUNNER_CAPABILITY_STRUCTURED_CARGO_TEST_EXECUTION_POLICY,
-    RUNNER_CAPABILITY_STRUCTURED_CARGO_TEST_LIB,
-    RUNNER_CAPABILITY_STRUCTURED_CARGO_CHECK_PACKAGES,
-    RUNNER_CAPABILITY_PROJECT_VALIDATION,
-    RUNNER_CAPABILITY_PROJECT_VALIDATION_PACKAGE_SCOPE,
-    RUNNER_CAPABILITY_STRUCTURED_GO_TEST_JSON,
-    RUNNER_CAPABILITY_STRUCTURED_GO_TEST_TOOL,
-    RUNNER_CAPABILITY_STRUCTURED_GO_TEST_PACKAGES,
-    RUNNER_CAPABILITY_STRUCTURED_PROCESS_ARGV,
-    RUNNER_CAPABILITY_STRUCTURED_SCRIPT_PAYLOAD,
-    RUNNER_CAPABILITY_STRUCTURED_SCRIPT_PYTHON,
-    RUNNER_CAPABILITY_STRUCTURED_SCRIPT_JAVASCRIPT,
-    RUNNER_CAPABILITY_STRUCTURED_SCRIPT_TYPESCRIPT,
-    RUNNER_CAPABILITY_INTERNAL_POSIX_SCRIPT,
-    RUNNER_CAPABILITY_STRUCTURED_EXECUTION_JOBS,
-    RUNNER_CAPABILITY_DETACHED_PROCESS_JOBS,
-    RUNNER_CAPABILITY_LSP_READ_ONLY_NAVIGATION,
-    RUNNER_CAPABILITY_LSP_CALL_HIERARCHY,
-    RUNNER_CAPABILITY_PROJECT_LIFECYCLE,
-    RUNNER_CAPABILITY_PROJECT_PATH_REGISTRATION,
-    RUNNER_CAPABILITY_MANAGED_WORKTREE,
-    RUNNER_CAPABILITY_SKILL_RUNTIME,
-    RUNNER_CAPABILITY_SKILL_RESOURCE_EXECUTION,
-    RUNNER_CAPABILITY_SKILL_MANAGEMENT,
-    RUNNER_CAPABILITY_BROWSER_OBSERVE,
-    RUNNER_CAPABILITY_BROWSER_CONTROL,
-    RUNNER_CAPABILITY_BROWSER_ELEMENT_ACTION_ADMISSION,
-    RUNNER_CAPABILITY_BROWSER_LAUNCH,
-    RUNNER_CAPABILITY_COMPUTER_OBSERVE,
-    RUNNER_CAPABILITY_COMPUTER_APPLICATION_DISCOVERY,
-    RUNNER_CAPABILITY_COMPUTER_APPLICATION_LAUNCH,
-    RUNNER_CAPABILITY_COMPUTER_DISPLAY_OBSERVE,
-    RUNNER_CAPABILITY_COMPUTER_POINTER_CONTROL,
-    RUNNER_CAPABILITY_COMPUTER_CLIPBOARD_READ,
-    RUNNER_CAPABILITY_COMPUTER_CLIPBOARD_WRITE,
-    RUNNER_CAPABILITY_COMPUTER_SNAPSHOT_REGION,
-    RUNNER_CAPABILITY_COMPUTER_ACCESSIBILITY_OBSERVE,
-    RUNNER_CAPABILITY_COMPUTER_ELEMENT_STATE,
-    RUNNER_CAPABILITY_JOB_STATE_RECONCILIATION,
-    RUNNER_CAPABILITY_CODING_AGENT_RUNS,
-    RUNNER_CAPABILITY_NATIVE_TOOL_PLUGINS,
-    RUNNER_CAPABILITY_MANAGED_SSH_RESOURCES,
-    RUNNER_CAPABILITY_RUNNER_CONFIG_CONTROL,
-    RUNNER_CAPABILITY_INSTRUCTION_RUNTIME,
-    RUNNER_CAPABILITY_COMPUTER_CONTROL,
-    RUNNER_CAPABILITY_COMPUTER_SCROLL_TO_ELEMENT,
-    RUNNER_CAPABILITY_COMPUTER_KEY_INPUT,
-    RUNNER_CAPABILITY_COMPUTER_WINDOW_ACTIVATE,
-    RUNNER_CAPABILITY_COMPUTER_TEXT_INPUT,
-];
 
 /// Maximum summaries in one project-inventory page. Cardinality is bounded per
 /// request rather than across the lifetime of a Runner.
@@ -562,289 +200,751 @@ pub const PROJECT_INVENTORY_STAGING_TTL_SECS: i64 = 120;
 /// Bound concurrent temporary inventory staging across one Server process.
 pub const PROJECT_INVENTORY_MAX_CONCURRENT_SYNCS: usize = 8;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RunnerCapabilities {
-    #[serde(default = "default_shell_true")]
-    pub shell: bool,
-    /// Additive structured selector for explicit local `sh`/`bash` raw shell
-    /// execution. Missing on older Runners is false and is never inferred.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub explicit_shell_selection: bool,
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub bash_login_shell: bool,
-    #[serde(default)]
-    pub file_read: bool,
-    #[serde(default)]
-    pub file_write: bool,
-    /// Internal bounded export-segment read that does not recompute whole-file
-    /// MIME/SHA metadata. Missing on older Runners is false.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub artifact_export_chunk_read: bool,
-    /// Whole-file export metadata (size/SHA/MIME) is computed without loading
-    /// the complete artifact into memory. Missing on older Runners is false and
-    /// is never inferred from `artifact_export_chunk_read`.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub artifact_export_streaming_metadata: bool,
-    /// Bounded structured file deletion with Runner-authoritative project-root
-    /// containment and file-only semantics. Missing on older Runners is false.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub structured_file_delete: bool,
-    /// Correct enforcement of ApplyTextEditInput.occurrence. Missing on older
-    /// Runners is false and is never inferred from another capability.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub apply_text_edit_occurrence: bool,
-    /// Globally unique exact local edits may omit expected_sha256. The Runner
-    /// still fences preflight-to-mutation races with the planned source SHA.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub apply_text_edit_local_guard_without_sha: bool,
-    /// Correct enforcement of ApplyTextEditInput.line_scope. Missing on older
-    /// Runners is false and is never inferred from occurrence or generation.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub apply_text_edit_line_scope: bool,
-    /// Deterministic 1-based inclusive whole-line replacement support.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub apply_text_edit_range: bool,
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub apply_text_edit_expected_match_count: bool,
-    /// Authoritative Codex-compatible patch parsing and transactional application.
-    /// Missing on older Runners is false and never follows from generic file_write.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub apply_patch: bool,
-    /// Complete per-chunk patch-plan/match metadata for successful apply_patch
-    /// results. Missing on older Runners is false and never follows from apply_patch.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub apply_patch_match_metadata: bool,
-    /// Current enum-based apply_patch positioning semantics. Missing on older
-    /// Runners is false and must fail closed for current model-facing requests.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub apply_patch_matching_mode: bool,
-    #[serde(default)]
-    pub git: bool,
-    #[serde(default)]
-    pub jobs: bool,
-    #[serde(default)]
-    pub async_jobs: bool,
-    #[serde(default)]
-    pub async_shell_jobs: bool,
-    /// The Runner can execute one-shot/background shell work through a Workflow
-    /// Session's configured SSH resource. Missing on older runners fails closed.
-    #[serde(default)]
-    pub ssh_shell: bool,
-    /// The Runner supports explicit Workflow Session persistent shells on its
-    /// own host. This does not imply SSH or PTY support.
-    #[serde(default)]
-    pub persistent_shell: bool,
-    /// The Runner can open a long-lived persistent shell on a Workflow Session's
-    /// SSH resource. Missing on older runners fails closed; this is independent
-    /// of `ssh_shell` and is never inferred from another capability combination.
-    #[serde(default)]
-    pub ssh_persistent_shell: bool,
-    /// Validation plans use a fixed executable plus argv, never shell text.
-    /// Missing on older Runners and therefore fail-closed.
-    #[serde(default)]
-    pub structured_validation_argv: bool,
-    /// Durable round-trip support for Cargo test-count postconditions.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub structured_cargo_test_count_assertion: bool,
-    /// Durable round-trip support for explicit Cargo execution-policy metadata.
-    /// Missing on older Runners is false and is never inferred from the count
-    /// assertion capability, structured validation argv, or protocol generation.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub structured_cargo_test_execution_policy: bool,
-    /// Additive canonical Cargo test `--lib` argv support. Missing on older
-    /// Runners is false and is never inferred from generic structured argv.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub structured_cargo_test_lib: bool,
-    /// Additive canonical Cargo check support for repeated `-p` selectors in
-    /// one validation argv. Missing on older Runners is false and is never
-    /// inferred from generic structured validation support.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub structured_cargo_check_packages: bool,
-    /// Machine-readable canonical `go test -json` validation. Older Runners may
-    /// support only the historical fixed `./...` scope; focused package argv is
-    /// an independent additive capability.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub structured_go_test_json: bool,
-    #[serde(default)]
-    pub project_validation_v1: bool,
-    /// Additive bounded package scope for project validation. Missing on older
-    /// project_validation_v1 Runners is false and must fail closed before a
-    /// scoped planning request is sent.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub project_validation_package_scope_v1: bool,
-    /// First-class `go_test` tool plus its durable validation metadata identity.
-    /// Missing on older Runners and false; never inferred from Go JSON parsing,
-    /// generic structured validation, protocol version, or executable presence.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub structured_go_test_tool: bool,
-    /// Expanded first-class `go_test` package argv beyond the historical fixed
-    /// `./...` shape. Missing on older Runners and false; never inferred from
-    /// the existing Go JSON or first-class tool capabilities.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub structured_go_test_packages: bool,
-    /// General native executable + argv requests. Missing on older Runners and
-    /// therefore false; the Server must fail closed without a shell fallback.
-    #[serde(default)]
-    pub structured_process_argv: bool,
-    /// Bounded typed script payloads executed from Runner-owned temporary
-    /// files. Missing on older Runners and therefore false; this is never
-    /// inferred from shell, validation argv, or process argv support.
-    #[serde(default)]
-    pub structured_script_payload: bool,
-    /// Additive typed-script support for the canonical `javascript` language.
-    /// Missing on older Runners is false and is never inferred from
-    /// `structured_script_payload` or protocol generation. Node availability is
-    /// resolved separately at execution time.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub structured_script_javascript: bool,
-    /// Additive typed-script support for the canonical `typescript` language.
-    /// Missing on older Runners is false and is never inferred from the generic
-    /// typed-script/JavaScript bits or protocol generation. Node availability
-    /// and native TypeScript support are resolved separately at execution time.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub structured_script_typescript: bool,
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub structured_script_python: bool,
-    /// Dedicated server-generated POSIX script request kind. Missing on older
-    /// Runners is false and is never inferred from raw shell or typed public
-    /// script support.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub internal_posix_script: bool,
-    /// Typed process and typed script requests can execute as durable Jobs.
-    /// Missing on older Runners and therefore false; it is never inferred from
-    /// any synchronous structured-execution or async-shell capability.
-    #[serde(default)]
-    pub structured_execution_jobs: bool,
-    /// Durable detached native-process ownership handoff. This is an additive
-    /// authority fence and is never implied by structured_process_argv or
-    /// structured_execution_jobs.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub detached_process_jobs: bool,
-    /// Read-only semantic navigation via constrained Runner language-server
-    /// profiles. Defaults to false for wire compatibility with older Runners.
-    #[serde(default)]
-    pub lsp_read_only_navigation: bool,
-    /// The Runner implements the bounded typed call-hierarchy operation.
-    #[serde(default)]
-    pub lsp_call_hierarchy: bool,
-    /// Structured project enable/disable/unregister requests. Missing on older
-    /// runners and therefore fail-closed.
-    #[serde(default)]
-    pub project_lifecycle: bool,
-    /// The Runner can resolve an absolute canonical project path or
-    /// atomically register it. Missing on older runners and therefore
-    /// fail-closed.
-    #[serde(default)]
-    pub project_path_registration: bool,
-    /// Closed Runner-owned worktree/bootstrap mutation capability. Older
-    /// Runners fail closed instead of falling back to Server-side Git/path work.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub managed_worktree: bool,
-    /// Runner-local Skill catalog observation, exact resolution, and source-pinned reads.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub skill_runtime: bool,
-    /// Runner-owned trusted Skill package execution context.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub skill_resource_execution: bool,
-    /// Managed Skill lifecycle/revision management. Independent from runtime reads.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub skill_management: bool,
-    /// Runner-owned Browser observation. Missing on older Runners is false and
-    /// never follows from OS/protocol/shell/Computer capabilities.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub browser_observe: bool,
-    /// Runner-owned Browser control excluding process launch.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub browser_control: bool,
-    /// Exact snapshot-advertised element action admission. Missing on older Runners
-    /// is false and never follows from generic Browser observation/control.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub browser_element_action_admission: bool,
-    /// Runner-owned launch of ephemeral Chromium-family runtimes.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub browser_launch: bool,
-    /// Native read-only desktop/window observation. Missing on older Runners
-    /// and therefore fail-closed.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub computer_observe: bool,
-    /// The Runner can return a bounded process-local installed-application list.
-    /// Missing on older Runners is false and never follows from observation.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub computer_application_discovery: bool,
-    /// The Runner can submit an exact native launch for a fresh application_id.
-    /// Missing on older Runners is false and never follows from discovery/control.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub computer_application_launch: bool,
-    /// The Runner can discover exact native displays and snapshot one fresh
-    /// opaque display handle. Missing is false and never follows from window observation.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub computer_display_observe: bool,
-    /// The Runner implements snapshot-fenced exact coordinate pointer input.
-    /// Missing on older Runners is false and never follows from other Computer capabilities.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub computer_pointer_control: bool,
-    /// The Runner supports bounded native Unicode-text clipboard observation.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub computer_clipboard_read: bool,
-    /// The Runner supports bounded native Unicode-text clipboard replacement.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub computer_clipboard_write: bool,
-    /// The Runner supports bounded region/max-output snapshot transforms while
-    /// preserving the existing whole-window snapshot wire for older Runners.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub computer_snapshot_region: bool,
-    /// Native read-only semantic accessibility inspection. Missing on older
-    /// Runners is false; future computer control requires a distinct capability.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub computer_accessibility_observe: bool,
-    /// The Runner can revalidate one exact element and return normalized read-only
-    /// affordances without exposing its true value. Missing on older Runners is false.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub computer_element_state: bool,
-    /// The runner retains bounded active and recent terminal job snapshots and
-    /// Native bounded accessibility control. Missing on older Runners is false
-    /// and never follows from desktop or accessibility observation authority.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub computer_control: bool,
-    /// The Runner can semantically scroll one exact observed Accessibility element
-    /// into view. Missing on older Runners is false and never follows from control.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub computer_scroll_to_element: bool,
-    /// The Runner can post one closed navigation/action key to one exact already-focused
-    /// native window. Missing on older Runners is false and never follows from control.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub computer_key_input: bool,
-    /// The Runner can activate/raise one exact previously observed native window.
-    /// Missing on older Runners is false and never follows from computer_control.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub computer_window_activate: bool,
-    /// The Runner implements bounded native Accessibility text input. Missing on
-    /// older Runners is false and never follows from computer_control.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub computer_text_input: bool,
-    /// submits a complete active inventory at register/re-register time.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub job_state_reconciliation: bool,
-    /// Runner-owned ACP coding-agent execution with closed typed Run lifecycle.
-    /// Optional and never inferred from shell/MCP.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub coding_agent_runs: bool,
-    /// Runner-owned native Tool Plugin lifecycle and typed Plugin gateway.
-    /// Registration carries capability only; provider/tool inventory remains
-    /// Runner-owned and is observed through the exact `plugin_tool` gateway.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub native_tool_plugins: bool,
-    /// Runner-local managed SSH resource list/register/remove lifecycle.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub managed_ssh_resources: bool,
-    /// First-class bounded config check/reload implemented by this Runner
-    /// process. Missing on older Runners is false and is never inferred from OS,
-    /// transport, Plugin support, or protocol generation.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub runner_config_control: bool,
-    /// Runner-owned configured instruction snapshot support. Missing on older Runners is false.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub instruction_runtime: bool,
+// Protocol facts only: catalog membership never enables a Runner implementation.
+// Keep declaration order equal to the historical wire struct serialization order.
+// Serde attributes are intentionally visible on each field for compatibility review.
+macro_rules! runner_capabilities {
+    ($( $(#[$doc:meta])* $variant:ident => $constant:ident($wire:literal),
+        v2_baseline = $baseline:literal {
+            $(#[$field_attr:meta])* pub $field:ident: bool = $default:expr;
+        }
+    )+) => {
+        $( $(#[$doc])* pub const $constant: &str = $wire; )+
+
+        /// Protocol identity, independent of whether a particular Runner implements it.
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+        pub enum RunnerCapabilityId { $( $variant, )+ }
+
+        impl RunnerCapabilityId {
+            pub const fn all() -> &'static [Self] { &[$(Self::$variant,)+] }
+
+            pub const fn as_wire_name(self) -> &'static str {
+                match self { $( Self::$variant => $constant, )+ }
+            }
+
+            pub fn from_wire_name(name: &str) -> Option<Self> {
+                match name { $( $constant => Some(Self::$variant), )+ _ => None }
+            }
+
+            /// Frozen registration requirement, never implementation discovery.
+            pub const fn is_v2_baseline(self) -> bool {
+                match self { $( Self::$variant => $baseline, )+ }
+            }
+        }
+
+        pub const RUNNER_CAPABILITY_NAMES: &[&str] = &[$($constant,)+];
+
+        /// Every accepted generation-2 registration must explicitly enable these
+        /// capabilities. Missing/false rejects registration; nothing is inferred.
+        pub const RUNNER_PROTOCOL_GENERATION_V2_BASELINE_CAPABILITY_NAMES: &[&str] = &{
+            let mut names = [""; 0 $(+ $baseline as usize)+];
+            let mut index = 0;
+            $( if $baseline { names[index] = $constant; index += 1; } )+
+            let _ = index;
+            names
+        };
+
+        #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+        pub struct RunnerCapabilities {
+            $( $(#[$field_attr])* pub $field: bool, )+
+        }
+
+        impl Default for RunnerCapabilities {
+            fn default() -> Self { Self { $( $field: $default, )+ } }
+        }
+
+        impl RunnerCapabilities {
+            pub fn supports(&self, id: RunnerCapabilityId) -> bool {
+                match id { $( RunnerCapabilityId::$variant => self.$field, )+ }
+            }
+
+            pub fn set(&mut self, id: RunnerCapabilityId, enabled: bool) {
+                match id { $( RunnerCapabilityId::$variant => self.$field = enabled, )+ }
+            }
+        }
+    };
+}
+
+runner_capabilities! {
+    Shell => RUNNER_CAPABILITY_SHELL("shell"),
+    v2_baseline = false {
+        #[serde(default = "default_shell_true")]
+        pub shell: bool = true;
+    }
+    /// Structured local `sh`/`bash` selection on raw shell requests. Missing on
+    /// older Runners is false; current Servers fail closed rather than sending a
+    /// POSIX `exec ... -c` wrapper to an unrelated configured shell.
+    ExplicitShellSelection => RUNNER_CAPABILITY_EXPLICIT_SHELL_SELECTION("explicit_shell_selection"),
+    v2_baseline = false {
+        /// Additive structured selector for explicit local `sh`/`bash` raw shell
+        /// execution. Missing on older Runners is false and is never inferred.
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub explicit_shell_selection: bool = false;
+    }
+    BashLoginShell => RUNNER_CAPABILITY_BASH_LOGIN_SHELL("bash_login_shell"),
+    v2_baseline = false {
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub bash_login_shell: bool = false;
+    }
+    FileRead => RUNNER_CAPABILITY_FILE_READ("file_read"),
+    v2_baseline = true {
+        #[serde(default)]
+        pub file_read: bool = false;
+    }
+    FileWrite => RUNNER_CAPABILITY_FILE_WRITE("file_write"),
+    v2_baseline = true {
+        #[serde(default)]
+        pub file_write: bool = false;
+    }
+    /// The Runner implements a narrow internal project-artifact export chunk read
+    /// that seeks and reads only the requested bounded segment. Missing on older
+    /// Runners is false and must never be inferred from ordinary file_read.
+    ArtifactExportChunkRead => RUNNER_CAPABILITY_ARTIFACT_EXPORT_CHUNK_READ("artifact_export_chunk_read"),
+    v2_baseline = true {
+        /// Internal bounded export-segment read that does not recompute whole-file
+        /// MIME/SHA metadata. Missing on older Runners is false.
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub artifact_export_chunk_read: bool = false;
+    }
+    /// The Runner computes artifact-export metadata for files above the whole-payload
+    /// limit with bounded streaming I/O. This is separate from chunk-read support:
+    /// older optimized-export Runners may advertise chunk reads while still
+    /// materializing metadata up to the caller-provided bound.
+    ArtifactExportStreamingMetadata => RUNNER_CAPABILITY_ARTIFACT_EXPORT_STREAMING_METADATA("artifact_export_streaming_metadata"),
+    v2_baseline = true {
+        /// Whole-file export metadata (size/SHA/MIME) is computed without loading
+        /// the complete artifact into memory. Missing on older Runners is false and
+        /// is never inferred from `artifact_export_chunk_read`.
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub artifact_export_streaming_metadata: bool = false;
+    }
+    /// The Runner implements bounded, project-root-enforced structured file deletion.
+    /// Missing on older Runners and false; never inferred from file_write, shell,
+    /// protocol version, transport, or operating system.
+    StructuredFileDelete => RUNNER_CAPABILITY_STRUCTURED_FILE_DELETE("structured_file_delete"),
+    v2_baseline = true {
+        /// Bounded structured file deletion with Runner-authoritative project-root
+        /// containment and file-only semantics. Missing on older Runners is false.
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub structured_file_delete: bool = false;
+    }
+    /// The Runner understands and enforces the optional 1-based exact occurrence
+    /// selector in ApplyTextEditInput. Missing on older Runners is false and is
+    /// never inferred from other file capabilities, protocol, build, transport, or OS.
+    ApplyTextEditOccurrence => RUNNER_CAPABILITY_APPLY_TEXT_EDIT_OCCURRENCE("apply_text_edit_occurrence"),
+    v2_baseline = true {
+        /// Correct enforcement of ApplyTextEditInput.occurrence. Missing on older
+        /// Runners is false and is never inferred from another capability.
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub apply_text_edit_occurrence: bool = false;
+    }
+    /// The Runner can prove globally unique exact local edit targets against its
+    /// current file content without requiring a historical whole-file SHA guard.
+    /// Missing on older Runners is false and is never inferred from file_write,
+    /// occurrence/line_scope support, protocol generation, build, transport, or OS.
+    ApplyTextEditLocalGuardWithoutSha => RUNNER_CAPABILITY_APPLY_TEXT_EDIT_LOCAL_GUARD_WITHOUT_SHA("apply_text_edit_local_guard_without_sha"),
+    v2_baseline = false {
+        /// Globally unique exact local edits may omit expected_sha256. The Runner
+        /// still fences preflight-to-mutation races with the planned source SHA.
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub apply_text_edit_local_guard_without_sha: bool = false;
+    }
+    /// The Runner understands and enforces ApplyTextEditInput.line_scope as a
+    /// 1-based inclusive full-match containment fence. Missing on older Runners is
+    /// false and is never inferred from occurrence, protocol generation, file_write,
+    /// version, transport, OS, or build identity.
+    ApplyTextEditLineScope => RUNNER_CAPABILITY_APPLY_TEXT_EDIT_LINE_SCOPE("apply_text_edit_line_scope"),
+    v2_baseline = false {
+        /// Correct enforcement of ApplyTextEditInput.line_scope. Missing on older
+        /// Runners is false and is never inferred from occurrence or generation.
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub apply_text_edit_line_scope: bool = false;
+    }
+    /// The Runner understands deterministic revision-fenced whole-line replacement
+    /// edits (`replace_range`). Missing on older Runners is false and is never
+    /// inferred from line_scope support or protocol generation.
+    ApplyTextEditRange => RUNNER_CAPABILITY_APPLY_TEXT_EDIT_RANGE("apply_text_edit_range"),
+    v2_baseline = false {
+        /// Deterministic 1-based inclusive whole-line replacement support.
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub apply_text_edit_range: bool = false;
+    }
+    /// Runner enforces explicit bounded all-match cardinality against one original
+    /// source snapshot. Missing on older Runners is false; never inferred.
+    ApplyTextEditExpectedMatchCount => RUNNER_CAPABILITY_APPLY_TEXT_EDIT_EXPECTED_MATCH_COUNT("apply_text_edit_expected_match_count"),
+    v2_baseline = false {
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub apply_text_edit_expected_match_count: bool = false;
+    }
+    /// Authoritative Runner-side Codex Patch parsing plus bounded transactional apply.
+    /// Missing on older Runners is false and is never inferred from file_write or
+    /// protocol generation, so a new Server cannot send this request kind to an old Runner.
+    ApplyPatch => RUNNER_CAPABILITY_APPLY_PATCH("apply_patch"),
+    v2_baseline = false {
+        /// Authoritative Codex-compatible patch parsing and transactional application.
+        /// Missing on older Runners is false and never follows from generic file_write.
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub apply_patch: bool = false;
+    }
+    /// The Runner returns the complete trusted apply_patch patch-plan/match metadata
+    /// required by the 0.4 success contract. Missing on older Runners is false; a
+    /// current Server must reject apply_patch before dispatch rather than accepting a
+    /// legacy success shape.
+    ApplyPatchMatchMetadata => RUNNER_CAPABILITY_APPLY_PATCH_MATCH_METADATA("apply_patch_match_metadata"),
+    v2_baseline = false {
+        /// Complete per-chunk patch-plan/match metadata for successful apply_patch
+        /// results. Missing on older Runners is false and never follows from apply_patch.
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub apply_patch_match_metadata: bool = false;
+    }
+    /// The Runner understands the 0.4 model-facing apply_patch matching_mode enum
+    /// (`first_match`, `unique`, `exact_unique`) and returns metadata bound to the
+    /// requested mode. Missing on older Runners is false; current Servers fail
+    /// closed instead of silently falling back to legacy permissive positioning.
+    ApplyPatchMatchingMode => RUNNER_CAPABILITY_APPLY_PATCH_MATCHING_MODE("apply_patch_matching_mode"),
+    v2_baseline = false {
+        /// Current enum-based apply_patch positioning semantics. Missing on older
+        /// Runners is false and must fail closed for current model-facing requests.
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub apply_patch_matching_mode: bool = false;
+    }
+    Git => RUNNER_CAPABILITY_GIT("git"),
+    v2_baseline = false {
+        #[serde(default)]
+        pub git: bool = false;
+    }
+    Jobs => RUNNER_CAPABILITY_JOBS("jobs"),
+    v2_baseline = true {
+        #[serde(default)]
+        pub jobs: bool = false;
+    }
+    AsyncJobs => RUNNER_CAPABILITY_ASYNC_JOBS("async_jobs"),
+    v2_baseline = true {
+        #[serde(default)]
+        pub async_jobs: bool = false;
+    }
+    AsyncShellJobs => RUNNER_CAPABILITY_ASYNC_SHELL_JOBS("async_shell_jobs"),
+    v2_baseline = true {
+        #[serde(default)]
+        pub async_shell_jobs: bool = false;
+    }
+    /// Runner-side one-shot/background SSH shell execution for Workflow Session
+    /// resources. This is deliberately separate from persistent SSH support: older
+    /// runners must reject such a Session-bound SSH request rather than silently
+    /// running it on their local project checkout.
+    SshShell => RUNNER_CAPABILITY_SSH_SHELL("ssh_shell"),
+    v2_baseline = false {
+        /// The Runner can execute one-shot/background shell work through a Workflow
+        /// Session's configured SSH resource. Missing on older runners fails closed.
+        #[serde(default)]
+        pub ssh_shell: bool = false;
+    }
+    /// Command-oriented, long-lived shell processes owned by one Workflow Session.
+    /// Missing on older runners and therefore fails closed.
+    PersistentShell => RUNNER_CAPABILITY_PERSISTENT_SHELL("persistent_shell"),
+    v2_baseline = false {
+        /// The Runner supports explicit Workflow Session persistent shells on its
+        /// own host. This does not imply SSH or PTY support.
+        #[serde(default)]
+        pub persistent_shell: bool = false;
+    }
+    /// Long-lived persistent shells opened on a Workflow Session's SSH resource.
+    /// This is additive to `persistent_shell` and independent of the one-shot
+    /// `ssh_shell` capability; older runners that predate it must reject the request
+    /// rather than silently opening a local shell.
+    SshPersistentShell => RUNNER_CAPABILITY_SSH_PERSISTENT_SHELL("ssh_persistent_shell"),
+    v2_baseline = false {
+        /// The Runner can open a long-lived persistent shell on a Workflow Session's
+        /// SSH resource. Missing on older runners fails closed; this is independent
+        /// of `ssh_shell` and is never inferred from another capability combination.
+        #[serde(default)]
+        pub ssh_persistent_shell: bool = false;
+    }
+    StructuredValidationArgv => RUNNER_CAPABILITY_STRUCTURED_VALIDATION_ARGV("structured_validation_argv"),
+    v2_baseline = true {
+        /// Validation plans use a fixed executable plus argv, never shell text.
+        /// Missing on older Runners and therefore fail-closed.
+        #[serde(default)]
+        pub structured_validation_argv: bool = false;
+    }
+    /// The Runner preserves the optional Cargo test-count postcondition in durable
+    /// validation Job metadata and returns it unchanged through reconciliation.
+    /// Missing on older Runners is false; Control must not start a validation Job
+    /// whose assertion could disappear after a Server restart.
+    StructuredCargoTestCountAssertion => RUNNER_CAPABILITY_STRUCTURED_CARGO_TEST_COUNT_ASSERTION("structured_cargo_test_count_assertion"),
+    v2_baseline = true {
+        /// Durable round-trip support for Cargo test-count postconditions.
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub structured_cargo_test_count_assertion: bool = false;
+    }
+    /// The Runner durably preserves explicit Cargo validation execution-policy
+    /// metadata (`require_tests` / `no_run`) through the Job lifecycle and
+    /// reconciliation. Older Runners already advertised the count-assertion
+    /// capability, so this is a separate additive rolling-upgrade fence and is
+    /// never inferred from protocol generation or other structured validation bits.
+    StructuredCargoTestExecutionPolicy => RUNNER_CAPABILITY_STRUCTURED_CARGO_TEST_EXECUTION_POLICY("structured_cargo_test_execution_policy"),
+    v2_baseline = false {
+        /// Durable round-trip support for explicit Cargo execution-policy metadata.
+        /// Missing on older Runners is false and is never inferred from the count
+        /// assertion capability, structured validation argv, or protocol generation.
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub structured_cargo_test_execution_policy: bool = false;
+    }
+    /// The Runner accepts Cargo test validation argv containing the first-class
+    /// `--lib` selector. Older Runners may already support structured Cargo argv
+    /// without this additive selector, so newer Servers must fence it explicitly.
+    StructuredCargoTestLib => RUNNER_CAPABILITY_STRUCTURED_CARGO_TEST_LIB("structured_cargo_test_lib"),
+    v2_baseline = false {
+        /// Additive canonical Cargo test `--lib` argv support. Missing on older
+        /// Runners is false and is never inferred from generic structured argv.
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub structured_cargo_test_lib: bool = false;
+    }
+    /// The Runner accepts one canonical Cargo check validation step containing
+    /// repeated `-p <package>` selectors. Older Runners accepted at most one
+    /// package even when they advertised generic structured validation argv.
+    StructuredCargoCheckPackages => RUNNER_CAPABILITY_STRUCTURED_CARGO_CHECK_PACKAGES("structured_cargo_check_packages"),
+    v2_baseline = false {
+        /// Additive canonical Cargo check support for repeated `-p` selectors in
+        /// one validation argv. Missing on older Runners is false and is never
+        /// inferred from generic structured validation support.
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub structured_cargo_check_packages: bool = false;
+    }
+    /// The Runner accepts the canonical machine-readable `go test -json` validation
+    /// shape. Older implementations may support only the historical fixed `./...`
+    /// scope; expanded caller-selected packages are fenced separately.
+    StructuredGoTestJson => RUNNER_CAPABILITY_STRUCTURED_GO_TEST_JSON("structured_go_test_json"),
+    v2_baseline = true {
+        /// Machine-readable canonical `go test -json` validation. Older Runners may
+        /// support only the historical fixed `./...` scope; focused package argv is
+        /// an independent additive capability.
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub structured_go_test_json: bool = false;
+    }
+    /// Runner-owned project validation gateway. Missing on older Runners is false.
+    ProjectValidation => RUNNER_CAPABILITY_PROJECT_VALIDATION("project_validation_v1"),
+    v2_baseline = false {
+        #[serde(default)]
+        pub project_validation_v1: bool = false;
+    }
+    /// The Runner understands the additive portable package scope carried by
+    /// project validation requests. Older project_validation_v1 Runners reject
+    /// scoped requests before dispatch rather than interpreting an unknown field.
+    ProjectValidationPackageScope => RUNNER_CAPABILITY_PROJECT_VALIDATION_PACKAGE_SCOPE("project_validation_package_scope_v1"),
+    v2_baseline = false {
+        /// Additive bounded package scope for project validation. Missing on older
+        /// project_validation_v1 Runners is false and must fail closed before a
+        /// scoped planning request is sent.
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub project_validation_package_scope_v1: bool = false;
+    }
+    /// The Runner understands the first-class model-facing `go_test` tool identity
+    /// and its durable `ShellJobValidationMetadata` contract. This is deliberately
+    /// separate from Go JSON parsing support: older Runners may advertise
+    /// `structured_go_test_json` for Connector validation without understanding
+    /// first-class `validation.tool = "go_test"` metadata.
+    StructuredGoTestTool => RUNNER_CAPABILITY_STRUCTURED_GO_TEST_TOOL("structured_go_test_tool"),
+    v2_baseline = true {
+        /// First-class `go_test` tool plus its durable validation metadata identity.
+        /// Missing on older Runners and false; never inferred from Go JSON parsing,
+        /// generic structured validation, protocol version, or executable presence.
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub structured_go_test_tool: bool = false;
+    }
+    /// The Runner accepts the expanded first-class `go_test` argv shape with
+    /// caller-selected bounded project-relative package patterns. Older Runners
+    /// already advertised the JSON/tool capabilities for fixed `./...`, so this
+    /// must remain a separate additive rolling-upgrade fence.
+    StructuredGoTestPackages => RUNNER_CAPABILITY_STRUCTURED_GO_TEST_PACKAGES("structured_go_test_packages"),
+    v2_baseline = true {
+        /// Expanded first-class `go_test` package argv beyond the historical fixed
+        /// `./...` shape. Missing on older Runners and false; never inferred from
+        /// the existing Go JSON or first-class tool capabilities.
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub structured_go_test_packages: bool = false;
+    }
+    /// General model-facing native process execution with a typed executable and
+    /// argv. This is deliberately independent from structured Cargo validation:
+    /// older Runners may support validation argv without accepting arbitrary
+    /// process argv.
+    StructuredProcessArgv => RUNNER_CAPABILITY_STRUCTURED_PROCESS_ARGV("structured_process_argv"),
+    v2_baseline = true {
+        /// General native executable + argv requests. Missing on older Runners and
+        /// therefore false; the Server must fail closed without a shell fallback.
+        #[serde(default)]
+        pub structured_process_argv: bool = false;
+    }
+    /// Model-facing bounded script content carried as typed protocol data. This is
+    /// deliberately independent from raw shell and native process argv support:
+    /// older Runners must fail closed rather than interpreting script text through
+    /// the legacy command channel.
+    StructuredScriptPayload => RUNNER_CAPABILITY_STRUCTURED_SCRIPT_PAYLOAD("structured_script_payload"),
+    v2_baseline = true {
+        /// Bounded typed script payloads executed from Runner-owned temporary
+        /// files. Missing on older Runners and therefore false; this is never
+        /// inferred from shell, validation argv, or process argv support.
+        #[serde(default)]
+        pub structured_script_payload: bool = false;
+    }
+    /// The Runner understands the additive `javascript` semantic language in typed
+    /// `run_script` payloads. Older generation-2 Runners already advertise
+    /// `structured_script_payload` while accepting only sh/bash/PowerShell, so this
+    /// remains a separate rolling-upgrade fence. It describes script protocol
+    /// semantics, not local Node.js executable availability.
+    StructuredScriptJavascript => RUNNER_CAPABILITY_STRUCTURED_SCRIPT_JAVASCRIPT("structured_script_javascript"),
+    v2_baseline = false {
+        /// Additive typed-script support for the canonical `javascript` language.
+        /// Missing on older Runners is false and is never inferred from
+        /// `structured_script_payload` or protocol generation. Node availability is
+        /// resolved separately at execution time.
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub structured_script_javascript: bool = false;
+    }
+    /// The Runner understands the additive `typescript` semantic language in typed
+    /// `run_script` payloads. Older Runners may understand generic typed scripts or
+    /// JavaScript without understanding this newer wire enum variant. This bit
+    /// describes protocol semantics, not local Node.js executable/version support.
+    StructuredScriptTypescript => RUNNER_CAPABILITY_STRUCTURED_SCRIPT_TYPESCRIPT("structured_script_typescript"),
+    v2_baseline = false {
+        /// Additive typed-script support for the canonical `typescript` language.
+        /// Missing on older Runners is false and is never inferred from the generic
+        /// typed-script/JavaScript bits or protocol generation. Node availability
+        /// and native TypeScript support are resolved separately at execution time.
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub structured_script_typescript: bool = false;
+    }
+    /// Additive typed Python script language; missing on older Runners is false.
+    StructuredScriptPython => RUNNER_CAPABILITY_STRUCTURED_SCRIPT_PYTHON("structured_script_python"),
+    v2_baseline = false {
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub structured_script_python: bool = false;
+    }
+    /// Runner-owned WebCodex-generated POSIX programs execute through an explicit
+    /// internal runtime instead of the configured interactive shell. Missing on
+    /// older Runners is false so Control never sends the dedicated request kind to
+    /// a Runner that could fall through to legacy shell dispatch.
+    InternalPosixScript => RUNNER_CAPABILITY_INTERNAL_POSIX_SCRIPT("internal_posix_script"),
+    v2_baseline = true {
+        /// Dedicated server-generated POSIX script request kind. Missing on older
+        /// Runners is false and is never inferred from raw shell or typed public
+        /// script support.
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub internal_posix_script: bool = false;
+    }
+    /// Durable Job execution for both typed native processes and typed script
+    /// payloads. This is deliberately independent from the synchronous structured
+    /// execution and legacy async-shell capabilities: older B1/B2 Runners may
+    /// advertise those capabilities without understanding typed Job starts.
+    StructuredExecutionJobs => RUNNER_CAPABILITY_STRUCTURED_EXECUTION_JOBS("structured_execution_jobs"),
+    v2_baseline = true {
+        /// Typed process and typed script requests can execute as durable Jobs.
+        /// Missing on older Runners and therefore false; it is never inferred from
+        /// any synchronous structured-execution or async-shell capability.
+        #[serde(default)]
+        pub structured_execution_jobs: bool = false;
+    }
+    /// Explicit authority for durable detached native-process Jobs whose payload tree is
+    /// handed off to the detached supervisor. Missing on older Runners is false and
+    /// is never inferred from structured process argv or ordinary durable Job support.
+    DetachedProcessJobs => RUNNER_CAPABILITY_DETACHED_PROCESS_JOBS("detached_process_jobs"),
+    v2_baseline = false {
+        /// Durable detached native-process ownership handoff. This is an additive
+        /// authority fence and is never implied by structured_process_argv or
+        /// structured_execution_jobs.
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub detached_process_jobs: bool = false;
+    }
+    /// Explicit capability for Runner-side read-only LSP navigation. Missing on
+    /// older Runners and defaults to `false` so the server never dispatches typed
+    /// LSP requests to Runners that cannot handle them.
+    LspReadOnlyNavigation => RUNNER_CAPABILITY_LSP_READ_ONLY_NAVIGATION("lsp_read_only_navigation"),
+    v2_baseline = true {
+        /// Read-only semantic navigation via constrained Runner language-server
+        /// profiles. Defaults to false for wire compatibility with older Runners.
+        #[serde(default)]
+        pub lsp_read_only_navigation: bool = false;
+    }
+    /// Bounded typed call-hierarchy traversal. Missing on older Runners and false;
+    /// never inferred from general LSP navigation or protocol version.
+    LspCallHierarchy => RUNNER_CAPABILITY_LSP_CALL_HIERARCHY("lsp_call_hierarchy"),
+    v2_baseline = true {
+        /// The Runner implements the bounded typed call-hierarchy operation.
+        #[serde(default)]
+        pub lsp_call_hierarchy: bool = false;
+    }
+    ProjectLifecycle => RUNNER_CAPABILITY_PROJECT_LIFECYCLE("project_lifecycle"),
+    v2_baseline = true {
+        /// Structured project enable/disable/unregister requests. Missing on older
+        /// runners and therefore fail-closed.
+        #[serde(default)]
+        pub project_lifecycle: bool = false;
+    }
+    /// Resolve an absolute canonical project path to an existing registration or
+    /// atomically persist a new project registration record. Missing on older runners and
+    /// therefore fails closed.
+    ProjectPathRegistration => RUNNER_CAPABILITY_PROJECT_PATH_REGISTRATION("project_path_registration"),
+    v2_baseline = true {
+        /// The Runner can resolve an absolute canonical project path or
+        /// atomically register it. Missing on older runners and therefore
+        /// fail-closed.
+        #[serde(default)]
+        pub project_path_registration: bool = false;
+    }
+    /// Runner-owned managed detached-worktree bootstrap. The Runner resolves the
+    /// source/ref and owns the filesystem destination; missing on older Runners is
+    /// false and is never inferred from generic Git or path-registration support.
+    ManagedWorktree => RUNNER_CAPABILITY_MANAGED_WORKTREE("managed_worktree"),
+    v2_baseline = false {
+        /// Closed Runner-owned worktree/bootstrap mutation capability. Older
+        /// Runners fail closed instead of falling back to Server-side Git/path work.
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub managed_worktree: bool = false;
+    }
+    /// Runner-global Skill catalog observation, exact resolution, and source-pinned read.
+    /// Configured and managed sources share this cross-process runtime capability.
+    SkillRuntime => RUNNER_CAPABILITY_SKILL_RUNTIME("skill_runtime"),
+    v2_baseline = false {
+        /// Runner-local Skill catalog observation, exact resolution, and source-pinned reads.
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub skill_runtime: bool = false;
+    }
+    /// Runner-owned package-context execution for trusted Skill resources.
+    /// Missing on older Runners is false; never infer it from generic process support.
+    SkillResourceExecution => RUNNER_CAPABILITY_SKILL_RESOURCE_EXECUTION("skill_resource_execution"),
+    v2_baseline = false {
+        /// Runner-owned trusted Skill package execution context.
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub skill_resource_execution: bool = false;
+    }
+    /// Runner-global managed Skill lifecycle and revision inventory. This is an
+    /// independent consequential capability and is never inferred from Skill runtime access.
+    SkillManagement => RUNNER_CAPABILITY_SKILL_MANAGEMENT("skill_management"),
+    v2_baseline = false {
+        /// Managed Skill lifecycle/revision management. Independent from runtime reads.
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub skill_management: bool = false;
+    }
+    /// Runner-owned Browser observation. Missing on older Runners is false;
+    /// never inferred from OS, protocol, shell or Computer capabilities.
+    BrowserObserve => RUNNER_CAPABILITY_BROWSER_OBSERVE("browser_observe"),
+    v2_baseline = false {
+        /// Runner-owned Browser observation. Missing on older Runners is false and
+        /// never follows from OS/protocol/shell/Computer capabilities.
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub browser_observe: bool = false;
+    }
+    /// Runner-owned Browser effects against opaque Browser/Page/Element identities.
+    /// Missing on older Runners is false and is never inferred from Browser observation,
+    /// Computer control, OS identity, protocol generation, or shell support.
+    BrowserControl => RUNNER_CAPABILITY_BROWSER_CONTROL("browser_control"),
+    v2_baseline = false {
+        /// Runner-owned Browser control excluding process launch.
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub browser_control: bool = false;
+    }
+    /// The Runner projects exact per-element Browser actions from the current semantic
+    /// snapshot and enforces the same action admission before each element effect.
+    /// Missing on older Runners is false and is never inferred from browser_control.
+    BrowserElementActionAdmission => RUNNER_CAPABILITY_BROWSER_ELEMENT_ACTION_ADMISSION("browser_element_action_admission"),
+    v2_baseline = false {
+        /// Exact snapshot-advertised element action admission. Missing on older Runners
+        /// is false and never follows from generic Browser observation/control.
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub browser_element_action_admission: bool = false;
+    }
+    /// Runner-owned creation of an ephemeral Chromium-family Browser runtime. Missing
+    /// on older Runners is false and is never inferred from executable/platform facts.
+    BrowserLaunch => RUNNER_CAPABILITY_BROWSER_LAUNCH("browser_launch"),
+    v2_baseline = false {
+        /// Runner-owned launch of ephemeral Chromium-family runtimes.
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub browser_launch: bool = false;
+    }
+    ComputerObserve => RUNNER_CAPABILITY_COMPUTER_OBSERVE("computer_observe"),
+    v2_baseline = false {
+        /// Native read-only desktop/window observation. Missing on older Runners
+        /// and therefore fail-closed.
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub computer_observe: bool = false;
+    }
+    /// Bounded installed-application discovery. Missing on older Runners is false
+    /// and is never inferred from desktop observation or launch authority.
+    ComputerApplicationDiscovery => RUNNER_CAPABILITY_COMPUTER_APPLICATION_DISCOVERY("computer_application_discovery"),
+    v2_baseline = false {
+        /// The Runner can return a bounded process-local installed-application list.
+        /// Missing on older Runners is false and never follows from observation.
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub computer_application_discovery: bool = false;
+    }
+    /// Exact native application launch for a fresh opaque discovery handle. Missing
+    /// on older Runners is false and is never inferred from discovery or control.
+    ComputerApplicationLaunch => RUNNER_CAPABILITY_COMPUTER_APPLICATION_LAUNCH("computer_application_launch"),
+    v2_baseline = false {
+        /// The Runner can submit an exact native launch for a fresh application_id.
+        /// Missing on older Runners is false and never follows from discovery/control.
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub computer_application_launch: bool = false;
+    }
+    /// Exact full-display discovery and snapshot observation. Missing on older
+    /// Runners is false and is never inferred from window observation, region
+    /// snapshots, or platform identity.
+    ComputerDisplayObserve => RUNNER_CAPABILITY_COMPUTER_DISPLAY_OBSERVE("computer_display_observe"),
+    v2_baseline = false {
+        /// The Runner can discover exact native displays and snapshot one fresh
+        /// opaque display handle. Missing is false and never follows from window observation.
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub computer_display_observe: bool = false;
+    }
+    /// Snapshot-fenced exact coordinate pointer input. Missing on older Runners is
+    /// false and is never inferred from control, display observation, or platform.
+    ComputerPointerControl => RUNNER_CAPABILITY_COMPUTER_POINTER_CONTROL("computer_pointer_control"),
+    v2_baseline = false {
+        /// The Runner implements snapshot-fenced exact coordinate pointer input.
+        /// Missing on older Runners is false and never follows from other Computer capabilities.
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub computer_pointer_control: bool = false;
+    }
+    /// Native bounded Unicode-text clipboard observation. Missing is false and is never
+    /// inferred from Computer read/control/platform capabilities.
+    ComputerClipboardRead => RUNNER_CAPABILITY_COMPUTER_CLIPBOARD_READ("computer_clipboard_read"),
+    v2_baseline = false {
+        /// The Runner supports bounded native Unicode-text clipboard observation.
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub computer_clipboard_read: bool = false;
+    }
+    /// Native bounded Unicode-text clipboard replacement. Missing is false and is never
+    /// inferred from clipboard read or other Computer effect capabilities.
+    ComputerClipboardWrite => RUNNER_CAPABILITY_COMPUTER_CLIPBOARD_WRITE("computer_clipboard_write"),
+    v2_baseline = false {
+        /// The Runner supports bounded native Unicode-text clipboard replacement.
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub computer_clipboard_write: bool = false;
+    }
+    /// Bounded surface-relative region/downscale snapshot requests. Missing on older
+    /// Runners is false and is never inferred from whole-window observation support.
+    ComputerSnapshotRegion => RUNNER_CAPABILITY_COMPUTER_SNAPSHOT_REGION("computer_snapshot_region"),
+    v2_baseline = false {
+        /// The Runner supports bounded region/max-output snapshot transforms while
+        /// preserving the existing whole-window snapshot wire for older Runners.
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub computer_snapshot_region: bool = false;
+    }
+    /// Native read-only semantic accessibility inspection. Missing on older Runners
+    /// is false and is never inferred from screenshot/window observation.
+    ComputerAccessibilityObserve => RUNNER_CAPABILITY_COMPUTER_ACCESSIBILITY_OBSERVE("computer_accessibility_observe"),
+    v2_baseline = false {
+        /// Native read-only semantic accessibility inspection. Missing on older
+        /// Runners is false; future computer control requires a distinct capability.
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub computer_accessibility_observe: bool = false;
+    }
+    /// Native read-only normalized state for one exact observed Accessibility element.
+    /// Missing on older Runners is false and is never inferred from tree observation.
+    ComputerElementState => RUNNER_CAPABILITY_COMPUTER_ELEMENT_STATE("computer_element_state"),
+    v2_baseline = false {
+        /// The Runner can revalidate one exact element and return normalized read-only
+        /// affordances without exposing its true value. Missing on older Runners is false.
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub computer_element_state: bool = false;
+    }
+    /// Native bounded accessibility control. Missing on older Runners is false and
+    /// is never inferred from either observation capability.
+    ComputerControl => RUNNER_CAPABILITY_COMPUTER_CONTROL("computer_control"),
+    v2_baseline = false {
+        /// Native bounded accessibility control. Missing on older Runners is false
+        /// and never follows from desktop or accessibility observation authority.
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub computer_control: bool = false;
+    }
+    /// Native semantic scroll-to-visible on one exact observed Accessibility element.
+    /// Missing on older Runners is false and is never inferred from computer_control.
+    ComputerScrollToElement => RUNNER_CAPABILITY_COMPUTER_SCROLL_TO_ELEMENT("computer_scroll_to_element"),
+    v2_baseline = false {
+        /// The Runner can semantically scroll one exact observed Accessibility element
+        /// into view. Missing on older Runners is false and never follows from control.
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub computer_scroll_to_element: bool = false;
+    }
+    /// Native closed-vocabulary key input to one exact already-focused window surface.
+    /// Missing on older Runners is false and is never inferred from computer_control.
+    ComputerKeyInput => RUNNER_CAPABILITY_COMPUTER_KEY_INPUT("computer_key_input"),
+    v2_baseline = false {
+        /// The Runner can post one closed navigation/action key to one exact already-focused
+        /// native window. Missing on older Runners is false and never follows from control.
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub computer_key_input: bool = false;
+    }
+    /// Native exact-window activation/raise. Missing on older Runners is false and
+    /// is never inferred from accessibility control, observation, or platform.
+    ComputerWindowActivate => RUNNER_CAPABILITY_COMPUTER_WINDOW_ACTIVATE("computer_window_activate"),
+    v2_baseline = false {
+        /// The Runner can activate/raise one exact previously observed native window.
+        /// Missing on older Runners is false and never follows from computer_control.
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub computer_window_activate: bool = false;
+    }
+    /// Native bounded Accessibility text input. Missing on older Runners is false
+    /// and is never inferred from accessibility observation or computer control.
+    ComputerTextInput => RUNNER_CAPABILITY_COMPUTER_TEXT_INPUT("computer_text_input"),
+    v2_baseline = false {
+        /// The Runner implements bounded native Accessibility text input. Missing on
+        /// older Runners is false and never follows from computer_control.
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub computer_text_input: bool = false;
+    }
+    /// Same-process async job recovery across server restarts and transport
+    /// reconnects. Missing on older Runners defaults to false.
+    JobStateReconciliation => RUNNER_CAPABILITY_JOB_STATE_RECONCILIATION("job_state_reconciliation"),
+    v2_baseline = false {
+        /// Retains bounded active/recent terminal job snapshots and submits a
+        /// complete active inventory at register/re-register time.
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub job_state_reconciliation: bool = false;
+    }
+    CodingAgentRuns => RUNNER_CAPABILITY_CODING_AGENT_RUNS("coding_agent_runs"),
+    v2_baseline = false {
+        /// Runner-owned ACP coding-agent execution with closed typed Run lifecycle.
+        /// Optional and never inferred from shell/MCP.
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub coding_agent_runs: bool = false;
+    }
+    /// Runner-owned native Tool Plugin gateway and explicit dynamic reload support.
+    /// Missing on older Runners is false and is never inferred from MCP inventory.
+    NativeToolPlugins => RUNNER_CAPABILITY_NATIVE_TOOL_PLUGINS("native_tool_plugins"),
+    v2_baseline = false {
+        /// Runner-owned native Tool Plugin lifecycle and typed Plugin gateway.
+        /// Registration carries capability only; provider/tool inventory remains
+        /// Runner-owned and is observed through the exact `plugin_tool` gateway.
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub native_tool_plugins: bool = false;
+    }
+    /// Runner-local durable managed SSH resource registry. Missing on older Runners
+    /// is false and is never inferred from one-shot or persistent SSH execution.
+    ManagedSshResources => RUNNER_CAPABILITY_MANAGED_SSH_RESOURCES("managed_ssh_resources"),
+    v2_baseline = false {
+        /// Runner-local managed SSH resource list/register/remove lifecycle.
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub managed_ssh_resources: bool = false;
+    }
+    /// First-class read/check and fenced activation of the exact Runner process's
+    /// startup-bound configuration path. Missing on older Runners is false; Servers
+    /// must never fall back to PID/signal emulation for this operation.
+    RunnerConfigControl => RUNNER_CAPABILITY_RUNNER_CONFIG_CONTROL("runner_config_control"),
+    v2_baseline = false {
+        /// First-class bounded config check/reload implemented by this Runner
+        /// process. Missing on older Runners is false and is never inferred from OS,
+        /// transport, Plugin support, or protocol generation.
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub runner_config_control: bool = false;
+    }
+    /// Narrow Runner-owned observation of configured instruction files. Missing on older Runners is false.
+    InstructionRuntime => RUNNER_CAPABILITY_INSTRUCTION_RUNTIME("instruction_runtime"),
+    v2_baseline = false {
+        /// Runner-owned configured instruction snapshot support. Missing on older Runners is false.
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub instruction_runtime: bool = false;
+    }
 }
 
 /// Bounded, non-secret status for the Runner's active configuration generation.
@@ -1065,87 +1165,6 @@ impl RunnerConfigOperationResponse {
             }
         }
         Ok(())
-    }
-}
-
-impl Default for RunnerCapabilities {
-    fn default() -> Self {
-        Self {
-            shell: true,
-            explicit_shell_selection: false,
-            bash_login_shell: false,
-            file_read: false,
-            file_write: false,
-            artifact_export_chunk_read: false,
-            artifact_export_streaming_metadata: false,
-            structured_file_delete: false,
-            apply_text_edit_occurrence: false,
-            apply_text_edit_local_guard_without_sha: false,
-            apply_text_edit_line_scope: false,
-            apply_text_edit_range: false,
-            apply_text_edit_expected_match_count: false,
-            apply_patch: false,
-            apply_patch_match_metadata: false,
-            apply_patch_matching_mode: false,
-            git: false,
-            jobs: false,
-            async_jobs: false,
-            async_shell_jobs: false,
-            ssh_shell: false,
-            persistent_shell: false,
-            ssh_persistent_shell: false,
-            structured_validation_argv: false,
-            structured_cargo_test_count_assertion: false,
-            structured_cargo_test_execution_policy: false,
-            structured_cargo_test_lib: false,
-            structured_cargo_check_packages: false,
-            structured_go_test_json: false,
-            project_validation_v1: false,
-            project_validation_package_scope_v1: false,
-            structured_go_test_tool: false,
-            structured_go_test_packages: false,
-            structured_process_argv: false,
-            structured_script_payload: false,
-            structured_script_javascript: false,
-            structured_script_typescript: false,
-            structured_script_python: false,
-            internal_posix_script: false,
-            structured_execution_jobs: false,
-            detached_process_jobs: false,
-            lsp_read_only_navigation: false,
-            lsp_call_hierarchy: false,
-            project_lifecycle: false,
-            project_path_registration: false,
-            managed_worktree: false,
-            skill_runtime: false,
-            skill_resource_execution: false,
-            skill_management: false,
-            browser_observe: false,
-            browser_control: false,
-            browser_element_action_admission: false,
-            browser_launch: false,
-            computer_observe: false,
-            computer_application_discovery: false,
-            computer_application_launch: false,
-            computer_snapshot_region: false,
-            computer_display_observe: false,
-            computer_pointer_control: false,
-            computer_clipboard_read: false,
-            computer_clipboard_write: false,
-            computer_accessibility_observe: false,
-            computer_element_state: false,
-            computer_control: false,
-            computer_scroll_to_element: false,
-            computer_key_input: false,
-            computer_window_activate: false,
-            computer_text_input: false,
-            job_state_reconciliation: false,
-            coding_agent_runs: false,
-            native_tool_plugins: false,
-            managed_ssh_resources: false,
-            runner_config_control: false,
-            instruction_runtime: false,
-        }
     }
 }
 
@@ -4001,85 +4020,6 @@ mod envelope_tests {
     #[test]
     fn runner_protocol_compatibility_literals_are_exact() {
         assert_eq!(RUNNER_QUIC_ALPN_V1, "webcodex-runner/1");
-        assert_eq!(
-            RUNNER_CAPABILITY_NAMES,
-            &[
-                "shell",
-                "explicit_shell_selection",
-                "bash_login_shell",
-                "file_read",
-                "file_write",
-                "artifact_export_chunk_read",
-                "artifact_export_streaming_metadata",
-                "structured_file_delete",
-                "apply_text_edit_occurrence",
-                "apply_text_edit_local_guard_without_sha",
-                "apply_text_edit_line_scope",
-                "apply_text_edit_range",
-                "apply_text_edit_expected_match_count",
-                "apply_patch",
-                "apply_patch_match_metadata",
-                "apply_patch_matching_mode",
-                "git",
-                "jobs",
-                "async_jobs",
-                "async_shell_jobs",
-                "ssh_shell",
-                "persistent_shell",
-                "ssh_persistent_shell",
-                "structured_validation_argv",
-                "structured_cargo_test_count_assertion",
-                "structured_cargo_test_execution_policy",
-                "structured_cargo_test_lib",
-                "structured_cargo_check_packages",
-                "project_validation_v1",
-                "project_validation_package_scope_v1",
-                "structured_go_test_json",
-                "structured_go_test_tool",
-                "structured_go_test_packages",
-                "structured_process_argv",
-                "structured_script_payload",
-                "structured_script_python",
-                "structured_script_javascript",
-                "structured_script_typescript",
-                "internal_posix_script",
-                "structured_execution_jobs",
-                "detached_process_jobs",
-                "lsp_read_only_navigation",
-                "lsp_call_hierarchy",
-                "project_lifecycle",
-                "project_path_registration",
-                "managed_worktree",
-                "skill_runtime",
-                "skill_resource_execution",
-                "skill_management",
-                "browser_observe",
-                "browser_control",
-                "browser_element_action_admission",
-                "browser_launch",
-                "computer_observe",
-                "computer_application_discovery",
-                "computer_application_launch",
-                "computer_display_observe",
-                "computer_pointer_control",
-                "computer_clipboard_read",
-                "computer_clipboard_write",
-                "computer_snapshot_region",
-                "computer_accessibility_observe",
-                "computer_element_state",
-                "job_state_reconciliation",
-                "coding_agent_runs",
-                "native_tool_plugins",
-                "managed_ssh_resources",
-                "runner_config_control",
-                "instruction_runtime",
-                "computer_control",
-                "computer_scroll_to_element",
-                "computer_key_input",
-                "computer_window_activate",
-                "computer_text_input",
-            ]
-        );
     }
 
     #[test]

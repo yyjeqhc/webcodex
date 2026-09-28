@@ -1221,7 +1221,7 @@ pub async fn verify_same_installed_package(
             != candidate
                 .artifacts
                 .get(name)
-                .ok_or_else(|| SetupDiagnostic::io())?
+                .ok_or_else(SetupDiagnostic::io)?
                 .sha256
         {
             return Err(error(
@@ -1716,7 +1716,7 @@ impl NativeEnvironment {
         journal: &mut UpgradeJournal,
     ) -> SetupResultValue<()> {
         journal.phase = Phase::Verifying;
-        save(store, &journal)?;
+        save(store, journal)?;
         for backup in &journal.programs {
             let artifact = &journal.candidate.artifacts[&backup.name];
             if digest(&backup.target)? != artifact.sha256 {
@@ -1761,7 +1761,7 @@ impl NativeEnvironment {
                     .any(|spec| spec.component == component)
             {
                 journal.replacement_started = true;
-                save(store, &journal)?;
+                save(store, journal)?;
             }
             for spec in journal
                 .services

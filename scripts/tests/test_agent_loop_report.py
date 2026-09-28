@@ -713,10 +713,50 @@ class AgentLoopReportTests(unittest.TestCase):
         self.assertEqual(scheduling["readiness_any"], 1)
         self.assertEqual(scheduling["readiness_all"], 2)
         self.assertEqual(scheduling["deadline_then_nearby_rewait"], 1)
+        self.assertEqual(
+            scheduling["nearby_rewait_max_gap_ms"],
+            report.JOB_SCHEDULING_NEARBY_REWAIT_MAX_GAP_MS,
+        )
         self.assertEqual(scheduling["readiness_waited_ms"]["samples"], 3)
         self.assertFalse(scheduling["same_model_turn_proven"])
         self.assertFalse(scheduling["same_blocked_set_proven"])
         self.assertTrue(result["availability"]["job_scheduling"]["available"])
+
+    def test_job_scheduling_nearby_rewait_excludes_far_serial_followup(self) -> None:
+        def readiness(state: str) -> dict[str, object]:
+            return {
+                "mode": "all",
+                "requested_jobs": 1,
+                "unique_jobs": 1,
+                "waited_ms": 45_000,
+                "wait_state": state,
+                "ready_count": int(state == "ready"),
+                "pending_count": int(state != "ready"),
+            }
+
+        self.insert_event(
+            "deadline",
+            tool="wait_for_job_readiness",
+            trace_id="deadline",
+            started=100,
+            handed=200,
+            readiness=readiness("deadline"),
+        )
+        self.insert_event(
+            "later",
+            tool="wait_for_job_readiness",
+            trace_id="later",
+            previous_trace_id="deadline",
+            started=200 + report.JOB_SCHEDULING_NEARBY_REWAIT_MAX_GAP_MS + 1,
+            handed=200 + report.JOB_SCHEDULING_NEARBY_REWAIT_MAX_GAP_MS + 10,
+            transition="serial",
+            readiness=readiness("ready"),
+        )
+
+        scheduling = self.summarize(variant="host_code_mode")["job_scheduling"]
+        self.assertEqual(scheduling["deadline_then_nearby_rewait"], 0)
+        self.assertFalse(scheduling["same_model_turn_proven"])
+        self.assertFalse(scheduling["same_blocked_set_proven"])
 
     def test_job_scheduling_missing_readiness_telemetry_stays_unknown(self) -> None:
         self.insert_event(

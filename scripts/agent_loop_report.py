@@ -786,6 +786,9 @@ def _summarize_job_convergence(selected: list[dict[str, Any]], context: list[dic
 
 
 
+JOB_SCHEDULING_NEARBY_REWAIT_MAX_GAP_MS = 120_000
+
+
 _JOB_SCHEDULING_INDEPENDENT_TOOLS = frozenset(
     {
         "read_files",
@@ -869,6 +872,7 @@ def _summarize_job_scheduling(
             "readiness_any": None,
             "readiness_all": None,
             "deadline_then_nearby_rewait": None,
+            "nearby_rewait_max_gap_ms": JOB_SCHEDULING_NEARBY_REWAIT_MAX_GAP_MS,
             "readiness_waited_ms": _metric_distribution([]),
             "same_model_turn_proven": False,
             "same_blocked_set_proven": False,
@@ -960,7 +964,14 @@ def _summarize_job_scheduling(
             and (previous_readiness := _readiness_facts(previous)) is not None
             and previous_readiness["wait_state"] == "deadline"
         ):
-            deadline_rewait_observed += 1
+            started = row.get("request_observed_at_ms")
+            handed = previous.get("response_handed_at_ms")
+            if (
+                isinstance(started, int)
+                and isinstance(handed, int)
+                and 0 <= started - handed <= JOB_SCHEDULING_NEARBY_REWAIT_MAX_GAP_MS
+            ):
+                deadline_rewait_observed += 1
 
     chain_complete = chain_missing == 0
     pending_handoffs = job_convergence.get("pending_handoff_count")
@@ -982,6 +993,7 @@ def _summarize_job_scheduling(
         "readiness_any": any_observed if readiness_complete else None,
         "readiness_all": all_observed if readiness_complete else None,
         "deadline_then_nearby_rewait": deadline_rewait_observed if chain_complete else None,
+        "nearby_rewait_max_gap_ms": JOB_SCHEDULING_NEARBY_REWAIT_MAX_GAP_MS,
         "readiness_waited_ms": _metric_distribution(
             waits, missing=len(readiness_rows) - len(measured)
         ),
@@ -1793,6 +1805,8 @@ def summarize(*, trace_root: Path | None, audit_db: Path | None, workflow_sessio
             "Runner request counts are observed enqueue events, not an asserted complete total",
             "repair_turns come only from the bounded run annotation sidecar and are never inferred from model text or private reasoning",
             "task_wall_time_ms is reported only when the sidecar supplies explicit independent task start/end timestamps",
+            "job_scheduling.pending_then_independent_work counts only exact immediate serial follow-up calls from a conservative read/review allowlist; generic process/script work is not inferred to be independent",
+            "job_scheduling.deadline_then_nearby_rewait counts only exact serial readiness adjacency within the reported nearby_rewait_max_gap_ms; it does not prove one Host turn or the same blocked Job set",
         ],
     }
 

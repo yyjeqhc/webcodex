@@ -112,10 +112,12 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 super::ToolActivityPresentation::Support,
                 super::ToolActivityInteraction::Meaningful,
             ),
-            "Canonical bootstrap for ordinary coding/review. Prefer project_ref (principal-scoped; reauthorizes Project), project or client_id+path. Omit session_id for a fresh Workflow Session; does not imply a fresh model context. Exact resume requires an active accessible Session; never guesses prior Session. goal_context reuses one exact Goal; no authority. Read/follow AGENTS.md/CLAUDE.md or repository rules: request _wc.context=[\"project.instructions\"]; Runtime re-observes instruction files. Available complete body satisfies reading; do not immediately reread. For fresh or uncertain model context, request webcodex.workflow via _wc.context; reuse retained guidance. Reuse successful workspace branch/HEAD/status, available semantic navigation, sufficient startup Skills/Plugins; refresh stale/incomplete facts or for detail/fences. guidance_profile guides; include_extension_catalog controls catalogs. mode=worktree creates an isolated worktree from an exact Git base with Project authority; checkout does not require Git.",
-        ).with_gpt_action_description("Start/resume exact Project work. Prefer project_ref; canonical id or client_id+path also work. Exact resume accepts session_ref/session_id; sparse goal_context supports explicit Goal reuse. MCP context sidecars are unavailable here."),
+            "Canonical bootstrap for ordinary coding/review. Prefer principal-scoped project_ref; project or client_id+path. project_ref reauthorizes Project. mode=worktree isolated worktree: project reauthorizes source, resolves an exact Git base with Project authority, and returns managed Project/ref plus a fresh Workflow Session; never retarget source Session or guess paths. Omit session_id for fresh work; this does not imply a fresh model context. Exact resume needs an active accessible Session and never guesses prior Session. Read AGENTS.md/CLAUDE.md via _wc.context=[\"project.instructions\"]; Runtime re-observes instruction files; do not immediately reread complete bodies. For fresh or uncertain model context request webcodex.workflow. Reuse successful workspace state, available semantic navigation, sufficient startup Skills/Plugins; refresh stale facts. goal_context has no authority. guidance_profile guides; include_extension_catalog controls Skills/Plugins. checkout does not require Git.",
+        )
+        .with_gpt_action_description("Start/resume exact Project work. Prefer project_ref; canonical id or client_id+path also work. Exact resume accepts session_ref/session_id; sparse goal_context supports explicit Goal reuse. MCP context sidecars are unavailable here."),
         10,
-    ),    requires_explicit_business_session(model_spec(
+    ),
+    requires_explicit_business_session(model_spec(
         def(
             "finish_coding_task",
             super::ToolAuditPolicy::TYPED_CANONICAL,

@@ -423,26 +423,38 @@ workflow engine directly, with diagnostic projection controls available only to
 tests rather than as a Session-selection or compatibility surface.
 
 `work_on_project` also owns the optional managed-worktree bootstrap without
-creating a new authority or Session concept. On a fresh `client_id + path` call
-with `mode=worktree`, `path` is a source checkout: the selected Runner validates
-the source against its filesystem policy, resolves `base_ref` (or the source
-`HEAD`) to an exact commit, chooses and creates an isolated detached worktree,
-registers that worktree as an ordinary runtime Project, and only then creates the
-Workflow Session on that final Project. The Server never constructs a Runner-host
-worktree path or interprets the Git ref. `work_on_project` hides Project
-registration and managed-worktree bootstrap from the ordinary model workflow;
-Project authority itself is not removed.
+creating a new authority or Session concept. The canonical model-facing form is
+a fresh `project + mode=worktree` call. The Server first resolves and
+reauthorizes that registered source Project, derives its authoritative
+Runner/source checkout/root fingerprint, and passes that identity fence to the
+Runner. The Runner re-resolves the exact registered source, validates that the
+identity still matches, resolves `base_ref` (or the source `HEAD`) to an exact
+commit, derives its internal managed namespace from the source checkout,
+creates an isolated detached worktree, registers that worktree as an ordinary
+runtime Project, and only then creates the Workflow Session on that final
+Project. The model never selects the managed destination and does not need to
+reconstruct `client_id` or an absolute source path.
 
-An explicit `session_id` in worktree mode resumes only its already-authorized
-final managed Project. The Runner re-observes that registered worktree and its
-source provenance instead of creating another worktree; a provided `base_ref`
-must still resolve to the stored exact base commit. `recording_session_id`,
-`ClientWindow`, ACK metadata, source-path knowledge, and managed operation ids do
-not select or authorize the Project. Finishing or closing the Workflow Session
-does not remove the managed worktree or unregister its Project; later review,
-commit, push, PR, handoff, and investigation remain possible until a future
-explicit lifecycle operation says otherwise.
+`client_id + path + mode=worktree` remains a compatibility/bootstrap form.
+Its source path still passes the ordinary Runner filesystem/path-authority
+checks and it converges on the same Runner-owned managed-worktree manager. The
+managed namespace is an internal authority for provenance-bound
+creation/recovery only; it is not added to generic allowed roots and cannot be
+used to register arbitrary sibling paths.
 
+Creating a managed Project from a source Project is a Project transition, not a
+Session retarget. A source Project's `session_id` therefore fails closed with
+the ordinary exact-Project Session mismatch before managed creation. The
+caller continues with the returned managed Project/ref and its new Workflow
+Session. The compatibility path form may exactly resume an already-authorized
+managed Project; in that case the Runner re-observes the registered worktree
+and source provenance rather than creating another worktree, and a provided
+`base_ref` must still resolve to the stored exact base commit.
+`recording_session_id`, `ClientWindow`, ACK metadata, source-path knowledge,
+and managed operation ids do not select or authorize the Project. Finishing or
+closing the Workflow Session does not remove the managed worktree or unregister
+its Project; later review, commit, push, PR, handoff, and investigation remain
+possible until a future explicit lifecycle operation says otherwise.
 `work_on_project` deliberately does not use Workflow Session identity, transport
 identity, a client-window key, credentials, project identity, or Server lifetime
 as evidence that the current model still retains static bootstrap content. The

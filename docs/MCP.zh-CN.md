@@ -229,7 +229,7 @@ work_on_project
 → finish_coding_task
 ```
 
-`work_on_project` 在普通 registered Project 上启动或精确恢复 Workflow Session。用户要求隔离时，`work_on_project(mode=worktree)` 才让 Runner 创建 canonical managed worktree，并把该 worktree 注册为另一个普通 Project；没有隔离要求时，本地 `share` / `run` 直接使用 setup 已注册的那一个 Project。
+`work_on_project` 在普通 registered Project 上启动或精确恢复 Workflow Session。用户要求隔离且已经有 registered Project 时，使用 `work_on_project(project=..., mode=worktree)`：Server 先重新授权 source Project，Runner 再派生内部 managed placement，并把生成的 worktree 注册为另一个普通 Project。模型不需要重新推导 Runner path，也不能选择 managed destination。`client_id + path + mode=worktree` 只保留为 compatibility/bootstrap 入口，并继续接受普通 path authority 检查；没有隔离要求时，本地 `share` / `run` 直接使用 setup 已注册的 Project。
 
 `present_work_result` 是 substantial coding 的一次性可视化层，不是 correctness primitive。挂载后，卡片通过 App-only state read 持续显示 Progress、Workspace、Validation 与 Review，无需模型轮询。`finish_coding_task` 在 non-blocking closeout 时把 eligible final changes seal 到 presentation cache，同一张卡随后发现这份 immutable snapshot，并按文件 lazy 展开 diff。tiny/read-only 工作应跳过这张卡，同一 Session 不应重复 presentation。
 

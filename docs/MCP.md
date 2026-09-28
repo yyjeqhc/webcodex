@@ -290,7 +290,7 @@ work_on_project
 → finish_coding_task
 ```
 
-`work_on_project` starts or resumes an explicit Workflow Session on an ordinary registered Project. If the user requests isolation, `work_on_project(mode=worktree)` asks the Runner to create its canonical managed worktree and registers that worktree as another ordinary Project. Without that request, local `share`/`run` work directly on the one Project already registered by setup.
+`work_on_project` starts or resumes an explicit Workflow Session on an ordinary registered Project. If the user requests isolation and a registered Project is already known, use `work_on_project(project=..., mode=worktree)`: the Server reauthorizes that source Project, the Runner derives its internal managed placement, and the resulting worktree is registered as another ordinary Project. The model does not reconstruct a Runner path or choose the managed destination. `client_id + path + mode=worktree` remains a compatibility/bootstrap form and keeps ordinary path authority checks. Without an isolation request, local `share`/`run` work directly on the Project already registered by setup.
 
 `present_work_result` is a one-card presentation layer for substantial coding, not a correctness primitive. Once mounted, its App-only state reads keep current progress, workspace, validation, and review visible without model polling. A non-blocking `finish_coding_task` seals eligible final changes in the presentation cache at closeout; the same card then discovers that immutable snapshot and can lazily expand per-file diffs. Tiny/read-only work should skip the card; repeated presentation of the same Session should be avoided.
 

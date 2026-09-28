@@ -319,8 +319,8 @@ fn coding_observation(
         provider_instance_id: intent.provider_instance_id.clone(),
         authority_fingerprint: intent.authority_fingerprint.clone(),
         coding_agent_intent_fingerprint: intent.coding_agent_intent_fingerprint.clone(),
-        run_state: CodingAgentRunState::from_str(run_state).expect("valid test run state"),
-        execution_state: CodingAgentExecutionState::from_str(execution_state)
+        run_state: CodingAgentRunState::from_wire(run_state).expect("valid test run state"),
+        execution_state: CodingAgentExecutionState::from_wire(execution_state)
             .expect("valid test execution state"),
         observation_revision: revision,
         terminal_stop_reason: match (run_state, execution_state) {

@@ -1314,23 +1314,27 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 schema["properties"]["output"]["properties"][key]["description"] =
                     json!(format!("{description} Empty/zero/false values are omitted on ordinary synchronous terminal success."));
             }
-            schema["allOf"] = json!([{
-                "if": {
-                    "properties": {
-                        "success": {"const":true},
-                        "output": {"not":{"required":["execution_state"]}}
+            schema["allOf"]
+                .as_array_mut()
+                .expect("wrapped output schema allOf")
+                .push(json!({
+                    "if": {
+                        "properties": {
+                            "success": {"const":true},
+                            "output": {"not":{"required":["execution_state"]}}
+                        },
+                        "required":["success", "output"]
                     },
-                    "required":["success", "output"]
-                },
-                "then": {"properties":{"output":{
-                    "required":["command_summary", "cwd", "shell"],
-                    "not":{"anyOf":[
-                        {"required":["exit_code"]}, {"required":["command_ok"]},
-                        {"required":["promoted_to_job"]}, {"required":["observation_token"]},
-                        {"required":["execution_source"]}
-                    ]}
-                }}}
-            }]);
+                    "then": {"properties":{"output":{
+                        "required":["command_summary", "cwd", "shell"],
+                        "not":{"anyOf":[
+                            {"required":["duration_ms"]}, {"required":["exit_code"]},
+                            {"required":["command_ok"]}, {"required":["promoted_to_job"]},
+                            {"required":["observation_token"]}, {"required":["executor"]},
+                            {"required":["execution_source"]}
+                        ]}
+                    }}}
+                }));
             Some(schema)
         }
         "open_session_shell"

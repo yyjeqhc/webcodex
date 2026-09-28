@@ -272,12 +272,19 @@ fn shell_sparse_schema_rejects_lifecycle_fragments() {
             "{key}"
         );
     }
-    let mut wire = serde_json::to_value(&result).unwrap();
-    wire["output"]["exit_code"] = json!(1);
-    assert!(
-        crate::tool_runtime::startup_brief::validate_schema_instance_for_test(&wire, &schema)
-            .is_err()
-    );
+    for (key, value) in [
+        ("exit_code", json!(1)),
+        ("duration_ms", json!(1)),
+        ("executor", json!("agent")),
+    ] {
+        let mut wire = serde_json::to_value(&result).unwrap();
+        wire["output"][key] = value;
+        assert!(
+            crate::tool_runtime::startup_brief::validate_schema_instance_for_test(&wire, &schema)
+                .is_err(),
+            "{key}"
+        );
+    }
 }
 
 #[test]

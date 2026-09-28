@@ -2750,8 +2750,8 @@ pub enum ToolCall {
         sync_wait_secs: Option<u64>,
     },
 
-    /// Run canonical structured `go test -json` validation with an optional
-    /// bounded project-relative package scope.
+    /// Run portable read-only project validation. The Runner resolves the nearest
+    /// supported Rust/Go recipe and admits one canonical structured validation Job.
     ProjectValidate {
         /// Exact registered Runner Project.
         project: String,

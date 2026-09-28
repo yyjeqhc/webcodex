@@ -233,6 +233,8 @@ work_on_project
 
 `present_work_result` 是 substantial coding 的一次性可视化层，不是 correctness primitive。挂载后，卡片通过 App-only state read 持续显示 Progress、Workspace、Validation 与 Review，无需模型轮询。`finish_coding_task` 在 non-blocking closeout 时把 eligible final changes seal 到 presentation cache，同一张卡随后发现这份 immutable snapshot，并按文件 lazy 展开 diff。tiny/read-only 工作应跳过这张卡，同一 Session 不应重复 presentation。
 
+普通的 portable read-only validation 优先使用 `project_validate`。它只接受封闭的 `format_check` / `check` / `test` intent，以及可选的 `auto` / `rust` / `go` adapter hint；Runner 在自己注册的真实文件系统上解析最近且无歧义的 recipe，然后进入现有 structured validation Job。Rust 分别映射到 `cargo fmt -- --check`、`cargo check --all-targets`、`cargo test`；Go 映射到 `go vet ./...` 或 `go test -json ./...`。当前检测到 Node/Python 时会返回有界的 unsupported 结果。请求不会携带 arbitrary executable、argv、shell grammar、安装动作或 source mutation；需要 ecosystem-specific 高级参数时继续使用现有 `cargo_*` / `go_test`。`project_validate` 依赖 additive `project_validation_v1` Runner capability；旧 Runner 会在 execution 前 fail closed，应先升级。
+
 Adaptive Runtime 可以把常用工具直接暴露，把 long-tail 工具通过 `call_runtime_tool` 暴露。direct/gateway 只影响 model exposure，不改变 schema validation、OAuth scope、Project authority、permission policy、Runner capability、Session fence 或 tool effects。
 
 已删除的 ProjectConnector capability 名称（`task_start`、`files_read`、`edits_apply`、`task_finish` 等）不会作为 runtime 工具的 compatibility alias 保留。请使用当前 `tools/list` / `tool_manifest` 返回的 ToolRuntime 名称。

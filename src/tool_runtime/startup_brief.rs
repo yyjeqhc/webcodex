@@ -543,6 +543,32 @@ fn workspace_projection(git: &Value) -> Value {
         .cloned()
         .or_else(|| git.get("head").filter(|value| value.is_string()).cloned())
         .unwrap_or(Value::Null);
+    let show_changes = git.get("show_changes").unwrap_or(&Value::Null);
+    let mut changed_paths = Vec::new();
+    for path in show_changes
+        .get("files")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|file| file.get("path").and_then(Value::as_str))
+    {
+        if path.len() > MAX_PATH_JSON_BYTES || changed_paths.iter().any(|seen| seen == path) {
+            continue;
+        }
+        changed_paths.push(path.to_string());
+        if changed_paths.len() == MAX_CHANGED_PATHS {
+            break;
+        }
+    }
+    let changed_paths_total = show_changes
+        .get("files_total")
+        .and_then(Value::as_u64)
+        .unwrap_or(changed_paths.len() as u64);
+    let changed_paths_truncated = show_changes
+        .get("files_truncated")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+        || changed_paths_total > changed_paths.len() as u64;
     json!({
         "status": status,
         "git_available": git_available,
@@ -557,8 +583,14 @@ fn workspace_projection(git: &Value) -> Value {
         "modified": count(counts, "modified"),
         "untracked": count(counts, "untracked"),
         "staged": count(counts, "staged"),
-        "ahead": Value::Null,
-        "behind": Value::Null,
+        "upstream_status": git.get("upstream_status").cloned().unwrap_or_else(|| json!("unobserved")),
+        "upstream_reason_code": git.get("upstream_reason_code").cloned().unwrap_or(Value::Null),
+        "upstream": git.get("upstream").cloned().unwrap_or(Value::Null),
+        "ahead": git.get("ahead").cloned().unwrap_or(Value::Null),
+        "behind": git.get("behind").cloned().unwrap_or(Value::Null),
+        "changed_paths": changed_paths,
+        "changed_paths_total": changed_paths_total,
+        "changed_paths_truncated": changed_paths_truncated,
     })
 }
 

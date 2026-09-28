@@ -945,7 +945,7 @@ impl ToolRuntime {
                 None
             }
         };
-        let (semantic_navigation, project_instructions, repository_overview, extensions) =
+        let startup_context = Box::pin(async {
             if startup.include_repository_overview {
                 let (semantic_navigation, project_instructions, repository_overview, extensions) =
                     futures_util::future::join4(
@@ -975,7 +975,20 @@ impl ToolRuntime {
                     repository_overview_not_requested(),
                     extensions,
                 )
-            };
+            }
+        });
+        // Git/runtime observations are independent of the instruction/LSP/extension
+        // probes above. Run them together so ordinary startup pays the slowest
+        // observation, not the sum of unrelated Runner round trips.
+        let git_summary = Box::pin(
+            self.coding_startup_git_summary(&resolved.resolved_id, include_recent_commits),
+        );
+        let (
+            (semantic_navigation, project_instructions, repository_overview, extensions),
+            runtime_status_result,
+            (git, git_warnings),
+        ) = futures_util::future::join3(startup_context, self.runtime_status(auth), git_summary)
+            .await;
         let semantic_navigation = serde_json::to_value(semantic_navigation).unwrap_or_else(|_| {
             json!({
                 "supported": false,
@@ -987,7 +1000,7 @@ impl ToolRuntime {
         // Coding startup always observes every fixed repository-rule
         // candidate. The complete bounded body remains only in the in-memory
         // Workflow Session; the ledger persistence path omits it.
-        let mut warnings = Vec::new();
+        let mut warnings = git_warnings;
         if repository_overview.get("status").and_then(Value::as_str) == Some("unavailable")
             && repository_overview
                 .get("reason_code")
@@ -1001,15 +1014,14 @@ impl ToolRuntime {
         }
         let mut runtime_status_call_failed = false;
         let (runtime_status, runtime_status_for_brief) = {
-            let result = self.runtime_status(auth).await;
-            if !result.success {
+            if !runtime_status_result.success {
                 runtime_status_call_failed = true;
                 warnings.push(json!({
                     "kind": "runtime_status_unavailable",
                     "message": "runtime status was unavailable during startup",
                 }));
             }
-            let raw = result.output;
+            let raw = runtime_status_result.output;
             let projected = if compact_startup {
                 compact_runtime_status(&raw)
             } else {
@@ -1024,13 +1036,6 @@ impl ToolRuntime {
         );
         let coding_agent_providers =
             project_coding_agent_providers(&resolved.config.client_id, &runtime_status_for_brief);
-        let git = self
-            .coding_startup_git_summary(
-                &resolved.resolved_id,
-                include_recent_commits,
-                &mut warnings,
-            )
-            .await;
         // Surface dirty/conflict worktree state at top-level so compact Action
         // responses that omit full git payloads still keep the warning reason.
         if !git.is_null() {
@@ -2283,8 +2288,8 @@ impl ToolRuntime {
         &self,
         project: &str,
         include_recent_commits: bool,
-        warnings: &mut Vec<Value>,
-    ) -> Value {
+    ) -> (Value, Vec<Value>) {
+        let mut warnings = Vec::new();
         let mut output = json!({
             "available": false,
             "branch": Value::Null,
@@ -2314,6 +2319,23 @@ impl ToolRuntime {
             output["branch"] = result.output.get("branch").cloned().unwrap_or(Value::Null);
             output["head"] = result.output.get("head").cloned().unwrap_or(Value::Null);
             output["clean"] = result.output.get("clean").cloned().unwrap_or(Value::Null);
+            output["upstream_status"] = result
+                .output
+                .get("upstream_status")
+                .cloned()
+                .unwrap_or_else(|| json!("unobserved"));
+            output["upstream_reason_code"] = result
+                .output
+                .get("upstream_reason_code")
+                .cloned()
+                .unwrap_or(Value::Null);
+            output["upstream"] = result
+                .output
+                .get("upstream")
+                .cloned()
+                .unwrap_or(Value::Null);
+            output["ahead"] = result.output.get("ahead").cloned().unwrap_or(Value::Null);
+            output["behind"] = result.output.get("behind").cloned().unwrap_or(Value::Null);
             output["non_git_project"] = result
                 .output
                 .get("non_git_project")
@@ -2361,7 +2383,7 @@ impl ToolRuntime {
             object.remove("recent_commits");
         }
 
-        output
+        (output, warnings)
     }
 
     /// Deterministic repository structure overview for the coding startup
@@ -2585,6 +2607,22 @@ struct WorkOnProjectWorkspaceProjection {
     head: WorkOnProjectRequiredNullable<String>,
     clean: WorkOnProjectRequiredNullable<bool>,
     conflicts: u64,
+    #[serde(default)]
+    upstream_status: Option<String>,
+    #[serde(default)]
+    upstream_reason_code: Option<String>,
+    #[serde(default)]
+    upstream: Option<String>,
+    #[serde(default)]
+    ahead: Option<u64>,
+    #[serde(default)]
+    behind: Option<u64>,
+    #[serde(default)]
+    changed_paths: Vec<String>,
+    #[serde(default)]
+    changed_paths_total: u64,
+    #[serde(default)]
+    changed_paths_truncated: bool,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -2684,6 +2722,14 @@ fn sparse_work_on_project_workspace(workspace: WorkOnProjectWorkspaceProjection)
         head,
         clean,
         conflicts,
+        upstream_status,
+        upstream_reason_code,
+        upstream,
+        ahead,
+        behind,
+        changed_paths,
+        changed_paths_total,
+        changed_paths_truncated,
     } = workspace;
     let status_unavailable = status == "unavailable";
     let mut projected = json!({
@@ -2701,6 +2747,33 @@ fn sparse_work_on_project_workspace(workspace: WorkOnProjectWorkspaceProjection)
     }
     if let Some(head) = head.0 {
         projected["head"] = json!(head);
+    }
+    if let Some(upstream_status) = upstream_status.filter(|status| status != "unobserved") {
+        projected["upstream_status"] = json!(upstream_status);
+    }
+    if let Some(upstream_reason_code) = upstream_reason_code {
+        projected["upstream_reason_code"] = json!(upstream_reason_code);
+    }
+    if let Some(upstream) = upstream {
+        projected["upstream"] = json!(upstream);
+    }
+    if let Some(ahead) = ahead {
+        projected["ahead"] = json!(ahead);
+    }
+    if let Some(behind) = behind {
+        projected["behind"] = json!(behind);
+    }
+    if !changed_paths.is_empty() {
+        projected["changed_paths"] = json!(changed_paths);
+        projected["changed_paths_total"] = json!(changed_paths_total.max(
+            projected["changed_paths"]
+                .as_array()
+                .map(Vec::len)
+                .unwrap_or(0) as u64
+        ));
+        if changed_paths_truncated {
+            projected["changed_paths_truncated"] = json!(true);
+        }
     }
     if status_unavailable {
         if let Some(clean) = clean.0 {

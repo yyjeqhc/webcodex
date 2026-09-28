@@ -486,8 +486,14 @@ fn startup_workspace_schema() -> Value {
             "modified": {"type": "integer", "minimum": 0},
             "untracked": {"type": "integer", "minimum": 0},
             "staged": {"type": "integer", "minimum": 0},
+            "upstream_status": {"type": "string", "enum": ["available", "absent", "gone", "unobserved"]},
+            "upstream_reason_code": nullable_schema("string", "Stable upstream-tracking reason when observed."),
+            "upstream": nullable_schema("string", "Configured upstream branch when observed."),
             "ahead": nullable_schema("integer", "Ahead count when a reliable source is available."),
-            "behind": nullable_schema("integer", "Behind count when a reliable source is available.")
+            "behind": nullable_schema("integer", "Behind count when a reliable source is available."),
+            "changed_paths": {"type": "array", "maxItems": 20, "uniqueItems": true, "items": {"type": "string"}},
+            "changed_paths_total": {"type": "integer", "minimum": 0},
+            "changed_paths_truncated": {"type": "boolean"}
         },
         "required": [
             "status",
@@ -500,8 +506,14 @@ fn startup_workspace_schema() -> Value {
             "modified",
             "untracked",
             "staged",
+            "upstream_status",
+            "upstream_reason_code",
+            "upstream",
             "ahead",
-            "behind"
+            "behind",
+            "changed_paths",
+            "changed_paths_total",
+            "changed_paths_truncated"
         ],
         "additionalProperties": false
     })
@@ -1204,6 +1216,20 @@ fn work_on_project_output_schema() -> Value {
             "git_available": nullable_schema("boolean", "Emitted when bounded Git inspection is explicitly unavailable; omission means no exceptional Git-unavailable fact."),
             "branch": nullable_schema("string", "Current branch when observed."),
             "head": nullable_schema("string", "Current full HEAD commit when observed."),
+            "upstream_status": {"type": "string", "enum": ["available", "absent", "gone"]},
+            "upstream_reason_code": schema_type("string", "Stable noteworthy upstream-tracking reason such as upstream_gone."),
+            "upstream": schema_type("string", "Observed configured upstream branch."),
+            "ahead": {"type": "integer", "minimum": 0, "description": "Observed commits ahead of the configured upstream, including zero."},
+            "behind": {"type": "integer", "minimum": 0, "description": "Observed commits behind the configured upstream, including zero."},
+            "changed_paths": {
+                "type": "array",
+                "maxItems": 20,
+                "uniqueItems": true,
+                "items": {"type": "string"},
+                "description": "Bounded already-observed dirty/conflicted paths from the startup Git snapshot; omitted when none were returned."
+            },
+            "changed_paths_total": {"type": "integer", "minimum": 1, "description": "Total changed paths observed by the same startup snapshot; emitted with changed_paths."},
+            "changed_paths_truncated": {"type": "boolean", "const": true, "description": "Emitted only when changed_paths is a bounded subset."},
             "clean": nullable_schema("boolean", "Legacy compatibility field; normal clean/dirty state is represented by status and may omit this field."),
             "conflicts": {"type": "integer", "minimum": 1}
         },

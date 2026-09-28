@@ -1917,6 +1917,43 @@ fn work_on_project_projection_is_sparse_for_defaults_and_keeps_noteworthy_state(
         .unwrap_or_else(|error| panic!("noteworthy sparse output must match schema: {error}"));
 }
 
+#[test]
+fn work_on_project_projection_preserves_observed_tracking_and_dirty_paths() {
+    let mut input = valid_work_on_project_projection_input();
+    input["workspace"]["status"] = json!("dirty");
+    input["workspace"]["git"]["status"] = json!("dirty");
+    input["workspace"]["clean"] = json!(false);
+    input["workspace"]["upstream_status"] = json!("available");
+    input["workspace"]["upstream_reason_code"] = Value::Null;
+    input["workspace"]["upstream"] = json!("origin/main");
+    input["workspace"]["ahead"] = json!(2);
+    input["workspace"]["behind"] = json!(1);
+    input["workspace"]["changed_paths"] = json!(["src/a.rs", "src/b.rs"]);
+    input["workspace"]["changed_paths_total"] = json!(3);
+    input["workspace"]["changed_paths_truncated"] = json!(true);
+
+    let result = crate::tool_runtime::coding_task::project_work_on_project_output(
+        SAMPLE_PROJECT.to_string(),
+        input,
+    );
+    assert!(result.success, "{:?}", result.error);
+    let workspace = &result.output["workspace"];
+    assert_eq!(workspace["status"], "dirty");
+    assert_eq!(workspace["upstream_status"], "available");
+    assert_eq!(workspace["upstream"], "origin/main");
+    assert_eq!(workspace["ahead"], 2);
+    assert_eq!(workspace["behind"], 1);
+    assert_eq!(workspace["changed_paths"], json!(["src/a.rs", "src/b.rs"]));
+    assert_eq!(workspace["changed_paths_total"], 3);
+    assert_eq!(workspace["changed_paths_truncated"], true);
+    assert!(workspace.get("clean").is_none());
+
+    let schema = crate::tool_runtime::registry::output_schema_for_tool("work_on_project");
+    let instance = json!({"success": true, "output": result.output});
+    crate::tool_runtime::startup_brief::validate_schema_instance_for_test(&instance, &schema)
+        .unwrap_or_else(|error| panic!("tracking startup projection must match schema: {error}"));
+}
+
 #[tokio::test]
 async fn work_on_project_without_session_id_always_creates_fresh_session() {
     let root = tempfile::tempdir().unwrap();
@@ -4410,6 +4447,10 @@ async fn work_on_project_new_task_is_lightweight_and_preserves_startup_context()
 
     // resolved_project is the full runtime project id.
     assert_eq!(result.output["resolved_project"], project);
+    assert_eq!(result.output["workspace"]["upstream_status"], "absent");
+    assert!(result.output["workspace"].get("upstream").is_none());
+    assert!(result.output["workspace"].get("ahead").is_none());
+    assert!(result.output["workspace"].get("behind").is_none());
     // Neither an inconclusive LSP probe nor an intentionally skipped
     // repository overview is a readiness warning.
     assert!(result.output.get("repository").is_none());

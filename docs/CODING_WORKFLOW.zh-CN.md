@@ -19,6 +19,7 @@ work_on_project
 ```
 
 `work_on_project` 是普通 coding/review 的 canonical bootstrap。把当前任务 instruction 交给它，然后遵循连接到的 Server 返回的 project instructions 与 tool surface。
+它会复用同一次 startup Git observation，提供有界的 branch/HEAD、upstream tracking、ahead/behind，以及可用时的 dirty-path 列表；这些字段就是初始 workspace observation，不应立刻再机械执行 `git status`/branch probe。只有相关 mutation 之后或确实需要额外精确 Git 事实时再刷新。Git、runtime、instruction、semantic-navigation 与 extension 等互不依赖且 authority 不变的 startup observation 会尽量并发调度。
 
 对于 substantial coding，在 Workflow Session 进入真实工作状态后（例如第一次有意义的源码 mutation，或开始长时间 validation），对该 exact Session 调用一次 `present_work_result(project, session_id)`。挂载后的 MCP App 会自行进行有界的 Workspace / Validation / Review live read，因此不要重复创建卡片，也不要为了给卡片喂状态而额外消耗 model turn。tiny/read-only 工作不需要 progress card。`finish_coding_task` 在 non-blocking closeout 时 seal eligible final changes，已经挂载的同一张卡会在后续 App refresh 中发现这份 immutable snapshot；如果此前没有挂卡而 closeout 明确返回 presentation suggestion，再在收尾时调用一次即可。
 它的 primary output 默认保持紧凑，不重复静态 instruction/workflow 正文；当前模型上下文缺少这些材料时，分别显式请求 `context_request=["project.instructions"]` 和/或 `context_request=["webcodex.workflow"]`。Workflow Session identity 不证明当前模型仍保留这些上下文。

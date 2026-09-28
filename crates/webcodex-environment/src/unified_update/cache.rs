@@ -123,10 +123,13 @@ impl PrivateUpdateCache {
         if target.try_exists().map_err(failed)? {
             return Err(UpdateError::CacheUnavailable);
         }
-        open_existing_private(&part, false)
-            .map_err(failed)?
-            .sync_all()
-            .map_err(failed)?;
+        // Windows FlushFileBuffers requires a handle opened for writing.
+        // Reopen the completed private part writable, flush it, then close the
+        // handle before the atomic rename so the durability contract is the same
+        // on every supported platform.
+        let part_file = open_existing_private(&part, true).map_err(failed)?;
+        part_file.sync_all().map_err(failed)?;
+        drop(part_file);
         std::fs::rename(&part, &target).map_err(failed)?;
         #[cfg(unix)]
         File::open(&self.root)

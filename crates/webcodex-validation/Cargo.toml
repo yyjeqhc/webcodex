@@ -5,8 +5,9 @@ license.workspace = true
 edition.workspace = true
 
 [features]
-default = []
-# The Runner needs recipes/adapters, not the Server's Session evidence ledger.
+# Preserve the pre-feature-split public surface for ordinary consumers. The
+# Runner explicitly disables defaults because it only needs recipes/adapters.
+default = ["session-evidence"]
 session-evidence = ["dep:webcodex-tool-contracts", "dep:webcodex-workflow-session"]
 
 [dependencies]

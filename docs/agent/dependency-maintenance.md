@@ -25,10 +25,12 @@ Changes:
 - Keep Salvo's existing production features explicit and enable `test` only under
   dev-dependencies. This removes Brotli and its three support packages from the
   normal Server graph, while retaining the HTTP test client in tests.
-- Make validation's Session evidence projection opt-in through `session-evidence`.
-  The Server enables it explicitly. The Runner uses only recipes and adapters and
-  no longer compiles tool-contracts or workflow-session through validation.
-  Validation's own tests retain their explicit development dependencies.
+- Isolate validation's Session evidence projection behind `session-evidence` while
+  keeping that feature enabled by default for compatibility with the crate's
+  pre-split public API. The Server enables it explicitly; the Runner disables
+  default features because it uses only recipes and adapters, so it no longer
+  compiles tool-contracts or workflow-session through validation. Validation's
+  own tests retain their explicit development dependencies.
 - State the `reqwest/system-proxy` requirement explicitly in environment and
   Runner. Previously the unused admin edge enabled it transitively. Removing an
   unused crate must not silently remove proxy discovery from live HTTP clients.
@@ -83,10 +85,11 @@ reduction must not be attributed solely to this branch. This is not a clean
 - `cargo test --locked --workspace`: **6230 passed, 0 failed, 29 ignored**, including
   the default test/doc-test targets. The Server accounts for 3040 passing tests;
   the Runner accounts for 945.
-- `cargo test --locked -p webcodex-validation --lib`, without session-evidence:
-  **101 passed, 0 failed, 0 ignored**.
-- Isolated Server, Runner, environment, validation-default and validation-evidence
-  production checks: pass. The final isolated graphs retain `system-proxy` and the
+- `cargo test --locked -p webcodex-validation --lib --no-default-features`,
+  without session-evidence: **101 passed, 0 failed, 0 ignored**.
+- Isolated Server, Runner, environment, validation-minimal (`--no-default-features`)
+  and validation-default/session-evidence production checks: pass. The final isolated
+  graphs retain `system-proxy` and the
   reduced package counts above.
 - `webcodex-computer --lib` cross-checks for `x86_64-pc-windows-msvc` and
   `aarch64-apple-darwin`: pass. These are type/build checks, not native GUI tests or
@@ -106,8 +109,8 @@ self-referential commit hash in this document.
 cargo machete
 bash scripts/workspace_boundary_check.sh --self-test
 bash scripts/workspace_boundary_check.sh
+cargo check --locked -p webcodex-validation --no-default-features
 cargo check --locked -p webcodex-validation
-cargo check --locked -p webcodex-validation --features session-evidence
 cargo check --locked -p webcodex-runner --bins
 cargo check --locked -p webcodex --lib --bins
 cargo fmt --all -- --check

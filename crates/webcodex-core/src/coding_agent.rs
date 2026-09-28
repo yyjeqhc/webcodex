@@ -93,6 +93,12 @@ macro_rules! coding_agent_state {
             pub fn from_wire(value: &str) -> Option<Self> {
                 match value { $($wire => Some(Self::$variant),)+ _ => None }
             }
+
+            // Preserve the pre-SSOT public helper while keeping the wire table
+            // above as the only vocabulary source.
+            pub fn from_str(value: &str) -> Option<Self> {
+                Self::from_wire(value)
+            }
         }
     };
 }
@@ -987,6 +993,7 @@ mod tests {
                 CodingAgentRunState::from_wire(expected),
                 Some(state.clone())
             );
+            assert_eq!(CodingAgentRunState::from_str(expected), Some(state.clone()));
             assert_eq!(serde_json::to_value(&state).unwrap(), expected);
             assert_eq!(
                 serde_json::from_value::<CodingAgentRunState>(expected.into()).unwrap(),
@@ -1002,6 +1009,7 @@ mod tests {
         ] {
             assert_eq!(state.as_str(), expected);
             assert_eq!(CodingAgentExecutionState::from_wire(expected), Some(state));
+            assert_eq!(CodingAgentExecutionState::from_str(expected), Some(state));
             assert_eq!(serde_json::to_value(state).unwrap(), expected);
             assert_eq!(
                 serde_json::from_value::<CodingAgentExecutionState>(expected.into()).unwrap(),

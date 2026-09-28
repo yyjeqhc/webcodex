@@ -1357,6 +1357,31 @@ fn readiness_tool_is_sequential_outer_only_and_does_not_expand_legacy() {
         spec.input_schema["properties"]["wait_secs"]["maximum"],
         crate::tool_call::MAX_JOB_READINESS_WAIT_SECS
     );
+    assert_eq!(spec.input_schema["properties"]["job_ids"]["maxItems"], 8);
+    let description = spec.description.as_str();
+    for phrase in [
+        "join barrier",
+        "currently-ready independent work",
+        "Use any when one terminal Job can unlock a useful dependent branch",
+        "use all only at a true join",
+        "do not mechanically repeat the same-set wait",
+        "largest safe remaining Host activation budget",
+        "no fixed 10/15/20s slice",
+        "logs/details/recovery use observe_jobs",
+    ] {
+        assert!(description.contains(phrase), "{phrase}: {description}");
+    }
+    let mode_description = spec.input_schema["properties"]["mode"]["description"]
+        .as_str()
+        .expect("readiness mode description");
+    assert!(mode_description.contains("one terminal Job can unlock a useful dependent branch"));
+    assert!(mode_description.contains("every blocked dependency is required"));
+    let wait_description = spec.input_schema["properties"]["wait_secs"]["description"]
+        .as_str()
+        .expect("readiness wait description");
+    assert!(wait_description.contains("largest safe value"));
+    assert!(wait_description.contains("no fixed 10/15/20-second slice"));
+    assert!(wait_description.contains("mechanically repeating the same wait"));
     for mode in ["any", "all"] {
         let args = json!({"job_ids":["wc_job_A","wc_job_A","wc_job_B"],"mode":mode,"wait_secs":12});
         crate::test_support::validate_schema_instance(&args, &spec.input_schema).unwrap();

@@ -215,9 +215,14 @@ fn assert_builtin_workflow(output: &Value) {
         "passive Job attention",
         "observe_jobs is for logs/details/recovery",
         "list_jobs is identity recovery",
-        "same-cell blocked dependencies use one wait_for_job_readiness set",
+        "Pending execution is background work",
+        "exhaust ready independent work",
+        "same-cell wait_for_job_readiness join set",
+        "any advances an independently-unblocked branch",
+        "all is only a true join",
+        "Deadline means recompute work/set, not automatic refill",
         "for a future activation use wait_for_job_terminal only on a hard terminal dependency",
-        "Do not poll or rearm durable waits",
+        "Never retry/redispatch the original Job",
     ] {
         assert!(defaults.contains(phrase), "workflow guidance: {phrase}");
     }

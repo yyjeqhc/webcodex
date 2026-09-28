@@ -159,7 +159,7 @@ Runner #730 的 JobUpdateDeliverySignal 仍然是 Runner 内部 delivery reactor
 
 用于 durable、单 exact Job、跨 model turn/Host continuation；有 wait row、delivery state、App carrier。
 
-### wait_for_job_readiness（拟新增）
+### wait_for_job_readiness（当前实现）
 
 只用于当前仍活着的 Host cell：
 
@@ -263,7 +263,7 @@ Host 只在 run-to-quiescence 后计算剩余预算：
 remaining = host_budget - elapsed - return_guard - jitter
 ~~~
 
-第一版 guidance 可保守限制单次 wait 约 10..15 秒，先 dogfood；Tool contract 自身可以允许更大的 bounded max。
+早期 probe 阶段曾建议先用约 10..15 秒的保守 slice dogfood；当前主线 contract 收敛后不再把固定 slice 当作偏好。Host 应在 run-to-quiescence 后，用 activation 的剩余安全预算减去 return guard/jitter，并受 canonical 45 秒上限约束，选择当前可安全使用的最大 bounded wait。
 
 ## 12. Host run-to-quiescence 规则
 
@@ -287,8 +287,11 @@ deadline / budget guard ---> yield
 规则：
 
 - readiness wait 只能在没有其它 ready work 时开始；
+- blocked set 中任意一个 terminal 就能解锁一条有用 branch 时用 `any`，返回后重新计算 ready/blocked set；
+- 只有真正的 aggregate/final join 必须等全部 dependency 时才用 `all`；
 - 不使用并发 Promise.race([waitJobA, waitJobB])；
 - 不用重复 5 秒 observe_jobs 模拟 readiness；
+- deadline 后先重新计算 ready work / blocked set；无新 work、无 set 变化、无 semantic information 时不机械重复同一 wait；
 - Job terminal 只表示依赖状态 ready，不等于下一步自动可执行；
 - follow_up_kind=mechanically_followable 才能继续机械调用；
 - fallback_recovery、semantic ambiguity、权限变化、uncertain effect 仍回模型；

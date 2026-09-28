@@ -53,18 +53,38 @@ pub fn nullable_schema(kind: &str, description: &str) -> Value {
 }
 
 pub(super) fn pending_job_strategy_schema() -> Value {
+    use crate::tool_call::{
+        PENDING_JOB_BLOCKED_FALLBACK, PENDING_JOB_DEFAULT, PENDING_JOB_EXECUTION_REPLAY,
+        PENDING_JOB_OBSERVE_CONTINUATION, PENDING_JOB_PASSIVE_TERMINAL_ATTENTION,
+        PENDING_JOB_READINESS_DEADLINE, PENDING_JOB_READINESS_KIND, PENDING_JOB_READINESS_MODE,
+        PENDING_JOB_READINESS_WHEN,
+    };
+
     json!({
         "type": "object",
-        "description": "Model-facing pending Job policy. Independent work is the default; eligible later same-scope results may carry passive terminal attention, exact observe_jobs continuation is only for logs/details/recovery, and blocking callers should wait once for terminal state.",
+        "description": "Model-facing pending Job scheduling policy. The Job is background execution: retain its exact identity/continuation, consume currently-ready independent work first, and use transient readiness only as a join barrier after useful ready work is exhausted. Observation remains logs/details/recovery only and the original execution is never retried or redispatched.",
         "additionalProperties": false,
         "properties": {
-            "default": {"type": "string", "const": "continue_independent_work"},
-            "passive_terminal_attention": {"type": "string", "const": "same_scope_may_surface", "description": "Conditional guidance only: passive terminal attention may appear on a later eligible same-Window/Project/business-Session result; it is not guaranteed for every pending call."},
-            "observe_continuation": {"type": "string", "const": "logs_details_recovery_fallback"},
+            "default": {"type": "string", "const": PENDING_JOB_DEFAULT},
+            "passive_terminal_attention": {"type": "string", "const": PENDING_JOB_PASSIVE_TERMINAL_ATTENTION, "description": "Conditional guidance only: passive terminal attention may appear on a later eligible same-Window/Project/business-Session result; it is not guaranteed for every pending call."},
+            "observe_continuation": {"type": "string", "const": PENDING_JOB_OBSERVE_CONTINUATION, "description": "The retained observe_jobs continuation is for logs/details/recovery, not ordinary pending follow-up or liveness polling."},
             "observe_auto_follow": {"type": "boolean", "const": false},
-            "blocked_fallback": {"type": "string", "const": "wait_for_job_terminal"}
+            "blocked_fallback": {"type": "string", "const": PENDING_JOB_BLOCKED_FALLBACK, "description": "Cross-activation fallback only when terminal outcome remains a hard dependency; same-activation blocking uses the readiness join policy below."},
+            "readiness": {
+                "type": "object",
+                "description": "Transient same-activation join policy. Finish ready work before waiting; any advances the first independently-unblocked branch, while all is only for a true join requiring every dependency. Deadline is not a refill signal.",
+                "additionalProperties": false,
+                "properties": {
+                    "kind": {"type": "string", "const": PENDING_JOB_READINESS_KIND},
+                    "when": {"type": "string", "const": PENDING_JOB_READINESS_WHEN},
+                    "mode": {"type": "string", "const": PENDING_JOB_READINESS_MODE},
+                    "deadline": {"type": "string", "const": PENDING_JOB_READINESS_DEADLINE}
+                },
+                "required": ["kind", "when", "mode", "deadline"]
+            },
+            "execution_replay": {"type": "string", "const": PENDING_JOB_EXECUTION_REPLAY, "description": "Pending/continuation state never authorizes retrying or redispatching the original Job."}
         },
-        "required": ["default", "passive_terminal_attention", "observe_continuation", "observe_auto_follow", "blocked_fallback"]
+        "required": ["default", "passive_terminal_attention", "observe_continuation", "observe_auto_follow", "blocked_fallback", "readiness", "execution_replay"]
     })
 }
 

@@ -1033,7 +1033,7 @@ def verify_draft_assets(*, repo: str, bundle_dir: Path, timeout: float) -> dict:
     expected_files.update(f"{summary['archive_stem']}-{platform}.tar.gz" for platform in collector.PLATFORMS)
     installer_artifacts = summary.get("installer_artifacts")
     if installer_artifacts is not None:
-        if not isinstance(installer_artifacts, dict) or set(installer_artifacts) != set(collector.PLATFORMS):
+        if not isinstance(installer_artifacts, dict) or set(installer_artifacts) != set(collector.INSTALLER_TARGETS):
             raise PublicationError("retained bundle unified installer summary is invalid")
         expected_files.add("manifest.json")
         expected_files.update(item["filename"] for item in installer_artifacts.values())

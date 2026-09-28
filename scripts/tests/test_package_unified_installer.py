@@ -255,6 +255,123 @@ class UnifiedInstallerTests(unittest.TestCase):
             self.assertTrue((control_dir / "upgrade-candidate/source-manifest.json").is_file())
             self.assertTrue((control_dir / "upgrade-candidate/artifacts/bin/webcodex-server").is_file())
 
+    @unittest.skipUnless(
+        all(shutil.which(tool) for tool in ("rpmbuild", "rpm", "rpm2cpio", "cpio")),
+        "RPM build/inspection tools are unavailable",
+    )
+    def test_builds_rpm_with_canonical_layout_dependencies_and_fail_closed_upgrade_scripts(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            manifest, sums, _ = self.make_fixture(root, "linux-x64")
+            output = root / "out" / "webcodex.rpm"
+            args = pkg.make_parser().parse_args([
+                "--platform", "linux-x64", "--input-root", str(root),
+                "--manifest", str(manifest), "--checksums", str(sums), "--output", str(output),
+            ])
+            result = pkg.package(args)
+            self.assertEqual(result["package"], "rpm")
+            self.assertEqual(output.read_bytes()[:4], bytes.fromhex("edabeedb"))
+            info = subprocess.run(
+                ["rpm", "-qpi", str(output)], check=True, capture_output=True, text=True
+            ).stdout
+            self.assertIn("Name        : webcodex", info)
+            self.assertIn("Architecture: x86_64", info)
+            files = subprocess.run(
+                ["rpm", "-qpl", str(output)], check=True, capture_output=True, text=True
+            ).stdout.splitlines()
+            for expected in (
+                "/usr/lib/webcodex/webcodex-desktop",
+                "/usr/lib/webcodex/webcodex-runtime/webcodex",
+                "/usr/lib/webcodex/webcodex-runtime/webcodex-server",
+                "/usr/lib/webcodex/webcodex-runtime/webcodex-runner",
+                "/usr/bin/webcodex",
+                "/usr/bin/webcodex-server",
+                "/usr/bin/webcodex-runner",
+                "/usr/share/applications/webcodex.desktop",
+                "/usr/share/doc/webcodex/unified-source-manifest.json",
+                "/usr/share/webcodex/unified-source-manifest.json",
+                "/usr/share/webcodex/upgrade-candidate/source-manifest.json",
+                "/usr/share/webcodex/upgrade-candidate/SHA256SUMS",
+            ):
+                self.assertIn(expected, files)
+            links = subprocess.run(
+                ["rpm", "-qp", "--qf", "[%{FILENAMES}\t%{FILELINKTOS}\n]", str(output)],
+                check=True, capture_output=True, text=True,
+            ).stdout
+            self.assertIn("/usr/bin/webcodex\t../lib/webcodex/webcodex-runtime/webcodex", links)
+            requires = subprocess.run(
+                ["rpm", "-qp", "--requires", str(output)], check=True, capture_output=True, text=True
+            ).stdout
+            self.assertIn("rpm", requires.splitlines())
+            self.assertIn("cpio", requires.splitlines())
+            self.assertIn("polkit", requires.splitlines())
+            scripts = subprocess.run(
+                ["rpm", "-qp", "--scripts", str(output)], check=True, capture_output=True, text=True
+            ).stdout
+            self.assertIn("set -eu", scripts)
+            self.assertIn('if [ "$1" -eq 1 ]', scripts)
+            self.assertIn("/var/lib/webcodex-installer/recovery/candidate", scripts)
+            self.assertIn("installer-verify", scripts)
+            self.assertIn("installer-verify-same", scripts)
+            self.assertIn("installer-finish", scripts)
+            for forbidden in ("dnf ", "--nodeps", "--force", "sudo "):
+                self.assertNotIn(forbidden, scripts)
+            checksig = subprocess.run(
+                ["rpm", "--checksig", str(output)], check=False, capture_output=True, text=True
+            )
+            self.assertIn("digests OK", checksig.stdout + checksig.stderr)
+            rpm2cpio = subprocess.Popen(["rpm2cpio", str(output)], stdout=subprocess.PIPE)
+            assert rpm2cpio.stdout is not None
+            inventory = subprocess.run(
+                ["cpio", "-it"], stdin=rpm2cpio.stdout, capture_output=True, text=True, check=True
+            )
+            rpm2cpio.stdout.close()
+            self.assertEqual(rpm2cpio.wait(), 0)
+            self.assertIn("./usr/share/webcodex/upgrade-candidate/source-manifest.json", inventory.stdout)
+
+    def test_linux_package_suffix_and_paths_fail_closed(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            manifest, sums, _ = self.make_fixture(root, "linux-x64")
+            args = pkg.make_parser().parse_args([
+                "--platform", "linux-x64", "--input-root", str(root),
+                "--manifest", str(manifest), "--checksums", str(sums),
+                "--output", str(root / "webcodex.zip"), "--dry-run",
+            ])
+            with self.assertRaisesRegex(pkg.PackageError, "must end in .deb or .rpm"):
+                pkg.package(args)
+        for value in ("../escape", "/absolute", "a\\b"):
+            with self.assertRaises(pkg.PackageError):
+                pkg.safe_relative(value, "fixture")
+
+    def test_rpm_rejects_semver_that_cannot_round_trip_as_exact_rpm_version(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            manifest_path, sums, _ = self.make_fixture(root, "linux-x64")
+            parsed = pkg.validate_manifest(manifest_path, sums, root, "linux-x64")
+            parsed["version"] = "0.8.1+build.1"
+            with self.assertRaisesRegex(pkg.PackageError, "canonical X.Y.Z"):
+                pkg.rpm_spec(parsed, root)
+
+
+    def test_rpm_arm64_dry_run_uses_native_rpm_arch_and_same_payload_contract(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            manifest, sums, _ = self.make_fixture(root, "linux-arm64")
+            output = root / "webcodex.rpm"
+            args = pkg.make_parser().parse_args([
+                "--platform", "linux-arm64", "--input-root", str(root),
+                "--manifest", str(manifest), "--checksums", str(sums),
+                "--output", str(output), "--dry-run",
+            ])
+            result = pkg.package(args)
+            self.assertEqual(result["package"], "rpm")
+            self.assertIn("BuildArch: aarch64", result["spec"])
+            self.assertIn("%pre", result["spec"])
+            self.assertIn("%post", result["spec"])
+            self.assertIn("usr/share/webcodex/upgrade-candidate/source-manifest.json", result["entries"])
+            self.assertFalse(output.exists())
+
     def test_rejects_unknown_environment_data_format(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

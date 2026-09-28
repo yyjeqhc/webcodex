@@ -6,8 +6,8 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use webcodex_environment::unified_update::{
-    self as unified, InstallerPlatform, PrivateUpdateCache, UpdateError, UpdateResult,
-    MAX_INSTALLER_BYTES,
+    self as unified, InstallerTarget, PrivateUpdateCache, RuntimePlatform, UpdateError,
+    UpdateResult, MAX_INSTALLER_BYTES,
 };
 
 pub(super) const RETRY_INTERVAL_MS: u64 = 60 * 60 * 1000;
@@ -42,7 +42,8 @@ pub enum InstallationKind {
 pub struct DownloadStatus {
     pub phase: DownloadPhase,
     pub version: Option<String>,
-    pub platform: Option<InstallerPlatform>,
+    pub platform: Option<RuntimePlatform>,
+    pub target: Option<InstallerTarget>,
     pub downloaded_bytes: u64,
     pub total_bytes: Option<u64>,
     pub error_kind: Option<UpdateError>,
@@ -65,7 +66,7 @@ pub(super) struct UpdateRecord {
     schema_version: u16,
     pub phase: DownloadPhase,
     pub version: Option<String>,
-    pub platform: Option<InstallerPlatform>,
+    pub target: Option<InstallerTarget>,
     pub downloaded_bytes: u64,
     pub total_bytes: Option<u64>,
     pub sha256: Option<String>,
@@ -82,10 +83,10 @@ pub(super) struct UpdateRecord {
 impl Default for UpdateRecord {
     fn default() -> Self {
         Self {
-            schema_version: 1,
+            schema_version: 2,
             phase: DownloadPhase::Idle,
             version: None,
-            platform: None,
+            target: None,
             downloaded_bytes: 0,
             total_bytes: None,
             sha256: None,
@@ -103,9 +104,10 @@ impl Default for UpdateRecord {
 }
 impl UpdateRecord {
     fn valid(&self) -> bool {
-        self.schema_version == 1
+        self.schema_version == 2
             && self.version.as_deref().is_none_or(unified::stable_version)
-            && self.version.is_some() == self.platform.is_some()
+            && self.version.is_some() == self.target.is_some()
+            && self.target.is_none_or(|target| target.valid())
             && self.downloaded_bytes <= MAX_INSTALLER_BYTES
             && self
                 .total_bytes
@@ -193,7 +195,8 @@ impl UpdateManager {
         DownloadStatus {
             phase: record.phase,
             version: record.version,
-            platform: record.platform,
+            platform: record.target.map(|target| target.platform),
+            target: record.target,
             downloaded_bytes: record.downloaded_bytes,
             total_bytes: record.total_bytes,
             error_kind: record.error_kind,
@@ -232,6 +235,7 @@ impl UpdateManager {
         automatic: bool,
         manual: bool,
         installation: InstallationKind,
+        target: Option<InstallerTarget>,
     ) {
         self.set_installation(installation);
         let Ok(guard) = Arc::clone(&self.attempt).try_lock_owned() else {
@@ -252,7 +256,14 @@ impl UpdateManager {
         tokio::spawn(async move {
             let _guard = guard;
             let result = manager
-                .run(notice, automatic, manual, installation, &cancellation)
+                .run(
+                    notice,
+                    automatic,
+                    manual,
+                    installation,
+                    target,
+                    &cancellation,
+                )
                 .await;
             if let Err(error) = result {
                 // Cache admission/loading failed. Do not overwrite an unknown
@@ -309,8 +320,8 @@ impl UpdateManager {
             .as_deref()
             .filter(|v| unified::stable_version(v))
             .ok_or(UpdateError::ManifestInvalid)?;
-        let platform = record.platform.ok_or(UpdateError::UnsupportedPlatform)?;
-        root.child(version)?.child(platform.as_str())
+        let target = record.target.ok_or(UpdateError::UnsupportedPlatform)?;
+        root.child(version)?.child(&target.as_str())
     }
     pub(super) fn load(&self, cache: &PrivateUpdateCache) -> UpdateResult<()> {
         use std::sync::atomic::Ordering;
@@ -324,8 +335,8 @@ impl UpdateManager {
         };
         if !record.valid()
             || record
-                .platform
-                .is_some_and(|v| Some(v) != InstallerPlatform::current())
+                .target
+                .is_some_and(|target| Some(target.platform) != RuntimePlatform::current())
         {
             return Err(UpdateError::RecoveryRequired);
         }
@@ -359,6 +370,7 @@ impl UpdateManager {
         automatic: bool,
         manual: bool,
         installation: InstallationKind,
+        target: Option<InstallerTarget>,
         cancellation: &CancellationSignal,
     ) -> UpdateResult<()> {
         let cache = PrivateUpdateCache::open(self.root.clone())?;
@@ -371,6 +383,7 @@ impl UpdateManager {
                 automatic,
                 manual,
                 installation,
+                target,
                 cancellation,
             )
             .await;
@@ -386,6 +399,7 @@ impl UpdateManager {
         automatic: bool,
         manual: bool,
         installation: InstallationKind,
+        target: Option<InstallerTarget>,
         cancellation: &CancellationSignal,
     ) -> UpdateResult<()> {
         if self.current().pending.is_some() {
@@ -401,19 +415,31 @@ impl UpdateManager {
             self.change(|s| *s = UpdateRecord::default());
             return self.persist(&cache);
         };
-        let Some(platform) = InstallerPlatform::current() else {
+        let Some(target) = target
+            .filter(|target| target.valid() && Some(target.platform) == RuntimePlatform::current())
+        else {
             self.change(|s| {
                 s.phase = DownloadPhase::Available;
                 s.error_kind = Some(UpdateError::UnsupportedPlatform);
             });
             return Ok(());
         };
-        if self.current().version.as_deref() != Some(&notice.version) {
+        let current = self.current();
+        let version_changed = current.version.as_deref() != Some(&notice.version);
+        let target_changed = current.target != Some(target);
+        if version_changed || target_changed {
             cache.retain_version(Some(&notice.version))?;
+            if !version_changed {
+                if let Some(previous) = current.target {
+                    cache
+                        .child(&notice.version)?
+                        .remove_child_tree(&previous.as_str())?;
+                }
+            }
             self.change(|s| {
                 *s = UpdateRecord {
                     version: Some(notice.version.clone()),
-                    platform: Some(platform),
+                    target: Some(target),
                     phase: DownloadPhase::Available,
                     ..Default::default()
                 }
@@ -461,18 +487,18 @@ impl UpdateManager {
         self.persist(&cache)?;
         tokio::select! {
             _ = cancellation.cancelled() => Err(UpdateError::Cancelled),
-            result = self.obtain(&cache, &notice.version, platform, allowed, cancellation) => result,
+            result = self.obtain(&cache, &notice.version, target, allowed, cancellation) => result,
         }
     }
     async fn obtain(
         &self,
         cache: &PrivateUpdateCache,
         version: &str,
-        platform: InstallerPlatform,
+        target: InstallerTarget,
         allowed: bool,
         cancellation: &CancellationSignal,
     ) -> UpdateResult<()> {
-        let Some(release) = unified::fetch_release(version, platform).await? else {
+        let Some(release) = unified::fetch_release(version, target).await? else {
             self.change(|s| {
                 s.phase = DownloadPhase::Available;
                 s.legacy_release = true;
@@ -482,7 +508,7 @@ impl UpdateManager {
             });
             return self.persist(cache);
         };
-        let entry = release.manifest.entry(platform)?;
+        let entry = release.manifest.entry(target)?;
         let target = self.target_cache(cache)?;
         self.change(|s| {
             s.phase = DownloadPhase::Verifying;

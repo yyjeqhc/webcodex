@@ -4,7 +4,15 @@ use super::*;
 fn record() -> UpdateRecord {
     let mut record = UpdateRecord::default();
     record.version = Some("1.2.3".into());
-    record.platform = InstallerPlatform::current();
+    let platform = webcodex_environment::unified_update::RuntimePlatform::current().unwrap();
+    record.target =
+        webcodex_environment::unified_update::InstallerTarget::default_for_non_linux(platform)
+            .or_else(|| {
+                webcodex_environment::unified_update::InstallerTarget::for_platform(
+                    platform,
+                    webcodex_environment::unified_update::PackageFormat::Deb,
+                )
+            });
     record.source_sha = Some("a".repeat(40));
     record.source_manifest_sha256 = Some("b".repeat(64));
     record.pending = Some(PendingInstall {

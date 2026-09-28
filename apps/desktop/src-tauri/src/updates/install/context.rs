@@ -4,7 +4,7 @@ use crate::webcodex::cli::{ResolvedBinaries, ResolvedBinarySource};
 use std::path::{Path, PathBuf};
 use webcodex_core::desktop_runtime_contract::MachineBuildInfo;
 use webcodex_environment::unified_update::{
-    self as unified, InstallerPlatform, UpdateError, UpdateResult,
+    self as unified, InstallerTarget, PackageFormat, RuntimePlatform, UpdateError, UpdateResult,
 };
 use webcodex_environment::{EnvironmentStore, RuntimeBinaries};
 
@@ -14,6 +14,76 @@ pub struct InstallContext {
     pub(super) binaries: RuntimeBinaries,
     pub(super) desktop: PathBuf,
     pub(super) build: MachineBuildInfo,
+    pub(crate) target: InstallerTarget,
+}
+
+#[cfg(target_os = "linux")]
+fn os_release_family(text: &str) -> Option<PackageFormat> {
+    let mut tokens = std::collections::BTreeSet::new();
+    for line in text.lines().take(128) {
+        let Some((key, raw)) = line.split_once('=') else {
+            continue;
+        };
+        if !matches!(key, "ID" | "ID_LIKE") {
+            continue;
+        }
+        let value = raw.trim().trim_matches('"').trim_matches('\'');
+        for token in value.split_ascii_whitespace().take(16) {
+            tokens.insert(token.to_ascii_lowercase());
+        }
+    }
+    let deb = tokens
+        .iter()
+        .any(|value| matches!(value.as_str(), "debian" | "ubuntu"));
+    let rpm = tokens.iter().any(|value| {
+        matches!(
+            value.as_str(),
+            "fedora" | "rhel" | "centos" | "rocky" | "almalinux" | "openeuler" | "openruyi"
+        )
+    });
+    match (deb, rpm) {
+        (true, false) => Some(PackageFormat::Deb),
+        (false, true) => Some(PackageFormat::Rpm),
+        _ => None,
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn installed_linux_package_format() -> Option<PackageFormat> {
+    let deb = std::process::Command::new("/usr/bin/dpkg-query")
+        .args(["-W", "-f=${db:Status-Status}", "webcodex"])
+        .output()
+        .ok()
+        .is_some_and(|output| output.status.success() && output.stdout == b"installed");
+    let rpm = std::process::Command::new("/usr/bin/rpm")
+        .args(["-q", "--quiet", "webcodex"])
+        .status()
+        .ok()
+        .is_some_and(|status| status.success());
+    match (deb, rpm) {
+        (true, false) => Some(PackageFormat::Deb),
+        (false, true) => Some(PackageFormat::Rpm),
+        (true, true) => None,
+        (false, false) => std::fs::read_to_string("/etc/os-release")
+            .ok()
+            .as_deref()
+            .and_then(os_release_family),
+    }
+}
+
+fn current_installer_target(platform: RuntimePlatform) -> Option<InstallerTarget> {
+    #[cfg(target_os = "linux")]
+    {
+        return InstallerTarget::for_platform(platform, installed_linux_package_format()?);
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        InstallerTarget::default_for_non_linux(platform)
+    }
+}
+
+pub(crate) fn detected_installer_target() -> Option<InstallerTarget> {
+    RuntimePlatform::current().and_then(current_installer_target)
 }
 
 fn aligned_release_build(build: &MachineBuildInfo, binaries: &ResolvedBinaries) -> bool {
@@ -37,7 +107,7 @@ fn aligned_release_build(build: &MachineBuildInfo, binaries: &ResolvedBinaries) 
         })
 }
 
-fn package_layout(executable: &Path, runtime: &Path) -> bool {
+fn package_layout(target: InstallerTarget, executable: &Path, runtime: &Path) -> bool {
     #[cfg(target_os = "macos")]
     {
         executable.parent()
@@ -49,9 +119,14 @@ fn package_layout(executable: &Path, runtime: &Path) -> bool {
     }
     #[cfg(target_os = "linux")]
     {
+        let provenance = match target.format {
+            PackageFormat::Deb => Path::new("/usr/share/doc/webcodex/unified-source-manifest.json"),
+            PackageFormat::Rpm => Path::new("/usr/share/webcodex/unified-source-manifest.json"),
+            _ => return false,
+        };
         executable == Path::new("/usr/lib/webcodex/webcodex-desktop")
             && runtime == Path::new("/usr/lib/webcodex/webcodex-runtime")
-            && Path::new("/usr/share/doc/webcodex/unified-source-manifest.json").is_file()
+            && provenance.is_file()
     }
     #[cfg(windows)]
     {
@@ -82,9 +157,9 @@ pub fn assess_installation(
     source: RuntimeSource,
     environment_id: Option<String>,
 ) -> (InstallationKind, Option<InstallContext>) {
-    if InstallerPlatform::current().is_none() {
+    let Some(target) = detected_installer_target() else {
         return (InstallationKind::UnsupportedPlatform, None);
-    }
+    };
     if build.git_dirty != Some(false) || !matches!(source, RuntimeSource::Bundled) {
         return (InstallationKind::SourceBuild, None);
     }
@@ -103,7 +178,7 @@ pub fn assess_installation(
     let Some(runtime) = binaries.directory.canonicalize().ok() else {
         return (InstallationKind::UnmanagedInstallation, None);
     };
-    if !package_layout(&desktop, &runtime) {
+    if !package_layout(target, &desktop, &runtime) {
         return (InstallationKind::UnmanagedInstallation, None);
     }
     let Some(environment_id) = environment_id else {
@@ -148,6 +223,7 @@ pub fn assess_installation(
             binaries: record.request.binaries,
             desktop,
             build,
+            target,
         })
     })();
     match context {
@@ -182,11 +258,11 @@ pub(super) fn environment(context: &InstallContext) -> UpdateResult<EnvironmentS
 
 pub(super) async fn verify_installed_generation(
     context: &InstallContext,
-    platform: InstallerPlatform,
+    target: InstallerTarget,
 ) -> UpdateResult<()> {
     #[cfg(unix)]
     unified::verify_installed_update_cli(&context.binaries.cli)?;
-    let published = unified::fetch_release(&context.build.version, platform)
+    let published = unified::fetch_release(&context.build.version, target)
         .await?
         .ok_or(UpdateError::ProvenanceFailed)?;
     if context.build.git_commit.as_deref() != Some(published.source.source_sha.as_str())
@@ -273,5 +349,28 @@ mod tests {
             assess_installation(build, None, RuntimeSource::Bundled, None).0,
             InstallationKind::SourceBuild
         );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn os_release_classification_is_bounded_and_ambiguous_fails_closed() {
+        assert_eq!(
+            os_release_family("ID=ubuntu\nID_LIKE=debian\n"),
+            Some(PackageFormat::Deb)
+        );
+        assert_eq!(os_release_family("ID=fedora\n"), Some(PackageFormat::Rpm));
+        assert_eq!(
+            os_release_family("ID=centos\nID_LIKE=\"rhel fedora\"\n"),
+            Some(PackageFormat::Rpm)
+        );
+        assert_eq!(
+            os_release_family("ID=openeuler\nID_LIKE=\"rhel fedora\"\n"),
+            Some(PackageFormat::Rpm)
+        );
+        assert_eq!(
+            os_release_family("ID=ubuntu\nID_LIKE=\"debian rhel\"\n"),
+            None
+        );
+        assert_eq!(os_release_family("ID=unknown\n"), None);
     }
 }

@@ -61,6 +61,12 @@ class LinuxElfBaselineTests(unittest.TestCase):
         self.assertIn("verify_linux_elf_baseline.py", linux_step)
         self.assertIn("collect_unified_installer_inputs.py", linux_step)
         self.assertIn("libwebkit2gtk-4.1-dev", linux_step)
+        self.assertIn("dpkg-dev rpm cpio", linux_step)
+        self.assertIn("for suffix in deb rpm", linux_step)
+        self.assertIn("--output \"dist/webcodex-unified-v$VERSION-$PLATFORM.$suffix\"", linux_step)
+        self.assertIn('"webcodex-unified-v$VERSION-linux-x64.rpm"', workflow)
+        self.assertIn('"webcodex-unified-v$VERSION-linux-arm64.rpm"', workflow)
+        self.assertNotIn('.json.sha256"            "webcodex-unified', workflow)
         self.assertIn("if: matrix.os == 'macos'", workflow[end:])
 
 

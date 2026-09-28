@@ -3,7 +3,11 @@ use super::*;
 #[test]
 fn package_handoff_is_exact_argv_not_shell_text() {
     let path = Path::new("/private/cache/1.2.3/a b;$(touch bad).pkg");
-    let (program, args) = package_program(InstallerPlatform::DarwinArm64, path).unwrap();
+    let (program, args) = package_program(
+        InstallerTarget::new(RuntimePlatform::DarwinArm64, PackageFormat::Pkg),
+        path,
+    )
+    .unwrap();
     assert_eq!(program, "/usr/sbin/installer");
     assert_eq!(
         args,
@@ -14,11 +18,36 @@ fn package_handoff_is_exact_argv_not_shell_text() {
             "/".into()
         ]
     );
-    let (program, args) = package_program(InstallerPlatform::LinuxX64, path).unwrap();
+    let (program, args) = package_program(
+        InstallerTarget::new(RuntimePlatform::LinuxX64, PackageFormat::Deb),
+        path,
+    )
+    .unwrap();
     assert_eq!(program, "/usr/bin/dpkg");
     assert_eq!(args[1], path.as_os_str());
-    assert!(package_program(InstallerPlatform::Win32X64, path).is_err());
-    assert!(package_program(InstallerPlatform::DarwinArm64, Path::new("relative.pkg")).is_err());
+    let (program, args) = package_program(
+        InstallerTarget::new(RuntimePlatform::LinuxX64, PackageFormat::Rpm),
+        path,
+    )
+    .unwrap();
+    assert_eq!(program, "/usr/bin/rpm");
+    assert_eq!(
+        args,
+        vec![
+            std::ffi::OsString::from("--upgrade"),
+            path.as_os_str().to_owned()
+        ]
+    );
+    assert!(package_program(
+        InstallerTarget::new(RuntimePlatform::Win32X64, PackageFormat::Exe),
+        path
+    )
+    .is_err());
+    assert!(package_program(
+        InstallerTarget::new(RuntimePlatform::DarwinArm64, PackageFormat::Pkg),
+        Path::new("relative.pkg")
+    )
+    .is_err());
 }
 
 #[test]

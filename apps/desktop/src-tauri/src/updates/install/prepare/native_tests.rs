@@ -7,9 +7,9 @@ use crate::updates::download::{stream_installer, verify_file};
 use serde_json::json;
 use std::os::unix::fs::PermissionsExt;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use webcodex_environment::unified_update::{sha256, verify_source_manifest};
+use webcodex_environment::unified_update::{sha256, verify_source_manifest, RuntimePlatform};
 
-fn source(platform: InstallerPlatform) -> Vec<u8> {
+fn source(platform: RuntimePlatform) -> Vec<u8> {
     let mut components = serde_json::Map::new();
     for name in [
         "webcodex",
@@ -54,10 +54,10 @@ async fn desktop_real_process_macos_verified_update_package_fixture() {
     .unwrap();
     let scripts = root.join("scripts");
     std::fs::create_dir_all(scripts.join("upgrade-candidate")).unwrap();
-    let platform = InstallerPlatform::current().unwrap();
+    let platform = RuntimePlatform::current().unwrap();
     assert!(matches!(
         platform,
-        InstallerPlatform::DarwinArm64 | InstallerPlatform::DarwinX64
+        RuntimePlatform::DarwinArm64 | RuntimePlatform::DarwinX64
     ));
     let source_bytes = source(platform);
     std::fs::write(
@@ -136,7 +136,8 @@ async fn desktop_real_process_macos_verified_update_package_fixture() {
         .await
         .unwrap();
     let cache = PrivateUpdateCache::open(root.join("private-updater")).unwrap();
-    let filename = platform.installer_filename("99.0.0");
+    let target = InstallerTarget::new(platform, PackageFormat::Pkg);
+    let filename = target.installer_filename("99.0.0");
     let downloaded = stream_installer(
         response,
         &cache,
@@ -163,7 +164,7 @@ async fn desktop_real_process_macos_verified_update_package_fixture() {
         downloaded
     );
     assert!(!cache.file("installer.part").unwrap().exists());
-    let candidate = extract_candidate(&cache, &cache.file(&filename).unwrap(), platform)
+    let candidate = extract_candidate(&cache, &cache.file(&filename).unwrap(), target)
         .await
         .unwrap();
     let extracted = std::fs::read(candidate.join("source-manifest.json")).unwrap();

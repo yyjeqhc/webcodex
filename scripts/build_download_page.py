@@ -9,14 +9,28 @@ import re
 import shutil
 from pathlib import Path
 
-PLATFORMS = ("linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64", "win32-x64", "win32-arm64")
+RUNTIME_PLATFORMS = ("linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64", "win32-x64", "win32-arm64")
+PLATFORMS = RUNTIME_PLATFORMS
+INSTALLER_TARGETS = {
+    "linux-x64-deb": ("linux-x64", "deb"),
+    "linux-x64-rpm": ("linux-x64", "rpm"),
+    "linux-arm64-deb": ("linux-arm64", "deb"),
+    "linux-arm64-rpm": ("linux-arm64", "rpm"),
+    "darwin-x64-pkg": ("darwin-x64", "pkg"),
+    "darwin-arm64-pkg": ("darwin-arm64", "pkg"),
+    "win32-x64-exe": ("win32-x64", "exe"),
+    "win32-arm64-exe": ("win32-arm64", "exe"),
+}
 VERSION_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
-def filename(version: str, platform: str) -> str:
-    suffix = ".deb" if platform.startswith("linux-") else ".pkg" if platform.startswith("darwin-") else ".exe"
-    return f"webcodex-unified-v{version}-{platform}{suffix}"
+def filename(version: str, target: str) -> str:
+    try:
+        platform, package_format = INSTALLER_TARGETS[target]
+    except KeyError as exc:
+        raise ValueError(f"unsupported installer target: {target}") from exc
+    return f"webcodex-unified-v{version}-{platform}.{package_format}"
 
 
 def validate_manifest(value: object) -> dict:
@@ -26,24 +40,34 @@ def validate_manifest(value: object) -> dict:
     if not isinstance(version, str) or not VERSION_RE.fullmatch(version):
         raise ValueError("release manifest has an invalid version")
     installers = value.get("installers")
-    if not isinstance(installers, dict) or set(installers) != set(PLATFORMS):
-        raise ValueError("release manifest must contain all six installers")
-    for platform in PLATFORMS:
-        item = installers[platform]
-        if not isinstance(item, dict):
-            raise ValueError(f"invalid installer entry for {platform}")
-        name = filename(version, platform)
+    if not isinstance(installers, dict) or set(installers) != set(INSTALLER_TARGETS):
+        raise ValueError("release manifest must contain all eight installer targets")
+    source_identity: dict[str, tuple[str, str]] = {}
+    for target, (platform, package_format) in INSTALLER_TARGETS.items():
+        item = installers[target]
+        if not isinstance(item, dict) or set(item) != {
+            "platform", "format", "filename", "url", "sha256",
+            "source_manifest_url", "source_manifest_sha256",
+        }:
+            raise ValueError(f"invalid installer entry for {target}")
+        name = filename(version, target)
         url = f"https://github.com/yyjeqhc/webcodex/releases/download/v{version}/{name}"
+        if (item.get("platform"), item.get("format")) != (platform, package_format):
+            raise ValueError(f"non-canonical installer identity for {target}")
         if item.get("filename") != name or item.get("url") != url:
-            raise ValueError(f"non-canonical installer filename or URL for {platform}")
+            raise ValueError(f"non-canonical installer filename or URL for {target}")
         if not isinstance(item.get("sha256"), str) or not SHA256_RE.fullmatch(item["sha256"]):
-            raise ValueError(f"invalid installer SHA-256 for {platform}")
+            raise ValueError(f"invalid installer SHA-256 for {target}")
         source_name = f"webcodex-source-v{version}-{platform}.json"
         source_url = f"https://github.com/yyjeqhc/webcodex/releases/download/v{version}/{source_name}"
+        source_digest = item.get("source_manifest_sha256")
         if item.get("source_manifest_url") != source_url:
-            raise ValueError(f"non-canonical source manifest URL for {platform}")
-        if not isinstance(item.get("source_manifest_sha256"), str) or not SHA256_RE.fullmatch(item["source_manifest_sha256"]):
-            raise ValueError(f"invalid source manifest SHA-256 for {platform}")
+            raise ValueError(f"non-canonical source manifest URL for {target}")
+        if not isinstance(source_digest, str) or not SHA256_RE.fullmatch(source_digest):
+            raise ValueError(f"invalid source manifest SHA-256 for {target}")
+        identity = (source_url, source_digest)
+        if source_identity.setdefault(platform, identity) != identity:
+            raise ValueError(f"installer targets disagree on source provenance for {platform}")
     return value
 
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a unified WebCodex .deb or macOS .pkg from a verified source manifest.
+"""Build a unified WebCodex .deb, .rpm, or macOS .pkg from a verified source manifest.
 
 The manifest records the SHA-256 and --build-info-json result for CLI, Server,
 Runner, and Desktop. SHA256SUMS binds the manifest to the build artifacts.
@@ -22,6 +22,7 @@ PLATFORMS = {
     "darwin-x64": ("darwin", "x86_64-apple-darwin", "x86_64", "x86_64"),
     "darwin-arm64": ("darwin", "aarch64-apple-darwin", "aarch64", "arm64"),
 }
+RPM_ARCH = {"linux-x64": "x86_64", "linux-arm64": "aarch64"}
 MAX_BYTES = 1024 * 1024
 
 class PackageError(ValueError):
@@ -358,8 +359,7 @@ fi
 """
 
 
-def stage_linux(manifest: dict[str, Any], stage: Path, input_root: Path) -> None:
-    artifacts = manifest["artifacts"]
+def stage_linux_payload(manifest: dict[str, Any], stage: Path) -> None:
     resolved = manifest["_artifacts"]
     _copy_exec(manifest["_desktop_payload"], stage / "usr/lib/webcodex/webcodex-desktop")
     for name in RUNTIMES:
@@ -374,6 +374,10 @@ def stage_linux(manifest: dict[str, Any], stage: Path, input_root: Path) -> None
     doc = stage / "usr/share/doc/webcodex"
     doc.mkdir(parents=True)
     (doc / "unified-source-manifest.json").write_text(json.dumps(public_manifest(manifest), indent=2) + "\n", encoding="utf-8")
+
+
+def stage_deb_metadata(manifest: dict[str, Any], stage: Path, input_root: Path) -> None:
+    artifacts = manifest["artifacts"]
     control = stage / "DEBIAN"
     control.mkdir()
     arch = PLATFORMS[manifest["platform"]][3]
@@ -384,11 +388,132 @@ def stage_linux(manifest: dict[str, Any], stage: Path, input_root: Path) -> None
         " Includes Desktop, CLI, Server and Runner. Installation does not start services.\n", encoding="utf-8")
     _copy_upgrade_candidate(input_root, control / "upgrade-candidate", manifest)
     preinst = control / "preinst"
-    preinst.write_text(_upgrade_preinstall("upgrade-candidate", "/var/lib/webcodex-installer/transaction", "/var/lib/webcodex-installer/authorization.json", "/usr/lib/webcodex/webcodex-runtime", 'existing_install=0\nif [ "$(dpkg-query -W -f=\'${db:Status-Status}\' webcodex 2>/dev/null || true)" = installed ]; then existing_install=1; fi\nfor pattern in /usr/lib/webcodex/webcodex-desktop /usr/lib/webcodex/webcodex-runtime/webcodex /usr/lib/webcodex/webcodex-runtime/webcodex-server /usr/lib/webcodex/webcodex-runtime/webcodex-runner /usr/bin/webcodex /usr/bin/webcodex-server /usr/bin/webcodex-runner /usr/share/applications/webcodex.desktop /etc/systemd/system/webcodex* /lib/systemd/system/webcodex* /usr/lib/systemd/system/webcodex*; do\n  if [ -e "$pattern" ] || [ -L "$pattern" ]; then existing_install=1; fi\ndone', "/var/lib/webcodex-installer/recovery", "/var/lib/webcodex-installer/same-package.pending", artifacts["webcodex"]["sha256"], "/usr/bin/sha256sum", "/usr/lib/webcodex/webcodex-runtime/webcodex"), encoding="utf-8")
+    ownership = """existing_install=0
+if [ "$(dpkg-query -W -f='""" + "$" + """{db:Status-Status}' webcodex 2>/dev/null || true)" = installed ]; then existing_install=1; fi
+for pattern in /usr/lib/webcodex/webcodex-desktop /usr/lib/webcodex/webcodex-runtime/webcodex /usr/lib/webcodex/webcodex-runtime/webcodex-server /usr/lib/webcodex/webcodex-runtime/webcodex-runner /usr/bin/webcodex /usr/bin/webcodex-server /usr/bin/webcodex-runner /usr/share/applications/webcodex.desktop /etc/systemd/system/webcodex* /lib/systemd/system/webcodex* /usr/lib/systemd/system/webcodex*; do
+  if [ -e "$pattern" ] || [ -L "$pattern" ]; then existing_install=1; fi
+done"""
+    preinst.write_text(_upgrade_preinstall("upgrade-candidate", "/var/lib/webcodex-installer/transaction", "/var/lib/webcodex-installer/authorization.json", "/usr/lib/webcodex/webcodex-runtime", ownership, "/var/lib/webcodex-installer/recovery", "/var/lib/webcodex-installer/same-package.pending", artifacts["webcodex"]["sha256"], "/usr/bin/sha256sum", "/usr/lib/webcodex/webcodex-runtime/webcodex"), encoding="utf-8")
     preinst.chmod(0o755)
     postinst = control / "postinst"
     postinst.write_text(_upgrade_postinstall("/usr/lib/webcodex/webcodex-runtime/webcodex", "/var/lib/webcodex-installer/transaction", "/var/lib/webcodex-installer/authorization.json", "/var/lib/webcodex-installer/recovery", "/usr/lib/webcodex/webcodex-runtime", "/var/lib/webcodex-installer/same-package.pending"), encoding="utf-8")
     postinst.chmod(0o755)
+
+
+def rpm_preinstall() -> str:
+    return """set -eu
+if [ "$1" -eq 1 ]; then
+  # Fresh install: no prior package payload exists to protect.
+  exit 0
+fi
+candidate=/var/lib/webcodex-installer/recovery/candidate
+cli=/usr/lib/webcodex/webcodex-runtime/webcodex
+authorization=/var/lib/webcodex-installer/authorization.json
+same_marker=/var/lib/webcodex-installer/same-package.pending
+if [ ! -x "$cli" ] || [ ! -d "$candidate" ]; then
+  echo "WebCodex RPM upgrade requires a verified prepared recovery candidate." >&2
+  exit 1
+fi
+if [ -f "$authorization" ]; then
+  "$cli" environment installer-verify --candidate-dir "$candidate" --expected-runtime-dir /usr/lib/webcodex/webcodex-runtime --json
+elif [ -f "$same_marker" ]; then
+  "$cli" environment installer-verify-same --candidate-dir "$candidate" --expected-runtime-dir /usr/lib/webcodex/webcodex-runtime --json
+else
+  echo "WebCodex RPM upgrade requires a prepared owner receipt or same-package marker." >&2
+  exit 1
+fi
+"""
+
+
+def rpm_postinstall() -> str:
+    return """set -eu
+if [ "$1" -eq 1 ]; then
+  exit 0
+fi
+cli=/usr/lib/webcodex/webcodex-runtime/webcodex
+authorization=/var/lib/webcodex-installer/authorization.json
+same_marker=/var/lib/webcodex-installer/same-package.pending
+candidate=/var/lib/webcodex-installer/recovery/candidate
+if [ -f "$authorization" ]; then
+  "$cli" environment installer-finish --json
+  rm -rf "$candidate"
+  exit 0
+fi
+if [ -f "$same_marker" ]; then
+  "$cli" environment installer-verify-same --candidate-dir "$candidate" --expected-runtime-dir /usr/lib/webcodex/webcodex-runtime --json
+  rm -f "$same_marker"
+  rm -rf "$candidate"
+  exit 0
+fi
+echo "WebCodex RPM upgrade lost its prepared transaction state." >&2
+exit 1
+"""
+
+
+def rpm_spec(manifest: dict[str, Any], payload_root: Path) -> str:
+    arch = RPM_ARCH[manifest["platform"]]
+    version = manifest["version"]
+    if not re.fullmatch(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)", version):
+        raise PackageError("RPM packaging currently requires a canonical X.Y.Z release version")
+    files = [
+        "/usr/lib/webcodex/webcodex-desktop",
+        "/usr/lib/webcodex/webcodex-runtime/webcodex",
+        "/usr/lib/webcodex/webcodex-runtime/webcodex-server",
+        "/usr/lib/webcodex/webcodex-runtime/webcodex-runner",
+        "/usr/bin/webcodex",
+        "/usr/bin/webcodex-server",
+        "/usr/bin/webcodex-runner",
+        "/usr/share/applications/webcodex.desktop",
+        "/usr/share/doc/webcodex/unified-source-manifest.json",
+        "/usr/share/webcodex/unified-source-manifest.json",
+        "/usr/share/webcodex/upgrade-candidate",
+    ]
+    return f"""Name: webcodex
+Version: {version}
+Release: 1
+Summary: WebCodex Desktop and unified Server/Runner runtime
+License: Apache-2.0
+URL: https://github.com/yyjeqhc/webcodex
+BuildArch: {arch}
+Requires: rpm
+Requires: cpio
+Requires: polkit
+
+%description
+WebCodex Desktop, CLI, Server and Runner. Installation does not start services.
+
+%install
+set -eu
+rm -rf "%{{buildroot}}"
+mkdir -p "%{{buildroot}}"
+cp -a "{payload_root}/." "%{{buildroot}}/"
+
+%pre
+{rpm_preinstall()}
+%post
+{rpm_postinstall()}
+%files
+""" + "\n".join(files) + "\n"
+
+def package_rpm(manifest: dict[str, Any], payload_root: Path, output: Path, temp_path: Path) -> None:
+    tool = shutil.which("rpmbuild")
+    if not tool:
+        raise PackageError("rpmbuild is required to create a .rpm")
+    top = temp_path / "rpmbuild"
+    for name in ("BUILD", "BUILDROOT", "RPMS", "SOURCES", "SPECS", "SRPMS"):
+        (top / name).mkdir(parents=True)
+    spec = top / "SPECS/webcodex.spec"
+    spec.write_text(rpm_spec(manifest, payload_root), encoding="utf-8")
+    result = subprocess.run([tool, "--define", f"_topdir {top}", "-bb", str(spec)],
+        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False, timeout=180)
+    if result.returncode:
+        raise PackageError("rpmbuild failed to build the installer")
+    arch = RPM_ARCH[manifest["platform"]]
+    built = list((top / "RPMS" / arch).glob("webcodex-*.rpm"))
+    if len(built) != 1 or built[0].stat().st_size == 0:
+        raise PackageError("rpmbuild did not produce exactly one RPM")
+    shutil.copyfile(built[0], output)
+
 
 def stage_macos(manifest: dict[str, Any], stage: Path, scripts_dir: Path, input_root: Path) -> None:
     artifacts = manifest["artifacts"]
@@ -413,11 +538,14 @@ def stage_macos(manifest: dict[str, Any], stage: Path, scripts_dir: Path, input_
 def package(args: argparse.Namespace) -> dict[str, Any]:
     manifest = validate_manifest(args.manifest, args.checksums, args.input_root, args.platform)
     os_name = PLATFORMS[args.platform][0]
-    expected_suffix = ".deb" if os_name == "linux" else ".pkg"
-    if args.output.suffix.lower() != expected_suffix:
-        raise PackageError(f"{args.platform} installer output must end in {expected_suffix}")
+    suffix = args.output.suffix.lower()
+    if os_name == "linux":
+        if suffix not in (".deb", ".rpm"):
+            raise PackageError(f"{args.platform} installer output must end in .deb or .rpm")
+    elif suffix != ".pkg":
+        raise PackageError(f"{args.platform} installer output must end in .pkg")
     if os_name == "linux" and platform.system() != "Linux":
-        raise PackageError(".deb creation requires a Linux host")
+        raise PackageError("Linux package creation requires a Linux host")
     if os_name == "darwin" and platform.system() != "Darwin" and not args.dry_run:
         raise PackageError(".pkg creation requires a native macOS host")
     output = args.output.absolute()
@@ -429,18 +557,39 @@ def package(args: argparse.Namespace) -> dict[str, Any]:
         stage = temp_path / "root"
         stage.mkdir()
         if os_name == "linux":
-            stage_linux(manifest, stage, args.input_root.resolve(strict=True))
+            stage_linux_payload(manifest, stage)
+            package_kind = suffix.removeprefix(".")
+            if package_kind == "deb":
+                stage_deb_metadata(manifest, stage, args.input_root.resolve(strict=True))
+            else:
+                provenance = stage / "usr/share/webcodex/unified-source-manifest.json"
+                provenance.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(
+                    stage / "usr/share/doc/webcodex/unified-source-manifest.json",
+                    provenance,
+                )
+                _copy_upgrade_candidate(
+                    args.input_root.resolve(strict=True),
+                    stage / "usr/share/webcodex/upgrade-candidate",
+                    manifest,
+                )
             if args.dry_run:
                 entries = sorted(path.relative_to(stage).as_posix() for path in stage.rglob("*"))
-                return {"platform": args.platform, "output": str(output), "entries": entries, "package": "deb"}
-            tool = shutil.which("dpkg-deb")
-            if not tool:
-                raise PackageError("dpkg-deb is required to create a .deb")
-            result = subprocess.run([tool, "--build", "--root-owner-group", str(stage), str(output)],
-                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False, timeout=120)
-            if result.returncode:
-                output.unlink(missing_ok=True)
-                raise PackageError("dpkg-deb failed to build the installer")
+                result = {"platform": args.platform, "output": str(output), "entries": entries, "package": package_kind}
+                if package_kind == "rpm":
+                    result["spec"] = rpm_spec(manifest, stage)
+                return result
+            if package_kind == "deb":
+                tool = shutil.which("dpkg-deb")
+                if not tool:
+                    raise PackageError("dpkg-deb is required to create a .deb")
+                result = subprocess.run([tool, "--build", "--root-owner-group", str(stage), str(output)],
+                    stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False, timeout=120)
+                if result.returncode:
+                    output.unlink(missing_ok=True)
+                    raise PackageError("dpkg-deb failed to build the installer")
+            else:
+                package_rpm(manifest, stage, output, temp_path)
         else:
             scripts_dir = temp_path / "pkg-scripts"
             stage_macos(manifest, stage, scripts_dir, args.input_root.resolve(strict=True))
@@ -461,7 +610,7 @@ def package(args: argparse.Namespace) -> dict[str, Any]:
         output.unlink(missing_ok=True)
         raise PackageError("installer output was not created")
     return {"platform": args.platform, "output": str(output), "sha256": sha256_file(output),
-        "package": "deb" if os_name == "linux" else "pkg"}
+        "package": suffix.removeprefix(".")}
 
 def make_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)

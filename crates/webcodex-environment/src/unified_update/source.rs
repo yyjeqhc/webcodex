@@ -8,7 +8,7 @@ use webcodex_core::desktop_runtime_contract::{DesktopRuntimeContract, MachineBui
 pub struct UpdateSource {
     pub version: String,
     pub source_sha: String,
-    pub platform: InstallerPlatform,
+    pub platform: RuntimePlatform,
     pub manifest_sha256: String,
     components: BTreeMap<String, Component>,
 }
@@ -50,7 +50,7 @@ struct Source {
     schema_version: u16,
     version: String,
     source_sha: String,
-    platform: InstallerPlatform,
+    platform: RuntimePlatform,
     target: String,
     architecture: String,
     source_workflow_run_id: u64,
@@ -74,7 +74,7 @@ fn relative_path(value: &str) -> bool {
 pub fn verify_source_manifest(
     bytes: &[u8],
     version: &str,
-    platform: InstallerPlatform,
+    platform: RuntimePlatform,
 ) -> UpdateResult<UpdateSource> {
     let bad = UpdateError::SourceManifestInvalid;
     if bytes.len() as u64 > MAX_SOURCE_BYTES {
@@ -154,7 +154,7 @@ pub fn verify_source_manifest(
     }
     let desktop = &source.artifacts["webcodex-desktop"];
     match platform {
-        InstallerPlatform::DarwinX64 | InstallerPlatform::DarwinArm64 => {
+        RuntimePlatform::DarwinX64 | RuntimePlatform::DarwinArm64 => {
             if !payload.path.ends_with(".app")
                 || !payload.executable.starts_with("Contents/MacOS/")
                 || desktop.path != format!("{}/{}", payload.path, payload.executable)
@@ -163,7 +163,7 @@ pub fn verify_source_manifest(
                 return Err(bad);
             }
         }
-        InstallerPlatform::LinuxX64 | InstallerPlatform::LinuxArm64 => {
+        RuntimePlatform::LinuxX64 | RuntimePlatform::LinuxArm64 => {
             if desktop.path != payload.path
                 || payload.path.rsplit('/').next() != Some(payload.executable.as_str())
                 || payload.sha256 != desktop.sha256
@@ -172,7 +172,7 @@ pub fn verify_source_manifest(
                 return Err(bad);
             }
         }
-        InstallerPlatform::Win32X64 | InstallerPlatform::Win32Arm64 => {
+        RuntimePlatform::Win32X64 | RuntimePlatform::Win32Arm64 => {
             if desktop.path != payload.path
                 || payload.executable != "WebCodex.exe"
                 || payload.sha256 != desktop.sha256

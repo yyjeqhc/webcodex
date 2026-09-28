@@ -933,7 +933,7 @@ jobs:
               apt-get update
               apt-get install -y --no-install-recommends binutils build-essential ca-certificates curl file git gnupg \
                 libayatana-appindicator3-dev libgtk-3-dev libssl-dev libwebkit2gtk-4.1-dev \
-                libxdo-dev librsvg2-dev patchelf pkg-config python3 python3-pip dpkg-dev
+                libxdo-dev librsvg2-dev patchelf pkg-config python3 python3-pip dpkg-dev rpm cpio
               curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
               apt-get install -y --no-install-recommends nodejs
               curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
@@ -974,12 +974,14 @@ jobs:
               source_name="webcodex-source-v$VERSION-$PLATFORM.json"
               cp unified-candidate/source-manifest.json "dist/$source_name"
               sha256sum "dist/$source_name" > "dist/$source_name.sha256"
-              python3 scripts/package_unified_installer.py \
-                --manifest unified-candidate/source-manifest.json --checksums unified-candidate/SHA256SUMS \
-                --input-root unified-candidate --platform "$PLATFORM" \
-                --output "dist/webcodex-unified-v$VERSION-$PLATFORM.deb"
-              filename="webcodex-unified-v$VERSION-$PLATFORM.deb"
-              sha256sum "dist/$filename" > "dist/$filename.sha256"
+              for suffix in deb rpm; do
+                python3 scripts/package_unified_installer.py \
+                  --manifest unified-candidate/source-manifest.json --checksums unified-candidate/SHA256SUMS \
+                  --input-root unified-candidate --platform "$PLATFORM" \
+                  --output "dist/webcodex-unified-v$VERSION-$PLATFORM.$suffix"
+                filename="webcodex-unified-v$VERSION-$PLATFORM.$suffix"
+                sha256sum "dist/$filename" > "dist/$filename.sha256"
+              done
             '
       - name: Verify native host and prepare exact runtime inputs
         if: matrix.os == 'macos'
@@ -1136,10 +1138,14 @@ jobs:
             "$ARCHIVE_STEM-win32-arm64.tar.gz.sha256"
             "webcodex-unified-v$VERSION-linux-x64.deb"
             "webcodex-unified-v$VERSION-linux-x64.deb.sha256"
+            "webcodex-unified-v$VERSION-linux-x64.rpm"
+            "webcodex-unified-v$VERSION-linux-x64.rpm.sha256"
             "webcodex-source-v$VERSION-linux-x64.json"
             "webcodex-source-v$VERSION-linux-x64.json.sha256"
             "webcodex-unified-v$VERSION-linux-arm64.deb"
             "webcodex-unified-v$VERSION-linux-arm64.deb.sha256"
+            "webcodex-unified-v$VERSION-linux-arm64.rpm"
+            "webcodex-unified-v$VERSION-linux-arm64.rpm.sha256"
             "webcodex-source-v$VERSION-linux-arm64.json"
             "webcodex-source-v$VERSION-linux-arm64.json.sha256"
             "webcodex-unified-v$VERSION-darwin-x64.pkg"
@@ -1203,17 +1209,21 @@ jobs:
             (cd candidate-input && sha256sum -c "$desktop_filename.sha256")
           done
           for platform in "${platforms[@]}"; do
-            case "$platform" in
-              linux-*) suffix=deb ;;
-              darwin-*) suffix=pkg ;;
-              win32-*) suffix=exe ;;
-            esac
-              installer="webcodex-unified-v$VERSION-$platform.$suffix"
-              (cd candidate-input && sha256sum -c "$installer.sha256")
-              (cd candidate-input && sha256sum -c "webcodex-source-v$VERSION-$platform.json.sha256")
-              cp "candidate-input/webcodex-source-v$VERSION-$platform.json" release-bundle/
+            (cd candidate-input && sha256sum -c "webcodex-source-v$VERSION-$platform.json.sha256")
           done
-
+          installers=(
+            "webcodex-unified-v$VERSION-linux-x64.deb"
+            "webcodex-unified-v$VERSION-linux-x64.rpm"
+            "webcodex-unified-v$VERSION-linux-arm64.deb"
+            "webcodex-unified-v$VERSION-linux-arm64.rpm"
+            "webcodex-unified-v$VERSION-darwin-x64.pkg"
+            "webcodex-unified-v$VERSION-darwin-arm64.pkg"
+            "webcodex-unified-v$VERSION-win32-x64.exe"
+            "webcodex-unified-v$VERSION-win32-arm64.exe"
+          )
+          for installer in "${installers[@]}"; do
+            (cd candidate-input && sha256sum -c "$installer.sha256")
+          done
           python3 - <<'PY'
           import hashlib
           import json
@@ -1259,13 +1269,10 @@ jobs:
           cp "candidate-input/$desktop_darwin_arm64" release-bundle/
           cp "candidate-input/$desktop_win32_x64" release-bundle/
           cp "candidate-input/$desktop_win32_arm64" release-bundle/
+          for installer in "${installers[@]}"; do
+            cp "candidate-input/$installer" release-bundle/
+          done
           for platform in "${platforms[@]}"; do
-            case "$platform" in
-              linux-*) suffix=deb ;;
-              darwin-*) suffix=pkg ;;
-              win32-*) suffix=exe ;;
-            esac
-            cp "candidate-input/webcodex-unified-v$VERSION-$platform.$suffix" release-bundle/
             cp "candidate-input/webcodex-source-v$VERSION-$platform.json" release-bundle/
           done
           cp candidate-input/linux-x64-elf.txt candidate-input/linux-arm64-elf.txt release-bundle/
@@ -1286,7 +1293,9 @@ jobs:
               done
               for filename in \
                 "webcodex-unified-v$VERSION-linux-x64.deb" \
+                "webcodex-unified-v$VERSION-linux-x64.rpm" \
                 "webcodex-unified-v$VERSION-linux-arm64.deb" \
+                "webcodex-unified-v$VERSION-linux-arm64.rpm" \
                 "webcodex-unified-v$VERSION-darwin-x64.pkg" \
                 "webcodex-unified-v$VERSION-darwin-arm64.pkg" \
                 "webcodex-unified-v$VERSION-win32-x64.exe" \
@@ -1333,9 +1342,18 @@ jobs:
                   "filename": filename,
                   "sha256": hashlib.sha256((source / filename).read_bytes()).hexdigest(),
               }
+          installer_targets = {
+              "linux-x64-deb": ("linux-x64", "deb"),
+              "linux-x64-rpm": ("linux-x64", "rpm"),
+              "linux-arm64-deb": ("linux-arm64", "deb"),
+              "linux-arm64-rpm": ("linux-arm64", "rpm"),
+              "darwin-x64-pkg": ("darwin-x64", "pkg"),
+              "darwin-arm64-pkg": ("darwin-arm64", "pkg"),
+              "win32-x64-exe": ("win32-x64", "exe"),
+              "win32-arm64-exe": ("win32-arm64", "exe"),
+          }
           installer_artifacts = {}
-          for platform in platforms:
-              suffix = "deb" if platform.startswith("linux-") else "pkg" if platform.startswith("darwin-") else "exe"
+          for target, (platform, suffix) in installer_targets.items():
               filename = f"webcodex-unified-v{os.environ['VERSION']}-{platform}.{suffix}"
               installer_record = {
                   "filename": filename,
@@ -1364,7 +1382,7 @@ jobs:
                       raise SystemExit(f"Windows bootstrap inner/outer digest mismatch: {platform}")
                   installer_record["inner_sha256"] = evidence["inner_installer_sha256"]
                   installer_record["candidate_manifest_sha256"] = evidence["candidate_manifest_sha256"]
-              installer_artifacts[platform] = installer_record
+              installer_artifacts[target] = installer_record
           payload = {
               "tag": os.environ["INPUT_TAG"],
               "version": os.environ["VERSION"],

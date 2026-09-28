@@ -66,19 +66,35 @@ def _write_bundle(root: Path, tag: str, build_kind: str, *, unified: bool = Fals
     installer_artifacts = {}
     installer_manifest = {}
     if unified:
+        source_records = {}
         for platform in collector.PLATFORMS:
-            filename = collector.installer_artifact_filename(VERSION, platform)
-            magic = b"!<arch>\n" if platform.startswith("linux-") else b"xar!" if platform.startswith("darwin-") else b"MZ"
+            source_name = f"webcodex-source-v{VERSION}-{platform}.json"
+            source_payload = json.dumps({
+                "schema_version": 1,
+                "version": VERSION,
+                "source_sha": SOURCE_SHA,
+                "source_workflow_run_id": RUN_ID,
+                "source_workflow_ref": "test/.github/workflows/release-build.yml@refs/tags/v0.4.3",
+                "platform": platform,
+            }).encode()
+            (root / source_name).write_bytes(source_payload)
+            source_digest = hashlib.sha256(source_payload).hexdigest()
+            checksum_lines.append(f"{source_digest}  {source_name}")
+            source_records[platform] = (source_name, source_digest)
+        for target, (platform, package_format) in collector.INSTALLER_TARGETS.items():
+            filename = collector.installer_artifact_filename(VERSION, target)
+            magic = {
+                "deb": b"!<arch>\n",
+                "rpm": bytes.fromhex("edabeedb"),
+                "pkg": b"xar!",
+                "exe": b"MZ",
+            }[package_format]
             payload = magic + b"synthetic installer"
             (root / filename).write_bytes(payload)
             digest = hashlib.sha256(payload).hexdigest()
             checksum_lines.append(f"{digest}  {filename}")
-            source_name = f"webcodex-source-v{VERSION}-{platform}.json"
-            source_payload = json.dumps({"schema_version": 1, "version": VERSION, "source_sha": SOURCE_SHA, "source_workflow_run_id": RUN_ID, "source_workflow_ref": "test/.github/workflows/release-build.yml@refs/tags/v0.3.8", "platform": platform}).encode()
-            (root / source_name).write_bytes(source_payload)
-            source_digest = hashlib.sha256(source_payload).hexdigest()
-            checksum_lines.append(f"{source_digest}  {source_name}")
-            installer_artifacts[platform] = {
+            source_name, source_digest = source_records[platform]
+            installer_artifacts[target] = {
                 "filename": filename,
                 "sha256": digest,
                 "source_manifest_filename": source_name,
@@ -88,7 +104,9 @@ def _write_bundle(root: Path, tag: str, build_kind: str, *, unified: bool = Fals
                     "candidate_manifest_sha256": hashlib.sha256(b"candidate manifest").hexdigest(),
                 } if platform.startswith("win32-") else {}),
             }
-            installer_manifest[platform] = {
+            installer_manifest[target] = {
+                "platform": platform,
+                "format": package_format,
                 "filename": filename,
                 "url": f"https://github.com/{collector.DEFAULT_REPO}/releases/download/v{VERSION}/{filename}",
                 "sha256": digest,
@@ -212,7 +230,7 @@ class ArtifactSelectionTests(unittest.TestCase):
 
 
 class BundleTests(unittest.TestCase):
-    def test_release_bundle_contract_with_six_unified_installers(self) -> None:
+    def test_release_bundle_contract_with_eight_unified_installer_targets(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             stem, _hashes = _write_bundle(root, f"v{VERSION}", "release", unified=True)
@@ -224,12 +242,20 @@ class BundleTests(unittest.TestCase):
                 expected_tag=f"v{VERSION}",
                 artifact_name=f"{stem}-bundle",
             )
-            self.assertEqual(set(summary["installer_artifacts"]), set(collector.PLATFORMS))
+            self.assertEqual(set(summary["installer_artifacts"]), set(collector.INSTALLER_TARGETS))
             self.assertEqual(
-                summary["installer_artifacts"]["linux-x64"]["filename"],
+                summary["installer_artifacts"]["linux-x64-deb"]["filename"],
                 f"webcodex-unified-v{VERSION}-linux-x64.deb",
             )
-            (root / summary["installer_artifacts"]["win32-x64"]["filename"]).write_bytes(b"broken")
+            self.assertEqual(
+                summary["installer_artifacts"]["linux-x64-rpm"]["filename"],
+                f"webcodex-unified-v{VERSION}-linux-x64.rpm",
+            )
+            self.assertEqual(
+                summary["installer_artifacts"]["linux-x64-deb"]["source_manifest_sha256"],
+                summary["installer_artifacts"]["linux-x64-rpm"]["source_manifest_sha256"],
+            )
+            (root / summary["installer_artifacts"]["win32-x64-exe"]["filename"]).write_bytes(b"broken")
             with self.assertRaises(collector.CollectionError):
                 collector.verify_bundle_directory(
                     root,

@@ -2,7 +2,7 @@
 //! or platform opener guessed from user-controlled environment variables.
 use std::ffi::OsString;
 use std::path::Path;
-use webcodex_environment::unified_update::UpdateError;
+use webcodex_environment::unified_update::{InstallerTarget, PackageFormat, UpdateError};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum LaunchOutcome {
@@ -11,29 +11,49 @@ pub(super) enum LaunchOutcome {
     Unknown,
 }
 
-pub(super) fn supported() -> bool {
+pub(super) fn supported(target: InstallerTarget) -> bool {
+    if !target.valid() {
+        return false;
+    }
     #[cfg(target_os = "macos")]
     {
-        Path::new("/usr/sbin/installer").is_file() && Path::new("/usr/sbin/pkgutil").is_file()
+        target.format == PackageFormat::Pkg
+            && Path::new("/usr/sbin/installer").is_file()
+            && Path::new("/usr/sbin/pkgutil").is_file()
     }
     #[cfg(target_os = "linux")]
     {
         Path::new("/usr/bin/pkexec").is_file()
-            && Path::new("/usr/bin/dpkg").is_file()
-            && Path::new("/usr/bin/dpkg-deb").is_file()
+            && match target.format {
+                PackageFormat::Deb => {
+                    Path::new("/usr/bin/dpkg").is_file() && Path::new("/usr/bin/dpkg-deb").is_file()
+                }
+                PackageFormat::Rpm => {
+                    Path::new("/usr/bin/rpm").is_file()
+                        && Path::new("/usr/bin/rpm2cpio").is_file()
+                        && Path::new("/usr/bin/cpio").is_file()
+                }
+                _ => false,
+            }
     }
     #[cfg(windows)]
     {
-        true
+        target.format == PackageFormat::Exe
     }
     #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
     {
+        let _ = target;
         false
     }
 }
 
 #[cfg(unix)]
-fn helper_arguments(receipt: &Path, candidate: &Path, installer: &Path) -> Vec<OsString> {
+fn helper_arguments(
+    receipt: &Path,
+    candidate: &Path,
+    installer: &Path,
+    target: InstallerTarget,
+) -> Vec<OsString> {
     vec![
         "environment".into(),
         "installer-apply".into(),
@@ -43,6 +63,8 @@ fn helper_arguments(receipt: &Path, candidate: &Path, installer: &Path) -> Vec<O
         candidate.as_os_str().into(),
         "--installer-file".into(),
         installer.as_os_str().into(),
+        "--installer-target".into(),
+        target.as_str().into(),
         "--json".into(),
     ]
 }
@@ -87,6 +109,7 @@ pub(super) async fn launch_unix(
     installer: &Path,
     version: &str,
     operation_id: &str,
+    target: InstallerTarget,
 ) -> LaunchOutcome {
     use std::process::Stdio;
     use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
@@ -96,7 +119,7 @@ pub(super) async fn launch_unix(
     let mut child = match tokio::process::Command::new("/usr/bin/pkexec")
         .arg("--disable-internal-agent")
         .arg(cli)
-        .args(helper_arguments(receipt, candidate, installer))
+        .args(helper_arguments(receipt, candidate, installer, target))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -142,9 +165,10 @@ pub(super) async fn launch_unix(
     installer: &Path,
     version: &str,
     operation_id: &str,
+    target: InstallerTarget,
 ) -> LaunchOutcome {
     let cli = cli.to_path_buf();
-    let args = helper_arguments(receipt, candidate, installer);
+    let args = helper_arguments(receipt, candidate, installer, target);
     let version = version.to_owned();
     let operation_id = operation_id.to_owned();
     tokio::task::spawn_blocking(move || macos::launch(&cli, &args, &version, &operation_id))
@@ -401,12 +425,19 @@ pub(super) fn launch_windows(
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+
+    fn target() -> InstallerTarget {
+        let platform = webcodex_environment::unified_update::RuntimePlatform::current().unwrap();
+        InstallerTarget::default_for_non_linux(platform)
+            .or_else(|| InstallerTarget::for_platform(platform, PackageFormat::Deb))
+            .unwrap()
+    }
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     #[tokio::test]
     async fn an_untrusted_cli_is_rejected_before_any_os_authorization_or_process() {
         let path = Path::new("/private/not-the-installed-webcodex");
         assert_eq!(
-            launch_unix(path, path, path, path, "1.2.3", "operation").await,
+            launch_unix(path, path, path, path, "1.2.3", "operation", target()).await,
             LaunchOutcome::NotStarted(UpdateError::UpgradePreflightFailed)
         );
     }
@@ -414,10 +445,13 @@ mod tests {
     #[test]
     fn helper_argv_never_interprets_metacharacters() {
         let path = Path::new("/Users/example/a b;$(touch nope)/package.pkg");
-        let args = helper_arguments(path, path, path);
-        assert_eq!(args.len(), 9);
+        let args = helper_arguments(path, path, path, target());
+        assert_eq!(args.len(), 11);
         assert_eq!(args[3], path.as_os_str());
         assert_eq!(args[7], path.as_os_str());
+        assert_eq!(args[8], "--installer-target");
+        let target_name = target().as_str();
+        assert_eq!(args[9].as_os_str(), std::ffi::OsStr::new(&target_name));
         assert!(!args.iter().any(|arg| arg == "sh" || arg == "sudo"));
     }
     #[test]

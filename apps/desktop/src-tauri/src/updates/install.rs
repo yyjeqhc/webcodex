@@ -1,6 +1,7 @@
 mod context;
 mod native;
 mod prepare;
+pub(crate) use context::detected_installer_target;
 pub use context::{assess_installation, InstallContext};
 
 use super::download::{
@@ -9,7 +10,7 @@ use super::download::{
 use crate::operation::CancellationSignal;
 use native::LaunchOutcome;
 use webcodex_environment::unified_update::{
-    self as unified, InstallerPlatform, PrivateUpdateCache, UpdateError, UpdateResult,
+    self as unified, PrivateUpdateCache, UpdateError, UpdateResult,
 };
 use webcodex_environment::{
     upgrade_observation, EnvironmentStore, NativeEnvironment, UpgradeObservation, UpgradeOutcome,
@@ -46,7 +47,8 @@ impl UpdateManager {
         {
             return Err(UpdateError::UpgradePreflightFailed);
         }
-        if !native::supported() {
+        let target = state.target.ok_or(UpdateError::UnsupportedPlatform)?;
+        if target != context.target || !native::supported(target) {
             return Err(UpdateError::UnsupportedPlatform);
         }
         self.change(|state| {
@@ -79,20 +81,26 @@ impl UpdateManager {
         {
             return Err(UpdateError::RecoveryRequired);
         }
-        let platform = InstallerPlatform::current().ok_or(UpdateError::UnsupportedPlatform)?;
-        if let Err(error) = context::verify_installed_generation(context, platform).await {
+        let target = self
+            .current()
+            .target
+            .ok_or(UpdateError::UnsupportedPlatform)?;
+        if target != context.target {
+            return Err(UpdateError::UnsupportedPlatform);
+        }
+        if let Err(error) = context::verify_installed_generation(context, target).await {
             if error == UpdateError::ProvenanceFailed {
                 self.set_installation(InstallationKind::UnmanagedInstallation);
             }
             return Err(error);
         }
-        let release = unified::fetch_release(version, platform)
+        let release = unified::fetch_release(version, target)
             .await?
             .ok_or(UpdateError::ManifestMissing)?;
-        let entry = release.manifest.entry(platform)?;
-        let target = self.target_cache(cache)?;
+        let entry = release.manifest.entry(target)?;
+        let target_cache = self.target_cache(cache)?;
         if let Err(error) = verify_file(
-            &target,
+            &target_cache,
             &entry.filename,
             &entry.sha256,
             unified::MAX_INSTALLER_BYTES,
@@ -104,7 +112,7 @@ impl UpdateManager {
                 error,
                 UpdateError::ChecksumMismatch | UpdateError::DownloadTooLarge
             ) {
-                target.remove_file(&entry.filename)?;
+                target_cache.remove_file(&entry.filename)?;
             }
             return Err(error);
         }
@@ -115,10 +123,10 @@ impl UpdateManager {
         {
             return Err(UpdateError::ProvenanceFailed);
         }
-        let package = target.file(&entry.filename)?;
+        let package = target_cache.file(&entry.filename)?;
         #[cfg(unix)]
         {
-            let candidate = prepare::extract_candidate(&target, &package, platform).await?;
+            let candidate = prepare::extract_candidate(&target_cache, &package, target).await?;
             let checked = webcodex_environment::verify_upgrade_candidate(&candidate)
                 .map_err(|_| UpdateError::ProvenanceFailed)?;
             if checked.version != version
@@ -166,6 +174,7 @@ impl UpdateManager {
                 &package,
                 version,
                 &observed.operation_id,
+                target,
             )
             .await;
             match outcome {

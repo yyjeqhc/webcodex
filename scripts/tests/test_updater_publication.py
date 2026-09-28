@@ -62,7 +62,7 @@ class UpdaterPublicationTests(unittest.TestCase):
     def test_corrupt_bytes_or_npm_disagreement_fails(self):
         with self.assertRaises(verifier.VerificationError):
             self.verify(self.raw + b" ")
-        self.manifest["installers"]["darwin-arm64"]["sha256"] = "0" * 64
+        self.manifest["installers"]["darwin-arm64-pkg"]["sha256"] = "0" * 64
         with self.assertRaises(verifier.VerificationError):
             self.verify()
 
@@ -79,12 +79,12 @@ class UpdaterPublicationTests(unittest.TestCase):
         with self.assertRaisesRegex(verifier.VerificationError, "malformed"):
             verifier.validate_github_assets(self.release, VERSION)
 
-    def test_partial_six_platform_set_fails(self):
-        removed = verifier.canonical_installer_name(VERSION, "linux-arm64")
+    def test_partial_eight_target_set_fails(self):
+        removed = verifier.canonical_installer_name(VERSION, "linux-arm64-rpm")
         self.release["assets"] = [a for a in self.release["assets"] if a["name"] != removed]
         with self.assertRaises(verifier.VerificationError):
             verifier.validate_github_assets(self.release, VERSION)
-        del self.manifest["installers"]["linux-arm64"]
+        del self.manifest["installers"]["linux-arm64-rpm"]
         with self.assertRaises(verifier.VerificationError):
             verifier.validate_public_installers(self.manifest, VERSION)
 
@@ -105,11 +105,13 @@ class UpdaterPublicationTests(unittest.TestCase):
                 for p in collector.primary_desktop_platforms_for_version(VERSION)
             },
             "installer_artifacts": {
-                p: {
-                    "filename": verifier.canonical_installer_name(VERSION, p),
-                    "source_manifest_filename": verifier.canonical_source_manifest_name(VERSION, p),
+                target: {
+                    "filename": verifier.canonical_installer_name(VERSION, target),
+                    "source_manifest_filename": verifier.canonical_source_manifest_name(
+                        VERSION, collector.INSTALLER_TARGETS[target][0]
+                    ),
                 }
-                for p in collector.PLATFORMS
+                for target in collector.INSTALLER_TARGETS
             },
         }
         draft = dict(self.release, id=123, draft=True, html_url=f"https://github.com/{verifier.REPO}/releases/tag/v{VERSION}")

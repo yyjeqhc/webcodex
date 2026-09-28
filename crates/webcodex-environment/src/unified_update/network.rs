@@ -126,8 +126,7 @@ fn verify_checksums(
     if sums.len() > 32 || sums.get("manifest.json").copied() != Some(sha256(raw).as_str()) {
         return Err(UpdateError::ChecksumMismatch);
     }
-    for platform in InstallerPlatform::ALL {
-        let entry = manifest.entry(platform)?;
+    for platform in RuntimePlatform::ALL {
         let runtime = manifest
             .artifacts
             .get(&platform)
@@ -140,12 +139,20 @@ fn verify_checksums(
         if sums.get(runtime_name.as_str()).copied() != Some(runtime.sha256.as_str()) {
             return Err(UpdateError::ChecksumMismatch);
         }
-        if sums.get(entry.filename.as_str()).copied() != Some(entry.sha256.as_str())
-            || sums
-                .get(platform.source_filename(&manifest.version).as_str())
-                .copied()
-                != Some(entry.source_manifest_sha256.as_str())
-        {
+        let source_name = platform.source_filename(&manifest.version);
+        let source_digest = InstallerTarget::ALL
+            .iter()
+            .find(|target| target.platform == platform)
+            .and_then(|target| manifest.entry(*target).ok())
+            .map(|entry| entry.source_manifest_sha256.as_str())
+            .ok_or(UpdateError::ManifestInvalid)?;
+        if sums.get(source_name.as_str()).copied() != Some(source_digest) {
+            return Err(UpdateError::ChecksumMismatch);
+        }
+    }
+    for target in InstallerTarget::ALL {
+        let entry = manifest.entry(target)?;
+        if sums.get(entry.filename.as_str()).copied() != Some(entry.sha256.as_str()) {
             return Err(UpdateError::ChecksumMismatch);
         }
     }
@@ -156,8 +163,9 @@ fn verify_checksums(
 /// metadata. Missing legacy installer metadata is availability, not a failure.
 pub async fn fetch_release(
     version: &str,
-    platform: InstallerPlatform,
+    target: InstallerTarget,
 ) -> UpdateResult<Option<ReleaseArtifacts>> {
+    let platform = target.platform;
     if !stable_version(version) {
         return Err(UpdateError::ManifestInvalid);
     }
@@ -186,7 +194,7 @@ pub async fn fetch_release(
     .await?
     .ok_or(UpdateError::ManifestInvalid)?;
     verify_checksums(&sums, &manifest, &manifest_bytes)?;
-    let entry = manifest.entry(platform)?;
+    let entry = manifest.entry(target)?;
     let source_bytes = metadata(&client, &entry.source_manifest_url, MAX_SOURCE_BYTES)
         .await?
         .ok_or(UpdateError::SourceManifestInvalid)?;
@@ -209,24 +217,30 @@ mod tests {
         let raw = serde_json::to_vec(&super::super::tests::manifest()).unwrap();
         let manifest = UnifiedInstallerManifest::parse(&raw, "1.2.3").unwrap();
         let mut sums = format!("{}  manifest.json\n", sha256(&raw));
-        for platform in InstallerPlatform::ALL {
-            let entry = manifest.entry(platform).unwrap();
+        for platform in RuntimePlatform::ALL {
             let runtime = &manifest.artifacts[&platform];
+            let source = InstallerTarget::ALL
+                .iter()
+                .find(|target| target.platform == platform)
+                .and_then(|target| manifest.entry(*target).ok())
+                .unwrap();
             sums.push_str(&format!(
-                "{}  webcodex-v1.2.3-{}.tar.gz\n{}  {}\n{}  {}\n",
+                "{}  webcodex-v1.2.3-{}.tar.gz\n{}  {}\n",
                 runtime.sha256,
                 platform.as_str(),
-                entry.sha256,
-                entry.filename,
-                entry.source_manifest_sha256,
+                source.source_manifest_sha256,
                 platform.source_filename("1.2.3")
             ));
+        }
+        for target in InstallerTarget::ALL {
+            let entry = manifest.entry(target).unwrap();
+            sums.push_str(&format!("{}  {}\n", entry.sha256, entry.filename));
         }
         (manifest, raw, sums)
     }
 
     #[test]
-    fn checksums_bind_manifest_and_all_six_runtime_installer_source_sets() {
+    fn checksums_bind_six_runtime_six_source_and_eight_installer_sets() {
         let (manifest, raw, sums) = checksum_fixture();
         assert_eq!(verify_checksums(sums.as_bytes(), &manifest, &raw), Ok(()));
         let mut changed = raw.clone();

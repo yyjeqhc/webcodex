@@ -45,6 +45,16 @@ class PrepareReleaseMetadataInstallerTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
+    def write_installers(self):
+        for target, (_platform, package_format) in metadata.INSTALLER_TARGETS.items():
+            signature = {
+                "deb": b"!<arch>\n",
+                "rpm": bytes.fromhex("edabeedb"),
+                "pkg": b"xar!",
+                "exe": b"MZ",
+            }[package_format]
+            (self.artifacts / metadata.installer_filename("0.3.0", target)).write_bytes(signature + b"fixture")
+
     def prepare(self):
         import subprocess, sys
         return subprocess.run([
@@ -56,31 +66,28 @@ class PrepareReleaseMetadataInstallerTests(unittest.TestCase):
         ], capture_output=True, text=True)
 
     def test_generates_canonical_installer_manifest_and_checksums(self):
-        for platform in metadata.PLATFORMS:
-            name = metadata.installer_filename("0.3.0", platform)
-            signature = b"!<arch>\n" if platform.startswith("linux-") else b"xar!" if platform.startswith("darwin-") else b"MZ"
-            (self.artifacts / name).write_bytes(signature + b"fixture")
+        self.write_installers()
         result = self.prepare()
         self.assertEqual(result.returncode, 0, result.stderr)
         manifest = json.loads((self.output / "manifest.json").read_text())
-        self.assertEqual(set(manifest["installers"]), set(metadata.PLATFORMS))
+        self.assertEqual(set(manifest["installers"]), set(metadata.INSTALLER_TARGETS))
         sums = (self.output / "SHA256SUMS").read_text()
         self.assertIn(f"{metadata.sha256(self.output / 'manifest.json')}  manifest.json\n", sums)
-        self.assertTrue(all(metadata.installer_filename("0.3.0", platform) in sums for platform in metadata.PLATFORMS))
-        self.assertTrue(all(manifest["installers"][platform]["source_manifest_sha256"] for platform in metadata.PLATFORMS))
+        self.assertTrue(all(metadata.installer_filename("0.3.0", target) in sums for target in metadata.INSTALLER_TARGETS))
+        self.assertTrue(all(manifest["installers"][target]["source_manifest_sha256"] for target in metadata.INSTALLER_TARGETS))
+        self.assertEqual(manifest["installers"]["linux-x64-deb"]["source_manifest_sha256"], manifest["installers"]["linux-x64-rpm"]["source_manifest_sha256"])
+        self.assertEqual(len(manifest["installers"]), 8)
+        self.assertEqual(len(manifest["artifacts"]), 6)
 
     def test_rejects_partial_unified_installer_set(self):
-        path = self.artifacts / metadata.installer_filename("0.3.0", metadata.PLATFORMS[0])
+        path = self.artifacts / metadata.installer_filename("0.3.0", next(iter(metadata.INSTALLER_TARGETS)))
         path.write_bytes(b"!<arch>\nfixture")
         result = self.prepare()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("incomplete unified installer set", result.stderr)
 
     def test_rejects_source_manifest_from_different_workflow_run(self):
-        for platform in metadata.PLATFORMS:
-            (self.artifacts / metadata.installer_filename("0.3.0", platform)).write_bytes(
-                (b"!<arch>\n" if platform.startswith("linux-") else b"xar!" if platform.startswith("darwin-") else b"MZ") + b"fixture"
-            )
+        self.write_installers()
         path = self.artifacts / metadata.source_manifest_filename("0.3.0", metadata.PLATFORMS[0])
         value = json.loads(path.read_text())
         value["source_workflow_run_id"] += 1
@@ -90,10 +97,7 @@ class PrepareReleaseMetadataInstallerTests(unittest.TestCase):
         self.assertIn("CI provenance mismatch", result.stderr)
 
     def test_rejects_component_build_info_from_different_source_or_dirty_build(self):
-        for platform in metadata.PLATFORMS:
-            (self.artifacts / metadata.installer_filename("0.3.0", platform)).write_bytes(
-                (b"!<arch>\n" if platform.startswith("linux-") else b"xar!" if platform.startswith("darwin-") else b"MZ") + b"fixture"
-            )
+        self.write_installers()
         path = self.artifacts / metadata.source_manifest_filename("0.3.0", metadata.PLATFORMS[0])
         value = json.loads(path.read_text())
         info = value["artifacts"]["webcodex"]["build_info"]

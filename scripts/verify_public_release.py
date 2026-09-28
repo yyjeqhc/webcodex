@@ -21,6 +21,16 @@ from typing import BinaryIO
 REPO = "yyjeqhc/webcodex"
 PACKAGE = "@yyjeqhc/webcodex"
 PLATFORMS = ("linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64", "win32-x64", "win32-arm64")
+INSTALLER_TARGETS = {
+    "linux-x64-deb": ("linux-x64", "deb"),
+    "linux-x64-rpm": ("linux-x64", "rpm"),
+    "linux-arm64-deb": ("linux-arm64", "deb"),
+    "linux-arm64-rpm": ("linux-arm64", "rpm"),
+    "darwin-x64-pkg": ("darwin-x64", "pkg"),
+    "darwin-arm64-pkg": ("darwin-arm64", "pkg"),
+    "win32-x64-exe": ("win32-x64", "exe"),
+    "win32-arm64-exe": ("win32-arm64", "exe"),
+}
 BINARIES = ("webcodex", "webcodex-server", "webcodex-runner")
 LEGACY_DESKTOP_PLATFORMS = ("darwin-x64", "darwin-arm64", "win32-x64")
 DESKTOP_PLATFORMS = (*LEGACY_DESKTOP_PLATFORMS, "win32-arm64")
@@ -102,17 +112,20 @@ def canonical_desktop_name(version: str, platform: str) -> str:
     return f"webcodex-desktop-v{version}-{platform}{suffix}"
 
 
-def canonical_installer_name(version: str, platform: str) -> str:
-    suffix = ".deb" if platform.startswith("linux-") else ".pkg" if platform.startswith("darwin-") else ".exe"
-    return f"webcodex-unified-v{version}-{platform}{suffix}"
+def canonical_installer_name(version: str, target: str) -> str:
+    try:
+        platform, package_format = INSTALLER_TARGETS[target]
+    except KeyError as exc:
+        raise VerificationError(f"unsupported installer target: {target!r}") from exc
+    return f"webcodex-unified-v{version}-{platform}.{package_format}"
 
 
 def canonical_source_manifest_name(version: str, platform: str) -> str:
     return f"webcodex-source-v{version}-{platform}.json"
 
 
-def expected_installer_url(version: str, platform: str) -> str:
-    return f"https://github.com/{REPO}/releases/download/v{version}/{canonical_installer_name(version, platform)}"
+def expected_installer_url(version: str, target: str) -> str:
+    return f"https://github.com/{REPO}/releases/download/v{version}/{canonical_installer_name(version, target)}"
 
 
 def expected_artifact_url(version: str, platform: str) -> str:
@@ -337,27 +350,46 @@ def validate_public_installers(manifest: dict, version: str) -> dict[str, dict[s
     installers = manifest.get("installers")
     if installers is None:
         return {}
-    if not isinstance(installers, dict) or set(installers) != set(PLATFORMS):
-        raise VerificationError("release manifest installers must contain exactly the six platforms")
+    if not isinstance(installers, dict) or set(installers) != set(INSTALLER_TARGETS):
+        raise VerificationError("release manifest installers must contain exactly the eight installer targets")
     result: dict[str, dict[str, str]] = {}
-    for platform in PLATFORMS:
-        item = installers[platform]
-        if not isinstance(item, dict):
-            raise VerificationError(f"invalid installer manifest entry for {platform}")
-        filename = canonical_installer_name(version, platform)
+    source_by_platform: dict[str, tuple[str, str]] = {}
+    for target, (platform, package_format) in INSTALLER_TARGETS.items():
+        item = installers[target]
+        expected_fields = {
+            "platform", "format", "filename", "url", "sha256",
+            "source_manifest_url", "source_manifest_sha256",
+        }
+        if not isinstance(item, dict) or set(item) != expected_fields:
+            raise VerificationError(f"invalid installer manifest entry for {target}")
+        filename = canonical_installer_name(version, target)
         source_name = canonical_source_manifest_name(version, platform)
         expected_source_url = f"https://github.com/{REPO}/releases/download/v{version}/{source_name}"
-        if item.get("filename") != filename or item.get("url") != expected_installer_url(version, platform):
-            raise VerificationError(f"unexpected installer name or URL for {platform}")
+        if (item.get("platform"), item.get("format")) != (platform, package_format):
+            raise VerificationError(f"unexpected installer target identity for {target}")
+        if item.get("filename") != filename or item.get("url") != expected_installer_url(version, target):
+            raise VerificationError(f"unexpected installer name or URL for {target}")
         digest = item.get("sha256")
         if not isinstance(digest, str) or not SHA256_RE.fullmatch(digest):
-            raise VerificationError(f"invalid installer SHA-256 for {platform}")
+            raise VerificationError(f"invalid installer SHA-256 for {target}")
         source_digest = item.get("source_manifest_sha256")
         if item.get("source_manifest_url") != expected_source_url or not isinstance(source_digest, str) or not SHA256_RE.fullmatch(source_digest):
-            raise VerificationError(f"invalid source manifest URL or SHA-256 for {platform}")
-        result[platform] = {"filename": filename, "url": item["url"], "sha256": digest, "source_manifest_filename": source_name, "source_manifest_url": expected_source_url, "source_manifest_sha256": source_digest}
+            raise VerificationError(f"invalid source manifest URL or SHA-256 for {target}")
+        source_identity = (expected_source_url, source_digest)
+        previous = source_by_platform.setdefault(platform, source_identity)
+        if previous != source_identity:
+            raise VerificationError(f"installer targets disagree on source provenance for {platform}")
+        result[target] = {
+            "platform": platform,
+            "format": package_format,
+            "filename": filename,
+            "url": item["url"],
+            "sha256": digest,
+            "source_manifest_filename": source_name,
+            "source_manifest_url": expected_source_url,
+            "source_manifest_sha256": source_digest,
+        }
     return result
-
 
 def parse_sha256sums(text: str, version: str, *, runtime_manifest: bool = False, unified_installers: bool = False) -> dict[str, str]:
     expected_names = {canonical_archive_name(version, platform) for platform in PLATFORMS}
@@ -367,7 +399,7 @@ def parse_sha256sums(text: str, version: str, *, runtime_manifest: bool = False,
     if runtime_manifest:
         expected_names.add("webcodex-release-manifest.json")
     if unified_installers:
-        expected_names.update(canonical_installer_name(version, platform) for platform in PLATFORMS)
+        expected_names.update(canonical_installer_name(version, target) for target in INSTALLER_TARGETS)
         expected_names.add("manifest.json")
         expected_names.update(canonical_source_manifest_name(version, platform) for platform in PLATFORMS)
     result: dict[str, str] = {}
@@ -420,7 +452,7 @@ def verify_public_installer_manifest(
         raise VerificationError("public unified installer manifest differs from retained npm manifest")
     validate_public_manifest(manifest, version)
     if not validate_public_installers(manifest, version):
-        raise VerificationError("public updater manifest is missing the six unified installers")
+        raise VerificationError("public updater manifest is missing the eight unified installer targets")
 
 
 def validate_server_image_metadata(value: dict, version: str) -> dict[str, str]:
@@ -541,7 +573,7 @@ def validate_github_assets(release: dict, version: str, *, unified_installers: b
             raise VerificationError(f"GitHub Release contains duplicate asset: {name}")
         result[name] = asset
     names = set(result)
-    installer_names = {canonical_installer_name(version, platform) for platform in PLATFORMS}
+    installer_names = {canonical_installer_name(version, target) for target in INSTALLER_TARGETS}
     source_names = {canonical_source_manifest_name(version, platform) for platform in PLATFORMS}
     has_installer = bool(names & installer_names)
     if unified_installers is None:
@@ -1015,41 +1047,49 @@ def verify_public_release(version: str, timeout: float) -> None:
             else:
                 print(f"{platform} sha256={digest} architecture=ok")
 
-        for platform, entry in manifest_installers.items():
+        verified_sources: dict[str, str] = {}
+        for target, entry in manifest_installers.items():
+            platform = entry["platform"]
+            package_format = entry["format"]
             name = entry["filename"]
             asset = assets.get(name)
             if asset is None or asset.get("browser_download_url") != entry["url"]:
-                raise VerificationError(f"GitHub installer asset URL mismatch for {platform}")
+                raise VerificationError(f"GitHub installer asset URL mismatch for {target}")
             path = root / name
             size, digest = download_file(entry["url"], path, MAX_INSTALLER_BYTES, timeout)
             if size <= 0 or digest != entry["sha256"] or digest != sums.get(name):
-                raise VerificationError(f"installer SHA-256 disagreement for {platform}")
-            if platform.startswith("linux-"):
-                valid = path.read_bytes()[:8] == b"!<arch>\n"
-            elif platform.startswith("darwin-"):
-                valid = path.read_bytes()[:4] == b"xar!"
-            else:
-                valid = path.read_bytes()[:2] == b"MZ"
+                raise VerificationError(f"installer SHA-256 disagreement for {target}")
+            magic = path.read_bytes()[:8]
+            valid = {
+                "deb": magic == b"!<arch>\n",
+                "rpm": magic[:4] == bytes.fromhex("edabeedb"),
+                "pkg": magic[:4] == b"xar!",
+                "exe": magic[:2] == b"MZ",
+            }[package_format]
             if not valid:
-                raise VerificationError(f"installer container signature mismatch for {platform}")
+                raise VerificationError(f"installer container signature mismatch for {target}")
             github_digest = _asset_digest(asset)
             if github_digest is not None and github_digest != digest:
-                raise VerificationError(f"GitHub installer asset digest mismatch for {platform}")
+                raise VerificationError(f"GitHub installer asset digest mismatch for {target}")
             source_name = entry["source_manifest_filename"]
-            source_asset = assets.get(source_name)
-            if source_asset is None or source_asset.get("browser_download_url") != entry["source_manifest_url"]:
-                raise VerificationError(f"GitHub source manifest asset URL mismatch for {platform}")
-            source_path = root / source_name
-            source_size, source_digest = download_file(entry["source_manifest_url"], source_path, 2 * 1024 * 1024, timeout)
-            if source_size <= 0 or source_digest != entry["source_manifest_sha256"] or source_digest != sums.get(source_name):
-                raise VerificationError(f"source manifest SHA-256 disagreement for {platform}")
-            source_info = json.loads(source_path.read_text(encoding="utf-8"))
-            if source_info.get("platform") != platform or source_info.get("version") != version:
-                raise VerificationError(f"source manifest identity mismatch for {platform}")
-            source_github_digest = _asset_digest(source_asset)
-            if source_github_digest is not None and source_github_digest != source_digest:
-                raise VerificationError(f"GitHub source manifest asset digest mismatch for {platform}")
-            print(f"installer_{platform.replace('-', '_')} sha256={digest} bytes={size}")
+            if source_name not in verified_sources:
+                source_asset = assets.get(source_name)
+                if source_asset is None or source_asset.get("browser_download_url") != entry["source_manifest_url"]:
+                    raise VerificationError(f"GitHub source manifest asset URL mismatch for {target}")
+                source_path = root / source_name
+                source_size, source_digest = download_file(entry["source_manifest_url"], source_path, 2 * 1024 * 1024, timeout)
+                if source_size <= 0 or source_digest != entry["source_manifest_sha256"] or source_digest != sums.get(source_name):
+                    raise VerificationError(f"source manifest SHA-256 disagreement for {target}")
+                source_info = json.loads(source_path.read_text(encoding="utf-8"))
+                if source_info.get("platform") != platform or source_info.get("version") != version:
+                    raise VerificationError(f"source manifest identity mismatch for {target}")
+                source_github_digest = _asset_digest(source_asset)
+                if source_github_digest is not None and source_github_digest != source_digest:
+                    raise VerificationError(f"GitHub source manifest asset digest mismatch for {target}")
+                verified_sources[source_name] = source_digest
+            elif verified_sources[source_name] != entry["source_manifest_sha256"]:
+                raise VerificationError(f"installer targets disagree on downloaded source manifest for {platform}")
+            print(f"installer_{target.replace('-', '_')} sha256={digest} bytes={size}")
 
     print("public_release_verification=passed")
 

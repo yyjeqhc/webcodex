@@ -4,10 +4,20 @@ use serde_json::{json, Value};
 pub(super) fn manifest() -> Value {
     let mut artifacts = serde_json::Map::new();
     let mut installers = serde_json::Map::new();
-    for platform in InstallerPlatform::ALL {
+    for platform in RuntimePlatform::ALL {
         artifacts.insert(platform.as_str().into(), json!({"url":release_asset_url("1.2.3", &format!("webcodex-v1.2.3-{}.tar.gz", platform.as_str())).unwrap(),"sha256":"a".repeat(64)}));
-        let filename = platform.installer_filename("1.2.3");
-        installers.insert(platform.as_str().into(), json!({"filename":filename,"url":release_asset_url("1.2.3",&filename).unwrap(),"sha256":"b".repeat(64),"source_manifest_url":release_asset_url("1.2.3",&platform.source_filename("1.2.3")).unwrap(),"source_manifest_sha256":"c".repeat(64)}));
+    }
+    for target in InstallerTarget::ALL {
+        let filename = target.installer_filename("1.2.3");
+        installers.insert(target.as_str(), json!({
+            "platform":target.platform,
+            "format":target.format,
+            "filename":filename,
+            "url":release_asset_url("1.2.3",&filename).unwrap(),
+            "sha256":"b".repeat(64),
+            "source_manifest_url":release_asset_url("1.2.3",&target.platform.source_filename("1.2.3")).unwrap(),
+            "source_manifest_sha256":"c".repeat(64)
+        }));
     }
     json!({"version":"1.2.3","binaries":RUNTIME_BINARIES,"artifacts":artifacts,"installers":installers})
 }
@@ -16,16 +26,16 @@ fn parse(value: &Value) -> UpdateResult<UnifiedInstallerManifest> {
 }
 
 #[test]
-fn six_platforms_are_local_deterministic_facts() {
+fn runtime_platforms_and_installer_targets_are_distinct_deterministic_facts() {
     for (os, arch, expected) in [
-        ("linux", "x86_64", InstallerPlatform::LinuxX64),
-        ("linux", "aarch64", InstallerPlatform::LinuxArm64),
-        ("macos", "x86_64", InstallerPlatform::DarwinX64),
-        ("macos", "aarch64", InstallerPlatform::DarwinArm64),
-        ("windows", "x86_64", InstallerPlatform::Win32X64),
-        ("windows", "aarch64", InstallerPlatform::Win32Arm64),
+        ("linux", "x86_64", RuntimePlatform::LinuxX64),
+        ("linux", "aarch64", RuntimePlatform::LinuxArm64),
+        ("macos", "x86_64", RuntimePlatform::DarwinX64),
+        ("macos", "aarch64", RuntimePlatform::DarwinArm64),
+        ("windows", "x86_64", RuntimePlatform::Win32X64),
+        ("windows", "aarch64", RuntimePlatform::Win32Arm64),
     ] {
-        assert_eq!(InstallerPlatform::from_native(os, arch), Some(expected));
+        assert_eq!(RuntimePlatform::from_native(os, arch), Some(expected));
     }
     for (os, arch) in [
         ("linux", "arm"),
@@ -33,16 +43,59 @@ fn six_platforms_are_local_deterministic_facts() {
         ("windows", "x86"),
         ("freebsd", "x86_64"),
     ] {
-        assert_eq!(InstallerPlatform::from_native(os, arch), None);
+        assert_eq!(RuntimePlatform::from_native(os, arch), None);
     }
     assert_eq!(
-        InstallerPlatform::ALL
+        RuntimePlatform::ALL
             .iter()
             .map(|v| v.as_str())
             .collect::<std::collections::BTreeSet<_>>()
             .len(),
         6
     );
+    assert_eq!(InstallerTarget::ALL.len(), 8);
+    assert_eq!(
+        InstallerTarget::ALL
+            .iter()
+            .filter(|t| t.platform == RuntimePlatform::LinuxX64)
+            .count(),
+        2
+    );
+    assert!(InstallerTarget::ALL.iter().all(|t| t.valid()));
+    for platform in [RuntimePlatform::LinuxX64, RuntimePlatform::LinuxArm64] {
+        let formats = InstallerTarget::ALL
+            .iter()
+            .filter(|target| target.platform == platform)
+            .map(|target| target.format)
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(formats, [PackageFormat::Deb, PackageFormat::Rpm].into());
+    }
+    for platform in [RuntimePlatform::DarwinX64, RuntimePlatform::DarwinArm64] {
+        assert_eq!(
+            InstallerTarget::ALL
+                .iter()
+                .filter(|target| target.platform == platform)
+                .map(|target| target.format)
+                .collect::<Vec<_>>(),
+            vec![PackageFormat::Pkg]
+        );
+    }
+    for platform in [RuntimePlatform::Win32X64, RuntimePlatform::Win32Arm64] {
+        assert_eq!(
+            InstallerTarget::ALL
+                .iter()
+                .filter(|target| target.platform == platform)
+                .map(|target| target.format)
+                .collect::<Vec<_>>(),
+            vec![PackageFormat::Exe]
+        );
+    }
+    for target in InstallerTarget::ALL {
+        assert_eq!(InstallerTarget::parse(&target.as_str()), Some(target));
+        assert!(target
+            .installer_filename("1.2.3")
+            .ends_with(target.format.extension()));
+    }
 }
 
 #[test]
@@ -56,7 +109,7 @@ fn manifest_requires_exact_version_shape_platforms_and_source_binding() {
         "source_manifest_sha256",
     ] {
         let mut value = manifest();
-        value["installers"]["darwin-arm64"][field] = "https://evil.invalid/update".into();
+        value["installers"]["darwin-arm64-pkg"][field] = "https://evil.invalid/update".into();
         assert!(parse(&value).is_err(), "{field}");
     }
     for value in ["1.2.4", "1.2.3-beta", "../1.2.3", ""] {
@@ -68,21 +121,24 @@ fn manifest_requires_exact_version_shape_platforms_and_source_binding() {
     missing["installers"]
         .as_object_mut()
         .unwrap()
-        .remove("win32-arm64");
+        .remove("win32-arm64-exe");
     assert!(parse(&missing).is_err());
     let mut extra = manifest();
     extra["unexpected"] = true.into();
     assert!(parse(&extra).is_err());
     let mut unknown = manifest();
-    unknown["installers"]["freebsd-x64"] = unknown["installers"]["linux-x64"].clone();
+    unknown["installers"]["freebsd-x64-pkg"] = unknown["installers"]["linux-x64-deb"].clone();
     assert!(parse(&unknown).is_err());
     let mut uppercase = manifest();
-    uppercase["installers"]["linux-x64"]["sha256"] = "A".repeat(64).into();
+    uppercase["installers"]["linux-x64-deb"]["sha256"] = "A".repeat(64).into();
     assert!(parse(&uppercase).is_err());
     let mut escaped = manifest();
-    escaped["installers"]["linux-x64"]["url"] =
+    escaped["installers"]["linux-x64-deb"]["url"] =
         "https://github.com/other/webcodex/releases/download/v1.2.3/setup.deb".into();
     assert!(parse(&escaped).is_err());
+    let mut split_source = manifest();
+    split_source["installers"]["linux-x64-rpm"]["source_manifest_sha256"] = "d".repeat(64).into();
+    assert!(parse(&split_source).is_err());
 }
 
 #[test]
@@ -139,10 +195,16 @@ fn urls_cannot_smuggle_paths_credentials_ports_or_redirect_hosts() {
     }
 }
 
-fn source(platform: InstallerPlatform) -> Value {
-    let desktop_path = if platform.extension() == "pkg" {
+fn source(platform: RuntimePlatform) -> Value {
+    let desktop_path = if matches!(
+        platform,
+        RuntimePlatform::DarwinX64 | RuntimePlatform::DarwinArm64
+    ) {
         "artifacts/WebCodex Desktop.app/Contents/MacOS/webcodex-desktop"
-    } else if platform.extension() == "exe" {
+    } else if matches!(
+        platform,
+        RuntimePlatform::Win32X64 | RuntimePlatform::Win32Arm64
+    ) {
         "artifacts/WebCodex.exe"
     } else {
         "artifacts/webcodex-desktop"
@@ -155,14 +217,20 @@ fn source(platform: InstallerPlatform) -> Value {
         "webcodex-desktop",
     ] {
         let info = json!({"schema_version":1,"binary":name,"version":"1.2.3","git_commit":"a".repeat(40),"git_dirty":false,"built_at":"1234567890","target":platform.target(),"architecture":platform.architecture(),"desktop_runtime_contract":{"min_generation":1,"max_generation":1},"environment_data_format":1,"agent_protocol_generation":2});
-        components.insert(name.into(),json!({"path":if name=="webcodex-desktop"{desktop_path.to_string()}else{format!("artifacts/bin/{name}{}",if platform.extension()=="exe"{".exe"}else{""})},"sha256":"b".repeat(64),"build_info_sha256":sha256(&serde_json::to_vec(&info).unwrap()),"build_info":info,"probe":"native-build-job"}));
+        components.insert(name.into(),json!({"path":if name=="webcodex-desktop"{desktop_path.to_string()}else{format!("artifacts/bin/{name}{}",if matches!(platform, RuntimePlatform::Win32X64 | RuntimePlatform::Win32Arm64){".exe"}else{""})},"sha256":"b".repeat(64),"build_info_sha256":sha256(&serde_json::to_vec(&info).unwrap()),"build_info":info,"probe":"native-build-job"}));
     }
-    let mut desktop = if platform.extension() == "pkg" {
+    let mut desktop = if matches!(
+        platform,
+        RuntimePlatform::DarwinX64 | RuntimePlatform::DarwinArm64
+    ) {
         json!({"path":"artifacts/WebCodex Desktop.app","sha256":"c".repeat(64),"executable":"Contents/MacOS/webcodex-desktop"})
     } else {
-        json!({"path":desktop_path,"sha256":"b".repeat(64),"executable":if platform.extension()=="exe"{"WebCodex.exe"}else{"webcodex-desktop"}})
+        json!({"path":desktop_path,"sha256":"b".repeat(64),"executable":if matches!(platform, RuntimePlatform::Win32X64 | RuntimePlatform::Win32Arm64){"WebCodex.exe"}else{"webcodex-desktop"}})
     };
-    if platform.extension() == "exe" {
+    if matches!(
+        platform,
+        RuntimePlatform::Win32X64 | RuntimePlatform::Win32Arm64
+    ) {
         desktop["managed_files"] = json!([
             "WebCodex.exe",
             "webcodex-runtime/webcodex.exe",
@@ -176,7 +244,7 @@ fn source(platform: InstallerPlatform) -> Value {
 
 #[test]
 fn source_verification_binds_all_four_native_components_not_just_a_checksum() {
-    for platform in InstallerPlatform::ALL {
+    for platform in RuntimePlatform::ALL {
         let value = source(platform);
         assert!(
             verify_source_manifest(&serde_json::to_vec(&value).unwrap(), "1.2.3", platform).is_ok(),

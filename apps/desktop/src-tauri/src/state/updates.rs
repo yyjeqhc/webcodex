@@ -51,9 +51,15 @@ impl AppState {
     }
 
     async fn request_automatic_download(&self, cache: &UpdateCache) {
-        if let Ok((kind, _)) = self.update_installation_context().await {
-            self.updates
-                .request(cache.latest.clone(), cache.automatic_download, false, kind);
+        if let Ok((kind, _context)) = self.update_installation_context().await {
+            let target = updates::detected_installer_target();
+            self.updates.request(
+                cache.latest.clone(),
+                cache.automatic_download,
+                false,
+                kind,
+                target,
+            );
         }
     }
 
@@ -142,9 +148,15 @@ impl AppState {
         {
             return Err(action_error());
         }
-        let (kind, _) = self.update_installation_context().await?;
-        self.updates
-            .request(cache.latest.clone(), cache.automatic_download, true, kind);
+        let (kind, _context) = self.update_installation_context().await?;
+        let target = updates::detected_installer_target();
+        self.updates.request(
+            cache.latest.clone(),
+            cache.automatic_download,
+            true,
+            kind,
+            target,
+        );
         tokio::task::yield_now().await;
         Ok(self.update_status(&cache, runtime_selection::now_ms(), true, None))
     }

@@ -3,6 +3,7 @@
 mod download;
 mod install;
 pub use download::{DownloadStatus, InstallationKind, UpdateManager};
+pub(crate) use install::detected_installer_target;
 pub use install::{assess_installation, InstallContext};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;

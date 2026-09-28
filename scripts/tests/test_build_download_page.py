@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scripts.build_download_page import PLATFORMS, build, filename, validate_manifest
+from scripts.build_download_page import INSTALLER_TARGETS, build, filename, validate_manifest
 
 
 class BuildDownloadPageTests(unittest.TestCase):
@@ -21,14 +21,16 @@ class BuildDownloadPageTests(unittest.TestCase):
         self.manifest = {
             "version": "1.2.3",
             "installers": {
-                platform: {
-                    "filename": filename("1.2.3", platform),
-                    "url": f"https://github.com/yyjeqhc/webcodex/releases/download/v1.2.3/{filename('1.2.3', platform)}",
-                    "sha256": hashlib.sha256(platform.encode()).hexdigest(),
+                target: {
+                    "platform": platform,
+                    "format": package_format,
+                    "filename": filename("1.2.3", target),
+                    "url": f"https://github.com/yyjeqhc/webcodex/releases/download/v1.2.3/{filename('1.2.3', target)}",
+                    "sha256": hashlib.sha256(target.encode()).hexdigest(),
                     "source_manifest_url": f"https://github.com/yyjeqhc/webcodex/releases/download/v1.2.3/webcodex-source-v1.2.3-{platform}.json",
                     "source_manifest_sha256": "a" * 64,
                 }
-                for platform in PLATFORMS
+                for target, (platform, package_format) in INSTALLER_TARGETS.items()
             },
         }
         self.manifest_path.write_text(json.dumps(self.manifest), encoding="utf-8")
@@ -43,13 +45,19 @@ class BuildDownloadPageTests(unittest.TestCase):
         self.assertTrue(all((output / name).is_file() for name in ("index.html", "styles.css", "app.js")))
 
     def test_rejects_incomplete_or_external_installer_manifest(self):
-        del self.manifest["installers"][PLATFORMS[-1]]
-        with self.assertRaisesRegex(ValueError, "all six"):
+        target = next(reversed(INSTALLER_TARGETS))
+        platform, package_format = INSTALLER_TARGETS[target]
+        del self.manifest["installers"][target]
+        with self.assertRaisesRegex(ValueError, "all eight"):
             validate_manifest(self.manifest)
-        self.manifest["installers"][PLATFORMS[-1]] = {
-            "filename": filename("1.2.3", PLATFORMS[-1]),
+        self.manifest["installers"][target] = {
+            "platform": platform,
+            "format": package_format,
+            "filename": filename("1.2.3", target),
             "url": "https://example.invalid/setup.exe",
             "sha256": "0" * 64,
+            "source_manifest_url": f"https://github.com/yyjeqhc/webcodex/releases/download/v1.2.3/webcodex-source-v1.2.3-{platform}.json",
+            "source_manifest_sha256": "a" * 64,
         }
         with self.assertRaisesRegex(ValueError, "non-canonical"):
             validate_manifest(self.manifest)

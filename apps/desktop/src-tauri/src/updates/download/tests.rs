@@ -178,11 +178,18 @@ async fn checksum_mismatch_truncation_and_cancellation_remove_partial_bytes() {
     }
 }
 
+fn current_target() -> InstallerTarget {
+    let platform = RuntimePlatform::current().unwrap();
+    InstallerTarget::default_for_non_linux(platform)
+        .or_else(|| InstallerTarget::for_platform(platform, unified::PackageFormat::Deb))
+        .unwrap()
+}
+
 fn target_record() -> UpdateRecord {
     UpdateRecord {
         phase: DownloadPhase::ReadyToInstall,
         version: Some("99.0.0".into()),
-        platform: InstallerPlatform::current(),
+        target: Some(current_target()),
         downloaded_bytes: 3,
         total_bytes: Some(3),
         sha256: Some(unified::sha256(b"pkg")),
@@ -246,7 +253,7 @@ fn restart_does_not_trust_a_ready_bit_and_removes_abandoned_partial() {
 fn invalid_persisted_paths_platforms_schema_and_sizes_fail_closed() {
     for mutation in [
         "version",
-        "platform",
+        "target",
         "schema_version",
         "downloaded_bytes",
         "installer_path",
@@ -259,7 +266,7 @@ fn invalid_persisted_paths_platforms_schema_and_sizes_fail_closed() {
             "schema_version" => 99.into(),
             "downloaded_bytes" => (MAX_INSTALLER_BYTES + 1).into(),
             "version" => "../../outside".into(),
-            "platform" => "freebsd-x64".into(),
+            "target" => "freebsd-x64".into(),
             _ => "/tmp/malicious.exe".into(),
         };
         let bytes = serde_json::to_vec(&value).unwrap();
@@ -284,6 +291,7 @@ async fn installed_or_stale_target_is_cleaned_without_network_or_runtime_changes
             true,
             false,
             InstallationKind::SourceBuild,
+            None,
             &CancellationSignal::new(),
         )
         .await
@@ -309,6 +317,7 @@ async fn source_build_automatic_check_never_downloads_or_installs() {
             true,
             false,
             InstallationKind::SourceBuild,
+            None,
             &CancellationSignal::new(),
         )
         .await
@@ -316,6 +325,49 @@ async fn source_build_automatic_check_never_downloads_or_installs() {
     assert_eq!(manager.current().phase, DownloadPhase::Available);
     assert!(manager.current().last_attempt_at_ms.is_none());
     assert!(manager.current().pending.is_none());
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn same_version_package_family_change_invalidates_old_target_cache() {
+    let temp = tempfile::tempdir().unwrap();
+    let manager = UpdateManager::new(temp.path().canonicalize().unwrap());
+    let cache = PrivateUpdateCache::open(manager.root.clone()).unwrap();
+    let platform = RuntimePlatform::current().unwrap();
+    let deb = InstallerTarget::for_platform(platform, unified::PackageFormat::Deb).unwrap();
+    let rpm = InstallerTarget::for_platform(platform, unified::PackageFormat::Rpm).unwrap();
+    manager.change(|record| {
+        *record = target_record();
+        record.target = Some(deb);
+    });
+    let old = cache.child("99.0.0").unwrap().child(&deb.as_str()).unwrap();
+    old.write("installer.deb", b"stale").unwrap();
+    manager
+        .run_locked(
+            &cache,
+            Some(ReleaseNotice {
+                version: "99.0.0".into(),
+                runtime_version: "99.0.0".into(),
+                release_url: "https://github.com/yyjeqhc/webcodex/releases/tag/v99.0.0".into(),
+                compatibility: UpdateCompatibility::Unknown,
+            }),
+            false,
+            false,
+            InstallationKind::SourceBuild,
+            Some(rpm),
+            &CancellationSignal::new(),
+        )
+        .await
+        .unwrap();
+    let state = manager.current();
+    assert_eq!(state.target, Some(rpm));
+    assert_eq!(state.phase, DownloadPhase::Available);
+    assert!(!cache
+        .child("99.0.0")
+        .unwrap()
+        .file(&deb.as_str())
+        .unwrap()
+        .exists());
 }
 
 #[test]

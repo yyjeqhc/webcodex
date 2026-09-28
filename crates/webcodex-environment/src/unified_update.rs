@@ -49,7 +49,7 @@ pub enum UpdateError {
 pub type UpdateResult<T> = Result<T, UpdateError>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum InstallerPlatform {
+pub enum RuntimePlatform {
     #[serde(rename = "linux-x64")]
     LinuxX64,
     #[serde(rename = "linux-arm64")]
@@ -64,7 +64,7 @@ pub enum InstallerPlatform {
     Win32Arm64,
 }
 
-impl InstallerPlatform {
+impl RuntimePlatform {
     pub const ALL: [Self; 6] = [
         Self::LinuxX64,
         Self::LinuxArm64,
@@ -119,24 +119,107 @@ impl InstallerPlatform {
         }
     }
 
+    pub fn source_filename(self, version: &str) -> String {
+        format!("webcodex-source-v{version}-{}.json", self.as_str())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PackageFormat {
+    Deb,
+    Rpm,
+    Pkg,
+    Exe,
+}
+
+impl PackageFormat {
     pub const fn extension(self) -> &'static str {
         match self {
-            Self::LinuxX64 | Self::LinuxArm64 => "deb",
-            Self::DarwinX64 | Self::DarwinArm64 => "pkg",
-            _ => "exe",
+            Self::Deb => "deb",
+            Self::Rpm => "rpm",
+            Self::Pkg => "pkg",
+            Self::Exe => "exe",
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InstallerTarget {
+    pub platform: RuntimePlatform,
+    pub format: PackageFormat,
+}
+
+impl InstallerTarget {
+    pub const ALL: [Self; 8] = [
+        Self::new(RuntimePlatform::LinuxX64, PackageFormat::Deb),
+        Self::new(RuntimePlatform::LinuxX64, PackageFormat::Rpm),
+        Self::new(RuntimePlatform::LinuxArm64, PackageFormat::Deb),
+        Self::new(RuntimePlatform::LinuxArm64, PackageFormat::Rpm),
+        Self::new(RuntimePlatform::DarwinX64, PackageFormat::Pkg),
+        Self::new(RuntimePlatform::DarwinArm64, PackageFormat::Pkg),
+        Self::new(RuntimePlatform::Win32X64, PackageFormat::Exe),
+        Self::new(RuntimePlatform::Win32Arm64, PackageFormat::Exe),
+    ];
+
+    pub const fn new(platform: RuntimePlatform, format: PackageFormat) -> Self {
+        Self { platform, format }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|target| target.as_str() == value)
+    }
+
+    pub const fn for_platform(platform: RuntimePlatform, format: PackageFormat) -> Option<Self> {
+        let target = Self::new(platform, format);
+        if target.valid() {
+            Some(target)
+        } else {
+            None
+        }
+    }
+
+    pub const fn default_for_non_linux(platform: RuntimePlatform) -> Option<Self> {
+        match platform {
+            RuntimePlatform::DarwinX64 | RuntimePlatform::DarwinArm64 => {
+                Self::for_platform(platform, PackageFormat::Pkg)
+            }
+            RuntimePlatform::Win32X64 | RuntimePlatform::Win32Arm64 => {
+                Self::for_platform(platform, PackageFormat::Exe)
+            }
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> String {
+        format!("{}-{}", self.platform.as_str(), self.format.extension())
     }
 
     pub fn installer_filename(self, version: &str) -> String {
         format!(
             "webcodex-unified-v{version}-{}.{}",
-            self.as_str(),
-            self.extension()
+            self.platform.as_str(),
+            self.format.extension()
         )
     }
 
-    pub fn source_filename(self, version: &str) -> String {
-        format!("webcodex-source-v{version}-{}.json", self.as_str())
+    pub const fn valid(self) -> bool {
+        matches!(
+            (self.platform, self.format),
+            (
+                RuntimePlatform::LinuxX64 | RuntimePlatform::LinuxArm64,
+                PackageFormat::Deb | PackageFormat::Rpm
+            ) | (
+                RuntimePlatform::DarwinX64 | RuntimePlatform::DarwinArm64,
+                PackageFormat::Pkg
+            ) | (
+                RuntimePlatform::Win32X64 | RuntimePlatform::Win32Arm64,
+                PackageFormat::Exe
+            )
+        )
     }
 }
 
@@ -188,6 +271,8 @@ pub struct RuntimeArtifact {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct InstallerEntry {
+    pub platform: RuntimePlatform,
+    pub format: PackageFormat,
     pub filename: String,
     pub url: String,
     pub sha256: String,
@@ -200,10 +285,9 @@ pub struct InstallerEntry {
 pub struct UnifiedInstallerManifest {
     pub version: String,
     pub binaries: Vec<String>,
-    pub artifacts: BTreeMap<InstallerPlatform, RuntimeArtifact>,
-    pub installers: BTreeMap<InstallerPlatform, InstallerEntry>,
+    pub artifacts: BTreeMap<RuntimePlatform, RuntimeArtifact>,
+    pub installers: BTreeMap<String, InstallerEntry>,
 }
-
 impl UnifiedInstallerManifest {
     pub fn parse(bytes: &[u8], version: &str) -> UpdateResult<Self> {
         if bytes.len() as u64 > MAX_MANIFEST_BYTES {
@@ -215,43 +299,68 @@ impl UnifiedInstallerManifest {
         if !stable_version(version)
             || manifest.version != version
             || manifest.binaries != RUNTIME_BINARIES
-            || manifest.artifacts.len() != 6
-            || manifest.installers.len() != 6
+            || manifest.artifacts.len() != RuntimePlatform::ALL.len()
+            || manifest.installers.len() != InstallerTarget::ALL.len()
         {
             return Err(UpdateError::ManifestInvalid);
         }
-        for platform in InstallerPlatform::ALL {
+        for platform in RuntimePlatform::ALL {
             let runtime = manifest
                 .artifacts
                 .get(&platform)
                 .ok_or(UpdateError::ManifestInvalid)?;
-            let entry = manifest
-                .installers
-                .get(&platform)
-                .ok_or(UpdateError::ManifestInvalid)?;
-            let filename = platform.installer_filename(version);
             if runtime.url
                 != release_asset_url(
                     version,
                     &format!("webcodex-v{version}-{}.tar.gz", platform.as_str()),
                 )?
                 || !valid_sha256(&runtime.sha256)
+            {
+                return Err(UpdateError::ManifestInvalid);
+            }
+        }
+        for target in InstallerTarget::ALL {
+            let key = target.as_str();
+            let entry = manifest
+                .installers
+                .get(&key)
+                .ok_or(UpdateError::ManifestInvalid)?;
+            let filename = target.installer_filename(version);
+            if !target.valid()
+                || entry.platform != target.platform
+                || entry.format != target.format
                 || entry.filename != filename
                 || entry.url != release_asset_url(version, &filename)?
                 || entry.source_manifest_url
-                    != release_asset_url(version, &platform.source_filename(version))?
+                    != release_asset_url(version, &target.platform.source_filename(version))?
                 || !valid_sha256(&entry.sha256)
                 || !valid_sha256(&entry.source_manifest_sha256)
             {
                 return Err(UpdateError::ManifestInvalid);
             }
         }
+        for platform in RuntimePlatform::ALL {
+            let mut source_sha256 = None;
+            for target in InstallerTarget::ALL
+                .into_iter()
+                .filter(|target| target.platform == platform)
+            {
+                let digest = manifest.entry(target)?.source_manifest_sha256.as_str();
+                if source_sha256.is_some_and(|expected| expected != digest) {
+                    return Err(UpdateError::ManifestInvalid);
+                }
+                source_sha256 = Some(digest);
+            }
+            if source_sha256.is_none() {
+                return Err(UpdateError::ManifestInvalid);
+            }
+        }
         Ok(manifest)
     }
 
-    pub fn entry(&self, platform: InstallerPlatform) -> UpdateResult<&InstallerEntry> {
+    pub fn entry(&self, target: InstallerTarget) -> UpdateResult<&InstallerEntry> {
         self.installers
-            .get(&platform)
+            .get(&target.as_str())
             .ok_or(UpdateError::ManifestInvalid)
     }
 }

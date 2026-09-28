@@ -130,8 +130,9 @@ without sending a message. Window activity calls are compact, collapsed by defau
 and fetch their sanitized trace/timing details only when expanded. The card header
 shows the canonical hashed Window key used by the Window activity ledger, making
 support traces attributable without exposing the Host's raw Window identifier.
-New cards use `ui://webcodex/work-result/v11` so Hosts with cached older templates
-load the updated activity presentation and lazy-detail contract.
+New cards use `ui://webcodex/work-result/v12` so Hosts with cached older templates
+load the progressive file-list and lazy-detail contract; v11 remains readable for
+previously mounted cards.
 
 ## Existing Server
 

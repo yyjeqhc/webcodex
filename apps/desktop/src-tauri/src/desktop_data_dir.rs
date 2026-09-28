@@ -218,9 +218,11 @@ mod tests {
         let resolved =
             resolve_with_override(default, Some(override_path.clone().into_os_string())).unwrap();
         assert_eq!(resolved.source, DesktopDataDirSource::Environment);
+        let expected =
+            normalize_windows_canonical_path(temp.path().canonicalize().unwrap()).join("override");
         assert!(webcodex_runner_config::paths::paths_equal(
             &resolved.effective,
-            &override_path
+            &expected
         ));
 
         let error = resolve_with_override(
@@ -331,13 +333,14 @@ mod tests {
 
         let effective = resolve_physical_path(&logical_root.join("WebCodex")).unwrap();
         let (env_file, server_data) = crate::state::local_runtime_paths(&effective);
+        let expected_runtime_root = effective.join("runtime").join("local");
         assert!(webcodex_runner_config::paths::paths_equal(
             &env_file,
-            &physical.join("WebCodex/runtime/local/webcodex.env")
+            &expected_runtime_root.join("webcodex.env")
         ));
         assert!(webcodex_runner_config::paths::paths_equal(
             &server_data,
-            &physical.join("WebCodex/runtime/local/data")
+            &expected_runtime_root.join("data")
         ));
     }
 }

@@ -29,35 +29,6 @@ fn with_wire_feature(
 }
 
 #[test]
-fn canonical_runner_feature_inventory_matches_wire_names_exactly() {
-    let wire_names = RUNNER_CAPABILITY_NAMES
-        .iter()
-        .copied()
-        .collect::<BTreeSet<_>>();
-    let canonical_names = RunnerFeature::all()
-        .iter()
-        .map(|feature| feature.as_wire_name())
-        .collect::<BTreeSet<_>>();
-
-    assert_eq!(wire_names.len(), RUNNER_CAPABILITY_NAMES.len());
-    assert_eq!(canonical_names.len(), RunnerFeature::all().len());
-    assert_eq!(canonical_names, wire_names);
-}
-
-#[test]
-fn canonical_runner_feature_wire_names_round_trip() {
-    for feature in RunnerFeature::all() {
-        assert_eq!(
-            RunnerFeature::from_wire_name(feature.as_wire_name()),
-            Some(*feature),
-            "{}",
-            feature.as_wire_name()
-        );
-    }
-    assert_eq!(RunnerFeature::from_wire_name("future_runner_feature"), None);
-}
-
-#[test]
 fn canonical_runner_feature_set_tracks_each_individual_wire_bool() {
     let all_false = RunnerFeatureSet::from_wire_for_test(&wire_capabilities_with_only(None));
     for feature in RunnerFeature::all() {
@@ -110,12 +81,7 @@ fn capability_classification_keeps_environment_dependent_features_registration_r
         RunnerFeature::SkillManagement,
         RunnerFeature::ManagedSshResources,
     ] {
-        assert_eq!(
-            feature.inference(),
-            RunnerFeatureInference::RegistrationRequired,
-            "{}",
-            feature.as_wire_name()
-        );
+        assert!(!feature.is_v2_baseline(), "{}", feature.as_wire_name());
     }
 
     for feature in [
@@ -124,12 +90,7 @@ fn capability_classification_keeps_environment_dependent_features_registration_r
         RunnerFeature::LspReadOnlyNavigation,
         RunnerFeature::ProjectLifecycle,
     ] {
-        assert_eq!(
-            feature.inference(),
-            RunnerFeatureInference::GenerationEligible,
-            "{}",
-            feature.as_wire_name()
-        );
+        assert!(feature.is_v2_baseline(), "{}", feature.as_wire_name());
     }
 }
 
@@ -172,7 +133,7 @@ fn v2_baseline_exactly_matches_generation_eligible_classification() {
     let generation_eligible = RunnerFeature::all()
         .iter()
         .copied()
-        .filter(|feature| feature.inference() == RunnerFeatureInference::GenerationEligible)
+        .filter(|feature| feature.is_v2_baseline())
         .map(RunnerFeature::as_wire_name)
         .collect::<BTreeSet<_>>();
 
@@ -184,7 +145,7 @@ fn v2_baseline_exactly_matches_generation_eligible_classification() {
     assert_eq!(baseline, generation_eligible);
     assert!(!baseline.contains(RunnerFeature::StructuredCargoTestExecutionPolicy.as_wire_name()));
     for feature in RunnerFeature::all() {
-        if feature.inference() == RunnerFeatureInference::RegistrationRequired {
+        if !feature.is_v2_baseline() {
             assert!(
                 !baseline.contains(feature.as_wire_name()),
                 "{}",
@@ -208,18 +169,25 @@ fn v2_generation_baseline_requires_explicit_bool_projection_without_silent_or() 
     for feature in RunnerFeature::all()
         .iter()
         .copied()
-        .filter(|feature| feature.inference() == RunnerFeatureInference::GenerationEligible)
+        .filter(|feature| feature.is_v2_baseline())
     {
         assert!(accepted.supports(feature), "{}", feature.as_wire_name());
-        let contradictory = with_wire_feature(&baseline, feature, false);
-        let error = RunnerFeatureSet::try_from_registration(&contradictory).unwrap_err();
-        assert_eq!(
-            error,
-            format!(
-                "runner generation baseline capability mismatch: {}",
-                feature.as_wire_name()
-            )
-        );
+        let mut missing = serde_json::to_value(&baseline).unwrap();
+        missing
+            .as_object_mut()
+            .unwrap()
+            .remove(feature.as_wire_name());
+        let missing = serde_json::from_value(missing).unwrap();
+        for contradictory in [with_wire_feature(&baseline, feature, false), missing] {
+            let error = RunnerFeatureSet::try_from_registration(&contradictory).unwrap_err();
+            assert_eq!(
+                error,
+                format!(
+                    "runner generation baseline capability mismatch: {}",
+                    feature.as_wire_name()
+                )
+            );
+        }
     }
 }
 
@@ -231,7 +199,7 @@ fn v2_registration_required_features_are_never_inferred_from_generation() {
     for feature in RunnerFeature::all()
         .iter()
         .copied()
-        .filter(|feature| feature.inference() == RunnerFeatureInference::RegistrationRequired)
+        .filter(|feature| !feature.is_v2_baseline())
     {
         assert!(
             !baseline_only.supports(feature),
@@ -259,17 +227,15 @@ fn v2_registration_required_features_are_never_inferred_from_generation() {
         RunnerFeature::StructuredScriptJavascript,
         RunnerFeature::StructuredScriptTypescript,
     ] {
-        assert_eq!(
-            feature.inference(),
-            RunnerFeatureInference::RegistrationRequired
-        );
+        assert!(!feature.is_v2_baseline());
         assert!(!baseline_only.supports(feature));
     }
 }
 
 #[test]
 fn missing_additive_wire_fields_remain_false_in_canonical_semantics() {
-    let wire: RunnerCapabilities = serde_json::from_str(r#"{}"#).unwrap();
+    let wire: RunnerCapabilities =
+        serde_json::from_str(r#"{"future_runner_feature":true}"#).unwrap();
     let semantics = RunnerFeatureSet::from_wire_for_test(&wire);
 
     assert!(semantics.supports(RunnerFeature::Shell));
@@ -285,8 +251,9 @@ fn missing_additive_wire_fields_remain_false_in_canonical_semantics() {
 async fn current_protocol_generation_never_infers_registration_required_host_features() {
     let registry = RunnerRegistry::default();
     let mut registration = runner_registration("no-inference", "inst-a", Vec::new());
-    let capabilities = v2_baseline_capabilities();
-    registration.capabilities = capabilities;
+    let mut wire = serde_json::to_value(v2_baseline_capabilities()).unwrap();
+    wire["future_runner_feature"] = true.into();
+    registration.capabilities = serde_json::from_value(wire).unwrap();
     registry.register(registration).await.unwrap();
 
     for feature in [

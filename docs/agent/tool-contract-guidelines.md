@@ -396,9 +396,26 @@ Input contract tests share `test_support::sample_tool_args_for_spec` in tool-con
 It chooses declared const/default/enum values, then bounded type/required-child samples;
 unsupported constraints fail rather than silently inventing a fixture. Keep semantic
 identity fixtures and cross-field overrides documented there, never in a second runtime
-helper. Runner registry's local `runner_features!` table owns Server feature projections
-and its all-enabled test fixture. The explicit `RunnerCapabilities` wire struct and
-frozen generation baseline remain independent compatibility contracts.
+helper.
+
+Runner wire capability facts live in core's `runner_protocol.rs` local
+`runner_capabilities!` declaration. Each row owns the typed identity, public constant,
+wire name, field/serde/default behavior and frozen V2 baseline membership. It generates
+`RunnerCapabilityId`, inventories, `RunnerCapabilities` and typed get/set projections.
+Declaration order preserves wire serialization order; golden tests protect legacy
+required false fields, omission and defaults. Server `RunnerFeature` re-exports this
+identity and validates baseline bits without inferring support. Computer admission
+classification and capability prerequisites remain Server policy.
+
+For a new `foo_v1` capability, add one protocol row (normally false-by-default,
+omitted when false, and outside the frozen V2 baseline). Advertise it explicitly in
+`runner_register_capabilities` only when that binary implements it; retain real
+runtime/platform probes for dynamic support. Add capability-specific prerequisites or
+Server classification only if needed. Catalog membership and baseline membership are
+never permission to advertise implementation support. Only the legacy `shell`/`git`
+implementation switches are copied from configuration; a new wire field cannot inherit
+advertisement merely from config. All-enabled fixtures are tests only and iterate the
+typed catalog.
 
 ## 10. Compatibility follows concrete consumers, not historical implementation
 

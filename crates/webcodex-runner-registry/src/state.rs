@@ -134,7 +134,7 @@ pub struct RunnerSemanticView {
 impl RunnerSemanticView {
     pub fn supports(&self, feature: RunnerFeature) -> bool {
         self.runner_features.supports(feature)
-            && (!feature.is_computer()
+            && (!crate::capabilities::is_computer(feature)
                 || self.view.computer_session_availability.is_none()
                 || (self.view.computer_session_availability == Some(true) && self.view.connected))
     }
@@ -162,7 +162,7 @@ pub(super) struct ProjectedStructuredTerminalSuppression {
 impl RunnerRecord {
     pub(super) fn supports(&self, feature: RunnerFeature) -> bool {
         self.runner_features.supports(feature)
-            && (!feature.is_computer()
+            && (!crate::capabilities::is_computer(feature)
                 || self.computer_session_availability.is_none()
                 || (self.computer_session_availability == Some(true)
                     && super::now_ts().saturating_sub(self.last_seen)

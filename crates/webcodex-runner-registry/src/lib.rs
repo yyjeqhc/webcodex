@@ -45,23 +45,20 @@ pub(crate) mod test_support {
     use crate::RunnerRegistry;
     use std::sync::atomic::{AtomicU64, Ordering};
     use webcodex_core::runner_protocol::{
-        RunnerCapabilities, RunnerProjectSummary, RunnerRegisterRequest, ShellProjectInventoryPage,
-        PROJECT_INVENTORY_PAGE_MAX_SUMMARIES, RUNNER_PROTOCOL_GENERATION_V2,
-        RUNNER_PROTOCOL_GENERATION_V2_BASELINE_CAPABILITY_NAMES,
+        RunnerCapabilities, RunnerCapabilityId, RunnerProjectSummary, RunnerRegisterRequest,
+        ShellProjectInventoryPage, PROJECT_INVENTORY_PAGE_MAX_SUMMARIES,
+        RUNNER_PROTOCOL_GENERATION_V2,
     };
 
     pub(crate) fn current_runner_capabilities(
-        capabilities: RunnerCapabilities,
+        mut capabilities: RunnerCapabilities,
     ) -> RunnerCapabilities {
-        let mut value =
-            serde_json::to_value(capabilities).expect("serialize Runner test capabilities");
-        let object = value
-            .as_object_mut()
-            .expect("Runner test capabilities must serialize as an object");
-        for capability in RUNNER_PROTOCOL_GENERATION_V2_BASELINE_CAPABILITY_NAMES {
-            object.insert((*capability).to_string(), serde_json::Value::Bool(true));
+        for capability in RunnerCapabilityId::all() {
+            if capability.is_v2_baseline() {
+                capabilities.set(*capability, true);
+            }
         }
-        serde_json::from_value(value).expect("deserialize canonical Runner test capabilities")
+        capabilities
     }
 
     pub(crate) fn current_runner_registration(

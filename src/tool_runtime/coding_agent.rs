@@ -2132,7 +2132,7 @@ mod tests {
         let run = "wc_agent_run_restart";
         let first =
             CodingAgentServerState::with_persistent_observation_mac_key(state_dir.path()).unwrap();
-        let first_epoch = first.epoch.clone();
+        let first_epoch = first.epoch;
         let token = first.observation_token(run, 7);
         drop(first);
 

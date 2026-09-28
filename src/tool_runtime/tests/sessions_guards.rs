@@ -525,7 +525,7 @@ async fn read_only_session_allows_read_files_and_records_success() {
             runtime
                 .dispatch_with_auth(
                     ToolCall::ReadFiles {
-                        project: project,
+                        project,
                         items: vec![crate::tool_runtime::ReadFilesItem {
                             path: "README.md".to_string(),
                             start_line: None,
@@ -902,7 +902,7 @@ async fn deny_write_only_allows_read_and_shell_tools() {
             runtime
                 .dispatch_with_auth(
                     ToolCall::ReadFiles {
-                        project: project,
+                        project,
                         items: vec![crate::tool_runtime::ReadFilesItem {
                             path: "README.md".to_string(),
                             start_line: None,

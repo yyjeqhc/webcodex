@@ -174,7 +174,7 @@ fn fixture() -> (tempfile::TempDir, Database, ApiKeyRecord) {
 fn operator_grant_is_idempotent_and_preserves_token_identity_expiry_and_existing_scopes() {
     let (_dir, db, before) = fixture();
     let hash = hash_token("fixture-user-token");
-    assert_eq!(grant_for_owner(&db, &hash, "alice", 10).unwrap(), true);
+    assert!(grant_for_owner(&db, &hash, "alice", 10).unwrap());
     let after = db.get_api_key_by_hash(&hash).unwrap().unwrap();
     assert!(after.scopes.ends_with("ssh:local coding_agent:run"));
     assert!(after.scopes.starts_with(&before.scopes));
@@ -183,7 +183,7 @@ fn operator_grant_is_idempotent_and_preserves_token_identity_expiry_and_existing
     expected.as_object_mut().unwrap().remove("scopes");
     actual.as_object_mut().unwrap().remove("scopes");
     assert_eq!(actual, expected);
-    assert_eq!(grant_for_owner(&db, &hash, "alice", 10).unwrap(), false);
+    assert!(!grant_for_owner(&db, &hash, "alice", 10).unwrap());
 }
 
 #[test]

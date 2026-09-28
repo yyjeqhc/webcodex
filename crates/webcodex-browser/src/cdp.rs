@@ -2868,7 +2868,7 @@ Connection: close
 
     #[test]
     fn ax_form_metadata_extracts_group_and_control_state() {
-        let raw_nodes = vec![
+        let raw_nodes = [
             json!({
                 "nodeId":"group-1",
                 "role":{"value":"group"},

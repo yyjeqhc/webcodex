@@ -2049,7 +2049,7 @@ fn validate_mcp_gateway_config(config: &McpGatewayConfig) -> Result<(), String> 
             }
             if destinations
                 .iter()
-                .any(|existing| super::shell::env_keys_equal(*existing, destination))
+                .any(|existing| super::shell::env_keys_equal(existing, destination))
             {
                 return Err(format!(
                     "mcp provider '{}' env_from_env contains conflicting destination names for this platform",

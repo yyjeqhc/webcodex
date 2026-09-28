@@ -304,7 +304,7 @@ pub(super) fn job_view(job: &ShellJobRecord) -> ShellJobInfo {
         // cursor-aware token for its frozen returned log snapshot.
         observation_token: webcodex_core::job_observation::JobObservationToken::new_baseline(
             job.job_id.clone(),
-            job.observation.epoch.to_string(),
+            &job.observation.epoch,
             job.observation
                 .revision
                 .load(std::sync::atomic::Ordering::Relaxed),

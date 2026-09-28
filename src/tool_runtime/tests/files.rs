@@ -2241,7 +2241,7 @@ fn raw_search_request() -> SearchRequest {
 
 fn search_call(project: String, request: SearchRequest) -> ToolCall {
     ToolCall::SearchProjectTexts {
-        project: project,
+        project,
         queries: vec![crate::tool_runtime::SearchProjectTextsQuery {
             pattern: request.pattern,
             pattern_mode: None,
@@ -4401,7 +4401,7 @@ async fn search_project_text_no_matches_returns_empty_matches() {
             runtime
                 .dispatch_with_auth(
                     ToolCall::SearchProjectTexts {
-                        project: project,
+                        project,
                         queries: vec![crate::tool_runtime::SearchProjectTextsQuery {
                             pattern: "absent_needle".to_string(),
                             pattern_mode: None,
@@ -4461,7 +4461,7 @@ async fn search_project_text_excludes_sensitive_and_build_dirs() {
             runtime
                 .dispatch_with_auth(
                     ToolCall::SearchProjectTexts {
-                        project: project,
+                        project,
                         queries: vec![crate::tool_runtime::SearchProjectTextsQuery {
                             pattern: "KEEP_SEARCH_NEEDLE".to_string(),
                             pattern_mode: None,
@@ -4834,7 +4834,7 @@ async fn search_project_text_context_does_not_enqueue_python_helper() {
             runtime
                 .dispatch_with_auth(
                     ToolCall::SearchProjectTexts {
-                        project: project,
+                        project,
                         queries: vec![crate::tool_runtime::SearchProjectTextsQuery {
                             pattern: "needle".to_string(),
                             pattern_mode: None,

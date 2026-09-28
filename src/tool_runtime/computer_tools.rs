@@ -3766,9 +3766,12 @@ fn validate_snapshot(
             );
         }
         let actual_region = output.get("region").and_then(snapshot_region_values);
-        let expected_region = expected_region
-            .and_then(snapshot_region_values)
-            .or_else(|| Some((0, 0, surface_width, surface_height)));
+        let expected_region = expected_region.and_then(snapshot_region_values).or(Some((
+            0,
+            0,
+            surface_width,
+            surface_height,
+        )));
         let Some((x, y, region_width, region_height)) = actual_region else {
             return computer_error(
                 "invalid_runner_response",

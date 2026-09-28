@@ -2408,7 +2408,7 @@ pub(super) fn coalesce_agent_wake_for_delivery(
         return Ok(wake_id);
     }
     let wake_id = allocate_identity(
-        &transaction,
+        transaction,
         AGENT_WAKE_ID_PREFIX,
         "SELECT EXISTS(SELECT 1 FROM wc_agent_wakes WHERE wake_id = ?1)",
     )?;

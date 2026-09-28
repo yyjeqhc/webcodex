@@ -179,11 +179,10 @@ pub(super) fn inspect(spec: &ServiceSpec) -> Result<ServiceStatus, ServiceError>
         )?;
         if socket.ownership == Ownership::Foreign {
             status.ownership = Ownership::Foreign;
-        } else if socket.ownership == Ownership::Unknown {
-            status.ownership = Ownership::Unknown;
-        } else if socket.ownership == Ownership::Absent && status.ownership == Ownership::Owned {
-            status.ownership = Ownership::Unknown;
-        } else if socket.ownership == Ownership::Owned && status.ownership == Ownership::Absent {
+        } else if socket.ownership == Ownership::Unknown
+            || (socket.ownership == Ownership::Absent && status.ownership == Ownership::Owned)
+            || (socket.ownership == Ownership::Owned && status.ownership == Ownership::Absent)
+        {
             status.ownership = Ownership::Unknown;
         }
         status.installed |= socket.installed;

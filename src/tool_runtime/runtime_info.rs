@@ -613,15 +613,15 @@ impl ToolRuntime {
         let clients = std::slice::from_ref(client);
         if sparse {
             return ToolResult::ok(self.sparse_runtime_status(
-                &clients,
+                clients,
                 &selected_jobs,
-                Some(&client),
+                Some(client),
             ));
         }
         let now = chrono::Utc::now().timestamp();
-        let project_count = enabled_projects_count(&client);
+        let project_count = enabled_projects_count(client);
         let online_project_count = if client.connected { project_count } else { 0 };
-        let target_compatibility = version_compatibility(&clients);
+        let target_compatibility = version_compatibility(clients);
         let target_runner = target_compatibility
             .pointer("/runners/0")
             .cloned()
@@ -676,16 +676,16 @@ impl ToolRuntime {
                 "runner_protocol_generation": client.runner_protocol_generation.get(),
                 "transport": client.transport,
                 "last_seen": client.last_seen,
-                "last_seen_age_secs": last_seen_age_secs(&client, now),
+                "last_seen_age_secs": last_seen_age_secs(client, now),
                 "pending_requests": client.pending_requests,
                 "active_jobs": active_jobs_for_client(&selected_jobs, &client.client_id),
-                "job_concurrency": job_concurrency_for_client(&client, &selected_jobs),
+                "job_concurrency": job_concurrency_for_client(client, &selected_jobs),
                 "projects_count": project_count,
                 "project_inventory": client.project_inventory,
                 "build": client.build,
                 "coding_agent_providers": safe_provider_inventory(client.coding_agent_providers.as_deref()),
             }],
-            "summary": runner_health_summary(&clients),
+            "summary": runner_health_summary(clients),
         });
         let tool_names: Vec<String> = model_visible_tool_definitions()
             .map(|definition| definition.name.to_string())
@@ -704,7 +704,7 @@ impl ToolRuntime {
             "coding_agent_providers": safe_provider_inventory(client.coding_agent_providers.as_deref()),
             "project_count": project_count,
             "active_jobs": runner_active,
-            "job_concurrency": job_concurrency_for_client(&client, &selected_jobs),
+            "job_concurrency": job_concurrency_for_client(client, &selected_jobs),
             "compatibility_status": target_runner.get("status").cloned().unwrap_or(Value::Null),
             "protocol_compatibility": target_runner.get("protocol_compatibility").cloned().unwrap_or(Value::Null),
             "build_alignment": target_runner.get("build_alignment").cloned().unwrap_or(Value::Null),

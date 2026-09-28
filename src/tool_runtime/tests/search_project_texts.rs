@@ -682,7 +682,7 @@ async fn search_project_texts_one_query_default_success_is_sparse_after_session_
             runtime
                 .dispatch_with_auth(
                     ToolCall::SearchProjectTexts {
-                        project: project,
+                        project,
                         queries: vec![crate::tool_runtime::SearchProjectTextsQuery {
                             pattern: "needle".to_string(),
                             pattern_mode: None,
@@ -782,7 +782,7 @@ async fn search_project_texts_one_query_nondefault_success_keeps_effective_selec
             runtime
                 .dispatch_with_auth(
                     ToolCall::SearchProjectTexts {
-                        project: project,
+                        project,
                         queries: vec![crate::tool_runtime::SearchProjectTextsQuery {
                             pattern: "needle".to_string(),
                             pattern_mode: None,
@@ -846,7 +846,7 @@ async fn search_project_texts_one_query_literal_mode_keeps_effective_metadata() 
             runtime
                 .dispatch_with_auth(
                     ToolCall::SearchProjectTexts {
-                        project: project,
+                        project,
                         queries: vec![crate::tool_runtime::SearchProjectTextsQuery {
                             pattern: "RuntimeInfo {".to_string(),
                             pattern_mode: Some(SearchPatternMode::Literal),
@@ -948,7 +948,7 @@ async fn search_project_texts_one_query_grep_fallback_keeps_backend_metadata() {
             runtime
                 .dispatch_with_auth(
                     ToolCall::SearchProjectTexts {
-                        project: project,
+                        project,
                         queries: vec![crate::tool_runtime::SearchProjectTextsQuery {
                             pattern: "needle".to_string(),
                             pattern_mode: None,
@@ -1253,7 +1253,7 @@ async fn search_project_texts_retries_one_dropped_agent_request_and_restores_ord
         }
     });
 
-    let first_two = vec![
+    let first_two = [
         wait_for_patch_agent_request(&runtime, client_id).await,
         wait_for_patch_agent_request(&runtime, client_id).await,
     ];
@@ -1351,7 +1351,7 @@ async fn search_project_texts_retry_stays_inside_existing_concurrency_slot() {
         }
     });
 
-    let first_two = vec![
+    let first_two = [
         wait_for_patch_agent_request(&runtime, client_id).await,
         wait_for_patch_agent_request(&runtime, client_id).await,
     ];

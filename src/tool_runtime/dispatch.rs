@@ -1861,11 +1861,11 @@ impl ToolRuntime {
         let tool_name = call.tool_name();
         let trusted_recording_session_id = recorder_metadata
             .recording_session_authorized
-            .then(|| recorder_metadata.recording_session_id.as_deref())
+            .then_some(recorder_metadata.recording_session_id.as_deref())
             .flatten();
         let trusted_recording_session_project = recorder_metadata
             .recording_session_authorized
-            .then(|| recorder_metadata.recording_session_project.as_deref())
+            .then_some(recorder_metadata.recording_session_project.as_deref())
             .flatten();
         let source_mutation = if super::validation_source::observes_potential_mutation(&call) {
             activity_project

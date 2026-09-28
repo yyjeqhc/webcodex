@@ -482,7 +482,7 @@ impl ToolRuntime {
                     session_id: input.session_id.clone(),
                 },
                 auth,
-                transport.clone(),
+                transport,
             )
             .await;
         if !result.success {
@@ -595,7 +595,7 @@ impl ToolRuntime {
                     overwrite: input.overwrite,
                 },
                 auth,
-                transport.clone(),
+                transport,
             )
             .await;
         if !begin.success {
@@ -623,7 +623,7 @@ impl ToolRuntime {
                     &upload_id,
                     input.session_id.as_deref(),
                     auth,
-                    transport.clone(),
+                    transport,
                 )
                 .await;
                 return Err(ToolResult::err(format!(
@@ -647,7 +647,7 @@ impl ToolRuntime {
                         &upload_id,
                         input.session_id.as_deref(),
                         auth,
-                        transport.clone(),
+                        transport,
                     )
                     .await;
                     return Err(ToolResult::err(format!(
@@ -662,7 +662,7 @@ impl ToolRuntime {
                     &upload_id,
                     input.session_id.as_deref(),
                     auth,
-                    transport.clone(),
+                    transport,
                 )
                 .await;
                 return Err(ToolResult::err(format!(
@@ -676,7 +676,7 @@ impl ToolRuntime {
                     &upload_id,
                     input.session_id.as_deref(),
                     auth,
-                    transport.clone(),
+                    transport,
                 )
                 .await;
                 return Err(ToolResult::err(format!(
@@ -700,7 +700,7 @@ impl ToolRuntime {
                             uploaded_bytes,
                             &pending,
                             auth,
-                            transport.clone(),
+                            transport,
                         )
                         .await?;
                     pending.clear();
@@ -715,7 +715,7 @@ impl ToolRuntime {
                 uploaded_bytes,
                 &pending,
                 auth,
-                transport.clone(),
+                transport,
             )
             .await?;
         }
@@ -729,7 +729,7 @@ impl ToolRuntime {
                     session_id: input.session_id.clone(),
                 },
                 auth,
-                transport.clone(),
+                transport,
             )
             .await;
         if !result.success {
@@ -788,7 +788,7 @@ impl ToolRuntime {
                     file_ref,
                     idx,
                     auth,
-                    transport.clone(),
+                    transport,
                     download_policy,
                 )
                 .await

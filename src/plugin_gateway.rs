@@ -1452,7 +1452,7 @@ mod tests {
         assert_eq!(audit["plugin"], "provider-a");
         assert_eq!(audit["tool"], "tool-a");
         assert_eq!(audit["binding_resolved"], true);
-        assert!(!encoded.contains(&opaque));
+        assert!(!encoded.contains(opaque));
         assert!(!encoded.contains(secret));
         assert!(!encoded.contains("provider-a-instance"));
     }

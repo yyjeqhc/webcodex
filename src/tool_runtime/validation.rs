@@ -1365,9 +1365,7 @@ impl ToolRuntime {
                 }
             }
             ShellCommandExecutionState::Completed => {
-                payload["failure_kind"] = json!(if validation_failed {
-                    CARGO_VALIDATION_FAILURE_KIND
-                } else if process_passed {
+                payload["failure_kind"] = json!(if validation_failed || process_passed {
                     CARGO_VALIDATION_FAILURE_KIND
                 } else {
                     "process_exit"

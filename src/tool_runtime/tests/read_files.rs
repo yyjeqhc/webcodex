@@ -1089,7 +1089,7 @@ async fn read_file_dispatch_complete_success_is_sparse_after_session_recording()
             runtime
                 .dispatch_with_auth(
                     ToolCall::ReadFiles {
-                        project: project,
+                        project,
                         items: vec![crate::tool_runtime::ReadFilesItem {
                             path: "src/lib.rs".to_string(),
                             start_line: None,
@@ -1188,7 +1188,7 @@ async fn read_file_dispatch_partial_success_keeps_full_range_cursor() {
             runtime
                 .dispatch_with_auth(
                     ToolCall::ReadFiles {
-                        project: project,
+                        project,
                         items: vec![crate::tool_runtime::ReadFilesItem {
                             path: "src/lib.rs".to_string(),
                             start_line: Some(2),
@@ -1296,7 +1296,7 @@ async fn read_files_continuation_rejects_changed_snapshot() {
             runtime
                 .dispatch_with_auth(
                     ToolCall::ReadFiles {
-                        project: project,
+                        project,
                         items: vec![crate::tool_runtime::ReadFilesItem {
                             path: "src/lib.rs".to_string(),
                             start_line: Some(1),
@@ -1513,7 +1513,7 @@ async fn read_file_dispatch_complete_explicit_range_keeps_full_range_metadata() 
             runtime
                 .dispatch_with_auth(
                     ToolCall::ReadFiles {
-                        project: project,
+                        project,
                         items: vec![crate::tool_runtime::ReadFilesItem {
                             path: "src/lib.rs".to_string(),
                             start_line: Some(1),

@@ -227,6 +227,8 @@ impl SkillStore {
         reject_symlink_or_non_file_if_exists(&path, "Skill store lock")?;
         let file = OpenOptions::new()
             .create(true)
+            // Lock acquisition must preserve the existing file and its inode.
+            .truncate(false)
             .read(true)
             .write(true)
             .open(&path)

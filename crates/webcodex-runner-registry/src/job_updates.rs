@@ -206,7 +206,7 @@ fn frozen_shell_job_log_projection(
         let mut view = job_view(job);
         view.observation_token = webcodex_core::job_observation::JobObservationToken::new_baseline(
             job.job_id.clone(),
-            job.observation.epoch.to_string(),
+            &job.observation.epoch,
             job.observation.revision.load(Ordering::Relaxed),
         )
         .ok()
@@ -279,7 +279,7 @@ fn frozen_shell_job_log_projection(
     let mut view = job_view(job);
     view.observation_token = webcodex_core::job_observation::JobObservationToken::new(
         job.job_id.clone(),
-        job.observation.epoch.to_string(),
+        &job.observation.epoch,
         job.observation.revision.load(Ordering::Relaxed),
         stdout.next_line as u64,
         stderr.next_line as u64,
@@ -1942,7 +1942,7 @@ impl RunnerRegistry {
                 .filter_map(|id| {
                     let job = inner.jobs_by_id.get(*id)?;
                     if job.visibility != ShellJobVisibility::Public
-                        || !shell_job_visible_to_auth(auth, &inner, job)
+                        || !shell_job_visible_to_auth(auth, inner, job)
                     {
                         return None;
                     }

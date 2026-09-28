@@ -459,7 +459,7 @@ impl ToolRuntime {
         };
         match db.read_agent_task(&principal, &task_id) {
             Ok(task) => {
-                let mut output = match to_value(&json!({"task": task})) {
+                let mut output = match to_value(json!({"task": task})) {
                     Ok(value) => value,
                     Err(error) => return agent_task_serialization_error(error),
                 };

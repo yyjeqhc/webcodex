@@ -36,7 +36,7 @@ fn streaming_registration(client_id: &str, runner_instance_id: &str) -> RunnerRe
         owner: None,
         hostname: None,
         host_context: None,
-        capabilities: capabilities,
+        capabilities,
         policy: None,
     })
 }

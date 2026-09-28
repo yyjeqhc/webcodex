@@ -667,7 +667,7 @@ fn correlations_are_bounded_explicit_identity_only_and_replayed() {
             &owner,
             &goal_id,
             GoalCorrelationKind::AgentTask,
-            &"wc_agent_task_________________".to_string(),
+            "wc_agent_task_________________",
             "capacity-overflow",
             T0 + 100,
         )

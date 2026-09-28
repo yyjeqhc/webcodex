@@ -2628,9 +2628,9 @@ pub(super) async fn handle_call(
         };
     }
     if session_message_resolution.is_some() && session_id.is_none() {
-        let message = format!(
-            "field '_wc.resolve' requires '_wc.record' for the exact target Workflow Session",
-        );
+        let message =
+            "field '_wc.resolve' requires '_wc.record' for the exact target Workflow Session"
+                .to_string();
         if let Some(lc) = lifecycle.as_deref() {
             lc.dispatch_failed("invalid_arguments");
             lc.dispatch_finished(false, Some(false), "invalid_arguments");
@@ -2690,7 +2690,7 @@ pub(super) async fn handle_call(
             completion.invocation = invocation_facts;
         }
     }
-    if let Some(slot) = correlation_out.as_deref_mut() {
+    if let Some(slot) = correlation_out {
         *slot = outcome.correlation.clone();
     }
     let mut result = match outcome.error_status {
@@ -2819,7 +2819,7 @@ pub(super) async fn handle_call(
             .get("structuredContent")
             .and_then(|structured| completion.record_for_structured_content(structured))
     });
-    if let Some(slot) = model_ergonomics_out.as_deref_mut() {
+    if let Some(slot) = model_ergonomics_out {
         *slot = model_ergonomics;
     }
     return McpOutcome::Ok(rpc_result(

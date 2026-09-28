@@ -694,7 +694,7 @@ fn collect_symbol_hints(diff: &str, files: &mut [ReviewFile], total_symbols: &mu
         }
     }
     let mut current = None;
-    let mut partial = diff.as_bytes().len() >= GIT_REVIEW_MAX_DIFF_BYTES;
+    let mut partial = diff.len() >= GIT_REVIEW_MAX_DIFF_BYTES;
     for line in diff.lines() {
         if line.starts_with("+++ ") {
             current =
@@ -1039,11 +1039,7 @@ impl ToolRuntime {
                 .await;
             match output {
                 Ok(output) if output.exit_code == Some(0) && output.error.is_none() => {
-                    diff_bytes_inspected = output
-                        .stdout
-                        .as_bytes()
-                        .len()
-                        .min(GIT_REVIEW_MAX_DIFF_BYTES);
+                    diff_bytes_inspected = output.stdout.len().min(GIT_REVIEW_MAX_DIFF_BYTES);
                     symbols_partial |=
                         collect_symbol_hints(&output.stdout, &mut files, &mut total_symbols);
                 }

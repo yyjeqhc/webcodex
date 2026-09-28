@@ -654,7 +654,7 @@ async fn shared_key_client_provision_rejects_invalid_computer_enabled_previous_c
         registry,
     ));
 
-    for previous in vec![
+    for previous in [
         vec!["runtime:read", "computer:launch"],
         vec!["runtime:read", "runtime:read"],
         vec!["runtime:read", "computer:future"],

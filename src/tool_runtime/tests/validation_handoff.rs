@@ -34,6 +34,7 @@ pub(super) async fn poll_start_validation_job(
     (request, job_id)
 }
 
+#[cfg(feature = "experimental-code-mode")]
 pub(super) async fn poll_start_validation_job_with_timeout(
     runtime: &ToolRuntime,
     client_id: &str,

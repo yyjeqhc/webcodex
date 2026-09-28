@@ -6501,7 +6501,7 @@ async fn show_changes_with_session_id_returns_session_block_and_records_call() {
             runtime
                 .dispatch_with_auth(
                     ToolCall::ReadFiles {
-                        project: project,
+                        project,
                         items: vec![crate::tool_runtime::ReadFilesItem {
                             path: "README.md".to_string(),
                             start_line: None,

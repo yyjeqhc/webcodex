@@ -833,7 +833,7 @@ async fn http_tools_call_full_trace_captures_raw_effective_and_final_payloads() 
     assert_eq!(effective, json!({}));
     let final_response = read_phase("final_response");
     assert_eq!(final_response["success"], true);
-    assert_eq!(final_response["output"]["tools"].is_array(), true);
+    assert!(final_response["output"]["tools"].is_array());
 }
 
 #[tokio::test]

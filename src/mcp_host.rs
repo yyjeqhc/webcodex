@@ -8,7 +8,9 @@ const HOST_CODE_MODE_DEFAULT_HOST_BUDGET_SECS: u64 = 55;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub(crate) enum McpHostProfile {
+    #[default]
     Direct,
     HostCodeMode,
 }
@@ -26,12 +28,6 @@ impl McpHostProfile {
             Self::Direct => DIRECT_DEFAULT_HOST_BUDGET_SECS,
             Self::HostCodeMode => HOST_CODE_MODE_DEFAULT_HOST_BUDGET_SECS,
         }
-    }
-}
-
-impl Default for McpHostProfile {
-    fn default() -> Self {
-        Self::Direct
     }
 }
 

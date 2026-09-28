@@ -2690,7 +2690,7 @@ fn structured_process_job_drains_large_output_without_log_observation_and_runs_o
             "{name}: {:?}",
             stream.tail
         );
-        assert!(stream.tail.as_bytes().iter().any(|byte| *byte == tail_byte));
+        assert!(stream.tail.as_bytes().contains(&tail_byte));
         assert!(std::str::from_utf8(stream.tail.as_bytes()).is_ok());
     }
     let starts = std::fs::read_to_string(marker).unwrap();
@@ -3362,7 +3362,7 @@ fn structured_script_job_drains_large_output_without_log_observation_and_runs_on
             "{name}: {:?}",
             stream.tail
         );
-        assert!(stream.tail.as_bytes().iter().any(|byte| *byte == tail_byte));
+        assert!(stream.tail.as_bytes().contains(&tail_byte));
         assert!(std::str::from_utf8(stream.tail.as_bytes()).is_ok());
     }
     assert_eq!(

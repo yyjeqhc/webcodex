@@ -424,7 +424,7 @@ impl Handler for AuthMiddleware {
                 // verification are always rejected.
                 let trimmed = token.trim();
                 if config.is_auth_enabled()
-                    && direct_shared_key_enabled(&*config)
+                    && direct_shared_key_enabled(&config)
                     && !trimmed.is_empty()
                     && !is_managed_token_prefix(trimmed)
                 {

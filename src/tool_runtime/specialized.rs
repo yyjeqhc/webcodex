@@ -222,7 +222,7 @@ impl SpecializedAuthorityRequirement {
         };
         match self {
             Self::Scope(scope) => scope_missing(scope).then_some(scope),
-            Self::All(scopes) => scopes.iter().copied().find(|scope| scope_missing(*scope)),
+            Self::All(scopes) => scopes.iter().copied().find(|scope| scope_missing(scope)),
         }
     }
 

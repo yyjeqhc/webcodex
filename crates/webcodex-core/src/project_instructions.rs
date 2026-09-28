@@ -301,7 +301,7 @@ impl ProjectInstructionsSnapshot {
                 new.instance_id == old.instance_id
                     && new
                         .generation
-                        .map_or(true, |generation| Some(generation) == old.generation)
+                        .is_none_or(|generation| Some(generation) == old.generation)
             });
         let retain_runner =
             runner_stale || (!self.scope_complete(InstructionSourceScope::Runner) && same_runner);

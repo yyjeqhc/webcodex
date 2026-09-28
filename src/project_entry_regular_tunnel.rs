@@ -231,6 +231,10 @@ fn tunnel_failure_evidence(code: &str) -> (&'static str, &'static str) {
             "tunnel_client_verification",
             "tunnel_client_verification_failed",
         ),
+        "tunnel_client_download_failed" => {
+            ("tunnel_client_download", "tunnel_client_download_failed")
+        }
+        "tunnel_client_install_failed" => ("tunnel_client_install", "tunnel_client_install_failed"),
         "tunnel_doctor_failed" => ("tunnel_doctor", "tunnel_doctor_failed"),
         "tunnel_control_plane_unreachable" => {
             ("tunnel_control_plane", "tunnel_control_plane_unreachable")
@@ -417,6 +421,20 @@ mod tests {
         assert_eq!(event["event"], "failure");
         assert_eq!(event["failure_stage"], "tunnel_control_plane");
         assert_eq!(event["reason_code"], "tunnel_control_plane_probe_failed");
+        let download = machine_regular_tunnel_failure_event(&ProductError::new(
+            "tunnel_client_download_failed",
+            "private proxy URL must never cross the machine channel",
+            Some("private recovery text"),
+        ));
+        assert_eq!(download["failure_stage"], "tunnel_client_download");
+        assert_eq!(download["reason_code"], "tunnel_client_download_failed");
+        let install = machine_regular_tunnel_failure_event(&ProductError::new(
+            "tunnel_client_install_failed",
+            "private path must never cross the machine channel",
+            Some("private recovery text"),
+        ));
+        assert_eq!(install["failure_stage"], "tunnel_client_install");
+        assert_eq!(install["reason_code"], "tunnel_client_install_failed");
         let encoded = serde_json::to_string(&event).unwrap();
         assert!(!encoded.contains("private runtime key"));
         assert!(!encoded.contains("private recovery"));

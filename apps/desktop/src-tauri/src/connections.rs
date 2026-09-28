@@ -13,7 +13,11 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::Instant;
 
-const STARTUP_TIMEOUT: Duration = Duration::from_secs(90);
+// The child owns normal phase deadlines. A first-run managed tunnel-client
+// download may consume the shared 120s download budget before verification and
+// the bounded 60s doctor/control-plane/readiness phase begins. Keep Desktop's
+// deadline as a supervision fail-safe so it cannot mask the child's typed error.
+const STARTUP_TIMEOUT: Duration = Duration::from_secs(240);
 const HEALTH_STALE_AFTER: Duration = Duration::from_secs(12);
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -460,7 +464,9 @@ fn safe_failure_evidence(event: &Value) -> Option<(&str, &str)> {
         (
             "tunnel_client_verification",
             "tunnel_client_verification_failed"
-        ) | ("tunnel_doctor", "tunnel_doctor_failed")
+        ) | ("tunnel_client_download", "tunnel_client_download_failed")
+            | ("tunnel_client_install", "tunnel_client_install_failed")
+            | ("tunnel_doctor", "tunnel_doctor_failed")
             | ("tunnel_control_plane", "tunnel_control_plane_unreachable")
             | ("tunnel_control_plane", "tunnel_control_plane_probe_failed")
             | ("tunnel_daemon_start", "tunnel_daemon_start_failed")

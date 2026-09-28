@@ -209,6 +209,34 @@ async fn concurrent_observers_are_independent_and_stale_generation_cannot_kill_r
     assert!(supervisor.lock().await.keys().is_empty());
 }
 
+#[test]
+fn desktop_supervision_does_not_preempt_first_run_tunnel_client_install() {
+    // The managed download may consume 120s before the child's separate 60s
+    // startup phase. Desktop must leave enough room for the child to emit a
+    // typed failure instead of replacing it with tunnel_startup_timeout.
+    assert!(STARTUP_TIMEOUT > Duration::from_secs(120 + 60));
+    assert_eq!(
+        safe_failure_evidence(&json!({
+            "event": "failure",
+            "schema_version": 1,
+            "provider": "openai",
+            "failure_stage": "tunnel_client_download",
+            "reason_code": "tunnel_client_download_failed"
+        })),
+        Some(("tunnel_client_download", "tunnel_client_download_failed"))
+    );
+    assert_eq!(
+        safe_failure_evidence(&json!({
+            "event": "failure",
+            "schema_version": 1,
+            "provider": "openai",
+            "failure_stage": "tunnel_client_install",
+            "reason_code": "tunnel_client_install_failed"
+        })),
+        Some(("tunnel_client_install", "tunnel_client_install_failed"))
+    );
+}
+
 #[tokio::test]
 async fn malformed_or_secret_bearing_child_failure_stays_local_and_safe() {
     let registry = ConnectionRuntimes::default();

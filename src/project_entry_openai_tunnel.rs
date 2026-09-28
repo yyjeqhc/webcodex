@@ -12,7 +12,7 @@ use std::io::Read;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 use tokio::process::{Child, Command};
 
 #[cfg(windows)]
@@ -27,6 +27,7 @@ const TUNNEL_CLIENT_VERIFY_TIMEOUT: Duration = Duration::from_secs(10);
 const TUNNEL_CLIENT_DOCTOR_TIMEOUT: Duration = Duration::from_secs(30);
 const TUNNEL_CLIENT_CONTROL_PLANE_PROBE_TIMEOUT: Duration = Duration::from_secs(20);
 const TUNNEL_CLIENT_READY_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
+const TUNNEL_CLIENT_STALE_INSTALL_AGE: Duration = Duration::from_secs(5 * 60);
 const TUNNEL_CLIENT_HEALTH_URL_BYTES: usize = 512;
 const TUNNEL_CLIENT_OVERRIDE: &str = "WEBCODEX_TUNNEL_CLIENT_BIN";
 #[cfg(windows)]
@@ -545,6 +546,7 @@ async fn ensure_managed_tunnel_client_at(
     let destination = managed_binary_path(root, asset);
     let install_dir = destination.parent().ok_or_else(managed_tool_path_error)?;
     create_private_tool_dir(install_dir)?;
+    cleanup_stale_install_dirs(install_dir);
     if managed_binary_is_valid(&destination, asset).await {
         return Ok(destination);
     }
@@ -566,7 +568,7 @@ async fn ensure_managed_tunnel_client_at(
         verify_tunnel_client_version(&candidate).await?;
         fs::rename(&candidate, &destination).map_err(|_| {
             ProductError::new(
-                "tunnel_unavailable",
+                "tunnel_client_install_failed",
                 "WebCodex could not install its managed OpenAI tunnel-client atomically",
                 Some("Check user-state filesystem permissions, then retry webcodex share --tunnel openai."),
             )
@@ -579,6 +581,54 @@ async fn ensure_managed_tunnel_client_at(
     .await;
     let _ = fs::remove_dir_all(&temporary);
     result
+}
+
+fn cleanup_stale_install_dirs(install_dir: &Path) {
+    let Some(cutoff) = SystemTime::now().checked_sub(TUNNEL_CLIENT_STALE_INSTALL_AGE) else {
+        return;
+    };
+    cleanup_stale_install_dirs_before(install_dir, cutoff);
+}
+
+fn cleanup_stale_install_dirs_before(install_dir: &Path, cutoff: SystemTime) {
+    let Ok(entries) = fs::read_dir(install_dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if !is_managed_install_staging_name(&entry.file_name()) {
+            continue;
+        }
+        let path = entry.path();
+        let Ok(metadata) = fs::symlink_metadata(&path) else {
+            continue;
+        };
+        if !metadata.file_type().is_dir() || metadata.file_type().is_symlink() {
+            continue;
+        }
+        #[cfg(windows)]
+        if super::windows_private_state::protect_private_directory(&path).is_err() {
+            continue;
+        }
+        let Ok(modified) = metadata.modified() else {
+            continue;
+        };
+        if modified <= cutoff {
+            let _ = fs::remove_dir_all(path);
+        }
+    }
+}
+
+fn is_managed_install_staging_name(name: &OsStr) -> bool {
+    let Some(name) = name.to_str() else {
+        return false;
+    };
+    let Some(id) = name.strip_prefix(".install-") else {
+        return false;
+    };
+    id.len() == 32
+        && id
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 async fn managed_binary_is_valid(path: &Path, asset: TunnelClientAsset) -> bool {
@@ -744,7 +794,7 @@ fn sha256_file(path: &Path) -> Result<String, ProductError> {
 fn verify_sha256(path: &Path, expected: &str, label: &str) -> Result<(), ProductError> {
     if sha256_file(path)? != expected {
         return Err(ProductError::new(
-            "tunnel_unavailable",
+            "tunnel_client_verification_failed",
             format!("{label} failed SHA-256 verification"),
             Some("Retry webcodex share --tunnel openai; if the failure persists, set WEBCODEX_TUNNEL_CLIENT_BIN to the pinned trusted binary."),
         ));
@@ -811,7 +861,7 @@ fn managed_user_root_error(name: &str) -> ProductError {
 
 fn managed_tool_path_error() -> ProductError {
     ProductError::new(
-        "tunnel_unavailable",
+        "tunnel_client_install_failed",
         "WebCodex could not create or protect its managed OpenAI tunnel-client files",
         Some("Check user-state filesystem permissions, then retry webcodex share --tunnel openai."),
     )
@@ -819,7 +869,7 @@ fn managed_tool_path_error() -> ProductError {
 
 fn download_error(detail: &str) -> ProductError {
     ProductError::new(
-        "tunnel_unavailable",
+        "tunnel_client_download_failed",
         format!("WebCodex could not download verified OpenAI tunnel-client: {detail}"),
         Some("Check network/proxy connectivity and retry, or set WEBCODEX_TUNNEL_CLIENT_BIN to the pinned trusted binary."),
     )
@@ -827,7 +877,7 @@ fn download_error(detail: &str) -> ProductError {
 
 fn extraction_error(detail: &str) -> ProductError {
     ProductError::new(
-        "tunnel_unavailable",
+        "tunnel_client_install_failed",
         format!("WebCodex could not unpack verified OpenAI tunnel-client: {detail}"),
         Some("Retry webcodex share --tunnel openai or set WEBCODEX_TUNNEL_CLIENT_BIN to the pinned trusted binary."),
     )

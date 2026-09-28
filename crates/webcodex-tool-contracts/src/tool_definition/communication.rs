@@ -117,8 +117,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         COMMUNICATION_MANAGE_SCOPES,
     ),
     require_all_scopes(
-        adaptive_runtime_direct(
-            permission_risk(
+        permission_risk(
                 model_spec(
                     def(
                         "rotate_agent_continuation_endpoint",
@@ -161,8 +160,6 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 PERMISSION_RISK_WRITE,
             )
             .with_gpt_action_unsupported(),
-            19,
-        ),
         COMMUNICATION_MANAGE_SCOPES,
     ),
     require_all_scopes(

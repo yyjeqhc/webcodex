@@ -11,7 +11,7 @@ use super::tool_definition::{
     ToolOperatorExtensionFamily, ToolReviewEvidence, ToolSessionEvidencePolicy,
     ToolValidationIdentityKind, PERMISSION_RISK_ARTIFACT_WRITE, PERMISSION_RISK_DESTRUCTIVE,
     PERMISSION_RISK_PATCH, PERMISSION_RISK_SHELL, PERMISSION_RISK_VALIDATION,
-    PERMISSION_RISK_WRITE, TOOL_CATEGORY_JOB,
+    PERMISSION_RISK_WRITE,
 };
 
 impl ToolDefinition {
@@ -120,8 +120,7 @@ impl ToolDefinition {
                 return ToolActivityKind::Edit;
             }
             if self.execution.is_some()
-                || (self.category == TOOL_CATEGORY_JOB
-                    && self.session_evidence.persistent_shell.is_some())
+                || self.session_evidence.persistent_shell.is_some()
                 || self.metadata.effect == ToolEffect::Execute
                 || self.metadata.shell_like
                 || self.metadata.risk == ToolRisk::JobRun

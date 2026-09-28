@@ -249,8 +249,8 @@ async fn mcp_tools_call_show_changes_returns_structured_tool_error() {
             "tools/call",
             Some(Value::from(14)),
             json!({
-                "name": "show_changes",
-                "arguments": {"project": "agent:nope:nope"}
+                "name": "call_runtime_tool",
+                "arguments": {"tool": "show_changes", "arguments": {"project": "agent:nope:nope"}}
             }),
         ),
         None,

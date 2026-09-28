@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn edit_project_files_metadata_and_mcp_consistency() {
-    use crate::tool_runtime::tool_definition::TOOL_DISCOVERY_GROUP_EDIT;
+    use crate::tool_runtime::tool_definition::TOOL_CATEGORY_EDIT;
 
     // Known name + spec + metadata coverage. registered_tool_specs() backs
     // both the list_tools runtime tool and MCP tools/list (parity is enforced
@@ -30,7 +30,7 @@ fn edit_project_files_metadata_and_mcp_consistency() {
     assert!(crate::tool_runtime::metadata::lookup_tool_metadata("edit_project_files").is_some());
     // The edit category includes the new tool.
     let cats = registered_tool_categories();
-    let edit = cats[TOOL_DISCOVERY_GROUP_EDIT]
+    let edit = cats[TOOL_CATEGORY_EDIT]
         .as_array()
         .expect("edit category present");
     assert!(edit.iter().any(|v| v == "edit_project_files"));

@@ -1,6 +1,6 @@
 use super::ToolVisibility::ModelHidden;
 use super::{
-    def, require_all_scopes, ToolDefinition, ToolOperatorExtensionFamily, TOOL_CATEGORY_RUNTIME,
+    def, require_all_scopes, ToolDefinition, ToolOperatorExtensionFamily, TOOL_CATEGORY_MEMORY,
 };
 use crate::metadata::{
     ToolPathHint::None as NoPath,
@@ -36,7 +36,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 super::ToolAuditResultField::value("state_changed"),
             ])),
             ModelHidden,
-            TOOL_CATEGORY_RUNTIME,
+            TOOL_CATEGORY_MEMORY,
             None,
             TOOL_PROVIDER_CONTROL,
             super::ToolSemanticContract {
@@ -80,7 +80,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 super::ToolAuditResultField::value("state_changed"),
             ])),
             ModelHidden,
-            TOOL_CATEGORY_RUNTIME,
+            TOOL_CATEGORY_MEMORY,
             None,
             TOOL_PROVIDER_CONTROL,
             super::ToolSemanticContract {
@@ -122,7 +122,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 super::ToolAuditResultField::value("state_changed"),
             ])),
             ModelHidden,
-            TOOL_CATEGORY_RUNTIME,
+            TOOL_CATEGORY_MEMORY,
             None,
             TOOL_PROVIDER_CONTROL,
             super::ToolSemanticContract {
@@ -162,7 +162,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 super::ToolAuditResultField::value("state_changed"),
             ])),
             ModelHidden,
-            TOOL_CATEGORY_RUNTIME,
+            TOOL_CATEGORY_MEMORY,
             None,
             TOOL_PROVIDER_CONTROL,
             super::ToolSemanticContract {
@@ -192,7 +192,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         ])
         .context_from_result(),
         ModelHidden,
-        TOOL_CATEGORY_RUNTIME,
+        TOOL_CATEGORY_MEMORY,
         None,
         TOOL_PROVIDER_CONTROL,
         super::ToolSemanticContract {
@@ -221,7 +221,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         ])
         .context_from_result(),
         ModelHidden,
-        TOOL_CATEGORY_RUNTIME,
+        TOOL_CATEGORY_MEMORY,
         None,
         TOOL_PROVIDER_CONTROL,
         super::ToolSemanticContract {

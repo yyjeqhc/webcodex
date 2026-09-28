@@ -89,8 +89,7 @@ pub(super) const SUMMARY_DEFINITIONS: &[ToolDefinition] = &[
         ))),
         120,
     ),
-    adaptive_runtime_direct(
-        change_summary_like(git_like(
+    change_summary_like(git_like(
             model_spec(
                 def(
                     "show_changes",
@@ -132,8 +131,7 @@ pub(super) const SUMMARY_DEFINITIONS: &[ToolDefinition] = &[
                 "Review current worktree changes and optional bounded diff hunks for presentation, Session signals, and closeout internals. Ordinary code review uses review_changes. Read-only.",
             ),
         )),
-        130,
-    ),];
+];
 pub(super) const DETAIL_DEFINITIONS: &[ToolDefinition] = &[
     require_all_scopes(git_like(model_spec(
         def(

@@ -174,7 +174,7 @@ fn tool_definitions_drive_session_and_permission_policy() {
         runtime_tool_session_risk_class, tool_definitions, PERMISSION_RISK_ARTIFACT_WRITE,
         PERMISSION_RISK_DESTRUCTIVE, PERMISSION_RISK_JOB, PERMISSION_RISK_PATCH,
         PERMISSION_RISK_SHELL, PERMISSION_RISK_VALIDATION, PERMISSION_RISK_WRITE,
-        TOOL_DISCOVERY_GROUPS, TOOL_DISCOVERY_GROUP_GIT,
+        TOOL_CATEGORY_GIT,
     };
     use crate::tool_policy::lookup_tool_definition;
 
@@ -230,13 +230,11 @@ fn tool_definitions_drive_session_and_permission_policy() {
     assert_eq!(patch_metadata.approval, ToolApprovalPolicy::Standard);
     assert_eq!(patch_metadata.idempotency, ToolIdempotency::NonIdempotent);
 
-    let git_group = TOOL_DISCOVERY_GROUPS
-        .iter()
-        .find(|group| group.name == TOOL_DISCOVERY_GROUP_GIT)
-        .expect("git discovery group")
-        .tools
-        .iter()
-        .copied()
+    let git_group = tool_definitions()
+        .filter(|definition| {
+            definition.visibility.is_model_visible() && definition.category == TOOL_CATEGORY_GIT
+        })
+        .map(|definition| definition.name)
         .collect::<BTreeSet<_>>();
 
     for retired_primitive in ["git_diff", "git_diff_summary"] {
@@ -676,13 +674,11 @@ fn workspace_checkpoints_disabled_registry_and_discovery() {
     assert!(registered_tool_specs()
         .iter()
         .all(|spec| !spec.name.starts_with("workspace_checkpoint_")));
-    assert!(crate::tool_catalog::TOOL_DISCOVERY_GROUPS
-        .iter()
-        .all(|group| group.name != "checkpoint"
-            && group
-                .tools
-                .iter()
-                .all(|name| !name.starts_with("workspace_checkpoint_"))));
+    assert!(crate::tool_catalog::group_tool_names_by_category(
+        model_visible_tool_definitions().map(|definition| definition.name)
+    )
+    .get("checkpoint")
+    .is_none());
     for suffix in ["create", "list", "show", "restore", "delete"] {
         assert!(lookup_tool_definition(&format!("workspace_checkpoint_{suffix}")).is_none());
     }

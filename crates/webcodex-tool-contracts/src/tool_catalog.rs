@@ -1,25 +1,31 @@
-//! Model-facing runtime tool discovery groups, recommended flows, and intents.
+//! Canonical category projection, recommended flows, and task intents.
 
-use super::tool_definition::{ToolDiscoveryGroup, ToolManifestIntent, ToolRecommendedFlow};
+use super::tool_definition::{ToolManifestIntent, ToolRecommendedFlow};
+use super::tool_policy::lookup_tool_definition;
+use std::collections::BTreeMap;
 
-pub const TOOL_DISCOVERY_GROUP_CHECKPOINT: &str = "checkpoint";
-pub const TOOL_DISCOVERY_GROUP_CLEANUP: &str = "cleanup";
-pub const TOOL_DISCOVERY_GROUP_CODING_AGENT: &str = "coding_agent";
-pub const TOOL_DISCOVERY_GROUP_COMMUNICATION: &str = "communication";
-pub const TOOL_DISCOVERY_GROUP_AGENT_TASK: &str = "agent_task";
-pub const TOOL_DISCOVERY_GROUP_AGENT_WAIT: &str = "agent_wait";
-pub const TOOL_DISCOVERY_GROUP_EDIT: &str = "edit";
-pub const TOOL_DISCOVERY_GROUP_FILE_TRANSFER: &str = "file_transfer";
-pub const TOOL_DISCOVERY_GROUP_GIT: &str = "git";
-pub const TOOL_DISCOVERY_GROUP_GOAL: &str = "goal";
-pub const TOOL_DISCOVERY_GROUP_INSPECT: &str = "inspect";
-pub const TOOL_DISCOVERY_GROUP_JOBS: &str = "jobs";
-pub const TOOL_DISCOVERY_GROUP_PROJECTS: &str = "projects";
-pub const TOOL_DISCOVERY_GROUP_REVIEW: &str = "review";
-pub const TOOL_DISCOVERY_GROUP_RUNTIME: &str = "runtime";
-pub const TOOL_DISCOVERY_GROUP_SHELL: &str = "shell";
-pub const TOOL_DISCOVERY_GROUP_VALIDATION: &str = "validation";
-
+/// Group an already-admitted selection by each ToolDefinition's sole category.
+/// This is presentation, not admission: callers own visibility, protocol and
+/// authority filtering. Unknown names are omitted; repeated names are deduplicated.
+/// Both categories and members are sorted so registry order cannot cause drift.
+pub fn group_tool_names_by_category<'a>(
+    names: impl IntoIterator<Item = &'a str>,
+) -> BTreeMap<&'static str, Vec<&'a str>> {
+    let mut categories: BTreeMap<&'static str, Vec<&'a str>> = BTreeMap::new();
+    for name in names {
+        if let Some(definition) = lookup_tool_definition(name) {
+            categories
+                .entry(definition.category)
+                .or_default()
+                .push(name);
+        }
+    }
+    for members in categories.values_mut() {
+        members.sort_unstable();
+        members.dedup();
+    }
+    categories
+}
 /// Hidden editing specialists that remain available only through exact
 /// tool_manifest lookup followed by the canonical gateway. They are excluded
 /// from ordinary tools/list, intent ranking, and recommended edit routing.
@@ -30,304 +36,10 @@ pub const EXACT_MANIFEST_SPECIALIST_TOOL_NAMES: &[&str] =
 pub const EXACT_DISCOVERY_SPECIALIST_TOOL_NAMES: &[&str] =
     &["git_diff_hunks", "git_review_summary"];
 
-/// Legacy review surfaces omitted from ordinary discovery/recommended flows.
-/// show_changes remains Adaptive-direct for established Apps/presentation contracts.
+/// Review specialists omitted from ordinary intent ranking/recommended flows.
+/// Category and exact discovery retain them behind the canonical gateway.
 pub const ORDINARY_DISCOVERY_DEMOTED_REVIEW_TOOL_NAMES: &[&str] =
     &["git_diff_hunks", "git_review_summary", "show_changes"];
-pub const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
-    ToolDiscoveryGroup {
-        name: TOOL_DISCOVERY_GROUP_INSPECT,
-        tools: &[
-            "list_tools",
-            "list_projects",
-            "list_runners",
-            "runtime_status",
-            "work_on_project",
-            "project_overview",
-            "list_project_tracked_files",
-            "read_files",
-            #[cfg(feature = "experimental-code-mode")]
-            "code_mode_exec",
-            "run_process",
-            "run_script",
-            "run_shell",
-            "search_project_texts",
-            "search_and_read",
-            "document_symbols",
-            "document_diagnostics",
-            "hover",
-            "workspace_symbols",
-            "goto_definition",
-            "find_references",
-            "call_hierarchy",
-            "lsp_status",
-            "list_project_files",
-            "review_changes",
-            "git_status",
-            "git_log",
-            #[cfg(feature = "workspace-checkpoints")]
-            "workspace_checkpoint_list",
-            #[cfg(feature = "workspace-checkpoints")]
-            "workspace_checkpoint_show",
-            "browser_observe",
-            "browser_act",
-            "computer_observe",
-            "computer_control",
-            "computer_save_snapshot",
-        ],
-    },
-    ToolDiscoveryGroup {
-        name: TOOL_DISCOVERY_GROUP_AGENT_TASK,
-        tools: &[
-            "create_agent_task",
-            "list_agent_tasks",
-            "read_agent_task",
-            "assign_agent_task",
-            "start_agent_task_attempt",
-            "start_agent_task_endpoint_continuation",
-            "start_agent_task_coding_run",
-            "reconcile_agent_task_coding_run",
-            "heartbeat_agent_task_attempt",
-            "complete_agent_task_attempt",
-        ],
-    },
-    ToolDiscoveryGroup {
-        name: TOOL_DISCOVERY_GROUP_AGENT_WAIT,
-        tools: &[
-            "wait_for_agent_events",
-            "read_agent_wait",
-            "cancel_agent_wait",
-        ],
-    },
-    ToolDiscoveryGroup {
-        name: TOOL_DISCOVERY_GROUP_GOAL,
-        tools: &[
-            "prepare_goal_workflow",
-            "create_goal",
-            "get_goal",
-            "present_goal_plan",
-            "list_goals",
-            "checkpoint_goal",
-            "update_goal",
-            "associate_goal_agent_task",
-            "associate_goal_workflow_session",
-        ],
-    },
-    ToolDiscoveryGroup {
-        name: TOOL_DISCOVERY_GROUP_COMMUNICATION,
-        tools: &[
-            "create_agent_identity",
-            "list_agent_identities",
-            "update_agent_identity",
-            "rotate_agent_continuation_endpoint",
-            "present_agent_continuation",
-            "bootstrap_agent_conversation",
-            "detach_agent_endpoint",
-            "create_conversation",
-            "list_conversations",
-            "read_conversation",
-            "post_conversation_message",
-            "list_agent_inbox",
-            "consume_agent_deliveries",
-            "consume_agent_wake",
-        ],
-    },
-    ToolDiscoveryGroup {
-        name: TOOL_DISCOVERY_GROUP_PROJECTS,
-        tools: &[
-            "list_projects",
-            "register_project",
-            "unregister_project",
-            "create_project",
-        ],
-    },
-    ToolDiscoveryGroup {
-        name: TOOL_DISCOVERY_GROUP_GIT,
-        tools: &[
-            "git_commit_paths",
-            "review_changes",
-            "git_status",
-            "git_log",
-            "git_restore_paths",
-            "discard_untracked",
-            #[cfg(feature = "workspace-checkpoints")]
-            "workspace_checkpoint_create",
-            #[cfg(feature = "workspace-checkpoints")]
-            "workspace_checkpoint_restore",
-        ],
-    },
-    ToolDiscoveryGroup {
-        name: TOOL_DISCOVERY_GROUP_REVIEW,
-        tools: &[
-            "finish_coding_task",
-            "present_work_result",
-            "review_changes",
-            "workspace_hygiene_check",
-            "git_log",
-            "git_status",
-            #[cfg(feature = "workspace-checkpoints")]
-            "workspace_checkpoint_show",
-            #[cfg(feature = "workspace-checkpoints")]
-            "workspace_checkpoint_list",
-        ],
-    },
-    ToolDiscoveryGroup {
-        name: TOOL_DISCOVERY_GROUP_VALIDATION,
-        tools: &[
-            "project_validate",
-            "cargo_fmt",
-            "cargo_check",
-            "cargo_test",
-            "go_test",
-            #[cfg(feature = "experimental-code-mode")]
-            "code_mode_exec_effectful",
-            "validation_summary",
-        ],
-    },
-    ToolDiscoveryGroup {
-        name: TOOL_DISCOVERY_GROUP_EDIT,
-        tools: &[
-            "edit_project_files",
-            "save_project_artifact",
-            #[cfg(feature = "experimental-code-mode")]
-            "code_mode_exec_mutating",
-            "read_project_artifact_metadata",
-            "read_project_artifact",
-            "import_conversation_files_to_project",
-            "artifact_upload_begin",
-            "artifact_upload_chunk",
-            "artifact_upload_finish",
-            "artifact_upload_abort",
-        ],
-    },
-    ToolDiscoveryGroup {
-        name: TOOL_DISCOVERY_GROUP_FILE_TRANSFER,
-        tools: &[
-            "import_conversation_files_to_project",
-            "transfer_project_artifact",
-            "project_artifact",
-            "save_project_artifact",
-            "read_project_artifact_metadata",
-            "read_project_artifact",
-            "artifact_upload_begin",
-            "artifact_upload_chunk",
-            "artifact_upload_finish",
-            "artifact_upload_abort",
-        ],
-    },
-    ToolDiscoveryGroup {
-        name: TOOL_DISCOVERY_GROUP_SHELL,
-        tools: &[
-            "project_validate",
-            "cargo_fmt",
-            "cargo_check",
-            "cargo_test",
-            "run_process",
-            "run_detached_process",
-            "run_script",
-            "run_shell",
-            "open_session_shell",
-            "session_shell_exec",
-            "session_shell_status",
-            "close_session_shell",
-            "run_job",
-        ],
-    },
-    ToolDiscoveryGroup {
-        name: TOOL_DISCOVERY_GROUP_JOBS,
-        tools: &[
-            "open_session_shell",
-            "session_shell_exec",
-            "session_shell_status",
-            "close_session_shell",
-            "run_detached_process",
-            "run_job",
-            "stop_job",
-            "observe_jobs",
-            "wait_for_job_readiness",
-            "wait_for_job_terminal",
-            "present_job_terminal_continuation",
-            "list_jobs",
-        ],
-    },
-    ToolDiscoveryGroup {
-        name: TOOL_DISCOVERY_GROUP_RUNTIME,
-        tools: &[
-            "list_tools",
-            "work_on_project",
-            "finish_coding_task",
-            "session_summary",
-            "update_session_context",
-            "close_session",
-            "post_session_message",
-            "post_peer_message",
-            "list_session_messages",
-            "get_session_assignment",
-            "observe_session_messages",
-            "resolve_session_message",
-            "complete_session_message",
-            "session_discussion_summary",
-            "session_handoff_summary",
-            "list_external_observations",
-            #[cfg(feature = "workspace-checkpoints")]
-            "workspace_checkpoint_create",
-            #[cfg(feature = "workspace-checkpoints")]
-            "workspace_checkpoint_list",
-            #[cfg(feature = "workspace-checkpoints")]
-            "workspace_checkpoint_show",
-            #[cfg(feature = "workspace-checkpoints")]
-            "workspace_checkpoint_restore",
-            #[cfg(feature = "workspace-checkpoints")]
-            "workspace_checkpoint_delete",
-            "list_projects",
-            "list_runners",
-            "runtime_status",
-            "runner_config_check",
-            "current_window_activity",
-            "runner_config_reload",
-            "tool_manifest",
-            #[cfg(feature = "experimental-code-mode")]
-            "code_mode_exec",
-            #[cfg(feature = "experimental-code-mode")]
-            "code_mode_exec_effectful",
-            #[cfg(feature = "experimental-code-mode")]
-            "code_mode_exec_mutating",
-            "plugin_tool",
-            "skill_load",
-            "run_skill_resource",
-            "ssh_resource",
-        ],
-    },
-    ToolDiscoveryGroup {
-        name: TOOL_DISCOVERY_GROUP_CODING_AGENT,
-        tools: &[
-            "coding_agent_start",
-            "coding_agent_observe",
-            "coding_agent_cancel",
-        ],
-    },
-    ToolDiscoveryGroup {
-        name: TOOL_DISCOVERY_GROUP_CLEANUP,
-        tools: &[
-            "delete_project_files",
-            "git_restore_paths",
-            "discard_untracked",
-            #[cfg(feature = "workspace-checkpoints")]
-            "workspace_checkpoint_delete",
-        ],
-    },
-    #[cfg(feature = "workspace-checkpoints")]
-    ToolDiscoveryGroup {
-        name: TOOL_DISCOVERY_GROUP_CHECKPOINT,
-        tools: &[
-            "workspace_checkpoint_create",
-            "workspace_checkpoint_list",
-            "workspace_checkpoint_show",
-            "workspace_checkpoint_restore",
-            "workspace_checkpoint_delete",
-        ],
-    },
-];
 
 pub const TOOL_RECOMMENDED_FLOWS: &[ToolRecommendedFlow] = &[
     ToolRecommendedFlow {
@@ -710,13 +422,4 @@ pub fn resolve_tool_manifest_intent(
         Some(intent) => Ok(Some(intent)),
         None => Err(trimmed.to_string()),
     }
-}
-
-/// Reverse view of curated discovery membership, in canonical group order.
-/// Unknown names (and tools omitted from ordinary discovery) have no groups.
-pub fn discovery_group_names_for_tool(name: &str) -> impl Iterator<Item = &'static str> + '_ {
-    TOOL_DISCOVERY_GROUPS
-        .iter()
-        .filter(move |group| group.tools.contains(&name))
-        .map(|group| group.name)
 }

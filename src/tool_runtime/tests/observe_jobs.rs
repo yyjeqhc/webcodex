@@ -603,7 +603,7 @@ fn observe_jobs_schema_catalog_permission_and_audit_are_public_and_token_safe() 
         crate::tool_runtime::metadata::ToolEffect::Observe
     );
     let manifest = super::super::surface::registered_tool_categories();
-    assert!(manifest["jobs"]
+    assert!(manifest["job"]
         .as_array()
         .unwrap()
         .iter()

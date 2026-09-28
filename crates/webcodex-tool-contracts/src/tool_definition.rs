@@ -43,14 +43,7 @@ use super::metadata::{
 pub use super::tool_catalog::TOOL_MANIFEST_INTENTS;
 pub use super::tool_catalog::{
     available_tool_manifest_intent_names, resolve_tool_manifest_intent, CODING_INTENT_TOOL_NAMES,
-    TOOL_DISCOVERY_GROUPS, TOOL_RECOMMENDED_FLOWS,
-};
-#[cfg(any(test, feature = "root-test-support"))]
-pub use super::tool_catalog::{
-    TOOL_DISCOVERY_GROUP_CHECKPOINT, TOOL_DISCOVERY_GROUP_CLEANUP, TOOL_DISCOVERY_GROUP_EDIT,
-    TOOL_DISCOVERY_GROUP_GIT, TOOL_DISCOVERY_GROUP_INSPECT, TOOL_DISCOVERY_GROUP_JOBS,
-    TOOL_DISCOVERY_GROUP_PROJECTS, TOOL_DISCOVERY_GROUP_REVIEW, TOOL_DISCOVERY_GROUP_RUNTIME,
-    TOOL_DISCOVERY_GROUP_SHELL, TOOL_DISCOVERY_GROUP_VALIDATION,
+    TOOL_RECOMMENDED_FLOWS,
 };
 #[cfg(any(test, feature = "root-test-support"))]
 pub use super::tool_policy::is_known_tool_name;
@@ -1099,15 +1092,19 @@ pub const TOOL_CATEGORY_COMPUTER: &str = "computer";
 pub const TOOL_CATEGORY_COMMUNICATION: &str = "communication";
 pub const TOOL_CATEGORY_CLEANUP: &str = "cleanup";
 pub const TOOL_CATEGORY_EDIT: &str = "edit";
+pub const TOOL_CATEGORY_EXECUTION: &str = "execution";
 pub const TOOL_CATEGORY_FILE: &str = "file";
 pub const TOOL_CATEGORY_GIT: &str = "git";
 pub const TOOL_CATEGORY_GOAL: &str = "goal";
 pub const TOOL_CATEGORY_JOB: &str = "job";
 pub const TOOL_CATEGORY_LSP: &str = "lsp";
+pub const TOOL_CATEGORY_MEMORY: &str = "memory";
+pub const TOOL_CATEGORY_PLUGIN: &str = "plugin";
 pub const TOOL_CATEGORY_PATCH: &str = "patch";
 pub const TOOL_CATEGORY_PROJECT: &str = "project";
 pub const TOOL_CATEGORY_RUNTIME: &str = "runtime";
 pub const TOOL_CATEGORY_SESSION: &str = "session";
+pub const TOOL_CATEGORY_SKILL: &str = "skill";
 pub const TOOL_CATEGORY_VALIDATION: &str = "validation";
 
 pub const PERMISSION_RISK_ARTIFACT_WRITE: &str = "artifact_write";
@@ -1148,12 +1145,6 @@ impl ToolDefinitionPolicy {
         requires_explicit_business_session: false,
         unit_arguments: false,
     };
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ToolDiscoveryGroup {
-    pub name: &'static str,
-    pub tools: &'static [&'static str],
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

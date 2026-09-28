@@ -262,14 +262,13 @@ fn assert_model_facing_surfaces_do_not_list_name(name: &str) {
         "{name} must not appear in full list_tools discovery"
     );
 
-    // Static discovery surfaces: category groups and recommended flows are
-    // compiled straight into the model-facing catalog.
-    for group in crate::tool_runtime::tool_definition::TOOL_DISCOVERY_GROUPS {
-        assert!(
-            !group.tools.contains(&name),
-            "{name} must not appear in discovery group {}",
-            group.name
-        );
+    // Categories derive from admitted definitions; retired names stay absent.
+    for members in registered_tool_categories().as_object().unwrap().values() {
+        assert!(members
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|member| member != name));
     }
     for flow in crate::tool_runtime::tool_catalog::TOOL_RECOMMENDED_FLOWS {
         assert!(

@@ -75,11 +75,10 @@ async fn adaptive_tools_list_exposes_ranked_direct_tools_and_gateway() {
         "cargo_check",
         "cargo_test",
         "review_changes",
-        "show_changes",
         "observe_jobs",
         "wait_for_job_terminal",
+        "wait_for_agent_events",
         "skill_load",
-        "run_skill_resource",
     ] {
         assert!(
             names.contains(&required),
@@ -89,6 +88,59 @@ async fn adaptive_tools_list_exposes_ranked_direct_tools_and_gateway() {
             crate::tool_runtime::tool_definition::is_adaptive_runtime_direct_tool(required),
             "{required} must derive direct admission from ToolDefinition rank"
         );
+    }
+}
+
+#[tokio::test]
+async fn specialist_tools_remain_discoverable_with_canonical_gateway_contracts() {
+    let runtime = test_runtime();
+    let listed = crate::mcp::tools::mcp_tools_list_payload_with_compact(false);
+    for name in [
+        "show_changes",
+        "session_handoff_summary",
+        "rotate_agent_continuation_endpoint",
+        "run_skill_resource",
+    ] {
+        let definition = webcodex_tool_contracts::lookup_tool_definition(name).unwrap();
+        assert!(definition.visibility.is_model_visible());
+        assert_eq!(definition.adaptive_runtime_direct_rank(), None);
+        assert!(!listed["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|tool| tool["name"] == name));
+        let McpOutcome::Ok(value) = handle_mcp_request(
+            &runtime,
+            rpc(
+                "tools/call",
+                Some(json!(67)),
+                mcp_2026_params(json!({
+                    "name": "tool_manifest", "arguments": {"tool_name": name}
+                })),
+            ),
+            None,
+        )
+        .await
+        else {
+            panic!("manifest {name}");
+        };
+        let output = &value["result"]["structuredContent"]["output"];
+        assert_eq!(output["route"]["primary"]["mode"], "gateway", "{name}");
+        assert_eq!(output["route"]["primary"]["tool"], "call_runtime_tool");
+        assert_eq!(output["route"]["primary"]["target"], name);
+        assert_eq!(
+            output["input_schema"],
+            webcodex_tool_contracts::input_schema_for_tool(name)
+        );
+        assert_eq!(
+            output["effect"],
+            definition.metadata().effect.manifest_label()
+        );
+        assert_eq!(
+            output["idempotency"],
+            definition.metadata().idempotency.manifest_label()
+        );
+        assert!(crate::mcp::tools::adaptive_runtime_gateway_target_admitted_for_test(name, true));
     }
 }
 

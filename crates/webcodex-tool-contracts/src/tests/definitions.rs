@@ -67,13 +67,7 @@ fn experimental_code_mode_is_visible_read_only_and_feature_scoped() {
     assert!(registered_tool_specs()
         .iter()
         .any(|spec| spec.name == "code_mode_exec"));
-    assert!(TOOL_DISCOVERY_GROUPS
-        .iter()
-        .filter(|group| matches!(
-            group.name,
-            TOOL_DISCOVERY_GROUP_INSPECT | TOOL_DISCOVERY_GROUP_RUNTIME
-        ))
-        .all(|group| group.tools.contains(&"code_mode_exec")));
+    assert_eq!(definition.category, TOOL_CATEGORY_RUNTIME);
     for intent in ["coding", "audit", "exploration"] {
         assert!(
             TOOL_MANIFEST_INTENTS
@@ -109,12 +103,7 @@ fn experimental_code_mode_effectful_has_conservative_e2a_envelope() {
     assert!(registered_tool_specs()
         .iter()
         .any(|spec| spec.name == "code_mode_exec_effectful"));
-    assert!(TOOL_DISCOVERY_GROUPS
-        .iter()
-        .find(|group| group.name == TOOL_DISCOVERY_GROUP_RUNTIME)
-        .expect("runtime discovery group")
-        .tools
-        .contains(&"code_mode_exec_effectful"));
+    assert_eq!(definition.category, TOOL_CATEGORY_RUNTIME);
 }
 
 #[cfg(feature = "experimental-code-mode")]
@@ -151,12 +140,7 @@ fn experimental_code_mode_mutating_has_conservative_e2c_combined_authority_envel
     assert!(registered_tool_specs()
         .iter()
         .any(|spec| spec.name == "code_mode_exec_mutating"));
-    assert!(TOOL_DISCOVERY_GROUPS
-        .iter()
-        .find(|group| group.name == TOOL_DISCOVERY_GROUP_RUNTIME)
-        .expect("runtime discovery group")
-        .tools
-        .contains(&"code_mode_exec_mutating"));
+    assert_eq!(definition.category, TOOL_CATEGORY_RUNTIME);
     assert!(CODING_INTENT_TOOL_NAMES.contains(&"code_mode_exec_mutating"));
     assert!(is_adaptive_runtime_direct_tool("code_mode_exec_mutating"));
 }
@@ -235,12 +219,7 @@ fn experimental_code_mode_is_absent_without_feature() {
             !registered_tool_specs().iter().any(|spec| spec.name == name),
             "{name}"
         );
-        assert!(
-            TOOL_DISCOVERY_GROUPS
-                .iter()
-                .all(|group| !group.tools.contains(&name)),
-            "{name}"
-        );
+        assert!(group_tool_names_by_category([name]).is_empty());
         assert!(
             TOOL_MANIFEST_INTENTS
                 .iter()
@@ -733,7 +712,7 @@ fn agent_continuation_setup_descriptions_are_self_guiding_without_direct_expansi
         lookup_tool_definition("rotate_agent_continuation_endpoint")
             .unwrap()
             .adaptive_runtime_direct_rank(),
-        Some(19)
+        None
     );
     assert_eq!(
         lookup_tool_definition("attach_agent_endpoint")
@@ -776,7 +755,6 @@ fn adaptive_runtime_direct_declarations_are_visible_ranked_and_unique() {
     );
 
     for (name, expected_rank) in [
-        ("rotate_agent_continuation_endpoint", 19),
         ("import_conversation_files_to_project", 55),
         ("project_artifact", 56),
         ("run_script", 74),
@@ -795,6 +773,10 @@ fn adaptive_runtime_direct_declarations_are_visible_ranked_and_unique() {
     }
 
     for name in [
+        "show_changes",
+        "session_handoff_summary",
+        "rotate_agent_continuation_endpoint",
+        "run_skill_resource",
         "list_jobs",
         "stop_job",
         "run_detached_process",
@@ -831,7 +813,6 @@ fn adaptive_runtime_direct_declarations_are_visible_ranked_and_unique() {
     for (name, expected_rank, expected_authority) in [
         ("session_discussion_summary", 15, RUNTIME_READ),
         ("review_changes", 120, PROJECT_READ),
-        ("show_changes", 130, PROJECT_READ),
     ] {
         let definition = derived
             .iter()
@@ -1295,17 +1276,15 @@ fn code_mode_discovery_ranks_inspection_before_specialized_effects_without_chang
     assert!(position("edit_project_files") < position("code_mode_exec_mutating"));
     assert!(position("code_mode_exec") < position("code_mode_exec_effectful"));
     assert!(position("cargo_test") < position("code_mode_exec_effectful"));
-    for (name, group) in [
-        ("code_mode_exec", TOOL_DISCOVERY_GROUP_INSPECT),
-        ("code_mode_exec_effectful", TOOL_DISCOVERY_GROUP_VALIDATION),
-        ("code_mode_exec_mutating", TOOL_DISCOVERY_GROUP_EDIT),
+    for name in [
+        "code_mode_exec",
+        "code_mode_exec_effectful",
+        "code_mode_exec_mutating",
     ] {
-        assert!(TOOL_DISCOVERY_GROUPS
-            .iter()
-            .find(|candidate| candidate.name == group)
-            .unwrap()
-            .tools
-            .contains(&name));
+        assert_eq!(
+            lookup_tool_definition(name).unwrap().category,
+            TOOL_CATEGORY_RUNTIME
+        );
         assert!(is_adaptive_runtime_direct_tool(name));
         assert_eq!(
             runtime_tool_composition_policy(name),

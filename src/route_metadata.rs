@@ -339,8 +339,9 @@ pub(crate) fn audit_class_for_path(path: &str) -> Option<AuditClass> {
 pub(crate) fn audit_class_for_runtime_tool(tool_name: &str) -> Option<AuditClass> {
     use webcodex_tool_contracts::{
         ToolActivityKind, ToolEffect, ToolExecutionForm, ToolExecutionStart,
-        TOOL_CATEGORY_ARTIFACT, TOOL_CATEGORY_EDIT, TOOL_CATEGORY_GIT, TOOL_CATEGORY_JOB,
-        TOOL_CATEGORY_PATCH, TOOL_CATEGORY_RUNTIME, TOOL_CATEGORY_VALIDATION,
+        TOOL_CATEGORY_ARTIFACT, TOOL_CATEGORY_EDIT, TOOL_CATEGORY_EXECUTION, TOOL_CATEGORY_GIT,
+        TOOL_CATEGORY_JOB, TOOL_CATEGORY_MEMORY, TOOL_CATEGORY_PATCH, TOOL_CATEGORY_PLUGIN,
+        TOOL_CATEGORY_RUNTIME, TOOL_CATEGORY_SKILL, TOOL_CATEGORY_VALIDATION,
     };
 
     let definition = webcodex_tool_contracts::lookup_tool_definition(tool_name)?;
@@ -367,7 +368,12 @@ pub(crate) fn audit_class_for_runtime_tool(tool_name: &str) -> Option<AuditClass
     }) {
         return Some(AuditClass::Shell);
     }
-    if definition.category == TOOL_CATEGORY_RUNTIME {
+    // The discovery taxonomy may split runtime extensions without rewriting
+    // the historical ActionAudit report/command buckets used by fleet analyses.
+    if matches!(
+        definition.category,
+        TOOL_CATEGORY_RUNTIME | TOOL_CATEGORY_SKILL | TOOL_CATEGORY_MEMORY | TOOL_CATEGORY_PLUGIN
+    ) {
         return Some(if definition.metadata().effect == ToolEffect::Observe {
             AuditClass::Report
         } else {
@@ -376,7 +382,7 @@ pub(crate) fn audit_class_for_runtime_tool(tool_name: &str) -> Option<AuditClass
     }
     if matches!(
         definition.category,
-        TOOL_CATEGORY_JOB | TOOL_CATEGORY_VALIDATION
+        TOOL_CATEGORY_EXECUTION | TOOL_CATEGORY_JOB | TOOL_CATEGORY_VALIDATION
     ) || matches!(
         activity.kind,
         ToolActivityKind::Run | ToolActivityKind::Test
@@ -696,6 +702,14 @@ mod tests {
             ("cargo_test", Job),
             ("workspace_hygiene_check", Report),
             ("plugin_tool", Command),
+            ("run_process", Job),
+            ("run_script", Job),
+            ("run_detached_process", Job),
+            ("session_shell_status", Job),
+            ("skill_load", Report),
+            ("run_skill_resource", Command),
+            ("memory_read", Report),
+            ("memory_set", Command),
         ] {
             assert_eq!(audit_class_for_runtime_tool(tool), Some(class), "{tool}");
             assert_eq!(

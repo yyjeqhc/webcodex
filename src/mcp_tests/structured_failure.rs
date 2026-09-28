@@ -92,7 +92,9 @@ async fn http_client_presentation_matrix_preserves_native_failure() {
             let (status, mut body) = http_call(
                 &service,
                 json!({
-                    "name": "show_changes", "arguments": {"project": "agent:missing:missing"},
+                    "name": "call_runtime_tool", "arguments": {
+                        "tool": "show_changes", "arguments": {"project": "agent:missing:missing"}
+                    },
                 }),
                 meta,
                 modern,
@@ -125,8 +127,8 @@ async fn http_openai_protocol_errors_remain_jsonrpc_errors() {
     ));
     for modern in [false, true] {
         for params in [
-            json!({"name": "show_changes", "arguments": {"project": 42}}),
-            json!({"name": "show_changes", "arguments": []}),
+            json!({"name": "call_runtime_tool", "arguments": {"tool": "show_changes", "arguments": {"project": 42}}}),
+            json!({"name": "call_runtime_tool", "arguments": {"tool": "show_changes", "arguments": []}}),
             // A malformed envelope must still fail McpToolCallParams deserialization.
             json!({"name": 42, "arguments": {}}),
         ] {

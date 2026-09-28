@@ -466,12 +466,19 @@ fn skill_runtime_tools_are_stateless_protocol_extensions_and_schema_static() {
         .collect::<Vec<_>>();
     assert_eq!(skill_names, vec!["skill_load"]);
 
-    let run_skill_resource = before["tools"]
+    assert!(!before["tools"]
         .as_array()
         .unwrap()
         .iter()
-        .find(|tool| tool["name"] == "run_skill_resource")
-        .expect("run_skill_resource must be exposed");
+        .any(|tool| tool["name"] == "run_skill_resource"));
+    // The trusted execution contract stays canonical behind exact discovery.
+    let run_skill_resource = serde_json::to_value(
+        registered_tool_specs()
+            .into_iter()
+            .find(|spec| spec.name == "run_skill_resource")
+            .unwrap(),
+    )
+    .unwrap();
     assert!(run_skill_resource["inputSchema"]["properties"]
         .get("stdin")
         .is_none());
@@ -2072,8 +2079,24 @@ async fn mcp_compact_stateless_wrapper_ids_still_reject_malformed_invocations() 
 #[test]
 fn mcp_compact_common_copy_respects_tool_and_argument_boundaries() {
     use crate::mcp::discovery::{bound_description, compact_tool, INPUT_DESCRIPTION_MAX_CHARS};
-    let full = mcp_tools_list_payload_with_compact(false);
-    let compact = mcp_tools_list_payload_with_compact(true);
+    let mut full = mcp_tools_list_payload_with_compact(false);
+    let mut compact = mcp_tools_list_payload_with_compact(true);
+    // Exercise the same copy projection for the now gateway-only specialist,
+    // without asserting that it belongs in the Direct inventory.
+    let specialist = serde_json::to_value(
+        registered_tool_specs()
+            .into_iter()
+            .find(|spec| spec.name == "run_skill_resource")
+            .unwrap(),
+    )
+    .unwrap();
+    let mut compact_specialist = specialist.clone();
+    compact_tool(&mut compact_specialist);
+    full["tools"].as_array_mut().unwrap().push(specialist);
+    compact["tools"]
+        .as_array_mut()
+        .unwrap()
+        .push(compact_specialist);
     for (name, field, hints) in [
         (
             "run_process",
@@ -2360,15 +2383,14 @@ async fn mcp_tools_list_stateless_serialized_size_budget() {
     ]);
     let mut admin = scoped.clone();
     admin.scopes.push(crate::auth::SCOPE_ADMIN.to_string());
-    // Final Stateless result bytes include the optional _wc envelope and gateways,
-    // not the RPC envelope. Envelope V2 plus review convergence leave about
-    // 76/78/87 KB for anonymous/scoped/admin without Apps; review_changes is
-    // primary, show_changes stays direct for Apps/presentation, and exact legacy
-    // review stays gateway-only. Keep small growth headroom around compact surface.
+    // Final Stateless bytes include the optional _wc envelope and gateways,
+    // not the RPC envelope. Four ordinary specialists moved behind exact/category
+    // discovery; App presentation tools and independently admitted extensions
+    // remain separate. Count changes require explicit inventory review.
     for (label, auth, max_tools, max_bytes) in [
-        ("anonymous", None, 30, 77_000),
-        ("scoped", Some(&scoped), 31, 79_000),
-        ("admin", Some(&admin), 37, 88_000),
+        ("anonymous", None, 26, 68_000),
+        ("scoped", Some(&scoped), 27, 70_000),
+        ("admin", Some(&admin), 33, 79_000),
     ] {
         for app_enabled in [false, true] {
             let mut sizes = Vec::new();
@@ -2543,8 +2565,9 @@ async fn session_tools_stay_registered_and_follow_adaptive_routes() {
         .iter()
         .map(|tool| tool["name"].as_str().unwrap())
         .collect::<Vec<_>>();
-    assert!(names.contains(&"session_handoff_summary"));
+    assert!(names.contains(&"session_discussion_summary"));
     for long_tail in [
+        "session_handoff_summary",
         "session_summary",
         "update_session_context",
         "validation_summary",
@@ -2584,14 +2607,8 @@ async fn session_tools_stay_registered_and_follow_adaptive_routes() {
         .to_lowercase()
         .contains("does not run cargo"));
 
-    let handoff = tools
-        .iter()
-        .find(|tool| tool["name"] == "session_handoff_summary")
-        .expect("Adaptive direct session_handoff_summary");
-    assert!(handoff["description"]
-        .as_str()
-        .unwrap()
-        .contains("exact session_id"));
+    let handoff = registered("session_handoff_summary");
+    assert!(handoff.description.contains("exact session_id"));
 
     let validation_summary = registered("validation_summary");
     assert_eq!(
@@ -3238,11 +3255,14 @@ async fn mcp_show_changes_distinguishes_recording_session_id_from_query_session_
             "tools/call",
             Some(Value::from(34)),
             mcp_2026_params(json!({
-                "name": "show_changes",
+                "name": "call_runtime_tool",
                 "arguments": {
-                    "project": project,
-                    "session_id": &query_session.session_id,
-                    "include_diff": false,
+                    "tool": "show_changes",
+                    "arguments": {
+                        "project": project,
+                        "session_id": &query_session.session_id,
+                        "include_diff": false
+                    },
                     "_wc": {"record": &tracking_session.session_id}
                 }
             })),

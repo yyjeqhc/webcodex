@@ -1,7 +1,7 @@
 use super::ToolVisibility::ModelVisible;
 use super::{
     adaptive_runtime_direct, def, model_spec, require_any_scopes, ToolDefinition,
-    TOOL_CATEGORY_RUNTIME,
+    TOOL_CATEGORY_PLUGIN,
 };
 use crate::metadata::{
     ToolPathHint::None as NoPath, ToolRisk::RunControl, PLUGIN_INSPECT, PLUGIN_INVOKE,
@@ -17,7 +17,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[adaptive_runtime_direct(
                 "plugin_tool",
                 super::ToolAuditPolicy::TYPED_CANONICAL,
                 ModelVisible,
-                TOOL_CATEGORY_RUNTIME,
+                TOOL_CATEGORY_PLUGIN,
                 None,
                 TOOL_PROVIDER_CONTROL,
                 super::ToolSemanticContract {

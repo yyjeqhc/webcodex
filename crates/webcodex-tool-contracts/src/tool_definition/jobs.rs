@@ -4,7 +4,8 @@ use super::RunnerCapabilityRequirement::{
 use super::ToolVisibility::{ModelHidden, ModelVisible};
 use super::{
     adaptive_runtime_direct, def, model_spec, permission_risk, require_all_scopes,
-    requires_explicit_business_session, ToolDefinition, PERMISSION_RISK_JOB, TOOL_CATEGORY_JOB,
+    requires_explicit_business_session, ToolDefinition, PERMISSION_RISK_JOB,
+    TOOL_CATEGORY_EXECUTION, TOOL_CATEGORY_JOB,
 };
 use crate::metadata::{
     ToolPathHint::None as NoPath,
@@ -27,7 +28,7 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
                     ]))
                     .execution(super::ToolAuditExecutionPolicy::DIRECT_ARGV_TEST_COUNTS),
                 ModelVisible,
-                TOOL_CATEGORY_JOB,
+                TOOL_CATEGORY_EXECUTION,
                 Some(StructuredProcess),
                 TOOL_PROVIDER_RUNNER,
                 super::ToolSemanticContract {
@@ -67,7 +68,7 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
                     ]),
                 ),
                 ModelVisible,
-                TOOL_CATEGORY_JOB,
+                TOOL_CATEGORY_EXECUTION,
                 Some(DetachedProcess),
                 TOOL_PROVIDER_RUNNER,
                 super::ToolSemanticContract {
@@ -106,7 +107,7 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
                 ]))
                 .execution(super::ToolAuditExecutionPolicy::SCRIPT_TEST_COUNTS),
             ModelVisible,
-            TOOL_CATEGORY_JOB,
+            TOOL_CATEGORY_EXECUTION,
             Some(StructuredScript),
             TOOL_PROVIDER_RUNNER,
             super::ToolSemanticContract {
@@ -144,7 +145,7 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
                     ]))
                     .execution(super::ToolAuditExecutionPolicy::TEST_COUNTS),
                 ModelVisible,
-                TOOL_CATEGORY_JOB,
+                TOOL_CATEGORY_EXECUTION,
                 Some(Shell),
                 TOOL_PROVIDER_RUNNER,
                 super::ToolSemanticContract {
@@ -175,7 +176,7 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
                 "open_session_shell",
                 super::ToolAuditPolicy::TYPED_CANONICAL,
                 ModelVisible,
-                TOOL_CATEGORY_JOB,
+                TOOL_CATEGORY_EXECUTION,
                 Some(PersistentShell),
                 TOOL_PROVIDER_RUNNER,
                 super::ToolSemanticContract {
@@ -203,7 +204,7 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
                     ]),
                 ),
                 ModelVisible,
-                TOOL_CATEGORY_JOB,
+                TOOL_CATEGORY_EXECUTION,
                 Some(PersistentShell),
                 TOOL_PROVIDER_RUNNER,
                 super::ToolSemanticContract {
@@ -232,7 +233,7 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
             "session_shell_status",
             super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
-            TOOL_CATEGORY_JOB,
+            TOOL_CATEGORY_EXECUTION,
             Some(PersistentShell),
             TOOL_PROVIDER_RUNNER,
             super::ToolSemanticContract {
@@ -256,7 +257,7 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
                 "close_session_shell",
                 super::ToolAuditPolicy::TYPED_CANONICAL,
                 ModelVisible,
-                TOOL_CATEGORY_JOB,
+                TOOL_CATEGORY_EXECUTION,
                 Some(PersistentShell),
                 TOOL_PROVIDER_RUNNER,
                 super::ToolSemanticContract {
@@ -287,7 +288,7 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
                     ]))
                     .execution(super::ToolAuditExecutionPolicy::TEST_COUNTS),
                 ModelVisible,
-                TOOL_CATEGORY_JOB,
+                TOOL_CATEGORY_EXECUTION,
                 Some(AsyncJobs),
                 TOOL_PROVIDER_RUNNER,
                 super::ToolSemanticContract {

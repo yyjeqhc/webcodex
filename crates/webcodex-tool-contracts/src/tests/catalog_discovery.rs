@@ -2,22 +2,10 @@ use super::*;
 use std::collections::BTreeSet;
 
 fn registered_tool_categories() -> Value {
-    Value::Object(
-        TOOL_DISCOVERY_GROUPS
-            .iter()
-            .filter_map(|group| {
-                let tools = group
-                    .tools
-                    .iter()
-                    .filter(|tool| is_model_visible_tool_name(tool))
-                    .map(|tool| Value::String((*tool).to_string()))
-                    .collect::<Vec<_>>();
-                (!tools.is_empty()).then(|| (group.name.to_string(), Value::Array(tools)))
-            })
-            .collect(),
-    )
+    json!(group_tool_names_by_category(
+        model_visible_tool_definitions().map(|definition| definition.name)
+    ))
 }
-
 fn recommended_flows() -> Vec<&'static str> {
     TOOL_RECOMMENDED_FLOWS
         .iter()
@@ -409,112 +397,68 @@ fn tool_categories_and_recommended_flows_are_well_formed() {
             );
         }
     }
-    for cat in [
-        TOOL_DISCOVERY_GROUP_INSPECT,
-        TOOL_DISCOVERY_GROUP_FILE_TRANSFER,
-        TOOL_DISCOVERY_GROUP_GIT,
-        TOOL_DISCOVERY_GROUP_REVIEW,
-        TOOL_DISCOVERY_GROUP_VALIDATION,
-        TOOL_DISCOVERY_GROUP_SHELL,
-        TOOL_DISCOVERY_GROUP_JOBS,
-        TOOL_DISCOVERY_GROUP_RUNTIME,
-        TOOL_DISCOVERY_GROUP_CLEANUP,
+    for category in [
+        TOOL_CATEGORY_FILE,
+        TOOL_CATEGORY_ARTIFACT,
+        TOOL_CATEGORY_GIT,
+        TOOL_CATEGORY_VALIDATION,
+        TOOL_CATEGORY_EXECUTION,
+        TOOL_CATEGORY_JOB,
+        TOOL_CATEGORY_RUNTIME,
+        TOOL_CATEGORY_SESSION,
+        TOOL_CATEGORY_SKILL,
+        TOOL_CATEGORY_PLUGIN,
+        TOOL_CATEGORY_CLEANUP,
         #[cfg(feature = "workspace-checkpoints")]
-        TOOL_DISCOVERY_GROUP_CHECKPOINT,
+        TOOL_CATEGORY_CHECKPOINT,
     ] {
         assert!(
-            categories.as_object().unwrap().contains_key(cat),
-            "missing category {cat}"
+            categories.get(category).is_some(),
+            "missing category {category}"
         );
     }
-    let validation = categories[TOOL_DISCOVERY_GROUP_VALIDATION]
-        .as_array()
-        .unwrap();
-    for name in ["cargo_fmt", "cargo_check", "cargo_test"] {
-        assert!(validation.iter().any(|value| value == name));
-    }
-    let review = categories[TOOL_DISCOVERY_GROUP_REVIEW].as_array().unwrap();
-    assert!(review.iter().any(|value| value == "review_changes"));
-    assert!(review
-        .iter()
-        .any(|value| value == "workspace_hygiene_check"));
-    assert!(review.iter().any(|value| value == "git_log"));
-    let inspect = categories[TOOL_DISCOVERY_GROUP_INSPECT].as_array().unwrap();
-    for name in [
-        "read_files",
-        "run_shell",
-        "search_project_texts",
-        "review_changes",
+    for (name, category) in [
+        ("run_process", TOOL_CATEGORY_EXECUTION),
+        ("run_script", TOOL_CATEGORY_EXECUTION),
+        ("run_shell", TOOL_CATEGORY_EXECUTION),
+        ("run_detached_process", TOOL_CATEGORY_EXECUTION),
+        ("run_job", TOOL_CATEGORY_EXECUTION),
+        ("session_shell_exec", TOOL_CATEGORY_EXECUTION),
+        ("observe_jobs", TOOL_CATEGORY_JOB),
+        ("stop_job", TOOL_CATEGORY_JOB),
+        ("cargo_test", TOOL_CATEGORY_VALIDATION),
+        ("read_files", TOOL_CATEGORY_FILE),
+        ("review_changes", TOOL_CATEGORY_GIT),
+        ("show_changes", TOOL_CATEGORY_GIT),
+        (
+            "import_conversation_files_to_project",
+            TOOL_CATEGORY_ARTIFACT,
+        ),
+        ("skill_load", TOOL_CATEGORY_SKILL),
+        ("run_skill_resource", TOOL_CATEGORY_SKILL),
+        ("plugin_tool", TOOL_CATEGORY_PLUGIN),
     ] {
         assert!(
-            inspect.iter().any(|value| value == name),
-            "inspect category: {name}"
+            categories[category]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|item| item == name),
+            "{name}"
         );
     }
-    let git = categories[TOOL_DISCOVERY_GROUP_GIT].as_array().unwrap();
-    for specialist in ORDINARY_DISCOVERY_DEMOTED_REVIEW_TOOL_NAMES {
-        assert!(
-            !review.iter().any(|value| value == specialist),
-            "review category must keep {specialist} exact-discovery-only"
-        );
-        assert!(
-            !inspect.iter().any(|value| value == specialist),
-            "inspect category must keep {specialist} exact-discovery-only"
-        );
-        assert!(
-            !git.iter().any(|value| value == specialist),
-            "git category must keep {specialist} exact-discovery-only"
-        );
+    // Categories are complete taxonomy, not recommendation rankings. Hidden
+    // specialists/extensions still require their independent admission path.
+    assert!(categories.get(TOOL_CATEGORY_MEMORY).is_none());
+    for members in categories.as_object().unwrap().values() {
+        for hidden in EXACT_MANIFEST_SPECIALIST_TOOL_NAMES {
+            assert!(!members
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|item| item == hidden));
+        }
     }
-    for compatibility_primitive in ["git_diff", "git_diff_summary"] {
-        assert!(
-            !inspect.iter().any(|value| value == compatibility_primitive),
-            "inspect category should prefer canonical tools over {compatibility_primitive}"
-        );
-        assert!(
-            !git.iter().any(|value| value == compatibility_primitive),
-            "git category should not recommend {compatibility_primitive}"
-        );
-        assert!(!review.iter().any(|value| value == compatibility_primitive));
-    }
-    let edit = categories[TOOL_DISCOVERY_GROUP_EDIT].as_array().unwrap();
-    let edit_prefix = edit
-        .iter()
-        .take(5)
-        .map(|value| value.as_str().unwrap())
-        .collect::<Vec<_>>();
-    let mut expected_edit_prefix = vec!["edit_project_files", "save_project_artifact"];
-    #[cfg(feature = "experimental-code-mode")]
-    expected_edit_prefix.push("code_mode_exec_mutating");
-    expected_edit_prefix.extend([
-        "read_project_artifact_metadata",
-        "read_project_artifact",
-        "import_conversation_files_to_project",
-    ]);
-    expected_edit_prefix.truncate(5);
-    assert_eq!(edit_prefix, expected_edit_prefix);
-    let file_transfer = categories[TOOL_DISCOVERY_GROUP_FILE_TRANSFER]
-        .as_array()
-        .expect("file_transfer category present");
-    for name in [
-        "import_conversation_files_to_project",
-        "transfer_project_artifact",
-        "project_artifact",
-        "save_project_artifact",
-        "read_project_artifact",
-        "artifact_upload_begin",
-        "artifact_upload_chunk",
-        "artifact_upload_finish",
-        "artifact_upload_abort",
-    ] {
-        assert!(
-            file_transfer.iter().any(|value| value == name),
-            "file_transfer: {name}"
-        );
-    }
-    assert!(edit
-        .iter()
-        .any(|value| value == "import_conversation_files_to_project"));
     let flows = recommended_flows();
     assert!(!flows.is_empty());
     for flow in &flows {
@@ -729,7 +673,7 @@ fn discovery_and_persistent_shell_flows_route_high_value_adaptive_tools() {
 #[test]
 fn tool_categories_include_edit_group() {
     let categories = registered_tool_categories();
-    let edit = categories[TOOL_DISCOVERY_GROUP_EDIT]
+    let edit = categories[TOOL_CATEGORY_EDIT]
         .as_array()
         .expect("edit category present");
     for present in ["edit_project_files"] {
@@ -746,7 +690,7 @@ fn tool_categories_include_edit_group() {
 #[test]
 fn tool_categories_include_projects_with_management_tools() {
     let categories = registered_tool_categories();
-    let projects = categories[TOOL_DISCOVERY_GROUP_PROJECTS]
+    let projects = categories[TOOL_CATEGORY_PROJECT]
         .as_array()
         .expect("projects category present");
     assert!(projects.iter().any(|value| value == "register_project"));
@@ -930,31 +874,38 @@ fn coding_intent_has_independent_ordered_canonical_selection_surface() {
 }
 
 #[test]
-fn curated_discovery_membership_has_one_ordered_reverse_view() {
-    let mut names = BTreeSet::new();
-    for group in TOOL_DISCOVERY_GROUPS {
-        assert!(names.insert(group.name), "duplicate group {}", group.name);
-        let mut tools = BTreeSet::new();
-        for name in group.tools {
-            assert!(tools.insert(name), "{} duplicate tool {name}", group.name);
+fn canonical_categories_are_complete_unique_sorted_and_selection_scoped() {
+    let names = model_visible_tool_definitions()
+        .map(|definition| definition.name)
+        .collect::<Vec<_>>();
+    let categories = group_tool_names_by_category(names.iter().copied());
+    let mut seen = BTreeSet::new();
+    for (category, members) in &categories {
+        assert!(!members.is_empty());
+        assert!(members.windows(2).all(|pair| pair[0] < pair[1]));
+        for name in members {
             assert!(
-                lookup_tool_definition(name).is_some(),
-                "unknown tool {name}"
+                seen.insert(*name),
+                "duplicate category membership for {name}"
             );
+            assert_eq!(lookup_tool_definition(name).unwrap().category, *category);
         }
     }
-    for definition in tool_definitions() {
-        let expected = TOOL_DISCOVERY_GROUPS
-            .iter()
-            .filter(|group| group.tools.contains(&definition.name))
-            .map(|group| group.name)
-            .collect::<Vec<_>>();
-        assert_eq!(
-            discovery_group_names_for_tool(definition.name).collect::<Vec<_>>(),
-            expected
-        );
-    }
-    assert!(discovery_group_names_for_tool("__unknown_tool__")
-        .next()
-        .is_none());
+    assert_eq!(seen, names.iter().copied().collect());
+    assert_eq!(
+        categories,
+        group_tool_names_by_category(names.iter().rev().copied())
+    );
+    let selected =
+        group_tool_names_by_category(["run_shell", "run_process", "run_shell", "__unknown_tool__"]);
+    assert_eq!(selected.len(), 1);
+    assert_eq!(
+        selected[TOOL_CATEGORY_EXECUTION],
+        ["run_process", "run_shell"]
+    );
+    // The helper neither discovers nor admits extensions. An adapter may supply
+    // an independently admitted extension without also exposing its siblings.
+    let extension = group_tool_names_by_category(["memory_read"]);
+    assert_eq!(extension.len(), 1);
+    assert_eq!(extension[TOOL_CATEGORY_MEMORY], ["memory_read"]);
 }

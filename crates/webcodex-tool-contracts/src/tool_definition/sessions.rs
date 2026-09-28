@@ -647,8 +647,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         )),
         15,
     ),
-    adaptive_runtime_direct(
-        requires_explicit_business_session(model_spec(
+    requires_explicit_business_session(model_spec(
             def(
                 "session_handoff_summary",
             super::ToolAuditPolicy::typed_fields(&[
@@ -684,9 +683,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             super::ToolActivityInteraction::Meaningful,
         ),
             "Explicit read-only recovery for missing task context or an explicit handoff; requires exact session_id/session_ref and is not routine status polling. Returns deterministic 8 KiB handoff_brief with task, workspace, progress, validation, Jobs, collaboration/external-report evidence, next actions and basis completeness. If the same owner has active Goals explicitly correlated to the Session, optional bounded goal_context is returned separately: zero omit it and multiple remain selection_required. Goal context is read-only: no inference, Goal mutation, liveness refresh, scheduling or authority grant. External reports retain unknown outcomes/incomplete coverage and are not native execution/validation. Omitted project uses the authorized Session Project; diagnostic=true adds ledger/closeout evidence. Concurrent Session change makes basis incomplete; re-observe before dependent work.",
-        ).with_gpt_action_description("Recover missing task context or perform an explicit handoff for the exact session_id or returned session_ref. Avoid routine status polling or baseline creation. Returns bounded handoff_brief plus optional read-only goal_context only from an existing explicit Session↔Goal correlation; multiple Goals remain unselected. diagnostic=true adds evidence. Check basis completeness before dependent work. Read-only.")),
-        16,
-    ),
+        ).with_gpt_action_description("Read-only recovery for exact session_id/session_ref; not routine polling. Returns bounded handoff_brief and optional explicitly correlated goal_context; multiple Goals stay unselected. diagnostic=true adds evidence. Check basis completeness before dependent work.")),
     requires_explicit_business_session(
         def(
             "session_handoff_state",

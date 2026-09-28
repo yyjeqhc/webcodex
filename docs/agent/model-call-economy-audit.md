@@ -1,5 +1,11 @@
 # Model-call economy audit (2026-09-26)
 
+Historical snapshot. The subsequent [2026-09-28 taxonomy audit](tool-surface-taxonomy-audit.md)
+uses sf ActionAudit aggregates and supersedes the Direct candidate decisions for
+explicit handoff and Endpoint setup below. The direct-only discussion-hint
+constraint and AgentWait App association are still preserved. Measurements in
+this document remain the original baseline.
+
 Baseline: `2f5d34b4` (`main`, including #691 and #692). The measured MCP
 surface is the default-feature Stateless result, without the JSON-RPC envelope.
 No live Server/Runner or deployed fleet was changed. **usage evidence unavailable**:

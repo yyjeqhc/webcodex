@@ -375,7 +375,7 @@ async fn server_mcp_apps_setting_disables_only_app_presentation() {
     let McpOutcome::Ok(enabled) = enabled else {
         panic!("enabled MCP Apps tools/list failed");
     };
-    assert!(tool(&enabled["result"], "show_changes")
+    assert!(tool(&enabled["result"], "review_changes")
         .pointer("/_meta/ui/resourceUri")
         .is_none());
     assert_eq!(
@@ -1962,8 +1962,11 @@ async fn mcp_show_changes_result(
     server_apps_enabled: bool,
 ) -> Value {
     let params = json!({
-        "name": "show_changes",
-        "arguments": {"project": "agent:result-app-runner:demo", "include_diff": false}
+        "name": "call_runtime_tool",
+        "arguments": {
+            "tool": "show_changes",
+            "arguments": {"project": "agent:result-app-runner:demo", "include_diff": false}
+        }
     });
     let params = if ui {
         mcp_2026_ui_params(params)

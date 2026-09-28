@@ -465,201 +465,58 @@ fn assert_no_response_too_large(surface: &str, payload: &Value) {
     );
 }
 
-fn allowed_tool_definition_categories_for_discovery_group(group: &str) -> &'static [&'static str] {
-    match group {
-        "checkpoint" => &["checkpoint"],
-        "cleanup" => &["checkpoint", "cleanup"],
-        "coding_agent" => &["coding_agent"],
-        "agent_task" => &["agent_task"],
-        "agent_wait" => &["agent_wait"],
-        "communication" => &["communication"],
-        "edit" => &["artifact", "edit", "patch"],
-        "file_transfer" => &["artifact"],
-        "git" => &["checkpoint", "cleanup", "file", "git"],
-        "goal" => &["goal"],
-        "inspect" => &[
-            "browser",
-            "checkpoint",
-            "computer",
-            "file",
-            "git",
-            "job",
-            "lsp",
-            "project",
-            "runtime",
-            "session",
-            "workflow",
-        ],
-        "jobs" => &["job"],
-        "patch" => &["patch"],
-        "projects" => &["project"],
-        "review" => &["checkpoint", "cleanup", "file", "git", "workflow"],
-        "runtime" => &["checkpoint", "project", "runtime", "session", "workflow"],
-        "shell" => &["job", "validation"],
-        "validation" => &["validation"],
-        other => panic!("missing discovery group category allowlist for {other}"),
-    }
-}
-
 #[test]
-fn tool_discovery_groups_drive_tool_categories() {
-    use crate::tool_runtime::tool_definition::{
-        is_model_visible_tool_name, lookup_tool_definition, model_visible_tool_definitions,
-        TOOL_DISCOVERY_GROUPS,
-    };
-    use std::collections::{BTreeMap, BTreeSet};
-
+fn canonical_categories_match_list_and_manifest_without_overlapping_groups() {
+    let runtime = test_runtime();
     let categories = registered_tool_categories();
-    let category_map = categories.as_object().expect("categories object");
-    let actual_category_names = category_map
-        .keys()
-        .map(String::as_str)
-        .collect::<BTreeSet<_>>();
-    let expected_group_names = TOOL_DISCOVERY_GROUPS
-        .iter()
-        .map(|group| group.name)
-        .collect::<BTreeSet<_>>();
-    assert_eq!(
-        actual_category_names, expected_group_names,
-        "registered_tool_categories keys must come only from TOOL_DISCOVERY_GROUPS"
-    );
-
-    assert_eq!(
-        expected_group_names.len(),
-        TOOL_DISCOVERY_GROUPS.len(),
-        "duplicate group name"
-    );
-    let mut memberships: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
-
-    for group in TOOL_DISCOVERY_GROUPS {
-        assert_eq!(
-            group.tools.iter().collect::<BTreeSet<_>>().len(),
-            group.tools.len(),
-            "{} duplicate tool",
-            group.name
-        );
-        let actual_tools = string_array(
-            category_map
-                .get(group.name)
-                .unwrap_or_else(|| panic!("{} discovery category missing", group.name)),
-            group.name,
-        );
-        let tools = group
-            .tools
+    let manifest = runtime.compact_tool_manifest_payload();
+    assert_eq!(categories, manifest["categories"]);
+    let mut seen = BTreeSet::new();
+    for (category, members) in categories.as_object().unwrap() {
+        let members = members.as_array().unwrap();
+        let names = members
             .iter()
-            .map(|name| {
-                let definition = lookup_tool_definition(name)
-                    .unwrap_or_else(|| panic!("{name} discovery group entry missing definition"));
-                assert!(
-                    definition.visibility.is_model_visible(),
-                    "{name} discovery group entry must be model-visible"
-                );
-                assert!(
-                    is_model_visible_tool_name(name),
-                    "{name} discovery group entry must pass visibility facade"
-                );
-                assert!(
-                    allowed_tool_definition_categories_for_discovery_group(group.name)
-                        .contains(&definition.category)
-                        // Existing stage entrypoints retain their canonical runtime
-                        // category even in purpose-oriented discovery groups. Keep
-                        // these exceptions exact; do not admit arbitrary runtime tools.
-                        || matches!(
-                            (group.name, *name, definition.category),
-                            ("validation", "code_mode_exec_effectful", "runtime")
-                                | ("edit", "code_mode_exec_mutating", "runtime")
-                        ),
-                    "{} discovery group entry {} has ToolDefinition category {}, which is not in the explicit allowlist",
-                    group.name,
-                    name,
-                    definition.category
-                );
-                memberships.entry(name).or_default().push(group.name);
-                Value::String((*name).to_string())
-            })
+            .map(|name| name.as_str().unwrap())
             .collect::<Vec<_>>();
+        assert!(names.windows(2).all(|pair| pair[0] < pair[1]));
+        for name in names {
+            assert!(seen.insert(name), "duplicate category membership: {name}");
+            assert_eq!(
+                crate::tool_runtime::tool_definition::runtime_tool_category(name),
+                category
+            );
+        }
+        let filtered = runtime.list_tools_payload(ListToolsOptions {
+            category: Some(category.clone()),
+            features: None,
+            summary_only: true,
+            limit: None,
+        });
         assert_eq!(
-            category_map.get(group.name),
-            Some(&Value::Array(tools)),
-            "{} category must derive from ToolDefinition discovery groups",
-            group.name
-        );
-        assert_eq!(
-            actual_tools,
-            group
-                .tools
+            tool_entry_names(&filtered["tools"], category),
+            members
                 .iter()
-                .map(|tool| (*tool).to_string())
-                .collect::<Vec<_>>(),
-            "{} registered category order must match TOOL_DISCOVERY_GROUPS",
-            group.name
+                .map(|name| name.as_str().unwrap().to_string())
+                .collect(),
+            "list_tools category selection must match its advertised category"
         );
     }
-
-    let exact_discovery_only = std::iter::once("attach_agent_endpoint")
-        .chain(
-            webcodex_tool_contracts::ORDINARY_DISCOVERY_DEMOTED_REVIEW_TOOL_NAMES
-                .iter()
-                .copied(),
-        )
-        .collect::<BTreeSet<_>>();
-    let mut omitted_from_groups = BTreeSet::new();
-    for definition in model_visible_tool_definitions() {
-        let Some(groups) = memberships.get(definition.name) else {
-            omitted_from_groups.insert(definition.name);
-            continue;
-        };
-        let expected = webcodex_tool_contracts::discovery_group_names_for_tool(definition.name)
-            .collect::<Vec<_>>();
-        assert_eq!(
-            *groups, expected,
-            "{} reverse discovery view",
-            definition.name
-        );
-    }
-    assert_eq!(
-        omitted_from_groups, exact_discovery_only,
-        "only exact-discovery compatibility primitives may stay out of ordinary discovery groups"
-    );
-
-    for allowed in [
-        "cargo_check",
-        "cargo_fmt",
-        "cargo_test",
-        #[cfg(feature = "experimental-code-mode")]
-        "code_mode_exec",
-        "discard_untracked",
-        "finish_coding_task",
-        "git_log",
-        "review_changes",
-        "git_restore_paths",
-        "git_status",
-        "list_runners",
-        "list_projects",
-        "list_tools",
-        "run_job",
-        "run_process",
-        "run_script",
-        "runtime_status",
-        "work_on_project",
-        #[cfg(feature = "workspace-checkpoints")]
-        "workspace_checkpoint_create",
-        #[cfg(feature = "workspace-checkpoints")]
-        "workspace_checkpoint_delete",
-        #[cfg(feature = "workspace-checkpoints")]
-        "workspace_checkpoint_list",
-        #[cfg(feature = "workspace-checkpoints")]
-        "workspace_checkpoint_restore",
-        #[cfg(feature = "workspace-checkpoints")]
-        "workspace_checkpoint_show",
+    let specs = registered_tool_specs();
+    assert_eq!(seen, specs.iter().map(|spec| spec.name.as_str()).collect());
+    for obsolete_group in [
+        "inspect",
+        "shell",
+        "jobs",
+        "projects",
+        "review",
+        "file_transfer",
     ] {
-        assert!(
-            memberships
-                .get(allowed)
-                .is_some_and(|groups| groups.len() > 1),
-            "{allowed} discovery cross-list allowlist must stay tied to an actual duplicate"
-        );
+        assert!(categories.get(obsolete_group).is_none(), "{obsolete_group}");
     }
+    assert!(
+        categories.get("memory").is_none(),
+        "hidden Memory is not admitted"
+    );
 }
 
 #[test]
@@ -2253,7 +2110,7 @@ async fn tool_manifest_projects_canonical_execution_selection_for_exact_and_filt
     let filtered = runtime
         .dispatch(ToolCall::ToolManifest {
             tool_name: None,
-            category: Some("job".to_string()),
+            category: Some("execution".to_string()),
             intent: Some("coding".to_string()),
             include_recommended_flows: false,
             include_risk_summary: false,
@@ -2420,7 +2277,7 @@ async fn tool_manifest_routing_metadata_uses_canonical_adaptive_routes() {
         ("session_discussion_summary", "direct", None),
         ("list_jobs", "gateway", Some("call_runtime_tool")),
         ("review_changes", "direct", None),
-        ("show_changes", "direct", None),
+        ("show_changes", "gateway", Some("call_runtime_tool")),
         ("git_diff_hunks", "gateway", Some("call_runtime_tool")),
         ("git_review_summary", "gateway", Some("call_runtime_tool")),
         ("run_script", "direct", None),

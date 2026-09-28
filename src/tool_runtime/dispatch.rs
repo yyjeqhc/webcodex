@@ -3313,7 +3313,10 @@ impl ToolRuntime {
             | ToolCall::WaitForJobReadiness { .. }
             | ToolCall::WaitForJobTerminal { .. }
             | ToolCall::ListJobs { .. }
-            | ToolCall::JobTail { .. }) => self.dispatch_job_tool(call, auth, ssh_resource).await,
+            | ToolCall::JobTail { .. }) => {
+                self.dispatch_job_tool(call, auth, ssh_resource, correlation)
+                    .await
+            }
 
             call @ ToolCall::WorkspaceHygieneCheck { .. } => self.dispatch_hygiene_tool(call).await,
 

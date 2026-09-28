@@ -393,7 +393,9 @@ fn mcp_tool_job_audit_correlation(
                 }
             }
         }
-        // Readiness intentionally has no Project projection; never guess attribution.
+        // Never infer Project authority from the sparse readiness result body.
+        // The Job dispatcher may already bind a common Project from exact caller-authorized
+        // Job records; mixed/projectless sets deliberately remain unanchored.
         return McpToolJobAuditCorrelation {
             observed_job_ids,
             ..Default::default()

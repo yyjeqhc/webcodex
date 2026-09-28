@@ -1,14 +1,37 @@
 //! Runtime dispatch adapters for job tool calls.
 
-use super::{ToolCall, ToolResult, ToolRuntime};
+use super::{ToolCall, ToolCallCorrelation, ToolResult, ToolRuntime};
 use crate::auth::AuthContext;
 
 impl ToolRuntime {
+    /// Resolve a Project anchor only from exact caller-authorized Job records.
+    /// A mixed, projectless, invalid, or hidden set deliberately has no anchor.
+    /// This is observability provenance only; it never grants Project authority.
+    pub(crate) async fn common_job_activity_project_for_auth(
+        &self,
+        job_ids: &[String],
+        auth: Option<&AuthContext>,
+    ) -> Option<String> {
+        let access = crate::runner_http::runner_access_from_auth(auth);
+        let job_ids = job_ids.iter().map(String::as_str).collect::<Vec<_>>();
+        self.runner_registry
+            .common_job_project_for_auth(access.as_ref(), &job_ids)
+            .await
+    }
+
+    fn bind_job_activity_project(&self, correlation: &mut ToolCallCorrelation, project: String) {
+        correlation.resolved_project = Some(project.clone());
+        if let Some(trace_id) = crate::tool_request_trace::current_active_trace_id() {
+            self.window_activity.update(&trace_id, None, Some(&project));
+        }
+    }
+
     pub(crate) async fn dispatch_job_tool(
         &self,
         call: ToolCall,
         auth: Option<&AuthContext>,
         ssh_resource: Option<&str>,
+        correlation: &mut ToolCallCorrelation,
     ) -> ToolResult {
         match call {
             ToolCall::RunJob {
@@ -68,6 +91,12 @@ impl ToolRuntime {
                 mode,
                 wait_secs,
             } => {
+                if let Some(project) = self
+                    .common_job_activity_project_for_auth(&job_ids, auth)
+                    .await
+                {
+                    self.bind_job_activity_project(correlation, project);
+                }
                 self.wait_for_job_readiness(job_ids, mode, wait_secs, auth)
                     .await
             }

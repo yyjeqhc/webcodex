@@ -360,7 +360,7 @@ describe("Project / Session / Window relationships", () => {
     expect(screen.queryByText(/^connected$/)).toBeNull();
   });
 
-  it("renders all server-returned Window activity without a second client-side cap", async () => {
+  it("renders all server-returned Window activity, including new tool names, without a client allowlist", async () => {
     const overview = runtimeOverview();
     const key = "d".repeat(64);
     const activity = Array.from({ length: 205 }, (_, index) => ({
@@ -368,8 +368,8 @@ describe("Project / Session / Window relationships", () => {
       ended_at_ms: 1_790_000_000_001 + index,
       duration_ms: 1,
       method: "tools/call",
-      tool_name: "tool-" + index,
-      activity_presentation: "tool-" + index,
+      tool_name: index === 100 ? "wait_for_job_readiness" : "tool-" + index,
+      activity_presentation: index === 100 ? "transport" : "tool-" + index,
       status: "ok",
       meaningful: true,
       workflow_sessions: [],
@@ -399,6 +399,7 @@ describe("Project / Session / Window relationships", () => {
     );
     expect((await screen.findAllByText("tool-204")).length).toBeGreaterThan(0);
     expect(screen.getAllByText("tool-0").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("wait_for_job_readiness").length).toBeGreaterThan(0);
     const steps = screen.getAllByTestId("window-workflow-step");
     expect(steps).toHaveLength(205);
     expect(steps[0].textContent).toContain("tool-0");

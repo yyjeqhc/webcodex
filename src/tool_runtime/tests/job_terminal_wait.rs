@@ -608,6 +608,65 @@ async fn readiness_cancellation_and_server_restart_need_no_persistent_wait_recov
 }
 
 #[tokio::test]
+async fn readiness_activity_project_comes_only_from_exact_authorized_job_provenance() {
+    let (_temp, runtime, _db) = attention_runtime().await;
+    let owner = shared_key_auth_context(&"c".repeat(64));
+    let other = shared_key_auth_context(&"d".repeat(64));
+    let (first, first_request) = start_owned_job(&runtime, "ready-project-a", "one", &owner).await;
+
+    assert_eq!(
+        runtime
+            .common_job_activity_project_for_auth(std::slice::from_ref(&first), Some(&owner))
+            .await
+            .as_deref(),
+        Some("agent:ready-project-a:one")
+    );
+    complete_job(&runtime, "ready-project-a", &first_request, Some(1)).await;
+    let mut correlation = super::super::window_activity::ToolCallCorrelation::default();
+    let dispatched = runtime
+        .dispatch_job_tool(
+            ToolCall::WaitForJobReadiness {
+                job_ids: vec![first.clone()],
+                mode: webcodex_tool_contracts::tool_call::JobReadinessMode::Any,
+                wait_secs: 1,
+            },
+            Some(&owner),
+            None,
+            &mut correlation,
+        )
+        .await;
+    assert!(dispatched.success, "{:?}", dispatched.error);
+    assert_eq!(dispatched.output["wait_state"], "ready");
+    assert_eq!(
+        correlation.resolved_project.as_deref(),
+        Some("agent:ready-project-a:one")
+    );
+    assert!(runtime
+        .common_job_activity_project_for_auth(std::slice::from_ref(&first), Some(&other))
+        .await
+        .is_none());
+
+    let (second, _) = start_owned_job(&runtime, "ready-project-b", "two", &owner).await;
+    assert!(
+        runtime
+            .common_job_activity_project_for_auth(&[first.clone(), second], Some(&owner))
+            .await
+            .is_none(),
+        "mixed-Project wait sets must remain unanchored"
+    );
+    assert!(
+        runtime
+            .common_job_activity_project_for_auth(
+                &[first, "wc_job_missing".to_string()],
+                Some(&owner)
+            )
+            .await
+            .is_none(),
+        "unknown Job identity must never produce a Project anchor"
+    );
+}
+
+#[tokio::test]
 async fn readiness_mixed_visibility_hides_the_whole_set_even_if_visible_job_is_terminal() {
     use webcodex_tool_contracts::tool_call::JobReadinessMode::{All, Any};
     let (_temp, runtime, _db) = attention_runtime().await;

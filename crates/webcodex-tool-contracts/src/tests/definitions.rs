@@ -294,6 +294,7 @@ fn tool_definitions_are_activity_semantics_ssot() {
         ("lsp_status", Work, Meaningful, Navigate),
         ("finish_coding_task", Work, Meaningful, Review),
         ("observe_jobs", Transport, Meaningful, NoKind),
+        ("wait_for_job_readiness", Transport, Meaningful, NoKind),
         ("list_jobs", Support, Meaningful, NoKind),
         ("session_handoff_summary", Support, Meaningful, NoKind),
         ("session_handoff_state", Support, NonMeaningful, NoKind),

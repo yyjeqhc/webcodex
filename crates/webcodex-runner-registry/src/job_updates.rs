@@ -1733,6 +1733,40 @@ impl RunnerRegistry {
         Ok(job_view(job))
     }
 
+    /// Resolve one observability-only Project anchor for an exact Job set under
+    /// one registry snapshot. Every Job must be Public, caller-visible, and carry
+    /// the same non-empty immutable Project id; otherwise attribution fails closed.
+    /// This never refreshes lifecycle state and never grants Project authority.
+    pub async fn common_job_project_for_auth(
+        &self,
+        auth: Option<&crate::RunnerAccess>,
+        job_ids: &[&str],
+    ) -> Option<String> {
+        if job_ids.is_empty() {
+            return None;
+        }
+        let inner = self.inner.lock().await;
+        let mut common: Option<String> = None;
+        for job_id in job_ids {
+            let job = inner.jobs_by_id.get(*job_id)?;
+            if job.visibility != ShellJobVisibility::Public
+                || !shell_job_visible_to_auth(auth, &inner, job)
+            {
+                return None;
+            }
+            let project = job.project_id.as_deref()?.trim();
+            if project.is_empty() {
+                return None;
+            }
+            match common.as_deref() {
+                None => common = Some(project.to_string()),
+                Some(existing) if existing == project => {}
+                Some(_) => return None,
+            }
+        }
+        common
+    }
+
     pub async fn list_jobs(&self, limit: Option<usize>) -> Vec<ShellJobInfo> {
         self.list_jobs_for_auth(None, limit).await
     }

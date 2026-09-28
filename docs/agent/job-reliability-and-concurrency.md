@@ -40,6 +40,14 @@ failure. Existing observation deadline semantics apply: an expired `all` wait
 stays deadline even if its final snapshot races completion; `any` can recognize
 terminal truth in that final snapshot.
 
+For Window activity only, a readiness set whose exact caller-authorized Job records
+all carry the same canonical Project is attributed to that Project before the wait
+starts. This provenance is derived from RunnerRegistry Job truth, not from the sparse
+model-facing result, and grants no Project authority. Mixed-Project, projectless,
+unknown, or unauthorized sets remain unanchored. This lets Runtime Console/WebUI
+reuse normal Project visibility across operator credential rotation without adding a
+per-tool UI allowlist or weakening fail-closed isolation.
+
 No durable registration, App carrier, new execution or retry is created.
 Cancellation/restart drops the wait; the existing Job lifecycle survives on its
 own terms. Never use parallel per-Job long waits or `Promise.race`. Resume ready

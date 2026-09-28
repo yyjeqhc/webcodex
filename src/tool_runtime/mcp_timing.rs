@@ -220,6 +220,22 @@ mod tests {
     }
 
     #[test]
+    fn readiness_explicit_wait_is_not_generic_five_second_handoff() {
+        let mut call = ToolCall::from_tool_name(
+            "wait_for_job_readiness",
+            serde_json::json!({"job_ids":["job"],"mode":"any","wait_secs":45}),
+        )
+        .unwrap();
+        let policy = host_code_mode_policy();
+        assert_eq!(policy.continuation_wait_secs, 5);
+        normalize_observation_call_timing(&mut call, SessionTransport::Mcp, policy);
+        assert!(matches!(
+            call,
+            ToolCall::WaitForJobReadiness { wait_secs: 45, .. }
+        ));
+    }
+
+    #[test]
     fn mcp_job_observation_waits_are_host_bounded() {
         let policy = host_code_mode_policy();
         let mut observe = ToolCall::from_tool_name(

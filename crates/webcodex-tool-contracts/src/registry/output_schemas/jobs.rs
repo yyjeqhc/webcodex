@@ -1483,6 +1483,48 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ("dispatch_observation", schema_type("string", "dispatch_accepted or delivery_unknown.")),
             ("state_changed", schema_type("boolean", "True when prepared delivery is finalized.")),
         ])),
+        "wait_for_job_readiness" => Some(json!({
+            "type": "object",
+            "properties": {
+                "success": {"type": "boolean"},
+                "error": {"type": ["string", "null"]},
+                "output": {"anyOf": [{
+                    "type": "object",
+                    // The ordinary envelope may carry authorized Session/Window/context
+                    // sidecars. Readiness itself never carries Job content or recovery.
+                    "additionalProperties": true,
+                    "not": {"anyOf": [
+                        {"required":["stdout"]}, {"required":["stderr"]},
+                        {"required":["stdout_tail"]}, {"required":["stderr_tail"]},
+                        {"required":["logs"]}, {"required":["command"]},
+                        {"required":["command_summary"]}, {"required":["path"]},
+                        {"required":["project"]}, {"required":["observation_token"]},
+                        {"required":["recovery_kind"]}, {"required":["suggested_call"]},
+                        {"required":["diagnostics"]}
+                    ]},
+                    "properties": {
+                        "wait_state": {"type": "string", "enum": ["ready", "deadline"]},
+                        "mode": {"type": "string", "enum": ["any", "all"]},
+                        "waited_ms": {"type": "integer", "minimum": 0},
+                        "ready": {"type": "array", "maxItems": 8, "items": {
+                            "type": "object", "additionalProperties": false,
+                            "properties": {
+                                "job_id": {"type": "string"},
+                                "status": {"type": "string"},
+                                "outcome": {"type": "string"}
+                            },
+                            "required": ["job_id", "status", "outcome"]
+                        }},
+                        "pending_job_ids": {"type": "array", "maxItems": 8, "items": {"type": "string"}}
+                    }
+                }, {"type":"null"}]}
+            },
+            "required": ["success"],
+            "allOf": [{"if": {"properties": {"success": {"const": true}}}, "then": {
+                "required": ["output"],
+                "properties": {"output": {"type": "object", "required": ["wait_state", "mode", "waited_ms", "ready", "pending_job_ids"]}}
+            }}]
+        })),
         "observe_jobs" => Some(observe_jobs_output_schema()),
         "job_tail" => {
             let mut schema = wrapped_output_schema(vec![

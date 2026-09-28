@@ -2366,9 +2366,9 @@ async fn mcp_tools_list_stateless_serialized_size_budget() {
     // primary, show_changes stays direct for Apps/presentation, and exact legacy
     // review stays gateway-only. Keep small growth headroom around compact surface.
     for (label, auth, max_tools, max_bytes) in [
-        ("anonymous", None, 29, 77_000),
-        ("scoped", Some(&scoped), 30, 79_000),
-        ("admin", Some(&admin), 36, 88_000),
+        ("anonymous", None, 30, 77_000),
+        ("scoped", Some(&scoped), 31, 79_000),
+        ("admin", Some(&admin), 37, 88_000),
     ] {
         for app_enabled in [false, true] {
             let mut sizes = Vec::new();

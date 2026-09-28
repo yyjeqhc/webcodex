@@ -63,6 +63,14 @@ impl ToolRuntime {
                 }
                 result
             }
+            ToolCall::WaitForJobReadiness {
+                job_ids,
+                mode,
+                wait_secs,
+            } => {
+                self.wait_for_job_readiness(job_ids, mode, wait_secs, auth)
+                    .await
+            }
             ToolCall::WaitForJobTerminal {
                 job_id,
                 idempotency_key,

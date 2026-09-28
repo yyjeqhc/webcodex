@@ -1,5 +1,6 @@
 //! Phase D bounded batch Job observation.
 
+mod readiness;
 mod summary;
 
 use super::super::kernel::{HostFileImportTrust, ToolCallContext, ToolCallRequest, ToolTransport};

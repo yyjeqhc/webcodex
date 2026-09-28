@@ -1327,3 +1327,83 @@ fn code_mode_discovery_ranks_inspection_before_specialized_effects_without_chang
         assert!(read.description.contains(phrase), "{phrase}");
     }
 }
+
+#[test]
+fn readiness_tool_is_sequential_outer_only_and_does_not_expand_legacy() {
+    let name = "wait_for_job_readiness";
+    let definition = lookup_tool_definition(name).unwrap();
+    assert_eq!(definition.composition, ToolCompositionPolicy::Denied);
+    assert_eq!(
+        definition.host_orchestration.concurrency,
+        ToolHostConcurrencyHint::Sequential
+    );
+    assert_eq!(
+        definition.host_orchestration.native_batch_field,
+        Some("job_ids")
+    );
+    assert!(is_adaptive_runtime_direct_tool(name));
+    assert!(!crate::tool_policy::LEGACY_GPT_ACTION_DIRECT_TOOL_NAMES.contains(&name));
+    assert!(!crate::tool_policy::LEGACY_GPT_ACTION_SUPPORTED_TOOL_NAMES.contains(&name));
+    assert!(!runtime_tool_supports_passive_job_attention(name));
+    let specs = registered_tool_specs();
+    let spec = spec_named(&specs, name);
+    assert_eq!(spec.input_schema["additionalProperties"], false);
+    assert_eq!(
+        spec.input_schema["properties"].as_object().unwrap().len(),
+        3
+    );
+    assert_eq!(
+        spec.input_schema["properties"]["wait_secs"]["maximum"],
+        crate::tool_call::MAX_JOB_READINESS_WAIT_SECS
+    );
+    for mode in ["any", "all"] {
+        let args = json!({"job_ids":["wc_job_A","wc_job_A","wc_job_B"],"mode":mode,"wait_secs":12});
+        crate::test_support::validate_schema_instance(&args, &spec.input_schema).unwrap();
+        ToolCall::from_tool_name(name, args).unwrap();
+    }
+    for args in [
+        json!({"job_ids":[],"mode":"any","wait_secs":1}),
+        json!({"job_ids":["a"],"mode":"invalid","wait_secs":1}),
+        json!({"job_ids":["a"],"mode":"any","wait_secs":0}),
+        json!({"job_ids":["a"],"mode":"any","wait_secs":46}),
+        json!({"job_ids":["a"],"mode":"any","wait_secs":1,"project":"foreign"}),
+    ] {
+        assert!(crate::test_support::validate_schema_instance(&args, &spec.input_schema).is_err());
+    }
+    let valid = json!({"success":true,"output":{"wait_state":"deadline","mode":"all","waited_ms":12000,"ready":[{"job_id":"a","status":"failed","outcome":"failed"}],"pending_job_ids":["b"]}});
+    crate::test_support::validate_schema_instance(&valid, &spec.output_schema).unwrap();
+    let mut with_sidecar = valid.clone();
+    with_sidecar["output"]["operator_messages"] = json!({"messages":[],"ack":{"accepted_ids":[]}});
+    crate::test_support::validate_schema_instance(&with_sidecar, &spec.output_schema).unwrap();
+    crate::test_support::validate_schema_instance(
+        &json!({"success":false,"output":null,"error":"unavailable"}),
+        &spec.output_schema,
+    )
+    .unwrap();
+    for forbidden in [
+        "stdout",
+        "stderr",
+        "logs",
+        "command",
+        "command_summary",
+        "path",
+        "project",
+        "observation_token",
+        "recovery_kind",
+        "suggested_call",
+        "diagnostics",
+    ] {
+        let mut invalid = valid.clone();
+        invalid["output"][forbidden] = json!("must not leak");
+        assert!(
+            crate::test_support::validate_schema_instance(&invalid, &spec.output_schema).is_err(),
+            "{forbidden}"
+        );
+        let mut invalid = valid.clone();
+        invalid["output"]["ready"][0][forbidden] = json!("must not leak");
+        assert!(
+            crate::test_support::validate_schema_instance(&invalid, &spec.output_schema).is_err(),
+            "nested {forbidden}"
+        );
+    }
+}

@@ -422,3 +422,15 @@ async fn oauth_mcp_request(
     let body = resp.take_json::<Value>().await.unwrap();
     (status, body, challenge)
 }
+
+#[test]
+fn readiness_audit_correlation_retains_exact_jobs_without_guessing_project() {
+    let body = json!({"result":{"structuredContent":{"success":true,"output":{
+        "wait_state":"ready", "ready":[{"job_id":"wc_job_A","status":"completed","outcome":"succeeded"}],
+        "pending_job_ids":["wc_job_B"], "project":"untrusted-guess"
+    }}}});
+    let correlation = mcp_tool_job_audit_correlation(Some("wait_for_job_readiness"), &body);
+    assert_eq!(correlation.observed_job_ids, vec!["wc_job_A", "wc_job_B"]);
+    assert!(correlation.resolved_project.is_none());
+    assert!(correlation.async_job_id.is_none());
+}

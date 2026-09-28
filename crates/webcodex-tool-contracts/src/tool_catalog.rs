@@ -242,6 +242,7 @@ pub const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
             "run_job",
             "stop_job",
             "observe_jobs",
+            "wait_for_job_readiness",
             "wait_for_job_terminal",
             "present_job_terminal_continuation",
             "list_jobs",

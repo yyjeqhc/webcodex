@@ -3306,6 +3306,7 @@ impl ToolRuntime {
             call @ (ToolCall::RunJob { .. }
             | ToolCall::StopJob { .. }
             | ToolCall::ObserveJobs { .. }
+            | ToolCall::WaitForJobReadiness { .. }
             | ToolCall::WaitForJobTerminal { .. }
             | ToolCall::ListJobs { .. }
             | ToolCall::JobTail { .. }) => self.dispatch_job_tool(call, auth, ssh_resource).await,

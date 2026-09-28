@@ -215,8 +215,9 @@ fn assert_builtin_workflow(output: &Value) {
         "passive Job attention",
         "observe_jobs is for logs/details/recovery",
         "list_jobs is identity recovery",
-        "wait_for_job_terminal only when terminal outcome is a true dependency",
-        "no independent work remains",
+        "same-cell blocked dependencies use one wait_for_job_readiness set",
+        "for a future activation use wait_for_job_terminal only on a hard terminal dependency",
+        "Do not poll or rearm durable waits",
     ] {
         assert!(defaults.contains(phrase), "workflow guidance: {phrase}");
     }

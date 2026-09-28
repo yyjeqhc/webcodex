@@ -376,6 +376,38 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
     adaptive_runtime_direct(
         model_spec(
             def(
+                "wait_for_job_readiness",
+                super::ToolAuditPolicy::TYPED_CANONICAL,
+                ModelVisible,
+                TOOL_CATEGORY_JOB,
+                None,
+                TOOL_PROVIDER_NATIVE,
+                super::ToolSemanticContract {
+                    effect: super::ToolEffect::Observe,
+                    risk: Read,
+                    approval: super::ToolApprovalPolicy::None,
+                    idempotency: super::ToolIdempotency::PureRead,
+                },
+                Some(RUNTIME_READ),
+                false,
+                NoPath,
+                false,
+                false,
+                super::ToolSessionEvidencePolicy::NONE,
+            )
+            .with_activity(
+                super::ToolActivityPresentation::Transport,
+                super::ToolActivityInteraction::Meaningful,
+            ).with_host_orchestration_hint(
+                super::ToolHostOrchestrationHint::sequential().with_native_batch_field("job_ids"),
+            ),
+            "Transient sequential wait barrier for the current Host activation, with one absolute 1..45s deadline. First finish all ready independent work. Pass the entire currently blocked exact Job set in one call; never create one readiness wait per Job or use Promise.race on long waits. Stable-deduplicate IDs; authorize every unique public Job before waiting and fail the whole set on any invalid/invisible target. any wakes on the first terminal Job; all waits for every target. Failure/lost/stopped/timeout are terminal-ready, not success. Returns only ready status/outcome and pending IDs; deadline is a normal outcome. No logs, recovery, execution changes, durable wait or restart recovery. Ready does not authorize a follow-up: only follow_up_kind=mechanically_followable may run mechanically. Budget wait_secs from remaining cell time (prefer 10–15s); yield on deadline/budget guard. For a future activation use wait_for_job_terminal; for logs/details use observe_jobs.",
+        ),
+        77,
+    ),
+    adaptive_runtime_direct(
+        model_spec(
+            def(
                 "wait_for_job_terminal",
                 super::ToolAuditPolicy::TYPED_CANONICAL,
                 ModelVisible,

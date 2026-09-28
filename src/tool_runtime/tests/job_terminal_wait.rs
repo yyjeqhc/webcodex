@@ -568,3 +568,70 @@ async fn registration_concurrent_with_terminalization_has_exactly_one_triggered_
     assert_eq!(stored.state, JobTerminalWaitState::Triggered);
     assert_eq!(stored.delivery_state, JobTerminalDeliveryState::Pending);
 }
+
+#[tokio::test]
+async fn readiness_cancellation_and_server_restart_need_no_persistent_wait_recovery() {
+    use webcodex_tool_contracts::tool_call::JobReadinessMode::Any;
+    let (temp, runtime, db) = attention_runtime().await;
+    let auth = shared_key_auth_context(&"a".repeat(64));
+    let (id, request) = start_owned_job(&runtime, "readiness-restart", "project-r", &auth).await;
+    {
+        let wait = runtime.wait_for_job_readiness(vec![id.clone()], Any, 45, Some(&auth));
+        tokio::pin!(wait);
+        assert!(futures_util::poll!(&mut wait).is_pending());
+    }
+    complete_job(&runtime, "readiness-restart", &request, Some(1)).await;
+    let path = temp.path().join("job-terminal-attention.db");
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    let rows: i64 = conn
+        .query_row("SELECT COUNT(*) FROM wc_job_terminal_waits", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(rows, 0);
+    drop(conn);
+    drop(runtime);
+    drop(db);
+    // Reopen actual retained Job receipts with a fresh registry, not wait recovery.
+    let db = Arc::new(crate::Database::open(&path).unwrap());
+    let controller = JobTerminalContinuationController::new(db.clone());
+    let registry = Arc::new(
+        crate::job_receipts::production_registry_with_terminal_attention(db, controller).await,
+    );
+    let restarted = ToolRuntime::new(registry, Arc::new(RuntimeInfo::default()));
+    let result = restarted
+        .wait_for_job_readiness(vec![id], Any, 1, Some(&auth))
+        .await;
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["wait_state"], "ready");
+    assert_eq!(result.output["waited_ms"], 0);
+}
+
+#[tokio::test]
+async fn readiness_mixed_visibility_hides_the_whole_set_even_if_visible_job_is_terminal() {
+    use webcodex_tool_contracts::tool_call::JobReadinessMode::{All, Any};
+    let (_temp, runtime, _db) = attention_runtime().await;
+    let owner = shared_key_auth_context(&"a".repeat(64));
+    let other = shared_key_auth_context(&"b".repeat(64));
+    let (visible, request) = start_owned_job(&runtime, "ready-visible", "one", &owner).await;
+    let (hidden, _) = start_owned_job(&runtime, "ready-hidden", "two", &other).await;
+    complete_job(&runtime, "ready-visible", &request, Some(1)).await;
+    for mode in [Any, All] {
+        for invalid in [&hidden, "wc_job_missing", "invalid/job/id"] {
+            let result = runtime
+                .wait_for_job_readiness(
+                    vec![visible.clone(), invalid.to_string()],
+                    mode,
+                    45,
+                    Some(&owner),
+                )
+                .await;
+            assert!(!result.success);
+            assert!(result.output.is_null());
+            assert_eq!(
+                result.error.as_deref(),
+                Some("Job readiness set is unavailable or identity-invalid")
+            );
+        }
+    }
+}

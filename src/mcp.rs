@@ -370,6 +370,35 @@ fn mcp_tool_job_audit_correlation(
     let Some(output) = body.pointer("/result/structuredContent/output") else {
         return McpToolJobAuditCorrelation::default();
     };
+    if tool_name == Some("wait_for_job_readiness") {
+        let mut observed_job_ids = Vec::new();
+        for value in output
+            .get("ready")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|item| item.get("job_id"))
+            .chain(
+                output
+                    .get("pending_job_ids")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten(),
+            )
+            .take(8)
+        {
+            if let Some(id) = safe_audit_job_id(Some(value)) {
+                if !observed_job_ids.contains(&id) {
+                    observed_job_ids.push(id);
+                }
+            }
+        }
+        // Readiness intentionally has no Project projection; never guess attribution.
+        return McpToolJobAuditCorrelation {
+            observed_job_ids,
+            ..Default::default()
+        };
+    }
     if tool_name == Some("observe_jobs") {
         let mut observed_job_ids = Vec::new();
         let mut resolved_project: Option<String> = None;

@@ -422,6 +422,7 @@ pub fn runtime_tool_supports_passive_job_attention(name: &str) -> bool {
                 | "observe_jobs"
                 | "list_jobs"
                 | "stop_job"
+                | "wait_for_job_readiness"
                 | "wait_for_job_terminal"
                 | "present_job_terminal_continuation"
         )

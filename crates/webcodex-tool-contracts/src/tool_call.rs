@@ -389,6 +389,17 @@ impl ObserveJobsItem {
     }
 }
 
+/// Transient terminal readiness condition for one exact Job set.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum JobReadinessMode {
+    Any,
+    All,
+}
+
+/// Explicit Host wait bound, independent of generic execution handoff slices.
+pub const MAX_JOB_READINESS_WAIT_SECS: u64 = 45;
+
 /// Which observable changes may end a bounded batch Job wait early.
 #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -4125,6 +4136,19 @@ pub enum ToolCall {
         summary_only: bool,
     },
 
+    /// Wait transiently in the current Host activation for an exact Job set.
+    WaitForJobReadiness {
+        /// Exact public Job IDs. Stable deduplication preserves first occurrence order;
+        /// the resulting set must contain 1..8 Jobs. Every target is re-authorized before waiting.
+        #[schemars(length(min = 1))]
+        job_ids: Vec<String>,
+        /// any returns on the first terminal Job; all requires every target terminal.
+        mode: JobReadinessMode,
+        /// Explicit bounded wait, 1..45 seconds. Progress never extends its absolute deadline.
+        #[schemars(range(min = 1, max = 45))]
+        wait_secs: u64,
+    },
+
     /// Arm one caller-owned durable one-shot terminal attention for an exact
     /// existing Job. This never starts, retries, stops, or replaces execution.
     WaitForJobTerminal {
@@ -5700,6 +5724,7 @@ impl ToolCall {
             Self::RunJob { .. } => "run_job",
             Self::StopJob { .. } => "stop_job",
             Self::ObserveJobs { .. } => "observe_jobs",
+            Self::WaitForJobReadiness { .. } => "wait_for_job_readiness",
             Self::WaitForJobTerminal { .. } => "wait_for_job_terminal",
             Self::PresentJobTerminalContinuation { .. } => "present_job_terminal_continuation",
             Self::JobTerminalContinuationBind { .. } => "job_terminal_continuation_bind",

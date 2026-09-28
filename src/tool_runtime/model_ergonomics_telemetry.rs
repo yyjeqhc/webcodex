@@ -91,6 +91,7 @@ pub(crate) struct ModelErgonomicsTimer {
     pub(crate) invocation: invocation::InvocationFacts,
     pub(crate) instruction_read: Option<invocation::InstructionReadFacts>,
     bulk_exact_requested: bool,
+    readiness_requested_jobs: Option<usize>,
 }
 
 #[derive(Debug, Clone)]
@@ -103,6 +104,7 @@ pub(crate) struct ModelErgonomicsCompletion {
     pub(crate) invocation: invocation::InvocationFacts,
     pub(crate) instruction_read: Option<invocation::InstructionReadFacts>,
     bulk_exact_requested: bool,
+    readiness_requested_jobs: Option<usize>,
     pub(crate) job_convergence: Option<job_convergence::JobConvergenceRecord>,
 }
 
@@ -139,6 +141,40 @@ pub(crate) struct ModelErgonomicsRecord {
     pub(crate) work_on_project: Option<WorkOnProjectErgonomicsFacts>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) job_convergence: Option<job_convergence::JobConvergenceRecord>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    readiness: Option<JobReadinessTelemetry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct JobReadinessTelemetry {
+    mode: String,
+    requested_jobs: usize,
+    unique_jobs: usize,
+    waited_ms: u64,
+    wait_state: String,
+    ready_count: usize,
+    pending_count: usize,
+}
+
+fn readiness_telemetry(
+    requested_jobs: Option<usize>,
+    success: bool,
+    output: &Value,
+) -> Option<JobReadinessTelemetry> {
+    if !success {
+        return None;
+    }
+    let ready_count = output.get("ready")?.as_array()?.len();
+    let pending_count = output.get("pending_job_ids")?.as_array()?.len();
+    Some(JobReadinessTelemetry {
+        requested_jobs: requested_jobs?,
+        unique_jobs: ready_count + pending_count,
+        mode: output.get("mode")?.as_str()?.to_string(),
+        waited_ms: output.get("waited_ms")?.as_u64()?,
+        wait_state: output.get("wait_state")?.as_str()?.to_string(),
+        ready_count,
+        pending_count,
+    })
 }
 
 impl ModelErgonomicsRecord {
@@ -234,6 +270,14 @@ impl ModelErgonomicsTimer {
                 tool_name, arguments,
             ),
             bulk_exact_requested,
+            readiness_requested_jobs: (tool_name == "wait_for_job_readiness")
+                .then(|| {
+                    arguments
+                        .get("job_ids")
+                        .and_then(Value::as_array)
+                        .map(Vec::len)
+                })
+                .flatten(),
         })
     }
 
@@ -249,6 +293,7 @@ impl ModelErgonomicsTimer {
             invocation: self.invocation.clone(),
             instruction_read: self.instruction_read.clone(),
             bulk_exact_requested: self.bulk_exact_requested,
+            readiness_requested_jobs: self.readiness_requested_jobs,
             job_convergence: None,
         }
     }
@@ -265,6 +310,7 @@ impl ModelErgonomicsTimer {
             invocation: self.invocation.clone(),
             instruction_read: self.instruction_read.clone(),
             bulk_exact_requested: self.bulk_exact_requested,
+            readiness_requested_jobs: self.readiness_requested_jobs,
             job_convergence: None,
         }
     }
@@ -338,7 +384,8 @@ impl ModelErgonomicsCompletion {
         let edit = edit_facts(self.tool_name, success, output);
         let edit_uncertain = edit.outcome.as_deref() == Some("uncertain");
         ModelErgonomicsRecord {
-            schema_version: 11,
+            schema_version: 12,
+            readiness: readiness_telemetry(self.readiness_requested_jobs, success, output),
             invocation: self.invocation.clone(),
             instruction_read: self.instruction_read.clone(),
             bootstrap: (self.tool_name == "work_on_project")
@@ -623,6 +670,31 @@ mod tests {
     }
 
     #[test]
+    fn readiness_telemetry_counts_duplicates_without_retaining_ids_or_logs() {
+        let completion = ModelErgonomicsTimer::start_with_arguments("wait_for_job_readiness",
+            &json!({"job_ids":["secret-id-a","secret-id-a","secret-id-b"],"mode":"all","wait_secs":12})).unwrap().finish();
+        let record = completion
+            .record_for_tool_result(&ToolResult::ok(json!({
+                "mode":"all","wait_state":"deadline","waited_ms":12000,
+                "ready":[{"job_id":"secret-id-a","status":"completed","outcome":"succeeded"}],
+                "pending_job_ids":["secret-id-b"]
+            })))
+            .unwrap();
+        let value = serde_json::to_value(record).unwrap();
+        assert_eq!(
+            value["readiness"],
+            json!({"mode":"all","wait_state":"deadline","waited_ms":12000,
+            "requested_jobs":3,"unique_jobs":2,"ready_count":1,"pending_count":1})
+        );
+        assert!(!value.to_string().contains("secret-id"));
+        assert!(completion
+            .record_for_tool_result(&ToolResult::err("unavailable"))
+            .unwrap()
+            .readiness
+            .is_none());
+    }
+
+    #[test]
     fn bulk_exact_metrics_record_only_bounded_counts_and_outcomes() {
         let args = json!({"changes":[{"path":"private.rs","edits":[{"kind":"replace_exact","old_text":"SECRET_OLD","new_text":"SECRET_NEW","expected_match_count":2}]}]});
         let completion = ModelErgonomicsTimer::start_with_arguments("edit_project_files", &args)
@@ -734,7 +806,7 @@ mod tests {
         let record = completion("tool_manifest", 0)
             .record_for_tool_result(&ToolResult::ok(json!({})))
             .unwrap();
-        assert_eq!(record.schema_version, 11);
+        assert_eq!(record.schema_version, 12);
         assert_eq!(record.work_on_project, None);
         assert!(!serde_json::to_string(&record)
             .unwrap()
@@ -1041,7 +1113,7 @@ mod tests {
             let record = completion("edit_project_files", 0)
                 .record_for_tool_result(&result)
                 .unwrap();
-            assert_eq!(record.schema_version, 11);
+            assert_eq!(record.schema_version, 12);
             assert_eq!(record.edit_surface.as_deref(), Some("structured_or_patch"));
             assert_eq!(record.edit_outcome.as_deref(), outcome);
             assert_eq!(record.edit_conflict_kind.as_deref(), conflict_kind);
@@ -1089,7 +1161,7 @@ mod tests {
                     .finish_after(Duration::ZERO)
                     .record_for_tool_result(&ToolResult::ok(json!({"private_body": "do-not-copy"})))
                     .unwrap();
-            assert_eq!(record.schema_version, 11);
+            assert_eq!(record.schema_version, 12);
             assert_eq!(record.finish_summary_only, Some(expected));
             assert!(record.serialized_result_bytes.is_some());
             let serialized = serde_json::to_string(&record).unwrap();

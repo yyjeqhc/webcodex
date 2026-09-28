@@ -4210,6 +4210,16 @@ impl ToolCallAuditProjection for ToolCall {
                 "wait_secs": wait_secs,
                 "wake_on": wake_on,
             }),
+            Self::WaitForJobReadiness {
+                job_ids,
+                mode,
+                wait_secs,
+            } => serde_json::json!({
+                "mode": mode,
+                "requested_jobs": job_ids.len(),
+                "unique_jobs": job_ids.iter().collect::<std::collections::HashSet<_>>().len(),
+                "wait_secs": wait_secs,
+            }),
             Self::WaitForJobTerminal { job_id, .. } => serde_json::json!({
                 "job_id": job_id,
             }),

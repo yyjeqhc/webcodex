@@ -218,11 +218,6 @@ async fn passive_attention_requires_exact_business_relation_and_deduplicates_sta
         .unwrap();
     let terminal = attention(&runtime, &project, Some(&session), &window, &auth).await;
     assert_eq!(
-        terminal.output["job_attention"]["items"][0]["status"],
-        "completed"
-    );
-    assert_eq!(terminal.output["job_attention"]["items"][0]["exit_code"], 0);
-    assert_eq!(
         attention(&runtime, &project, Some(&session), &another_window, &auth)
             .await
             .output["job_attention"]["items"][0]["job_id"],
@@ -246,14 +241,8 @@ async fn passive_attention_requires_exact_business_relation_and_deduplicates_sta
         "historical terminal must not replay"
     );
     let terminal_item = &terminal.output["job_attention"]["items"][0];
-    assert_eq!(terminal_item["state"], "terminal");
     assert_eq!(terminal_item["outcome"], "passed");
-    assert_eq!(terminal_item["command_ok"], true);
-    assert_eq!(terminal_item["details"]["tool"], "observe_jobs");
-    assert_eq!(
-        terminal_item["details"]["arguments"]["items"][0]["job_id"],
-        job_id
-    );
+    assert_eq!(terminal_item.as_object().unwrap().len(), 3);
     assert!(!terminal.output["job_attention"]
         .to_string()
         .contains("secret output"));
@@ -355,11 +344,8 @@ async fn initiating_handoff_is_cursor_baseline_then_terminal_is_delivered_once()
     let ordinary = attention(&runtime, &project, Some(&session), &window, &auth).await;
     let item = &ordinary.output["job_attention"]["items"][0];
     assert_eq!(item["job_id"], job_id);
-    assert_eq!(item["state"], "terminal");
     assert_eq!(item["outcome"], "passed");
-    assert_eq!(item["command_ok"], true);
-    assert_eq!(item["exit_code"], 0);
-    assert_eq!(item["details"]["tool"], "observe_jobs");
+    assert_eq!(item.as_object().unwrap().len(), 3);
     assert!(
         !ordinary.output["job_attention"]
             .to_string()

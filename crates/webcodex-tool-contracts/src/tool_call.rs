@@ -400,36 +400,6 @@ pub enum JobReadinessMode {
 /// Explicit Host wait bound, independent of generic execution handoff slices.
 pub const MAX_JOB_READINESS_WAIT_SECS: u64 = 45;
 
-pub const PENDING_JOB_DEFAULT: &str = "continue_independent_work";
-pub const PENDING_JOB_PASSIVE_TERMINAL_ATTENTION: &str = "same_scope_may_surface";
-pub const PENDING_JOB_OBSERVE_CONTINUATION: &str = "logs_details_recovery_fallback";
-pub const PENDING_JOB_BLOCKED_FALLBACK: &str = "wait_for_job_terminal";
-pub const PENDING_JOB_READINESS_KIND: &str = "join_barrier";
-pub const PENDING_JOB_READINESS_WHEN: &str = "ready_work_exhausted";
-pub const PENDING_JOB_READINESS_MODE: &str = "any_unblocks_branch_all_requires_every_dependency";
-pub const PENDING_JOB_READINESS_DEADLINE: &str = "recompute_then_yield_if_unchanged";
-pub const PENDING_JOB_EXECUTION_REPLAY: &str = "never_retry_or_redispatch";
-
-/// Canonical compact scheduler guidance attached to every normal pending execution.
-///
-/// This is model guidance only. It never grants retry, observation, wait, or execution authority.
-pub fn pending_job_strategy_value() -> Value {
-    serde_json::json!({
-        "default": PENDING_JOB_DEFAULT,
-        "passive_terminal_attention": PENDING_JOB_PASSIVE_TERMINAL_ATTENTION,
-        "observe_continuation": PENDING_JOB_OBSERVE_CONTINUATION,
-        "observe_auto_follow": false,
-        "blocked_fallback": PENDING_JOB_BLOCKED_FALLBACK,
-        "readiness": {
-            "kind": PENDING_JOB_READINESS_KIND,
-            "when": PENDING_JOB_READINESS_WHEN,
-            "mode": PENDING_JOB_READINESS_MODE,
-            "deadline": PENDING_JOB_READINESS_DEADLINE,
-        },
-        "execution_replay": PENDING_JOB_EXECUTION_REPLAY,
-    })
-}
-
 /// Which observable changes may end a bounded batch Job wait early.
 #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]

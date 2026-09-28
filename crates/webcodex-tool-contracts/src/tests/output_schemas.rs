@@ -1774,47 +1774,7 @@ fn key_tool_output_schemas_include_expected_fields() {
             .as_array()
             .unwrap()
             .contains(&serde_json::json!("wake_on")));
-        let pending_strategy = output_schema_property(&specs, name, "pending_strategy");
-        assert_eq!(
-            pending_strategy["properties"]["default"]["const"],
-            "continue_independent_work"
-        );
-        assert_eq!(
-            pending_strategy["properties"]["passive_terminal_attention"]["const"],
-            "same_scope_may_surface"
-        );
-        assert_eq!(
-            pending_strategy["properties"]["observe_continuation"]["const"],
-            "logs_details_recovery_fallback"
-        );
-        assert_eq!(
-            pending_strategy["properties"]["observe_auto_follow"]["const"],
-            false
-        );
-        assert_eq!(
-            pending_strategy["properties"]["blocked_fallback"]["const"],
-            "wait_for_job_terminal"
-        );
-        assert_eq!(
-            pending_strategy["properties"]["readiness"]["properties"]["kind"]["const"],
-            "join_barrier"
-        );
-        assert_eq!(
-            pending_strategy["properties"]["readiness"]["properties"]["when"]["const"],
-            "ready_work_exhausted"
-        );
-        assert_eq!(
-            pending_strategy["properties"]["readiness"]["properties"]["mode"]["const"],
-            "any_unblocks_branch_all_requires_every_dependency"
-        );
-        assert_eq!(
-            pending_strategy["properties"]["readiness"]["properties"]["deadline"]["const"],
-            "recompute_then_yield_if_unchanged"
-        );
-        assert_eq!(
-            pending_strategy["properties"]["execution_replay"]["const"],
-            "never_retry_or_redispatch"
-        );
+        assert!(!has_output_field(name, "pending_strategy"));
         assert!(
             has_output_field(name, "failure_kind"),
             "{name} missing failure_kind"
@@ -2718,7 +2678,6 @@ fn model_visible_output_schemas_admit_bounded_passive_job_attention() {
         "success": true,
         "output": {
             "execution_state": "pending",
-            "pending_strategy": crate::tool_call::pending_job_strategy_value(),
             "continuation": {
                 "follow_up_kind": "fallback_recovery",
                 "tool": "observe_jobs",
@@ -3553,4 +3512,35 @@ fn structured_validation_definitions_receive_the_validation_output_family() {
         }
     }
     assert!(count > 0);
+}
+
+#[test]
+fn passive_success_schema_keeps_source_truth_and_distinguishes_rich_failures() {
+    let schema = output_schema_for_tool("cargo_check");
+    let field = &schema["properties"]["output"]["properties"]["job_attention"];
+    let compact = json!({"changed":true,"items":[{
+        "job_id":"wc_job_success", "tool":"cargo_test", "outcome":"passed",
+        "validation":{"kind":"test", "tests_run_count":3, "zero_tests_run":false,
+            "source_state":{"freshness":"unproven","observed_mutation_fence":"uncrossed"}}
+    }]});
+    test_support::validate_schema_instance(&compact, field).unwrap();
+    for pointer in ["/items/0/outcome", "/items/0/validation/source_state"] {
+        let mut missing = compact.clone();
+        *missing.pointer_mut(pointer).unwrap() = Value::Null;
+        assert!(
+            test_support::validate_schema_instance(&missing, field).is_err(),
+            "{pointer}"
+        );
+    }
+    for (freshness, fence) in [("stale", "crossed"), ("unproven", "unknown")] {
+        let mut misleading = compact.clone();
+        misleading["items"][0]["validation"]["source_state"] =
+            json!({"freshness":freshness,"observed_mutation_fence":fence});
+        assert!(test_support::validate_schema_instance(&misleading, field).is_err());
+    }
+    for outcome in ["failed", "timed_out", "cancelled"] {
+        let mut failure = compact.clone();
+        failure["items"][0]["outcome"] = json!(outcome);
+        assert!(test_support::validate_schema_instance(&failure, field).is_err());
+    }
 }

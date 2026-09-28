@@ -106,7 +106,8 @@ fn passive_failed_test_names_and_success_are_sparse() {
     record.validation_output.as_mut().unwrap().stdout =
         "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n".into();
     let success = runtime.passive_job_attention_item(&record);
-    assert_eq!(success["validation"]["passed"], true);
+    assert_eq!(success["outcome"], "passed");
+    assert!(success["validation"].get("passed").is_none());
     assert!(success["validation"].get("diagnostics").is_none());
     assert_schema(&success);
 }
@@ -305,4 +306,142 @@ async fn passive_failure_reads_retained_server_evidence_without_runner_poll() {
     assert!(probe_agent_request_for_instance(&runtime, client, "inst")
         .await
         .is_none());
+}
+
+#[test]
+fn passive_success_keeps_test_and_source_evidence_without_repeating_terminal_truth() {
+    let runtime = ToolRuntime::new_for_tests();
+    for (tool, kind, stdout) in [
+        ("cargo_check", "check", ""),
+        (
+            "cargo_test",
+            "test",
+            "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n",
+        ),
+        (
+            "cargo_test",
+            "test",
+            "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n",
+        ),
+    ] {
+        let mut record = snapshot(&runtime, tool, kind, stdout, "");
+        record.job.exit_code = Some(0);
+        if stdout.contains("3 passed") {
+            record.job.validation.as_mut().unwrap().minimum_tests = Some(2);
+        }
+        let canonical = runtime
+            .passive_job_validation_projection(&record.job, record.validation_output.as_ref())
+            .unwrap();
+        let before = json!({
+            "job_id": record.job.job_id, "tool": tool, "status": "completed", "state": "terminal",
+            "outcome": "passed", "exit_code": 0, "command_ok": true,
+            "validation": canonical,
+            "details": crate::tool_runtime::jobs::observe_job_details_call(&record.job.job_id),
+        });
+        let item = runtime.passive_job_attention_item(&record);
+        assert_schema(&item);
+        assert_eq!(item["job_id"], record.job.job_id);
+        assert_eq!(item["tool"], tool);
+        assert_eq!(item["outcome"], "passed");
+        assert_eq!(
+            item["validation"]["source_state"],
+            json!({"freshness":"unproven", "observed_mutation_fence":"uncrossed"})
+        );
+        let mut expected = canonical.clone();
+        for field in ["tool", "state", "passed"] {
+            expected.as_object_mut().unwrap().remove(field);
+        }
+        assert_eq!(item["validation"], expected);
+        for field in [
+            "state",
+            "status",
+            "exit_code",
+            "command_ok",
+            "details",
+            "logs",
+            "diagnostics",
+            "continuation",
+        ] {
+            assert!(item.get(field).is_none(), "{field}");
+        }
+        if kind == "test" {
+            assert_eq!(
+                item["validation"]["tests_run_count"],
+                if stdout.contains("3 passed") { 3 } else { 0 }
+            );
+            assert_eq!(
+                item["validation"]["zero_tests_run"],
+                stdout.contains("0 passed")
+            );
+        }
+        // Match the existing serialized_result_bytes boundary: a ToolResult,
+        // excluding transport framing. Historical shape is a fixture, not API.
+        let before_bytes = crate::json_measurement::serialized_json_len(&ToolResult::ok(
+            json!({"job_attention":{"changed":true,"items":[before]}}),
+        ))
+        .unwrap();
+        let after_bytes = crate::json_measurement::serialized_json_len(&ToolResult::ok(
+            json!({"job_attention":{"changed":true,"items":[item]}}),
+        ))
+        .unwrap();
+        eprintln!(
+            "passive {tool} ({kind}, zero={}): {before_bytes} -> {after_bytes} bytes",
+            stdout.contains("0 passed")
+        );
+        assert!(
+            after_bytes * 100 < before_bytes * 80,
+            "happy-path receipt unexpectedly grew: {before_bytes} -> {after_bytes}"
+        );
+        assert_eq!(canonical["passed"], true, "canonical proof remains rich");
+        assert_eq!(record.job.validation.as_ref().unwrap().steps.len(), 1);
+    }
+}
+
+#[test]
+fn passive_success_does_not_compact_uncertainty_recovery_or_stale_evidence() {
+    use webcodex_runner_registry::{JobRecoveryPhase, JobRecoveryReason};
+    let runtime = ToolRuntime::new_for_tests();
+    let mut base = snapshot(&runtime, "cargo_check", "check", "", "");
+    base.job.exit_code = Some(0);
+    for reason in [
+        "unknown_source",
+        "truncated",
+        "missing_output",
+        "recovery",
+        "stale",
+    ] {
+        let mut record = base.clone();
+        match reason {
+            "unknown_source" => record.job.validation.as_mut().unwrap().source_fence = None,
+            "truncated" => record.validation_output.as_mut().unwrap().truncated = true,
+            "missing_output" => record.validation_output = None,
+            "recovery" => {
+                record.recovery = Some((
+                    JobRecoveryPhase::Reconciled,
+                    Some(JobRecoveryReason::SameInstanceReconciliation),
+                ));
+                record.job.recovery_state = Some("reconciled".into());
+                record.job.recovery_reason_code = Some("same_instance_reconciliation".into());
+            }
+            "stale" => runtime
+                .validation_sources
+                .begin(record.job.project_id.as_deref().unwrap())
+                .unwrap()
+                .finish(&ToolResult::ok(json!({"state_changed":true}))),
+            _ => unreachable!(),
+        }
+        let item = runtime.passive_job_attention_item(&record);
+        assert_schema(&item);
+        assert_eq!(item["state"], "terminal", "{reason}");
+        assert_eq!(item["status"], "completed", "{reason}");
+        assert_eq!(item["details"]["follow_up_kind"], "fallback_recovery");
+        assert!(item["validation"].get("passed").is_some());
+        if reason == "stale" {
+            assert_eq!(item["validation"]["source_state"]["freshness"], "stale");
+            assert_eq!(
+                item["validation"]["source_state"]["observed_mutation_fence"],
+                "crossed"
+            );
+        }
+    }
 }

@@ -235,3 +235,43 @@ fn job_attention_terminal_delivery_precedes_active_recovery_under_item_budget() 
         1
     );
 }
+
+#[test]
+fn job_attention_heartbeat_neither_consumes_terminal_nor_changes_projection() {
+    let runtime = ToolRuntime::new_for_tests();
+    for exit_code in [0, 1] {
+        let cursor = JobAttentionCursor::default();
+        let mut snapshot = job(1, "running");
+        let deliver = |snapshot: &JobAttentionSnapshot| {
+            let mut result = ToolResult::ok(json!({}));
+            cursor.project_result(
+                &mut result,
+                key("heartbeat"),
+                std::slice::from_ref(snapshot),
+                None,
+                |snapshot| runtime.passive_job_attention_item(snapshot),
+            );
+            result
+        };
+        for seq in 1..=5 {
+            snapshot.job.last_update_seq = Some(seq);
+            snapshot.job.duration_ms = Some(seq * 1000);
+            snapshot.job.activity = Some(serde_json::from_value(json!({"state":"working", "phase":"process_running", "source":"runner_execution"})).unwrap());
+            assert!(deliver(&snapshot).output.get("job_attention").is_none());
+        }
+        snapshot.job.status = "completed".into();
+        snapshot.job.exit_code = Some(exit_code);
+        let first = deliver(&snapshot);
+        let item = first.output["job_attention"]["items"][0].clone();
+        assert_eq!(item["job_id"], "job-1");
+        assert_eq!(
+            item["outcome"],
+            if exit_code == 0 { "passed" } else { "failed" }
+        );
+        snapshot.job.last_update_seq = Some(99);
+        snapshot.job.duration_ms = Some(99000);
+        snapshot.job.activity = None;
+        assert_eq!(runtime.passive_job_attention_item(&snapshot), item);
+        assert!(deliver(&snapshot).output.get("job_attention").is_none());
+    }
+}

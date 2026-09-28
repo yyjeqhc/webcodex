@@ -3328,7 +3328,6 @@ fn cargo_output_schema_enforces_handoff_terminal_and_rejection_branches() {
         "success": true,
         "output": {
             "execution_state": "pending",
-            "pending_strategy": webcodex_tool_contracts::tool_call::pending_job_strategy_value(),
             "continuation": {
                 "follow_up_kind": "fallback_recovery",
                 "tool": "observe_jobs",

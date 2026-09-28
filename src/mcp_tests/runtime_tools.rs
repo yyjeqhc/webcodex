@@ -460,3 +460,39 @@ async fn mcp_runtime_status_defaults_sparse_preserves_explicit_full_and_gateway_
         "canonical/API runtime_status default must remain full"
     );
 }
+
+#[test]
+fn mcp_pending_and_success_attention_match_published_output_schema() {
+    use crate::model_surface::{project_tool_result_suggested_calls, suggested_tool_call_route};
+    let tools = mcp_tools_list_payload_with_compact(false);
+    let descriptor = tools["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|tool| tool["name"] == "cargo_check")
+        .unwrap();
+    let continuation = json!({"follow_up_kind":"fallback_recovery", "tool":"observe_jobs", "arguments":{
+        "items":[{"job_id":"wc_job_pending", "after_observation_token":"wj3_AAAAAAAAAAAAAAAAAAAAAA.1.0.0"}], "wait_secs":5, "wake_on":"terminal"
+    }});
+    let mut result = ToolResult::ok(
+        json!({"execution_state":"pending", "continuation":continuation,
+            "job_attention":{"changed":true,"items":[{"job_id":"wc_job_done","tool":"cargo_check","outcome":"passed",
+                "validation":{"kind":"check","source_state":{"freshness":"unproven","observed_mutation_fence":"uncrossed"}}}]}
+        }),
+    );
+    project_tool_result_suggested_calls("cargo_check", &mut result, &|target| {
+        suggested_tool_call_route(target, true)
+    });
+    let envelope = serde_json::to_value(&result).unwrap();
+    webcodex_tool_contracts::test_support::validate_schema_instance(
+        &envelope,
+        &descriptor["outputSchema"],
+    )
+    .unwrap();
+    assert!(result.output.get("pending_strategy").is_none());
+    assert_eq!(result.output["continuation"], continuation);
+    webcodex_tool_contracts::test_support::validate_generated_tool_call_against_registered_input_schema(&result.output["continuation"]).unwrap();
+    assert!(result.output["job_attention"]["items"][0]
+        .get("details")
+        .is_none());
+}

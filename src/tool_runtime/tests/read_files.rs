@@ -2298,10 +2298,8 @@ async fn ordinary_read_delivers_terminal_attention_without_host_continuation_sup
     assert_eq!(result.output["items"][0]["output"]["text"], "ordinary read");
     let attention = &result.output["job_attention"]["items"][0];
     assert_eq!(attention["job_id"], job_id);
-    assert_eq!(attention["state"], "terminal");
     assert_eq!(attention["outcome"], "passed");
-    assert_eq!(attention["command_ok"], true);
-    assert_eq!(attention["details"]["tool"], "observe_jobs");
+    assert_eq!(attention.as_object().unwrap().len(), 3);
     assert!(!result.output["job_attention"]
         .to_string()
         .contains("PRIVATE_JOB_OUTPUT"));

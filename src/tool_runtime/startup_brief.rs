@@ -75,7 +75,7 @@ pub(crate) fn builtin_coding_workflow_projection(profile: CodingGuidanceProfile)
             "Validation failure is evidence, not queue cleanliness. Fix dependent blockers; continue otherwise. Reuse assertion_name; outcome_unknown fails closed. After Rust stabilizes, format once. Development validation may overlap independent work; covered-source edits make it stale for final evidence.",
             "For closeout evidence, freeze source covered by final validation. Continue read-only review/docs/external inspection; if covered source must change, invalidate that evidence and rerun the appropriate final validation.",
             "Keep one execution/Job. Generated calls carry follow_up_kind. mechanically_followable is an exact continuation: copy args unchanged after Host inputSchema validation. fallback_recovery is recovery/detail/dependency, never auto-followed. Pending Job continuation is fallback_recovery; passive Job attention may surface.",
-            "observe_jobs is for logs/details/recovery; list_jobs is identity recovery. Pending: retain Job identity; finish ready work before one wait_for_job_readiness join. any may unblock a branch; all requires every blocker. Deadline recomputes work/set. Future activation: wait_for_job_terminal. Never retry/redispatch."
+            "observe_jobs is for logs/details/recovery; list_jobs is identity recovery; finish ready work before one wait_for_job_readiness join. any may unblock a branch; all requires every blocker. Deadline recomputes work/set; never mechanically refill. Future activation: wait_for_job_terminal. Never retry/redispatch."
         ],
         "tool_strategy": tool_strategy_projection(profile),
         "model_protocol": {

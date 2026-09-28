@@ -106,7 +106,9 @@ impl ToolRuntime {
                     .iter()
                     .take(super::super::observe_jobs::MAX_OBSERVE_JOBS_ITEMS)
                 {
-                    if item["state"] != "terminal" {
+                    if item["state"] != "terminal"
+                        && !(item.get("state").is_none() && item["outcome"] == "passed")
+                    {
                         continue;
                     }
                     let Some(id) = item["job_id"].as_str() else {

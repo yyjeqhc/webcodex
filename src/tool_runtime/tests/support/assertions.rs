@@ -98,14 +98,8 @@ pub(in crate::tool_runtime::tests) fn assert_sparse_pending_job_handoff(output: 
         .collect::<std::collections::BTreeSet<_>>();
     assert_eq!(
         keys,
-        ["continuation", "execution_state", "pending_strategy"]
-            .into_iter()
-            .collect(),
+        ["continuation", "execution_state"].into_iter().collect(),
         "normal model-facing pending handoff must stay sparse"
-    );
-    assert_eq!(
-        output["pending_strategy"],
-        webcodex_tool_contracts::tool_call::pending_job_strategy_value()
     );
     observe_job_continuation_job_id(output)
 }

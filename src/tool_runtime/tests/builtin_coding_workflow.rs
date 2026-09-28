@@ -397,3 +397,42 @@ fn tool_strategy_schema_requires_one_known_profile_and_closed_shape() {
         assert!(validate_schema_instance_for_test(&invalid, &schema).is_err());
     }
 }
+
+#[test]
+fn sparse_pending_receipts_rely_on_complete_static_scheduling_guidance() {
+    use crate::tool_runtime::tool_inputs::CodingGuidanceProfile;
+    for profile in [
+        CodingGuidanceProfile::Direct,
+        CodingGuidanceProfile::HostCodeMode,
+    ] {
+        let workflow = builtin_coding_workflow_projection(profile);
+        let text = workflow.to_string();
+        for rule in [
+            "continue independent work",
+            "finish ready work",
+            "wait_for_job_readiness join",
+            "any may unblock a branch",
+            "all requires every blocker",
+            "never mechanically refill",
+            "observe_jobs is for logs/details/recovery",
+            "Never retry/redispatch",
+            "Future activation: wait_for_job_terminal",
+            "fallback_recovery",
+        ] {
+            assert!(
+                text.contains(rule),
+                "missing static pending guidance: {rule}"
+            );
+        }
+        if profile == CodingGuidanceProfile::HostCodeMode {
+            for rule in [
+                "join barrier",
+                "Cross-turn hard dependency",
+                "do not mechanically repeat the same-set wait",
+                "fallback_recovery never auto-runs",
+            ] {
+                assert!(text.contains(rule), "missing Host guidance: {rule}");
+            }
+        }
+    }
+}

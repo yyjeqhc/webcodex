@@ -2876,20 +2876,12 @@ fn job_handoff_model_projection_keeps_identity_and_exceptional_receipts() {
             .keys()
             .cloned()
             .collect::<std::collections::BTreeSet<_>>(),
-        [
-            "continuation".to_string(),
-            "execution_state".to_string(),
-            "pending_strategy".to_string(),
-        ]
-        .into_iter()
-        .collect()
+        ["continuation".to_string(), "execution_state".to_string(),]
+            .into_iter()
+            .collect()
     );
     assert_eq!(model.output["execution_state"], "pending");
     assert_observe_job_continuation(&model.output);
-    assert_eq!(
-        model.output["pending_strategy"],
-        webcodex_tool_contracts::tool_call::pending_job_strategy_value()
-    );
     for key in [
         "job_id",
         "job_status",
@@ -2925,4 +2917,35 @@ fn job_handoff_model_projection_keeps_identity_and_exceptional_receipts() {
         super::super::jobs::sparsify_job_handoff_model_result(&mut model);
         assert_eq!(model.output, exceptional);
     }
+}
+
+#[test]
+fn pending_happy_path_serialized_result_bytes_regression() {
+    let continuation =
+        super::super::jobs::observe_job_continuation("job-one", Some("job-token-one"));
+    // Frozen historical fixture for size comparison only. Scheduling guidance
+    // now lives in startup/discovery, never in the dynamic receipt.
+    let strategy = json!({
+        "default":"continue_independent_work", "passive_terminal_attention":"same_scope_may_surface",
+        "observe_continuation":"logs_details_recovery_fallback", "observe_auto_follow":false,
+        "blocked_fallback":"wait_for_job_terminal",
+        "readiness":{"kind":"join_barrier","when":"ready_work_exhausted","mode":"any_unblocks_branch_all_requires_every_dependency","deadline":"recompute_then_yield_if_unchanged"},
+        "execution_replay":"never_retry_or_redispatch"
+    });
+    let before = ToolResult::ok(
+        json!({"execution_state":"pending", "continuation":continuation, "pending_strategy":strategy}),
+    );
+    let mut after = ToolResult::ok(
+        json!({"execution_state":"running", "job_id":"job-one", "observation_token":"job-token-one", "continuation":continuation}),
+    );
+    super::super::jobs::sparsify_job_handoff_model_result(&mut after);
+    assert_sparse_pending_job_handoff(&after.output);
+    assert_eq!(after.output["continuation"], before.output["continuation"]);
+    let before_bytes = crate::json_measurement::serialized_json_len(&before).unwrap();
+    let after_bytes = crate::json_measurement::serialized_json_len(&after).unwrap();
+    eprintln!("pending: {before_bytes} -> {after_bytes} bytes");
+    assert!(
+        after_bytes * 100 < before_bytes * 50,
+        "happy-path receipt unexpectedly grew: {before_bytes} -> {after_bytes}"
+    );
 }

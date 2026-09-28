@@ -320,6 +320,46 @@ impl ToolRuntime {
                 item["validation"] = validation;
             }
             item["details"] = super::jobs::observe_job_details_call(&job.job_id);
+            // Compact only proven execution success. Source currentness remains
+            // independent: even an uncrossed canonical fence is still unproven.
+            // Recovery, missing/truncated proof and unknown/stale source keep the
+            // existing explanatory receipt. Never mutate the retained snapshot.
+            let validation_ok = item.get("validation").is_none_or(|validation| {
+                validation["passed"] == true
+                    && validation["state"] == "completed"
+                    && validation["source_state"]["freshness"] == "unproven"
+                    && validation["source_state"]["observed_mutation_fence"] == "uncrossed"
+                    && snapshot
+                        .validation_output
+                        .as_ref()
+                        .is_some_and(|output| !output.truncated)
+            });
+            if job.status == "completed"
+                && job.exit_code == Some(0)
+                && item["outcome"] == "passed"
+                && snapshot.recovery.is_none()
+                && !job.recovered_after_server_restart
+                && job.recovery_state.is_none()
+                && job.recovery_reason_code.is_none()
+                && validation_ok
+            {
+                let tool = item["tool"].clone();
+                let fields = item.as_object_mut().expect("attention object");
+                for key in ["status", "state", "exit_code", "command_ok", "details"] {
+                    fields.remove(key);
+                }
+                if let Some(validation) =
+                    fields.get_mut("validation").and_then(Value::as_object_mut)
+                {
+                    // A project validation tool may use a different adapter;
+                    // preserve that distinction when it is not derivable.
+                    if validation.get("tool") == Some(&tool) {
+                        validation.remove("tool");
+                    }
+                    validation.remove("state");
+                    validation.remove("passed");
+                }
+            }
         }
         item
     }

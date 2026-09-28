@@ -215,7 +215,7 @@ fn assert_builtin_workflow(output: &Value) {
         "passive Job attention",
         "observe_jobs is for logs/details/recovery",
         "list_jobs is identity recovery",
-        "Pending: retain Job identity",
+        "Keep one execution/Job",
         "finish ready work",
         "one wait_for_job_readiness join",
         "any may unblock a branch",

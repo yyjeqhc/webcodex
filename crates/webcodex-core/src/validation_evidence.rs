@@ -117,6 +117,53 @@ pub struct CargoTestSummary {
     pub ignored: Option<u64>,
 }
 
+/// Parse Go vet's stable relative-file:line:column diagnostics. Compiler prose
+/// without a stable location is not invented into structured evidence.
+pub fn parse_go_vet_diagnostics(stderr: &str, truncated: bool) -> ValidationDiagnostics {
+    let mut items = Vec::new();
+    let mut invalid = 0;
+    for raw in stderr.lines() {
+        let line = sanitize_line(raw);
+        let Some((location, message)) = line.split_once(": ") else {
+            continue;
+        };
+        let Some(span) = parse_location(location) else {
+            invalid += 1;
+            continue;
+        };
+        let Some(message) = sanitize_bounded_value(message, MAX_DIAGNOSTIC_MESSAGE_CHARS)
+            .filter(|m| !looks_sensitive(m))
+        else {
+            invalid += 1;
+            continue;
+        };
+        items.push(CargoDiagnostic {
+            severity: "error",
+            code: None,
+            file: Some(span.file),
+            line: Some(span.line),
+            column: Some(span.column),
+            message: crate::validation_bridge::sanitize_bridge_text(&message),
+        });
+    }
+    items.sort_by(compare_diagnostics);
+    items.dedup();
+    let total = items.len();
+    items.truncate(MAX_DIAGNOSTICS);
+    if total == 0 {
+        diagnostics_unavailable(invalid)
+    } else {
+        diagnostics_from_rust(
+            ParsedDiagnostics {
+                items,
+                total,
+                invalid,
+            },
+            truncated,
+        )
+    }
+}
+
 pub fn parse_cargo_check_diagnostics(
     stdout_excerpt: &str,
     stderr_excerpt: &str,

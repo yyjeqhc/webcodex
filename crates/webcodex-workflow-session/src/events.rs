@@ -1045,6 +1045,9 @@ pub fn validation_output_summary_for_tool_result(tool_name: &str, output: &Value
         "execution_state": output.get("execution_state").cloned().unwrap_or(Value::Null),
         "validation_tool": output.get("validation_tool").cloned().unwrap_or(Value::Null),
     });
+    if tool_name == "project_validate" {
+        copy_project_validation_evidence(&mut summary, output);
+    }
     if let Some(source) = sanitized_validation_source(output.get("source_state")) {
         summary["source_state"] = source;
     }
@@ -1158,6 +1161,9 @@ pub(super) fn sanitize_persisted_validation_output_summary(
         "execution_state": object.get("execution_state").and_then(Value::as_str),
         "validation_tool": object.get("validation_tool").and_then(Value::as_str),
     });
+    if tool_name == "project_validate" {
+        copy_project_validation_evidence(&mut summary, value);
+    }
     if let Some(source) = sanitized_validation_source(object.get("source_state")) {
         summary["source_state"] = source;
     }
@@ -1516,5 +1522,39 @@ mod result_expectation_tests {
             ),
             TOOL_EXPECTATION_RESULT_UNEXPECTED_FAILURE
         );
+    }
+}
+
+fn copy_project_validation_evidence(summary: &mut Value, output: &Value) {
+    if let Some(id) = output
+        .get("validation_target_id")
+        .and_then(Value::as_str)
+        .filter(|id| {
+            webcodex_core::validation_identity::is_structured_validation_target_identity(id)
+        })
+    {
+        summary["validation_target_id"] = json!(id);
+    }
+    for (field, allowed) in [
+        (
+            "adapter",
+            &[
+                "cargo_fmt",
+                "cargo_check",
+                "cargo_test",
+                "go_vet",
+                "go_test",
+            ][..],
+        ),
+        ("action", &["format_check", "check", "test"][..]),
+        ("backend", &["rust", "go"][..]),
+    ] {
+        if let Some(value) = output
+            .get(field)
+            .and_then(Value::as_str)
+            .filter(|v| allowed.contains(v))
+        {
+            summary[field] = json!(value);
+        }
     }
 }

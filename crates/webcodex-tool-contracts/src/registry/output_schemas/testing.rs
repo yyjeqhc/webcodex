@@ -8,7 +8,9 @@ use super::common::{
 
 pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
     match name {
-        "cargo_fmt" | "cargo_check" | "cargo_test" | "go_test" => Some(cargo_output_schema(name)),
+        "project_validate" | "cargo_fmt" | "cargo_check" | "cargo_test" | "go_test" => {
+            Some(cargo_output_schema(name))
+        }
         _ => None,
     }
 }
@@ -134,7 +136,10 @@ fn cargo_output_schema(tool_name: &str) -> Value {
             ),
         ]);
     }
-    if matches!(tool_name, "cargo_check" | "cargo_test" | "go_test") {
+    if matches!(
+        tool_name,
+        "project_validate" | "cargo_check" | "cargo_test" | "go_test"
+    ) {
         fields.push((
             "diagnostics",
             cargo_test_diagnostics_schema(
@@ -142,7 +147,7 @@ fn cargo_output_schema(tool_name: &str) -> Value {
             ),
         ));
     }
-    if matches!(tool_name, "cargo_test" | "go_test") {
+    if matches!(tool_name, "project_validate" | "cargo_test" | "go_test") {
         fields.extend([
             (
                 "tests_detected",
@@ -167,7 +172,7 @@ fn cargo_output_schema(tool_name: &str) -> Value {
             ),
         ]);
     }
-    if tool_name == "cargo_test" {
+    if matches!(tool_name, "cargo_test" | "project_validate") {
         fields.extend([
             (
                 "require_tests",
@@ -184,6 +189,15 @@ fn cargo_output_schema(tool_name: &str) -> Value {
                 ),
             ),
             ("test_count_assertion", cargo_test_count_assertion_schema()),
+        ]);
+    }
+    if tool_name == "project_validate" {
+        fields.extend([
+            ("backend", json!({"type":"string", "enum":["rust","go"]})),
+            ("action", json!({"type":"string", "enum":["format_check","check","test"]})),
+            ("adapter", json!({"type":"string", "enum":["cargo_fmt","cargo_check","cargo_test","go_vet","go_test"]})),
+            ("validation_target_id", schema_type("string", "Canonical resolved validation target, independent of source freshness.")),
+            ("detected_backend", json!({"type":["string","null"], "enum":["rust","go","node","python",null]})),
         ]);
     }
     let properties = fields

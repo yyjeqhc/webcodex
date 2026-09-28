@@ -503,6 +503,7 @@ async fn register_agent_projects_for_auth(
                         structured_cargo_test_lib: true,
                         structured_cargo_check_packages: true,
                         structured_go_test_json: true,
+                        project_validation_v1: false,
                         structured_go_test_tool: true,
                         structured_go_test_packages: true,
                         structured_process_argv: true,

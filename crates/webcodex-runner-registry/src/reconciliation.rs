@@ -294,7 +294,7 @@ fn validate_snapshot(
             .validation
             .as_ref()
             .is_some_and(|metadata| {
-                metadata.tool == "cargo_test"
+                metadata.adapter == "cargo_test"
                     && metadata.kind == "test"
                     && metadata.no_run != Some(true)
             });

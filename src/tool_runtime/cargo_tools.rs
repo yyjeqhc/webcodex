@@ -13,6 +13,26 @@ impl ToolRuntime {
     ) -> ToolResult {
         let tool_name = call.tool_name();
         let mut result = match call {
+            ToolCall::ProjectValidate {
+                project,
+                session_id,
+                cwd,
+                action,
+                adapter,
+                timeout_secs,
+            } => {
+                self.project_validate(
+                    project,
+                    session_id,
+                    cwd,
+                    action,
+                    adapter,
+                    timeout_secs,
+                    ssh_resource,
+                    auth,
+                )
+                .await
+            }
             ToolCall::CargoFmt {
                 project,
                 session_id,

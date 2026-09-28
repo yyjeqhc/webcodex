@@ -2752,6 +2752,24 @@ pub enum ToolCall {
 
     /// Run canonical structured `go test -json` validation with an optional
     /// bounded project-relative package scope.
+    ProjectValidate {
+        /// Exact registered Runner Project.
+        project: String,
+        #[serde(default)]
+        session_id: Option<String>,
+        /// Project-relative directory; nearest recipe root is resolved on Runner.
+        #[serde(default)]
+        cwd: Option<String>,
+        action: webcodex_core::project_validation::ProjectValidationAction,
+        /// Omission means auto. Rust and Go are supported; Node/Python return unavailable.
+        #[serde(default)]
+        adapter: Option<webcodex_core::project_validation::ProjectValidationAdapter>,
+        /// Total execution budget, clamped to 3600 seconds. Host grace never starts another execution.
+        #[serde(default)]
+        #[schemars(range(min = 1))]
+        timeout_secs: Option<u64>,
+    },
+
     GoTest {
         /// Runner-registered project id.
         project: String,
@@ -5663,6 +5681,7 @@ impl ToolCall {
             Self::CargoFmt { .. } => "cargo_fmt",
             Self::CargoCheck { .. } => "cargo_check",
             Self::CargoTest { .. } => "cargo_test",
+            Self::ProjectValidate { .. } => "project_validate",
             Self::GoTest { .. } => "go_test",
             Self::ReadFiles { .. } => "read_files",
             Self::SkillLoad { .. } => "skill_load",
@@ -5817,6 +5836,7 @@ impl ToolCall {
             | Self::CargoFmt { session_id, .. }
             | Self::CargoCheck { session_id, .. }
             | Self::CargoTest { session_id, .. }
+            | Self::ProjectValidate { session_id, .. }
             | Self::GoTest { session_id, .. }
             | Self::ReadFiles { session_id, .. }
             | Self::SkillLoad { session_id, .. }
@@ -5967,6 +5987,7 @@ impl ToolCall {
             | Self::CargoFmt { project, .. }
             | Self::CargoCheck { project, .. }
             | Self::CargoTest { project, .. }
+            | Self::ProjectValidate { project, .. }
             | Self::GoTest { project, .. }
             | Self::ReadFiles { project, .. }
             | Self::SkillLoad { project, .. }

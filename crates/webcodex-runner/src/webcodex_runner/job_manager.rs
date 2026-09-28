@@ -2168,7 +2168,15 @@ impl JobManager {
                 })
                 .count();
             let inventory_full = active_count >= JOB_INVENTORY_MAX_ACTIVE_JOBS;
-            let immediate_failure = if inventory_full {
+            let admission_failure = super::validation::project::fence(
+                &start.policy,
+                &start.project_registry_dir,
+                &start.operation,
+            )
+            .err();
+            let immediate_failure = if let Some(error) = admission_failure {
+                Some(error)
+            } else if inventory_full {
                 Some(format!(
                     "runner active job inventory limit reached ({})",
                     JOB_INVENTORY_MAX_ACTIVE_JOBS
@@ -2650,7 +2658,7 @@ impl JobManager {
             _ => unreachable!("shell Job starter received non shell/validation operation"),
         };
         let capture_cargo_test_count = context.validation.as_ref().is_some_and(|metadata| {
-            metadata.tool == "cargo_test"
+            metadata.adapter == "cargo_test"
                 && metadata.kind == "test"
                 && metadata.no_run != Some(true)
         });

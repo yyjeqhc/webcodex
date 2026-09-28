@@ -1520,6 +1520,7 @@ fn runner_register_capabilities(cfg: &RunnerConfig) -> RunnerCapabilities {
     // the current machine-readable JSON argv. Do not trust static config or
     // infer this from generic structured validation support.
     capabilities.structured_go_test_json = true;
+    capabilities.project_validation_v1 = true;
     // This binary also understands the first-class go_test durable metadata
     // identity. Keep this independent from JSON parsing so an old Runner that
     // supported Connector Go evidence cannot be mistaken for a first-class

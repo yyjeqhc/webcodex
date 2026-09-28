@@ -278,6 +278,7 @@ pub fn generated_runner_config_toml(opts: &RunnerInitOptions) -> Result<String, 
             // The running binary advertises this process-lifetime protocol
             // capability after installing its exact Go argv boundary.
             structured_go_test_json: false,
+            project_validation_v1: false,
             // Like JSON parsing, first-class durable go_test support is
             // advertised by the running binary, never by generated static config.
             structured_go_test_tool: false,

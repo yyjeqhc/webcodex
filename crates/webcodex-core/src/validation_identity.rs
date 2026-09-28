@@ -21,12 +21,13 @@ pub enum ToolValidationIdentityKind {
     CargoCheck,
     CargoTest,
     GoTest,
+    Project,
 }
 
 impl ToolValidationIdentityKind {
     pub const fn tool_name(self) -> Option<&'static str> {
         match self {
-            Self::None => None,
+            Self::None | Self::Project => None,
             Self::CargoFmt => Some("cargo_fmt"),
             Self::CargoCheck => Some("cargo_check"),
             Self::CargoTest => Some("cargo_test"),
@@ -178,7 +179,7 @@ pub fn structured_validation_target_identity(
                 "packages": packages,
             })
         }
-        ToolValidationIdentityKind::None => return None,
+        ToolValidationIdentityKind::None | ToolValidationIdentityKind::Project => return None,
     };
     // `serde_json::Map` switches from sorted-map semantics to insertion-order
     // semantics when any workspace dependency enables `preserve_order`.

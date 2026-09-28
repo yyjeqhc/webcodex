@@ -668,6 +668,8 @@ impl ShellJobActivity {
 /// protocol metadata; it is not a model input and never contains shell text.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ShellJobValidationMetadata {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_validation: Option<crate::project_validation::ProjectValidationProvenance>,
     pub tool: String,
     pub kind: String,
     pub steps: Vec<ShellJobValidationStep>,
@@ -698,7 +700,7 @@ pub struct ShellJobValidationMetadata {
 
 impl ShellJobValidationMetadata {
     pub fn is_valid(&self) -> bool {
-        if self.adapter != self.tool
+        if (self.tool != "project_validate" && self.adapter != self.tool)
             || self.steps.len() != 1
             || !self.steps[0].is_canonical()
             || self.effective_timeout_secs < 1
@@ -719,10 +721,14 @@ impl ShellJobValidationMetadata {
         {
             return false;
         }
-        if self.minimum_tests.is_some() && self.tool != "cargo_test" {
+        if self.minimum_tests.is_some()
+            && !matches!(self.adapter.as_str(), "cargo_test" | "go_test")
+        {
             return false;
         }
-        if (self.require_tests.is_some() || self.no_run.is_some()) && self.tool != "cargo_test" {
+        if (self.require_tests.is_some() || self.no_run.is_some())
+            && !matches!(self.adapter.as_str(), "cargo_test" | "go_test")
+        {
             return false;
         }
         if self.no_run == Some(true) && self.minimum_tests.is_some() {
@@ -733,8 +739,29 @@ impl ShellJobValidationMetadata {
         {
             return false;
         }
+        if self.tool == "project_validate" {
+            let Some(provenance) = &self.project_validation else {
+                return false;
+            };
+            if !provenance.is_valid()
+                || provenance.request.action.kind() != self.kind
+                || !matches!(
+                    (provenance.backend.as_str(), self.adapter.as_str()),
+                    ("rust", "cargo_fmt" | "cargo_check" | "cargo_test")
+                        | ("go", "go_vet" | "go_test")
+                )
+                || (self.kind == "test"
+                    && (self.require_tests != Some(true)
+                        || self.minimum_tests != Some(1)
+                        || self.no_run.is_some()))
+            {
+                return false;
+            }
+        } else if self.project_validation.is_some() {
+            return false;
+        }
         let step = &self.steps[0];
-        match self.tool.as_str() {
+        match self.adapter.as_str() {
             "cargo_fmt" => {
                 self.kind == "format" && step.name == "format" && step.program == "cargo"
             }
@@ -743,6 +770,7 @@ impl ShellJobValidationMetadata {
             }
             "cargo_test" => self.kind == "test" && step.name == "test" && step.program == "cargo",
             "go_test" => self.kind == "test" && step.is_structured_go_test_json(),
+            "go_vet" => self.kind == "check" && step.name == "check" && step.program == "go",
             _ => false,
         }
     }

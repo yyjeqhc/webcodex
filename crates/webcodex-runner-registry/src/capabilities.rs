@@ -36,6 +36,7 @@ pub enum RunnerFeature {
     StructuredCargoTestExecutionPolicy,
     StructuredCargoTestLib,
     StructuredCargoCheckPackages,
+    ProjectValidation,
     StructuredGoTestJson,
     StructuredGoTestTool,
     StructuredGoTestPackages,
@@ -111,6 +112,7 @@ const ALL_RUNNER_FEATURES: &[RunnerFeature] = &[
     RunnerFeature::StructuredCargoTestExecutionPolicy,
     RunnerFeature::StructuredCargoTestLib,
     RunnerFeature::StructuredCargoCheckPackages,
+    RunnerFeature::ProjectValidation,
     RunnerFeature::StructuredGoTestJson,
     RunnerFeature::StructuredGoTestTool,
     RunnerFeature::StructuredGoTestPackages,
@@ -236,6 +238,7 @@ impl RunnerFeature {
             Self::StructuredCargoCheckPackages => {
                 wire::RUNNER_CAPABILITY_STRUCTURED_CARGO_CHECK_PACKAGES
             }
+            Self::ProjectValidation => wire::RUNNER_CAPABILITY_PROJECT_VALIDATION,
             Self::StructuredGoTestJson => wire::RUNNER_CAPABILITY_STRUCTURED_GO_TEST_JSON,
             Self::StructuredGoTestTool => wire::RUNNER_CAPABILITY_STRUCTURED_GO_TEST_TOOL,
             Self::StructuredGoTestPackages => wire::RUNNER_CAPABILITY_STRUCTURED_GO_TEST_PACKAGES,
@@ -335,6 +338,7 @@ impl RunnerFeature {
             wire::RUNNER_CAPABILITY_STRUCTURED_CARGO_CHECK_PACKAGES => {
                 Self::StructuredCargoCheckPackages
             }
+            wire::RUNNER_CAPABILITY_PROJECT_VALIDATION => Self::ProjectValidation,
             wire::RUNNER_CAPABILITY_STRUCTURED_GO_TEST_JSON => Self::StructuredGoTestJson,
             wire::RUNNER_CAPABILITY_STRUCTURED_GO_TEST_TOOL => Self::StructuredGoTestTool,
             wire::RUNNER_CAPABILITY_STRUCTURED_GO_TEST_PACKAGES => Self::StructuredGoTestPackages,
@@ -417,7 +421,8 @@ impl RunnerFeature {
             | Self::LspCallHierarchy
             | Self::ProjectLifecycle
             | Self::ProjectPathRegistration => RunnerFeatureInference::GenerationEligible,
-            Self::Shell
+            Self::ProjectValidation
+            | Self::Shell
             | Self::ExplicitShellSelection
             | Self::BashLoginShell
             | Self::Git
@@ -510,6 +515,7 @@ impl RunnerFeature {
             }
             Self::StructuredCargoTestLib => capabilities.structured_cargo_test_lib,
             Self::StructuredCargoCheckPackages => capabilities.structured_cargo_check_packages,
+            Self::ProjectValidation => capabilities.project_validation_v1,
             Self::StructuredGoTestJson => capabilities.structured_go_test_json,
             Self::StructuredGoTestTool => capabilities.structured_go_test_tool,
             Self::StructuredGoTestPackages => capabilities.structured_go_test_packages,

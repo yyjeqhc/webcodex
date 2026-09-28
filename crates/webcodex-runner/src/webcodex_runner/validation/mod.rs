@@ -8,6 +8,7 @@
 
 mod execute;
 mod path;
+pub(crate) mod project;
 mod pyright;
 mod registry;
 
@@ -211,3 +212,6 @@ pub(crate) fn base_response(
 #[cfg(test)]
 #[path = "tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod project_tests;

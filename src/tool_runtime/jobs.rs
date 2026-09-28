@@ -615,7 +615,7 @@ pub(crate) fn validation_job_projection_with_policy(
             value["tests_passed"] = json!(evidence.tests_passed);
             value["tests_failed"] = json!(evidence.tests_failed);
             value["zero_tests_run"] = json!(evidence.zero_tests_run);
-            if tool == "cargo_test" && process_passed {
+            if matches!(tool, "cargo_test" | "go_test") && process_passed {
                 if let Some(minimum_tests) = minimum_tests {
                     let (status, reason_code) = match evidence.tests_run_count {
                         Some(actual) if actual >= minimum_tests => ("passed", "minimum_satisfied"),
@@ -864,7 +864,7 @@ impl ToolRuntime {
         }
 
         let tool = metadata
-            .map(|metadata| metadata.tool.as_str())
+            .map(|metadata| metadata.adapter.as_str())
             .or_else(|| {
                 job.structured_execution
                     .as_ref()
@@ -925,6 +925,7 @@ impl ToolRuntime {
             metadata.and_then(|metadata| metadata.validation_target_id.as_deref())
         {
             validation["validation_target_id"] = json!(target_id);
+            annotate_project_validation(&mut validation, metadata);
         }
 
         let source_state = match job.project_id.as_deref().filter(|value| !value.is_empty()) {
@@ -1607,7 +1608,7 @@ impl ToolRuntime {
                     add_command_preview_metadata(&mut output, job.command_preview.clone());
                 }
                 let validation_metadata = job.validation.as_ref();
-                let tool = validation_metadata.map(|metadata| metadata.tool.as_str());
+                let tool = validation_metadata.map(|metadata| metadata.adapter.as_str());
                 let kind = validation_metadata.map(|metadata| metadata.kind.as_str());
                 if tool.is_some() {
                     let logs = self
@@ -1663,6 +1664,7 @@ impl ToolRuntime {
                             job.project_id.as_deref().unwrap_or_default(),
                             validation_metadata.and_then(|metadata| metadata.source_fence.as_ref()),
                         ));
+                        annotate_project_validation(&mut validation, validation_metadata);
                         output["validation"] = validation;
                     }
                 }
@@ -1746,7 +1748,7 @@ impl ToolRuntime {
                 let validation_tool = job
                     .validation
                     .as_ref()
-                    .map(|metadata| metadata.tool.as_str());
+                    .map(|metadata| metadata.adapter.as_str());
                 let validation_kind = job
                     .validation
                     .as_ref()
@@ -1769,6 +1771,7 @@ impl ToolRuntime {
                     job.validation.as_ref().and_then(|metadata| metadata.no_run),
                 );
                 if let Some(validation) = validation.as_mut() {
+                    annotate_project_validation(validation, job.validation.as_ref());
                     validation["source_state"] = json!(self.validation_sources.observe(
                         job.project_id.as_deref().unwrap_or_default(),
                         job.validation
@@ -2938,5 +2941,19 @@ mod recovery_projection_tests {
             value.get("command").is_none(),
             "summary must not surface command"
         );
+    }
+}
+
+fn annotate_project_validation(
+    value: &mut Value,
+    metadata: Option<&crate::runner_protocol::ShellJobValidationMetadata>,
+) {
+    if let Some(metadata) = metadata {
+        if let Some(provenance) = &metadata.project_validation {
+            value["tool"] = json!(metadata.tool);
+            value["backend"] = json!(provenance.backend);
+            value["action"] = json!(provenance.request.action);
+            value["adapter"] = json!(metadata.adapter);
+        }
     }
 }

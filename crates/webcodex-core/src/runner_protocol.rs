@@ -243,6 +243,8 @@ pub const RUNNER_CAPABILITY_STRUCTURED_CARGO_CHECK_PACKAGES: &str =
 /// The Runner accepts the canonical machine-readable `go test -json` validation
 /// shape. Older implementations may support only the historical fixed `./...`
 /// scope; expanded caller-selected packages are fenced separately.
+pub const RUNNER_CAPABILITY_PROJECT_VALIDATION: &str = "project_validation_v1";
+
 pub const RUNNER_CAPABILITY_STRUCTURED_GO_TEST_JSON: &str = "structured_go_test_json";
 /// The Runner understands the first-class model-facing `go_test` tool identity
 /// and its durable `ShellJobValidationMetadata` contract. This is deliberately
@@ -656,6 +658,8 @@ pub struct RunnerCapabilities {
     /// an independent additive capability.
     #[serde(default, skip_serializing_if = "is_false")]
     pub structured_go_test_json: bool,
+    #[serde(default)]
+    pub project_validation_v1: bool,
     /// First-class `go_test` tool plus its durable validation metadata identity.
     /// Missing on older Runners and false; never inferred from Go JSON parsing,
     /// generic structured validation, protocol version, or executable presence.
@@ -1084,6 +1088,7 @@ impl Default for RunnerCapabilities {
             structured_cargo_test_lib: false,
             structured_cargo_check_packages: false,
             structured_go_test_json: false,
+            project_validation_v1: false,
             structured_go_test_tool: false,
             structured_go_test_packages: false,
             structured_process_argv: false,
@@ -2675,6 +2680,7 @@ mod envelope_tests {
                 structured_cargo_test_lib: true,
                 structured_cargo_check_packages: true,
                 structured_go_test_json: true,
+                project_validation_v1: false,
                 structured_go_test_tool: true,
                 structured_go_test_packages: true,
                 structured_process_argv: true,
@@ -4429,6 +4435,7 @@ mod filter_canonical_tests {
         step: ShellJobValidationStep,
     ) -> ShellJobValidationMetadata {
         ShellJobValidationMetadata {
+            project_validation: None,
             source_fence: None,
             tool: tool.to_string(),
             kind: kind.to_string(),

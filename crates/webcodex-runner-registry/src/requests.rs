@@ -2549,6 +2549,46 @@ impl RunnerRegistry {
     /// Enqueue a typed read-only LSP navigation request. Never falls through
     /// to shell execution: the Runner dispatches exclusively on `kind = "lsp"`
     /// with a structured `lsp` payload.
+    pub async fn enqueue_project_validation_plan(
+        &self,
+        client_id: String,
+        payload: webcodex_core::project_validation::ProjectValidationRequest,
+        access: Option<&crate::RunnerAccess>,
+    ) -> Result<(String, oneshot::Receiver<ShellRunResponse>), String> {
+        payload.validate()?;
+        let request_id = next_request_id();
+        let (tx, rx) = oneshot::channel();
+        let request = encode_runner_operation(
+            &request_id,
+            &client_id,
+            "tool_runtime".into(),
+            RunnerOperation::PlanProjectValidation(payload),
+        )?;
+        let mut inner = self.inner.lock().await;
+        self.prune_expired_shared_key_runners_locked(&mut inner, now_ts());
+        let runner = inner.runners.get(&client_id).ok_or("unknown Runner")?;
+        assert_runner_access(access, runner)?;
+        if !runner
+            .runner_features
+            .supports(RunnerFeature::ProjectValidation)
+        {
+            return Err(
+                "capability_unavailable: upgrade target Runner for project_validation_v1".into(),
+            );
+        }
+        enqueue_pending_request_locked(
+            self.telemetry.as_ref(),
+            &mut inner,
+            &client_id,
+            request_id.clone(),
+            request,
+            Some(tx),
+            None,
+        )?;
+        notify_runner_locked(&inner, &client_id);
+        Ok((request_id, rx))
+    }
+
     pub async fn enqueue_lsp(
         &self,
         client_id: String,

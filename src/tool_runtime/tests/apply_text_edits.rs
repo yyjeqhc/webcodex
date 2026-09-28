@@ -1086,6 +1086,12 @@ async fn apply_text_edits_success_mints_final_revisions_and_continues_without_re
         },
         guarded_edit("noop.txt", noop_revision, "same", "same"),
     ];
+    let projection = dispatch::ModelFacingProjectionPlan::capture(&ToolCall::ApplyTextEdits {
+        project: project.clone(),
+        changes: changes.clone(),
+        dry_run: None,
+        session_id: None,
+    });
     let task = tokio::spawn({
         let runtime = runtime.clone();
         let project = project.clone();
@@ -1147,6 +1153,31 @@ async fn apply_text_edits_success_mints_final_revisions_and_continues_without_re
     );
     assert_eq!(audit["files"][0]["old_sha256"], edit_old);
     assert_eq!(audit["files"][0]["new_sha256"], edit_new);
+
+    let mut model = ToolResult::ok(result.output.clone());
+    projection.project(&mut model);
+    for (canonical, projected) in files.iter().zip(model.output["files"].as_array().unwrap()) {
+        for key in [
+            "index",
+            "kind",
+            "path",
+            "to_path",
+            "changed",
+            "would_change",
+            "read_revision",
+            "edits",
+        ] {
+            assert_eq!(projected[key], canonical[key], "{key}");
+        }
+    }
+    assert_eq!(model.output["files"][2]["to_path"], "renamed.txt");
+    assert_eq!(model.output["files"][3]["kind"], "delete");
+    assert_eq!(model.output["files"][4]["changed"], false);
+    startup_brief::validate_schema_instance_for_test(
+        &serde_json::to_value(&model).unwrap(),
+        &registry::output_schema_for_tool("edit_project_files"),
+    )
+    .unwrap();
 
     let edit_continuation = guarded_edit("edit.txt", edit_final_revision, "new", "newer");
     let continuation_task = tokio::spawn({
@@ -2209,7 +2240,7 @@ async fn apply_text_edits_session_event_summary() {
     session_change.expected_read_revision = Some(revision);
     let task = tokio::spawn(async move {
         runtime_for_task
-            .dispatch_with_auth(
+            .dispatch_with_auth_transport_options_and_metadata_with_recording_mode_and_context_with_result_projection(
                 ToolCall::ApplyTextEdits {
                     project: project_for_task,
                     changes: vec![session_change],
@@ -2217,6 +2248,14 @@ async fn apply_text_edits_session_event_summary() {
                     session_id: Some(session_id),
                 },
                 Some(&bootstrap),
+                sessions::SessionTransport::Api,
+                Default::default(),
+                None,
+                true,
+                Vec::new(),
+                Default::default(),
+                Default::default(),
+                super::super::return_timing::ToolReturnTimingPolicy::unconstrained(),
             )
             .await
     });
@@ -2234,12 +2273,18 @@ async fn apply_text_edits_session_event_summary() {
                 serde_json::json!({
                     "dry_run": false,
                     "applied_count": 1,
+                    "planned_count": 1,
+                    "ignored_noop_count": 0,
+                    "change_summary": {"requested_changes":1,"changed_files":1,"logical_edits":1,"resolved_matches":1,"warnings":0},
                     "changed": true,
                     "would_change": true,
                     "files": [{
                         "index": 0, "kind": "edit", "path": "src/lib.rs", "to_path": null,
                         "old_sha256": "a".repeat(64), "new_sha256": "b".repeat(64),
-                        "changed": true, "would_change": true, "edits": []
+                        "changed": true, "would_change": true, "edits": [{
+                            "index":0,"kind":"replace_exact","old_start_line":1,"old_end_line":1,
+                            "new_line_count":1,"would_change":true
+                        }]
                     }],
                     "changed_paths": ["src/lib.rs"]
                 })
@@ -2254,7 +2299,58 @@ async fn apply_text_edits_session_event_summary() {
         .await
         .unwrap();
 
-    let result = task.await.unwrap();
+    let (mut result, projection, _) = task.await.unwrap();
+    let before = serde_json::to_vec(&result).unwrap().len();
+    let mut previous_projection = serde_json::to_value(&result).unwrap();
+    for file in previous_projection["output"]["files"]
+        .as_array_mut()
+        .unwrap()
+    {
+        file.as_object_mut().unwrap().remove("old_sha256");
+        file.as_object_mut().unwrap().remove("new_sha256");
+    }
+    let previous_bytes = serde_json::to_vec(&previous_projection).unwrap().len();
+    let mut telemetry =
+        super::super::model_ergonomics_telemetry::ModelErgonomicsTimer::start_with_arguments(
+            "edit_project_files",
+            &serde_json::json!({}),
+        )
+        .unwrap();
+    telemetry.capture_canonical_result(&result);
+    let telemetry = telemetry.finish();
+    let mut canonical_metrics =
+        serde_json::to_value(telemetry.record_for_tool_result(&result).unwrap()).unwrap();
+    projection.project(&mut result);
+    let model_metrics =
+        serde_json::to_value(telemetry.record_for_tool_result(&result).unwrap()).unwrap();
+    assert_eq!(canonical_metrics["edit_outcome"], "applied");
+    assert_eq!(
+        model_metrics["edit_outcome"],
+        canonical_metrics["edit_outcome"]
+    );
+    canonical_metrics["serialized_result_bytes"] = model_metrics["serialized_result_bytes"].clone();
+    assert_eq!(canonical_metrics, model_metrics);
+    let after = serde_json::to_vec(&result).unwrap().len();
+    eprintln!("edit_success: {before} -> {after} bytes");
+    assert!(after < before);
+    eprintln!("edit_round2_incremental: {previous_bytes} -> {after} bytes");
+    assert!(after < previous_bytes);
+    assert_eq!(
+        result.output["change_summary"],
+        previous_projection["output"]["change_summary"]
+    );
+    assert_eq!(result.output["ignored_noop_count"], 0);
+    for key in [
+        "dry_run",
+        "execution_state",
+        "state_changed",
+        "would_change",
+        "applied_count",
+        "planned_count",
+    ] {
+        assert!(result.output.get(key).is_none(), "{key}");
+    }
+
     assert!(result.success, "{:?}", result.error);
     assert_eq!(result.output["changed"], true);
     assert_eq!(result.output["changed_paths"][0], "src/lib.rs");
@@ -2575,5 +2671,63 @@ async fn apply_text_edits_path_overlap_identifies_first_and_current_changes() {
             &crate::tool_runtime::registry::output_schema_for_tool("edit_project_files"),
         )
         .unwrap();
+    }
+}
+
+#[test]
+fn edit_project_files_projection_preserves_identity_and_nonhappy_results() {
+    let call = ToolCall::from_tool_name(
+        "edit_project_files",
+        serde_json::json!({
+            "project":"demo", "changes":[{"kind":"create", "path":"new.rs", "content":"x"}]
+        }),
+    )
+    .unwrap();
+    let canonical = serde_json::json!({
+        "dry_run":false, "execution_state":"completed", "state_changed":true,
+        "changed":true, "would_change":true, "applied_count":1, "planned_count":1,
+        "changed_paths":["new.rs"], "files":[{
+            "index":0,"kind":"create","path":"new.rs","to_path":null,
+            "changed":true,"would_change":true,"read_revision":42,"edits":[]
+        }]
+    });
+    let schema = registry::output_schema_for_tool("edit_project_files");
+    let validate = |result: &ToolResult| {
+        startup_brief::validate_schema_instance_for_test(
+            &serde_json::to_value(result).unwrap(),
+            &schema,
+        )
+    };
+    let mut result = ToolResult::ok(canonical.clone());
+    validate(&result).unwrap();
+    dispatch::ModelFacingProjectionPlan::capture(&call).project(&mut result);
+    validate(&result).unwrap();
+    assert_eq!(result.output["files"], canonical["files"]);
+    let mut malformed = ToolResult::ok(result.output.clone());
+    malformed.output["dry_run"] = serde_json::json!(false);
+    assert!(
+        validate(&malformed).is_err(),
+        "hybrid success must be rejected"
+    );
+    for (key, value) in [
+        ("dry_run", serde_json::json!(true)),
+        ("execution_state", serde_json::json!("outcome_unknown")),
+        ("state_changed", serde_json::json!(false)),
+        ("would_change", serde_json::json!(false)),
+        ("applied_count", serde_json::json!(0)),
+        ("planned_count", serde_json::json!(2)),
+    ] {
+        let mut result = ToolResult::ok(canonical.clone());
+        result.output[key] = value;
+        let before = result.output.clone();
+        dispatch::ModelFacingProjectionPlan::capture(&call).project(&mut result);
+        assert_eq!(result.output, before, "{key}");
+    }
+    for state in ["not_started", "completed", "outcome_unknown"] {
+        let mut result = ToolResult::err_with_output("edit rejected", canonical.clone());
+        result.output["execution_state"] = serde_json::json!(state);
+        let before = result.output.clone();
+        dispatch::ModelFacingProjectionPlan::capture(&call).project(&mut result);
+        assert_eq!(result.output, before);
     }
 }

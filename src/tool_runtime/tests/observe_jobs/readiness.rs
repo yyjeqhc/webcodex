@@ -9,16 +9,47 @@ async fn ready(
     secs: u64,
     auth: &crate::auth::AuthContext,
 ) -> ToolResult {
-    runtime
-        .dispatch_with_auth(
-            ToolCall::WaitForJobReadiness {
-                job_ids: ids,
-                mode,
-                wait_secs: secs,
-            },
-            Some(auth),
-        )
-        .await
+    let start = tokio::time::Instant::now();
+    let (mut result, projection, _) = runtime
+        .dispatch_with_auth_transport_options_and_metadata_with_recording_mode_and_context_with_result_projection(
+            ToolCall::WaitForJobReadiness { job_ids: ids, mode, wait_secs: secs },
+            Some(auth), sessions::SessionTransport::Api, Default::default(), None, true,
+            Vec::new(), Default::default(), Default::default(),
+            super::super::super::return_timing::ToolReturnTimingPolicy::unconstrained(),
+        ).await;
+    let schema = registry::output_schema_for_tool("wait_for_job_readiness");
+    startup_brief::validate_schema_instance_for_test(
+        &serde_json::to_value(&result).unwrap(),
+        &schema,
+    )
+    .unwrap();
+    let before = serde_json::to_vec(&result).unwrap().len();
+    if result.success {
+        assert!(result.output["waited_ms"].as_u64().unwrap() <= start.elapsed().as_millis() as u64);
+    }
+    let canonical = result.output.clone();
+    projection.project(&mut result);
+    if result.success {
+        let after = serde_json::to_vec(&result).unwrap().len();
+        eprintln!(
+            "readiness_{}_{mode:?}: {before} -> {after} bytes",
+            result.output["wait_state"]
+        );
+        assert!(after < before);
+        assert!(result.output.get("mode").is_none());
+        assert!(result.output.get("waited_ms").is_none());
+        for key in ["wait_state", "ready", "pending_job_ids"] {
+            assert_eq!(result.output[key], canonical[key]);
+        }
+    } else {
+        assert_eq!(result.output, canonical);
+    }
+    startup_brief::validate_schema_instance_for_test(
+        &serde_json::to_value(&result).unwrap(),
+        &schema,
+    )
+    .unwrap();
+    result
 }
 
 #[tokio::test(start_paused = true)]
@@ -51,7 +82,7 @@ async fn readiness_already_terminal_sparse_and_stable_dedup() {
     assert_eq!(tokio::time::Instant::now(), before);
     assert_eq!(
         result.output,
-        json!({"wait_state":"ready", "mode":"all", "waited_ms":0,
+        json!({"wait_state":"ready",
         "ready":[{"job_id":a,"status":"completed","outcome":"succeeded"},{"job_id":b,"status":"completed","outcome":"succeeded"}],"pending_job_ids":[]})
     );
 }
@@ -86,7 +117,7 @@ async fn readiness_runtime_dogfood_any_consumes_a_before_b_without_redispatch() 
     assert_eq!(result.output["wait_state"], "ready");
     assert_eq!(result.output["ready"][0]["job_id"], a);
     assert_eq!(result.output["pending_job_ids"], json!([b]));
-    assert_eq!(result.output["waited_ms"], 7314);
+    assert!(result.output.get("waited_ms").is_none());
     // Consume A-dependent state in the same executor activation.
     let consumed_a = runtime
         .runner_registry
@@ -141,7 +172,7 @@ async fn readiness_all_retains_remaining_wait_and_progress_never_resets_deadline
     let result = wait.await;
     assert!(result.success);
     assert_eq!(result.output["wait_state"], "deadline");
-    assert_eq!(result.output["waited_ms"], 4000);
+    assert!(result.output.get("waited_ms").is_none());
     assert_eq!(result.output["ready"][0]["job_id"], a);
     assert_eq!(result.output["pending_job_ids"], json!([b]));
 }
@@ -242,7 +273,7 @@ async fn readiness_cancel_drops_transient_wait_but_job_survives_runtime_recreati
     let restarted = ToolRuntime::new(registry, Arc::new(RuntimeInfo::default()));
     let result = ready(&restarted, vec![id], Any, 1, &auth).await;
     assert_eq!(result.output["wait_state"], "ready");
-    assert_eq!(result.output["waited_ms"], 0);
+    assert!(result.output.get("waited_ms").is_none());
 }
 
 #[tokio::test(start_paused = true)]
@@ -268,7 +299,7 @@ async fn readiness_terminal_between_snapshot_and_registration_is_not_lost() {
     };
     let (result, ()) = tokio::join!(wait, transition);
     assert_eq!(result.output["wait_state"], "ready");
-    assert_eq!(result.output["waited_ms"], 0);
+    assert!(result.output.get("waited_ms").is_none());
 }
 
 #[tokio::test]
@@ -292,4 +323,83 @@ async fn readiness_logical_identity_excludes_detached_instance_but_not_owner() {
         source_from_snapshot(&snapshot),
         source_from_snapshot(&transferred)
     );
+}
+
+#[tokio::test(start_paused = true)]
+async fn readiness_kernel_preserves_canonical_telemetry_after_projection() {
+    let runtime = test_runtime();
+    let (a, request, auth) = register_and_start_agent_job(&runtime, "readiness-telemetry").await;
+    update_observed_job(
+        &runtime,
+        "readiness-telemetry",
+        &request,
+        "completed",
+        None,
+        None,
+        true,
+    )
+    .await;
+    let outcome = runtime
+        .call_tool_with_context(
+            ToolCallRequest {
+                tool_name: "wait_for_job_readiness".to_string(),
+                arguments: json!({"job_ids":[a.clone(), a], "mode":"all", "wait_secs":12}),
+            },
+            ToolCallContext {
+                transport: ToolTransport::Api,
+                session_id: None,
+                auth: Some(&auth),
+                window: None,
+                record_oauth_scope_denials: true,
+                host_file_import_trust: HostFileImportTrust::Untrusted,
+            },
+        )
+        .await;
+    let result = outcome.result.unwrap();
+    assert!(result.success, "{:?}", result.error);
+    assert!(result.output.get("mode").is_none());
+    assert!(result.output.get("waited_ms").is_none());
+    let completion = outcome.model_ergonomics.unwrap();
+    let record = serde_json::to_value(completion.record_for_tool_result(&result).unwrap()).unwrap();
+    assert_eq!(
+        record["readiness"],
+        json!({"mode":"all", "wait_state":"ready", "waited_ms":0,
+        "requested_jobs":2, "unique_jobs":1, "ready_count":1, "pending_count":0})
+    );
+    assert_eq!(
+        record["serialized_result_bytes"],
+        serde_json::to_vec(&result).unwrap().len()
+    );
+    let structured = serde_json::to_value(&result).unwrap();
+    assert_eq!(
+        serde_json::to_value(
+            completion
+                .record_for_structured_content(&structured)
+                .unwrap()
+        )
+        .unwrap()["readiness"],
+        record["readiness"]
+    );
+    let schema = registry::output_schema_for_tool("wait_for_job_readiness");
+    startup_brief::validate_schema_instance_for_test(&structured, &schema).unwrap();
+    for key in [
+        "mode",
+        "waited_ms",
+        "wait_state",
+        "ready",
+        "pending_job_ids",
+    ] {
+        let mut malformed = structured.clone();
+        if key == "mode" {
+            malformed["output"][key] = json!("all");
+        } else if key == "waited_ms" {
+            malformed["output"][key] = json!(0);
+        } else {
+            malformed["output"].as_object_mut().unwrap().remove(key);
+        }
+        assert!(
+            startup_brief::validate_schema_instance_for_test(&malformed, &schema).is_err(),
+            "{key}"
+        );
+    }
 }

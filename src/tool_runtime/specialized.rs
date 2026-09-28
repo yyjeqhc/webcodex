@@ -56,6 +56,7 @@ pub(crate) async fn try_dispatch_specialized_gateway(
                 error_status: Some(ToolCallErrorStatus::InvalidArguments { message }),
                 project: None,
                 model_ergonomics: None,
+                canonical_audit_output: None,
                 correlation: Default::default(),
             });
         }
@@ -140,6 +141,7 @@ pub(crate) async fn try_dispatch_specialized_gateway(
                 error_status: None,
                 project: None,
                 model_ergonomics: None,
+                canonical_audit_output: None,
                 correlation,
             }
         }
@@ -149,6 +151,7 @@ pub(crate) async fn try_dispatch_specialized_gateway(
             error_status: None,
             project: None,
             model_ergonomics: None,
+            canonical_audit_output: None,
             correlation: Default::default(),
         },
         Err(SpecializedGovernanceDenial::Scope {
@@ -163,6 +166,7 @@ pub(crate) async fn try_dispatch_specialized_gateway(
             }),
             project: None,
             model_ergonomics: None,
+            canonical_audit_output: None,
             correlation: Default::default(),
         },
     })

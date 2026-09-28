@@ -31,7 +31,7 @@ fn snapshot(
 fn assert_schema(item: &Value) {
     let schema = crate::tool_runtime::registry::output_schema_for_tool("cargo_check");
     let schema = &schema["properties"]["output"]["properties"]["job_attention"];
-    let attention = json!({"changed": true, "items": [item]});
+    let attention = json!({"items": [item]});
     crate::tool_runtime::startup_brief::validate_schema_instance_for_test(&attention, schema)
         .unwrap();
 }
@@ -381,7 +381,7 @@ fn passive_success_keeps_test_and_source_evidence_without_repeating_terminal_tru
         ))
         .unwrap();
         let after_bytes = crate::json_measurement::serialized_json_len(&ToolResult::ok(
-            json!({"job_attention":{"changed":true,"items":[item]}}),
+            json!({"job_attention":{"items":[item]}}),
         ))
         .unwrap();
         eprintln!(

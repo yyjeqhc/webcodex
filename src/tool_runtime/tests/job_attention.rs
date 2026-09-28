@@ -29,6 +29,30 @@ async fn attention(
             Some(auth),
         )
         .await;
+    if let Some(sidecar) = result.output.get("job_attention") {
+        assert!(sidecar.get("changed").is_none());
+        assert!(!sidecar["items"].as_array().unwrap().is_empty());
+        let after = serde_json::to_vec(&result).unwrap().len();
+        let mut previous = serde_json::to_value(&result).unwrap();
+        previous["output"]["job_attention"]["changed"] = json!(true);
+        let before = serde_json::to_vec(&previous).unwrap().len();
+        eprintln!("job_attention: {before} -> {after} bytes");
+        assert_eq!(before - after, 15);
+        let schema = crate::tool_runtime::registry::output_schema_for_tool("git_status");
+        crate::tool_runtime::startup_brief::validate_schema_instance_for_test(
+            &serde_json::to_value(&result).unwrap(),
+            &schema,
+        )
+        .unwrap();
+        let sidecar_schema = &schema["properties"]["output"]["properties"]["job_attention"];
+        assert!(
+            crate::tool_runtime::startup_brief::validate_schema_instance_for_test(
+                &json!({"items":[]}),
+                sidecar_schema
+            )
+            .is_err()
+        );
+    }
     result
 }
 

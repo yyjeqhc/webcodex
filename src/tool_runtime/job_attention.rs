@@ -211,10 +211,7 @@ impl JobAttentionCursor {
             if output.contains_key("job_attention") {
                 return;
             }
-            output.insert(
-                "job_attention".to_string(),
-                json!({"changed": true, "items": items}),
-            );
+            output.insert("job_attention".to_string(), json!({"items": items}));
             if !crate::json_measurement::serialized_json_len(result).is_ok_and(|size| {
                 size <= webcodex_workspace::file_read_range::MAX_SERIALIZED_OUTPUT_BYTES
             }) {

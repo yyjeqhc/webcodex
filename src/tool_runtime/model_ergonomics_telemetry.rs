@@ -92,6 +92,8 @@ pub(crate) struct ModelErgonomicsTimer {
     pub(crate) instruction_read: Option<invocation::InstructionReadFacts>,
     bulk_exact_requested: bool,
     readiness_requested_jobs: Option<usize>,
+    readiness: Option<JobReadinessTelemetry>,
+    edit: Option<EditFacts>,
 }
 
 #[derive(Debug, Clone)]
@@ -105,6 +107,8 @@ pub(crate) struct ModelErgonomicsCompletion {
     pub(crate) instruction_read: Option<invocation::InstructionReadFacts>,
     bulk_exact_requested: bool,
     readiness_requested_jobs: Option<usize>,
+    readiness: Option<JobReadinessTelemetry>,
+    edit: Option<EditFacts>,
     pub(crate) job_convergence: Option<job_convergence::JobConvergenceRecord>,
 }
 
@@ -270,6 +274,8 @@ impl ModelErgonomicsTimer {
                 tool_name, arguments,
             ),
             bulk_exact_requested,
+            readiness: None,
+            edit: None,
             readiness_requested_jobs: (tool_name == "wait_for_job_readiness")
                 .then(|| {
                     arguments
@@ -279,6 +285,18 @@ impl ModelErgonomicsTimer {
                 })
                 .flatten(),
         })
+    }
+
+    /// Preserve canonical edit and readiness facts before the late model projection.
+    pub(crate) fn capture_canonical_result(&mut self, result: &ToolResult) {
+        self.readiness = readiness_telemetry(
+            self.readiness_requested_jobs,
+            result.success,
+            &result.output,
+        );
+        if self.tool_name == "edit_project_files" && result.success {
+            self.edit = Some(edit_facts(self.tool_name, result.success, &result.output));
+        }
     }
 
     pub(crate) fn finish(self) -> ModelErgonomicsCompletion {
@@ -294,6 +312,8 @@ impl ModelErgonomicsTimer {
             instruction_read: self.instruction_read.clone(),
             bulk_exact_requested: self.bulk_exact_requested,
             readiness_requested_jobs: self.readiness_requested_jobs,
+            readiness: self.readiness,
+            edit: self.edit,
             job_convergence: None,
         }
     }
@@ -311,6 +331,8 @@ impl ModelErgonomicsTimer {
             instruction_read: self.instruction_read.clone(),
             bulk_exact_requested: self.bulk_exact_requested,
             readiness_requested_jobs: self.readiness_requested_jobs,
+            readiness: self.readiness,
+            edit: self.edit,
             job_convergence: None,
         }
     }
@@ -381,11 +403,21 @@ impl ModelErgonomicsCompletion {
                 recovery_kind(output),
             )
         };
-        let edit = edit_facts(self.tool_name, success, output);
+        let edit = self
+            .edit
+            .clone()
+            .filter(|_| success)
+            .unwrap_or_else(|| edit_facts(self.tool_name, success, output));
         let edit_uncertain = edit.outcome.as_deref() == Some("uncertain");
         ModelErgonomicsRecord {
             schema_version: 12,
-            readiness: readiness_telemetry(self.readiness_requested_jobs, success, output),
+            readiness: if success {
+                self.readiness
+                    .clone()
+                    .or_else(|| readiness_telemetry(self.readiness_requested_jobs, success, output))
+            } else {
+                None
+            },
             invocation: self.invocation.clone(),
             instruction_read: self.instruction_read.clone(),
             bootstrap: (self.tool_name == "work_on_project")
@@ -399,7 +431,7 @@ impl ModelErgonomicsCompletion {
             error_kind,
             failure_kind,
             recovery_kind,
-            execution_state: execution_state(output),
+            execution_state: edit.execution_state,
             finish_summary_only: self.finish_summary_only,
             edit_surface: edit.surface,
             edit_outcome: edit.outcome,
@@ -533,8 +565,9 @@ fn effective_default_true_boolean(
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct EditFacts {
+    execution_state: Option<String>,
     surface: Option<String>,
     outcome: Option<String>,
     conflict_kind: Option<String>,
@@ -543,6 +576,7 @@ struct EditFacts {
 fn edit_facts(tool_name: &str, success: bool, output: &Value) -> EditFacts {
     let surface = edit_tool_surface(tool_name).map(|surface| surface.as_str().to_string());
     let mut facts = EditFacts {
+        execution_state: execution_state(output),
         surface,
         outcome: None,
         conflict_kind: None,

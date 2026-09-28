@@ -666,7 +666,6 @@ pub(super) fn passive_job_attention_schema() -> Value {
         "additionalProperties": false,
         "description": "Changed Jobs in the exact authenticated Window/Project/Workflow Session. Passive only: never starts, retries, waits or polls.",
         "properties": {
-            "changed": {"type": "boolean", "const": true},
             "items": {
                 "type": "array",
                 "minItems": 1,
@@ -717,7 +716,7 @@ pub(super) fn passive_job_attention_schema() -> Value {
                 }
             }
         },
-        "required": ["changed", "items"]
+        "required": ["items"]
     })
 }
 

@@ -476,7 +476,7 @@ fn mcp_pending_and_success_attention_match_published_output_schema() {
     }});
     let mut result = ToolResult::ok(
         json!({"execution_state":"pending", "continuation":continuation,
-            "job_attention":{"changed":true,"items":[{"job_id":"wc_job_done","tool":"cargo_check","outcome":"passed",
+            "job_attention":{"items":[{"job_id":"wc_job_done","tool":"cargo_check","outcome":"passed",
                 "validation":{"kind":"check","source_state":{"freshness":"unproven","observed_mutation_fence":"uncrossed"}}}]}
         }),
     );

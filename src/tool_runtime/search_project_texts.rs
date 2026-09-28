@@ -1075,6 +1075,7 @@ mod tests {
     fn default_matches_item(index: usize, count: usize, preview_bytes: usize) -> Value {
         let mut item = matches_item(index, count, preview_bytes);
         let output = item["output"].as_object_mut().unwrap();
+        output.insert("pattern_mode".to_string(), json!("regex"));
         output.insert("path".to_string(), json!("."));
         output.insert("effective_timeout_secs".to_string(), json!(30));
         output.insert("exit_code".to_string(), json!(0));

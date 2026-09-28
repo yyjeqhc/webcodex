@@ -452,11 +452,24 @@ fn add_run_process_expectation_projection(
     );
 }
 
-fn apply_text_edits_model_projection(result: &mut ToolResult) {
+fn apply_text_edits_model_projection(result: &mut ToolResult, change_count: usize, dry_run: bool) {
     if !result.success {
         return;
     }
-    let Some(files) = result.output.get_mut("files").and_then(Value::as_array_mut) else {
+    // The mutation handler has already validated the Runner protocol and consumed
+    // hashes for revisions. Only a proven actual completion can omit effect echoes.
+    let output = &mut result.output;
+    let compact = !dry_run
+        && output.get("dry_run").and_then(Value::as_bool) == Some(false)
+        && output.get("execution_state").and_then(Value::as_str) == Some("completed")
+        && output.get("changed").and_then(Value::as_bool).is_some()
+        && output.get("state_changed") == output.get("changed")
+        && output.get("would_change") == output.get("changed")
+        && output.get("applied_count").and_then(Value::as_u64) == Some(change_count as u64)
+        && output
+            .get("planned_count")
+            .is_none_or(|count| count.as_u64() == Some(change_count as u64));
+    let Some(files) = output.get_mut("files").and_then(Value::as_array_mut) else {
         return;
     };
     for file in files {
@@ -465,6 +478,19 @@ fn apply_text_edits_model_projection(result: &mut ToolResult) {
         };
         file.remove("old_sha256");
         file.remove("new_sha256");
+    }
+    if compact {
+        let output = output.as_object_mut().expect("validated edit output");
+        for key in [
+            "dry_run",
+            "execution_state",
+            "state_changed",
+            "would_change",
+            "applied_count",
+            "planned_count",
+        ] {
+            output.remove(key);
+        }
     }
 }
 
@@ -508,7 +534,8 @@ enum ModelFacingProjection {
     None,
     JobHandoff,
     AgentWait,
-    ApplyTextEdits,
+    JobReadiness,
+    ApplyTextEdits { change_count: usize, dry_run: bool },
     Read(super::read_files::ReadModelProjection),
     Search(SearchModelProjection),
 }
@@ -527,7 +554,13 @@ impl ModelFacingProjectionPlan {
             ToolCall::WaitForAgentEvents { .. }
             | ToolCall::ReadAgentWait { .. }
             | ToolCall::CancelAgentWait { .. } => ModelFacingProjection::AgentWait,
-            ToolCall::ApplyTextEdits { .. } => ModelFacingProjection::ApplyTextEdits,
+            ToolCall::WaitForJobReadiness { .. } => ModelFacingProjection::JobReadiness,
+            ToolCall::ApplyTextEdits {
+                changes, dry_run, ..
+            } => ModelFacingProjection::ApplyTextEdits {
+                change_count: changes.len(),
+                dry_run: dry_run.unwrap_or(false),
+            },
             ToolCall::RunProcess { .. }
             | ToolCall::RunSkillResource { .. }
             | ToolCall::RunScript { .. }
@@ -568,10 +601,16 @@ impl ModelFacingProjectionPlan {
     pub(super) fn project(self, result: &mut ToolResult) {
         match self.projection {
             ModelFacingProjection::None => {}
+            ModelFacingProjection::JobReadiness => {
+                super::observe_jobs::sparsify_job_readiness_model_result(result)
+            }
             ModelFacingProjection::AgentWait => {
                 super::agent_wait::agent_wait_model_projection(result)
             }
-            ModelFacingProjection::ApplyTextEdits => apply_text_edits_model_projection(result),
+            ModelFacingProjection::ApplyTextEdits {
+                change_count,
+                dry_run,
+            } => apply_text_edits_model_projection(result, change_count, dry_run),
             ModelFacingProjection::JobHandoff => {
                 super::jobs::sparsify_job_handoff_model_result(result)
             }
@@ -804,7 +843,7 @@ fn sparsify_search_success_for_model(projection: &SearchModelProjection, result:
         SearchModelProjection::Batch {
             default_timeouts, ..
         } => {
-            let complete_batch =
+            let mut complete_batch =
                 output
                     .get("items")
                     .and_then(Value::as_array)
@@ -829,23 +868,27 @@ fn sparsify_search_success_for_model(projection: &SearchModelProjection, result:
             let Some(items) = output.get_mut("items").and_then(Value::as_array_mut) else {
                 return;
             };
-            for item in items {
+            for item in items.iter_mut() {
                 let Some(item) = item.as_object_mut() else {
+                    complete_batch = false;
                     continue;
                 };
                 if item.get("success").and_then(Value::as_bool) != Some(true)
                     || !item.get("error").is_some_and(Value::is_null)
                 {
+                    complete_batch = false;
                     continue;
                 }
                 let Some(index) = item.get("index").and_then(Value::as_u64) else {
+                    complete_batch = false;
                     continue;
                 };
                 let Some(search_output) = item.get_mut("output").and_then(Value::as_object_mut)
                 else {
+                    complete_batch = false;
                     continue;
                 };
-                sparsify_search_output_for_model(
+                complete_batch &= sparsify_search_output_for_model(
                     search_output,
                     default_timeouts
                         .get(index as usize)
@@ -855,6 +898,14 @@ fn sparsify_search_success_for_model(projection: &SearchModelProjection, result:
                 );
             }
             if complete_batch {
+                for item in items {
+                    let item = item
+                        .as_object_mut()
+                        .expect("validated successful search item");
+                    item.remove("success");
+                    item.remove("error");
+                }
+
                 for key in [
                     "project",
                     "requested_count",
@@ -1020,6 +1071,18 @@ pub(crate) fn sparsify_complete_read_success(tool_name: &str, result: &mut ToolR
         }
     }
     if every_item_complete {
+        for item in output
+            .get_mut("items")
+            .and_then(Value::as_array_mut)
+            .expect("validated read items")
+        {
+            let item = item
+                .as_object_mut()
+                .expect("validated successful read item");
+            item.remove("success");
+            item.remove("error");
+        }
+
         for key in [
             "project",
             "requested_count",

@@ -1523,7 +1523,11 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             "required": ["success"],
             "allOf": [{"if": {"properties": {"success": {"const": true}}}, "then": {
                 "required": ["output"],
-                "properties": {"output": {"type": "object", "required": ["wait_state", "mode", "waited_ms", "ready", "pending_job_ids"]}}
+                "properties": {"output": {"type": "object", "required": ["wait_state", "ready", "pending_job_ids"],
+                    "oneOf": [
+                        {"required": ["mode", "waited_ms"]},
+                        {"not": {"anyOf": [{"required": ["mode"]}, {"required": ["waited_ms"]}]}}
+                    ]}}
             }}]
         })),
         "observe_jobs" => Some(observe_jobs_output_schema()),

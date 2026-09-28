@@ -475,6 +475,24 @@ Do not skip directly to pruning or composition just because a trace contains man
 tool calls. First determine whether the extra calls are real model decisions or
 avoidable contract friction.
 
+### Completed result projections
+
+After canonical validation, revision/fence handling, Session recording and capture
+of audit/telemetry evidence, successful actual `edit_project_files` results omit
+`dry_run=false`, completed execution state, the two top-level effect echoes and
+applied/planned counts. `changed`, paths, summaries and per-file kind, destination,
+changed/no-op facts and final `read_revision` remain. Dry-run and exceptional
+results retain their existing detail.
+
+Complete all-success `read_files` and `search_project_texts` batches omit each
+item's `success=true` and `error=null`. Item indices still map to request order;
+read items also retain their paths. Partial, mixed, truncated and search fallback
+batches retain full item envelopes. Readiness observations omit request mode and
+elapsed time only from the model result; telemetry retains both. `wait_state`,
+ready Job ids/status/outcomes and pending ids remain, including terminal failures.
+Passive `job_attention` presence with nonempty `items` represents changed delivery
+without a second `changed=true` flag.
+
 ### Runtime status projections
 
 Canonical `runtime_status` and HTTP/API omission retain full diagnostic output.

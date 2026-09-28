@@ -162,9 +162,13 @@ fn extract_single_search_batch_result(batch: &ToolResult) -> ToolResult {
     assert_eq!(items.len(), 1, "one-query search batch: {}", batch.output);
     let item = &items[0];
     ToolResult {
-        success: item["success"]
-            .as_bool()
-            .expect("one-query search item success"),
+        success: if batch.output.get("requested_count").is_none() {
+            assert!(item.get("success").is_none());
+            assert!(item.get("error").is_none());
+            true // The complete sparse batch branch proves every item succeeded.
+        } else {
+            item["success"].as_bool().expect("full search item success")
+        },
         output: item.get("output").cloned().unwrap_or(Value::Null),
         error: item
             .get("error")
@@ -433,52 +437,74 @@ fn search_project_text_model_projection_compacts_files_count_and_guides_truncati
 }
 
 #[tokio::test]
-async fn search_project_texts_four_query_projection_measures_canonical_vs_sparse_bytes() {
-    let root = tempfile::tempdir().unwrap();
-    let runtime = ToolRuntime::new_for_tests();
-    let client_id = "search-four-query-bytes";
-    register_runner_project_at_path(&runtime, client_id, "demo", root.path()).await;
-    let queries = (0..4)
-        .map(|index| query(&format!("needle-{index}"), None))
-        .collect::<Vec<_>>();
-    let task = tokio::spawn({
-        let runtime = runtime.clone();
-        async move {
-            runtime
-                .search_project_texts("demo".to_string(), queries)
-                .await
+async fn search_project_texts_item_projection_measures_canonical_vs_sparse_bytes() {
+    for count in [1, 8] {
+        let root = tempfile::tempdir().unwrap();
+        let runtime = ToolRuntime::new_for_tests();
+        let client_id = "search-four-query-bytes";
+        register_runner_project_at_path(&runtime, client_id, "demo", root.path()).await;
+        let queries = (0..count)
+            .map(|index| query(&format!("needle-{index}"), None))
+            .collect::<Vec<_>>();
+        let task = tokio::spawn({
+            let runtime = runtime.clone();
+            async move {
+                runtime
+                    .search_project_texts("demo".to_string(), queries)
+                    .await
+            }
+        });
+        for _ in 0..count {
+            let request = wait_for_patch_agent_request(&runtime, client_id).await;
+            let pattern = request_pattern(&request);
+            complete_search_success(&runtime, client_id, &request, &format!("src/{pattern}.rs"))
+                .await;
         }
-    });
-    for _ in 0..4 {
-        let request = wait_for_patch_agent_request(&runtime, client_id).await;
-        let pattern = request_pattern(&request);
-        complete_search_success(&runtime, client_id, &request, &format!("src/{pattern}.rs")).await;
-    }
-    let canonical = task.await.unwrap();
-    assert!(canonical.success, "{:?}", canonical.error);
-    assert_eq!(canonical.output["items"].as_array().unwrap().len(), 4);
-    assert_eq!(canonical.output["output_truncated"], false);
-    assert!(canonical.output["next_index"].is_null());
+        let canonical = task.await.unwrap();
+        assert!(canonical.success, "{:?}", canonical.error);
+        assert_eq!(canonical.output["items"].as_array().unwrap().len(), count);
+        assert_eq!(canonical.output["output_truncated"], false);
+        assert!(canonical.output["next_index"].is_null());
 
-    let mut sparse = ToolResult::ok(canonical.output.clone());
-    crate::tool_runtime::dispatch::sparsify_search_batch_success_for_model(&[true; 4], &mut sparse);
-    assert!(sparse.output.get("project").is_none());
-    assert!(sparse.output.get("requested_count").is_none());
-    assert!(sparse.output.get("next_index").is_none());
-    let items = sparse.output["items"].as_array().unwrap();
-    assert_eq!(items.len(), 4);
-    for item in items {
-        assert!(item["output"].get("backend").is_none());
-        let search_match = &item["output"]["matches"][0];
-        assert!(search_match.get("context_before").is_none());
-        assert!(search_match.get("context_after").is_none());
-        assert!(search_match["read_hint"].get("path").is_none());
-    }
+        let mut sparse = ToolResult::ok(canonical.output.clone());
+        crate::tool_runtime::dispatch::sparsify_search_batch_success_for_model(
+            &vec![true; count],
+            &mut sparse,
+        );
+        assert!(sparse.output.get("project").is_none());
+        assert!(sparse.output.get("requested_count").is_none());
+        assert!(sparse.output.get("next_index").is_none());
+        let items = sparse.output["items"].as_array().unwrap();
+        assert_eq!(items.len(), count);
+        for item in items {
+            assert!(item.get("success").is_none());
+            assert!(item.get("error").is_none());
+            assert!(item["output"].get("backend").is_none());
+            let search_match = &item["output"]["matches"][0];
+            assert!(search_match.get("context_before").is_none());
+            assert!(search_match.get("context_after").is_none());
+            assert!(search_match["read_hint"].get("path").is_none());
+        }
 
-    let canonical_bytes = serialized_output_bytes(&canonical);
-    let sparse_bytes = serialized_output_bytes(&sparse);
-    eprintln!("search_four_query_batch_bytes canonical={canonical_bytes} sparse={sparse_bytes}");
-    assert!(sparse_bytes < canonical_bytes);
+        let canonical_bytes = serialized_output_bytes(&canonical);
+        let sparse_bytes = serialized_output_bytes(&sparse);
+        eprintln!("search_{count}_items: {canonical_bytes} -> {sparse_bytes} bytes");
+        assert!(sparse_bytes < canonical_bytes);
+        let mut previous_wrapper = sparse.output.clone();
+        for item in previous_wrapper["items"].as_array_mut().unwrap() {
+            item["success"] = json!(true);
+            item["error"] = Value::Null;
+        }
+        assert_eq!(
+            serde_json::to_vec(&previous_wrapper).unwrap().len() - sparse_bytes,
+            28 * count
+        );
+        startup_brief::validate_schema_instance_for_test(
+            &serde_json::to_value(&sparse).unwrap(),
+            &registry::output_schema_for_tool("search_project_texts"),
+        )
+        .unwrap();
+    }
 }
 
 #[test]
@@ -924,7 +950,7 @@ async fn search_project_texts_literal_query_preserves_mode_to_runner_and_output(
 
     let result = task.await.unwrap();
     assert!(result.success, "{:?}", result.error);
-    assert_eq!(result.output["items"][0]["success"], true);
+    assert!(result.output["items"][0].get("success").is_none());
     assert_eq!(
         result.output["items"][0]["output"]["pattern_mode"],
         "literal"
@@ -1043,7 +1069,7 @@ async fn search_project_texts_default_matches_items_are_sparse_and_schema_valid(
     }
     let items = result.output["items"].as_array().unwrap();
     for item in items {
-        assert_eq!(item["success"], true);
+        assert!(item.get("success").is_none());
         assert!(item["error"].is_null());
         let matches = item["output"]["matches"].as_array().unwrap();
         assert_eq!(matches.len(), 1);

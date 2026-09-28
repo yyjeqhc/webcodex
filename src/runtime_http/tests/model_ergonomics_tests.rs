@@ -278,3 +278,82 @@ async fn action_audit_sink_failure_never_changes_success_or_failure_tool_result(
     assert_eq!(failure_body["output"]["error_kind"], "unknown_project");
     assert_eq!(failure_body["output"]["recovery_kind"], "fix_input");
 }
+
+#[tokio::test]
+async fn api_edit_compaction_preserves_canonical_action_audit_and_telemetry() {
+    use crate::runner_protocol::{RunnerCapabilities, RunnerPollRequest, RunnerResultRequest};
+    let config = super::test_config(Some("secret"));
+    let (_db_tmp, db) = super::test_db();
+    let project_tmp = tempfile::tempdir().unwrap();
+    let (runtime, registry) = super::register_import_agent_with_capabilities(
+        project_tmp.path(),
+        Some(RunnerCapabilities {
+            file_write: true,
+            apply_text_edit_local_guard_without_sha: true,
+            ..Default::default()
+        }),
+    )
+    .await;
+    let service = Service::new(super::build_projects_router(config, db.clone(), runtime));
+    let runner = async {
+        let request = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                if let Some(request) = registry
+                    .poll(RunnerPollRequest {
+                        client_id: "importer".into(),
+                        runner_instance_id: "inst-import".into(),
+                    })
+                    .await
+                    .unwrap()
+                {
+                    break request;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("edit request before deadline");
+        assert_eq!(request.kind, "file_apply_text_edits");
+        registry.complete(RunnerResultRequest {
+            client_id: "importer".into(), runner_instance_id: "inst-import".into(),
+            request_id: request.request_id, exit_code: Some(0),
+            stdout: Some(json!({"dry_run":false,"applied_count":1,"planned_count":1,
+                "changed":true,"would_change":true,"changed_paths":["new.rs"],
+                "files":[{"index":0,"kind":"create","path":"new.rs","to_path":null,
+                    "old_sha256":null,"new_sha256":"a".repeat(64),"changed":true,"would_change":true,"edits":[]}]
+            }).to_string()), stderr: Some(String::new()), stdout_truncated:false,
+            stderr_truncated:false, duration_ms:Some(1), error:None,
+        }).await.unwrap();
+    };
+    let request = TestClient::post("http://localhost/api/tools/call")
+        .bearer_auth("secret")
+        .add_header("x-action-session-id", "edit-compaction", true)
+        .json(
+            &json!({"tool":"edit_project_files", "params":{"project":"agent:importer:demo",
+            "changes":[{"kind":"create","path":"new.rs","content":"hello"}]}}),
+        );
+    let (mut response, ()) = tokio::join!(request.send(&service), runner);
+    let body: Value = response.take_json().await.unwrap();
+    assert_eq!(body["success"], true, "{body}");
+    assert!(body["output"].get("dry_run").is_none());
+    assert!(body["output"].get("execution_state").is_none());
+    let events = db.list_action_events("edit-compaction", 20).unwrap();
+    assert_eq!(events.len(), 1);
+    let summary: Value = serde_json::from_str(&events[0].summary_json).unwrap();
+    assert_eq!(summary["output"]["dry_run"], false);
+    assert_eq!(summary["output"]["execution_state"], "completed");
+    assert_eq!(summary["output"]["applied_count"], 1);
+    assert_eq!(summary["output"]["state_changed"], true);
+    assert_eq!(summary["output"]["files"][0]["new_sha256"], "a".repeat(64));
+    assert_eq!(summary["model_ergonomics"]["edit_outcome"], "applied");
+    assert_eq!(summary["model_ergonomics"]["execution_state"], "completed");
+    assert_eq!(
+        summary["model_ergonomics"]["serialized_result_bytes"],
+        serde_json::to_vec(&body).unwrap().len()
+    );
+    crate::tool_runtime::startup_brief::validate_schema_instance_for_test(
+        &body,
+        &crate::tool_runtime::registry::output_schema_for_tool("edit_project_files"),
+    )
+    .unwrap();
+}

@@ -2631,7 +2631,6 @@ fn default_output_schema_field_names() -> BTreeSet<&'static str> {
 #[test]
 fn model_visible_output_schemas_admit_bounded_passive_job_attention() {
     let attention = json!({
-        "changed": true,
         "items": [{
             "job_id": "wc_job_schema",
             "tool": "cargo_test",
@@ -3518,7 +3517,7 @@ fn structured_validation_definitions_receive_the_validation_output_family() {
 fn passive_success_schema_keeps_source_truth_and_distinguishes_rich_failures() {
     let schema = output_schema_for_tool("cargo_check");
     let field = &schema["properties"]["output"]["properties"]["job_attention"];
-    let compact = json!({"changed":true,"items":[{
+    let compact = json!({"items":[{
         "job_id":"wc_job_success", "tool":"cargo_test", "outcome":"passed",
         "validation":{"kind":"test", "tests_run_count":3, "zero_tests_run":false,
             "source_state":{"freshness":"unproven","observed_mutation_fence":"uncrossed"}}

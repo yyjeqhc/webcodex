@@ -113,6 +113,9 @@ pub(crate) struct ToolCallOutcome {
     pub(crate) error_status: Option<ToolCallErrorStatus>,
     pub(crate) project: Option<String>,
     pub(crate) model_ergonomics: Option<ModelErgonomicsCompletion>,
+    /// Existing privacy-safe audit projection captured before model compaction.
+    /// Never serialized into ToolResult or interpreted as execution authority.
+    pub(crate) canonical_audit_output: Option<Value>,
     /// Trusted internal Window/Workflow Session correlation evidence. This is
     /// adapter metadata only and is never part of the public ToolResult.
     pub(crate) correlation: super::window_activity::ToolCallCorrelation,
@@ -371,6 +374,7 @@ impl ToolRuntime {
                     capabilities,
                     return_timing,
                     &mut control,
+                    &mut telemetry,
                 )
                 .await;
             if let Some(control) = control {
@@ -400,6 +404,7 @@ impl ToolRuntime {
         capabilities: ToolProtocolCapabilities,
         return_timing: super::return_timing::ToolReturnTimingPolicy,
         control: &mut Option<super::control_sidecar::ControlExecution>,
+        telemetry: &mut Option<ModelErgonomicsTimer>,
     ) -> ToolCallOutcome {
         // Admit before any tool-specific await or side effect. The permit is
         // retained through the complete call, including direct SSH effects.
@@ -414,6 +419,7 @@ impl ToolRuntime {
                     }),
                     project: None,
                     model_ergonomics: None,
+                    canonical_audit_output: None,
                     correlation: Default::default(),
                 }
             }
@@ -453,6 +459,7 @@ impl ToolRuntime {
                 }),
                 project: None,
                 model_ergonomics: None,
+                canonical_audit_output: None,
                 correlation: Default::default(),
             };
         }
@@ -466,6 +473,7 @@ impl ToolRuntime {
                 }),
                 project: None,
                 model_ergonomics: None,
+            canonical_audit_output: None,
                 correlation: Default::default(),
             };
         }
@@ -483,6 +491,7 @@ impl ToolRuntime {
                 }),
                 project: None,
                 model_ergonomics: None,
+            canonical_audit_output: None,
                 correlation: Default::default(),
             };
         }
@@ -496,6 +505,7 @@ impl ToolRuntime {
                 }),
                 project: None,
                 model_ergonomics: None,
+            canonical_audit_output: None,
                 correlation: Default::default(),
             };
         }
@@ -520,6 +530,7 @@ impl ToolRuntime {
                 }),
                 project: None,
                 model_ergonomics: None,
+            canonical_audit_output: None,
                 correlation: Default::default(),
             };
         }
@@ -541,6 +552,7 @@ impl ToolRuntime {
                 }),
                 project: None,
                 model_ergonomics: None,
+            canonical_audit_output: None,
                 correlation: Default::default(),
             };
         }
@@ -563,6 +575,7 @@ impl ToolRuntime {
                 }),
                 project: None,
                 model_ergonomics: None,
+                canonical_audit_output: None,
                 correlation: Default::default(),
             };
         }
@@ -583,6 +596,7 @@ impl ToolRuntime {
                 }),
                 project: None,
                 model_ergonomics: None,
+                canonical_audit_output: None,
                 correlation: Default::default(),
             };
         }
@@ -600,6 +614,7 @@ impl ToolRuntime {
                 }),
                 project: None,
                 model_ergonomics: None,
+                canonical_audit_output: None,
                 correlation: Default::default(),
             };
         }
@@ -619,6 +634,7 @@ impl ToolRuntime {
                 }),
                 project: None,
                 model_ergonomics: None,
+                canonical_audit_output: None,
                 correlation: Default::default(),
             };
         }
@@ -632,6 +648,7 @@ impl ToolRuntime {
                         error_status: Some(ToolCallErrorStatus::InvalidArguments { message }),
                         project: None,
                         model_ergonomics: None,
+                        canonical_audit_output: None,
                         correlation: Default::default(),
                     };
                 }
@@ -701,6 +718,7 @@ impl ToolRuntime {
                     error_status: None,
                     project: None,
                     model_ergonomics: None,
+                    canonical_audit_output: None,
                     correlation: Default::default(),
                 };
             }
@@ -735,6 +753,7 @@ impl ToolRuntime {
                 }),
                 project: None,
                 model_ergonomics: None,
+                canonical_audit_output: None,
                 correlation: Default::default(),
             };
         }
@@ -748,6 +767,7 @@ impl ToolRuntime {
                 error_status: Some(error_status),
                 project: None,
                 model_ergonomics: None,
+                canonical_audit_output: None,
                 correlation: Default::default(),
             };
         }
@@ -760,6 +780,7 @@ impl ToolRuntime {
                 error_status: Some(ToolCallErrorStatus::InvalidArguments { message }),
                 project: None,
                 model_ergonomics: None,
+                canonical_audit_output: None,
                 correlation: Default::default(),
             };
         }
@@ -792,6 +813,7 @@ impl ToolRuntime {
                         error_status: None,
                         project: None,
                         model_ergonomics: None,
+                        canonical_audit_output: None,
                         correlation: Default::default(),
                     };
                 }
@@ -820,6 +842,7 @@ impl ToolRuntime {
                         error_status: None,
                         project: None,
                         model_ergonomics: None,
+                        canonical_audit_output: None,
                         correlation: Default::default(),
                     };
                 }
@@ -885,6 +908,7 @@ impl ToolRuntime {
                 error_status: None,
                 project: None,
                 model_ergonomics: None,
+                canonical_audit_output: None,
                 correlation: Default::default(),
             };
         }
@@ -902,6 +926,7 @@ impl ToolRuntime {
                     error_status: Some(error_status),
                     project: None,
                     model_ergonomics: None,
+                    canonical_audit_output: None,
                     correlation: Default::default(),
                 };
             }
@@ -948,6 +973,7 @@ impl ToolRuntime {
                     error_status: Some(error_status),
                     project: None,
                     model_ergonomics: None,
+                    canonical_audit_output: None,
                     correlation: Default::default(),
                 };
             }
@@ -969,6 +995,7 @@ impl ToolRuntime {
                     error_status: Some(ToolCallErrorStatus::InvalidArguments { message }),
                     project: None,
                     model_ergonomics: None,
+                    canonical_audit_output: None,
                     correlation: Default::default(),
                 };
             }
@@ -1019,6 +1046,7 @@ impl ToolRuntime {
                     error_status: None,
                     project: None,
                     model_ergonomics: None,
+                    canonical_audit_output: None,
                     correlation: Default::default(),
                 };
             }
@@ -1183,6 +1211,14 @@ impl ToolRuntime {
         // Canonical execution evidence and every Session/context overlay are now
         // complete. Consume the request-scoped plan exactly once to produce the
         // final model-facing read/search result.
+        if let Some(telemetry) = telemetry.as_mut() {
+            telemetry.capture_canonical_result(&result);
+        }
+        let canonical_audit_output = matches!(
+            request.tool_name.as_str(),
+            "edit_project_files" | "read_files" | "search_project_texts" | "wait_for_job_readiness"
+        )
+        .then(|| session_log_result_for_tool(&request.tool_name, &result.output));
         result_projection.project(&mut result);
         if let (Some(session_id), Some(project)) = (
             correlation.recorder_gap_session_id.as_deref(),
@@ -1287,6 +1323,7 @@ impl ToolRuntime {
             error_status: None,
             project,
             model_ergonomics: None,
+            canonical_audit_output,
             correlation,
         }
     }

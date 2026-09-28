@@ -1312,6 +1312,43 @@ impl ToolRuntime {
     }
 }
 
+/// Called only after canonical Session recording and readiness telemetry capture.
+/// Readiness is an observation: terminal failures remain ready with their outcome.
+pub(super) fn sparsify_job_readiness_model_result(result: &mut ToolResult) {
+    if !result.success {
+        return;
+    }
+    let Some(output) = result.output.as_object_mut() else {
+        return;
+    };
+    if !matches!(
+        output.get("wait_state").and_then(Value::as_str),
+        Some("ready" | "deadline")
+    ) || !matches!(
+        output.get("mode").and_then(Value::as_str),
+        Some("any" | "all")
+    ) || output.get("waited_ms").and_then(Value::as_u64).is_none()
+        || !output
+            .get("ready")
+            .and_then(Value::as_array)
+            .is_some_and(|items| {
+                items.iter().all(|item| {
+                    ["job_id", "status", "outcome"]
+                        .iter()
+                        .all(|key| item.get(*key).and_then(Value::as_str).is_some())
+                })
+            })
+        || !output
+            .get("pending_job_ids")
+            .and_then(Value::as_array)
+            .is_some_and(|ids| ids.iter().all(Value::is_string))
+    {
+        return;
+    }
+    output.remove("mode");
+    output.remove("waited_ms");
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

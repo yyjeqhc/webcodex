@@ -1618,8 +1618,8 @@ async fn read_files_dispatch_complete_batch_is_sparse_and_schema_valid() {
     let items = result.output["items"].as_array().unwrap();
     assert_eq!(items.len(), 2);
     for item in items {
-        assert_eq!(item["success"], true);
-        assert!(item["error"].is_null());
+        assert!(item.get("success").is_none());
+        assert!(item.get("error").is_none());
         assert_eq!(item["output"]["format"], "numbered");
         assert!(item["output"].get("path").is_none());
         assert!(item["output"].get("sha256").is_none());
@@ -2775,4 +2775,64 @@ async fn read_files_outer_recording_session_keeps_final_response_under_hard_cap(
         serialized_len <= MAX_SERIALIZED_OUTPUT_BYTES,
         "outer Session overlays pushed read_files final response above the 512 KiB inspection hard cap: {serialized_len} bytes"
     );
+}
+
+#[tokio::test]
+async fn read_files_complete_item_projection_byte_regression() {
+    for count in [1, 8] {
+        let root = tempfile::tempdir().unwrap();
+        let runtime = ToolRuntime::new_for_tests();
+        let client_id = "read-item-bytes";
+        let project =
+            register_runner_project_at_path(&runtime, client_id, "demo", root.path()).await;
+        let items = (0..count)
+            .map(|index| item(&format!("{index}.rs"), None, None))
+            .collect::<Vec<_>>();
+        let task = tokio::spawn({
+            let runtime = runtime.clone();
+            let items = items.clone();
+            async move { runtime.read_files("demo".to_string(), items, None).await }
+        });
+        for _ in 0..count {
+            let request = next_read_request(&runtime, client_id).await;
+            complete_read(&runtime, client_id, &request, "hello\n").await;
+        }
+        let mut result = task.await.unwrap();
+        assert!(result.success, "{:?}", result.error);
+        let before = serde_json::to_vec(&result.output).unwrap().len();
+        dispatch::ModelFacingProjectionPlan::capture(&ToolCall::ReadFiles {
+            project,
+            items,
+            session_id: None,
+            with_line_numbers: None,
+            max_result_bytes: None,
+        })
+        .project(&mut result);
+        let after = serde_json::to_vec(&result.output).unwrap().len();
+        eprintln!("read_{count}_items: {before} -> {after} bytes");
+        assert!(after < before);
+        let mut previous_wrapper = result.output.clone();
+        for (index, item) in previous_wrapper["items"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .enumerate()
+        {
+            assert_eq!(item["index"], index);
+            assert_eq!(item["path"], format!("{index}.rs"));
+            assert!(item.get("success").is_none());
+            assert!(item.get("error").is_none());
+            item["success"] = json!(true);
+            item["error"] = Value::Null;
+        }
+        assert_eq!(
+            serde_json::to_vec(&previous_wrapper).unwrap().len() - after,
+            28 * count
+        );
+        startup_brief::validate_schema_instance_for_test(
+            &serde_json::to_value(&result).unwrap(),
+            &registry::output_schema_for_tool("read_files"),
+        )
+        .unwrap();
+    }
 }

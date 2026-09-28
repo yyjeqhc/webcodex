@@ -305,7 +305,7 @@ tool_call read_files "$READ_ARGS" | python3 -c '
 import json, sys
 d = json.load(sys.stdin)
 item = d["output"]["items"][0]
-assert d["success"] and item["success"] and "before" in item["output"]["text"]
+assert d["success"] and "success" not in item and "error" not in item and "before" in item["output"]["text"]
 ' || fail "Native read failed"
 api_post /api/runtime/status '{}' | python3 -c '
 import json, sys
@@ -326,8 +326,14 @@ tool_call search_project_texts "$SEARCH_ARGS" | python3 -c '
 import json, sys
 d = json.load(sys.stdin)
 item = d["output"]["items"][0]
-assert d["success"] and item["success"]
-assert item["output"]["backend"] in ("rg", "grep")
+assert d["success"]
+if "success" in item:
+    assert item["success"] and item["error"] is None
+else:
+    assert "error" not in item
+out = item["output"]
+assert out.get("result_mode", "matches") == "matches" and out["matches"]
+assert out.get("backend") in (None, "grep")
 ' || fail "Native search fallback failed"
 wait_for_provider_call native true success null || fail "search fallback evidence did not propagate"
 ok "search fallback recorded selected_provider=native"

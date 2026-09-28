@@ -35,9 +35,11 @@ required. Every Job is independently re-authorized before waiting; an
 invalid/invisible target fails the entire set without partial evidence. It shares
 `observe_jobs`' canonical Notify/revision waiter, private cursors and one absolute
 deadline. Nonterminal updates do not satisfy readiness or extend the deadline.
-The final snapshot reports only ready `job_id/status/outcome` and
-`pending_job_ids`, plus `mode`, `wait_state` and `waited_ms`. Failed, stopped,
-lost and timed-out Jobs are terminal-ready. `deadline` is successful observation
+The model-facing final snapshot reports only ready `job_id/status/outcome`,
+`pending_job_ids`, and `wait_state`. Request `mode` and measured `waited_ms` remain
+in canonical ActionAudit/model-ergonomics telemetry rather than repeating facts the
+caller already knows in the happy-path receipt. Failed, stopped, lost and timed-out
+Jobs are terminal-ready. `deadline` is successful observation
 of an unsatisfied bounded wait, not Job failure. Existing observation deadline
 semantics apply: an expired `all` wait stays deadline even if its final snapshot
 races completion; `any` can recognize terminal truth in that final snapshot.

@@ -195,13 +195,11 @@ Runner #730 的 JobUpdateDeliverySignal 仍然是 Runner 内部 delivery reactor
 - 所有目标 Job 在 wait 前逐个通过当前 caller visibility/authorization；
 - 任一 Job unknown/unauthorized/identity-invalid 时整个 wait-set fail closed，不做 partial authorized subset wait。
 
-建议输出：
+当前 model-facing 输出进一步收敛为只保留下一步调度需要的动态事实：
 
 ~~~json
 {
   "wait_state": "ready",
-  "mode": "any",
-  "waited_ms": 7314,
   "ready": [
     {
       "job_id": "wc_job_A",
@@ -218,14 +216,12 @@ deadline：
 ~~~json
 {
   "wait_state": "deadline",
-  "mode": "any",
-  "waited_ms": 12001,
   "ready": [],
   "pending_job_ids": ["wc_job_A", "wc_job_B"]
 }
 ~~~
 
-输出不包含 stdout/stderr、command text、diagnostics、observation tokens、recovery/retry suggestions、Project path 或 Runner instance details。
+请求的 `mode` 与实际 `waited_ms` 仍由 Server 保存在 ActionAudit / model ergonomics telemetry 中，用于 dogfood 与离线分析；正常模型结果不再重复这些调用方已知或纯测量事实。输出也不包含 stdout/stderr、command text、diagnostics、observation tokens、recovery/retry suggestions、Project path 或 Runner instance details。
 
 ## 10. 实现形状
 

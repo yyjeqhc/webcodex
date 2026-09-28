@@ -73,19 +73,23 @@ strings and locally edited metadata cannot authorize replacement on their own.
 
 ## Local platform selection
 
-| Native OS / Rust architecture | Manifest platform | Unified package |
+| Native OS / Rust architecture | Runtime platform | Installer targets |
 | --- | --- | --- |
-| Linux / `x86_64` | `linux-x64` | `.deb` |
-| Linux / `aarch64` | `linux-arm64` | `.deb` |
-| macOS / `x86_64` | `darwin-x64` | `.pkg` |
-| macOS / `aarch64` | `darwin-arm64` | `.pkg` |
-| Windows / `x86_64` | `win32-x64` | `.exe` |
-| Windows / `aarch64` | `win32-arm64` | `.exe` |
+| Linux / `x86_64` | `linux-x64` | `linux-x64-deb`, `linux-x64-rpm` |
+| Linux / `aarch64` | `linux-arm64` | `linux-arm64-deb`, `linux-arm64-rpm` |
+| macOS / `x86_64` | `darwin-x64` | `darwin-x64-pkg` |
+| macOS / `aarch64` | `darwin-arm64` | `darwin-arm64-pkg` |
+| Windows / `x86_64` | `win32-x64` | `win32-x64-exe` |
+| Windows / `aarch64` | `win32-arm64` | `win32-arm64-exe` |
 
-`InstallerPlatform` in Core is the Rust mapping authority. Unsupported targets
-keep discovery and **View release**, with no guessed installer. Package names are
-`webcodex-unified-v<VERSION>-<PLATFORM>.<EXT>`; source documents are
-`webcodex-source-v<VERSION>-<PLATFORM>.json`.
+`RuntimePlatform` remains the six-entry runtime/source identity. `InstallerTarget`
+is the separate eight-entry package authority and includes `PackageFormat`.
+On Linux, Desktop first checks whether the installed WebCodex package is owned by
+dpkg or RPM; only when neither owns it does it use bounded `/etc/os-release`
+`ID`/`ID_LIKE` classification. Conflicting evidence fails closed. Merely
+having `rpm` installed on Ubuntu does not select RPM. Package names remain
+`webcodex-unified-v<VERSION>-<PLATFORM>.<EXT>`; DEB and RPM for one Linux
+runtime both bind the same `webcodex-source-v<VERSION>-<PLATFORM>.json`.
 
 ## Network, cache and retry bounds
 
@@ -109,7 +113,7 @@ The Desktop-owned layout is:
 <Desktop app data>/stable-updates-v1/
   update.lock
   update-state.json
-  <VERSION>/<PLATFORM>/
+  <VERSION>/<INSTALLER-TARGET>/
     installer.part
     <canonical installer filename>
     manifest.json
@@ -117,7 +121,7 @@ The Desktop-owned layout is:
     expanded/                 # Unix inspection, only after explicit Install
 ```
 
-State has schema version 1 and a 24 KiB bound. The frontend sees neither these
+State has schema version 2 and a 24 KiB bound. The frontend sees neither these
 paths nor Environment receipts. Private files/ACLs, atomic writes and a
 cross-process lock reuse Core primitives without configuring another Environment.
 A process-local lock additionally serializes download and installation attempts.
@@ -181,15 +185,32 @@ to introduce a password prompt or shell-based fallback.
 
 ### Linux
 
-Desktop requires `pkexec`, `dpkg` and `dpkg-deb`. `pkexec` uses the graphical
-system authorization agent; its internal terminal agent is disabled. Missing
-support or rejected authorization fails explicitly. The same protected CLI,
-original-owner preparation, root-private package copy and existing package
-hooks are used. No direct writes to `/usr`, stored sudo password or arbitrary
-shell invocation are added. V1 uses `dpkg --install`, not dependency fetching;
-missing dependencies/package-manager repair require the normal distribution
-workflow. File/Environment rollback is not proof that a failed package-manager
-database transaction has been repaired.
+Desktop requires `pkexec` plus the tools for the selected package family.
+DEB targets require fixed `/usr/bin/dpkg` and `/usr/bin/dpkg-deb`; RPM targets
+require fixed `/usr/bin/rpm`, `/usr/bin/rpm2cpio` and `/usr/bin/cpio`.
+`pkexec` uses the graphical system authorization agent and disables its
+internal terminal agent. Missing or ambiguous package-family evidence fails
+closed.
+
+DEB keeps the existing control-archive candidate path. RPM cannot safely inspect
+a new package payload from `%pre`, so Desktop first queries a bounded RPM file
+inventory, rejects links/special files in the canonical candidate subtree, runs
+`rpm2cpio` without a shell, writes a bounded private cpio file, and invokes
+`cpio` with literal argv to extract only
+`/usr/share/webcodex/upgrade-candidate`. No RPM scriptlet executes during this
+inspection. Core then performs the same complete candidate verification,
+preflight and prepare as every other Unix package.
+
+After preparation, the privileged helper re-verifies release provenance and the
+owner receipt, copies the RPM into the root-private updater cache, freezes a
+root-owned recovery candidate, and invokes exactly `/usr/bin/rpm --upgrade
+<verified-rpm>`. RPM `%pre/%post` consume that prepared transaction and fail
+closed if an upgrade is attempted without it. Fresh RPM installation remains a
+normal package-manager operation. No `dnf` shell-out, `sudo`, `--nodeps`,
+`--force`, password storage or direct Desktop writes to `/usr` are added.
+Dependency resolution for manual fresh install belongs to the distribution
+package manager; package-manager database repair is separate from
+File/Environment rollback.
 
 ## State and recovery
 
@@ -251,7 +272,10 @@ release and a candidate from the exact release pipeline:
 | --- | --- |
 | mini / macOS | OS prompt accept/cancel, real Core prepare and package hooks, exact launch acknowledgment, Desktop exit/reopen, service identity preservation and rollback |
 | MSI / Windows x64 | Auto-download, current-user/UAC behavior, outer/inner NSIS upgrade, early bootstrap failure, Desktop exit/reopen, Server/Runner identity and rollback |
-| OE / Debian or Ubuntu x64 | Graphical authorization, package dependencies/ownership, owner receipt, systemd state, Environment preservation and package/upgrade recovery |
+| Debian/Ubuntu x64 | DEB graphical authorization, dependencies/ownership, owner receipt, systemd state and package/upgrade recovery |
+| Fedora x64 | RPM family detection, read-only candidate extraction, package ownership/dependencies, prepared transaction, Desktop relaunch and recovery |
+| CentOS Stream 9 x64 | ABI/dependency evidence only: GLIBC 2.34 is within the numeric ceiling, but the tested repositories lack the required WebKitGTK 4.1 development stack, so Desktop support is not claimed |
+| openEuler 24.03 x64 | Trusted-image/package metadata validation; full repository-backed install smoke remained blocked by repository access during bounded validation |
 
 The six-platform mapping and metadata fixtures do not substitute for native
 Windows/Linux installation tests. None of these tests authorizes changing a

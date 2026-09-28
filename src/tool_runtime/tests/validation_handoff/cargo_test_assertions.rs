@@ -466,15 +466,19 @@ async fn cargo_test_minimum_misassertion_then_sufficient_same_target_is_non_bloc
             assert_eq!(result.output["exit_code"], 0);
         }
         assert_eq!(result.output["tests_run_count"], 1);
-        assert_eq!(result.output["tests_failed"], 0);
-        assert_eq!(
-            result.output["test_count_assertion"]["reason_code"],
-            if expect_success {
-                "minimum_satisfied"
-            } else {
+        if expect_success {
+            assert!(result.output.get("tests_failed").is_none());
+            assert_eq!(
+                result.output["test_count_assertion"],
+                json!({"minimum_tests":minimum})
+            );
+        } else {
+            assert_eq!(result.output["tests_failed"], 0);
+            assert_eq!(
+                result.output["test_count_assertion"]["reason_code"],
                 "minimum_not_met"
-            }
-        );
+            );
+        }
     }
 
     let summary = runtime.sessions.summary(&session_id, Some(50)).unwrap();
@@ -680,4 +684,145 @@ async fn durable_cargo_test_explicit_zero_opt_out_survives_job_reconciliation() 
     assert_eq!(validation["latest_status"], "passed");
     assert_eq!(validation["latest_success"]["require_tests"], false);
     assert_eq!(validation["latest_success"]["zero_tests_run"], true);
+}
+
+#[tokio::test]
+async fn validation_success_sparse_receipts_preserve_session_proof_and_request_policy() {
+    for (require_tests, min_tests, no_run, stdout, count) in [
+        (
+            None,
+            None,
+            None,
+            "test result: ok. 3 passed; 0 failed; 0 ignored\n",
+            Some(3),
+        ),
+        (
+            None,
+            Some(1),
+            None,
+            "test result: ok. 3 passed; 0 failed; 0 ignored\n",
+            Some(3),
+        ),
+        (
+            Some(false),
+            None,
+            None,
+            "test result: ok. 0 passed; 0 failed; 0 ignored\n",
+            Some(0),
+        ),
+        (None, None, Some(true), "", None),
+    ] {
+        let client_id = "validation-success-proof";
+        let runtime = runtime_with_agent_project(client_id)
+            .with_validation_sync_wait(std::time::Duration::from_millis(500));
+        register_agent(
+            &runtime,
+            client_id,
+            None,
+            RunnerCapabilities {
+                async_shell_jobs: true,
+                structured_validation_argv: true,
+                structured_cargo_test_count_assertion: true,
+                structured_cargo_test_execution_policy: true,
+                ..Default::default()
+            },
+        )
+        .await;
+        let project = agent_test_project_id(client_id);
+        let session = runtime.sessions.start_session(Some(project.clone()), None);
+        let task = tokio::spawn({
+            let runtime = runtime.clone();
+            let session_id = session.session_id.clone();
+            async move {
+                runtime
+                    .dispatch_with_auth(
+                        ToolCall::CargoTest {
+                            project,
+                            session_id: Some(session_id),
+                            cwd: None,
+                            filter: None,
+                            lib: None,
+                            all_targets: None,
+                            all_features: None,
+                            no_default_features: None,
+                            features: None,
+                            package: None,
+                            no_run,
+                            require_tests,
+                            min_tests,
+                            timeout_secs: Some(60),
+                            sync_wait_secs: None,
+                        },
+                        Some(&auth_context(None, true)),
+                    )
+                    .await
+            }
+        });
+        let (request, job_id) = poll_start_validation_job(&runtime, client_id).await;
+        runtime
+            .runner_registry
+            .update_job(cargo_test_update(
+                client_id,
+                &request.request_id,
+                &job_id,
+                "completed",
+                stdout,
+                "",
+                Some(0),
+                completed_progress(),
+                true,
+            ))
+            .await
+            .unwrap();
+        let result = task.await.unwrap();
+        assert!(result.success, "{result:?}");
+        assert_model_cargo_result_matches_schema("cargo_test", &result);
+        assert!(result.output.get("tests_failed").is_none(), "{result:?}");
+        assert!(result.output.get("diagnostics").is_none());
+        assert_eq!(result.output["tests_run_count"].as_u64(), count);
+        if no_run == Some(true) {
+            assert_eq!(result.output["no_run"], true);
+        }
+        if count == Some(0) {
+            assert_eq!(result.output["require_tests"], false);
+        }
+        if let Some(minimum) = min_tests {
+            assert_eq!(
+                result.output["test_count_assertion"],
+                json!({"minimum_tests":minimum})
+            );
+        }
+        let summary = runtime
+            .sessions
+            .summary(&session.session_id, Some(50))
+            .unwrap();
+        let validation = validation_summary_for_session(&summary);
+        assert_eq!(validation["status"], "passed", "{validation}");
+        assert_eq!(
+            validation["latest_success"]["tests_run_count"].as_u64(),
+            count
+        );
+        if count.is_some() {
+            assert_eq!(validation["latest_success"]["tests_failed"], 0);
+            assert_eq!(validation["latest_success"]["tests_detected"], true);
+        }
+        if min_tests.is_some() {
+            assert_eq!(
+                validation["latest_success"]["test_count_assertion"]["status"],
+                "passed"
+            );
+            assert_eq!(
+                validation["latest_success"]["test_count_assertion"]["actual_tests_run"],
+                3
+            );
+        }
+        if no_run == Some(true) {
+            assert_eq!(validation["latest_success"]["no_run"], true);
+        }
+        if count == Some(0) {
+            assert_eq!(validation["latest_success"]["require_tests"], false);
+        }
+        assert_eq!(validation["current_evidence"]["status"], "unproven");
+        assert!(runtime.runner_registry.list_jobs(Some(10)).await.is_empty());
+    }
 }

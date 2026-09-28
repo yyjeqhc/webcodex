@@ -1359,6 +1359,8 @@ pub(super) fn apply_validation_projection_fields(payload: &mut Value, projection
         "tests_passed",
         "tests_failed",
         "zero_tests_run",
+        "require_tests",
+        "no_run",
         "test_count_assertion",
         "diagnostics",
     ] {

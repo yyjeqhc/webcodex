@@ -3,7 +3,10 @@ use serde_json::json;
 
 fn project(name: &'static str, result: &mut ToolResult) {
     ModelFacingProjectionPlan {
-        projection: ModelFacingProjection::Execution { tool_name: name },
+        projection: ModelFacingProjection::Execution {
+            tool_name: name,
+            validation_policy: ValidationSuccessPolicy::default(),
+        },
     }
     .project(result);
 }

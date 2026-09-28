@@ -624,10 +624,16 @@ impl SearchModelProjection {
 
 enum ModelFacingProjection {
     None,
-    Execution { tool_name: &'static str },
+    Execution {
+        tool_name: &'static str,
+        validation_policy: ValidationSuccessPolicy,
+    },
     AgentWait,
     JobReadiness,
-    ApplyTextEdits { change_count: usize, dry_run: bool },
+    ApplyTextEdits {
+        change_count: usize,
+        dry_run: bool,
+    },
     Read(super::read_files::ReadModelProjection),
     Search(SearchModelProjection),
 }
@@ -653,16 +659,29 @@ impl ModelFacingProjectionPlan {
                 change_count: changes.len(),
                 dry_run: dry_run.unwrap_or(false),
             },
+            ToolCall::CargoTest {
+                require_tests,
+                no_run,
+                min_tests,
+                ..
+            } => ModelFacingProjection::Execution {
+                tool_name: call.tool_name(),
+                validation_policy: ValidationSuccessPolicy {
+                    require_tests: *require_tests,
+                    no_run: *no_run,
+                    min_tests: *min_tests,
+                },
+            },
             ToolCall::RunProcess { .. }
             | ToolCall::RunSkillResource { .. }
             | ToolCall::RunScript { .. }
             | ToolCall::RunShell { .. }
             | ToolCall::CargoFmt { .. }
             | ToolCall::CargoCheck { .. }
-            | ToolCall::CargoTest { .. }
             | ToolCall::ProjectValidate { .. }
             | ToolCall::GoTest { .. } => ModelFacingProjection::Execution {
                 tool_name: call.tool_name(),
+                validation_policy: ValidationSuccessPolicy::default(),
             },
             ToolCall::ReadFiles { .. } => {
                 ModelFacingProjection::Read(super::read_files::ReadModelProjection::capture(call))
@@ -705,7 +724,15 @@ impl ModelFacingProjectionPlan {
                 change_count,
                 dry_run,
             } => apply_text_edits_model_projection(result, change_count, dry_run),
-            ModelFacingProjection::Execution { tool_name } => {
+            ModelFacingProjection::Execution {
+                tool_name,
+                validation_policy,
+            } => {
+                sparsify_structured_validation_success_evidence(
+                    tool_name,
+                    validation_policy,
+                    result,
+                );
                 if tool_name == "run_shell" {
                     sparsify_terminal_shell_success(result);
                 }
@@ -3867,3 +3894,9 @@ mod sparse_read_projection_tests {
 #[cfg(test)]
 #[path = "tests/execution_projection.rs"]
 mod execution_projection_tests;
+
+#[path = "validation_success_projection.rs"]
+mod validation_success_projection;
+use validation_success_projection::{
+    sparsify_structured_validation_success_evidence, ValidationSuccessPolicy,
+};

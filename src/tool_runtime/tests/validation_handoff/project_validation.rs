@@ -142,7 +142,15 @@ async fn project_validation_fast_rust_check_records_resolved_evidence() {
         .unwrap();
     let result = task.await.unwrap();
     assert!(result.success, "{:?}", result);
+    // project_validate currently participates in the potential-mutation fence.
+    // Unknown source evidence must retain the rich receipt, even on exit 0.
+    assert_eq!(
+        result.output["source_state"]["observed_mutation_fence"],
+        "unknown"
+    );
     assert_eq!(result.output["backend"], "rust");
+    assert_eq!(result.output["action"], "check");
+    assert!(result.output.get("diagnostics").is_some());
     assert_eq!(result.output["adapter"], "cargo_check");
     assert_model_cargo_result_matches_schema("project_validate", &result);
     assert!(runtime.runner_registry.list_jobs(Some(10)).await.is_empty());

@@ -3543,3 +3543,18 @@ fn passive_success_schema_keeps_source_truth_and_distinguishes_rich_failures() {
         assert!(test_support::validate_schema_instance(&failure, field).is_err());
     }
 }
+
+#[test]
+fn structured_validation_sparse_assertion_never_weakens_rejection_or_uncertainty() {
+    let schema = registry::output_schema_for_tool("cargo_test");
+    for output in [
+        serde_json::json!({"command_started":false,"command_completed":false,"failure_kind":"capability_unavailable"}),
+        serde_json::json!({"execution_state":"outcome_unknown","command_started":true,"command_completed":false,"terminal":false,"failure_kind":"outcome_unknown"}),
+    ] {
+        let mut wire =
+            serde_json::json!({"success":false,"error":"validation unavailable","output":output});
+        test_support::validate_schema_instance(&wire, &schema).unwrap();
+        wire["output"]["test_count_assertion"] = serde_json::json!({"minimum_tests":1});
+        assert!(test_support::validate_schema_instance(&wire, &schema).is_err());
+    }
+}

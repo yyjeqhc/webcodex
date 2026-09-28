@@ -3854,3 +3854,44 @@ fn compact_bootstrap_description_teaches_explicit_context_and_reuse() {
     assert!(!description.contains("Defaults return"));
     assert!(!description.contains("context_request"));
 }
+
+#[tokio::test]
+async fn mcp_published_validation_success_sparse_schema_contract() {
+    let runtime = test_runtime_with_mcp_settings(false, true);
+    let McpOutcome::Ok(value) = handle_mcp_request(
+        &runtime,
+        rpc("tools/list", Some(json!(8001)), mcp_2026_params(json!({}))),
+        None,
+    )
+    .await
+    else {
+        panic!("tools/list failed");
+    };
+    let tools = value["result"]["tools"].as_array().unwrap();
+    for (name, output) in [
+        ("cargo_check", json!({})),
+        ("cargo_test", json!({"tests_run_count":28})),
+        (
+            "cargo_test",
+            json!({"tests_run_count":28,"test_count_assertion":{"minimum_tests":20}}),
+        ),
+        (
+            "cargo_test",
+            json!({"tests_run_count":0,"require_tests":false}),
+        ),
+        ("cargo_test", json!({"no_run":true})),
+    ] {
+        let published = &tools.iter().find(|tool| tool["name"] == name).unwrap()["outputSchema"];
+        let mut wire = json!({"success":true,"error":null,"output":output});
+        wire["output"]["source_state"] =
+            json!({"freshness":"unproven","observed_mutation_fence":"uncrossed"});
+        crate::tool_runtime::startup_brief::validate_schema_instance_for_test(&wire, published)
+            .unwrap();
+        wire["output"]["tests_failed"] = json!(0);
+        assert!(
+            crate::tool_runtime::startup_brief::validate_schema_instance_for_test(&wire, published)
+                .is_err(),
+            "{name}"
+        );
+    }
+}

@@ -918,9 +918,9 @@ async fn fast_cargo_check_completes_in_windows_and_leaves_no_visible_job() {
 
     let result = task.await.unwrap();
     assert_sparse_validation_terminal_success(&result);
-    assert_eq!(result.output["warnings_count"], 0);
-    assert_eq!(result.output["errors_count"], 0);
-    assert!(result.output.get("diagnostics").is_some());
+    assert!(result.output.get("warnings_count").is_none());
+    assert!(result.output.get("errors_count").is_none());
+    assert!(result.output.get("diagnostics").is_none());
     assert_model_cargo_result_matches_schema("cargo_check", &result);
     // No redundant visible job.
     let list = runtime.list_jobs_for_auth(None, None, None).await;
@@ -3420,7 +3420,7 @@ fn cargo_output_schema_enforces_handoff_terminal_and_rejection_branches() {
             "tests_passed": 1,
             "tests_failed": 0,
             "zero_tests_run": false,
-            "diagnostics": {},
+            "diagnostics": {"available":true,"parser":"structured_validation_parser"},
             "permission": {"policy": "trusted_agent"}
         }
     });

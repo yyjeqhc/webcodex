@@ -116,6 +116,12 @@ For an unusual local layout, set `WEBCODEX_DESKTOP_BIN_DIR` to another directory
 containing all three source-matched binaries. This override is a debug/development
 path. Installed non-debug Desktop builds require their bundled runtime resources.
 
+### Desktop data directory
+
+Desktop normally starts from Tauri's per-user app-local-data directory. On Windows, Desktop resolves the deepest existing ancestor of that logical path to its physical filesystem location before creating any missing tail directories. This supports redirected Windows profiles whose `C:\\Users\\<user>` path is an NTFS Junction while keeping one effective root for Desktop state, secrets, `runtime/local`, connection state, provider/coding-agent state, updates, diagnostics, and reset/recovery flows.
+
+For operator recovery or debugging, `WEBCODEX_DESKTOP_DATA_DIR` overrides the Tauri location. The value must be an absolute path. Windows applies the same physical-resolution rule to the override; Linux and macOS keep the supplied absolute path without new symlink canonicalization semantics. This override does **not** relax CLI credential-path checks: the bundled CLI still validates the final effective path and refuses unsafe credential-directory redirection.
+
 ## Run Desktop from source
 
 After building the dogfood runtime:

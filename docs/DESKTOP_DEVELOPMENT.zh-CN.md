@@ -112,6 +112,12 @@ Desktop 会验证三个 binary 报告的 version 与 Git commit 一致。
 同源 binary 的目录。这个 override 只属于 debug/development 路径；正式安装的
 non-debug Desktop 必须使用包内 runtime resources。
 
+### Desktop 数据目录
+
+Desktop 默认从 Tauri 提供的当前用户 app-local-data 目录开始。Windows 上，Desktop 会先找到该 logical 路径中最深的已存在 ancestor，解析其真实物理文件系统位置，再原样追加尚不存在的 tail。这样可以支持 `C:\\Users\\<user>` 通过 NTFS Junction 重定向到其他磁盘的 Windows profile，同时让 Desktop state、secrets、`runtime/local`、connection state、provider/coding-agent state、updates、diagnostics 与 reset/recovery 始终共享同一个 effective root。
+
+运维恢复或调试时可以设置 `WEBCODEX_DESKTOP_DATA_DIR` 覆盖 Tauri 路径；其值必须是绝对路径。Windows 会对 override 应用同样的物理路径解析规则；Linux/macOS 不会因此新增 symlink canonicalization 语义。这个 override **不会**放宽 CLI credential-path 安全检查：bundled CLI 仍会严格验证最终 effective path，并拒绝不安全的 credential directory 重定向。
+
 ## 从源码运行 Desktop
 
 dogfood runtime 构建好以后：

@@ -72,6 +72,7 @@ struct ChatGptActivityProbe {
 
 pub struct AppState {
     core: Mutex<Option<DesktopCore>>,
+    desktop_data_dir: crate::desktop_data_dir::DesktopDataDir,
     ssh_resources: Mutex<crate::ssh_resources::SshResourcesManager>,
     published: Arc<RwLock<DesktopStateSnapshot>>,
     supervisor: SharedSupervisor,
@@ -86,6 +87,19 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(data_dir: PathBuf, resource_dir: PathBuf) -> DesktopResult<Self> {
+        let desktop_data_dir = crate::desktop_data_dir::DesktopDataDir {
+            effective: data_dir,
+            source: crate::desktop_data_dir::DesktopDataDirSource::Tauri,
+            physical_resolution_changed: false,
+        };
+        Self::new_resolved(desktop_data_dir, resource_dir)
+    }
+
+    pub fn new_resolved(
+        desktop_data_dir: crate::desktop_data_dir::DesktopDataDir,
+        resource_dir: PathBuf,
+    ) -> DesktopResult<Self> {
+        let data_dir = desktop_data_dir.effective.clone();
         let updates = crate::updates::UpdateManager::new(data_dir.clone());
         let core = DesktopCore::new(data_dir, resource_dir)?;
         let published = Arc::clone(&core.published);
@@ -94,6 +108,7 @@ impl AppState {
         let connections = core.connections.clone();
         Ok(Self {
             core: Mutex::new(Some(core)),
+            desktop_data_dir,
             ssh_resources: Mutex::new(crate::ssh_resources::SshResourcesManager::default()),
             published,
             supervisor,
@@ -1299,9 +1314,11 @@ impl DesktopCore {
         );
         self.publish_snapshot();
 
-        let local_dir = self.data_dir.join("runtime").join("local");
-        let env_file = local_dir.join("webcodex.env");
-        let data_dir = local_dir.join("data");
+        let (env_file, data_dir) = local_runtime_paths(&self.data_dir);
+        let local_dir = env_file
+            .parent()
+            .expect("Desktop local runtime env file always has a parent")
+            .to_path_buf();
         tokio::fs::create_dir_all(&local_dir).await.map_err(|_| {
             DesktopError::new(
                 "desktop_state_unavailable",
@@ -2605,6 +2622,11 @@ fn machine_event_overflow_error(event: &Value) -> DesktopError {
             .and_then(Value::as_u64)
             .unwrap_or(1),
     }))
+}
+
+pub(crate) fn local_runtime_paths(data_dir: &Path) -> (PathBuf, PathBuf) {
+    let local_dir = data_dir.join("runtime").join("local");
+    (local_dir.join("webcodex.env"), local_dir.join("data"))
 }
 
 fn local_enrollment_directory(data_dir: &Path, config: &StoredDesktopConfig) -> PathBuf {

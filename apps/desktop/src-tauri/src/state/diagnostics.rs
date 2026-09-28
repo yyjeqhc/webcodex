@@ -152,7 +152,7 @@ impl AppState {
         let snapshot = self.get_state();
         let permissions = crate::platform::permissions::probe();
         let permissions = serde_json::json!({"supported":permissions.supported,"desktop_accessibility":permissions.desktop_accessibility,"desktop_screen_recording":permissions.desktop_screen_recording});
-        let report = diagnostics::report(
+        let mut report = diagnostics::report(
             &snapshot,
             &settings,
             runner.as_ref(),
@@ -161,6 +161,19 @@ impl AppState {
             &self.activity.snapshot(),
             permissions,
         );
+        if let Some(report) = report.as_object_mut() {
+            report.insert(
+                "desktop_data_dir".into(),
+                serde_json::json!({
+                    "source": self.desktop_data_dir.source.label(),
+                    "physical_resolution": if self.desktop_data_dir.physical_resolution_changed {
+                        "changed"
+                    } else {
+                        "unchanged"
+                    }
+                }),
+            );
+        }
         let markdown = diagnostics::report_markdown(&report);
         Ok(DiagnosticSnapshot {
             schema_version: 1,

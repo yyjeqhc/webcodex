@@ -4,6 +4,7 @@ mod commands;
 mod connection_id;
 mod connections;
 mod deadline;
+mod desktop_data_dir;
 mod desktop_shell;
 mod diagnostics;
 mod error;
@@ -44,9 +45,19 @@ pub fn run() {
             Some(vec!["--background"]),
         ))
         .setup(|app| {
-            let data_dir = app.path().app_local_data_dir()?;
+            let logical_data_dir = app.path().app_local_data_dir()?;
+            let data_dir = desktop_data_dir::resolve(logical_data_dir)?;
+            eprintln!(
+                "WebCodex Desktop data root source={} physical_resolution={}",
+                data_dir.source.label(),
+                if data_dir.physical_resolution_changed {
+                    "changed"
+                } else {
+                    "unchanged"
+                }
+            );
             let resource_dir = app.path().resource_dir()?;
-            app.manage(AppState::new(data_dir, resource_dir)?);
+            app.manage(AppState::new_resolved(data_dir, resource_dir)?);
             app.manage(desktop_shell::DesktopShellState::default());
             app.manage(tray::TrayPresentationCache::default());
             tray::setup(app.handle())?;

@@ -756,6 +756,11 @@ fn required_runner_capability_matches_metadata_risk_table() {
             RunnerCapabilityRequirement::Shell,
         ),
         (
+            "project_validate",
+            ToolRisk::JobRun,
+            RunnerCapabilityRequirement::OwnerOnly,
+        ),
+        (
             "go_test",
             ToolRisk::JobRun,
             RunnerCapabilityRequirement::OwnerOnly,

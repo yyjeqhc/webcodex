@@ -493,6 +493,7 @@ pub const RUNNER_CAPABILITY_NAMES: &[&str] = &[
     RUNNER_CAPABILITY_STRUCTURED_CARGO_TEST_EXECUTION_POLICY,
     RUNNER_CAPABILITY_STRUCTURED_CARGO_TEST_LIB,
     RUNNER_CAPABILITY_STRUCTURED_CARGO_CHECK_PACKAGES,
+    RUNNER_CAPABILITY_PROJECT_VALIDATION,
     RUNNER_CAPABILITY_STRUCTURED_GO_TEST_JSON,
     RUNNER_CAPABILITY_STRUCTURED_GO_TEST_TOOL,
     RUNNER_CAPABILITY_STRUCTURED_GO_TEST_PACKAGES,
@@ -4018,6 +4019,7 @@ mod envelope_tests {
                 "structured_cargo_test_execution_policy",
                 "structured_cargo_test_lib",
                 "structured_cargo_check_packages",
+                "project_validation_v1",
                 "structured_go_test_json",
                 "structured_go_test_tool",
                 "structured_go_test_packages",
@@ -4502,8 +4504,18 @@ mod filter_canonical_tests {
         let mut go_assertion = metadata.clone();
         go_assertion.minimum_tests = Some(1);
         assert!(
-            !go_assertion.is_valid(),
-            "Cargo-specific assertion metadata must not cross validation adapters"
+            go_assertion.is_valid(),
+            "test-count assertion metadata is supported by structured go_test"
+        );
+        let mut go_vet_assertion = validation_metadata(
+            "go_vet",
+            "check",
+            validation_step("check", "go", &["vet", "./..."]),
+        );
+        go_vet_assertion.minimum_tests = Some(1);
+        assert!(
+            !go_vet_assertion.is_valid(),
+            "test-count assertion metadata must stay limited to test adapters"
         );
 
         let plain_go = validation_step("test", "go", &["test", "./..."]);

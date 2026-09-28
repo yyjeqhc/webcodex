@@ -160,6 +160,7 @@ normal = [
     "webcodex-persistent-shell",
     "webcodex-process",
     "webcodex-runner-config",
+    "webcodex-validation",
     "webcodex-workspace",
 ]
 dev = []

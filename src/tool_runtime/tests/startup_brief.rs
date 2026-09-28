@@ -277,25 +277,17 @@ fn assert_builtin_workflow(output: &Value) {
         .as_str()
         .unwrap();
     for phrase in [
+        "Goal workflow is on-demand",
+        "do not require a Goal",
         "work_on_project.goal_context",
-        "get_goal/present_goal_plan",
         "choose explicitly among multiple candidates",
         "never infer from Project/Window/title/recency",
-        "ordinary new substantial multi-step/cross-turn",
-        "prepare_goal_workflow",
-        "exact current Workflow Session",
-        "completion_conditions",
-        "optional explicit controller Agent",
-        "Host continuation setup/readiness remains separate",
-        "Low-level create_goal and associate_goal_workflow_session remain available",
-        "Tiny one-step",
-        "independently of AGENTS.md",
+        "webcodex.goal_workflow",
     ] {
         assert!(goal_workflow.contains(phrase), "{phrase}");
     }
-    let continuation = workflow["model_protocol"]["goal_continuation"]
-        .as_str()
-        .unwrap();
+    let details = crate::model_workflow::ModelWorkflowPolicy::default().goal_workflow_projection();
+    let continuation = details["continuation"].as_str().unwrap();
     for phrase in [
         "exact explicit durable controller Agent",
         "Reuse the same Agent",
@@ -307,9 +299,7 @@ fn assert_builtin_workflow(output: &Value) {
     ] {
         assert!(continuation.contains(phrase), "{phrase}");
     }
-    let checkpoint = workflow["model_protocol"]["goal_checkpoint"]
-        .as_str()
-        .unwrap();
+    let checkpoint = details["checkpoint"].as_str().unwrap();
     for phrase in [
         "After a plan phase completes",
         "_wc.control.before.goal_progress",

@@ -32,6 +32,7 @@ mod mcp;
 mod mcp_gateway;
 mod mcp_host;
 mod model_surface;
+mod model_workflow;
 pub(crate) use webcodex_store::models;
 mod oauth_http;
 #[cfg(feature = "legacy-gpt-actions")]
@@ -258,6 +259,8 @@ pub async fn run_server_with_shutdown(
     }
     let config = Config::from_env();
     let mcp_host_policy = mcp_host::McpHostConfig::from_env().runtime_policy();
+    let model_workflow_policy =
+        model_workflow::ModelWorkflowPolicy::from_env().map_err(std::io::Error::other)?;
     let (acceptor, listener_mode, listener_addr) = server_listener::server_acceptor(&config.addr)
         .await
         .map_err(std::io::Error::other)?;
@@ -359,6 +362,7 @@ explicitly allow remote shared-key auth."
     let mut tool_runtime_builder =
         tool_runtime::ToolRuntime::new(runner_registry.clone(), runtime_info.clone())
             .with_mcp_host_policy(mcp_host_policy)
+            .with_model_workflow_policy(model_workflow_policy)
             .with_window_activity_database(db.clone())
             .with_memory_database(db.clone())
             .with_project_reference_database(db.clone())

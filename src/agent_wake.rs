@@ -208,10 +208,15 @@ impl EndpointContinuationCarrier {
         }
     }
 
-    fn production_auto_resume_available(&self) -> bool {
+    fn production_auto_resume_available(
+        &self,
+        mcp_app_resume_mode: crate::model_workflow::McpAppResumeMode,
+    ) -> bool {
         match self {
             Self::Push(adapter) => adapter.production_auto_resume_available(),
-            Self::McpApp { .. } => true,
+            // A message channel is not evidence of confirmation-free execution.
+            // This conservative projection does not suppress or replay delivery.
+            Self::McpApp { .. } => mcp_app_resume_mode.allows_unattended_claim(),
         }
     }
 
@@ -257,6 +262,7 @@ struct AgentContinuationControllerState {
 pub(crate) struct AgentContinuationController {
     state: Arc<AgentContinuationControllerState>,
     dispatch_tx: mpsc::SyncSender<String>,
+    mcp_app_resume_mode: crate::model_workflow::McpAppResumeMode,
 }
 
 impl AgentContinuationController {
@@ -296,7 +302,19 @@ impl AgentContinuationController {
                 }
             })
             .expect("Agent continuation controller thread must start");
-        Self { state, dispatch_tx }
+        Self {
+            state,
+            dispatch_tx,
+            mcp_app_resume_mode: Default::default(),
+        }
+    }
+
+    pub(crate) fn with_mcp_app_resume_mode(
+        mut self,
+        mode: crate::model_workflow::McpAppResumeMode,
+    ) -> Self {
+        self.mcp_app_resume_mode = mode;
+        self
     }
 
     /// Register a push-style process-local adapter for one exact current Endpoint.
@@ -1155,8 +1173,11 @@ impl AgentContinuationController {
         AgentHostBindingStatus {
             adapter_registered: binding.is_some(),
             adapter_kind: binding.map(|binding| binding.carrier.adapter_kind().to_string()),
-            production_auto_resume_available: binding
-                .is_some_and(|binding| binding.carrier.production_auto_resume_available()),
+            production_auto_resume_available: binding.is_some_and(|binding| {
+                binding
+                    .carrier
+                    .production_auto_resume_available(self.mcp_app_resume_mode)
+            }),
         }
     }
 
@@ -1192,7 +1213,9 @@ impl AgentContinuationController {
             if binding.principal != *principal
                 || binding.agent_id != agent_id
                 || binding.controller_generation != expected_controller_generation
-                || !binding.carrier.production_auto_resume_available()
+                || !binding
+                    .carrier
+                    .production_auto_resume_available(self.mcp_app_resume_mode)
             {
                 return false;
             }

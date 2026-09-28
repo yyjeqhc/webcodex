@@ -20,6 +20,85 @@ fn tool_names(value: &Value) -> Vec<&str> {
 }
 
 #[tokio::test]
+async fn model_workflow_policy_changes_never_change_cached_tools_schemas_routes_or_apps() {
+    use crate::model_workflow::ModelWorkflowPolicy;
+    let auth = adaptive_direct_auth();
+    let full_schema_baseline = serde_json::to_vec(
+        &crate::mcp::tools::mcp_tools_list_payload_with_compact(false),
+    )
+    .unwrap();
+    for apps in [false, true] {
+        let mut listed_baseline = None;
+        let mut manifest_baseline = None;
+        for preference in ["on_demand", "preferred"] {
+            for mode in ["unknown", "user_confirmed", "unattended"] {
+                let runtime = test_runtime().with_model_workflow_policy(
+                    ModelWorkflowPolicy::from_values(Some(preference), Some(mode)).unwrap(),
+                );
+                let params = if apps {
+                    mcp_2026_ui_params(json!({}))
+                } else {
+                    mcp_2026_params(json!({}))
+                };
+                let McpOutcome::Ok(listed) = handle_mcp_request(
+                    &runtime,
+                    rpc("tools/list", Some(json!(160)), params),
+                    Some(&auth),
+                )
+                .await
+                else {
+                    panic!("tools/list");
+                };
+                let bytes = serde_json::to_vec(&listed["result"]).unwrap();
+                if let Some(expected) = &listed_baseline {
+                    assert_eq!(&bytes, expected);
+                } else {
+                    listed_baseline = Some(bytes);
+                }
+                assert_eq!(
+                    serde_json::to_vec(&crate::mcp::tools::mcp_tools_list_payload_with_compact(
+                        false
+                    ))
+                    .unwrap(),
+                    full_schema_baseline
+                );
+                let mut manifests = Vec::new();
+                for tool in [
+                    "present_goal_plan",
+                    "prepare_goal_workflow",
+                    "checkpoint_goal",
+                    "get_goal",
+                    "update_goal",
+                    "present_agent_continuation",
+                ] {
+                    let args = json!({"name":"tool_manifest", "arguments":{"tool_name":tool}});
+                    let params = if apps {
+                        mcp_2026_ui_params(args)
+                    } else {
+                        mcp_2026_params(args)
+                    };
+                    let McpOutcome::Ok(manifest) = handle_mcp_request(
+                        &runtime,
+                        rpc("tools/call", Some(json!(161)), params),
+                        Some(&auth),
+                    )
+                    .await
+                    else {
+                        panic!("manifest {tool}");
+                    };
+                    manifests.push(manifest["result"].clone());
+                }
+                if let Some(expected) = &manifest_baseline {
+                    assert_eq!(&manifests, expected);
+                } else {
+                    manifest_baseline = Some(manifests);
+                }
+            }
+        }
+    }
+}
+
+#[tokio::test]
 async fn adaptive_tools_list_exposes_ranked_direct_tools_and_gateway() {
     let runtime = test_runtime();
     let auth = adaptive_direct_auth();

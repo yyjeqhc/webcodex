@@ -43,6 +43,7 @@ mod jobs;
 mod lsp;
 mod memory;
 mod metadata;
+mod model_workflow;
 mod observe_jobs;
 mod peer_collaboration;
 mod permission_gate;

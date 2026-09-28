@@ -206,6 +206,70 @@ async fn context_projection_is_explicit_deduped_open_ended_and_nonfatal() {
 }
 
 #[tokio::test]
+async fn model_workflow_context_refresh_changes_guidance_only_and_chapters_are_explicit() {
+    use crate::model_workflow::{ModelWorkflowPolicy, GOAL_WORKFLOW_CONTEXT_KEY};
+    let base_runtime = ToolRuntime::new_for_tests();
+    let mut canonical_output = None;
+    for preference in ["on_demand", "preferred"] {
+        for mode in ["unknown", "user_confirmed", "unattended"] {
+            let policy = ModelWorkflowPolicy::from_values(Some(preference), Some(mode)).unwrap();
+            let runtime = base_runtime.clone().with_model_workflow_policy(policy);
+            for chapter in [false, true] {
+                let mut keys = vec!["webcodex.workflow".to_string()];
+                if chapter {
+                    keys.push(GOAL_WORKFLOW_CONTEXT_KEY.to_string());
+                }
+                let mut result = runtime
+                    .dispatch_with_auth_transport_options_and_metadata_with_recording_mode_and_context(
+                        ToolCall::from_tool_name("list_tools", json!({})).unwrap(),
+                        None, SessionTransport::Mcp, Default::default(), None, true, keys,
+                        super::super::context_projection::ContextMaterialCapabilities::default(),
+                    ).await;
+                assert!(result.success, "{:?}", result.error);
+                let material = context_material(&result, "webcodex.workflow");
+                assert_eq!(material["status"], "available");
+                assert_eq!(
+                    material["projection"]["model_protocol"]["goal_workflow"],
+                    policy.goal_selection_guidance()
+                );
+                assert_eq!(
+                    material["projection"]["model_protocol"]["goal_continuation"],
+                    policy.mcp_app_resume.guidance()
+                );
+                assert_eq!(
+                    result.output["context_projection"]["materials"]
+                        .as_array()
+                        .unwrap()
+                        .len(),
+                    if chapter { 2 } else { 1 }
+                );
+                if chapter {
+                    assert_eq!(
+                        context_material(&result, GOAL_WORKFLOW_CONTEXT_KEY)["projection"],
+                        policy.goal_workflow_projection()
+                    );
+                }
+                result
+                    .output
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("context_projection");
+                if let Some(expected) = &canonical_output {
+                    assert_eq!(&result.output, expected);
+                } else {
+                    canonical_output = Some(result.output);
+                }
+            }
+        }
+    }
+    assert_eq!(
+        base_runtime.model_workflow_policy,
+        ModelWorkflowPolicy::default(),
+        "a request must not rewrite another runtime snapshot"
+    );
+}
+
+#[tokio::test]
 async fn private_context_marker_requires_explicit_sidecar_capability() {
     let runtime = ToolRuntime::new_for_tests();
 
@@ -224,7 +288,10 @@ async fn private_context_marker_requires_explicit_sidecar_capability() {
                 host_file_import_trust: HostFileImportTrust::Untrusted,
             },
             ToolInvocationMetadata {
-                context_request: vec!["webcodex.workflow".to_string()],
+                context_request: vec![
+                    "webcodex.workflow".to_string(),
+                    crate::model_workflow::GOAL_WORKFLOW_CONTEXT_KEY.to_string(),
+                ],
                 ..Default::default()
             },
             ToolProtocolCapabilities {

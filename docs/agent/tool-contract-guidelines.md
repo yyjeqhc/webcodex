@@ -419,6 +419,24 @@ implementation switches are copied from configuration; a new wire field cannot i
 advertisement merely from config. All-enabled fixtures are tests only and iterate the
 typed catalog.
 
+### Stable schemas and optional workflow guidance
+
+Host tool-schema refresh is an integration operation, not a workflow preference.
+Do not change Direct ranks, tool names, schemas, descriptions or App associations
+when an operator changes which workflow is recommended. Keep those contracts
+static; deliver current recommendations through the existing bounded context
+channel. An active conversation may retain older guidance: refresh context after
+an announced policy change, not the Host tool registration, and do not poll.
+
+Goal selection and Host interaction assumptions are separate, typed deployment
+facts in `ModelWorkflowPolicy`. The baseline is on-demand; detailed Goal recipes
+are an optional context chapter. Existing Goal/Wake/Job state is never retired,
+completed or replayed by changing preference. A message API or accepted dispatch
+is not proof that user confirmation is unnecessary. See
+[`model-workflow-policy.md`](model-workflow-policy.md) for configuration and the
+schema/data-refresh distinction. Extend this small boundary only for concrete
+workflows, not a per-tool feature-flag or general rules engine.
+
 ## 10. Compatibility follows concrete consumers, not historical implementation
 
 For model-facing tool contracts, compatibility is opt-in rather than automatic.

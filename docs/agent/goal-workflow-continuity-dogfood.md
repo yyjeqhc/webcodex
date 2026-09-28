@@ -5,14 +5,19 @@ This is the current WebCodex-owned Goal workflow contract, not repository
 [`durable-agent-runtime.md`](../architecture/durable-agent-runtime.md) and
 [`durable-agent-conversation.md`](../architecture/durable-agent-conversation.md).
 
-## Ordinary single-window flow
+## Optional single-window flow
 
-For ordinary **new** substantial multi-step/cross-turn work, first establish the
+Workflow selection is now [deployment guidance](model-workflow-policy.md), default
+`on_demand`, not a requirement for every substantial task. Load `webcodex.workflow`
+for current selection and `webcodex.goal_workflow` only for selected Goal work.
+Tool inventories and schemas stay fixed when this preference changes.
+
+For explicitly selected **new** durable Goal work, first establish the
 exact Workflow Session with `work_on_project`, then call `prepare_goal_workflow` with
 that exact `session_id`, bounded completion conditions/stable plan steps, and an
 optional explicit controller Agent. The Store admits the new Goal and initial Session
-correlation atomically at revision 1. Then present the Goal Plan card. Tiny one-step
-lookups/trivial edits do not require setup. Exact known Goals can still use the
+correlation atomically at revision 1. Present the Goal Plan card when requested or
+useful. Ordinary coding/review and tiny lookups need no Goal setup. Exact known Goals can still use the
 lower-level `create_goal` / `associate_goal_workflow_session` primitives for explicit
 advanced composition; `prepare_goal_workflow` never guesses or reuses a Goal by title,
 Window, Session, or recency.
@@ -41,7 +46,10 @@ summary. Complete all steps and freshly verify/review before explicitly completi
 the Goal. Session closeout returns owned correlated active Goal follow-up; it does
 not complete the Goal.
 
-Automatic continuation is optional and requires an exact durable controller Agent.
+Automatic continuation is optional and requires an exact durable controller Agent
+plus separately verified Host behavior. An MCP App message channel alone does not
+prove confirmation-free continuation; unknown/user-confirmed deployment modes
+retain manual follow-up without advertising unattended readiness.
 An Agent already made callable through explicit identity/Endpoint/presentation setup
 should be reused as that controller. If its carrier is not ready, use the separate
 `agent_continuation_setup` flow. Endpoint rotation, App mount/bind, Host readiness,

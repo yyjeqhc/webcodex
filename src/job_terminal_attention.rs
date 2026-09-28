@@ -95,6 +95,7 @@ pub(crate) struct JobTerminalContinuationController {
     app_bindings: Arc<Mutex<HashMap<String, JobTerminalAppBinding>>>,
     retired_app_bindings: Arc<Mutex<HashMap<String, RetiredJobTerminalAppBindings>>>,
     app_binding_transitions: Arc<Mutex<()>>,
+    mcp_app_resume_mode: crate::model_workflow::McpAppResumeMode,
 }
 
 impl std::fmt::Debug for JobTerminalContinuationController {
@@ -116,7 +117,16 @@ impl JobTerminalContinuationController {
             app_bindings: Arc::new(Mutex::new(HashMap::new())),
             retired_app_bindings: Arc::new(Mutex::new(HashMap::new())),
             app_binding_transitions: Arc::new(Mutex::new(())),
+            mcp_app_resume_mode: Default::default(),
         }
+    }
+
+    pub(crate) fn with_mcp_app_resume_mode(
+        mut self,
+        mode: crate::model_workflow::McpAppResumeMode,
+    ) -> Self {
+        self.mcp_app_resume_mode = mode;
+        self
     }
 
     fn push_adapter_auto_resume_available(&self) -> bool {
@@ -160,7 +170,8 @@ impl JobTerminalContinuationController {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .get(wait_id)
             .is_some_and(|binding| binding.principal == *principal);
-        app_bound || self.push_adapter_auto_resume_available()
+        (app_bound && self.mcp_app_resume_mode.allows_unattended_claim())
+            || self.push_adapter_auto_resume_available()
     }
 
     #[cfg(test)]
@@ -949,10 +960,58 @@ mod tests {
     }
 
     #[test]
+    fn model_workflow_job_app_policy_keeps_delivery_state_and_requires_declared_unattended_mode() {
+        use crate::model_workflow::McpAppResumeMode;
+        let temp = tempdir().unwrap();
+        let db = Arc::new(Database::open(&temp.path().join("app-confirmation.db")).unwrap());
+        let controller = JobTerminalContinuationController::new(db.clone());
+        let wait_id = create_waiting(&db, "job-confirmation", "confirmation", 1_100);
+        let declaration = controller
+            .clone()
+            .with_mcp_app_resume_mode(McpAppResumeMode::Unattended);
+        assert!(!declaration.automatic_resume_available_for_wait(&principal(), &wait_id, 1_101));
+        controller
+            .bind_mcp_app(
+                &principal(),
+                &wait_id,
+                binding(33),
+                Some("confirmation-window"),
+                1_101,
+            )
+            .unwrap();
+        let before = serde_json::to_value(
+            db.read_job_terminal_wait(&principal(), &wait_id, 1_101)
+                .unwrap(),
+        )
+        .unwrap();
+        for mode in [
+            McpAppResumeMode::Unknown,
+            McpAppResumeMode::UserConfirmed,
+            McpAppResumeMode::Unattended,
+        ] {
+            let snapshot = controller.clone().with_mcp_app_resume_mode(mode);
+            assert_eq!(
+                snapshot.automatic_resume_available_for_wait(&principal(), &wait_id, 1_101),
+                mode == McpAppResumeMode::Unattended
+            );
+            assert_eq!(
+                serde_json::to_value(
+                    db.read_job_terminal_wait(&principal(), &wait_id, 1_101)
+                        .unwrap()
+                )
+                .unwrap(),
+                before
+            );
+        }
+        assert!(!controller.automatic_resume_available_for_wait(&principal(), &wait_id, 1_101));
+    }
+
+    #[test]
     fn exact_wait_app_capability_and_binding_fences_are_local_and_authorized() {
         let temp = tempdir().unwrap();
         let db = Arc::new(Database::open(&temp.path().join("app-binding.db")).unwrap());
-        let controller = JobTerminalContinuationController::new(db.clone());
+        let controller = JobTerminalContinuationController::new(db.clone())
+            .with_mcp_app_resume_mode(crate::model_workflow::McpAppResumeMode::Unattended);
         let wait_id = create_waiting(&db, "job-app-bound", "app-bound", 1_100);
         let unrelated = create_waiting(&db, "job-app-unrelated", "app-unrelated", 1_100);
         let first = binding(1);
@@ -1347,7 +1406,8 @@ mod tests {
                 .delivery_state,
             JobTerminalDeliveryState::Pending
         );
-        let rebound = JobTerminalContinuationController::new(db.clone());
+        let rebound = JobTerminalContinuationController::new(db.clone())
+            .with_mcp_app_resume_mode(crate::model_workflow::McpAppResumeMode::Unattended);
         assert!(!rebound.automatic_resume_available_for_wait(&principal(), &pending_wait, 3_103));
         rebound
             .bind_mcp_app(

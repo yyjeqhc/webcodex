@@ -209,6 +209,9 @@ fn single_window_goal_workflow_prefers_atomic_admission_and_keeps_host_setup_sep
         "prepare_goal_workflow",
         "durable admission only",
         "host carrier setup/readiness remains separate",
+        "optional cross-repository workflow",
+        "consult current webcodex.workflow context for selection",
+        "only after selecting durable goal work",
         "agent_continuation_setup",
         "low-level create_goal and associate_goal_workflow_session remain available",
     ] {

@@ -587,10 +587,82 @@ fn natural_agent_message_dispatches_once_and_burst_remains_bounded_and_private()
 }
 
 #[test]
+fn model_workflow_confirmation_policy_never_creates_binding_readiness_or_changes_endpoint_state() {
+    use crate::model_workflow::ModelWorkflowPolicy;
+    let temp = tempfile::tempdir().unwrap();
+    let db = Arc::new(Database::open(&temp.path().join("confirmation.db")).unwrap());
+    let runtime = runtime_with_db(db.clone());
+    let agent = create_agent(
+        &runtime,
+        "confirmation",
+        "Confirmation",
+        "description",
+        "label",
+        "confirmation-agent",
+    );
+    let (endpoint, generation) = attach(&runtime, &agent, "confirmation-endpoint");
+    let declared = ModelWorkflowPolicy::from_values(None, Some("unattended")).unwrap();
+    let unbound = runtime.clone().with_model_workflow_policy(declared);
+    assert_eq!(
+        listed_agent(&unbound, &agent)["production_auto_resume_available"],
+        false
+    );
+    bind_mcp_app(&runtime, &agent, &endpoint, generation);
+    assert_eq!(
+        listed_agent(&runtime, &agent)["production_auto_resume_available"],
+        false,
+        "a message-capable binding alone cannot prove confirmation-free continuation"
+    );
+    let fingerprint = endpoint_recovery_fingerprint(&db, &endpoint);
+    for goal in ["on_demand", "preferred"] {
+        for mode in ["unknown", "user_confirmed", "unattended"] {
+            let configured = runtime.clone().with_model_workflow_policy(
+                ModelWorkflowPolicy::from_values(Some(goal), Some(mode)).unwrap(),
+            );
+            assert_eq!(
+                listed_agent(&configured, &agent)["production_auto_resume_available"],
+                mode == "unattended"
+            );
+            let status = configured
+                .agent_continuations
+                .as_ref()
+                .unwrap()
+                .binding_status(&agent, &endpoint, generation);
+            assert!(
+                status.adapter_registered,
+                "policy does not withdraw the message channel"
+            );
+            assert_eq!(
+                status.production_auto_resume_available,
+                mode == "unattended"
+            );
+            assert_eq!(endpoint_recovery_fingerprint(&db, &endpoint), fingerprint);
+        }
+    }
+    // Builder order cannot lose the declared policy; a new controller still has
+    // no live binding and must not inherit readiness from another runtime.
+    let before_store = ToolRuntime::new_for_tests()
+        .with_model_workflow_policy(declared)
+        .with_communication_database(db);
+    assert_eq!(before_store.model_workflow_policy, declared);
+    assert!(
+        !before_store
+            .agent_continuations
+            .as_ref()
+            .unwrap()
+            .binding_status(&agent, &endpoint, generation)
+            .production_auto_resume_available
+    );
+}
+
+#[test]
 fn agent_listing_projects_only_current_production_continuation_readiness() {
     let temp = tempfile::tempdir().unwrap();
     let db = Arc::new(Database::open(&temp.path().join("readiness.db")).unwrap());
-    let runtime = runtime_with_db(db.clone());
+    // This fixture models a separately declared unattended deployment, not API presence.
+    let runtime = runtime_with_db(db.clone()).with_model_workflow_policy(
+        crate::model_workflow::ModelWorkflowPolicy::from_values(None, Some("unattended")).unwrap(),
+    );
 
     let ready = create_agent(
         &runtime,
@@ -757,7 +829,9 @@ fn offline_restart_and_replacement_dispatch_the_same_logical_wake() {
     reopened
         .recover_agent_wakes_for_server_takeover(&ownership, chrono::Utc::now().timestamp_millis())
         .unwrap();
-    let runtime = runtime_with_db(reopened.clone());
+    let runtime = runtime_with_db(reopened.clone()).with_model_workflow_policy(
+        crate::model_workflow::ModelWorkflowPolicy::from_values(None, Some("unattended")).unwrap(),
+    );
     let restart_listing = listed_agent(&runtime, &agent_b);
     assert_eq!(restart_listing["active_endpoint_count"], 1);
     assert_eq!(

@@ -20,6 +20,12 @@ struct Workflow {
 impl Workflow {
     async fn new(controller: bool) -> Self {
         let (temp, db, runtime) = runtime_with_goal_activity_db();
+        // These continuity fixtures model an explicitly declared unattended carrier.
+        // On-demand selection still permits every already-established Goal operation.
+        let runtime = runtime.with_model_workflow_policy(
+            crate::model_workflow::ModelWorkflowPolicy::from_values(None, Some("unattended"))
+                .unwrap(),
+        );
         let auth = goal_activity_auth("goal-workflow-owner");
         let project = register_goal_activity_project(
             &runtime,

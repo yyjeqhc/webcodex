@@ -1,6 +1,6 @@
 use super::project_resolution::ResolvedProject;
 use super::startup_brief::{
-    builtin_coding_workflow_projection, project_instructions_context_projection,
+    builtin_coding_workflow_projection_with_policy, project_instructions_context_projection,
 };
 use super::tool_inputs::CodingGuidanceProfile;
 use super::{SuggestedToolCall, ToolResult, ToolRuntime};
@@ -94,6 +94,16 @@ pub(crate) const CONTEXT_MATERIAL_SPECS: &[ContextMaterialSpec] = &[
     },
 ];
 
+// Optional workflow chapters are discovered through the stable webcodex.workflow
+// entrypoint, not repeated in every cached tool descriptor's example key list.
+// Adding a chapter therefore needs neither new tool registration nor schema refresh.
+const GOAL_WORKFLOW_MATERIAL: ContextMaterialSpec = ContextMaterialSpec {
+    key: crate::model_workflow::GOAL_WORKFLOW_CONTEXT_KEY,
+    project_required: false,
+    scope_policy: ContextMaterialScopePolicy::Public,
+    surface: ContextMaterialSurface::AnySidecar,
+};
+
 pub(crate) fn context_material_keys_csv() -> String {
     CONTEXT_MATERIAL_SPECS
         .iter()
@@ -103,7 +113,10 @@ pub(crate) fn context_material_keys_csv() -> String {
 }
 
 fn context_material_spec(key: &str) -> Option<&'static ContextMaterialSpec> {
-    CONTEXT_MATERIAL_SPECS.iter().find(|spec| spec.key == key)
+    CONTEXT_MATERIAL_SPECS
+        .iter()
+        .chain(std::iter::once(&GOAL_WORKFLOW_MATERIAL))
+        .find(|spec| spec.key == key)
 }
 
 fn context_material_surface_available(
@@ -326,7 +339,14 @@ impl ToolRuntime {
                         "webcodex.workflow" => json!({
                             "key": key,
                             "status": "available",
-                            "projection": builtin_coding_workflow_projection(guidance_profile),
+                            "projection": builtin_coding_workflow_projection_with_policy(
+                                guidance_profile, self.model_workflow_policy
+                            ),
+                        }),
+                        crate::model_workflow::GOAL_WORKFLOW_CONTEXT_KEY => json!({
+                            "key": key,
+                            "status": "available",
+                            "projection": self.model_workflow_policy.goal_workflow_projection(),
                         }),
                         _ => unreachable!("context material registry/provider match drifted"),
                     }

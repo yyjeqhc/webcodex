@@ -270,6 +270,9 @@ async fn unauthorized_registration_is_existence_hiding_and_session_window_are_no
 #[tokio::test]
 async fn keyed_replay_reports_current_exact_carrier_capability_only_for_its_wait() {
     let (_temp, runtime, _db, controller) = attention_runtime_with_controller().await;
+    let runtime = runtime.with_model_workflow_policy(
+        crate::model_workflow::ModelWorkflowPolicy::from_values(None, Some("unattended")).unwrap(),
+    );
     let auth = shared_key_auth_context(&"7".repeat(64));
     let (job_id, _request) =
         start_owned_job(&runtime, "e3-carrier", "project-carrier", &auth).await;
@@ -408,6 +411,9 @@ async fn presentation_reauthorizes_exact_wait_and_exposes_no_ambient_authority_s
 #[tokio::test]
 async fn app_binding_uses_hashed_host_sideband_only_and_never_returns_raw_identity_or_fence() {
     let (_temp, runtime, db, _controller) = attention_runtime_with_controller().await;
+    let runtime = runtime.with_model_workflow_policy(
+        crate::model_workflow::ModelWorkflowPolicy::from_values(None, Some("unattended")).unwrap(),
+    );
     let auth = shared_key_auth_context(&"6".repeat(64));
     let (job_id, _request) =
         start_owned_job(&runtime, "e3-sideband", "project-sideband", &auth).await;

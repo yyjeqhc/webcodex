@@ -4,10 +4,15 @@ version.workspace = true
 license.workspace = true
 edition.workspace = true
 
+[features]
+default = []
+# The Runner needs recipes/adapters, not the Server's Session evidence ledger.
+session-evidence = ["dep:webcodex-tool-contracts", "dep:webcodex-workflow-session"]
+
 [dependencies]
 webcodex-core = { path = "../webcodex-core" }
-webcodex-tool-contracts = { path = "../webcodex-tool-contracts" }
-webcodex-workflow-session = { path = "../webcodex-workflow-session" }
+webcodex-tool-contracts = { path = "../webcodex-tool-contracts", optional = true }
+webcodex-workflow-session = { path = "../webcodex-workflow-session", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"

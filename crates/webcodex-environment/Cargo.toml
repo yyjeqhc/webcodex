@@ -5,7 +5,6 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-webcodex-admin = { path = "../webcodex-admin" }
 webcodex-core = { path = "../webcodex-core" }
 webcodex-runner-config = { path = "../webcodex-runner-config" }
 fs2 = "0.4"

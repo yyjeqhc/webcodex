@@ -27,7 +27,8 @@ futures-util = "0.3"
 fs2 = "0.4"
 flate2 = "1"
 quinn = "0.11"
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+# Polling HTTP clients must retain system proxies in an isolated Runner build.
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls", "system-proxy"] }
 rustls = "0.23"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

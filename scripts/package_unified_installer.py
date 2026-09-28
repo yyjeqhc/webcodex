@@ -403,7 +403,15 @@ done"""
 def rpm_preinstall() -> str:
     return """set -eu
 if [ "$1" -eq 1 ]; then
-  # Fresh install: no prior package payload exists to protect.
+  # RPM only knows that no older *RPM package* is installed. A DEB, manual,
+  # or legacy WebCodex installation can still own these paths, so never treat
+  # package-manager cardinality alone as fresh-install authority.
+  for pattern in /usr/lib/webcodex/webcodex-desktop /usr/lib/webcodex/webcodex-runtime/webcodex /usr/lib/webcodex/webcodex-runtime/webcodex-server /usr/lib/webcodex/webcodex-runtime/webcodex-runner /usr/bin/webcodex /usr/bin/webcodex-server /usr/bin/webcodex-runner /usr/share/applications/webcodex.desktop /etc/systemd/system/webcodex* /lib/systemd/system/webcodex* /usr/lib/systemd/system/webcodex*; do
+    if [ -e "$pattern" ] || [ -L "$pattern" ]; then
+      echo "Fresh RPM installation found an existing WebCodex installation; remove/migrate it or use its existing package-family upgrade path." >&2
+      exit 1
+    fi
+  done
   exit 0
 fi
 candidate=/var/lib/webcodex-installer/recovery/candidate
@@ -436,6 +444,7 @@ same_marker=/var/lib/webcodex-installer/same-package.pending
 candidate=/var/lib/webcodex-installer/recovery/candidate
 if [ -f "$authorization" ]; then
   "$cli" environment installer-finish --json
+  rm -f "$same_marker"
   rm -rf "$candidate"
   exit 0
 fi

@@ -78,6 +78,13 @@ example:
 sudo dnf install ./webcodex-unified-v<VERSION>-linux-x64.rpm
 ```
 
+"Fresh" means more than the RPM database having no `webcodex` package. The RPM
+preinstall script also rejects canonical WebCodex Desktop/runtime/symlink/service
+paths left by a DEB, manual, or legacy installation. This prevents a first RPM
+transaction from overwriting an existing Environment outside the prepared upgrade
+authority. Migrate/remove that installation or upgrade through its existing package
+family instead.
+
 Package installation itself does not auto-enable Server or Runner. Environment
 configuration and service lifecycle remain owned by `webcodex environment`.
 

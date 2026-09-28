@@ -310,10 +310,14 @@ class UnifiedInstallerTests(unittest.TestCase):
             ).stdout
             self.assertIn("set -eu", scripts)
             self.assertIn('if [ "$1" -eq 1 ]', scripts)
+            self.assertIn("Fresh RPM installation found an existing WebCodex installation", scripts)
+            self.assertIn("/usr/lib/webcodex/webcodex-runtime/webcodex", scripts)
+            self.assertIn("/etc/systemd/system/webcodex*", scripts)
             self.assertIn("/var/lib/webcodex-installer/recovery/candidate", scripts)
             self.assertIn("installer-verify", scripts)
             self.assertIn("installer-verify-same", scripts)
             self.assertIn("installer-finish", scripts)
+            self.assertIn('rm -f "$same_marker"', scripts)
             for forbidden in ("dnf ", "--nodeps", "--force", "sudo "):
                 self.assertNotIn(forbidden, scripts)
             checksig = subprocess.run(

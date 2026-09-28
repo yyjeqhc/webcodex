@@ -773,8 +773,9 @@ normal timer for a registered model-visible tool; the transport that already own
 the outer Action Audit row then finalizes one `summary.model_ergonomics` object
 from the final model-facing ToolResult projection, retaining the canonical
 closed execution state captured before late model compaction. Execution
-ActionAudit receipts retain definition-authorized bounded lifecycle and source
-classifications, never raw command/script/stdout/stderr or source fence identity.
+ActionAudit receipts retain definition-authorized bounded lifecycle, validation
+counts/assertion verdicts, and source classifications, never raw command/script/stdout/stderr,
+diagnostic bodies, or source fence identity.
 Workflow Session evidence is consumed before projection. A transport may use a bounded
 fallback timer only after a runtime tool identity is established when MCP-only
 validation rejects the call before kernel entry or the MCP hard dispatch timeout

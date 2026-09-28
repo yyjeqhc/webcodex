@@ -1145,9 +1145,45 @@ fn typed_skill_request_audit(kind: SkillRequestAudit, arguments: &Value) -> Valu
     Value::Object(out)
 }
 
+fn bounded_test_count_assertion_audit(value: &Value) -> Option<Value> {
+    let assertion = value.as_object()?;
+    let minimum_tests = assertion.get("minimum_tests")?.as_u64()?;
+    let actual_tests_run = match assertion.get("actual_tests_run")? {
+        Value::Null => Value::Null,
+        value => serde_json::json!(value.as_u64()?),
+    };
+    let status = assertion.get("status")?.as_str()?;
+    let reason_code = assertion.get("reason_code")?.as_str()?;
+    let evidence_reason_code = assertion.get("evidence_reason_code")?.as_str()?;
+    if !matches!(status, "passed" | "failed" | "unproven")
+        || !matches!(
+            reason_code,
+            "minimum_satisfied" | "minimum_not_met" | "test_count_unproven"
+        )
+        || !matches!(
+            evidence_reason_code,
+            "complete_summary"
+                | "output_truncated"
+                | "partial_harness_summary"
+                | "no_complete_summary"
+                | "incomplete_stream"
+        )
+    {
+        return None;
+    }
+    Some(serde_json::json!({
+        "minimum_tests": minimum_tests,
+        "actual_tests_run": actual_tests_run,
+        "status": status,
+        "reason_code": reason_code,
+        "evidence_reason_code": evidence_reason_code,
+    }))
+}
+
 /// ActionAudit cannot persist the raw canonical evidence that the Session ledger
-/// consumes. Narrow definition-owned execution evidence to lifecycle scalars;
-/// Session excerpt/source processing continues to consume its original result.
+/// consumes. Narrow definition-owned execution evidence to lifecycle scalars plus
+/// bounded validation counts/assertions; Session excerpt/source processing continues
+/// to consume its original result.
 pub fn canonical_execution_audit_result_for_tool(tool_name: &str, output: &Value) -> Value {
     let Some(definition) = webcodex_tool_contracts::lookup_tool_definition(tool_name) else {
         return empty_audit_projection();
@@ -1182,6 +1218,57 @@ pub fn canonical_execution_audit_result_for_tool(tool_name: &str, output: &Value
     }
     if let Some(value) = output.get("exit_code").filter(|value| value.is_i64()) {
         result.insert("exit_code".to_string(), value.clone());
+    }
+    if let Some(kind) = output.get("failure_kind").and_then(Value::as_str) {
+        if !kind.is_empty()
+            && kind.len() <= 64
+            && kind
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+        {
+            result.insert("failure_kind".to_string(), Value::String(kind.to_string()));
+        }
+    }
+    if let Some(kind) = output.get("recovery_kind").and_then(Value::as_str) {
+        if webcodex_core::runtime_contract::RECOVERY_KIND_VALUES.contains(&kind) {
+            result.insert("recovery_kind".to_string(), Value::String(kind.to_string()));
+        }
+    }
+    for key in ["warnings_count", "errors_count"] {
+        if let Some(value) = output.get(key).filter(|value| value.is_u64()) {
+            result.insert(key.to_string(), value.clone());
+        }
+    }
+    if matches!(
+        definition.audit_policy().execution.detail,
+        webcodex_tool_contracts::ToolAuditExecutionDetail::TestCounts
+            | webcodex_tool_contracts::ToolAuditExecutionDetail::TestAssertions
+    ) {
+        for key in ["tests_run_count", "tests_passed", "tests_failed"] {
+            if let Some(value) = output.get(key).filter(|value| value.is_u64()) {
+                result.insert(key.to_string(), value.clone());
+            }
+        }
+        for key in ["tests_detected", "zero_tests_run"] {
+            if let Some(value) = output.get(key).filter(|value| value.is_boolean()) {
+                result.insert(key.to_string(), value.clone());
+            }
+        }
+    }
+    if definition.audit_policy().execution.detail
+        == webcodex_tool_contracts::ToolAuditExecutionDetail::TestAssertions
+    {
+        for key in ["require_tests", "no_run"] {
+            if let Some(value) = output.get(key).filter(|value| value.is_boolean()) {
+                result.insert(key.to_string(), value.clone());
+            }
+        }
+        if let Some(assertion) = output
+            .get("test_count_assertion")
+            .and_then(bounded_test_count_assertion_audit)
+        {
+            result.insert("test_count_assertion".to_string(), assertion);
+        }
     }
     if let Some(state) = output.get("execution_state").and_then(Value::as_str) {
         if matches!(
@@ -1222,6 +1309,110 @@ pub fn canonical_execution_audit_result_for_tool(tool_name: &str, output: &Value
         }
     }
     Value::Object(result)
+}
+
+#[cfg(test)]
+mod canonical_execution_audit_projection_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn validation_audit_keeps_bounded_counts_and_assertion_without_payloads() {
+        let output = json!({
+            "execution_state": "completed",
+            "command_started": true,
+            "command_completed": true,
+            "command_ok": true,
+            "passed": true,
+            "exit_code": 0,
+            "tests_detected": true,
+            "tests_run_count": 12,
+            "tests_passed": 12,
+            "tests_failed": 0,
+            "zero_tests_run": false,
+            "require_tests": true,
+            "no_run": false,
+            "test_count_assertion": {
+                "minimum_tests": 1,
+                "actual_tests_run": 12,
+                "status": "passed",
+                "reason_code": "minimum_satisfied",
+                "evidence_reason_code": "complete_summary"
+            },
+            "source_state": {
+                "freshness": "unproven",
+                "observed_mutation_fence": "uncrossed",
+                "source_fence": "PRIVATE_FENCE"
+            },
+            "command_summary": "PRIVATE_COMMAND",
+            "stdout_tail": "PRIVATE_STDOUT",
+            "stderr_tail": "PRIVATE_STDERR",
+            "diagnostics": {"diagnostics":[{"message":"PRIVATE_DIAGNOSTIC"}]}
+        });
+        let audit = canonical_execution_audit_result_for_tool("cargo_test", &output);
+        assert_eq!(audit["execution_state"], "completed");
+        assert_eq!(audit["tests_run_count"], 12);
+        assert_eq!(audit["tests_passed"], 12);
+        assert_eq!(audit["tests_failed"], 0);
+        assert_eq!(audit["zero_tests_run"], false);
+        assert_eq!(audit["require_tests"], true);
+        assert_eq!(audit["test_count_assertion"]["status"], "passed");
+        assert_eq!(audit["source_state"]["freshness"], "unproven");
+        assert_eq!(
+            audit["source_state"]["observed_mutation_fence"],
+            "uncrossed"
+        );
+        let serialized = serde_json::to_string(&audit).unwrap();
+        for private in [
+            "PRIVATE_COMMAND",
+            "PRIVATE_STDOUT",
+            "PRIVATE_STDERR",
+            "PRIVATE_DIAGNOSTIC",
+            "PRIVATE_FENCE",
+        ] {
+            assert!(!serialized.contains(private));
+        }
+        assert!(audit.get("command_summary").is_none());
+        assert!(audit.get("diagnostics").is_none());
+    }
+
+    #[test]
+    fn execution_audit_keeps_bounded_failure_and_recovery_classification() {
+        let audit = canonical_execution_audit_result_for_tool(
+            "run_shell",
+            &json!({
+                "execution_state":"outcome_unknown",
+                "command_started":true,
+                "command_completed":false,
+                "command_ok":false,
+                "failure_kind":"outcome_unknown",
+                "recovery_kind":"reconcile",
+                "stdout_tail":"PRIVATE_OUTPUT"
+            }),
+        );
+        assert_eq!(audit["failure_kind"], "outcome_unknown");
+        assert_eq!(audit["recovery_kind"], "reconcile");
+        assert!(!audit.to_string().contains("PRIVATE_OUTPUT"));
+    }
+
+    #[test]
+    fn text_validation_audit_keeps_warning_error_counts() {
+        let audit = canonical_execution_audit_result_for_tool(
+            "cargo_check",
+            &json!({
+                "execution_state":"completed",
+                "command_started":true,
+                "command_completed":true,
+                "passed":true,
+                "warnings_count":3,
+                "errors_count":0,
+                "stdout_tail":"PRIVATE_OUTPUT"
+            }),
+        );
+        assert_eq!(audit["warnings_count"], 3);
+        assert_eq!(audit["errors_count"], 0);
+        assert!(!audit.to_string().contains("PRIVATE_OUTPUT"));
+    }
 }
 
 pub fn session_log_result_for_tool(tool_name: &str, output: &Value) -> Value {

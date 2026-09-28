@@ -1329,9 +1329,20 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                         "required":["command_summary", "cwd", "shell"],
                         "not":{"anyOf":[
                             {"required":["duration_ms"]}, {"required":["exit_code"]},
-                            {"required":["command_ok"]}, {"required":["promoted_to_job"]},
-                            {"required":["observation_token"]}, {"required":["executor"]},
-                            {"required":["execution_source"]}
+                            {"required":["command_started"]}, {"required":["command_completed"]},
+                            {"required":["command_ok"]}, {"required":["failure_kind"]},
+                            {"required":["tool_failure"]}, {"required":["promoted_to_job"]},
+                            {"required":["terminal"]}, {"required":["job_id"]},
+                            {"required":["job_status"]}, {"required":["observation_token"]},
+                            {"required":["effective_timeout_secs"]}, {"required":["sync_wait_secs"]},
+                            {"required":["async_handoff_available"]}, {"required":["executor"]},
+                            {"required":["execution_source"]}, {"required":["continuation"]},
+                            {"required":["suggested_call"]}, {"required":["activity"]},
+                            {"required":["recovery_state"]},
+                            {"required":["recovered_after_server_restart"]},
+                            {"required":["reconciled_at"]}, {"required":["recovery_reason_code"]},
+                            {"required":["recovery"]}, {"required":["recovery_reason"]},
+                            {"required":["observation_error"]}, {"required":["reconciliation"]}
                         ]}
                     }}}
                 }));

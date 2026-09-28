@@ -276,6 +276,18 @@ fn shell_sparse_schema_rejects_lifecycle_fragments() {
         ("exit_code", json!(1)),
         ("duration_ms", json!(1)),
         ("executor", json!("agent")),
+        ("command_started", json!(true)),
+        ("command_completed", json!(true)),
+        ("terminal", json!(true)),
+        ("job_id", json!("job-impossible")),
+        (
+            "continuation",
+            super::super::jobs::observe_job_continuation("job-impossible", None),
+        ),
+        ("recovery_state", json!("reconciled")),
+        ("recovery_reason_code", json!("server_epoch_changed")),
+        ("recovered_after_server_restart", json!(true)),
+        ("reconciled_at", json!(1)),
     ] {
         let mut wire = serde_json::to_value(&result).unwrap();
         wire["output"][key] = value;

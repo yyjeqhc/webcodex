@@ -47,10 +47,12 @@ compatibility review, not a blind manifest deletion. The default graphs exclude 
 ## Drift and lint policy
 
 The local `coding_agent_state!` table owns the enum variants, serde wire spellings,
-`as_str`, and strict `from_wire` parsing for two CodingAgent state types. Semantic
-state-transition logic remains ordinary Rust. Independent expected-value and
-round-trip tests protect the existing wire and persisted vocabulary. There is no
-new procedural-macro crate, global code-generation framework, or protocol change.
+`as_str`, and strict `from_wire` parsing for two CodingAgent state types. Server
+projections consume those canonical `as_str` helpers rather than maintaining a
+second state-name match. Semantic state-transition logic remains ordinary Rust.
+Independent expected-value and round-trip tests protect the existing wire and
+persisted vocabulary. There is no new procedural-macro crate, global code-generation
+framework, or protocol change.
 
 Schema tests reuse their parent module's `assert_schema_fields!` instead of keeping
 an identical child-module copy. Reuse an existing definition before introducing

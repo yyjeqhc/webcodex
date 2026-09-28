@@ -1084,8 +1084,8 @@ impl ToolRuntime {
             &snapshot.run_id,
             &snapshot.provider_id,
             kind,
-            state_name(&snapshot.state),
-            execution_name(snapshot.execution_state),
+            snapshot.state.as_str(),
+            snapshot.execution_state.as_str(),
             snapshot
                 .terminal
                 .as_ref()
@@ -1580,8 +1580,8 @@ fn start_projection(run: &CodingAgentRunSnapshot, token: String) -> Value {
         "run_id": run.run_id,
         "project": run.runtime_project_id,
         "provider_id": run.provider_id,
-        "state": state_name(&run.state),
-        "execution_state": execution_name(run.execution_state),
+        "state": run.state.as_str(),
+        "execution_state": run.execution_state.as_str(),
         "observation_token": token,
         "terminal": terminal_projection(run),
     })
@@ -1592,8 +1592,8 @@ fn cancel_projection(run: &CodingAgentRunSnapshot) -> Value {
         "run_id": run.run_id,
         "project": run.runtime_project_id,
         "provider_id": run.provider_id,
-        "state": state_name(&run.state),
-        "execution_state": execution_name(run.execution_state),
+        "state": run.state.as_str(),
+        "execution_state": run.execution_state.as_str(),
         "cancel_requested": !run.state.terminal(),
         "terminal": terminal_projection(run),
     })
@@ -1615,8 +1615,8 @@ fn observe_projection(
         "run_id": run.run_id,
         "project": run.runtime_project_id,
         "provider_id": run.provider_id,
-        "state": state_name(&run.state),
-        "execution_state": execution_name(run.execution_state),
+        "state": run.state.as_str(),
+        "execution_state": run.execution_state.as_str(),
         "events": events,
         "observation_token": token,
         "has_more": observation.has_more,
@@ -1650,27 +1650,6 @@ fn terminal_projection(run: &CodingAgentRunSnapshot) -> Value {
             })
         })
         .unwrap_or(Value::Null)
-}
-
-fn state_name(state: &CodingAgentRunState) -> &'static str {
-    match state {
-        CodingAgentRunState::Starting => "starting",
-        CodingAgentRunState::Running => "running",
-        CodingAgentRunState::WaitingPermission => "waiting_permission",
-        CodingAgentRunState::Completed => "completed",
-        CodingAgentRunState::Failed => "failed",
-        CodingAgentRunState::Cancelled => "cancelled",
-        CodingAgentRunState::Lost => "lost",
-    }
-}
-
-fn execution_name(state: CodingAgentExecutionState) -> &'static str {
-    match state {
-        CodingAgentExecutionState::NotStarted => "not_started",
-        CodingAgentExecutionState::Started => "started",
-        CodingAgentExecutionState::OutcomeUnknown => "outcome_unknown",
-        CodingAgentExecutionState::Completed => "completed",
-    }
 }
 
 fn run_recovery_kind(run: &CodingAgentRunSnapshot) -> &'static str {

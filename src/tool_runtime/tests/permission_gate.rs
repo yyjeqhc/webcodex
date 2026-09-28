@@ -293,7 +293,7 @@ async fn observe_tool_skips_permission_evaluator() {
             runtime
                 .dispatch_with_auth(
                     ToolCall::ReadFiles {
-                        project: project,
+                        project,
                         items: vec![crate::tool_runtime::ReadFilesItem {
                             path: "README.md".to_string(),
                             start_line: None,

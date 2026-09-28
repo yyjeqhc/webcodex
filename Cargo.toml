@@ -61,12 +61,16 @@ webcodex-core = { path = "crates/webcodex-core" }
 webcodex-environment = { path = "crates/webcodex-environment" }
 webcodex-tool-contracts = { path = "crates/webcodex-tool-contracts" }
 webcodex-tool-runtime-contracts = { path = "crates/webcodex-tool-runtime-contracts" }
-webcodex-validation = { path = "crates/webcodex-validation" }
+webcodex-validation = { path = "crates/webcodex-validation", features = ["session-evidence"] }
 webcodex-workflow-session = { path = "crates/webcodex-workflow-session" }
-webcodex-persistent-shell = { path = "crates/webcodex-persistent-shell" }
 webcodex-store = { path = "crates/webcodex-store" }
 webcodex-workspace = { path = "crates/webcodex-workspace" }
-salvo = { version = "0.93", features = ["oapi", "cors", "affix-state", "websocket", "timeout"] }
+# Keep production HTTP features explicit: Salvo's defaults also enable its test
+# client and compression helpers. Tests opt in separately below.
+salvo = { version = "0.93", default-features = false, features = [
+    "cookie", "fix-http1-request-uri", "server", "server-handle", "http1", "http2",
+    "aws-lc-rs", "matched-path", "oapi", "cors", "affix-state", "websocket", "timeout",
+] }
 tokio = { version = "1", features = ["full"] }
 tokio-tungstenite = { version = "0.29", features = ["connect", "rustls-tls-webpki-roots"] }
 futures-util = "0.3"
@@ -146,7 +150,7 @@ webcodex-store = { path = "crates/webcodex-store", features = ["root-test-suppor
 webcodex-tool-contracts = { path = "crates/webcodex-tool-contracts", features = ["root-test-support"] }
 webcodex-workflow-session = { path = "crates/webcodex-workflow-session", features = ["root-test-support"] }
 urlencoding = "2"
-salvo = { version = "0.93", features = ["test"] }
+salvo = { version = "0.93", default-features = false, features = ["test"] }
 # Self-signed cert generation for QUIC integration tests. Uses the `ring`
 # provider that is already in the dependency tree (via quinn-proto), so it
 # does not pull a new crypto backend.

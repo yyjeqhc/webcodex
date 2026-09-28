@@ -1,4 +1,3 @@
-use crate::capabilities::RunnerFeatureInference;
 use crate::projects::RunnerLookupError;
 use crate::protocol::AcceptedRunnerProtocol;
 use crate::registry::{MAX_SHARED_KEY_RUNNERS_PER_GROUP, SHARED_KEY_OFFLINE_TTL_SECS};
@@ -88,13 +87,20 @@ fn runner_registration(
     }
 }
 
-fn v2_baseline_capabilities() -> RunnerCapabilities {
-    let mut value = serde_json::Map::new();
-    value.insert("shell".to_string(), serde_json::Value::Bool(false));
-    for capability in RUNNER_PROTOCOL_GENERATION_V2_BASELINE_CAPABILITY_NAMES {
-        value.insert((*capability).to_string(), serde_json::Value::Bool(true));
+fn all_enabled_capabilities() -> RunnerCapabilities {
+    let mut capabilities = RunnerCapabilities::default();
+    for feature in RunnerFeature::all() {
+        capabilities.set(*feature, true);
     }
-    serde_json::from_value(serde_json::Value::Object(value)).unwrap()
+    capabilities
+}
+
+fn v2_baseline_capabilities() -> RunnerCapabilities {
+    let mut capabilities = RunnerCapabilities::default();
+    for feature in RunnerFeature::all() {
+        capabilities.set(*feature, feature.is_v2_baseline());
+    }
+    capabilities
 }
 
 fn current_runner_registration(registration: RunnerRegisterRequest) -> RunnerRegisterRequest {

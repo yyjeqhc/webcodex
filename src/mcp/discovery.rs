@@ -274,7 +274,7 @@ pub(super) fn bound_description(description: &str, max_chars: usize) -> String {
                     .is_none_or(char::is_whitespace))
             .then_some(end)
         })
-        .last()
+        .next_back()
     {
         return prefix[..end].to_string();
     }

@@ -2497,11 +2497,7 @@ async fn window_for_auth(
     }
     let timing = project_window_loop_timings(&raw_activity, &activity_visible);
     let mut activity = Vec::new();
-    for ((event, visible), timing) in raw_activity
-        .into_iter()
-        .zip(activity_visible.into_iter())
-        .zip(timing.into_iter())
-    {
+    for ((event, visible), timing) in raw_activity.into_iter().zip(activity_visible).zip(timing) {
         if !visible {
             continue;
         }

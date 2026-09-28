@@ -98,10 +98,11 @@ impl CodexPatchMatchMode {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ApplyPatchMatchingMode {
     FirstMatch,
+    #[default]
     Unique,
     ExactUnique,
 }
@@ -113,12 +114,6 @@ impl ApplyPatchMatchingMode {
             Self::Unique => "unique",
             Self::ExactUnique => "exact_unique",
         }
-    }
-}
-
-impl Default for ApplyPatchMatchingMode {
-    fn default() -> Self {
-        Self::Unique
     }
 }
 

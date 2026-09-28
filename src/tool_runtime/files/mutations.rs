@@ -2809,7 +2809,7 @@ impl ToolRuntime {
                     end_line: None,
                     line: None,
                     create_dirs: false,
-                    wait_timeout_secs: wait_timeout_secs,
+                    wait_timeout_secs,
                 },
                 "tool_runtime".to_string(),
             )

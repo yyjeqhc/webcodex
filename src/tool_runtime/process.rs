@@ -576,7 +576,7 @@ impl ToolRuntime {
             Err(error) => {
                 return process_tool_failure_result(
                     command_rejected_message(
-                        error.to_string(),
+                        &error,
                         "confirm the Runner is registered and connected, then retry.",
                     ),
                     "agent_offline",

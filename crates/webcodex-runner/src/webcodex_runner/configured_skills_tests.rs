@@ -168,11 +168,11 @@ fn same_package_in_two_roots_has_distinct_opaque_identity() {
         assert!(!skill
             .descriptor
             .skill_id()
-            .contains(&first.path().to_string_lossy().as_ref()));
+            .contains(first.path().to_string_lossy().as_ref()));
         assert!(!skill
             .descriptor
             .skill_id()
-            .contains(&second.path().to_string_lossy().as_ref()));
+            .contains(second.path().to_string_lossy().as_ref()));
     }
 }
 

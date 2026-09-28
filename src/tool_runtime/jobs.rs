@@ -1826,6 +1826,8 @@ impl ToolRuntime {
                     "wait_outcome": wait.wait_outcome.as_str(),
                     "waited_ms": wait.waited_ms,
                     "changed": wait.changed,
+                    "meaningful_changed": wait.meaningful_changed,
+                    "heartbeat_changed": wait.heartbeat_changed,
                     "terminal": wait.terminal,
                     "executor": "agent",
                     "session_id": job.session_id,

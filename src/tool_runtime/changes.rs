@@ -1083,7 +1083,7 @@ mod tests {
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].path, "src/a.rs");
 
-        let stats = parse_numstat_z("1\t2\tsrc/a.rs\03\t4\tsrc/partial");
+        let stats = parse_numstat_z("1\t2\tsrc/a.rs\x003\t4\tsrc/partial");
         assert_eq!(stats.len(), 1);
         assert_eq!(stats["src/a.rs"].additions, Some(1));
         assert_eq!(stats["src/a.rs"].deletions, Some(2));
@@ -1112,7 +1112,7 @@ mod tests {
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].path, "src/a.rs");
 
-        let stats = parse_numstat_z("1\t2\tsrc/a.rs\03\t4\tline\nbreak.rs\05\t6\tC:drive.rs\0");
+        let stats = parse_numstat_z("1\t2\tsrc/a.rs\x003\t4\tline\nbreak.rs\x005\t6\tC:drive.rs\0");
         assert_eq!(stats.len(), 1);
         assert_eq!(stats["src/a.rs"].additions, Some(1));
         assert_eq!(stats["src/a.rs"].deletions, Some(2));

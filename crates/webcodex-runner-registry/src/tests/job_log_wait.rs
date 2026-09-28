@@ -131,6 +131,79 @@ async fn job_log_wait_observation_update_between_calls_is_immediate() {
 }
 
 #[tokio::test]
+async fn job_log_wait_distinguishes_sequence_only_heartbeat_from_meaningful_output() {
+    let registry = RunnerRegistry::default();
+    let job = start_wait_job(&registry).await;
+    registry
+        .update_job(wait_job_update(
+            "inst-wait",
+            &job.job_id,
+            1,
+            "running",
+            Some("first\n"),
+            false,
+        ))
+        .await
+        .unwrap();
+    let (baseline, _, _, _, _, _) = registry
+        .job_log_for_auth(None, &job.job_id, None, None, Some(10), None, None)
+        .await
+        .unwrap();
+    let token = baseline.observation_token.unwrap();
+
+    registry
+        .update_job(wait_job_update(
+            "inst-wait",
+            &job.job_id,
+            2,
+            "running",
+            None,
+            false,
+        ))
+        .await
+        .unwrap();
+    let (heartbeat, stdout, _, _, _, heartbeat_wait) = registry
+        .job_log_for_auth(None, &job.job_id, None, None, None, Some(&token), Some(1))
+        .await
+        .unwrap();
+    assert_eq!(heartbeat_wait.wait_outcome, JobLogWaitOutcome::Immediate);
+    assert!(heartbeat_wait.changed);
+    assert!(!heartbeat_wait.meaningful_changed);
+    assert!(heartbeat_wait.heartbeat_changed);
+    assert_eq!(stdout.as_deref(), Some(""));
+    assert_eq!(heartbeat.last_update_seq, Some(2));
+
+    let heartbeat_token = heartbeat.observation_token.unwrap();
+    registry
+        .update_job(wait_job_update(
+            "inst-wait",
+            &job.job_id,
+            3,
+            "running",
+            Some("second\n"),
+            false,
+        ))
+        .await
+        .unwrap();
+    let (_, stdout, _, _, _, meaningful_wait) = registry
+        .job_log_for_auth(
+            None,
+            &job.job_id,
+            None,
+            None,
+            None,
+            Some(&heartbeat_token),
+            Some(1),
+        )
+        .await
+        .unwrap();
+    assert!(meaningful_wait.changed);
+    assert!(meaningful_wait.meaningful_changed);
+    assert!(!meaningful_wait.heartbeat_changed);
+    assert_eq!(stdout.as_deref(), Some("second\n"));
+}
+
+#[tokio::test]
 async fn job_log_wait_server_transition_between_calls_is_immediate() {
     let registry = RunnerRegistry::default();
     let job = start_wait_job(&registry).await;
@@ -517,7 +590,7 @@ async fn job_log_wait_unsequenced_update_between_calls_and_noop_update() {
             owner: Some("alice".to_string()),
             hostname: None,
             host_context: None,
-            capabilities: capabilities,
+            capabilities,
             policy: None,
         }))
         .await

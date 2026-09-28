@@ -282,7 +282,7 @@ fn current_validation_evidence_for_events(
         })
         .filter(|(_, event)| material_workspace_content_change(event))
         .map(|(index, _)| index)
-        .last();
+        .next_back();
     let effective_boundary_index = reset_index.or(attempt.boundary_event_index);
 
     let validation_records = extract_validation_event_records(events);

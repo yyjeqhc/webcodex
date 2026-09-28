@@ -159,7 +159,7 @@ impl ToolRuntime {
                 || generation.is_some_and(|current| {
                     observation
                         .generation
-                        .map_or(true, |observed| current > observed)
+                        .is_none_or(|observed| current > observed)
                 })
             {
                 result = (Vec::new(), false);

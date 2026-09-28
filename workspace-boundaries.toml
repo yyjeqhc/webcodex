@@ -30,7 +30,6 @@ normal = [
     "webcodex-code-mode",
     "webcodex-core",
     "webcodex-environment",
-    "webcodex-persistent-shell",
     "webcodex-runner-config",
     "webcodex-runner-registry",
     "webcodex-store",
@@ -112,7 +111,6 @@ test_support = []
 layer = "runtime"
 role = "Shared environment setup, recovery, and persistent service lifecycle."
 normal = [
-    "webcodex-admin",
     "webcodex-core",
     "webcodex-runner-config",
 ]

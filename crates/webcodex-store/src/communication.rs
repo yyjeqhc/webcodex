@@ -2198,7 +2198,7 @@ impl Database {
         // uncertain response.
         let replay_endpoint_id = wake_reply
             .is_none()
-            .then(|| input.endpoint_id.as_deref())
+            .then_some(input.endpoint_id.as_deref())
             .flatten();
         let replay_controller_generation = wake_reply
             .is_none()

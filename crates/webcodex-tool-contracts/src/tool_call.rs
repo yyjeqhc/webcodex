@@ -436,6 +436,7 @@ pub fn pending_job_strategy_value() -> Value {
 pub enum ObserveJobsWakeOn {
     #[default]
     Change,
+    MeaningfulChange,
     Terminal,
     AllTerminal,
 }
@@ -4172,13 +4173,14 @@ pub enum ToolCall {
         #[serde(default, deserialize_with = "deserialize_observe_jobs_wait_secs")]
         wait_secs: Option<u64>,
         #[schemars(extend("default" = "change"))]
-        /// Bounded-wait wake policy. change (default) returns on any observable change. terminal waits for
-        /// any Job to be terminal; use it for one Job or when any terminal result unblocks progress.
-        /// all_terminal waits for every Job in a predetermined set needed before progress. Both coalesce
-        /// non-terminal log/progress/activity updates and return immediately on any item error or at the
-        /// shared deadline. Deadline returns timeout even when changed=true; deltas remain relative to the
-        /// caller's original tokens. No token means immediate baseline; no wait_secs means immediate
-        /// observation.
+        /// Bounded-wait wake policy. change (default) returns on any observable change.
+        /// meaningful_change suppresses sequence-only heartbeat revisions but still wakes for log,
+        /// lifecycle, progress, activity and recovery changes. terminal waits for any Job to be terminal;
+        /// use it for one Job or when any terminal result unblocks progress. all_terminal waits for every
+        /// Job in a predetermined set needed before progress. Terminal policies coalesce non-terminal
+        /// updates and all policies return immediately on any item error or at the shared deadline.
+        /// Deadline returns timeout even when changed=true; deltas remain relative to the caller's
+        /// original tokens. No token means immediate baseline; no wait_secs means immediate observation.
         #[serde(default)]
         wake_on: ObserveJobsWakeOn,
         /// Opt-in projection for proven successful structured validation Jobs. Removes routine

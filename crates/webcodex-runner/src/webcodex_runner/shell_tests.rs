@@ -933,7 +933,7 @@ fn structured_process_continuously_drains_large_stdout_and_stderr() {
         );
         assert_eq!(output.as_bytes().last().copied(), Some(b'\n'));
         assert!(
-            output.as_bytes().iter().any(|byte| *byte == tail_byte),
+            output.as_bytes().contains(&tail_byte),
             "{name} lost its retained tail"
         );
         assert!(std::str::from_utf8(output.as_bytes()).is_ok());
@@ -999,7 +999,7 @@ fn structured_script_continuously_drains_large_stdout_and_stderr() {
             "{name}: {output:?}"
         );
         assert!(
-            output.as_bytes().iter().any(|byte| *byte == tail_byte),
+            output.as_bytes().contains(&tail_byte),
             "{name} lost its retained tail"
         );
         assert!(std::str::from_utf8(output.as_bytes()).is_ok());

@@ -467,7 +467,7 @@ async fn post_live_unregister(
             "Server returned an unclassified unregister failure",
         ));
     }
-    parsed.get("output").cloned().ok_or_else(|| {
+    parsed.get("output").cloned().ok_or({
         LiveUnregisterError::OutcomeUnknown("canonical unregister_project response omitted output")
     })
 }

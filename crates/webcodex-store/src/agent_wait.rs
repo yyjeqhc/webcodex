@@ -1052,7 +1052,7 @@ fn coalesce_wait_wake_in_transaction(
         return Ok(false);
     }
     let wake_id = allocate_identity(
-        &transaction,
+        transaction,
         AGENT_WAKE_ID_PREFIX,
         "SELECT EXISTS(SELECT 1 FROM wc_agent_wakes WHERE wake_id = ?1)",
     )?;

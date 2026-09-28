@@ -376,7 +376,7 @@ impl PendingJobUpdateDelivery {
             exit_code: update.exit_code,
             duration_ms: update.duration_ms,
             error: update.error.clone(),
-            command_execution_state: update.command_execution_state.clone(),
+            command_execution_state: update.command_execution_state,
             validation_progress: update.validation_progress.clone(),
             test_count_evidence: update.test_count_evidence.clone(),
             activity: update.activity,
@@ -507,7 +507,7 @@ fn job_update_from_delivery(
     update.exit_code = pending.exit_code;
     update.duration_ms = pending.duration_ms;
     update.error = pending.error.clone();
-    update.command_execution_state = pending.command_execution_state.clone();
+    update.command_execution_state = pending.command_execution_state;
     update.validation_progress = pending.validation_progress.clone();
     update.test_count_evidence = pending.test_count_evidence.clone();
     update.activity = pending.activity;
@@ -1604,7 +1604,7 @@ impl JobManager {
                         exit_code: snapshot.exit_code,
                         duration_ms: snapshot.duration_ms,
                         error: snapshot.error.clone(),
-                        command_execution_state: snapshot.command_execution_state.clone(),
+                        command_execution_state: snapshot.command_execution_state,
                         validation_progress: snapshot.validation_progress.clone(),
                         test_count_evidence: snapshot.test_count_evidence.clone(),
                         activity: snapshot.activity,

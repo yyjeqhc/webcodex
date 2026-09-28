@@ -913,8 +913,8 @@ fn normalize_git_diff_hunks_committed_range(
                 return Err("committed_range_conflicts_with_cached");
             }
             Ok(Some((
-                normalize_exact_commit_id(&base)?,
-                normalize_exact_commit_id(&head)?,
+                normalize_exact_commit_id(base)?,
+                normalize_exact_commit_id(head)?,
             )))
         }
     }

@@ -134,7 +134,7 @@ pub struct RunnerSemanticView {
 impl RunnerSemanticView {
     pub fn supports(&self, feature: RunnerFeature) -> bool {
         self.runner_features.supports(feature)
-            && (!feature.is_computer()
+            && (!crate::capabilities::is_computer(feature)
                 || self.view.computer_session_availability.is_none()
                 || (self.view.computer_session_availability == Some(true) && self.view.connected))
     }
@@ -162,7 +162,7 @@ pub(super) struct ProjectedStructuredTerminalSuppression {
 impl RunnerRecord {
     pub(super) fn supports(&self, feature: RunnerFeature) -> bool {
         self.runner_features.supports(feature)
-            && (!feature.is_computer()
+            && (!crate::capabilities::is_computer(feature)
                 || self.computer_session_availability.is_none()
                 || (self.computer_session_availability == Some(true)
                     && super::now_ts().saturating_sub(self.last_seen)
@@ -390,6 +390,11 @@ impl JobRecoveryState {
 pub(super) struct JobObservationState {
     pub(super) epoch: Arc<str>,
     pub(super) revision: Arc<AtomicU64>,
+    /// Total observation revision of the most recent change that affected
+    /// public Job meaning beyond a sequence-only liveness update. This keeps
+    /// the opaque token format stable while allowing observers to suppress
+    /// heartbeat-only revision advances.
+    pub(super) last_meaningful_revision: Arc<AtomicU64>,
     pub(super) notify: Arc<Notify>,
     /// First time this Server process observed the Job in a terminal execution
     /// lifecycle. Runner-reported `ended_at` remains the public execution time
@@ -408,6 +413,7 @@ impl JobObservationState {
         Self {
             epoch,
             revision: Arc::new(AtomicU64::new(0)),
+            last_meaningful_revision: Arc::new(AtomicU64::new(0)),
             notify: Arc::new(Notify::new()),
             terminal_observed_at: None,
             receipt_candidates: None,

@@ -144,17 +144,12 @@ impl Default for ControllerSettings {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 enum ServerMode {
+    #[default]
     Local,
     Remote,
-}
-
-impl Default for ServerMode {
-    fn default() -> Self {
-        Self::Local
-    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

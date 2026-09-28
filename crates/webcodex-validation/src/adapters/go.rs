@@ -13,6 +13,10 @@ pub(super) fn validation_adapter(tool_identity: &str) -> Option<&'static dyn Val
     (tool_identity == "go_test").then_some(&GO_TEST_ADAPTER)
 }
 
+pub(super) fn test_adapter() -> &'static dyn ValidationAdapter {
+    &GO_TEST_ADAPTER
+}
+
 impl ValidationAdapter for GoTestValidationAdapter {
     fn validation_kind(&self) -> &'static str {
         "test"

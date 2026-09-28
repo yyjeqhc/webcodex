@@ -1,5 +1,7 @@
 use crate::{
-    execution_purpose_for_validation_kind, validation_adapter_for_tool, ValidationCommandOptions,
+    execution_purpose_for_validation_kind, validation_adapter_for_tool, CargoCheckOptions,
+    CargoReadOnlyValidationOperation, CargoTestOptions, GoReadOnlyValidationOperation,
+    GoTestOptions, ReadOnlyValidationOperation, ValidationCommandOptions,
     ValidationFailureEvidence,
 };
 use webcodex_core::runner_protocol::{GO_TEST_PACKAGE_MAX_BYTES, GO_TEST_PACKAGE_MAX_ITEMS};
@@ -15,6 +17,101 @@ use webcodex_tool_runtime_contracts::{
     },
     ToolCallAuditProjection,
 };
+
+#[test]
+fn semantic_read_only_operations_preserve_legacy_leaf_plans_and_identity_profiles() {
+    let cases = [
+        (
+            ReadOnlyValidationOperation::Cargo(CargoReadOnlyValidationOperation::FormatCheck),
+            "cargo_fmt",
+            ValidationCommandOptions {
+                check: true,
+                ..ValidationCommandOptions::default()
+            },
+        ),
+        (
+            ReadOnlyValidationOperation::Cargo(CargoReadOnlyValidationOperation::Check(
+                CargoCheckOptions {
+                    all_targets: Some(false),
+                    all_features: Some(true),
+                    no_default_features: Some(true),
+                    features: Some("feature-a,feature-b".to_string()),
+                    package: None,
+                    packages: Some(vec!["package-a".to_string(), "package-b".to_string()]),
+                },
+            )),
+            "cargo_check",
+            ValidationCommandOptions {
+                all_targets: Some(false),
+                all_features: Some(true),
+                no_default_features: Some(true),
+                features: Some("feature-a,feature-b".to_string()),
+                cargo_packages: Some(vec!["package-a".to_string(), "package-b".to_string()]),
+                ..ValidationCommandOptions::default()
+            },
+        ),
+        (
+            ReadOnlyValidationOperation::Cargo(CargoReadOnlyValidationOperation::Test(
+                CargoTestOptions {
+                    filter: Some("runtime".to_string()),
+                    lib: Some(true),
+                    all_targets: Some(true),
+                    all_features: Some(false),
+                    no_default_features: Some(true),
+                    features: Some("feature-a".to_string()),
+                    package: Some("webcodex".to_string()),
+                    no_run: Some(true),
+                },
+            )),
+            "cargo_test",
+            ValidationCommandOptions {
+                filter: Some("runtime".to_string()),
+                lib: Some(true),
+                all_targets: Some(true),
+                all_features: Some(false),
+                no_default_features: Some(true),
+                features: Some("feature-a".to_string()),
+                package: Some("webcodex".to_string()),
+                no_run: Some(true),
+                ..ValidationCommandOptions::default()
+            },
+        ),
+        (
+            ReadOnlyValidationOperation::Go(GoReadOnlyValidationOperation::Test(GoTestOptions {
+                packages: Some(vec![
+                    "./internal/control".to_string(),
+                    "./internal/node".to_string(),
+                ]),
+            })),
+            "go_test",
+            ValidationCommandOptions {
+                go_packages: Some(vec![
+                    "./internal/control".to_string(),
+                    "./internal/node".to_string(),
+                ]),
+                ..ValidationCommandOptions::default()
+            },
+        ),
+    ];
+
+    for (operation, tool_name, legacy_options) in cases {
+        let compatibility = operation.compatibility_profile();
+        assert_eq!(compatibility.tool_identity, tool_name);
+        assert_eq!(
+            compatibility.validation_identity,
+            webcodex_tool_contracts::runtime_tool_session_evidence_policy(tool_name)
+                .validation_identity
+        );
+
+        let semantic_plan = operation.build_readonly_plan().unwrap();
+        let legacy_plan = validation_adapter_for_tool(tool_name)
+            .unwrap()
+            .build_readonly_plan(legacy_options)
+            .unwrap();
+        assert_eq!(semantic_plan, legacy_plan, "{tool_name}");
+        assert_eq!(operation.adapter().tool_identity(), tool_name);
+    }
+}
 
 #[test]
 fn execution_purpose_vocabulary_classification_and_validator_mapping_are_canonical() {

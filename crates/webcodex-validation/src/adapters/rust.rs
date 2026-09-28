@@ -43,6 +43,18 @@ pub(super) fn validation_adapters() -> &'static [&'static dyn ValidationAdapter]
     &RUST_ADAPTERS
 }
 
+pub(super) fn format_adapter() -> &'static dyn ValidationAdapter {
+    &CARGO_FMT_ADAPTER
+}
+
+pub(super) fn check_adapter() -> &'static dyn ValidationAdapter {
+    &CARGO_CHECK_ADAPTER
+}
+
+pub(super) fn test_adapter() -> &'static dyn ValidationAdapter {
+    &CARGO_TEST_ADAPTER
+}
+
 impl ValidationAdapter for RustValidationAdapter {
     fn validation_kind(&self) -> &'static str {
         match self.kind {

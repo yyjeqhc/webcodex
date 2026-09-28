@@ -125,21 +125,43 @@ fn exact_git_commit(source: &Path, base_ref: &str) -> Result<String, &'static st
     Ok(sha.to_ascii_lowercase())
 }
 
-fn managed_worktree_namespace_candidate(source: &Path) -> Result<PathBuf, &'static str> {
-    let parent = source.parent().ok_or("managed_worktree_root_unavailable")?;
-    let parent = canonicalize_existing(parent).map_err(|_| "managed_worktree_root_unavailable")?;
-    if paths_equal(&parent, source) {
-        return Err("managed_worktree_root_unavailable");
+fn managed_worktree_namespace_candidate(
+    policy: &RunnerPolicy,
+    source: &Path,
+) -> Result<PathBuf, &'static str> {
+    let mut roots =
+        webcodex_runner_config::paths::canonicalize_usable_allowed_roots(&policy.allowed_roots);
+    roots.sort_by_key(|root| std::cmp::Reverse(root.components().count()));
+    for root in roots {
+        if !webcodex_runner_config::paths::path_is_within(source, &root) {
+            continue;
+        }
+        let candidate = root.join(MANAGED_WORKTREE_NAMESPACE);
+        if webcodex_runner_config::paths::path_is_within(&candidate, source) {
+            continue;
+        }
+        return Ok(candidate);
     }
-    Ok(parent.join(MANAGED_WORKTREE_NAMESPACE))
+    if policy.allow_cwd_anywhere {
+        let parent = source.parent().ok_or("managed_worktree_root_unavailable")?;
+        let parent =
+            canonicalize_existing(parent).map_err(|_| "managed_worktree_root_unavailable")?;
+        if !paths_equal(&parent, source) {
+            return Ok(parent.join(MANAGED_WORKTREE_NAMESPACE));
+        }
+    }
+    Err("managed_worktree_root_unavailable")
 }
 
-/// Materialize the Runner-owned managed-worktree namespace next to the source
-/// checkout. This is deliberately not a generic project root: callers cannot
-/// supply this destination, and ordinary path registration continues to use
-/// `validate_project_path_policy` independently.
-fn ensure_managed_worktree_root(source: &Path) -> Result<PathBuf, &'static str> {
-    let candidate = managed_worktree_namespace_candidate(source)?;
+/// Materialize the Runner-owned managed-worktree namespace inside the current
+/// Runner filesystem policy. The caller never selects this destination, but the
+/// resulting Project must remain usable by the ordinary file/shell/process paths,
+/// which continue to enforce `allowed_roots`.
+fn ensure_managed_worktree_root(
+    policy: &RunnerPolicy,
+    source: &Path,
+) -> Result<PathBuf, &'static str> {
+    let candidate = managed_worktree_namespace_candidate(policy, source)?;
     match std::fs::symlink_metadata(&candidate) {
         Ok(metadata) => {
             if metadata.file_type().is_symlink() || !metadata.is_dir() {
@@ -158,20 +180,14 @@ fn ensure_managed_worktree_root(source: &Path) -> Result<PathBuf, &'static str> 
 
     let root =
         canonicalize_existing(&candidate).map_err(|_| "managed_worktree_root_unavailable")?;
-    let expected_parent = source
-        .parent()
-        .and_then(|parent| canonicalize_existing(parent).ok())
-        .ok_or("managed_worktree_root_unavailable")?;
     if !paths_equal(&root, &candidate)
-        || root
-            .parent()
-            .is_none_or(|parent| !paths_equal(parent, &expected_parent))
+        || validate_project_path_policy(policy, &root).is_err()
+        || webcodex_runner_config::paths::path_is_within(&root, source)
     {
         return Err("managed_worktree_root_unsafe");
     }
     Ok(root)
 }
-
 fn valid_project_root_fingerprint(value: &str) -> bool {
     value
         .strip_prefix(webcodex_core::runner_protocol::PROJECT_ROOT_FINGERPRINT_PREFIX)
@@ -306,6 +322,7 @@ fn managed_worktree_success(
 
 fn resume_managed_worktree(
     start: Instant,
+    policy: &RunnerPolicy,
     project_registry_dir: &Path,
     client_id: &str,
     source_root: &Path,
@@ -435,12 +452,12 @@ fn resume_managed_worktree(
             )
         }
     };
-    // Registered managed worktrees are recovered from persisted provenance and
-    // the source repository's authoritative Git worktree list. Do not reapply
-    // generic allowed_roots here: older Runner-owned placements may predate the
-    // sibling namespace, and accepting their exact registered identity does not
-    // grant model-supplied path authority.
-    if validate_windows_project_root(&worktree).is_err() {
+    // Persisted provenance proves identity, not current filesystem authority.
+    // Re-apply the current Runner policy so narrowing allowed_roots takes effect
+    // for exact resume just as it does for ordinary Projects.
+    if validate_windows_project_root(&worktree).is_err()
+        || validate_project_path_policy(policy, &worktree).is_err()
+    {
         return managed_worktree_error(
             start,
             "managed_worktree_recovery_conflict",
@@ -682,6 +699,7 @@ pub(crate) fn handle_prepare_managed_worktree_operation(
     if let Some(resume_project_id) = resume_project_id {
         return resume_managed_worktree(
             start,
+            policy,
             project_registry_dir,
             client_id,
             &source_root,
@@ -746,7 +764,7 @@ pub(crate) fn handle_prepare_managed_worktree_operation(
             )
         }
     };
-    let managed_root = match ensure_managed_worktree_root(&source_root) {
+    let managed_root = match ensure_managed_worktree_root(policy, &source_root) {
         Ok(root) => root,
         Err(error) => {
             return managed_worktree_error(
@@ -967,6 +985,7 @@ pub(crate) fn handle_prepare_managed_worktree_operation(
     if canonical_worktree
         .parent()
         .is_none_or(|parent| !paths_equal(parent, &managed_root))
+        || validate_project_path_policy(policy, &canonical_worktree).is_err()
     {
         return managed_worktree_error(
             start,

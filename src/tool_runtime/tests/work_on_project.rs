@@ -2996,11 +2996,21 @@ async fn managed_worktree_bootstrap_recovers_same_operation_and_binds_session_to
     )
     .await;
 
+    let auth = auth_context(None, true);
+    let resolved_source = runtime
+        .resolve_project_input_for_auth("agent:wop-managed:source", Some(&auth))
+        .await
+        .expect("source Project resolves for short-ref bootstrap");
+    let source_project_ref = runtime
+        .project_reference_for_resolved(&resolved_source, Some(&auth))
+        .expect("source Project must have a short Project ref");
+    assert!(source_project_ref.starts_with("~p"));
+
     let (first, payloads) = dispatch_with_managed_worktree_runner(
         &runtime,
         client_id,
         project_worktree_work_on_project_call(
-            "agent:wop-managed:source",
+            &source_project_ref,
             "work in an isolated checkout",
             Some("HEAD"),
             None,
@@ -3154,6 +3164,89 @@ async fn managed_worktree_bootstrap_recovers_same_operation_and_binds_session_to
     let instance = json!({"success": true, "output": first.output});
     crate::tool_runtime::startup_brief::validate_schema_instance_for_test(&instance, &schema)
         .unwrap_or_else(|error| panic!("managed worktree output must match schema: {error}"));
+}
+
+#[tokio::test]
+async fn managed_worktree_project_source_failure_scrubs_internal_identity_fence() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("source");
+    std::fs::create_dir_all(&source).unwrap();
+    init_git_repo(&source);
+    let source_path = source.canonicalize().unwrap().to_string_lossy().to_string();
+    let runtime = ToolRuntime::new_for_tests();
+    let client_id = "wop-managed-failure";
+    let mut source_project = registered_project("source", &source_path);
+    source_project.root_fingerprint = Some(managed_source_root_fingerprint());
+    register_agent_with_projects(
+        &runtime,
+        client_id,
+        None,
+        RunnerCapabilities {
+            shell: true,
+            git: true,
+            managed_worktree: true,
+            ..Default::default()
+        },
+        vec![source_project],
+    )
+    .await;
+
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let call = project_worktree_work_on_project_call(
+            "agent:wop-managed-failure:source",
+            "surface a bounded identity failure",
+            None,
+            None,
+        );
+        async move {
+            runtime
+                .dispatch_with_auth(call, Some(&auth_context(None, true)))
+                .await
+        }
+    });
+    let deadline = std::time::Instant::now() + CODING_WORKFLOW_FIXTURE_TIMEOUT;
+    while !task.is_finished() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "managed-worktree failure fixture did not finish"
+        );
+        let Some(request) = probe_patch_agent_request(&runtime, client_id).await else {
+            tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+            continue;
+        };
+        assert_eq!(request.kind, "prepare_managed_worktree");
+        let response = json!({
+            "error_code": "managed_worktree_source_identity_changed",
+            "error_kind": "managed_worktree_source_identity_changed",
+            "failure_kind": "managed_worktree_source_identity_changed",
+            "state_changed": false,
+            "source_project_id": "source",
+            "source_root_fingerprint": managed_source_root_fingerprint(),
+        });
+        complete_patch_agent_request(
+            &runtime,
+            client_id,
+            &request.request_id,
+            1,
+            &response.to_string(),
+            "",
+        )
+        .await;
+    }
+
+    let result = task.await.unwrap();
+    assert!(!result.success);
+    assert_eq!(
+        result.output["error_kind"],
+        "managed_worktree_source_identity_changed"
+    );
+    assert_eq!(
+        result.output["source_project"],
+        "agent:wop-managed-failure:source"
+    );
+    assert!(result.output.get("source_project_id").is_none());
+    assert!(result.output.get("source_root_fingerprint").is_none());
 }
 
 #[tokio::test]

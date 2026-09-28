@@ -438,9 +438,12 @@ reconstruct `client_id` or an absolute source path.
 `client_id + path + mode=worktree` remains a compatibility/bootstrap form.
 Its source path still passes the ordinary Runner filesystem/path-authority
 checks and it converges on the same Runner-owned managed-worktree manager. The
-managed namespace is an internal authority for provenance-bound
-creation/recovery only; it is not added to generic allowed roots and cannot be
-used to register arbitrary sibling paths.
+Runner chooses the managed namespace inside its current filesystem policy so the
+resulting Project remains usable by ordinary file/shell/process tools without
+special path authority. If an explicit `allowed_roots` policy is narrowed to the
+source checkout itself and leaves no isolated sibling location, bootstrap fails
+closed with `managed_worktree_root_unavailable`; Project-first selection never
+widens the operator's filesystem policy.
 
 Creating a managed Project from a source Project is a Project transition, not a
 Session retarget. A source Project's `session_id` therefore fails closed with

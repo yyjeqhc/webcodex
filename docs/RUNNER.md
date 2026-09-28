@@ -121,6 +121,12 @@ allow_cwd_anywhere = false
 allowed_roots = ["/root/git"]
 ```
 
+Managed-worktree bootstrap uses the same boundary. The Runner may derive a
+private managed namespace so the model never supplies a destination path, but
+that namespace and the resulting Project still have to fit the effective
+`allowed_roots` policy (unless `allow_cwd_anywhere=true`). A Project selector or
+Project ref does not widen this filesystem authority.
+
 ### Registering projects at runtime
 
 The runtime tools `register_project` and `create_project` let a client register

@@ -752,8 +752,15 @@ impl ToolRuntime {
                         )
                         .await;
                     if !resolved.success {
+                        // Root fingerprints and Runner-local source ids are internal
+                        // identity fences, not model-facing recovery inputs. Keep the
+                        // already-authorized canonical source Project for diagnostics,
+                        // but scrub internal identity material from Runner failures.
+                        if let Some(output) = resolved.output.as_object_mut() {
+                            output.remove("source_project_id");
+                            output.remove("source_root_fingerprint");
+                        }
                         resolved.output["source_project"] = json!(source_runtime_id);
-                        resolved.output["source_root_fingerprint"] = json!(source_root_fingerprint);
                     }
                     match project_resolution_from_runner_result(resolved, true, permission) {
                         Ok(resolved) => resolved,

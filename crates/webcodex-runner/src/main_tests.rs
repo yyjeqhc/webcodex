@@ -1282,18 +1282,18 @@ fn managed_worktree_network_source_requires_runner_authority_before_resolution()
 }
 
 #[test]
-fn managed_worktree_uses_source_parent_namespace_without_expanding_path_authority() {
+fn managed_worktree_uses_authorized_namespace_and_keeps_follow_up_cwd_allowed() {
     let tmp = tempfile::tempdir().unwrap();
-    let source = tmp.path().join("repo");
+    let allowed = tmp.path().join("allowed");
+    let source = allowed.join("repo");
     let arbitrary = tmp.path().join("arbitrary");
     let registry = tmp.path().join("project-registry");
+    std::fs::create_dir_all(&allowed).unwrap();
     seed_managed_worktree_repo(&source);
     std::fs::create_dir(&arbitrary).unwrap();
     register_managed_source_project(&registry, &source);
 
-    // Deliberately authorize only the source checkout itself. The Runner-owned
-    // managed namespace is a sibling and must not become a generic allowed root.
-    let policy = project_policy(&source);
+    let policy = project_policy(&allowed);
     let created = project_ok(handle_prepare_managed_worktree(
         &policy,
         &registry,
@@ -1305,11 +1305,7 @@ fn managed_worktree_uses_source_parent_namespace_without_expanding_path_authorit
         ),
     ));
     let worktree = PathBuf::from(created["path"].as_str().unwrap());
-    let expected_namespace = tmp
-        .path()
-        .join(".webcodex-worktrees")
-        .canonicalize()
-        .unwrap();
+    let expected_namespace = allowed.join(".webcodex-worktrees").canonicalize().unwrap();
     assert_eq!(
         worktree.parent().unwrap().canonicalize().unwrap(),
         expected_namespace
@@ -1318,6 +1314,8 @@ fn managed_worktree_uses_source_parent_namespace_without_expanding_path_authorit
         worktree.canonicalize().unwrap(),
         source.canonicalize().unwrap()
     );
+    crate::webcodex_runner::shell::cwd_allowed(&policy, &worktree)
+        .expect("managed Project cwd must remain inside ordinary Runner authority");
 
     let denied = project_error_value(handle_resolve_or_register_project(
         &policy,
@@ -1335,6 +1333,32 @@ fn managed_worktree_uses_source_parent_namespace_without_expanding_path_authorit
     );
 }
 
+#[test]
+fn managed_worktree_does_not_escape_an_exact_source_allowed_root() {
+    let tmp = tempfile::tempdir().unwrap();
+    let source = tmp.path().join("repo");
+    let registry = tmp.path().join("project-registry");
+    seed_managed_worktree_repo(&source);
+    register_managed_source_project(&registry, &source);
+
+    let policy = project_policy(&source);
+    let error = project_error_value(handle_prepare_managed_worktree(
+        &policy,
+        &registry,
+        &managed_worktree_request(
+            &source,
+            serde_json::Value::Null,
+            "11111111-1111-4111-8111-111111111111",
+            None,
+        ),
+    ));
+    assert_eq!(error["error_code"], "managed_worktree_root_unavailable");
+    assert_eq!(error["state_changed"], false);
+    assert!(
+        !tmp.path().join(".webcodex-worktrees").exists(),
+        "managed bootstrap must not create a sibling outside allowed_roots"
+    );
+}
 #[test]
 fn managed_worktree_expected_source_identity_is_revalidated_before_creation() {
     let tmp = tempfile::tempdir().unwrap();

@@ -1210,15 +1210,22 @@ impl ToolRuntime {
         }
         // Canonical execution evidence and every Session/context overlay are now
         // complete. Consume the request-scoped plan exactly once to produce the
-        // final model-facing read/search result.
+        // final model-facing result.
         if let Some(telemetry) = telemetry.as_mut() {
             telemetry.capture_canonical_result(&result);
         }
-        let canonical_audit_output = matches!(
-            request.tool_name.as_str(),
-            "edit_project_files" | "read_files" | "search_project_texts" | "wait_for_job_readiness"
-        )
-        .then(|| session_log_result_for_tool(&request.tool_name, &result.output));
+        let canonical_audit_output = match request.tool_name.as_str() {
+            "run_process" | "run_script" | "run_skill_resource" | "run_shell"
+            | "project_validate" | "cargo_fmt" | "cargo_check" | "cargo_test" | "go_test" => {
+                Some(super::tool_audit::canonical_execution_audit_result_for_tool(
+                    &request.tool_name, &result.output,
+                ))
+            }
+            "edit_project_files" | "read_files" | "search_project_texts" | "wait_for_job_readiness" => {
+                Some(session_log_result_for_tool(&request.tool_name, &result.output))
+            }
+            _ => None,
+        };
         result_projection.project(&mut result);
         if let (Some(session_id), Some(project)) = (
             correlation.recorder_gap_session_id.as_deref(),

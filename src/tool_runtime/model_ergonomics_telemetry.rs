@@ -94,6 +94,7 @@ pub(crate) struct ModelErgonomicsTimer {
     readiness_requested_jobs: Option<usize>,
     readiness: Option<JobReadinessTelemetry>,
     edit: Option<EditFacts>,
+    canonical_execution_state: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -109,6 +110,7 @@ pub(crate) struct ModelErgonomicsCompletion {
     readiness_requested_jobs: Option<usize>,
     readiness: Option<JobReadinessTelemetry>,
     edit: Option<EditFacts>,
+    canonical_execution_state: Option<String>,
     pub(crate) job_convergence: Option<job_convergence::JobConvergenceRecord>,
 }
 
@@ -276,6 +278,7 @@ impl ModelErgonomicsTimer {
             bulk_exact_requested,
             readiness: None,
             edit: None,
+            canonical_execution_state: None,
             readiness_requested_jobs: (tool_name == "wait_for_job_readiness")
                 .then(|| {
                     arguments
@@ -287,8 +290,9 @@ impl ModelErgonomicsTimer {
         })
     }
 
-    /// Preserve canonical edit and readiness facts before the late model projection.
+    /// Preserve bounded canonical facts before the late model projection.
     pub(crate) fn capture_canonical_result(&mut self, result: &ToolResult) {
+        self.canonical_execution_state = execution_state(&result.output);
         self.readiness = readiness_telemetry(
             self.readiness_requested_jobs,
             result.success,
@@ -314,6 +318,7 @@ impl ModelErgonomicsTimer {
             readiness_requested_jobs: self.readiness_requested_jobs,
             readiness: self.readiness,
             edit: self.edit,
+            canonical_execution_state: self.canonical_execution_state,
             job_convergence: None,
         }
     }
@@ -333,6 +338,7 @@ impl ModelErgonomicsTimer {
             readiness_requested_jobs: self.readiness_requested_jobs,
             readiness: self.readiness,
             edit: self.edit,
+            canonical_execution_state: self.canonical_execution_state,
             job_convergence: None,
         }
     }
@@ -431,7 +437,7 @@ impl ModelErgonomicsCompletion {
             error_kind,
             failure_kind,
             recovery_kind,
-            execution_state: edit.execution_state,
+            execution_state: self.canonical_execution_state.clone().or(edit.execution_state),
             finish_summary_only: self.finish_summary_only,
             edit_surface: edit.surface,
             edit_outcome: edit.outcome,

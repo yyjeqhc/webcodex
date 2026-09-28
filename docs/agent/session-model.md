@@ -771,7 +771,11 @@ durable/queryable sink for low-cardinality ergonomics telemetry. No second
 telemetry table or recorder is created. The shared ToolRuntime kernel owns the
 normal timer for a registered model-visible tool; the transport that already owns
 the outer Action Audit row then finalizes one `summary.model_ergonomics` object
-from the final model-facing ToolResult projection. A transport may use a bounded
+from the final model-facing ToolResult projection, retaining the canonical
+closed execution state captured before late model compaction. Execution
+ActionAudit receipts retain definition-authorized bounded lifecycle and source
+classifications, never raw command/script/stdout/stderr or source fence identity.
+Workflow Session evidence is consumed before projection. A transport may use a bounded
 fallback timer only after a runtime tool identity is established when MCP-only
 validation rejects the call before kernel entry or the MCP hard dispatch timeout
 prevents kernel completion. Batch items do not create generic invocation records,

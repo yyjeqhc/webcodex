@@ -532,7 +532,7 @@ impl SearchModelProjection {
 
 enum ModelFacingProjection {
     None,
-    JobHandoff,
+    Execution { tool_name: &'static str },
     AgentWait,
     JobReadiness,
     ApplyTextEdits { change_count: usize, dry_run: bool },
@@ -569,7 +569,9 @@ impl ModelFacingProjectionPlan {
             | ToolCall::CargoCheck { .. }
             | ToolCall::CargoTest { .. }
             | ToolCall::ProjectValidate { .. }
-            | ToolCall::GoTest { .. } => ModelFacingProjection::JobHandoff,
+            | ToolCall::GoTest { .. } => ModelFacingProjection::Execution {
+                tool_name: call.tool_name(),
+            },
             ToolCall::ReadFiles { .. } => {
                 ModelFacingProjection::Read(super::read_files::ReadModelProjection::capture(call))
             }
@@ -596,7 +598,7 @@ impl ModelFacingProjectionPlan {
     }
 
     /// Consume the plan at the only stage allowed to turn canonical execution
-    /// output into the final model-facing read/search shape. Session/audit
+    /// output into the final model-facing shape. Session/audit
     /// recorders must run before this method.
     pub(super) fn project(self, result: &mut ToolResult) {
         match self.projection {
@@ -611,8 +613,10 @@ impl ModelFacingProjectionPlan {
                 change_count,
                 dry_run,
             } => apply_text_edits_model_projection(result, change_count, dry_run),
-            ModelFacingProjection::JobHandoff => {
-                super::jobs::sparsify_job_handoff_model_result(result)
+            ModelFacingProjection::Execution { tool_name } => {
+                sparsify_terminal_structured_execution_success(tool_name, result);
+                sparsify_structured_validation_runtime_metadata(tool_name, result);
+                super::jobs::sparsify_job_handoff_model_result(result);
             }
             ModelFacingProjection::Read(projection) => {
                 let super::read_files::ReadModelProjection::Batch {
@@ -2075,8 +2079,6 @@ impl ToolRuntime {
             window,
         )
         .await;
-        sparsify_terminal_structured_execution_success(tool_name, &mut result);
-        sparsify_structured_validation_runtime_metadata(tool_name, &mut result);
         result
     }
 
@@ -3469,7 +3471,7 @@ mod structured_execution_sparse_projection_tests {
         assert_eq!(work_result.project(), Some("demo"));
     }
 
-    fn terminal_process_result(execution_source: &str) -> ToolResult {
+    pub(super) fn terminal_process_result(execution_source: &str) -> ToolResult {
         ToolResult::ok(json!({
             "duration_ms": 1,
             "exit_code": 0,
@@ -3763,3 +3765,7 @@ mod sparse_read_projection_tests {
         assert!(result.output["items"][0]["output"].get("sha256").is_none());
     }
 }
+
+#[cfg(test)]
+#[path = "tests/execution_projection.rs"]
+mod execution_projection_tests;

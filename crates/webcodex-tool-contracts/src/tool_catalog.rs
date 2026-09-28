@@ -174,6 +174,7 @@ pub const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
     ToolDiscoveryGroup {
         name: TOOL_DISCOVERY_GROUP_VALIDATION,
         tools: &[
+            "project_validate",
             "cargo_fmt",
             "cargo_check",
             "cargo_test",
@@ -217,6 +218,7 @@ pub const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
     ToolDiscoveryGroup {
         name: TOOL_DISCOVERY_GROUP_SHELL,
         tools: &[
+            "project_validate",
             "cargo_fmt",
             "cargo_check",
             "cargo_test",
@@ -470,9 +472,10 @@ pub const TOOL_RECOMMENDED_FLOWS: &[ToolRecommendedFlow] = &[
         summary:
             "Validate: use structured validators when their canonical diagnostics, evidence/test-count, validation identity, or same-execution Job semantics help; native execution is first-class when the command is outside or awkward for that contract.",
         manifest_purpose:
-            "For common supported validation, use cargo_fmt/cargo_check/cargo_test/go_test when their canonical argv, parsed diagnostics, validation identity, test-count proof, min_tests/require_tests, bounded projection, or same-execution Job handoff materially helps. Native validation is first-class when the command is outside or awkward for that structured contract: prefer run_process for one literal-argv executable, run_shell when shell grammar/output shaping is required, and run_script for program-like supported scripts. Keep independent failure/permission boundaries separate. cargo_fmt check=false retains ensure-format mutation truth; check=true stays read-only.",
+            "For portable project validation, prefer project_validate. Use cargo_fmt/cargo_check/cargo_test/go_test for advanced ecosystem options when their canonical argv, parsed diagnostics, validation identity, test-count proof, min_tests/require_tests, bounded projection, or same-execution Job handoff materially helps. Native validation is first-class when the command is outside or awkward for that structured contract: prefer run_process for one literal-argv executable, run_shell when shell grammar/output shaping is required, and run_script for program-like supported scripts. Keep independent failure/permission boundaries separate. cargo_fmt check=false retains ensure-format mutation truth; check=true stays read-only.",
         tools: &[
-            "cargo_fmt",
+            "project_validate",
+    "cargo_fmt",
             "cargo_check",
             "cargo_test",
             "go_test",
@@ -572,6 +575,7 @@ pub const CODING_INTENT_TOOL_NAMES: &[&str] = &[
     "run_shell",
     "observe_jobs",
     // Common structured validation with evidence semantics.
+    "project_validate",
     "cargo_fmt",
     "cargo_check",
     "cargo_test",
@@ -655,7 +659,8 @@ pub const TOOL_MANIFEST_INTENTS: &[ToolManifestIntent] = &[
             "runtime_status",
             "git_status",
             "workspace_hygiene_check",
-            "cargo_fmt",
+            "project_validate",
+    "cargo_fmt",
             "cargo_check",
             "cargo_test",
             "validation_summary",

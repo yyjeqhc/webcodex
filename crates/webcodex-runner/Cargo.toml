@@ -10,6 +10,7 @@ workspace-checkpoints = ["webcodex-workspace/workspace-checkpoints"]
 runner-real-process-tests = ["webcodex-lsp/real-process-tests"]
 
 [dependencies]
+webcodex-validation = { path = "../webcodex-validation" }
 agent-client-protocol-schema = { version = "1.7.0", default-features = false }
 webcodex-browser = { path = "../webcodex-browser" }
 webcodex-computer = { path = "../webcodex-computer" }

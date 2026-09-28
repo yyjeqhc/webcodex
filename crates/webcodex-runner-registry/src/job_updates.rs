@@ -456,7 +456,7 @@ fn validate_test_count_evidence(
         return Ok(());
     };
     let cargo_test = job.validation.as_ref().is_some_and(|metadata| {
-        metadata.tool == "cargo_test" && metadata.kind == "test" && metadata.no_run != Some(true)
+        metadata.adapter == "cargo_test" && metadata.kind == "test" && metadata.no_run != Some(true)
     });
     if !cargo_test || !lifecycle.is_terminal() || !update.finished || !evidence.is_valid() {
         return invalid_progress("test_count_evidence_invalid");
@@ -1184,6 +1184,17 @@ impl RunnerRegistry {
                 client_id
             ));
         }
+        if validation
+            .as_ref()
+            .is_some_and(|v| v.project_validation.is_some())
+            && !runner
+                .runner_features
+                .supports(RunnerFeature::ProjectValidation)
+        {
+            return Err(
+                "capability_unavailable: upgrade target Runner for project_validation_v1".into(),
+            );
+        }
         if !validation_steps.is_empty()
             && !runner
                 .runner_features
@@ -1269,7 +1280,7 @@ impl RunnerRegistry {
         }
         if validation
             .as_ref()
-            .is_some_and(|metadata| metadata.tool == "go_test")
+            .is_some_and(|metadata| metadata.adapter == "go_test")
             && !runner
                 .runner_features
                 .supports(RunnerFeature::StructuredGoTestTool)

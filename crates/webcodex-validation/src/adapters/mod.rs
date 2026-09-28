@@ -288,3 +288,19 @@ pub fn validation_adapter_for_tool(tool_identity: &str) -> Option<&'static dyn V
         .find(|adapter| adapter.tool_identity() == tool_identity)
         .or_else(|| go::validation_adapter(tool_identity))
 }
+
+/// Canonical project selection; direct tools remain compatibility entry points.
+pub fn validation_adapter_for_recipe(
+    backend: &str,
+    action: crate::SemanticCheck,
+) -> Option<&'static dyn ValidationAdapter> {
+    use crate::SemanticCheck::*;
+    validation_adapter_for_tool(match (backend, action) {
+        ("rust", Format) => "cargo_fmt",
+        ("rust", Check) => "cargo_check",
+        ("rust", Test) => "cargo_test",
+        ("go", Check) => "go_vet",
+        ("go", Test) => "go_test",
+        _ => return None,
+    })
+}

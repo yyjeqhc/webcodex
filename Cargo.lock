@@ -5616,6 +5616,7 @@ dependencies = [
  "webcodex-persistent-shell",
  "webcodex-process",
  "webcodex-runner-config",
+ "webcodex-validation",
  "webcodex-workspace",
  "webpki-roots 0.26.11",
  "windows-sys 0.61.2",

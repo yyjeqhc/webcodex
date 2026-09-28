@@ -63,6 +63,7 @@ fn canonical_execution_project_binding(
         | ToolCall::CargoFmt { project, .. }
         | ToolCall::CargoCheck { project, .. }
         | ToolCall::CargoTest { project, .. }
+        | ToolCall::ProjectValidate { project, .. }
         | ToolCall::GoTest { project, .. }
         | ToolCall::ListProjectFiles { project, .. }
         | ToolCall::ListProjectTrackedFiles { project, .. }
@@ -144,7 +145,7 @@ pub(super) fn decorate_structured_execution_prestart_denial(
 fn is_structured_validation_tool(tool_name: &str) -> bool {
     matches!(
         tool_name,
-        "cargo_fmt" | "cargo_check" | "cargo_test" | "go_test"
+        "project_validate" | "cargo_fmt" | "cargo_check" | "cargo_test" | "go_test"
     )
 }
 
@@ -534,6 +535,7 @@ impl ModelFacingProjectionPlan {
             | ToolCall::CargoFmt { .. }
             | ToolCall::CargoCheck { .. }
             | ToolCall::CargoTest { .. }
+            | ToolCall::ProjectValidate { .. }
             | ToolCall::GoTest { .. } => ModelFacingProjection::JobHandoff,
             ToolCall::ReadFiles { .. } => {
                 ModelFacingProjection::Read(super::read_files::ReadModelProjection::capture(call))
@@ -1625,6 +1627,7 @@ impl ToolRuntime {
                             | ToolCall::CargoFmt { .. }
                             | ToolCall::CargoCheck { .. }
                             | ToolCall::CargoTest { .. }
+                            | ToolCall::ProjectValidate { .. }
                             | ToolCall::GoTest { .. }
                     ) {
                         ssh_resource = execution_context.resource.clone();
@@ -3301,6 +3304,7 @@ impl ToolRuntime {
             call @ (ToolCall::CargoFmt { .. }
             | ToolCall::CargoCheck { .. }
             | ToolCall::CargoTest { .. }
+            | ToolCall::ProjectValidate { .. }
             | ToolCall::GoTest { .. }) => self.dispatch_cargo_tool(call, ssh_resource, auth).await,
 
             call @ (ToolCall::RunJob { .. }

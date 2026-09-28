@@ -243,6 +243,8 @@ pub const RUNNER_CAPABILITY_STRUCTURED_CARGO_CHECK_PACKAGES: &str =
 /// The Runner accepts the canonical machine-readable `go test -json` validation
 /// shape. Older implementations may support only the historical fixed `./...`
 /// scope; expanded caller-selected packages are fenced separately.
+pub const RUNNER_CAPABILITY_PROJECT_VALIDATION: &str = "project_validation_v1";
+
 pub const RUNNER_CAPABILITY_STRUCTURED_GO_TEST_JSON: &str = "structured_go_test_json";
 /// The Runner understands the first-class model-facing `go_test` tool identity
 /// and its durable `ShellJobValidationMetadata` contract. This is deliberately
@@ -491,6 +493,7 @@ pub const RUNNER_CAPABILITY_NAMES: &[&str] = &[
     RUNNER_CAPABILITY_STRUCTURED_CARGO_TEST_EXECUTION_POLICY,
     RUNNER_CAPABILITY_STRUCTURED_CARGO_TEST_LIB,
     RUNNER_CAPABILITY_STRUCTURED_CARGO_CHECK_PACKAGES,
+    RUNNER_CAPABILITY_PROJECT_VALIDATION,
     RUNNER_CAPABILITY_STRUCTURED_GO_TEST_JSON,
     RUNNER_CAPABILITY_STRUCTURED_GO_TEST_TOOL,
     RUNNER_CAPABILITY_STRUCTURED_GO_TEST_PACKAGES,
@@ -656,6 +659,8 @@ pub struct RunnerCapabilities {
     /// an independent additive capability.
     #[serde(default, skip_serializing_if = "is_false")]
     pub structured_go_test_json: bool,
+    #[serde(default)]
+    pub project_validation_v1: bool,
     /// First-class `go_test` tool plus its durable validation metadata identity.
     /// Missing on older Runners and false; never inferred from Go JSON parsing,
     /// generic structured validation, protocol version, or executable presence.
@@ -1084,6 +1089,7 @@ impl Default for RunnerCapabilities {
             structured_cargo_test_lib: false,
             structured_cargo_check_packages: false,
             structured_go_test_json: false,
+            project_validation_v1: false,
             structured_go_test_tool: false,
             structured_go_test_packages: false,
             structured_process_argv: false,
@@ -2675,6 +2681,7 @@ mod envelope_tests {
                 structured_cargo_test_lib: true,
                 structured_cargo_check_packages: true,
                 structured_go_test_json: true,
+                project_validation_v1: false,
                 structured_go_test_tool: true,
                 structured_go_test_packages: true,
                 structured_process_argv: true,
@@ -4012,6 +4019,7 @@ mod envelope_tests {
                 "structured_cargo_test_execution_policy",
                 "structured_cargo_test_lib",
                 "structured_cargo_check_packages",
+                "project_validation_v1",
                 "structured_go_test_json",
                 "structured_go_test_tool",
                 "structured_go_test_packages",
@@ -4429,6 +4437,7 @@ mod filter_canonical_tests {
         step: ShellJobValidationStep,
     ) -> ShellJobValidationMetadata {
         ShellJobValidationMetadata {
+            project_validation: None,
             source_fence: None,
             tool: tool.to_string(),
             kind: kind.to_string(),
@@ -4495,8 +4504,18 @@ mod filter_canonical_tests {
         let mut go_assertion = metadata.clone();
         go_assertion.minimum_tests = Some(1);
         assert!(
-            !go_assertion.is_valid(),
-            "Cargo-specific assertion metadata must not cross validation adapters"
+            go_assertion.is_valid(),
+            "test-count assertion metadata is supported by structured go_test"
+        );
+        let mut go_vet_assertion = validation_metadata(
+            "go_vet",
+            "check",
+            validation_step("check", "go", &["vet", "./..."]),
+        );
+        go_vet_assertion.minimum_tests = Some(1);
+        assert!(
+            !go_vet_assertion.is_valid(),
+            "test-count assertion metadata must stay limited to test adapters"
         );
 
         let plain_go = validation_step("test", "go", &["test", "./..."]);

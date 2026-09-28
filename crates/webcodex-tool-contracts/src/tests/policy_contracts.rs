@@ -427,7 +427,13 @@ fn tool_definitions_drive_session_and_permission_policy() {
         .collect::<Vec<_>>();
     assert_eq!(
         validation_output_tools,
-        vec!["cargo_fmt", "cargo_check", "cargo_test", "go_test"]
+        vec![
+            "cargo_fmt",
+            "cargo_check",
+            "cargo_test",
+            "project_validate",
+            "go_test",
+        ]
     );
 
     let explicit_business_session_tools = tool_definitions()
@@ -748,6 +754,11 @@ fn required_runner_capability_matches_metadata_risk_table() {
             "cargo_test",
             ToolRisk::JobRun,
             RunnerCapabilityRequirement::Shell,
+        ),
+        (
+            "project_validate",
+            ToolRisk::JobRun,
+            RunnerCapabilityRequirement::OwnerOnly,
         ),
         (
             "go_test",

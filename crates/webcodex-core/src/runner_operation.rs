@@ -640,6 +640,7 @@ pub enum RunnerOperation {
     Project(RunnerProjectOperation),
     Computer(RunnerComputerOperation),
     Browser(RunnerBrowserOperation),
+    PlanProjectValidation(crate::project_validation::ProjectValidationRequest),
     Validation {
         payload: ValidationBridgeRequest,
         timeout_secs: u64,
@@ -679,6 +680,7 @@ impl RunnerOperation {
             Self::Project(operation) => operation.kind.wire_kind(),
             Self::Computer(operation) => operation.kind.wire_kind(),
             Self::Browser(operation) => operation.kind.wire_kind(),
+            Self::PlanProjectValidation(_) => "plan_project_validation",
             Self::Validation { .. } => crate::validation_bridge::AGENT_VALIDATION_REQUEST_KIND,
             Self::Lsp { .. } => crate::lsp_bridge::AGENT_LSP_REQUEST_KIND,
             Self::PersistentShell(_) => "persistent_shell",
@@ -890,6 +892,11 @@ fn encode_operation(
             wire.kind = operation.kind.wire_kind().to_string();
             wire.stdin = Some(operation.payload);
             wire.timeout_secs = operation.timeout_secs.max(1);
+        }
+        RunnerOperation::PlanProjectValidation(payload) => {
+            payload.validate()?;
+            wire.content = Some(serde_json::to_string(&payload).map_err(|e| e.to_string())?);
+            wire.timeout_secs = 30;
         }
         RunnerOperation::Validation {
             payload,
@@ -1310,6 +1317,27 @@ fn decode_operation(wire: &RunnerRequest) -> Result<RunnerOperation, String> {
                 payload,
                 timeout_secs: wire.timeout_secs,
             }))
+        }
+        "plan_project_validation" => {
+            ensure_special_payloads_absent(wire)?;
+            if !wire.command.is_empty()
+                || wire.cwd.is_some()
+                || wire.stdin.is_some()
+                || wire.job_context.is_some()
+                || wire.shell.is_some()
+                || wire.login
+            {
+                return Err("project validation planning contains execution fields".into());
+            }
+            let payload: crate::project_validation::ProjectValidationRequest =
+                serde_json::from_str(
+                    wire.content
+                        .as_deref()
+                        .ok_or("project validation request missing")?,
+                )
+                .map_err(|e| e.to_string())?;
+            payload.validate()?;
+            Ok(RunnerOperation::PlanProjectValidation(payload))
         }
         crate::validation_bridge::AGENT_VALIDATION_REQUEST_KIND => {
             ensure_only_validation_payload(wire)?;

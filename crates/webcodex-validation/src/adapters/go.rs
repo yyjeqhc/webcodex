@@ -10,7 +10,11 @@ struct GoTestValidationAdapter;
 static GO_TEST_ADAPTER: GoTestValidationAdapter = GoTestValidationAdapter;
 
 pub(super) fn validation_adapter(tool_identity: &str) -> Option<&'static dyn ValidationAdapter> {
-    (tool_identity == "go_test").then_some(&GO_TEST_ADAPTER)
+    match tool_identity {
+        "go_test" => Some(&GO_TEST_ADAPTER),
+        "go_vet" => Some(&GO_VET_ADAPTER),
+        _ => None,
+    }
 }
 
 pub(super) fn test_adapter() -> &'static dyn ValidationAdapter {
@@ -105,5 +109,44 @@ impl ValidationAdapter for GoTestValidationAdapter {
 
     fn reports_test_run_metadata(&self) -> bool {
         true
+    }
+}
+
+struct GoVetValidationAdapter;
+static GO_VET_ADAPTER: GoVetValidationAdapter = GoVetValidationAdapter;
+impl ValidationAdapter for GoVetValidationAdapter {
+    fn validation_kind(&self) -> &'static str {
+        "check"
+    }
+    fn tool_identity(&self) -> &'static str {
+        "go_vet"
+    }
+    fn build_readonly_plan(
+        &self,
+        _options: ValidationCommandOptions,
+    ) -> Result<ReadOnlyValidationPlan, String> {
+        read_only_validation_plan(
+            "check",
+            "go",
+            vec![
+                ValidationPlanArg::Literal("vet"),
+                ValidationPlanArg::Literal("./..."),
+            ],
+        )
+    }
+    fn parse(&self, _stdout: &str, stderr: &str, truncated: bool) -> ValidationDiagnostics {
+        webcodex_core::validation_evidence::parse_go_vet_diagnostics(stderr, truncated)
+    }
+    fn map_failure_kind(&self, evidence: ValidationFailureEvidence<'_>) -> &'static str {
+        if evidence.success {
+            "unknown"
+        } else if matches!(
+            evidence.reported_failure_kind,
+            Some("timeout" | "timed_out" | "command_timeout")
+        ) {
+            "timeout"
+        } else {
+            "compile_error"
+        }
     }
 }

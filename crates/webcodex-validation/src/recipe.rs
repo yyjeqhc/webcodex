@@ -1,4 +1,4 @@
-//! Deterministic project-aware plans for the hosted `checks_run` capability.
+//! Deterministic project-aware plans resolved on the owning Runner.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -542,4 +542,19 @@ fn check_unavailable() -> RecipeError {
 
 fn filter_unsupported() -> RecipeError {
     RecipeError::new("test_filter_unsupported")
+}
+
+/// Detect using the same nearest-root and ambiguity rules as recipe resolution.
+/// This allows production admission to reject deferred backends before asking
+/// those backends for scripts or installed tooling.
+pub fn detect_validation_recipe(
+    root: &Path,
+    cwd: Option<&str>,
+    hint: Option<RecipeId>,
+) -> Result<RecipeId, RecipeError> {
+    let root = root
+        .canonicalize()
+        .map_err(|_| RecipeError::new("validation_recipe_not_found"))?;
+    let cwd = resolve_cwd(&root, cwd)?;
+    nearest_recipe_root(&root, &cwd, hint).map(|(recipe, _)| recipe)
 }

@@ -69,6 +69,9 @@ fn sample_tool_args_for_spec(spec: &ToolSpec) -> Value {
         "project_artifact" => {
             args.insert("action".to_string(), json!("metadata"));
         }
+        "project_validate" => {
+            args.insert("action".to_string(), json!("check"));
+        }
         "ssh_resource" => {
             args.insert("action".to_string(), json!("list"));
             args.insert("runner".to_string(), json!("runner-a"));

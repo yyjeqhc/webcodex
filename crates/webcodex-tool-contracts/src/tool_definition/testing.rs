@@ -114,6 +114,36 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     ),
     captures_validation_output(model_spec(
             def(
+                "project_validate",
+                super::ToolAuditPolicy::TYPED_CANONICAL
+                    .execution(super::ToolAuditExecutionPolicy::TEST_ASSERTIONS),
+                ModelVisible,
+                TOOL_CATEGORY_VALIDATION,
+                Some(OwnerOnly),
+                TOOL_PROVIDER_RUNNER,
+                super::ToolSemanticContract {
+                    effect: super::ToolEffect::Execute,
+                    risk: JobRun,
+                    approval: super::ToolApprovalPolicy::Standard,
+                    idempotency: super::ToolIdempotency::NonIdempotent,
+                },
+                Some(JOB_RUN),
+                true,
+                NoPath,
+                false,
+                false,
+                super::ToolSessionEvidencePolicy::NONE.validation_identity(super::ToolValidationIdentityKind::Project),
+            ),
+            "Preferred portable read-only project validation. Runner resolves the nearest unambiguous recipe beneath the exact registered Project. action=format_check/check/test; adapter omission or auto detects Rust/Go, while explicit hints must match. Rust runs cargo fmt -- --check, cargo check --all-targets, or cargo test; Go supports go vet ./... and go test -json ./..., not formatting. Node/Python detection returns adapter unavailable. No arbitrary executable, flags, shell, installation or source mutation. Test success requires proof that tests actually ran. Short runs return structured terminal evidence; long runs return the same Runner-owned Job with observe_jobs continuation. Pending is never retry authority: continue independent work, use observe_jobs for details or wait_for_job_readiness when blocked. Source changes stale evidence; freeze covered source for final proof. Unsupported Runner capability requires an upgrade; advanced ecosystem options remain on cargo_* and go_test.",
+    )
+    .with_execution(super::ToolExecutionContract::new(
+        super::ToolExecutionForm::StructuredValidation,
+        super::ToolExecutionLifetime::Runner,
+        super::ToolExecutionStart::SyncFirst,
+        super::ToolExecutionContinuation::ObserveJobs,
+    ))),
+    captures_validation_output(model_spec(
+            def(
                 "go_test",
                 super::ToolAuditPolicy::TYPED_CANONICAL
                     .execution(super::ToolAuditExecutionPolicy::TEST_COUNTS),

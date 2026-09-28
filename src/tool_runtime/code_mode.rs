@@ -74,6 +74,7 @@ pub(crate) const E2A_NESTED_TOOLS: &[&str] = &[
     "git_diff_hunks",
     "git_review_summary",
     "show_changes",
+    "project_validate",
     "cargo_check",
     "cargo_test",
 ];
@@ -89,6 +90,7 @@ pub(crate) const E2C_NESTED_TOOLS: &[&str] = &[
     "git_review_summary",
     "show_changes",
     "edit_project_files",
+    "project_validate",
     "cargo_check",
     "cargo_test",
 ];
@@ -640,7 +642,7 @@ mod tests {
         );
         assert_eq!(
             &E2A_NESTED_TOOLS[READ_ONLY_NESTED_TOOLS.len()..],
-            ["cargo_check", "cargo_test"]
+            ["project_validate", "cargo_check", "cargo_test"]
         );
         assert_eq!(
             &E2C_NESTED_TOOLS[..READ_ONLY_NESTED_TOOLS.len()],
@@ -648,7 +650,12 @@ mod tests {
         );
         assert_eq!(
             &E2C_NESTED_TOOLS[READ_ONLY_NESTED_TOOLS.len()..],
-            ["edit_project_files", "cargo_check", "cargo_test"]
+            [
+                "edit_project_files",
+                "project_validate",
+                "cargo_check",
+                "cargo_test"
+            ]
         );
         for stage in [
             CodeModeCallableStage::ReadOnly,

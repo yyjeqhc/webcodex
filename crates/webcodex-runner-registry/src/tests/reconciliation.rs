@@ -145,6 +145,7 @@ fn cargo_validation_start_metadata(
         shell: Some("direct_argv".to_string()),
         validation_steps: vec![step.clone()],
         validation: Some(ShellJobValidationMetadata {
+            project_validation: None,
             source_fence: None,
             tool: "cargo_test".to_string(),
             kind: "test".to_string(),
@@ -197,6 +198,7 @@ fn multi_package_cargo_check_start_metadata() -> ShellJobStartMetadata {
         shell: Some("direct_argv".to_string()),
         validation_steps: vec![step.clone()],
         validation: Some(ShellJobValidationMetadata {
+            project_validation: None,
             source_fence: None,
             tool: "cargo_check".to_string(),
             kind: "check".to_string(),
@@ -718,6 +720,7 @@ async fn cargo_test_count_assertion_survives_inventory_roundtrip_and_server_rest
                 shell: Some("direct_argv".to_string()),
                 validation_steps: vec![step.clone()],
                 validation: Some(ShellJobValidationMetadata {
+                    project_validation: None,
                     source_fence: None,
                     tool: "cargo_test".to_string(),
                     kind: "test".to_string(),
@@ -811,6 +814,7 @@ async fn reconciliation_rejects_cross_product_first_class_go_test_metadata() {
     snapshot.context.purpose = Some("validation".to_string());
     snapshot.context.validation_steps = vec!["test".to_string()];
     snapshot.context.validation = Some(ShellJobValidationMetadata {
+        project_validation: None,
         source_fence: None,
         tool: "go_test".to_string(),
         kind: "test".to_string(),

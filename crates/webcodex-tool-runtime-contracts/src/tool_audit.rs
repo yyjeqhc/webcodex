@@ -4362,6 +4362,16 @@ impl ToolCallAuditProjection for ToolCall {
                 }
                 out
             }
+            Self::ProjectValidate {
+                project,
+                cwd,
+                action,
+                adapter,
+                timeout_secs,
+                ..
+            } => serde_json::json!({
+                "project": project, "cwd": cwd, "action": action, "adapter": adapter, "timeout_secs": timeout_secs,
+            }),
             Self::CargoFmt {
                 project,
                 cwd,

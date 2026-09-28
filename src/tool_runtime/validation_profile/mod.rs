@@ -10,7 +10,6 @@ pub(crate) use webcodex_validation::{
 };
 
 pub(crate) struct ValidationRuntimeProfile {
-    pub tool_name: &'static str,
     pub default_timeout_secs: u64,
     pub force_agent_handoff: bool,
     pub invalid_argument_guidance: &'static str,
@@ -20,7 +19,6 @@ pub(crate) fn runtime_profile(operation: &ReadOnlyValidationOperation) -> Valida
     match operation {
         ReadOnlyValidationOperation::Cargo(CargoReadOnlyValidationOperation::FormatCheck) => {
             ValidationRuntimeProfile {
-                tool_name: "cargo_fmt",
                 default_timeout_secs: DEFAULT_CARGO_FMT_TIMEOUT_SECS,
                 force_agent_handoff: false,
                 invalid_argument_guidance: "fix the cargo argument format, then retry.",
@@ -28,7 +26,6 @@ pub(crate) fn runtime_profile(operation: &ReadOnlyValidationOperation) -> Valida
         }
         ReadOnlyValidationOperation::Cargo(CargoReadOnlyValidationOperation::Check(_)) => {
             ValidationRuntimeProfile {
-                tool_name: "cargo_check",
                 default_timeout_secs: DEFAULT_CARGO_CHECK_TIMEOUT_SECS,
                 force_agent_handoff: false,
                 invalid_argument_guidance: "fix the cargo argument format, then retry.",
@@ -36,7 +33,6 @@ pub(crate) fn runtime_profile(operation: &ReadOnlyValidationOperation) -> Valida
         }
         ReadOnlyValidationOperation::Cargo(CargoReadOnlyValidationOperation::Test(_)) => {
             ValidationRuntimeProfile {
-                tool_name: "cargo_test",
                 default_timeout_secs: DEFAULT_CARGO_TEST_TIMEOUT_SECS,
                 force_agent_handoff: false,
                 invalid_argument_guidance: "fix the cargo argument format, then retry.",
@@ -44,7 +40,6 @@ pub(crate) fn runtime_profile(operation: &ReadOnlyValidationOperation) -> Valida
         }
         ReadOnlyValidationOperation::Go(GoReadOnlyValidationOperation::Test(_)) => {
             ValidationRuntimeProfile {
-                tool_name: "go_test",
                 default_timeout_secs: DEFAULT_CARGO_TEST_TIMEOUT_SECS,
                 force_agent_handoff: true,
                 invalid_argument_guidance: "fix the Go package pattern format, then retry.",

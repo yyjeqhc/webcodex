@@ -3554,6 +3554,7 @@ fn cargo_test_terminal_count_evidence_survives_runner_stream_retention() {
     let mut context = test_job_context(temp.path(), vec!["test".to_string()]);
     context.purpose = Some("test".to_string());
     context.validation = Some(runner_protocol::ShellJobValidationMetadata {
+        project_validation: None,
         source_fence: None,
         tool: "cargo_test".to_string(),
         kind: "test".to_string(),
@@ -5196,6 +5197,7 @@ fn runner_recovery_context_rejects_cross_product_go_test_metadata() {
     context.purpose = Some("validation".to_string());
     context.validation_steps = vec!["test".to_string()];
     context.validation = Some(runner_protocol::ShellJobValidationMetadata {
+        project_validation: None,
         source_fence: None,
         tool: "go_test".to_string(),
         kind: "test".to_string(),

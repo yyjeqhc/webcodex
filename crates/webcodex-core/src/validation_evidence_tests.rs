@@ -745,3 +745,17 @@ fn successful_cargo_check_may_have_no_diagnostics() {
     assert!(!diagnostics.available);
     assert_eq!(diagnostics.reason, Some(NO_STABLE_DIAGNOSTICS_REASON));
 }
+
+#[test]
+fn go_vet_diagnostics_are_bounded_and_reject_absolute_locations() {
+    let parsed = super::validation_evidence::parse_go_vet_diagnostics(
+        "# demo\n./main.go:3:5: printf format mismatch\n/private/main.go:1:2: private path\n",
+        false,
+    );
+    assert_eq!(parsed.returned_diagnostic_count, 1);
+    assert_eq!(parsed.diagnostics[0].file.as_deref(), Some("./main.go"));
+    assert_eq!(parsed.invalid_diagnostics_omitted, 1);
+    assert!(!serde_json::to_string(&parsed)
+        .unwrap()
+        .contains("/private/"));
+}

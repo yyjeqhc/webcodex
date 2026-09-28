@@ -1021,6 +1021,28 @@ pub fn validation_kind_for_tool(tool_name: &str) -> Option<&'static str> {
 }
 
 fn execution_purpose(event: &SessionEvent) -> Option<String> {
+    if event.tool_name == "project_validate" {
+        let action = event
+            .input_summary
+            .as_ref()
+            .and_then(|v| v.get("action"))
+            .or_else(|| {
+                event
+                    .validation_output_summary
+                    .as_ref()
+                    .and_then(|v| v.get("action"))
+            })
+            .and_then(Value::as_str)?;
+        return Some(
+            match action {
+                "format_check" => "format",
+                "check" => "validation",
+                "test" => "test",
+                _ => return None,
+            }
+            .into(),
+        );
+    }
     if let Some(kind) = validation_kind_for_tool(&event.tool_name) {
         return Some(
             execution_purpose_for_validation_kind(kind)
@@ -1271,6 +1293,14 @@ fn validation_adapter_for_execution(
 ) -> Option<&'static dyn ValidationAdapter> {
     validation_adapter_for_tool(&finished.tool_name)
         .or_else(|| {
+            finished
+                .validation_output_summary
+                .as_ref()
+                .and_then(|v| v.get("adapter"))
+                .and_then(Value::as_str)
+                .and_then(validation_adapter_for_tool)
+        })
+        .or_else(|| {
             started
                 .and_then(|event| event.input_summary.as_ref())
                 .and_then(|input| input.get("validation_tool"))
@@ -1387,6 +1417,17 @@ fn execution_identity(
         .filter(|value| is_validation_execution_identity(value))
     {
         return identity.to_string();
+    }
+    if tool_name == "project_validate" {
+        if let Some(id) = finished
+            .validation_output_summary
+            .as_ref()
+            .and_then(|v| v.get("validation_target_id"))
+            .and_then(Value::as_str)
+            .filter(|id| is_structured_validation_target_identity(id))
+        {
+            return id.into();
+        }
     }
     let validation_identity_kind =
         runtime_tool_session_evidence_policy(tool_name).validation_identity;

@@ -7,6 +7,7 @@
 //! (mutating) never auto-promotes.
 
 mod cargo_test_assertions;
+mod project_validation;
 
 use super::support::*;
 use crate::runner_http::{ShellJobStartMetadata, ShellJobVisibility};
@@ -221,6 +222,7 @@ async fn seed_retained_terminal_validation_job(
                 shell: Some("bash".to_string()),
                 validation_steps: vec![step.clone()],
                 validation: Some(ShellJobValidationMetadata {
+                    project_validation: None,
                     source_fence: None,
                     tool: "cargo_check".to_string(),
                     kind: "check".to_string(),
@@ -401,6 +403,7 @@ async fn go_test_rejects_empty_or_oversized_package_lists_before_dispatch() {
             async_shell_jobs: true,
             structured_validation_argv: true,
             structured_go_test_json: true,
+            project_validation_v1: false,
             structured_go_test_tool: true,
             ..Default::default()
         },
@@ -535,6 +538,7 @@ async fn fast_go_test_uses_exact_structured_argv_cwd_and_records_session_evidenc
             async_shell_jobs: true,
             structured_validation_argv: true,
             structured_go_test_json: true,
+            project_validation_v1: false,
             structured_go_test_tool: true,
             ..Default::default()
         },
@@ -647,6 +651,7 @@ async fn go_test_failure_reports_failed_test_identity_in_result_and_session() {
             async_shell_jobs: true,
             structured_validation_argv: true,
             structured_go_test_json: true,
+            project_validation_v1: false,
             structured_go_test_tool: true,
             ..Default::default()
         },
@@ -735,6 +740,7 @@ async fn long_go_test_hands_off_same_job_and_terminal_evidence_is_queryable() {
             async_shell_jobs: true,
             structured_validation_argv: true,
             structured_go_test_json: true,
+            project_validation_v1: false,
             structured_go_test_tool: true,
             structured_go_test_packages: true,
             ..Default::default()

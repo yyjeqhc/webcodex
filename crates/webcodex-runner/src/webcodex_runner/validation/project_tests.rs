@@ -33,6 +33,7 @@ fn request(action: ProjectValidationAction) -> ProjectValidationRequest {
 }
 #[test]
 fn project_validation_runner_resolves_all_production_actions() {
+    use sha2::Digest;
     use ProjectValidationAction::*;
     for (marker, action, adapter, args) in [
         (
@@ -56,6 +57,42 @@ fn project_validation_runner_resolves_all_production_actions() {
         assert_eq!(cwd.canonicalize().unwrap(), root.canonicalize().unwrap());
         assert_eq!(plan.adapter, adapter);
         assert_eq!(plan.step.args, args);
+
+        let semantic_check = match action {
+            FormatCheck => webcodex_validation::SemanticCheck::Format,
+            Check => webcodex_validation::SemanticCheck::Check,
+            Test => webcodex_validation::SemanticCheck::Test,
+        };
+        let canonical_adapter = webcodex_validation::validation_adapter_for_recipe(
+            plan.provenance.backend.as_str(),
+            semantic_check,
+        )
+        .unwrap();
+        let canonical_options = if plan.provenance.backend == "rust" && action == FormatCheck {
+            webcodex_validation::ValidationCommandOptions {
+                check: true,
+                ..Default::default()
+            }
+        } else {
+            webcodex_validation::ValidationCommandOptions::default()
+        };
+        let canonical_plan = canonical_adapter
+            .build_readonly_plan(canonical_options)
+            .unwrap();
+        assert_eq!(
+            plan.step, canonical_plan.structured_step,
+            "{adapter} gateway plan must use the canonical adapter step"
+        );
+        let invocation_digest = format!(
+            "{:x}",
+            sha2::Sha256::digest(
+                serde_json::to_vec(&vec![canonical_plan.structured_step]).unwrap()
+            )
+        );
+        assert_eq!(
+            plan.provenance.invocation_digest, invocation_digest,
+            "{adapter} provenance must bind the canonical adapter step"
+        );
         assert!(plan.provenance.is_valid());
         assert!(!serde_json::to_string(&plan)
             .unwrap()

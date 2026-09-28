@@ -145,10 +145,11 @@ pub fn resolve_validation_recipe(
     } else {
         let manifest = read_manifest(&root, &marker_path)?;
         let (steps, extra_digest_files) = match recipe {
-            RecipeId::Rust => rust_steps(checks, test_filter.as_deref()),
+            RecipeId::Rust | RecipeId::Go => {
+                canonical_adapter_steps(recipe, checks, test_filter.as_deref())?
+            }
             RecipeId::Node => node_steps(&recipe_root, &manifest, checks)?,
             RecipeId::Python => python_steps(&manifest, checks)?,
-            RecipeId::Go => go_steps(checks)?,
         };
         let manifest_digest = digest_files(
             &root,
@@ -253,28 +254,39 @@ fn nearest_recipe_root(
     Err(RecipeError::new(code))
 }
 
-fn rust_steps(
+/// Recipe resolution owns project/root provenance; canonical adapters own the
+/// executable and argv for production Rust/Go validation steps.
+fn canonical_adapter_steps(
+    recipe: RecipeId,
     checks: &[SemanticCheck],
-    filter: Option<&str>,
-) -> (Vec<ShellJobValidationStep>, Vec<&'static str>) {
+    test_filter: Option<&str>,
+) -> Result<(Vec<ShellJobValidationStep>, Vec<&'static str>), RecipeError> {
     let mut steps = Vec::with_capacity(checks.len());
     for check in checks {
-        let args = match check {
-            SemanticCheck::Format => {
-                vec!["fmt".to_string(), "--".to_string(), "--check".to_string()]
-            }
-            SemanticCheck::Check => vec!["check".to_string(), "--all-targets".to_string()],
-            SemanticCheck::Test => {
-                let mut args = vec!["test".to_string()];
-                if let Some(filter) = filter {
-                    args.push(filter.to_string());
-                }
-                args
-            }
+        let adapter = crate::validation_adapter_for_recipe(recipe.as_str(), *check)
+            .ok_or_else(check_unavailable)?;
+        let options = match (recipe, *check) {
+            (RecipeId::Rust, SemanticCheck::Format) => crate::ValidationCommandOptions {
+                check: true,
+                ..Default::default()
+            },
+            (RecipeId::Rust, SemanticCheck::Test) => crate::ValidationCommandOptions {
+                filter: test_filter.map(str::to_string),
+                ..Default::default()
+            },
+            _ => crate::ValidationCommandOptions::default(),
         };
-        steps.push(step(*check, "cargo", args));
+        let plan = adapter
+            .build_readonly_plan(options)
+            .map_err(|_| check_unavailable())?;
+        steps.push(plan.structured_step);
     }
-    (steps, vec!["Cargo.lock"])
+    let extra_digest_files = match recipe {
+        RecipeId::Rust => vec!["Cargo.lock"],
+        RecipeId::Go => vec!["go.sum"],
+        RecipeId::Node | RecipeId::Python => unreachable!("canonical project adapters are Rust/Go"),
+    };
+    Ok((steps, extra_digest_files))
 }
 
 fn node_steps(
@@ -404,25 +416,6 @@ fn python_manifestless_steps(
             SemanticCheck::Format | SemanticCheck::Check => Err(check_unavailable()),
         })
         .collect()
-}
-
-fn go_steps(
-    checks: &[SemanticCheck],
-) -> Result<(Vec<ShellJobValidationStep>, Vec<&'static str>), RecipeError> {
-    let mut steps = Vec::with_capacity(checks.len());
-    for check in checks {
-        let args = match check {
-            SemanticCheck::Format => return Err(check_unavailable()),
-            SemanticCheck::Check => vec!["vet", "./..."],
-            SemanticCheck::Test => vec!["test", "-json", "./..."],
-        };
-        steps.push(step(
-            *check,
-            "go",
-            args.into_iter().map(str::to_string).collect(),
-        ));
-    }
-    Ok((steps, vec!["go.sum"]))
 }
 
 fn step(check: SemanticCheck, program: &str, args: Vec<String>) -> ShellJobValidationStep {

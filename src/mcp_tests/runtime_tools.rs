@@ -481,7 +481,11 @@ fn mcp_pending_and_success_attention_match_published_output_schema() {
         }),
     );
     project_tool_result_suggested_calls("cargo_check", &mut result, &|target| {
-        suggested_tool_call_route(target, true)
+        // This descriptor comes from the non-stateless MCP surface. The
+        // operator-extension bit is target-specific admission, not a blanket
+        // statement that the adapter supports extensions; observe_jobs remains
+        // a direct target here just as it does in production MCP routing.
+        suggested_tool_call_route(target, false)
     });
     let envelope = serde_json::to_value(&result).unwrap();
     webcodex_tool_contracts::test_support::validate_schema_instance(

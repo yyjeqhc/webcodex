@@ -202,6 +202,10 @@ Codex session 统计的配对规则：只对 name=exec 的 custom_tool_call/func
 
 审查同时暴露一个具体 model-facing result gap：Runner 的 SHA/revision conflict 已包含 `direct_retry_safe=false`、`reread_required=true`，但基线 Server 将其投影为 `stale_file_revision` 时会移除这两个字段，只保留 `error_kind` 与 `read_files` recovery。语义仍然 fail-closed，但 Host 会失去统一的机器可判定 stop/replay 信号。本分支后续生产修改已在 `edit_project_files` 的 stale projection 补齐这两个字段，并明确 guidance：stale/revision mismatch 的 recovery 是重新观察入口，不是自动 reread + mutation retry authority。
 
+## 9.5 第三轮：Host Job Readiness Reactor 实测
+
+2026-09-28 的 OE readiness probe 已验证当前 ChatGPT Host 可以在同一 functions.exec cell 中 await 一个真正由 Server event 唤醒的 MCP request，并在返回后继续 dependent child call；同时也验证多个并发 long-lived MCP calls 的 Promise.race 不能作为可靠的 low-latency any-ready primitive。最新 main 的 observe_jobs 内部已经使用 canonical Notify + revision recheck multi-Job waiter，因此下一步应提取一个薄的 transient wait_for_job_readiness facade，而不是新增第二套 reactor/scheduler。完整实验数据与设计见 [Host Job Readiness Reactor](host-job-readiness-reactor.md)。
+
 ## 10. Host guidance bound 验证
 
 随后在 OE `mcp-tool-surface-probe` 增加独立 `guidance-limits` profile，并通过 sf 公网路由在刷新后的 ChatGPT Host 中验证。无 `maxItems/maxLength` 的结果从 `8×320` 一直到 `64×4096`（262,144 item chars）都完整返回，首尾 sentinel 保持一致。更关键的是，另一个工具的 `outputSchema` 明确声明 `maxItems=8`、item `maxLength=320` 后，Host 仍完整返回 `9×320`、`8×321`、`16×512` 等故意违反声明约束的 `structuredContent`；没有 outer exception、截断或自动修剪。

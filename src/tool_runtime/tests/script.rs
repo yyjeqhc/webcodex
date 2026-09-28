@@ -598,6 +598,85 @@ async fn run_script_fast_missing_interpreter_retains_not_started_through_the_hid
 }
 
 #[tokio::test]
+async fn run_script_fast_post_spawn_uncertainty_preserves_same_job_for_recovery() {
+    let temp = tempfile::tempdir().unwrap();
+    let runtime = test_runtime().with_structured_execution_sync_wait(Duration::from_millis(250));
+    let project = register_script_job_agent(&runtime, "script-fast-unknown", temp.path()).await;
+    let auth = auth_context(None, true);
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        let auth = auth.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    script_call(
+                        project,
+                        None,
+                        ShellScriptLanguage::Javascript,
+                        "console.log('uncertain');\n",
+                    ),
+                    Some(&auth),
+                )
+                .await
+        }
+    });
+    let request = wait_for_patch_agent_request(&runtime, "script-fast-unknown").await;
+    let job_id = request.job_id.clone().expect("structured script Job id");
+    update_script_job(
+        &runtime,
+        "script-fast-unknown",
+        &request,
+        "lost",
+        Some(ShellCommandExecutionState::OutcomeUnknown),
+        None,
+        Some("partial\n"),
+        None,
+        Some("script terminal correlation was lost after spawn"),
+    )
+    .await;
+
+    let result = task.await.unwrap();
+    assert!(!result.success);
+    assert_eq!(result.output["execution_state"], "outcome_unknown");
+    assert_eq!(result.output["command_started"], true);
+    assert_eq!(result.output["command_completed"], false);
+    assert_eq!(result.output["promoted_to_job"], true);
+    assert_eq!(result.output["terminal"], false);
+    assert_eq!(result.output["job_id"], job_id);
+    assert_eq!(result.output["job_status"], "lost");
+    assert_eq!(
+        result.output["continuation"]["arguments"]["items"][0]["job_id"],
+        job_id
+    );
+    let schema = crate::tool_runtime::registry::output_schema_for_tool("run_script");
+    let instance = json!({
+        "success": result.success,
+        "output": result.output.clone(),
+        "error": result.error.clone(),
+    });
+    crate::tool_runtime::startup_brief::validate_schema_instance_for_test(&instance, &schema)
+        .unwrap_or_else(|error| panic!("uncertain run_script result schema mismatch: {error}"));
+
+    let visible = runtime
+        .runner_registry
+        .get_job_for_auth(Some(&crate::test_support::runner_access(&auth)), &job_id)
+        .await
+        .unwrap();
+    assert_eq!(visible.status, "lost");
+    assert_eq!(
+        visible.command_execution_state,
+        Some(ShellCommandExecutionState::OutcomeUnknown)
+    );
+    assert!(runtime
+        .runner_registry
+        .hidden_job_ids_for_test()
+        .await
+        .is_empty());
+    assert!(runtime.runner_registry.remove_job_record(&job_id).await);
+}
+
+#[tokio::test]
 async fn run_script_slow_handoff_keeps_typed_payload_ephemeral_and_safe_metadata_durable() {
     let temp = tempfile::tempdir().unwrap();
     let runtime = test_runtime().with_structured_execution_sync_wait(Duration::from_millis(40));

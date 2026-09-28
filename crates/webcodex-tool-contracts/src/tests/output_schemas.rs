@@ -1544,6 +1544,33 @@ fn key_tool_output_schemas_include_expected_fields() {
         ("run_process", "run_process", run_process_schema),
         ("run_script", "run_script", run_script_schema),
     ] {
+        let mut uncertain = structured_execution_output(
+            execution_source,
+            "outcome_unknown",
+            true,
+            false,
+            true,
+            false,
+            Some("job-1"),
+            Some("lost"),
+        );
+        uncertain["success"] = json!(false);
+        uncertain["error"] = json!("execution outcome is unknown");
+        uncertain["output"]["promoted_to_job"] = json!(true);
+        uncertain["output"]["observation_token"] = json!("observation");
+        uncertain["output"]["async_handoff_available"] = json!(true);
+        uncertain["output"]["command_ok"] = json!(false);
+        uncertain["output"]["failure_kind"] = json!("outcome_unknown");
+        uncertain["output"]["tool_failure"] = json!(true);
+        test_support::validate_schema_instance(&uncertain, schema).unwrap_or_else(|error| {
+            panic!("{tool} must admit an uncertain execution with its exact recovery Job: {error}")
+        });
+    }
+
+    for (tool, execution_source, schema) in [
+        ("run_process", "run_process", run_process_schema),
+        ("run_script", "run_script", run_script_schema),
+    ] {
         let mut promoted_without_job_id = structured_execution_output(
             execution_source,
             "running",

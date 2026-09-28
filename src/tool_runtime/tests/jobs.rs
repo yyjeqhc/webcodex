@@ -787,6 +787,78 @@ async fn long_run_shell_fast_terminal_returns_ordinary_result_without_visible_jo
 }
 
 #[tokio::test]
+async fn long_run_shell_fast_outcome_unknown_preserves_visible_recovery_job() {
+    let client_id = "shell-long-fast-unknown";
+    let runtime = runtime_with_agent_project(client_id)
+        .with_structured_execution_sync_wait(std::time::Duration::from_millis(200));
+    register_agent(
+        &runtime,
+        client_id,
+        None,
+        RunnerCapabilities {
+            shell: true,
+            async_shell_jobs: true,
+            ..Default::default()
+        },
+    )
+    .await;
+    let project = agent_test_project_id(client_id);
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        async move {
+            runtime
+                .run_shell(project, "printf uncertain".to_string(), Some(600), None)
+                .await
+        }
+    });
+    let start = wait_for_patch_agent_request(&runtime, client_id).await;
+    assert_eq!(start.kind, "start_job");
+    let job_id = start.job_id.clone().expect("durable shell Job id");
+    update_agent_shell_job(
+        &runtime,
+        client_id,
+        &start.request_id,
+        &job_id,
+        "lost",
+        Some(ShellCommandExecutionState::OutcomeUnknown),
+        None,
+        Some("partial\n"),
+        Some("reader lost terminal correlation\n"),
+        Some("structured shell lifecycle became uncertain"),
+        true,
+    )
+    .await;
+
+    let result = task.await.unwrap();
+    assert!(!result.success);
+    assert_eq!(result.output["execution_state"], "outcome_unknown");
+    assert_eq!(result.output["command_started"], true);
+    assert_eq!(result.output["command_completed"], false);
+    assert_eq!(result.output["promoted_to_job"], true);
+    assert_eq!(result.output["terminal"], false);
+    assert_eq!(result.output["job_id"], job_id);
+    assert_eq!(result.output["job_status"], "lost");
+    assert_eq!(
+        result.output["continuation"]["arguments"]["items"][0]["job_id"],
+        job_id
+    );
+    assert_run_shell_result_matches_schema(&result);
+
+    let visible = runtime.runner_registry.get_job(&job_id).await.unwrap();
+    assert_eq!(visible.status, "lost");
+    assert_eq!(
+        visible.command_execution_state,
+        Some(ShellCommandExecutionState::OutcomeUnknown)
+    );
+    assert!(runtime
+        .runner_registry
+        .hidden_job_ids_for_test()
+        .await
+        .is_empty());
+    assert!(runtime.runner_registry.remove_job_record(&job_id).await);
+}
+
+#[tokio::test]
 async fn run_shell_default_sixty_uses_ten_second_same_execution_handoff() {
     let client_id = "shell-default-handoff";
     let runtime = runtime_with_agent_project(client_id)

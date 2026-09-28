@@ -1187,6 +1187,74 @@ async fn run_process_fast_terminal_jobs_project_back_without_visible_duplicates(
 }
 
 #[tokio::test]
+async fn run_process_fast_outcome_unknown_preserves_visible_recovery_job() {
+    let temp = tempfile::tempdir().unwrap();
+    let runtime = test_runtime().with_structured_execution_sync_wait(Duration::from_millis(250));
+    let project = register_process_job_agent(&runtime, "process-fast-unknown", temp.path()).await;
+    let auth = auth_context(None, true);
+    let (task, request) = dispatch_process_until_request(
+        &runtime,
+        "process-fast-unknown",
+        process_call(project, None),
+        auth.clone(),
+    )
+    .await;
+    assert_eq!(request.kind, "start_process_job");
+    let job_id = request.job_id.clone().expect("structured process Job id");
+    update_process_job(
+        &runtime,
+        "process-fast-unknown",
+        &request,
+        "lost",
+        Some(ShellCommandExecutionState::OutcomeUnknown),
+        None,
+        Some("partial process output\n"),
+        None,
+        Some("process terminal correlation was lost after spawn"),
+    )
+    .await;
+
+    let result = task.await.unwrap();
+    assert!(!result.success);
+    assert_eq!(result.output["execution_state"], "outcome_unknown");
+    assert_eq!(result.output["command_started"], true);
+    assert_eq!(result.output["command_completed"], false);
+    assert_eq!(result.output["promoted_to_job"], true);
+    assert_eq!(result.output["terminal"], false);
+    assert_eq!(result.output["job_id"], job_id);
+    assert_eq!(result.output["job_status"], "lost");
+    assert_eq!(
+        result.output["continuation"]["arguments"]["items"][0]["job_id"],
+        job_id
+    );
+    let schema = crate::tool_runtime::registry::output_schema_for_tool("run_process");
+    let instance = json!({
+        "success": result.success,
+        "output": result.output.clone(),
+        "error": result.error.clone(),
+    });
+    crate::tool_runtime::startup_brief::validate_schema_instance_for_test(&instance, &schema)
+        .unwrap_or_else(|error| panic!("uncertain run_process result schema mismatch: {error}"));
+
+    let visible = runtime
+        .runner_registry
+        .get_job_for_auth(Some(&crate::test_support::runner_access(&auth)), &job_id)
+        .await
+        .unwrap();
+    assert_eq!(visible.status, "lost");
+    assert_eq!(
+        visible.command_execution_state,
+        Some(ShellCommandExecutionState::OutcomeUnknown)
+    );
+    assert!(runtime
+        .runner_registry
+        .hidden_job_ids_for_test()
+        .await
+        .is_empty());
+    assert!(runtime.runner_registry.remove_job_record(&job_id).await);
+}
+
+#[tokio::test]
 async fn run_process_terminal_success_is_sparse_after_full_session_effect_recording() {
     let temp = tempfile::tempdir().unwrap();
     let runtime = test_runtime().with_structured_execution_sync_wait(Duration::from_millis(250));

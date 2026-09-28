@@ -10,7 +10,8 @@ use super::helpers::{
 };
 use super::process::add_structured_continuation_facts;
 use super::structured_execution::{
-    await_hidden_structured_job, HiddenStructuredJobWait, StructuredExecutionBudget,
+    await_hidden_structured_job, finalize_hidden_terminal_projection, HiddenStructuredJobWait,
+    StructuredExecutionBudget,
 };
 use super::tool_result::ToolResult;
 use super::{ExecutionPurpose, ExecutionShell, ToolRuntime};
@@ -743,10 +744,16 @@ impl ToolRuntime {
                     stdout,
                     stderr,
                 }) => {
-                    let result = Self::run_shell_terminal_job_result(&job, stdout, stderr, timeout);
-                    self.runner_registry
-                        .remove_projected_hidden_terminal_job_record(&job.job_id)
-                        .await;
+                    let mut result =
+                        Self::run_shell_terminal_job_result(&job, stdout, stderr, timeout);
+                    finalize_hidden_terminal_projection(
+                        self.runner_registry.as_ref(),
+                        auth,
+                        &job,
+                        &mut result,
+                        budget,
+                    )
+                    .await;
                     result
                 }
                 Ok(HiddenStructuredJobWait::Continued {

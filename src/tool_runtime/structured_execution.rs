@@ -2,7 +2,7 @@ use super::helpers::{bounded_tail, COMMAND_STDIO_TAIL_CHARS};
 use crate::auth::AuthContext;
 use crate::runner_http::RunnerRegistry;
 use crate::runner_protocol::{
-    ShellJobInfo, PROCESS_TIMEOUT_MAX_SECS, SCRIPT_TIMEOUT_MAX_SECS,
+    ShellCommandExecutionState, ShellJobInfo, PROCESS_TIMEOUT_MAX_SECS, SCRIPT_TIMEOUT_MAX_SECS,
     STRUCTURED_EXECUTION_TIMEOUT_DEFAULT_SECS, STRUCTURED_EXECUTION_TIMEOUT_MAX_SECS,
     STRUCTURED_EXECUTION_TIMEOUT_MIN_SECS,
 };
@@ -192,6 +192,53 @@ impl StructuredJobHandoffFailure {
         }
         result
     }
+}
+
+/// Finalize a hidden terminal projection without destroying recovery evidence.
+///
+/// Conclusive terminal executions keep the existing sync-first behavior and are
+/// removed after their result is projected. `outcome_unknown` is intentionally
+/// different: effects may have occurred, so publish the same durable Job and
+/// attach its exact observation continuation. If publication itself cannot be
+/// proven, retain the hidden terminal record rather than deleting evidence.
+pub(crate) async fn finalize_hidden_terminal_projection(
+    clients: &RunnerRegistry,
+    auth: Option<&AuthContext>,
+    job: &ShellJobInfo,
+    result: &mut super::ToolResult,
+    budget: StructuredExecutionBudget,
+) {
+    if job.command_execution_state != Some(ShellCommandExecutionState::OutcomeUnknown) {
+        clients
+            .remove_projected_hidden_terminal_job_record(&job.job_id)
+            .await;
+        return;
+    }
+
+    let access = crate::runner_http::runner_access_from_auth(auth);
+    let Ok(public_job) = clients
+        .promote_hidden_job(access.as_ref(), &job.job_id)
+        .await
+    else {
+        return;
+    };
+
+    super::process::add_structured_continuation_facts(
+        result,
+        budget.effective_timeout_secs,
+        budget.sync_wait_secs,
+        true,
+    );
+    result.output["promoted_to_job"] = serde_json::json!(true);
+    result.output["job_id"] = serde_json::json!(public_job.job_id);
+    result.output["job_status"] = serde_json::json!(public_job.status);
+    result.output["activity"] =
+        serde_json::to_value(public_job.activity).unwrap_or(serde_json::Value::Null);
+    if let Some(observation_token) = public_job.observation_token.as_deref() {
+        result.output["observation_token"] = serde_json::json!(observation_token);
+    }
+    result.output["continuation"] =
+        super::jobs::observe_job_continuation(&job.job_id, public_job.observation_token.as_deref());
 }
 
 /// Re-observe/promote the same durable record, never a replacement execution.

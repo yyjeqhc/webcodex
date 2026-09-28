@@ -1423,10 +1423,15 @@ impl RunnerRegistry {
         if job.visibility == ShellJobVisibility::CleanupPending {
             return Err(format!("structured job cleanup is pending: {job_id}"));
         }
-        // A terminal update may race the sync-wait deadline. Keep terminal
-        // records hidden so the initiating structured tool call returns its
-        // terminal result instead of handing off an already-finished Job.
-        if !job.lifecycle.is_terminal() {
+        // A conclusive terminal update may race the sync-wait deadline. Keep
+        // those records hidden so the initiating structured tool call returns
+        // the terminal result without leaving a redundant public Job. An
+        // outcome_unknown terminal is different: the initiating result cannot
+        // safely authorize a retry, so preserve the same durable Job as the
+        // recovery identity instead of discarding the only reconciliation handle.
+        let publish_terminal_recovery = job.lifecycle.is_terminal()
+            && job.command_execution_state == Some(ShellCommandExecutionState::OutcomeUnknown);
+        if !job.lifecycle.is_terminal() || publish_terminal_recovery {
             let view = job_view(job);
             if view.observation_token.is_none() {
                 return Err(format!(

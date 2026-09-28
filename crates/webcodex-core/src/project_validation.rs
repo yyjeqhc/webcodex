@@ -27,6 +27,30 @@ pub enum ProjectValidationAdapter {
     Rust,
     Go,
 }
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectValidationScope {
+    /// Portable bounded package scope. Rust adapters interpret values as Cargo
+    /// package names; Go adapters interpret them as project-relative package patterns.
+    #[schemars(length(min = 1, max = 8))]
+    #[schemars(inner(length(min = 1, max = 256)))]
+    pub packages: Vec<String>,
+}
+
+impl ProjectValidationScope {
+    fn validate(&self) -> Result<(), String> {
+        if self.packages.is_empty() || self.packages.len() > 8 {
+            return Err("project validation packages must contain between 1 and 8 items".into());
+        }
+        if self.packages.iter().any(|package| {
+            package.is_empty() || package.len() > 256 || package.chars().any(char::is_control)
+        }) {
+            return Err("invalid project validation package scope".into());
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectValidationRequest {
@@ -35,6 +59,8 @@ pub struct ProjectValidationRequest {
     pub action: ProjectValidationAction,
     #[serde(default)]
     pub adapter: ProjectValidationAdapter,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<ProjectValidationScope>,
 }
 impl ProjectValidationRequest {
     pub fn validate(&self) -> Result<(), String> {
@@ -44,7 +70,11 @@ impl ProjectValidationRequest {
         {
             return Err("invalid project validation project id".into());
         }
-        validate_relative(self.cwd.as_deref().unwrap_or("."))
+        validate_relative(self.cwd.as_deref().unwrap_or("."))?;
+        if let Some(scope) = &self.scope {
+            scope.validate()?;
+        }
+        Ok(())
     }
 }
 pub fn validate_relative(path: &str) -> Result<(), String> {

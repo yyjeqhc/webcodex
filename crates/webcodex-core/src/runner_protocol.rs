@@ -244,6 +244,11 @@ pub const RUNNER_CAPABILITY_STRUCTURED_CARGO_CHECK_PACKAGES: &str =
 /// shape. Older implementations may support only the historical fixed `./...`
 /// scope; expanded caller-selected packages are fenced separately.
 pub const RUNNER_CAPABILITY_PROJECT_VALIDATION: &str = "project_validation_v1";
+/// The Runner understands the additive portable package scope carried by
+/// project validation requests. Older project_validation_v1 Runners reject
+/// scoped requests before dispatch rather than interpreting an unknown field.
+pub const RUNNER_CAPABILITY_PROJECT_VALIDATION_PACKAGE_SCOPE: &str =
+    "project_validation_package_scope_v1";
 
 pub const RUNNER_CAPABILITY_STRUCTURED_GO_TEST_JSON: &str = "structured_go_test_json";
 /// The Runner understands the first-class model-facing `go_test` tool identity
@@ -494,6 +499,7 @@ pub const RUNNER_CAPABILITY_NAMES: &[&str] = &[
     RUNNER_CAPABILITY_STRUCTURED_CARGO_TEST_LIB,
     RUNNER_CAPABILITY_STRUCTURED_CARGO_CHECK_PACKAGES,
     RUNNER_CAPABILITY_PROJECT_VALIDATION,
+    RUNNER_CAPABILITY_PROJECT_VALIDATION_PACKAGE_SCOPE,
     RUNNER_CAPABILITY_STRUCTURED_GO_TEST_JSON,
     RUNNER_CAPABILITY_STRUCTURED_GO_TEST_TOOL,
     RUNNER_CAPABILITY_STRUCTURED_GO_TEST_PACKAGES,
@@ -661,6 +667,11 @@ pub struct RunnerCapabilities {
     pub structured_go_test_json: bool,
     #[serde(default)]
     pub project_validation_v1: bool,
+    /// Additive bounded package scope for project validation. Missing on older
+    /// project_validation_v1 Runners is false and must fail closed before a
+    /// scoped planning request is sent.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub project_validation_package_scope_v1: bool,
     /// First-class `go_test` tool plus its durable validation metadata identity.
     /// Missing on older Runners and false; never inferred from Go JSON parsing,
     /// generic structured validation, protocol version, or executable presence.
@@ -1090,6 +1101,7 @@ impl Default for RunnerCapabilities {
             structured_cargo_check_packages: false,
             structured_go_test_json: false,
             project_validation_v1: false,
+            project_validation_package_scope_v1: false,
             structured_go_test_tool: false,
             structured_go_test_packages: false,
             structured_process_argv: false,
@@ -2682,6 +2694,7 @@ mod envelope_tests {
                 structured_cargo_check_packages: true,
                 structured_go_test_json: true,
                 project_validation_v1: false,
+                project_validation_package_scope_v1: false,
                 structured_go_test_tool: true,
                 structured_go_test_packages: true,
                 structured_process_argv: true,
@@ -4020,6 +4033,7 @@ mod envelope_tests {
                 "structured_cargo_test_lib",
                 "structured_cargo_check_packages",
                 "project_validation_v1",
+                "project_validation_package_scope_v1",
                 "structured_go_test_json",
                 "structured_go_test_tool",
                 "structured_go_test_packages",
@@ -4543,6 +4557,31 @@ mod filter_canonical_tests {
             "structured go_test rejects per-step environment overrides"
         );
         assert!(!env_injected.is_valid());
+    }
+
+    #[test]
+    fn canonical_scoped_project_validation_argv_accepts_bounded_package_shapes() {
+        let cargo_test = validation_step(
+            "test",
+            "cargo",
+            &["test", "-p", "package-a", "-p", "package-b"],
+        );
+        assert!(cargo_test.is_canonical());
+
+        let go_vet = validation_step("check", "go", &["vet", "./cmd/...", "./internal"]);
+        assert!(go_vet.is_canonical());
+
+        for rejected in [
+            validation_step("check", "go", &["vet", "not-relative"]),
+            validation_step("check", "go", &["vet", "./internal", "--flag"]),
+            validation_step(
+                "test",
+                "cargo",
+                &["test", "-p", "package-a", "-p", "package-a"],
+            ),
+        ] {
+            assert!(!rejected.is_canonical(), "{rejected:?}");
+        }
     }
 
     #[test]

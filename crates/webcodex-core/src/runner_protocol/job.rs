@@ -232,7 +232,7 @@ impl ShellJobValidationStep {
             ("format", "cargo") => args == ["fmt", "--", "--check"],
             ("check", "cargo") => is_canonical_cargo_check_args(&args),
             ("test", "cargo") => is_canonical_cargo_test_args(&args),
-            ("check", "go") => args == ["vet", "./..."],
+            ("check", "go") => is_canonical_go_vet_args(&args),
             ("test", "go") => args == ["test", "./..."] || self.is_structured_go_test_json(),
             ("format", "python") => {
                 args == ["-m", "ruff", "format", "--check"] || args == ["-m", "black", "--check"]
@@ -280,8 +280,8 @@ fn is_canonical_cargo_check_args(args: &[&str]) -> bool {
 
 /// Canonical `cargo test` argv: the `test` subcommand, an optional libtest
 /// filter (never a Cargo option), then zero or more distinct read-only flags
-/// and `--features <value>` / `-p <value>` pairs, optionally including the
-/// Cargo test-only `--lib` and `--no-run` selectors.
+/// and `--features <value>` / repeated `-p <value>` pairs, optionally including
+/// the Cargo test-only `--lib` and `--no-run` selectors.
 ///
 /// The flat argv boundary has inherent information loss: `["test",
 /// "--all-features"]` is a legal `cargo test --all-features` whether the
@@ -296,7 +296,7 @@ fn is_canonical_cargo_test_args(args: &[&str]) -> bool {
         Some(filter) if valid_rust_test_filter(filter) => 2,
         _ => 1,
     };
-    is_canonical_cargo_flags(&args[flags_start..], true, false)
+    is_canonical_cargo_flags(&args[flags_start..], true, true)
 }
 
 /// Normalize and validate one value-taking Cargo argument (`--features`,
@@ -365,7 +365,7 @@ pub fn normalize_cargo_packages(
     Ok(Some(normalized))
 }
 
-/// Normalize the optional package scope of the first-class `go_test` tool.
+/// Normalize the optional package scope shared by structured Go validation.
 /// Omission preserves the historical `./...` scope; an explicit list must
 /// contain one to eight already-normalized project-relative patterns.
 pub fn normalize_go_test_packages(
@@ -438,6 +438,20 @@ fn normalize_go_test_package(raw: &str) -> Result<String, &'static str> {
     Ok(raw.to_string())
 }
 
+fn is_canonical_go_vet_args(args: &[&str]) -> bool {
+    if args.len() < 2 || args[0] != "vet" {
+        return false;
+    }
+    let packages = args[1..]
+        .iter()
+        .map(|value| (*value).to_string())
+        .collect::<Vec<_>>();
+    matches!(
+        normalize_go_test_packages(Some(&packages)),
+        Ok(normalized) if normalized == packages
+    )
+}
+
 fn is_canonical_go_test_json_args(args: &[&str]) -> bool {
     if args.len() < 3 || args[0] != "test" || args[1] != "-json" {
         return false;
@@ -454,8 +468,8 @@ fn is_canonical_go_test_json_args(args: &[&str]) -> bool {
 
 /// Validate the read-only Cargo flag tail shared by `cargo check` and
 /// `cargo test` validation steps. Each single flag and `--features` appears at
-/// most once. Cargo check may repeat `-p` for distinct packages; Cargo test
-/// retains its legacy single-package shape. Every value must already satisfy
+/// most once. Cargo check and Cargo test may repeat `-p` for distinct
+/// packages. Every value must already satisfy
 /// the shared [`normalize_cargo_value`] contract: non-empty after trimming, not
 /// a `-`-prefixed option, NUL/control-free, bounded to `CARGO_VALUE_MAX_BYTES`,
 /// and already normalized (no leading/trailing whitespace). `--lib` and

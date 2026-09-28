@@ -81,6 +81,7 @@ runner_features! {
     StructuredCargoTestLib => (RUNNER_CAPABILITY_STRUCTURED_CARGO_TEST_LIB, structured_cargo_test_lib, RegistrationRequired, false),
     StructuredCargoCheckPackages => (RUNNER_CAPABILITY_STRUCTURED_CARGO_CHECK_PACKAGES, structured_cargo_check_packages, RegistrationRequired, false),
     ProjectValidation => (RUNNER_CAPABILITY_PROJECT_VALIDATION, project_validation_v1, RegistrationRequired, false),
+    ProjectValidationPackageScope => (RUNNER_CAPABILITY_PROJECT_VALIDATION_PACKAGE_SCOPE, project_validation_package_scope_v1, RegistrationRequired, false),
     StructuredGoTestJson => (RUNNER_CAPABILITY_STRUCTURED_GO_TEST_JSON, structured_go_test_json, GenerationEligible, false),
     StructuredGoTestTool => (RUNNER_CAPABILITY_STRUCTURED_GO_TEST_TOOL, structured_go_test_tool, GenerationEligible, false),
     StructuredGoTestPackages => (RUNNER_CAPABILITY_STRUCTURED_GO_TEST_PACKAGES, structured_go_test_packages, GenerationEligible, false),

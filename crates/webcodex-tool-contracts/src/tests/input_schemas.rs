@@ -298,6 +298,50 @@ fn list_project_files_paging_schema_keeps_cardinality_bounded() {
 }
 
 #[test]
+fn project_validate_package_scope_schema_is_closed_and_bounded() {
+    let schema = input_schema_for_tool("project_validate");
+    let valid = serde_json::json!({
+        "project": "demo",
+        "action": "check",
+        "scope": {"packages": ["package-a", "package-b"]}
+    });
+    assert!(test_support::validate_schema_instance(&valid, &schema).is_ok());
+
+    for invalid in [
+        serde_json::json!({
+            "project": "demo",
+            "action": "check",
+            "scope": {"packages": []}
+        }),
+        serde_json::json!({
+            "project": "demo",
+            "action": "check",
+            "scope": {"packages": (0..9).map(|index| format!("package-{index}")).collect::<Vec<_>>()}
+        }),
+        serde_json::json!({
+            "project": "demo",
+            "action": "check",
+            "scope": {"packages": ["x".repeat(257)]}
+        }),
+        serde_json::json!({
+            "project": "demo",
+            "action": "check",
+            "scope": {"packages": ["package-a"], "unknown": true}
+        }),
+        serde_json::json!({
+            "project": "demo",
+            "action": "check",
+            "scope": {}
+        }),
+    ] {
+        assert!(
+            test_support::validate_schema_instance(&invalid, &schema).is_err(),
+            "{invalid}"
+        );
+    }
+}
+
+#[test]
 fn execution_timeout_schemas_keep_runtime_bounds_and_hide_sync_wait_tuning() {
     let specs = registered_tool_specs();
     for (name, default) in [

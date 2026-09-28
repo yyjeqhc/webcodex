@@ -11,7 +11,9 @@ async fn setup(grace_ms: u64) -> ToolRuntime {
         RunnerCapabilities {
             async_shell_jobs: true,
             structured_validation_argv: true,
+            structured_cargo_check_packages: true,
             project_validation_v1: true,
+            project_validation_package_scope_v1: true,
             structured_go_test_json: true,
             structured_go_test_tool: true,
             structured_cargo_test_count_assertion: true,
@@ -38,14 +40,15 @@ async fn reply_plan(
         ProjectValidationAction::Check => webcodex_validation::SemanticCheck::Check,
         ProjectValidationAction::Test => webcodex_validation::SemanticCheck::Test,
     };
-    let adapter = webcodex_validation::validation_adapter_for_recipe(backend, check).unwrap();
-    let step = adapter
-        .build_readonly_plan(webcodex_validation::ValidationCommandOptions {
-            check: action == ProjectValidationAction::FormatCheck,
-            ..Default::default()
-        })
-        .unwrap()
-        .structured_step;
+    let operation = webcodex_validation::project_validation_operation(
+        backend,
+        check,
+        semantic.scope.as_ref().map(|scope| scope.packages.clone()),
+    )
+    .unwrap();
+    let adapter = operation.adapter();
+    let step = operation.build_readonly_plan().unwrap().structured_step;
+    let validation_target_id = operation.validation_target_id(Some(".")).unwrap();
     let plan = ProjectValidationPlan {
         provenance: ProjectValidationProvenance {
             request: semantic,
@@ -57,7 +60,7 @@ async fn reply_plan(
         },
         adapter: adapter.tool_identity().into(),
         step,
-        validation_target_id: format!("target:{}", "a".repeat(24)),
+        validation_target_id,
     };
     complete_sync_shell_lifecycle(
         runtime,
@@ -73,12 +76,21 @@ async fn reply_plan(
     poll_start_validation_job(runtime, "project-validation").await
 }
 fn call(action: ProjectValidationAction, session_id: Option<String>) -> ToolCall {
+    call_with_scope(action, session_id, None)
+}
+
+fn call_with_scope(
+    action: ProjectValidationAction,
+    session_id: Option<String>,
+    packages: Option<Vec<String>>,
+) -> ToolCall {
     ToolCall::ProjectValidate {
         project: agent_test_project_id("project-validation"),
         session_id,
         cwd: None,
         action,
         adapter: None,
+        scope: packages.map(|packages| ProjectValidationScope { packages }),
         timeout_secs: Some(60),
     }
 }
@@ -142,7 +154,7 @@ async fn project_validation_fast_rust_check_records_resolved_evidence() {
     assert_eq!(validation["status"], "passed", "{validation}");
     assert_eq!(
         validation["latest"]["identity"],
-        format!("target:{}", "a".repeat(24))
+        "target:f9d553ae448eadebf9aaae0e"
     );
 }
 #[tokio::test]
@@ -215,6 +227,117 @@ async fn project_validation_capability_mismatch_starts_nothing() {
         .await;
     assert!(!result.success);
     assert!(result.error.unwrap().contains("project_validation_v1"));
+    assert!(runtime.runner_registry.list_jobs(Some(10)).await.is_empty());
+    assert!(probe_patch_agent_request(&runtime, "project-validation")
+        .await
+        .is_none());
+}
+
+#[tokio::test]
+async fn project_validation_scoped_rust_check_preserves_scope_in_job_metadata() {
+    let runtime = setup(500).await;
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    call_with_scope(
+                        ProjectValidationAction::Check,
+                        None,
+                        Some(vec!["package-b".into(), "package-a".into()]),
+                    ),
+                    Some(&auth_context(None, true)),
+                )
+                .await
+        }
+    });
+    let (request, job_id) = reply_plan(&runtime, "rust", ProjectValidationAction::Check).await;
+    let metadata = request
+        .job_context
+        .as_ref()
+        .unwrap()
+        .validation
+        .as_ref()
+        .unwrap();
+    assert_eq!(metadata.tool, "project_validate");
+    assert_eq!(metadata.adapter, "cargo_check");
+    assert_eq!(
+        metadata.steps[0].args,
+        [
+            "check",
+            "--all-targets",
+            "-p",
+            "package-a",
+            "-p",
+            "package-b"
+        ]
+    );
+    assert_eq!(
+        metadata
+            .project_validation
+            .as_ref()
+            .unwrap()
+            .request
+            .scope
+            .as_ref()
+            .unwrap()
+            .packages,
+        ["package-b", "package-a"]
+    );
+    assert_ne!(
+        metadata.validation_target_id.as_deref(),
+        Some("target:f9d553ae448eadebf9aaae0e")
+    );
+    runtime
+        .runner_registry
+        .update_job(cargo_test_update(
+            "project-validation",
+            &request.request_id,
+            &job_id,
+            "completed",
+            "",
+            "Finished dev profile\n",
+            Some(0),
+            completed_progress(),
+            true,
+        ))
+        .await
+        .unwrap();
+    let result = task.await.unwrap();
+    assert!(result.success, "{result:?}");
+}
+
+#[tokio::test]
+async fn project_validation_package_scope_requires_additive_runner_capability() {
+    let runtime = runtime_with_agent_project("project-validation");
+    register_agent(
+        &runtime,
+        "project-validation",
+        None,
+        RunnerCapabilities {
+            async_shell_jobs: true,
+            structured_validation_argv: true,
+            project_validation_v1: true,
+            project_validation_package_scope_v1: false,
+            ..Default::default()
+        },
+    )
+    .await;
+    let result = runtime
+        .dispatch_with_auth(
+            call_with_scope(
+                ProjectValidationAction::Check,
+                None,
+                Some(vec!["package-a".into()]),
+            ),
+            Some(&auth_context(None, true)),
+        )
+        .await;
+    assert!(!result.success);
+    assert!(result
+        .error
+        .unwrap()
+        .contains("project_validation_package_scope_v1"));
     assert!(runtime.runner_registry.list_jobs(Some(10)).await.is_empty());
     assert!(probe_patch_agent_request(&runtime, "project-validation")
         .await

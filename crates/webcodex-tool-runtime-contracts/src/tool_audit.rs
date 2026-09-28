@@ -1907,6 +1907,20 @@ mod computer_privacy_tests {
         assert_eq!(later_summary["validation_target_id"], validation_target_id);
         assert_eq!(cargo_test, cargo_test_before);
 
+        let project_validate = json!({
+            "project": "agent:test:demo",
+            "action": "check",
+            "scope": {"packages": ["private-package-a", "private-package-b"]},
+            "timeout_secs": 90
+        });
+        let project_summary =
+            session_log_arguments_for_tool_request("project_validate", &project_validate);
+        assert_eq!(project_summary["packages_present"], true);
+        assert_eq!(project_summary["package_count"], 2);
+        let serialized = serde_json::to_string(&project_summary).unwrap();
+        assert!(!serialized.contains("private-package-a"));
+        assert!(!serialized.contains("private-package-b"));
+
         let unknown = json!({"secret": "UNKNOWN_TOOL_SECRET"});
         let unknown_before = unknown.clone();
         assert_eq!(
@@ -4367,10 +4381,17 @@ impl ToolCallAuditProjection for ToolCall {
                 cwd,
                 action,
                 adapter,
+                scope,
                 timeout_secs,
                 ..
             } => serde_json::json!({
-                "project": project, "cwd": cwd, "action": action, "adapter": adapter, "timeout_secs": timeout_secs,
+                "project": project,
+                "cwd": cwd,
+                "action": action,
+                "adapter": adapter,
+                "packages_present": scope.is_some(),
+                "package_count": scope.as_ref().map(|scope| scope.packages.len()).unwrap_or_default(),
+                "timeout_secs": timeout_secs,
             }),
             Self::CargoFmt {
                 project,

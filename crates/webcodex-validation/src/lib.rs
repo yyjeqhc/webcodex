@@ -17,9 +17,10 @@ mod profile_tests;
 mod recipe_tests;
 
 pub use adapters::{
-    execution_purpose_for_validation_kind, validation_adapter_for_recipe,
-    validation_adapter_for_tool, CargoCheckOptions, CargoReadOnlyValidationOperation,
-    CargoTestOptions, GoReadOnlyValidationOperation, GoTestOptions, ReadOnlyValidationOperation,
+    execution_purpose_for_validation_kind, project_validation_operation,
+    validation_adapter_for_recipe, validation_adapter_for_tool, CargoCheckOptions,
+    CargoReadOnlyValidationOperation, CargoTestOptions, GoCheckOptions,
+    GoReadOnlyValidationOperation, GoTestOptions, ReadOnlyValidationOperation,
     ReadOnlyValidationPlan, ValidationAdapter, ValidationCommandOptions,
     ValidationCompatibilityProfile, ValidationFailureEvidence,
 };
@@ -30,8 +31,8 @@ pub use evidence::{
     validation_summary_from_events, CurrentValidationEvidenceProjection, ValidationEvent,
 };
 pub use recipe::{
-    detect_validation_recipe, resolve_validation_recipe, RecipeError, RecipeId,
-    ResolvedValidationRecipe, SemanticCheck,
+    detect_validation_recipe, resolve_validation_recipe, resolve_validation_recipe_with_packages,
+    RecipeError, RecipeId, ResolvedValidationRecipe, SemanticCheck,
 };
 pub use webcodex_core::cargo_test_count::{
     parse_cargo_test_run_metadata, CargoTestRunMetadata, CargoTestRunMetadataAccumulator,

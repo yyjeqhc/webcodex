@@ -46,7 +46,13 @@ pub struct CargoTestOptions {
     pub no_default_features: Option<bool>,
     pub features: Option<String>,
     pub package: Option<String>,
+    pub packages: Option<Vec<String>>,
     pub no_run: Option<bool>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct GoCheckOptions {
+    pub packages: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -63,6 +69,7 @@ pub enum CargoReadOnlyValidationOperation {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GoReadOnlyValidationOperation {
+    Check(GoCheckOptions),
     Test(GoTestOptions),
 }
 
@@ -99,6 +106,10 @@ impl ReadOnlyValidationOperation {
                     validation_identity: ToolValidationIdentityKind::CargoTest,
                 }
             }
+            Self::Go(GoReadOnlyValidationOperation::Check(_)) => ValidationCompatibilityProfile {
+                tool_identity: "go_vet",
+                validation_identity: ToolValidationIdentityKind::GoVet,
+            },
             Self::Go(GoReadOnlyValidationOperation::Test(_)) => ValidationCompatibilityProfile {
                 tool_identity: "go_test",
                 validation_identity: ToolValidationIdentityKind::GoTest,
@@ -111,6 +122,7 @@ impl ReadOnlyValidationOperation {
             Self::Cargo(CargoReadOnlyValidationOperation::FormatCheck) => rust::format_adapter(),
             Self::Cargo(CargoReadOnlyValidationOperation::Check(_)) => rust::check_adapter(),
             Self::Cargo(CargoReadOnlyValidationOperation::Test(_)) => rust::test_adapter(),
+            Self::Go(GoReadOnlyValidationOperation::Check(_)) => go::check_adapter(),
             Self::Go(GoReadOnlyValidationOperation::Test(_)) => go::test_adapter(),
         }
     }
@@ -129,10 +141,95 @@ impl ReadOnlyValidationOperation {
             Self::Cargo(CargoReadOnlyValidationOperation::Test(options)) => self
                 .adapter()
                 .build_readonly_plan(ValidationCommandOptions::from(options.clone())),
+            Self::Go(GoReadOnlyValidationOperation::Check(options)) => self
+                .adapter()
+                .build_readonly_plan(ValidationCommandOptions::from(options.clone())),
             Self::Go(GoReadOnlyValidationOperation::Test(options)) => self
                 .adapter()
                 .build_readonly_plan(ValidationCommandOptions::from(options.clone())),
         }
+    }
+
+    /// Stable execution target identity for the semantic validation operation.
+    /// Source state is deliberately excluded and fenced independently.
+    pub fn validation_target_id(&self, cwd: Option<&str>) -> Option<String> {
+        let profile = self.compatibility_profile();
+        let arguments = match self {
+            Self::Cargo(CargoReadOnlyValidationOperation::FormatCheck) => serde_json::json!({
+                "cwd": cwd,
+                "check": true,
+            }),
+            Self::Cargo(CargoReadOnlyValidationOperation::Check(options)) => serde_json::json!({
+                "cwd": cwd,
+                "all_targets": options.all_targets,
+                "all_features": options.all_features,
+                "no_default_features": options.no_default_features,
+                "features": options.features.as_deref(),
+                "package": options.package.as_deref(),
+                "packages": options.packages.as_ref(),
+            }),
+            Self::Cargo(CargoReadOnlyValidationOperation::Test(options)) => serde_json::json!({
+                "cwd": cwd,
+                "filter": options.filter.as_deref(),
+                "lib": options.lib,
+                "all_targets": options.all_targets,
+                "all_features": options.all_features,
+                "no_default_features": options.no_default_features,
+                "features": options.features.as_deref(),
+                "package": options.package.as_deref(),
+                "packages": options.packages.as_ref(),
+                "no_run": options.no_run,
+            }),
+            Self::Go(GoReadOnlyValidationOperation::Check(options)) => serde_json::json!({
+                "cwd": cwd,
+                "packages": options.packages.as_ref(),
+            }),
+            Self::Go(GoReadOnlyValidationOperation::Test(options)) => serde_json::json!({
+                "cwd": cwd,
+                "packages": options.packages.as_ref(),
+            }),
+        };
+        webcodex_core::validation_identity::structured_validation_target_identity(
+            profile.validation_identity,
+            &arguments,
+        )
+    }
+}
+
+/// Translate the portable project validation intent into the canonical
+/// ecosystem-specific semantic operation. Project/root discovery remains
+/// Runner-owned and outside this adapter boundary.
+pub fn project_validation_operation(
+    backend: &str,
+    action: crate::SemanticCheck,
+    packages: Option<Vec<String>>,
+) -> Result<ReadOnlyValidationOperation, &'static str> {
+    use crate::SemanticCheck::*;
+    match (backend, action) {
+        ("rust", Format) if packages.is_none() => Ok(ReadOnlyValidationOperation::Cargo(
+            CargoReadOnlyValidationOperation::FormatCheck,
+        )),
+        ("rust", Format) => Err("validation_scope_unsupported"),
+        ("rust", Check) => Ok(ReadOnlyValidationOperation::Cargo(
+            CargoReadOnlyValidationOperation::Check(CargoCheckOptions {
+                packages,
+                ..Default::default()
+            }),
+        )),
+        ("rust", Test) => Ok(ReadOnlyValidationOperation::Cargo(
+            CargoReadOnlyValidationOperation::Test(CargoTestOptions {
+                packages,
+                ..Default::default()
+            }),
+        )),
+        ("go", Format) => Err("validation_action_unsupported"),
+        ("go", Check) => Ok(ReadOnlyValidationOperation::Go(
+            GoReadOnlyValidationOperation::Check(GoCheckOptions { packages }),
+        )),
+        ("go", Test) => Ok(ReadOnlyValidationOperation::Go(
+            GoReadOnlyValidationOperation::Test(GoTestOptions { packages }),
+        )),
+        _ => Err("validation_adapter_unavailable"),
     }
 }
 
@@ -160,7 +257,17 @@ impl From<CargoTestOptions> for ValidationCommandOptions {
             no_default_features: options.no_default_features,
             features: options.features,
             package: options.package,
+            cargo_packages: options.packages,
             no_run: options.no_run,
+            ..Self::default()
+        }
+    }
+}
+
+impl From<GoCheckOptions> for ValidationCommandOptions {
+    fn from(options: GoCheckOptions) -> Self {
+        Self {
+            go_packages: options.packages,
             ..Self::default()
         }
     }

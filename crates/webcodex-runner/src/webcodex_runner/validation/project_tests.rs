@@ -29,6 +29,7 @@ fn request(action: ProjectValidationAction) -> ProjectValidationRequest {
         cwd: None,
         action,
         adapter: ProjectValidationAdapter::Auto,
+        scope: None,
     }
 }
 #[test]
@@ -99,6 +100,119 @@ fn project_validation_runner_resolves_all_production_actions() {
             .contains(root.to_str().unwrap()));
     }
 }
+#[test]
+fn project_validation_package_scope_maps_through_canonical_operations() {
+    use ProjectValidationAction::*;
+    let cases = [
+        (
+            "Cargo.toml",
+            Check,
+            vec!["package-b", "package-a"],
+            "cargo_check",
+            vec![
+                "check",
+                "--all-targets",
+                "-p",
+                "package-a",
+                "-p",
+                "package-b",
+            ],
+        ),
+        (
+            "Cargo.toml",
+            Test,
+            vec!["package-b", "package-a"],
+            "cargo_test",
+            vec!["test", "-p", "package-a", "-p", "package-b"],
+        ),
+        (
+            "go.mod",
+            Check,
+            vec!["./cmd/...", "./internal"],
+            "go_vet",
+            vec!["vet", "./cmd/...", "./internal"],
+        ),
+        (
+            "go.mod",
+            Test,
+            vec!["./cmd/...", "./internal"],
+            "go_test",
+            vec!["test", "-json", "./cmd/...", "./internal"],
+        ),
+    ];
+    for (marker, action, packages, adapter, expected_args) in cases {
+        let (_tmp, _root, registry, policy) = fixture(marker);
+        let mut req = request(action);
+        req.scope = Some(ProjectValidationScope {
+            packages: packages.into_iter().map(str::to_string).collect(),
+        });
+        let (plan, _) = project::plan(&policy, &registry, &req).unwrap();
+        assert_eq!(plan.adapter, adapter);
+        assert_eq!(plan.step.args, expected_args);
+        assert_eq!(plan.provenance.request, req);
+        let semantic = match action {
+            FormatCheck => webcodex_validation::SemanticCheck::Format,
+            Check => webcodex_validation::SemanticCheck::Check,
+            Test => webcodex_validation::SemanticCheck::Test,
+        };
+        let operation = webcodex_validation::project_validation_operation(
+            plan.provenance.backend.as_str(),
+            semantic,
+            plan.provenance
+                .request
+                .scope
+                .as_ref()
+                .map(|scope| scope.packages.clone()),
+        )
+        .unwrap();
+        assert_eq!(
+            plan.validation_target_id,
+            operation
+                .validation_target_id(Some(&plan.provenance.recipe_root))
+                .unwrap()
+        );
+        assert_eq!(
+            plan.step,
+            operation.build_readonly_plan().unwrap().structured_step
+        );
+    }
+}
+
+#[test]
+fn project_validation_package_scope_fails_closed_when_action_or_backend_scope_is_invalid() {
+    let (_tmp, _root, registry, policy) = fixture("Cargo.toml");
+    let mut format = request(ProjectValidationAction::FormatCheck);
+    format.scope = Some(ProjectValidationScope {
+        packages: vec!["package-a".into()],
+    });
+    assert!(matches!(
+        project::plan(&policy, &registry, &format),
+        Err(ProjectValidationPlanningResult::Unavailable { code, .. })
+            if code == "validation_scope_unsupported"
+    ));
+
+    let mut invalid_rust = request(ProjectValidationAction::Check);
+    invalid_rust.scope = Some(ProjectValidationScope {
+        packages: vec!["-bad".into()],
+    });
+    assert!(matches!(
+        project::plan(&policy, &registry, &invalid_rust),
+        Err(ProjectValidationPlanningResult::Unavailable { code, .. })
+            if code == "validation_scope_invalid"
+    ));
+
+    let (_tmp, _root, registry, policy) = fixture("go.mod");
+    let mut invalid_go = request(ProjectValidationAction::Test);
+    invalid_go.scope = Some(ProjectValidationScope {
+        packages: vec!["not-relative".into()],
+    });
+    assert!(matches!(
+        project::plan(&policy, &registry, &invalid_go),
+        Err(ProjectValidationPlanningResult::Unavailable { code, .. })
+            if code == "validation_scope_invalid"
+    ));
+}
+
 #[test]
 fn project_validation_nearest_root_hint_and_ambiguity() {
     let (_tmp, root, registry, policy) = fixture("Cargo.toml");

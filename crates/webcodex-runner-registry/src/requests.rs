@@ -2556,6 +2556,7 @@ impl RunnerRegistry {
         access: Option<&crate::RunnerAccess>,
     ) -> Result<(String, oneshot::Receiver<ShellRunResponse>), String> {
         payload.validate()?;
+        let requires_package_scope = payload.scope.is_some();
         let request_id = next_request_id();
         let (tx, rx) = oneshot::channel();
         let request = encode_runner_operation(
@@ -2574,6 +2575,16 @@ impl RunnerRegistry {
         {
             return Err(
                 "capability_unavailable: upgrade target Runner for project_validation_v1".into(),
+            );
+        }
+        if requires_package_scope
+            && !runner
+                .runner_features
+                .supports(RunnerFeature::ProjectValidationPackageScope)
+        {
+            return Err(
+                "capability_unavailable: upgrade target Runner for project_validation_package_scope_v1"
+                    .into(),
             );
         }
         enqueue_pending_request_locked(

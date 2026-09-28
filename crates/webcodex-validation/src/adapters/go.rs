@@ -17,6 +17,10 @@ pub(super) fn validation_adapter(tool_identity: &str) -> Option<&'static dyn Val
     }
 }
 
+pub(super) fn check_adapter() -> &'static dyn ValidationAdapter {
+    &GO_VET_ADAPTER
+}
+
 pub(super) fn test_adapter() -> &'static dyn ValidationAdapter {
     &GO_TEST_ADAPTER
 }
@@ -42,6 +46,7 @@ impl ValidationAdapter for GoTestValidationAdapter {
             || options.no_default_features.is_some()
             || options.features.is_some()
             || options.package.is_some()
+            || options.cargo_packages.is_some()
             || options.no_run.is_some()
         {
             return Err("go_test does not accept Cargo validation command options".to_string());
@@ -123,16 +128,32 @@ impl ValidationAdapter for GoVetValidationAdapter {
     }
     fn build_readonly_plan(
         &self,
-        _options: ValidationCommandOptions,
+        options: ValidationCommandOptions,
     ) -> Result<ReadOnlyValidationPlan, String> {
-        read_only_validation_plan(
-            "check",
-            "go",
-            vec![
-                ValidationPlanArg::Literal("vet"),
-                ValidationPlanArg::Literal("./..."),
-            ],
-        )
+        if options.check
+            || options.filter.is_some()
+            || options.lib.is_some()
+            || options.all_targets.is_some()
+            || options.all_features.is_some()
+            || options.no_default_features.is_some()
+            || options.features.is_some()
+            || options.package.is_some()
+            || options.cargo_packages.is_some()
+            || options.no_run.is_some()
+        {
+            return Err("go_vet does not accept Cargo validation command options".to_string());
+        }
+        let explicit_packages = options.go_packages.is_some();
+        let packages = normalize_go_test_packages(options.go_packages.as_deref())
+            .map_err(|reason| format!("packages {reason}"))?;
+        let mut args = vec![ValidationPlanArg::Literal("vet")];
+        if explicit_packages {
+            args.extend(packages.into_iter().map(ValidationPlanArg::Value));
+        } else {
+            debug_assert_eq!(packages.as_slice(), ["./..."]);
+            args.push(ValidationPlanArg::Literal("./..."));
+        }
+        read_only_validation_plan("check", "go", args)
     }
     fn parse(&self, _stdout: &str, stderr: &str, truncated: bool) -> ValidationDiagnostics {
         webcodex_core::validation_evidence::parse_go_vet_diagnostics(stderr, truncated)

@@ -21,6 +21,7 @@ pub enum ToolValidationIdentityKind {
     CargoCheck,
     CargoTest,
     GoTest,
+    GoVet,
     Project,
 }
 
@@ -32,6 +33,7 @@ impl ToolValidationIdentityKind {
             Self::CargoCheck => Some("cargo_check"),
             Self::CargoTest => Some("cargo_test"),
             Self::GoTest => Some("go_test"),
+            Self::GoVet => Some("go_vet"),
         }
     }
 }
@@ -147,12 +149,12 @@ pub fn structured_validation_target_identity(
             }
             let filter = normalized_rust_test_target_filter(obj.get("filter"))?;
             let features = normalized_cargo_target_value(obj.get("features"))?;
-            let package = normalized_cargo_target_value(obj.get("package"))?;
+            let packages =
+                normalized_cargo_target_packages(obj.get("package"), obj.get("packages"))?;
             let mut semantic = serde_json::json!({
                 "tool": tool_name,
                 "kind": "test",
                 "cwd": cwd,
-                "package": package,
                 "filter": filter,
                 "features": features,
                 "all_targets": obj.get("all_targets").and_then(Value::as_bool).unwrap_or(false),
@@ -160,6 +162,12 @@ pub fn structured_validation_target_identity(
                 "no_default_features": obj.get("no_default_features").and_then(Value::as_bool).unwrap_or(false),
                 "no_run": obj.get("no_run").and_then(Value::as_bool).unwrap_or(false),
             });
+            if packages.as_ref().is_some_and(|packages| packages.len() > 1) {
+                semantic["packages"] = serde_json::json!(packages);
+            } else {
+                semantic["package"] =
+                    serde_json::json!(packages.and_then(|mut values| values.pop()));
+            }
             if obj.get("lib").and_then(Value::as_bool) == Some(true) {
                 semantic["lib"] = Value::Bool(true);
             }
@@ -175,6 +183,29 @@ pub fn structured_validation_target_identity(
             serde_json::json!({
                 "tool": tool_name,
                 "kind": "test",
+                "cwd": cwd,
+                "packages": packages,
+            })
+        }
+        ToolValidationIdentityKind::GoVet => {
+            if obj.get("packages_present").and_then(Value::as_bool) == Some(true)
+                && obj.get("packages").is_none()
+            {
+                return None;
+            }
+            let packages = normalized_go_test_target_packages(obj.get("packages"))?;
+            // Preserve the project_validate v1 default Go vet target identity
+            // byte-for-byte. Explicit "./..." is semantically the same scope.
+            if packages.as_slice() == ["./..."] {
+                let digest = format!("{:x}", Sha256::digest(format!("go_vet\0{cwd}")));
+                return Some(format!(
+                    "{STRUCTURED_VALIDATION_TARGET_PREFIX}{}",
+                    &digest[..VALIDATION_IDENTITY_HEX_LEN]
+                ));
+            }
+            serde_json::json!({
+                "tool": tool_name,
+                "kind": "check",
                 "cwd": cwd,
                 "packages": packages,
             })
@@ -315,6 +346,11 @@ mod tests {
                 serde_json::json!({"cwd": ".", "packages": ["./..."]}),
                 "target:53578a0709b0ce549e125eb7",
             ),
+            (
+                ToolValidationIdentityKind::GoVet,
+                serde_json::json!({"cwd": "."}),
+                "target:6d00fe00bc63c0cd5baaff2d",
+            ),
         ];
         for (kind, arguments, expected) in cases {
             assert_eq!(
@@ -328,6 +364,53 @@ mod tests {
                 &serde_json::json!({})
             ),
             None
+        );
+    }
+
+    #[test]
+    fn cargo_test_multi_package_identity_preserves_single_package_compatibility() {
+        let kind = ToolValidationIdentityKind::CargoTest;
+        let multi = structured_validation_target_identity(
+            kind,
+            &serde_json::json!({"packages": ["package-b", "package-a", "package-b"]}),
+        )
+        .unwrap();
+        let distinct = structured_validation_target_identity(
+            kind,
+            &serde_json::json!({"packages": ["package-a", "package-c"]}),
+        )
+        .unwrap();
+        assert_ne!(multi, distinct);
+        assert_eq!(
+            structured_validation_target_identity(
+                kind,
+                &serde_json::json!({"packages": ["package-a"]}),
+            ),
+            structured_validation_target_identity(
+                kind,
+                &serde_json::json!({"package": "package-a"}),
+            )
+        );
+    }
+
+    #[test]
+    fn go_vet_default_identity_is_legacy_stable_and_scoped_identity_is_distinct() {
+        let kind = ToolValidationIdentityKind::GoVet;
+        let legacy = structured_validation_target_identity(kind, &serde_json::json!({"cwd": "."}));
+        assert_eq!(legacy.as_deref(), Some("target:6d00fe00bc63c0cd5baaff2d"));
+        assert_eq!(
+            legacy,
+            structured_validation_target_identity(
+                kind,
+                &serde_json::json!({"cwd": ".", "packages": ["./..."]}),
+            )
+        );
+        assert_ne!(
+            legacy,
+            structured_validation_target_identity(
+                kind,
+                &serde_json::json!({"cwd": ".", "packages": ["./cmd/...", "./internal"]}),
+            )
         );
     }
 

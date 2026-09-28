@@ -1,4 +1,7 @@
-use super::{resolve_validation_recipe, RecipeError, RecipeId, SemanticCheck};
+use super::{
+    resolve_validation_recipe, resolve_validation_recipe_with_packages, RecipeError, RecipeId,
+    SemanticCheck,
+};
 use std::fs;
 use std::path::Path;
 
@@ -325,6 +328,73 @@ fn recipes_emit_only_canonical_argv_and_never_select_mutating_node_format() {
 }
 
 #[test]
+fn scoped_rust_and_go_recipes_bind_canonical_package_argv_into_invocation_identity() {
+    use sha2::{Digest, Sha256};
+
+    let rust = tempfile::tempdir().unwrap();
+    write(
+        rust.path(),
+        "Cargo.toml",
+        "[workspace]\nmembers=['package-a','package-b']\n",
+    );
+    let rust_plan = resolve_validation_recipe_with_packages(
+        rust.path(),
+        None,
+        Some(RecipeId::Rust),
+        &[SemanticCheck::Check, SemanticCheck::Test],
+        None,
+        Some(&["package-b".into(), "package-a".into()]),
+    )
+    .unwrap();
+    assert_eq!(
+        rust_plan.steps[0].args,
+        [
+            "check",
+            "--all-targets",
+            "-p",
+            "package-a",
+            "-p",
+            "package-b"
+        ]
+    );
+    assert_eq!(
+        rust_plan.steps[1].args,
+        ["test", "-p", "package-a", "-p", "package-b"]
+    );
+    assert_eq!(
+        rust_plan.invocation_digest,
+        format!(
+            "{:x}",
+            Sha256::digest(serde_json::to_vec(&rust_plan.steps).unwrap())
+        )
+    );
+
+    let go = tempfile::tempdir().unwrap();
+    write(go.path(), "go.mod", "module example.test/fixture\n");
+    let go_plan = resolve_validation_recipe_with_packages(
+        go.path(),
+        None,
+        Some(RecipeId::Go),
+        &[SemanticCheck::Check, SemanticCheck::Test],
+        None,
+        Some(&["./cmd/...".into(), "./internal".into()]),
+    )
+    .unwrap();
+    assert_eq!(go_plan.steps[0].args, ["vet", "./cmd/...", "./internal"]);
+    assert_eq!(
+        go_plan.steps[1].args,
+        ["test", "-json", "./cmd/...", "./internal"]
+    );
+    assert_eq!(
+        go_plan.invocation_digest,
+        format!(
+            "{:x}",
+            Sha256::digest(serde_json::to_vec(&go_plan.steps).unwrap())
+        )
+    );
+}
+
+#[test]
 fn go_test_json_argv_is_bound_into_durable_invocation_identity() {
     use sha2::{Digest, Sha256};
 
@@ -396,6 +466,44 @@ fn node_package_manager_resolution_covers_declared_and_lockfile_evidence() {
             .unwrap()
             .contains("private body"));
     }
+}
+
+#[test]
+fn package_scope_is_rejected_for_non_portable_backends() {
+    let node = tempfile::tempdir().unwrap();
+    write(
+        node.path(),
+        "package.json",
+        r#"{"packageManager":"npm@10","scripts":{"test":"vitest"}}"#,
+    );
+    write(node.path(), "package-lock.json", "{}");
+    let error = resolve_validation_recipe_with_packages(
+        node.path(),
+        None,
+        Some(RecipeId::Node),
+        &[SemanticCheck::Test],
+        None,
+        Some(&["package-a".to_string()]),
+    )
+    .unwrap_err();
+    assert_eq!(error.code, "validation_scope_unsupported");
+
+    let python = tempfile::tempdir().unwrap();
+    write(
+        python.path(),
+        "pyproject.toml",
+        "[tool.pytest.ini_options]\naddopts = '-q'\n",
+    );
+    let error = resolve_validation_recipe_with_packages(
+        python.path(),
+        None,
+        Some(RecipeId::Python),
+        &[SemanticCheck::Test],
+        None,
+        Some(&["package-a".to_string()]),
+    )
+    .unwrap_err();
+    assert_eq!(error.code, "validation_scope_unsupported");
 }
 
 #[test]

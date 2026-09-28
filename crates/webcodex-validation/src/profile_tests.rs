@@ -1,7 +1,8 @@
 use crate::{
-    execution_purpose_for_validation_kind, validation_adapter_for_tool, CargoCheckOptions,
-    CargoReadOnlyValidationOperation, CargoTestOptions, GoReadOnlyValidationOperation,
-    GoTestOptions, ReadOnlyValidationOperation, ValidationCommandOptions,
+    execution_purpose_for_validation_kind, project_validation_operation,
+    validation_adapter_for_tool, CargoCheckOptions, CargoReadOnlyValidationOperation,
+    CargoTestOptions, GoCheckOptions, GoReadOnlyValidationOperation, GoTestOptions,
+    ReadOnlyValidationOperation, SemanticCheck, ValidationCommandOptions,
     ValidationFailureEvidence,
 };
 use webcodex_core::runner_protocol::{GO_TEST_PACKAGE_MAX_BYTES, GO_TEST_PACKAGE_MAX_ITEMS};
@@ -60,6 +61,7 @@ fn semantic_read_only_operations_preserve_legacy_leaf_plans_and_identity_profile
                     no_default_features: Some(true),
                     features: Some("feature-a".to_string()),
                     package: Some("webcodex".to_string()),
+                    packages: None,
                     no_run: Some(true),
                 },
             )),
@@ -111,6 +113,110 @@ fn semantic_read_only_operations_preserve_legacy_leaf_plans_and_identity_profile
         assert_eq!(semantic_plan, legacy_plan, "{tool_name}");
         assert_eq!(operation.adapter().tool_identity(), tool_name);
     }
+}
+
+#[test]
+fn project_validation_operations_preserve_default_identities_and_scope_commands() {
+    let defaults = [
+        (
+            "rust",
+            SemanticCheck::Format,
+            "target:dfd175fca2d6e3c744338849",
+        ),
+        (
+            "rust",
+            SemanticCheck::Check,
+            "target:f9d553ae448eadebf9aaae0e",
+        ),
+        (
+            "rust",
+            SemanticCheck::Test,
+            "target:8ca3fd3664d56332a1d5839f",
+        ),
+        (
+            "go",
+            SemanticCheck::Check,
+            "target:6d00fe00bc63c0cd5baaff2d",
+        ),
+        ("go", SemanticCheck::Test, "target:53578a0709b0ce549e125eb7"),
+    ];
+    for (backend, action, expected) in defaults {
+        let operation = project_validation_operation(backend, action, None).unwrap();
+        assert_eq!(
+            operation.validation_target_id(Some(".")).as_deref(),
+            Some(expected)
+        );
+    }
+
+    let rust_packages = Some(vec!["package-b".to_string(), "package-a".to_string()]);
+    for (action, expected) in [
+        (
+            SemanticCheck::Check,
+            vec![
+                "check",
+                "--all-targets",
+                "-p",
+                "package-a",
+                "-p",
+                "package-b",
+            ],
+        ),
+        (
+            SemanticCheck::Test,
+            vec!["test", "-p", "package-a", "-p", "package-b"],
+        ),
+    ] {
+        let operation =
+            project_validation_operation("rust", action, rust_packages.clone()).unwrap();
+        let plan = operation.build_readonly_plan().unwrap();
+        assert_eq!(plan.structured_step.args, expected);
+        assert!(operation.validation_target_id(Some(".")).is_some());
+    }
+
+    let go_packages = Some(vec!["./cmd/...".to_string(), "./internal".to_string()]);
+    for (action, expected) in [
+        (SemanticCheck::Check, vec!["vet", "./cmd/...", "./internal"]),
+        (
+            SemanticCheck::Test,
+            vec!["test", "-json", "./cmd/...", "./internal"],
+        ),
+    ] {
+        let operation = project_validation_operation("go", action, go_packages.clone()).unwrap();
+        let plan = operation.build_readonly_plan().unwrap();
+        assert_eq!(plan.structured_step.args, expected);
+        assert!(operation.validation_target_id(Some(".")).is_some());
+    }
+
+    assert_eq!(
+        project_validation_operation(
+            "rust",
+            SemanticCheck::Format,
+            Some(vec!["package-a".to_string()])
+        )
+        .unwrap_err(),
+        "validation_scope_unsupported"
+    );
+    assert_eq!(
+        project_validation_operation("go", SemanticCheck::Format, None).unwrap_err(),
+        "validation_action_unsupported"
+    );
+}
+
+#[test]
+fn go_check_semantic_operation_uses_canonical_vet_adapter() {
+    let operation =
+        ReadOnlyValidationOperation::Go(GoReadOnlyValidationOperation::Check(GoCheckOptions {
+            packages: Some(vec!["./internal/control".to_string()]),
+        }));
+    assert_eq!(operation.compatibility_profile().tool_identity, "go_vet");
+    assert_eq!(operation.adapter().tool_identity(), "go_vet");
+    assert_eq!(
+        operation
+            .build_readonly_plan()
+            .unwrap()
+            .compatibility_command,
+        "go vet './internal/control'"
+    );
 }
 
 #[test]

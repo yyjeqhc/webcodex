@@ -365,82 +365,6 @@ pub(super) fn reject_structured_validation_ssh_resource(
     })
 }
 
-fn validation_identity_arguments(
-    operation: &ReadOnlyValidationOperation,
-    cwd: Option<&str>,
-    require_tests: Option<bool>,
-    minimum_tests: Option<u64>,
-) -> Value {
-    match operation {
-        ReadOnlyValidationOperation::Cargo(CargoReadOnlyValidationOperation::FormatCheck) => {
-            json!({
-                "cwd": cwd,
-                "check": true,
-                "filter": null,
-                "lib": null,
-                "all_targets": null,
-                "all_features": null,
-                "no_default_features": null,
-                "features": null,
-                "package": null,
-                "no_run": null,
-                "require_tests": require_tests,
-                "min_tests": minimum_tests,
-                "packages": null,
-            })
-        }
-        ReadOnlyValidationOperation::Cargo(CargoReadOnlyValidationOperation::Check(options)) => {
-            json!({
-                "cwd": cwd,
-                "check": false,
-                "filter": null,
-                "lib": null,
-                "all_targets": options.all_targets,
-                "all_features": options.all_features,
-                "no_default_features": options.no_default_features,
-                "features": options.features.as_deref(),
-                "package": options.package.as_deref(),
-                "no_run": null,
-                "require_tests": require_tests,
-                "min_tests": minimum_tests,
-                "packages": options.packages.as_ref(),
-            })
-        }
-        ReadOnlyValidationOperation::Cargo(CargoReadOnlyValidationOperation::Test(options)) => {
-            json!({
-                "cwd": cwd,
-                "check": false,
-                "filter": options.filter.as_deref(),
-                "lib": options.lib,
-                "all_targets": options.all_targets,
-                "all_features": options.all_features,
-                "no_default_features": options.no_default_features,
-                "features": options.features.as_deref(),
-                "package": options.package.as_deref(),
-                "no_run": options.no_run,
-                "require_tests": require_tests,
-                "min_tests": minimum_tests,
-                "packages": null,
-            })
-        }
-        ReadOnlyValidationOperation::Go(GoReadOnlyValidationOperation::Test(options)) => json!({
-            "cwd": cwd,
-            "check": false,
-            "filter": null,
-            "lib": null,
-            "all_targets": null,
-            "all_features": null,
-            "no_default_features": null,
-            "features": null,
-            "package": null,
-            "no_run": null,
-            "require_tests": require_tests,
-            "min_tests": minimum_tests,
-            "packages": options.packages.as_ref(),
-        }),
-    }
-}
-
 fn validation_no_run(operation: &ReadOnlyValidationOperation) -> Option<bool> {
     match operation {
         ReadOnlyValidationOperation::Cargo(CargoReadOnlyValidationOperation::Test(options)) => {
@@ -458,6 +382,7 @@ impl ToolRuntime {
         cwd: Option<String>,
         action: webcodex_core::project_validation::ProjectValidationAction,
         adapter_hint: Option<webcodex_core::project_validation::ProjectValidationAdapter>,
+        scope: Option<webcodex_core::project_validation::ProjectValidationScope>,
         timeout_secs: Option<u64>,
         ssh_resource: Option<&str>,
         auth: Option<&AuthContext>,
@@ -495,6 +420,7 @@ impl ToolRuntime {
             cwd,
             action,
             adapter: adapter_hint.unwrap_or_default(),
+            scope,
         };
         if let Err(e) = request.validate() {
             return ToolResult::err(e);
@@ -610,16 +536,7 @@ impl ToolRuntime {
         };
         let adapter = operation.adapter();
         let no_run = validation_no_run(&operation);
-        let identity_arguments = validation_identity_arguments(
-            &operation,
-            cwd.as_deref(),
-            request.require_tests,
-            request.minimum_tests,
-        );
-        let validation_target_id = super::tool_audit::structured_validation_target_identity(
-            compatibility.validation_identity,
-            &identity_arguments,
-        );
+        let validation_target_id = operation.validation_target_id(cwd.as_deref());
         let plan = match operation.build_readonly_plan() {
             Ok(plan) => plan,
             Err(e) => {

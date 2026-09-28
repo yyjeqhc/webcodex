@@ -119,11 +119,32 @@ pub fn resolve_validation_recipe(
     checks: &[SemanticCheck],
     test_filter: Option<&str>,
 ) -> Result<ResolvedValidationRecipe, RecipeError> {
+    resolve_validation_recipe_with_packages(
+        execution_root,
+        cwd,
+        explicit_recipe,
+        checks,
+        test_filter,
+        None,
+    )
+}
+
+pub fn resolve_validation_recipe_with_packages(
+    execution_root: &Path,
+    cwd: Option<&str>,
+    explicit_recipe: Option<RecipeId>,
+    checks: &[SemanticCheck],
+    test_filter: Option<&str>,
+    package_scope: Option<&[String]>,
+) -> Result<ResolvedValidationRecipe, RecipeError> {
     let root = execution_root
         .canonicalize()
         .map_err(|_| RecipeError::new("validation_recipe_not_found"))?;
     let cwd = resolve_cwd(&root, cwd)?;
     let (recipe, recipe_root) = nearest_recipe_root(&root, &cwd, explicit_recipe)?;
+    if package_scope.is_some() && !matches!(recipe, RecipeId::Rust | RecipeId::Go) {
+        return Err(RecipeError::new("validation_scope_unsupported"));
+    }
     let root_relative = relative_root(&root, &recipe_root);
     let marker = recipe.marker();
     let marker_path = recipe_root.join(marker);
@@ -146,7 +167,7 @@ pub fn resolve_validation_recipe(
         let manifest = read_manifest(&root, &marker_path)?;
         let (steps, extra_digest_files) = match recipe {
             RecipeId::Rust | RecipeId::Go => {
-                canonical_adapter_steps(recipe, checks, test_filter.as_deref())?
+                canonical_adapter_steps(recipe, checks, test_filter.as_deref(), package_scope)?
             }
             RecipeId::Node => node_steps(&recipe_root, &manifest, checks)?,
             RecipeId::Python => python_steps(&manifest, checks)?,
@@ -260,25 +281,35 @@ fn canonical_adapter_steps(
     recipe: RecipeId,
     checks: &[SemanticCheck],
     test_filter: Option<&str>,
+    package_scope: Option<&[String]>,
 ) -> Result<(Vec<ShellJobValidationStep>, Vec<&'static str>), RecipeError> {
     let mut steps = Vec::with_capacity(checks.len());
     for check in checks {
-        let adapter = crate::validation_adapter_for_recipe(recipe.as_str(), *check)
-            .ok_or_else(check_unavailable)?;
-        let options = match (recipe, *check) {
-            (RecipeId::Rust, SemanticCheck::Format) => crate::ValidationCommandOptions {
-                check: true,
-                ..Default::default()
-            },
-            (RecipeId::Rust, SemanticCheck::Test) => crate::ValidationCommandOptions {
-                filter: test_filter.map(str::to_string),
-                ..Default::default()
-            },
-            _ => crate::ValidationCommandOptions::default(),
-        };
-        let plan = adapter
-            .build_readonly_plan(options)
-            .map_err(|_| check_unavailable())?;
+        let mut operation = crate::project_validation_operation(
+            recipe.as_str(),
+            *check,
+            package_scope.map(<[String]>::to_vec),
+        )
+        .map_err(|code| {
+            if package_scope.is_none() && code == "validation_action_unsupported" {
+                check_unavailable()
+            } else {
+                RecipeError::new(code)
+            }
+        })?;
+        if let crate::ReadOnlyValidationOperation::Cargo(
+            crate::CargoReadOnlyValidationOperation::Test(options),
+        ) = &mut operation
+        {
+            options.filter = test_filter.map(str::to_string);
+        }
+        let plan = operation.build_readonly_plan().map_err(|_| {
+            if package_scope.is_some() {
+                RecipeError::new("validation_scope_invalid")
+            } else {
+                check_unavailable()
+            }
+        })?;
         steps.push(plan.structured_step);
     }
     let extra_digest_files = match recipe {

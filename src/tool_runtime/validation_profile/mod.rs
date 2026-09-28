@@ -38,6 +38,13 @@ pub(crate) fn runtime_profile(operation: &ReadOnlyValidationOperation) -> Valida
                 invalid_argument_guidance: "fix the cargo argument format, then retry.",
             }
         }
+        ReadOnlyValidationOperation::Go(GoReadOnlyValidationOperation::Check(_)) => {
+            ValidationRuntimeProfile {
+                default_timeout_secs: DEFAULT_CARGO_CHECK_TIMEOUT_SECS,
+                force_agent_handoff: false,
+                invalid_argument_guidance: "fix the Go package pattern format, then retry.",
+            }
+        }
         ReadOnlyValidationOperation::Go(GoReadOnlyValidationOperation::Test(_)) => {
             ValidationRuntimeProfile {
                 default_timeout_secs: DEFAULT_CARGO_TEST_TIMEOUT_SECS,

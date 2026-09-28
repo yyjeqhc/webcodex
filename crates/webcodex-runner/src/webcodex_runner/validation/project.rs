@@ -2,12 +2,9 @@
 use super::*;
 use sha2::{Digest, Sha256};
 use webcodex_core::project_validation::*;
-use webcodex_core::validation_identity::{
-    structured_validation_target_identity, ToolValidationIdentityKind,
-};
 use webcodex_validation::{
-    detect_validation_recipe, resolve_validation_recipe, validation_adapter_for_recipe, RecipeId,
-    SemanticCheck,
+    detect_validation_recipe, project_validation_operation,
+    resolve_validation_recipe_with_packages, RecipeId, SemanticCheck,
 };
 
 pub(crate) fn plan(
@@ -45,28 +42,32 @@ pub(crate) fn plan(
         ProjectValidationAction::Check => SemanticCheck::Check,
         ProjectValidationAction::Test => SemanticCheck::Test,
     };
-    let adapter = validation_adapter_for_recipe(backend.as_str(), action)
-        .ok_or_else(|| unavailable("validation_action_unsupported", Some(backend.as_str())))?;
-    let resolved = resolve_validation_recipe(&root, request.cwd.as_deref(), hint, &[action], None)
-        .map_err(|e| unavailable(e.code, Some(backend.as_str())))?;
-    let identity_kind = match adapter.tool_identity() {
-        "cargo_fmt" => ToolValidationIdentityKind::CargoFmt,
-        "cargo_check" => ToolValidationIdentityKind::CargoCheck,
-        "cargo_test" => ToolValidationIdentityKind::CargoTest,
-        "go_test" => ToolValidationIdentityKind::GoTest,
-        _ => ToolValidationIdentityKind::None,
-    };
-    let identity = structured_validation_target_identity(
-        identity_kind,
-        &serde_json::json!({"cwd": resolved.recipe_root_relative, "check": true}),
+    let packages = request.scope.as_ref().map(|scope| scope.packages.clone());
+    let operation = project_validation_operation(backend.as_str(), action, packages)
+        .map_err(|code| unavailable(code, Some(backend.as_str())))?;
+    let adapter = operation.adapter();
+    let resolved = resolve_validation_recipe_with_packages(
+        &root,
+        request.cwd.as_deref(),
+        hint,
+        &[action],
+        None,
+        request
+            .scope
+            .as_ref()
+            .map(|scope| scope.packages.as_slice()),
     )
-    .unwrap_or_else(|| {
-        let digest = format!(
-            "{:x}",
-            Sha256::digest(format!("go_vet\0{}", resolved.recipe_root_relative))
-        );
-        format!("target:{}", &digest[..24])
-    });
+    .map_err(|e| unavailable(e.code, Some(backend.as_str())))?;
+    let identity = operation
+        .validation_target_id(Some(&resolved.recipe_root_relative))
+        .ok_or_else(|| unavailable("validation_scope_invalid", Some(backend.as_str())))?;
+    debug_assert_eq!(
+        operation
+            .build_readonly_plan()
+            .ok()
+            .map(|plan| plan.structured_step),
+        resolved.steps.first().cloned()
+    );
     let cwd = root.join(&resolved.recipe_root_relative);
     Ok((
         ProjectValidationPlan {

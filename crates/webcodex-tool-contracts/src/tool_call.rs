@@ -2764,6 +2764,11 @@ pub enum ToolCall {
         /// Omission means auto. Rust and Go are supported; Node/Python return unavailable.
         #[serde(default)]
         adapter: Option<webcodex_core::project_validation::ProjectValidationAdapter>,
+        /// Optional portable package scope. Rust check/test map packages to repeated Cargo -p selectors;
+        /// Go check/test map packages to bounded project-relative package patterns. Formatting with package
+        /// scope is not supported.
+        #[serde(default)]
+        scope: Option<webcodex_core::project_validation::ProjectValidationScope>,
         /// Total execution budget, clamped to 3600 seconds. Host grace never starts another execution.
         #[serde(default)]
         #[schemars(range(min = 1))]

@@ -218,12 +218,13 @@ fn cargo_check_plan(options: ValidationCommandOptions) -> Result<ReadOnlyValidat
 }
 
 fn cargo_test_plan(options: ValidationCommandOptions) -> Result<ReadOnlyValidationPlan, String> {
-    if options.cargo_packages.is_some() {
-        return Err("cargo_test does not accept cargo_check packages".to_string());
-    }
     let filter = validate_filter(options.filter)?;
     let features = validate_arg("features", options.features)?;
-    let package = validate_arg("package", options.package)?;
+    let packages = normalize_cargo_packages(
+        options.package.as_deref(),
+        options.cargo_packages.as_deref(),
+    )
+    .map_err(|reason| format!("packages {reason}"))?;
     let mut args = vec![ValidationPlanArg::Literal("test")];
     if let Some(filter) = filter {
         args.push(ValidationPlanArg::Value(filter));
@@ -244,7 +245,7 @@ fn cargo_test_plan(options: ValidationCommandOptions) -> Result<ReadOnlyValidati
         args.push(ValidationPlanArg::Literal("--features"));
         args.push(ValidationPlanArg::Value(features));
     }
-    if let Some(package) = package {
+    for package in packages.into_iter().flatten() {
         args.push(ValidationPlanArg::Literal("-p"));
         args.push(ValidationPlanArg::Value(package));
     }

@@ -7,12 +7,9 @@ use super::common::{
 };
 
 pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
-    match name {
-        "project_validate" | "cargo_fmt" | "cargo_check" | "cargo_test" | "go_test" => {
-            Some(cargo_output_schema(name))
-        }
-        _ => None,
-    }
+    crate::runtime_tool_execution_contract(name)
+        .filter(|execution| execution.form == crate::ToolExecutionForm::StructuredValidation)
+        .map(|_| cargo_output_schema(name))
 }
 
 fn cargo_output_schema(tool_name: &str) -> Value {

@@ -385,6 +385,21 @@ Presentation classes are not authority. For example, a Transport activity can
 still be a meaningful model/environment interaction, and a ModelHidden tool can
 still represent real work.
 
+Contract consistency tests iterate `tool_definitions()` rather than maintaining a second
+complete name/risk/capability table. Curated membership remains in
+`TOOL_DISCOVERY_GROUPS`; `discovery_group_names_for_tool` supplies its ordered reverse
+view. Group/category compatibility, manifest intents and recommended flows remain
+independent selection policies. Structured-validation output family admission follows
+`ToolExecutionForm::StructuredValidation`; tool-specific output fields remain explicit.
+
+Input contract tests share `test_support::sample_tool_args_for_spec` in tool-contracts.
+It chooses declared const/default/enum values, then bounded type/required-child samples;
+unsupported constraints fail rather than silently inventing a fixture. Keep semantic
+identity fixtures and cross-field overrides documented there, never in a second runtime
+helper. Runner registry's local `runner_features!` table owns Server feature projections
+and its all-enabled test fixture. The explicit `RunnerCapabilities` wire struct and
+frozen generation baseline remain independent compatibility contracts.
+
 ## 10. Compatibility follows concrete consumers, not historical implementation
 
 For model-facing tool contracts, compatibility is opt-in rather than automatic.

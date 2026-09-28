@@ -928,3 +928,33 @@ fn coding_intent_has_independent_ordered_canonical_selection_surface() {
         .unwrap();
     assert!(read_files_position < edit_project_files_position);
 }
+
+#[test]
+fn curated_discovery_membership_has_one_ordered_reverse_view() {
+    let mut names = BTreeSet::new();
+    for group in TOOL_DISCOVERY_GROUPS {
+        assert!(names.insert(group.name), "duplicate group {}", group.name);
+        let mut tools = BTreeSet::new();
+        for name in group.tools {
+            assert!(tools.insert(name), "{} duplicate tool {name}", group.name);
+            assert!(
+                lookup_tool_definition(name).is_some(),
+                "unknown tool {name}"
+            );
+        }
+    }
+    for definition in tool_definitions() {
+        let expected = TOOL_DISCOVERY_GROUPS
+            .iter()
+            .filter(|group| group.tools.contains(&definition.name))
+            .map(|group| group.name)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            discovery_group_names_for_tool(definition.name).collect::<Vec<_>>(),
+            expected
+        );
+    }
+    assert!(discovery_group_names_for_tool("__unknown_tool__")
+        .next()
+        .is_none());
+}

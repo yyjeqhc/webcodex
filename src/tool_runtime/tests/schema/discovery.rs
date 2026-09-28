@@ -501,59 +501,6 @@ fn allowed_tool_definition_categories_for_discovery_group(group: &str) -> &'stat
     }
 }
 
-fn expected_cross_listed_discovery_groups(tool: &str) -> Option<&'static [&'static str]> {
-    match tool {
-        "apply_patch" => Some(&["edit", "patch"]),
-        "apply_unified_diff" => Some(&["edit", "patch"]),
-        "project_validate" => Some(&["shell", "validation"]),
-        "cargo_check" => Some(&["shell", "validation"]),
-        "cargo_fmt" => Some(&["shell", "validation"]),
-        "cargo_test" => Some(&["shell", "validation"]),
-        #[cfg(feature = "experimental-code-mode")]
-        "code_mode_exec" => Some(&["inspect", "runtime"]),
-        #[cfg(feature = "experimental-code-mode")]
-        "code_mode_exec_effectful" => Some(&["runtime", "validation"]),
-        #[cfg(feature = "experimental-code-mode")]
-        "code_mode_exec_mutating" => Some(&["edit", "runtime"]),
-        "discard_untracked" => Some(&["cleanup", "git"]),
-        "finish_coding_task" => Some(&["review", "runtime"]),
-        "artifact_upload_abort"
-        | "artifact_upload_begin"
-        | "artifact_upload_chunk"
-        | "artifact_upload_finish"
-        | "import_conversation_files_to_project"
-        | "read_project_artifact"
-        | "read_project_artifact_metadata"
-        | "save_project_artifact" => Some(&["edit", "file_transfer"]),
-        "git_diff_hunks" => Some(&["git", "inspect", "review"]),
-        "git_review_summary" => Some(&["git", "inspect", "review"]),
-        "review_changes" => Some(&["git", "inspect", "review"]),
-        "git_log" => Some(&["git", "inspect", "review"]),
-        "git_restore_paths" => Some(&["cleanup", "git"]),
-        "git_status" => Some(&["git", "inspect", "review"]),
-        "list_runners" => Some(&["inspect", "runtime"]),
-        "list_projects" => Some(&["inspect", "projects", "runtime"]),
-        "list_tools" => Some(&["inspect", "runtime"]),
-        "run_job" => Some(&["jobs", "shell"]),
-        "run_detached_process" => Some(&["jobs", "shell"]),
-        "run_process" | "run_script" => Some(&["inspect", "shell"]),
-        "run_shell" => Some(&["inspect", "shell"]),
-        "open_session_shell"
-        | "session_shell_exec"
-        | "session_shell_status"
-        | "close_session_shell" => Some(&["jobs", "shell"]),
-        "runtime_status" => Some(&["inspect", "runtime"]),
-        "show_changes" => Some(&["git", "inspect", "review"]),
-        "work_on_project" => Some(&["inspect", "runtime"]),
-        "workspace_checkpoint_create" => Some(&["checkpoint", "git", "runtime"]),
-        "workspace_checkpoint_delete" => Some(&["checkpoint", "cleanup", "runtime"]),
-        "workspace_checkpoint_list" => Some(&["checkpoint", "inspect", "review", "runtime"]),
-        "workspace_checkpoint_restore" => Some(&["checkpoint", "git", "runtime"]),
-        "workspace_checkpoint_show" => Some(&["checkpoint", "inspect", "review", "runtime"]),
-        _ => None,
-    }
-}
-
 #[test]
 fn tool_discovery_groups_drive_tool_categories() {
     use crate::tool_runtime::tool_definition::{
@@ -577,9 +524,20 @@ fn tool_discovery_groups_drive_tool_categories() {
         "registered_tool_categories keys must come only from TOOL_DISCOVERY_GROUPS"
     );
 
+    assert_eq!(
+        expected_group_names.len(),
+        TOOL_DISCOVERY_GROUPS.len(),
+        "duplicate group name"
+    );
     let mut memberships: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
 
     for group in TOOL_DISCOVERY_GROUPS {
+        assert_eq!(
+            group.tools.iter().collect::<BTreeSet<_>>().len(),
+            group.tools.len(),
+            "{} duplicate tool",
+            group.name
+        );
         let actual_tools = string_array(
             category_map
                 .get(group.name)
@@ -651,21 +609,11 @@ fn tool_discovery_groups_drive_tool_categories() {
             omitted_from_groups.insert(definition.name);
             continue;
         };
-        if groups.len() == 1 {
-            continue;
-        }
-        let expected =
-            expected_cross_listed_discovery_groups(definition.name).unwrap_or_else(|| {
-                panic!(
-                    "{} appears in multiple discovery groups without an explicit allowlist: {:?}",
-                    definition.name, groups
-                )
-            });
-        let actual_groups = groups.iter().copied().collect::<BTreeSet<_>>();
-        let expected_groups = expected.iter().copied().collect::<BTreeSet<_>>();
+        let expected = webcodex_tool_contracts::discovery_group_names_for_tool(definition.name)
+            .collect::<Vec<_>>();
         assert_eq!(
-            actual_groups, expected_groups,
-            "{} discovery cross-listing changed",
+            *groups, expected,
+            "{} reverse discovery view",
             definition.name
         );
     }

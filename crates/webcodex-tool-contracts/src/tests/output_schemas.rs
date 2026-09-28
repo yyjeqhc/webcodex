@@ -3511,3 +3511,32 @@ fn browser_observation_schema_accepts_canonical_runner_output_and_rejects_privat
     leaked_endpoint["debug_endpoint"] = json!("ws://127.0.0.1/devtools");
     assert!(act_ok(leaked_endpoint).is_err());
 }
+
+#[test]
+fn structured_validation_definitions_receive_the_validation_output_family() {
+    let mut count = 0;
+    for definition in tool_definitions().filter(|definition| {
+        definition
+            .execution
+            .is_some_and(|execution| execution.form == ToolExecutionForm::StructuredValidation)
+    }) {
+        count += 1;
+        let schema = output_schema_for_tool(definition.name);
+        let properties = schema["properties"]["output"]["properties"]
+            .as_object()
+            .unwrap_or_else(|| panic!("{} validation output properties", definition.name));
+        for field in [
+            "source_state",
+            "execution_state",
+            "failure_kind",
+            "continuation",
+        ] {
+            assert!(
+                properties.contains_key(field),
+                "{} missing {field}",
+                definition.name
+            );
+        }
+    }
+    assert!(count > 0);
+}

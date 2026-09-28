@@ -91,7 +91,7 @@ fn validate_schema_instance_at(instance: &Value, schema: &Value, path: &str) -> 
             .map(|variant| validate_schema_instance_at(instance, variant, path))
             .collect::<Vec<_>>();
         let successes = results.iter().filter(|result| result.is_ok()).count();
-        return (successes == 1).then_some(()).ok_or_else(|| {
+        (successes == 1).then_some(()).ok_or_else(|| {
             let errors = results
                 .into_iter()
                 .enumerate()
@@ -103,17 +103,17 @@ fn validate_schema_instance_at(instance: &Value, schema: &Value, path: &str) -> 
                 .collect::<Vec<_>>()
                 .join("; ");
             format!("{path}: expected exactly one matching schema, got {successes}; {errors}")
-        });
+        })?;
     }
     if let Some(variants) = schema.get("anyOf").and_then(Value::as_array) {
-        return variants
+        variants
             .iter()
             .find_map(|variant| {
                 validate_schema_instance_at(instance, variant, path)
                     .ok()
                     .map(|_| ())
             })
-            .ok_or_else(|| format!("{path}: no anyOf variant matched"));
+            .ok_or_else(|| format!("{path}: no anyOf variant matched"))?;
     }
     if let Some(expected) = schema.get("const") {
         if instance != expected {
@@ -125,8 +125,8 @@ fn validate_schema_instance_at(instance: &Value, schema: &Value, path: &str) -> 
             return Err(format!("{path}: value is outside the declared enum"));
         }
     }
-    if let Some(expected_type) = schema.get("type").and_then(Value::as_str) {
-        let matches = match expected_type {
+    if let Some(expected_type) = schema.get("type") {
+        let matches_type = |kind: &str| match kind {
             "object" => instance.is_object(),
             "array" => instance.is_array(),
             "string" => instance.is_string(),
@@ -134,7 +134,12 @@ fn validate_schema_instance_at(instance: &Value, schema: &Value, path: &str) -> 
             "integer" => instance.as_i64().is_some() || instance.as_u64().is_some(),
             "number" => instance.is_number(),
             "null" => instance.is_null(),
-            _ => true,
+            _ => false,
+        };
+        let matches = match expected_type {
+            Value::String(kind) => matches_type(kind),
+            Value::Array(kinds) => kinds.iter().filter_map(Value::as_str).any(matches_type),
+            _ => false,
         };
         if !matches {
             return Err(format!("{path}: expected {expected_type}"));
@@ -206,27 +211,21 @@ fn validate_schema_instance_at(instance: &Value, schema: &Value, path: &str) -> 
             return Err(format!("{path}: maxLength exceeded"));
         }
     }
-    if let Some(number) = instance.as_i64() {
-        if schema
-            .get("minimum")
-            .and_then(Value::as_i64)
-            .is_some_and(|minimum| number < minimum)
-        {
+    if instance.is_number() {
+        // Preserve exact integer comparisons for revision/fence-sized u64 values.
+        let compare = |bound: &Value| {
+            if let (Some(a), Some(b)) = (instance.as_i64(), bound.as_i64()) {
+                Some(a.cmp(&b))
+            } else if let (Some(a), Some(b)) = (instance.as_u64(), bound.as_u64()) {
+                Some(a.cmp(&b))
+            } else {
+                instance.as_f64()?.partial_cmp(&bound.as_f64()?)
+            }
+        };
+        if schema.get("minimum").and_then(compare) == Some(std::cmp::Ordering::Less) {
             return Err(format!("{path}: below minimum"));
         }
-        if schema
-            .get("maximum")
-            .and_then(Value::as_i64)
-            .is_some_and(|maximum| number > maximum)
-        {
-            return Err(format!("{path}: above maximum"));
-        }
-    } else if let Some(number) = instance.as_u64() {
-        if schema
-            .get("maximum")
-            .and_then(Value::as_u64)
-            .is_some_and(|maximum| number > maximum)
-        {
+        if schema.get("maximum").and_then(compare) == Some(std::cmp::Ordering::Greater) {
             return Err(format!("{path}: above maximum"));
         }
     }
@@ -327,3 +326,6 @@ mod tests {
         }
     }
 }
+
+mod samples;
+pub use samples::{sample_schema_value, sample_tool_args, sample_tool_args_for_spec};

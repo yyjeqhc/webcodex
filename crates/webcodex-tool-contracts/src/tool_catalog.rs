@@ -711,3 +711,12 @@ pub fn resolve_tool_manifest_intent(
         None => Err(trimmed.to_string()),
     }
 }
+
+/// Reverse view of curated discovery membership, in canonical group order.
+/// Unknown names (and tools omitted from ordinary discovery) have no groups.
+pub fn discovery_group_names_for_tool(name: &str) -> impl Iterator<Item = &'static str> + '_ {
+    TOOL_DISCOVERY_GROUPS
+        .iter()
+        .filter(move |group| group.tools.contains(&name))
+        .map(|group| group.name)
+}

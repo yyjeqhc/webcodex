@@ -114,7 +114,7 @@ non-debug Desktop 必须使用包内 runtime resources。
 
 ### Desktop 数据目录
 
-Desktop 默认从 Tauri 提供的当前用户 app-local-data 目录开始。Windows 上，Desktop 会先找到该 logical 路径中最深的已存在 ancestor，解析其真实物理文件系统位置，再原样追加尚不存在的 tail。这样可以支持 `C:\\Users\\<user>` 通过 NTFS Junction 重定向到其他磁盘的 Windows profile，同时让 Desktop state、secrets、`runtime/local`、connection state、provider/coding-agent state、updates、diagnostics 与 reset/recovery 始终共享同一个 effective root。
+Desktop 默认从 Tauri 提供的当前用户 app-local-data 目录开始。Windows 上，Desktop 会解析最终 Desktop-owned data-root 组件之前的 ancestor 到真实物理文件系统位置，再原样追加尚不存在的 tail。这样可以支持 `C:\\Users\\<user>` 通过 NTFS Junction 重定向到其他磁盘的 Windows profile，同时让 Desktop state、secrets、`runtime/local`、connection state、provider/coding-agent state、updates、diagnostics 与 reset/recovery 始终共享同一个 effective root。已经存在的最终 WebCodex data-root 组件不会通过 Junction/symlink 被 canonicalize 掉；如果它本身是 reparse point，Desktop 会直接拒绝，以保留 credential-path 安全边界。
 
 运维恢复或调试时可以设置 `WEBCODEX_DESKTOP_DATA_DIR` 覆盖 Tauri 路径；其值必须是绝对路径。Windows 会对 override 应用同样的物理路径解析规则；Linux/macOS 不会因此新增 symlink canonicalization 语义。这个 override **不会**放宽 CLI credential-path 安全检查：bundled CLI 仍会严格验证最终 effective path，并拒绝不安全的 credential directory 重定向。
 

@@ -123,8 +123,8 @@ fn builtin_coding_workflow_defaults_cover_unnamed_tasks_without_granting_authori
         "passive Job attention",
         "observe_jobs is for logs/details/recovery",
         "list_jobs is identity recovery",
-        "wait_for_job_terminal only on a hard terminal dependency",
-        "Finish independent work first",
+        "Future activation: wait_for_job_terminal",
+        "finish ready work",
         "After Rust stabilizes, format once",
     ] {
         assert!(defaults.contains(boundary), "missing guidance: {boundary}");

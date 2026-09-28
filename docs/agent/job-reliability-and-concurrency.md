@@ -64,6 +64,14 @@ handoff/continuation slices and Job lifetimes are unchanged. This tool is ordina
 MCP/Adaptive Runtime only;
 no nested Code Mode admission or frozen legacy Actions membership is added.
 
+`observe_jobs` keeps `wake_on=change` backward-compatible: any accepted observation
+revision, including sequence-only Runner liveness, may wake it. Use
+`wake_on=meaningful_change` only when sequence-only liveness should be skipped; it
+advances a private wait cursor across those revisions while preserving one absolute
+deadline, and still wakes for logs, lifecycle, activity, recovery, epoch/reset, or
+terminal changes. Returned `meaningful_changed` and `heartbeat_changed` classify the
+observed revision without changing the opaque observation-token contract.
+
 `wait_for_job_terminal(job_id="<job>", idempotency_key="<wait-key>")` registers
 bounded one-shot terminal attention. Prefer it when progress genuinely depends
 on completion and a real Host carrier is available. Check

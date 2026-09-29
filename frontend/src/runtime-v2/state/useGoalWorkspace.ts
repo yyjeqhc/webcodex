@@ -3,6 +3,8 @@ import { fetchGoal, fetchGoals } from "../api/goals.js";
 import type { RuntimeV2Client } from "../api/client.js";
 import type { GoalDetailResponse, GoalListItem } from "../model/goals.js";
 import type { Availability } from "../model/types.js";
+import { useObservationRequest } from "./useObservationRequest.js";
+import { useVisibleRefresh } from "./useVisibleRefresh.js";
 
 export type GoalWorkspaceState = {
   availability: Availability;
@@ -16,11 +18,7 @@ export type GoalWorkspaceState = {
   refresh: () => void;
 };
 
-export function useGoalWorkspace(
-  client: RuntimeV2Client,
-  enabled: boolean,
-  onUnauthorized: () => void,
-): GoalWorkspaceState {
+export function useGoalWorkspace(client: RuntimeV2Client, enabled: boolean, onUnauthorized: () => void): GoalWorkspaceState {
   const [availability, setAvailability] = useState<Availability>("idle");
   const [detailAvailability, setDetailAvailability] = useState<Availability>("idle");
   const [goals, setGoals] = useState<GoalListItem[]>([]);
@@ -30,121 +28,61 @@ export function useGoalWorkspace(
   const [detail, setDetail] = useState<GoalDetailResponse | null>(null);
   const [listRevision, setListRevision] = useState(0);
   const [detailRevision, setDetailRevision] = useState(0);
-  const listRequest = useRef<AbortController | null>(null);
-  const detailRequest = useRef<AbortController | null>(null);
+  const listRequest = useObservationRequest();
+  const detailRequest = useObservationRequest();
   const loadedGoal = useRef("");
   const refresh = useCallback(() => {
-    // A slow resource must not block its peer or be canceled by the next poll.
-    if (!listRequest.current) setListRevision((value) => value + 1);
-    if (!detailRequest.current) setDetailRevision((value) => value + 1);
-  }, []);
+    listRequest.requestRefresh(() => setListRevision(value => value + 1));
+    detailRequest.requestRefresh(() => setDetailRevision(value => value + 1));
+  }, [listRequest, detailRequest]);
+  // Periodic reads skip occupied slots; only explicit refreshes queue a follow-up.
+  useVisibleRefresh(enabled, () => {
+    if (!listRequest.pending) setListRevision(value => value + 1);
+    if (!detailRequest.pending) setDetailRevision(value => value + 1);
+  }, 5_000);
 
   useEffect(() => {
-    listRequest.current?.abort();
-    listRequest.current = null;
-    if (!enabled) {
-      setAvailability("idle");
-      return;
-    }
-    const controller = new AbortController();
-    listRequest.current = controller;
-    setAvailability((value) => value === "idle" ? "loading" : value);
-    void fetchGoals(client, undefined, controller.signal).then((response) => {
-      if (listRequest.current !== controller || controller.signal.aborted || !response) return;
-      listRequest.current = null;
-      if (response.status === 401) {
-        onUnauthorized();
-        return;
+    listRequest.cancel();
+    if (!enabled) { setAvailability("idle"); return; }
+    setAvailability(value => value === "idle" ? "loading" : value);
+    void listRequest.run(signal => fetchGoals(client, undefined, signal), response => {
+      if (response?.status === 401) { onUnauthorized(); return; }
+      if (response?.status === 403) {
+        setGoals([]); setTotal(0); setSelectedGoalId(""); setDetail(null);
+        setAvailability("denied"); setDetailAvailability("denied"); return;
       }
-      if (response.status === 403) {
-        setGoals([]);
-        setTotal(0);
-        setSelectedGoalId("");
-        setDetail(null);
-        setAvailability("denied");
-        setDetailAvailability("denied");
-        return;
-      }
-      if (!response.ok || !response.data) {
-        setAvailability((value) => value === "available" || value === "stale" ? "stale" : "error");
-        return;
+      if (!response?.ok || !response.data) {
+        setAvailability(value => value === "available" || value === "stale" ? "stale" : "error"); return;
       }
       const rows = Array.isArray(response.data.goals) ? response.data.goals : [];
-      rows.sort((a, b) => {
-        const active = Number(b.lifecycle === "active") - Number(a.lifecycle === "active");
-        return active || b.updated_at_unix_ms - a.updated_at_unix_ms;
-      });
-      setGoals(rows);
-      setTotal(Math.max(response.data.total || 0, rows.length));
-      setTruncated(Boolean(response.data.truncated));
-      setAvailability("available");
-      setSelectedGoalId((current) => rows.some((row) => row.goal_id === current)
-        ? current
-        : rows[0]?.goal_id || "");
+      rows.sort((a, b) => Number(b.lifecycle === "active") - Number(a.lifecycle === "active") || b.updated_at_unix_ms - a.updated_at_unix_ms);
+      setGoals(rows); setTotal(Math.max(response.data.total || 0, rows.length));
+      setTruncated(Boolean(response.data.truncated)); setAvailability("available");
+      setSelectedGoalId(current => rows.some(row => row.goal_id === current) ? current : rows[0]?.goal_id || "");
     });
-    return () => {
-      controller.abort();
-      if (listRequest.current === controller) listRequest.current = null;
-    };
-  }, [client, enabled, onUnauthorized, listRevision]);
+    return () => listRequest.cancel();
+  }, [client, enabled, onUnauthorized, listRevision, listRequest]);
 
   useEffect(() => {
-    detailRequest.current?.abort();
-    detailRequest.current = null;
+    detailRequest.cancel();
     if (!enabled || !selectedGoalId) {
-      loadedGoal.current = "";
-      setDetail(null);
-      setDetailAvailability("idle");
-      return;
+      loadedGoal.current = ""; setDetail(null); setDetailAvailability("idle"); return;
     }
     const changed = loadedGoal.current !== selectedGoalId;
     loadedGoal.current = selectedGoalId;
-    if (changed) {
-      setDetail(null);
-      setDetailAvailability("loading");
-    }
-    const controller = new AbortController();
-    detailRequest.current = controller;
-    void fetchGoal(client, selectedGoalId, controller.signal).then((response) => {
-      if (detailRequest.current !== controller || controller.signal.aborted || !response) return;
-      detailRequest.current = null;
-      if (response.status === 401) {
-        onUnauthorized();
-        return;
+    if (changed) { setDetail(null); setDetailAvailability("loading"); }
+    void detailRequest.run(signal => fetchGoal(client, selectedGoalId, signal), response => {
+      if (response?.status === 401) { onUnauthorized(); return; }
+      if (response?.status === 403 || response?.status === 404) {
+        setDetail(null); setDetailAvailability("denied"); return;
       }
-      if (response.status === 403 || response.status === 404) {
-        setDetail(null);
-        setDetailAvailability("denied");
-        return;
+      if (!response?.ok || !response.data || response.data.goal.summary.goal_id !== selectedGoalId) {
+        setDetailAvailability(value => value === "available" || value === "stale" ? "stale" : "error"); return;
       }
-      if (!response.ok || !response.data || response.data.goal.summary.goal_id !== selectedGoalId) {
-        setDetailAvailability((value) => value === "available" || value === "stale" ? "stale" : "error");
-        return;
-      }
-      setDetail(response.data);
-      setDetailAvailability("available");
+      setDetail(response.data); setDetailAvailability("available");
     });
-    return () => {
-      controller.abort();
-      if (detailRequest.current === controller) detailRequest.current = null;
-    };
-  }, [client, enabled, onUnauthorized, detailRevision, selectedGoalId]);
+    return () => detailRequest.cancel();
+  }, [client, enabled, onUnauthorized, detailRevision, selectedGoalId, detailRequest]);
 
-  useEffect(() => {
-    if (!enabled) return;
-    const timer = window.setInterval(refresh, 5_000);
-    return () => window.clearInterval(timer);
-  }, [enabled, refresh]);
-
-  return {
-    availability,
-    detailAvailability,
-    goals,
-    total,
-    truncated,
-    selectedGoalId,
-    detail,
-    selectGoal: setSelectedGoalId,
-    refresh,
-  };
+  return { availability, detailAvailability, goals, total, truncated, selectedGoalId, detail, selectGoal: setSelectedGoalId, refresh };
 }

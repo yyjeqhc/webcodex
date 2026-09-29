@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { RuntimeV2Client } from "../api/client.js";
+import { useVisibleRefresh } from "./useVisibleRefresh.js";
 import {
   fetchWindowCollaboration,
   postWindowCollaboration,
@@ -51,28 +52,15 @@ export function useWindowCollaboration(client: RuntimeV2Client, windowKey: strin
     // Hiding the panel pauses reads, but an outstanding send must still settle.
     return () => { alive.current = false; };
   }, []);
+  const cancelRead = useCallback(() => {
+    inFlight.current?.abort();
+    inFlight.current = null;
+  }, []);
+  useVisibleRefresh(active, () => void refresh(), 3000, cancelRead);
   useEffect(() => {
-    let timer: ReturnType<typeof setInterval> | undefined;
-    const stop = () => {
-      clearInterval(timer);
-      timer = undefined;
-      inFlight.current?.abort();
-      inFlight.current = null;
-    };
-    const updateVisibility = () => {
-      stop();
-      if (!active || pageIsHidden()) return;
-      void refresh();
-      timer = setInterval(() => void refresh(), 3000);
-    };
-    updateVisibility();
-    document.addEventListener("visibilitychange", updateVisibility);
-    return () => {
-      stop();
-      document.removeEventListener("visibilitychange", updateVisibility);
-    };
-  }, [active, refresh]);
-  const send = async (
+    void refresh();
+    return cancelRead;
+  }, [active, refresh, cancelRead]);  const send = async (
     message: string,
     sessionId: string | null,
     kind: WindowCollaborationKind = "guidance",

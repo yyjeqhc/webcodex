@@ -381,7 +381,7 @@ fn serialized_value_len(value: &Value) -> usize {
 fn projected_batch_serialized_len(output: &Value, projection: &ReadModelProjection) -> usize {
     let mut projected = ToolResult::ok(output.clone());
     add_actionable_read_continuations(projection, &mut projected);
-    super::dispatch::sparsify_complete_read_success("read_files", &mut projected);
+    super::result_projection::sparsify_complete_read_success("read_files", &mut projected);
     serialized_json_len(&projected).unwrap_or(usize::MAX)
 }
 
@@ -396,7 +396,7 @@ fn projected_read_item_len(item: &Value) -> usize {
             outer_path,
             projected.get_mut("output").and_then(Value::as_object_mut),
         ) {
-            super::dispatch::sparsify_complete_file_read_output(output, Some(&outer_path));
+            super::result_projection::sparsify_complete_file_read_output(output, Some(&outer_path));
             if output
                 .get("read_revision")
                 .and_then(Value::as_u64)
@@ -682,7 +682,7 @@ pub(crate) fn apply_model_facing_output_budget(
 fn final_model_result_len(output: &Value, projection: &ReadModelProjection) -> usize {
     let mut projected = ToolResult::ok(output.clone());
     add_actionable_read_continuations(projection, &mut projected);
-    super::dispatch::sparsify_complete_read_success("read_files", &mut projected);
+    super::result_projection::sparsify_complete_read_success("read_files", &mut projected);
     serialized_json_len(&projected).unwrap_or(usize::MAX)
 }
 
@@ -1321,7 +1321,7 @@ mod tests {
             assert_eq!(actual["output"]["text"], expected["output"]["text"]);
         }
 
-        super::super::dispatch::sparsify_complete_read_success("read_files", &mut result);
+        super::super::result_projection::sparsify_complete_read_success("read_files", &mut result);
         assert!(result.output.get("output_truncated").is_none());
         assert!(result.output.get("next_index").is_none());
         assert_eq!(result.output["items"].as_array().unwrap().len(), 8);
@@ -1371,7 +1371,7 @@ mod tests {
         assert!(serialized.len() <= legacy_budget);
         let mut model = ToolResult::ok(output);
         add_actionable_read_continuations(&projection, &mut model);
-        super::super::dispatch::sparsify_complete_read_success("read_files", &mut model);
+        super::super::result_projection::sparsify_complete_read_success("read_files", &mut model);
         let serialized = serde_json::to_vec(&model).unwrap();
         assert!(
             serialized.len() <= legacy_budget,
@@ -1488,7 +1488,10 @@ mod tests {
             let revision = partial["read_revision"].clone();
             let mut model = ToolResult::ok(output);
             add_actionable_read_continuations(&projection, &mut model);
-            super::super::dispatch::sparsify_complete_read_success("read_files", &mut model);
+            super::super::result_projection::sparsify_complete_read_success(
+                "read_files",
+                &mut model,
+            );
             let call = &model.output["suggested_call"];
             ToolCall::from_tool_name(call["tool"].as_str().unwrap(), call["arguments"].clone())
                 .unwrap();
@@ -1736,7 +1739,7 @@ mod tests {
         let model_bytes = |tool: &str, output: &Value, projection: &ReadModelProjection| {
             let mut model = ToolResult::ok(output.clone());
             add_actionable_read_continuations(projection, &mut model);
-            super::super::dispatch::sparsify_complete_read_success(tool, &mut model);
+            super::super::result_projection::sparsify_complete_read_success(tool, &mut model);
             serde_json::to_vec(&model).unwrap().len()
         };
 

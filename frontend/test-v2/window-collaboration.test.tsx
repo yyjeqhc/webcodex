@@ -11,7 +11,7 @@ const transcript = { available: true, can_send: true, messages: [
 ], truncated: false };
 
 describe("Window collaboration", () => {
-  it("polls only while visible and refreshes immediately on return", async () => {
+  it("polls only while visible and coalesces refresh events on return", async () => {
     vi.useFakeTimers();
     let visibility: DocumentVisibilityState = "visible";
     vi.spyOn(document, "visibilityState", "get").mockImplementation(() => visibility);
@@ -39,7 +39,13 @@ describe("Window collaboration", () => {
       await act(async () => { await vi.advanceTimersByTimeAsync(9000); });
       expect(post).toHaveBeenCalledTimes(3);
       visibility = "visible";
-      await act(async () => { fireEvent(document, new Event("visibilitychange")); });
+      await act(async () => {
+        fireEvent(document, new Event("visibilitychange"));
+        fireEvent(window, new Event("focus"));
+        fireEvent(window, new Event("online"));
+      });
+      expect(post).toHaveBeenCalledTimes(3);
+      await act(async () => { await vi.advanceTimersByTimeAsync(150); });
       expect(post).toHaveBeenCalledTimes(4);
     } finally {
       view.unmount();
@@ -92,7 +98,7 @@ describe("Window collaboration", () => {
 
     visibility = "visible";
     fireEvent(document, new Event("visibilitychange"));
-    expect(reads).toHaveLength(2);
+    await waitFor(() => expect(reads).toHaveLength(2));
     await act(async () => { reads[1].resolve({ ok: true, status: 200, data: transcript }); });
     expect(screen.getByText("Review done")).toBeTruthy();
     view.unmount();

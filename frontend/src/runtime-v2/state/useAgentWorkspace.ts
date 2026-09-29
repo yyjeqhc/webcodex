@@ -14,6 +14,7 @@ import {
   updateAgent,
 } from "../api/agents.js";
 import type { RuntimeV2Client } from "../api/client.js";
+import { useVisibleRefresh } from "./useVisibleRefresh.js";
 import {
   idempotencyKeyFor,
   operationKey,
@@ -225,11 +226,9 @@ export function useAgentWorkspace(
     return () => controller.abort();
   }, [client, enabled, endpoint?.controller_generation, endpoint?.endpoint_id, onUnauthorized, selectedAgentId, revision]);
 
-  useEffect(() => {
-    if (!enabled) return;
-    const timer = window.setInterval(refresh, 30_000);
-    return () => window.clearInterval(timer);
-  }, [enabled, refresh]);
+  // Data observation pauses when hidden. Endpoint renewal below is a lease
+  // lifecycle, not a UI poll: do not bind it to document visibility.
+  useVisibleRefresh(enabled, () => { if (!request.current) refresh(); }, 30_000);
 
   useEffect(() => {
     if (!enabled || !endpoints.size) return;

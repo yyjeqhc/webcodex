@@ -1,5 +1,4 @@
 use std::collections::VecDeque;
-use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
@@ -135,7 +134,7 @@ impl GitReviewSnapshot {
 }
 
 #[derive(Default)]
-struct GitReviewSnapshotRegistry {
+pub(super) struct GitReviewSnapshotRegistry {
     snapshots: VecDeque<GitReviewSnapshot>,
 }
 
@@ -215,11 +214,6 @@ impl GitReviewSnapshotRegistry {
     }
 }
 
-fn review_snapshots() -> &'static Mutex<GitReviewSnapshotRegistry> {
-    static REGISTRY: OnceLock<Mutex<GitReviewSnapshotRegistry>> = OnceLock::new();
-    REGISTRY.get_or_init(|| Mutex::new(GitReviewSnapshotRegistry::default()))
-}
-
 fn review_snapshot_id(
     caller_fingerprint: &str,
     project: &str,
@@ -257,34 +251,38 @@ pub(crate) fn caller_fingerprint(auth: Option<&AuthContext>) -> Result<String, T
         .map_err(|_| ToolResult::err("git review snapshot authority unavailable"))
 }
 
-pub(crate) fn insert_snapshot(snapshot: GitReviewSnapshot) -> GitReviewSnapshot {
-    review_snapshots()
-        .lock()
-        .expect("Git review snapshot registry mutex poisoned")
-        .insert_or_get(snapshot)
-}
+impl ToolRuntime {
+    pub(super) fn insert_review_snapshot(&self, snapshot: GitReviewSnapshot) -> GitReviewSnapshot {
+        self.review_snapshots
+            .lock()
+            .expect("Git review snapshot registry mutex poisoned")
+            .insert_or_get(snapshot)
+    }
 
-pub(crate) fn get_snapshot(
-    snapshot_id: &str,
-    caller_fingerprint: &str,
-    project: &str,
-    session_id: Option<&str>,
-) -> Option<GitReviewSnapshot> {
-    review_snapshots()
-        .lock()
-        .expect("Git review snapshot registry mutex poisoned")
-        .get(snapshot_id, caller_fingerprint, project, session_id)
-}
+    pub(super) fn review_snapshot(
+        &self,
+        snapshot_id: &str,
+        caller_fingerprint: &str,
+        project: &str,
+        session_id: Option<&str>,
+    ) -> Option<GitReviewSnapshot> {
+        self.review_snapshots
+            .lock()
+            .expect("Git review snapshot registry mutex poisoned")
+            .get(snapshot_id, caller_fingerprint, project, session_id)
+    }
 
-pub(crate) fn latest_workspace_snapshot(
-    caller_fingerprint: &str,
-    project: &str,
-    session_id: Option<&str>,
-) -> Option<GitReviewSnapshot> {
-    review_snapshots()
-        .lock()
-        .expect("Git review snapshot registry mutex poisoned")
-        .latest_workspace(caller_fingerprint, project, session_id)
+    pub(super) fn latest_workspace_review_snapshot(
+        &self,
+        caller_fingerprint: &str,
+        project: &str,
+        session_id: Option<&str>,
+    ) -> Option<GitReviewSnapshot> {
+        self.review_snapshots
+            .lock()
+            .expect("Git review snapshot registry mutex poisoned")
+            .latest_workspace(caller_fingerprint, project, session_id)
+    }
 }
 
 pub(crate) fn workspace_snapshot_complete_for_closeout(
@@ -404,46 +402,85 @@ mod tests {
 
     #[test]
     fn reinserting_same_source_refreshes_snapshot_payload() {
+        let runtime = ToolRuntime::new_for_tests();
         let mut first = snapshot("caller-refresh", "project", &"8".repeat(40));
         first.signals = json!([{"name": "before"}]);
-        let first = insert_snapshot(first);
+        let first = runtime.insert_review_snapshot(first);
         let mut refreshed = snapshot("caller-refresh", "project", &"8".repeat(40));
         assert_eq!(first.snapshot_id, refreshed.snapshot_id);
         refreshed.signals = json!([{"name": "after"}]);
-        let refreshed = insert_snapshot(refreshed);
-        let loaded = get_snapshot(
-            &refreshed.snapshot_id,
-            "caller-refresh",
-            "project",
-            Some("wc_sess_test"),
-        )
-        .unwrap();
+        let refreshed = runtime.insert_review_snapshot(refreshed);
+        let loaded = runtime
+            .review_snapshot(
+                &refreshed.snapshot_id,
+                "caller-refresh",
+                "project",
+                Some("wc_sess_test"),
+            )
+            .unwrap();
         assert_eq!(loaded.signals, json!([{"name": "after"}]));
     }
 
     #[test]
+    fn review_registry_is_shared_by_clones_but_isolated_between_runtimes() {
+        let runtime = ToolRuntime::new_for_tests();
+        let clone = runtime.clone();
+        let independent = ToolRuntime::new_for_tests();
+        let stored = runtime.insert_review_snapshot(snapshot("caller", "project", &"5".repeat(40)));
+        assert!(clone
+            .review_snapshot(
+                &stored.snapshot_id,
+                "caller",
+                "project",
+                Some("wc_sess_test")
+            )
+            .is_some());
+        assert!(independent
+            .review_snapshot(
+                &stored.snapshot_id,
+                "caller",
+                "project",
+                Some("wc_sess_test")
+            )
+            .is_none());
+        assert!(independent
+            .latest_workspace_review_snapshot("caller", "project", Some("wc_sess_test"))
+            .is_none());
+        let weak = std::sync::Arc::downgrade(&runtime.review_snapshots);
+        drop(runtime);
+        assert!(weak.upgrade().is_some());
+        drop(clone);
+        assert!(weak.upgrade().is_none());
+    }
+
+    #[test]
     fn registry_is_authority_and_session_fenced() {
-        let stored = insert_snapshot(snapshot("caller-a", "project", &"4".repeat(40)));
-        assert!(get_snapshot(
-            &stored.snapshot_id,
-            "caller-a",
-            "project",
-            Some("wc_sess_test")
-        )
-        .is_some());
-        assert!(get_snapshot(
-            &stored.snapshot_id,
-            "caller-b",
-            "project",
-            Some("wc_sess_test")
-        )
-        .is_none());
-        assert!(get_snapshot(
-            &stored.snapshot_id,
-            "caller-a",
-            "project",
-            Some("wc_sess_other")
-        )
-        .is_none());
+        let runtime = ToolRuntime::new_for_tests();
+        let stored =
+            runtime.insert_review_snapshot(snapshot("caller-a", "project", &"4".repeat(40)));
+        assert!(runtime
+            .review_snapshot(
+                &stored.snapshot_id,
+                "caller-a",
+                "project",
+                Some("wc_sess_test")
+            )
+            .is_some());
+        assert!(runtime
+            .review_snapshot(
+                &stored.snapshot_id,
+                "caller-b",
+                "project",
+                Some("wc_sess_test")
+            )
+            .is_none());
+        assert!(runtime
+            .review_snapshot(
+                &stored.snapshot_id,
+                "caller-a",
+                "project",
+                Some("wc_sess_other")
+            )
+            .is_none());
     }
 }

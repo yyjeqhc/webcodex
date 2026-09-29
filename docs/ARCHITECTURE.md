@@ -220,6 +220,36 @@ business arguments. Specialized gateways and early denials retain their existing
 entry/exit paths. No tool schema, direct admission or UI resource changes follow
 from this internal separation.
 
+### Runtime ownership and presentation boundaries
+
+`tool_runtime::result_projection` owns request-scoped model result projection;
+`dispatch` retains execution targeting, permission/Session orchestration, and
+pre-record expectation facts. The existing one-shot projection plan is consumed
+after canonical evidence capture. Moving a presentation field must not introduce
+execution or authorization into the projection module.
+
+Git review and Changes snapshot registries are owned by one `ToolRuntime` through
+shared `Arc`s. Runtime clones share snapshots; independent runtimes cannot read,
+refresh, or evict each other's entries. Their existing authority fences, source
+identities and distinct review/live/sealed retention rules remain separate.
+There is no process-global presentation registry or universal cache policy.
+
+Validation's current-evidence computation consumes its own typed
+`ValidationSummary` directly and serializes at the projection boundary. It never
+reads counts back from its serialized representation. Current-source status is
+separate from historical validator success; its closed status type deliberately
+cannot assert `passed` while external source stability remains unproven. Existing
+JSON projection ports to handoff/continuation remain explicit wire/presentation
+boundaries, not a second source of validation truth.
+
+The Frontend shares visible observation scheduling and narrow read-request
+slots. Goal/Session selection cancels only obsolete reads; periodic refresh skips
+occupied slots, while explicit refreshes coalesce behind them. Mutation delivery
+keys, pending sends and Agent Endpoint renewal are independent lifecycles.
+
+Scale/recovery methodology and maintenance rules are recorded in
+[`implementation/runtime-maintenance-boundaries.md`](implementation/runtime-maintenance-boundaries.md).
+
 ### Model-facing tool contract ergonomics
 
 Model-facing tools follow one shared design rule: be strict where meaning,

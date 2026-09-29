@@ -1086,12 +1086,13 @@ async fn apply_text_edits_success_mints_final_revisions_and_continues_without_re
         },
         guarded_edit("noop.txt", noop_revision, "same", "same"),
     ];
-    let projection = dispatch::ModelFacingProjectionPlan::capture(&ToolCall::ApplyTextEdits {
-        project: project.clone(),
-        changes: changes.clone(),
-        dry_run: None,
-        session_id: None,
-    });
+    let projection =
+        result_projection::ModelFacingProjectionPlan::capture(&ToolCall::ApplyTextEdits {
+            project: project.clone(),
+            changes: changes.clone(),
+            dry_run: None,
+            session_id: None,
+        });
     let task = tokio::spawn({
         let runtime = runtime.clone();
         let project = project.clone();
@@ -2700,7 +2701,7 @@ fn edit_project_files_projection_preserves_identity_and_nonhappy_results() {
     };
     let mut result = ToolResult::ok(canonical.clone());
     validate(&result).unwrap();
-    dispatch::ModelFacingProjectionPlan::capture(&call).project(&mut result);
+    result_projection::ModelFacingProjectionPlan::capture(&call).project(&mut result);
     validate(&result).unwrap();
     assert_eq!(result.output["files"], canonical["files"]);
     let mut malformed = ToolResult::ok(result.output.clone());
@@ -2720,14 +2721,14 @@ fn edit_project_files_projection_preserves_identity_and_nonhappy_results() {
         let mut result = ToolResult::ok(canonical.clone());
         result.output[key] = value;
         let before = result.output.clone();
-        dispatch::ModelFacingProjectionPlan::capture(&call).project(&mut result);
+        result_projection::ModelFacingProjectionPlan::capture(&call).project(&mut result);
         assert_eq!(result.output, before, "{key}");
     }
     for state in ["not_started", "completed", "outcome_unknown"] {
         let mut result = ToolResult::err_with_output("edit rejected", canonical.clone());
         result.output["execution_state"] = serde_json::json!(state);
         let before = result.output.clone();
-        dispatch::ModelFacingProjectionPlan::capture(&call).project(&mut result);
+        result_projection::ModelFacingProjectionPlan::capture(&call).project(&mut result);
         assert_eq!(result.output, before);
     }
 }

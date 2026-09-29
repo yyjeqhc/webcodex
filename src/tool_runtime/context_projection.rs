@@ -201,6 +201,7 @@ impl ToolRuntime {
             capabilities,
             CodingGuidanceProfile::default(),
             None,
+            None,
         )
         .await;
     }
@@ -214,6 +215,7 @@ impl ToolRuntime {
         capabilities: ContextMaterialCapabilities,
         guidance_profile: CodingGuidanceProfile,
         window: Option<&crate::client_window::ClientWindow>,
+        instructions: Option<&super::project_instructions::ProjectInstructionsSnapshot>,
     ) {
         if requested.is_empty() {
             return;
@@ -241,8 +243,16 @@ impl ToolRuntime {
                         "project.instructions" => {
                             let project =
                                 resolved_project.expect("registry requires project target");
-                            let snapshot =
-                                self.load_effective_coding_instructions(project, auth).await;
+                            let loaded;
+                            let snapshot = match instructions {
+                                Some(snapshot) => snapshot,
+                                None => {
+                                    loaded = self
+                                        .load_effective_coding_instructions(project, auth)
+                                        .await;
+                                    &loaded
+                                }
+                            };
                             let mut material = if snapshot.scan_complete {
                                 json!({"key": key, "status": "available", "projection": null})
                             } else {
@@ -264,7 +274,7 @@ impl ToolRuntime {
                             .saturating_sub(4); // Replace the literal JSON null.
                             materials.pop();
                             material["projection"] = project_instructions_context_projection(
-                                &snapshot,
+                                snapshot,
                                 MAX_CONTEXT_PROJECTION_BYTES.saturating_sub(reserved),
                             );
                             material

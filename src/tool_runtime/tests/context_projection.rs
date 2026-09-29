@@ -1044,6 +1044,15 @@ async fn context_projection_coexists_without_context_ack_and_with_attention() {
 }
 
 async fn configured_instruction_context_fixture(source_count: usize, rich: bool) -> ToolResult {
+    configured_instruction_context_fixture_inner(source_count, rich, false, true).await
+}
+
+async fn configured_instruction_context_fixture_inner(
+    source_count: usize,
+    rich: bool,
+    bootstrap: bool,
+    complete: bool,
+) -> ToolResult {
     use webcodex_core::project_instructions::{
         InstructionSourceScope, LoadedInstructionCandidate, ProjectInstructionsSnapshot,
     };
@@ -1076,9 +1085,12 @@ async fn configured_instruction_context_fixture(source_count: usize, rich: bool)
         async move {
             runtime
                 .dispatch_with_auth_transport_options_and_metadata_with_recording_mode_and_context(
-                    ToolCall::GitStatus {
-                        project,
-                        session_id: None,
+                    if bootstrap {
+                        ToolCall::from_tool_name("work_on_project", json!({
+                            "project": project, "instruction": "inspect instructions", "include_extension_catalog": false
+                        })).unwrap()
+                    } else {
+                        ToolCall::GitStatus { project, session_id: None }
                     },
                     Some(&auth_context(None, true)),
                     SessionTransport::Mcp,
@@ -1114,11 +1126,12 @@ async fn configured_instruction_context_fixture(source_count: usize, rich: bool)
     let stdout = serde_json::to_string(&RunnerInstructionSnapshotResponse {
         format: RUNNER_INSTRUCTION_RESPONSE_FORMAT.into(),
         generation: 1,
-        scan_complete: true,
+        scan_complete: complete,
         files: snapshot.files,
     })
     .unwrap();
     let deadline = Instant::now() + Duration::from_secs(10);
+    let mut instruction_reads = 0;
     while !task.is_finished() {
         assert!(
             Instant::now() < deadline,
@@ -1126,6 +1139,7 @@ async fn configured_instruction_context_fixture(source_count: usize, rich: bool)
         );
         if let Some(request) = probe_patch_agent_request(&runtime, "context-global").await {
             if request.kind == RUNNER_INSTRUCTION_REQUEST_KIND {
+                instruction_reads += 1;
                 complete_patch_agent_request(
                     &runtime,
                     "context-global",
@@ -1143,6 +1157,10 @@ async fn configured_instruction_context_fixture(source_count: usize, rich: bool)
             tokio::time::sleep(Duration::from_millis(2)).await;
         }
     }
+    assert_eq!(
+        instruction_reads, 1,
+        "bootstrap and context must share the observation"
+    );
     task.await.unwrap()
 }
 
@@ -1184,4 +1202,74 @@ async fn maximum_runner_sources_fit_shared_context_budget_without_losing_project
         .iter()
         .all(|source| source["read_more"].is_null()));
     assert_eq!(sources[16]["content"], "local sidecar rule");
+}
+
+#[tokio::test]
+async fn bootstrap_context_reuses_complete_and_incomplete_instruction_observations() {
+    for complete in [true, false] {
+        let result = configured_instruction_context_fixture_inner(1, false, true, complete).await;
+        assert!(result.success, "{:?}", result.error);
+        assert_eq!(
+            result.output["resolved_project"],
+            "agent:context-global:demo"
+        );
+        let material = context_material(&result, "project.instructions");
+        assert_eq!(
+            material["status"],
+            if complete { "available" } else { "unavailable" }
+        );
+        if !complete {
+            assert_eq!(
+                material["reason_code"],
+                "project_instructions_observation_incomplete"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn bootstrap_instruction_snapshot_does_not_bypass_material_scope() {
+    let runtime = ToolRuntime::new_for_tests();
+    let root = tempfile::tempdir().unwrap();
+    let project =
+        register_runner_project_at_path(&runtime, "bootstrap-scope", "demo", root.path()).await;
+    let mut auth = auth_context(None, true);
+    let resolved = runtime
+        .resolve_project_input_for_auth(&project, Some(&auth))
+        .await
+        .unwrap();
+    auth = auth_context(None, false);
+    auth.scopes.clear();
+    let snapshot =
+        webcodex_core::project_instructions::ProjectInstructionsSnapshot::from_candidates(
+            vec![
+                webcodex_core::project_instructions::LoadedInstructionCandidate {
+                    source_scope:
+                        webcodex_core::project_instructions::InstructionSourceScope::Project,
+                    path: "AGENTS.md".into(),
+                    content: "PRIVATE_BOOTSTRAP_RULE".into(),
+                    total_lines: 1,
+                    full_sha256: None,
+                },
+            ],
+            true,
+        );
+    let mut result = ToolResult::ok(json!({}));
+    runtime
+        .add_requested_context_projection_with_guidance(
+            &mut result,
+            &["project.instructions".into()],
+            Some(&resolved),
+            Some(&auth),
+            Default::default(),
+            Default::default(),
+            None,
+            Some(&snapshot),
+        )
+        .await;
+    assert_eq!(
+        context_material(&result, "project.instructions")["status"],
+        "unavailable"
+    );
+    assert!(!result.output.to_string().contains("PRIVATE_BOOTSTRAP_RULE"));
 }

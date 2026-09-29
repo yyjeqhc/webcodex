@@ -68,6 +68,7 @@ pub(crate) enum SemanticNavigationStartupStatus {
     // Stable serialized compatibility status retained for pre-0.4 consumers.
     #[serde(rename = "agent_capability_unavailable")]
     RunnerCapabilityUnavailable,
+    NotObserved,
     ProbeTimeout,
     ProbeFailed,
 }
@@ -325,6 +326,7 @@ impl ToolRuntime {
     pub(crate) async fn probe_semantic_navigation_for_startup(
         &self,
         resolved: &ResolvedProject,
+        startup_completed: tokio::sync::oneshot::Receiver<()>,
     ) -> SemanticNavigationStartupSummary {
         let client_id = resolved.config.client_id.clone();
         let Some(client) = self
@@ -378,7 +380,18 @@ impl ToolRuntime {
             Ok(Ok(request)) => request,
         };
 
-        let response = match tokio::time::timeout_at(deadline, receiver).await {
+        let response = tokio::select! {
+            biased;
+            response = tokio::time::timeout_at(deadline, receiver) => response,
+            _ = startup_completed => {
+                self.runner_registry.cancel_request(&request_id).await;
+                let mut summary = SemanticNavigationStartupSummary::probe_timeout();
+                summary.status = SemanticNavigationStartupStatus::NotObserved;
+                summary.reason_code = None;
+                return summary;
+            }
+        };
+        let response = match response {
             Err(_) => {
                 self.runner_registry.cancel_request(&request_id).await;
                 return SemanticNavigationStartupSummary::probe_timeout();

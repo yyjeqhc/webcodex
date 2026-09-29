@@ -422,6 +422,14 @@ variant remains for that retired name; `work_on_project` calls the shared coding
 workflow engine directly, with diagnostic projection controls available only to
 tests rather than as a Session-selection or compatibility surface.
 
+Requested `project.instructions` context on `work_on_project` reuses that call's
+resolved Project and instruction observation. Material scopes remain independently
+checked; incomplete observations are not re-read or promoted to complete. The
+semantic-navigation status probe runs concurrently with required bootstrap
+observations. Startup does not wait solely for LSP: `not_observed` with null
+availability means required observations finished first. Explicit LSP tools still
+obtain current provider truth.
+
 `work_on_project` also owns the optional managed-worktree bootstrap without
 creating a new authority or Session concept. The canonical model-facing form is
 a fresh `project + mode=worktree` call. The Server first resolves and

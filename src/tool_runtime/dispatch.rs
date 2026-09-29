@@ -1476,6 +1476,7 @@ impl ToolRuntime {
                 material_capabilities,
                 context_guidance_profile,
                 window,
+                None,
             )
             .await;
         }
@@ -2089,6 +2090,7 @@ impl ToolRuntime {
             auth,
             session_id.as_deref().or(trusted_recording_session_id),
         );
+        let mut bootstrap_context = None;
         let mut result = super::read_cache::READ_SCOPE
             .scope(
                 read_scope,
@@ -2105,6 +2107,7 @@ impl ToolRuntime {
                     logical_invocation_id,
                     protocol_capabilities,
                     correlation,
+                    &mut bootstrap_context,
                 ),
             )
             .await;
@@ -2197,11 +2200,17 @@ impl ToolRuntime {
         self.add_requested_context_projection_with_guidance(
             &mut result,
             &context_request,
-            context_projection_project.as_ref(),
+            bootstrap_context
+                .as_ref()
+                .map(|context| &context.project)
+                .or(context_projection_project.as_ref()),
             auth,
             material_capabilities,
             context_guidance_profile,
             window,
+            bootstrap_context
+                .as_ref()
+                .map(|context| &context.instructions),
         )
         .await;
         result
@@ -2221,6 +2230,7 @@ impl ToolRuntime {
         _logical_invocation_id: Option<&str>,
         protocol_capabilities: super::kernel::ToolProtocolCapabilities,
         correlation: &mut super::window_activity::ToolCallCorrelation,
+        bootstrap_context: &mut Option<super::coding_task::BootstrapContext>,
     ) -> ToolResult {
         match call {
             call @ (ToolCall::ListTools { .. }
@@ -2313,6 +2323,7 @@ impl ToolRuntime {
                     trusted_recording_session_id,
                     trusted_recording_session_project,
                     correlation,
+                    bootstrap_context,
                 ))
                 .await
             }

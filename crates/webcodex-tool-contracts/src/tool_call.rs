@@ -1551,7 +1551,7 @@ pub enum ToolCall {
         /// Required exact runtime Project input. It is independently resolved and authorized on every call.
         #[schemars(length(min = 1, max = 512))]
         project: String,
-        /// Optional exact project-scoped Workflow Session association for compatibility.
+        /// Optional exact project-scoped Workflow Session for authorized Server Job state.
         /// Omit it when the Window has not created or resumed a Workflow Session.
         #[serde(default)]
         #[schemars(regex(pattern = "^wc_sess_([A-Za-z0-9_-]{16}|[0-9a-f]{32})$"))]
@@ -1559,7 +1559,7 @@ pub enum ToolCall {
     },
 
     /// App-only read of the same Window card projection. Optional Session identity
-    /// is association evidence only and is deliberately excluded from generic recording.
+    /// selects authorized Server Job state and is deliberately excluded from generic recording.
     WorkResultState {
         project: String,
         #[serde(default)]

@@ -12,6 +12,7 @@ impl ToolRuntime {
         trusted_recording_session_id: Option<&str>,
         trusted_recording_session_project: Option<&str>,
         correlation: &mut ToolCallCorrelation,
+        bootstrap_context: &mut Option<super::coding_task::BootstrapContext>,
     ) -> ToolResult {
         match call {
             ToolCall::WorkOnProject {
@@ -44,6 +45,7 @@ impl ToolRuntime {
                     trusted_recording_session_project,
                     transport,
                     correlation,
+                    bootstrap_context,
                 )
                 .await
             }

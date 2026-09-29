@@ -943,11 +943,12 @@ fn startup_semantic_navigation_schema() -> Value {
                     "not_applicable",
                     "agent_unavailable",
                     "agent_capability_unavailable",
+                    "not_observed",
                     "probe_timeout",
                     "probe_failed"
                 ]
             },
-            "available": nullable_schema("boolean", "Observed semantic-navigation availability. Null means the bounded startup status probe timed out or failed without an availability observation; this is advisory, not unavailability."),
+            "available": nullable_schema("boolean", "Observed semantic-navigation availability. Null means startup finished without waiting for availability, or the bounded status probe timed out or failed; this is advisory, not unavailability."),
             "provider": nullable_schema("string", "Semantic provider when applicable."),
             "capability": nullable_schema("string", "Bounded advertised capability summary."),
             "reason_code": nullable_schema("string", "Stable semantic-navigation reason.")
@@ -1102,6 +1103,7 @@ fn semantic_navigation_schema() -> Value {
                     "not_applicable",
                     "agent_unavailable",
                     "agent_capability_unavailable",
+                    "not_observed",
                     "probe_timeout",
                     "probe_failed"
                 ]
@@ -1268,7 +1270,7 @@ fn work_on_project_output_schema() -> Value {
         "type": "object",
         "properties": {
             "supported": {"type": "boolean"},
-            "available": nullable_schema("boolean", "Observed semantic-navigation availability. Null means the bounded startup status probe timed out or failed without an availability observation; this does not lower coding readiness."),
+            "available": nullable_schema("boolean", "Observed semantic-navigation availability. Null means startup finished without waiting for availability, or the bounded status probe timed out or failed; this does not lower coding readiness."),
             "status": {
                 "type": "string",
                 "enum": [
@@ -1280,6 +1282,7 @@ fn work_on_project_output_schema() -> Value {
                     "not_applicable",
                     "agent_unavailable",
                     "agent_capability_unavailable",
+                    "not_observed",
                     "probe_timeout",
                     "probe_failed"
                 ]

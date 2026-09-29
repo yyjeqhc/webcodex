@@ -908,7 +908,20 @@ async fn dispatch_with_path_runner(
     let task = tokio::spawn({
         let runtime = runtime.clone();
         let auth = auth_context(None, true);
-        async move { runtime.dispatch_with_auth(call, Some(&auth)).await }
+        async move {
+            runtime
+                .dispatch_with_auth_transport_options_and_metadata_with_recording_mode_and_context(
+                    call,
+                    Some(&auth),
+                    crate::tool_runtime::sessions::SessionTransport::Mcp,
+                    Default::default(),
+                    None,
+                    true,
+                    vec!["project.instructions".into()],
+                    Default::default(),
+                )
+                .await
+        }
     });
     let deadline = std::time::Instant::now() + CODING_WORKFLOW_FIXTURE_TIMEOUT;
     loop {
@@ -935,6 +948,7 @@ async fn dispatch_with_path_runner(
                     "allow_patch": true,
                     "disabled": false,
                     "revision": format!("sha256:{}", "a".repeat(64)),
+                    "root_fingerprint": format!("wc_projroot_{}", "b".repeat(64)),
                     "source": "path",
                     "outcome": outcome,
                     "registered": registered,
@@ -3507,7 +3521,11 @@ async fn path_source_auto_registers_reuses_and_supports_canonical_coding_entry()
     std::fs::write(root.path().join("hello.txt"), "hello\n").unwrap();
     let project_path = root.path().canonicalize().unwrap();
     let project_path = project_path.to_string_lossy().to_string();
-    let runtime = ToolRuntime::new_for_tests();
+    let references = tempfile::tempdir().unwrap();
+    let db = std::sync::Arc::new(
+        crate::Database::open(&references.path().join("references.db")).unwrap(),
+    );
+    let runtime = ToolRuntime::new_for_tests().with_project_reference_database(db);
     let client_id = "wop-path";
     register_agent_with_projects(
         &runtime,
@@ -3552,6 +3570,14 @@ async fn path_source_auto_registers_reuses_and_supports_canonical_coding_entry()
         !first.output.to_string().contains(&project_path),
         "compact work_on_project output leaked the absolute input path"
     );
+    assert_eq!(
+        first.output["context_projection"]["materials"][0]["status"],
+        "available"
+    );
+    assert_eq!(
+        first.output["context_projection"]["materials"][0]["projection"]["fingerprint"],
+        first.output["instructions"]["fingerprint"]
+    );
     let session_id = first.output["session_id"].as_str().unwrap().to_string();
 
     let second = dispatch_with_path_runner(
@@ -3579,6 +3605,31 @@ async fn path_source_auto_registers_reuses_and_supports_canonical_coding_entry()
         "reused_existing_registration"
     );
     assert_eq!(instruction_events(&runtime, &session_id).len(), 2);
+
+    for selector in [
+        first.output["resolved_project"].as_str().unwrap(),
+        first.output["project_ref"].as_str().unwrap(),
+    ] {
+        let canonical = dispatch_with_path_runner(
+            &runtime,
+            client_id,
+            work_on_project_call(selector, "canonical context", None),
+            "repo-a1b2c3d4",
+            &project_path,
+            "reused_existing_registration",
+            false,
+        )
+        .await;
+        assert!(canonical.success, "{canonical:?}");
+        assert_eq!(
+            canonical.output["resolved_project"],
+            first.output["resolved_project"]
+        );
+        assert_eq!(
+            canonical.output["context_projection"]["materials"][0]["status"],
+            "available"
+        );
+    }
 
     let listed = runtime.list_projects(Some(&auth_context(None, true))).await;
     assert!(listed.success);
@@ -6073,15 +6124,15 @@ async fn work_on_project_distinguishes_unavailable_from_inconclusive_lsp_probes(
     use std::time::{Duration, Instant};
 
     for (status, reason) in [
-        ("probe_timeout", "status_probe_timed_out"),
-        ("probe_failed", "status_probe_failed"),
-        ("unavailable", "server_unavailable"),
+        ("not_observed", None),
+        ("probe_failed", Some("status_probe_failed")),
+        ("unavailable", Some("server_unavailable")),
     ] {
         let root = tempfile::tempdir().unwrap();
         init_git_repo(root.path());
         commit_file(root.path(), "README.md", "# fixture\n", "seed");
         let runtime = ToolRuntime::new_for_tests()
-            .with_semantic_navigation_probe_timeout(Duration::from_millis(100));
+            .with_semantic_navigation_probe_timeout(Duration::from_secs(60));
         let project =
             register_runner_project_at_path(&runtime, "wop-probe-state", "demo", root.path()).await;
         let task = tokio::spawn({
@@ -6109,9 +6160,9 @@ async fn work_on_project_distinguishes_unavailable_from_inconclusive_lsp_probes(
                 continue;
             }
             probe_count += 1;
-            if status == "probe_timeout" {
-                // Leave exactly this probe unanswered; the normal timeout path
-                // must cancel it without blocking the rest of coding startup.
+            if status == "not_observed" {
+                // Leave only the optional probe unanswered. Mandatory completion
+                // must cancel it without waiting for the provider timeout.
                 continue;
             }
             let envelope = if status == "unavailable" {
@@ -6148,7 +6199,7 @@ async fn work_on_project_distinguishes_unavailable_from_inconclusive_lsp_probes(
         let semantic = &result.output["semantic_navigation"];
         assert_eq!(semantic["supported"], true);
         assert_eq!(semantic["status"], status);
-        assert_eq!(semantic["reason_code"], reason);
+        assert_eq!(semantic["reason_code"], json!(reason));
         if status == "unavailable" {
             assert_eq!(semantic["available"], false);
             assert_eq!(result.output["readiness"]["status"], "warn");

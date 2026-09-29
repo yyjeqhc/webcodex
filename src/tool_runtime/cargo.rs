@@ -563,6 +563,7 @@ impl ToolRuntime {
         self.run_readonly_validation(
             ReadOnlyValidationOperation::Go(GoReadOnlyValidationOperation::Test(GoTestOptions {
                 packages,
+                ..Default::default()
             })),
             ValidationRunRequest {
                 project,

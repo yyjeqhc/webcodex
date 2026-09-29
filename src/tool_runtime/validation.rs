@@ -383,6 +383,7 @@ impl ToolRuntime {
         action: webcodex_core::project_validation::ProjectValidationAction,
         adapter_hint: Option<webcodex_core::project_validation::ProjectValidationAdapter>,
         scope: Option<webcodex_core::project_validation::ProjectValidationScope>,
+        test: Option<webcodex_core::project_validation::ProjectValidationTestOptions>,
         timeout_secs: Option<u64>,
         ssh_resource: Option<&str>,
         auth: Option<&AuthContext>,
@@ -421,6 +422,7 @@ impl ToolRuntime {
             action,
             adapter: adapter_hint.unwrap_or_default(),
             scope,
+            test,
         };
         if let Err(e) = request.validate() {
             return ToolResult::err(e);
@@ -472,7 +474,7 @@ impl ToolRuntime {
         let provenance = plan.provenance;
         let relative_root = provenance.recipe_root.clone();
         let command = format!("{} {}", plan.step.program, plan.step.args.join(" "));
-        let minimum = (action == ProjectValidationAction::Test).then_some(1);
+        let (require_tests, minimum) = request.test_requirements();
         let target_id = plan.validation_target_id;
         let mut result = self
             .run_readonly_validation_agent(
@@ -491,7 +493,7 @@ impl ToolRuntime {
                 Some(target_id.clone()),
                 source_fence.clone(),
                 minimum,
-                minimum.map(|_| true),
+                require_tests,
                 None,
                 None,
                 auth,

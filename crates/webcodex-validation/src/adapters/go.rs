@@ -39,7 +39,6 @@ impl ValidationAdapter for GoTestValidationAdapter {
         options: ValidationCommandOptions,
     ) -> Result<ReadOnlyValidationPlan, String> {
         if options.check
-            || options.filter.is_some()
             || options.lib.is_some()
             || options.all_targets.is_some()
             || options.all_features.is_some()
@@ -58,6 +57,16 @@ impl ValidationAdapter for GoTestValidationAdapter {
             ValidationPlanArg::Literal("test"),
             ValidationPlanArg::Literal("-json"),
         ];
+        if let Some(filter) = options
+            .filter
+            .as_deref()
+            .map(webcodex_core::runner_protocol::normalize_go_test_filter)
+            .transpose()?
+            .flatten()
+        {
+            args.push(ValidationPlanArg::Literal("-run"));
+            args.push(ValidationPlanArg::Value(filter));
+        }
         if explicit_packages {
             args.extend(packages.into_iter().map(ValidationPlanArg::Value));
         } else {

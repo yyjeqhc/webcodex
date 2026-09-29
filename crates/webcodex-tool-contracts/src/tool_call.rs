@@ -2807,6 +2807,10 @@ pub enum ToolCall {
         /// scope is not supported.
         #[serde(default)]
         scope: Option<webcodex_core::project_validation::ProjectValidationScope>,
+        /// Test-only selector and count postconditions. Rust uses a libtest substring;
+        /// Go uses native -run regexp. Omission preserves unfiltered positive-test proof.
+        #[serde(default)]
+        test: Option<webcodex_core::project_validation::ProjectValidationTestOptions>,
         /// Total execution budget, clamped to 3600 seconds. Host grace never starts another execution.
         #[serde(default)]
         #[schemars(range(min = 1))]

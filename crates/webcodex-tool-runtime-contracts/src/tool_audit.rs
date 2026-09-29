@@ -544,6 +544,7 @@ impl ToolCallAuditProjection for ToolCall {
                 action,
                 adapter,
                 scope,
+                test,
                 timeout_secs,
                 ..
             } => serde_json::json!({
@@ -553,6 +554,10 @@ impl ToolCallAuditProjection for ToolCall {
                 "adapter": adapter,
                 "packages_present": scope.is_some(),
                 "package_count": scope.as_ref().map(|scope| scope.packages.len()).unwrap_or_default(),
+                "test_options_present": test.is_some(),
+                "filter_present": test.as_ref().is_some_and(|options| options.filter.is_some()),
+                "require_tests": test.as_ref().and_then(|options| options.require_tests),
+                "min_tests": test.as_ref().and_then(|options| options.min_tests),
                 "timeout_secs": timeout_secs,
             }),
             Self::CargoFmt {

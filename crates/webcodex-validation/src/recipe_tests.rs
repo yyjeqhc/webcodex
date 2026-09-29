@@ -515,6 +515,55 @@ fn package_scope_is_rejected_for_non_portable_backends() {
 }
 
 #[test]
+fn project_recipe_filtered_execution_is_deterministic_without_repeating_arg_builders() {
+    for (marker, backend, filter) in [
+        ("Cargo.toml", RecipeId::Rust, " selected "),
+        ("go.mod", RecipeId::Go, "^TestA/Sub$"),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        write(root.path(), marker, "");
+        let plain = resolve(
+            root.path(),
+            None,
+            Some(backend),
+            &[SemanticCheck::Test],
+            None,
+        )
+        .unwrap();
+        let selected = resolve(
+            root.path(),
+            None,
+            Some(backend),
+            &[SemanticCheck::Test],
+            Some(filter),
+        )
+        .unwrap();
+        let expected =
+            crate::project_validation_operation(backend.as_str(), SemanticCheck::Test, None)
+                .unwrap()
+                .with_test_filter(Some(filter))
+                .unwrap()
+                .build_readonly_plan()
+                .unwrap();
+        assert_eq!(selected.steps, vec![expected.structured_step]);
+        assert_eq!(selected.manifest_digest, plain.manifest_digest);
+        assert_ne!(selected.invocation_digest, plain.invocation_digest);
+        assert_eq!(
+            resolve(
+                root.path(),
+                None,
+                Some(backend),
+                &[SemanticCheck::Test],
+                Some("")
+            )
+            .unwrap()
+            .invocation_digest,
+            plain.invocation_digest
+        );
+    }
+}
+
+#[test]
 fn unavailable_checks_and_unsupported_filters_fail_before_execution() {
     let go = tempfile::tempdir().unwrap();
     write(go.path(), "go.mod", "module example.test/fixture\n");

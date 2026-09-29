@@ -20,6 +20,49 @@ use webcodex_tool_runtime_contracts::{
 };
 
 #[test]
+fn project_test_filter_plans_and_identities_share_native_semantics() {
+    for (backend, filter, expected) in [
+        (
+            "rust",
+            "  module::selected  ",
+            vec!["test", "module::selected", "-p", "pkg"],
+        ),
+        (
+            "go",
+            "^TestA/sub.*$",
+            vec!["test", "-json", "-run", "^TestA/sub.*$", "./pkg"],
+        ),
+        (
+            "go",
+            "  space  ",
+            vec!["test", "-json", "-run", "  space  ", "./pkg"],
+        ),
+    ] {
+        let packages = Some(vec![
+            if backend == "rust" { "pkg" } else { "./pkg" }.to_owned()
+        ]);
+        let operation =
+            project_validation_operation(backend, SemanticCheck::Test, packages).unwrap();
+        let baseline = operation.validation_target_id(Some("."));
+        let selected = operation.clone().with_test_filter(Some(filter)).unwrap();
+        let plan = selected.build_readonly_plan().unwrap();
+        assert_eq!(plan.structured_step.args, expected);
+        assert!(plan.structured_step.is_canonical());
+        assert_ne!(selected.validation_target_id(Some(".")), baseline);
+        let empty = operation.with_test_filter(Some("")).unwrap();
+        assert_eq!(empty.validation_target_id(Some(".")), baseline);
+    }
+    let rust = project_validation_operation("rust", SemanticCheck::Test, None).unwrap();
+    for bad in ["--all-features", "bad\nfilter"] {
+        assert!(rust.clone().with_test_filter(Some(bad)).is_err());
+    }
+    for backend in ["rust", "go"] {
+        let check = project_validation_operation(backend, SemanticCheck::Check, None).unwrap();
+        assert!(check.with_test_filter(Some("test")).is_err());
+    }
+}
+
+#[test]
 fn semantic_read_only_operations_preserve_legacy_leaf_plans_and_identity_profiles() {
     let cases = [
         (
@@ -80,6 +123,7 @@ fn semantic_read_only_operations_preserve_legacy_leaf_plans_and_identity_profile
         ),
         (
             ReadOnlyValidationOperation::Go(GoReadOnlyValidationOperation::Test(GoTestOptions {
+                filter: None,
                 packages: Some(vec![
                     "./internal/control".to_string(),
                     "./internal/node".to_string(),
@@ -479,10 +523,19 @@ fn go_profile_selects_only_go_test_and_preserves_json_command() {
             .unwrap(),
         "go test -json './internal/control' './internal/node'"
     );
+    assert_eq!(
+        adapter
+            .build_command(ValidationCommandOptions {
+                filter: Some("TestOne".to_string()),
+                ..ValidationCommandOptions::default()
+            })
+            .unwrap(),
+        "go test -json -run 'TestOne' ./..."
+    );
     assert!(adapter
         .build_command(ValidationCommandOptions {
-            filter: Some("TestOne".to_string()),
-            ..ValidationCommandOptions::default()
+            filter: Some("bad\nfilter".into()),
+            ..Default::default()
         })
         .is_err());
     assert!(validation_adapter_for_tool("go_check").is_none());

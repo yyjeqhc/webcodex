@@ -180,12 +180,29 @@ pub fn structured_validation_target_identity(
                 return None;
             }
             let packages = normalized_go_test_target_packages(obj.get("packages"))?;
-            serde_json::json!({
+            if obj.get("filter_present").and_then(Value::as_bool) == Some(true)
+                && obj.get("filter").is_none()
+            {
+                return None;
+            }
+            let filter = match obj.get("filter") {
+                None | Some(Value::Null) => None,
+                Some(value) => {
+                    crate::runner_protocol::normalize_go_test_filter(value.as_str()?).ok()?
+                }
+            };
+            let mut semantic = serde_json::json!({
                 "tool": tool_name,
                 "kind": "test",
                 "cwd": cwd,
                 "packages": packages,
-            })
+            });
+            // Preserve all unfiltered identities exactly, including omitted or
+            // empty filters. Count postconditions never change executable target.
+            if let Some(filter) = filter {
+                semantic["filter"] = Value::String(filter);
+            }
+            semantic
         }
         ToolValidationIdentityKind::GoVet => {
             if obj.get("packages_present").and_then(Value::as_bool) == Some(true)

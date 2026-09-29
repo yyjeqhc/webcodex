@@ -30,6 +30,7 @@ fn request(action: ProjectValidationAction) -> ProjectValidationRequest {
         action,
         adapter: ProjectValidationAdapter::Auto,
         scope: None,
+        test: None,
     }
 }
 #[test]
@@ -264,6 +265,79 @@ fn project_validation_rejects_escape_and_unknown_project() {
     req.project_id = "missing".into();
     assert!(project::plan(&policy, &registry, &req).is_err());
 }
+#[test]
+fn project_validation_test_options_fence_selection_and_count_policy_separately() {
+    use webcodex_core::runner_protocol::ShellJobValidationMetadata;
+    for (marker, filter, expected) in [
+        ("Cargo.toml", " selected ", vec!["test", "selected"]),
+        (
+            "go.mod",
+            "^TestA/sub.*$",
+            vec!["test", "-json", "-run", "^TestA/sub.*$", "./..."],
+        ),
+    ] {
+        let (_tmp, _root, registry, policy) = fixture(marker);
+        let mut req = request(ProjectValidationAction::Test);
+        let (plain, _) = project::plan(&policy, &registry, &req).unwrap();
+        req.test = Some(ProjectValidationTestOptions {
+            filter: Some(filter.into()),
+            require_tests: Some(false),
+            min_tests: Some(3),
+        });
+        let (selected, _) = project::plan(&policy, &registry, &req).unwrap();
+        assert_eq!(selected.step.args, expected);
+        assert_ne!(selected.validation_target_id, plain.validation_target_id);
+        assert_ne!(
+            selected.provenance.invocation_digest,
+            plain.provenance.invocation_digest
+        );
+        let mut metadata = ShellJobValidationMetadata {
+            project_validation: Some(selected.provenance.clone()),
+            tool: "project_validate".into(),
+            kind: "test".into(),
+            adapter: selected.adapter,
+            steps: vec![selected.step],
+            effective_timeout_secs: 60,
+            sync_wait_secs: 5,
+            validation_target_id: Some(selected.validation_target_id.clone()),
+            source_fence: None,
+            minimum_tests: Some(3),
+            require_tests: Some(false),
+            no_run: None,
+        };
+        assert!(metadata.is_valid());
+        assert_eq!(
+            serde_json::from_str::<ShellJobValidationMetadata>(
+                &serde_json::to_string(&metadata).unwrap()
+            )
+            .unwrap(),
+            metadata
+        );
+        metadata.minimum_tests = Some(1);
+        assert!(!metadata.is_valid());
+        metadata.minimum_tests = Some(3);
+        metadata.require_tests = Some(true);
+        assert!(!metadata.is_valid());
+        metadata.require_tests = Some(false);
+        metadata.no_run = Some(true);
+        assert!(!metadata.is_valid());
+        // Policy changes fence a request/Job but do not pretend to alter argv.
+        req.test.as_mut().unwrap().min_tests = Some(9);
+        let (other_minimum, _) = project::plan(&policy, &registry, &req).unwrap();
+        assert_eq!(
+            other_minimum.validation_target_id,
+            selected.validation_target_id
+        );
+        assert_eq!(
+            other_minimum.provenance.invocation_digest,
+            selected.provenance.invocation_digest
+        );
+        assert_ne!(other_minimum.provenance, selected.provenance);
+        req.action = ProjectValidationAction::Check;
+        assert!(project::plan(&policy, &registry, &req).is_err());
+    }
+}
+
 #[test]
 fn project_validation_manifest_fence_and_exact_recovery_plan() {
     use webcodex_core::runner_operation::{RunnerJobOperation, RunnerJobValidationOperation};

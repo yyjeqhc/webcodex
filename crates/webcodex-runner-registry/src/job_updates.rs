@@ -1224,6 +1224,22 @@ impl RunnerRegistry {
                 "capability_unavailable: upgrade target Runner for project_validation_v1".into(),
             );
         }
+        // Recheck at admission, not only during the earlier planning round trip:
+        // a replacement/older Runner must never reinterpret new filters or counts.
+        let project_test_options = validation
+            .as_ref()
+            .and_then(|metadata| metadata.project_validation.as_ref())
+            .is_some_and(|provenance| provenance.request.test.is_some());
+        let go_test_filter = validation_steps.iter().any(|step| {
+            step.is_structured_go_test_json() && step.args.get(2).is_some_and(|arg| arg == "-run")
+        });
+        if (project_test_options || go_test_filter)
+            && !runner
+                .runner_features
+                .supports(RunnerFeature::ProjectValidationTestOptions)
+        {
+            return Err("capability_unavailable: upgrade target Runner for project_validation_test_options_v1".into());
+        }
         if !validation_steps.is_empty()
             && !runner
                 .runner_features

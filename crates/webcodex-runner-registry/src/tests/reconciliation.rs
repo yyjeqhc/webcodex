@@ -585,6 +585,34 @@ async fn old_count_capable_runner_accepts_cargo_validation_without_explicit_exec
 }
 
 #[tokio::test]
+async fn project_test_options_are_fenced_again_at_job_admission() {
+    use webcodex_core::project_validation::*;
+    for supported in [false, true] {
+        let registry = RunnerRegistry::default();
+        let mut registration = register_request(INSTANCE_A, empty_inventory());
+        registration.capabilities.project_validation_v1 = true;
+        registration.capabilities.project_validation_test_options_v1 = supported;
+        registry.register(registration).await.unwrap();
+        let mut metadata = cargo_validation_start_metadata(Some(true), None, Some(3));
+        let validation = metadata.validation.as_mut().unwrap();
+        validation.tool = "project_validate".into();
+        validation.project_validation = Some(ProjectValidationProvenance {
+            request:ProjectValidationRequest {project_id:"demo".into(),cwd:None,action:ProjectValidationAction::Test,
+                adapter:ProjectValidationAdapter::Rust,scope:None,
+                test:Some(ProjectValidationTestOptions {filter:Some("focused".into()),min_tests:Some(3),require_tests:None})},
+            backend:"rust".into(),recipe_root:".".into(),root_digest:"a".repeat(64),manifest_digest:"b".repeat(64),invocation_digest:"c".repeat(64),
+        });
+        assert!(validation.is_valid());
+        let result = registry.start_job_with_metadata(start_request("validation"), "tester".into(), metadata).await;
+        if supported { assert!(result.is_ok(), "{result:?}"); }
+        else {
+            assert!(result.unwrap_err().contains("project_validation_test_options_v1"));
+            assert!(registry.list_jobs(Some(10)).await.is_empty());
+        }
+    }
+}
+
+#[tokio::test]
 async fn old_count_capable_runner_fails_closed_on_explicit_cargo_execution_policy() {
     for (label, require_tests, no_run, minimum_tests) in [
         ("require-false", Some(false), None, None),

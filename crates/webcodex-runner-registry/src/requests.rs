@@ -2546,9 +2546,8 @@ impl RunnerRegistry {
         Ok((request_id, rx))
     }
 
-    /// Enqueue a typed read-only LSP navigation request. Never falls through
-    /// to shell execution: the Runner dispatches exclusively on `kind = "lsp"`
-    /// with a structured `lsp` payload.
+    /// Resolve a declarative project validation plan on the authorized Runner.
+    /// Additive fields require their own capability before anything is enqueued.
     pub async fn enqueue_project_validation_plan(
         &self,
         client_id: String,
@@ -2557,6 +2556,7 @@ impl RunnerRegistry {
     ) -> Result<(String, oneshot::Receiver<ShellRunResponse>), String> {
         payload.validate()?;
         let requires_package_scope = payload.scope.is_some();
+        let requires_test_options = payload.test.is_some();
         let request_id = next_request_id();
         let (tx, rx) = oneshot::channel();
         let request = encode_runner_operation(
@@ -2576,6 +2576,13 @@ impl RunnerRegistry {
             return Err(
                 "capability_unavailable: upgrade target Runner for project_validation_v1".into(),
             );
+        }
+        if requires_test_options
+            && !runner
+                .runner_features
+                .supports(RunnerFeature::ProjectValidationTestOptions)
+        {
+            return Err("capability_unavailable: upgrade target Runner for project_validation_test_options_v1".into());
         }
         if requires_package_scope
             && !runner

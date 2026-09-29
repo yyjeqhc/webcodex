@@ -43,7 +43,12 @@ pub(crate) fn plan(
         ProjectValidationAction::Test => SemanticCheck::Test,
     };
     let packages = request.scope.as_ref().map(|scope| scope.packages.clone());
+    let filter = request
+        .test
+        .as_ref()
+        .and_then(|test| test.filter.as_deref());
     let operation = project_validation_operation(backend.as_str(), action, packages)
+        .and_then(|operation| operation.with_test_filter(filter))
         .map_err(|code| unavailable(code, Some(backend.as_str())))?;
     let adapter = operation.adapter();
     let resolved = resolve_validation_recipe_with_packages(
@@ -51,7 +56,7 @@ pub(crate) fn plan(
         request.cwd.as_deref(),
         hint,
         &[action],
-        None,
+        filter,
         request
             .scope
             .as_ref()

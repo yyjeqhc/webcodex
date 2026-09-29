@@ -438,6 +438,16 @@ fn normalize_go_test_package(raw: &str) -> Result<String, &'static str> {
     Ok(raw.to_string())
 }
 
+/// Bounded native Go -run expression. Do not trim: spaces and slash-separated
+/// subtest expressions have native meaning. Go validates regexp syntax; the
+/// Runner transports one literal argv value, never shell or additional flags.
+pub fn normalize_go_test_filter(raw: &str) -> Result<Option<String>, &'static str> {
+    if raw.len() > RUST_TEST_FILTER_MAX_BYTES || raw.chars().any(char::is_control) {
+        return Err("Go test filter exceeds 200 bytes or contains control characters");
+    }
+    Ok((!raw.is_empty()).then(|| raw.to_owned()))
+}
+
 fn is_canonical_go_vet_args(args: &[&str]) -> bool {
     if args.len() < 2 || args[0] != "vet" {
         return false;
@@ -456,7 +466,18 @@ fn is_canonical_go_test_json_args(args: &[&str]) -> bool {
     if args.len() < 3 || args[0] != "test" || args[1] != "-json" {
         return false;
     }
-    let packages = args[2..]
+    let package_start = if args.get(2) == Some(&"-run") {
+        let Some(filter) = args.get(3) else {
+            return false;
+        };
+        if !matches!(normalize_go_test_filter(filter), Ok(Some(value)) if value == *filter) {
+            return false;
+        }
+        4
+    } else {
+        2
+    };
+    let packages = args[package_start..]
         .iter()
         .map(|value| (*value).to_string())
         .collect::<Vec<_>>();
@@ -764,10 +785,9 @@ impl ShellJobValidationMetadata {
                     ("rust", "cargo_fmt" | "cargo_check" | "cargo_test")
                         | ("go", "go_vet" | "go_test")
                 )
-                || (self.kind == "test"
-                    && (self.require_tests != Some(true)
-                        || self.minimum_tests != Some(1)
-                        || self.no_run.is_some()))
+                || (self.require_tests, self.minimum_tests)
+                    != provenance.request.test_requirements()
+                || self.no_run.is_some()
             {
                 return false;
             }

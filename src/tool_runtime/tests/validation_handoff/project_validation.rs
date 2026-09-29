@@ -14,8 +14,10 @@ async fn setup(grace_ms: u64) -> ToolRuntime {
             structured_cargo_check_packages: true,
             project_validation_v1: true,
             project_validation_package_scope_v1: true,
+            project_validation_test_options_v1: true,
             structured_go_test_json: true,
             structured_go_test_tool: true,
+            structured_go_test_packages: true,
             structured_cargo_test_count_assertion: true,
             structured_cargo_test_execution_policy: true,
             ..Default::default()
@@ -44,6 +46,13 @@ async fn reply_plan(
         backend,
         check,
         semantic.scope.as_ref().map(|scope| scope.packages.clone()),
+    )
+    .unwrap()
+    .with_test_filter(
+        semantic
+            .test
+            .as_ref()
+            .and_then(|test| test.filter.as_deref()),
     )
     .unwrap();
     let adapter = operation.adapter();
@@ -91,6 +100,7 @@ fn call_with_scope(
         action,
         adapter: None,
         scope: packages.map(|packages| ProjectValidationScope { packages }),
+        test: None,
         timeout_secs: Some(60),
     }
 }
@@ -346,6 +356,112 @@ async fn project_validation_package_scope_requires_additive_runner_capability() 
         .unwrap()
         .contains("project_validation_package_scope_v1"));
     assert!(runtime.runner_registry.list_jobs(Some(10)).await.is_empty());
+    assert!(probe_patch_agent_request(&runtime, "project-validation")
+        .await
+        .is_none());
+}
+
+fn call_with_test(test: ProjectValidationTestOptions) -> ToolCall {
+    let mut call = call(ProjectValidationAction::Test, None);
+    if let ToolCall::ProjectValidate { test: options, .. } = &mut call {
+        *options = Some(test);
+    }
+    call
+}
+
+#[tokio::test]
+async fn project_validation_test_options_reject_before_any_plan_on_old_runner() {
+    let runtime = runtime_with_agent_project("project-validation");
+    register_agent(
+        &runtime,
+        "project-validation",
+        None,
+        RunnerCapabilities {
+            async_shell_jobs: true,
+            structured_validation_argv: true,
+            project_validation_v1: true,
+            project_validation_package_scope_v1: true,
+            ..Default::default()
+        },
+    )
+    .await;
+    for test in [
+        ProjectValidationTestOptions::default(),
+        ProjectValidationTestOptions {
+            filter: Some("selected".into()),
+            ..Default::default()
+        },
+        ProjectValidationTestOptions {
+            require_tests: Some(false),
+            ..Default::default()
+        },
+        ProjectValidationTestOptions {
+            min_tests: Some(3),
+            ..Default::default()
+        },
+    ] {
+        let result = runtime
+            .dispatch_with_auth(call_with_test(test), Some(&auth_context(None, true)))
+            .await;
+        assert!(!result.success);
+        assert!(
+            result
+                .error
+                .as_deref()
+                .unwrap()
+                .contains("project_validation_test_options_v1"),
+            "{result:?}"
+        );
+        assert!(runtime.runner_registry.list_jobs(Some(10)).await.is_empty());
+        assert!(probe_patch_agent_request(&runtime, "project-validation")
+            .await
+            .is_none());
+    }
+}
+
+#[tokio::test]
+async fn project_validation_filtered_test_count_policy_survives_same_job_handoff() {
+    for (backend, filter, stdout, minimum, required, expected) in [
+        ("rust", "selected", "running 2 tests\ntest selected_one ... ok\ntest selected_two ... ok\ntest result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n", Some(3), true, false),
+        ("go", "^Test", "{\"Action\":\"run\",\"Package\":\"example/pkg\",\"Test\":\"TestOne\"}\n{\"Action\":\"pass\",\"Package\":\"example/pkg\",\"Test\":\"TestOne\"}\n{\"Action\":\"run\",\"Package\":\"example/pkg\",\"Test\":\"TestTwo\"}\n{\"Action\":\"pass\",\"Package\":\"example/pkg\",\"Test\":\"TestTwo\"}\n{\"Action\":\"pass\",\"Package\":\"example/pkg\"}\n", Some(3), false, false),
+        ("rust", "absent", "running 0 tests\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out\n", None, false, true),
+        ("rust", "selected", "running 1 test\ntest selected_one ... ok\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n", Some(1), true, true),
+    ] {
+        let runtime = setup(1).await;
+        let task = tokio::spawn({ let runtime = runtime.clone(); async move {
+            runtime.dispatch_with_auth(call_with_test(ProjectValidationTestOptions {
+                filter:Some(filter.into()), require_tests:Some(required), min_tests:minimum,
+            }), Some(&auth_context(None,true))).await
+        }});
+        let (request, job_id) = reply_plan(&runtime, backend, ProjectValidationAction::Test).await;
+        let metadata = request.job_context.as_ref().unwrap().validation.as_ref().unwrap();
+        assert_eq!(metadata.minimum_tests, minimum);
+        assert_eq!(metadata.require_tests, Some(required));
+        assert!(metadata.steps[0].args.iter().any(|arg| arg==filter));
+        let encoded = serde_json::to_vec(metadata).unwrap();
+        assert_eq!(serde_json::from_slice::<crate::runner_protocol::ShellJobValidationMetadata>(&encoded).unwrap(), *metadata);
+        let pending = task.await.unwrap();
+        assert_eq!(pending.output["continuation"]["arguments"]["items"][0]["job_id"], job_id);
+        runtime.runner_registry.update_job(cargo_test_update("project-validation", &request.request_id, &job_id,
+            "completed", stdout, "", Some(0), completed_progress(), true)).await.unwrap();
+        let status = runtime.job_status_for_auth(job_id, false, None).await;
+        assert_eq!(status.output["validation"]["passed"], expected, "backend={backend} {status:?}");
+        assert!(probe_patch_agent_request(&runtime, "project-validation").await.is_none());
+    }
+}
+
+#[tokio::test]
+async fn project_validation_rejects_test_policy_on_non_test_before_planning() {
+    let runtime = setup(1).await;
+    let mut call = call_with_test(ProjectValidationTestOptions::default());
+    if let ToolCall::ProjectValidate { action, .. } = &mut call {
+        *action = ProjectValidationAction::Check;
+    }
+    let result = runtime
+        .dispatch_with_auth(call, Some(&auth_context(None, true)))
+        .await;
+    assert!(!result.success);
+    assert!(result.error.as_deref().unwrap().contains("action=test"));
     assert!(probe_patch_agent_request(&runtime, "project-validation")
         .await
         .is_none());

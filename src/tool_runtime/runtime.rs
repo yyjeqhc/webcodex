@@ -125,6 +125,11 @@ pub struct ToolRuntime {
     /// Clones share the registry; a Server runtime restart creates a new epoch.
     pub(crate) read_revisions: Arc<super::read_revisions::ReadRevisionRegistry>,
     pub(crate) read_cache: Arc<super::read_cache::ReadCache>,
+    /// Runtime-owned presentation snapshots. Clones share retention; independent
+    /// runtimes do not. Neither registry survives a runtime restart.
+    pub(super) review_snapshots:
+        Arc<std::sync::Mutex<super::git_review_snapshot::GitReviewSnapshotRegistry>>,
+    pub(super) changes_snapshots: Arc<std::sync::Mutex<super::changes::ChangesSnapshotRegistry>>,
     pub(crate) validation_sources: Arc<super::validation_source::ValidationSourceRegistry>,
     /// Process-local Project mutation serialization used only by orchestration
     /// frontends. Direct first-class mutations deliberately bypass this registry.
@@ -236,6 +241,8 @@ impl ToolRuntime {
                 super::coding_task::DEFAULT_REPOSITORY_OVERVIEW_PROBE_TIMEOUT,
             read_revisions: Arc::new(super::read_revisions::ReadRevisionRegistry::new()),
             read_cache: Arc::new(super::read_cache::ReadCache::default()),
+            review_snapshots: Arc::default(),
+            changes_snapshots: Arc::default(),
             validation_sources: Arc::new(
                 super::validation_source::ValidationSourceRegistry::default(),
             ),

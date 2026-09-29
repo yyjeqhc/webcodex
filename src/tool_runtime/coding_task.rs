@@ -15,8 +15,8 @@ use super::continuation_feedback::{
     ContinuationToolFailureSnapshot,
 };
 use super::git_review_snapshot::{
-    caller_fingerprint as review_caller_fingerprint, latest_workspace_snapshot,
-    workspace_snapshot_complete_for_closeout, GitReviewSnapshot,
+    caller_fingerprint as review_caller_fingerprint, workspace_snapshot_complete_for_closeout,
+    GitReviewSnapshot,
 };
 use super::handoff::{
     actionable_unexpected_failure_count, apply_compact_workflow_outcomes, closeout_work_projection,
@@ -1704,7 +1704,11 @@ impl ToolRuntime {
         });
         let reusable_snapshot = if summary_only {
             review_caller_fingerprint(auth).ok().and_then(|caller| {
-                latest_workspace_snapshot(&caller, &resolved.resolved_id, Some(&session_id))
+                self.latest_workspace_review_snapshot(
+                    &caller,
+                    &resolved.resolved_id,
+                    Some(&session_id),
+                )
             })
         } else {
             review_snapshot_reuse["reason_code"] =

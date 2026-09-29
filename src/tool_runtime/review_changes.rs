@@ -5,8 +5,7 @@ use crate::auth::AuthContext;
 use webcodex_tool_contracts::tool_call::GitReviewScopeInput;
 
 use super::git_review_snapshot::{
-    caller_fingerprint, get_snapshot, insert_snapshot, GitReviewScope, GitReviewSnapshot,
-    GitReviewSourceIdentity,
+    caller_fingerprint, GitReviewScope, GitReviewSnapshot, GitReviewSourceIdentity,
 };
 use super::{ToolResult, ToolRuntime};
 
@@ -244,7 +243,7 @@ impl ToolRuntime {
             let Some((snapshot_id, inner)) = decode_review_continuation(&continuation) else {
                 return review_changes_failure(&project, "invalid_continuation");
             };
-            let Some(snapshot) = get_snapshot(
+            let Some(snapshot) = self.review_snapshot(
                 snapshot_id,
                 &caller,
                 &resolved_project,
@@ -585,7 +584,7 @@ impl ToolRuntime {
                 )
             }
         };
-        let snapshot = insert_snapshot(GitReviewSnapshot::new(
+        let snapshot = self.insert_review_snapshot(GitReviewSnapshot::new(
             caller,
             resolved_project,
             session_id.clone(),

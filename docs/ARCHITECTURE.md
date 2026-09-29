@@ -199,6 +199,27 @@ Session provenance is supported, while generic invocation continuity metadata
 receives no specialized semantics. Adding another heterogeneous gateway extends
 this closed dispatch boundary without adding a concrete Kernel policy branch.
 
+### Typed queries and post-record responses
+
+`tool_runtime::job_query` owns the shared authorized Job inventory selection:
+normalize filters, ask the Registry for visible matching records, then apply
+status/order/limit before any model or Console projection. `JobInventoryPage`
+is internal and deliberately not serializable. `list_jobs` applies the model
+allowlist only to returned records; `runtime_console_http::job_projection`
+projects typed fields directly instead of parsing model-facing JSON. Registry
+lifecycle refresh, endpoint scopes and visibility remain unchanged. Passive
+Work Result/attention snapshots keep their separate non-refreshing reader.
+
+The ordinary Kernel path finishes authorization, dispatch, control sidecars and
+Session/permission recording before entering `kernel::postprocess`. That stage
+captures canonical audit/telemetry evidence, consumes the existing one-shot
+model projection plan, and finally adds bounded response-only collaboration and
+Job attention. Its internal result keeps canonical audit output separate from
+model output. It cannot redispatch the original operation or reinterpret raw
+business arguments. Specialized gateways and early denials retain their existing
+entry/exit paths. No tool schema, direct admission or UI resource changes follow
+from this internal separation.
+
 ### Model-facing tool contract ergonomics
 
 Model-facing tools follow one shared design rule: be strict where meaning,

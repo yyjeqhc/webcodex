@@ -391,11 +391,12 @@ async fn presentation_reauthorizes_exact_wait_and_exposes_no_ambient_authority_s
     assert!(!denied.success);
     assert_eq!(denied.output["error_kind"], "job_terminal_wait_not_found");
 
-    let spec = crate::tool_runtime::registered_tool_specs()
-        .into_iter()
-        .find(|spec| spec.name == "present_job_terminal_continuation")
-        .unwrap();
-    assert_eq!(spec.input_schema["required"], json!(["wait_id"]));
+    assert!(!crate::tool_runtime::registered_tool_specs()
+        .iter()
+        .any(|spec| spec.name == "present_job_terminal_continuation"));
+    let schema =
+        webcodex_tool_contracts::input_schema_for_tool("present_job_terminal_continuation");
+    assert_eq!(schema["required"], json!(["wait_id"]));
     for forbidden in [
         "job_id",
         "session_id",
@@ -404,7 +405,7 @@ async fn presentation_reauthorizes_exact_wait_and_exposes_no_ambient_authority_s
         "principal_digest",
         "project",
     ] {
-        assert!(spec.input_schema["properties"].get(forbidden).is_none());
+        assert!(schema["properties"].get(forbidden).is_none());
     }
 }
 

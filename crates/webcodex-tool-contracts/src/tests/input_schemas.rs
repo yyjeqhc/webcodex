@@ -435,10 +435,16 @@ fn cargo_test_schema_explains_execution_proof_policy() {
         no_run.contains("does not require executed-test-count proof"),
         "{no_run}"
     );
+    assert!(spec.description.contains("Exit 0 alone is not test proof"));
     assert!(spec
         .description
-        .contains("Normal execution requires non-zero"));
-    assert!(spec.description.contains("require_tests=false opts out"));
+        .contains("default requires positive counts"));
+    assert!(spec
+        .description
+        .contains("require_tests=false accepts zero only without min_tests"));
+    assert!(spec
+        .description
+        .contains("require_tests=true/min_tests enforce a proven minimum"));
     assert!(spec.description.contains("no_run=true is compile-only"));
     assert!(spec.description.contains("Rust substring"));
     assert!(spec.description.contains("--exact"));
@@ -446,7 +452,15 @@ fn cargo_test_schema_explains_execution_proof_policy() {
     assert!(spec.description.contains("--lib"));
     assert!(spec
         .description
-        .contains("zero-test results are not validation proof"));
+        .contains("Rich success may lack test proof"));
+    for phrase in [
+        "tests_run_count and explicit minimum_tests",
+        "require_tests=false for accepted zero",
+        "no_run=true for compile-only",
+        "source_state never certifies current workspace source",
+    ] {
+        assert!(spec.description.contains(phrase), "missing {phrase}");
+    }
 }
 
 #[test]

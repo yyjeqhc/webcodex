@@ -2184,18 +2184,24 @@ async fn mcp_validation_run_and_summary_use_real_canonical_contracts() {
         "purpose",
         "executor",
         "shell",
+        "warnings_count",
+        "errors_count",
+        "diagnostics",
     ] {
         assert!(
             model_output.get(redundant).is_none(),
             "model result leaked {redundant}: {model_output}"
         );
     }
-    assert_eq!(model_output["warnings_count"], 0);
-    assert_eq!(model_output["errors_count"], 0);
+    assert_eq!(cargo_result["structuredContent"]["success"], true);
     assert_eq!(presentation(cargo_result)["kind"], "validation_run");
     assert_eq!(presentation(cargo_result)["tool"], "cargo_check");
-    assert_eq!(presentation(cargo_result)["warnings_count"], 0);
-    assert_eq!(presentation(cargo_result)["errors_count"], 0);
+    for omitted in ["warnings_count", "errors_count", "diagnostics"] {
+        assert!(
+            presentation(cargo_result).get(omitted).is_none(),
+            "presentation reintroduced {omitted}"
+        );
+    }
     assert!(presentation(cargo_result).get("execution_state").is_none());
     assert!(presentation(cargo_result).get("passed").is_none());
     assert!(!serde_json::to_string(presentation(cargo_result))

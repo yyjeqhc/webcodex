@@ -83,6 +83,17 @@ Canonical Session identity/retention is separate from in-memory residency. `Acti
 
 Closed historical rows use an independent bounded retention policy. Closed Sessions are coldified to compact durable JSON and remain queryable while retained; mutation remains denied and retention never reopens them. `historical_session_retention_limit` bounds retained Closed history only. When that explicit historical policy expires an old Closed row, the current v2 ledger has no tombstone shape, so a later lookup can no longer distinguish retention expiry from an identity that was never present. Adding explicit retention-expired tombstones is a separate follow-up and must not be approximated by deleting Active identities. The compatibility `max_sessions` status field now aliases the hot capacity target and must not be interpreted as permission to delete durable Active Sessions.
 
+Access recency is maintained by a store-owned ordered index with separate Closed
+eligibility; it is not business lifecycle or activity. Exact reads update that
+index without appending ledger events or scheduling a write. The background
+whole-ledger writer coalesces ordinary asynchronous dirty marks for at most a
+fixed 20 ms scheduling window from the first pending mark. Progress never resets
+that deadline. Explicit generation flushes and shutdown bypass coalescing, while
+preserving existing write ordering and persistence-error reporting. I/O can take
+longer; this is neither a fsync nor a power-loss guarantee. Ledger version 2 and
+its per-cycle full snapshot format are unchanged. Implementation evidence and
+tradeoffs: [SessionStore access and writes](../implementation/session-store-access-and-write-scheduling.md).
+
 Per-Session event and message tails remain independently bounded (`DEFAULT_MAX_EVENTS_PER_SESSION` and `DEFAULT_MAX_MESSAGES_PER_SESSION`); preserving a canonical Active identity does not turn its event/message history into an unbounded archive. The persistence wire shape remains ledger version 2 because this change alters retention/restore policy, not the serialized Session row schema. Existing Session rows already deleted by an older Server cannot be reconstructed by upgrading: the fix prevents future destructive capacity loss from the first upgraded snapshot onward.
 
 `recording_session_id` remains a separate provenance contract. It may explicitly carry the same principal-scoped `session_ref` returned for that exact Session; Runtime canonicalizes the ref before recorder authorization and durable provenance recording. This does not make recorder provenance a business Session target, and omission never selects a recorder implicitly or creates sticky recorder context.

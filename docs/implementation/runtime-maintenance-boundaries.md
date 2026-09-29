@@ -1,5 +1,9 @@
 # Runtime maintenance boundaries and Session scale evidence
 
+Follow-up: [SessionStore access order and bounded write coalescing](session-store-access-and-write-scheduling.md)
+implements and measures the recency/scheduling work identified here. The numbers
+below remain the original #771 baseline, not a current deployment benchmark.
+
 ## Scope (2026-09-29)
 
 Worktree: special `/root/git/webcodex-review`; baseline

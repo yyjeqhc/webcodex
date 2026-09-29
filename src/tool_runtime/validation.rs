@@ -1065,7 +1065,7 @@ impl ToolRuntime {
                 .await;
             return ToolResult::err_with_output(
                 if stale {
-                    "Project recipe changed before admission; resolve project_validate again. No command started."
+                    "Project validation plan changed before execution; resolve project_validate again. No command started."
                 } else {
                     "Runner rejected validation before execution; inspect project availability and Runner policy, then retry."
                 },

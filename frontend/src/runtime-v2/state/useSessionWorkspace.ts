@@ -112,7 +112,10 @@ export function useSessionWorkspace(
     return () => messageRequest.cancel();
   }, [client, enabled, loadMessages, projectId, sessionId, onUnauthorized, messageRevision, messageRequest]);
 
-  const shouldPoll = !detail || detail.lifecycle === "active" || detail.running_call || detail.running_jobs > 0;
+  // Transient missing/error detail remains recoverable through polling, but a
+  // deterministic authority/not-found result must not become a 5-second retry loop.
+  const shouldPoll = detailAvailability !== "denied"
+    && (!detail || detail.lifecycle === "active" || detail.running_call || detail.running_jobs > 0);
   useVisibleRefresh(Boolean(enabled && location && shouldPoll), () => {
     if (!detailRequest.pending) setDetailRevision(value => value + 1);
     if (loadMessages && !messageRequest.pending) setMessageRevision(value => value + 1);

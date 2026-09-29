@@ -33539,7 +33539,7 @@ function p7(e, n, a, r, l = {}) {
     R,
     z
   ]);
-  const Z = !b || b.lifecycle === "active" || b.running_call || b.running_jobs > 0;
+  const Z = u !== "denied" && (!b || b.lifecycle === "active" || b.running_call || b.running_jobs > 0);
   return pr(!!(n && a && Z), () => {
     D.pending || L((ee) => ee + 1), d && !z.pending && M((ee) => ee + 1);
   }, 5e3), {

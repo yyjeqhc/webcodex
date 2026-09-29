@@ -78,6 +78,31 @@ it("Goal reads recover after null, coalesce resume events and stop periodic obse
   unmount(); expect(vi.getTimerCount()).toBe(0);
 });
 
+it("Session detail denial does not become an automatic retry loop", async () => {
+  vi.useFakeTimers();
+  vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+  const detail = sessionDetail();
+  let detailReads = 0;
+  const post = vi.fn(async (path: string) => {
+    if (path === "workflow-session") {
+      detailReads++;
+      return { ok: false, status: 404, data: null };
+    }
+    throw new Error(`unexpected path ${path}`);
+  });
+  const location = { projectId: "agent:runner:demo", sessionId: detail.session_id, runner: "runner", projectName: "Demo" };
+  const client = { post } as unknown as RuntimeV2Client;
+  const unauthorized = vi.fn();
+  const { result, unmount } = renderHook(() => useSessionWorkspace(client, true, location, unauthorized, { loadMessages: false }));
+  await act(async () => {});
+  expect(result.current.detailAvailability).toBe("denied");
+  expect(detailReads).toBe(1);
+  await act(async () => { await vi.advanceTimersByTimeAsync(20_000); });
+  expect(detailReads).toBe(1);
+  unmount();
+  expect(vi.getTimerCount()).toBe(0);
+});
+
 it("Session detail and message observations do not cancel or block each other", async () => {
   vi.useFakeTimers();
   vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");

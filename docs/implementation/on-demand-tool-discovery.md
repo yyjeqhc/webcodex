@@ -71,9 +71,16 @@ intended. No runtime restart or deployment is needed to measure the source tests
 The broad all-feature `tool_manifest` selection passed 35 tests. An additional
 exact experimental Code Mode stage test exposed the existing 16 KiB guarded-edit
 projection ceiling: read-only and validation stages succeeded, guarded-edit
-reported `code_mode_projection_too_large`. A disposable immutable baseline
-comparison is used to distinguish a pre-existing optional limitation from a
-regression; no limit or constraint is loosened merely to pass the test.
+reported `code_mode_projection_too_large`. The same targeted test was run on a
+disposable `git archive` of the unchanged baseline
+`b967a1556ac58b50e32c8399196979fdbae1713c` and failed identically (exit 101):
+read-only 8,991 bytes, validation 13,017 bytes, guarded-edit over the existing
+16 KiB limit. This confirms a pre-existing optional self-hosted Code Mode
+limitation, not a regression introduced by this change. No limit, constraint or
+test is weakened. The contract crate's all-feature library passed 264 tests;
+this is not a claim that the entire optional root suite is green. The separate
+key-constraint test following the failed targeted command was not executed.
+The existing optional `ObservedRunnerRequest.login` warning also remains.
 
 This change is independent of the environment-isolation and large-module/test
 organization PRs. Shared full ToolSpec construction remains available at real

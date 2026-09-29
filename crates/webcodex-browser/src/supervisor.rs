@@ -2,12 +2,13 @@ use crate::cdp::{
     BackendFactory, BackendNode, BackendPage, BackendScreenshot, BrowserBackend, ChromiumFactory,
 };
 use crate::types::{
-    clip_bytes, clip_chars, validate_navigation_url, AdmittedBrowserAction, BrowserError,
-    BrowserKey, BrowserResult, BrowserShutdownReport, BrowserStability, BrowserSummary,
-    ControlCapability, PageSummary, Screenshot, SemanticNode, SemanticSnapshot, SnapshotMode,
-    BROWSER_IDLE_TIMEOUT, MAX_BROWSERS, MAX_BROWSER_LIFETIME, MAX_IMAGE_BYTES, MAX_IMAGE_DIMENSION,
-    MAX_INPUT_TEXT_BYTES, MAX_NODE_TEXT_BYTES, MAX_PAGES_PER_BROWSER, MAX_PAGE_SUMMARIES,
-    MAX_SNAPSHOT_BYTES, MAX_SNAPSHOT_NODES, SHUTDOWN_TIMEOUT,
+    clip_bytes, clip_chars, validate_navigation_url, AdmittedBrowserAction, BatchOperation,
+    BatchResult, BrowserError, BrowserKey, BrowserResult, BrowserShutdownReport, BrowserStability,
+    BrowserSummary, ControlCapability, ExecutionState, PageSummary, Screenshot, SemanticNode,
+    SemanticSnapshot, SnapshotMode, BROWSER_IDLE_TIMEOUT, MAX_BATCH_OPERATIONS, MAX_BROWSERS,
+    MAX_BROWSER_LIFETIME, MAX_IMAGE_BYTES, MAX_IMAGE_DIMENSION, MAX_INPUT_TEXT_BYTES,
+    MAX_NODE_TEXT_BYTES, MAX_PAGES_PER_BROWSER, MAX_PAGE_SUMMARIES, MAX_SNAPSHOT_BYTES,
+    MAX_SNAPSHOT_NODES, SHUTDOWN_TIMEOUT,
 };
 use base64::{engine::general_purpose, Engine as _};
 use sha2::{Digest, Sha256};
@@ -791,6 +792,109 @@ impl BrowserSupervisor {
         }
     }
 
+    pub fn batch(
+        &self,
+        browser_id: &str,
+        page_id: &str,
+        operations: &[BatchOperation],
+    ) -> BrowserResult<BatchResult> {
+        if operations.is_empty() || operations.len() > MAX_BATCH_OPERATIONS {
+            return Err(BrowserError::not_started(
+                "invalid_batch_count",
+                "batch requires 1..32 operations",
+            ));
+        }
+        self.touch_current(browser_id)?;
+        let mut state = self.operation_state()?;
+        let runtime = state
+            .browsers
+            .get_mut(browser_id)
+            .ok_or_else(|| stale_browser(browser_id))?;
+        let target = runtime.page_target(page_id)?;
+        let deadline = Instant::now() + Duration::from_secs(20);
+        let mut result = BatchResult {
+            execution_state: ExecutionState::NotStarted,
+            requested_count: operations.len(),
+            completed_count: 0,
+            stopped_at_index: None,
+            remaining_count: operations.len(),
+            needs_snapshot: false,
+            stability: None,
+            error: None,
+        };
+        for (index, operation) in operations.iter().enumerate() {
+            let attempt = (|| {
+                if Instant::now() >= deadline {
+                    return Err(BrowserError::not_started(
+                        "batch_deadline",
+                        "batch dispatch budget exhausted",
+                    ));
+                }
+                operation.validate()?;
+                let (element_id, action) = operation.authority();
+                let element = runtime.authorized_element(page_id, &target, element_id, action)?;
+                let node = element.backend_node_id;
+                match operation {
+                    BatchOperation::Click { .. } => runtime.backend.click(&target, node),
+                    BatchOperation::InputText { text, .. } => {
+                        runtime.backend.input_text(&target, node, text)
+                    }
+                    BatchOperation::SelectOption { option, .. } => {
+                        runtime.backend.select_option(&target, node, option)
+                    }
+                    BatchOperation::SetValue { value, .. } => {
+                        runtime.backend.set_value(&target, node, value)
+                    }
+                    BatchOperation::UploadFile { path, .. } => {
+                        runtime.backend.upload_file(&target, node, path)
+                    }
+                }
+            })();
+            if let Err(error) = attempt {
+                // Backend observed errors can still describe an explicitly completed effect.
+                if error.execution_state == ExecutionState::Completed {
+                    result.completed_count += 1;
+                }
+                if error.execution_state == ExecutionState::OutcomeUnknown {
+                    result.execution_state = ExecutionState::OutcomeUnknown;
+                }
+                result.remaining_count = operations.len()
+                    - result.completed_count
+                    - usize::from(error.execution_state == ExecutionState::OutcomeUnknown);
+                result.stopped_at_index = Some(index);
+                result.error = Some(error);
+                break;
+            }
+            result.completed_count += 1;
+            result.remaining_count -= 1;
+            // All field handlers may synchronously navigate, not just clicks.
+            // Reconcile even the final operation before reporting reusable authority.
+            if let Err(mut error) = runtime.refresh_document_fence(page_id, &target) {
+                error.execution_state = ExecutionState::Completed;
+                result.stopped_at_index = Some(index);
+                result.error = Some(error);
+                break;
+            }
+        }
+        if result.execution_state != ExecutionState::OutcomeUnknown && result.completed_count > 0 {
+            result.execution_state = ExecutionState::Completed;
+        }
+        if result.error.is_none() {
+            result.stability = Some(runtime.wait_after_effect(&target));
+            if let Err(mut error) = runtime.refresh_document_fence(page_id, &target) {
+                error.execution_state = ExecutionState::Completed;
+                result.stopped_at_index = Some(operations.len() - 1);
+                result.error = Some(error);
+            }
+        }
+        result.needs_snapshot =
+            result.error.is_some() || result.stability.as_ref().is_some_and(|s| !s.stable);
+        if let Some(error) = &mut result.error {
+            error.recovery_action.get_or_insert("snapshot");
+        }
+        Ok(result)
+    }
+
     fn element_effect<F>(
         &self,
         browser_id: &str,
@@ -808,25 +912,7 @@ impl BrowserSupervisor {
             .get_mut(browser_id)
             .ok_or_else(|| stale_browser(browser_id))?;
         let target_id = runtime.page_target(page_id)?;
-        runtime.refresh_document_fence(page_id, &target_id)?;
-        let element = runtime
-            .elements
-            .get(element_id)
-            .cloned()
-            .ok_or_else(stale_element)?;
-        let page = runtime
-            .pages
-            .get(page_id)
-            .ok_or_else(|| stale_page(page_id))?;
-        if element.page_id != page_id
-            || element.document_id != page.document_id
-            || element.snapshot_generation != page.snapshot_generation
-        {
-            return Err(stale_element());
-        }
-        if !element.capability.admits(action) {
-            return Err(unsupported_element_action());
-        }
+        let element = runtime.authorized_element(page_id, &target_id, element_id, action)?;
         effect(
             runtime.backend.as_mut(),
             &target_id,
@@ -867,6 +953,32 @@ impl BrowserSupervisor {
 }
 
 impl BrowserRuntime {
+    fn authorized_element(
+        &mut self,
+        page_id: &str,
+        target_id: &str,
+        element_id: &str,
+        action: AdmittedBrowserAction,
+    ) -> BrowserResult<ElementIdentity> {
+        self.refresh_document_fence(page_id, target_id)?;
+        let element = self
+            .elements
+            .get(element_id)
+            .cloned()
+            .ok_or_else(stale_element)?;
+        let page = self.pages.get(page_id).ok_or_else(|| stale_page(page_id))?;
+        if element.page_id != page_id
+            || element.document_id != page.document_id
+            || element.snapshot_generation != page.snapshot_generation
+        {
+            return Err(stale_element());
+        }
+        if !element.capability.admits(action) {
+            return Err(unsupported_element_action());
+        }
+        Ok(element)
+    }
+
     fn new(backend: Box<dyn BrowserBackend>) -> Self {
         let now = Instant::now();
         Self {
@@ -1148,10 +1260,12 @@ fn stale_browser(browser_id: &str) -> BrowserError {
 }
 
 fn stale_page(page_id: &str) -> BrowserError {
-    BrowserError::not_started(
+    let mut error = BrowserError::not_started(
         "stale_page",
         format!("page_id '{page_id}' is no longer current"),
-    )
+    );
+    error.recovery_action = Some("pages");
+    error
 }
 
 fn unsupported_element_action() -> BrowserError {
@@ -1176,6 +1290,7 @@ fn opaque_id(prefix: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    mod batch;
     use super::*;
     use crate::cdp::{
         BackendConsoleEntry, BackendDiagnosticsSnapshot, BackendEventSnapshot, BackendFactory,
@@ -1226,6 +1341,7 @@ mod tests {
     }
 
     struct FakeBackend {
+        batch_probe: Option<Arc<Mutex<batch::BatchProbe>>>,
         pages: Vec<BackendPage>,
         document_generation: u64,
         snapshot_node_count: usize,
@@ -1247,6 +1363,7 @@ mod tests {
 
         fn with_snapshot_nodes(snapshot_node_count: usize) -> Self {
             Self {
+                batch_probe: None,
                 pages: vec![BackendPage {
                     target_id: "private-target".to_string(),
                     title: "Fixture".to_string(),
@@ -1306,6 +1423,17 @@ mod tests {
 
     impl BrowserBackend for FakeBackend {
         fn pages(&mut self) -> BrowserResult<Vec<BackendPage>> {
+            if self
+                .batch_probe
+                .as_ref()
+                .is_some_and(|p| p.lock().unwrap().fail_freshness)
+            {
+                return Err(BrowserError::observed(
+                    "fixture_pages_failed",
+                    "freshness observation failed",
+                    None,
+                ));
+            }
             if self.fail_pages_after_create && self.page_created {
                 return Err(BrowserError::observed(
                     "fixture_pages_failed",
@@ -1331,6 +1459,13 @@ mod tests {
             _target_id: &str,
             _max_depth: u32,
         ) -> BrowserResult<BackendSnapshot> {
+            if self.batch_probe.is_some() {
+                return Ok(BackendSnapshot {
+                    document_id: self.pages[0].document_id.clone(),
+                    nodes: batch::form_nodes(),
+                    truncated: false,
+                });
+            }
             if self.compact_select_page {
                 let (nodes, truncated) = crate::cdp::project_ax_nodes(
                     &compact_select_ax_nodes(),
@@ -1542,7 +1677,7 @@ mod tests {
             Ok(())
         }
         fn click(&mut self, _target_id: &str, _backend_node_id: i64) -> BrowserResult<()> {
-            Ok(())
+            self.record_batch_effect(format!("click:{_backend_node_id}"))
         }
         fn input_text(
             &mut self,
@@ -1550,7 +1685,7 @@ mod tests {
             _backend_node_id: i64,
             _text: &str,
         ) -> BrowserResult<()> {
-            Ok(())
+            self.record_batch_effect(format!("input:{_backend_node_id}:{_text}"))
         }
         fn select_option(
             &mut self,
@@ -1558,7 +1693,7 @@ mod tests {
             _backend_node_id: i64,
             _option: &str,
         ) -> BrowserResult<()> {
-            Ok(())
+            self.record_batch_effect(format!("select:{_backend_node_id}:{_option}"))
         }
         fn set_value(
             &mut self,
@@ -1566,7 +1701,7 @@ mod tests {
             _backend_node_id: i64,
             _value: &str,
         ) -> BrowserResult<()> {
-            Ok(())
+            self.record_batch_effect(format!("value:{_backend_node_id}:{_value}"))
         }
         fn upload_file(
             &mut self,
@@ -1574,7 +1709,7 @@ mod tests {
             _backend_node_id: i64,
             _path: &std::path::Path,
         ) -> BrowserResult<()> {
-            Ok(())
+            self.record_batch_effect(format!("upload:{_backend_node_id}:{}", _path.display()))
         }
         fn key(&mut self, _target_id: &str, _key: BrowserKey) -> BrowserResult<()> {
             Ok(())
@@ -1584,6 +1719,13 @@ mod tests {
             _target_id: &str,
             _timeout: Duration,
         ) -> BrowserResult<BrowserStability> {
+            if let Some(probe) = &self.batch_probe {
+                let mut probe = probe.lock().unwrap();
+                probe.waits += 1;
+                if probe.replace_on_settle {
+                    self.pages[0].document_id = "replaced-during-settle".into();
+                }
+            }
             if self.wait_fails {
                 return Err(BrowserError::observed(
                     "fixture_wait_failed",

@@ -21,9 +21,10 @@ browser_observe / browser_act
 ```
 
 `browser_observe` is guaranteed read-only and has the closed actions `targets`,
-`browsers`, `pages`, `snapshot`, and `screenshot`. `browser_act` has the closed
-actions `launch`, `new_page`, `navigate`, `click`, `input_text`, `key`,
-`close_page`, and `close_browser`. The model surface does not expose one MCP tool
+`browsers`, `pages`, `snapshot`, `screenshot`, `console`, `network`, and `diagnostics`.
+`browser_act` has the closed actions `launch`, `new_page`, `navigate`, `reload`,
+`click`, `input_text`, `select_option`, `set_value`, `upload_file`, `batch`, `key`,
+`clear_diagnostics`, `close_page`, and `close_browser`. The model surface does not expose one MCP tool
 per CDP primitive, and it does not accept arbitrary protocol methods, scripts,
 Browser executables, command-line arguments, profile paths, debugger endpoints,
 or remote CDP endpoints.
@@ -33,6 +34,43 @@ The Runner wire remains more precise than the model facade. It uses distinct
 navigation, element effects, key input, and close operations. This separation
 preserves rolling compatibility, capability admission, telemetry, and exact
 failure attribution without inflating the model tool inventory.
+
+### Bounded form batches
+
+`browser_act(action=batch)` sends one `browser_batch` Runner invocation containing
+1..32 ordered `input_text`, `select_option`, `set_value`, `click`, or `upload_file`
+operations for one exact Browser/page. Each operation carries only an opaque
+element identity and its action-specific value; upload additionally supplies the
+authorized same-Runner Project and relative path. Server Project authorization
+and Runner upload-path validation run before any batch effect. The batch payload
+is capped at 256 KiB; individual field byte bounds are unchanged. Old Runners
+without the additive `browser_batch` capability are rejected before dispatch.
+
+The existing Supervisor holds its operation lock across the batch. Every element
+effect uses the same document freshness, page, snapshot generation and admitted
+action checks as a single effect. Every successful operation, including clicks,
+is followed by document reconciliation. Ordinary effects keep sibling identities
+valid; navigation, document replacement and new snapshots invalidate them. No
+label-based navigation prediction or remapping exists. Successful batches settle
+once and check document freshness again after settling. Dispatch has a 20-second
+absolute budget checked before each operation; a running operation retains its
+existing bounded backend requests. The batch transport wait is 120 seconds to
+leave room for that operation's terminal reply, not to add retries or per-field
+settle waits.
+
+Any rejection, uncertain outcome or failed freshness check stops the batch.
+`completed_count` records known completed operations; `stopped_at_index` is
+zero-based and `stopped_execution_state` uses the existing certainty enum.
+Aggregate `execution_state=not_started` means no effect started, `completed`
+preserves known completion even when a later operation was rejected, and
+`outcome_unknown` preserves uncertainty. `remaining_count` counts definitely
+unstarted operations, including a rejected operation but excluding an uncertain
+one. A post-effect freshness failure stops at the completed operation's index.
+Transport loss can omit progress counts: never infer zero completion from their
+absence. `needs_snapshot` and observation recovery replace retry suggestions.
+Always take a fresh verification snapshot after filling, and observe after
+structural/page changes. `campus-application` remains a planner and final submit
+remains `ready_for_review`.
 
 ## Authority and model surfaces
 
@@ -58,8 +96,9 @@ Operator may expose them directly.
 
 ## Runner capabilities and lifecycle
 
-The Runner advertises three independent registration-required capabilities:
-`browser_observe`, `browser_control`, and `browser_launch`. They are absent/false on
+The Runner advertises independent registration-required capabilities:
+`browser_observe`, `browser_control`, `browser_launch`,
+`browser_element_action_admission`, and `browser_batch`. They are absent/false on
 older Runners and are never inferred by the Server from OS identity, protocol
 generation, shell support, Computer capabilities, or an assumed browser install.
 At startup the Runner performs deterministic local Chromium-family executable

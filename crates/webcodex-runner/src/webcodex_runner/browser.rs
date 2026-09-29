@@ -16,6 +16,57 @@ use webcodex_core::runner_operation::{RunnerBrowserOperation, RunnerBrowserOpera
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+struct BatchRequest {
+    browser_id: String,
+    page_id: String,
+    operations: Vec<serde_json::Value>,
+}
+
+fn resolve_batch_operations(
+    policy: &RunnerPolicy,
+    operations: Vec<serde_json::Value>,
+) -> BrowserResult<Vec<webcodex_browser::BatchOperation>> {
+    if operations.is_empty() || operations.len() > webcodex_browser::MAX_BATCH_OPERATIONS {
+        return Err(BrowserError::not_started(
+            "invalid_batch_count",
+            "batch requires 1..32 operations",
+        ));
+    }
+    operations
+        .into_iter()
+        .map(|mut operation| {
+            if operation.get("action").and_then(serde_json::Value::as_str) == Some("upload_file") {
+                let root = operation
+                    .as_object_mut()
+                    .and_then(|o| o.remove("project_root"))
+                    .and_then(|v| v.as_str().map(str::to_owned))
+                    .ok_or_else(|| {
+                        BrowserError::not_started(
+                            "invalid_request",
+                            "upload requires an authorized project root",
+                        )
+                    })?;
+                let path = operation
+                    .get("path")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or_else(|| {
+                        BrowserError::not_started(
+                            "invalid_request",
+                            "upload requires a project-relative path",
+                        )
+                    })?;
+                let resolved = resolve_upload_path(policy, &root, path)?;
+                operation["path"] = json!(resolved);
+            }
+            serde_json::from_value(operation).map_err(|_| {
+                BrowserError::not_started("invalid_request", "invalid batch operation")
+            })
+        })
+        .collect()
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct EmptyRequest {}
 
 #[derive(Debug, Deserialize)]
@@ -144,160 +195,188 @@ pub(crate) fn handle_browser_operation(
     operation: &RunnerBrowserOperation,
 ) -> CommandResult {
     let start = Instant::now();
-    let output = match operation.kind {
-        RunnerBrowserOperationKind::ListBrowsers => {
-            parse::<EmptyRequest>(&operation.payload).map(|_| {
-                let browsers = supervisor.list_browsers();
-                json!({
-                    "count": browsers.len(),
-                    "browsers": browsers,
-                })
-            })
-        }
-        RunnerBrowserOperationKind::ListPages => parse::<PagesRequest>(&operation.payload)
-            .and_then(|request| {
-                supervisor
-                    .pages(&request.browser_id, request.limit)
-                    .map(|pages| {
-                        json!({
-                            "count": pages.len(),
-                            "pages": pages,
-                        })
+    if operation.kind == RunnerBrowserOperationKind::Batch
+        && operation.payload.len() > operation.kind.max_payload_bytes()
+    {
+        return ok_cmd(
+            start,
+            json!({"ok": false, "execution_state": "not_started",
+            "error": BrowserError::not_started("invalid_request", "batch payload exceeds 256 KiB")}),
+        );
+    }
+    let output =
+        match operation.kind {
+            RunnerBrowserOperationKind::Batch => parse::<BatchRequest>(&operation.payload)
+                .and_then(|request| {
+                    let operations = resolve_batch_operations(policy, request.operations)?;
+                    supervisor
+                        .batch(&request.browser_id, &request.page_id, &operations)
+                        .map(|v| json!(v))
+                }),
+            RunnerBrowserOperationKind::ListBrowsers => parse::<EmptyRequest>(&operation.payload)
+                .map(|_| {
+                    let browsers = supervisor.list_browsers();
+                    json!({
+                        "count": browsers.len(),
+                        "browsers": browsers,
                     })
-            }),
-        RunnerBrowserOperationKind::Snapshot => parse::<SnapshotRequest>(&operation.payload)
-            .and_then(|request| {
-                supervisor
-                    .snapshot(
+                }),
+            RunnerBrowserOperationKind::ListPages => parse::<PagesRequest>(&operation.payload)
+                .and_then(|request| {
+                    supervisor
+                        .pages(&request.browser_id, request.limit)
+                        .map(|pages| {
+                            json!({
+                                "count": pages.len(),
+                                "pages": pages,
+                            })
+                        })
+                }),
+            RunnerBrowserOperationKind::Snapshot => parse::<SnapshotRequest>(&operation.payload)
+                .and_then(|request| {
+                    supervisor
+                        .snapshot(
+                            &request.browser_id,
+                            &request.page_id,
+                            request.mode,
+                            request
+                                .max_nodes
+                                .unwrap_or_else(default_snapshot_node_limit),
+                            request.max_depth.unwrap_or_else(default_snapshot_depth),
+                        )
+                        .map(|v| json!(v))
+                }),
+            RunnerBrowserOperationKind::Screenshot => parse::<PageRequest>(&operation.payload)
+                .and_then(|request| {
+                    supervisor
+                        .screenshot(&request.browser_id, &request.page_id)
+                        .map(|v| json!(v))
+                }),
+            RunnerBrowserOperationKind::Console => parse::<PageRequest>(&operation.payload)
+                .and_then(|request| supervisor.console(&request.browser_id, &request.page_id)),
+            RunnerBrowserOperationKind::Network => parse::<PageRequest>(&operation.payload)
+                .and_then(|request| supervisor.network(&request.browser_id, &request.page_id)),
+            RunnerBrowserOperationKind::Diagnostics => {
+                parse::<DiagnosticsRequest>(&operation.payload).and_then(|request| {
+                    supervisor.diagnostics(
                         &request.browser_id,
                         &request.page_id,
-                        request.mode,
-                        request
-                            .max_nodes
-                            .unwrap_or_else(default_snapshot_node_limit),
-                        request.max_depth.unwrap_or_else(default_snapshot_depth),
+                        request.include_all_console,
+                        request.include_all_network,
+                        request.since_cursor,
                     )
-                    .map(|v| json!(v))
-            }),
-        RunnerBrowserOperationKind::Screenshot => parse::<PageRequest>(&operation.payload)
-            .and_then(|request| {
-                supervisor
-                    .screenshot(&request.browser_id, &request.page_id)
-                    .map(|v| json!(v))
-            }),
-        RunnerBrowserOperationKind::Console => parse::<PageRequest>(&operation.payload)
-            .and_then(|request| supervisor.console(&request.browser_id, &request.page_id)),
-        RunnerBrowserOperationKind::Network => parse::<PageRequest>(&operation.payload)
-            .and_then(|request| supervisor.network(&request.browser_id, &request.page_id)),
-        RunnerBrowserOperationKind::Diagnostics => parse::<DiagnosticsRequest>(&operation.payload)
-            .and_then(|request| {
-                supervisor.diagnostics(
-                    &request.browser_id,
-                    &request.page_id,
-                    request.include_all_console,
-                    request.include_all_network,
-                    request.since_cursor,
-                )
-            }),
-        RunnerBrowserOperationKind::ClearDiagnostics => parse::<PageRequest>(&operation.payload)
-            .and_then(|request| {
-                supervisor
-                    .clear_diagnostics(&request.browser_id, &request.page_id)
-                    .map(|_| json!({}))
-            }),
-        RunnerBrowserOperationKind::Launch => parse::<EmptyRequest>(&operation.payload)
-            .and_then(|_| supervisor.launch().map(|v| json!(v))),
-        RunnerBrowserOperationKind::NewPage => parse::<BrowserRequest>(&operation.payload)
-            .and_then(|request| supervisor.new_page(&request.browser_id).map(|v| json!(v))),
-        RunnerBrowserOperationKind::Navigate => parse::<NavigateRequest>(&operation.payload)
-            .and_then(|request| {
-                supervisor
-                    .navigate(&request.browser_id, &request.page_id, &request.url)
-                    .map(|stability| json!({"stability": stability}))
-            }),
-        RunnerBrowserOperationKind::Reload => {
-            parse::<PageRequest>(&operation.payload).and_then(|request| {
-                supervisor
-                    .reload(&request.browser_id, &request.page_id)
-                    .map(|stability| json!({"stability": stability}))
-            })
-        }
-        RunnerBrowserOperationKind::Click => {
-            parse::<ElementRequest>(&operation.payload).and_then(|request| {
-                supervisor
-                    .click(&request.browser_id, &request.page_id, &request.element_id)
-                    .map(|stability| json!({"stability": stability}))
-            })
-        }
-        RunnerBrowserOperationKind::InputText => parse::<InputTextRequest>(&operation.payload)
-            .and_then(|request| {
-                supervisor
-                    .input_text(
-                        &request.browser_id,
-                        &request.page_id,
-                        &request.element_id,
-                        &request.text,
-                    )
-                    .map(|stability| json!({"stability": stability}))
-            }),
-        RunnerBrowserOperationKind::SelectOption => {
-            parse::<SelectOptionRequest>(&operation.payload).and_then(|request| {
-                supervisor
-                    .select_option(
-                        &request.browser_id,
-                        &request.page_id,
-                        &request.element_id,
-                        &request.option,
-                    )
-                    .map(|stability| json!({"stability": stability}))
-            })
-        }
-        RunnerBrowserOperationKind::SetValue => parse::<SetValueRequest>(&operation.payload)
-            .and_then(|request| {
-                supervisor
-                    .set_value(
-                        &request.browser_id,
-                        &request.page_id,
-                        &request.element_id,
-                        &request.value,
-                    )
-                    .map(|stability| json!({"stability": stability}))
-            }),
-        RunnerBrowserOperationKind::UploadFile => parse::<UploadFileRequest>(&operation.payload)
-            .and_then(|request| {
-                let path = resolve_upload_path(policy, &request.project_root, &request.path)?;
-                supervisor
-                    .upload_file(
-                        &request.browser_id,
-                        &request.page_id,
-                        &request.element_id,
-                        &path,
-                    )
-                    .map(|stability| json!({"stability": stability}))
-            }),
-        RunnerBrowserOperationKind::Key => {
-            parse::<KeyRequest>(&operation.payload).and_then(|request| {
-                supervisor
-                    .key(&request.browser_id, &request.page_id, request.key)
-                    .map(|stability| json!({"stability": stability}))
-            })
-        }
-        RunnerBrowserOperationKind::ClosePage => {
-            parse::<PageRequest>(&operation.payload).and_then(|request| {
-                supervisor
-                    .close_page(&request.browser_id, &request.page_id)
-                    .map(|_| json!({}))
-            })
-        }
-        RunnerBrowserOperationKind::CloseBrowser => parse::<BrowserRequest>(&operation.payload)
-            .and_then(|request| {
-                supervisor
-                    .close_browser(&request.browser_id)
-                    .map(|_| json!({}))
-            }),
-    };
+                })
+            }
+            RunnerBrowserOperationKind::ClearDiagnostics => {
+                parse::<PageRequest>(&operation.payload).and_then(|request| {
+                    supervisor
+                        .clear_diagnostics(&request.browser_id, &request.page_id)
+                        .map(|_| json!({}))
+                })
+            }
+            RunnerBrowserOperationKind::Launch => parse::<EmptyRequest>(&operation.payload)
+                .and_then(|_| supervisor.launch().map(|v| json!(v))),
+            RunnerBrowserOperationKind::NewPage => parse::<BrowserRequest>(&operation.payload)
+                .and_then(|request| supervisor.new_page(&request.browser_id).map(|v| json!(v))),
+            RunnerBrowserOperationKind::Navigate => parse::<NavigateRequest>(&operation.payload)
+                .and_then(|request| {
+                    supervisor
+                        .navigate(&request.browser_id, &request.page_id, &request.url)
+                        .map(|stability| json!({"stability": stability}))
+                }),
+            RunnerBrowserOperationKind::Reload => parse::<PageRequest>(&operation.payload)
+                .and_then(|request| {
+                    supervisor
+                        .reload(&request.browser_id, &request.page_id)
+                        .map(|stability| json!({"stability": stability}))
+                }),
+            RunnerBrowserOperationKind::Click => parse::<ElementRequest>(&operation.payload)
+                .and_then(|request| {
+                    supervisor
+                        .click(&request.browser_id, &request.page_id, &request.element_id)
+                        .map(|stability| json!({"stability": stability}))
+                }),
+            RunnerBrowserOperationKind::InputText => parse::<InputTextRequest>(&operation.payload)
+                .and_then(|request| {
+                    supervisor
+                        .input_text(
+                            &request.browser_id,
+                            &request.page_id,
+                            &request.element_id,
+                            &request.text,
+                        )
+                        .map(|stability| json!({"stability": stability}))
+                }),
+            RunnerBrowserOperationKind::SelectOption => {
+                parse::<SelectOptionRequest>(&operation.payload).and_then(|request| {
+                    supervisor
+                        .select_option(
+                            &request.browser_id,
+                            &request.page_id,
+                            &request.element_id,
+                            &request.option,
+                        )
+                        .map(|stability| json!({"stability": stability}))
+                })
+            }
+            RunnerBrowserOperationKind::SetValue => parse::<SetValueRequest>(&operation.payload)
+                .and_then(|request| {
+                    supervisor
+                        .set_value(
+                            &request.browser_id,
+                            &request.page_id,
+                            &request.element_id,
+                            &request.value,
+                        )
+                        .map(|stability| json!({"stability": stability}))
+                }),
+            RunnerBrowserOperationKind::UploadFile => {
+                parse::<UploadFileRequest>(&operation.payload).and_then(|request| {
+                    let path = resolve_upload_path(policy, &request.project_root, &request.path)?;
+                    supervisor
+                        .upload_file(
+                            &request.browser_id,
+                            &request.page_id,
+                            &request.element_id,
+                            &path,
+                        )
+                        .map(|stability| json!({"stability": stability}))
+                })
+            }
+            RunnerBrowserOperationKind::Key => {
+                parse::<KeyRequest>(&operation.payload).and_then(|request| {
+                    supervisor
+                        .key(&request.browser_id, &request.page_id, request.key)
+                        .map(|stability| json!({"stability": stability}))
+                })
+            }
+            RunnerBrowserOperationKind::ClosePage => parse::<PageRequest>(&operation.payload)
+                .and_then(|request| {
+                    supervisor
+                        .close_page(&request.browser_id, &request.page_id)
+                        .map(|_| json!({}))
+                }),
+            RunnerBrowserOperationKind::CloseBrowser => parse::<BrowserRequest>(&operation.payload)
+                .and_then(|request| {
+                    supervisor
+                        .close_browser(&request.browser_id)
+                        .map(|_| json!({}))
+                }),
+        };
 
     let value = match output {
+        Ok(mut result) if operation.kind == RunnerBrowserOperationKind::Batch => {
+            let object = result.as_object_mut().expect("serialized batch receipt");
+            let execution_state = object.remove("execution_state").expect("batch certainty");
+            let error = object.remove("error");
+            if let Some(error) = &error {
+                object.insert(
+                    "stopped_execution_state".into(),
+                    error["execution_state"].clone(),
+                );
+            }
+            json!({"ok": error.is_none(), "execution_state": execution_state, "result": result, "error": error})
+        }
         Ok(result) => json!({
             "ok": true,
             "execution_state": ExecutionState::Completed,
@@ -322,11 +401,12 @@ fn resolve_upload_path(
     if project_root.is_empty()
         || project_root.contains('\0')
         || relative_path.is_empty()
+        || relative_path.len() > 4096
         || relative_path.contains('\0')
     {
         return Err(BrowserError::not_started(
             "invalid_upload_path",
-            "Browser upload requires a non-empty project root and project-relative file path",
+            "Browser upload requires a non-empty project root and a NUL-free project-relative path within 4096 UTF-8 bytes",
         ));
     }
     let raw_root = Path::new(project_root);
@@ -416,6 +496,7 @@ fn parse<T: DeserializeOwned>(payload: &str) -> BrowserResult<T> {
 
 #[cfg(test)]
 mod tests {
+    mod batch;
     use super::*;
     use webcodex_core::runner_operation::RunnerBrowserOperationKind;
 

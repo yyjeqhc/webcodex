@@ -11,6 +11,18 @@ pub(super) fn browser_observe_audit_projection(call: &BrowserObserveToolCall) ->
 
 pub(super) fn browser_act_audit_projection(call: &BrowserActToolCall) -> Value {
     match call {
+        BrowserActToolCall::Batch {
+            client_id,
+            browser_id,
+            page_id,
+            operations,
+        } => serde_json::json!({
+            "action": "batch",
+            "client_id": client_id,
+            "browser_id": browser_id,
+            "page_id": page_id,
+            "operation_count": operations.len(),
+        }),
         BrowserActToolCall::Launch { client_id } => serde_json::json!({
             "action": "launch",
             "client_id": client_id,

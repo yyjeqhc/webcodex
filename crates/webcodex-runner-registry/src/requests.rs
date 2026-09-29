@@ -2467,6 +2467,7 @@ impl RunnerRegistry {
                 | "browser_select_option"
                 | "browser_set_value"
                 | "browser_upload_file"
+                | "browser_batch"
         );
         let required_feature = match kind {
             "browser_list_browsers"
@@ -2485,18 +2486,18 @@ impl RunnerRegistry {
             | "browser_select_option"
             | "browser_set_value"
             | "browser_upload_file"
+            | "browser_batch"
             | "browser_key"
             | "browser_close_page"
             | "browser_clear_diagnostics"
             | "browser_close" => RunnerFeature::BrowserControl,
             _ => return Err("invalid browser request kind".to_string()),
         };
-        const MAX_BROWSER_REQUEST_PAYLOAD_BYTES: usize = 32 * 1024;
-        if payload.len() > MAX_BROWSER_REQUEST_PAYLOAD_BYTES || payload.contains('\0') {
-            return Err("browser request payload is invalid or too large".to_string());
-        }
         let operation_kind = RunnerBrowserOperationKind::from_wire(kind)
             .ok_or_else(|| "invalid browser request kind".to_string())?;
+        if payload.len() > operation_kind.max_payload_bytes() || payload.contains('\0') {
+            return Err("browser request payload is invalid or too large".to_string());
+        }
         let request_id = next_request_id();
         let (tx, rx) = oneshot::channel();
         let request = encode_runner_operation(
@@ -2521,6 +2522,13 @@ impl RunnerRegistry {
                 "capability_unavailable: runner {client_id} does not support {}",
                 required_feature.as_wire_name()
             ));
+        }
+        if kind == "browser_batch"
+            && !current
+                .runner_features
+                .supports(RunnerFeature::BrowserBatch)
+        {
+            return Err("capability_unavailable: runner does not support browser_batch".into());
         }
         if requires_element_action_admission
             && !current

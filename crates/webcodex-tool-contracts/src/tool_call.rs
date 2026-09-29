@@ -854,7 +854,62 @@ impl BrowserKeyCall {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, JsonSchema)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
+pub enum BrowserBatchOperation {
+    Click {
+        #[schemars(length(min = 1, max = 128))]
+        #[schemars(regex(pattern = "^element_[A-Za-z0-9_-]{16,64}$"))]
+        element_id: String,
+    },
+    InputText {
+        #[schemars(length(min = 1, max = 128))]
+        #[schemars(regex(pattern = "^element_[A-Za-z0-9_-]{16,64}$"))]
+        element_id: String,
+        #[schemars(length(min = 1, max = 4096))]
+        text: String,
+    },
+    SelectOption {
+        #[schemars(length(min = 1, max = 128))]
+        #[schemars(regex(pattern = "^element_[A-Za-z0-9_-]{16,64}$"))]
+        element_id: String,
+        /// Exact native option value or trimmed visible option text.
+        #[schemars(length(min = 1, max = 4096))]
+        option: String,
+    },
+    SetValue {
+        #[schemars(length(min = 1, max = 128))]
+        #[schemars(regex(pattern = "^element_[A-Za-z0-9_-]{16,64}$"))]
+        element_id: String,
+        /// Exact native form-control value, for example 2027-06 for input[type=month].
+        #[schemars(length(min = 1, max = 4096))]
+        value: String,
+    },
+    UploadFile {
+        #[schemars(length(min = 1, max = 128))]
+        #[schemars(regex(pattern = "^element_[A-Za-z0-9_-]{16,64}$"))]
+        element_id: String,
+        /// Authorized Runner project containing the file to upload.
+        #[schemars(length(min = 1, max = 512))]
+        project: String,
+        /// Project-relative path to one existing regular file.
+        #[schemars(length(min = 1, max = 4096))]
+        path: String,
+    },
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, JsonSchema)]
+#[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 pub enum BrowserActToolCall {
+    Batch {
+        #[schemars(length(min = 1, max = 128))]
+        client_id: String,
+        #[schemars(regex(pattern = "^browser_[A-Za-z0-9_-]{16,64}$"))]
+        browser_id: String,
+        #[schemars(regex(pattern = "^page_[A-Za-z0-9_-]{16,64}$"))]
+        page_id: String,
+        #[schemars(length(min = 1, max = 32))]
+        operations: Vec<BrowserBatchOperation>,
+    },
+
     Launch {
         #[schemars(length(min = 1, max = 128))]
         client_id: String,
@@ -1020,6 +1075,7 @@ impl BrowserActToolCall {
             Self::SelectOption { .. } => "select_option",
             Self::SetValue { .. } => "set_value",
             Self::UploadFile { .. } => "upload_file",
+            Self::Batch { .. } => "batch",
             Self::Key { .. } => "key",
             Self::ClearDiagnostics { .. } => "clear_diagnostics",
             Self::ClosePage { .. } => "close_page",

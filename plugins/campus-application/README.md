@@ -7,6 +7,14 @@ The Plugin is deliberately split from Browser execution:
 - Browser observation supplies semantic controls and opaque element identities.
 - `campus-application` maps those controls to a structured resume profile and proposes bounded actions.
 - the caller executes ordinary Browser actions and takes a fresh snapshot after every structural or page-step mutation.
+
+For a built-in Browser `plan_fill` result, send up to 32 same-page field actions
+through `browser_act(action="batch")`, using the opaque elements from the same
+snapshot. Batch preserves order and stops on stale authority, rejection or
+uncertainty; inspect its completion counts and follow observation recovery rather
+than replaying effects. Take a fresh verification snapshot after filling. Keep
+section-expansion and page-step mutations separate. The plugin remains a planner;
+final submission remains `ready_for_review` and is never automatic.
 - final submit controls become a `ready_for_review` boundary with no click action.
 
 ## Install, build, and test

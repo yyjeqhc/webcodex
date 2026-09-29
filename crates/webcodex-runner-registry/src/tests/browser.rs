@@ -1,11 +1,96 @@
 use super::*;
 
+#[tokio::test]
+async fn browser_batch_is_one_bounded_runner_invocation() {
+    let registry = RunnerRegistry::default();
+    let alice = auth_context(Some("alice"), false);
+    register_browser_runner(&registry, "browser-batch", true, true, true, true, true).await;
+    let operations = vec![
+        serde_json::json!({"action": "input_text", "element_id": "element_fixture", "text": "x".repeat(4096)});
+        32
+    ];
+    let payload = serde_json::json!({"browser_id": "browser_fixture", "page_id": "page_fixture", "operations": operations}).to_string();
+    assert!(payload.len() > 32 * 1024);
+    let (_, _receiver) = registry
+        .enqueue_browser(
+            "browser-batch".into(),
+            "browser_batch",
+            payload.clone(),
+            "alice".into(),
+            Some(&alice),
+            120,
+        )
+        .await
+        .unwrap();
+    let poll = || RunnerPollRequest {
+        client_id: "browser-batch".into(),
+        runner_instance_id: "browser-inst".into(),
+    };
+    let request = registry.poll(poll()).await.unwrap().unwrap();
+    assert_eq!(request.kind, "browser_batch");
+    assert_eq!(request.stdin.as_deref(), Some(payload.as_str()));
+    assert!(request.command.is_empty());
+    assert!(request.process.is_none());
+    assert!(request.script.is_none());
+    assert!(registry.poll(poll()).await.unwrap().is_none());
+    assert!(registry
+        .enqueue_browser(
+            "browser-batch".into(),
+            "browser_batch",
+            "x".repeat(256 * 1024 + 1),
+            "alice".into(),
+            Some(&alice),
+            120
+        )
+        .await
+        .unwrap_err()
+        .contains("too large"));
+}
+
+#[tokio::test]
+async fn browser_batch_requires_additive_capability_without_dispatch() {
+    let registry = RunnerRegistry::default();
+    let alice = auth_context(Some("alice"), false);
+    register_browser_runner(
+        &registry,
+        "browser-old-batch",
+        true,
+        true,
+        true,
+        false,
+        true,
+    )
+    .await;
+    let error = registry
+        .enqueue_browser(
+            "browser-old-batch".into(),
+            "browser_batch",
+            "{}".into(),
+            "alice".into(),
+            Some(&alice),
+            120,
+        )
+        .await
+        .unwrap_err();
+    assert!(error.contains("browser_batch"), "{error}");
+    assert!(error.contains("capability_unavailable"), "{error}");
+    assert!(registry
+        .poll(RunnerPollRequest {
+            client_id: "browser-old-batch".into(),
+            runner_instance_id: "browser-inst".into(),
+        })
+        .await
+        .unwrap()
+        .is_none());
+}
+
 async fn register_browser_runner(
     registry: &RunnerRegistry,
     client_id: &str,
     observe: bool,
     control: bool,
     element_action_admission: bool,
+    batch: bool,
     launch: bool,
 ) {
     registry
@@ -28,6 +113,7 @@ async fn register_browser_runner(
                 browser_observe: observe,
                 browser_control: control,
                 browser_element_action_admission: element_action_admission,
+                browser_batch: batch,
                 browser_launch: launch,
                 ..v2_baseline_capabilities()
             },
@@ -41,7 +127,7 @@ async fn register_browser_runner(
 async fn browser_capability_is_checked_before_dispatch_and_never_falls_back() {
     let registry = RunnerRegistry::default();
     let alice = auth_context(Some("alice"), false);
-    register_browser_runner(&registry, "browser-old", false, false, false, false).await;
+    register_browser_runner(&registry, "browser-old", false, false, false, false, false).await;
 
     for (kind, payload, capability) in [
         ("browser_list_browsers", r#"{}"#, "browser_observe"),
@@ -95,7 +181,7 @@ async fn browser_capability_is_checked_before_dispatch_and_never_falls_back() {
 async fn browser_element_action_admission_is_additive_and_fails_closed_for_old_runners() {
     let registry = RunnerRegistry::default();
     let alice = auth_context(Some("alice"), false);
-    register_browser_runner(&registry, "browser-legacy", true, true, false, true).await;
+    register_browser_runner(&registry, "browser-legacy", true, true, false, false, true).await;
 
     for kind in [
         "browser_snapshot",
@@ -157,7 +243,7 @@ async fn browser_element_action_admission_is_additive_and_fails_closed_for_old_r
 async fn browser_precise_operation_is_preserved_on_wire_without_shell_fields() {
     let registry = RunnerRegistry::default();
     let alice = auth_context(Some("alice"), false);
-    register_browser_runner(&registry, "browser-new", true, true, true, true).await;
+    register_browser_runner(&registry, "browser-new", true, true, true, false, true).await;
 
     let (_request_id, _receiver) = registry
         .enqueue_browser(

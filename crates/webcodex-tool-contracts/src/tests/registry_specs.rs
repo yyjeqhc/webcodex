@@ -500,7 +500,7 @@ fn tool_specs_describe_default_coding_loop_preferences() {
         "continue independent work",
         "sparse terminal job attention",
         "observe_jobs only for logs/details/recovery",
-        "wait_for_job_terminal only when terminal outcome is a true dependency",
+        "bounded wait_for_job_readiness when terminal outcome blocks progress",
         "duration alone does not select a detached primitive",
     ] {
         assert!(
@@ -521,7 +521,7 @@ fn tool_specs_describe_default_coding_loop_preferences() {
         "continue independent work",
         "sparse terminal job attention",
         "observe_jobs only for logs/details/recovery",
-        "wait_for_job_terminal only when terminal outcome is a true dependency",
+        "bounded wait_for_job_readiness when terminal outcome blocks progress",
         "run_detached_process",
         "survive runner restart/upgrade/stop/replacement",
         "duration alone is not a reason to detach",
@@ -546,7 +546,7 @@ fn tool_specs_describe_default_coding_loop_preferences() {
         "continue independent work",
         "sparse terminal job attention",
         "observe_jobs only for logs/details/recovery",
-        "wait_for_job_terminal only when terminal outcome is a true dependency",
+        "bounded wait_for_job_readiness when terminal outcome blocks progress",
         "script bodies never become shell command text",
         "survive runner restart/upgrade/stop/replacement",
     ] {

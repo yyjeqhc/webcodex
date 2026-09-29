@@ -32,9 +32,11 @@ Bootstrap 或 discovery 返回 `project_ref` 后，普通 Project-scoped tool ca
 
 ## 工具策略 guidance
 
-`work_on_project` 的 `guidance_profile` 是可选的：显式值始终优先；MCP 调用省略时
-使用已配置的 `WEBCODEX_MCP_HOST_PROFILE` 作为 model-guidance 默认值；非 MCP/internal
-调用省略时仍回退到 `direct`。Workflow contract v26 保持共享的 `guidance`、
+`work_on_project` 的 `guidance_profile` 是可选的：显式值只覆盖指导文本；MCP 省略时
+使用当次请求的 `X-WebCodex-MCP-Profile`，header 省略才使用部署默认
+`WEBCODEX_MCP_HOST_PROFILE`。HTTP header 独立决定返回/等待策略，见
+[MCP 客户端策略](MCP.zh-CN.md#同一-server-的客户端策略)。非 MCP/internal
+调用省略时仍回退到 `direct`。Workflow contract v27 保持共享的 `guidance`、
 `model_protocol` 和 review `roles`，并在显式 `context_request=["webcodex.workflow"]`
 时通过 `tool_strategy` 返回本次请求选中的 effective 策略。
 
@@ -66,8 +68,8 @@ Bootstrap 或 discovery 返回 `project_ref` 后，普通 Project-scoped tool ca
   如果 ready work、blocked set 和 semantic information 都没有变化，不要机械续同一组 wait，
   接近预算边界时正常 yield。Job terminal 不等于 mechanically_followable；
   fallback_recovery、authority change、ambiguous result、outcome_unknown 和 effect uncertainty
-  仍回模型。需要跨 turn 的硬依赖使用 `wait_for_job_terminal`。不要用 `observe_jobs`
-  heartbeat 保活。startup
+  仍回模型。Host cell 返回不等于当前 turn 完成；继续在当前 turn 推进任务，不假设
+  自动开启下一 turn，也不要用 `observe_jobs` heartbeat 保活。startup
   `tool_strategy.host_orchestration` catalog 与 exact
   `tool_manifest(tool_name=...)` hint 都从 canonical `ToolDefinition` metadata 派生；
   它们只提供 guidance，不改变 `ToolCompositionPolicy`、authority、effect、permission、

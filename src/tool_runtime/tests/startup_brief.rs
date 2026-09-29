@@ -221,7 +221,7 @@ fn assert_builtin_workflow(output: &Value) {
         "any may unblock a branch",
         "all requires every blocker",
         "Deadline recomputes work/set",
-        "Future activation: wait_for_job_terminal",
+        "no automatic next turn",
         "Never retry/redispatch",
     ] {
         assert!(defaults.contains(phrase), "workflow guidance: {phrase}");

@@ -123,7 +123,7 @@ fn builtin_coding_workflow_defaults_cover_unnamed_tasks_without_granting_authori
         "passive Job attention",
         "observe_jobs is for logs/details/recovery",
         "list_jobs is identity recovery",
-        "Future activation: wait_for_job_terminal",
+        "no automatic next turn",
         "finish ready work",
         "After Rust stabilizes, format once",
     ] {
@@ -416,7 +416,7 @@ fn sparse_pending_receipts_rely_on_complete_static_scheduling_guidance() {
             "never mechanically refill",
             "observe_jobs is for logs/details/recovery",
             "Never retry/redispatch",
-            "Future activation: wait_for_job_terminal",
+            "no automatic next turn",
             "fallback_recovery",
         ] {
             assert!(
@@ -424,10 +424,16 @@ fn sparse_pending_receipts_rely_on_complete_static_scheduling_guidance() {
                 "missing static pending guidance: {rule}"
             );
         }
+        assert!(!workflow["guidance"]
+            .to_string()
+            .contains("wait_for_job_terminal"));
+        assert!(!workflow["tool_strategy"]
+            .to_string()
+            .contains("wait_for_job_terminal"));
         if profile == CodingGuidanceProfile::HostCodeMode {
             for rule in [
                 "join barrier",
-                "Cross-turn hard dependency",
+                "Cell return is not turn completion",
                 "do not mechanically repeat the same-set wait",
                 "fallback_recovery never auto-runs",
             ] {

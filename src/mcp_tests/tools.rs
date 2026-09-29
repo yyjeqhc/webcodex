@@ -2204,15 +2204,15 @@ fn mcp_compact_descriptions_preserve_selection_and_schema_literals() {
             vec![
                 "observation_token",
                 "after_observation_token",
-                "never redispatches",
+                "Never redispatch",
             ],
         ),
         (
             "wait_for_job_terminal",
             vec![
-                "exact existing Job",
-                "returned continuation",
-                "Host continuation",
+                "Optional durable terminal attention",
+                "Not a blocking wait",
+                "current turn",
             ],
         ),
         (
@@ -3848,8 +3848,7 @@ async fn mcp_2026_control_sidecars_gateway_strip_and_closed_schema() {
 #[test]
 fn compact_bootstrap_description_teaches_explicit_context_and_reuse() {
     use crate::mcp::discovery::compact_tool;
-    let mut tool =
-        json!({"name": "work_on_project", "description": "placeholder", "inputSchema": {}});
+    let mut tool = json!({"name": "work_on_project", "description": "placeholder", "inputSchema": {"properties":{"_wc":{}}}});
     compact_tool(&mut tool);
     let description = tool["description"].as_str().unwrap();
     for phrase in [
@@ -3870,6 +3869,38 @@ fn compact_bootstrap_description_teaches_explicit_context_and_reuse() {
     }
     assert!(!description.contains("Defaults return"));
     assert!(!description.contains("context_request"));
+}
+
+#[tokio::test]
+async fn compact_bootstrap_guidance_matches_advertised_context_capability() {
+    let runtime = test_runtime_with_mcp_settings(true, false);
+    for modern in [false, true] {
+        let params = if modern {
+            mcp_2026_params(json!({}))
+        } else {
+            json!({})
+        };
+        let McpOutcome::Ok(body) =
+            handle_mcp_request(&runtime, rpc("tools/list", Some(json!(8000)), params), None).await
+        else {
+            panic!("tools/list");
+        };
+        let tool = body["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|tool| tool["name"] == "work_on_project")
+            .unwrap();
+        assert_eq!(
+            tool.pointer("/inputSchema/properties/_wc").is_some(),
+            modern
+        );
+        let description = tool["description"].as_str().unwrap();
+        assert_eq!(description.contains("_wc.context"), modern);
+        if !modern {
+            assert!(description.contains("read_files"));
+        }
+    }
 }
 
 #[tokio::test]

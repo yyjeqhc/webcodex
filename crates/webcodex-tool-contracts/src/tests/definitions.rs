@@ -1128,7 +1128,7 @@ fn turn_economy_descriptors_stay_converged_and_bounded() {
         for phrase in [
             "continue independent work",
             "observe_jobs only for",
-            "wait_for_job_terminal only when",
+            "bounded wait_for_job_readiness",
         ] {
             assert!(spec.description.contains(phrase), "{name}: {phrase}");
         }
@@ -1188,10 +1188,12 @@ fn turn_economy_descriptors_stay_converged_and_bounded() {
     let wait = spec_named(&specs, "wait_for_job_terminal");
     assert!(wait
         .description
-        .contains("only when no independent work remains"));
+        .contains("explicitly selected continuation workflow"));
+    assert!(wait.description.contains("not a blocking wait"));
+    assert!(wait.description.contains("never starts a model turn"));
     assert!(wait
         .description
-        .contains("explicit logs/details or recovery"));
+        .contains("wait_for_job_readiness in the current turn"));
     let list = spec_named(&specs, "list_jobs");
     assert!(list
         .description
@@ -1521,7 +1523,8 @@ fn readiness_tool_is_sequential_outer_only_and_does_not_expand_legacy() {
         "do not mechanically repeat the same-set wait",
         "largest safe remaining Host activation budget",
         "no fixed 10/15/20s slice",
-        "logs/details/recovery use observe_jobs",
+        "Logs/details/recovery use observe_jobs",
+        "No automatic next turn",
     ] {
         assert!(description.contains(phrase), "{phrase}: {description}");
     }

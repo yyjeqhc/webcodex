@@ -5526,9 +5526,8 @@ impl ToolCall {
         }
         let mut arguments = strip_tool_call_expectation_metadata(arguments);
         validate_run_shell_login(name, &arguments)?;
-        let normalization =
-            canonicalize_process_argv_alias(name, &mut arguments)?
-                .then_some(crate::ToolInputNormalizationCode::ArgvToArgs);
+        let normalization = canonicalize_process_argv_alias(name, &mut arguments)?
+            .then_some(crate::ToolInputNormalizationCode::ArgvToArgs);
         canonicalize_cargo_check_packages(name, &mut arguments)?;
         if name == "tool_manifest" {
             if let Some(object) = arguments.as_object_mut() {

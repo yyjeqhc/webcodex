@@ -3,6 +3,169 @@ use super::*;
 // Durable model-ergonomics and MCP tool-surface measurement integration tests.
 // Keep these separate from the general HTTP transport lifecycle coverage.
 
+#[tokio::test]
+async fn model_ergonomics_normalization_reaches_api_and_mcp_action_audit_without_payloads() {
+    use crate::runner_protocol::{
+        RunnerJobUpdateRequest, RunnerPollRequest, ShellCommandExecutionState,
+    };
+    let config = test_config(Some("secret"));
+    let (_tmp, db) = test_db();
+    let registry = Arc::new(crate::runner_http::RunnerRegistry::default());
+    registry
+        .register(crate::test_support::current_runner_registration(
+            RunnerRegisterRequest {
+                client_id: "input-audit".to_string(),
+                runner_instance_id: "inst-input-audit".to_string(),
+                runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
+                capabilities: RunnerCapabilities {
+                    shell: true,
+                    structured_process_argv: true,
+                    ..Default::default()
+                },
+                computer_session_availability: None,
+                process_started_at: None,
+                build: None,
+                job_concurrency_limit: None,
+                job_inventory: None,
+                coding_agent_providers: None,
+                coding_agent_inventory: None,
+                display_name: None,
+                owner: None,
+                hostname: None,
+                host_context: None,
+                policy: None,
+            },
+        ))
+        .await
+        .unwrap();
+    crate::test_support::apply_project_inventory_snapshot(
+        &registry,
+        "input-audit",
+        "inst-input-audit",
+        vec![RunnerProjectSummary {
+            id: "demo".to_string(),
+            name: None,
+            path: "/tmp/input-audit".to_string(),
+            allow_patch: true,
+            kind: Some("repo".to_string()),
+            registration_source: None,
+            description: None,
+            hooks: Vec::new(),
+            disabled: false,
+            revision: None,
+            root_fingerprint: None,
+            lineage: None,
+            git_branch: None,
+            git_head: None,
+            git_dirty: None,
+            updated_at: 1,
+            shell_profile: None,
+        }],
+    )
+    .await;
+    let runtime = Arc::new(ToolRuntime::new(
+        registry.clone(),
+        Arc::new(crate::tool_runtime::RuntimeInfo::default()),
+    ));
+    let service = Service::new(
+        build_test_router(config, db.clone(), runtime).push(
+            Router::with_path("api/tools/call")
+                .hoop(crate::AuthMiddleware)
+                .post(crate::runtime_http::tools_call),
+        ),
+    );
+    for transport in ["api", "mcp", "mcp_gateway"] {
+        let arguments = json!({"project":"agent:input-audit:demo", "executable":"PRIVATE_EXECUTABLE", "argv":["PRIVATE_ARG"]});
+        let (url, body) = if transport == "api" {
+            (
+                "http://localhost/api/tools/call",
+                json!({"tool":"run_process", "params":arguments}),
+            )
+        } else {
+            let params = if transport == "mcp_gateway" {
+                adaptive_runtime_gateway_params("run_process", arguments)
+            } else {
+                json!({"name":"run_process", "arguments":arguments})
+            };
+            (
+                "http://localhost/mcp",
+                json!({"jsonrpc":"2.0", "id":701, "method":"tools/call", "params":params}),
+            )
+        };
+        let audit_id = format!("normalization-{transport}");
+        let request = TestClient::post(url)
+            .bearer_auth("secret")
+            .add_header("x-action-session-id", &audit_id, true)
+            .json(&body);
+        let responder = async {
+            let request = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+                loop {
+                    if let Some(request) = registry
+                        .poll(RunnerPollRequest {
+                            client_id: "input-audit".to_string(),
+                            runner_instance_id: "inst-input-audit".to_string(),
+                        })
+                        .await
+                        .unwrap()
+                    {
+                        break request;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                }
+            })
+            .await
+            .expect("fake Runner request within one absolute deadline");
+            assert_eq!(request.kind, "start_process_job");
+            assert_eq!(request.process.as_ref().unwrap().args, ["PRIVATE_ARG"]);
+            registry
+                .update_job(RunnerJobUpdateRequest {
+                    client_id: "input-audit".to_string(),
+                    runner_instance_id: "inst-input-audit".to_string(),
+                    job_id: request.job_id.expect("structured Job identity"),
+                    request_id: Some(request.request_id),
+                    update_seq: None,
+                    status: "completed".to_string(),
+                    exit_code: Some(0),
+                    stdout_chunk: Some("PRIVATE_OUTPUT".to_string()),
+                    stderr_chunk: None,
+                    log_snapshot: None,
+                    duration_ms: Some(1),
+                    error: None,
+                    command_execution_state: Some(ShellCommandExecutionState::Completed),
+                    validation_progress: None,
+                    test_count_evidence: None,
+                    activity: None,
+                    finished: true,
+                })
+                .await
+                .unwrap();
+        };
+        let (mut response, ()) = tokio::join!(request.send(&service), responder);
+        assert_eq!(effective_status(&response), StatusCode::OK);
+        let body: Value = response.take_json().await.unwrap();
+        let result = if transport == "api" {
+            &body
+        } else {
+            &body["result"]["structuredContent"]
+        };
+        assert_eq!(result["success"], true, "{body}");
+        assert_eq!(
+            result["output"]["input_normalization"]["code"],
+            "argv_to_args"
+        );
+        assert!(result["output"].get("input_normalization_code").is_none());
+        let events = db.list_action_events(&audit_id, 10).unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].operation.as_deref(), Some("run_process"));
+        let summary: Value = serde_json::from_str(&events[0].summary_json).unwrap();
+        let telemetry = &summary["model_ergonomics"];
+        assert_eq!(telemetry["schema_version"], 13);
+        assert_eq!(telemetry["input_normalization_code"], "argv_to_args");
+        assert!(!telemetry.to_string().contains("hint"));
+        assert!(!summary.to_string().contains("PRIVATE_"), "{summary}");
+    }
+}
+
 // Explicit compact-schema=false keeps the full outputSchema projection. Use an
 // explicit runtime snapshot so no process-global env guard is needed.
 #[tokio::test]
@@ -312,7 +475,7 @@ async fn http_mcp_work_on_project_preferences_persist_without_private_request_va
     assert_eq!(events[0].operation.as_deref(), Some("work_on_project"));
     let summary: Value = serde_json::from_str(&events[0].summary_json).unwrap();
     let telemetry = &summary["model_ergonomics"];
-    assert_eq!(telemetry["schema_version"], 12);
+    assert_eq!(telemetry["schema_version"], 13);
     let facts = &telemetry["work_on_project"];
     assert_eq!(facts["resume_requested"], true);
     assert_eq!(facts["source"], "invalid");

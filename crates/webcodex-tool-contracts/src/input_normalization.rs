@@ -33,7 +33,10 @@ impl ToolInputNormalizationCode {
 
     /// Exact closed lookup. No trimming, aliases, or arbitrary diagnostic strings.
     pub fn from_wire(value: &str) -> Option<Self> {
-        Self::all().iter().copied().find(|code| code.as_str() == value)
+        Self::all()
+            .iter()
+            .copied()
+            .find(|code| code.as_str() == value)
     }
 
     pub const fn model_hint(self) -> &'static str {

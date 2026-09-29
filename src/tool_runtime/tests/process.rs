@@ -326,6 +326,14 @@ async fn model_argv_alias_executes_canonical_process_and_returns_success_hint() 
     )
     .await;
     let outcome = task.await.unwrap();
+    let completion = outcome.model_ergonomics.as_ref().unwrap();
+    let record = completion
+        .record_for_tool_result(outcome.result.as_ref().unwrap())
+        .unwrap();
+    assert_eq!(
+        record.input_normalization_code,
+        Some(webcodex_tool_contracts::ToolInputNormalizationCode::ArgvToArgs)
+    );
     let result = outcome.result.unwrap();
     assert!(result.success, "{result:?}");
     assert_eq!(

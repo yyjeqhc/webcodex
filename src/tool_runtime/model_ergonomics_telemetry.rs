@@ -6,6 +6,8 @@
 
 pub(crate) mod invocation;
 pub(crate) mod job_convergence;
+#[cfg(test)]
+mod normalization_tests;
 
 use super::edit_tool_telemetry::{edit_tool_surface, EditToolSurface};
 use super::tool_definition::model_visible_tool_definitions;
@@ -18,6 +20,7 @@ use serde_json::Value;
 use std::time::Duration;
 use std::time::Instant;
 use webcodex_tool_contracts::tool_inputs::CodingGuidanceProfile;
+use webcodex_tool_contracts::ToolInputNormalizationCode;
 
 const MAX_STRUCTURED_KIND_BYTES: usize = 64;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -95,6 +98,7 @@ pub(crate) struct ModelErgonomicsTimer {
     readiness: Option<JobReadinessTelemetry>,
     edit: Option<EditFacts>,
     canonical_execution_state: Option<String>,
+    input_normalization_code: Option<ToolInputNormalizationCode>,
 }
 
 #[derive(Debug, Clone)]
@@ -111,6 +115,7 @@ pub(crate) struct ModelErgonomicsCompletion {
     readiness: Option<JobReadinessTelemetry>,
     edit: Option<EditFacts>,
     canonical_execution_state: Option<String>,
+    input_normalization_code: Option<ToolInputNormalizationCode>,
     pub(crate) job_convergence: Option<job_convergence::JobConvergenceRecord>,
 }
 
@@ -130,6 +135,8 @@ pub(crate) struct ModelErgonomicsRecord {
     pub(crate) error_kind: Option<String>,
     pub(crate) failure_kind: Option<String>,
     pub(crate) recovery_kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) input_normalization_code: Option<ToolInputNormalizationCode>,
     pub(crate) execution_state: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) finish_summary_only: Option<bool>,
@@ -279,6 +286,7 @@ impl ModelErgonomicsTimer {
             readiness: None,
             edit: None,
             canonical_execution_state: None,
+            input_normalization_code: None,
             readiness_requested_jobs: (tool_name == "wait_for_job_readiness")
                 .then(|| {
                     arguments
@@ -293,6 +301,7 @@ impl ModelErgonomicsTimer {
     /// Preserve bounded canonical facts before the late model projection.
     pub(crate) fn capture_canonical_result(&mut self, result: &ToolResult) {
         self.canonical_execution_state = execution_state(&result.output);
+        self.input_normalization_code = input_normalization_code(result.success, &result.output);
         self.readiness = readiness_telemetry(
             self.readiness_requested_jobs,
             result.success,
@@ -319,6 +328,7 @@ impl ModelErgonomicsTimer {
             readiness: self.readiness,
             edit: self.edit,
             canonical_execution_state: self.canonical_execution_state,
+            input_normalization_code: self.input_normalization_code,
             job_convergence: None,
         }
     }
@@ -339,6 +349,7 @@ impl ModelErgonomicsTimer {
             readiness: self.readiness,
             edit: self.edit,
             canonical_execution_state: self.canonical_execution_state,
+            input_normalization_code: self.input_normalization_code,
             job_convergence: None,
         }
     }
@@ -416,7 +427,7 @@ impl ModelErgonomicsCompletion {
             .unwrap_or_else(|| edit_facts(self.tool_name, success, output));
         let edit_uncertain = edit.outcome.as_deref() == Some("uncertain");
         ModelErgonomicsRecord {
-            schema_version: 12,
+            schema_version: 13,
             readiness: if success {
                 self.readiness
                     .clone()
@@ -437,6 +448,12 @@ impl ModelErgonomicsCompletion {
             error_kind,
             failure_kind,
             recovery_kind,
+            input_normalization_code: if success {
+                self.input_normalization_code
+                    .or_else(|| input_normalization_code(success, output))
+            } else {
+                None
+            },
             execution_state: self
                 .canonical_execution_state
                 .clone()
@@ -503,6 +520,14 @@ impl ModelErgonomicsCompletion {
             }),
         }
     }
+}
+
+// Read only the closed canonical code, never hints, arguments or parser text.
+fn input_normalization_code(success: bool, output: &Value) -> Option<ToolInputNormalizationCode> {
+    if !success {
+        return None;
+    }
+    ToolInputNormalizationCode::from_wire(output.get("input_normalization")?.get("code")?.as_str()?)
 }
 
 fn work_on_project_facts(
@@ -849,7 +874,7 @@ mod tests {
         let record = completion("tool_manifest", 0)
             .record_for_tool_result(&ToolResult::ok(json!({})))
             .unwrap();
-        assert_eq!(record.schema_version, 12);
+        assert_eq!(record.schema_version, 13);
         assert_eq!(record.work_on_project, None);
         assert!(!serde_json::to_string(&record)
             .unwrap()
@@ -1156,7 +1181,7 @@ mod tests {
             let record = completion("edit_project_files", 0)
                 .record_for_tool_result(&result)
                 .unwrap();
-            assert_eq!(record.schema_version, 12);
+            assert_eq!(record.schema_version, 13);
             assert_eq!(record.edit_surface.as_deref(), Some("structured_or_patch"));
             assert_eq!(record.edit_outcome.as_deref(), outcome);
             assert_eq!(record.edit_conflict_kind.as_deref(), conflict_kind);
@@ -1204,7 +1229,7 @@ mod tests {
                     .finish_after(Duration::ZERO)
                     .record_for_tool_result(&ToolResult::ok(json!({"private_body": "do-not-copy"})))
                     .unwrap();
-            assert_eq!(record.schema_version, 12);
+            assert_eq!(record.schema_version, 13);
             assert_eq!(record.finish_summary_only, Some(expected));
             assert!(record.serialized_result_bytes.is_some());
             let serialized = serde_json::to_string(&record).unwrap();

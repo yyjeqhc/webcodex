@@ -220,6 +220,14 @@ business arguments. Specialized gateways and early denials retain their existing
 entry/exit paths. No tool schema, direct admission or UI resource changes follow
 from this internal separation.
 
+Window-specific Console query assembly lives in
+`runtime_console_http::window_queries`, behind the same common authorization
+and error helpers; routes and DTOs stay at the adapter boundary. Audit admission
+and exhaustive ToolCall routing remain in `tool_audit`, while private `request`,
+`result` and `execution_identity` modules own their existing projections. Public
+audit import paths remain stable. Related tests are grouped by responsibility,
+not duplicated per adapter; see [module boundaries](implementation/console-audit-module-boundaries.md).
+
 ### Runtime ownership and presentation boundaries
 
 `tool_runtime::result_projection` owns request-scoped model result projection;

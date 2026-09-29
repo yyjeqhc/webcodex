@@ -7,7 +7,7 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::io;
 use std::path::PathBuf;
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use webcodex_core::runner_job_lifecycle::RunnerJobLifecycle;
 use webcodex_core::validation_identity::{
@@ -73,6 +73,11 @@ use super::util::{
 #[path = "identifier_tests.rs"]
 mod identifier_tests;
 
+mod recency;
+use recency::SessionRecency;
+mod writer;
+use writer::LedgerWriterGuard;
+
 #[cfg(test)]
 mod scale_tests;
 
@@ -94,217 +99,11 @@ pub struct SessionStore {
     fail_next_coding_continuity_precommit: Arc<std::sync::atomic::AtomicBool>,
 }
 
-/// Coordinates a dedicated OS thread that owns session-ledger serialize +
-/// atomic disk write. Callers only mark dirty (or flush); they never block
-/// async Tokio workers on full-store JSON + `fs::write`.
-///
-/// Why this exists: every `push_event` used to call `persist_after_mutation`
-/// synchronously on the request path, holding a global write mutex while
-/// cloning/serializing the full retained Session set (with bounded per-Session
-/// tails) and renaming on disk.
-/// Under concurrent MCP tools/call traffic that saturates the async runtime
-/// and surfaces as intermittent "no reply" hangs.
-struct LedgerWriterGuard {
-    shared: Arc<LedgerWriterShared>,
-    join: Mutex<Option<std::thread::JoinHandle<()>>>,
-}
-
-struct LedgerWriterShared {
-    state: Mutex<LedgerWriterState>,
-    cvar: Condvar,
-}
-
-struct LedgerWriterState {
-    /// Set by mutation paths; cleared when the writer begins a snapshot.
-    dirty: bool,
-    /// Monotonic counter advanced every time `dirty` is set. Flush waiters
-    /// wait until `writes_completed` reaches the generation they observed.
-    dirty_generation: u64,
-    /// Generation of the last completed write cycle.
-    writes_completed: u64,
-    shutdown: bool,
-}
-
-impl std::fmt::Debug for LedgerWriterGuard {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("LedgerWriterGuard").finish_non_exhaustive()
-    }
-}
-
-impl LedgerWriterGuard {
-    fn spawn(
-        store_inner: Arc<Mutex<SessionStoreInner>>,
-        write_mutex: Arc<Mutex<()>>,
-    ) -> Option<Arc<Self>> {
-        let shared = Arc::new(LedgerWriterShared {
-            state: Mutex::new(LedgerWriterState {
-                dirty: false,
-                dirty_generation: 0,
-                writes_completed: 0,
-                shutdown: false,
-            }),
-            cvar: Condvar::new(),
-        });
-        let shared_thread = Arc::clone(&shared);
-        let join = std::thread::Builder::new()
-            .name("session-ledger-writer".to_string())
-            .spawn(move || ledger_writer_loop(shared_thread, store_inner, write_mutex))
-            .ok()?;
-        Some(Arc::new(Self {
-            shared,
-            join: Mutex::new(Some(join)),
-        }))
-    }
-
-    fn mark_dirty(&self) -> u64 {
-        let mut state = self
-            .shared
-            .state
-            .lock()
-            .expect("session ledger writer state poisoned");
-        state.dirty = true;
-        state.dirty_generation = state.dirty_generation.saturating_add(1);
-        let generation = state.dirty_generation;
-        self.shared.cvar.notify_one();
-        generation
-    }
-
-    /// Block until the exact generation requested by the caller has been
-    /// written. Later concurrent dirty marks do not extend this fence.
-    fn flush_through(&self, generation: u64) {
-        let mut state = self
-            .shared
-            .state
-            .lock()
-            .expect("session ledger writer state poisoned");
-        while state.writes_completed < generation {
-            state = self
-                .shared
-                .cvar
-                .wait(state)
-                .expect("session ledger writer state poisoned");
-        }
-    }
-
-    /// Test/closeout barrier for every dirty mark observed at call time.
-    #[cfg(any(test, feature = "root-test-support"))]
-    fn flush(&self) {
-        let generation = self
-            .shared
-            .state
-            .lock()
-            .expect("session ledger writer state poisoned")
-            .dirty_generation;
-        self.flush_through(generation);
-    }
-}
-
-impl Drop for LedgerWriterGuard {
-    fn drop(&mut self) {
-        {
-            let mut state = self
-                .shared
-                .state
-                .lock()
-                .expect("session ledger writer state poisoned");
-            // Keep dirty as-is so the loop performs one final write before exit.
-            state.shutdown = true;
-            self.shared.cvar.notify_one();
-        }
-        if let Some(join) = self
-            .join
-            .lock()
-            .expect("session ledger writer join mutex poisoned")
-            .take()
-        {
-            let _ = join.join();
-        }
-    }
-}
-
-fn ledger_writer_loop(
-    shared: Arc<LedgerWriterShared>,
-    store_inner: Arc<Mutex<SessionStoreInner>>,
-    write_mutex: Arc<Mutex<()>>,
-) {
-    loop {
-        let generation = {
-            let mut state = shared
-                .state
-                .lock()
-                .expect("session ledger writer state poisoned");
-            while !state.dirty && !state.shutdown {
-                state = shared
-                    .cvar
-                    .wait(state)
-                    .expect("session ledger writer state poisoned");
-            }
-            if !state.dirty {
-                // shutdown with nothing pending
-                break;
-            }
-            let generation = state.dirty_generation;
-            state.dirty = false;
-            generation
-        };
-
-        // Snapshot + write under the same write mutex used by the synchronous
-        // test hook (`persist_after_mutation_with`), so a custom delayed write
-        // cannot race an older snapshot past a newer background write without
-        // the lock ordering the two.
-        let _write_guard = write_mutex
-            .lock()
-            .expect("session persistence mutex poisoned");
-        let snapshot = {
-            let inner = store_inner.lock().expect("session store mutex poisoned");
-            let path = inner
-                .persistence
-                .as_ref()
-                .map(|persistence| persistence.path.clone());
-            path.map(|path| (path, inner.to_persisted_ledger()))
-        };
-        let result = match snapshot {
-            Some((path, ledger)) => write_ledger_atomic(&path, &ledger).map_err(|err| {
-                bound_summary_string(&format!("persist_failed: {}: {err}", path.display()))
-            }),
-            None => Ok(()),
-        };
-        {
-            let mut inner = store_inner.lock().expect("session store mutex poisoned");
-            if let Some(persistence) = inner.persistence.as_mut() {
-                match &result {
-                    Ok(()) => persistence.last_persist_error = None,
-                    Err(error) => {
-                        tracing::warn!("session ledger persistence failed: {}", error);
-                        persistence.last_persist_error = Some(error.clone());
-                    }
-                }
-            }
-        }
-        {
-            let mut state = shared
-                .state
-                .lock()
-                .expect("session ledger writer state poisoned");
-            state.writes_completed = generation;
-            // Wake flush waiters; if dirty was re-set during the write the
-            // loop body runs again without waiting.
-            shared.cvar.notify_all();
-            if state.shutdown && !state.dirty {
-                break;
-            }
-        }
-        // Drop write_guard at end of iteration so a concurrent
-        // persist_after_mutation_with can interleave between cycles.
-        drop(_write_guard);
-    }
-}
-
 #[derive(Debug)]
 pub(super) struct SessionStoreInner {
     /// Durable workflow sessions. Mutated only via the helpers below.
     sessions: HashMap<String, StoredSession>,
-    lru: VecDeque<String>,
+    lru: SessionRecency,
     hot_session_capacity_target: usize,
     historical_session_retention_limit: usize,
     capacity_evictions: u64,
@@ -347,7 +146,7 @@ impl SessionStore {
         Self {
             inner: Arc::new(Mutex::new(SessionStoreInner {
                 sessions: HashMap::<String, StoredSession>::new(),
-                lru: VecDeque::new(),
+                lru: SessionRecency::default(),
                 hot_session_capacity_target,
                 historical_session_retention_limit,
                 capacity_evictions: 0,
@@ -384,9 +183,15 @@ impl SessionStore {
             historical_session_retention_limit,
             max_events_per_session,
         );
+        let mut lru = SessionRecency::default();
+        for id in &restored.lru {
+            if let Some(record) = restored.sessions.get(id) {
+                lru.touch(id, record.lifecycle() == SessionLifecycle::Closed);
+            }
+        }
         let inner = Arc::new(Mutex::new(SessionStoreInner {
             sessions: restored.sessions,
-            lru: restored.lru,
+            lru,
             hot_session_capacity_target,
             historical_session_retention_limit,
             capacity_evictions: restored.capacity_evictions,
@@ -2859,6 +2664,8 @@ impl SessionStoreInner {
                         record.events.pop_front();
                     }
                 }
+                // Update eviction eligibility in the same locked lifecycle commit.
+                self.touch(session_id);
                 let record = self
                     .sessions
                     .get(session_id)
@@ -3684,39 +3491,34 @@ impl SessionStoreInner {
     }
 
     pub(super) fn touch(&mut self, session_id: &str) {
-        self.lru.retain(|id| id != session_id);
-        if self.sessions.contains_key(session_id) {
-            self.lru.push_back(session_id.to_string());
+        if let Some(session) = self.sessions.get(session_id) {
+            self.lru
+                .touch(session_id, session.lifecycle() == SessionLifecycle::Closed);
         }
     }
 
     fn enforce_historical_retention_bound(&mut self) {
-        let mut closed_count = self
-            .sessions
-            .values()
-            .filter(|session| session.lifecycle() == SessionLifecycle::Closed)
-            .count();
-        if closed_count <= self.historical_session_retention_limit {
-            return;
-        }
-
-        let mut retained_order = VecDeque::with_capacity(self.lru.len());
-        while let Some(session_id) = self.lru.pop_front() {
-            let remove = closed_count > self.historical_session_retention_limit
-                && self
-                    .sessions
-                    .get(&session_id)
-                    .is_some_and(|session| session.lifecycle() == SessionLifecycle::Closed);
-            if remove {
-                if self.sessions.remove(&session_id).is_some() {
-                    closed_count = closed_count.saturating_sub(1);
-                    self.capacity_evictions = self.capacity_evictions.saturating_add(1);
-                }
-            } else {
-                retained_order.push_back(session_id);
+        while self.lru.closed_count() > self.historical_session_retention_limit {
+            let session_id = self
+                .lru
+                .oldest_closed()
+                .expect("closed count has an oldest entry")
+                .to_owned();
+            // Lifecycle remains authoritative; a recency index cannot authorize
+            // deleting an Active identity even if an internal invariant regresses.
+            if !self
+                .sessions
+                .get(&session_id)
+                .is_some_and(|session| session.lifecycle() == SessionLifecycle::Closed)
+            {
+                self.lru.remove(&session_id);
+                self.touch(&session_id);
+                continue;
             }
+            self.sessions.remove(&session_id);
+            self.lru.remove(&session_id);
+            self.capacity_evictions = self.capacity_evictions.saturating_add(1);
         }
-        self.lru = retained_order;
     }
 
     pub(super) fn summary(&self, session_id: &str, limit: Option<usize>) -> Option<SessionSummary> {

@@ -91,6 +91,10 @@ async fn terminal_observed_poll_complete_and_log() {
     assert_eq!(polled.command, "printf hello");
     let running = registry.get_job(&job.job_id).await.unwrap();
     assert_eq!(running.status, "agent_queued");
+    assert_eq!(
+        running.started_at, None,
+        "dispatch alone must not claim the shell command started"
+    );
     registry
         .complete(RunnerResultRequest {
             client_id: "oe".to_string(),
@@ -229,6 +233,95 @@ async fn job_update_rejects_mismatched_request_id_without_mutating_target_job() 
 
     let accepted = registry.update_job(update(request_b)).await.unwrap();
     assert_eq!(accepted.status, "running");
+}
+
+#[tokio::test]
+async fn dispatched_raw_shell_accepts_prestart_not_started_terminal_update() {
+    let registry = RunnerRegistry::default();
+    registry
+        .register(RunnerRegisterRequest {
+            computer_session_availability: None,
+            process_started_at: None,
+            build: None,
+            job_concurrency_limit: None,
+            job_inventory: None,
+            coding_agent_providers: None,
+            coding_agent_inventory: None,
+            client_id: "oe".to_string(),
+            runner_instance_id: "inst".to_string(),
+            runner_protocol_generation: crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2,
+            display_name: None,
+            owner: None,
+            hostname: None,
+            host_context: None,
+            capabilities: async_job_capabilities(),
+            policy: None,
+        })
+        .await
+        .unwrap();
+    let job = registry
+        .start_job(
+            ShellJobOpRequest {
+                login: false,
+                op: "start".to_string(),
+                client_id: Some("oe".to_string()),
+                cwd: None,
+                command: Some("printf ok".to_string()),
+                timeout_secs: Some(30),
+                job_id: None,
+                since_stdout_line: None,
+                since_stderr_line: None,
+                tail_lines: None,
+                limit: None,
+                codex: None,
+            },
+            "test".to_string(),
+        )
+        .await
+        .unwrap();
+    let request = registry
+        .poll(RunnerPollRequest {
+            client_id: "oe".to_string(),
+            runner_instance_id: "inst".to_string(),
+        })
+        .await
+        .unwrap()
+        .unwrap();
+
+    let terminal = registry
+        .update_job(RunnerJobUpdateRequest {
+            client_id: "oe".to_string(),
+            runner_instance_id: "inst".to_string(),
+            job_id: job.job_id.clone(),
+            request_id: Some(request.request_id),
+            update_seq: None,
+            status: "failed".to_string(),
+            stdout_chunk: None,
+            stderr_chunk: None,
+            log_snapshot: None,
+            exit_code: None,
+            duration_ms: Some(0),
+            error: Some("invalid Runner Job request: pre-spawn rejection".to_string()),
+            command_execution_state: Some(ShellCommandExecutionState::NotStarted),
+            validation_progress: None,
+            test_count_evidence: None,
+            activity: None,
+            finished: true,
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(terminal.status, "failed");
+    assert_eq!(
+        terminal.command_execution_state,
+        Some(ShellCommandExecutionState::NotStarted)
+    );
+    assert_eq!(terminal.started_at, None);
+    assert!(!terminal
+        .error
+        .as_deref()
+        .unwrap_or_default()
+        .contains("protocol violation"));
 }
 
 #[tokio::test]

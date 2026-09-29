@@ -699,12 +699,9 @@ impl RunnerRegistry {
                     if job.lifecycle == JobLifecycleState::Queued {
                         job.lifecycle = JobLifecycleState::RunnerQueued;
                         // Dispatch proves only that the Runner accepted the
-                        // Job request. A typed structured Job becomes started
-                        // only when the Runner reports `running` after a
-                        // successful child spawn.
-                        if job.structured_execution.is_none() {
-                            job.started_at = Some(now_ts());
-                        }
+                        // Job request. The command becomes started only when the
+                        // Runner reports running or a terminal execution outcome;
+                        // a pre-spawn rejection must remain NotStarted.
                         super::jobs::notify_job_update(job);
                     }
                 }

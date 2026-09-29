@@ -1374,6 +1374,7 @@ fn validate_runner_job_context_operation(
         !matches!(
             shell,
             "sh" | "bash"
+                | "bash_login"
                 | "powershell"
                 | "python"
                 | "javascript"

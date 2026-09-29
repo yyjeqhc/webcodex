@@ -5597,6 +5597,19 @@ fn runner_recovery_context_accepts_compact_session_base64url_alphabet() {
 }
 
 #[test]
+fn runner_recovery_context_accepts_bash_login_shell() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut request = shell_job_request(temp.path(), "printf ok");
+    request.login = true;
+    request.shell = Some(webcodex_core::workflow_session_contract::ExecutionShell::Bash);
+    let context = request.job_context.as_mut().unwrap();
+    context.shell = Some("bash_login".to_string());
+    let context = context.clone();
+
+    validate_runner_job_context(&context, &request, "ws-client").unwrap();
+}
+
+#[test]
 fn runner_recovery_context_accepts_javascript_script_job() {
     let temp = tempfile::tempdir().unwrap();
     let script = runner_protocol::ShellScriptPayload {

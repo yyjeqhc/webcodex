@@ -63,6 +63,7 @@ mod computer_schemas;
 mod definitions;
 mod edit_schemas;
 mod identifier_schemas;
+mod input_normalization;
 mod input_schemas;
 mod metadata_policy;
 mod migration_contracts;

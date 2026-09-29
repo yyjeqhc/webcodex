@@ -5475,7 +5475,7 @@ impl ToolCall {
     pub fn from_tool_name_with_normalization(
         name: &str,
         arguments: Value,
-    ) -> Result<(Self, Option<&'static str>), String> {
+    ) -> Result<(Self, Option<crate::ToolInputNormalizationCode>), String> {
         validate_model_facing_assertion_name(name, &arguments)?;
         validate_model_facing_result_expectation(name, &arguments)?;
         if name == "create_project"
@@ -5527,7 +5527,8 @@ impl ToolCall {
         let mut arguments = strip_tool_call_expectation_metadata(arguments);
         validate_run_shell_login(name, &arguments)?;
         let normalization =
-            canonicalize_process_argv_alias(name, &mut arguments)?.then_some("argv_to_args");
+            canonicalize_process_argv_alias(name, &mut arguments)?
+                .then_some(crate::ToolInputNormalizationCode::ArgvToArgs);
         canonicalize_cargo_check_packages(name, &mut arguments)?;
         if name == "tool_manifest" {
             if let Some(object) = arguments.as_object_mut() {

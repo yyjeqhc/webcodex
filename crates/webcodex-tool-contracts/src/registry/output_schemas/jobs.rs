@@ -70,7 +70,7 @@ fn input_normalization_schema() -> Value {
         "type": "object", "additionalProperties": false,
         "description": "Known lossless input normalization used to avoid a mechanical retry. No raw payload is repeated.",
         "properties": {
-            "code": {"type": "string", "enum": ["argv_to_args", "run_process_sh_c_to_run_shell", "run_process_bash_c_to_run_shell", "run_process_bash_lc_to_login_run_shell"]},
+            "code": {"type": "string", "enum": crate::ToolInputNormalizationCode::all()},
             "hint": {"type": "string", "maxLength": 80}
         },
         "required": ["code", "hint"]

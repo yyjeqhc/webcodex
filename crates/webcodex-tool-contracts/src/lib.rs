@@ -5,6 +5,7 @@
 //! Execution, authorization enforcement, connector orchestration, and side effects remain in
 //! the root application crate.
 
+pub mod input_normalization;
 pub mod metadata;
 pub mod registry;
 pub mod request_schema;
@@ -22,6 +23,7 @@ pub mod test_support;
 #[cfg(test)]
 mod tests;
 
+pub use input_normalization::ToolInputNormalizationCode;
 pub use metadata::*;
 pub use registry::*;
 pub use request_schema::*;

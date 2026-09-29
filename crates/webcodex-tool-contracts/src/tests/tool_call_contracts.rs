@@ -967,7 +967,7 @@ fn process_argv_alias_is_exact_and_canonical() {
         alias["argv"] = json!(["status"]);
         let (call, code) =
             ToolCall::from_tool_name_with_normalization(name, alias.clone()).unwrap();
-        assert_eq!(code, Some("argv_to_args"));
+        assert_eq!(code, Some(ToolInputNormalizationCode::ArgvToArgs));
         assert_eq!(
             serde_json::to_value(&call).unwrap()["params"]["args"],
             json!(["status"])
@@ -995,7 +995,7 @@ fn process_argv_alias_is_exact_and_canonical() {
             ToolCall::from_tool_name_with_normalization(name, alias.clone())
                 .unwrap()
                 .1,
-            Some("argv_to_args")
+            Some(ToolInputNormalizationCode::ArgvToArgs)
         );
         alias["args"] = json!(["different"]);
         assert_eq!(

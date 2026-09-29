@@ -2558,6 +2558,14 @@ async fn run_process_shell_command_mode_recovery_is_lossless_parser_ready_and_pr
                 if args[0] == "-lc" {
                     assert_eq!(result.output["shell"], "bash_login");
                 }
+                let expected_code = if args[0] == "-lc" {
+                    "run_process_bash_lc_to_login_run_shell"
+                } else if shell == "sh" {
+                    "run_process_sh_c_to_run_shell"
+                } else {
+                    "run_process_bash_c_to_run_shell"
+                };
+                assert_eq!(result.output["input_normalization"]["code"], expected_code);
                 assert!(result.output["input_normalization"]["hint"]
                     .as_str()
                     .unwrap()

@@ -1112,12 +1112,8 @@ impl ToolRuntime {
             .await;
         if result.success {
             if let Some(code) = input_normalization {
-                let hint = match code {
-                    "argv_to_args" => "normalized argv→args",
-                    _ => unreachable!("parser returns only stable known normalization codes"),
-                };
                 result.output["input_normalization"] =
-                    serde_json::json!({"code": code, "hint": hint});
+                    serde_json::json!({"code": code, "hint": code.model_hint()});
             }
         }
         if let Some(control) = control.as_mut() {

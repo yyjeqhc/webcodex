@@ -982,11 +982,15 @@ fn process_argv_alias_is_exact_and_canonical() {
                 .1,
             None
         );
-        let canonical_value = serde_json::to_value(ToolCall::from_tool_name(name, canonical).unwrap()).unwrap();
+        let canonical_value =
+            serde_json::to_value(ToolCall::from_tool_name(name, canonical).unwrap()).unwrap();
         assert_eq!(serde_json::to_value(&call).unwrap(), canonical_value);
         assert_eq!(call.tool_name(), name);
         alias["args"] = json!(["status"]);
-        assert_eq!(serde_json::to_value(ToolCall::from_tool_name(name, alias.clone()).unwrap()).unwrap(), canonical_value);
+        assert_eq!(
+            serde_json::to_value(ToolCall::from_tool_name(name, alias.clone()).unwrap()).unwrap(),
+            canonical_value
+        );
         assert_eq!(
             ToolCall::from_tool_name_with_normalization(name, alias.clone())
                 .unwrap()
@@ -1010,7 +1014,10 @@ fn process_argv_alias_is_exact_and_canonical() {
             let mut invalid = base.clone();
             invalid["argv"] = invalid_value.clone();
             invalid["args"] = invalid_value;
-            assert!(ToolCall::from_tool_name(name, invalid).is_err(), "identical aliases do not bypass typing");
+            assert!(
+                ToolCall::from_tool_name(name, invalid).is_err(),
+                "identical aliases do not bypass typing"
+            );
         }
         for field in ["timeout", "workdir", "arg", "command_args", "params"] {
             let mut invalid = base.clone();
@@ -1168,7 +1175,7 @@ fn from_tool_name_rejects_retired_inspection_tools_and_parses_retained_git_tools
 }
 
 #[test]
-fn continuation_endpoint_rotation_has_canonical_and_legacy_tool_names() {
+fn continuation_endpoint_rotation_only_retains_legacy_name_with_legacy_feature() {
     let args = json!({
         "agent_id": "wc_dagent_qqqqqqqqqqqqqqqq".to_string(),
         "host": "ChatGPT",
@@ -1184,9 +1191,20 @@ fn continuation_endpoint_rotation_has_canonical_and_legacy_tool_names() {
         ToolCall::RotateAgentContinuationEndpoint { .. }
     ));
 
-    let legacy = ToolCall::from_tool_name("attach_agent_endpoint", args).unwrap();
-    assert_eq!(legacy.tool_name(), "attach_agent_endpoint");
-    assert!(matches!(legacy, ToolCall::AttachAgentEndpoint { .. }));
+    #[cfg(feature = "legacy-gpt-actions")]
+    {
+        let legacy = ToolCall::from_tool_name("attach_agent_endpoint", args).unwrap();
+        assert_eq!(legacy.tool_name(), "attach_agent_endpoint");
+        assert!(matches!(legacy, ToolCall::AttachAgentEndpoint { .. }));
+    }
+    #[cfg(not(feature = "legacy-gpt-actions"))]
+    {
+        assert!(ToolCall::from_tool_name("attach_agent_endpoint", args.clone()).is_err());
+        assert!(serde_json::from_value::<ToolCall>(
+            json!({"tool":"attach_agent_endpoint", "params":args})
+        )
+        .is_err());
+    }
 }
 
 #[test]
@@ -2153,7 +2171,9 @@ fn retired_start_coding_task_is_a_canonical_unknown_tool() {
 
 #[test]
 fn present_agent_continuation_parses_ref_or_explicit_tuple_without_session() {
-    assert!(!registered_tool_specs().iter().any(|spec| spec.name == "present_agent_continuation"));
+    assert!(!registered_tool_specs()
+        .iter()
+        .any(|spec| spec.name == "present_agent_continuation"));
     let schema = input_schema_for_tool("present_agent_continuation");
     let properties = schema["properties"].as_object().unwrap();
     assert!(properties.contains_key("agent_continuation_ref"));

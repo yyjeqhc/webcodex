@@ -588,6 +588,22 @@ Historical persisted evidence should remain truthful about the past, but current
 ToolDefinitions and model projections should not carry obsolete tool API baggage
 solely to preserve old model behavior.
 
+### Sole endpoint-name legacy exception
+
+`attach_agent_endpoint` is absent from the default canonical ToolDefinition,
+ToolCall parser, exact discovery and normal catalog. Use
+`rotate_agent_continuation_endpoint`. The frozen `legacy-gpt-actions` adapter
+still names the old operation, so enabling that existing feature retains its
+old definition/parser/schema/dispatch as one explicit exception. This is not
+complete adapter-local isolation: legacy-enabled builds also retain that
+long-tail model entry. Moving its exact discovery and request adaptation wholly
+into the retiring adapter would expand this change; remove the exception with
+GPT Actions rather than adding more historical model names.
+
+The Store operation key named `attach_agent_endpoint` is a separate persisted
+idempotency domain and deliberately remains unchanged. No durable endpoint
+state, replay key, authorization or controller fencing is migrated here.
+
 ## 11. Measure friction before pruning tools
 
 Low usage alone does not prove a tool lacks value. A tool may be avoided because

@@ -108,6 +108,7 @@ fn tool_specs_annotations_are_canonical_semantic_projections() {
         "complete_agent_task_attempt",
         "update_agent_identity",
         "rotate_agent_continuation_endpoint",
+        #[cfg(feature = "legacy-gpt-actions")]
         "attach_agent_endpoint",
         "detach_agent_endpoint",
         "consume_agent_deliveries",

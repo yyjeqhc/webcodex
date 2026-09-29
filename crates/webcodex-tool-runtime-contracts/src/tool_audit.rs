@@ -5116,8 +5116,17 @@ impl ToolCallAuditProjection for ToolCall {
                 host,
                 client_attachment_id,
                 idempotency_key,
-            }
-            | Self::AttachAgentEndpoint {
+            } => typed_communication_request_audit(
+                CommunicationRequestAudit::AttachEndpoint,
+                &serde_json::json!({
+                    "agent_id": agent_id,
+                    "host": host,
+                    "client_attachment_id": client_attachment_id,
+                    "idempotency_key": idempotency_key,
+                }),
+            ),
+            #[cfg(feature = "legacy-gpt-actions")]
+            Self::AttachAgentEndpoint {
                 agent_id,
                 host,
                 client_attachment_id,

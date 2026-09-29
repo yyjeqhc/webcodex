@@ -3071,8 +3071,15 @@ impl ToolRuntime {
                 host,
                 client_attachment_id,
                 idempotency_key,
-            }
-            | ToolCall::AttachAgentEndpoint {
+            } => self.attach_agent_endpoint(
+                auth,
+                agent_id,
+                host,
+                client_attachment_id,
+                idempotency_key,
+            ),
+            #[cfg(feature = "legacy-gpt-actions")]
+            ToolCall::AttachAgentEndpoint {
                 agent_id,
                 host,
                 client_attachment_id,

@@ -36,7 +36,10 @@ edition.workspace = true
 
 [features]
 default = []
-legacy-gpt-actions = ["webcodex-tool-contracts/legacy-gpt-actions"]
+legacy-gpt-actions = [
+    "webcodex-tool-contracts/legacy-gpt-actions",
+    "webcodex-tool-runtime-contracts/legacy-gpt-actions",
+]
 experimental-code-mode = [
     "dep:webcodex-code-mode",
     "webcodex-code-mode/v8-runtime",

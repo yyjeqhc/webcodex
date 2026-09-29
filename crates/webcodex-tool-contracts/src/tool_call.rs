@@ -3650,8 +3650,9 @@ pub enum ToolCall {
         idempotency_key: String,
     },
 
-    /// Compatibility name for server-local continuation Endpoint rotation.
-    /// Attach a current Host/Client Endpoint to a durable Agent.
+    /// Frozen GPT Actions spelling only; absent from the default canonical parser.
+    /// This exception retires with the legacy adapter, not with a schema refresh.
+    #[cfg(feature = "legacy-gpt-actions")]
     AttachAgentEndpoint {
         /// Canonical durable Agent id owned by the current communication principal.
         #[schemars(regex(pattern = "^wc_dagent_[A-Za-z0-9_-]{16}$"))]
@@ -5749,6 +5750,7 @@ impl ToolCall {
             Self::ListAgentIdentities { .. } => "list_agent_identities",
             Self::UpdateAgentIdentity { .. } => "update_agent_identity",
             Self::RotateAgentContinuationEndpoint { .. } => "rotate_agent_continuation_endpoint",
+            #[cfg(feature = "legacy-gpt-actions")]
             Self::AttachAgentEndpoint { .. } => "attach_agent_endpoint",
             Self::PresentAgentContinuation { .. } => "present_agent_continuation",
             Self::AgentContinuationBind { .. } => "agent_continuation_bind",

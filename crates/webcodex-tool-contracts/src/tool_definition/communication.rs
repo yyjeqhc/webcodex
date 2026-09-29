@@ -1,7 +1,7 @@
 use super::ToolVisibility::{ModelHidden, ModelVisible};
 use super::{
-    def, model_spec, permission_risk, require_all_scopes, ToolDefinition,
-    PERMISSION_RISK_WRITE, TOOL_CATEGORY_COMMUNICATION,
+    def, model_spec, permission_risk, require_all_scopes, ToolDefinition, PERMISSION_RISK_WRITE,
+    TOOL_CATEGORY_COMMUNICATION,
 };
 use crate::metadata::{
     ToolPathHint::None as NoPath,
@@ -162,6 +162,9 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             .with_gpt_action_unsupported(),
         COMMUNICATION_MANAGE_SCOPES,
     ),
+    // Sole frozen GPT Actions name exception. Default Adaptive builds do not
+    // register or parse this historical spelling.
+    #[cfg(feature = "legacy-gpt-actions")]
     require_all_scopes(
         permission_risk(
             model_spec(
@@ -201,7 +204,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 false,
                 super::ToolSessionEvidencePolicy::NONE,
             ),
-            "Compatibility name for rotate_agent_continuation_endpoint. Rotates only the server-local continuation Endpoint record for an owned durable Agent, assigns a new monotonic controller generation, and makes older generations stale. The result's agent_continuation_ref pins that exact generation and is not a credential. It does not connect to, configure, or control ChatGPT or any external Host. Public rotation is not wake-capable until a separately authorized process-local Host binding is established. Exact idempotency replay returns the same Endpoint.",
+            "Frozen legacy GPT Actions name for rotate_agent_continuation_endpoint. Rotates only the server-local continuation Endpoint record for an owned durable Agent, assigns a new monotonic controller generation, and makes older generations stale. The result's agent_continuation_ref pins that exact generation and is not a credential. It does not connect to, configure, or control ChatGPT or any external Host. Public rotation is not wake-capable until a separately authorized process-local Host binding is established. Exact idempotency replay returns the same Endpoint.",
             ),
             PERMISSION_RISK_WRITE,
         ),

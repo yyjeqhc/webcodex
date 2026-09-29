@@ -64,6 +64,7 @@ fn canonical_execution_project_binding(
         | ToolCall::CargoFmt { project, .. }
         | ToolCall::CargoCheck { project, .. }
         | ToolCall::CargoTest { project, .. }
+        | ToolCall::ProjectBuild { project, .. }
         | ToolCall::ProjectValidate { project, .. }
         | ToolCall::GoTest { project, .. }
         | ToolCall::ListProjectFiles { project, .. }
@@ -751,6 +752,7 @@ impl ToolRuntime {
                             | ToolCall::CargoFmt { .. }
                             | ToolCall::CargoCheck { .. }
                             | ToolCall::CargoTest { .. }
+                            | ToolCall::ProjectBuild { .. }
                             | ToolCall::ProjectValidate { .. }
                             | ToolCall::GoTest { .. }
                     ) {
@@ -1039,6 +1041,7 @@ impl ToolRuntime {
                     trusted_recording_session_id,
                     trusted_recording_session_project,
                     logical_invocation_id,
+                    effective_return_timing.max_handoff_secs(),
                     protocol_capabilities,
                     correlation,
                     &mut bootstrap_context,
@@ -1155,6 +1158,7 @@ impl ToolRuntime {
         trusted_recording_session_id: Option<&str>,
         trusted_recording_session_project: Option<&str>,
         _logical_invocation_id: Option<&str>,
+        structured_handoff_max_secs: Option<u64>,
         protocol_capabilities: super::kernel::ToolProtocolCapabilities,
         correlation: &mut super::window_activity::ToolCallCorrelation,
         bootstrap_context: &mut Option<super::coding_task::BootstrapContext>,
@@ -1465,6 +1469,28 @@ impl ToolRuntime {
             | ToolCall::RunShell { .. }) => {
                 self.dispatch_shell_tool(call, ssh_resource, validation_assertion_name, auth)
                     .await
+            }
+
+            ToolCall::ProjectBuild {
+                project,
+                session_id,
+                cwd,
+                adapter,
+                scope,
+                timeout_secs,
+            } => {
+                self.project_build(
+                    project,
+                    session_id,
+                    cwd,
+                    adapter,
+                    scope,
+                    timeout_secs,
+                    structured_handoff_max_secs,
+                    ssh_resource.as_deref(),
+                    auth,
+                )
+                .await
             }
 
             call @ (ToolCall::OpenSessionShell { .. }

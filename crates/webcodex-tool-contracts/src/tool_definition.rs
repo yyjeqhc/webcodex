@@ -79,10 +79,10 @@ use webcodex_core::runner_protocol::{
     RUNNER_CAPABILITY_DETACHED_PROCESS_JOBS, RUNNER_CAPABILITY_FILE_READ,
     RUNNER_CAPABILITY_FILE_WRITE, RUNNER_CAPABILITY_GIT, RUNNER_CAPABILITY_INTERNAL_POSIX_SCRIPT,
     RUNNER_CAPABILITY_LSP_CALL_HIERARCHY, RUNNER_CAPABILITY_LSP_READ_ONLY_NAVIGATION,
-    RUNNER_CAPABILITY_PERSISTENT_SHELL, RUNNER_CAPABILITY_RUNNER_CONFIG_CONTROL,
-    RUNNER_CAPABILITY_SHELL, RUNNER_CAPABILITY_SKILL_MANAGEMENT,
-    RUNNER_CAPABILITY_SKILL_RESOURCE_EXECUTION, RUNNER_CAPABILITY_STRUCTURED_PROCESS_ARGV,
-    RUNNER_CAPABILITY_STRUCTURED_SCRIPT_PAYLOAD,
+    RUNNER_CAPABILITY_PERSISTENT_SHELL, RUNNER_CAPABILITY_PROJECT_BUILD,
+    RUNNER_CAPABILITY_RUNNER_CONFIG_CONTROL, RUNNER_CAPABILITY_SHELL,
+    RUNNER_CAPABILITY_SKILL_MANAGEMENT, RUNNER_CAPABILITY_SKILL_RESOURCE_EXECUTION,
+    RUNNER_CAPABILITY_STRUCTURED_PROCESS_ARGV, RUNNER_CAPABILITY_STRUCTURED_SCRIPT_PAYLOAD,
 };
 
 /// Runner capability or owner-boundary requirement that must hold before a
@@ -97,6 +97,9 @@ pub enum RunnerCapabilityRequirement {
     /// General native process + argv execution. This must never be inferred
     /// from shell or structured-validation support.
     StructuredProcess,
+    /// Runner-owned portable Rust/Go project build planning + typed StartBuild.
+    /// Never inferred from generic process or validation support.
+    ProjectBuild,
     /// Runner-owned trusted Skill resource execution with package identity.
     /// Never infer this from generic structured process or Skill read support.
     SkillResourceExecution,
@@ -172,6 +175,7 @@ impl RunnerCapabilityRequirement {
             Self::OwnerOnly => "owner boundary",
             Self::Shell => RUNNER_CAPABILITY_SHELL,
             Self::StructuredProcess => RUNNER_CAPABILITY_STRUCTURED_PROCESS_ARGV,
+            Self::ProjectBuild => RUNNER_CAPABILITY_PROJECT_BUILD,
             Self::SkillResourceExecution => RUNNER_CAPABILITY_SKILL_RESOURCE_EXECUTION,
             Self::DetachedProcess => RUNNER_CAPABILITY_DETACHED_PROCESS_JOBS,
             Self::StructuredScript => RUNNER_CAPABILITY_STRUCTURED_SCRIPT_PAYLOAD,
@@ -209,6 +213,7 @@ impl RunnerCapabilityRequirement {
             Self::OwnerOnly => &[],
             Self::Shell => &[RUNNER_CAPABILITY_SHELL],
             Self::StructuredProcess => &[RUNNER_CAPABILITY_STRUCTURED_PROCESS_ARGV],
+            Self::ProjectBuild => &[RUNNER_CAPABILITY_PROJECT_BUILD],
             Self::SkillResourceExecution => &[RUNNER_CAPABILITY_SKILL_RESOURCE_EXECUTION],
             Self::DetachedProcess => &[RUNNER_CAPABILITY_DETACHED_PROCESS_JOBS],
             Self::StructuredScript => &[RUNNER_CAPABILITY_STRUCTURED_SCRIPT_PAYLOAD],
@@ -381,6 +386,10 @@ impl ToolAuditExecutionPolicy {
     pub const TEST_ASSERTIONS: Self = Self {
         detail: ToolAuditExecutionDetail::TestAssertions,
         shell: ToolAuditExecutionShell::Output,
+    };
+    pub const DIRECT_ARGV_TEXT: Self = Self {
+        detail: ToolAuditExecutionDetail::Text,
+        shell: ToolAuditExecutionShell::DirectArgv,
     };
     pub const DIRECT_ARGV_TEST_COUNTS: Self = Self {
         detail: ToolAuditExecutionDetail::TestCounts,
@@ -724,6 +733,7 @@ pub enum ToolExecutionForm {
     NativeArgv,
     TypedScript,
     ShellCommand,
+    ProjectBuild,
     StructuredValidation,
     PersistentShellCommand,
 }
@@ -734,6 +744,7 @@ impl ToolExecutionForm {
             Self::NativeArgv => "native_argv",
             Self::TypedScript => "typed_script",
             Self::ShellCommand => "shell_command",
+            Self::ProjectBuild => "project_build",
             Self::StructuredValidation => "structured_validation",
             Self::PersistentShellCommand => "persistent_shell_command",
         }

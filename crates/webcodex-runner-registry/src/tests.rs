@@ -354,6 +354,8 @@ mod mcp_gateway;
 mod plugin_gateway;
 #[path = "tests/polling.rs"]
 mod polling;
+#[path = "tests/project_build.rs"]
+mod project_build;
 #[path = "tests/project_file_read.rs"]
 mod project_file_read;
 #[path = "tests/project_inventory.rs"]

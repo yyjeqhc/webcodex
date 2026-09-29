@@ -72,6 +72,7 @@ mod patch_tools;
 pub(crate) mod peer_collaboration;
 pub(crate) mod permissions;
 mod process;
+mod project_build;
 mod project_resolution;
 pub(crate) mod window_collaboration;
 pub(crate) use project_resolution::ResolvedProject;

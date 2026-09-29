@@ -40,6 +40,21 @@ fn request_audit_fails_closed_and_never_mutates_business_arguments() {
     assert!(!serialized.contains("private-package-a"));
     assert!(!serialized.contains("private-package-b"));
 
+    let project_build = json!({
+        "project": "agent:test:demo",
+        "adapter": "rust",
+        "scope": {"packages": ["private-build-a", "private-build-b"]},
+        "timeout_secs": 1800
+    });
+    let build_summary = session_log_arguments_for_tool_request("project_build", &project_build);
+    assert_eq!(build_summary["adapter"], "rust");
+    assert_eq!(build_summary["packages_present"], true);
+    assert_eq!(build_summary["package_count"], 2);
+    assert_eq!(build_summary["timeout_secs"], 1800);
+    let serialized = serde_json::to_string(&build_summary).unwrap();
+    assert!(!serialized.contains("private-build-a"));
+    assert!(!serialized.contains("private-build-b"));
+
     let unknown = json!({"secret": "UNKNOWN_TOOL_SECRET"});
     let unknown_before = unknown.clone();
     assert_eq!(

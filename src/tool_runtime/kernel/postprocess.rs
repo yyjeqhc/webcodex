@@ -159,8 +159,8 @@ impl PostRecordResponse<'_> {
 
 fn canonical_audit_output(tool_name: &str, output: &Value) -> Option<Value> {
     match tool_name {
-        "run_process" | "run_script" | "run_skill_resource" | "run_shell" | "project_validate"
-        | "cargo_fmt" | "cargo_check" | "cargo_test" | "go_test" => Some(
+        "project_build" | "run_process" | "run_script" | "run_skill_resource" | "run_shell"
+        | "project_validate" | "cargo_fmt" | "cargo_check" | "cargo_test" | "go_test" => Some(
             crate::tool_runtime::tool_audit::canonical_execution_audit_result_for_tool(
                 tool_name, output,
             ),

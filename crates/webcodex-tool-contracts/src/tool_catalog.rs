@@ -193,6 +193,14 @@ pub const TOOL_RECOMMENDED_FLOWS: &[ToolRecommendedFlow] = &[
         ],
     },
     ToolRecommendedFlow {
+        name: "build",
+        summary:
+            "Build: prefer project_build for portable Rust/Go builds; use native execution only outside the canonical gateway.",
+        manifest_purpose:
+            "Use project_build for canonical Rust cargo build and Go go build with optional bounded package scope. It preserves Runner-owned recipe resolution, provenance, and same-execution Job admission. Use run_process only when the required build is outside this closed contract.",
+        tools: &["project_build", "observe_jobs", "run_process"],
+    },
+    ToolRecommendedFlow {
         name: "validate",
         summary:
             "Validate: use structured validators when their canonical diagnostics, evidence/test-count, validation identity, or same-execution Job semantics help; native execution is first-class when the command is outside or awkward for that contract.",
@@ -294,7 +302,8 @@ pub const CODING_INTENT_TOOL_NAMES: &[&str] = &[
     "edit_project_files",
     #[cfg(feature = "experimental-code-mode")]
     "code_mode_exec_mutating",
-    // Ordinary execution plus program-like multi-stage specialist.
+    // Portable project build plus ordinary execution specialists.
+    "project_build",
     "run_process",
     "run_script",
     "run_shell",

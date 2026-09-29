@@ -1590,3 +1590,32 @@ fn readiness_tool_is_sequential_outer_only_and_does_not_expand_legacy() {
         );
     }
 }
+
+#[test]
+fn project_build_is_gateway_visible_but_not_adaptive_direct() {
+    let definition = lookup_tool_definition("project_build").expect("project_build definition");
+    assert!(definition.visibility.is_model_visible());
+    assert_eq!(definition.category, TOOL_CATEGORY_EXECUTION);
+    assert_eq!(definition.adaptive_runtime_direct_rank(), None);
+    assert!(!is_adaptive_runtime_direct_tool("project_build"));
+    let requirement = runtime_tool_runner_capability("project_build")
+        .expect("project_build must require its typed Runner capability");
+    assert_eq!(requirement, RunnerCapabilityRequirement::ProjectBuild);
+    assert_eq!(requirement.label(), "project_build_v1");
+    assert_eq!(requirement.registry_capabilities(), &["project_build_v1"]);
+    assert_eq!(
+        runtime_tool_execution_contract("project_build").map(|contract| contract.form),
+        Some(ToolExecutionForm::ProjectBuild)
+    );
+    assert_eq!(
+        definition.audit_policy().execution,
+        ToolAuditExecutionPolicy::DIRECT_ARGV_TEXT
+    );
+    #[cfg(feature = "legacy-gpt-actions")]
+    assert!(
+        !gpt_action_direct_tool_definitions()
+            .iter()
+            .any(|definition| definition.name == "project_build"),
+        "project_build must remain gateway-only on the legacy GPT Actions surface"
+    );
+}

@@ -307,6 +307,45 @@ fn project_validate_test_options_schema_is_closed_and_bounded() {
 }
 
 #[test]
+fn project_build_schema_is_closed_bounded_and_has_no_raw_execution_fields() {
+    let schema = input_schema_for_tool("project_build");
+    let valid = serde_json::json!({
+        "project": "demo",
+        "adapter": "rust",
+        "scope": {"packages": ["package-a", "package-b"]},
+        "timeout_secs": 1800
+    });
+    assert!(test_support::validate_schema_instance(&valid, &schema).is_ok());
+
+    for forbidden in [
+        "executable",
+        "args",
+        "shell",
+        "script",
+        "sync_wait_secs",
+        "release",
+        "target",
+    ] {
+        assert!(
+            schema["properties"].get(forbidden).is_none(),
+            "project_build exposed {forbidden}"
+        );
+    }
+    for invalid in [
+        serde_json::json!({"project":"demo","scope":{"packages":[]}}),
+        serde_json::json!({"project":"demo","scope":{"packages":(0..9).map(|i| format!("p-{i}")).collect::<Vec<_>>()}}),
+        serde_json::json!({"project":"demo","scope":{"packages":["x".repeat(257)]}}),
+        serde_json::json!({"project":"demo","scope":{"packages":["a"],"unknown":true}}),
+        serde_json::json!({"project":"demo","unknown":true}),
+    ] {
+        assert!(
+            test_support::validate_schema_instance(&invalid, &schema).is_err(),
+            "{invalid}"
+        );
+    }
+}
+
+#[test]
 fn project_validate_package_scope_schema_is_closed_and_bounded() {
     let schema = input_schema_for_tool("project_validate");
     let valid = serde_json::json!({

@@ -8,9 +8,12 @@ Rust/Go validation, #760 added package scope, and #766 centralized neutral recip
 facts in `webcodex-workspace`. This patch extends that path; it adds no tool,
 Direct descriptor, adapter registry, crate, external dependency or scheduler.
 
-Still deferred: `project_build` and artifact/target/profile identity, mutating
-`project_format`, lint, production Node/Python adapters, workspace/exclude and
-locked/offline dependency policies. Existing lower-level Cargo/Go tools retain
+That validation slice deferred `project_build`. The current tree now has a
+separate Rust/Go `project_build` v1 gateway with Runner-owned recipe planning,
+typed `StartBuild`, manifest/lock provenance, and same-Job admission fencing.
+Build profile/target/artifact identity, mutating `project_format`, lint,
+production Node/Python adapters, workspace/exclude and locked/offline dependency
+policies remain separate #599 work. Existing lower-level Cargo/Go tools retain
 their options and default behavior. No claim of complete CLI parity is made.
 
 ## Request and planning

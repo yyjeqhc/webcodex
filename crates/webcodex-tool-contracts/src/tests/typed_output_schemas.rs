@@ -436,3 +436,35 @@ fn typed_output_schemas_use_host_normalized_inline_shapes() {
         assert!(!encoded.contains("nullable"), "{name}");
     }
 }
+
+#[test]
+fn project_build_output_schema_accepts_sparse_success_and_typed_failure() {
+    let schema = output_schema_for_tool("project_build");
+    for impossible in [
+        "suggested_call",
+        "requested_surface",
+        "input_normalization",
+        "expectation_satisfied",
+    ] {
+        assert!(
+            schema["properties"]["output"]["properties"]
+                .get(impossible)
+                .is_none(),
+            "project_build must not advertise run_process-only field {impossible}"
+        );
+    }
+    assert_registered_schema_accepts("project_build", true, &json!({"backend": "rust"}));
+    assert_registered_schema_accepts(
+        "project_build",
+        false,
+        &json!({
+            "execution_state": "not_started",
+            "command_started": false,
+            "command_completed": false,
+            "command_ok": false,
+            "failure_kind": "build_adapter_unavailable",
+            "detected_backend": "node",
+            "tool_failure": true
+        }),
+    );
+}

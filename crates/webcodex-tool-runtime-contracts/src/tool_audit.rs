@@ -538,6 +538,21 @@ impl ToolCallAuditProjection for ToolCall {
                 }
                 out
             }
+            Self::ProjectBuild {
+                project,
+                cwd,
+                adapter,
+                scope,
+                timeout_secs,
+                ..
+            } => serde_json::json!({
+                "project": project,
+                "cwd": cwd,
+                "adapter": adapter,
+                "packages_present": scope.is_some(),
+                "package_count": scope.as_ref().map(|scope| scope.packages.len()).unwrap_or_default(),
+                "timeout_secs": timeout_secs,
+            }),
             Self::ProjectValidate {
                 project,
                 cwd,

@@ -41,7 +41,10 @@ impl RetainedJobReceipt {
             || !text(&snapshot.job_id, 128)
             || !text(&snapshot.request_id, 128)
             || !text(&self.kind, 128)
-            || !matches!(self.kind.as_str(), "shell" | "run_process" | "run_script")
+            || !matches!(
+                self.kind.as_str(),
+                "shell" | "project_build" | "run_process" | "run_script"
+            )
             || self.terminal_observed_at <= 0
             || self.terminal_observed_at > now
             // Accept the exact pre-24h retention contract without extending

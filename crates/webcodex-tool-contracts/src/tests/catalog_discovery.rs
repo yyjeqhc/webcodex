@@ -435,6 +435,7 @@ fn tool_categories_and_recommended_flows_are_well_formed() {
         );
     }
     for (name, category) in [
+        ("project_build", TOOL_CATEGORY_EXECUTION),
         ("run_process", TOOL_CATEGORY_EXECUTION),
         ("run_script", TOOL_CATEGORY_EXECUTION),
         ("run_shell", TOOL_CATEGORY_EXECUTION),

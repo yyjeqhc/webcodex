@@ -1859,7 +1859,7 @@ pub const SCRIPT_TIMEOUT_MAX_SECS: u64 = 7 * 24 * 60 * 60;
 /// validation, shell, and Skill Job kinds retain the shared 1-hour ceiling.
 pub fn job_execution_timeout_max_secs(kind: &str) -> u64 {
     match kind {
-        "run_process" | "run_detached_process" => PROCESS_TIMEOUT_MAX_SECS,
+        "project_build" | "run_process" | "run_detached_process" => PROCESS_TIMEOUT_MAX_SECS,
         "run_script" => SCRIPT_TIMEOUT_MAX_SECS,
         _ => STRUCTURED_EXECUTION_TIMEOUT_MAX_SECS,
     }
@@ -3594,6 +3594,10 @@ mod envelope_tests {
         assert_eq!(SCRIPT_TIMEOUT_MAX_SECS, 604_800);
         assert_eq!(STRUCTURED_EXECUTION_TIMEOUT_MAX_SECS, 3_600);
         assert_eq!(STRUCTURED_EXECUTION_DIRECT_SYNC_TIMEOUT_MAX_SECS, 120);
+        assert_eq!(
+            job_execution_timeout_max_secs("project_build"),
+            PROCESS_TIMEOUT_MAX_SECS
+        );
         assert_eq!(
             job_execution_timeout_max_secs("run_process"),
             PROCESS_TIMEOUT_MAX_SECS

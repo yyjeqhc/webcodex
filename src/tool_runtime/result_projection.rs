@@ -134,7 +134,7 @@ fn sparsify_terminal_structured_execution_success(tool_name: &str, result: &mut 
     }
     if !matches!(
         tool_name,
-        "run_process" | "run_script" | "run_skill_resource"
+        "project_build" | "run_process" | "run_script" | "run_skill_resource"
     ) || !result.success
     {
         return;
@@ -209,7 +209,7 @@ fn sparsify_terminal_structured_execution_success(tool_name: &str, result: &mut 
     }
 
     let summary_key = match tool_name {
-        "run_process" | "run_skill_resource" => "process_summary",
+        "project_build" | "run_process" | "run_skill_resource" => "process_summary",
         "run_script" => "script_summary",
         _ => unreachable!("structured execution sparsifier is tool-gated"),
     };
@@ -357,7 +357,7 @@ pub(super) fn sparsify_failure_model_result_metadata(tool_name: &str, result: &m
     output.remove("session_event_id");
     if matches!(
         tool_name,
-        "run_process" | "run_script" | "run_skill_resource"
+        "project_build" | "run_process" | "run_script" | "run_skill_resource"
     ) {
         for key in [
             "executor",
@@ -369,7 +369,7 @@ pub(super) fn sparsify_failure_model_result_metadata(tool_name: &str, result: &m
             output.remove(key);
         }
         output.remove(match tool_name {
-            "run_process" | "run_skill_resource" => "process_summary",
+            "project_build" | "run_process" | "run_skill_resource" => "process_summary",
             "run_script" => "script_summary",
             _ => unreachable!("structured failure sparsifier is tool-gated"),
         });
@@ -504,7 +504,8 @@ impl ModelFacingProjectionPlan {
                     min_tests: *min_tests,
                 },
             },
-            ToolCall::RunProcess { .. }
+            ToolCall::ProjectBuild { .. }
+            | ToolCall::RunProcess { .. }
             | ToolCall::RunSkillResource { .. }
             | ToolCall::RunScript { .. }
             | ToolCall::RunShell { .. }
@@ -1137,6 +1138,52 @@ mod structured_execution_sparse_projection_tests {
         assert!(alternate.output.get("cwd").is_none());
         assert!(alternate.output.get("executor").is_none());
         assert!(alternate.output.get("execution_state").is_none());
+    }
+
+    #[test]
+    fn project_build_terminal_success_keeps_backend_and_drops_execution_noise() {
+        let mut result = terminal_process_result("project_build");
+        result.output["backend"] = json!("rust");
+        result.output["purpose"] = json!("build");
+        result.output["process_summary"] = json!("cargo build -p demo");
+        sparsify_terminal_structured_execution_success("project_build", &mut result);
+        assert_eq!(result.output, json!({"backend": "rust"}));
+    }
+
+    #[test]
+    fn project_build_failure_projection_keeps_decision_facts_without_process_echo() {
+        let mut result = ToolResult::err_with_output(
+            "build failed",
+            json!({
+                "execution_source": "project_build",
+                "purpose": "build",
+                "process_summary": "cargo build -p private-package",
+                "cwd": "private/path",
+                "executor": "agent",
+                "backend": "rust",
+                "execution_state": "completed",
+                "command_started": true,
+                "command_completed": true,
+                "command_ok": false,
+                "exit_code": 101,
+                "failure_kind": "command_exit_nonzero",
+                "tool_failure": false,
+                "stderr_tail": "compiler error"
+            }),
+        );
+        sparsify_failure_model_result_metadata("project_build", &mut result);
+        assert_eq!(result.output["backend"], "rust");
+        assert_eq!(result.output["failure_kind"], "command_exit_nonzero");
+        assert_eq!(result.output["stderr_tail"], "compiler error");
+        for omitted in [
+            "execution_source",
+            "purpose",
+            "process_summary",
+            "cwd",
+            "executor",
+        ] {
+            assert!(result.output.get(omitted).is_none(), "{omitted}");
+        }
     }
 
     #[test]

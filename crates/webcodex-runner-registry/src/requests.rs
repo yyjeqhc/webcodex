@@ -2546,6 +2546,45 @@ impl RunnerRegistry {
         Ok((request_id, rx))
     }
 
+    /// Enqueue Runner-owned project build planning. The returned typed plan
+    /// carries canonical argv and admission provenance; no build starts here.
+    pub async fn enqueue_project_build_plan(
+        &self,
+        client_id: String,
+        payload: webcodex_core::project_build::ProjectBuildRequest,
+        access: Option<&crate::RunnerAccess>,
+    ) -> Result<(String, oneshot::Receiver<ShellRunResponse>), String> {
+        payload.validate()?;
+        let request_id = next_request_id();
+        let (tx, rx) = oneshot::channel();
+        let request = encode_runner_operation(
+            &request_id,
+            &client_id,
+            "tool_runtime".into(),
+            RunnerOperation::PlanProjectBuild(payload),
+        )?;
+        let mut inner = self.inner.lock().await;
+        self.prune_expired_shared_key_runners_locked(&mut inner, now_ts());
+        let runner = inner.runners.get(&client_id).ok_or("unknown Runner")?;
+        assert_runner_access(access, runner)?;
+        if !runner.runner_features.supports(RunnerFeature::ProjectBuild) {
+            return Err(
+                "capability_unavailable: upgrade target Runner for project_build_v1".into(),
+            );
+        }
+        enqueue_pending_request_locked(
+            self.telemetry.as_ref(),
+            &mut inner,
+            &client_id,
+            request_id.clone(),
+            request,
+            Some(tx),
+            None,
+        )?;
+        notify_runner_locked(&inner, &client_id);
+        Ok((request_id, rx))
+    }
+
     /// Resolve a declarative project validation plan on the authorized Runner.
     /// Additive fields require their own capability before anything is enqueued.
     pub async fn enqueue_project_validation_plan(
@@ -2607,6 +2646,9 @@ impl RunnerRegistry {
         Ok((request_id, rx))
     }
 
+    /// Enqueue a typed read-only LSP navigation request. Never falls through
+    /// to shell execution: the Runner dispatches exclusively on `kind = "lsp"`
+    /// with a structured `lsp` payload.
     pub async fn enqueue_lsp(
         &self,
         client_id: String,

@@ -64,6 +64,28 @@ fn structured_execution_output(
 }
 
 #[test]
+fn project_build_schema_accepts_same_job_queued_handoff() {
+    let schema = output_schema_for_tool("project_build");
+    let mut pending = structured_execution_output(
+        "project_build",
+        "queued",
+        false,
+        false,
+        true,
+        false,
+        Some("job-1"),
+        Some("agent_queued"),
+    );
+    pending["output"]["backend"] = serde_json::json!("rust");
+    pending["output"]["purpose"] = serde_json::json!("build");
+    pending["output"]["process_summary"] = serde_json::json!("cargo build");
+    pending["output"]["cwd"] = serde_json::json!(".");
+    pending["output"]["executor"] = serde_json::json!("agent");
+    test_support::validate_schema_instance(&pending, &schema)
+        .expect("project_build queued handoff must remain the same typed Job");
+}
+
+#[test]
 fn suggested_tool_call_schema_recognizer_is_strict_and_structural() {
     let valid_generated = json!({
         "follow_up_kind": "mechanically_followable",

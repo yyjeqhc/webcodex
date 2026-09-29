@@ -25,9 +25,9 @@ use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::Ordering;
 use webcodex_core::runner_operation::{
-    RunnerInvocationMetadata, RunnerJobOperation, RunnerJobProcessOperation,
-    RunnerJobScriptOperation, RunnerJobShellOperation, RunnerJobSkillResourceOperation,
-    RunnerJobValidationOperation, RunnerOperation,
+    RunnerInvocationMetadata, RunnerJobBuildOperation, RunnerJobOperation,
+    RunnerJobProcessOperation, RunnerJobScriptOperation, RunnerJobShellOperation,
+    RunnerJobSkillResourceOperation, RunnerJobValidationOperation, RunnerOperation,
 };
 use webcodex_core::runner_protocol::{
     validate_process_argv, validate_script_request, validation_infrastructure_failure_code,
@@ -638,6 +638,7 @@ pub struct ShellJobStartMetadata {
 
 #[derive(Debug, Clone)]
 pub enum StructuredJobExecution {
+    ProjectBuild(webcodex_core::project_build::ProjectBuildPlan),
     Process(ShellProcessArgv),
     DetachedProcess(ShellProcessArgv),
     Script(ShellScriptPayload),
@@ -827,6 +828,10 @@ impl RunnerRegistry {
             structured_execution.as_ref(),
             Some(StructuredJobExecution::SkillResource(_))
         );
+        let project_build_request = matches!(
+            structured_execution.as_ref(),
+            Some(StructuredJobExecution::ProjectBuild(_))
+        );
         if explicit_shell.is_some()
             && (structured_execution.is_some()
                 || !validation_steps.is_empty()
@@ -865,6 +870,33 @@ impl RunnerRegistry {
         let (safe_command_preview, structured_metadata, job_kind) = match structured_execution
             .as_ref()
         {
+            Some(StructuredJobExecution::ProjectBuild(plan)) => {
+                if !plan.is_valid() || structured_stdin.is_some() {
+                    return Err("invalid typed project build Job plan".to_string());
+                }
+                validate_process_argv(&plan.process)?;
+                validate_structured_job_common(
+                    normalized_job_cwd.as_deref(),
+                    None,
+                    timeout_secs,
+                    PROCESS_TIMEOUT_MAX_SECS,
+                )?;
+                let preview = process_preview(
+                    &plan.process.executable,
+                    plan.process.args.iter().map(String::as_str),
+                );
+                let safe = ShellJobStructuredExecutionMetadata {
+                    execution_source: "project_build".to_string(),
+                    language: None,
+                    script_bytes: None,
+                    arg_count: plan.process.args.len(),
+                    stdin_present: false,
+                    validation_identity: None,
+                    validation_tool: None,
+                    assertion_name: None,
+                };
+                (preview, Some(safe), "project_build")
+            }
             Some(StructuredJobExecution::Process(process)) => {
                 validate_process_argv(process)?;
                 validate_structured_job_common(
@@ -1043,6 +1075,16 @@ impl RunnerRegistry {
             structured_execution: structured_metadata.clone(),
         };
         let job_operation = match structured_execution {
+            Some(StructuredJobExecution::ProjectBuild(plan)) => {
+                RunnerJobOperation::StartBuild(RunnerJobBuildOperation {
+                    job_id: job_id.clone(),
+                    cwd: normalized_job_cwd.clone(),
+                    process: plan.process,
+                    provenance: plan.provenance,
+                    timeout_secs,
+                    context: job_context,
+                })
+            }
             Some(StructuredJobExecution::Process(process)) => {
                 RunnerJobOperation::StartProcess(RunnerJobProcessOperation {
                     job_id: job_id.clone(),
@@ -1153,6 +1195,11 @@ impl RunnerRegistry {
             return Err(format!(
                 "capability_unavailable: runner {client_id} does not support structured_execution_jobs"
             ));
+        }
+        if project_build_request && !runner.runner_features.supports(RunnerFeature::ProjectBuild) {
+            return Err(
+                "capability_unavailable: upgrade target Runner for project_build_v1".to_string(),
+            );
         }
         if javascript_script_request
             && !runner

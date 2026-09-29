@@ -1,5 +1,6 @@
 use super::RunnerCapabilityRequirement::{
-    AsyncJobs, DetachedProcess, PersistentShell, Shell, StructuredProcess, StructuredScript,
+    AsyncJobs, DetachedProcess, PersistentShell, ProjectBuild, Shell, StructuredProcess,
+    StructuredScript,
 };
 use super::ToolVisibility::{ModelHidden, ModelVisible};
 use super::{
@@ -15,6 +16,36 @@ use crate::metadata::{
 use webcodex_core::authority::SCOPE_JOB_DETACH;
 
 pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
+    model_spec(
+        def(
+            "project_build",
+            super::ToolAuditPolicy::TYPED_CANONICAL
+                .execution(super::ToolAuditExecutionPolicy::DIRECT_ARGV_TEXT),
+            ModelVisible,
+            TOOL_CATEGORY_EXECUTION,
+            Some(ProjectBuild),
+            TOOL_PROVIDER_RUNNER,
+            super::ToolSemanticContract {
+                effect: super::ToolEffect::Execute,
+                risk: JobRun,
+                approval: super::ToolApprovalPolicy::Standard,
+                idempotency: super::ToolIdempotency::NonIdempotent,
+            },
+            Some(JOB_RUN),
+            true,
+            NoPath,
+            false,
+            false,
+            super::ToolSessionEvidencePolicy::NONE,
+        ),
+        "Preferred portable project build gateway. Runner resolves the nearest unambiguous Rust/Go recipe and executes canonical cargo build or go build argv. Optional scope.packages narrows Cargo with repeated -p selectors or Go with bounded project-relative patterns. Long builds remain the same durable Job; pending never authorizes retry.",
+    )
+    .with_execution(super::ToolExecutionContract::new(
+        super::ToolExecutionForm::ProjectBuild,
+        super::ToolExecutionLifetime::Runner,
+        super::ToolExecutionStart::SyncFirst,
+        super::ToolExecutionContinuation::ObserveJobs,
+    )),
     adaptive_runtime_direct(
         model_spec(
             def(

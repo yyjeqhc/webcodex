@@ -107,17 +107,29 @@ impl Directory {
     ) -> DesktopResult<()> {
         self.verify_location()?;
         let name = format!(".AGENTS.{}.tmp", uuid::Uuid::new_v4());
-        let mut file = self.open_file(&name, true).map_err(invalid_io)?;
+        let stage_error = |stage: &'static str, error: std::io::Error| {
+            unavailable().with_details(serde_json::json!({
+                "stage": stage,
+                "os_error": error.raw_os_error(),
+                "error_kind": format!("{:?}", error.kind()),
+            }))
+        };
+        let mut file = self
+            .open_file(&name, true)
+            .map_err(|error| stage_error("create_staging", error))?;
         let prepared = (|| {
-            file.write_all(content.as_bytes()).map_err(invalid_io)?;
-            file.sync_all().map_err(invalid_io)?;
+            file.write_all(content.as_bytes())
+                .map_err(|error| stage_error("write_staging", error))?;
+            file.sync_all()
+                .map_err(|error| stage_error("sync_staging", error))?;
             drop(file);
             before_commit();
             if revision(self.read()?.as_deref()) != expected {
                 return Err(conflict());
             }
             self.verify_location()?;
-            self.rename(&name).map_err(invalid_io)?;
+            self.rename(&name)
+                .map_err(|error| stage_error("atomic_replace", error))?;
             Ok(())
         })();
         if prepared.is_err() {

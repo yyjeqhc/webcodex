@@ -13,8 +13,8 @@ use super::metadata::ToolAuthorityPolicy;
 #[cfg(feature = "experimental-code-mode")]
 use super::orchestration_host::is_server_owned_orchestration_argument;
 use super::registry::{
-    exact_manifest_specialist_tool_specs, registered_tool_specs,
-    stateless_operator_extension_tool_specs,
+    exact_manifest_specialist_tool_descriptors, registered_tool_descriptors,
+    stateless_operator_extension_tool_descriptors,
 };
 use super::runtime::ToolRuntime;
 use super::tool_definition::{
@@ -33,6 +33,8 @@ use serde_json::{json, Value};
 #[cfg(feature = "experimental-code-mode")]
 use std::collections::BTreeSet;
 use std::collections::{BTreeMap, HashMap};
+use webcodex_tool_contracts::registry::ToolDescriptor;
+#[cfg(feature = "experimental-code-mode")]
 use webcodex_tool_contracts::ToolSpec;
 
 const TOOL_MANIFEST_SELECTION_DESCRIPTION_MAX_CHARS: usize = 180;
@@ -409,10 +411,10 @@ pub(crate) fn recommended_flows() -> Vec<&'static str> {
         .collect()
 }
 
-fn tool_manifest_specs(capabilities: ToolProtocolCapabilities) -> Vec<ToolSpec> {
-    let mut specs = registered_tool_specs();
+fn tool_manifest_specs(capabilities: ToolProtocolCapabilities) -> Vec<ToolDescriptor> {
+    let mut specs = registered_tool_descriptors();
     specs.extend(
-        stateless_operator_extension_tool_specs()
+        stateless_operator_extension_tool_descriptors()
             .into_iter()
             .filter(|spec| tool_manifest_extension_capability_allows(&spec.name, capabilities)),
     );
@@ -439,7 +441,7 @@ fn tool_manifest_extension_capability_allows(
     }
 }
 
-fn tool_manifest_route(spec: &ToolSpec) -> (&'static str, Option<&'static str>) {
+fn tool_manifest_route(spec: &ToolDescriptor) -> (&'static str, Option<&'static str>) {
     if is_model_visible_tool_name(spec.name.as_str()) {
         crate::model_surface::adaptive_runtime_tool_invocation_route(spec.name.as_str())
     } else {
@@ -450,7 +452,7 @@ fn tool_manifest_route(spec: &ToolSpec) -> (&'static str, Option<&'static str>) 
     }
 }
 
-fn tool_manifest_invocation_route(spec: &ToolSpec) -> Value {
+fn tool_manifest_invocation_route(spec: &ToolDescriptor) -> Value {
     let target = spec.name.as_str();
     let (availability, gateway_tool) = tool_manifest_route(spec);
     let primary = match (availability, gateway_tool) {
@@ -502,7 +504,7 @@ impl ToolRuntime {
     pub(crate) const LIST_TOOLS_MAX_LIMIT: usize = 256;
 
     pub(crate) fn list_tools_payload(&self, options: ListToolsOptions) -> Value {
-        let specs = registered_tool_specs();
+        let specs = registered_tool_descriptors();
         let total_count = specs.len();
         let filtered_indexes = list_tools_filtered_indexes(&specs, &options);
         let filtered_count = filtered_indexes.len();
@@ -538,7 +540,9 @@ impl ToolRuntime {
         } else {
             returned_indexes
                 .iter()
-                .map(|index| serde_json::to_value(&specs[*index]).unwrap_or(Value::Null))
+                .map(|index| {
+                    serde_json::to_value(specs[*index].clone().into_spec()).unwrap_or(Value::Null)
+                })
                 .collect()
         };
 
@@ -634,7 +638,7 @@ impl ToolRuntime {
             return Err(unknown_tool_manifest_tool_result(tool_name));
         }
         let specs = tool_manifest_specs(protocol_capabilities);
-        let specialist_specs = exact_manifest_specialist_tool_specs();
+        let specialist_specs = exact_manifest_specialist_tool_descriptors();
         let tool_count = specs.len();
         let Some(spec) = specs
             .iter()
@@ -664,8 +668,8 @@ impl ToolRuntime {
                 "risk": metadata.risk.session_risk_class(),
                 "approval": metadata.approval.manifest_label(),
                 "idempotency": metadata.idempotency.manifest_label(),
-                "input_schema": spec.input_schema,
-                "annotations": spec.annotations,
+                "input_schema": spec.input_schema(),
+                "annotations": spec.annotations(),
                 "availability": availability,
                 "gateway_tool": gateway_tool,
             },
@@ -701,7 +705,11 @@ impl ToolRuntime {
         }
         #[cfg(feature = "experimental-code-mode")]
         if let Some(stage) = code_mode_callable_stage_for_entry_tool(spec.name.as_str()) {
-            output["code_mode_callable_contract"] = code_mode_callable_contract(stage, &specs)?;
+            let contracts = specs
+                .into_iter()
+                .map(ToolDescriptor::into_spec)
+                .collect::<Vec<_>>();
+            output["code_mode_callable_contract"] = code_mode_callable_contract(stage, &contracts)?;
         }
         Ok(output)
     }
@@ -780,7 +788,7 @@ impl ToolRuntime {
         let available_intents = available_tool_manifest_intent_names();
 
         // Apply optional intent ranking, then optional category filter, then limit.
-        let filtered_specs: Vec<&ToolSpec> =
+        let filtered_specs: Vec<&ToolDescriptor> =
             filter_manifest_specs(&specs, resolved_intent, categories_requested.as_ref());
         let filtered_count = filtered_specs.len();
         let requested_limit = limit;
@@ -790,7 +798,7 @@ impl ToolRuntime {
         let filtered =
             categories_requested.is_some() || resolved_intent.is_some() || limit.is_some();
         let intent_name = resolved_intent.map(|intent| intent.name);
-        let returned_specs: Vec<&ToolSpec> = match limit {
+        let returned_specs: Vec<&ToolDescriptor> = match limit {
             Some(limit) => filtered_specs.into_iter().take(limit).collect(),
             None => filtered_specs,
         };
@@ -842,16 +850,16 @@ impl ToolRuntime {
 }
 
 fn filter_manifest_specs<'a>(
-    specs: &'a [ToolSpec],
+    specs: &'a [ToolDescriptor],
     intent: Option<&'static ToolManifestIntent>,
     categories_requested: Option<&Vec<String>>,
-) -> Vec<&'a ToolSpec> {
-    let by_name: HashMap<&str, &ToolSpec> = specs
+) -> Vec<&'a ToolDescriptor> {
+    let by_name: HashMap<&str, &ToolDescriptor> = specs
         .iter()
         .map(|spec| (spec.name.as_str(), spec))
         .collect();
 
-    let ordered: Vec<&ToolSpec> = match intent {
+    let ordered: Vec<&ToolDescriptor> = match intent {
         Some(intent) => intent
             .tools
             .iter()
@@ -915,7 +923,7 @@ fn tool_manifest_exact_filter_conflict_result() -> ToolResult {
 }
 
 pub(super) fn list_tools_filtered_indexes(
-    specs: &[ToolSpec],
+    specs: &[ToolDescriptor],
     options: &ListToolsOptions,
 ) -> Vec<usize> {
     specs
@@ -952,7 +960,7 @@ pub(super) fn normalize_tool_manifest_categories(
     (!out.is_empty()).then_some(out)
 }
 
-pub(super) fn build_list_tools_summary_entries(specs: &[ToolSpec]) -> Vec<Value> {
+pub(super) fn build_list_tools_summary_entries(specs: &[ToolDescriptor]) -> Vec<Value> {
     specs
         .iter()
         .map(|spec| {
@@ -968,7 +976,7 @@ pub(super) fn build_list_tools_summary_entries(specs: &[ToolSpec]) -> Vec<Value>
                 "idempotency": m.idempotency.manifest_label(),
                 "read_only": m.effect.read_only_hint(),
                 "requires_project": m.requires_project,
-                "annotations": spec.annotations,
+                "annotations": spec.annotations(),
             })
         })
         .collect()
@@ -1152,7 +1160,7 @@ pub(super) fn sparsify_tool_manifest_model_result(result: &mut ToolResult) {
             projected.insert("recommended_flows".to_string(), Value::Array(flows.clone()));
         }
     } else if canonical.get("filtered").and_then(Value::as_bool) == Some(true) {
-        let specs = registered_tool_specs();
+        let specs = registered_tool_descriptors();
         let descriptions: HashMap<&str, &str> = specs
             .iter()
             .map(|spec| (spec.name.as_str(), spec.description.as_str()))
@@ -1259,7 +1267,7 @@ fn manifest_execution_projection(execution: ToolExecutionContract) -> Value {
     })
 }
 
-pub(super) fn compact_manifest_tool_entry(spec: &ToolSpec) -> Value {
+pub(super) fn compact_manifest_tool_entry(spec: &ToolDescriptor) -> Value {
     let name = spec.name.as_str();
     let m = runtime_tool_metadata(name);
     let (availability, gateway_tool) = tool_manifest_route(spec);
@@ -1325,15 +1333,15 @@ fn list_tool_matches_feature(name: &str, feature: &str) -> bool {
     }
 }
 
-/// Build a sorted taxonomy from the exact admitted ToolSpec selection.
-pub(super) fn build_manifest_categories(specs: &[ToolSpec]) -> Value {
+/// Build a sorted taxonomy from the exact admitted ToolDescriptor selection.
+pub(super) fn build_manifest_categories(specs: &[ToolDescriptor]) -> Value {
     json!(webcodex_tool_contracts::group_tool_names_by_category(
         specs.iter().map(|spec| spec.name.as_str())
     ))
 }
 
 /// Build the risk summary map from the returned compact manifest specs.
-pub(super) fn build_risk_summary(specs: &[&ToolSpec]) -> Value {
+pub(super) fn build_risk_summary(specs: &[&ToolDescriptor]) -> Value {
     let mut counts: BTreeMap<&str, u64> = BTreeMap::new();
     for spec in specs {
         let risk = runtime_tool_metadata(spec.name.as_str())

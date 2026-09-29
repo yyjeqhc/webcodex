@@ -16,3 +16,10 @@ pub use tool_specs::{
     registered_tool_specs, skill_management_tool_specs, skill_runtime_tool_specs,
     stateless_operator_extension_tool_specs, work_result_app_tool_specs,
 };
+
+#[cfg(any(test, feature = "root-test-support"))]
+pub use tool_specs::take_tool_materialization_counts_for_test;
+pub use tool_specs::{
+    exact_manifest_specialist_tool_descriptors, registered_tool_descriptors,
+    stateless_operator_extension_tool_descriptors, ToolDescriptor,
+};

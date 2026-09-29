@@ -14,14 +14,69 @@ use super::super::tool_spec::ToolSpec;
 use super::{output_schema_for_tool, tool_annotations};
 use std::collections::BTreeSet;
 
-pub fn registered_tool_specs() -> Vec<ToolSpec> {
-    resolve_tool_specs(model_visible_tool_definitions())
+/// Schema-free catalog entry. Selection and counts need metadata, not eagerly
+/// materialized input/output contracts. This record does not admit a tool.
+#[derive(Debug, Clone)]
+pub struct ToolDescriptor {
+    pub name: String,
+    pub description: String,
 }
 
-/// Specialist mutation contracts are intentionally absent from the ordinary
-/// model surface but remain discoverable by exact name through tool_manifest.
-pub fn exact_manifest_specialist_tool_specs() -> Vec<ToolSpec> {
-    resolve_tool_specs(EXACT_MANIFEST_SPECIALIST_TOOL_NAMES.iter().map(|name| {
+impl ToolDescriptor {
+    pub fn annotations(&self) -> serde_json::Value {
+        tool_annotations(&self.name)
+    }
+
+    pub fn input_schema(&self) -> serde_json::Value {
+        #[cfg(any(test, feature = "root-test-support"))]
+        MATERIALIZATIONS.with(|count| {
+            let (input, output) = count.get();
+            count.set((input + 1, output));
+        });
+        input_schema_for_tool(&self.name)
+    }
+
+    pub fn into_spec(self) -> ToolSpec {
+        let input_schema = self.input_schema();
+        #[cfg(any(test, feature = "root-test-support"))]
+        MATERIALIZATIONS.with(|count| {
+            let (input, output) = count.get();
+            count.set((input, output + 1));
+        });
+        ToolSpec {
+            input_schema,
+            output_schema: output_schema_for_tool(&self.name),
+            annotations: self.annotations(),
+            name: self.name,
+            description: self.description,
+        }
+    }
+}
+
+#[cfg(any(test, feature = "root-test-support"))]
+thread_local! {
+    static MATERIALIZATIONS: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
+}
+
+/// Test-thread-local contract projection counts, not cache internals or telemetry.
+#[cfg(any(test, feature = "root-test-support"))]
+pub fn take_tool_materialization_counts_for_test() -> (usize, usize) {
+    MATERIALIZATIONS.with(|count| count.replace((0, 0)))
+}
+
+pub fn registered_tool_descriptors() -> Vec<ToolDescriptor> {
+    resolve_tool_descriptors(model_visible_tool_definitions())
+}
+
+pub fn registered_tool_specs() -> Vec<ToolSpec> {
+    registered_tool_descriptors()
+        .into_iter()
+        .map(ToolDescriptor::into_spec)
+        .collect()
+}
+
+pub fn exact_manifest_specialist_tool_descriptors() -> Vec<ToolDescriptor> {
+    resolve_tool_descriptors(EXACT_MANIFEST_SPECIALIST_TOOL_NAMES.iter().map(|name| {
         let definition = lookup_tool_definition(name)
             .unwrap_or_else(|| panic!("missing exact-manifest specialist definition: {name}"));
         debug_assert!(!definition.visibility.is_model_visible());
@@ -29,13 +84,10 @@ pub fn exact_manifest_specialist_tool_specs() -> Vec<ToolSpec> {
     }))
 }
 
-fn operator_extension_specs(
-    specs: Vec<ToolSpec>,
-    family: ToolOperatorExtensionFamily,
-) -> Vec<ToolSpec> {
-    specs
+pub fn exact_manifest_specialist_tool_specs() -> Vec<ToolSpec> {
+    exact_manifest_specialist_tool_descriptors()
         .into_iter()
-        .filter(|spec| runtime_tool_operator_extension_family(&spec.name) == Some(family))
+        .map(ToolDescriptor::into_spec)
         .collect()
 }
 
@@ -140,76 +192,80 @@ pub fn job_terminal_continuation_app_tool_specs() -> Vec<ToolSpec> {
     ]
 }
 
-/// Fixed admin-only forensic trace reader. It remains globally ModelHidden and
-/// is projected only by capable Stateless MCP 2026 adapters.
-pub fn operator_diagnostic_tool_specs() -> Vec<ToolSpec> {
-    operator_extension_specs(
-        vec![tool_spec(
-            "read_tool_trace",
-            "Admin-only bounded reader for Server-hosted full tool-request traces. Omit payload_index to list safe payload metadata first; then read one bounded JSON payload by index. Available only when full trace mode is enabled. Trace payloads may contain sensitive tool data and never grant execution authority.",
-        )],
-        ToolOperatorExtensionFamily::TraceDiagnostics,
-    )
-}
-
-/// Fixed read-only project Memory runtime contract. Definitions remain hidden
-/// from generic/GPT Action registries and are projected only by capable
-/// Stateless MCP 2026 adapters.
-pub fn memory_runtime_tool_specs() -> Vec<ToolSpec> {
-    operator_extension_specs(
-        memory::tool_specs(),
-        ToolOperatorExtensionFamily::MemoryRuntime,
-    )
-}
-
-/// Fixed project Memory mutation plus global Memory lifecycle contract. Durable
-/// Memory/scope cardinality never changes this schema set. Each tool's canonical
-/// ToolDefinition authority distinguishes project-scoped memory:manage from
-/// admin-only lifecycle inspection/purge; permission evaluation remains independent.
-pub fn memory_management_tool_specs() -> Vec<ToolSpec> {
-    operator_extension_specs(
-        memory::tool_specs(),
-        ToolOperatorExtensionFamily::MemoryManagement,
-    )
-}
-
-/// Fixed read-only Skill runtime contract. These definitions are deliberately
-/// ModelHidden globally and are projected only by the capable Stateless MCP
-/// 2026 adapter.
-pub fn skill_runtime_tool_specs() -> Vec<ToolSpec> {
-    operator_extension_specs(
-        skills::tool_specs(),
-        ToolOperatorExtensionFamily::SkillRuntime,
-    )
-}
-
-/// Fixed Runner-global Skill-management contract. Package/version cardinality
-/// never changes this schema set; the MCP adapter additionally requires explicit
-/// operator authority before projecting these tools.
-pub fn skill_management_tool_specs() -> Vec<ToolSpec> {
-    operator_extension_specs(
-        skills::tool_specs(),
-        ToolOperatorExtensionFamily::SkillManagement,
-    )
-}
-
-/// Canonical fixed Stateless MCP 2026 operator-extension universe. These specs
-/// remain globally ModelHidden and are projected only by protocol-capability-aware
-/// adapters and discovery. Keeping the composition here prevents tools/list,
-/// Adaptive gateway admission, and tool_manifest from maintaining separate name sets.
-pub fn stateless_operator_extension_tool_specs() -> Vec<ToolSpec> {
-    skill_runtime_tool_specs()
+fn operator_family_descriptors(family: ToolOperatorExtensionFamily) -> Vec<ToolDescriptor> {
+    let descriptors = match family {
+        ToolOperatorExtensionFamily::SkillRuntime | ToolOperatorExtensionFamily::SkillManagement => skills::tool_descriptors(),
+        ToolOperatorExtensionFamily::MemoryRuntime | ToolOperatorExtensionFamily::MemoryManagement => memory::tool_descriptors(),
+        ToolOperatorExtensionFamily::TraceDiagnostics => vec![tool_descriptor("read_tool_trace", "Admin-only bounded reader for Server-hosted full tool-request traces. Omit payload_index to list safe payload metadata first; then read one bounded JSON payload by index. Available only when full trace mode is enabled. Trace payloads may contain sensitive tool data and never grant execution authority.")],
+    };
+    descriptors
         .into_iter()
-        .chain(skill_management_tool_specs())
-        .chain(memory_runtime_tool_specs())
-        .chain(memory_management_tool_specs())
-        .chain(operator_diagnostic_tool_specs())
+        .filter(|descriptor| {
+            runtime_tool_operator_extension_family(&descriptor.name) == Some(family)
+        })
         .collect()
 }
 
-fn resolve_tool_specs<'a>(
+pub fn operator_diagnostic_tool_specs() -> Vec<ToolSpec> {
+    operator_family_descriptors(ToolOperatorExtensionFamily::TraceDiagnostics)
+        .into_iter()
+        .map(ToolDescriptor::into_spec)
+        .collect()
+}
+
+pub fn memory_runtime_tool_specs() -> Vec<ToolSpec> {
+    operator_family_descriptors(ToolOperatorExtensionFamily::MemoryRuntime)
+        .into_iter()
+        .map(ToolDescriptor::into_spec)
+        .collect()
+}
+
+pub fn memory_management_tool_specs() -> Vec<ToolSpec> {
+    operator_family_descriptors(ToolOperatorExtensionFamily::MemoryManagement)
+        .into_iter()
+        .map(ToolDescriptor::into_spec)
+        .collect()
+}
+
+pub fn skill_runtime_tool_specs() -> Vec<ToolSpec> {
+    operator_family_descriptors(ToolOperatorExtensionFamily::SkillRuntime)
+        .into_iter()
+        .map(ToolDescriptor::into_spec)
+        .collect()
+}
+
+pub fn skill_management_tool_specs() -> Vec<ToolSpec> {
+    operator_family_descriptors(ToolOperatorExtensionFamily::SkillManagement)
+        .into_iter()
+        .map(ToolDescriptor::into_spec)
+        .collect()
+}
+
+/// Canonical ordered operator-extension universe. Capability/authority filtering
+/// belongs to the adapter; the catalog itself never grants access.
+pub fn stateless_operator_extension_tool_descriptors() -> Vec<ToolDescriptor> {
+    [
+        ToolOperatorExtensionFamily::SkillRuntime,
+        ToolOperatorExtensionFamily::SkillManagement,
+        ToolOperatorExtensionFamily::MemoryRuntime,
+        ToolOperatorExtensionFamily::MemoryManagement,
+        ToolOperatorExtensionFamily::TraceDiagnostics,
+    ]
+    .into_iter()
+    .flat_map(operator_family_descriptors)
+    .collect()
+}
+
+pub fn stateless_operator_extension_tool_specs() -> Vec<ToolSpec> {
+    stateless_operator_extension_tool_descriptors()
+        .into_iter()
+        .map(ToolDescriptor::into_spec)
+        .collect()
+}
+
+fn resolve_tool_descriptors<'a>(
     definitions: impl IntoIterator<Item = &'a ToolDefinition>,
-) -> Vec<ToolSpec> {
+) -> Vec<ToolDescriptor> {
     let mut specs = Vec::new();
     let mut seen_definition_names = BTreeSet::new();
     for definition in definitions {
@@ -225,28 +281,53 @@ fn resolve_tool_specs<'a>(
                 definition.name
             )
         });
-        specs.push(tool_spec(definition.name, model_spec.description));
+        specs.push(tool_descriptor(definition.name, model_spec.description));
     }
     specs
 }
 
-pub(super) fn tool_spec(name: &'static str, description: impl Into<String>) -> ToolSpec {
+fn tool_descriptor(name: &'static str, description: impl Into<String>) -> ToolDescriptor {
     debug_assert!(
         lookup_tool_definition(name).is_some(),
-        "{name} ToolSpec is missing a ToolDefinition"
+        "{name} descriptor lacks definition"
     );
-    ToolSpec {
-        name: name.to_string(),
+    ToolDescriptor {
+        name: name.to_owned(),
         description: description.into(),
-        input_schema: input_schema_for_tool(name),
-        output_schema: output_schema_for_tool(name),
-        annotations: tool_annotations(name),
     }
+}
+
+pub(super) fn tool_spec(name: &'static str, description: impl Into<String>) -> ToolSpec {
+    tool_descriptor(name, description).into_spec()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn descriptors_preserve_full_contract_metadata_and_order_without_materialization() {
+        take_tool_materialization_counts_for_test();
+        let descriptors = registered_tool_descriptors()
+            .into_iter()
+            .chain(exact_manifest_specialist_tool_descriptors())
+            .chain(stateless_operator_extension_tool_descriptors())
+            .collect::<Vec<_>>();
+        assert_eq!(take_tool_materialization_counts_for_test(), (0, 0));
+        let specs = registered_tool_specs()
+            .into_iter()
+            .chain(exact_manifest_specialist_tool_specs())
+            .chain(stateless_operator_extension_tool_specs())
+            .collect::<Vec<_>>();
+        assert_eq!(descriptors.len(), specs.len());
+        for (descriptor, spec) in descriptors.iter().zip(&specs) {
+            assert_eq!(descriptor.name, spec.name);
+            assert_eq!(descriptor.description, spec.description);
+            assert_eq!(descriptor.annotations(), spec.annotations);
+            assert_eq!(spec.input_schema, input_schema_for_tool(&spec.name));
+            assert_eq!(spec.output_schema, output_schema_for_tool(&spec.name));
+        }
+    }
 
     fn collect_schema_descriptions<'a>(value: &'a Value, out: &mut Vec<&'a str>) {
         match value {
@@ -362,7 +443,7 @@ mod tests {
             *lookup_tool_definition("register_project").expect("register_project ToolDefinition");
         assert!(definition.model_spec.is_some());
         definition.model_spec = None;
-        let _ = resolve_tool_specs(std::iter::once(&definition));
+        let _ = resolve_tool_descriptors(std::iter::once(&definition));
     }
 
     #[test]
@@ -372,7 +453,7 @@ mod tests {
             *lookup_tool_definition("register_project").expect("register_project ToolDefinition");
         assert!(definition.model_spec.is_some());
         let duplicate = definition;
-        let _ = resolve_tool_specs([&definition, &duplicate]);
+        let _ = resolve_tool_descriptors([&definition, &duplicate]);
     }
 
     #[test]

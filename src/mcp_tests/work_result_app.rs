@@ -484,7 +484,7 @@ fn work_result_html_is_bounded_live_progress_ui() {
         "id=\"windowIdentity\"",
         "Project · ",
         "Session · ",
-        "Window calls in start-time order.",
+        "Calls in this chat, earliest first.",
         "Activity",
         "Collaboration",
         "Final changes",

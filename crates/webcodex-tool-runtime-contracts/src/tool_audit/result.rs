@@ -332,6 +332,12 @@ pub(super) fn browser_control_result_audit(output: &Value) -> Value {
         "browser_id",
         "page_id",
         "page_count",
+        "requested_count",
+        "completed_count",
+        "stopped_at_index",
+        "remaining_count",
+        "needs_snapshot",
+        "stopped_execution_state",
     ] {
         copy_existing_audit_value(&mut projected, output, key);
     }

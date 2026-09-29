@@ -16,6 +16,7 @@ fn target_schema() -> Value {
                     "browser_observe": {"type": "boolean"},
                     "browser_control": {"type": "boolean"},
                     "browser_element_action_admission": {"type": "boolean"},
+                    "browser_batch": {"type": "boolean"},
                     "browser_launch": {"type": "boolean"}
                 },
                 "required": [
@@ -337,6 +338,12 @@ pub fn output_schema_for_tool(name: &str) -> Option<Value> {
         "browser_act" => {
             let mut fields = common_fields();
             fields.extend([
+                ("requested_count", bounded_count(32)),
+                ("completed_count", json!({"type": "integer", "minimum": 0, "maximum": 32, "description": "Known completed operations, even when aggregate execution_state is outcome_unknown. Missing after transport loss means progress is unknown."})),
+                ("stopped_at_index", json!({"type": "integer", "minimum": 0, "maximum": 31, "description": "Zero-based stopped operation. A post-effect document change stops at the completed operation's index."})),
+                ("remaining_count", json!({"type": "integer", "minimum": 0, "maximum": 32, "description": "Definitely unstarted operations, including a rejected operation but excluding an uncertain operation. Never implies permission to retry."})),
+                ("needs_snapshot", json!({"type": "boolean"})),
+                ("stopped_execution_state", json!({"type": "string", "enum": ["not_started", "completed", "outcome_unknown"]})),
                 (
                     "browser_id",
                     json!({"type": "string", "minLength": 1, "maxLength": 128}),

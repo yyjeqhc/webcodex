@@ -631,6 +631,7 @@ mod tests {
             browser_observe: false,
             browser_control: false,
             browser_element_action_admission: false,
+            browser_batch: false,
             browser_launch: false,
             computer_observe: false,
             computer_application_discovery: false,

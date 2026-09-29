@@ -574,12 +574,21 @@ pub enum RunnerBrowserOperationKind {
     SelectOption,
     SetValue,
     UploadFile,
+    Batch,
     Key,
     ClosePage,
     CloseBrowser,
 }
 
 impl RunnerBrowserOperationKind {
+    pub const fn max_payload_bytes(self) -> usize {
+        if matches!(self, Self::Batch) {
+            256 * 1024
+        } else {
+            32 * 1024
+        }
+    }
+
     pub fn wire_kind(self) -> &'static str {
         match self {
             Self::ListBrowsers => "browser_list_browsers",
@@ -599,6 +608,7 @@ impl RunnerBrowserOperationKind {
             Self::SelectOption => "browser_select_option",
             Self::SetValue => "browser_set_value",
             Self::UploadFile => "browser_upload_file",
+            Self::Batch => "browser_batch",
             Self::Key => "browser_key",
             Self::ClosePage => "browser_close_page",
             Self::CloseBrowser => "browser_close",
@@ -624,6 +634,7 @@ impl RunnerBrowserOperationKind {
             "browser_select_option" => Self::SelectOption,
             "browser_set_value" => Self::SetValue,
             "browser_upload_file" => Self::UploadFile,
+            "browser_batch" => Self::Batch,
             "browser_key" => Self::Key,
             "browser_close_page" => Self::ClosePage,
             "browser_close" => Self::CloseBrowser,
@@ -1983,12 +1994,8 @@ fn validate_computer_payload(
     validate_json_payload(payload, "computer operation")
 }
 
-fn validate_browser_payload(
-    _kind: RunnerBrowserOperationKind,
-    payload: &str,
-) -> Result<(), String> {
-    const MAX_BROWSER_REQUEST_PAYLOAD_BYTES: usize = 32 * 1024;
-    if payload.len() > MAX_BROWSER_REQUEST_PAYLOAD_BYTES {
+fn validate_browser_payload(kind: RunnerBrowserOperationKind, payload: &str) -> Result<(), String> {
+    if payload.len() > kind.max_payload_bytes() {
         return Err("browser request payload exceeds V2 bound".to_string());
     }
     validate_json_payload(payload, "browser operation")

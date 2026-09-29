@@ -2,6 +2,25 @@ use super::*;
 use serde_json::json;
 
 #[test]
+fn browser_batch_audit_omits_nested_field_values_and_upload_paths() {
+    let projection = session_log_arguments_for_tool_request(
+        "browser_act",
+        &json!({
+            "action": "batch", "client_id": "mini", "browser_id": "browser_abcdefghijklmnop",
+            "page_id": "page_abcdefghijklmnop", "operations": [
+                {"action": "input_text", "element_id": "element_abcdefghijklmnop", "text": "PRIVATE_TEXT"},
+                {"action": "select_option", "element_id": "element_abcdefghijklmnop", "option": "PRIVATE_OPTION"},
+                {"action": "set_value", "element_id": "element_abcdefghijklmnop", "value": "PRIVATE_VALUE"},
+                {"action": "upload_file", "element_id": "element_abcdefghijklmnop", "project": "agent:mini:resume", "path": "PRIVATE_PATH.pdf"}
+            ]
+        }),
+    );
+    assert_eq!(projection["operation_count"], 4);
+    assert!(projection.get("operations").is_none());
+    assert!(!projection.to_string().contains("PRIVATE_"));
+}
+
+#[test]
 fn browser_effect_request_audit_drops_sensitive_text_and_url() {
     let text_secret = "PASSWORD_SECRET_123";
     let text = session_log_arguments_for_tool_request(
@@ -166,11 +185,23 @@ fn browser_control_result_audit_drops_page_text_and_url() {
         "state_changed":true,
         "browser_id":"browser_abcdefghijklmnop",
         "page_id":"page_abcdefghijklmnop",
+        "requested_count":4,
+        "completed_count":2,
+        "stopped_at_index":2,
+        "remaining_count":1,
+        "needs_snapshot":true,
+        "stopped_execution_state":"outcome_unknown",
         "title":"PRIVATE_TITLE",
         "url":"https://example.test/?secret=PRIVATE_QUERY",
         "value":"PRIVATE_FORM_VALUE"
     });
     let projected = session_log_result_for_tool("browser_act", &output);
+    assert_eq!(projected["requested_count"], 4);
+    assert_eq!(projected["completed_count"], 2);
+    assert_eq!(projected["stopped_at_index"], 2);
+    assert_eq!(projected["remaining_count"], 1);
+    assert_eq!(projected["needs_snapshot"], true);
+    assert_eq!(projected["stopped_execution_state"], "outcome_unknown");
     let serialized = serde_json::to_string(&projected).unwrap();
     for private in ["PRIVATE_TITLE", "PRIVATE_QUERY", "PRIVATE_FORM_VALUE"] {
         assert!(!serialized.contains(private));

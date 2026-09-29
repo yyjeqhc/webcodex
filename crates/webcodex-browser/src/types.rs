@@ -87,6 +87,82 @@ impl BrowserError {
 
 pub type BrowserResult<T> = Result<T, BrowserError>;
 
+pub const MAX_BATCH_OPERATIONS: usize = 32;
+
+/// Already resolved local upload paths are supplied only by the Runner adapter.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
+pub enum BatchOperation {
+    Click {
+        element_id: String,
+    },
+    InputText {
+        element_id: String,
+        text: String,
+    },
+    SelectOption {
+        element_id: String,
+        option: String,
+    },
+    SetValue {
+        element_id: String,
+        value: String,
+    },
+    UploadFile {
+        element_id: String,
+        path: std::path::PathBuf,
+    },
+}
+
+impl BatchOperation {
+    pub(crate) fn authority(&self) -> (&str, AdmittedBrowserAction) {
+        match self {
+            Self::Click { element_id } => (element_id, AdmittedBrowserAction::Click),
+            Self::InputText { element_id, .. } => (element_id, AdmittedBrowserAction::InputText),
+            Self::SelectOption { element_id, .. } => {
+                (element_id, AdmittedBrowserAction::SelectOption)
+            }
+            Self::SetValue { element_id, .. } => (element_id, AdmittedBrowserAction::SetValue),
+            Self::UploadFile { element_id, .. } => (element_id, AdmittedBrowserAction::UploadFile),
+        }
+    }
+
+    pub(crate) fn validate(&self) -> BrowserResult<()> {
+        let value = match self {
+            Self::InputText { text, .. } => Some(text),
+            Self::SelectOption { option, .. } => Some(option),
+            Self::SetValue { value, .. } => Some(value),
+            _ => None,
+        };
+        if value.is_some_and(|v| v.is_empty() || v.contains('\0') || v.len() > MAX_INPUT_TEXT_BYTES)
+        {
+            return Err(BrowserError::not_started(
+                "invalid_batch_value",
+                "field value must be non-empty, NUL-free, and within the Browser UTF-8 byte bound",
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Sparse receipt. Aggregate certainty never erases an earlier completed effect.
+/// stopped_at_index is zero-based; remaining_count counts definitely unstarted
+/// operations (including a rejected operation, excluding an uncertain operation).
+#[derive(Debug, Serialize)]
+pub struct BatchResult {
+    pub execution_state: ExecutionState,
+    pub requested_count: usize,
+    pub completed_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stopped_at_index: Option<usize>,
+    pub remaining_count: usize,
+    pub needs_snapshot: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stability: Option<BrowserStability>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<BrowserError>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct BrowserSummary {
     pub browser_id: String,

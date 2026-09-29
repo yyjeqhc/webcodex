@@ -355,7 +355,7 @@ fn goal_schemas_are_bounded_private_and_existing_coding_tools_do_not_accept_goal
     let prepare = spec("prepare_goal_workflow");
     assert_eq!(
         prepare.input_schema["properties"]["session_id"]["pattern"],
-        "^wc_sess_([A-Za-z0-9_-]{16}|[0-9a-f]{32})$"
+        "^(wc_sess_([A-Za-z0-9_-]{16}|[0-9a-f]{32})|~s[1-9][0-9]{0,18})$"
     );
     assert_eq!(
         prepare.input_schema["properties"]["title"]["maxLength"],

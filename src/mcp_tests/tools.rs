@@ -1876,10 +1876,10 @@ async fn mcp_compact_preserves_safety_patterns_and_wrapper_bounds() {
         schema("run_skill_resource")["properties"]["expected_definition_revision"]["pattern"],
         "^[0-9a-f]{64}$"
     );
-    // The identical opaque Session pattern remains on business Session inputs.
+    // Business Session selectors retain the canonical-or-ref pattern in compact schemas.
     assert_eq!(
         schema("work_on_project")["properties"]["session_id"]["pattern"],
-        "^wc_sess_([A-Za-z0-9_-]{16}|[0-9a-f]{32})$"
+        "^(wc_sess_([A-Za-z0-9_-]{16}|[0-9a-f]{32})|~s[1-9][0-9]{0,18})$"
     );
     let properties = &schema("run_process")["properties"];
     let envelope = &properties["_wc"];

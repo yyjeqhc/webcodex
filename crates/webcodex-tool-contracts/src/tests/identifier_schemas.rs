@@ -142,6 +142,94 @@ fn workflow_session_identifier_schemas_accept_compact_and_persisted_legacy_forms
 }
 
 #[test]
+fn workflow_session_selector_schemas_accept_refs() {
+    let mut checked = BTreeSet::new();
+    for spec in registered_tool_specs() {
+        let selector = &spec.input_schema["properties"]["session_id"];
+        let Some(pattern) = selector["pattern"].as_str() else {
+            continue;
+        };
+        let regex = regex::Regex::new(pattern).unwrap();
+        for accepted in [
+            "~s1",
+            "~s242",
+            "~s9223372036854775807",
+            "wc_sess_0123456789abcdef",
+            "wc_sess_0123456789abcdef0123456789abcdef",
+        ] {
+            assert!(
+                regex.is_match(accepted),
+                "{}.session_id rejects {accepted}: {pattern}",
+                spec.name
+            );
+        }
+        for rejected in [
+            "~s",
+            "~s0",
+            "~s01",
+            "~s-1",
+            "~s1x",
+            "~s1 ",
+            "~p1",
+            "~ac1",
+            "~s18446744073709551616",
+        ] {
+            assert!(
+                !regex.is_match(rejected),
+                "{}.session_id accepts malformed/wrong-domain selector {rejected}",
+                spec.name
+            );
+        }
+        checked.insert(spec.name);
+    }
+    for tool in [
+        "work_on_project",
+        "present_work_result",
+        "update_session_context",
+    ] {
+        assert!(checked.contains(tool), "missing selector coverage: {tool}");
+    }
+}
+
+#[test]
+fn workflow_session_output_id_schemas_remain_canonical() {
+    fn visit(value: &Value, checked: &mut usize) {
+        match value {
+            Value::Object(object) => {
+                if let Some(pattern) = object
+                    .get("properties")
+                    .and_then(|properties| properties.get("session_id"))
+                    .and_then(|session_id| session_id.get("pattern"))
+                    .and_then(Value::as_str)
+                {
+                    let regex = regex::Regex::new(pattern).unwrap();
+                    assert!(regex.is_match("wc_sess_0123456789abcdef"), "{pattern}");
+                    assert!(
+                        !regex.is_match("~s1"),
+                        "output identity is not a selector: {pattern}"
+                    );
+                    *checked += 1;
+                }
+                for child in object.values() {
+                    visit(child, checked);
+                }
+            }
+            Value::Array(values) => {
+                for child in values {
+                    visit(child, checked);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut checked = 0;
+    for spec in registered_tool_specs() {
+        visit(&spec.output_schema, &mut checked);
+    }
+    assert!(checked > 0, "missing canonical output identity coverage");
+}
+
+#[test]
 fn registered_tool_string_length_bounds_are_not_inverted() {
     fn visit(value: &serde_json::Value, path: &str) {
         match value {

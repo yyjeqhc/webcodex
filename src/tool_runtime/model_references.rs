@@ -417,12 +417,16 @@ mod tests {
         let recorder_ref = runtime
             .session_reference_for_id(&recorder.session_id, None)
             .unwrap();
+        let business_ref = runtime
+            .session_reference_for_id(&business.session_id, None)
+            .unwrap();
+        assert_ne!(business_ref, recorder_ref);
 
         let outcome = runtime
             .call_tool_with_context(
                 crate::tool_runtime::kernel::ToolCallRequest {
                     tool_name: "session_summary".to_string(),
-                    arguments: serde_json::json!({"session_id": business.session_id}),
+                    arguments: serde_json::json!({"session_id": business_ref}),
                 },
                 crate::tool_runtime::kernel::ToolCallContext {
                     transport: crate::tool_runtime::kernel::ToolTransport::Api,

@@ -1492,7 +1492,8 @@ pub enum ToolCall {
         /// substitutes for plugin_tool describe before invocation.
         #[serde(default = "default_true")]
         include_extension_catalog: bool,
-        /// Optional explicit Workflow Session to continue exactly. It must be active and accessible and
+        /// Optional explicit Workflow Session to continue exactly: canonical wc_sess_* or server-issued
+        /// principal-scoped session_ref (~sN). It must be active and accessible and
         /// remains bound to its exact Project. Creating a managed worktree from an existing source Project is
         /// a fresh-Session transition: omit session_id, then continue using the returned managed Project/ref
         /// and its Session. A source Session is never retargeted to the new Project. The legacy client_id +
@@ -1501,7 +1502,9 @@ pub enum ToolCall {
         /// model context still retains project instructions, workflow guidance, or extension metadata. On
         /// MCP, a fresh model context should request missing static guidance through `_wc.context`. This
         /// business input is distinct from recorder provenance supplied through `_wc.record`.
-        #[schemars(regex(pattern = "^wc_sess_([A-Za-z0-9_-]{16}|[0-9a-f]{32})$"))]
+        #[schemars(regex(
+            pattern = "^(wc_sess_([A-Za-z0-9_-]{16}|[0-9a-f]{32})|~s[1-9][0-9]{0,18})$"
+        ))]
         #[serde(default)]
         session_id: Option<String>,
     },
@@ -1551,10 +1554,13 @@ pub enum ToolCall {
         /// Required exact runtime Project input. It is independently resolved and authorized on every call.
         #[schemars(length(min = 1, max = 512))]
         project: String,
-        /// Optional exact project-scoped Workflow Session for authorized Server Job state.
+        /// Optional exact project-scoped Workflow Session (canonical wc_sess_* or server-issued ~sN)
+        /// for authorized Server Job state.
         /// Omit it when the Window has not created or resumed a Workflow Session.
         #[serde(default)]
-        #[schemars(regex(pattern = "^wc_sess_([A-Za-z0-9_-]{16}|[0-9a-f]{32})$"))]
+        #[schemars(regex(
+            pattern = "^(wc_sess_([A-Za-z0-9_-]{16}|[0-9a-f]{32})|~s[1-9][0-9]{0,18})$"
+        ))]
         session_id: Option<String>,
     },
 
@@ -1563,7 +1569,9 @@ pub enum ToolCall {
     WorkResultState {
         project: String,
         #[serde(default)]
-        #[schemars(regex(pattern = "^wc_sess_([A-Za-z0-9_-]{16}|[0-9a-f]{32})$"))]
+        #[schemars(regex(
+            pattern = "^(wc_sess_([A-Za-z0-9_-]{16}|[0-9a-f]{32})|~s[1-9][0-9]{0,18})$"
+        ))]
         session_id: Option<String>,
         /// Explicit file page or lazy diff; omission keeps lightweight card state.
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1585,7 +1593,9 @@ pub enum ToolCall {
         project: String,
         /// Optional exact work context explicitly linked to the current Window; never the recipient.
         #[serde(default)]
-        #[schemars(regex(pattern = "^wc_sess_([A-Za-z0-9_-]{16}|[0-9a-f]{32})$"))]
+        #[schemars(regex(
+            pattern = "^(wc_sess_([A-Za-z0-9_-]{16}|[0-9a-f]{32})|~s[1-9][0-9]{0,18})$"
+        ))]
         session_id: Option<String>,
         #[schemars(length(min = 1, max = 8000))]
         message: String,
@@ -1623,7 +1633,9 @@ pub enum ToolCall {
         project: String,
         /// Required explicit active, project-scoped Workflow Session id. Unknown ids fail without creating
         /// a Session.
-        #[schemars(regex(pattern = "^wc_sess_([A-Za-z0-9_-]{16}|[0-9a-f]{32})$"))]
+        #[schemars(regex(
+            pattern = "^(wc_sess_([A-Za-z0-9_-]{16}|[0-9a-f]{32})|~s[1-9][0-9]{0,18})$"
+        ))]
         session_id: String,
         /// Complete replacement execution context. `{}` clears all defaults. The context cannot store
         /// environment variables, credentials, SSH host/configuration, keys, passwords, connections, or
@@ -1778,7 +1790,9 @@ pub enum ToolCall {
     /// Session-store snapshot and return an opaque assignment fence.
     GetSessionAssignment {
         /// Required coordinator/business Workflow Session containing the exact todo.
-        #[schemars(regex(pattern = "^wc_sess_([A-Za-z0-9_-]{16}|[0-9a-f]{32})$"))]
+        #[schemars(regex(
+            pattern = "^(wc_sess_([A-Za-z0-9_-]{16}|[0-9a-f]{32})|~s[1-9][0-9]{0,18})$"
+        ))]
         session_id: String,
         /// Required exact open todo id. No implicit or recent-message inference is used.
         #[schemars(regex(pattern = "^wc_msg_([A-Za-z0-9_-]{16}|[0-9a-f]{32})$"))]
@@ -1790,7 +1804,9 @@ pub enum ToolCall {
     /// no history. Optional waiting is one bounded wait, never a subscription.
     ObserveSessionMessages {
         /// Required explicit Workflow Session whose message-state delta is observed.
-        #[schemars(regex(pattern = "^wc_sess_([A-Za-z0-9_-]{16}|[0-9a-f]{32})$"))]
+        #[schemars(regex(
+            pattern = "^(wc_sess_([A-Za-z0-9_-]{16}|[0-9a-f]{32})|~s[1-9][0-9]{0,18})$"
+        ))]
         session_id: String,
         /// Optional opaque Session-bound durable observation token returned by an earlier
         /// observe_session_messages call.
@@ -1981,7 +1997,9 @@ pub enum ToolCall {
         /// Required Project target. Nested JavaScript tool calls cannot select or override Project authority.
         project: String,
         /// Required exact Workflow Session. Nested JavaScript tool calls remain bound to this Session and record canonical evidence there.
-        #[schemars(regex(pattern = "^wc_sess_([A-Za-z0-9_-]{16}|[0-9a-f]{32})$"))]
+        #[schemars(regex(
+            pattern = "^(wc_sess_([A-Za-z0-9_-]{16}|[0-9a-f]{32})|~s[1-9][0-9]{0,18})$"
+        ))]
         session_id: String,
         /// Bounded JavaScript orchestration source. tools.<name>(args) returns a Promise for admitted read-only tools; use direct primitives for simple one-step observations, Promise.all only for independent observations, and sequential adaptive follow-ups inside the cell. Filter and synthesize raw child results before text(value); emit distilled evidence, not raw-result dumps, before reaching the outer-output limit. Project/Session are outer-bound. No shell, filesystem, network, Node, Deno, WebAssembly, mutation, validation, Jobs, plugins, or MCP are exposed.
         #[schemars(length(max = 65536))]
@@ -2000,7 +2018,9 @@ pub enum ToolCall {
         /// Required Project target. Nested JavaScript tool calls cannot select or override Project authority.
         project: String,
         /// Required exact Workflow Session. Every nested child remains a canonical ToolRuntime invocation in this same Session.
-        #[schemars(regex(pattern = "^wc_sess_([A-Za-z0-9_-]{16}|[0-9a-f]{32})$"))]
+        #[schemars(regex(
+            pattern = "^(wc_sess_([A-Za-z0-9_-]{16}|[0-9a-f]{32})|~s[1-9][0-9]{0,18})$"
+        ))]
         session_id: String,
         /// Experimental E2a JavaScript orchestration source. Admitted tools are the E1 read-only set plus cargo_check and cargo_test. Structured validators may hand off the same execution as ordinary Jobs; no mutation, shell, generic process, Job observation, plugins/MCP, or recursive Code Mode is exposed.
         #[schemars(length(max = 65536))]
@@ -2018,7 +2038,9 @@ pub enum ToolCall {
         /// Required Project target. Nested JavaScript tool calls cannot select or override Project authority.
         project: String,
         /// Required exact Workflow Session. Every nested child remains a canonical ToolRuntime invocation in this same Session.
-        #[schemars(regex(pattern = "^wc_sess_([A-Za-z0-9_-]{16}|[0-9a-f]{32})$"))]
+        #[schemars(regex(
+            pattern = "^(wc_sess_([A-Za-z0-9_-]{16}|[0-9a-f]{32})|~s[1-9][0-9]{0,18})$"
+        ))]
         session_id: String,
         /// Experimental E2c source: E1 reads, at most one canonical edit_project_files attempt, then cargo_check/cargo_test only after a successful known edit (including no-op). Use read_revision for guarded edits. Inspect source_state independently of execution success. Return Job handoffs to the outer workflow, never wait inside JS. No shell/process, nested Job observation, alternate writes, gateways, recursion or automatic whole-program retry.
         #[schemars(length(max = 65536))]
@@ -3053,7 +3075,9 @@ pub enum ToolCall {
     /// This is Runtime/Store workflow composition only; it does not establish any Host carrier.
     PrepareGoalWorkflow {
         /// Exact Workflow Session independently re-authorized before durable admission.
-        #[schemars(regex(pattern = "^wc_sess_([A-Za-z0-9_-]{16}|[0-9a-f]{32})$"))]
+        #[schemars(regex(
+            pattern = "^(wc_sess_([A-Za-z0-9_-]{16}|[0-9a-f]{32})|~s[1-9][0-9]{0,18})$"
+        ))]
         session_id: String,
         /// Fixed durable completion intent; the Server does not evaluate natural-language conditions.
         /// At most 8 conditions, each additionally bounded to 512 UTF-8 bytes.
@@ -3236,7 +3260,9 @@ pub enum ToolCall {
         goal_id: String,
         /// Exact Workflow Session id. The target Session is independently re-authorized before association;
         /// the correlation never grants Session or Project authority.
-        #[schemars(regex(pattern = "^wc_sess_([A-Za-z0-9_-]{16}|[0-9a-f]{32})$"))]
+        #[schemars(regex(
+            pattern = "^(wc_sess_([A-Za-z0-9_-]{16}|[0-9a-f]{32})|~s[1-9][0-9]{0,18})$"
+        ))]
         session_id: String,
         /// Caller-generated Goal-to-Workflow-Session association key. Exact retry replays; changed reuse
         /// fails closed.

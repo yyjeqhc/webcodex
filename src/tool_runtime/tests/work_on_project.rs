@@ -1138,7 +1138,7 @@ fn work_on_project_schema_and_registration() {
     assert_eq!(props["session_id"]["type"], "string");
     assert_eq!(
         props["session_id"]["pattern"],
-        "^wc_sess_([A-Za-z0-9_-]{16}|[0-9a-f]{32})$"
+        "^(wc_sess_([A-Za-z0-9_-]{16}|[0-9a-f]{32})|~s[1-9][0-9]{0,18})$"
     );
     assert_eq!(props["include_extension_catalog"]["type"], "boolean");
     assert_eq!(props["include_extension_catalog"]["default"], true);

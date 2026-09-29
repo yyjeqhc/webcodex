@@ -19,6 +19,9 @@ use std::sync::OnceLock;
 use tempfile::TempDir;
 use webcodex_core::runner_protocol::{RunnerEnvelope, VALIDATION_STEP_WAIT_FAILED_CODE};
 
+#[path = "job_manager_tests/project_build.rs"]
+mod project_build;
+
 fn retained_terminal_job(job_id: &str, ended_at: i64) -> RunningJob {
     let mut snapshot = test_job_snapshot(job_id);
     snapshot.status = "completed".to_string();

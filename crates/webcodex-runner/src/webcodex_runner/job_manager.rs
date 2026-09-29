@@ -2716,6 +2716,15 @@ impl JobManager {
         let worker_guard = self.workers.enter();
         std::thread::spawn(move || {
             let _worker_guard = worker_guard;
+            // An admitted build can wait in the local queue while its recipe,
+            // lockfile or registered root changes. Recheck on the worker before
+            // entering the native process path, not only when enqueueing it.
+            if let Err(error) =
+                super::project_build::fence(&policy, &project_registry_dir, &operation)
+            {
+                manager.fail_job(&operation, error, None);
+                return;
+            }
             let started_manager = manager.clone_for_worker();
             let started_job_id = job_id.clone();
             let on_started = || {

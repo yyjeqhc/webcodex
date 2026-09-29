@@ -2791,15 +2791,21 @@ pub enum ToolCall {
     /// Run one portable project build. The Runner resolves the nearest supported
     /// Rust/Go recipe, plans canonical argv, and admits one typed build Job.
     ProjectBuild {
+        /// Exact registered Runner Project.
         project: String,
         #[serde(default)]
         session_id: Option<String>,
+        /// Project-relative directory; Runner resolves the nearest recipe root.
         #[serde(default)]
         cwd: Option<String>,
+        /// Omission means auto. Rust and Go are supported; Node/Python return unavailable.
         #[serde(default)]
         adapter: Option<webcodex_core::project_build::ProjectBuildAdapter>,
+        /// Optional bounded Cargo package selectors or project-relative Go package patterns.
         #[serde(default)]
         scope: Option<webcodex_core::project_build::ProjectBuildScope>,
+        /// Total build execution budget, default 1800 seconds, clamped to 7 days.
+        /// Host handoff timing never extends this budget or starts a second build.
         #[serde(default)]
         #[schemars(range(min = 1))]
         timeout_secs: Option<u64>,

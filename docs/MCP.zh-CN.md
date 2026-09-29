@@ -273,7 +273,7 @@ work_on_project
 
 普通的 portable Rust/Go 构建优先使用 `project_build`。它只接受精确 registered `project`、可选的 project-relative `cwd`、可选的 `auto` / `rust` / `go` adapter hint、有界 `scope.packages`（1..8 项）以及总 `timeout_secs`。Runner 解析最近且无歧义的 recipe 并拥有 canonical argv：Rust 映射为 `cargo build`，有 scope 时使用重复 `-p` selector；Go 映射为 `go build ./...` 或调用方给出的有界 project-relative package pattern。请求不能携带 executable、argv、shell、script、release/profile/target/features、workspace/exclude、依赖／网络策略或 artifact discovery contract；v1 检测到 Node/Python recipe 时 fail closed。
 
-`project_build` 在 planning 与 typed Job admission 两处都要求 additive `project_build_v1` Runner capability。Job 准入会重新规划 registered project/root、recipe、manifest/lock provenance、package scope 与 canonical invocation；计划 stale 时拒绝执行，不会根据模型输入静默重建。长构建继续使用同一个 durable Job，并返回普通的 sparse pending continuation；pending 绝不授权 retry/redispatch。这个 closed gateway 限制的是 WebCodex 自己的命令权限，并不是 OS sandbox：Cargo/Go 构建逻辑以及项目 build script 仍可能产生自己的文件系统或网络副作用。超出 v1 contract 的构建继续显式使用 lower-level execution 工具。
+`project_build` 在 planning 与 typed Job admission 两处都要求 additive `project_build_v1` Runner capability。Job 准入会重新规划 registered project/root、recipe、manifest/lock provenance、package scope 与 canonical invocation；若经过本地排队，worker 会在原生进程执行前再次核验同一个计划。计划 stale 时以 `not_started` 拒绝并释放 Job 槽位，不会静默重建或执行过期意图。长构建继续使用同一个 durable Job，并返回普通的 sparse pending continuation；pending 绝不授权 retry/redispatch。这个 closed gateway 限制的是 WebCodex 自己的命令权限，并不是 OS sandbox：Cargo/Go 构建逻辑以及项目 build script 仍可能产生自己的文件系统或网络副作用。超出 v1 contract 的构建继续显式使用 lower-level execution 工具。
 
 Adaptive Runtime 可以把常用工具直接暴露，把 long-tail 工具通过 `call_runtime_tool` 暴露。direct/gateway 只影响 model exposure，不改变 schema validation、OAuth scope、Project authority、permission policy、Runner capability、Session fence 或 tool effects。
 

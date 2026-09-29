@@ -71,7 +71,9 @@ impl ToolDefinition {
         self.adaptive_runtime_direct.map(|policy| policy.rank)
     }
 
-    pub fn adaptive_runtime_direct_reason(self) -> Option<super::tool_definition::ToolDirectReason> {
+    pub fn adaptive_runtime_direct_reason(
+        self,
+    ) -> Option<super::tool_definition::ToolDirectReason> {
         self.adaptive_runtime_direct.map(|policy| policy.reason)
     }
 

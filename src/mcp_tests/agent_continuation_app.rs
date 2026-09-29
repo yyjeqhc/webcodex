@@ -1084,7 +1084,10 @@ async fn agent_continuation_app_protocol_uses_standard_result_without_model_proj
     // Exercise the retained domain projection without advertising a new model
     // presentation entry. Existing App protocol calls below remain real MCP.
     let present = runtime.present_agent_continuation(
-        Some(&owner), receiver.clone(), receiver_endpoint.clone(), receiver_generation,
+        Some(&owner),
+        receiver.clone(),
+        receiver_endpoint.clone(),
+        receiver_generation,
     );
     let present = json!({"result": super::super::tools::mcp_runtime_tool_result(
         "present_agent_continuation", false, present,
@@ -1388,7 +1391,10 @@ async fn all_agent_wait_mcp_automatic_message_is_compact_and_guides_authoritativ
         attach(&runtime, &owner, &watcher, "continuation-all-wait-endpoint");
 
     let present = runtime.present_agent_continuation(
-        Some(&owner), watcher.clone(), watcher_endpoint.clone(), watcher_generation,
+        Some(&owner),
+        watcher.clone(),
+        watcher_endpoint.clone(),
+        watcher_generation,
     );
     assert!(present.success, "retained ALL Wait projection: {present:?}");
 
@@ -1615,9 +1621,15 @@ async fn goal_scoped_agent_wait_mcp_message_names_goal_and_authoritative_rereads
     );
 
     let present = runtime.present_agent_continuation(
-        Some(&owner), controller.clone(), controller_endpoint.clone(), controller_generation,
+        Some(&owner),
+        controller.clone(),
+        controller_endpoint.clone(),
+        controller_generation,
     );
-    assert!(present.success, "retained Goal-scoped Wait projection: {present:?}");
+    assert!(
+        present.success,
+        "retained Goal-scoped Wait projection: {present:?}"
+    );
 
     let bind = handle_with_server_apps_enabled(
         &runtime,

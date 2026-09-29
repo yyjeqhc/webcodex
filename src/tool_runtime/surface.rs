@@ -18,12 +18,12 @@ use super::registry::{
 };
 use super::runtime::ToolRuntime;
 use super::tool_definition::{
-    available_tool_manifest_intent_names, is_model_visible_tool_name, resolve_tool_manifest_intent,
-    runtime_tool_category, runtime_tool_execution_contract, runtime_tool_host_orchestration_hint,
-    runtime_tool_metadata, runtime_tool_operator_extension_family, ToolExecutionContract,
-    ToolManifestIntent, ToolOperatorExtensionFamily, TOOL_CATEGORY_ARTIFACT, TOOL_CATEGORY_EDIT,
-    TOOL_CATEGORY_GIT, TOOL_CATEGORY_PATCH, TOOL_CATEGORY_RUNTIME, TOOL_CATEGORY_SESSION,
-    TOOL_CATEGORY_VALIDATION, model_visible_recommended_flows,
+    available_tool_manifest_intent_names, is_model_visible_tool_name,
+    model_visible_recommended_flows, resolve_tool_manifest_intent, runtime_tool_category,
+    runtime_tool_execution_contract, runtime_tool_host_orchestration_hint, runtime_tool_metadata,
+    runtime_tool_operator_extension_family, ToolExecutionContract, ToolManifestIntent,
+    ToolOperatorExtensionFamily, TOOL_CATEGORY_ARTIFACT, TOOL_CATEGORY_EDIT, TOOL_CATEGORY_GIT,
+    TOOL_CATEGORY_PATCH, TOOL_CATEGORY_RUNTIME, TOOL_CATEGORY_SESSION, TOOL_CATEGORY_VALIDATION,
 };
 use super::tool_inputs::ListToolsOptions;
 use super::tool_result::ToolResult;

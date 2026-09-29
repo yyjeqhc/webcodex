@@ -70,11 +70,15 @@ fn job_terminal_wait_does_not_suggest_an_unadvertised_host_carrier() {
 
     let mut capable = ToolResult::ok(base.clone());
     super::super::tools::project_job_terminal_resume_suggested_call(true, &mut capable);
-    assert_eq!(capable.output, base, "hidden carrier must not create a dead follow-up");
+    assert_eq!(
+        capable.output, base,
+        "hidden carrier must not create a dead follow-up"
+    );
     crate::tool_runtime::ToolCall::from_tool_name(
         "present_job_terminal_continuation",
         json!({"wait_id": "wc_job_wait_q6urq6urq6urq6ur"}),
-    ).expect("hidden domain ToolCall is retained");
+    )
+    .expect("hidden domain ToolCall is retained");
 
     let mut no_carrier = ToolResult::ok(base.clone());
     super::super::tools::project_job_terminal_resume_suggested_call(false, &mut no_carrier);
@@ -137,7 +141,12 @@ async fn job_terminal_continuation_app_surface_is_explicit_sparse_and_app_only()
     assert!(tool(&ui["result"], "present_job_terminal_continuation").is_none());
     assert!(tool(&ui["result"], "wait_for_job_terminal").is_none());
     for apps in [false, true] {
-        let full = super::super::tools::mcp_tools_list_payload_with_features_for_auth(false, apps, true, Some(&auth));
+        let full = super::super::tools::mcp_tools_list_payload_with_features_for_auth(
+            false,
+            apps,
+            true,
+            Some(&auth),
+        );
         assert!(tool(&full, "wait_for_job_terminal").is_none());
         assert!(tool(&full, "present_job_terminal_continuation").is_none());
     }

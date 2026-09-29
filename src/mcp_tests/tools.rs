@@ -2238,7 +2238,11 @@ fn mcp_compact_descriptions_preserve_selection_and_schema_literals() {
             compact_tool(&mut descriptor);
             descriptor
         } else {
-            tools.iter().find(|tool| tool["name"] == name).unwrap().clone()
+            tools
+                .iter()
+                .find(|tool| tool["name"] == name)
+                .unwrap()
+                .clone()
         };
         let description = descriptor["description"].as_str().unwrap();
         for phrase in phrases {

@@ -1,7 +1,7 @@
 use super::ToolVisibility::{ModelHidden, ModelVisible};
 use super::{
-    def, model_spec, permission_risk, require_all_scopes, ToolDefinition,
-    PERMISSION_RISK_WRITE, TOOL_CATEGORY_AGENT_WAIT,
+    def, model_spec, permission_risk, require_all_scopes, ToolDefinition, PERMISSION_RISK_WRITE,
+    TOOL_CATEGORY_AGENT_WAIT,
 };
 use crate::metadata::{
     ToolPathHint::None as NoPath,

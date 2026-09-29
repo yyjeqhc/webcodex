@@ -48,7 +48,8 @@ pub const ORDINARY_DISCOVERY_DEMOTED_REVIEW_TOOL_NAMES: &[&str] =
 pub fn model_visible_recommended_flows() -> impl Iterator<Item = &'static ToolRecommendedFlow> {
     TOOL_RECOMMENDED_FLOWS.iter().filter(|flow| {
         flow.tools.iter().all(|name| {
-            lookup_tool_definition(name).is_some_and(|definition| definition.visibility.is_model_visible())
+            lookup_tool_definition(name)
+                .is_some_and(|definition| definition.visibility.is_model_visible())
         })
     })
 }

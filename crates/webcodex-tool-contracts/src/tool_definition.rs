@@ -43,8 +43,7 @@ use super::metadata::{
 pub use super::tool_catalog::TOOL_MANIFEST_INTENTS;
 pub use super::tool_catalog::{
     available_tool_manifest_intent_names, model_visible_recommended_flows,
-    resolve_tool_manifest_intent, CODING_INTENT_TOOL_NAMES,
-    TOOL_RECOMMENDED_FLOWS,
+    resolve_tool_manifest_intent, CODING_INTENT_TOOL_NAMES, TOOL_RECOMMENDED_FLOWS,
 };
 #[cfg(any(test, feature = "root-test-support"))]
 pub use super::tool_policy::is_known_tool_name;
@@ -1241,7 +1240,10 @@ const fn adaptive_runtime_direct(
     rank: u16,
     reason: ToolDirectReason,
 ) -> ToolDefinition {
-    assert!(matches!(definition.visibility, ToolVisibility::ModelVisible));
+    assert!(matches!(
+        definition.visibility,
+        ToolVisibility::ModelVisible
+    ));
     ToolDefinition {
         adaptive_runtime_direct: Some(ToolAdaptiveDirectPolicy { rank, reason }),
         ..definition

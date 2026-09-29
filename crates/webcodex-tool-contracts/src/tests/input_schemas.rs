@@ -1203,7 +1203,9 @@ fn job_terminal_continuation_app_contract_is_exact_wait_plus_private_view_fence_
     )
     .is_ok());
 
-    assert!(!registered_tool_specs().iter().any(|spec| spec.name == "present_job_terminal_continuation"));
+    assert!(!registered_tool_specs()
+        .iter()
+        .any(|spec| spec.name == "present_job_terminal_continuation"));
     let present = input_schema_for_tool("present_job_terminal_continuation");
     assert_eq!(present["required"], json!(["wait_id"]));
     assert_eq!(
@@ -1298,9 +1300,16 @@ fn process_alias_and_python_are_host_visible_without_opening_objects() {
         );
         let mut alias = schema["properties"]["argv"].clone();
         let mut canonical = schema["properties"]["args"].clone();
-        let description = alias.as_object_mut().unwrap().remove("description").unwrap();
+        let description = alias
+            .as_object_mut()
+            .unwrap()
+            .remove("description")
+            .unwrap();
         canonical.as_object_mut().unwrap().remove("description");
-        assert_eq!(alias, canonical, "{name}: an alias must retain all canonical bounds");
+        assert_eq!(
+            alias, canonical,
+            "{name}: an alias must retain all canonical bounds"
+        );
         assert!(description.as_str().unwrap().contains("mechanical retry"));
         assert!(!description.as_str().unwrap().contains("Compatibility"));
         let mut arguments = json!({"project":"demo", "executable":"git", "argv":["status"]});

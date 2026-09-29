@@ -76,6 +76,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             super::ToolExecutionContinuation::ObserveJobs,
         ))),
         90,
+        super::ToolDirectReason::CoreWorkflow,
     ),
     adaptive_runtime_direct(
         captures_validation_output(model_spec(
@@ -111,6 +112,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             super::ToolExecutionContinuation::ObserveJobs,
         ))),
         100,
+        super::ToolDirectReason::CoreWorkflow,
     ),
     captures_validation_output(model_spec(
             def(

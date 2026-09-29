@@ -68,7 +68,11 @@ impl ToolDefinition {
     }
 
     pub fn adaptive_runtime_direct_rank(self) -> Option<u16> {
-        self.adaptive_runtime_direct_rank
+        self.adaptive_runtime_direct.map(|policy| policy.rank)
+    }
+
+    pub fn adaptive_runtime_direct_reason(self) -> Option<super::tool_definition::ToolDirectReason> {
+        self.adaptive_runtime_direct.map(|policy| policy.reason)
     }
 
     pub fn gpt_action_exposure(self) -> ToolGptActionExposure {

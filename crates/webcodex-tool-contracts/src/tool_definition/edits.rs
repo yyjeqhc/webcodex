@@ -70,5 +70,6 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             PERMISSION_RISK_WRITE,
         ),
         60,
+        super::ToolDirectReason::CoreWorkflow,
     ),
 ];

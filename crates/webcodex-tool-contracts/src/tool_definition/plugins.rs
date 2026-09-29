@@ -38,4 +38,5 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[adaptive_runtime_direct(
         PLUGIN_GATEWAY_SCOPES,
     ),
     26,
+    super::ToolDirectReason::CoreWorkflow,
 )];

@@ -72,6 +72,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             "Load one uniquely named Skill by exact Unicode case folding. Returns its descriptor, bounded SKILL.md, and revisions in one read-only Project call. Missing, ambiguous, or truncated discovery fails closed; scripts and other Skill resources are never executed.",
         ),
         27,
+        super::ToolDirectReason::CoreWorkflow,
     ),
     require_all_scopes(
             model_spec(

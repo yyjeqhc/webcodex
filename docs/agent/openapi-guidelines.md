@@ -17,7 +17,7 @@ LEGACY_GPT_ACTION_SUPPORTED_TOOL_NAMES
 
 Those snapshots describe compatibility, not authority. Every admitted call still resolves its canonical `ToolDefinition` and executes through ToolRuntime. New Adaptive Runtime, Host, MCP, Plugin, or Code Mode tools must **not** enter GPT Actions automatically.
 
-Tests must lock the frozen snapshots. Changing `adaptive_runtime_direct(..., rank)`, adding a model-visible tool, or changing Host routing must not require a GPT Actions change. Update a frozen snapshot only for a deliberate compatibility fix to an existing legacy deployment.
+Tests must lock the frozen snapshots. Changing `adaptive_runtime_direct(..., rank, reason)`, adding a model-visible tool, or changing Host routing must not require a GPT Actions change. Update a frozen snapshot only for a deliberate compatibility fix to an existing legacy deployment.
 
 ## 2. Action-specific state is legacy presentation/transport only
 

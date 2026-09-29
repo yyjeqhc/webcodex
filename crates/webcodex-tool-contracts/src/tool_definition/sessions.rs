@@ -116,6 +116,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         )
         .with_gpt_action_description("Start/resume exact Project work. Prefer project_ref; canonical id or client_id+path also work. Exact resume accepts session_ref/session_id; sparse goal_context supports explicit Goal reuse. MCP context sidecars are unavailable here."),
         10,
+        super::ToolDirectReason::CoreWorkflow,
     ),
     requires_explicit_business_session(model_spec(
         def(
@@ -177,6 +178,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         )
         .with_gpt_action_unsupported(),
         155,
+        super::ToolDirectReason::Presentation,
     ),
     def(
         "work_result_state",
@@ -646,6 +648,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         "Return a bounded structured aggregate of session-local discussion from the recorded session ledger. Does not call an LLM or generate natural-language summaries.",
         )),
         15,
+        super::ToolDirectReason::CoreWorkflow,
     ),
     requires_explicit_business_session(model_spec(
             def(

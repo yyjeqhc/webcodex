@@ -53,6 +53,7 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
             super::ToolExecutionContinuation::ObserveJobs,
         )),
         70,
+        super::ToolDirectReason::CoreWorkflow,
     ),
     require_all_scopes(
         model_spec(
@@ -133,6 +134,7 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
             super::ToolExecutionContinuation::ObserveJobs,
         )),
         74,
+        super::ToolDirectReason::CoreWorkflow,
     ),
     adaptive_runtime_direct(
         model_spec(
@@ -170,6 +172,7 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
             super::ToolExecutionContinuation::ObserveJobs,
         )),
         75,
+        super::ToolDirectReason::CoreWorkflow,
     ),
     requires_explicit_business_session(model_spec(
             def(
@@ -373,6 +376,7 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
             "Explicit logs/details/recovery for a known pending execution; not the default follow-up to execution_state=pending. A continuation is fallback, not a next-action command. Prefer passive terminal attention; do not call list_jobs first. Prefer observation_ref, or pass observation_token unchanged as after_observation_token. No token or no wait_secs gives an immediate observation. With tokens, bounded wait_secs defaults to wake_on=change; use wake_on=meaningful_change to suppress sequence-only heartbeat wakes while still waking for logs/lifecycle/activity/recovery, or wake_on=terminal only when useful progress is blocked on terminal outcome. If independent work remains, continue it; do not poll for visibility or repeatedly observe the same Job. terminal wakes on any terminal Job; all_terminal waits for all. Item errors return immediately; timeout may include changed=true. summary_only compacts successful validation logs. Never launches, retries, stops, or subscribes.",
         ).with_gpt_action_description("Observe one known pending execution only for logs/details/recovery or when passive terminal truth is insufficient. A continuation is fallback, not a next-action command. Do not list first, auto-follow, poll, or keep a Host Code Mode cell alive with repeated same-Job observations."),
         80,
+        super::ToolDirectReason::CoreWorkflow,
     ),
     adaptive_runtime_direct(
         model_spec(
@@ -405,6 +409,7 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
             "Transient join barrier for the current Host activation. Finish all currently-ready independent work, then pass the entire exact blocked Job set once; never use per-Job waits or Promise.race. Use any when one terminal Job can unlock a useful dependent branch; use all only at a true join requiring every blocked dependency. Stable-deduplicate IDs and re-authorize every target before one 1..45s wait. Failure/lost/stopped/timeout are terminal-ready, not success. Sparse output: ready status/outcome plus pending IDs; deadline is normal. After deadline recompute work/set and do not mechanically repeat the same-set wait without new work, dependency change, or semantic information. No logs, execution changes, durable state, restart recovery, or retry authority. Ready never authorizes follow-up. Choose wait_secs from the largest safe remaining Host activation budget after return guard, max 45s; no fixed 10/15/20s slice is preferred. Future activation: wait_for_job_terminal; logs/details/recovery use observe_jobs.",
         ),
         77,
+        super::ToolDirectReason::CoreWorkflow,
     ),
     adaptive_runtime_direct(
         model_spec(
@@ -435,6 +440,7 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
             "Arm one bounded one-shot terminal attention for one exact existing job_id. Exact keyed replay returns the same wait. Never starts, retries, stops, or replaces the Job. Terminal delivery is sparse status/outcome, never logs. automatic_resume_available is true only with a real current Host carrier. If suggested_call is supplied, use it only while waiting and only when no independent work remains; after presentation yield/end the current turn. An already-triggered wait needs no follow-up carrier. Do not poll, rearm/check repeatedly, or keep a Host Code Mode cell alive. Use observe_jobs only for explicit logs/details or recovery.",
         ).with_gpt_action_description("Arm one-shot terminal attention only when terminal outcome is a true dependency and no independent work remains. It never changes execution. Do not poll, rearm/check repeatedly, or keep a Host Code Mode cell alive. observe_jobs is only for explicit logs/details/recovery."),
         79,
+        super::ToolDirectReason::Continuation,
     ),
 ];
 
@@ -501,6 +507,7 @@ pub(super) const LISTING_DEFINITIONS: &[ToolDefinition] = &[
         )
         .with_gpt_action_unsupported(),
         78,
+        super::ToolDirectReason::Continuation,
     ),
     def(
         "job_terminal_continuation_bind",

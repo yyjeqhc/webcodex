@@ -51,6 +51,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 PERMISSION_RISK_WRITE,
             ),
             21,
+            super::ToolDirectReason::Continuation,
         ),
         COMMUNICATION_MANAGE_SCOPES,
     ),

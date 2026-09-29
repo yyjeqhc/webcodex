@@ -55,6 +55,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             "Read-only Code Mode for related inspections. Prefer a direct tool for one simple observation. Use Promise.all only for independent calls; keep dependent follow-ups sequential inside one cell. Filter child results before text(value); never a raw-result dump. Project before the outer-output limit. Children keep canonical authority; no shell/fs/network/mutation/validation/Jobs.",
         ).with_gpt_action_description("Read-only orchestration for related inspections. Use direct tools for simple observations; parallelize only independent calls, keep adaptive follow-ups inside the cell. Distill evidence before text(value); avoid raw-result dumps. Canonical Project/Session checks remain.").with_gpt_action_gateway_only()),
         45,
+        super::ToolDirectReason::CoreWorkflow,
     ),
     adaptive_runtime_direct(
         requires_explicit_business_session(model_spec(
@@ -81,6 +82,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             "Validation Code Mode for E1 reads plus cargo_check/cargo_test. Default to direct validators; use only when related validations save model turns. Distill results before text(value). Children retain canonical Project/Session, permission, validation and Job semantics; no mutation, shell/process, nested Job observation, gateways or recursion.",
         ).with_gpt_action_description("Validation orchestration for E1 reads plus cargo_check/cargo_test when multiple related validations save model turns. Default to direct validators. Canonical authority/evidence/Jobs remain; no mutation, shell/process, nested Job observation or recursion.").with_gpt_action_gateway_only()),
         105,
+        super::ToolDirectReason::CoreWorkflow,
     ),
     adaptive_runtime_direct(
         permission_risk(
@@ -110,5 +112,6 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             PERMISSION_RISK_WRITE,
         ),
         65,
+        super::ToolDirectReason::CoreWorkflow,
     ),
 ];

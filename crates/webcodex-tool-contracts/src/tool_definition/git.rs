@@ -88,6 +88,7 @@ pub(super) const SUMMARY_DEFINITIONS: &[ToolDefinition] = &[
             "Primary bounded Git review workflow. First call returns an exact snapshot, summary/signals, and first git_diff_hunks page. Continue with the returned opaque token and identical closed scope/paging inputs. Workspace mutation fails closed; committed review stays pinned to exact commits and merge-base.",
         ))),
         120,
+        super::ToolDirectReason::CoreWorkflow,
     ),
     change_summary_like(git_like(
             model_spec(

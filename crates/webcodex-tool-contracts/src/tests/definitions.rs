@@ -724,14 +724,71 @@ fn agent_continuation_setup_descriptions_are_self_guiding_without_direct_expansi
 }
 
 #[test]
+fn adaptive_direct_reason_is_independent_of_domain_and_authority() {
+    use crate::tool_definition::{ToolAdaptiveDirectPolicy, ToolDirectReason};
+
+    for (name, reason) in [
+        ("read_files", ToolDirectReason::CoreWorkflow),
+        ("project_artifact", ToolDirectReason::CoreWorkflow),
+        ("import_conversation_files_to_project", ToolDirectReason::HostIntegration),
+        ("present_work_result", ToolDirectReason::Presentation),
+        ("present_goal_plan", ToolDirectReason::Presentation),
+    ] {
+        let definition = lookup_tool_definition(name).unwrap();
+        assert_eq!(definition.adaptive_runtime_direct_reason(), Some(reason), "{name}");
+    }
+    assert_eq!(
+        lookup_tool_definition("project_artifact").unwrap().category,
+        lookup_tool_definition("import_conversation_files_to_project").unwrap().category
+    );
+    for original in tool_definitions() {
+        for reason in [
+            ToolDirectReason::CoreWorkflow,
+            ToolDirectReason::HostIntegration,
+            ToolDirectReason::Presentation,
+            ToolDirectReason::Continuation,
+        ] {
+            let mut changed = *original;
+            // Only change an existing policy; never admit a hidden/gateway tool.
+            changed.adaptive_runtime_direct = original.adaptive_runtime_direct.map(|policy| {
+                ToolAdaptiveDirectPolicy { rank: policy.rank, reason }
+            });
+            assert_eq!(changed.category, original.category);
+            assert_eq!(changed.visibility, original.visibility);
+            assert_eq!(changed.runner_capability, original.runner_capability);
+            assert_eq!(changed.policy, original.policy);
+            assert_eq!(changed.audit, original.audit);
+            assert_eq!(changed.effect_annotations(), original.effect_annotations());
+            assert_eq!(changed.metadata.effect, original.metadata.effect);
+            assert_eq!(changed.metadata.risk, original.metadata.risk);
+            assert_eq!(changed.metadata.authority, original.metadata.authority);
+            assert_eq!(changed.metadata.approval, original.metadata.approval);
+            assert_eq!(changed.metadata.idempotency, original.metadata.idempotency);
+            assert_eq!(changed.adaptive_runtime_direct_rank(), original.adaptive_runtime_direct_rank());
+        }
+    }
+    let model_specs = serde_json::to_string(&registered_tool_specs()).unwrap();
+    for internal_key in ["\"adaptive_runtime_direct\"", "\"adaptive_runtime_direct_reason\"", "\"ToolDirectReason\""] {
+        assert!(!model_specs.contains(internal_key), "{internal_key}");
+    }
+}
+
+#[test]
 fn adaptive_runtime_direct_declarations_are_visible_ranked_and_unique() {
     let mut seen_ranks = std::collections::BTreeMap::new();
     for definition in tool_definitions() {
-        let Some(rank) = definition.adaptive_runtime_direct_rank() else {
+        if definition.visibility.is_model_hidden() {
+            assert_eq!(definition.adaptive_runtime_direct, None, "{}", definition.name);
+        }
+        let Some(policy) = definition.adaptive_runtime_direct else {
+            assert_eq!(definition.adaptive_runtime_direct_rank(), None);
+            assert_eq!(definition.adaptive_runtime_direct_reason(), None);
             continue;
         };
+        assert_eq!(definition.adaptive_runtime_direct_rank(), Some(policy.rank));
+        assert_eq!(definition.adaptive_runtime_direct_reason(), Some(policy.reason));
         assert!(definition.visibility.is_model_visible());
-        assert!(seen_ranks.insert(rank, definition.name).is_none());
+        assert!(seen_ranks.insert(policy.rank, definition.name).is_none());
     }
 
     let derived = adaptive_runtime_direct_tool_definitions();

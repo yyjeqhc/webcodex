@@ -111,6 +111,7 @@ pub(super) const SEARCH_DEFINITIONS: &[ToolDefinition] = &[
             "Batch-capable project-text search for 1..8 predetermined independent queries with bounded structured results, protected-path policy, and isolated failures. One absolute batch deadline covers queueing/retries; timeout_secs is an item ceiling capped by remaining batch budget and retries do not reset it. For broad discovery prefer files_with_matches/count or a small low-context match set. A complete zero-result query with include_globs may return zero_match_hint=include_globs_excluded_matches after one bounded path-private diagnostic; broaden only the include filter deliberately. When matched source will be read immediately, prefer search_and_read; for one small known-scope search, native rg is first-class. Queries default to regex; prefer pattern_mode=literal for exact text. Batch only independent queries and keep result-dependent follow-ups sequential. Use the returned suggested_call for whole-query continuation; truncated individual queries must be narrowed.",
         ).with_gpt_action_description("Batch-search 1..8 independent queries under one shared absolute deadline. timeout_secs is an item ceiling capped by remaining batch budget; retries do not reset it. Prefer search_and_read for immediate reads and literal mode for exact text. Use suggested_call to continue."),
         40,
+        super::ToolDirectReason::CoreWorkflow,
     ),
     adaptive_runtime_direct(
         model_spec(
@@ -145,6 +146,7 @@ pub(super) const SEARCH_DEFINITIONS: &[ToolDefinition] = &[
             "Compound coding inspection: run one bounded project-text query or 1..8 predetermined independent queries, then read ranges around up to eight matches in one call. Provide query xor queries; max_reads is one global read budget shared fairly across the batch. Runtime forces zero-context match mode and returns coalesced ranges while preserving per-query batch failures and read_files snapshot/recovery semantics. Matches whose source text was successfully materialized keep path/line identity but omit duplicate preview content; unmaterialized matches keep the existing compound-search evidence. If explicit include_globs yield no matches, zero_match_hint can report that the filter excluded otherwise eligible matches without exposing diagnostic paths. Batch only independent queries; keep result-dependent follow-ups sequential. Follow reads.suggested_call for revision-fenced continuation. Prefer search_project_texts for discovery, count, or files-only tasks.",
         ).with_gpt_action_description("Search one query or batch 1..8 independent queries, then inspect up to eight matched source ranges total. Use query xor queries; max_reads is shared across the batch. Follow reads.suggested_call for snapshot-fenced continuation; use search_project_texts for discovery/count/files-only tasks."),
         52,
+        super::ToolDirectReason::CoreWorkflow,
     ),
 ];
 
@@ -179,5 +181,6 @@ pub(super) const READ_DEFINITIONS: &[ToolDefinition] = &[
             "Batch/snapshot-aware project inspect with read_revision, snapshot-bound continuation, batching, protected-path policy, range normalization, and bounded recovery. When the target symbol/test/implementation region is known, prefer bounded targeted ranges and batch related ranges already known to be needed; do not read an entire large file merely because the budget permits it. A small known one-off observation without downstream snapshot dependency may use native file commands. Items expose read_revision for the full-file snapshot. Partial reads return suggested_call; continued ranges are fenced to that read_revision and Runtime rejects a continuation if the snapshot changed. The call binds the exact resolved Project and business session_id. Zero progress may suggest larger max_result_bytes; the 512 KiB hard cap exposes no fake continuation.",
         ).with_gpt_action_description("Batch-read 1..8 UTF-8 ranges. Prefer bounded targeted ranges when locations are known; batch related predetermined ranges instead of broad whole-file reads. Follow suggested_call: continuation is read_revision-fenced, changed snapshots fail closed, zero progress may suggest a larger budget."),
         50,
+        super::ToolDirectReason::CoreWorkflow,
     ),
 ];

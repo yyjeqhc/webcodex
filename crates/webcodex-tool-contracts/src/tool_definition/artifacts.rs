@@ -66,6 +66,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             PERMISSION_RISK_ARTIFACT_WRITE,
         ),
         55,
+        super::ToolDirectReason::HostIntegration,
     ),
     permission_risk(
         model_spec(
@@ -122,6 +123,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         )
         .with_gpt_action_description("Project artifact read surface. GPT Actions supports metadata and bounded inspect; native image and ResourceLink export require MCP."),
         56,
+        super::ToolDirectReason::CoreWorkflow,
     ),
     model_spec(
         def(

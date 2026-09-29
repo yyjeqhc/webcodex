@@ -163,6 +163,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             )
             .with_gpt_action_unsupported(),
             17,
+            super::ToolDirectReason::Presentation,
         ),
         COMMUNICATION_READ_SCOPES,
     ),

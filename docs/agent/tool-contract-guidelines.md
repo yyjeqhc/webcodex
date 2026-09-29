@@ -472,15 +472,18 @@ Keep these four concerns independent:
 4. **model-surface policy** — how the currently integrated Host should discover
    or invoke that same canonical tool.
 
-Current Adaptive Runtime expresses ordinary Direct/Gateway placement with
-`adaptive_runtime_direct_rank`: `Some(rank)` advertises a dedicated Host
-descriptor and `None` keeps an admitted model-visible tool behind exact
-`tool_manifest` discovery plus `call_runtime_tool`. Changing that rank is a
-presentation/routing change, not a rename, authority change or new ToolCall.
+Current Adaptive Runtime owns one optional `ToolAdaptiveDirectPolicy { rank,
+reason }` in `ToolDefinition.adaptive_runtime_direct`. Each dedicated descriptor
+has exactly one `ToolDirectReason` and a unique rank; derived rank/reason methods
+keep callers independent of the representation. `None` grants no admission: an
+ordinary admitted model-visible tool uses exact `tool_manifest` discovery plus
+`call_runtime_tool`, while ModelHidden and operator extensions keep their existing
+visibility/admission boundaries. Rank or reason changes are presentation/routing
+changes, not renames, authority changes or new ToolCalls. Neither the policy nor
+its reason is serialized into model-facing schemas/results.
 `tool_manifest.route.primary`/fallback reports the current callable posture.
 
-When reviewing why a descriptor remains Direct, use this small design vocabulary
-even if it is not represented as a new enum:
+The Direct reasons are:
 
 - **CoreWorkflow** — high-frequency primitive needed in the ordinary coding loop;
 - **HostIntegration** — the dedicated descriptor carries Host-native input or
@@ -488,10 +491,11 @@ even if it is not represented as a new enum:
 - **Presentation** — the descriptor carries MCP App/resource presentation
   metadata; while that integration is enabled it must not be replaced by a
   generic gateway call;
-- **Continuation** — blocking/fresh-turn/continuation integration whose value
-  depends on concrete Host lifecycle capability;
-- **Gateway** — canonical long-tail operation with full runtime parity through
-  exact discovery and generic dispatch.
+- **Continuation** — fresh-turn/continuation integration whose value depends on
+  concrete Host lifecycle capability.
+
+Gateway is the absence of a Direct policy plus ordinary model-visible admission,
+not another Direct reason or a second tool taxonomy.
 
 These labels explain exposure; they grant no authority and do not create a
 second taxonomy. In particular, a Continuation tool may be down-admitted while a

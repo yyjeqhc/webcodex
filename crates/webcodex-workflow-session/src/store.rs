@@ -73,6 +73,9 @@ use super::util::{
 #[path = "identifier_tests.rs"]
 mod identifier_tests;
 
+#[cfg(test)]
+mod scale_tests;
+
 #[derive(Debug, Clone)]
 pub struct SessionStore {
     /// Shared session map and LRU metadata.

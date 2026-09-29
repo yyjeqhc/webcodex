@@ -636,7 +636,7 @@ pub async fn open_latest_release(state: State<'_, AppState>) -> DesktopResult<()
 
 #[tauri::command]
 pub fn get_desktop_build_info() -> webcodex_core::desktop_runtime_contract::MachineBuildInfo {
-    let mut info = webcodex_core::build_info::machine_build_info("webcodex-desktop");
+    let mut info = webcodex_build_info::machine_build_info("webcodex-desktop");
     info.version = env!("CARGO_PKG_VERSION").to_string();
     info
 }

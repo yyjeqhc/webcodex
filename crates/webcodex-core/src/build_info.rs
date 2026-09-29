@@ -1,3 +1,5 @@
+//! Stable build metadata contracts and formatting. Git/environment capture is
+//! owned by webcodex-build-info at the executable composition boundary.
 use serde::Serialize;
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -19,88 +21,79 @@ pub struct RuntimeBuildInfo {
     pub architecture: Option<&'static str>,
 }
 
-pub fn current() -> BuildInfo {
+impl BuildInfo {
+    pub fn runtime_build_info(&self) -> RuntimeBuildInfo {
+        RuntimeBuildInfo {
+            git_commit: self.git_commit,
+            git_dirty: self.git_dirty,
+            built_at: self.built_at,
+            target: self.target,
+            architecture: self.architecture,
+        }
+    }
+
+    pub fn version_output(&self, binary: &str) -> String {
+        let mut output = format!(
+            "{} {} (commit {}",
+            binary,
+            self.version,
+            self.git_commit.unwrap_or("unknown")
+        );
+        if let Some(git_dirty) = self.git_dirty {
+            output.push_str(&format!(", dirty={git_dirty}"));
+        }
+        if let Some(built_at) = self.built_at {
+            output.push_str(&format!(", built_at={built_at}"));
+        }
+        output.push_str(")\n");
+        output
+    }
+
+    /// Stable machine-readable metadata, independent of runtime configuration.
+    pub fn machine_build_info(
+        &self,
+        binary: &str,
+    ) -> crate::desktop_runtime_contract::MachineBuildInfo {
+        use crate::desktop_runtime_contract::{
+            MachineBuildInfo, BUILD_INFO_SCHEMA_VERSION, DESKTOP_RUNTIME_CONTRACT,
+        };
+        MachineBuildInfo {
+            schema_version: BUILD_INFO_SCHEMA_VERSION,
+            binary: binary.to_string(),
+            version: self.version.to_string(),
+            git_commit: self.git_commit.map(str::to_string),
+            git_dirty: self.git_dirty,
+            built_at: self.built_at.map(str::to_string),
+            target: self.target.unwrap_or("unknown").to_string(),
+            architecture: self
+                .architecture
+                .unwrap_or(std::env::consts::ARCH)
+                .to_string(),
+            desktop_runtime_contract: DESKTOP_RUNTIME_CONTRACT,
+            agent_protocol_generation: matches!(binary, "webcodex-server" | "webcodex-runner")
+                .then_some(crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2.get()),
+            environment_data_format: Some(1),
+        }
+    }
+
+    pub fn build_info_json(&self, binary: &str) -> String {
+        format!(
+            "{}\n",
+            serde_json::to_string(&self.machine_build_info(binary))
+                .expect("build identity contains only JSON primitives")
+        )
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn fixture() -> BuildInfo {
     BuildInfo {
-        version: env!("CARGO_PKG_VERSION"),
-        git_commit: option_env!("WEBCODEX_BUILD_GIT_COMMIT").and_then(non_empty),
-        git_dirty: option_env!("WEBCODEX_BUILD_GIT_DIRTY").and_then(parse_bool),
-        built_at: option_env!("WEBCODEX_BUILD_BUILT_AT").and_then(non_empty),
-        target: option_env!("WEBCODEX_BUILD_TARGET").and_then(non_empty),
-        architecture: option_env!("WEBCODEX_BUILD_ARCHITECTURE").and_then(non_empty),
-    }
-}
-
-pub fn runtime_build_info() -> RuntimeBuildInfo {
-    let info = current();
-    RuntimeBuildInfo {
-        git_commit: info.git_commit,
-        git_dirty: info.git_dirty,
-        built_at: info.built_at,
-        target: info.target,
-        architecture: info.architecture,
-    }
-}
-
-pub fn version_output(binary: &str) -> String {
-    let info = current();
-    let mut output = format!(
-        "{} {} (commit {}",
-        binary,
-        info.version,
-        info.git_commit.unwrap_or("unknown")
-    );
-    if let Some(git_dirty) = info.git_dirty {
-        output.push_str(&format!(", dirty={git_dirty}"));
-    }
-    if let Some(built_at) = info.built_at {
-        output.push_str(&format!(", built_at={built_at}"));
-    }
-    output.push_str(")\n");
-    output
-}
-
-/// Stable machine-readable metadata. This surface exits before config loading.
-pub fn machine_build_info(binary: &str) -> crate::desktop_runtime_contract::MachineBuildInfo {
-    use crate::desktop_runtime_contract::{
-        MachineBuildInfo, BUILD_INFO_SCHEMA_VERSION, DESKTOP_RUNTIME_CONTRACT,
-    };
-    let info = current();
-    MachineBuildInfo {
-        schema_version: BUILD_INFO_SCHEMA_VERSION,
-        binary: binary.to_string(),
-        version: info.version.to_string(),
-        git_commit: info.git_commit.map(str::to_string),
-        git_dirty: info.git_dirty,
-        built_at: info.built_at.map(str::to_string),
-        target: info.target.unwrap_or("unknown").to_string(),
-        architecture: info
-            .architecture
-            .unwrap_or(std::env::consts::ARCH)
-            .to_string(),
-        desktop_runtime_contract: DESKTOP_RUNTIME_CONTRACT,
-        agent_protocol_generation: matches!(binary, "webcodex-server" | "webcodex-runner")
-            .then_some(crate::runner_protocol::RUNNER_PROTOCOL_GENERATION_V2.get()),
-        environment_data_format: Some(1),
-    }
-}
-
-pub fn build_info_json(binary: &str) -> String {
-    format!(
-        "{}\n",
-        serde_json::to_string(&machine_build_info(binary))
-            .expect("build identity contains only JSON primitives")
-    )
-}
-
-fn non_empty(value: &'static str) -> Option<&'static str> {
-    (!value.trim().is_empty()).then_some(value)
-}
-
-fn parse_bool(value: &'static str) -> Option<bool> {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "true" | "1" | "yes" => Some(true),
-        "false" | "0" | "no" => Some(false),
-        _ => None,
+        version: "0.4.3",
+        git_commit: Some("0123456789ab"),
+        git_dirty: Some(true),
+        built_at: Some("1234567890"),
+        target: Some("x86_64-unknown-linux-gnu"),
+        architecture: Some("x86_64"),
     }
 }
 
@@ -109,37 +102,29 @@ mod tests {
     use super::*;
 
     #[test]
-    fn build_info_includes_package_version() {
-        let info = current();
-        assert_eq!(info.version, env!("CARGO_PKG_VERSION"));
-        assert!(!info.version.trim().is_empty());
-        assert!(info.target.is_some_and(|value| !value.trim().is_empty()));
-        assert!(info
-            .architecture
-            .is_some_and(|value| !value.trim().is_empty()));
-    }
-
-    #[test]
-    fn build_info_version_output_includes_build_commit_or_unknown() {
-        let output = version_output("webcodex-test");
-        assert!(output.starts_with(&format!(
-            "webcodex-test {} (commit ",
-            env!("CARGO_PKG_VERSION")
-        )));
-        assert!(output.trim_end().ends_with(')'));
-        assert_ne!(
-            output,
-            format!("webcodex-test {}\n", env!("CARGO_PKG_VERSION"))
+    fn build_info_formatting_preserves_identity_and_unknowns() {
+        let info = fixture();
+        assert_eq!(
+            info.version_output("webcodex-test"),
+            "webcodex-test 0.4.3 (commit 0123456789ab, dirty=true, built_at=1234567890)\n"
         );
-    }
-
-    #[test]
-    fn build_info_runtime_build_metadata_is_safe() {
-        let build = runtime_build_info();
-        if let Some(commit) = build.git_commit {
-            assert!(!commit.contains('/'));
-            assert!(!commit.contains('\\'));
-            assert!(!commit.trim().is_empty());
-        }
+        let runtime = info.runtime_build_info();
+        assert_eq!(runtime.git_commit, info.git_commit);
+        assert_eq!(runtime.git_dirty, Some(true));
+        let machine: serde_json::Value =
+            serde_json::from_str(&info.build_info_json("webcodex-runner")).unwrap();
+        assert_eq!(machine["git_commit"], "0123456789ab");
+        assert_eq!(machine["agent_protocol_generation"], 2);
+        let unknown = BuildInfo {
+            git_commit: None,
+            git_dirty: None,
+            built_at: None,
+            ..info
+        };
+        assert_eq!(
+            unknown.version_output("webcodex-test"),
+            "webcodex-test 0.4.3 (commit unknown)\n"
+        );
+        assert_eq!(unknown.machine_build_info("webcodex").git_dirty, None);
     }
 }

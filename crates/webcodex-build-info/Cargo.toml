@@ -1,0 +1,10 @@
+[package]
+name = "webcodex-build-info"
+version.workspace = true
+license.workspace = true
+edition.workspace = true
+
+# Checkout-dependent identity belongs beside composition, never below core or
+# domain crates. Keep the collector dependency-free and the public types in core.
+[dependencies]
+webcodex-core = { path = "../webcodex-core" }

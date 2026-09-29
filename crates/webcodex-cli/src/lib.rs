@@ -22,7 +22,7 @@ mod environment;
 mod webcodex_cli;
 
 use webcodex_admin as admin_cli;
-use webcodex_core::build_info;
+use webcodex_build_info as build_info;
 use webcodex_runner_config as runner_config;
 
 use admin_cli::{

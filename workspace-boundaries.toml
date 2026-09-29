@@ -27,6 +27,7 @@ layer = "composition"
 role = "Server composition and protocol adapters."
 normal = [
     "webcodex-admin",
+    "webcodex-build-info",
     "webcodex-code-mode",
     "webcodex-core",
     "webcodex-environment",
@@ -61,6 +62,14 @@ dev = []
 build = []
 test_support = []
 
+[packages.webcodex-build-info]
+layer = "runtime"
+role = "Checkout-dependent build identity for executable composition; core/domain crates must not depend on this package."
+normal = ["webcodex-core"]
+dev = []
+build = []
+test_support = []
+
 [packages.webcodex-browser]
 layer = "domain"
 role = "First-class bounded CDP browser runtime built on process lifecycle primitives."
@@ -75,6 +84,7 @@ role = "User-facing CLI entrypoint over server composition and shared setup help
 normal = [
     "webcodex",
     "webcodex-admin",
+    "webcodex-build-info",
     "webcodex-core",
     "webcodex-environment",
     "webcodex-runner-config",
@@ -151,6 +161,7 @@ layer = "runtime"
 role = "Runner executable/runtime composition for local project execution."
 normal = [
     "webcodex-browser",
+    "webcodex-build-info",
     "webcodex-computer",
     "webcodex-core",
     "webcodex-environment",

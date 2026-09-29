@@ -185,7 +185,7 @@ fn executable(path: &Path) -> bool {
 }
 
 fn host_compatible(info: &MachineBuildInfo) -> bool {
-    let arch = webcodex_core::build_info::current()
+    let arch = webcodex_build_info::current()
         .architecture
         .unwrap_or(std::env::consts::ARCH);
     let os_matches = match std::env::consts::OS {

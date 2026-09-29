@@ -207,6 +207,8 @@ jobs:
         run: |
           bash scripts/workspace_boundary_check.sh --self-test
           bash scripts/workspace_boundary_check.sh
+      - name: Check build identity and incremental boundary
+        run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest scripts.tests.test_build_identity
       - name: Check formatting
         run: cargo fmt --all -- --check
       - name: Ensure test inventory dependency

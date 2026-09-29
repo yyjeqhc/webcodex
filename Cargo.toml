@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/webcodex-admin",
+    "crates/webcodex-build-info",
     "crates/webcodex-browser",
     "crates/webcodex-computer",
     "crates/webcodex-code-mode",
@@ -54,6 +55,7 @@ path = "src/bin/webcodex-server.rs"
 
 [dependencies]
 webcodex-admin = { path = "crates/webcodex-admin" }
+webcodex-build-info = { path = "crates/webcodex-build-info" }
 webcodex-code-mode = { path = "crates/webcodex-code-mode", optional = true }
 webcodex-runner-config = { path = "crates/webcodex-runner-config" }
 webcodex-runner-registry = { path = "crates/webcodex-runner-registry" }

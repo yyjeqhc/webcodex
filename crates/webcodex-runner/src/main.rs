@@ -20,8 +20,9 @@ use webcodex_runner::{cwd_allowed, PreparedShellProfileCache};
 use runner_operation::RunnerFileOperation;
 #[cfg(test)]
 use runner_operation::RunnerOperation;
+use webcodex_build_info as build_info;
 use webcodex_core::{
-    apply_edits_shared, apply_patch_shared, artifact_policy, build_info, lsp_bridge, mcp_gateway,
+    apply_edits_shared, apply_patch_shared, artifact_policy, lsp_bridge, mcp_gateway,
     runner_operation, runner_protocol, validation_bridge,
 };
 use webcodex_runner_config as runner_config;

@@ -5405,6 +5405,7 @@ dependencies = [
  "urlencoding",
  "uuid",
  "webcodex-admin",
+ "webcodex-build-info",
  "webcodex-code-mode",
  "webcodex-core",
  "webcodex-environment",
@@ -5448,6 +5449,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "webcodex-build-info"
+version = "0.4.3"
+dependencies = [
+ "webcodex-core",
+]
+
+[[package]]
 name = "webcodex-cli"
 version = "0.4.3"
 dependencies = [
@@ -5468,6 +5476,7 @@ dependencies = [
  "uuid",
  "webcodex",
  "webcodex-admin",
+ "webcodex-build-info",
  "webcodex-core",
  "webcodex-environment",
  "webcodex-runner-config",
@@ -5607,6 +5616,7 @@ dependencies = [
  "url",
  "uuid",
  "webcodex-browser",
+ "webcodex-build-info",
  "webcodex-computer",
  "webcodex-core",
  "webcodex-environment",

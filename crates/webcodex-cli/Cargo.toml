@@ -9,6 +9,7 @@ name = "webcodex"
 path = "src/main.rs"
 
 [dependencies]
+webcodex-build-info = { path = "../webcodex-build-info" }
 webcodex = { path = "../.." }
 webcodex-admin = { path = "../webcodex-admin" }
 webcodex-runner-config = { path = "../webcodex-runner-config" }

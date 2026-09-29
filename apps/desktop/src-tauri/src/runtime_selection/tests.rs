@@ -37,7 +37,7 @@ fn fixture(changes: impl Fn(usize, &mut MachineBuildInfo)) -> PathBuf {
         .into_iter()
         .enumerate()
     {
-        let mut info = webcodex_core::build_info::machine_build_info(name);
+        let mut info = webcodex_build_info::machine_build_info(name);
         changes(index, &mut info);
         write_fixture_binary(&dir, name, &info);
     }
@@ -164,7 +164,7 @@ async fn an_ordinary_restart_rejects_replaced_custom_files_until_explicit_reappr
     let (_, resolved) = candidate(&dir).await;
     let approved_fingerprint = resolved.unwrap().fingerprint;
 
-    let mut replacement = webcodex_core::build_info::machine_build_info("webcodex-runner");
+    let mut replacement = webcodex_build_info::machine_build_info("webcodex-runner");
     replacement.git_commit = Some("abcdef012345abcdef012345abcdef012345abcd".into());
     write_fixture_binary(&dir, "webcodex-runner", &replacement);
 

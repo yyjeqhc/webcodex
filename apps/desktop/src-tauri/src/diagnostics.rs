@@ -420,7 +420,7 @@ pub fn report(
     }
     let safe_activity:Vec<_>=activity.iter().rev().take(25).map(|entry| json!({"sequence":entry.sequence,"timestamp_ms":entry.timestamp_ms,"level":entry.level,"event_kind":entry.event_kind})).collect();
     let connection_health:Vec<_>=snapshot.connections.profiles.iter().take(16).map(|p|json!({"lifecycle":p.runtime.lifecycle,"health":p.runtime.health,"ready":p.runtime.ready,"error_code":p.runtime.last_error})).collect();
-    let mut desktop = webcodex_core::build_info::machine_build_info("webcodex-desktop");
+    let mut desktop = webcodex_build_info::machine_build_info("webcodex-desktop");
     desktop.version = env!("CARGO_PKG_VERSION").into();
     json!({"schema_version":1,"desktop":safe_build(&desktop),
         "selected_runtime":{"source":match runtime.source {crate::runtime_selection::RuntimeSource::Bundled=>"bundled",_=>"custom"},

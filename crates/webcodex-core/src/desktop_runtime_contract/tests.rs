@@ -66,7 +66,8 @@ fn build_differences_are_diagnostics_not_protocol_authority() {
 #[test]
 fn metadata_ignores_additive_fields_and_preserves_all_three_identities() {
     for binary in ["webcodex", "webcodex-server", "webcodex-runner"] {
-        let mut raw = serde_json::to_value(crate::build_info::machine_build_info(binary)).unwrap();
+        let mut raw =
+            serde_json::to_value(crate::build_info::fixture().machine_build_info(binary)).unwrap();
         raw["future_field"] = json!({"anything": true});
         raw["desktop_runtime_contract"]["future_field"] = json!(true);
         let parsed: MachineBuildInfo = serde_json::from_value(raw).unwrap();
@@ -77,7 +78,7 @@ fn metadata_ignores_additive_fields_and_preserves_all_three_identities() {
 
 #[test]
 fn metadata_rejects_unverifiable_contract_and_control_text() {
-    let mut info = crate::build_info::machine_build_info("webcodex");
+    let mut info = crate::build_info::fixture().machine_build_info("webcodex");
     info.schema_version = 99;
     assert_eq!(
         info.validate("webcodex"),

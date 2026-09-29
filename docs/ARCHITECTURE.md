@@ -292,11 +292,13 @@ are separately pinned to declared development dependencies.
 
 The current layers are:
 
-- **leaf** — `webcodex-core`, `webcodex-process`, `webcodex-computer`, and
-  `webcodex-admin`; these do not depend on another workspace package.
+- **leaf** — low-level contracts/primitives in `webcodex-core`,
+  `webcodex-process`, `webcodex-computer`, and `webcodex-admin`; computer primitives
+  consume core contracts, while core/process/admin have no workspace dependencies.
 - **domain** — Runner config/registry, Store, Workspace, Workflow Session,
   Tool contracts, Validation, Persistent Shell, and native LSP ownership.
-- **runtime** — `webcodex-runner` and `webcodex-tool-runtime-contracts`.
+- **runtime** — `webcodex-runner`, `webcodex-tool-runtime-contracts`, environment
+  lifecycle, and the composition-only `webcodex-build-info` provider.
 - **composition** — the root `webcodex` package, which owns Server composition
   and protocol adapters rather than forcing those concerns into lower crates.
 - **entrypoint** — `webcodex-cli`, the user-facing executable over the lower
@@ -305,6 +307,17 @@ The current layers are:
 CI validates this policy from `cargo metadata`; adding a workspace crate or a
 new direct workspace dependency therefore requires an intentional policy
 update rather than silently changing the architecture.
+
+### Build identity does not own core invalidation
+
+`webcodex-core::build_info` contains only stable metadata types and formatting.
+The small `webcodex-build-info` package owns the Git/dirty build script and its
+compile-time capture. Server, Runner, CLI and the separate Desktop workspace use
+that provider directly; domain crates never depend on it. There is no runtime
+Git lookup, mutable global identity, copied collector, or new external dependency.
+Identity-only changes therefore invalidate composition rather than core's domain
+consumers. Release overrides, linked-worktree handling and dirty-state truth stay
+in the existing collector. See [the experiment and regression contract](implementation/build-identity-isolation.md).
 
 ## Further reading
 

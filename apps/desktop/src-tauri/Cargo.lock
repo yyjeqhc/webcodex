@@ -5028,6 +5028,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "webcodex-build-info"
+version = "0.4.3"
+dependencies = [
+ "webcodex-core",
+]
+
+[[package]]
 name = "webcodex-core"
 version = "0.4.3"
 dependencies = [
@@ -5063,6 +5070,7 @@ dependencies = [
  "toml_edit 0.25.13+spec-1.1.0",
  "url",
  "uuid",
+ "webcodex-build-info",
  "webcodex-core",
  "webcodex-environment",
  "webcodex-process",

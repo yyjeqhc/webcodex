@@ -1,6 +1,7 @@
 """Exercise Cargo invalidation against disposable Git metadata, without dependencies."""
 
 import os
+import json
 from pathlib import Path
 import shutil
 import subprocess
@@ -8,7 +9,7 @@ import tempfile
 import unittest
 
 
-BUILD_SCRIPT = Path(__file__).resolve().parents[2] / "crates/webcodex-core/build.rs"
+BUILD_SCRIPT = Path(__file__).resolve().parents[2] / "crates/webcodex-build-info/build.rs"
 
 
 class BuildIdentityTests(unittest.TestCase):
@@ -224,6 +225,132 @@ class BuildIdentityTests(unittest.TestCase):
                 self.assertEqual(run(package, "cargo", "run", "--offline", "--quiet"), "true")
                 run(repo, "git", "add", "tracked.txt")
                 self.assertEqual(run(package, "cargo", "run", "--offline", "--quiet"), "true")
+
+
+class BuildIdentityBoundaryTests(unittest.TestCase):
+    def test_git_identity_changes_do_not_invalidate_core_or_domain_artifacts(self):
+        """Real Cargo/Git with the shipped collector, no registry dependencies."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            repo.mkdir()
+            env = os.environ.copy()
+            for key in (
+                "WEBCODEX_GIT_COMMIT", "WEBCODEX_GIT_DIRTY", "WEBCODEX_BUILT_AT",
+                "SOURCE_DATE_EPOCH", "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE",
+            ):
+                env.pop(key, None)
+            env["CARGO_TARGET_DIR"] = str(root / "target")
+
+            def run(cwd, *args):
+                return subprocess.run(args, cwd=cwd, env=env, check=True,
+                                      capture_output=True, text=True, timeout=90).stdout.strip()
+
+            (repo / "Cargo.toml").write_text(
+                '[workspace]\nresolver = "2"\nmembers = ["crates/*"]\n', encoding="utf-8")
+            definitions = {
+                "identity-core": ('pub fn value() -> u8 { 7 }\n', {}),
+                "identity-domain": ('pub fn value() -> u8 { identity_core::value() }\n',
+                                    {"identity-core": "../identity-core"}),
+                "identity-build": (
+                    'pub fn values() -> [&\'static str; 5] { [env!("WEBCODEX_BUILD_GIT_COMMIT"), '
+                    'env!("WEBCODEX_BUILD_GIT_DIRTY"), env!("WEBCODEX_BUILD_BUILT_AT"), '
+                    'env!("WEBCODEX_BUILD_TARGET"), env!("WEBCODEX_BUILD_ARCHITECTURE")] }\n',
+                    {"identity-core": "../identity-core"}),
+                "identity-app": (
+                    'fn main() { assert_eq!(identity_domain::value(), 7); '
+                    'println!("{}", identity_build::values().join("|")); }\n',
+                    {"identity-domain": "../identity-domain", "identity-build": "../identity-build"}),
+            }
+            for name, (source, dependencies) in definitions.items():
+                package = repo / "crates" / name
+                (package / "src").mkdir(parents=True)
+                manifest = f'[package]\nname = "{name}"\nversion = "0.0.0"\nedition = "2021"\n[dependencies]\n'
+                manifest += ''.join(f'{dep} = {{ path = "{path}" }}\n' for dep, path in dependencies.items())
+                (package / "Cargo.toml").write_text(manifest, encoding="utf-8")
+                (package / "src" / ("main.rs" if name == "identity-app" else "lib.rs")).write_text(source, encoding="utf-8")
+            shutil.copyfile(BUILD_SCRIPT, repo / "crates/identity-build/build.rs")
+            (repo / "README.md").write_text("fixture\n", encoding="utf-8")
+            run(repo, "git", "init", "-b", "identity-fixture")
+            run(repo, "git", "config", "user.name", "Build fixture")
+            run(repo, "git", "config", "user.email", "fixture@example.invalid")
+            run(repo, "git", "add", ".")
+            run(repo, "git", "commit", "-m", "fixture")
+
+            def build(checkout):
+                messages = run(checkout, "cargo", "build", "--offline", "--message-format=json", "-p", "identity-app")
+                artifacts = [json.loads(line) for line in messages.splitlines() if line.startswith('{')]
+                freshness = {item["target"]["name"]: item["fresh"] for item in artifacts
+                             if item.get("reason") == "compiler-artifact" and "custom-build" not in item["target"]["kind"]}
+                binary = root / "target/debug" / ("identity-app.exe" if os.name == "nt" else "identity-app")
+                return run(checkout, str(binary)).split("|"), freshness
+
+            first, _ = build(repo)
+            repeated, fresh = build(repo)
+            self.assertEqual(first, repeated)
+            self.assertTrue(all(fresh.values()), fresh)
+            self.assertEqual(first[1], "false")
+            run(repo, "git", "commit", "--allow-empty", "-m", "identity-only")
+            current, fresh = build(repo)
+            self.assertEqual(current[0], run(repo, "git", "rev-parse", "--short=12", "HEAD"))
+            self.assertNotEqual(first[0], current[0])
+            self.assertTrue(fresh["identity_core"])
+            self.assertTrue(fresh["identity_domain"])
+            self.assertFalse(fresh["identity_build"])
+            self.assertFalse(fresh["identity-app"])
+
+            (repo / "README.md").write_text("dirty documentation\n", encoding="utf-8")
+            dirty, fresh = build(repo)
+            self.assertEqual(dirty[1], "true")
+            self.assertTrue(fresh["identity_core"])
+            self.assertTrue(fresh["identity_domain"])
+            app = repo / "crates/identity-app/src/main.rs"
+            app.write_text(app.read_text(encoding="utf-8") + "// local implementation change\n", encoding="utf-8")
+            _, fresh = build(repo)
+            self.assertTrue(fresh["identity_core"])
+            self.assertTrue(fresh["identity_domain"])
+            self.assertTrue(fresh["identity_build"])
+            self.assertFalse(fresh["identity-app"])
+            # Restore only this disposable fixture, never the user's workspace.
+            run(repo, "git", "restore", "README.md", "crates/identity-app/src/main.rs")
+            clean, _ = build(repo)
+            self.assertEqual(clean[1], "false")
+            linked = root / "linked"
+            run(repo, "git", "worktree", "add", "-b", "linked-identity", str(linked))
+            run(linked, "git", "commit", "--allow-empty", "-m", "linked identity")
+            linked_identity, _ = build(linked)
+            self.assertEqual(linked_identity[0], run(linked, "git", "rev-parse", "--short=12", "HEAD"))
+            self.assertNotEqual(linked_identity[0], clean[0])
+            returned, _ = build(repo)
+            self.assertEqual(returned, clean)
+
+    def test_source_archive_and_release_overrides_keep_explicit_identity(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            package = root / "crates/identity-archive"
+            (package / "src").mkdir(parents=True)
+            (package / "Cargo.toml").write_text(
+                '[package]\nname = "identity-archive"\nversion = "0.0.0"\nedition = "2021"\n', encoding="utf-8")
+            shutil.copyfile(BUILD_SCRIPT, package / "build.rs")
+            (package / "src/main.rs").write_text(
+                'fn main() { println!("{}|{}|{}", env!("WEBCODEX_BUILD_GIT_COMMIT"), '
+                'env!("WEBCODEX_BUILD_GIT_DIRTY"), env!("WEBCODEX_BUILD_BUILT_AT")); }\n', encoding="utf-8")
+            env = os.environ.copy()
+            for key in ("WEBCODEX_GIT_COMMIT", "WEBCODEX_GIT_DIRTY", "WEBCODEX_BUILT_AT", "SOURCE_DATE_EPOCH",
+                        "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"):
+                env.pop(key, None)
+            env["CARGO_TARGET_DIR"] = str(root / "target")
+            env["SOURCE_DATE_EPOCH"] = "1234567890"
+
+            def build():
+                return subprocess.run(["cargo", "run", "--offline", "--quiet"], cwd=package,
+                                      env=env, check=True, capture_output=True, text=True, timeout=90).stdout.strip()
+
+            self.assertEqual(build(), "unknown|unknown|1234567890")
+            env.update(WEBCODEX_GIT_COMMIT="abcdef012345", WEBCODEX_GIT_DIRTY="false", WEBCODEX_BUILT_AT="1234567891")
+            self.assertEqual(build(), "abcdef012345|false|1234567891")
+            env["WEBCODEX_GIT_DIRTY"] = "true"
+            self.assertEqual(build(), "abcdef012345|true|1234567891")
 
 
 if __name__ == "__main__":

@@ -169,6 +169,35 @@ async fn request_policy_isolated_across_concurrent_http_direct_and_gateway_calls
     let later = post(&service, "tools/call", context_call(true), None, None).await;
     assert_eq!(profile_from_result(&later.1), "host_code_mode");
     assert_eq!(runtime.mcp_host_policy, deployment());
+    let compact_status = post(
+        &service,
+        "tools/call",
+        json!({"name":"runtime_status", "arguments":{"compact":true}}),
+        Some("direct"),
+        Some("9"),
+    )
+    .await;
+    assert_eq!(compact_status.0, StatusCode::OK, "{}", compact_status.1);
+    assert_eq!(
+        compact_status.1["result"]["structuredContent"]["output"]["mcp_host"]["profile"],
+        "host_code_mode"
+    );
+    let status = post(
+        &service,
+        "tools/call",
+        json!({"name":"runtime_status", "arguments":{"compact":false}}),
+        Some("direct"),
+        Some("9"),
+    )
+    .await;
+    assert_eq!(status.0, StatusCode::OK, "{}", status.1);
+    let deployment_status =
+        &status.1["result"]["structuredContent"]["output"]["effective_config"]["mcp_host"];
+    assert_eq!(deployment_status["profile"], "host_code_mode");
+    assert_eq!(deployment_status["host_budget_secs"], 55);
+    assert_eq!(deployment_status["initial_job_handoff_secs"], 5);
+    assert_eq!(deployment_status["max_sync_wait_secs"], 5);
+    assert_eq!(deployment_status["continuation_wait_secs"], 5);
     let bad = post(
         &service,
         "tools/call",

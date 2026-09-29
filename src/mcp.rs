@@ -674,7 +674,12 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
     let runtime = if policy == runtime.mcp_host_policy {
         runtime
     } else {
-        Arc::new(runtime.as_ref().clone().with_mcp_host_policy(policy))
+        Arc::new(
+            runtime
+                .as_ref()
+                .clone()
+                .with_request_mcp_host_policy(policy),
+        )
     };
     let window = match protocol_era {
         McpProtocolEra::Legacy => {

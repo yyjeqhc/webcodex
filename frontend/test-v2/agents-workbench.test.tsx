@@ -190,6 +190,39 @@ it("does not overlap slow renewals and ignores their responses after disable", a
   }
 });
 
+it("hidden pages pause inventory observations without pausing the current Endpoint lease", async () => {
+  vi.useFakeTimers();
+  const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+  let unmount = () => {};
+  try {
+    const attached = { endpoint_id: "endpoint-hidden", controller_generation: 1, lifecycle: "attached" };
+    const client = clientFor(() => ok({ messages: [] }), path => {
+      if (path === "communication/endpoint/attach" || path === "communication/endpoint/renew") return ok({ endpoint: attached });
+      return ok({});
+    });
+    const unauthorized = vi.fn();
+    const hook = renderHook(() => useAgentWorkspace(client, true, unauthorized));
+    unmount = hook.unmount;
+    await act(async () => {});
+    await act(async () => { expect(await hook.result.current.attach()).toBe(true); });
+    const count = (path: string) => vi.mocked(client.post).mock.calls.filter(call => call[0] === path).length;
+    const inventoryReads = count("communication/agents");
+    visibility.mockReturnValue("hidden");
+    act(() => document.dispatchEvent(new Event("visibilitychange")));
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    expect(count("communication/agents")).toBe(inventoryReads);
+    expect(count("communication/endpoint/renew")).toBe(2);
+    expect(hook.result.current.endpoint?.endpoint_id).toBe(attached.endpoint_id);
+    visibility.mockReturnValue("visible");
+    act(() => { document.dispatchEvent(new Event("visibilitychange")); window.dispatchEvent(new Event("focus")); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(150); });
+    expect(count("communication/agents")).toBe(inventoryReads + 1);
+  } finally {
+    unmount(); visibility.mockRestore(); vi.useRealTimers();
+  }
+});
+
 it("continues renewing the current Endpoint after a successful heartbeat", async () => {
   vi.useFakeTimers();
   try {

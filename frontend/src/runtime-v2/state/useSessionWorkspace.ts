@@ -8,6 +8,8 @@ import {
 } from "../api/sessions.js";
 import type { RuntimeV2Client } from "../api/client.js";
 import type { Availability, MessagesResponse, SessionDetail } from "../model/types.js";
+import { useObservationRequest } from "./useObservationRequest.js";
+import { useVisibleRefresh } from "./useVisibleRefresh.js";
 
 export type SessionLocation = {
   projectId: string;
@@ -53,120 +55,68 @@ export function useSessionWorkspace(
   const [sending, setSending] = useState(false);
   const [mutationNotice, setMutationNotice] = useState("");
   const [mutationAllowed, setMutationAllowed] = useState<boolean | null>(null);
-  const [revision, setRevision] = useState(0);
-  const detailRequest = useRef<AbortController | null>(null);
-  const messageRequest = useRef<AbortController | null>(null);
+  const [detailRevision, setDetailRevision] = useState(0);
+  const [messageRevision, setMessageRevision] = useState(0);
+  const detailRequest = useObservationRequest();
+  const messageRequest = useObservationRequest();
   const loadedLocation = useRef("");
-  const refresh = useCallback(() => setRevision((value) => value + 1), []);
+  const projectId = location?.projectId;
+  const sessionId = location?.sessionId;
+  const refresh = useCallback(() => {
+    detailRequest.requestRefresh(() => setDetailRevision(value => value + 1));
+    if (loadMessages) messageRequest.requestRefresh(() => setMessageRevision(value => value + 1));
+  }, [detailRequest, messageRequest, loadMessages]);
 
   useEffect(() => {
-    detailRequest.current?.abort();
-    messageRequest.current?.abort();
-    if (!enabled || !location) {
-      setDetail(null);
-      setMessages(null);
-      setDetailAvailability("idle");
-      setMessagesAvailability("idle");
-      setMutationNotice("");
-      setMutationAllowed(null);
-      setSending(false);
-      loadedLocation.current = "";
-      return;
-    }
+    const identity = enabled && projectId && sessionId ? `${projectId}\u0000${sessionId}` : "";
+    if (loadedLocation.current === identity) return;
+    loadedLocation.current = identity;
+    setDetail(null); setMessages(null); setMutationNotice(""); setMutationAllowed(null); setSending(false);
+    setDetailAvailability(identity ? "loading" : "idle");
+    setMessagesAvailability(identity && loadMessages ? "loading" : "idle");
+  }, [enabled, projectId, sessionId, loadMessages]);
 
-    const locationIdentity = sessionLocationIdentity(location);
-    const locationChanged = loadedLocation.current !== locationIdentity;
-    loadedLocation.current = locationIdentity;
-    if (locationChanged) {
-      // Never render the previous Session's evidence under a newly selected
-      // Session identity while the replacement request is still in flight.
-      setDetail(null);
-      setMessages(null);
-      setDetailAvailability("loading");
-      setMessagesAvailability(loadMessages ? "loading" : "idle");
-      setMutationNotice("");
-      setMutationAllowed(null);
-      setSending(false);
-    } else {
-      setDetailAvailability((value) => (value === "idle" ? "loading" : value));
-      if (loadMessages) {
-        setMessagesAvailability((value) => (value === "idle" ? "loading" : value));
-      } else {
-        setMessages(null);
-        setMessagesAvailability("idle");
+  useEffect(() => {
+    detailRequest.cancel();
+    if (!enabled || !projectId || !sessionId) return;
+    setDetailAvailability(value => value === "idle" ? "loading" : value);
+    void detailRequest.run(signal => fetchSessionDetail(client, projectId, sessionId, signal), response => {
+      if (response?.status === 401) { onUnauthorized(); return; }
+      if (response?.status === 403 || response?.status === 404) {
+        setDetail(null); setDetailAvailability("denied"); return;
       }
-    }
-
-    const detailController = new AbortController();
-    const messageController = loadMessages ? new AbortController() : null;
-    detailRequest.current = detailController;
-    messageRequest.current = messageController;
-
-    void fetchSessionDetail(client, location.projectId, location.sessionId, detailController.signal).then((response) => {
-      if (detailRequest.current !== detailController || !response) return;
-      detailRequest.current = null;
-      if (response.status === 401) {
-        onUnauthorized();
-        return;
+      if (!response?.ok || !response.data || response.data.session_id !== sessionId) {
+        setDetailAvailability(value => value === "available" || value === "stale" ? "stale" : "error"); return;
       }
-      if (response.status === 403 || response.status === 404) {
-        setDetail(null);
-        setDetailAvailability("denied");
-        return;
-      }
-      if (!response.ok || !response.data || response.data.session_id !== location.sessionId) {
-        setDetailAvailability((current) => current === "available" || current === "stale" ? "stale" : "error");
-        return;
-      }
-      setDetail(response.data);
-      setDetailAvailability("available");
+      setDetail(response.data); setDetailAvailability("available");
     });
-
-    if (messageController) {
-      void fetchSessionMessages(client, location.projectId, location.sessionId, messageController.signal).then((response) => {
-        if (messageRequest.current !== messageController || !response) return;
-        messageRequest.current = null;
-        if (response.status === 401) {
-          onUnauthorized();
-          return;
-        }
-        if (response.status === 403 || response.status === 404) {
-          setMessages(null);
-          setMessagesAvailability("denied");
-          return;
-        }
-        if (!response.ok || !response.data || response.data.session_id !== location.sessionId) {
-          setMessagesAvailability((current) => current === "available" || current === "stale" ? "stale" : "error");
-          return;
-        }
-        setMessages(response.data);
-        setMessagesAvailability("available");
-        setMutationNotice("");
-      });
-    }
-
-    return () => {
-      detailController.abort();
-      messageController?.abort();
-    };
-  }, [client, enabled, loadMessages, location?.projectId, location?.sessionId, onUnauthorized, revision]);
+    return () => detailRequest.cancel();
+  }, [client, enabled, projectId, sessionId, onUnauthorized, detailRevision, detailRequest]);
 
   useEffect(() => {
-    if (!enabled || !location || !detail) return;
-    const shouldPoll = detail.lifecycle === "active" || detail.running_call || detail.running_jobs > 0;
-    if (!shouldPoll) return;
-    const refreshVisible = () => {
-      if (document.visibilityState !== "hidden" && !detailRequest.current && !messageRequest.current) refresh();
-    };
-    const timer = window.setInterval(refreshVisible, 5_000);
-    document.addEventListener("visibilitychange", refreshVisible);
-    window.addEventListener("focus", refreshVisible);
-    return () => {
-      window.clearInterval(timer);
-      document.removeEventListener("visibilitychange", refreshVisible);
-      window.removeEventListener("focus", refreshVisible);
-    };
-  }, [detail, enabled, location, refresh]);
+    messageRequest.cancel();
+    if (!enabled || !projectId || !sessionId || !loadMessages) {
+      setMessages(null); setMessagesAvailability("idle"); return;
+    }
+    setMessagesAvailability(value => value === "idle" ? "loading" : value);
+    void messageRequest.run(signal => fetchSessionMessages(client, projectId, sessionId, signal), response => {
+      if (response?.status === 401) { onUnauthorized(); return; }
+      if (response?.status === 403 || response?.status === 404) {
+        setMessages(null); setMessagesAvailability("denied"); return;
+      }
+      if (!response?.ok || !response.data || response.data.session_id !== sessionId) {
+        setMessagesAvailability(value => value === "available" || value === "stale" ? "stale" : "error"); return;
+      }
+      setMessages(response.data); setMessagesAvailability("available"); setMutationNotice("");
+    });
+    return () => messageRequest.cancel();
+  }, [client, enabled, loadMessages, projectId, sessionId, onUnauthorized, messageRevision, messageRequest]);
+
+  const shouldPoll = !detail || detail.lifecycle === "active" || detail.running_call || detail.running_jobs > 0;
+  useVisibleRefresh(Boolean(enabled && location && shouldPoll), () => {
+    if (!detailRequest.pending) setDetailRevision(value => value + 1);
+    if (loadMessages && !messageRequest.pending) setMessageRevision(value => value + 1);
+  }, 5_000);
 
   const send = useCallback(async (input: { message: string; kind?: string; priority?: string; requiresAck?: boolean; replyTo?: string }) => {
     if (!location || !input.message.trim()) return false;

@@ -41,11 +41,20 @@ not a silently auto-drained cursor or a background request for every Project.
 Rows remain usable during ordinary refresh. Credential/filter changes clear the
 old selection and stale responses cannot overwrite the current one.
 
-`useVisibleRefresh` owns visibility, event coalescing and timer cleanup for the
-Overview, Projects and Project Sessions hooks. Hidden tabs do not issue timed
-inventory requests; focus/online/visibility events coalesce. Each consumer still
-owns its exact request fence and single-flight guard. Null/failed Session reads
-release that guard instead of permanently wedging subsequent refreshes.
+`useVisibleRefresh` owns visibility, event coalescing and timer cleanup for
+Overview, Projects, Project Sessions, Goal/Session workspaces, Agent inventory
+and Window collaboration. Hidden tabs do not issue periodic observation reads;
+focus/online/visibility events coalesce into one 150 ms resume. Window collaboration
+also cancels an in-flight read when paused; an already-pending send is unaffected.
+
+Goal and Session resources use `ObservationRequest` slots for cancellation,
+null/error completion, stale-response fencing and single-flight release. List,
+detail and message resources progress independently. Periodic refresh skips a
+busy resource; an explicit refresh queues at most one follow-up behind it instead
+of canceling slow work. A canceled old read cannot release a newer slot or revive
+its queued callback. These slots are not used for mutations or lease renewal.
+Agent Endpoint renewal retains its own schedule while the page is hidden; only
+its inventory observation timer follows document visibility.
 
 ## Exact Session Job state
 

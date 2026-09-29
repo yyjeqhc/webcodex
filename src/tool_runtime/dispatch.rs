@@ -1878,6 +1878,7 @@ impl ToolRuntime {
 
             ToolCall::StartAgentTaskCodingRun {
                 project,
+                attempt_ref,
                 task_id,
                 attempt_id,
                 assignee_agent_id,
@@ -1889,9 +1890,10 @@ impl ToolRuntime {
             } => {
                 // Keep this relatively large orchestration future off the shared dispatch
                 // future's inline state so unrelated tool calls do not inherit its stack cost.
-                Box::pin(self.start_agent_task_coding_run(
+                Box::pin(self.start_agent_task_coding_run_with_selector(
                     auth,
                     project,
+                    attempt_ref,
                     task_id,
                     attempt_id,
                     assignee_agent_id,

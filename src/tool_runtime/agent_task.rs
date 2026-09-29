@@ -807,6 +807,51 @@ impl ToolRuntime {
     }
 
     #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn start_agent_task_coding_run_with_selector(
+        &self,
+        auth: Option<&AuthContext>,
+        project: String,
+        attempt_ref: Option<String>,
+        task_id: Option<String>,
+        attempt_id: Option<String>,
+        assignee_agent_id: Option<String>,
+        attempt_fence: Option<String>,
+        attempt_controller_generation: Option<i64>,
+        provider_id: String,
+        config: Option<BTreeMap<String, CodingAgentConfigValue>>,
+        timeout_secs: Option<u64>,
+    ) -> ToolResult {
+        let (task_id, attempt_id, assignee_agent_id, attempt_fence, attempt_controller_generation) =
+            match self.resolve_agent_task_attempt_selector(
+                auth,
+                attempt_ref,
+                task_id,
+                attempt_id,
+                assignee_agent_id,
+                attempt_fence,
+                attempt_controller_generation,
+            ) {
+                Ok(selector) => selector,
+                Err(result) => return result,
+            };
+        // Resolve only identity. The canonical path still rechecks Project/provider authority,
+        // live Attempt fencing and immutable binding intent before any external dispatch.
+        self.start_agent_task_coding_run(
+            auth,
+            project,
+            task_id,
+            attempt_id,
+            assignee_agent_id,
+            attempt_fence,
+            attempt_controller_generation,
+            provider_id,
+            config,
+            timeout_secs,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn start_agent_task_coding_run(
         &self,
         auth: Option<&AuthContext>,

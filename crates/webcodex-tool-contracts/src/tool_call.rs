@@ -3449,24 +3449,34 @@ pub enum ToolCall {
         /// CodingAgentRun authority.
         #[schemars(length(min = 1))]
         project: String,
-        /// Canonical durable AgentTask id. It is not a credential or Connector Task id.
+        /// Server-issued ~ta selector for one exact task, attempt, assignee, fence, and generation.
+        /// Not authority. Omit it when passing the explicit tuple; Project and provider remain explicit.
+        #[schemars(regex(pattern = "^~ta[1-9][0-9]{0,18}$"))]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        attempt_ref: Option<String>,
+        /// Canonical durable AgentTask id. Required with the explicit tuple; omit with attempt_ref.
         #[schemars(regex(pattern = "^wc_agent_task_[A-Za-z0-9_-]{16}$"))]
-        task_id: String,
-        /// Exact durable AgentTaskAttempt id.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        task_id: Option<String>,
+        /// Exact durable AgentTaskAttempt id. Required with the explicit tuple; omit with attempt_ref.
         #[schemars(regex(pattern = "^wc_agent_task_attempt_[A-Za-z0-9_-]{16}$"))]
-        attempt_id: String,
-        /// Explicit current durable Agent assignee. Agent identity does not grant Project or executor
-        /// authority.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        attempt_id: Option<String>,
+        /// Exact current Agent assignee. Required with the explicit tuple; omit with attempt_ref.
+        /// Agent identity does not grant Project or executor authority.
         #[schemars(regex(pattern = "^wc_dagent_[A-Za-z0-9_-]{16}$"))]
-        assignee_agent_id: String,
-        /// Opaque exact-Attempt freshness fence returned by start_agent_task_attempt. It is not a bearer
-        /// credential or idempotency key.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        assignee_agent_id: Option<String>,
+        /// Exact Attempt fence. Required with the explicit tuple; omit with attempt_ref.
+        /// Not a bearer credential or idempotency key.
         #[schemars(regex(pattern = "^wc_agent_task_fence_[A-Za-z0-9_-]{21}[AQgw]$"))]
-        attempt_fence: String,
-        /// Exact current Attempt-local controller generation. Carrier replacement increments it without
-        /// creating a new Attempt.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        attempt_fence: Option<String>,
+        /// Exact Attempt controller generation. Required with the explicit tuple; omit with attempt_ref.
+        /// Stale selectors never select a newer controller or Attempt.
         #[schemars(range(min = 1))]
-        attempt_controller_generation: i64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        attempt_controller_generation: Option<i64>,
         /// Logical Runner-advertised CodingAgent provider. The Server binds its exact provider instance;
         /// callers cannot supply provider_instance_id.
         #[schemars(length(min = 1, max = 64))]

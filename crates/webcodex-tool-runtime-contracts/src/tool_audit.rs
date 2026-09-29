@@ -881,6 +881,7 @@ impl ToolCallAuditProjection for ToolCall {
             ),
             Self::StartAgentTaskCodingRun {
                 project,
+                attempt_ref,
                 task_id,
                 attempt_id,
                 assignee_agent_id,
@@ -893,6 +894,7 @@ impl ToolCallAuditProjection for ToolCall {
                 AgentTaskRequestAudit::StartCodingRun,
                 &serde_json::json!({
                     "project": project,
+                    "attempt_ref": attempt_ref,
                     "task_id": task_id,
                     "attempt_id": attempt_id,
                     "assignee_agent_id": assignee_agent_id,

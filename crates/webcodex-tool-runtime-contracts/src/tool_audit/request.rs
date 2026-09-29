@@ -525,19 +525,20 @@ pub(super) fn typed_agent_task_request_audit(
             );
         }
         AgentTaskRequestAudit::StartCodingRun => {
-            copy_keys(
-                obj,
-                &mut out,
-                &[
-                    "project",
-                    "task_id",
-                    "attempt_id",
-                    "assignee_agent_id",
-                    "attempt_controller_generation",
-                    "provider_id",
-                    "timeout_secs",
-                ],
-            );
+            for key in [
+                "project",
+                "attempt_ref",
+                "task_id",
+                "attempt_id",
+                "assignee_agent_id",
+                "attempt_controller_generation",
+                "provider_id",
+                "timeout_secs",
+            ] {
+                if let Some(value) = obj.get(key).filter(|value| !value.is_null()) {
+                    out.insert((*key).to_string(), value.clone());
+                }
+            }
             out.insert(
                 "attempt_fence_present".to_string(),
                 Value::Bool(obj.get("attempt_fence").and_then(Value::as_str).is_some()),

@@ -1,6 +1,7 @@
 //! Canonical ToolCall parser, wire, accessor, and request-audit helper tests.
 
 use super::tool_call_test_support::*;
+use super::{required_fields, spec_named};
 use crate::*;
 use serde_json::{json, Value};
 use webcodex_core::workflow_session_contract as sessions;
@@ -207,20 +208,62 @@ fn start_agent_task_endpoint_continuation_parses_ref_or_explicit_tuple() {
             ..
         } if selector == "~ta1" && outcome == "succeeded" && completion_key == "completion-by-ref"
     ));
-    assert!(ToolCall::from_tool_name(
-        "start_agent_task_coding_run",
-        json!({
-            "attempt_ref": "~ta1",
-            "project": "agent:special:task-project",
-            "task_id": "wc_agent_task_ERERERERERERERER",
-            "attempt_id": "wc_agent_task_attempt_IiIiIiIiIiIiIiIi",
-            "assignee_agent_id": "wc_dagent_MzMzMzMzMzMzMzMz",
-            "attempt_fence": "wc_agent_task_fence_RERERERERERERERERERERA",
-            "attempt_controller_generation": 1,
-            "provider_id": "codex"
-        }),
-    )
-    .is_err());
+}
+
+#[test]
+fn start_agent_task_coding_run_parses_ref_or_explicit_tuple() {
+    let by_ref = json!({
+        "attempt_ref": "~ta1",
+        "project": "agent:special:task-project",
+        "provider_id": "codex"
+    });
+    let call = ToolCall::from_tool_name("start_agent_task_coding_run", by_ref.clone()).unwrap();
+    assert!(matches!(call, ToolCall::StartAgentTaskCodingRun {
+        attempt_ref: Some(ref selector), task_id: None, attempt_id: None,
+        assignee_agent_id: None, attempt_fence: None, attempt_controller_generation: None, ..
+    } if selector == "~ta1"));
+    let by_tuple = json!({
+        "project": "agent:special:task-project",
+        "task_id": "wc_agent_task_ERERERERERERERER",
+        "attempt_id": "wc_agent_task_attempt_IiIiIiIiIiIiIiIi",
+        "assignee_agent_id": "wc_dagent_MzMzMzMzMzMzMzMz",
+        "attempt_fence": "wc_agent_task_fence_RERERERERERERERERERERA",
+        "attempt_controller_generation": 1,
+        "provider_id": "codex"
+    });
+    let call = ToolCall::from_tool_name("start_agent_task_coding_run", by_tuple).unwrap();
+    assert!(matches!(
+        call,
+        ToolCall::StartAgentTaskCodingRun {
+            attempt_ref: None,
+            task_id: Some(_),
+            attempt_id: Some(_),
+            assignee_agent_id: Some(_),
+            attempt_fence: Some(_),
+            attempt_controller_generation: Some(1),
+            ..
+        }
+    ));
+    let specs = registered_tool_specs();
+    let spec = spec_named(&specs, "start_agent_task_coding_run");
+    assert_eq!(spec.input_schema["additionalProperties"], false);
+    assert_eq!(required_fields(spec), vec!["project", "provider_id"]);
+    assert!(test_support::validate_schema_instance(&by_ref, &spec.input_schema).is_ok());
+    for missing in ["project", "provider_id"] {
+        let mut invalid = by_ref.clone();
+        invalid.as_object_mut().unwrap().remove(missing);
+        assert!(ToolCall::from_tool_name("start_agent_task_coding_run", invalid).is_err());
+    }
+    for forbidden in [
+        "session_id",
+        "instruction",
+        "idempotency_key",
+        "provider_instance_id",
+    ] {
+        let mut invalid = by_ref.clone();
+        invalid[forbidden] = json!("not-inferred");
+        assert!(ToolCall::from_tool_name("start_agent_task_coding_run", invalid).is_err());
+    }
 }
 
 #[test]

@@ -786,8 +786,12 @@ communication-principal index pinned to that tuple, including the fence and cont
 generation. It is not a credential. Lookup runs only for the caller, then the existing
 owner, lease, fence, and generation checks run again. A later takeover, expiry,
 replacement, or controller generation change leaves the old ref pinned to the old tuple.
-Heartbeat, completion, and CodingAgent dispatch still take the explicit tuple. Startup
-never selects an Endpoint. The Store records
+Endpoint continuation, heartbeat, completion, and CodingAgent dispatch all accept this
+same `attempt_ref` or the full explicit tuple, never a mixture. `start_agent_task_coding_run`
+still requires an explicit Project and provider; resolving the ref does not bypass its
+Project/provider authorization, current Attempt checks, immutable binding intent, or
+outcome-unknown replay fence. Active-turn Wake/consume proof and completion keys remain
+separate inputs, not part of the selector. Startup never selects an Endpoint. The Store records
 one concrete `wc_agent_task_endpoint_executions` row plus one durable
 `agent_task_attempt` Wake. Its Endpoint id/generation are nullable until an existing
 wake-capable carrier later claims the Wake. Attempt controller generation remains

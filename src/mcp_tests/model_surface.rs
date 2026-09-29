@@ -289,7 +289,7 @@ async fn retired_endpoint_name_is_absent_from_adaptive_exact_discovery() {
     let old = "attach_agent_endpoint";
     assert!(webcodex_tool_contracts::lookup_tool_definition(old).is_none());
     assert_eq!(
-        crate::model_surface::suggested_tool_call_route(old, true),
+        crate::model_surface::suggested_tool_call_route(old, false),
         crate::model_surface::SuggestedToolCallRoute::Unavailable
     );
     let outcome = handle_mcp_request(

@@ -32,64 +32,69 @@ fn cwd_allowed_remains_fail_closed_when_no_existing_root_matches() {
 #[cfg(windows)]
 #[test]
 fn shell_job_filters_sensitive_env_case_insensitive() {
-    let _guard = test_env_lock();
-    let tmp = tempfile::tempdir().unwrap();
-    let cfg = test_config(tmp.path().join("config/project-registry"));
-    let cwd = tmp.path().to_string_lossy().to_string();
-    // The plain (non-profile) path removes sensitive keys from the child
-    // environment; Windows removal must be case-insensitive like the OS.
-    for spelling in [
-        "WEBCODEX_TOKEN",
-        "WebCodex_Pat",
-        "WebCodex_User_Token",
-        "Authorization",
-        "webcodex_agent_token",
-    ] {
-        let _env = EnvGuard::new().set(spelling, "secret-token");
-        let result = run_shell(
-            &cfg.policy,
-            &ShellConfig::default(),
-            Some(&cwd),
-            &shell_if_else_env_present(spelling),
-            None,
-            10,
-            None,
-        );
-        assert_eq!(result.exit_code, Some(0), "{result:?}");
-        assert_eq!(result.stdout.as_deref(), Some("absent"), "{result:?}");
-    }
+    IsolatedEnv::new()
+        .set("WEBCODEX_TOKEN", "secret-token")
+        .set("WebCodex_Pat", "secret-token")
+        .set("WebCodex_User_Token", "secret-token")
+        .set("Authorization", "secret-token")
+        .set("webcodex_agent_token", "secret-token")
+        .run("inherited", || {
+            let tmp = tempfile::tempdir().unwrap();
+            let cfg = test_config(tmp.path().join("config/project-registry"));
+            let cwd = tmp.path().to_string_lossy().to_string();
+            // The plain (non-profile) path removes sensitive keys from the child
+            // environment; Windows removal must be case-insensitive like the OS.
+            for spelling in [
+                "WEBCODEX_TOKEN",
+                "WebCodex_Pat",
+                "WebCodex_User_Token",
+                "Authorization",
+                "webcodex_agent_token",
+            ] {
+                let result = run_shell(
+                    &cfg.policy,
+                    &ShellConfig::default(),
+                    Some(&cwd),
+                    &shell_if_else_env_present(spelling),
+                    None,
+                    10,
+                    None,
+                );
+                assert_eq!(result.exit_code, Some(0), "{result:?}");
+                assert_eq!(result.stdout.as_deref(), Some("absent"), "{result:?}");
+            }
 
-    // A configured shell env must not be able to re-insert a secret after the
-    // inherited environment was scrubbed. Exercise canonical and mixed-case
-    // spellings because Windows environment names are case-insensitive.
-    for spelling in [
-        "WEBCODEX_TOKEN",
-        "webcodex_pat",
-        "WebCodex_User_Token",
-        "authorization",
-    ] {
-        let shell = ShellConfig {
-            env: HashMap::from([(spelling.to_string(), "configured-secret".to_string())]),
-            ..ShellConfig::default()
-        };
-        let result = run_shell(
-            &cfg.policy,
-            &shell,
-            Some(&cwd),
-            &shell_if_else_env_present(spelling),
-            None,
-            10,
-            None,
-        );
-        assert_eq!(result.exit_code, Some(0), "{result:?}");
-        assert_eq!(
-            result.stdout.as_deref(),
-            Some("absent"),
-            "configured sensitive env leaked: {result:?}"
-        );
-    }
+            // A configured shell env must not be able to re-insert a secret after the
+            // inherited environment was scrubbed. Exercise canonical and mixed-case
+            // spellings because Windows environment names are case-insensitive.
+            for spelling in [
+                "WEBCODEX_TOKEN",
+                "webcodex_pat",
+                "WebCodex_User_Token",
+                "authorization",
+            ] {
+                let shell = ShellConfig {
+                    env: HashMap::from([(spelling.to_string(), "configured-secret".to_string())]),
+                    ..ShellConfig::default()
+                };
+                let result = run_shell(
+                    &cfg.policy,
+                    &shell,
+                    Some(&cwd),
+                    &shell_if_else_env_present(spelling),
+                    None,
+                    10,
+                    None,
+                );
+                assert_eq!(result.exit_code, Some(0), "{result:?}");
+                assert_eq!(
+                    result.stdout.as_deref(),
+                    Some("absent"),
+                    "configured sensitive env leaked: {result:?}"
+                );
+            }
+        });
 }
-
 #[test]
 fn shell_job_success_and_failure_results_are_structured() {
     let tmp = tempfile::tempdir().unwrap();

@@ -120,6 +120,21 @@ pub(crate) fn execute_validation_at_root(
     request: &ValidationBridgeRequest,
     max_timeout_secs: u64,
 ) -> Result<ValidationBridgeResponse, ValidationBridgeResultEnvelope> {
+    execute_validation_at_root_with_program(
+        project_root,
+        request,
+        max_timeout_secs,
+        execute::resolve_executable("WEBCODEX_PYRIGHT", "pyright"),
+    )
+}
+
+#[cfg(test)]
+fn execute_validation_at_root_with_program(
+    project_root: &Path,
+    request: &ValidationBridgeRequest,
+    max_timeout_secs: u64,
+    program: Option<PathBuf>,
+) -> Result<ValidationBridgeResponse, ValidationBridgeResultEnvelope> {
     if let Err(message) = validate_bridge_request(request) {
         return Err(ValidationBridgeResultEnvelope::err(
             failure_kinds::INVALID_ARGUMENTS,
@@ -139,11 +154,12 @@ pub(crate) fn execute_validation_at_root(
         ));
     }
     match meta.adapter_id {
-        "pyright" => Ok(pyright::run_pyright(
+        "pyright" => Ok(pyright::run_pyright_with_program(
             project_root,
             request,
             max_timeout_secs,
             None,
+            program,
         )),
         other => Err(ValidationBridgeResultEnvelope::err(
             failure_kinds::ADAPTER_NOT_FOUND,

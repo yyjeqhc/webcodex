@@ -5933,64 +5933,66 @@ for line in sys.stdin:
     #[test]
     #[cfg(unix)]
     fn child_environment_is_cleared_and_missing_mapping_never_spawns() {
-        let _guard = crate::tests::test_env_lock();
-        let _env = crate::tests::EnvGuard::new()
+        crate::tests::IsolatedEnv::new()
             .set("WEBCODEX_TEST_ACP_VISIBLE", "visible-value")
-            .set("WEBCODEX_TEST_ACP_HIDDEN", "must-not-reach-child");
-        let temp = crate::tests::executable_tempdir();
-        let (exe, args) = fake_agent(&temp, "end");
-        let mut cfg = fake_config(exe, args);
-        cfg.agents[0].env_from_env = BTreeMap::from([(
-            "ACP_VISIBLE".to_string(),
-            "WEBCODEX_TEST_ACP_VISIBLE".to_string(),
-        )]);
-        let projects = project_fixture(&temp);
-        let root = temp.path().join("repo");
-        let manager = CodingAgentManager::with_store(&cfg, temp.path().join("store")).unwrap();
-        let run = "wc_agent_run_envclear0001";
-        assert!(manager
-            .handle(
-                start_request(&manager, &root, run, BTreeMap::new()),
-                &projects
-            )
-            .error
-            .is_none());
-        wait_for_snapshot(&manager, run, |snapshot| snapshot.state.terminal());
-        let startup = wire_log(&temp)
-            .into_iter()
-            .find(|entry| entry.get("env_keys").is_some())
-            .unwrap();
-        assert_eq!(startup["env_keys"], json!(["ACP_VISIBLE"]));
+            .set("WEBCODEX_TEST_ACP_HIDDEN", "must-not-reach-child")
+            .run("inherited", || {
+                let temp = crate::tests::executable_tempdir();
+                let (exe, args) = fake_agent(&temp, "end");
+                let mut cfg = fake_config(exe, args);
+                cfg.agents[0].env_from_env = BTreeMap::from([(
+                    "ACP_VISIBLE".to_string(),
+                    "WEBCODEX_TEST_ACP_VISIBLE".to_string(),
+                )]);
+                let projects = project_fixture(&temp);
+                let root = temp.path().join("repo");
+                let manager =
+                    CodingAgentManager::with_store(&cfg, temp.path().join("store")).unwrap();
+                let run = "wc_agent_run_envclear0001";
+                assert!(manager
+                    .handle(
+                        start_request(&manager, &root, run, BTreeMap::new()),
+                        &projects
+                    )
+                    .error
+                    .is_none());
+                wait_for_snapshot(&manager, run, |snapshot| snapshot.state.terminal());
+                let startup = wire_log(&temp)
+                    .into_iter()
+                    .find(|entry| entry.get("env_keys").is_some())
+                    .unwrap();
+                assert_eq!(startup["env_keys"], json!(["ACP_VISIBLE"]));
 
-        let temp = crate::tests::executable_tempdir();
-        let (exe, args) = fake_agent(&temp, "end");
-        let mut cfg = fake_config(exe, args);
-        cfg.agents[0].env_from_env = BTreeMap::from([(
-            "ACP_VISIBLE".to_string(),
-            "WEBCODEX_TEST_ACP_MISSING".to_string(),
-        )]);
-        let projects = project_fixture(&temp);
-        let root = temp.path().join("repo");
-        let manager = CodingAgentManager::with_store(&cfg, temp.path().join("store")).unwrap();
-        let response = manager.handle(
-            start_request(
-                &manager,
-                &root,
-                "wc_agent_run_missingenv01",
-                BTreeMap::new(),
-            ),
-            &projects,
-        );
-        assert_eq!(
-            response.error.as_ref().map(|error| error.code.as_str()),
-            Some("coding_agent_environment_unavailable")
-        );
-        assert!(
-            wire_log(&temp).is_empty(),
-            "provider child must not start when an env source is missing"
-        );
+                let temp = crate::tests::executable_tempdir();
+                let (exe, args) = fake_agent(&temp, "end");
+                let mut cfg = fake_config(exe, args);
+                cfg.agents[0].env_from_env = BTreeMap::from([(
+                    "ACP_VISIBLE".to_string(),
+                    "WEBCODEX_TEST_ACP_MISSING".to_string(),
+                )]);
+                let projects = project_fixture(&temp);
+                let root = temp.path().join("repo");
+                let manager =
+                    CodingAgentManager::with_store(&cfg, temp.path().join("store")).unwrap();
+                let response = manager.handle(
+                    start_request(
+                        &manager,
+                        &root,
+                        "wc_agent_run_missingenv01",
+                        BTreeMap::new(),
+                    ),
+                    &projects,
+                );
+                assert_eq!(
+                    response.error.as_ref().map(|error| error.code.as_str()),
+                    Some("coding_agent_environment_unavailable")
+                );
+                assert!(
+                    wire_log(&temp).is_empty(),
+                    "provider child must not start when an env source is missing"
+                );
+            });
     }
-
     #[test]
     #[cfg(unix)]
     fn pre_barrier_restart_is_not_started_and_child_tree_is_reaped() {

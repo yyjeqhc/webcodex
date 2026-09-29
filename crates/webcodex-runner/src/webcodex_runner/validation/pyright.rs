@@ -25,9 +25,24 @@ pub(crate) fn run_pyright(
     shutdown: Option<&AtomicBool>,
 ) -> ValidationBridgeResponse {
     let meta = registry::lookup_adapter(ADAPTER_ID).expect("pyright adapter registered");
-    let timeout = request.timeout_secs.min(max_timeout_secs).max(1);
+    run_pyright_with_program(
+        project_root,
+        request,
+        max_timeout_secs,
+        shutdown,
+        resolve_executable(meta.env_override, meta.executable_name),
+    )
+}
 
-    let Some(program) = resolve_executable(meta.env_override, meta.executable_name) else {
+pub(super) fn run_pyright_with_program(
+    project_root: &Path,
+    request: &ValidationBridgeRequest,
+    max_timeout_secs: u64,
+    shutdown: Option<&AtomicBool>,
+    program: Option<std::path::PathBuf>,
+) -> ValidationBridgeResponse {
+    let timeout = request.timeout_secs.min(max_timeout_secs).max(1);
+    let Some(program) = program else {
         let mut response = base_response(request, false);
         response.failure_kind = Some(failure_kinds::TOOL_UNAVAILABLE.to_string());
         response.message = Some("pyright executable is not available".to_string());

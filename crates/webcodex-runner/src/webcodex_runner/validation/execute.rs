@@ -367,7 +367,19 @@ fn bound_stderr(text: &str) -> String {
 /// Resolve an executable by env override then PATH search. Callers must not
 /// expose the absolute executable path across the bridge.
 pub(crate) fn resolve_executable(env_override: &str, executable_name: &str) -> Option<PathBuf> {
-    if let Ok(value) = std::env::var(env_override) {
+    resolve_executable_with_env(
+        std::env::var(env_override).ok().as_deref(),
+        std::env::var_os("PATH").as_deref(),
+        executable_name,
+    )
+}
+
+fn resolve_executable_with_env(
+    override_value: Option<&str>,
+    path_value: Option<&std::ffi::OsStr>,
+    executable_name: &str,
+) -> Option<PathBuf> {
+    if let Some(value) = override_value {
         let trimmed = value.trim();
         if !trimmed.is_empty() {
             #[cfg(windows)]
@@ -375,8 +387,8 @@ pub(crate) fn resolve_executable(env_override: &str, executable_name: &str) -> O
                 // The override may be a bare name ("pyright"), a batch shim
                 // ("pyright.cmd") or a path; resolve through the platform
                 // rules so extensionless POSIX shims are never selected.
-                let path_var = std::env::var_os("PATH").unwrap_or_default();
-                return crate::webcodex_runner::util::resolve_program_in_path(trimmed, &path_var)
+                let path_var = path_value.unwrap_or_else(|| std::ffi::OsStr::new(""));
+                return crate::webcodex_runner::util::resolve_program_in_path(trimmed, path_var)
                     .map(|program| program.path().to_path_buf());
             }
             #[cfg(not(windows))]
@@ -386,8 +398,7 @@ pub(crate) fn resolve_executable(env_override: &str, executable_name: &str) -> O
             }
         }
     }
-    let path_var = std::env::var_os("PATH")?;
-    crate::webcodex_runner::util::find_executable_in_path(executable_name, &path_var)
+    crate::webcodex_runner::util::find_executable_in_path(executable_name, path_value?)
 }
 
 #[cfg(test)]
@@ -405,23 +416,20 @@ mod tests {
     fn env_override_requires_an_executable_file() {
         use std::os::unix::fs::PermissionsExt;
 
-        const ENV: &str = "WEBCODEX_TEST_VALIDATION_EXECUTABLE";
         const MISSING_NAME: &str = "webcodex-validation-executable-that-does-not-exist";
-        let _env_lock = crate::tests::test_env_lock();
         let temp = tempfile::tempdir().unwrap();
 
-        let env = crate::tests::EnvGuard::new().set(ENV, temp.path());
-        assert!(resolve_executable(ENV, MISSING_NAME).is_none());
+        let resolve = |path: &Path| resolve_executable_with_env(path.to_str(), None, MISSING_NAME);
+        assert!(resolve(temp.path()).is_none());
 
         let file = temp.path().join("tool");
         std::fs::write(&file, "#!/bin/sh\nexit 0\n").unwrap();
-        let _env = env.set(ENV, &file);
-        assert!(resolve_executable(ENV, MISSING_NAME).is_none());
+        assert!(resolve(&file).is_none());
 
         let mut permissions = std::fs::metadata(&file).unwrap().permissions();
         permissions.set_mode(0o755);
         std::fs::set_permissions(&file, permissions).unwrap();
-        assert_eq!(resolve_executable(ENV, MISSING_NAME), Some(file));
+        assert_eq!(resolve(&file), Some(file));
     }
 
     // -----------------------------------------------------------------------

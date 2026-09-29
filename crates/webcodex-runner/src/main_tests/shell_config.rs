@@ -258,24 +258,25 @@ dialect = "cmd"
 
 #[test]
 fn shell_config_default_environment_is_inherited() {
-    let _guard = test_env_lock();
     let tmp = tempfile::tempdir().unwrap();
     let cfg = test_config(tmp.path().join("config/project-registry"));
     let cwd = tmp.path().to_string_lossy().to_string();
-    let _env = EnvGuard::new().set("WEBCODEX_INHERITED_TEST", "inherited-ok");
-    let result = run_shell(
-        &cfg.policy,
-        &ShellConfig::default(),
-        Some(&cwd),
-        &shell_env_var("WEBCODEX_INHERITED_TEST"),
-        None,
-        10,
-        None,
-    );
-    assert_eq!(result.exit_code, Some(0), "{result:?}");
-    assert_eq!(result.stdout.as_deref(), Some("inherited-ok"));
+    IsolatedEnv::new()
+        .set("WEBCODEX_INHERITED_TEST", "inherited-ok")
+        .run("inherited", || {
+            let result = run_shell(
+                &cfg.policy,
+                &ShellConfig::default(),
+                Some(&cwd),
+                &shell_env_var("WEBCODEX_INHERITED_TEST"),
+                None,
+                10,
+                None,
+            );
+            assert_eq!(result.exit_code, Some(0), "{result:?}");
+            assert_eq!(result.stdout.as_deref(), Some("inherited-ok"));
+        });
 }
-
 #[test]
 fn shell_config_env_values_are_available() {
     let tmp = tempfile::tempdir().unwrap();

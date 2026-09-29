@@ -197,13 +197,12 @@ fn load_config_explicit_allowed_roots_override_home_default() {
 
 #[test]
 fn load_config_empty_roots_without_home_and_no_cwd_anywhere_errors() {
-    let _guard = test_env_lock();
     // Windows derives the allowed-root default from USERPROFILE, so both
     // home sources must be absent to exercise the fail-closed branch.
-    let _env = EnvGuard::new()
+    IsolatedEnv::new()
         .remove("HOME")
         .remove("USERPROFILE")
-        .remove("APPDATA");
+        .remove("APPDATA").run("inherited", || {
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join("runner.toml");
     std::fs::write(
@@ -214,4 +213,5 @@ fn load_config_empty_roots_without_home_and_no_cwd_anywhere_errors() {
     .unwrap();
     let err = load_config(&path).unwrap_err();
     assert!(err.contains("allowed_roots is empty"));
+    });
 }

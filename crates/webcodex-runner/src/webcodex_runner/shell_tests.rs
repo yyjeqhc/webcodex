@@ -2313,7 +2313,6 @@ fn windows_batch_shim_forwards_supported_argv_to_native_child() {
 
 #[test]
 fn execution_environment_inherits_path_filters_credentials_and_honors_overrides() {
-    let _lock = crate::tests::test_env_lock();
     let temp = tempfile::tempdir().unwrap();
     let marker = temp.path().join("runner-toolchain");
     let inherited = std::env::var_os("PATH").unwrap_or_default();
@@ -2321,48 +2320,53 @@ fn execution_environment_inherits_path_filters_credentials_and_honors_overrides(
         std::iter::once(marker.clone()).chain(std::env::split_paths(&inherited)),
     )
     .unwrap();
-    let _env = crate::tests::EnvGuard::new()
+    crate::tests::IsolatedEnv::new()
         .set("PATH", path)
-        .set("WEBCODEX_TOKEN", "test-secret");
-    let shell = ShellConfig::default();
-    let env = base_shell_env(&shell, &ShellProfileConfig::default()).unwrap();
-    assert_eq!(
-        env_lookup(&env, "PATH").cloned(),
-        std::env::var("PATH").ok()
-    );
-    assert!(std::env::split_paths(env_lookup(&env, "PATH").unwrap()).any(|path| path == marker));
-    assert!(!env.contains_key("WEBCODEX_TOKEN"));
-    let shell = ShellConfig {
-        environment_mode: ShellEnvironmentMode::Isolated,
-        env: HashMap::from([
-            ("PATH".into(), "shell-path".into()),
-            ("WEBCODEX_TOKEN".into(), "test-secret".into()),
-        ]),
-        ..ShellConfig::default()
-    };
-    let profile = ShellProfileConfig {
-        env: std::collections::BTreeMap::from([("PATH".into(), "profile-path".into())]),
-        ..ShellProfileConfig::default()
-    };
-    let env = base_shell_env(&shell, &profile).unwrap();
-    assert_eq!(
-        env_lookup(&env, "PATH").map(String::as_str),
-        Some("profile-path")
-    );
-    assert!(!env.contains_key("WEBCODEX_TOKEN"));
-    assert!(!env.contains_key("HOME"));
-    let provider = PreparedExecutionEnvironment::prepare(
-        1,
-        &shell,
-        None,
-        Path::new("."),
-        &PreparedShellProfileCache::default(),
-        None,
-    )
-    .unwrap();
-    assert!(!provider.env_snapshot.contains_key("WEBCODEX_TOKEN"));
+        .set("WEBCODEX_TOKEN", "test-secret")
+        .set("WEBCODEX_TEST_PATH_MARKER", &marker)
+        .run("inherited", || {
+            let marker = PathBuf::from(std::env::var_os("WEBCODEX_TEST_PATH_MARKER").unwrap());
+            let shell = ShellConfig::default();
+            let env = base_shell_env(&shell, &ShellProfileConfig::default()).unwrap();
+            assert_eq!(
+                env_lookup(&env, "PATH").cloned(),
+                std::env::var("PATH").ok()
+            );
+            assert!(
+                std::env::split_paths(env_lookup(&env, "PATH").unwrap()).any(|path| path == marker)
+            );
+            assert!(!env.contains_key("WEBCODEX_TOKEN"));
+            let shell = ShellConfig {
+                environment_mode: ShellEnvironmentMode::Isolated,
+                env: HashMap::from([
+                    ("PATH".into(), "shell-path".into()),
+                    ("WEBCODEX_TOKEN".into(), "test-secret".into()),
+                ]),
+                ..ShellConfig::default()
+            };
+            let profile = ShellProfileConfig {
+                env: std::collections::BTreeMap::from([("PATH".into(), "profile-path".into())]),
+                ..ShellProfileConfig::default()
+            };
+            let env = base_shell_env(&shell, &profile).unwrap();
+            assert_eq!(
+                env_lookup(&env, "PATH").map(String::as_str),
+                Some("profile-path")
+            );
+            assert!(!env.contains_key("WEBCODEX_TOKEN"));
+            assert!(!env.contains_key("HOME"));
+            let provider = PreparedExecutionEnvironment::prepare(
+                1,
+                &shell,
+                None,
+                Path::new("."),
+                &PreparedShellProfileCache::default(),
+                None,
+            )
+            .unwrap();
+            assert!(!provider.env_snapshot.contains_key("WEBCODEX_TOKEN"));
+        });
 }
-
 #[test]
 fn isolated_environment_is_explicit_and_does_not_inherit_user_path() {
     let shell: ShellConfig = toml::from_str("environment_mode = 'isolated'").unwrap();
@@ -2382,11 +2386,10 @@ fn isolated_environment_is_explicit_and_does_not_inherit_user_path() {
 #[test]
 fn default_shell_preserves_non_unicode_environment_without_panicking() {
     use std::os::unix::ffi::OsStringExt;
-    let _lock = crate::tests::test_env_lock();
-    let _env = crate::tests::EnvGuard::new().set(
+    crate::tests::IsolatedEnv::new().set(
         "WEBCODEX_OPAQUE_TOOLCHAIN_ENV",
         OsString::from_vec(vec![0xff]),
-    );
+    ).run("inherited", || {
     let shell = ShellConfig::default();
     configured_process_command(&shell, None, "true", &[], None).unwrap();
     let snapshot = base_shell_env(&shell, &ShellProfileConfig::default()).unwrap();
@@ -2403,4 +2406,5 @@ fn default_shell_preserves_non_unicode_environment_without_panicking() {
         None,
     )
     .unwrap();
+    });
 }

@@ -32,47 +32,9 @@ pub(crate) fn test_env_lock() -> std::sync::MutexGuard<'static, ()> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-/// RAII restore for environment variables mutated by tests: restores the
-/// previous value (or absence) on drop, even when the test panics, so a
-/// failure cannot leak env state into later tests.
-pub(crate) struct EnvGuard {
-    restored: Vec<(&'static str, Option<std::ffi::OsString>)>,
-}
-
-impl EnvGuard {
-    pub(crate) fn new() -> Self {
-        EnvGuard {
-            restored: Vec::new(),
-        }
-    }
-
-    pub(crate) fn set(mut self, name: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
-        self.capture(name);
-        std::env::set_var(name, value.as_ref());
-        self
-    }
-
-    pub(crate) fn remove(mut self, name: &'static str) -> Self {
-        self.capture(name);
-        std::env::remove_var(name);
-        self
-    }
-
-    fn capture(&mut self, name: &'static str) {
-        self.restored.push((name, std::env::var_os(name)));
-    }
-}
-
-impl Drop for EnvGuard {
-    fn drop(&mut self) {
-        for (name, value) in self.restored.drain(..).rev() {
-            match value {
-                Some(value) => std::env::set_var(name, value),
-                None => std::env::remove_var(name),
-            }
-        }
-    }
-}
+#[path = "main_tests/isolated_env.rs"]
+mod isolated_env;
+pub(crate) use isolated_env::IsolatedEnv;
 
 /// Policy for tests that exercise shell/profile behavior inside a temp dir
 /// rather than the filesystem boundary itself. `RunnerPolicy::default()` is
@@ -905,7 +867,6 @@ fn shell_job_native_exe_nonzero_exit_code_is_preserved() {
 #[cfg(windows)]
 #[test]
 fn shell_job_unicode_stdout_stderr_env_and_cwd() {
-    let _guard = test_env_lock();
     let tmp = tempfile::tempdir().unwrap();
     let cfg = test_config(tmp.path().join("config/project-registry"));
     let unicode_cwd = tmp.path().join("unicode cwd 测试");
@@ -929,40 +890,42 @@ fn shell_job_unicode_stdout_stderr_env_and_cwd() {
     assert_eq!(result.stderr.as_deref(), Some("err 測試"));
 
     // Unicode environment value inherited from the parent process.
-    let _env = EnvGuard::new().set("WEBCODEX_UNICODE_ENV", "值 测试");
-    let result = run_shell(
-        &cfg.policy,
-        &ShellConfig::default(),
-        Some(&cwd),
-        &shell_env_var("WEBCODEX_UNICODE_ENV"),
-        None,
-        10,
-        None,
-    );
-    assert_eq!(result.exit_code, Some(0), "{result:?}");
-    assert_eq!(result.stdout.as_deref(), Some("值 测试"));
+    IsolatedEnv::new()
+        .set("WEBCODEX_UNICODE_ENV", "值 测试")
+        .run("inherited", || {
+            let result = run_shell(
+                &cfg.policy,
+                &ShellConfig::default(),
+                Some(&cwd),
+                &shell_env_var("WEBCODEX_UNICODE_ENV"),
+                None,
+                10,
+                None,
+            );
+            assert_eq!(result.exit_code, Some(0), "{result:?}");
+            assert_eq!(result.stdout.as_deref(), Some("值 测试"));
 
-    // Unicode cwd: the shell reports its working directory verbatim.
-    let result = run_shell(
-        &cfg.policy,
-        &ShellConfig::default(),
-        Some(&cwd),
-        "[Console]::Out.Write((Get-Location).Path)",
-        None,
-        10,
-        None,
-    );
-    assert_eq!(result.exit_code, Some(0), "{result:?}");
-    assert!(
-        result
-            .stdout
-            .as_deref()
-            .unwrap_or_default()
-            .contains("测试"),
-        "{result:?}"
-    );
+            // Unicode cwd: the shell reports its working directory verbatim.
+            let result = run_shell(
+                &cfg.policy,
+                &ShellConfig::default(),
+                Some(&cwd),
+                "[Console]::Out.Write((Get-Location).Path)",
+                None,
+                10,
+                None,
+            );
+            assert_eq!(result.exit_code, Some(0), "{result:?}");
+            assert!(
+                result
+                    .stdout
+                    .as_deref()
+                    .unwrap_or_default()
+                    .contains("测试"),
+                "{result:?}"
+            );
+        });
 }
-
 #[cfg(windows)]
 #[test]
 fn prepared_profile_unicode_env_round_trip_and_unicode_init_path() {

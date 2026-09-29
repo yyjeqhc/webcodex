@@ -185,11 +185,23 @@ fn browser_control_result_audit_drops_page_text_and_url() {
         "state_changed":true,
         "browser_id":"browser_abcdefghijklmnop",
         "page_id":"page_abcdefghijklmnop",
+        "requested_count":4,
+        "completed_count":2,
+        "stopped_at_index":2,
+        "remaining_count":1,
+        "needs_snapshot":true,
+        "stopped_execution_state":"outcome_unknown",
         "title":"PRIVATE_TITLE",
         "url":"https://example.test/?secret=PRIVATE_QUERY",
         "value":"PRIVATE_FORM_VALUE"
     });
     let projected = session_log_result_for_tool("browser_act", &output);
+    assert_eq!(projected["requested_count"], 4);
+    assert_eq!(projected["completed_count"], 2);
+    assert_eq!(projected["stopped_at_index"], 2);
+    assert_eq!(projected["remaining_count"], 1);
+    assert_eq!(projected["needs_snapshot"], true);
+    assert_eq!(projected["stopped_execution_state"], "outcome_unknown");
     let serialized = serde_json::to_string(&projected).unwrap();
     for private in ["PRIVATE_TITLE", "PRIVATE_QUERY", "PRIVATE_FORM_VALUE"] {
         assert!(!serialized.contains(private));

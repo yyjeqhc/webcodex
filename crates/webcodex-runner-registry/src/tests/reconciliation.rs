@@ -2737,6 +2737,18 @@ fn standalone_snapshot(job_id: &str, status: &str) -> ShellJobSnapshot {
 }
 
 #[test]
+fn job_inventory_accepts_bash_login_shell_context() {
+    let mut snapshot = standalone_snapshot("bash-login-running", "running");
+    snapshot.context.shell = Some("bash_login".to_string());
+    let inventory = ShellJobInventory {
+        active_complete: true,
+        jobs: vec![snapshot],
+    };
+
+    validate_job_inventory(CLIENT_ID, &[project_summary()], &inventory).unwrap();
+}
+
+#[test]
 fn job_inventory_accepts_javascript_structured_script_context() {
     let mut javascript = standalone_snapshot("javascript-running", "running");
     javascript.context.shell = Some("javascript".to_string());

@@ -96,6 +96,7 @@ fn validate_context(
         !matches!(
             shell,
             "sh" | "bash"
+                | "bash_login"
                 | "powershell"
                 | "javascript"
                 | "typescript"

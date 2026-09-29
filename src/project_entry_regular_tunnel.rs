@@ -7,6 +7,8 @@ use std::future::Future;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
+#[path = "project_entry_regular_tunnel/health_events.rs"]
+mod health_events;
 
 const REGULAR_TUNNEL_STARTUP_TIMEOUT: Duration = Duration::from_secs(60);
 
@@ -120,7 +122,7 @@ async fn run_regular_server_tunnel_inner(
         _ = wait_for_regular_tunnel_stop_signal(options.stop_on_stdin_eof) => Ok(()),
         _ = &mut stop => Ok(()),
         result = tunnel.wait_for_exit() => result,
-        result = report_regular_tunnel_health(&health_url, &local_mcp_url, &options.bootstrap_token, service_readiness.as_deref()) => result,
+        result = report_regular_tunnel_health(&health_url, &local_mcp_url, &options.bootstrap_token, service_readiness.as_deref(), options.stop_on_stdin_eof) => result,
     };
     if let Some(path) = service_readiness {
         let _ = webcodex_environment::write_tunnel_health(&path, false, false);
@@ -136,6 +138,7 @@ async fn report_regular_tunnel_health(
     local_mcp_url: &str,
     bootstrap: &str,
     service_readiness: Option<&Path>,
+    parent_heartbeat: bool,
 ) -> Result<(), ProductError> {
     let client = reqwest::Client::builder()
         .no_proxy()
@@ -146,6 +149,7 @@ async fn report_regular_tunnel_health(
         .map_err(|_| tunnel_auth_error("Local connection health monitoring is unavailable"))?;
     let mut interval = tokio::time::interval(Duration::from_secs(2));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut events = health_events::HealthEvents::new(parent_heartbeat);
     loop {
         interval.tick().await;
         let (tunnel_ready, local_mcp_ready) = tokio::join!(
@@ -162,10 +166,12 @@ async fn report_regular_tunnel_health(
             webcodex_environment::write_tunnel_health(path, tunnel_ready, local_mcp_ready)
                 .map_err(|_| tunnel_auth_error("Could not persist service connection health"))?;
         }
-        println!(
-            "{}",
-            json!({"event":"health", "schema_version":1, "tunnel_ready":tunnel_ready, "local_mcp_ready":local_mcp_ready})
-        );
+        if events.should_emit(Instant::now(), tunnel_ready, local_mcp_ready) {
+            println!(
+                "{}",
+                json!({"event":"health", "schema_version":1, "tunnel_ready":tunnel_ready, "local_mcp_ready":local_mcp_ready})
+            );
+        }
     }
 }
 
@@ -205,7 +211,8 @@ fn machine_regular_tunnel_ready_event(clipboard: ClipboardCopyOutcome) -> Value 
         "event": "ready",
         "schema_version": 1,
         "provider": "openai",
-        "ready_for_chatgpt": clipboard == ClipboardCopyOutcome::Copied,
+        "ready_for_chatgpt": true,
+        "client_connection": "not_observed",
         "connection": {
             "kind": "openai_tunnel",
             "clipboard_state": clipboard_state,
@@ -408,6 +415,20 @@ mod tests {
         assert!(!encoded.contains("Bearer"));
         assert!(!encoded.contains("wc_pat_"));
         assert!(!encoded.contains("wc_boot_"));
+    }
+
+    #[test]
+    fn tunnel_readiness_is_not_clipboard_delivery_or_verified_client_use() {
+        for outcome in [
+            ClipboardCopyOutcome::Copied,
+            ClipboardCopyOutcome::Unavailable,
+            ClipboardCopyOutcome::Disabled,
+        ] {
+            let value = machine_regular_tunnel_ready_event(outcome);
+            assert_eq!(value["ready_for_chatgpt"], true);
+            assert_eq!(value["client_connection"], "not_observed");
+            assert!(value["connection"]["clipboard_state"].is_string());
+        }
     }
 
     #[test]

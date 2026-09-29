@@ -47,6 +47,23 @@ inventory requests; focus/online/visibility events coalesce. Each consumer still
 owns its exact request fence and single-flight guard. Null/failed Session reads
 release that guard instead of permanently wedging subsequent refreshes.
 
+## Exact Session Job state
+
+Work Result v13 retains an explicitly supplied business `session_id` on its normal
+state refresh. With that exact authorized Session and Project, `jobs` projects up
+to eight caller-visible Server registry snapshots, active Jobs first, then recent
+terminals. `active` covers the selected Session even when items are truncated.
+Only Job identity, tool, lifecycle, outcome and recovery state reach the card;
+commands, logs, output, observation tokens and Runner payloads stay out.
+
+Without an explicit Session, `jobs.available=false`; Window-linked Session
+activity does not select Job inventory. Snapshot reads neither poll Runner nor
+consume passive model attention, register wakes or create Session events. A
+terminal transition changes `state_version` and appears on the existing next
+refresh without a model turn. Unchanged terminal history is stable state, not a
+new event. Active Jobs reuse the same visibility/backoff timer; hidden and
+teardown fences remain unchanged.
+
 ## File lists and immutable source ownership
 
 The Work Result passive producer now requests Git metadata only: no diff hunks

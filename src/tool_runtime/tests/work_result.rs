@@ -1446,3 +1446,5 @@ fn work_result_tool_contract_requires_project_and_accepts_optional_session() {
 
 #[path = "work_result/frozen_changes.rs"]
 mod frozen_changes;
+
+mod jobs;

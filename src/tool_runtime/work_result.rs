@@ -16,6 +16,7 @@ use super::validation_events::{
 use super::{ToolResult, ToolRuntime};
 use webcodex_workflow_session::SessionSummary;
 
+const WORK_RESULT_JOB_LIMIT: usize = 8;
 const WORK_RESULT_SESSION_EVENT_LIMIT: usize = 200;
 const WORK_RESULT_VALIDATION_LIMIT: usize = 20;
 const WORK_RESULT_ACTIVITY_LIMIT: usize = 24;
@@ -388,6 +389,11 @@ impl ToolRuntime {
         );
         projection["window_activity"] = work_result_window_activity_projection(&observed);
         projection["activity"] = work_result_activity_projection(&observed, summary.as_ref());
+        // Only the exact business Session supplied to this call selects Jobs.
+        // Window correlation may enrich activity but is never Job inventory authority.
+        projection["jobs"] = self
+            .work_result_jobs(&resolved_project, session_id.as_deref(), auth)
+            .await;
         projection["state_version"] = json!(work_result_state_version(&projection));
 
         if let Some(summary) = summary.as_ref() {
@@ -398,6 +404,65 @@ impl ToolRuntime {
             }
         }
         ToolResult::ok(json!({"work_result": projection}))
+    }
+
+    pub(crate) async fn work_result_jobs(
+        &self,
+        project: &str,
+        session_id: Option<&str>,
+        auth: Option<&AuthContext>,
+    ) -> Value {
+        let Some(session_id) = session_id else {
+            return json!({"available": false});
+        };
+        if auth.is_some_and(|auth| !auth.has_scope(SCOPE_RUNTIME_READ)) {
+            return json!({"available": false});
+        }
+        // This bounded snapshot reads Server records only: no lifecycle refresh,
+        // Runner request, attention cursor, terminal wake or Session event write.
+        let snapshots = self
+            .runner_registry
+            .snapshot_jobs_for_auth_filtered(
+                crate::runner_http::runner_access_from_auth(auth).as_ref(),
+                project,
+                session_id,
+                WORK_RESULT_JOB_LIMIT + 1,
+                WORK_RESULT_JOB_LIMIT + 1,
+            )
+            .await;
+        let active = snapshots
+            .iter()
+            .any(|snapshot| !super::jobs::is_terminal_job_status(&snapshot.job.status));
+        let items: Vec<Value> = snapshots
+            .iter()
+            .take(WORK_RESULT_JOB_LIMIT)
+            .map(|snapshot| self.work_result_job(snapshot))
+            .collect();
+        json!({"available": true, "active": active, "items": items, "truncated": snapshots.len() > WORK_RESULT_JOB_LIMIT})
+    }
+
+    pub(crate) fn work_result_job(
+        &self,
+        snapshot: &webcodex_runner_registry::JobAttentionSnapshot,
+    ) -> Value {
+        let summary = self.passive_job_attention_item(snapshot);
+        let mut item = json!({
+            "job_id": snapshot.job.job_id,
+            "tool": summary["tool"],
+            "status": snapshot.job.status,
+            "state": if super::jobs::is_terminal_job_status(&snapshot.job.status) { "terminal" } else { "active" },
+        });
+        for key in ["outcome", "recovery_state"] {
+            if let Some(value) = summary.get(key) {
+                item[key] = value.clone();
+            }
+        }
+        if summary["outcome"] == "passed"
+            && summary.pointer("/validation/passed") == Some(&Value::Bool(false))
+        {
+            item["outcome"] = json!("failed");
+        }
+        item
     }
 }
 

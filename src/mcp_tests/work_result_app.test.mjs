@@ -400,7 +400,7 @@ test("input-only bootstrap waits for a user Refresh before reading state", async
   view.nodes.refresh.onclick();
   await flush();
   assert.equal(view.calls("work_result_state").length, 1);
-  assert.deepEqual({ ...view.calls("work_result_state")[0].params.arguments }, { project });
+  assert.deepEqual({ ...view.calls("work_result_state")[0].params.arguments }, { project, session_id });
   await view.reply(view.calls("work_result_state")[0], toolResult({ work_result: baseState }));
   assert.equal(view.nodes.windowCoverage.textContent, "2 observed events");
   assert.equal(view.nodes.status.textContent, "Updated");
@@ -426,7 +426,7 @@ test("live progress performs bounded app-only polling and adapts to visibility",
   assert.equal(view.calls("work_result_state").length, 0);
   await view.fireTimers(10000);
   assert.equal(view.calls("work_result_state").length, 1);
-  assert.deepEqual({ ...view.calls("work_result_state")[0].params.arguments }, { project });
+  assert.deepEqual({ ...view.calls("work_result_state")[0].params.arguments }, { project, session_id });
   await view.reply(view.calls("work_result_state")[0], toolResult({ work_result: nextState }));
   assert.equal(view.nodes.activityStatus.textContent, "Running checks");
   assert.equal(view.nodes.activityAge.textContent, "Active now");
@@ -456,7 +456,7 @@ test("closed linked Session does not stop Window-level automatic polling", async
   assert.equal(view.timers.size, 1);
   await view.fireTimers(10000);
   assert.equal(view.calls("work_result_state").length, 1);
-  assert.deepEqual({ ...view.calls("work_result_state")[0].params.arguments }, { project });
+  assert.deepEqual({ ...view.calls("work_result_state")[0].params.arguments }, { project, session_id });
   await view.reply(view.calls("work_result_state")[0], toolResult({ work_result: closedState }));
   assert.equal(view.nodes.refresh.disabled, false);
   assert.equal(view.nodes.status.textContent, "Live");
@@ -491,7 +491,7 @@ test("user Refresh performs one exact state read and updates the snapshot", asyn
   view.nodes.refresh.onclick();
   await flush();
   assert.equal(view.calls("work_result_state").length, 1);
-  assert.deepEqual({ ...view.calls("work_result_state")[0].params.arguments }, { project });
+  assert.deepEqual({ ...view.calls("work_result_state")[0].params.arguments }, { project, session_id });
   assert.equal(view.nodes.refresh.disabled, true);
   assert.equal(view.nodes.refresh.textContent, "Refreshing…");
   await view.reply(view.calls("work_result_state")[0], toolResult({ work_result: nextState }));
@@ -516,7 +516,7 @@ test("in-flight Refresh clicks coalesce and a later user click performs one new 
   view.nodes.refresh.onclick();
   await flush();
   assert.equal(view.calls("work_result_state").length, 2);
-  assert.deepEqual({ ...view.calls("work_result_state")[1].params.arguments }, { project });
+  assert.deepEqual({ ...view.calls("work_result_state")[1].params.arguments }, { project, session_id });
 });
 
 test("failed Refresh preserves the last valid snapshot and remains retryable", async () => {
@@ -1329,4 +1329,88 @@ test("unsafe live file paths fail closed and clear previously displayed results"
   assert.equal(view.nodes.workspaceFiles.children.length, 0);
   assert.equal(view.nodes.workspaceStatus.textContent, 'Changes unavailable');
   assert.equal(view.nodes.refresh.disabled, true);
+});
+
+const runningJobs = { available: true, active: true, truncated: false, items: [
+  { job_id: "job-one", tool: "cargo_test", status: "running", state: "active" },
+] };
+
+test("exact Session Job transitions through normal refresh without a model tool result", async () => {
+  const view = app("mcp_work_result_app.html");
+  view.toolInput(input);
+  view.toolResult({ work_result: { ...baseState, jobs: runningJobs } });
+  await view.initialize();
+  assert.equal(view.nodes.jobsSection.hidden, false);
+  assert.equal(view.nodes.jobsList.children[0].children[0].children[1].textContent, "Running");
+  assert.equal(view.nodes.badge.textContent, "Working");
+  const terminal = { ...baseState, state_version: `wr2_${"c".repeat(64)}`, jobs: {
+    available: true, active: false, truncated: false,
+    items: [{ ...runningJobs.items[0], status: "completed", state: "terminal", outcome: "passed" }],
+  } };
+  await view.fireTimers(10000);
+  const call = view.calls("work_result_state").at(-1);
+  assert.deepEqual({ ...call.params.arguments }, { project, session_id });
+  await view.reply(call, toolResult({ work_result: terminal }));
+  await flush();
+  assert.equal(view.nodes.jobsList.children[0].children[0].children[1].textContent, "Passed");
+  assert.equal(view.calls("observe_jobs").length, 0);
+  assert.equal(view.calls("ui/message").length, 0);
+});
+
+test("Window-linked Session does not become Job authority on refresh", async () => {
+  const view = app("mcp_work_result_app.html");
+  view.toolInput({ project });
+  view.toolResult({ work_result: { ...baseState, jobs: { available: false } } });
+  await view.initialize();
+  assert.equal(view.nodes.jobsSection.hidden, true);
+  await view.fireTimers(10000);
+  assert.deepEqual({ ...view.calls("work_result_state")[0].params.arguments }, { project });
+});
+
+test("Job failures and recovery remain bounded labels and conflicting Session fails closed", async () => {
+  const view = app("mcp_work_result_app.html");
+  view.toolInput(input);
+  view.toolResult({ work_result: { ...baseState, jobs: { ...runningJobs, active: false, items: [
+    { ...runningJobs.items[0], state: "terminal", status: "failed", outcome: "failed", recovery_state: "recovered" },
+  ] } } });
+  await view.initialize();
+  assert.equal(view.nodes.jobsList.children[0].children[0].children[1].textContent, "Failed · recovered");
+  view.toolInput({ project, session_id: `wc_sess_${"2".repeat(32)}` });
+  assert.equal(view.nodes.badge.textContent, "Unavailable");
+  assert.equal(view.nodes.jobsSection.hidden, true);
+  assert.equal(view.timers.size, 0);
+});
+
+test("active Jobs use the existing timer and preserve hidden and teardown fences", async () => {
+  const view = app("mcp_work_result_app.html");
+  view.toolInput(input);
+  view.toolResult({ work_result: { ...baseState, jobs: runningJobs } });
+  await view.initialize();
+  await view.fireTimers(10000);
+  const call = view.calls("work_result_state")[0];
+  view.notification("ui/resource-teardown", {});
+  await view.reply(call, toolResult({ work_result: nextState }));
+  await flush();
+  assert.equal(view.timers.size, 0);
+  assert.equal(view.nodes.jobsList.children[0].children[0].children[1].textContent, "Running");
+});
+
+test("result-first Job state cannot be rebound by a different explicit Session", async () => {
+  const view = app("mcp_work_result_app.html");
+  view.toolResult({ work_result: { ...baseState, jobs: runningJobs } });
+  view.toolInput({ project, session_id: `wc_sess_${"2".repeat(32)}` });
+  await view.initialize();
+  assert.equal(view.nodes.badge.textContent, "Unavailable");
+  assert.equal(view.calls("work_result_state").length, 0);
+});
+
+for (const jobs of [
+  { ...runningJobs, items: Array.from({ length: 9 }, () => runningJobs.items[0]) },
+  { ...runningJobs, items: [{ ...runningJobs.items[0], state: "guessed" }] },
+]) test("invalid Job state fails closed", async () => {
+  const view = app("mcp_work_result_app.html");
+  view.toolInput(input);
+  view.toolResult({ work_result: { ...baseState, jobs } });
+  await view.initialize();
+  assert.equal(view.nodes.badge.textContent, "Unavailable");
 });

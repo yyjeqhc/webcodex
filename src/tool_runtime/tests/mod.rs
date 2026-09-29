@@ -38,6 +38,7 @@ mod handoff_brief;
 mod hygiene;
 mod job_attention;
 mod job_continuation;
+mod job_query;
 mod job_terminal_wait;
 mod jobs;
 mod lsp;

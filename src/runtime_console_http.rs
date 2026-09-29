@@ -29,6 +29,7 @@ use webcodex_core::runner_job_lifecycle::RunnerJobLifecycle;
 
 mod communication;
 mod goals;
+mod job_projection;
 mod window_collaboration;
 mod workspace;
 
@@ -39,6 +40,9 @@ use communication::{
     communication_inbox, communication_inbox_consume, communication_message_post,
 };
 use goals::{goal_handler, goals_handler};
+use job_projection::{
+    running_jobs_for_auth, session_jobs_for_auth, RunningJobSnapshot, RuntimeConsoleSessionJob,
+};
 
 // Runtime Console inventories are operator-facing and the underlying stores are
 // already bounded. Avoid arbitrary 10/20/50/100-row presentation cliffs that make
@@ -474,23 +478,6 @@ struct RuntimeConsoleWorkspaceActivity {
     session_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
-struct RuntimeConsoleSessionJob {
-    job_id: String,
-    kind: String,
-    status: String,
-    terminal: bool,
-    created_at: i64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    started_at: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    ended_at: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    activity_state: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    activity_phase: Option<String>,
-}
-
 #[derive(Debug, Serialize)]
 struct RuntimeConsoleWorkflowSessionDetail {
     #[serde(flatten)]
@@ -775,7 +762,11 @@ fn render_error(res: &mut Response, error: RuntimeConsoleError) {
 }
 
 fn bounded_text(value: &Value, max_chars: usize) -> Option<String> {
-    let text = value.as_str()?.trim();
+    bounded_text_str(value.as_str()?, max_chars)
+}
+
+fn bounded_text_str(text: &str, max_chars: usize) -> Option<String> {
+    let text = text.trim();
     if text.is_empty() {
         return None;
     }
@@ -1465,127 +1456,6 @@ async fn authorize_exact_project(
     } else {
         Err(RuntimeConsoleError::NotFound)
     }
-}
-
-#[derive(Debug, Default)]
-struct RunningJobSnapshot {
-    counts: HashMap<(String, String), usize>,
-    truncated: bool,
-}
-
-impl RunningJobSnapshot {
-    fn count(&self, project: &str, session_id: &str) -> usize {
-        self.counts
-            .get(&(project.to_string(), session_id.to_string()))
-            .copied()
-            .unwrap_or(0)
-    }
-}
-
-async fn running_jobs_for_auth(
-    runtime: &ToolRuntime,
-    auth: &AuthContext,
-    project: Option<&str>,
-) -> Result<RunningJobSnapshot, RuntimeConsoleError> {
-    if !auth.has_scope(SCOPE_RUNTIME_READ) {
-        return Ok(RunningJobSnapshot::default());
-    }
-    let result = runtime
-        .list_jobs_for_auth_with_filters(
-            Some(100),
-            Some("running".to_string()),
-            project.map(str::to_string),
-            None,
-            Some(auth),
-        )
-        .await;
-    if !result.success {
-        return Err(RuntimeConsoleError::Internal);
-    }
-    let mut snapshot = RunningJobSnapshot {
-        truncated: safe_bool(result.output.get("truncated")),
-        ..Default::default()
-    };
-    for job in result
-        .output
-        .get("jobs")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-    {
-        let Some(project) = safe_string(job.get("project"), MAX_PROJECT_ID_CHARS) else {
-            continue;
-        };
-        let Some(session_id) = safe_string(job.get("session_id"), 160) else {
-            continue;
-        };
-        if !valid_project_id(&project) || !is_valid_session_id(&session_id) {
-            continue;
-        }
-        snapshot
-            .counts
-            .entry((project, session_id))
-            .and_modify(|count| *count = count.saturating_add(1))
-            .or_insert(1);
-    }
-    Ok(snapshot)
-}
-
-async fn session_jobs_for_auth(
-    runtime: &ToolRuntime,
-    auth: &AuthContext,
-    project: &str,
-    session_id: &str,
-) -> Result<(Vec<RuntimeConsoleSessionJob>, bool), RuntimeConsoleError> {
-    let result = runtime
-        .list_jobs_for_auth_with_filters(
-            Some(100),
-            None,
-            Some(project.to_string()),
-            Some(session_id.to_string()),
-            Some(auth),
-        )
-        .await;
-    if !result.success {
-        return Err(RuntimeConsoleError::Internal);
-    }
-    let truncated = safe_bool(result.output.get("truncated"));
-    let mut jobs = Vec::new();
-    for job in result
-        .output
-        .get("jobs")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-    {
-        let Some(job_id) = safe_string(job.get("job_id"), 160) else {
-            continue;
-        };
-        let Some(kind) = safe_string(job.get("kind"), 80) else {
-            continue;
-        };
-        let Some(status) = safe_string(job.get("status"), 80) else {
-            continue;
-        };
-        let activity = job.get("activity");
-        jobs.push(RuntimeConsoleSessionJob {
-            job_id,
-            kind,
-            terminal: RunnerJobLifecycle::from_wire(&status)
-                .is_ok_and(RunnerJobLifecycle::is_terminal),
-            status,
-            created_at: job.get("created_at").and_then(Value::as_i64).unwrap_or(0),
-            started_at: job.get("started_at").and_then(Value::as_i64),
-            ended_at: job.get("ended_at").and_then(Value::as_i64),
-            activity_state: activity
-                .and_then(|value| value.get("state"))
-                .and_then(|value| safe_string(Some(value), 80)),
-            activity_phase: activity
-                .and_then(|value| value.get("phase"))
-                .and_then(|value| safe_string(Some(value), 120)),
-        });
-    }
-    Ok((jobs, truncated))
 }
 
 fn workspace_activity_for_auth(
@@ -3523,6 +3393,8 @@ async fn workflow_session_replace_message(
 
 #[cfg(test)]
 mod tests {
+    mod job_queries;
+
     use super::*;
     use crate::auth::AuthKind;
     use crate::db::{NewGoal, NewGoalStep};

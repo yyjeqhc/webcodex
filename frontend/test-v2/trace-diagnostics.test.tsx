@@ -34,6 +34,23 @@ it("reads metadata only on expansion, caches it, pages and requires explicit ful
   expect(post.mock.calls[2][1]).toEqual({ trace_ref: "exact-trace", payload_index: 0 });
 });
 
+it("caps the diagnostic view at 240 events even when the last page crosses the boundary", async () => {
+  const initial = Array.from({ length: 239 }, (_, index) => ({ event: `event-${index}` }));
+  const overflow = Array.from({ length: 12 }, (_, index) => ({ event: `overflow-${index}` }));
+  const post = vi.fn(async (_path, request) => request.offset
+    ? ok({ status: "available", events: overflow, next_offset: 251 })
+    : ok({ status: "available", events: initial, next_offset: 239 }));
+  const { container } = render(<TraceCallDetails client={client(post)} traceRef="bounded-trace" language="en" />);
+  fireEvent.click(screen.getByRole("button", { name: "Inspect call diagnostics" }));
+  await screen.findByText("event-238");
+  fireEvent.click(screen.getByRole("button", { name: "More trace events" }));
+  await screen.findByText("overflow-0");
+  expect(container.querySelectorAll(".trace-event")).toHaveLength(240);
+  expect(screen.queryByText("overflow-1")).toBeNull();
+  expect(screen.queryByRole("button", { name: "More trace events" })).toBeNull();
+  expect(screen.getByText("Diagnostic view limit reached. Use the exact trace reader for more.")).toBeTruthy();
+});
+
 it("ignores a delayed response after the exact trace identity changes", async () => {
   let resolve: (value: unknown) => void = () => {};
   const post = vi.fn((_path, request) => request.trace_ref === "old"

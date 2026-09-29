@@ -6,6 +6,8 @@ import type { TraceEvent, TracePage } from "../api/traces.js";
 import { useTraceRead } from "../state/useTraceRead.js";
 import { CopyIdentity } from "./ui/CopyIdentity.js";
 
+const MAX_DISPLAYED_TRACE_EVENTS = 240;
+
 export function TraceCallDetails({ client, traceRef, language }: {
   client: RuntimeV2Client; traceRef: string; language: RuntimeLanguage;
 }) {
@@ -28,7 +30,10 @@ function TraceCallPanel({ client, traceRef, language }: {
     if (next === undefined) return; // Superseded/aborted reads cannot clear newer evidence.
     if (!next) { setPage(null); setEvents([]); setPayload(null); return; }
     setPage(next);
-    setEvents(previous => offset ? [...previous, ...(next.events || [])] : next.events || []);
+    setEvents(previous => {
+      const combined = offset ? [...previous, ...(next.events || [])] : next.events || [];
+      return combined.slice(0, MAX_DISPLAYED_TRACE_EVENTS);
+    });
     setPayload(null);
   };
   const toggle = () => {
@@ -57,8 +62,8 @@ function TraceCallPanel({ client, traceRef, language }: {
           if (value) setPayload(value);
         }}>{t("Read retained full payload")} · {event.payload_bytes ?? "?"} B</button>}
       </details>)}
-      {page?.next_offset != null && events.length < 240 && <button type="button" className="text-button" disabled={request.pending} onClick={() => void load(page.next_offset!)}>{t("More trace events")}</button>}
-      {events.length >= 240 && <p className="inventory-note">{t("Diagnostic view limit reached. Use the exact trace reader for more.")}</p>}
+      {page?.next_offset != null && events.length < MAX_DISPLAYED_TRACE_EVENTS && <button type="button" className="text-button" disabled={request.pending} onClick={() => void load(page.next_offset!)}>{t("More trace events")}</button>}
+      {events.length >= MAX_DISPLAYED_TRACE_EVENTS && <p className="inventory-note">{t("Diagnostic view limit reached. Use the exact trace reader for more.")}</p>}
       {payload && <details className="trace-event" open><summary>{t("Retained full payload")}</summary>
         <pre>{JSON.stringify(payload.payload_available ? payload.payload : payload, null, 2)}</pre>
       </details>}

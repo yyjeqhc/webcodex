@@ -1740,7 +1740,8 @@ impl SessionStore {
             || !retained_terminal_job_ids.contains(&job_id)
             || !matches!(
                 tool_name,
-                "cargo_fmt"
+                "project_validate"
+                    | "cargo_fmt"
                     | "cargo_check"
                     | "cargo_test"
                     | "go_test"

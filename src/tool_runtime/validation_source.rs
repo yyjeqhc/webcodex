@@ -145,6 +145,7 @@ pub(crate) fn observes_potential_mutation(call: &super::ToolCall) -> bool {
         "code_mode_exec"
             | "code_mode_exec_effectful"
             | "code_mode_exec_mutating"
+            | "project_validate"
             | "cargo_check"
             | "cargo_test"
             | "go_test"

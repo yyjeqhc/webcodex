@@ -142,15 +142,14 @@ async fn project_validation_fast_rust_check_records_resolved_evidence() {
         .unwrap();
     let result = task.await.unwrap();
     assert!(result.success, "{:?}", result);
-    // project_validate currently participates in the potential-mutation fence.
-    // Unknown source evidence must retain the rich receipt, even on exit 0.
     assert_eq!(
         result.output["source_state"]["observed_mutation_fence"],
-        "unknown"
+        "uncrossed"
     );
-    assert_eq!(result.output["backend"], "rust");
-    assert_eq!(result.output["action"], "check");
-    assert!(result.output.get("diagnostics").is_some());
+    assert_eq!(result.output["source_state"]["freshness"], "unproven");
+    assert!(result.output.get("backend").is_none());
+    assert!(result.output.get("action").is_none());
+    assert!(result.output.get("diagnostics").is_none());
     assert_eq!(result.output["adapter"], "cargo_check");
     assert_model_cargo_result_matches_schema("project_validate", &result);
     assert!(runtime.runner_registry.list_jobs(Some(10)).await.is_empty());
@@ -350,4 +349,53 @@ async fn project_validation_package_scope_requires_additive_runner_capability() 
     assert!(probe_patch_agent_request(&runtime, "project-validation")
         .await
         .is_none());
+}
+
+#[tokio::test]
+async fn project_validation_readonly_adapters_preserve_source_fence_through_handoff() {
+    for (backend, action, adapter, stdout) in [
+        ("rust", ProjectValidationAction::FormatCheck, "cargo_fmt", ""),
+        ("rust", ProjectValidationAction::Test, "cargo_test", "running 1 test\ntest example ... ok\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out\n"),
+        ("go", ProjectValidationAction::Check, "go_vet", ""),
+        ("go", ProjectValidationAction::Test, "go_test", "{\"Action\":\"run\",\"Package\":\"example/pkg\",\"Test\":\"TestOne\"}\n{\"Action\":\"pass\",\"Package\":\"example/pkg\",\"Test\":\"TestOne\"}\n{\"Action\":\"pass\",\"Package\":\"example/pkg\"}\n"),
+    ] {
+        for external_writer in [false, true] {
+            let runtime = setup(1).await;
+            let project = agent_test_project_id("project-validation");
+            let session = runtime.sessions.start_session(Some(project.clone()), None);
+            let before = runtime.validation_sources.capture(&project).unwrap();
+            let writer = external_writer.then(|| runtime.validation_sources.begin(&project).unwrap());
+            let task = tokio::spawn({
+                let runtime = runtime.clone();
+                let id = session.session_id.clone();
+                async move { runtime.dispatch_with_auth(call(action, Some(id)), Some(&auth_context(None, true))).await }
+            });
+            let (request, job_id) = reply_plan(&runtime, backend, action).await;
+            let metadata = request.job_context.as_ref().unwrap().validation.as_ref().unwrap();
+            assert_eq!(metadata.adapter, adapter);
+            assert_eq!(metadata.source_fence.as_ref().unwrap().quiescent, !external_writer);
+            let pending = task.await.unwrap();
+            assert_eq!(pending.output["execution_state"], "pending");
+            assert_eq!(pending.output["continuation"]["arguments"]["items"][0]["job_id"], job_id);
+            runtime.runner_registry.update_job(cargo_test_update(
+                "project-validation", &request.request_id, &job_id, "completed", stdout, "", Some(0), completed_progress(), true,
+            )).await.unwrap();
+            let status = runtime.job_status_for_auth(job_id.clone(), false, None).await;
+            assert_eq!(status.output["validation"]["source_state"]["observed_mutation_fence"], if external_writer { "unknown" } else { "uncrossed" }, "{status:?}");
+            assert_eq!(status.output["validation"]["passed"], true, "{status:?}");
+            let summary = runtime.sessions.summary(&session.session_id, None).unwrap();
+            let _ = runtime.validation_summary_for_session_with_jobs(&summary, 50, Some(&auth_context(None, true))).await;
+            let reconciled = runtime.sessions.summary(&session.session_id, None).unwrap();
+            let terminal = reconciled.events.iter().filter(|event| event.kind == "validation_job_terminal" && event.job_id.as_deref() == Some(job_id.as_str())).collect::<Vec<_>>();
+            assert_eq!(terminal.len(), 1, "adapter={adapter}");
+            assert_eq!(terminal[0].tool_name, "project_validate");
+            assert_eq!(terminal[0].validation_output_summary.as_ref().unwrap()["adapter"], adapter);
+            let encoded = serde_json::to_value(terminal[0]).unwrap();
+            assert!(encoded.to_string().contains(if external_writer { "unknown" } else { "uncrossed" }), "{encoded}");
+            let after = runtime.validation_sources.capture(&project).unwrap();
+            assert_eq!(after.generation, before.generation + u64::from(external_writer));
+            assert!(probe_patch_agent_request(&runtime, "project-validation").await.is_none());
+            drop(writer);
+        }
+    }
 }

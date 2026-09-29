@@ -43,13 +43,12 @@ Go's parser counts pass + fail + skip; Cargo counts only pass + fail. Go asserti
 complete Go JSON summary/count agreement, no invalid events and no truncation
 supply the actual Go evidence. Do not redesign that parser taxonomy here.
 
-The real project_validate dispatch currently participates in the generic potential
-mutation fence (`observes_potential_mutation`), so its own active guard can yield
-`unproven/unknown`. The existing Runner integration fixture reproduces this.
-These receipts remain rich, including backend/action, as required for unknown
-source evidence. Project byte fixtures below measure canonical uncrossed inputs;
-they do not claim savings for today's unknown-fence dispatch. Changing source
-classification is intentionally outside this work.
+The read-only `project_validate` wrapper is transparent to the generic potential
+mutation fence, like its read-only adapters. A quiescent dispatch therefore keeps
+`unproven/uncrossed` evidence and can use the sparse success receipt. External
+writers and fence uncertainty still produce conservative rich evidence; an
+uncrossed dispatch fence does not certify source freshness. The same source
+fence travels with the canonical execution through Job handoff and reconciliation.
 
 ## Deterministic serialized receipt sizes
 

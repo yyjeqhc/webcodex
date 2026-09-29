@@ -145,7 +145,10 @@ fn serialized_value_len(value: &Value) -> usize {
 
 fn projected_batch_serialized_len(output: &Value, default_timeouts: &[bool]) -> usize {
     let mut projected = ToolResult::ok(output.clone());
-    super::dispatch::sparsify_search_batch_success_for_model(default_timeouts, &mut projected);
+    super::result_projection::sparsify_search_batch_success_for_model(
+        default_timeouts,
+        &mut projected,
+    );
     serialized_json_len(&projected).unwrap_or(usize::MAX)
 }
 
@@ -158,7 +161,10 @@ fn projected_batch_serialized_len_with_continuation(
     max_result_bytes: Option<usize>,
 ) -> usize {
     let mut projected = ToolResult::ok(output.clone());
-    super::dispatch::sparsify_search_batch_success_for_model(default_timeouts, &mut projected);
+    super::result_projection::sparsify_search_batch_success_for_model(
+        default_timeouts,
+        &mut projected,
+    );
     add_actionable_search_continuation(
         &mut projected,
         project,
@@ -173,7 +179,11 @@ fn projected_search_item_len(item: &Value, default_timeout: bool) -> usize {
     let mut projected = item.clone();
     if projected["success"].as_bool() == Some(true) {
         if let Some(output) = projected.get_mut("output").and_then(Value::as_object_mut) {
-            super::dispatch::sparsify_search_output_for_model(output, default_timeout, true);
+            super::result_projection::sparsify_search_output_for_model(
+                output,
+                default_timeout,
+                true,
+            );
         }
     }
     serialized_value_len(&projected)
@@ -1183,7 +1193,10 @@ mod tests {
             None,
             None,
         ));
-        super::super::dispatch::sparsify_search_batch_success_for_model(&[true], &mut batch);
+        super::super::result_projection::sparsify_search_batch_success_for_model(
+            &[true],
+            &mut batch,
+        );
         let output = &batch.output["items"][0]["output"];
         assert_eq!(output["count_complete"], false);
         assert_eq!(output["total_matches"], Value::Null);
@@ -1258,7 +1271,10 @@ mod tests {
             assert_eq!(actual["output"]["matches"], expected["output"]["matches"]);
         }
 
-        super::super::dispatch::sparsify_search_batch_success_for_model(&[true; 8], &mut result);
+        super::super::result_projection::sparsify_search_batch_success_for_model(
+            &[true; 8],
+            &mut result,
+        );
         assert!(result.output.get("output_truncated").is_none());
         assert!(result.output.get("next_index").is_none());
         assert_eq!(result.output["items"].as_array().unwrap().len(), 8);
@@ -1353,7 +1369,10 @@ mod tests {
         assert_eq!(summaries[2]["returned_file_count"], 4);
         assert!(!serde_json::to_string(summaries).unwrap().contains("src/3-"));
 
-        super::super::dispatch::sparsify_search_batch_success_for_model(&[true; 4], &mut result);
+        super::super::result_projection::sparsify_search_batch_success_for_model(
+            &[true; 4],
+            &mut result,
+        );
         add_actionable_search_continuation(&mut result, "agent:oe:demo", &queries, None, None);
         let suggested_queries = result.output["suggested_call"]["arguments"]["queries"]
             .as_array()
@@ -1436,7 +1455,10 @@ mod tests {
             ) <= budget
         );
         let mut result = ToolResult::ok(output);
-        super::super::dispatch::sparsify_search_batch_success_for_model(&[true; 4], &mut result);
+        super::super::result_projection::sparsify_search_batch_success_for_model(
+            &[true; 4],
+            &mut result,
+        );
         add_actionable_search_continuation(&mut result, "agent:oe:demo", &queries, None, None);
         assert_eq!(
             result.output["suggested_call"]["tool"],
@@ -1465,7 +1487,10 @@ mod tests {
                 std::slice::from_ref(&query),
                 None,
             );
-            super::super::dispatch::sparsify_search_batch_success_for_model(&[true], &mut result);
+            super::super::result_projection::sparsify_search_batch_success_for_model(
+                &[true],
+                &mut result,
+            );
             add_actionable_search_continuation(
                 &mut result,
                 "agent:oe:demo",
@@ -1837,7 +1862,10 @@ mod tests {
             result.output.get("next_index").is_none(),
             "producer-only cursor must not survive when its parser-ready call exceeds the model budget"
         );
-        super::super::dispatch::sparsify_search_batch_success_for_model(&[true; 8], &mut result);
+        super::super::result_projection::sparsify_search_batch_success_for_model(
+            &[true; 8],
+            &mut result,
+        );
         add_actionable_search_continuation(&mut result, "agent:oe:demo", &queries, None, None);
         assert!(result.output.get("suggested_call").is_none());
         let bytes = serialized_json_len(&result).unwrap();

@@ -3050,7 +3050,7 @@ fn run_shell_recovered_terminal_snapshot_stays_rich_after_projection() {
         json!({"project":"agent:test:project", "command":"true"}),
     )
     .unwrap();
-    super::super::dispatch::ModelFacingProjectionPlan::capture(&call).project(&mut result);
+    super::super::result_projection::ModelFacingProjectionPlan::capture(&call).project(&mut result);
     assert_eq!(result.output, before);
     assert_eq!(result.output["recovery_state"], "reconciled");
     assert_eq!(result.output["reconciled_at"], 42);

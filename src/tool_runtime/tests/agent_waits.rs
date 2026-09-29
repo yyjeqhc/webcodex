@@ -12,7 +12,7 @@ fn assert_sparse_wait(
         output: canonical.output.clone(),
         error: canonical.error.clone(),
     };
-    super::super::dispatch::ModelFacingProjectionPlan::capture(&call).project(&mut model);
+    super::super::result_projection::ModelFacingProjectionPlan::capture(&call).project(&mut model);
     let durable = &canonical.output["agent_wait"];
     let wait = &model.output["agent_wait"];
     for key in [

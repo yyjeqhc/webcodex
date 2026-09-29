@@ -64,7 +64,10 @@ fn sanitize_batch_search_and_collect_successes(batch: &mut Value) -> Vec<Value> 
 /// canonical results. Query indexes, failures, truncation and nonempty source context stay intact.
 pub(crate) fn compact_compound_search(batch: Value, default_timeouts: &[bool]) -> Value {
     let mut result = ToolResult::ok(batch);
-    super::dispatch::sparsify_search_batch_success_for_model(default_timeouts, &mut result);
+    super::result_projection::sparsify_search_batch_success_for_model(
+        default_timeouts,
+        &mut result,
+    );
     result.output
 }
 
@@ -313,7 +316,7 @@ impl ToolRuntime {
         );
         super::read_files::enforce_final_model_facing_hard_cap(&mut reads, &projection);
         super::read_files::add_actionable_read_continuations(&projection, &mut reads);
-        super::dispatch::sparsify_complete_read_success("read_files", &mut reads);
+        super::result_projection::sparsify_complete_read_success("read_files", &mut reads);
         // The outer Project already identifies both phases; never remove a distinct identity.
         if reads.output.get("project").and_then(Value::as_str)
             == Some(resolved.resolved_id.as_str())

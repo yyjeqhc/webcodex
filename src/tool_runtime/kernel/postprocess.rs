@@ -5,8 +5,8 @@
 //! the request's projection plan once, then attach optional presentation sidecars.
 //! This module never dispatches/retries the original operation or selects a Session.
 use super::{ToolCallContext, ToolProtocolCapabilities};
-use crate::tool_runtime::dispatch::ModelFacingProjectionPlan;
 use crate::tool_runtime::model_ergonomics_telemetry::ModelErgonomicsTimer;
+use crate::tool_runtime::result_projection::ModelFacingProjectionPlan;
 use crate::tool_runtime::sessions::ToolCallRecorderMetadata;
 use crate::tool_runtime::tool_audit::session_log_result_for_tool;
 use crate::tool_runtime::window_collaboration::ToolCallWindowReply;
@@ -49,7 +49,7 @@ impl PostRecordResponse<'_> {
         if self.tool_name == "tool_manifest" {
             crate::tool_runtime::surface::sparsify_tool_manifest_model_result(&mut result);
         }
-        crate::tool_runtime::dispatch::sparsify_failure_model_result_metadata(
+        crate::tool_runtime::result_projection::sparsify_failure_model_result_metadata(
             self.tool_name,
             &mut result,
         );
@@ -68,7 +68,7 @@ impl PostRecordResponse<'_> {
                 output.insert("trace_ref".to_string(), Value::String(trace_ref));
             }
         }
-        crate::tool_runtime::dispatch::sparsify_success_model_result_metadata(
+        crate::tool_runtime::result_projection::sparsify_success_model_result_metadata(
             self.tool_name,
             &mut result,
         );

@@ -81,6 +81,7 @@ mod read_files;
 mod read_revisions;
 #[cfg(test)]
 pub(crate) use read_revisions::ReadRevisionTarget;
+mod result_projection;
 mod return_timing;
 mod runtime;
 mod runtime_info;

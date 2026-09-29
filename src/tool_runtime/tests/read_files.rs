@@ -764,7 +764,7 @@ async fn read_files_returns_ordered_normalized_successes_after_out_of_order_comp
 
     let mut result = result;
     let projection =
-        super::super::dispatch::ModelFacingProjectionPlan::capture(&ToolCall::ReadFiles {
+        super::super::result_projection::ModelFacingProjectionPlan::capture(&ToolCall::ReadFiles {
             project: runtime_project,
             items: vec![
                 item("src/lib.rs", Some(2), Some(2)),
@@ -2800,7 +2800,7 @@ async fn read_files_complete_item_projection_byte_regression() {
         let mut result = task.await.unwrap();
         assert!(result.success, "{:?}", result.error);
         let before = serde_json::to_vec(&result.output).unwrap().len();
-        dispatch::ModelFacingProjectionPlan::capture(&ToolCall::ReadFiles {
+        result_projection::ModelFacingProjectionPlan::capture(&ToolCall::ReadFiles {
             project,
             items,
             session_id: None,

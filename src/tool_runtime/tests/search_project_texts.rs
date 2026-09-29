@@ -150,7 +150,7 @@ fn project_single_search(canonical: &ToolResult) -> ToolResult {
         .output
         .as_object_mut()
         .expect("canonical search output object");
-    crate::tool_runtime::dispatch::sparsify_search_output_for_model(output, true, false);
+    crate::tool_runtime::result_projection::sparsify_search_output_for_model(output, true, false);
     projected
 }
 
@@ -467,7 +467,7 @@ async fn search_project_texts_item_projection_measures_canonical_vs_sparse_bytes
         assert!(canonical.output["next_index"].is_null());
 
         let mut sparse = ToolResult::ok(canonical.output.clone());
-        crate::tool_runtime::dispatch::sparsify_search_batch_success_for_model(
+        crate::tool_runtime::result_projection::sparsify_search_batch_success_for_model(
             &vec![true; count],
             &mut sparse,
         );

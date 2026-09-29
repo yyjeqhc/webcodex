@@ -16,8 +16,9 @@ const LOCAL_PLUGIN_INSPECT_SCOPE: &str = "plugin:inspect";
 const LOCAL_PLUGIN_INVOKE_SCOPE: &str = "plugin:invoke";
 const LOCAL_SSH_SCOPE: &str = "ssh:local";
 const CODING_AGENT_SCOPE: &str = "coding_agent:run";
+#[cfg(test)]
+use webcodex_core::authority::profiles::OPTIONAL_COMPUTER as BRIDGE_OPTIONAL_COMPUTER_SCOPES;
 use webcodex_core::authority::profiles::{
-    OPTIONAL_COMPUTER as BRIDGE_OPTIONAL_COMPUTER_SCOPES,
     SHARED_KEY_COMPUTER as BRIDGE_COMPUTER_ENABLED_SCOPES,
     SHARED_KEY_MODEL as BRIDGE_BASELINE_SCOPES,
 };

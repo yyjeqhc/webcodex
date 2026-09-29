@@ -161,6 +161,21 @@ struct ExtractedValidationEvent {
     event: ValidationEvent,
 }
 
+/// Current-source evidence is not the historical validator verdict. There is
+/// deliberately no `Passed` variant: the current fence cannot prove external
+/// writers absent. Serialize only at the public projection boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum CurrentEvidenceStatus {
+    Unknown,
+    NotRun,
+    Failed,
+    Unproven,
+    Expected,
+    Inconclusive,
+    Stale,
+}
+
 #[derive(Debug, Clone)]
 pub struct CurrentValidationEvidenceProjection {
     pub evidence: Value,
@@ -332,59 +347,35 @@ fn current_validation_evidence_for_events(
         })
         .cloned()
         .collect::<Vec<_>>();
-    let mut current_validation = validation_summary_from_events(&current_events, limit);
-    let current_events_total = current_validation
-        .get("events_total")
-        .and_then(Value::as_u64)
-        .unwrap_or(0) as usize;
-    let successes = current_validation
-        .get("successes")
-        .and_then(Value::as_u64)
-        .unwrap_or(0) as usize;
-    let failures = current_validation
-        .get("failures")
-        .and_then(Value::as_u64)
-        .unwrap_or(0) as usize;
-    let expected_results = current_validation
-        .get("expected_results")
-        .and_then(Value::as_u64)
-        .unwrap_or(0) as usize;
-    let resolved_failure_count = current_validation
-        .pointer("/resolved_failures/count")
-        .and_then(Value::as_u64)
-        .unwrap_or(0) as usize;
-    let unresolved_failure_count = current_validation
-        .pointer("/unresolved_failures/count")
-        .and_then(Value::as_u64)
-        .unwrap_or(0) as usize;
-    let evidence_gap_event_count = current_validation
-        .pointer("/evidence_gaps/count")
-        .and_then(Value::as_u64)
-        .unwrap_or(0) as usize;
-    let current_summary_status = current_validation
-        .get("status")
-        .and_then(Value::as_str)
-        .unwrap_or("unknown");
+    let mut current_validation = build_validation_summary(&current_events, limit);
+    let current_events_total = current_validation.events_total;
+    let successes = current_validation.successes.unwrap_or(0);
+    let failures = current_validation.failures.unwrap_or(0);
+    let expected_results = current_validation.expected_results.unwrap_or(0);
+    let resolved_failure_count = current_validation.resolved_failures.count;
+    let unresolved_failure_count = current_validation.unresolved_failures.count;
+    let evidence_gap_event_count = current_validation.evidence_gaps.count;
+    let current_summary_status = current_validation.status;
+    use CurrentEvidenceStatus as Status;
     let (status, reason) = if current_events_total > 0 && unresolved_failure_count > 0 {
-        ("failed", Some("current_validation_failures"))
+        (Status::Failed, Some("current_validation_failures"))
     } else if current_events_total > 0 && successes > 0 {
-        ("unproven", Some("validation_source_unproven"))
+        (Status::Unproven, Some("validation_source_unproven"))
     } else if current_events_total > 0 && expected_results > 0 {
         (
-            "expected",
+            Status::Expected,
             Some("declared_result_expectation_satisfied_without_validation_pass"),
         )
     } else if current_events_total > 0 && current_summary_status == "inconclusive" {
         (
-            "inconclusive",
+            Status::Inconclusive,
             current_validation
-                .get("reason")
-                .and_then(Value::as_str)
+                .reason
                 .or(Some("validation_evidence_inconclusive")),
         )
     } else if stale_validation_count > 0 {
         (
-            "stale",
+            Status::Stale,
             Some(if reset_index.is_some() {
                 "validation_stale_after_changes"
             } else {
@@ -392,30 +383,25 @@ fn current_validation_evidence_for_events(
             }),
         )
     } else if current_events_total == 0 {
-        ("not_run", Some("no_validation_in_current_attempt"))
+        (Status::NotRun, Some("no_validation_in_current_attempt"))
     } else {
-        ("unknown", Some("current_validation_evidence_unknown"))
+        (Status::Unknown, Some("current_validation_evidence_unknown"))
     };
     let reason = reason.map(str::to_string);
     // Historical execution successes remain in the ledger. They must not leak
     // back into a current-workspace proof through the closeout projection.
     if successes > 0 {
-        current_validation["successes"] = json!(0);
-        if status == "unproven" {
-            current_validation["status"] = json!("inconclusive");
-            current_validation["reason"] = json!("validation_source_unproven");
+        current_validation.successes = Some(0);
+        if status == Status::Unproven {
+            current_validation.status = "inconclusive";
+            current_validation.reason = Some("validation_source_unproven");
         }
-        if current_validation["latest_status"] == "passed" {
-            current_validation["latest_status"] = json!("inconclusive");
+        if current_validation.latest_status == "passed" {
+            current_validation.latest_status = "inconclusive";
         }
-        if let Some(object) = current_validation.as_object_mut() {
-            object.remove("latest_success");
-        }
+        current_validation.latest_success = None;
     }
-    let latest_status = current_validation
-        .get("latest_status")
-        .and_then(Value::as_str)
-        .unwrap_or("unknown");
+    let latest_status = current_validation.latest_status;
     let boundary_reason = if reset_index.is_some() {
         "workspace_content_changed"
     } else {
@@ -451,7 +437,7 @@ fn current_validation_evidence_for_events(
             "evidence_after_latest_content_change": reset_index.is_some() && current_events_total > 0,
             "boundary_reason": boundary_reason,
         }),
-        current_validation,
+        current_validation: to_value(current_validation),
         non_actionable_tool_failure_event_ids,
     }
 }
@@ -515,10 +501,15 @@ fn material_workspace_content_change(event: &SessionEvent) -> bool {
 }
 
 pub fn validation_summary_from_events(events: &[SessionEvent], limit: usize) -> Value {
+    to_value(build_validation_summary(events, limit))
+}
+
+/// Domain evaluation consumes fields, never reparses its own serialized JSON.
+fn build_validation_summary(events: &[SessionEvent], limit: usize) -> ValidationSummary {
     let validation_events = extract_validation_events(events);
     let events_total = validation_events.len();
     if events_total == 0 {
-        return to_value(ValidationSummary {
+        return ValidationSummary {
             available: false,
             status: "not_run",
             reason: Some("no_validation_tool_invoked"),
@@ -539,7 +530,7 @@ pub fn validation_summary_from_events(events: &[SessionEvent], limit: usize) -> 
             parser: parser_unavailable(),
             cargo_test_zero_tests_run: false,
             skipped: false,
-        });
+        };
     }
 
     let mut validation_events = validation_events;
@@ -587,7 +578,7 @@ pub fn validation_summary_from_events(events: &[SessionEvent], limit: usize) -> 
     let skip = events_total.saturating_sub(limit);
     let events = validation_events.into_iter().skip(skip).collect();
 
-    to_value(ValidationSummary {
+    ValidationSummary {
         available: true,
         status,
         reason,
@@ -608,7 +599,7 @@ pub fn validation_summary_from_events(events: &[SessionEvent], limit: usize) -> 
         parser,
         cargo_test_zero_tests_run,
         skipped: false,
-    })
+    }
 }
 
 fn validation_status(

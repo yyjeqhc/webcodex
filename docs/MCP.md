@@ -160,6 +160,55 @@ advanced identity flow.
 
 There is one model-facing MCP runtime contract: **Adaptive Runtime**. Canonical `ToolDefinition` rank decides the direct tools; ordinary model-visible long-tail tools are invoked through `call_runtime_tool`; server-owned protocol capabilities and MCP App admission may add hidden extensions for the relevant protocol request. There is no startup model-surface selector. `tool_manifest(tool_name=...)` is discovery only: it never dynamically registers a new Host tool. Its exact `route.primary` describes the preferred callable, and a normal direct tool also exposes `route.fallback` through `call_runtime_tool` for the case where that direct callable is not present; explicit MCP App presentation tools mark that fallback as blocked while Apps are enabled. Direct versus gateway routing changes presentation only and never bypasses the target tool's authentication, Project authority, permission, Runner capability, Session, or safety checks.
 
+### Request-local client policy
+
+A shared Server can serve ordinary calls and Host-native orchestration without
+changing tools or restarting between clients. Configure these optional HTTP
+headers on the **client connection**, or inject them on a dedicated proxy route:
+
+```http
+X-WebCodex-MCP-Profile: direct
+X-WebCodex-MCP-Budget-Secs: 20
+```
+
+`X-WebCodex-MCP-Profile` accepts exactly `direct` or `host_code_mode`. Omission
+uses `WEBCODEX_MCP_HOST_PROFILE` (whose default is `direct`); it does not detect
+client brands or prove that a particular call was programmatically orchestrated.
+Send the header on each request, not just `initialize` or `work_on_project`.
+There is no sticky Window, Session, credential or transport selection. For a
+Server defaulting to `host_code_mode`, ordinary clients must explicitly select
+`direct`; clients unable to set headers can use a configured proxy route.
+
+The optional positive-integer budget header can only **reduce** the deployment's
+resolved `WEBCODEX_MCP_HOST_BUDGET_SECS` budget. Return waits preserve the existing
+five-second guard (and the existing one-second floor for tiny budgets). A Direct
+request on a Server budget of 55 seconds therefore defaults to a ten-second
+execution handoff, with a 50-second synchronous/observation ceiling; Host Code
+Mode retains its five-second handoff/observation slices. `wait_for_job_readiness`
+uses up to 45 seconds, further capped by the selected budget minus the guard,
+not by the five-second handoff slice. Header omission leaves deployment behavior
+unchanged. Empty, repeated or malformed headers fail before dispatch without
+echoing their values; oversized numeric budgets are capped, not used to enlarge
+Server limits.
+
+This budget limits execution handoff and Job observation/readiness waiting. It
+is **not** a universal RPC timeout or an execution lifetime: `timeout_secs`, Job
+identity, effects, authorization, internal orchestration caps and Runner ownership
+are unchanged. Explicit `work_on_project.guidance_profile` still selects guidance
+only; it does not override transport timing. Subsequent context refreshes use the
+policy of their own request. `/api/tools/call`, result-text compatibility,
+`tools/list`, Apps admission and standard error semantics are unaffected.
+`runtime_status.effective_config.mcp_host` remains the deployment snapshot, not a
+claim about every connected client's policy.
+
+Ordinary work stays in the current turn: finish independent work, use one bounded
+`wait_for_job_readiness` join for blocking Jobs, then `observe_jobs` for needed
+results. At deadline reassess work/dependencies instead of mechanically refilling
+waits. Preserve pending identities when work cannot finish; never redispatch or
+assume a new model turn will start. `wait_for_job_terminal` is optional durable
+attention for an explicitly established continuation workflow, not a blocking
+wait or a prerequisite for ordinary MCP.
+
 ### Tool result framing
 
 Machine-readable MCP tool results are returned in `structuredContent`; `content` is a concise human-readable/protocol-native fallback. Clients that need fields should consume `structuredContent` rather than parse text.

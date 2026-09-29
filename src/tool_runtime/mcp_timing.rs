@@ -28,6 +28,15 @@ pub(super) fn normalize_observation_call_timing(
         return;
     }
     match call {
+        ToolCall::WaitForJobReadiness { wait_secs, .. } => {
+            // A join may use the remaining request budget, not the 5s handoff
+            // slice. Still honor a smaller client budget and the return guard.
+            let safe_wait = policy
+                .host_budget_secs
+                .saturating_sub(crate::mcp_host::HOST_RETURN_GUARD_SECS)
+                .max(1);
+            *wait_secs = (*wait_secs).min(safe_wait);
+        }
         ToolCall::ObserveJobs { wait_secs, .. } | ToolCall::JobTail { wait_secs, .. } => {
             if let Some(wait_secs) = wait_secs.as_mut() {
                 *wait_secs = (*wait_secs).min(policy.continuation_wait_secs);
@@ -233,6 +242,28 @@ mod tests {
             call,
             ToolCall::WaitForJobReadiness { wait_secs: 45, .. }
         ));
+    }
+
+    #[test]
+    fn readiness_honors_smaller_request_budget_without_changing_api_waits() {
+        for profile in [McpHostProfile::Direct, McpHostProfile::HostCodeMode] {
+            let policy = McpHostConfig {
+                profile,
+                host_budget_secs: Some(9),
+            }
+            .runtime_policy();
+            for (transport, expected) in [(SessionTransport::Mcp, 4), (SessionTransport::Api, 45)] {
+                let mut call = ToolCall::from_tool_name(
+                    "wait_for_job_readiness",
+                    serde_json::json!({"job_ids":["job"],"mode":"all","wait_secs":45}),
+                )
+                .unwrap();
+                normalize_observation_call_timing(&mut call, transport, policy);
+                assert!(
+                    matches!(call, ToolCall::WaitForJobReadiness { wait_secs, .. } if wait_secs == expected)
+                );
+            }
+        }
     }
 
     #[test]

@@ -110,8 +110,9 @@ pub struct ToolRuntime {
     pub(crate) ssh_resource_gateway: Arc<crate::ssh_resource_gateway::SshResourceGatewayRuntime>,
     pub(crate) coding_agent_runs: Arc<super::coding_agent::CodingAgentServerState>,
     pub runtime_info: Arc<RuntimeInfo>,
-    /// Server-side MCP Host timing policy. This adapts MCP waiting only and is
-    /// never forwarded to Runner execution.
+    /// MCP Host timing/guidance policy: deployment default, or a request-local
+    /// view selected by the MCP adapter. Never forwarded as Runner authority or
+    /// execution lifetime; runtime_info retains the deployment diagnostics.
     pub(crate) mcp_host_policy: crate::mcp_host::McpHostRuntimePolicy,
     /// Immutable deployment recommendation/interaction snapshot; never admission.
     pub(crate) model_workflow_policy: crate::model_workflow::ModelWorkflowPolicy,

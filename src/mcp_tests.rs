@@ -298,6 +298,8 @@ mod plugin_check;
 mod plugin_tools;
 #[path = "mcp_tests/protocol.rs"]
 mod protocol;
+#[path = "mcp_tests/request_policy.rs"]
+mod request_policy;
 #[path = "mcp_tests/response.rs"]
 mod response_tests;
 #[path = "mcp_tests/result_app.rs"]

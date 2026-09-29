@@ -196,7 +196,7 @@ WEBCODEX_MCP_HOST_BUDGET_SECS=55
 
 `WEBCODEX_MCP_HOST_BUDGET_SECS` describes the Host-side MCP call/composition budget, not command runtime. Tool `timeout_secs` remains the execution lifetime and may be much larger. WebCodex never infers the profile from `clientInfo`, User-Agent, or a Host product name.
 
-`host_code_mode` describes orchestration supplied by the external MCP Host. It is separate from WebCodex's experimental internal Code Mode feature and its own nested-execution safeguards. `runtime_status` reports the effective non-secret policy under `effective_config.mcp_host`.
+`host_code_mode` describes orchestration supplied by the external MCP Host. It is separate from WebCodex's experimental internal Code Mode feature and its own nested-execution safeguards. `runtime_status.effective_config.mcp_host` reports the non-secret **deployment default**. Mixed clients can override their request strategy with `X-WebCodex-MCP-Profile` and reduce their waiting budget with `X-WebCodex-MCP-Budget-Secs`; configure these headers on each client connection, not as model arguments. See [request-local client policy](MCP.md#request-local-client-policy). No header means the deployment default; client brand is never auto-detected.
 
 ### Tool invocation tracing
 

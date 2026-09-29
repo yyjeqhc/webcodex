@@ -2,6 +2,7 @@ mod discovery;
 mod http_metadata;
 mod presentation;
 mod protocol;
+mod request_policy;
 mod resources;
 mod response;
 mod tools;
@@ -652,6 +653,29 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
             return;
         }
     };
+    let policy = match request_policy::resolve(req.headers(), runtime.mcp_host_policy) {
+        Ok(policy) => policy,
+        Err(message) => {
+            // Reject ambiguous transport preferences before any tool/Job effect.
+            // Do not echo potentially sensitive header values into diagnostics.
+            guard.parsed("request_policy_error");
+            let body = rpc_error(request.id.clone(), -32600, message);
+            let estimated = estimate_json_bytes(&body);
+            guard.response_serialized(400, estimated, Some(false), None, "request_policy_error");
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(Json(body));
+            guard.handler_returned(400, estimated, Some(false), None, "request_policy_error");
+            return;
+        }
+    };
+    // Clone only the lightweight runtime view when a preference actually differs.
+    // Stores, execution ownership and fences stay shared; policy never mutates
+    // the deployment snapshot or leaks between concurrent requests.
+    let runtime = if policy == runtime.mcp_host_policy {
+        runtime
+    } else {
+        Arc::new(runtime.as_ref().clone().with_mcp_host_policy(policy))
+    };
     let window = match protocol_era {
         McpProtocolEra::Legacy => {
             crate::client_window::mcp_window(req, request.method == "initialize")
@@ -795,7 +819,10 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
     // one outer emergency timer only so the MCP hard-timeout path does not erase
     // an otherwise established runtime invocation from ergonomics telemetry.
     let mut hard_timeout_model_ergonomics = tool_name.as_deref().and_then(|name| {
-        ModelErgonomicsTimer::start_with_arguments(name, &request.params["arguments"])
+        let mut timer =
+            ModelErgonomicsTimer::start_with_arguments(name, &request.params["arguments"])?;
+        timer.resolve_work_on_project_guidance_profile(policy, true);
+        Some(timer)
     });
     let mut tool_correlation = crate::tool_runtime::ToolCallCorrelation::default();
     let mut model_ergonomics = None;

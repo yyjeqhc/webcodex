@@ -489,8 +489,10 @@ retention state. `include_extension_catalog` remains a separate caller-explicit
 selection-metadata preference.
 
 `guidance_profile` is a request-local presentation enum. Explicit selection wins;
-when omitted on MCP, `McpHostRuntimePolicy.profile` (configured by
-`WEBCODEX_MCP_HOST_PROFILE`) supplies the default, while non-MCP/internal omission
+when omitted on MCP, the current request's `McpHostRuntimePolicy.profile` supplies
+the default (`X-WebCodex-MCP-Profile`, otherwise deployment `WEBCODEX_MCP_HOST_PROFILE`).
+The MCP adapter creates an immutable runtime view; it never stores this preference
+in the Session or changes shared execution ownership. Non-MCP/internal omission
 falls back to `direct`. Available explicit values are `direct`, `host_code_mode` for
 Host-supplied native orchestration in every build, or `code_mode` for WebCodex nested
 orchestration only in Experimental Code Mode builds. Host-native guidance favors canonical batches and `search_and_read`,

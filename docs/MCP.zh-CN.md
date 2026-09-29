@@ -55,6 +55,42 @@ admission 问题处理。如果 Host 根本没有 dispatch `runtime_status`，�
 WebCodex tool result。修改 credential 或 Runner 配置前，先从独立路径确认 Server/Runner；
 完整流程见[故障排查](TROUBLESHOOTING.zh-CN.md)。
 
+## 同一 Server 的客户端策略
+
+普通 MCP 与 Host 原生编排共用工具。客户端可在连接设置中为每个请求附加以下
+HTTP header，也可由专用反向代理路由注入；不需要新增模型工具参数：
+
+```http
+X-WebCodex-MCP-Profile: direct
+X-WebCodex-MCP-Budget-Secs: 20
+```
+
+Profile 只接受 `direct` / `host_code_mode`；省略时使用服务端
+`WEBCODEX_MCP_HOST_PROFILE`，其默认是 `direct`。不会按客户端品牌、Window、
+Session 或历史调用猜测，也不证明模型实际使用了程序编排。必须每次请求携带，
+不是在 initialize / work_on_project 设置一次。如果服务端默认 host_code_mode，
+普通客户端需显式发送 direct；无法设置 header 时可使用注入 header 的代理路由。
+
+可选的正整数 Budget 只能缩短服务端已解析的 Host budget，不能放大服务端上限。
+继续保留 5 秒返回余量与极小预算下已有的 1 秒等待下限。例如服务端 budget=55，
+Direct 默认执行 handoff=10 秒、同步/观察上限=50 秒；Host Code Mode 保留
+5 秒 handoff/观察切片。readiness 最多等待 45 秒，同时受 budget 减去返回余量约束，
+不会被通用 5 秒 handoff 切片误缩短。空值、重复或畸形 header 在 dispatch 前拒绝，
+不回显其原文；超大的合法整数 budget 会被截到服务端上限。
+
+该预算只约束执行交接与 Job 观察/readiness 等待，不是所有 RPC 的统一 timeout。
+命令 `timeout_secs`、Job 身份、权限、执行生命周期及内部编排上限不变。
+`work_on_project.guidance_profile` 仍只覆盖当次指导文本；后续 context refresh
+按其自身请求策略处理。API transport、tools/list、App admission、错误语义及
+`WEBCODEX_MCP_TEXT_JSON_COMPAT` 均不改变。runtime_status 中的 mcp_host 继续
+表示部署默认值，而非所有客户端当前请求的策略。
+
+默认在当前 turn 完成工作：先做独立工作，依赖 Job 时进行一次有界
+wait_for_job_readiness，必要时 observe_jobs 获取结果。deadline 后重新判断工作与
+依赖，不机械续等、不重新派发执行、不假设自动开启下一 turn；无法完成时保留
+pending Job 的精确身份。wait_for_job_terminal 仅用于显式建立的可选 continuation
+workflow，不是阻塞等待，也不是普通 MCP 的前置要求。
+
 ## Claude 与其他 MCP client
 
 使用同一份输出的 `/mcp` URL 与认证值。Claude 中添加 custom connector 并粘贴 MCP URL；

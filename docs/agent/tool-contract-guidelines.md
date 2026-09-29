@@ -419,6 +419,92 @@ implementation switches are copied from configuration; a new wire field cannot i
 advertisement merely from config. All-enabled fixtures are tests only and iterate the
 typed catalog.
 
+### Canonical tool naming and model-surface exposure
+
+Tool identity must describe the operation, not today's Host presentation policy.
+Direct/Gateway placement is allowed to change as Host behavior, usage evidence and
+schema budgets change without renaming the canonical tool. Do not encode
+`direct`, `gateway`, `hidden`, `adaptive`, or a Host brand into an ordinary
+canonical tool name.
+
+For new model-visible tools, prefer a stable `verb_object` name and use these
+verbs consistently:
+
+| Form | Meaning |
+|---|---|
+| `list_*` | Bounded/filterable inventory of zero or more objects. |
+| `read_*` | Read bounded content or evidence, commonly with paging, snapshots or revisions. |
+| `get_*` | Exact durable object/state lookup when content-reading semantics are not the point. |
+| `observe_*` | Observe changing state for an already-known identity; cursor/token semantics may apply. |
+| `wait_for_*` | A real dependency wait/barrier with an owned deadline or continuation contract. |
+| `present_*` | Host-visible presentation/App integration whose descriptor carries presentation semantics. |
+| `create_*`, `update_*`, `assign_*`, `complete_*`, `stop_*` | Explicit lifecycle/effect verbs; keep target identity in the object name. |
+
+Use plural objects when one ordinary call is natively batch-shaped
+(`read_files`, `observe_jobs`, `search_project_texts`); use singular names
+for exact-resource operations unless an established domain term says otherwise.
+Provider-specific validation keeps `<provider>_<operation>`
+(`cargo_check`, `cargo_test`, `go_test`), while a portable orchestration
+entry may use a domain name such as `project_validate`.
+
+Reserve `*_tool` for a genuine gateway into a separately named or dynamic tool
+namespace, such as `plugin_tool` or `mcp_tool`. The generic
+`call_runtime_tool` is the explicit Adaptive Runtime dispatch gateway. Do not
+introduce `git_tool`, `job_tool`, `session_tool`, or similar mega-tools merely
+to reduce the Direct inventory.
+
+Canonical names should stay stable across model-surface policy changes; moving a
+tool between Direct and Gateway is never by itself a reason to rename it. Broader
+rename/compatibility decisions still follow the concrete-consumer test in section
+10. When such a consumer requires an old spelling, keep the old name only as the
+narrowest frozen compatibility input: exclude it from ordinary Direct exposure,
+intent recommendations and canonical category discovery unless that consumer
+specifically requires otherwise. New aliases require the same concrete-consumer
+justification.
+
+Keep these four concerns independent:
+
+1. **canonical name** — stable operation identity used by parsing, audit and
+   generated follow-ups;
+2. **category** — complete non-overlapping domain taxonomy owned by
+   `ToolDefinition.category`;
+3. **semantic contract** — effect/risk/authority/execution and result meaning;
+4. **model-surface policy** — how the currently integrated Host should discover
+   or invoke that same canonical tool.
+
+Current Adaptive Runtime expresses ordinary Direct/Gateway placement with
+`adaptive_runtime_direct_rank`: `Some(rank)` advertises a dedicated Host
+descriptor and `None` keeps an admitted model-visible tool behind exact
+`tool_manifest` discovery plus `call_runtime_tool`. Changing that rank is a
+presentation/routing change, not a rename, authority change or new ToolCall.
+`tool_manifest.route.primary`/fallback reports the current callable posture.
+
+When reviewing why a descriptor remains Direct, use this small design vocabulary
+even if it is not represented as a new enum:
+
+- **CoreWorkflow** — high-frequency primitive needed in the ordinary coding loop;
+- **HostIntegration** — the dedicated descriptor carries Host-native input or
+  another integration contract that the generic gateway cannot reproduce;
+- **Presentation** — the descriptor carries MCP App/resource presentation
+  metadata; while that integration is enabled it must not be replaced by a
+  generic gateway call;
+- **Continuation** — blocking/fresh-turn/continuation integration whose value
+  depends on concrete Host lifecycle capability;
+- **Gateway** — canonical long-tail operation with full runtime parity through
+  exact discovery and generic dispatch.
+
+These labels explain exposure; they grant no authority and do not create a
+second taxonomy. In particular, a Continuation tool may be down-admitted while a
+Host cannot reliably resume a fresh turn and later promoted again without
+changing its canonical name or domain contract. Presentation tools remain
+dedicated when their Host resource association requires the direct descriptor.
+CoreWorkflow tools should not be demoted merely to meet an arbitrary count
+target.
+
+Direct/Gateway decisions therefore belong to model-surface policy and measured
+Host ergonomics. Tool names, categories, parser variants, persisted identities,
+Runner protocol and domain authority must not churn when that policy changes.
+
 ### Stable schemas and optional workflow guidance
 
 Host tool-schema refresh is an integration operation, not a workflow preference.

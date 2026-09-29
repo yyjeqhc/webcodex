@@ -1,6 +1,6 @@
 //! Narrow native I/O for exactly instructions/AGENTS.md. Unix operations are
 //! relative to held no-follow directory descriptors. Windows holds no-reparse
-//! directories without write/delete sharing through atomic replacement.
+//! directories without delete sharing through atomic replacement.
 use super::*;
 use std::fs::{File, OpenOptions};
 use std::io::Write;
@@ -281,11 +281,15 @@ fn create_child_directory(root: &File, _: &Path) -> std::io::Result<()> {
 #[cfg(windows)]
 fn open_directory(path: &Path) -> std::io::Result<File> {
     use std::os::windows::fs::OpenOptionsExt;
+    use windows_sys::Win32::Storage::FileSystem::{FILE_SHARE_READ, FILE_SHARE_WRITE};
     OpenOptions::new()
         .read(true)
-        .share_mode(1)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
         .custom_flags(0x02000000 | 0x00200000)
-        .open(path) // BACKUP_SEMANTICS | OPEN_REPARSE_POINT, READ sharing only
+        // BACKUP_SEMANTICS | OPEN_REPARSE_POINT. Child-file replacement
+        // needs write sharing, while withholding delete sharing keeps the
+        // held directory itself from being renamed or replaced.
+        .open(path)
 }
 #[cfg(windows)]
 fn open_child_directory(_: &File, path: &Path) -> std::io::Result<File> {
@@ -333,6 +337,23 @@ mod tests {
             1
         );
     }
+    #[cfg(windows)]
+    #[test]
+    fn held_directory_blocks_replacement_but_allows_child_atomic_replace() {
+        let root = tempfile::tempdir().unwrap();
+        let directory = Directory::open(root.path(), true).unwrap().unwrap();
+        directory.replace("original", "missing").unwrap();
+
+        let instructions = root.path().join("instructions");
+        assert!(std::fs::rename(&instructions, root.path().join("old-instructions")).is_err());
+        assert_eq!(directory.read().unwrap().as_deref(), Some("original"));
+
+        directory
+            .replace("updated", &revision(Some("original")))
+            .unwrap();
+        assert_eq!(directory.read().unwrap().as_deref(), Some("updated"));
+    }
+
     #[test]
     fn atomic_save_rechecks_content_after_staging() {
         let tmp = tempfile::tempdir().unwrap();

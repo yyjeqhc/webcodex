@@ -49,7 +49,14 @@ The rule is simple: **knowing an ID or opaque tool value never substitutes for a
 
 ## Server bootstrap token
 
-`WEBCODEX_TOKEN` is the Server's bootstrap/admin credential. `webcodex server init` stores it in the Server environment. Use it for initial administration, user creation/pairing, and emergency recovery. Do not use it for MCP, GPT Actions, Runner connectivity, or ordinary daily work.
+`WEBCODEX_TOKEN` is the Server's bootstrap/admin credential. `webcodex server init` stores it in the Server environment. Use it for initial administration, user creation/pairing, and emergency recovery. Do not manually supply it to external MCP/GPT clients or reuse it as a Runner token.
+
+The same-owner Desktop/local Server Tunnel is an intentional exception: its protected
+local authorization file uses bootstrap internally, while the ChatGPT connection
+contains no WebCodex secret. This trusted self-hosted connection carries that owner's
+authority; it is not a restricted delegated user. No additional Tunnel token is needed.
+Use the existing delegated credentials when connecting a different trust domain.
+[Personal deployment lifecycle](implementation/personal-environment-lifecycle.md).
 
 ## Pairing and managed login
 

@@ -331,6 +331,28 @@ stderr、provider stderr 或任意 provider prose。
 
 同一个 ToolRuntime 通过一套 Adaptive Runtime contract 服务单项目、project-scoped 的本地 `share` / `run` 和多项目 hosted Server。project-scoped credential 改变可见性与 authority，不改变 model-facing runtime shape。特定 protocol capability 与 MCP App 可以 admission 额外的 hidden presentation/resource operation，但不会形成第二套 runtime surface。
 
+### 项目级验证
+
+`project_validate` 通过 Runner 上的现有适配器执行 Rust 的格式检查／检查／测试，
+以及 Go 的检查／测试。`scope.packages` 表示有界包范围。
+`action="test"` 可使用 `test.filter`：Rust 为一个 libtest 子串，Go 为原生 `-run`
+正则表达式（包含子测试的斜杠语义），并非跨语言统一查询语法。Go 保留空格；
+空字符串或省略表示不加过滤。
+
+```json
+{"project":"agent:runner:repo","action":"test","test":{"filter":"selected_test","require_tests":true,"min_tests":3}}
+```
+
+`require_tests` 默认为 true，要求至少一个已证明执行的测试；false 且未设
+`min_tests` 时允许已证明的零测试结果。`min_tests` 为 1..1,000,000 的证据后置条件，
+即使 require_tests=false 仍需满足；计数未知不表示零。check／format_check 不接受
+该 test 块。任意显式 test 块均需 `project_validation_test_options_v1` 能力，
+规划与 Job 准入各检查一次；省略时保持原有行为。完整参数不会变成任意 argv／shell。
+长任务仍观察同一个 Job，不能因 Host 中断而重跑。
+
+构建产物、修改源码的格式化、lint、Node/Python 生产适配器，以及更广泛的
+workspace／依赖策略仍是 #599 后续工作；现有 cargo_*、go_test 与显式进程工具保留。
+
 ### ChatGPT 文件桥接
 
 当当前 MCP protocol/host admission 允许 artifact capability 时，WebCodex 支持双向的 host-native 文件传输，不需要把完整二进制经由模型文本搬运：

@@ -346,6 +346,26 @@ work_on_project
 
 For ordinary portable read-only validation, prefer `project_validate`. It accepts only a closed `format_check` / `check` / `test` intent plus an optional `auto` / `rust` / `go` adapter hint; the Runner resolves the nearest unambiguous recipe on its own registered filesystem and then starts the existing structured validation Job. Rust maps to `cargo fmt -- --check`, `cargo check --all-targets`, or `cargo test`; Go maps to `go vet ./...` or `go test -json ./...`. An optional bounded `scope.packages` (1..8 entries) narrows Rust check/test through repeated Cargo `-p` selectors and Go check/test through project-relative package patterns; package-scoped formatting fails closed. Node/Python detection currently returns a bounded unsupported result. The request never carries arbitrary executable, argv, shell grammar, installation, or source mutation. Existing `cargo_*` / `go_test` tools remain available for ecosystem-specific advanced options. `project_validate` requires the additive `project_validation_v1` Runner capability; scoped requests additionally require `project_validation_package_scope_v1`, so mixed-version deployments fail closed before sending the expanded request.
 
+For `action="test"`, optional `test` selects tests and states the evidence requirement:
+
+```json
+{"project":"agent:runner:repo","action":"test","scope":{"packages":["package-a"]},"test":{"filter":"selected_test","min_tests":3}}
+```
+
+Rust interprets `filter` as one libtest substring; Go interprets it as a native
+`-run` regexp, including Go's slash-separated subtest semantics. Go whitespace is
+preserved; this is not a cross-language query syntax. Empty/omitted filters keep
+the unfiltered default. Filters cannot introduce arbitrary argv. `require_tests`
+defaults to true (at least one proven executed test); explicit false accepts
+proven zero tests when `min_tests` is absent. A requested `min_tests` (1..1,000,000)
+still applies with false, and count uncertainty is not zero. These are evidence
+postconditions, not extra tests to run. The test block is invalid for check or
+format_check. Any supplied test block requires the additive
+`project_validation_test_options_v1` Runner capability; it is checked at both
+planning and Job admission. Old calls without that block retain their old wire
+and execution defaults. See [project-validation test options](implementation/project-validation-test-options.md)
+for exact scope, identity, and remaining #599 work.
+
 Adaptive Runtime may expose common tools directly and long-tail tools through `call_runtime_tool`. Direct versus gateway exposure never changes schema validation, OAuth scope, Project authority, permission policy, Runner capability checks, Session fences, or effects.
 
 The removed ProjectConnector capability names (`task_start`, `files_read`, `edits_apply`, `task_finish`, and related operations) are not compatibility aliases for runtime tools. Use the current ToolRuntime names returned by `tools/list`/`tool_manifest`.

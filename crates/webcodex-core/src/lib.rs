@@ -17,6 +17,7 @@ pub mod mcp_gateway;
 pub mod memory_contract;
 pub mod model_reference;
 pub mod plugin;
+pub mod project_build;
 pub mod project_context_contract;
 pub mod project_instructions;
 pub mod project_listing;
@@ -46,3 +47,6 @@ pub mod project_validation;
 
 #[cfg(test)]
 mod project_validation_tests;
+
+#[cfg(test)]
+mod project_build_tests;

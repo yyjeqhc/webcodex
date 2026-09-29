@@ -1538,6 +1538,7 @@ fn runner_register_capabilities(cfg: &RunnerConfig) -> RunnerCapabilities {
     // infer this from generic structured validation support.
     capabilities.set(RunnerCapabilityId::StructuredGoTestJson, true);
     capabilities.set(RunnerCapabilityId::ProjectValidation, true);
+    capabilities.set(RunnerCapabilityId::ProjectBuild, true);
     // Portable package scope is additive to project_validation_v1 so mixed
     // Server/Runner deployments fail closed before sending the expanded request.
     capabilities.set(RunnerCapabilityId::ProjectValidationPackageScope, true);

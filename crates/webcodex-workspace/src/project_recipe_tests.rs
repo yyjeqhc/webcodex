@@ -215,3 +215,17 @@ fn source_digest_preserves_path_length_content_order_and_skips_missing_optional_
     }
     assert_eq!(actual, format!("{:x}", hasher.finalize()));
 }
+
+#[test]
+fn project_recipe_dependency_state_files_are_narrow_rust_go_source_truth() {
+    assert_eq!(
+        project_recipe_dependency_state_files(ProjectRecipeId::Rust),
+        Some(&["Cargo.lock"][..])
+    );
+    assert_eq!(
+        project_recipe_dependency_state_files(ProjectRecipeId::Go),
+        Some(&["go.sum"][..])
+    );
+    assert!(project_recipe_dependency_state_files(ProjectRecipeId::Node).is_none());
+    assert!(project_recipe_dependency_state_files(ProjectRecipeId::Python).is_none());
+}

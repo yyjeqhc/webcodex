@@ -10,19 +10,19 @@ mod transport;
 mod tests;
 
 pub use job::{
-    normalize_cargo_packages, normalize_cargo_value, normalize_go_test_filter,
-    normalize_go_test_packages, normalize_rust_test_filter, valid_rust_test_filter,
-    RunnerJobLogRequest, RunnerJobLogResponse, RunnerJobResult, RunnerJobStatusRequest,
-    RunnerJobStatusResponse, RunnerJobStopRequest, RunnerJobStopResponse, RunnerJobUpdateRequest,
-    RunnerJobUpdateResponse, RunnerJobsListRequest, RunnerJobsListResponse, RunnerShellJobResult,
-    ShellJobActivity, ShellJobActivityPhase, ShellJobActivitySource, ShellJobActivityState,
-    ShellJobCodexMetadata, ShellJobContext, ShellJobInfo, ShellJobInventory, ShellJobLogSnapshot,
-    ShellJobOpRequest, ShellJobOpResponse, ShellJobSnapshot, ShellJobStreamSnapshot,
-    ShellJobStructuredExecutionMetadata, ShellJobTestCountEvidence, ShellJobValidationMetadata,
-    ShellJobValidationProgress, ShellJobValidationStep, CARGO_PACKAGE_MAX_ITEMS,
-    CARGO_TEST_MIN_TESTS_MAX, CARGO_VALUE_MAX_BYTES, GO_TEST_PACKAGE_MAX_BYTES,
-    GO_TEST_PACKAGE_MAX_ITEMS, JOB_INVENTORY_MAX_ACTIVE_JOBS, JOB_INVENTORY_MAX_JOBS,
-    JOB_INVENTORY_MAX_SERIALIZED_BYTES, JOB_INVENTORY_MAX_TERMINAL_JOBS,
+    normalize_cargo_packages, normalize_cargo_value, normalize_go_packages,
+    normalize_go_test_filter, normalize_go_test_packages, normalize_rust_test_filter,
+    valid_rust_test_filter, RunnerJobLogRequest, RunnerJobLogResponse, RunnerJobResult,
+    RunnerJobStatusRequest, RunnerJobStatusResponse, RunnerJobStopRequest, RunnerJobStopResponse,
+    RunnerJobUpdateRequest, RunnerJobUpdateResponse, RunnerJobsListRequest, RunnerJobsListResponse,
+    RunnerShellJobResult, ShellJobActivity, ShellJobActivityPhase, ShellJobActivitySource,
+    ShellJobActivityState, ShellJobCodexMetadata, ShellJobContext, ShellJobInfo, ShellJobInventory,
+    ShellJobLogSnapshot, ShellJobOpRequest, ShellJobOpResponse, ShellJobSnapshot,
+    ShellJobStreamSnapshot, ShellJobStructuredExecutionMetadata, ShellJobTestCountEvidence,
+    ShellJobValidationMetadata, ShellJobValidationProgress, ShellJobValidationStep,
+    CARGO_PACKAGE_MAX_ITEMS, CARGO_TEST_MIN_TESTS_MAX, CARGO_VALUE_MAX_BYTES,
+    GO_TEST_PACKAGE_MAX_BYTES, GO_TEST_PACKAGE_MAX_ITEMS, JOB_INVENTORY_MAX_ACTIVE_JOBS,
+    JOB_INVENTORY_MAX_JOBS, JOB_INVENTORY_MAX_SERIALIZED_BYTES, JOB_INVENTORY_MAX_TERMINAL_JOBS,
     JOB_SNAPSHOT_STREAM_MAX_BYTES, JOB_TERMINAL_RETENTION_SECS, RUNNER_JOB_CONCURRENCY_MAX,
     RUNNER_JOB_CONCURRENCY_MIN, RUST_TEST_FILTER_MAX_BYTES, VALIDATION_ASSERTION_NAME_MAX_CHARS,
 };
@@ -527,6 +527,13 @@ runner_capabilities! {
     v2_baseline = false {
         #[serde(default)]
         pub project_validation_v1: bool = false;
+    }
+    /// Runner-owned project build planning plus typed StartBuild admission.
+    /// Missing on older Runners is false and must fail closed.
+    ProjectBuild => RUNNER_CAPABILITY_PROJECT_BUILD("project_build_v1"),
+    v2_baseline = false {
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub project_build_v1: bool = false;
     }
     /// The Runner understands the additive portable package scope carried by
     /// project validation requests. Older project_validation_v1 Runners reject
@@ -2720,6 +2727,7 @@ mod envelope_tests {
                 structured_cargo_check_packages: true,
                 structured_go_test_json: true,
                 project_validation_v1: false,
+                project_build_v1: false,
                 project_validation_package_scope_v1: false,
                 project_validation_test_options_v1: false,
                 structured_go_test_tool: true,

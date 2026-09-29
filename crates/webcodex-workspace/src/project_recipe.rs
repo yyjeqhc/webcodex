@@ -51,6 +51,20 @@ impl ResolvedProjectRecipeRoot {
     }
 }
 
+/// Canonical optional dependency-state files for the portable Rust/Go recipe
+/// consumers. Missing files remain valid and are skipped by the digest helper.
+/// Node/Python intentionally return None because their dependency/package-manager
+/// provenance is not represented by this narrow source-truth contract.
+pub fn project_recipe_dependency_state_files(
+    recipe: ProjectRecipeId,
+) -> Option<&'static [&'static str]> {
+    match recipe {
+        ProjectRecipeId::Rust => Some(&["Cargo.lock"]),
+        ProjectRecipeId::Go => Some(&["go.sum"]),
+        ProjectRecipeId::Node | ProjectRecipeId::Python => None,
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProjectRecipeResolutionError {
     ExecutionRootUnavailable,

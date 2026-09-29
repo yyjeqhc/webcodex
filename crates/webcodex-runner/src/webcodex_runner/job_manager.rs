@@ -999,6 +999,7 @@ fn runner_job_is_active(status: &str) -> bool {
 fn job_prestart_lifecycle(operation: &RunnerJobOperation) -> Option<ShellCommandExecutionState> {
     match operation {
         RunnerJobOperation::StartShell(_)
+        | RunnerJobOperation::StartBuild(_)
         | RunnerJobOperation::StartProcess(_)
         | RunnerJobOperation::StartDetachedProcess(_)
         | RunnerJobOperation::StartScript(_)
@@ -1016,6 +1017,7 @@ pub(crate) fn decode_failure_prestart_lifecycle(
     matches!(
         request.kind.as_str(),
         "start_job"
+            | "start_build_job"
             | "start_process_job"
             | "start_detached_process_job"
             | "start_script_job"
@@ -1447,6 +1449,32 @@ fn validate_runner_job_context_operation(
     match operation {
         RunnerJobOperation::StartShell(operation) => {
             runner_protocol::validate_raw_shell_wire_command(&operation.command)?;
+        }
+        RunnerJobOperation::StartBuild(operation) => {
+            if context.ssh_resource.is_some() {
+                return Err("typed project build Job request shape is invalid".to_string());
+            }
+            runner_protocol::validate_process_argv(&operation.process)?;
+            validate_runner_structured_common(
+                operation.cwd.as_deref(),
+                None,
+                operation.timeout_secs,
+                runner_protocol::PROCESS_TIMEOUT_MAX_SECS,
+            )?;
+            if !operation.provenance.is_valid() {
+                return Err("project build Job provenance is invalid".to_string());
+            }
+            let canonical = webcodex_core::project_build::canonical_project_build_process(
+                &operation.provenance.backend,
+                &operation.provenance.request,
+            )
+            .map_err(str::to_string)?;
+            if canonical != operation.process
+                || webcodex_core::project_build::project_build_invocation_digest(&operation.process)
+                    != operation.provenance.invocation_digest
+            {
+                return Err("project build Job process does not match provenance".to_string());
+            }
         }
         RunnerJobOperation::StartProcess(operation)
         | RunnerJobOperation::StartDetachedProcess(operation) => {
@@ -2337,6 +2365,13 @@ impl JobManager {
                 &start.project_registry_dir,
                 &start.operation,
             )
+            .and_then(|_| {
+                super::project_build::fence(
+                    &start.policy,
+                    &start.project_registry_dir,
+                    &start.operation,
+                )
+            })
             .err();
             let immediate_failure = if let Some(error) = admission_failure {
                 Some(error)
@@ -2421,7 +2456,8 @@ impl JobManager {
         }
         match &start.operation {
             RunnerJobOperation::StartDetachedProcess(_) => self.start_detached_process_job(start),
-            RunnerJobOperation::StartProcess(_)
+            RunnerJobOperation::StartBuild(_)
+            | RunnerJobOperation::StartProcess(_)
             | RunnerJobOperation::StartScript(_)
             | RunnerJobOperation::StartSkillResource(_) => self.start_structured_job(start),
             RunnerJobOperation::StartShell(_) | RunnerJobOperation::StartValidation(_) => {
@@ -2652,7 +2688,8 @@ impl JobManager {
         let job_id = operation.job_id().to_string();
         if !matches!(
             operation,
-            RunnerJobOperation::StartProcess(_)
+            RunnerJobOperation::StartBuild(_)
+                | RunnerJobOperation::StartProcess(_)
                 | RunnerJobOperation::StartScript(_)
                 | RunnerJobOperation::StartSkillResource(_)
         ) {
@@ -2692,6 +2729,22 @@ impl JobManager {
                 );
             };
             let result = match &operation {
+                RunnerJobOperation::StartBuild(request) => {
+                    run_process_with_profiles_and_execution_state_with_start_hook(
+                        generation,
+                        &policy,
+                        &shell,
+                        &project_registry_dir,
+                        &manager.prepared_profiles,
+                        request.cwd.as_deref(),
+                        &request.process.executable,
+                        &request.process.args,
+                        None,
+                        request.timeout_secs,
+                        Some(stop_requested.as_ref()),
+                        Some(&on_started),
+                    )
+                }
                 RunnerJobOperation::StartProcess(request) => {
                     run_process_with_profiles_and_execution_state_with_start_hook(
                         generation,

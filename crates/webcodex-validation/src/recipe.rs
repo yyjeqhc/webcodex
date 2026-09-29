@@ -8,8 +8,8 @@ use std::fs;
 use std::path::Path;
 use webcodex_core::runner_protocol::{normalize_rust_test_filter, ShellJobValidationStep};
 use webcodex_workspace::project_recipe::{
-    digest_project_recipe_files, read_project_recipe_file, resolve_project_recipe_root,
-    ProjectRecipeResolutionError,
+    digest_project_recipe_files, project_recipe_dependency_state_files, read_project_recipe_file,
+    resolve_project_recipe_root, ProjectRecipeResolutionError,
 };
 
 pub use webcodex_workspace::project_recipe::ProjectRecipeId as RecipeId;
@@ -240,11 +240,9 @@ fn canonical_adapter_steps(
         })?;
         steps.push(plan.structured_step);
     }
-    let extra_digest_files = match recipe {
-        RecipeId::Rust => vec!["Cargo.lock"],
-        RecipeId::Go => vec!["go.sum"],
-        RecipeId::Node | RecipeId::Python => unreachable!("canonical project adapters are Rust/Go"),
-    };
+    let extra_digest_files = project_recipe_dependency_state_files(recipe)
+        .expect("canonical project validation adapters are Rust/Go")
+        .to_vec();
     Ok((steps, extra_digest_files))
 }
 

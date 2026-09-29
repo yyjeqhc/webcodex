@@ -22,6 +22,9 @@ pub(crate) mod output_text;
 pub(crate) mod patches;
 pub(crate) mod persistent_shell;
 pub(crate) mod plugin;
+pub(crate) mod project_build;
+#[cfg(test)]
+mod project_build_tests;
 pub(crate) mod projects;
 pub(crate) mod runner_instructions;
 pub(crate) mod runner_skills;

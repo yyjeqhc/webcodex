@@ -105,6 +105,16 @@ pub struct RunnerJobValidationOperation {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunnerJobBuildOperation {
+    pub job_id: String,
+    pub cwd: Option<String>,
+    pub process: ShellProcessArgv,
+    pub provenance: crate::project_build::ProjectBuildProvenance,
+    pub timeout_secs: u64,
+    pub context: ShellJobContext,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunnerJobProcessOperation {
     pub job_id: String,
     pub cwd: Option<String>,
@@ -137,6 +147,7 @@ pub struct RunnerJobSkillResourceOperation {
 pub enum RunnerJobOperation {
     StartShell(RunnerJobShellOperation),
     StartValidation(RunnerJobValidationOperation),
+    StartBuild(RunnerJobBuildOperation),
     StartProcess(RunnerJobProcessOperation),
     StartDetachedProcess(RunnerJobProcessOperation),
     StartScript(RunnerJobScriptOperation),
@@ -149,6 +160,7 @@ impl RunnerJobOperation {
         match self {
             Self::StartShell(operation) => &operation.job_id,
             Self::StartValidation(operation) => &operation.job_id,
+            Self::StartBuild(operation) => &operation.job_id,
             Self::StartProcess(operation) | Self::StartDetachedProcess(operation) => {
                 &operation.job_id
             }
@@ -162,6 +174,7 @@ impl RunnerJobOperation {
         match self {
             Self::StartShell(operation) => Some(&operation.context),
             Self::StartValidation(operation) => Some(&operation.context),
+            Self::StartBuild(operation) => Some(&operation.context),
             Self::StartProcess(operation) | Self::StartDetachedProcess(operation) => {
                 Some(&operation.context)
             }
@@ -175,6 +188,7 @@ impl RunnerJobOperation {
         match self {
             Self::StartShell(operation) => operation.cwd.as_deref(),
             Self::StartValidation(operation) => operation.cwd.as_deref(),
+            Self::StartBuild(operation) => operation.cwd.as_deref(),
             Self::StartProcess(operation) | Self::StartDetachedProcess(operation) => {
                 operation.cwd.as_deref()
             }
@@ -208,6 +222,16 @@ impl RunnerJobOperation {
             })
             .unwrap_or((None, None, None));
         match self {
+            Self::StartBuild(operation) => Some(ShellJobStructuredExecutionMetadata {
+                execution_source: "project_build".to_string(),
+                language: None,
+                script_bytes: None,
+                arg_count: operation.process.args.len(),
+                stdin_present: false,
+                validation_identity: None,
+                validation_tool: None,
+                assertion_name: None,
+            }),
             Self::StartProcess(operation) => Some(ShellJobStructuredExecutionMetadata {
                 execution_source: "run_process".to_string(),
                 language: None,
@@ -641,6 +665,7 @@ pub enum RunnerOperation {
     Computer(RunnerComputerOperation),
     Browser(RunnerBrowserOperation),
     PlanProjectValidation(crate::project_validation::ProjectValidationRequest),
+    PlanProjectBuild(crate::project_build::ProjectBuildRequest),
     Validation {
         payload: ValidationBridgeRequest,
         timeout_secs: u64,
@@ -670,6 +695,7 @@ impl RunnerOperation {
             Self::Job(operation) => match operation {
                 RunnerJobOperation::StartShell(_) => "start_job",
                 RunnerJobOperation::StartValidation(_) => "start_validation_job",
+                RunnerJobOperation::StartBuild(_) => "start_build_job",
                 RunnerJobOperation::StartProcess(_) => "start_process_job",
                 RunnerJobOperation::StartDetachedProcess(_) => "start_detached_process_job",
                 RunnerJobOperation::StartScript(_) => "start_script_job",
@@ -681,6 +707,7 @@ impl RunnerOperation {
             Self::Computer(operation) => operation.kind.wire_kind(),
             Self::Browser(operation) => operation.kind.wire_kind(),
             Self::PlanProjectValidation(_) => "plan_project_validation",
+            Self::PlanProjectBuild(_) => "plan_project_build",
             Self::Validation { .. } => crate::validation_bridge::AGENT_VALIDATION_REQUEST_KIND,
             Self::Lsp { .. } => crate::lsp_bridge::AGENT_LSP_REQUEST_KIND,
             Self::PersistentShell(_) => "persistent_shell",
@@ -898,6 +925,11 @@ fn encode_operation(
             wire.content = Some(serde_json::to_string(&payload).map_err(|e| e.to_string())?);
             wire.timeout_secs = 30;
         }
+        RunnerOperation::PlanProjectBuild(payload) => {
+            payload.validate()?;
+            wire.content = Some(serde_json::to_string(&payload).map_err(|e| e.to_string())?);
+            wire.timeout_secs = 30;
+        }
         RunnerOperation::Validation {
             payload,
             timeout_secs,
@@ -999,6 +1031,7 @@ fn encode_job_operation(
     wire.kind = match &operation {
         RunnerJobOperation::StartShell(_) => "start_job",
         RunnerJobOperation::StartValidation(_) => "start_validation_job",
+        RunnerJobOperation::StartBuild(_) => "start_build_job",
         RunnerJobOperation::StartProcess(_) => "start_process_job",
         RunnerJobOperation::StartDetachedProcess(_) => "start_detached_process_job",
         RunnerJobOperation::StartScript(_) => "start_script_job",
@@ -1038,6 +1071,32 @@ fn encode_job_operation(
             wire.cwd = operation.cwd;
             wire.command = serde_json::to_string(&operation.steps)
                 .map_err(|error| format!("could not encode validation Job plan: {error}"))?;
+            wire.timeout_secs = operation.timeout_secs;
+            wire.job_context = Some(operation.context);
+        }
+        RunnerJobOperation::StartBuild(operation) => {
+            validate_structured_job_common(
+                operation.cwd.as_deref(),
+                None,
+                operation.timeout_secs,
+                PROCESS_TIMEOUT_MAX_SECS,
+            )?;
+            validate_process_argv(&operation.process)?;
+            validate_job_context_coherence(operation.cwd.as_deref(), &operation.context)?;
+            validate_project_build_job(
+                &operation.process,
+                &operation.provenance,
+                &operation.context,
+            )?;
+            let content = serde_json::to_string(&operation.provenance)
+                .map_err(|error| format!("could not encode project build provenance: {error}"))?;
+            if content.len() > crate::project_build::PROJECT_BUILD_PROVENANCE_MAX_BYTES {
+                return Err("project build provenance exceeds V2 payload bound".to_string());
+            }
+            wire.job_id = Some(operation.job_id);
+            wire.cwd = operation.cwd;
+            wire.process = Some(operation.process);
+            wire.content = Some(content);
             wire.timeout_secs = operation.timeout_secs;
             wire.job_context = Some(operation.context);
         }
@@ -1218,6 +1277,7 @@ fn decode_operation(wire: &RunnerRequest) -> Result<RunnerOperation, String> {
         }
         "start_job"
         | "start_validation_job"
+        | "start_build_job"
         | "start_process_job"
         | "start_detached_process_job"
         | "start_script_job"
@@ -1338,6 +1398,26 @@ fn decode_operation(wire: &RunnerRequest) -> Result<RunnerOperation, String> {
                 .map_err(|e| e.to_string())?;
             payload.validate()?;
             Ok(RunnerOperation::PlanProjectValidation(payload))
+        }
+        "plan_project_build" => {
+            ensure_special_payloads_absent(wire)?;
+            if !wire.command.is_empty()
+                || wire.cwd.is_some()
+                || wire.stdin.is_some()
+                || wire.job_context.is_some()
+                || wire.shell.is_some()
+                || wire.login
+            {
+                return Err("project build planning contains execution fields".into());
+            }
+            let payload: crate::project_build::ProjectBuildRequest = serde_json::from_str(
+                wire.content
+                    .as_deref()
+                    .ok_or("project build request missing")?,
+            )
+            .map_err(|e| e.to_string())?;
+            payload.validate()?;
+            Ok(RunnerOperation::PlanProjectBuild(payload))
         }
         crate::validation_bridge::AGENT_VALIDATION_REQUEST_KIND => {
             ensure_only_validation_payload(wire)?;
@@ -1479,7 +1559,10 @@ fn decode_operation(wire: &RunnerRequest) -> Result<RunnerOperation, String> {
 }
 
 fn decode_job_operation(wire: &RunnerRequest) -> Result<RunnerJobOperation, String> {
-    if wire.kind == "start_skill_resource_job" {
+    if matches!(
+        wire.kind.as_str(),
+        "start_skill_resource_job" | "start_build_job"
+    ) {
         ensure_no_file_fields_except_content(wire)?;
     } else {
         ensure_no_file_fields(wire)?;
@@ -1545,6 +1628,53 @@ fn decode_job_operation(wire: &RunnerRequest) -> Result<RunnerJobOperation, Stri
                     context,
                 },
             ))
+        }
+        "start_build_job" => {
+            ensure_only_process_payload(wire)?;
+            if !wire.command.is_empty() || wire.stdin.is_some() || context.ssh_resource.is_some() {
+                return Err(
+                    "typed project build Job contains incompatible execution fields".to_string(),
+                );
+            }
+            let process = wire
+                .process
+                .clone()
+                .ok_or_else(|| "start_build_job requires process payload".to_string())?;
+            validate_process_argv(&process)?;
+            validate_structured_job_common(
+                wire.cwd.as_deref(),
+                None,
+                wire.timeout_secs,
+                PROCESS_TIMEOUT_MAX_SECS,
+            )?;
+            let provenance = serde_json::from_str::<crate::project_build::ProjectBuildProvenance>(
+                bounded_content(
+                    wire,
+                    crate::project_build::PROJECT_BUILD_PROVENANCE_MAX_BYTES,
+                    "project build provenance",
+                )?,
+            )
+            .map_err(|error| format!("invalid project build provenance: {error}"))?;
+            validate_project_build_job(&process, &provenance, &context)?;
+            let job = RunnerJobOperation::StartBuild(RunnerJobBuildOperation {
+                job_id,
+                cwd: wire.cwd.clone(),
+                process,
+                provenance,
+                timeout_secs: wire.timeout_secs,
+                context,
+            });
+            if job
+                .context()
+                .and_then(|ctx| ctx.structured_execution.clone())
+                != job.expected_structured_execution()
+            {
+                return Err(
+                    "project build Job recovery metadata does not match typed operation"
+                        .to_string(),
+                );
+            }
+            Ok(job)
         }
         "start_process_job" | "start_detached_process_job" => {
             ensure_only_process_payload(wire)?;
@@ -1664,6 +1794,31 @@ fn decode_job_operation(wire: &RunnerRequest) -> Result<RunnerJobOperation, Stri
         }
         _ => unreachable!("decode_job_operation called for non-job kind"),
     }
+}
+
+fn validate_project_build_job(
+    process: &ShellProcessArgv,
+    provenance: &crate::project_build::ProjectBuildProvenance,
+    context: &ShellJobContext,
+) -> Result<(), String> {
+    if !context.validation_steps.is_empty() || context.validation.is_some() {
+        return Err("project build Job cannot carry validation metadata".to_string());
+    }
+    if !provenance.is_valid() {
+        return Err("project build Job provenance is invalid".to_string());
+    }
+    let canonical = crate::project_build::canonical_project_build_process(
+        &provenance.backend,
+        &provenance.request,
+    )
+    .map_err(str::to_string)?;
+    if &canonical != process
+        || crate::project_build::project_build_invocation_digest(process)
+            != provenance.invocation_digest
+    {
+        return Err("project build Job process does not match build provenance".to_string());
+    }
+    Ok(())
 }
 
 fn validate_direct_process(operation: &RunnerProcessOperation) -> Result<(), String> {
@@ -2484,6 +2639,24 @@ mod tests {
         };
         let mut validation_context = job_context(Some("/repo"));
         validation_context.validation_steps = vec!["check".to_string()];
+        let build_request = crate::project_build::ProjectBuildRequest {
+            project_id: "demo".to_string(),
+            cwd: None,
+            adapter: crate::project_build::ProjectBuildAdapter::Rust,
+            scope: None,
+        };
+        let build_process =
+            crate::project_build::canonical_project_build_process("rust", &build_request).unwrap();
+        let build_provenance = crate::project_build::ProjectBuildProvenance {
+            request: build_request,
+            backend: "rust".to_string(),
+            recipe_root: ".".to_string(),
+            root_digest: "1".repeat(64),
+            manifest_digest: "2".repeat(64),
+            invocation_digest: crate::project_build::project_build_invocation_digest(
+                &build_process,
+            ),
+        };
         let mut operations = vec![
             RunnerOperation::RunShell(RunnerShellOperation {
                 login: false,
@@ -2543,6 +2716,21 @@ mod tests {
                     context: validation_context,
                 },
             )),
+            RunnerOperation::Job(RunnerJobOperation::StartBuild(RunnerJobBuildOperation {
+                job_id: "job-build".to_string(),
+                cwd: Some("/repo".to_string()),
+                process: build_process.clone(),
+                provenance: build_provenance,
+                timeout_secs: 60,
+                context: structured_job_context(
+                    Some("/repo"),
+                    "project_build",
+                    None,
+                    None,
+                    build_process.args.len(),
+                    false,
+                ),
+            })),
             RunnerOperation::Job(RunnerJobOperation::StartProcess(
                 RunnerJobProcessOperation {
                     job_id: "job-process".to_string(),
@@ -2757,6 +2945,7 @@ mod tests {
             RUNNER_SKILL_EXECUTION_REQUEST_KIND,
             "start_job",
             "start_validation_job",
+            "start_build_job",
             "start_process_job",
             "start_detached_process_job",
             "start_script_job",

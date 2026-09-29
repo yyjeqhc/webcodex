@@ -365,12 +365,10 @@ pub fn normalize_cargo_packages(
     Ok(Some(normalized))
 }
 
-/// Normalize the optional package scope shared by structured Go validation.
-/// Omission preserves the historical `./...` scope; an explicit list must
-/// contain one to eight already-normalized project-relative patterns.
-pub fn normalize_go_test_packages(
-    packages: Option<&[String]>,
-) -> Result<Vec<String>, &'static str> {
+/// Normalize one bounded project-relative Go package scope.
+/// Omission preserves the canonical `./...` project scope; an explicit list
+/// must contain one to eight already-normalized project-relative patterns.
+pub fn normalize_go_packages(packages: Option<&[String]>) -> Result<Vec<String>, &'static str> {
     let Some(packages) = packages else {
         return Ok(vec!["./...".to_string()]);
     };
@@ -379,11 +377,18 @@ pub fn normalize_go_test_packages(
     }
     packages
         .iter()
-        .map(|package| normalize_go_test_package(package))
+        .map(|package| normalize_go_package(package))
         .collect()
 }
 
-fn normalize_go_test_package(raw: &str) -> Result<String, &'static str> {
+/// Compatibility entry for existing structured Go validation callers.
+pub fn normalize_go_test_packages(
+    packages: Option<&[String]>,
+) -> Result<Vec<String>, &'static str> {
+    normalize_go_packages(packages)
+}
+
+fn normalize_go_package(raw: &str) -> Result<String, &'static str> {
     if raw.is_empty() {
         return Err("package pattern cannot be empty");
     }
@@ -886,6 +891,15 @@ impl ShellJobStructuredExecutionMetadata {
                 self.language.is_none()
                     && self.script_bytes.is_none()
                     && self.arg_count <= PROCESS_ARG_MAX_COUNT
+            }
+            "project_build" => {
+                self.language.is_none()
+                    && self.script_bytes.is_none()
+                    && self.arg_count <= PROCESS_ARG_MAX_COUNT
+                    && !self.stdin_present
+                    && self.validation_identity.is_none()
+                    && self.validation_tool.is_none()
+                    && self.assertion_name.is_none()
             }
             "run_script" => {
                 self.language.is_some()

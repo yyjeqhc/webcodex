@@ -1,5 +1,88 @@
 use super::*;
 
+#[tokio::test]
+async fn discovery_materializes_only_the_requested_contract_shape() {
+    use crate::tool_runtime::kernel::ToolProtocolCapabilities;
+    use webcodex_tool_contracts::take_tool_materialization_counts_for_test as take_counts;
+    let runtime = test_runtime();
+    take_counts();
+    let exact = runtime
+        .tool_manifest(
+            Some("run_process".into()),
+            None,
+            None,
+            false,
+            false,
+            ToolProtocolCapabilities::default(),
+        )
+        .await;
+    assert!(exact.success, "{:?}", exact.error);
+    assert_eq!(
+        take_counts(),
+        (1, 0),
+        "exact discovery projects one input and no outputs"
+    );
+    assert_eq!(
+        exact.output["contract"]["input_schema"],
+        webcodex_tool_contracts::input_schema_for_tool("run_process")
+    );
+    let category = runtime
+        .tool_manifest(
+            None,
+            Some("execution".into()),
+            None,
+            false,
+            true,
+            ToolProtocolCapabilities::default(),
+        )
+        .await;
+    assert!(category.success);
+    assert!(category.output["count"].as_u64().unwrap() > 0);
+    assert_eq!(take_counts(), (0, 0));
+    let mut projected = category;
+    crate::tool_runtime::surface::sparsify_tool_manifest_model_result(&mut projected);
+    assert_eq!(
+        take_counts(),
+        (0, 0),
+        "description lookup must not rebuild full specs"
+    );
+    let hidden = runtime
+        .tool_manifest(
+            Some("memory_read".into()),
+            None,
+            None,
+            false,
+            false,
+            ToolProtocolCapabilities::default(),
+        )
+        .await;
+    assert!(
+        !hidden.success,
+        "metadata must not grant extension admission"
+    );
+    assert_eq!(take_counts(), (0, 0));
+    let summary = runtime.list_tools_payload(crate::tool_runtime::tool_inputs::ListToolsOptions {
+        category: None,
+        features: None,
+        limit: Some(1),
+        summary_only: true,
+    });
+    assert_eq!(summary["count"], 1);
+    assert_eq!(take_counts(), (0, 0));
+    let full = runtime.list_tools_payload(crate::tool_runtime::tool_inputs::ListToolsOptions {
+        category: None,
+        features: None,
+        limit: Some(1),
+        summary_only: false,
+    });
+    assert_eq!(full["count"], 1);
+    assert_eq!(
+        take_counts(),
+        (1, 1),
+        "full list must select before materializing"
+    );
+}
+
 #[cfg(feature = "experimental-code-mode")]
 use std::collections::HashMap;
 #[cfg(feature = "experimental-code-mode")]

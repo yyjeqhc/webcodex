@@ -55,13 +55,6 @@ async fn model_workflow_policy_changes_never_change_cached_tools_schemas_routes_
                 } else {
                     listed_baseline = Some(bytes);
                 }
-                assert_eq!(
-                    serde_json::to_vec(&crate::mcp::tools::mcp_tools_list_payload_with_compact(
-                        false
-                    ))
-                    .unwrap(),
-                    full_schema_baseline
-                );
                 let mut manifests = Vec::new();
                 for tool in [
                     "present_goal_plan",
@@ -96,6 +89,15 @@ async fn model_workflow_policy_changes_never_change_cached_tools_schemas_routes_
             }
         }
     }
+    // This static builder takes no Runtime/policy input. Check it once after
+    // the complete adapter matrix, not repeatedly inside every policy cell.
+    assert_eq!(
+        serde_json::to_vec(&crate::mcp::tools::mcp_tools_list_payload_with_compact(
+            false
+        ))
+        .unwrap(),
+        full_schema_baseline
+    );
 }
 
 #[tokio::test]

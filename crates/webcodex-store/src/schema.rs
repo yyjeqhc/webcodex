@@ -495,6 +495,9 @@ impl Database {
             CREATE INDEX IF NOT EXISTS idx_action_events_window_started
                 ON action_events(client_window_key, window_started_at_ms DESC)
                 WHERE client_window_key IS NOT NULL;
+            CREATE INDEX IF NOT EXISTS idx_action_events_window_observed
+                ON action_events(client_window_key, COALESCE(request_observed_at_ms, window_started_at_ms) DESC, event_id DESC)
+                WHERE window_started_at_ms IS NOT NULL AND window_ended_at_ms IS NOT NULL;
             CREATE INDEX IF NOT EXISTS idx_action_events_window_completed
                 ON action_events(client_window_key, window_ended_at_ms DESC, event_id DESC)
                 WHERE window_started_at_ms IS NOT NULL AND window_ended_at_ms IS NOT NULL;

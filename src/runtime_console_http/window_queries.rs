@@ -152,13 +152,8 @@ pub(super) async fn visible_window_summary_for_auth_bounded(
         .window_activity_db
         .as_ref()
         .ok_or(RuntimeConsoleError::Internal)?;
-    #[cfg(feature = "experimental-code-mode")]
-    let events = db.list_window_activity_events_with_code_mode_composition(
-        window_key,
-        principal,
-        activity_scan_limit,
-    );
-    #[cfg(not(feature = "experimental-code-mode"))]
+    // Summary fields do not consume Code Mode composition or audit summary JSON.
+    // Keep full composition hydration on the selected Window detail path only.
     let events = db.list_window_activity_events(window_key, principal, activity_scan_limit);
     let events = events.map_err(|_| RuntimeConsoleError::Internal)?;
     let caller_principal = if principal.is_none() && !auth.is_admin_caller() {

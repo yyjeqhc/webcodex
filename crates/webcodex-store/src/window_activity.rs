@@ -4,7 +4,7 @@ use crate::models::{
 };
 use crate::Database;
 use rusqlite::{params, Connection};
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use webcodex_core::workflow_session_contract::is_safe_job_id;
 
 // Window history is already bounded by ActionAudit retention. Keep the human
@@ -598,7 +598,7 @@ fn collect_window_event_rows(
             async_job_id,
             observed_job_ids,
             recorder_gap_session_id: row.get(12)?,
-            workflow_links: workflow_links_for_event(conn, &event_id)?,
+            workflow_links: Vec::new(),
             principal_correlation_kind: row.get(13)?,
             principal_correlation_id: row.get(14)?,
             request_observed_at_ms: row.get(15)?,
@@ -618,28 +618,40 @@ fn collect_window_event_rows(
             },
         });
     }
+    // Fetch links for the exact bounded page in one query while holding the same
+    // connection lock. Per-event queries made each Window list refresh perform
+    // thousands of statement preparations before it could return any rows.
+    if !out.is_empty() {
+        let ids = out
+            .iter()
+            .map(|event| event.event_id.as_str())
+            .collect::<Vec<_>>();
+        let encoded_ids = serde_json::to_string(&ids)?;
+        let positions = ids
+            .into_iter()
+            .enumerate()
+            .map(|(index, id)| (id.to_string(), index))
+            .collect::<HashMap<_, _>>();
+        let mut stmt = conn.prepare_cached(
+            "SELECT event_id, workflow_session_id, project, workflow_session_relation, linked_at_ms
+             FROM action_event_workflow_links
+             WHERE event_id IN (SELECT value FROM json_each(?1))
+             ORDER BY event_id ASC, linked_at_ms ASC, workflow_session_relation ASC, workflow_session_id ASC",
+        )?;
+        let mut links = stmt.query(params![encoded_ids])?;
+        while let Some(row) = links.next()? {
+            let event_id: String = row.get(0)?;
+            if let Some(&index) = positions.get(&event_id) {
+                out[index].workflow_links.push(WindowWorkflowLinkRecord {
+                    workflow_session_id: row.get(1)?,
+                    project: row.get(2)?,
+                    relation: row.get(3)?,
+                    linked_at_ms: row.get(4)?,
+                });
+            }
+        }
+    }
     Ok(out)
-}
-
-fn workflow_links_for_event(
-    conn: &Connection,
-    event_id: &str,
-) -> anyhow::Result<Vec<WindowWorkflowLinkRecord>> {
-    let mut stmt = conn.prepare(
-        "SELECT workflow_session_id, project, workflow_session_relation, linked_at_ms
-         FROM action_event_workflow_links
-         WHERE event_id = ?1
-         ORDER BY linked_at_ms ASC, workflow_session_relation ASC, workflow_session_id ASC",
-    )?;
-    let rows = stmt.query_map(params![event_id], |row| {
-        Ok(WindowWorkflowLinkRecord {
-            workflow_session_id: row.get(0)?,
-            project: row.get(1)?,
-            relation: row.get(2)?,
-            linked_at_ms: row.get(3)?,
-        })
-    })?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
 }
 
 fn relation_set(csv: Option<String>) -> Vec<String> {
@@ -691,6 +703,8 @@ fn collect_session_window_rows(
 
 #[cfg(test)]
 mod tests {
+    mod queries;
+
     use super::*;
     use crate::models::{ActionEventRecord, ActionEventWorkflowLinkRecord, ActionSessionRecord};
 

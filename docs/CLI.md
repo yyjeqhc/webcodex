@@ -25,11 +25,18 @@ For everyday development, follow the [Full Setup guide](PERSONAL_SETUP.md) and u
 
 ### Environment configuration
 
+For a new personal machine: `webcodex environment configure --create --runner --scope user`,
+then `webcodex environment configure-tunnel default` and `webcodex environment status`.
+Local user/Runner credentials are created internally; no pairing input is needed.
+Linux user services depend on linger for post-logout persistence; macOS LaunchAgents
+and Windows interactive tasks require a signed-in owner. Scope changes do not adopt
+existing services. [Lifecycle and compatibility details](implementation/personal-environment-lifecycle.md).
+
 `webcodex environment` and Desktop call the same setup core. This namespace configures the machine's persistent environment; the existing project-level `webcodex setup` command keeps its original meaning. Installer availability and native acceptance are tracked in [Unified installation](unified-installation.md) and [Deployment validation](unified-deployment-validation.md).
 
 | Command | Purpose |
 | --- | --- |
-| `webcodex environment configure` | Interactively choose create/join and project/skip, then collect the required address, authentication, and system authorization. |
+| `webcodex environment configure [--scope user\|system]` | Choose create/join and local Runner/viewer. New environments default to the owner's user service; existing environments keep their saved manager. System scope explicitly requests machine-service authorization. |
 | `configure --create --project PATH` / `configure --create --no-project` | Create or resume local Server + Runner / Server-only setup. |
 | `configure --join URL --project PATH --code-stdin` | Join with a project; read one Runner pairing code from stdin, then save credentials, register the project, install services, and verify readiness. |
 | `configure --join URL --no-project --token-file PATH` | Join as a viewer with a protected user API credential; creates no local Runner identity or service. Omit the file option for hidden terminal input. |

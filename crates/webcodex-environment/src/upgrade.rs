@@ -2823,6 +2823,7 @@ mod tests {
                 schema_version: 1,
                 environment_id: "env-fixture".into(),
                 request: SetupRequest {
+                    service_scope: service::ServiceScope::System,
                     mode: EnvironmentMode::Join,
                     server_url: "http://127.0.0.1:1".into(),
                     project: None,

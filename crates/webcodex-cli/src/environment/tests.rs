@@ -1,5 +1,26 @@
 use super::*;
 
+#[test]
+fn service_scope_is_only_a_new_setup_choice_not_a_control_retarget() {
+    let selected = input(&["configure", "--create", "--runner", "--scope", "user"]).unwrap();
+    assert_eq!(selected.scope, Some(service::ServiceScope::User));
+    assert_eq!(
+        input(&["configure", "--create", "--runner", "--scope", "system"])
+            .unwrap()
+            .scope,
+        Some(service::ServiceScope::System)
+    );
+    for args in [
+        vec!["configure", "--scope", "auto"],
+        vec!["resume", "--scope", "user"],
+        vec!["start", "server", "--scope", "user"],
+        vec!["configure", "--scope", "user", "--scope", "system"],
+    ] {
+        assert!(input(&args).is_err());
+    }
+    assert!(!selected.code_stdin && selected.token_file.is_none());
+}
+
 fn input(args: &[&str]) -> Result<Input, String> {
     parse(
         &args

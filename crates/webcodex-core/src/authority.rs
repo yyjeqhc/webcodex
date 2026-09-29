@@ -4,6 +4,8 @@
 //! verification remain application concerns. This module owns only stable scope
 //! names and policy values consumed by auth, route metadata, and tool contracts.
 
+pub mod profiles;
+
 pub const SCOPE_RUNTIME_READ: &str = "runtime:read";
 /// Consequential management of one exact caller-visible Runner process. This is
 /// deliberately independent from Project, Job, Plugin, and administrator scopes.

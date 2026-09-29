@@ -5,9 +5,8 @@ use sha2::{Digest, Sha256};
 use super::context::{AuthContext, AuthKind};
 use super::scopes::{
     SCOPE_AGENT_JOB_UPDATE, SCOPE_AGENT_POLL, SCOPE_AGENT_REGISTER, SCOPE_AGENT_RESULT,
-    SCOPE_COMMUNICATION_MANAGE, SCOPE_COMMUNICATION_READ, SCOPE_COMPUTER_CONTROL,
-    SCOPE_COMPUTER_READ, SCOPE_JOB_RUN, SCOPE_MEMORY_MANAGE, SCOPE_MEMORY_READ, SCOPE_PROJECT_READ,
-    SCOPE_PROJECT_WRITE, SCOPE_RUNNER_MANAGE, SCOPE_RUNTIME_READ, SCOPE_SESSION_COLLABORATE,
+    SCOPE_COMMUNICATION_MANAGE, SCOPE_COMMUNICATION_READ, SCOPE_JOB_RUN, SCOPE_PROJECT_READ,
+    SCOPE_PROJECT_WRITE, SCOPE_RUNTIME_READ, SCOPE_SESSION_COLLABORATE,
 };
 
 /// Read the explicit-anonymous (`--open`) flag from the environment. When true,
@@ -126,21 +125,7 @@ pub(crate) fn shared_key_hash_of(token: &str) -> String {
 /// Model-facing authority of a direct hosted shared key. The OAuth shared-key
 /// bridge uses this exact closed set, so browser OAuth never inherits Agent
 /// transport scopes or unrelated future OAuth permissions.
-pub(crate) const DIRECT_SHARED_KEY_MODEL_SCOPES: &[&str] = &[
-    SCOPE_RUNTIME_READ,
-    SCOPE_RUNNER_MANAGE,
-    SCOPE_SESSION_COLLABORATE,
-    SCOPE_PROJECT_READ,
-    SCOPE_PROJECT_WRITE,
-    SCOPE_MEMORY_READ,
-    SCOPE_MEMORY_MANAGE,
-    SCOPE_COMMUNICATION_READ,
-    SCOPE_COMMUNICATION_MANAGE,
-    SCOPE_JOB_RUN,
-    SCOPE_COMPUTER_READ,
-    SCOPE_COMPUTER_CONTROL,
-];
-
+pub(crate) use webcodex_core::authority::profiles::SHARED_KEY_MODEL as DIRECT_SHARED_KEY_MODEL_SCOPES;
 /// Scopes granted to interactive shared-key callers. These include the Agent
 /// transport needed by a local Runner, but remain intentionally below account
 /// management and admin. The transport surface still admits only direct

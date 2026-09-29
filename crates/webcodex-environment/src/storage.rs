@@ -19,6 +19,7 @@ pub fn default_environment_dir() -> SetupResultValue<PathBuf> {
         })
 }
 
+#[derive(Clone)]
 pub struct EnvironmentStore {
     root: PathBuf,
 }

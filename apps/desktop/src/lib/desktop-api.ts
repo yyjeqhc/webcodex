@@ -86,6 +86,7 @@ export const desktopApi = {
       request: { projectPath: projectPath ?? null },
     }),
   configureEnvironment: (request: {
+    serviceScope?: "user" | "system";
     mode: "create" | "join";
     serverUrl?: string | null;
     projectPath?: string | null;

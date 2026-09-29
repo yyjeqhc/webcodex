@@ -22,11 +22,17 @@ Server API 完成。
 
 ### 环境配置
 
+个人新安装可执行 `webcodex environment configure --create --runner --scope user`，
+再运行 `webcodex environment configure-tunnel default` 和 `webcodex environment status`。
+同机用户/Runner 凭据由内部生成，无需手动 pairing。Linux 退出登录后的持续运行取决于 linger；
+macOS LaunchAgent 与 Windows 用户计划任务需要该用户保持登录。旧服务不会被自动接管。
+[生命周期与兼容边界](implementation/personal-environment-lifecycle.md)。
+
 `webcodex environment` 与 Desktop 调用同一配置核心。该命名空间配置本机持久环境；原有项目级 `webcodex setup` 含义保持不变。安装包供应与原生验收状态见[统一安装指南](unified-installation.zh-CN.md)和[部署验收清单](unified-deployment-validation.md)。
 
 | 命令 | 用途 |
 | --- | --- |
-| `webcodex environment configure` | 交互选择创建/加入和项目/跳过，再收集必要地址、认证信息和系统授权。 |
+| `webcodex environment configure [--scope user\|system]` | 选择创建/加入与本机 Runner/查看端。新环境默认用户级服务，已有环境保留原作用域；system 明确选择机器启动服务并请求系统授权。 |
 | `configure --create --project PATH` / `configure --create --no-project` | 创建或继续配置本机 Server + Runner / 仅 Server 环境。 |
 | `configure --join URL --project PATH --code-stdin` | 带项目加入；从 stdin 读取一次性 Runner 配对码，完成凭据保存、项目注册、服务安装和就绪检查。 |
 | `configure --join URL --no-project --token-file PATH` | 从受保护文件读取用户 API 凭据，仅作为查看端加入；不创建本机 Runner 身份或服务。省略文件选项时使用隐藏终端输入。 |

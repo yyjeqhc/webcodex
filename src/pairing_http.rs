@@ -12,9 +12,6 @@ pub(crate) use runner_capabilities::{grant_runner_capabilities, runner_capabilit
 use crate::auth::{
     clean_token_name, generate_agent_token, generate_api_token, hash_token, scopes_to_string,
     token_prefix, validate_allowed_client_id, validate_username, AuthContext,
-    SCOPE_AGENT_JOB_UPDATE, SCOPE_AGENT_POLL, SCOPE_AGENT_REGISTER, SCOPE_AGENT_RESULT,
-    SCOPE_JOB_RUN, SCOPE_PROJECT_READ, SCOPE_PROJECT_WRITE, SCOPE_RUNTIME_READ,
-    SCOPE_SESSION_COLLABORATE,
 };
 use crate::db::PairingConsumeResult;
 use crate::json_error;
@@ -24,28 +21,15 @@ use crate::models::{
 use salvo::prelude::*;
 use serde::Deserialize;
 use serde_json::{json, Value};
-use webcodex_core::authority::{SCOPE_CODING_AGENT_RUN, SCOPE_RUNNER_MANAGE, SCOPE_SSH_LOCAL};
+use webcodex_core::authority::{SCOPE_CODING_AGENT_RUN, SCOPE_SSH_LOCAL};
 
 const DEFAULT_TTL_SECS: i64 = 600;
 const MIN_TTL_SECS: i64 = 60;
 const MAX_TTL_SECS: i64 = 3600;
 
-const ENROLL_USER_SCOPES: &[&str] = &[
-    SCOPE_RUNTIME_READ,
-    SCOPE_RUNNER_MANAGE,
-    SCOPE_SESSION_COLLABORATE,
-    SCOPE_PROJECT_READ,
-    SCOPE_PROJECT_WRITE,
-    SCOPE_JOB_RUN,
-];
-
-const ENROLL_AGENT_SCOPES: &[&str] = &[
-    SCOPE_AGENT_REGISTER,
-    SCOPE_AGENT_POLL,
-    SCOPE_AGENT_RESULT,
-    SCOPE_AGENT_JOB_UPDATE,
-];
-
+use webcodex_core::authority::{
+    profiles::LOCAL_USER as ENROLL_USER_SCOPES, AGENT_SCOPES as ENROLL_AGENT_SCOPES,
+};
 #[derive(Debug, Deserialize)]
 pub(crate) struct PairingCreateRequest {
     pub username: String,
@@ -481,6 +465,11 @@ mod tests {
     use salvo::test::{ResponseExt, TestClient};
     use salvo::{Router, Service};
     use std::sync::Arc;
+    use webcodex_core::authority::{
+        SCOPE_AGENT_JOB_UPDATE, SCOPE_AGENT_POLL, SCOPE_AGENT_REGISTER, SCOPE_AGENT_RESULT,
+        SCOPE_JOB_RUN, SCOPE_PROJECT_READ, SCOPE_PROJECT_WRITE, SCOPE_RUNNER_MANAGE,
+        SCOPE_RUNTIME_READ, SCOPE_SESSION_COLLABORATE,
+    };
 
     fn test_db() -> Database {
         let tmp = tempfile::tempdir().unwrap();

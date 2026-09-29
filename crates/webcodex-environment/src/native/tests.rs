@@ -125,6 +125,7 @@ fn record(
         schema_version: ENVIRONMENT_SCHEMA,
         environment_id: "fixture-environment".into(),
         request: SetupRequest {
+            service_scope: service::ServiceScope::System,
             mode,
             server_url,
             project,
@@ -141,6 +142,42 @@ fn record(
         projects: Vec::new(),
         configured: false,
     }
+}
+
+#[test]
+fn user_plans_keep_all_components_on_the_same_manager_without_system_entrypoints() {
+    let temp = crate::test_tempdir().unwrap();
+    let store = EnvironmentStore::open(temp.path().join("environment")).unwrap();
+    let mut saved = record(
+        "http://127.0.0.1:18880".into(),
+        None,
+        EnvironmentMode::Create {
+            listen: "127.0.0.1:18880".into(),
+        },
+    );
+    saved.request.runner = Some(true);
+    saved.runner_client_id = Some("user-runner".into());
+    saved.request.service_scope = service::ServiceScope::User;
+    // Pure plans: no platform manager or local credentials are touched.
+    for spec in [
+        service_spec(&store, &saved, Component::Server).unwrap(),
+        service_spec(&store, &saved, Component::Runner).unwrap(),
+        crate::tunnel_service_spec(&store, &saved, "default").unwrap(),
+    ] {
+        assert_eq!(spec.scope, service::ServiceScope::User);
+        assert!(spec.linux_socket.is_none());
+        assert!(matches!(
+            spec.account,
+            ServiceAccount::SystemUser { group: None, .. }
+        ));
+        for arg in ["--windows-service", "--computer-session-dir"] {
+            assert!(!spec.args.iter().any(|value| value == arg));
+        }
+        #[cfg(windows)]
+        assert!(spec.environment.is_empty());
+    }
+    assert!(!store.root().join("runner.toml").exists());
+    assert!(!store.root().join("webcodex-user-token").exists());
 }
 
 #[tokio::test]

@@ -9,9 +9,13 @@ use std::path::{Path, PathBuf};
 #[cfg(target_os = "linux")]
 mod linux;
 mod log;
+mod scope;
+pub use scope::ServiceScope;
 #[cfg(target_os = "macos")]
 mod macos;
 pub mod runtime;
+#[cfg(any(windows, test))]
+mod windows_user;
 pub use log::{ServiceLog, ServiceLogEvent, ServiceLogGuard, SERVICE_LOG_NAME};
 #[cfg(windows)]
 mod windows;
@@ -24,7 +28,7 @@ pub enum Component {
 }
 
 impl Component {
-    fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::Server => "server",
             Self::Runner => "runner",
@@ -55,6 +59,9 @@ pub struct LinuxSocketSpec {
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ServiceSpec {
+    /// Persisted manager namespace. Old specs remain System; never guess on resume.
+    #[serde(default, skip_serializing_if = "ServiceScope::is_system")]
+    pub scope: ServiceScope,
     /// Platform-independent service basename, e.g. `webcodex` or
     /// `webcodex-runner`; the Linux unit is `<id>.service`.
     pub id: String,
@@ -77,6 +84,7 @@ impl fmt::Debug for ServiceSpec {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ServiceSpec")
             .field("id", &self.id)
+            .field("scope", &self.scope)
             .field("component", &self.component)
             .field("program", &self.program)
             .field("args", &"[REDACTED]")
@@ -231,6 +239,15 @@ pub fn current_account() -> Result<CurrentAccount, ServiceError> {
 /// ownership; callers must stop the service before a populated-tree migration.
 pub fn grant_service_directory(spec: &ServiceSpec, path: &Path) -> Result<(), ServiceError> {
     validate_spec(spec)?;
+    if spec.scope == ServiceScope::User {
+        scope::verify_current_user(spec)?;
+        return crate::storage::ensure_private_directory(path).map_err(|_| {
+            ServiceError::new(
+                ServiceErrorCode::PermissionDenied,
+                "User service directory must remain private to its owner",
+            )
+        });
+    }
     platform::grant_service_directory(spec, path)
 }
 
@@ -243,6 +260,12 @@ impl ServiceManager {
         credential: Option<&ServiceCredential>,
     ) -> Result<ServiceStatus, ServiceError> {
         validate_spec(spec)?;
+        if spec.scope == ServiceScope::User {
+            return Err(ServiceError::new(
+                ServiceErrorCode::Unsupported,
+                "User services do not prepare an SCM account",
+            ));
+        }
         platform::prepare_runner(spec, credential)
     }
 
@@ -253,15 +276,29 @@ impl ServiceManager {
         project: Option<&Path>,
     ) -> Result<(), ServiceError> {
         validate_spec(spec)?;
+        if spec.scope == ServiceScope::User {
+            return Err(ServiceError::new(
+                ServiceErrorCode::Unsupported,
+                "User services do not accept an SCM password",
+            ));
+        }
         platform::validate_credential(spec, credential, project)
     }
     pub fn inspect(spec: &ServiceSpec) -> Result<ServiceStatus, ServiceError> {
         validate_spec(spec)?;
+        #[cfg(windows)]
+        if spec.scope == ServiceScope::User {
+            return windows_user::inspect(spec);
+        }
         platform::inspect(spec)
     }
 
     pub fn preflight(spec: &ServiceSpec) -> Result<ServiceStatus, ServiceError> {
         validate_spec(spec)?;
+        #[cfg(windows)]
+        if spec.scope == ServiceScope::User {
+            return windows_user::preflight(spec);
+        }
         platform::preflight(spec)
     }
 
@@ -276,26 +313,46 @@ impl ServiceManager {
         credential: Option<&ServiceCredential>,
     ) -> Result<ServiceStatus, ServiceError> {
         validate_spec(spec)?;
+        #[cfg(windows)]
+        if spec.scope == ServiceScope::User {
+            return windows_user::install(spec, credential);
+        }
         platform::install(spec, credential)
     }
 
     pub fn start(spec: &ServiceSpec) -> Result<ServiceStatus, ServiceError> {
         validate_spec(spec)?;
+        #[cfg(windows)]
+        if spec.scope == ServiceScope::User {
+            return windows_user::control(spec, "start");
+        }
         platform::start(spec)
     }
 
     pub fn stop(spec: &ServiceSpec) -> Result<ServiceStatus, ServiceError> {
         validate_spec(spec)?;
+        #[cfg(windows)]
+        if spec.scope == ServiceScope::User {
+            return windows_user::control(spec, "stop");
+        }
         platform::stop(spec)
     }
 
     pub fn restart(spec: &ServiceSpec) -> Result<ServiceStatus, ServiceError> {
         validate_spec(spec)?;
+        #[cfg(windows)]
+        if spec.scope == ServiceScope::User {
+            return windows_user::control(spec, "restart");
+        }
         platform::restart(spec)
     }
 
     pub fn uninstall(spec: &ServiceSpec) -> Result<ServiceStatus, ServiceError> {
         validate_spec(spec)?;
+        #[cfg(windows)]
+        if spec.scope == ServiceScope::User {
+            return windows_user::control(spec, "uninstall");
+        }
         platform::uninstall(spec)
     }
 
@@ -307,6 +364,12 @@ impl ServiceManager {
         credential: &ServiceCredential,
     ) -> Result<ServiceStatus, ServiceError> {
         validate_spec(spec)?;
+        if spec.scope == ServiceScope::User {
+            return Err(ServiceError::new(
+                ServiceErrorCode::Unsupported,
+                "User services do not store an account password",
+            ));
+        }
         platform::update_credential(spec, credential)
     }
 }
@@ -411,6 +474,15 @@ fn validate_spec(spec: &ServiceSpec) -> Result<(), ServiceError> {
             ServiceErrorCode::InvalidSpec,
             "invalid service identity, executable, arguments, or environment",
         ));
+    }
+    if spec.scope == ServiceScope::User {
+        scope::user_account(spec)?;
+        if spec.linux_socket.is_some() || spec.args.iter().any(|arg| arg == "--windows-service") {
+            return Err(ServiceError::new(
+                ServiceErrorCode::InvalidSpec,
+                "User services cannot select SCM entrypoints or system socket activation",
+            ));
+        }
     }
     if spec.component == Component::Runner
         && !matches!(spec.account, ServiceAccount::SystemUser { .. })
@@ -663,6 +735,7 @@ mod tests {
 
     pub(super) fn sample_spec() -> ServiceSpec {
         ServiceSpec {
+            scope: ServiceScope::System,
             id: "webcodex-runner".into(),
             component: Component::Runner,
             program: PathBuf::from("/usr/bin/webcodex-runner"),

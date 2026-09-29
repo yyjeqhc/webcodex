@@ -23,6 +23,7 @@ mod legacy_cli;
 mod legacy_system_server;
 #[cfg(target_os = "linux")]
 mod legacy_systemd;
+mod local_status;
 mod migration;
 mod native;
 mod privilege;
@@ -33,6 +34,7 @@ pub mod session_service;
 mod storage;
 mod tunnel;
 mod types;
+pub use local_status::{ComponentObservation, LocalEnvironmentStatus};
 pub use upgrade::{upgrade_observation, UpgradeObservation, UpgradeOutcome};
 pub mod unified_update;
 mod upgrade;
@@ -44,8 +46,8 @@ pub use migration::{
     LegacyProcess, LegacyTunnelProfile, MigrationJournal, MigrationPhase,
 };
 pub use native::{
-    canonical_server_url, current_account, read_secret, service_spec, validate_request,
-    NativeEnvironment,
+    canonical_server_url, current_account, read_secret, resolve_service_scope, service_spec,
+    validate_request, NativeEnvironment,
 };
 pub use privilege::run_privileged_service_request;
 pub use storage::{default_environment_dir, EnvironmentStore};

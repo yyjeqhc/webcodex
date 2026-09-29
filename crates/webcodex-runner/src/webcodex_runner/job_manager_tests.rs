@@ -21,6 +21,8 @@ use webcodex_core::runner_protocol::{RunnerEnvelope, VALIDATION_STEP_WAIT_FAILED
 
 #[path = "job_manager_tests/project_build.rs"]
 mod project_build;
+#[path = "job_manager_tests/project_validation.rs"]
+mod project_validation;
 
 fn retained_terminal_job(job_id: &str, ended_at: i64) -> RunningJob {
     let mut snapshot = test_job_snapshot(job_id);

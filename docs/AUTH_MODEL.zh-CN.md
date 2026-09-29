@@ -49,7 +49,10 @@ WebCodex 内部还有一些非 secret 的 ID 与 opaque tool state。普通用�
 
 ## Server bootstrap token
 
-`WEBCODEX_TOKEN` 是 Server bootstrap/admin 凭据。`webcodex server init` 会把它保存到 Server 环境中。它只用于初始管理、建用户/pairing 与紧急恢复，不用于 MCP、GPT Actions、Runner 连接或日常开发。
+`WEBCODEX_TOKEN` 是 Server bootstrap/admin 凭据。`webcodex server init` 会把它保存到 Server 环境中。通常用于初始管理、建用户/pairing 与紧急恢复，不应手动交给外部 MCP/GPT 客户端或用作 Runner token。
+
+同一所有者自部署的 Desktop/本地 Server Tunnel 是明确的例外：受保护的本地 authorization 文件在内部使用 bootstrap，ChatGPT 配置中不包含 WebCodex secret。此可信连接使用该所有者的权限，并不是受限的多用户委托；无需再签发一份 Tunnel token。跨信任域仍使用已有的委托凭据。
+[个人部署生命周期](implementation/personal-environment-lifecycle.md)。
 
 ## Pairing 与 managed login
 

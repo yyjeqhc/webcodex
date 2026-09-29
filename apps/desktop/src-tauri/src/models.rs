@@ -554,6 +554,8 @@ pub struct StoredRuntime {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EnvironmentInput {
+    /// New personal environments default to user scope; saved/migrated ones keep their namespace.
+    pub service_scope: Option<webcodex_environment::service::ServiceScope>,
     pub mode: String,
     pub server_url: Option<String>,
     pub project_path: Option<String>,

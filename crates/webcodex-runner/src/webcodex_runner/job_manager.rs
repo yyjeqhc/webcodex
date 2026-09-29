@@ -1004,6 +1004,15 @@ fn job_prestart_lifecycle(operation: &RunnerJobOperation) -> Option<ShellCommand
         | RunnerJobOperation::StartDetachedProcess(_)
         | RunnerJobOperation::StartScript(_)
         | RunnerJobOperation::StartSkillResource(_) => Some(ShellCommandExecutionState::NotStarted),
+        RunnerJobOperation::StartValidation(operation)
+            if operation
+                .context
+                .validation
+                .as_ref()
+                .is_some_and(|metadata| metadata.project_validation.is_some()) =>
+        {
+            Some(ShellCommandExecutionState::NotStarted)
+        }
         RunnerJobOperation::StartValidation(_) | RunnerJobOperation::Stop { .. } => None,
     }
 }
@@ -2883,6 +2892,17 @@ impl JobManager {
             ),
             _ => unreachable!("shell Job starter received non shell/validation operation"),
         };
+        if validation {
+            // A project validation can wait in the local queue after its
+            // admission fence. Recheck the retained project plan after that
+            // wait and before entering the native validation process path.
+            if let Err(error) =
+                super::validation::project::fence(&policy, &project_registry_dir, &operation)
+            {
+                self.fail_job(&operation, error, None);
+                return;
+            }
+        }
         let capture_cargo_test_count = context.validation.as_ref().is_some_and(|metadata| {
             metadata.adapter == "cargo_test"
                 && metadata.kind == "test"

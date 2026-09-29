@@ -12,20 +12,9 @@ use std::path::Path;
 use std::time::Duration;
 
 const HTTP_LIMIT: usize = 1024 * 1024;
-const USER_SCOPES: &[&str] = &[
-    "runtime:read",
-    "runner:manage",
-    "session:collaborate",
-    "project:read",
-    "project:write",
-    "job:run",
-];
-const RUNNER_SCOPES: &[&str] = &[
-    "agent:register",
-    "agent:poll",
-    "agent:result",
-    "agent:job_update",
-];
+use webcodex_core::authority::{
+    profiles::LOCAL_USER as USER_SCOPES, AGENT_SCOPES as RUNNER_SCOPES,
+};
 
 /// The production adapter. Neither frontend supplies its own deployment backend.
 pub struct NativeEnvironment {
@@ -560,7 +549,22 @@ impl NativeEnvironment {
                     .map(|journal| journal.environment)
             })
             .ok_or_else(|| diagnostic("not_configured", "This machine has no saved environment"))?;
-        let observation = self.observe(store, &record).await?;
+        let mut observation = self.observe(store, &record).await?;
+        let store_copy = store.clone();
+        let record_copy = record.clone();
+        let api_ready = observation.server_reachable && observation.authenticated;
+        let runner_online = observation.runner_online;
+        match tokio::task::spawn_blocking(move || {
+            crate::local_status::collect(&store_copy, &record_copy, api_ready, runner_online)
+        })
+        .await
+        {
+            Ok(local) => observation.local = Some(local),
+            Err(_) => observation.diagnostics.push(diagnostic(
+                "local_observation_unavailable",
+                "Native service status could not be observed",
+            )),
+        }
         Ok(SetupResult {
             environment: record,
             observation,
@@ -572,80 +576,78 @@ impl NativeEnvironment {
     pub async fn doctor(&mut self, store: &EnvironmentStore) -> SetupResultValue<SetupResult> {
         let mut result = self.status(store).await?;
         let record = &result.environment;
-        for component in [
-            record.request.local_server().then_some(Component::Server),
-            record.request.local_runner().then_some(Component::Runner),
-        ]
-        .into_iter()
-        .flatten()
-        {
-            let name = match component {
-                Component::Server => "server",
-                Component::Runner => "runner",
-                Component::Tunnel => unreachable!(),
-            };
-            match service_spec(store, record, component) {
-                Ok(spec) => {
-                    match ServiceManager::inspect(&spec).map_err(service_error) {
-                        Ok(status) => result
-                            .observation
-                            .diagnostics
-                            .push(service_diagnostic(name, &status)),
-                        Err(error) => result.observation.diagnostics.push(error),
-                    }
-                    #[cfg(any(windows, target_os = "macos"))]
+        // Reuse the native observations collected by status on its blocking
+        // worker. Doctor must not re-query every manager/profile synchronously
+        // or mix a second service snapshot into the same readiness summary.
+        if let Some(local) = &result.observation.local {
+            for row in &local.components {
+                if let Some(status) = &row.service {
                     result
                         .observation
                         .diagnostics
-                        .push(service_log_diagnostic(name, &spec));
+                        .push(service_diagnostic(&row.component, status));
                 }
-                Err(error) => result.observation.diagnostics.push(error),
-            }
-            #[cfg(any(windows, target_os = "macos"))]
-            if component == Component::Runner {
-                match service_spec(store, record, component).and_then(|spec| {
-                    crate::session_service::inspect_session_helper(&spec, &store.root().join("cu"))
-                        .map_err(service_error)
-                }) {
-                    Ok(status) => result
-                        .observation
-                        .diagnostics
-                        .push(service_diagnostic("computer_helper", &status)),
-                    Err(error) => result.observation.diagnostics.push(error),
+                if let Some(error) = &row.diagnostic {
+                    result.observation.diagnostics.push(error.clone());
+                }
+                if row.component == "tunnel" {
+                    let ready = row.tunnel_ready == Some(true) && row.local_mcp_ready == Some(true);
+                    result.observation.diagnostics.push(SetupDiagnostic::new(
+                        if ready {
+                            "tunnel_ready"
+                        } else {
+                            "tunnel_not_ready"
+                        },
+                        &format!(
+                            "Tunnel profile {}: tunnel_ready={:?}, local_mcp_ready={:?}",
+                            row.profile.as_deref().unwrap_or("unobserved"),
+                            row.tunnel_ready,
+                            row.local_mcp_ready
+                        ),
+                        "Check the observed service and private readiness marker before retrying",
+                    ));
+                }
+                #[cfg(any(windows, target_os = "macos"))]
+                {
+                    let spec = match row.component.as_str() {
+                        "server" => service_spec(store, record, Component::Server),
+                        "runner" => service_spec(store, record, Component::Runner),
+                        "tunnel" => crate::tunnel_service_spec(
+                            store,
+                            record,
+                            row.profile.as_deref().unwrap_or("default"),
+                        ),
+                        _ => continue,
+                    };
+                    if let Ok(spec) = spec {
+                        result
+                            .observation
+                            .diagnostics
+                            .push(service_log_diagnostic(&row.component, &spec));
+                    }
                 }
             }
         }
-        if record.request.local_server() {
-            match crate::tunnel::tunnel_profiles(store) {
-                Ok(profiles) => {
-                    for profile in profiles {
-                        match self.tunnel_status(store, &profile.profile_id) {
-                            Ok(tunnel) => {
-                                result
-                                    .observation
-                                    .diagnostics
-                                    .push(service_diagnostic("tunnel", &tunnel.service_status));
-                                result.observation.diagnostics.push(SetupDiagnostic::new(
-                                if tunnel.ready { "tunnel_ready" } else { "tunnel_not_ready" },
-                                &format!("Tunnel profile {}: tunnel_ready={}, local_mcp_ready={}", profile.profile_id, tunnel.tunnel_ready, tunnel.local_mcp_ready),
-                                "Check the private Tunnel readiness marker and managed service before retrying",
-                            ));
-                                #[cfg(any(windows, target_os = "macos"))]
-                                if let Ok(spec) = crate::tunnel::tunnel_service_spec(
-                                    store,
-                                    record,
-                                    &profile.profile_id,
-                                ) {
-                                    result
-                                        .observation
-                                        .diagnostics
-                                        .push(service_log_diagnostic("tunnel", &spec));
-                                }
-                            }
-                            Err(error) => result.observation.diagnostics.push(error),
-                        }
-                    }
-                }
+        #[cfg(any(windows, target_os = "macos"))]
+        if record.request.local_runner() && record.request.service_scope.is_system() {
+            let spec = service_spec(store, record, Component::Runner)?;
+            let session_directory = store.root().join("cu");
+            let observed = tokio::task::spawn_blocking(move || {
+                crate::session_service::inspect_session_helper(&spec, &session_directory)
+                    .map_err(service_error)
+            })
+            .await
+            .map_err(|_| {
+                diagnostic(
+                    "local_observation_unavailable",
+                    "Computer helper status could not be observed",
+                )
+            })?;
+            match observed {
+                Ok(status) => result
+                    .observation
+                    .diagnostics
+                    .push(service_diagnostic("computer_helper", &status)),
                 Err(error) => result.observation.diagnostics.push(error),
             }
         }
@@ -1285,7 +1287,9 @@ impl EnvironmentBackend for NativeEnvironment {
                         if matches!(step, ServerServiceInstall | RunnerServiceInstall) =>
                     {
                         #[cfg(any(windows, target_os = "macos"))]
-                        if component == Component::Runner {
+                        if component == Component::Runner
+                            && record.request.service_scope.is_system()
+                        {
                             let helper = crate::session_service::inspect_session_helper(
                                 &service_spec(store, record, component)?,
                                 &store.root().join("cu"),
@@ -1389,7 +1393,7 @@ impl EnvironmentBackend for NativeEnvironment {
                         .map_err(service_error)?;
                 }
                 #[cfg(windows)]
-                if record.request.local_runner() {
+                if record.request.local_runner() && record.request.service_scope.is_system() {
                     // SCM holds the only retained account password. Reserve a
                     // disabled definition before spending a one-time code.
                     let credential = secrets
@@ -1945,6 +1949,33 @@ pub(crate) fn validate_request_with_preserved_listen(
     Ok(())
 }
 
+/// One defaulting rule for CLI and Desktop. Old/mid-flight records keep their
+/// manager namespace; changing scope is an explicit migration, not configure.
+pub fn resolve_service_scope(
+    store: &EnvironmentStore,
+    requested: Option<service::ServiceScope>,
+) -> SetupResultValue<service::ServiceScope> {
+    let environment = store.load_environment()?;
+    let journal = store.load_journal()?;
+    if let (Some(record), Some(journal)) = (&environment, &journal) {
+        if record.request.service_scope != journal.environment.request.service_scope {
+            return Err(diagnostic("service_scope_conflict","Saved environment and setup journal have different service managers; reconcile the original operation first"));
+        }
+    }
+    let saved = environment
+        .as_ref()
+        .map(|record| record.request.service_scope)
+        .or_else(|| {
+            journal
+                .as_ref()
+                .map(|journal| journal.environment.request.service_scope)
+        });
+    if saved.is_some() && requested.is_some() && saved != requested {
+        return Err(diagnostic("service_scope_conflict", "This environment already belongs to another service manager; resume its saved scope instead of adopting or replacing services"));
+    }
+    Ok(saved.or(requested).unwrap_or(service::ServiceScope::User))
+}
+
 pub fn service_spec(
     store: &EnvironmentStore,
     record: &EnvironmentRecord,
@@ -1955,6 +1986,7 @@ pub fn service_spec(
     }
     let account = &record.request.account;
     let server = component == Component::Server;
+    let scope = record.request.service_scope;
     let id = if cfg!(windows) {
         match component {
             Component::Server => "WebCodexServer".into(),
@@ -1971,7 +2003,7 @@ pub fn service_spec(
             Component::Tunnel => "webcodex-tunnel".into(),
         }
     };
-    let account = if cfg!(windows) && component != Component::Runner {
+    let account = if cfg!(windows) && component != Component::Runner && scope.is_system() {
         ServiceAccount::WindowsVirtual {
             name: format!("NT SERVICE\\{id}"),
         }
@@ -2019,7 +2051,10 @@ pub fn service_spec(
     if component == Component::Tunnel {
         args.extend(["--provider".into(), "openai".into(), "--json".into()]);
     }
-    if cfg!(windows) {
+    if scope == service::ServiceScope::User && component == Component::Runner {
+        args.truncate(2); // A signed-in user process does not use the system-service GUI relay.
+    }
+    if cfg!(windows) && scope.is_system() {
         args.splice(0..0, ["--windows-service".into(), id.clone()]);
     }
     let working_directory = if component != Component::Runner {
@@ -2036,6 +2071,7 @@ pub fn service_spec(
         BTreeMap::new()
     };
     Ok(ServiceSpec {
+        scope,
         id,
         component,
         program,
@@ -2045,7 +2081,7 @@ pub fn service_spec(
         config_identity: record.environment_id.clone(),
         env_file,
         environment,
-        linux_socket: if cfg!(target_os = "linux") && server {
+        linux_socket: if cfg!(target_os = "linux") && server && scope.is_system() {
             match &record.request.mode {
                 EnvironmentMode::Create { listen } => Some(LinuxSocketSpec {
                     listen: listen.clone(),

@@ -20,6 +20,26 @@ pub(super) fn store() -> DesktopResult<EnvironmentStore> {
     EnvironmentStore::open(default_environment_dir().map_err(desktop_error)?).map_err(desktop_error)
 }
 
+/// Read the canonical saved scope, rather than offering account-password
+/// recovery for every Windows Runner (interactive user tasks have no password).
+/// Unknown/mismatched environment identity leaves this UI capability disabled.
+pub(super) fn runner_uses_system_service(environment_id: &str) -> bool {
+    let observed = || -> Option<bool> {
+        let root = default_environment_dir().ok()?;
+        if !root.is_dir() {
+            return None;
+        }
+        let store = EnvironmentStore::open(root).ok()?;
+        let record = store.load_environment().ok()??;
+        Some(
+            record.environment_id == environment_id
+                && record.request.local_runner()
+                && record.request.service_scope.is_system(),
+        )
+    };
+    observed() == Some(true)
+}
+
 impl AppState {
     pub async fn repair_environment_user_credential(
         &self,
@@ -435,6 +455,15 @@ impl DesktopCore {
         crate::runtime_selection::verify_resolved_files(&binaries).await?;
         self.snapshot.binaries = Some(binaries.info());
         let request = SetupRequest {
+            service_scope: if legacy {
+                if input.service_scope.is_some_and(|scope| !scope.is_system()) {
+                    return Err(migration_target_conflict());
+                }
+                webcodex_environment::service::ServiceScope::System
+            } else {
+                webcodex_environment::resolve_service_scope(&store()?, input.service_scope)
+                    .map_err(desktop_error)?
+            },
             runner: input.runner.or_else(|| {
                 self.config
                     .topology

@@ -3,6 +3,7 @@ use crate::auth::{AuthContext, AuthKind};
 use salvo::affix_state;
 use salvo::test::{ResponseExt, TestClient};
 use salvo::{Router, Service};
+use webcodex_core::authority::{SCOPE_RUNNER_MANAGE, SCOPE_RUNTIME_READ};
 
 #[tokio::test]
 async fn operator_grant_reads_canonical_runner_owner_and_rejects_wrong_or_offline_target() {

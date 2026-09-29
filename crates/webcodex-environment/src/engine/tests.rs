@@ -57,6 +57,7 @@ impl EnvironmentBackend for Host {
 }
 fn request(create: bool, project: bool) -> SetupRequest {
     SetupRequest {
+        service_scope: service::ServiceScope::System,
         mode: if create {
             EnvironmentMode::Create {
                 listen: "127.0.0.1:8080".into(),
@@ -256,6 +257,62 @@ async fn unpersisted_enrollment_never_automatically_redeems_again() {
         )
         .await
         .unwrap();
+}
+
+#[tokio::test]
+async fn user_scope_is_persisted_and_never_reinterprets_an_existing_system_setup() {
+    let dir = crate::test_tempdir().unwrap();
+    let store = EnvironmentStore::open(dir.path().join("environment")).unwrap();
+    assert_eq!(
+        resolve_service_scope(&store, None).unwrap(),
+        service::ServiceScope::User
+    );
+    let mut setup = EnvironmentSetup::new(Host::default());
+    let mut original = request(true, false);
+    original.runner = Some(true);
+    original.service_scope = service::ServiceScope::User;
+    setup
+        .configure(&store, original.clone(), &SetupSecrets::default(), |_| {})
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .load_environment()
+            .unwrap()
+            .unwrap()
+            .request
+            .service_scope,
+        service::ServiceScope::User
+    );
+    assert_eq!(
+        resolve_service_scope(&store, None).unwrap(),
+        service::ServiceScope::User
+    );
+    assert_eq!(
+        resolve_service_scope(&store, Some(service::ServiceScope::System))
+            .unwrap_err()
+            .code,
+        "service_scope_conflict"
+    );
+    assert!(!setup.backend.effects.contains(&SetupStep::RunnerEnrollment));
+    let old = serde_json::to_value(request(true, false)).unwrap();
+    assert!(old.get("service_scope").is_none());
+    let restored: SetupRequest = serde_json::from_value(old).unwrap();
+    assert_eq!(restored.service_scope, service::ServiceScope::System);
+    let before = setup.backend.effects.len();
+    let mut changed = original;
+    changed.service_scope = service::ServiceScope::System;
+    assert_eq!(
+        setup
+            .configure(&store, changed, &SetupSecrets::default(), |_| {})
+            .await
+            .unwrap_err()
+            .code,
+        "environment_conflict"
+    );
+    assert_eq!(setup.backend.effects.len(), before);
+    std::fs::write(store.root().join("setup.json"), "broken").unwrap();
+    assert!(resolve_service_scope(&store, None).is_err());
 }
 
 #[tokio::test]

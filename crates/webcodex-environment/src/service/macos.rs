@@ -7,6 +7,42 @@ use std::process::Command;
 
 const DAEMON_DIR: &str = "/Library/LaunchDaemons";
 
+#[cfg(test)]
+mod scope_tests {
+    use super::*;
+    #[test]
+    fn user_launch_agent_keeps_owner_domain_separate_from_system_daemon() {
+        let mut spec = crate::service::tests::sample_spec();
+        let system = render_plist(&spec).unwrap();
+        assert!(system.contains("<key>UserName</key>"));
+        spec.scope = ServiceScope::User;
+        if let ServiceAccount::SystemUser {
+            group,
+            home,
+            expected_identity,
+            ..
+        } = &mut spec.account
+        {
+            *group = None;
+            *home = Some("/Users/alice".into());
+            *expected_identity = "501".into();
+        }
+        validate_spec(&spec).unwrap();
+        assert_eq!(domain(&spec).unwrap(), "gui/501");
+        assert!(plist_path(&spec)
+            .unwrap()
+            .starts_with("/Users/alice/Library/LaunchAgents"));
+        assert_eq!(
+            target(&spec).unwrap(),
+            "gui/501/org.webcodex.webcodex-runner"
+        );
+        let body = render_plist(&spec).unwrap();
+        assert!(!body.contains("<key>UserName</key>"));
+        assert!(!body.contains("<key>GroupName</key>"));
+        assert!(body.contains("<key>KeepAlive</key><true/>"));
+    }
+}
+
 pub(super) fn current_account() -> Result<CurrentAccount, ServiceError> {
     current_unix_account()
 }
@@ -42,8 +78,23 @@ pub(super) fn grant_service_directory(spec: &ServiceSpec, path: &Path) -> Result
 fn label(spec: &ServiceSpec) -> String {
     format!("org.webcodex.{}", spec.id)
 }
-fn plist_path(spec: &ServiceSpec) -> PathBuf {
-    Path::new(DAEMON_DIR).join(format!("{}.plist", label(spec)))
+fn domain(spec: &ServiceSpec) -> Result<String, ServiceError> {
+    if spec.scope == ServiceScope::User {
+        Ok(format!("gui/{}", scope::user_account(spec)?.0))
+    } else {
+        Ok("system".into())
+    }
+}
+fn target(spec: &ServiceSpec) -> Result<String, ServiceError> {
+    Ok(format!("{}/{}", domain(spec)?, label(spec)))
+}
+fn plist_path(spec: &ServiceSpec) -> Result<PathBuf, ServiceError> {
+    let directory = if spec.scope == ServiceScope::User {
+        scope::user_account(spec)?.1.join("Library/LaunchAgents")
+    } else {
+        PathBuf::from(DAEMON_DIR)
+    };
+    Ok(directory.join(format!("{}.plist", label(spec))))
 }
 fn launchctl(args: &[&str]) -> Result<String, ServiceError> {
     let output = Command::new("/bin/launchctl")
@@ -70,7 +121,10 @@ fn launchctl(args: &[&str]) -> Result<String, ServiceError> {
 
 /// `None` is not loaded; `Some(false)` is loaded but has no live process.
 fn load_state(spec: &ServiceSpec) -> Result<Option<bool>, ServiceError> {
-    let target = format!("system/{}", label(spec));
+    if spec.scope == ServiceScope::User {
+        scope::verify_current_user(spec)?;
+    }
+    let target = target(spec)?;
     let output = Command::new("/bin/launchctl")
         .args(["print", &target])
         .bounded_output()
@@ -101,7 +155,7 @@ fn load_state(spec: &ServiceSpec) -> Result<Option<bool>, ServiceError> {
 
 pub(super) fn inspect(spec: &ServiceSpec) -> Result<ServiceStatus, ServiceError> {
     let expected = render_plist(spec)?;
-    let path = plist_path(spec);
+    let path = plist_path(spec)?;
     let loaded = load_state(spec)?;
     let running = loaded.unwrap_or(false);
     match fs::symlink_metadata(&path) {
@@ -123,7 +177,12 @@ pub(super) fn inspect(spec: &ServiceSpec) -> Result<ServiceStatus, ServiceError>
         Ok(meta) => {
             let owned = meta.is_file()
                 && !meta.file_type().is_symlink()
-                && meta.uid() == 0
+                && meta.uid()
+                    == if spec.scope == ServiceScope::User {
+                        unsafe { libc::geteuid() }
+                    } else {
+                        0
+                    }
                 && meta.permissions().mode() & 0o022 == 0
                 && fs::read_to_string(&path).ok().as_deref() == Some(&expected);
             Ok(ServiceStatus {
@@ -143,6 +202,11 @@ pub(super) fn inspect(spec: &ServiceSpec) -> Result<ServiceStatus, ServiceError>
 }
 
 pub(super) fn preflight(spec: &ServiceSpec) -> Result<ServiceStatus, ServiceError> {
+    if spec.scope == ServiceScope::User {
+        scope::verify_current_user(spec)?;
+        launchctl(&["print", &domain(spec)?]).map_err(|_| ServiceError::new(ServiceErrorCode::MissingPrerequisite,
+            "The saved user's GUI login domain is unavailable; sign in locally, or explicitly choose system scope for boot services"))?;
+    }
     check_files(spec)?;
     if spec
         .program
@@ -226,7 +290,7 @@ pub(super) fn install(
     spec: &ServiceSpec,
     credential: Option<&ServiceCredential>,
 ) -> Result<ServiceStatus, ServiceError> {
-    if unsafe { libc::geteuid() } != 0 {
+    if spec.scope == ServiceScope::System && unsafe { libc::geteuid() } != 0 {
         return Err(ServiceError::new(
             ServiceErrorCode::PermissionDenied,
             "LaunchDaemon installation requires root authorization",
@@ -243,7 +307,15 @@ pub(super) fn install(
         return Ok(status);
     }
     check_install_files(spec)?;
-    let path = plist_path(spec);
+    let path = plist_path(spec)?;
+    if spec.scope == ServiceScope::User {
+        scope::ensure_user_service_directory(
+            path.parent().ok_or_else(|| {
+                ServiceError::new(ServiceErrorCode::InvalidSpec, "User plist parent missing")
+            })?,
+            unsafe { libc::geteuid() },
+        )?;
+    }
     ensure_safe_new_path(&path)?;
     let mut file = OpenOptions::new()
         .write(true)
@@ -276,13 +348,13 @@ pub(super) fn start(spec: &ServiceSpec) -> Result<ServiceStatus, ServiceError> {
     if status.running == Some(true) {
         return Ok(status);
     }
-    let path = plist_path(spec);
+    let path = plist_path(spec)?;
     let action = if load_state(spec)?.is_some() {
-        launchctl(&["kickstart", "-k", &format!("system/{}", label(spec))])
+        launchctl(&["kickstart", "-k", &target(spec)?])
     } else {
         launchctl(&[
             "bootstrap",
-            "system",
+            &domain(spec)?,
             path.to_str().ok_or_else(|| {
                 ServiceError::new(ServiceErrorCode::InvalidSpec, "plist path is not UTF-8")
             })?,
@@ -303,7 +375,7 @@ pub(super) fn stop(spec: &ServiceSpec) -> Result<ServiceStatus, ServiceError> {
     if load_state(spec)?.is_none() {
         return Ok(status);
     }
-    launchctl(&["bootout", &format!("system/{}", label(spec))]).map_err(|error| {
+    launchctl(&["bootout", &target(spec)?]).map_err(|error| {
         ServiceError::new(
             ServiceErrorCode::OutcomeUnknown,
             format!("stop failed ({error}); inspect before retrying"),
@@ -318,7 +390,7 @@ pub(super) fn restart(spec: &ServiceSpec) -> Result<ServiceStatus, ServiceError>
     if status.running == Some(false) {
         return start(spec);
     }
-    launchctl(&["kickstart", "-k", &format!("system/{}", label(spec))]).map_err(|error| {
+    launchctl(&["kickstart", "-k", &target(spec)?]).map_err(|error| {
         ServiceError::new(
             ServiceErrorCode::OutcomeUnknown,
             format!("restart failed ({error}); inspect before retrying"),
@@ -339,7 +411,7 @@ pub(super) fn uninstall(spec: &ServiceSpec) -> Result<ServiceStatus, ServiceErro
             "unload LaunchDaemon explicitly before uninstall",
         ));
     }
-    fs::remove_file(plist_path(spec)).map_err(|_| {
+    fs::remove_file(plist_path(spec)?).map_err(|_| {
         ServiceError::new(
             ServiceErrorCode::OutcomeUnknown,
             "plist removal failed; inspect before retrying",
@@ -396,15 +468,17 @@ pub(super) fn render_plist(spec: &ServiceSpec) -> Result<String, ServiceError> {
         xml(&label(spec))?
     ));
     out.push_str(&format!("<!-- {} -->\n", xml(&ownership_marker(spec))?));
-    out.push_str(&format!(
-        "<key>UserName</key><string>{}</string>\n",
-        xml(name)?
-    ));
-    if let Some(group) = group {
+    if spec.scope == ServiceScope::System {
         out.push_str(&format!(
-            "<key>GroupName</key><string>{}</string>\n",
-            xml(group)?
+            "<key>UserName</key><string>{}</string>\n",
+            xml(name)?
         ));
+        if let Some(group) = group {
+            out.push_str(&format!(
+                "<key>GroupName</key><string>{}</string>\n",
+                xml(group)?
+            ));
+        }
     }
     out.push_str(&format!(
         "<key>WorkingDirectory</key><string>{}</string>\n",

@@ -282,7 +282,7 @@ beforeEach(() => {
     expect(screen.queryByRole("button", { name: "选择文件夹" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "配置 WebCodex" }));
     await waitFor(() => expect(api.configureEnvironment).toHaveBeenCalledWith({
-      mode: "create", serverUrl: null, projectPath: null, runner: true,
+      mode: "create", serverUrl: null, projectPath: null, runner: true, serviceScope:"user",
       pairingCode: null, userToken: null, replacePairingCode: false,
     }));
   });
@@ -296,7 +296,7 @@ beforeEach(() => {
     expect(screen.queryByLabelText("一次性登录码")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "连接电脑" }));
     await waitFor(() => expect(api.configureEnvironment).toHaveBeenCalledWith({
-      mode: "join", serverUrl: "https://server.example", projectPath: null, runner: false,
+      mode: "join", serverUrl: "https://server.example", projectPath: null, runner: false, serviceScope:"user",
       pairingCode: null, userToken: "wc_user_secret", replacePairingCode: false,
     }));
   });
@@ -311,7 +311,7 @@ beforeEach(() => {
     fireEvent.change(code, { target: { value: "wc_pair_once" } });
     fireEvent.click(screen.getByRole("button", { name: "连接电脑" }));
     await waitFor(() => expect(api.configureEnvironment).toHaveBeenCalledWith({
-      mode: "join", serverUrl: "https://server.example", projectPath: null, runner: true,
+      mode: "join", serverUrl: "https://server.example", projectPath: null, runner: true, serviceScope:"user",
       pairingCode: "wc_pair_once", userToken: null, replacePairingCode: false,
     }));
     expect(code).toHaveValue("");

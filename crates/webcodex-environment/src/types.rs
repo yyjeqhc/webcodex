@@ -24,8 +24,18 @@ pub enum EnvironmentMode {
 }
 
 /// Contains no credentials. This exact intent is persisted before any effect.
+mod setup_wire;
+use setup_wire::SetupRequestWire;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(try_from = "SetupRequestWire", into = "SetupRequestWire")]
 pub struct SetupRequest {
+    /// Existing records omit this and keep their system-service identity.
+    #[serde(
+        default,
+        skip_serializing_if = "crate::service::ServiceScope::is_system"
+    )]
+    pub service_scope: crate::service::ServiceScope,
     pub mode: EnvironmentMode,
     pub server_url: String,
     pub project: Option<PathBuf>,
@@ -167,6 +177,9 @@ pub struct ProjectRecord {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RuntimeObservation {
+    /// Populated by explicit environment status/doctor, not every readiness poll.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local: Option<crate::LocalEnvironmentStatus>,
     pub server_reachable: bool,
     pub authenticated: bool,
     /// None means that no local Runner was requested, not that it is offline.

@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { LocaleProvider } from "../../i18n/locale";
+import { DesktopMantineProvider } from "../../components/DesktopMantineProvider";
 import type { DesktopState } from "../../models/topology";
 import { FirstRun } from "./FirstRun";
 
@@ -12,7 +13,7 @@ const state = { topology: null, project: null, current_operation: null } as Desk
 const project = { path: "/work/repo", allowed_root: "/work/repo", is_git_repository: true, runtime_project_id: null };
 function mount(setupState = state, chooseModeFirst = true) {
   const onState = vi.fn();
-  return { ...render(<LocaleProvider><FirstRun state={setupState} onState={onState} chooseModeFirst={chooseModeFirst} /></LocaleProvider>), onState };
+  return { ...render(<DesktopMantineProvider><LocaleProvider><FirstRun state={setupState} onState={onState} chooseModeFirst={chooseModeFirst} /></LocaleProvider></DesktopMantineProvider>), onState };
 }
 function action(container: HTMLElement, name: string) {
   const button = container.querySelector<HTMLButtonElement>(`[data-webcodex-action="${name}"]`);
@@ -33,6 +34,26 @@ beforeEach(() => {
 });
 
 describe("explicit environment setup", () => {
+  it("chooses machine startup explicitly and never retries a user failure as a system install", async () => {
+    api.configureEnvironment.mockRejectedValue({ code:"missing_prerequisite", message:"Sign in first", next_action:"Inspect user manager" });
+    const {container}=mount(); action(container,"choose-local-setup");
+    action(container,"configure-local");
+    await screen.findByRole("alert");
+    expect(api.configureEnvironment).toHaveBeenCalledTimes(1);
+    expect(api.configureEnvironment.mock.calls[0][0].serviceScope).toBe("user");
+    fireEvent.change(screen.getByLabelText("Background startup"),{target:{value:"system"}});
+    action(container,"configure-local");
+    await waitFor(()=>expect(api.configureEnvironment).toHaveBeenCalledTimes(2));
+    expect(api.configureEnvironment.mock.calls[1][0].serviceScope).toBe("system");
+  });
+
+  it("does not reinterpret an already saved environment's native manager", async () => {
+    const {container}=mount(remote(true),false);
+    expect(screen.queryByLabelText("Background startup")).toBeNull();
+    action(container,"configure-remote");
+    await waitFor(()=>expect(api.configureEnvironment).toHaveBeenCalledTimes(1));
+    expect(api.configureEnvironment.mock.calls[0][0]).not.toHaveProperty("serviceScope");
+  });
   it("offers persistent local/join and temporary sharing without registering a default project", async () => {
     const { container, onState } = mount();
     expect(container.querySelectorAll(".entry-card")).toHaveLength(3);
@@ -42,7 +63,7 @@ describe("explicit environment setup", () => {
     expect(container.querySelector('[data-webcodex-action="choose-project"]')).toBeNull();
     action(container, "configure-local");
     await waitFor(() => expect(api.configureEnvironment).toHaveBeenCalledWith({
-      mode: "create", serverUrl: null, projectPath: null, runner: true,
+      mode: "create", serverUrl: null, projectPath: null, runner: true, serviceScope: "user",
       pairingCode: null, userToken: null, replacePairingCode: false,
     }));
     expect(onState).toHaveBeenCalledWith(state);
@@ -65,7 +86,7 @@ describe("explicit environment setup", () => {
     expect(screen.queryByLabelText("One-time login code")).toBeNull();
     action(container, "configure-remote");
     await waitFor(() => expect(api.configureEnvironment).toHaveBeenCalledWith({
-      mode: "join", serverUrl: "https://server.example", projectPath: null, runner: false,
+      mode: "join", serverUrl: "https://server.example", projectPath: null, runner: false, serviceScope: "user",
       pairingCode: null, userToken: "wc_user_secret", replacePairingCode: false,
     }));
     expect(screen.getByLabelText("User API credential")).toHaveValue("");

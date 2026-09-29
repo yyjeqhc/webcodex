@@ -286,6 +286,7 @@ impl AppState {
         project_path: Option<&str>,
     ) -> DesktopResult<DesktopStateSnapshot> {
         self.configure_environment(crate::models::EnvironmentInput {
+            service_scope: None,
             mode: "create".into(),
             server_url: None,
             project_path: project_path.map(str::to_owned),
@@ -349,6 +350,7 @@ impl AppState {
         project_path: &str,
     ) -> DesktopResult<DesktopStateSnapshot> {
         self.configure_environment(crate::models::EnvironmentInput {
+            service_scope: None,
             mode: "join".into(),
             server_url: Some(server_url.to_owned()),
             project_path: Some(project_path.to_owned()),
@@ -3314,7 +3316,10 @@ fn preferred_connection(config: &StoredDesktopConfig) -> RegularConnectionPrefer
 fn apply_config_projection(snapshot: &mut DesktopStateSnapshot, config: &StoredDesktopConfig) {
     snapshot.persistent_environment = config.persistent_environment.clone();
     snapshot.can_repair_runner_credential = cfg!(windows)
-        && config.persistent_environment.is_some()
+        && config
+            .persistent_environment
+            .as_deref()
+            .is_some_and(environment::runner_uses_system_service)
         && config
             .topology
             .as_ref()

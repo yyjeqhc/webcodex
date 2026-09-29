@@ -945,6 +945,7 @@ mod tests {
     use super::*;
     fn spec(dir: &Path) -> ServiceSpec {
         ServiceSpec {
+            scope: crate::service::ServiceScope::System,
             id: "WebCodexRunner-test".into(),
             component: Component::Runner,
             program: PathBuf::from("/opt/webcodex/webcodex-runner"),

@@ -995,6 +995,7 @@ mod tests {
     #[test]
     fn prepared_disabled_service_still_has_its_configuration_owner() {
         let spec = ServiceSpec {
+            scope: ServiceScope::System,
             id: "WebCodexServer-test".into(),
             component: Component::Server,
             program: PathBuf::from(r"C:\WebCodex\webcodex-server.exe"),

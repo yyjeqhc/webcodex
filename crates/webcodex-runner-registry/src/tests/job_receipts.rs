@@ -186,6 +186,27 @@ async fn terminal_events_emit_once_only_after_accepted_sequenced_terminal_truth(
     assert_eq!(events.rows.lock().unwrap().len(), 1);
 }
 
+#[tokio::test]
+async fn terminal_events_canonicalize_both_timeout_wire_spellings() {
+    for wire_status in ["timeout", "timed_out"] {
+        let store = Arc::new(MemoryReceipts::default());
+        let events = Arc::new(MemoryTerminalEvents::default());
+        let registry = durable_with_events(&store, &events).await;
+        register(&registry, INSTANCE_A, empty_inventory()).await;
+        let (job, _) = start_and_take_over(&registry, INSTANCE_A).await;
+
+        registry
+            .update_job(update(INSTANCE_A, &job.job_id, 1, wire_status, None, true))
+            .await
+            .unwrap();
+
+        let rows = events.rows.lock().unwrap();
+        assert_eq!(rows.len(), 1, "wire status {wire_status}");
+        assert_eq!(rows[0].status, "timed_out", "wire status {wire_status}");
+        assert_eq!(rows[0].outcome, "timed_out", "wire status {wire_status}");
+    }
+}
+
 
 #[tokio::test]
 async fn terminal_event_sink_failure_requeues_candidate_until_a_later_registry_unlock() {

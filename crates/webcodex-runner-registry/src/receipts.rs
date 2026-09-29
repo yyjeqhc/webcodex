@@ -200,10 +200,19 @@ impl Drop for ReceiptRegistryGuard<'_> {
     }
 }
 
+fn terminal_attention_status(status: &str) -> &str {
+    match status {
+        // Runner wire compatibility preserves both timeout spellings. Durable
+        // terminal-attention state keeps one semantic representation.
+        "timeout" | "timed_out" => "timed_out",
+        _ => status,
+    }
+}
+
 fn terminal_outcome(status: &str) -> &'static str {
     match status {
         "completed" => "succeeded",
-        "timed_out" => "timed_out",
+        "timeout" | "timed_out" => "timed_out",
         "stopped" | "cancelled" => "cancelled",
         _ => "failed",
     }
@@ -214,14 +223,15 @@ pub(crate) fn capture_terminal_event(job: &ShellJobRecord) -> Option<JobTerminal
         return None;
     }
     let terminal_observed_at = job.observation.terminal_observed_at?;
-    let status = job.lifecycle.as_wire().to_string();
+    let wire_status = job.lifecycle.as_wire();
+    let status = terminal_attention_status(wire_status).to_string();
     Some(JobTerminalEvent {
         job_id: job.job_id.clone(),
         client_id: job.client_id.clone(),
         runner_instance_id: job.runner_instance_id.clone(),
         auth_group: job.auth_group.clone(),
         owner_at_admission: job.owner_at_admission.clone(),
-        outcome: terminal_outcome(&status).to_string(),
+        outcome: terminal_outcome(wire_status).to_string(),
         status,
         terminal_observed_at,
         expires_at: terminal_observed_at.saturating_add(JOB_TERMINAL_RETENTION_SECS),

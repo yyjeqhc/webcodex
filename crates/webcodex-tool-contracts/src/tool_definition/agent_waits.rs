@@ -1,6 +1,6 @@
 use super::ToolVisibility::{ModelHidden, ModelVisible};
 use super::{
-    adaptive_runtime_direct, def, model_spec, permission_risk, require_all_scopes, ToolDefinition,
+    def, model_spec, permission_risk, require_all_scopes, ToolDefinition,
     PERMISSION_RISK_WRITE, TOOL_CATEGORY_AGENT_WAIT,
 };
 use crate::metadata::{
@@ -12,8 +12,7 @@ use webcodex_core::authority::{COMMUNICATION_MANAGE_SCOPES, COMMUNICATION_READ_S
 
 pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     require_all_scopes(
-        adaptive_runtime_direct(
-            permission_risk(
+        permission_risk(
                 model_spec(
                     def(
                         "wait_for_agent_events",
@@ -50,9 +49,6 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 ).with_gpt_action_description("Create one bounded one-shot AgentWait over exact AgentTask terminal selectors. mode=any (default) triggers on the first match; mode=all triggers only after every registered source matches. Exact idempotency replay returns the same Wait."),
                 PERMISSION_RISK_WRITE,
             ),
-            21,
-            super::ToolDirectReason::Continuation,
-        ),
         COMMUNICATION_MANAGE_SCOPES,
     ),
     require_all_scopes(

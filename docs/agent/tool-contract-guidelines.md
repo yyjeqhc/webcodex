@@ -509,6 +509,31 @@ Direct/Gateway decisions therefore belong to model-surface policy and measured
 Host ergonomics. Tool names, categories, parser variants, persisted identities,
 Runner protocol and domain authority must not churn when that policy changes.
 
+### Current continuation surface
+
+The current static Host surface does not advertise fresh-turn continuation:
+`wait_for_job_terminal` and `wait_for_agent_events` keep their canonical names,
+input/output contracts, keyed replay, authorization and durable state, but are
+Gateway tools. `present_agent_continuation` and
+`present_job_terminal_continuation` are ModelHidden, never generic Gateway
+presentation targets. Their ToolCalls, handlers, resources and existing hidden
+App protocol remain intact. A cached presentation descriptor follows existing
+admission rules; no old-schema compatibility bypass is added.
+
+`present_work_result` and `present_goal_plan` remain Direct with Presentation
+reason. `import_conversation_files_to_project` remains Direct with HostIntegration
+reason. No current Direct definition needs Continuation reason. Restore that
+policy explicitly (and presentation visibility), then refresh Host schema if
+fresh-turn support returns; do not couple registration to
+`WEBCODEX_MCP_APP_RESUME_MODE` or `ModelWorkflowPolicy`.
+
+Generated wait edges use the canonical Gateway wrapper; unavailable presentation
+edges are omitted from schema and value. MCP-added Job carrier suggestions also
+check the canonical Direct policy because they are outside the domain output
+schema. Retained recommended recipes are projected through current static
+visibility so dormant continuation recipes do not recommend unavailable tools.
+App-only protocol descriptors are not ordinary model-tool savings.
+
 ### Stable schemas and optional workflow guidance
 
 Host tool-schema refresh is an integration operation, not a workflow preference.

@@ -7,8 +7,7 @@ fn registered_tool_categories() -> Value {
     ))
 }
 fn recommended_flows() -> Vec<&'static str> {
-    TOOL_RECOMMENDED_FLOWS
-        .iter()
+    crate::tool_catalog::model_visible_recommended_flows()
         .map(|flow| flow.summary)
         .collect()
 }
@@ -106,8 +105,7 @@ fn tool_manifest_schema_exposes_compact_discovery_fields() {
 
 #[test]
 fn tool_recommended_flows_reference_visible_defined_tools() {
-    let expected_summaries = TOOL_RECOMMENDED_FLOWS
-        .iter()
+    let expected_summaries = crate::tool_catalog::model_visible_recommended_flows()
         .map(|flow| {
             assert!(!flow.name.trim().is_empty());
             assert!(!flow.manifest_purpose.trim().is_empty(), "{}", flow.name);
@@ -136,6 +134,17 @@ fn tool_recommended_flows_reference_visible_defined_tools() {
         })
         .collect::<Vec<_>>();
     assert_eq!(recommended_flows(), expected_summaries);
+}
+
+#[test]
+fn inactive_continuation_recipes_are_retained_but_not_recommended() {
+    for flow in TOOL_RECOMMENDED_FLOWS {
+        assert!(flow.tools.iter().all(|name| lookup_tool_definition(name).is_some()));
+    }
+    for name in ["agent_continuation_setup", "goal_agent_wait_orchestration"] {
+        assert!(TOOL_RECOMMENDED_FLOWS.iter().any(|flow| flow.name == name));
+        assert!(!crate::tool_catalog::model_visible_recommended_flows().any(|flow| flow.name == name));
+    }
 }
 
 #[test]

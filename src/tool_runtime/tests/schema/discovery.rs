@@ -818,7 +818,7 @@ fn list_tools_category_filter_matches_tool_definition_categories() {
 #[test]
 fn tool_manifest_recommended_flows_reference_visible_defined_tools() {
     use crate::tool_runtime::tool_definition::{
-        is_model_visible_tool_name, lookup_tool_definition, TOOL_RECOMMENDED_FLOWS,
+        is_model_visible_tool_name, lookup_tool_definition, model_visible_recommended_flows,
     };
 
     let runtime = test_runtime();
@@ -827,9 +827,12 @@ fn tool_manifest_recommended_flows_reference_visible_defined_tools() {
     let flows = manifest["recommended_flows"]
         .as_array()
         .expect("tool_manifest recommended_flows");
-    assert_eq!(flows.len(), TOOL_RECOMMENDED_FLOWS.len());
+    assert_eq!(flows.len(), model_visible_recommended_flows().count());
+    for inactive in ["agent_continuation_setup", "goal_agent_wait_orchestration"] {
+        assert!(!flows.iter().any(|flow| flow["name"] == inactive));
+    }
 
-    for (actual, expected) in flows.iter().zip(TOOL_RECOMMENDED_FLOWS) {
+    for (actual, expected) in flows.iter().zip(model_visible_recommended_flows()) {
         assert_eq!(actual["name"], expected.name);
         assert_eq!(actual["purpose"], expected.manifest_purpose);
         let tools = actual["tools"]
@@ -2459,7 +2462,7 @@ async fn tool_manifest_exact_tool_fails_closed_for_unknown_or_mixed_filters() {
 
 #[tokio::test]
 async fn unfiltered_tool_manifest_keeps_full_recommended_flows() {
-    use crate::tool_runtime::tool_definition::TOOL_RECOMMENDED_FLOWS;
+    use crate::tool_runtime::tool_definition::model_visible_recommended_flows;
 
     let runtime = test_runtime();
     let result = runtime
@@ -2478,8 +2481,8 @@ async fn unfiltered_tool_manifest_keeps_full_recommended_flows() {
         .expect("unfiltered recommended_flows");
     assert_eq!(
         flows.len(),
-        TOOL_RECOMMENDED_FLOWS.len(),
-        "unfiltered recommended_flows must keep full global set"
+        model_visible_recommended_flows().count(),
+        "unfiltered recommended_flows must keep the full currently callable set"
     );
     let serialized = result.output["recommended_flows"]
         .to_string()

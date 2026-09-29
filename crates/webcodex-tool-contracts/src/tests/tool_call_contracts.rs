@@ -2143,14 +2143,12 @@ fn retired_start_coding_task_is_a_canonical_unknown_tool() {
 
 #[test]
 fn present_agent_continuation_parses_ref_or_explicit_tuple_without_session() {
-    let spec = registered_tool_specs()
-        .into_iter()
-        .find(|spec| spec.name == "present_agent_continuation")
-        .unwrap();
-    let properties = spec.input_schema["properties"].as_object().unwrap();
+    assert!(!registered_tool_specs().iter().any(|spec| spec.name == "present_agent_continuation"));
+    let schema = input_schema_for_tool("present_agent_continuation");
+    let properties = schema["properties"].as_object().unwrap();
     assert!(properties.contains_key("agent_continuation_ref"));
     assert!(properties.contains_key("agent_id"));
-    if let Some(fields) = spec.input_schema["required"].as_array() {
+    if let Some(fields) = schema["required"].as_array() {
         for field in fields {
             assert!(
                 field != "agent_id"
@@ -2161,7 +2159,7 @@ fn present_agent_continuation_parses_ref_or_explicit_tuple_without_session() {
             );
         }
     }
-    let schema_text = spec.input_schema.to_string();
+    let schema_text = schema.to_string();
     assert!(schema_text.contains(crate::AGENT_CONTINUATION_REF_PATTERN));
 
     let by_ref = ToolCall::from_tool_name(

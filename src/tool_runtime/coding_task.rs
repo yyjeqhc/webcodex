@@ -41,7 +41,7 @@ use super::startup_brief::{
     startup_brief_from_output, StartupBriefInput, StartupExtensions, StartupPluginEntry,
     StartupPluginsCatalog, REPOSITORY_OVERVIEW_NOT_REQUESTED_REASON,
 };
-use super::tool_catalog::TOOL_RECOMMENDED_FLOWS;
+use super::tool_catalog::model_visible_recommended_flows;
 use super::tool_inputs::{CodingGuidanceProfile, SessionMode, StartupDetail};
 use super::tool_result::{RecoveryKind, ToolResult};
 use super::unknown_session_result;
@@ -3191,8 +3191,7 @@ fn recommended_flow_groups(visible: Option<&HashSet<&str>>) -> Value {
     const GROUPS: &[&str] = &["inspect", "edit", "validate", "review", "handoff"];
     let mut map = serde_json::Map::new();
     for group in GROUPS {
-        let tools = TOOL_RECOMMENDED_FLOWS
-            .iter()
+        let tools = model_visible_recommended_flows()
             .find(|flow| flow.name == *group)
             .map(|flow| {
                 let mut seen = HashSet::new();

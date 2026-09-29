@@ -23,7 +23,7 @@ use super::tool_definition::{
     runtime_tool_metadata, runtime_tool_operator_extension_family, ToolExecutionContract,
     ToolManifestIntent, ToolOperatorExtensionFamily, TOOL_CATEGORY_ARTIFACT, TOOL_CATEGORY_EDIT,
     TOOL_CATEGORY_GIT, TOOL_CATEGORY_PATCH, TOOL_CATEGORY_RUNTIME, TOOL_CATEGORY_SESSION,
-    TOOL_CATEGORY_VALIDATION, TOOL_RECOMMENDED_FLOWS,
+    TOOL_CATEGORY_VALIDATION, model_visible_recommended_flows,
 };
 use super::tool_inputs::ListToolsOptions;
 use super::tool_result::ToolResult;
@@ -404,8 +404,7 @@ pub(crate) fn registered_tool_categories() -> Value {
 /// Short GPT-facing flow hints. Their compact-discovery summary budget remains
 /// independently capped at 300 characters.
 pub(crate) fn recommended_flows() -> Vec<&'static str> {
-    TOOL_RECOMMENDED_FLOWS
-        .iter()
+    model_visible_recommended_flows()
         .map(|flow| flow.summary)
         .collect()
 }
@@ -1352,8 +1351,7 @@ pub(super) fn build_risk_summary(specs: &[&ToolSpec]) -> Value {
 /// Short, bounded list of recommended tool flows for common tasks. Each
 /// entry references only known tool names. Kept under 10 entries.
 pub(super) fn tool_manifest_recommended_flows() -> Vec<Value> {
-    TOOL_RECOMMENDED_FLOWS
-        .iter()
+    model_visible_recommended_flows()
         .map(|flow| {
             json!({
                 "name": flow.name,
@@ -1375,8 +1373,7 @@ where
     I: IntoIterator<Item = &'a str>,
 {
     let visible: std::collections::HashSet<&str> = visible_tools.into_iter().collect();
-    TOOL_RECOMMENDED_FLOWS
-        .iter()
+    model_visible_recommended_flows()
         .filter_map(|flow| {
             let mut seen = std::collections::HashSet::new();
             let tools: Vec<&str> = flow

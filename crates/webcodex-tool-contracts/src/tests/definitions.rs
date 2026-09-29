@@ -670,14 +670,12 @@ fn stop_job_preserves_one_canonical_effect() {
 
 #[test]
 fn agent_continuation_setup_descriptions_are_self_guiding_without_direct_expansion() {
-    let specs = registered_tool_specs();
     let description = |name: &str| {
-        specs
-            .iter()
-            .find(|spec| spec.name == name)
-            .unwrap_or_else(|| panic!("missing ToolSpec {name}"))
+        lookup_tool_definition(name)
+            .unwrap_or_else(|| panic!("missing ToolDefinition {name}"))
+            .model_spec
+            .expect("retained domain description")
             .description
-            .as_str()
     };
     let create = description("create_agent_identity");
     assert!(create.contains("first setup step"));
@@ -706,7 +704,7 @@ fn agent_continuation_setup_descriptions_are_self_guiding_without_direct_expansi
         lookup_tool_definition("present_agent_continuation")
             .unwrap()
             .adaptive_runtime_direct_rank(),
-        Some(18)
+        None
     );
     assert_eq!(
         lookup_tool_definition("rotate_agent_continuation_endpoint")
@@ -721,6 +719,26 @@ fn agent_continuation_setup_descriptions_are_self_guiding_without_direct_expansi
         None,
         "compatibility alias must not become a second canonical Direct entry"
     );
+}
+
+#[test]
+fn inactive_continuation_surface_preserves_domain_definitions() {
+    for (name, visible, category, effect) in [
+        ("wait_for_agent_events", true, TOOL_CATEGORY_AGENT_WAIT, ToolEffect::Mutate),
+        ("wait_for_job_terminal", true, TOOL_CATEGORY_JOB, ToolEffect::Mutate),
+        ("present_agent_continuation", false, TOOL_CATEGORY_COMMUNICATION, ToolEffect::Observe),
+        ("present_job_terminal_continuation", false, TOOL_CATEGORY_JOB, ToolEffect::Observe),
+    ] {
+        let definition = lookup_tool_definition(name).expect("retained continuation definition");
+        assert_eq!(definition.visibility.is_model_visible(), visible, "{name}");
+        assert_eq!(definition.adaptive_runtime_direct, None, "{name}");
+        assert_eq!(definition.category, category, "{name}");
+        assert_eq!(definition.metadata.effect, effect, "{name}");
+        assert!(definition.model_spec.is_some(), "{name} keeps its domain specification");
+        assert_eq!(registered_tool_specs().iter().any(|spec| spec.name == name), visible, "{name}");
+        assert_eq!(definition.metadata.idempotency,
+            if visible { ToolIdempotency::Keyed } else { ToolIdempotency::PureRead }, "{name}");
+    }
 }
 
 #[test]

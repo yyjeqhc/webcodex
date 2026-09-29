@@ -1203,11 +1203,11 @@ fn job_terminal_continuation_app_contract_is_exact_wait_plus_private_view_fence_
     )
     .is_ok());
 
-    let registered = registered_tool_specs();
-    let present = spec_named(&registered, "present_job_terminal_continuation");
-    assert_eq!(present.input_schema["required"], json!(["wait_id"]));
+    assert!(!registered_tool_specs().iter().any(|spec| spec.name == "present_job_terminal_continuation"));
+    let present = input_schema_for_tool("present_job_terminal_continuation");
+    assert_eq!(present["required"], json!(["wait_id"]));
     assert_eq!(
-        present.input_schema["properties"]["wait_id"]["pattern"],
+        present["properties"]["wait_id"]["pattern"],
         "^wc_job_wait_[A-Za-z0-9_-]{16}$"
     );
 }

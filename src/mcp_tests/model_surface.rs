@@ -155,8 +155,9 @@ async fn adaptive_tools_list_exposes_ranked_direct_tools_and_gateway() {
         "cargo_test",
         "review_changes",
         "observe_jobs",
-        "wait_for_job_terminal",
-        "wait_for_agent_events",
+        "wait_for_job_readiness",
+        "present_work_result",
+        "present_goal_plan",
         "skill_load",
     ] {
         assert!(
@@ -179,6 +180,8 @@ async fn specialist_tools_remain_discoverable_with_canonical_gateway_contracts()
         "session_handoff_summary",
         "rotate_agent_continuation_endpoint",
         "run_skill_resource",
+        "wait_for_agent_events",
+        "wait_for_job_terminal",
     ] {
         let definition = webcodex_tool_contracts::lookup_tool_definition(name).unwrap();
         assert!(definition.visibility.is_model_visible());
@@ -220,6 +223,38 @@ async fn specialist_tools_remain_discoverable_with_canonical_gateway_contracts()
             definition.metadata().idempotency.manifest_label()
         );
         assert!(crate::mcp::tools::adaptive_runtime_gateway_target_admitted_for_test(name, true));
+    }
+}
+
+#[tokio::test]
+async fn inactive_continuation_presentations_are_unavailable_not_gateway_tools() {
+    let runtime = test_runtime();
+    for apps in [false, true] {
+        for name in ["present_agent_continuation", "present_job_terminal_continuation"] {
+            assert_eq!(crate::model_surface::suggested_tool_call_route(name, false),
+                crate::model_surface::SuggestedToolCallRoute::Unavailable);
+            assert!(!crate::mcp::tools::adaptive_runtime_gateway_target_admitted_for_test(name, true));
+            let listed = crate::mcp::tools::mcp_tools_list_payload_with_features_for_auth(false, apps, true, None);
+            assert!(!listed["tools"].as_array().unwrap().iter().any(|tool| tool["name"] == name));
+            for (gateway, params) in [
+                (false, json!({"name": name, "arguments": {}})),
+                (true, adaptive_runtime_gateway_params(name, json!({}))),
+            ] {
+                let params = if apps { mcp_2026_ui_params(params) } else { mcp_2026_params(params) };
+                let outcome = handle_mcp_request(&runtime, rpc("tools/call", Some(json!(68)), params), None).await;
+                if gateway {
+                    let McpOutcome::Ok(value) = outcome else { panic!("{name}: {outcome:?}") };
+                    let result = &value["result"]["structuredContent"];
+                    assert_eq!(result["success"], false);
+                    assert_eq!(result["output"]["error_kind"], "unknown_tool");
+                    assert_eq!(result["output"]["execution_state"], "not_started");
+                    assert_eq!(result["output"]["state_changed"], false);
+                    assert!(result["output"].get("suggested_call").is_none());
+                } else {
+                    assert!(matches!(outcome, McpOutcome::BadRequest(_)), "{name}: {outcome:?}");
+                }
+            }
+        }
     }
 }
 
@@ -415,8 +450,6 @@ async fn call_runtime_tool_rejects_direct_app_presentation_targets_when_apps_are
     for (index, target) in [
         "present_work_result",
         "present_goal_plan",
-        "present_agent_continuation",
-        "present_job_terminal_continuation",
     ]
     .into_iter()
     .enumerate()
@@ -458,6 +491,14 @@ async fn pruned_tools_keep_exact_manifest_and_canonical_gateway_validation() {
     let runtime = test_runtime();
     for (name, arguments) in [
         ("list_jobs", json!({})),
+        ("wait_for_job_terminal", json!({"job_id":"missing", "idempotency_key":"surface-parity"})),
+        ("wait_for_agent_events", json!({
+            "agent_id":"wc_dagent_qqqqqqqqqqqqqqqq",
+            "endpoint_id":"wc_endpoint_qqqqqqqqqqqqqqqq",
+            "expected_controller_generation":1,
+            "events":[{"kind":"agent_task_terminal", "task_id":"wc_agent_task_qqqqqqqqqqqqqqqq"}],
+            "idempotency_key":"surface-parity"
+        })),
         (
             "stop_job",
             json!({"project": "missing", "job_id": "missing", "confirm": true}),

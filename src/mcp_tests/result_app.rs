@@ -127,10 +127,8 @@ fn result_tool_app_metadata_is_capability_scoped_compact_safe_and_merge_safe() {
             tool(&enabled, "present_goal_plan")["_meta"]["ui"]["resourceUri"],
             MCP_GOAL_PLAN_UI_RESOURCE_URI
         );
-        assert_eq!(
-            tool(&enabled, "present_agent_continuation")["_meta"]["ui"]["resourceUri"],
-            MCP_AGENT_CONTINUATION_UI_RESOURCE_URI
-        );
+        assert!(!enabled["tools"].as_array().unwrap().iter()
+            .any(|tool| tool["name"] == "present_agent_continuation"));
         assert_eq!(
             tool(&enabled, "present_work_result")["_meta"]["ui"]["resourceUri"],
             MCP_WORK_RESULT_UI_RESOURCE_URI

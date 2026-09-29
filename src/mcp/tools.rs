@@ -981,7 +981,10 @@ fn attach_job_terminal_resume_suggested_call_schema(
     app_enabled: bool,
     value: &mut Value,
 ) {
-    if !app_enabled || tool_name != "wait_for_job_terminal" {
+    if !app_enabled
+        || tool_name != "wait_for_job_terminal"
+        || !is_adaptive_runtime_direct_tool("present_job_terminal_continuation")
+    {
         return;
     }
     let Some(properties) = value
@@ -1020,7 +1023,13 @@ pub(super) fn project_job_terminal_resume_suggested_call(
     carrier_available: bool,
     result: &mut ToolResult,
 ) {
-    if !carrier_available || !result.success {
+    // MCP-added edges are not part of the canonical domain output schema.
+    // Derive their availability from the same static descriptor policy, not
+    // workflow guidance or an App capability alone.
+    if !carrier_available
+        || !result.success
+        || !is_adaptive_runtime_direct_tool("present_job_terminal_continuation")
+    {
         return;
     }
     let Some(output) = result.output.as_object_mut() else {

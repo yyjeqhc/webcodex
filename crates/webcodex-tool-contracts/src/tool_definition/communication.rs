@@ -1,6 +1,6 @@
 use super::ToolVisibility::{ModelHidden, ModelVisible};
 use super::{
-    adaptive_runtime_direct, def, model_spec, permission_risk, require_all_scopes, ToolDefinition,
+    def, model_spec, permission_risk, require_all_scopes, ToolDefinition,
     PERMISSION_RISK_WRITE, TOOL_CATEGORY_COMMUNICATION,
 };
 use crate::metadata::{
@@ -41,7 +41,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 false,
                 super::ToolSessionEvidencePolicy::NONE,
             ),
-            "Create a durable Server-owned Agent identity and mutable self-description card. For a new ChatGPT window that needs durable Agent continuation, this is the first setup step; next use rotate_agent_continuation_endpoint, then present_agent_continuation. The canonical wc_dagent_* id remains independent from windows, Endpoints, Workflow Sessions, Projects, and execution authority. Exact idempotency-key replay returns the original Agent; changed reuse is rejected.",
+            "Create a durable Server-owned Agent identity and mutable self-description card. For a new ChatGPT window that needs durable Agent continuation, this is the first setup step; use rotate_agent_continuation_endpoint for Endpoint preparation. Use present_agent_continuation only when its dedicated descriptor is advertised; an unavailable carrier is not a reason to repeat discovery. The canonical wc_dagent_* id remains independent from windows, Endpoints, Workflow Sessions, Projects, and execution authority. Exact idempotency-key replay returns the original Agent; changed reuse is rejected.",
         ),
         COMMUNICATION_MANAGE_SCOPES,
     ),
@@ -155,7 +155,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                         false,
                         super::ToolSessionEvidencePolicy::NONE,
                     ),
-                    "Create or rotate the server-local continuation Endpoint for an owned durable Agent. The result's agent_continuation_ref pins that exact Endpoint generation for present_agent_continuation; it is not a credential and will not follow a later rotation. This is the canonical Endpoint step for first-time durable continuation setup; later calls replace the Endpoint with a new monotonic controller generation and make older generations stale. Next usually call present_agent_continuation. This tool does not establish a Host binding or production auto-resume readiness. Exact idempotency replay returns the same Endpoint.",
+                    "Create or rotate the server-local continuation Endpoint for an owned durable Agent. The result's agent_continuation_ref pins that exact Endpoint generation for present_agent_continuation; it is not a credential and will not follow a later rotation. This is the canonical Endpoint step for first-time durable continuation setup; later calls replace the Endpoint with a new monotonic controller generation and make older generations stale. Use present_agent_continuation only when its dedicated descriptor is advertised; do not repeat discovery for an unavailable Host carrier. This tool does not establish a Host binding or production auto-resume readiness. Exact idempotency replay returns the same Endpoint.",
                 ),
                 PERMISSION_RISK_WRITE,
             )
@@ -208,8 +208,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         COMMUNICATION_MANAGE_SCOPES,
     ),
     require_all_scopes(
-        adaptive_runtime_direct(
-            model_spec(
+        model_spec(
                 def(
                     "present_agent_continuation",
                     super::ToolAuditPolicy::typed_fields(&[
@@ -222,7 +221,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                         super::ToolAuditResultField::pointer("dispatch_observation", "/agent_continuation/dispatch_observation"),
                         super::ToolAuditResultField::value("error_kind"),
                     ]),
-                    ModelVisible,
+                    ModelHidden,
                     TOOL_CATEGORY_COMMUNICATION,
                     None,
                     TOOL_PROVIDER_CONTROL,
@@ -242,9 +241,6 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 "Present one explicit durable Agent/Endpoint generation as a sparse MCP App continuation controller card. Pass either agent_continuation_ref from rotate_agent_continuation_endpoint or list_agent_identities, or the exact agent_id, endpoint_id, and expected_controller_generation. The ref only names that pinned tuple; it is not a credential, and this read still rechecks owner, lifecycle, and generation. New durable Agent window setup is create_agent_identity -> rotate_agent_continuation_endpoint -> present_agent_continuation; after presentation, yield/end the current model turn promptly so the MCP App can establish and maintain the Host binding. Presentation success is not production auto-resume readiness: verify list_agent_identities.production_auto_resume_available afterward. Presentation is read-only and never itself establishes Host binding or execution authority.",
             )
             .with_gpt_action_unsupported(),
-            18,
-            super::ToolDirectReason::Continuation,
-        ),
         COMMUNICATION_READ_SCOPES,
     ),
     require_all_scopes(

@@ -2225,9 +2225,22 @@ fn mcp_compact_descriptions_preserve_selection_and_schema_literals() {
             ],
         ),
     ] {
-        let description = tools.iter().find(|tool| tool["name"] == name).unwrap()["description"]
-            .as_str()
-            .unwrap();
+        let descriptor = if matches!(name, "wait_for_job_terminal" | "present_agent_continuation") {
+            assert!(!tools.iter().any(|tool| tool["name"] == name));
+            // Keep testing dormant/gateway compact copy without asserting that
+            // these tools still occupy the ordinary direct inventory.
+            let definition = webcodex_tool_contracts::lookup_tool_definition(name).unwrap();
+            let mut descriptor = json!({
+                "name": name,
+                "description": definition.model_spec.unwrap().description,
+                "inputSchema": webcodex_tool_contracts::input_schema_for_tool(name),
+            });
+            compact_tool(&mut descriptor);
+            descriptor
+        } else {
+            tools.iter().find(|tool| tool["name"] == name).unwrap().clone()
+        };
+        let description = descriptor["description"].as_str().unwrap();
         for phrase in phrases {
             assert!(description.contains(phrase), "{name}: {description}");
         }
@@ -2384,13 +2397,13 @@ async fn mcp_tools_list_stateless_serialized_size_budget() {
     let mut admin = scoped.clone();
     admin.scopes.push(crate::auth::SCOPE_ADMIN.to_string());
     // Final Stateless bytes include the optional _wc envelope and gateways,
-    // not the RPC envelope. Four ordinary specialists moved behind exact/category
-    // discovery; App presentation tools and independently admitted extensions
-    // remain separate. Count changes require explicit inventory review.
+    // not the RPC envelope. Two durable waits use Gateway and two inactive
+    // continuation presentations are hidden. All 18 App-only protocol tools
+    // remain present with Apps on; they are not ordinary model-tool savings.
     for (label, auth, max_tools, max_bytes) in [
-        ("anonymous", None, 26, 68_000),
-        ("scoped", Some(&scoped), 27, 70_000),
-        ("admin", Some(&admin), 33, 79_000),
+        ("anonymous", None, 22, 60_000),
+        ("scoped", Some(&scoped), 23, 62_000),
+        ("admin", Some(&admin), 29, 71_000),
     ] {
         for app_enabled in [false, true] {
             let mut sizes = Vec::new();

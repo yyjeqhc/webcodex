@@ -217,6 +217,9 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
 .activity-detail { display: grid; min-width: 0; gap: 7px; padding: 0 1px 10px 17px; }
 .activity-detail .detail-grid { padding: 0; }
 .activity-detail-state { color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+.background-work { display: grid; min-width: 0; gap: 6px; }
+.background-results > summary { padding: 8px 0; cursor: pointer; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.background-results > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .section p { margin: 0; }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; scroll-behavior: auto !important; } }
 </style>
@@ -244,11 +247,18 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
           <div id="activityStatus" class="activity-current">Waiting for activity…</div>
           <div id="activityDetail" class="activity-age"></div>
         </div>
+        <div id="jobsSection" class="background-work" hidden>
+          <div id="jobsList" aria-label="Work continuing in the background"></div>
+          <details id="jobResults" class="background-results" hidden>
+            <summary id="jobResultsSummary">Recent background results</summary>
+            <div id="jobResultsList"></div>
+          </details>
+          <p id="jobsMeta" class="secondary"></p>
+        </div>
       </section>
       <section class="section">
         <div class="section-head"><h2>Window activity</h2><span id="windowCoverage" class="secondary"></span></div>
-        <p class="secondary">Window calls in start-time order. Expand a completed call for trace, Session, Job, timing, and transition details.</p>
-        <section id="jobsSection" hidden aria-label="Background jobs"><div class="section-label">Jobs</div><div id="jobsList" class="workflow-activity"></div><p id="jobsMeta" class="secondary"></p></section>
+        <p class="secondary">Calls in this chat, earliest first. Expand a call for technical details. Background work above belongs to this task.</p>
         <div id="windowActivity" class="workflow-activity"></div>
         <button id="askActivity" class="refresh" type="button">Send an instruction</button>
       </section>
@@ -392,6 +402,9 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     el("resultChecks").hidden = true;
     el("jobsSection").hidden = true;
     el("jobsList").replaceChildren();
+    el("jobResults").hidden = true;
+    el("jobResults").open = false;
+    el("jobResultsList").replaceChildren();
     diffCache.clear();
     activityDetailCache.clear();
     activityDetailInFlight.clear();
@@ -1348,21 +1361,37 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     }
   }
 
+  function jobOutcomeLabel(job) {
+    const state = job.state === "active" ? job.status : job.outcome || job.status;
+    return ({ running: "Running", queued: "Queued", completed: "Completed", passed: "Passed", failed: "Failed", recovering: "Reconnecting", lost: "Execution lost", stopped: "Stopped", cancelled: "Cancelled", timed_out: "Timed out", inconclusive: "Inconclusive", stop_requested: "Stopping" })[state] || state.replaceAll("_", " ");
+  }
+
   function renderJobs(jobs) {
     const root = el("jobsList"); root.replaceChildren();
-    el("jobsSection").hidden = !jobs?.available || !jobs.items.length;
-    el("jobsMeta").textContent = jobs?.truncated ? "Showing up to 8 retained jobs" : "";
+    const results = el("jobResultsList"); results.replaceChildren();
+    el("jobsSection").hidden = !jobs?.available || (!jobs.items.length && !jobs.active);
+    el("jobsMeta").textContent = jobs?.truncated ? "Showing up to 8 background executions; more may be active or finished." : "";
+    el("jobResults").hidden = true;
     if (!jobs?.available) return;
+    const outcomes = new Map();
     for (const job of jobs.items) {
       const row = document.createElement("article"); row.className = "workflow-row";
       const header = document.createElement("header");
       const label = document.createElement("strong"); label.textContent = job.tool.replaceAll("_", " ");
       const status = document.createElement("span"); status.className = "secondary";
-      const state = job.outcome || job.status;
-      status.textContent = ({ running: "Running", queued: "Queued", completed: "Completed", passed: "Passed", failed: "Failed", recovering: "Recovering", lost: "Lost", stopped: "Stopped", cancelled: "Cancelled", timed_out: "Timed out", inconclusive: "Inconclusive", stop_requested: "Stop requested" })[state] || state;
+      const outcome = jobOutcomeLabel(job);
+      status.textContent = outcome;
       if (job.recovery_state) status.textContent += " · " + job.recovery_state.replaceAll("_", " ");
-      header.append(label, status); row.append(header); root.append(row);
+      header.append(label, status); row.append(header);
+      if (job.state === "active") root.append(row);
+      else {
+        results.append(row);
+        outcomes.set(outcome, (outcomes.get(outcome) || 0) + 1);
+      }
     }
+    el("jobResults").hidden = !results.children.length;
+    el("jobResultsSummary").textContent = "Recent background results · "
+      + [...outcomes].map(([outcome, count]) => count + " " + outcome.toLowerCase()).join(" · ");
   }
 
   function render(state) {
@@ -1377,9 +1406,10 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     renderWindowCurrentActivity(state.activity);
     renderWindowActivity(state.window_activity);
     renderJobs(state.jobs);
-    if (!state.activity.active && state.jobs?.available && state.jobs.items.length) {
-      el("activityStatus").textContent = state.jobs.active ? "Background jobs running" : "Background jobs finished";
-      el("activityDetail").textContent = "Current Server job state for this task";
+    if (!state.activity.active && state.jobs?.available && state.jobs.active) {
+      el("activityStatus").textContent = "Work continuing in the background";
+      el("activityDetail").textContent = "This task still has background work. Current execution states are shown below.";
+      el("activityAge").textContent = "";
     }
     renderMessages(state.collaboration);
     renderWorkspace(state.workspace);

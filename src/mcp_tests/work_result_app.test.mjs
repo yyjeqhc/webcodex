@@ -1352,9 +1352,77 @@ test("exact Session Job transitions through normal refresh without a model tool 
   assert.deepEqual({ ...call.params.arguments }, { project, session_id });
   await view.reply(call, toolResult({ work_result: terminal }));
   await flush();
-  assert.equal(view.nodes.jobsList.children[0].children[0].children[1].textContent, "Passed");
+  assert.equal(view.nodes.jobResultsList.children[0].children[0].children[1].textContent, "Passed");
   assert.equal(view.calls("observe_jobs").length, 0);
   assert.equal(view.calls("ui/message").length, 0);
+});
+
+test("background executions separate live work from folded outcomes without declaring task completion", async () => {
+  const view = app("mcp_work_result_app.html");
+  view.toolInput(input);
+  view.toolResult({ work_result: { ...baseState, jobs: { ...runningJobs, items: [
+    { ...runningJobs.items[0], job_id: "failed-one", state: "terminal", status: "failed", outcome: "failed" },
+    runningJobs.items[0],
+    { ...runningJobs.items[0], job_id: "passed-one", state: "terminal", status: "completed", outcome: "passed" },
+  ] } } });
+  await view.initialize();
+  assert.equal(view.nodes.jobsList.children.length, 1);
+  assert.equal(view.nodes.jobResultsList.children.length, 2);
+  assert.equal(view.nodes.jobResults.hidden, false);
+  assert.equal(view.nodes.jobResults.open, false);
+  assert.equal(view.nodes.jobResultsSummary.textContent, "Recent background results · 1 failed · 1 passed");
+  assert.equal(view.nodes.activityStatus.textContent, "Work continuing in the background");
+  assert.equal(view.nodes.activityAge.textContent, "");
+  view.nodes.jobResults.open = true;
+  view.nodes.refresh.onclick(); await flush();
+  await view.reply(view.calls("work_result_state")[0], toolResult({ work_result: {
+    ...baseState, state_version: nextState.state_version, jobs: { ...runningJobs, active: false, items: [
+      { ...runningJobs.items[0], state: "terminal", status: "completed", outcome: "passed" },
+    ] },
+  } }));
+  assert.equal(view.nodes.jobsList.children.length, 0);
+  assert.equal(view.nodes.jobResults.open, true);
+  assert.equal(view.nodes.activityStatus.textContent, "Reviewed changes");
+  assert.notEqual(view.nodes.badge.textContent, "Working");
+});
+
+test("live Window activity stays primary while background work is visible", async () => {
+  const view = app("mcp_work_result_app.html");
+  view.toolInput(input);
+  view.toolResult({ work_result: { ...baseState, jobs: runningJobs, activity: {
+    ...baseState.activity, active: true,
+    current: { label: "Reading files", kind: "read", started_at_ms: 1_999_999_999_000 },
+  } } });
+  await view.initialize();
+  assert.equal(view.nodes.activityStatus.textContent, "Reading files");
+  assert.equal(view.nodes.jobsList.children.length, 1);
+  assert.equal(view.nodes.jobResults.hidden, true);
+});
+
+test("truncated background state does not mistake a terminal visible slice for completion", async () => {
+  const view = app("mcp_work_result_app.html");
+  view.toolInput(input);
+  view.toolResult({ work_result: { ...baseState, jobs: { ...runningJobs, truncated: true, items: [
+    { ...runningJobs.items[0], state: "terminal", status: "failed", outcome: "failed" },
+  ] } } });
+  await view.initialize();
+  assert.equal(view.nodes.activityStatus.textContent, "Work continuing in the background");
+  assert.equal(view.nodes.jobsList.children.length, 0);
+  assert.equal(view.nodes.badge.textContent, "Working");
+  assert.match(view.nodes.jobsMeta.textContent, /more may be active or finished/);
+  assert.match(view.nodes.jobResultsSummary.textContent, /1 failed/);
+});
+
+for (const status of ["queued", "recovering", "stop_requested"]) test(`background ${status} does not claim execution is running`, async () => {
+  const view = app("mcp_work_result_app.html");
+  view.toolInput(input);
+  view.toolResult({ work_result: { ...baseState, jobs: { ...runningJobs, items: [
+    { ...runningJobs.items[0], status },
+  ] } } });
+  await view.initialize();
+  assert.equal(view.nodes.activityAge.textContent, "");
+  assert.notEqual(view.nodes.jobsList.children[0].children[0].children[1].textContent, "Running");
+  assert.equal(view.nodes.jobResults.hidden, true);
 });
 
 test("Window-linked Session does not become Job authority on refresh", async () => {
@@ -1374,7 +1442,7 @@ test("Job failures and recovery remain bounded labels and conflicting Session fa
     { ...runningJobs.items[0], state: "terminal", status: "failed", outcome: "failed", recovery_state: "recovered" },
   ] } } });
   await view.initialize();
-  assert.equal(view.nodes.jobsList.children[0].children[0].children[1].textContent, "Failed · recovered");
+  assert.equal(view.nodes.jobResultsList.children[0].children[0].children[1].textContent, "Failed · recovered");
   view.toolInput({ project, session_id: `wc_sess_${"2".repeat(32)}` });
   assert.equal(view.nodes.badge.textContent, "Unavailable");
   assert.equal(view.nodes.jobsSection.hidden, true);

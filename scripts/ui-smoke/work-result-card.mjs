@@ -23,6 +23,11 @@ try {
     }));
     state.activity.active = true;
     state.activity.current = { label: "Running tools", kind: "run", started_at_ms: Date.now() };
+    state.jobs = { available: true, active: true, truncated: false, items: [
+      { job_id: 'smoke-running', tool: 'cargo_test', status: 'running', state: 'active' },
+      { job_id: 'smoke-failed', tool: 'project_build', status: 'failed', state: 'terminal', outcome: 'failed' },
+      { job_id: 'smoke-passed', tool: 'project_validate', status: 'completed', state: 'terminal', outcome: 'passed' },
+    ] };
     state.collaboration.messages = [{ message_id: 'wc_msg_reading', created_at_ms: Date.now(), message: 'Please review the collaboration workflow before release.', source: 'operator', direction: 'inbound', requires_ack: true, first_projected_at_ms: null, first_ack_observed_at_ms: null }];
     await page.evaluate(({ html, state }) => {
       window.fixtureState = state;
@@ -48,16 +53,23 @@ try {
     }, { html, state });
     const card = page.frameLocator('iframe');
     await card.getByText('run_shell', { exact: true }).waitFor();
-    assert.equal(await card.getByText('Running', { exact: true }).count(), 2);
+    assert.equal(await card.getByText('Running', { exact: true }).count(), 3);
+    assert.equal(await card.locator('#jobsSection').evaluate(node => node.closest('.progress-section') !== null), true);
+    assert.equal(await card.locator('#jobResults').evaluate(node => node.open), false);
+    await card.getByText('Recent background results · 1 failed · 1 passed', { exact: true }).waitFor();
+    assert.equal(await card.getByText('project build', { exact: true }).isVisible(), false);
+    await card.locator('#jobResultsSummary').focus();
+    await page.keyboard.press('Enter');
+    await card.getByText('project build', { exact: true }).waitFor();
+    await card.locator('#jobResultsSummary').click();
     assert(await card.locator('body').evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
     await page.screenshot({ path: new URL(`work-result-activity-${width}.png`, output).pathname, fullPage: true });
     await card.getByRole('tab', { name: 'Results', exact: true }).click();
-    await card.getByText('src/a.rs', { exact: true }).waitFor();
-    await card.getByText('Modified · Unstaged', { exact: true }).waitFor();
+    await card.getByRole('button', { name: 'src/a.rs · +4 −1', exact: true }).waitFor();
     await card.getByText('Checks passed', { exact: true }).waitFor();
     assert.equal(await card.locator('#finalChanges').isVisible(), false);
     assert(await card.locator('body').evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
-    await card.locator('#workspaceFiles code').evaluate(node => {
+    await card.locator('#workspaceFiles .file-toggle').evaluate(node => {
       window.originalFile = node;
       const range = document.createRange(); range.selectNodeContents(node);
       getSelection().removeAllRanges(); getSelection().addRange(range);
@@ -65,7 +77,7 @@ try {
     await page.evaluate(() => { window.fixtureState.state_version = 'wr2_' + 'c'.repeat(64); });
     await card.locator('#refresh').evaluate(node => node.click());
     await card.getByRole('button', { name: 'Refresh', exact: true }).waitFor();
-    assert(await card.locator('#workspaceFiles code').evaluate(node => node === window.originalFile && getSelection().toString() === node.textContent));
+    assert(await card.locator('#workspaceFiles .file-toggle').evaluate(node => node === window.originalFile && getSelection().toString() === node.textContent));
     await page.screenshot({ path: new URL(`work-result-files-${width}.png`, output).pathname, fullPage: true });
     await card.getByRole('button', { name: 'Discuss these changes', exact: true }).click();
     await card.getByText('Saved', { exact: true }).waitFor();
@@ -92,5 +104,5 @@ try {
     assert.deepEqual(errors, []);
     await page.close();
   }
-  console.log('Work Result card: live files, Results navigation, selection preservation, exact retry, reduced motion and narrow layout passed at 800 / 390 px.');
+  console.log('Work Result card: background outcomes, keyboard disclosure, live files, Results navigation, selection preservation, exact retry, reduced motion and narrow layout passed at 800 / 390 px.');
 } finally { await browser.close(); }

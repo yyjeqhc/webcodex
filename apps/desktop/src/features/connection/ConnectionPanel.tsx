@@ -42,7 +42,7 @@ export function ConnectionPanel({ state, onState }: { state: DesktopState; onSta
     {profiles.config_error && <p role="alert" className="workspace-notice">{c("configError")}</p>}
     {failed && !deleting && <div role="alert" className="workspace-notice"><p>{c("operationFailed")}</p>{autoProxyRecovery && <p>{p("tunnelAutoProxyRecovery")}</p>}</div>}
     {saved && <p role="status" className="workspace-notice">{c("saved")}</p>}
-    <div className="connection-list">{profiles.profiles.map(profile => <ConnectionCard key={profile.id} profile={profile} canStart={local && state.readiness.runtime_ready} busy={disabled} copied={copiedId === profile.id}
+    <div className="connection-list">{profiles.profiles.map(profile => <ConnectionCard key={profile.id} profile={profile} canStart={local && state.readiness.runtime_ready} busy={disabled} copied={copiedId === profile.id} autoProxyDetected={state.tunnel_proxy.mode === "auto" && state.tunnel_proxy.effective_proxy_present}
       onAction={action => void run(profile.id, action)}
       onEdit={() => { setSaved(false); setEditor({ profile }); }} onDelete={() => { setFailed(null); setDeleting(profile); }}
       onCopy={() => { if (profile.tunnel_id) void writeText(profile.tunnel_id).then(() => setCopiedId(profile.id)).catch(value => setFailed(normalizeDesktopError(value))); }} />)}</div>

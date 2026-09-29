@@ -65,6 +65,30 @@ profiles with **Start automatically** selected are started after runtime restora
 Stop persists disabled intent. First-run's explicit default connection also records
 its autostart choice; deleting the default does not resurrect environment fallback.
 
+### Tunnel startup and proxy recovery
+
+A start action being accepted is not proof that the tunnel is ready. Later
+readiness failures appear on the affected connection card, including after an
+automatic startup. Download, local installation and integrity verification
+failures have distinct recovery messages; changing credentials does not repair a
+full disk or an invalid downloaded binary. Integrity checks must never be bypassed.
+
+When **Auto** selected a detected proxy and the tunnel reports a network/readiness
+failure, the card offers an explicit diagnostic option: try **Direct** under
+**Settings → Network**, then restart the affected connection. This covers the
+reported Clash TUN scenario in #720 without silently bypassing a user's proxy.
+Direct removes WebCodex's application-level proxy configuration; it does not
+turn off the operating system's TUN or guarantee a particular network route.
+Direct succeeding narrows the problem but does not establish the root cause.
+Custom/Direct choices, installation errors and verification errors do not trigger
+this Auto-proxy advice. Proxy settings are shared by Desktop connections; changes
+are applied on subsequent starts, not by silently restarting healthy peers.
+
+For support, retain the selected proxy mode, effective source, and the connection's
+safe `failure_stage` / `reason_code` shown under Advanced. Do not post API keys,
+authorization files or credential-bearing proxy URLs. Server and Runner need not
+be restarted merely to retry one tunnel.
+
 ### Credential migration and public state
 
 The existing private `secrets/tunnel-config.json` is migrated in place to a versioned

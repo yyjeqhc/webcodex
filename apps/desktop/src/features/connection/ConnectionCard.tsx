@@ -3,8 +3,8 @@ import { useLocale } from "../../i18n/locale";
 import { useProduct } from "../../i18n/product";
 import { connectionActive, type TunnelConnection, type TunnelProfileAction } from "../../models/connections-tools";
 
-export function ConnectionCard({ profile, canStart, busy, copied, onAction, onEdit, onDelete, onCopy }: {
-  profile: TunnelConnection; canStart: boolean; busy: boolean; copied: boolean;
+export function ConnectionCard({ profile, canStart, busy, copied, autoProxyDetected, onAction, onEdit, onDelete, onCopy }: {
+  profile: TunnelConnection; canStart: boolean; busy: boolean; copied: boolean; autoProxyDetected: boolean;
   onAction: (action: TunnelProfileAction) => void; onEdit: () => void; onDelete: () => void; onCopy: () => void;
 }) {
   const p = useProduct(); const c = useConnectionsTools(); const { formatTime } = useLocale();
@@ -14,10 +14,19 @@ export function ConnectionCard({ profile, canStart, busy, copied, onAction, onEd
   const canStop = active || (profile.enabled && profile.lifecycle === "error");
   const startAction = canStop ? "restart" : "start";
   const status = profile.ready ? p("running") : profile.last_error || profile.lifecycle === "error" ? p("failed") : profile.lifecycle === "starting" ? p("starting") : profile.lifecycle === "stopping" ? c("stopping") : profile.lifecycle === "running" ? p("starting") : p("stopped");
+  const failureMessage = profile.reason_code === "tunnel_client_download_failed" ? "tunnelDownloadFailed"
+    : profile.reason_code === "tunnel_client_install_failed" ? "tunnelInstallFailed"
+    : profile.reason_code === "tunnel_client_verification_failed" ? "tunnelVerificationFailed"
+    : profile.last_error === "local_mcp_unavailable" ? "localUnavailable" : "tunnelUnavailable";
+  // Readiness is asynchronous: use the observed per-profile failure, not only a
+  // rejected start command. Never infer a proxy cause or silently switch routes.
+  const autoProxyRecovery = autoProxyDetected && profile.last_error === "tunnel_unavailable" && (
+    !profile.reason_code || ["tunnel_client_download_failed", "tunnel_control_plane_unreachable", "tunnel_control_plane_probe_failed", "tunnel_daemon_not_ready", "tunnel_unavailable"].includes(profile.reason_code)
+  );
   return <article className="connection-profile" aria-labelledby={`connection-${profile.id}`} data-tunnel-profile-id={profile.id}>
     <header className="workspace-section-heading"><div><h2 id={`connection-${profile.id}`}>{profile.name}</h2><span className="workspace-observation">{c("secureTunnel")}</span></div><span className={`connection-state ${profile.ready ? "ready" : ""}`} role="status"><i className={`status-dot ${profile.ready ? "ready" : profile.last_error ? "error" : "unknown"}`} aria-hidden="true" />{status}</span></header>
     <div className="connection-id"><span>Tunnel ID</span><code>{profile.tunnel_id || "—"}</code>{profile.tunnel_id && <button type="button" className="text-button" aria-label={`${c("copyId")} ${profile.name}`} onClick={onCopy}>{copied ? p("copied") : c("copyId")}</button>}</div>
-    {profile.last_error && <p className="workspace-notice" role="status">{c(profile.last_error === "local_mcp_unavailable" ? "localUnavailable" : "tunnelUnavailable")}</p>}
+    {profile.last_error && <div className="workspace-notice" role="status"><p>{c(failureMessage)}</p>{autoProxyRecovery && <p>{p("tunnelAutoProxyRecovery")}</p>}</div>}
     <div className="connection-actions">
       <button type="button" className="secondary-button" disabled={busy} aria-label={`${p("edit")} ${profile.name}`} onClick={onEdit}>{p("edit")}</button>
       <button type="button" className={active ? "secondary-button" : "primary-button"} disabled={busy || !canStart || !profile.credential_present} aria-label={`${p(startAction)} ${profile.name}`} onClick={() => onAction(startAction)}>{p(startAction)}</button>

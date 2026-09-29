@@ -89,6 +89,42 @@ describe("Connections + Tools control surfaces", () => {
     expect(alert).toHaveTextContent("does not identify the root cause");
   });
 
+  it("shows proxy recovery for asynchronous readiness failure without a rejected start call", () => {
+    const initial = state();
+    initial.tunnel_proxy = { mode: "auto", custom_url: null, effective_source: "system", effective_proxy_present: true, system_proxy_detected: true };
+    initial.connections = connectionSnapshot(connectionFixture({ id: "work", name: "ChatGPT Work", lifecycle: "error", pid: null, ready: false, last_error: "tunnel_unavailable", failure_stage: "tunnel_daemon_readiness", reason_code: "tunnel_daemon_not_ready" }));
+    render(<Harness mode="connections" initial={initial} />);
+    const card = screen.getByRole("article", { name: "ChatGPT Work" });
+    expect(within(card).getByText(/Auto is using a detected proxy/)).toHaveTextContent("try Direct mode");
+    expect(api.tunnelProfileAction).not.toHaveBeenCalled();
+    expect(api.restartOwnedRunner).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["tunnel_client_download_failed", "tunnel_client_download", "could not be downloaded", true],
+    ["tunnel_client_install_failed", "tunnel_client_install", "could not be installed", false],
+    ["tunnel_client_verification_failed", "tunnel_client_verification", "failed integrity verification", false],
+  ] as const)("shows specific recovery for %s instead of blaming credentials", (reason_code, failure_stage, message, proxyHint) => {
+    const initial = state();
+    initial.tunnel_proxy = { mode: "auto", custom_url: null, effective_source: "system", effective_proxy_present: true, system_proxy_detected: true };
+    initial.connections = connectionSnapshot(connectionFixture({ id: "work", name: "ChatGPT Work", lifecycle: "error", ready: false, last_error: "tunnel_unavailable", reason_code, failure_stage }));
+    render(<Harness mode="connections" initial={initial} />);
+    const card = screen.getByRole("article", { name: "ChatGPT Work" });
+    expect(card).toHaveTextContent(message);
+    expect(card).not.toHaveTextContent("Check this connection’s credentials");
+    expect(within(card).queryByText(/Auto is using a detected proxy/) !== null).toBe(proxyHint);
+    expect(api.tunnelProfileAction).not.toHaveBeenCalled();
+  });
+
+  it.each(["direct", "custom"] as const)("does not suggest bypassing the explicit %s proxy choice", (mode) => {
+    const initial = state();
+    initial.tunnel_proxy = { mode, custom_url: mode === "custom" ? "http://127.0.0.1:7890" : null, effective_source: mode, effective_proxy_present: mode === "custom", system_proxy_detected: true };
+    initial.connections = connectionSnapshot(connectionFixture({ lifecycle: "error", ready: false, last_error: "tunnel_unavailable", failure_stage: "tunnel_daemon_readiness", reason_code: "tunnel_daemon_not_ready" }));
+    render(<Harness mode="connections" initial={initial} />);
+    expect(screen.queryByText(/Auto is using a detected proxy/)).not.toBeInTheDocument();
+    expect(api.tunnelProfileAction).not.toHaveBeenCalled();
+  });
+
   it("does not attribute unrelated Tunnel failures to Clash or proxy detection", async () => {
     const initial = state();
     initial.tunnel_proxy = { mode: "auto", custom_url: null, effective_source: "system", effective_proxy_present: true, system_proxy_detected: true };

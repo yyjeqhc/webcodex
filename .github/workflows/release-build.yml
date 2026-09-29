@@ -1292,8 +1292,11 @@ jobs:
           from pathlib import Path
 
           root = Path("candidate-input")
-          expected_signing = "adhoc"
-          expected_notarized = False
+          build_kind = os.environ["BUILD_KIND"]
+          if build_kind not in {"release", "verification"}:
+              raise SystemExit("unknown macOS Desktop build kind")
+          expected_signing = "developer-id" if build_kind == "release" else "adhoc"
+          expected_notarized = build_kind == "release"
           pairs = [("darwin-arm64", os.environ["DESKTOP_DARWIN_ARM64_FILENAME"])]
           if os.environ["DESKTOP_DARWIN_X64_SUPPLEMENTAL"] != "true":
               pairs.insert(0, ("darwin-x64", os.environ["DESKTOP_DARWIN_X64_FILENAME"]))
@@ -1313,7 +1316,7 @@ jobs:
               if not isinstance(runtime, dict) or set(runtime) != {"webcodex", "webcodex-server", "webcodex-runner"}:
                   raise SystemExit(f"native macOS Desktop runtime evidence set mismatch: {platform}")
               for name, item in runtime.items():
-                  if not isinstance(item, dict) or set(item) != {"unsigned_input_sha256", "bundled_signed_sha256"}:
+                  if not isinstance(item, dict) or set(item) != {"runtime_input_sha256", "bundled_signed_sha256"}:
                       raise SystemExit(f"malformed native macOS runtime evidence: {platform}/{name}")
                   if not all(isinstance(item[key], str) and re.fullmatch(r"[0-9a-f]{64}", item[key]) for key in item):
                       raise SystemExit(f"invalid native macOS runtime evidence digest: {platform}/{name}")

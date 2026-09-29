@@ -222,6 +222,9 @@ jobs:
           bash scripts/test_inventory.sh --self-test
           PYTHONDONTWRITEBYTECODE=1 python3 -m unittest scripts.tests.test_ci_rust_test
           bash scripts/test_inventory.sh
+      - name: Check macOS signing setup and release evidence contracts
+        # Fake signing commands and synthetic artifacts only; no Apple credentials.
+        run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest scripts.tests.test_macos_signing_setup scripts.tests.test_macos_release_evidence
       - name: Check schema and metadata contracts
         run: |
           python3 scripts/tests/test_runner_observability_contract.py

@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# Certificate bytes must be private from creation, including failed imports.
+umask 077
 
 fail() {
   printf 'macOS Developer ID setup failed: %s\n' "$*" >&2
@@ -20,13 +22,28 @@ esac
 
 keychain="$RUNNER_TEMP/webcodex-developer-id.keychain-db"
 certificate="$RUNNER_TEMP/webcodex-developer-id.p12"
+# Check before installing cleanup: never delete another attempt's scratch state.
+[ ! -e "$keychain" ] && [ ! -L "$keychain" ] && [ ! -e "$certificate" ] && [ ! -L "$certificate" ] || {
+  fail "signing scratch paths already exist"
+}
 keychain_password="$(openssl rand -hex 32)"
+setup_complete=0
+keychain_created=0
+cleanup() {
+  rm -f "$certificate"
+  if [ "$setup_complete" -ne 1 ] && [ "$keychain_created" -eq 1 ]; then
+    security delete-keychain "$keychain" >/dev/null 2>&1 || true
+  fi
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
-rm -f "$keychain" "$certificate"
 printf '%s' "$APPLE_CERTIFICATE" | openssl base64 -d -A > "$certificate"
 chmod 600 "$certificate"
 
 security create-keychain -p "$keychain_password" "$keychain"
+keychain_created=1
 security set-keychain-settings -lut 7200 "$keychain"
 security unlock-keychain -p "$keychain_password" "$keychain"
 security import "$certificate" \
@@ -55,4 +72,5 @@ count="$(printf '%s\n' "$matches" | awk 'NF { n += 1 } END { print n + 0 }')"
   printf 'WEBCODEX_SIGNING_KEYCHAIN=%s\n' "$keychain"
 } >> "$GITHUB_ENV"
 
+setup_complete=1
 printf 'Configured one Developer ID Application signing identity in an ephemeral keychain.\n'

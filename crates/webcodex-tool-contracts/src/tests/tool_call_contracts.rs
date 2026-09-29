@@ -982,7 +982,11 @@ fn process_argv_alias_is_exact_and_canonical() {
                 .1,
             None
         );
+        let canonical_value = serde_json::to_value(ToolCall::from_tool_name(name, canonical).unwrap()).unwrap();
+        assert_eq!(serde_json::to_value(&call).unwrap(), canonical_value);
+        assert_eq!(call.tool_name(), name);
         alias["args"] = json!(["status"]);
+        assert_eq!(serde_json::to_value(ToolCall::from_tool_name(name, alias.clone()).unwrap()).unwrap(), canonical_value);
         assert_eq!(
             ToolCall::from_tool_name_with_normalization(name, alias.clone())
                 .unwrap()
@@ -992,7 +996,7 @@ fn process_argv_alias_is_exact_and_canonical() {
         alias["args"] = json!(["different"]);
         assert_eq!(
             ToolCall::from_tool_name(name, alias).unwrap_err(),
-            "ambiguous compatibility alias: args and argv differ"
+            "ambiguous input alias: args and argv differ"
         );
         for (field, value) in [("argv", json!("status")), ("arguments", json!(["status"]))] {
             let mut invalid = base.clone();
@@ -1001,6 +1005,12 @@ fn process_argv_alias_is_exact_and_canonical() {
                 ToolCall::from_tool_name(name, invalid).is_err(),
                 "{name}: {field}"
             );
+        }
+        for invalid_value in [json!(null), json!(7), json!([7]), json!({})] {
+            let mut invalid = base.clone();
+            invalid["argv"] = invalid_value.clone();
+            invalid["args"] = invalid_value;
+            assert!(ToolCall::from_tool_name(name, invalid).is_err(), "identical aliases do not bypass typing");
         }
         for field in ["timeout", "workdir", "arg", "command_args", "params"] {
             let mut invalid = base.clone();

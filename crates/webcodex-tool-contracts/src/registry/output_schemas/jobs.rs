@@ -68,7 +68,7 @@ fn process_execution_state_schema() -> Value {
 fn input_normalization_schema() -> Value {
     json!({
         "type": "object", "additionalProperties": false,
-        "description": "Present only after a successful, explicitly known lossless model-input normalization. No raw payload is repeated.",
+        "description": "Known lossless input normalization used to avoid a mechanical retry. No raw payload is repeated.",
         "properties": {
             "code": {"type": "string", "enum": ["argv_to_args", "run_process_sh_c_to_run_shell", "run_process_bash_c_to_run_shell", "run_process_bash_lc_to_login_run_shell"]},
             "hint": {"type": "string", "maxLength": 80}

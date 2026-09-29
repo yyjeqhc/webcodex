@@ -114,13 +114,26 @@ composition. None of these rules means “shell first” or weakens specialized 
 
 ## 2. Mechanical repair should be server-owned
 
-Current execution-input compatibility is deliberately narrow:
+Current ergonomic execution-input normalization is deliberately narrow:
 
 | Model input | Canonical interpretation | Condition |
 |---|---|---|
 | `run_process.argv`, `run_detached_process.argv` | `args` | If `args` is also present, values must be identical. |
 | `run_process` with exact `sh -c` or `bash -c` argv | `run_shell` with explicit `shell` | Runtime proves the request is lossless and the canonical shell path passes authority, policy, and capability gates. |
 | `run_process` with exact `bash -lc` argv | `run_shell(shell=bash, login=true)` | Same proof and Bash-login capability gate. |
+
+Input aliases save model turns; they are not an API compatibility promise.
+An alias must be explicit, closed, lossless and unambiguous: alias-only input
+canonicalizes; canonical plus alias with identical values canonicalizes; different
+values fail closed. Canonical ToolCall serialization retains only the canonical
+field. Advertise the known alias in Host input schema when necessary for it to
+reach Server normalization, without opening `additionalProperties`.
+
+Never fuzzy-correct unknown fields or tool names. Do not guess authority, target,
+effect, retry, fence or idempotency fields. Keep the explicit process spelling
+repair local; do not add a general alias registry without several concrete
+normalizations needing one. Stable `input_normalization` codes, such as
+`argv_to_args`, make the avoided mechanical retries observable.
 
 `run_script(language=python)` is canonical; `python3` is not a language alias.
 Unknown spellings such as `timeout`, `workdir`, `command_args`, and
@@ -453,14 +466,17 @@ namespace, such as `plugin_tool` or `mcp_tool`. The generic
 introduce `git_tool`, `job_tool`, `session_tool`, or similar mega-tools merely
 to reduce the Direct inventory.
 
-Canonical names should stay stable across model-surface policy changes; moving a
-tool between Direct and Gateway is never by itself a reason to rename it. Broader
-rename/compatibility decisions still follow the concrete-consumer test in section
-10. When such a consumer requires an old spelling, keep the old name only as the
-narrowest frozen compatibility input: exclude it from ordinary Direct exposure,
-intent recommendations and canonical category discovery unless that consumer
-specifically requires otherwise. New aliases require the same concrete-consumer
-justification.
+Model-visible names describe the business operation, not Host routing. Moving
+between Direct, Gateway and Hidden is not a rename reason; do not add routing
+prefixes such as `direct_`, `gateway_`, `hidden_`, `host_` or `adaptive_`.
+
+Ordinary ChatGPT tool names acquire no compatibility promise from a past schema.
+After a deliberate rename, the refreshed Host schema is the current contract.
+Update ToolDefinition, ToolCall, schemas, discovery, generated follow-ups, tests
+and documentation atomically. Do not retain duplicate model-visible tool names
+just because an earlier schema exposed them. A real frozen legacy adapter may
+need a narrowly scoped exception under section 10; ergonomic parameter spelling
+normalization is a different concern, described in section 2.
 
 Keep these four concerns independent:
 
@@ -554,16 +570,18 @@ workflows, not a per-tool feature-flag or general rules engine.
 
 ## 10. Compatibility follows concrete consumers, not historical implementation
 
-For model-facing tool contracts, compatibility is opt-in rather than automatic.
-Before retaining an alias, dual shape, legacy argument, or compatibility parser,
-name the consumer or durable/public boundary that requires it.
+Compatibility belongs to a concrete durable/public consumer boundary, not to an
+ordinary ChatGPT model-facing tool schema or name. Before retaining a legacy
+name, dual shape, old argument or compatibility parser, name that real consumer.
+Known ergonomic input aliases are turn-economy normalization, not this domain.
 
 Valid reasons include, when actually present:
 
 - durable persisted state that must still restore;
 - mixed-version Server/Runner rolling operation;
 - a named external client/workflow or published artifact contract;
-- a required security/privacy migration boundary.
+- a required security/privacy migration boundary;
+- an explicitly frozen legacy adapter contract.
 
 "The old test expects it" and "a previous commit emitted it" are not consumers.
 Historical persisted evidence should remain truthful about the past, but current

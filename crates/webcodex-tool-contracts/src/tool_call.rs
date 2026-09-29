@@ -5446,7 +5446,7 @@ fn canonicalize_process_argv_alias(name: &str, arguments: &mut Value) -> Result<
     };
     if let Some(canonical) = object.get("args") {
         if canonical != &alias {
-            return Err("ambiguous compatibility alias: args and argv differ".to_string());
+            return Err("ambiguous input alias: args and argv differ".to_string());
         }
     } else {
         object.insert("args".to_string(), alias);
@@ -5469,7 +5469,8 @@ impl ToolCall {
         Self::from_tool_name_with_normalization(name, arguments).map(|(call, _)| call)
     }
 
-    /// Returns a stable code only when a documented compatibility alias was used.
+    /// Returns a stable code only when an explicit ergonomic input alias was
+    /// normalized to avoid a mechanical retry. This is not API compatibility.
     pub fn from_tool_name_with_normalization(
         name: &str,
         arguments: Value,

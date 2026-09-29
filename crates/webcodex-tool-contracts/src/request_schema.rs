@@ -108,7 +108,7 @@ fn decorate_model_wrapper_schema(tool_name: &str, schema: &mut Value) {
     if matches!(tool_name, "run_process" | "run_detached_process") {
         let mut alias = properties.get("args").expect("process args schema").clone();
         alias["description"] = Value::String(
-            "Compatibility spelling for args. Prefer args; if both are sent, their values must be identical."
+            "Alternative accepted spelling for args to avoid a mechanical retry. It canonicalizes to args; if both are supplied they must be identical."
                 .to_string(),
         );
         properties.insert("argv".to_string(), alias);

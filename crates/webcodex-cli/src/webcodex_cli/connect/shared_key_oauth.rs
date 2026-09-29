@@ -16,39 +16,11 @@ const LOCAL_PLUGIN_INSPECT_SCOPE: &str = "plugin:inspect";
 const LOCAL_PLUGIN_INVOKE_SCOPE: &str = "plugin:invoke";
 const LOCAL_SSH_SCOPE: &str = "ssh:local";
 const CODING_AGENT_SCOPE: &str = "coding_agent:run";
-const BRIDGE_BASELINE_SCOPES: &[&str] = &[
-    "runtime:read",
-    "session:collaborate",
-    "project:read",
-    "project:write",
-    "job:run",
-    "computer:read",
-    "computer:control",
-];
-const BRIDGE_OPTIONAL_COMPUTER_SCOPES: &[&str] = &[
-    "computer:launch",
-    "computer:display_read",
-    "computer:pointer_control",
-    "computer:clipboard_read",
-    "computer:clipboard_write",
-];
-// Canonical ceiling for a fresh Computer-enabled client. Existing profiles may
-// retain a narrower non-empty baseline subset plus all optional Computer scopes.
-const BRIDGE_COMPUTER_ENABLED_SCOPES: &[&str] = &[
-    "runtime:read",
-    "session:collaborate",
-    "project:read",
-    "project:write",
-    "job:run",
-    "computer:read",
-    "computer:control",
-    "computer:launch",
-    "computer:display_read",
-    "computer:pointer_control",
-    "computer:clipboard_read",
-    "computer:clipboard_write",
-];
-
+use webcodex_core::authority::profiles::{
+    OPTIONAL_COMPUTER as BRIDGE_OPTIONAL_COMPUTER_SCOPES,
+    SHARED_KEY_COMPUTER as BRIDGE_COMPUTER_ENABLED_SCOPES,
+    SHARED_KEY_MODEL as BRIDGE_BASELINE_SCOPES,
+};
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 struct SharedKeyOAuthProfile {
     version: u32,
@@ -157,51 +129,19 @@ fn without_optional_class_scopes(scopes: &[String]) -> Vec<String> {
 }
 
 fn baseline_scope_ceiling_is_valid(scopes: &[String]) -> bool {
-    !scopes.is_empty()
-        && scope_list_is_unique(scopes)
-        && scopes
-            .iter()
-            .all(|scope| BRIDGE_BASELINE_SCOPES.contains(&scope.as_str()))
+    webcodex_core::authority::profiles::is_baseline(scopes)
 }
-
 fn computer_enabled_scope_ceiling_is_valid(scopes: &[String]) -> bool {
-    if scopes.is_empty() || !scope_list_is_unique(scopes) {
-        return false;
-    }
-
-    let mut has_baseline_scope = false;
-    for scope in scopes {
-        if BRIDGE_BASELINE_SCOPES.contains(&scope.as_str()) {
-            has_baseline_scope = true;
-        } else if !BRIDGE_OPTIONAL_COMPUTER_SCOPES.contains(&scope.as_str()) {
-            return false;
-        }
-    }
-
-    has_baseline_scope
-        && BRIDGE_OPTIONAL_COMPUTER_SCOPES
-            .iter()
-            .all(|required| scopes.iter().any(|scope| scope == required))
+    webcodex_core::authority::profiles::is_computer(scopes)
 }
-
 fn computer_enabled_scope_ceiling_from_existing(scopes: &[String]) -> Option<Vec<String>> {
-    if computer_enabled_scope_ceiling_is_valid(scopes) {
-        return Some(scopes.to_vec());
-    }
-    if !baseline_scope_ceiling_is_valid(scopes) {
-        return None;
-    }
-
-    let mut expanded = scopes.to_vec();
-    expanded.extend(
-        BRIDGE_OPTIONAL_COMPUTER_SCOPES
-            .iter()
-            .map(|scope| (*scope).to_string()),
-    );
-    Some(expanded)
+    webcodex_core::authority::profiles::with_computer(scopes)
 }
 
 fn profile_scope_ceiling_is_valid(profile: &SharedKeyOAuthProfile) -> bool {
+    if !scope_list_is_unique(&profile.allowed_scopes) {
+        return false;
+    }
     let local_mcp_present = profile
         .allowed_scopes
         .iter()
@@ -700,15 +640,7 @@ mod tests {
 
     #[tokio::test]
     async fn ordinary_connect_oauth_provisions_then_reuses_same_shared_key_client() {
-        let scopes = vec![
-            "runtime:read",
-            "session:collaborate",
-            "project:read",
-            "project:write",
-            "job:run",
-            "computer:read",
-            "computer:control",
-        ];
+        let scopes = BRIDGE_BASELINE_SCOPES;
         let (server, handle) = json_responses(vec![
             json!({
                 "success": true,
@@ -726,15 +658,7 @@ mod tests {
                 "client": {
                     "client_id": "wc_client_bridge_created",
                     "redirect_uri": "https://chatgpt.example/callback",
-                    "allowed_scopes": [
-                        "runtime:read",
-                        "session:collaborate",
-                        "project:read",
-                        "project:write",
-                        "job:run",
-                        "computer:read",
-                        "computer:control"
-                    ]
+                    "allowed_scopes": scopes
                 }
             }),
         ]);
@@ -943,6 +867,9 @@ mod tests {
         local_mcp.local_mcp_enabled = true;
         local_mcp.allowed_scopes.push(LOCAL_MCP_SCOPE.to_string());
         assert!(profile_scope_ceiling_is_valid(&local_mcp));
+        let mut duplicated = local_mcp.clone();
+        duplicated.allowed_scopes.push(LOCAL_MCP_SCOPE.into());
+        assert!(!profile_scope_ceiling_is_valid(&duplicated));
         let mut mismatched_local_mcp = local_mcp.clone();
         mismatched_local_mcp.local_mcp_enabled = false;
         assert!(!profile_scope_ceiling_is_valid(&mismatched_local_mcp));

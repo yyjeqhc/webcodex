@@ -2,17 +2,13 @@ use salvo::prelude::*;
 
 use crate::auth::{
     generate_oauth_authorization_code, hash_token, shared_key_hash_of, AuthContext,
-    DIRECT_SHARED_KEY_MODEL_SCOPES, SCOPE_CODING_AGENT_RUN, SCOPE_COMMUNICATION_MANAGE,
-    SCOPE_COMMUNICATION_READ, SCOPE_COMPUTER_CLIPBOARD_READ, SCOPE_COMPUTER_CLIPBOARD_WRITE,
-    SCOPE_COMPUTER_CONTROL, SCOPE_COMPUTER_DISPLAY_READ, SCOPE_COMPUTER_LAUNCH,
-    SCOPE_COMPUTER_POINTER_CONTROL, SCOPE_COMPUTER_READ, SCOPE_JOB_RUN, SCOPE_MCP_LOCAL,
-    SCOPE_MEMORY_MANAGE, SCOPE_MEMORY_READ, SCOPE_PLUGIN_INSPECT, SCOPE_PLUGIN_INVOKE,
-    SCOPE_PROJECT_READ, SCOPE_PROJECT_WRITE, SCOPE_RUNTIME_READ, SCOPE_SESSION_COLLABORATE,
-    SCOPE_SSH_LOCAL,
+    DIRECT_SHARED_KEY_MODEL_SCOPES, SCOPE_CODING_AGENT_RUN, SCOPE_COMPUTER_CLIPBOARD_READ,
+    SCOPE_COMPUTER_CLIPBOARD_WRITE, SCOPE_COMPUTER_CONTROL, SCOPE_COMPUTER_DISPLAY_READ,
+    SCOPE_COMPUTER_LAUNCH, SCOPE_COMPUTER_POINTER_CONTROL, SCOPE_COMPUTER_READ, SCOPE_MCP_LOCAL,
+    SCOPE_PLUGIN_INSPECT, SCOPE_PLUGIN_INVOKE, SCOPE_SSH_LOCAL,
 };
 use crate::models::OAuthAuthorizationCodeRecord;
 use crate::runner_http::{RunnerFeature, RunnerFeatureSet};
-use webcodex_core::authority::SCOPE_RUNNER_MANAGE;
 
 use super::{
     apply_oauth_no_store_headers, authorize_bridge_html, decoded_authorize_param, form_field,
@@ -25,37 +21,10 @@ use super::{
 pub(crate) const OAUTH_BRIDGE_INVALID_SCOPE_MESSAGE: &str =
     "bridge tokens exceed the ordinary shared-key OAuth scope ceiling";
 
-pub(crate) const SHARED_KEY_OAUTH_OPTIONAL_COMPUTER_SCOPES: &[&str] = &[
-    SCOPE_COMPUTER_LAUNCH,
-    SCOPE_COMPUTER_DISPLAY_READ,
-    SCOPE_COMPUTER_POINTER_CONTROL,
-    SCOPE_COMPUTER_CLIPBOARD_READ,
-    SCOPE_COMPUTER_CLIPBOARD_WRITE,
-];
-
-/// Canonical ceiling for a fresh Computer-enabled shared-key OAuth client.
-/// Existing clients may retain a narrower non-empty baseline subset and add the
-/// same fixed optional Computer scopes.
-pub(crate) const SHARED_KEY_OAUTH_COMPUTER_ENABLED_SCOPES: &[&str] = &[
-    SCOPE_RUNTIME_READ,
-    SCOPE_RUNNER_MANAGE,
-    SCOPE_SESSION_COLLABORATE,
-    SCOPE_PROJECT_READ,
-    SCOPE_PROJECT_WRITE,
-    SCOPE_MEMORY_READ,
-    SCOPE_MEMORY_MANAGE,
-    SCOPE_COMMUNICATION_READ,
-    SCOPE_COMMUNICATION_MANAGE,
-    SCOPE_JOB_RUN,
-    SCOPE_COMPUTER_READ,
-    SCOPE_COMPUTER_CONTROL,
-    SCOPE_COMPUTER_LAUNCH,
-    SCOPE_COMPUTER_DISPLAY_READ,
-    SCOPE_COMPUTER_POINTER_CONTROL,
-    SCOPE_COMPUTER_CLIPBOARD_READ,
-    SCOPE_COMPUTER_CLIPBOARD_WRITE,
-];
-
+pub(crate) use webcodex_core::authority::profiles::{
+    OPTIONAL_COMPUTER as SHARED_KEY_OAUTH_OPTIONAL_COMPUTER_SCOPES,
+    SHARED_KEY_COMPUTER as SHARED_KEY_OAUTH_COMPUTER_ENABLED_SCOPES,
+};
 #[derive(Debug, Clone, Copy)]
 struct BridgePermissionSpec {
     id: &'static str,
@@ -126,50 +95,14 @@ fn bridge_scope_list_is_unique(scopes: &[String]) -> bool {
 }
 
 fn bridge_baseline_scope_ceiling_is_valid(scopes: &[String]) -> bool {
-    !scopes.is_empty()
-        && bridge_scope_list_is_unique(scopes)
-        && scopes
-            .iter()
-            .all(|scope| bridge_oauth_scopes().contains(&scope.as_str()))
+    webcodex_core::authority::profiles::is_baseline(scopes)
 }
-
 fn bridge_computer_scope_ceiling_is_valid(scopes: &[String]) -> bool {
-    if scopes.is_empty() || !bridge_scope_list_is_unique(scopes) {
-        return false;
-    }
-
-    let mut has_baseline_scope = false;
-    for scope in scopes {
-        if bridge_oauth_scopes().contains(&scope.as_str()) {
-            has_baseline_scope = true;
-        } else if !SHARED_KEY_OAUTH_OPTIONAL_COMPUTER_SCOPES.contains(&scope.as_str()) {
-            return false;
-        }
-    }
-
-    has_baseline_scope
-        && SHARED_KEY_OAUTH_OPTIONAL_COMPUTER_SCOPES
-            .iter()
-            .all(|required| scopes.iter().any(|scope| scope == required))
+    webcodex_core::authority::profiles::is_computer(scopes)
 }
-
 fn bridge_computer_enabled_scope_ceiling(scopes: &[String]) -> Option<Vec<String>> {
-    if bridge_computer_scope_ceiling_is_valid(scopes) {
-        return Some(scopes.to_vec());
-    }
-    if !bridge_baseline_scope_ceiling_is_valid(scopes) {
-        return None;
-    }
-
-    let mut expanded = scopes.to_vec();
-    expanded.extend(
-        SHARED_KEY_OAUTH_OPTIONAL_COMPUTER_SCOPES
-            .iter()
-            .map(|scope| (*scope).to_string()),
-    );
-    Some(expanded)
+    webcodex_core::authority::profiles::with_computer(scopes)
 }
-
 fn bridge_scope_ceiling_without_optional_class_scopes(scopes: &[String]) -> Option<Vec<String>> {
     if !bridge_scope_list_is_unique(scopes) {
         return None;

@@ -1004,6 +1004,15 @@ fn job_prestart_lifecycle(operation: &RunnerJobOperation) -> Option<ShellCommand
         | RunnerJobOperation::StartDetachedProcess(_)
         | RunnerJobOperation::StartScript(_)
         | RunnerJobOperation::StartSkillResource(_) => Some(ShellCommandExecutionState::NotStarted),
+        RunnerJobOperation::StartValidation(operation)
+            if operation
+                .context
+                .validation
+                .as_ref()
+                .is_some_and(|metadata| metadata.project_validation.is_some()) =>
+        {
+            Some(ShellCommandExecutionState::NotStarted)
+        }
         RunnerJobOperation::StartValidation(_) | RunnerJobOperation::Stop { .. } => None,
     }
 }

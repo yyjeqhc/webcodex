@@ -40,11 +40,13 @@ impl AppState {
                 .runtime
                 .clone()
                 .ok_or_else(|| desktop_state_unavailable("Configure a Runner first"))?;
-            tokio::task::spawn_blocking(move || {
-                crate::webcodex::settings::update(&runtime, request)
+            let edit = tokio::task::spawn_blocking({
+                let runtime = runtime.clone();
+                move || crate::webcodex::settings::stage_paths_update(&runtime, request)
             })
             .await
             .map_err(|_| desktop_state_unavailable("Settings worker stopped"))??;
+            apply_staged_settings(&runtime, &edit).await?;
             core.get_state().await
         }
         .await;
@@ -72,62 +74,8 @@ impl AppState {
             .await
             .map_err(|_| desktop_state_unavailable("Settings worker stopped"))??;
 
-            let checked = match runner_config_call(&runtime, "runner_config_check", serde_json::json!({
-                "client_id": edit_target_client_id(&runtime)?
-            }))
-            .await
-            {
-                Ok(value) => value,
-                Err(error) => {
-                    rollback_staged_file_access(&edit)?;
-                    return Err(error);
-                }
-            };
-            let generation = match checked_config_generation(&checked) {
-                Ok(generation) => generation,
-                Err(error) => {
-                    rollback_staged_file_access(&edit)?;
-                    return Err(error);
-                }
-            };
-            if !edit.candidate_unchanged()? {
-                return Err(file_access_error(
-                    "runner_config_concurrent_change",
-                    "Runner configuration changed while file access was being validated",
-                    "Reload File access and retry from the current Runner configuration.",
-                ));
-            }
-
-            let reload = runner_config_call(
-                &runtime,
-                "runner_config_reload",
-                serde_json::json!({
-                    "client_id": edit_target_client_id(&runtime)?,
-                    "expected_generation": generation,
-                }),
-            )
-            .await;
-            let applied = match reload {
-                Ok(value) if value.get("success").and_then(Value::as_bool) == Some(true) => {
-                    reload_generation_applied(&value, generation)
-                }
-                Ok(value) if reload_outcome_unknown(&value) => {
-                    reconcile_unknown_reload(&runtime, &edit, generation).await
-                }
-                Ok(_) => Err(file_access_error(
-                    "runner_config_reload_failed",
-                    "Runner rejected the file access reload",
-                    "The previous on-disk file access configuration was restored. Recheck the Runner and try again.",
-                )),
-                Err(_) => reconcile_unknown_reload(&runtime, &edit, generation).await,
-            };
-            match applied {
-                Ok(()) => core.get_state().await,
-                Err(error) => {
-                    rollback_staged_file_access(&edit)?;
-                    Err(error)
-                }
-            }
+            apply_staged_settings(&runtime, &edit).await?;
+            core.get_state().await
         }
         .await;
         self.finish_operation(operation, cancellation, core, baseline, result)
@@ -227,7 +175,83 @@ impl AppState {
     }
 }
 
-fn file_access_error(
+/// Shared settings transaction: an unavailable check proves reload was not
+/// submitted; an indeterminate reload does not authorize rollback or replay.
+/// This same path serves allowed roots, instruction files and Skill roots.
+pub(super) async fn apply_staged_settings(
+    runtime: &StoredRuntime,
+    edit: &crate::webcodex::settings::PendingSettingsEdit,
+) -> DesktopResult<()> {
+    let client_id = edit_target_client_id(runtime)?;
+    apply_with_control(&client_id, edit, |tool, params| {
+        runner_config_call(runtime, tool, params)
+    })
+    .await
+}
+
+async fn apply_with_control<F, Fut>(
+    client_id: &str,
+    edit: &crate::webcodex::settings::PendingSettingsEdit,
+    mut call: F,
+) -> DesktopResult<()>
+where
+    F: FnMut(&'static str, Value) -> Fut,
+    Fut: std::future::Future<Output = DesktopResult<Value>>,
+{
+    let checked = call(
+        "runner_config_check",
+        serde_json::json!({"client_id": client_id}),
+    )
+    .await;
+    let generation = match checked.and_then(|value| checked_config_generation(&value)) {
+        Ok(generation) => generation,
+        Err(error) => {
+            rollback_staged_settings(edit)?;
+            return Err(error);
+        }
+    };
+    if !edit.candidate_unchanged()? {
+        return Err(settings_error(
+            "runner_config_concurrent_change",
+            "Runner configuration changed during validation",
+            "Reload settings before making another change.",
+        ));
+    }
+    let reload = call(
+        "runner_config_reload",
+        serde_json::json!({
+            "client_id": client_id, "expected_generation": generation
+        }),
+    )
+    .await;
+    let applied = match reload {
+        Ok(value) if value.get("success").and_then(Value::as_bool) == Some(true) => reload_generation_applied(&value, generation),
+        Ok(value) if reload_outcome_unknown(&value) => {
+            let observed = call("runner_config_check", serde_json::json!({"client_id":client_id})).await;
+            Err(uncertain_reload(observed))
+        }
+        Err(_) => {
+            let observed = call("runner_config_check", serde_json::json!({"client_id":client_id})).await;
+            Err(uncertain_reload(observed))
+        }
+        Ok(_) => Err(settings_error("runner_config_reload_failed", "Runner rejected the settings reload", "The unchanged on-disk candidate will be restored. Reconnect and reload settings before trying again.")),
+    };
+    match applied {
+        Ok(()) if edit.candidate_unchanged()? => Ok(()),
+        Ok(()) => Err(settings_error(
+            "runner_config_reconcile_required",
+            "Configuration changed after reload",
+            "Recheck the active Runner and current settings; no automatic rollback was attempted.",
+        )),
+        Err(error) if error.code == "runner_config_reload_failed" => {
+            rollback_staged_settings(edit)?;
+            Err(error)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn settings_error(
     code: &'static str,
     message: &'static str,
     next_action: &'static str,
@@ -256,27 +280,27 @@ async fn runner_config_call(
     )
     .await
     .map_err(|_| {
-        file_access_error(
+        settings_error(
             "runner_config_control_unavailable",
             "Runner configuration could not be verified online",
-            "The on-disk change was not reported as applied. Reconnect the Runner and recheck File access.",
+            "The on-disk change was not reported as applied. Reconnect the Runner and recheck settings.",
         )
     })
 }
 
 fn checked_config_generation(value: &Value) -> DesktopResult<u64> {
     if value.get("success").and_then(Value::as_bool) != Some(true) {
-        return Err(file_access_error(
+        return Err(settings_error(
             "runner_config_check_failed",
-            "Runner rejected the file access candidate",
-            "The previous on-disk file access configuration was restored. Correct the configuration and try again.",
+            "Runner rejected the settings candidate",
+            "The previous on-disk settings configuration was restored. Correct the configuration and try again.",
         ));
     }
     let output = value.get("output").ok_or_else(|| {
-        file_access_error(
+        settings_error(
             "runner_config_check_failed",
             "Runner returned an incomplete configuration check",
-            "The previous on-disk file access configuration was restored. Recheck the Runner and try again.",
+            "The previous on-disk settings configuration was restored. Recheck the Runner and try again.",
         )
     })?;
     if output.get("valid").and_then(Value::as_bool) != Some(true)
@@ -285,30 +309,30 @@ fn checked_config_generation(value: &Value) -> DesktopResult<u64> {
             .and_then(Value::as_bool)
             .unwrap_or(false)
     {
-        return Err(file_access_error(
+        return Err(settings_error(
             "runner_config_check_failed",
-            "Runner could not safely hot-reload the file access candidate",
-            "The previous on-disk file access configuration was restored. Resolve other pending Runner config changes and try again.",
+            "Runner could not safely hot-reload the settings candidate",
+            "The previous on-disk settings configuration was restored. Resolve other pending Runner config changes and try again.",
         ));
     }
     output
         .get("current_generation")
         .and_then(Value::as_u64)
         .ok_or_else(|| {
-            file_access_error(
+            settings_error(
                 "runner_config_check_failed",
                 "Runner omitted the active configuration generation",
-                "The previous on-disk file access configuration was restored. Recheck the Runner and try again.",
+                "The previous on-disk settings configuration was restored. Recheck the Runner and try again.",
             )
         })
 }
 
 fn reload_generation_applied(value: &Value, before: u64) -> DesktopResult<()> {
     let output = value.get("output").ok_or_else(|| {
-        file_access_error(
+        settings_error(
             "runner_config_reconcile_required",
-            "Runner reload completed without enough state to confirm file access",
-            "Recheck File access before relying on the new folders.",
+            "Runner reload completed without enough state to confirm settings",
+            "Recheck settings before relying on the new settings.",
         )
     })?;
     if output
@@ -316,25 +340,25 @@ fn reload_generation_applied(value: &Value, before: u64) -> DesktopResult<()> {
         .and_then(Value::as_bool)
         .unwrap_or(false)
     {
-        return Err(file_access_error(
-            "runner_config_reload_failed",
-            "Runner reported a restart-only configuration change",
-            "The previous on-disk file access configuration was restored. Resolve other Runner config changes first.",
+        return Err(settings_error(
+            "runner_config_reconcile_required",
+            "Runner reported startup-only changes after accepting the reload",
+            "Hot-reloadable values may already be active. Inspect the current configuration; Desktop did not roll it back or restart the Runner.",
         ));
     }
     let expected = before.checked_add(1).ok_or_else(|| {
-        file_access_error(
+        settings_error(
             "runner_config_reconcile_required",
             "Runner configuration generation could not be reconciled",
-            "Recheck File access before relying on the new folders.",
+            "Recheck settings before relying on the new settings.",
         )
     })?;
     match output.get("current_generation").and_then(Value::as_u64) {
         Some(current) if current == expected => Ok(()),
-        _ => Err(file_access_error(
+        _ => Err(settings_error(
             "runner_config_reconcile_required",
             "Runner reload generation did not match the checked candidate",
-            "Recheck File access before relying on the new folders.",
+            "Recheck settings before relying on the new settings.",
         )),
     }
 }
@@ -357,61 +381,29 @@ fn reload_outcome_unknown(value: &Value) -> bool {
             })
 }
 
-async fn reconcile_unknown_reload(
-    runtime: &StoredRuntime,
-    edit: &crate::webcodex::settings::PendingAllowedRootsEdit,
-    before: u64,
-) -> DesktopResult<()> {
-    if !edit.candidate_unchanged()? {
-        return Err(file_access_error(
-            "runner_config_reconcile_required",
-            "Runner configuration changed while reload status was uncertain",
-            "Reload File access and inspect the current Runner configuration before making another change.",
-        ));
-    }
-    let checked = runner_config_call(
-        runtime,
-        "runner_config_check",
-        serde_json::json!({"client_id": edit_target_client_id(runtime)?}),
-    )
-    .await?;
-    let current = checked_config_generation(&checked)?;
-    let expected = before.checked_add(1).ok_or_else(|| {
-        file_access_error(
-            "runner_config_reconcile_required",
-            "Runner configuration generation could not be reconciled",
-            "Recheck File access before relying on the new folders.",
-        )
-    })?;
-    if current == expected {
-        return Ok(());
-    }
-    if current == before {
-        return Err(file_access_error(
-            "runner_config_reload_failed",
-            "Runner did not activate the file access candidate",
-            "The previous on-disk file access configuration was restored. Recheck the Runner and try again.",
-        ));
-    }
-    Err(file_access_error(
-        "runner_config_reconcile_required",
-        "Runner configuration advanced unexpectedly while reload status was uncertain",
-        "Recheck File access before relying on either the old or new folder list.",
-    ))
+fn uncertain_reload(observed: DesktopResult<Value>) -> DesktopError {
+    // A check observes the current generation, not which request changed it.
+    // Even an unchanged generation cannot prove a timed-out reload will not
+    // execute later. Never replay or restore the candidate on this evidence.
+    settings_error("runner_config_reconcile_required", "Runner settings reload outcome is uncertain", "The candidate remains on disk. Reconnect and inspect settings before retrying; no restart, repeated reload or automatic rollback was attempted.")
+        .with_details(serde_json::json!({"observed_generation": observed.ok().and_then(|value| value.get("output")?.get("current_generation")?.as_u64())}))
 }
 
-fn rollback_staged_file_access(
-    edit: &crate::webcodex::settings::PendingAllowedRootsEdit,
+fn rollback_staged_settings(
+    edit: &crate::webcodex::settings::PendingSettingsEdit,
 ) -> DesktopResult<()> {
     match edit.rollback_if_unchanged()? {
         true => Ok(()),
-        false => Err(file_access_error(
+        false => Err(settings_error(
             "runner_config_reconcile_required",
-            "Runner configuration changed before Desktop could restore the previous file access list",
-            "Reload File access and inspect the current Runner configuration before making another change.",
+            "Runner configuration changed before Desktop could restore the previous settings list",
+            "Reload settings and inspect the current Runner configuration before making another change.",
         )),
     }
 }
+
+#[cfg(test)]
+mod tests;
 
 #[cfg(test)]
 mod file_access_contract_tests {

@@ -8,6 +8,7 @@ mod desktop_data_dir;
 mod desktop_shell;
 mod diagnostics;
 mod error;
+mod managed_instructions;
 mod mcp_providers;
 mod models;
 mod operation;
@@ -95,6 +96,9 @@ pub fn run() {
             commands::get_computer_permissions,
             commands::request_computer_permission,
             commands::get_runner_settings,
+            commands::managed_instructions_read,
+            commands::managed_instructions_save,
+            commands::managed_instructions_enable,
             commands::add_runner_plugin,
             commands::update_runner_settings,
             commands::update_runner_allowed_roots,

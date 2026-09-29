@@ -95,6 +95,70 @@ fn settings_preserve_credentials_policy_plugins_and_comments() {
 }
 
 #[test]
+fn managed_instruction_activation_appends_preserves_and_rolls_back_exact_candidate() {
+    let f = Fixture::new();
+    let custom = f.dir.join("company.md").to_string_lossy().into_owned();
+    let skills = f.dir.join("skills").to_string_lossy().into_owned();
+    let expected = RunnerPaths {
+        instruction_files: vec![custom.clone()],
+        skill_roots: vec![skills.clone()],
+    };
+    update(
+        &f.runtime,
+        SettingsUpdate {
+            target: target(&f.runtime).unwrap(),
+            expected: empty(),
+            paths: expected.clone(),
+        },
+    )
+    .unwrap();
+    let before = read(f.runtime.runner_config.as_ref().unwrap()).unwrap();
+    let managed = f.dir.join("instructions/AGENTS.md");
+    let edit = stage_managed_instructions(
+        &f.runtime,
+        target(&f.runtime).unwrap(),
+        expected.clone(),
+        &managed,
+    )
+    .unwrap();
+    let after = inspect(&f.runtime, false).unwrap();
+    assert_eq!(
+        after.paths.instruction_files,
+        vec![custom, managed.to_string_lossy().into_owned()]
+    );
+    assert_eq!(after.paths.skill_roots, vec![skills]);
+    let duplicate = stage_managed_instructions(
+        &f.runtime,
+        target(&f.runtime).unwrap(),
+        after.paths.clone(),
+        &managed,
+    )
+    .unwrap();
+    assert!(duplicate.candidate_unchanged().unwrap());
+    assert_eq!(
+        inspect(&f.runtime, false)
+            .unwrap()
+            .paths
+            .instruction_files
+            .len(),
+        2
+    );
+    assert!(edit.rollback_if_unchanged().unwrap());
+    assert_eq!(
+        read(f.runtime.runner_config.as_ref().unwrap()).unwrap(),
+        before
+    );
+    let edit =
+        stage_managed_instructions(&f.runtime, target(&f.runtime).unwrap(), expected, &managed)
+            .unwrap();
+    let path = f.runtime.runner_config.as_ref().unwrap();
+    let changed = format!("{}\n# concurrent operator edit\n", read(path).unwrap());
+    std::fs::write(path, &changed).unwrap();
+    assert!(!edit.rollback_if_unchanged().unwrap());
+    assert_eq!(read(path).unwrap(), changed);
+}
+
+#[test]
 fn file_access_reports_configured_and_effective_roots_and_preserves_unrelated_config() {
     let f = Fixture::new();
     let before = read(f.runtime.runner_config.as_ref().unwrap()).unwrap();

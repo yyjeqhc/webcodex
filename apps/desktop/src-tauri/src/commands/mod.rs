@@ -111,6 +111,30 @@ pub async fn update_tunnel_config(
     project_state_result(&app, state.update_tunnel_config(request).await)
 }
 
+#[tauri::command]
+pub async fn managed_instructions_read(
+    state: State<'_, AppState>,
+) -> DesktopResult<crate::managed_instructions::Snapshot> {
+    state.managed_instructions_read().await
+}
+
+#[tauri::command]
+pub async fn managed_instructions_save(
+    state: State<'_, AppState>,
+    request: crate::managed_instructions::SaveRequest,
+) -> DesktopResult<crate::managed_instructions::Snapshot> {
+    state.managed_instructions_save(request).await
+}
+
+#[tauri::command]
+pub async fn managed_instructions_enable(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: crate::managed_instructions::EnableRequest,
+) -> DesktopResult<DesktopStateSnapshot> {
+    project_state_result(&app, state.managed_instructions_enable(request).await)
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectRequest {

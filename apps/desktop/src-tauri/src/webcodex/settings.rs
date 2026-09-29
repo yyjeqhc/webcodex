@@ -82,13 +82,13 @@ pub struct AllowedRootsUpdate {
     pub roots: Vec<String>,
 }
 
-pub struct PendingAllowedRootsEdit {
+pub struct PendingSettingsEdit {
     path: PathBuf,
     original: String,
     candidate: String,
 }
 
-impl PendingAllowedRootsEdit {
+impl PendingSettingsEdit {
     pub fn candidate_unchanged(&self) -> DesktopResult<bool> {
         Ok(read(&self.path)? == self.candidate)
     }
@@ -296,7 +296,7 @@ fn plugin_ids(doc: &DocumentMut) -> DesktopResult<Vec<String>> {
 pub fn stage_allowed_roots_update(
     runtime: &StoredRuntime,
     request: AllowedRootsUpdate,
-) -> DesktopResult<PendingAllowedRootsEdit> {
+) -> DesktopResult<PendingSettingsEdit> {
     verify_target(runtime, &request.target)?;
     validate_allowed_roots(&request.roots)?;
     let path = runtime.runner_config.as_ref().ok_or_else(error)?;
@@ -308,14 +308,17 @@ pub fn stage_allowed_roots_update(
     doc["policy"]["allowed_roots"] = toml_edit::value(request.roots.into_iter().collect::<Array>());
     let candidate = doc.to_string();
     persist_text(path, &original, &candidate)?;
-    Ok(PendingAllowedRootsEdit {
+    Ok(PendingSettingsEdit {
         path: path.clone(),
         original,
         candidate,
     })
 }
 
-pub fn update(runtime: &StoredRuntime, request: SettingsUpdate) -> DesktopResult<()> {
+pub fn stage_paths_update(
+    runtime: &StoredRuntime,
+    request: SettingsUpdate,
+) -> DesktopResult<PendingSettingsEdit> {
     verify_target(runtime, &request.target)?;
     validate(&request.paths.instruction_files)?;
     validate(&request.paths.skill_roots)?;
@@ -332,7 +335,46 @@ pub fn update(runtime: &StoredRuntime, request: SettingsUpdate) -> DesktopResult
         let array: Array = values.into_iter().collect();
         doc[section][key] = toml_edit::value(array);
     }
-    persist(path, &original, &doc)
+    let candidate = doc.to_string();
+    persist_text(path, &original, &candidate)?;
+    Ok(PendingSettingsEdit {
+        path: path.clone(),
+        original,
+        candidate,
+    })
+}
+
+#[cfg(test)]
+pub fn update(runtime: &StoredRuntime, request: SettingsUpdate) -> DesktopResult<()> {
+    stage_paths_update(runtime, request).map(|_| ())
+}
+
+/// Append the fixed managed path without changing existing file order or Skills.
+/// Paths are still only configuration; instruction authority remains Runner-owned.
+pub fn stage_managed_instructions(
+    runtime: &StoredRuntime,
+    target: SettingsTarget,
+    expected: RunnerPaths,
+    managed_path: &Path,
+) -> DesktopResult<PendingSettingsEdit> {
+    let mut paths = expected.clone();
+    if !paths
+        .instruction_files
+        .iter()
+        .any(|path| webcodex_runner_config::paths::paths_equal(Path::new(path), managed_path))
+    {
+        paths
+            .instruction_files
+            .push(managed_path.to_string_lossy().into_owned());
+    }
+    stage_paths_update(
+        runtime,
+        SettingsUpdate {
+            target,
+            expected,
+            paths,
+        },
+    )
 }
 
 fn persist(path: &Path, original: &str, doc: &DocumentMut) -> DesktopResult<()> {

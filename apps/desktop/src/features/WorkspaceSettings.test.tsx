@@ -13,7 +13,7 @@ import { TunnelConfigDiagnostics } from "./connection/TunnelConfigDiagnostics";
 const native = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: native.invoke }));
 
-const api = vi.hoisted(() => ({ runnerCapabilityAuthorization: vi.fn(), authorizeRunnerCapabilities: vi.fn(), sshResources: vi.fn(), runnerSettings: vi.fn(), updateRunnerSettings: vi.fn(), updateRunnerAllowedRoots: vi.fn(), restartOwnedRunner: vi.fn(), addRunnerPlugin: vi.fn(), computerPermissions: vi.fn(), requestComputerPermission: vi.fn(), updateTunnelConfig: vi.fn(), getState: vi.fn() }));
+const api = vi.hoisted(() => ({ managedInstructionsRead: vi.fn(), managedInstructionsSave: vi.fn(), managedInstructionsEnable: vi.fn(), runnerCapabilityAuthorization: vi.fn(), authorizeRunnerCapabilities: vi.fn(), sshResources: vi.fn(), runnerSettings: vi.fn(), updateRunnerSettings: vi.fn(), updateRunnerAllowedRoots: vi.fn(), restartOwnedRunner: vi.fn(), addRunnerPlugin: vi.fn(), computerPermissions: vi.fn(), requestComputerPermission: vi.fn(), updateTunnelConfig: vi.fn(), getState: vi.fn() }));
 const dialog = vi.hoisted(() => ({ open: vi.fn() }));
 vi.mock("@tauri-apps/plugin-dialog", () => dialog);
 vi.mock("../lib/desktop-api", () => ({ desktopApi: api }));
@@ -43,6 +43,7 @@ beforeEach(() => {
   });
   settings = { target, paths: { instruction_files: ["/fixture/global.md"], skill_roots: ["/fixture/skills"] }, file_access: { configured_roots: [], effective_roots: ["/Users/fixture"], using_default_roots: true, allow_cwd_anywhere: false }, plugin_ids: ["existing"], can_restart: true };
   api.runnerSettings.mockImplementation(async () => structuredClone(settings));
+  api.managedInstructionsRead.mockResolvedValue({ path:"/fixture/desktop/instructions/AGENTS.md", exists:false, content:"", revision:"missing" });
   api.runnerCapabilityAuthorization.mockResolvedValue({ target, can_authorize: true, coding_agents: true, ssh_resources: true });
   api.authorizeRunnerCapabilities.mockResolvedValue({ target, can_authorize: true, coding_agents: true, ssh_resources: true });
   api.sshResources.mockResolvedValue({ runner: target.client_id, available: true, observation_id: "observed", resources: [], error_kind: null });
@@ -102,7 +103,7 @@ describe("workspace configuration boundaries", () => {
     await waitFor(() => expect(api.runnerSettings).toHaveBeenCalled());
   });
 
-  it("saves exact-target instruction and Skill paths and fences Runner restart", async () => {
+  it("applies exact-target instruction and Skill paths without Runner restart", async () => {
     render(wrap(<ExtensionsPanel state={state} onState={onState} />));
     fireEvent.click(screen.getByRole("tab", { name: "Instructions" }));
     fireEvent.click(await screen.findByRole("button", { name: "Manage" }));
@@ -110,9 +111,9 @@ describe("workspace configuration boundaries", () => {
     fireEvent.change(input, { target: { value: "/fixture/new.md" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(api.updateRunnerSettings).toHaveBeenCalledWith(target, { instruction_files: ["/fixture/global.md"], skill_roots: ["/fixture/skills"] }, { instruction_files: ["/fixture/new.md"], skill_roots: ["/fixture/skills"] }));
-    await waitFor(() => expect(screen.getByRole("button", { name: "Restart Runner" })).not.toBeDisabled());
-    fireEvent.click(screen.getByRole("button", { name: "Restart Runner" }));
-    await waitFor(() => expect(api.restartOwnedRunner).toHaveBeenCalledWith(target));
+    await screen.findByText("Instruction and Skill paths applied without restarting Runner.");
+    expect(screen.queryByRole("button", { name: "Restart Runner" })).not.toBeInTheDocument();
+    expect(api.restartOwnedRunner).not.toHaveBeenCalled();
   });
 
   it("validates native Plugin arguments and writes only a new explicit registration", async () => {

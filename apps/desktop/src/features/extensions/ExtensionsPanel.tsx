@@ -7,8 +7,11 @@ import { SshResourcesPanel } from "./SshResourcesPanel";
 import { useRunnerCapabilitiesText } from "../../i18n/runner-capabilities";
 import { useConnectionsTools } from "../../i18n/connections-tools";
 import { ExtensionPathsEditor } from "./ExtensionPathsEditor";
+import { ManagedInstructionsPanel } from "./ManagedInstructionsPanel";
+import { useInstructionsText } from "../../i18n/instructions";
+import { normalizeDesktopError } from "../../i18n/presentation";
 import { desktopApi } from "../../lib/desktop-api";
-import type { DesktopState, RunnerSettings } from "../../models/topology";
+import type { DesktopError, DesktopState, RunnerSettings } from "../../models/topology";
 import type { ExtensionsSnapshot, InstructionSummary } from "../../models/workspace";
 import { useLocale } from "../../i18n/locale";
 import { useProduct } from "../../i18n/product";
@@ -30,6 +33,9 @@ export function ExtensionsPanel({ state, onState }: { state: DesktopState; onSta
   const [failed, setFailed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [pendingRestart, setPendingRestart] = useState(false);
+  const instructionsText = useInstructionsText();
+  const [pathsApplied, setPathsApplied] = useState(false);
+  const [pathsError, setPathsError] = useState<DesktopError | null>(null);
   const [manage, setManage] = useState(false);
   const [revision, setRevision] = useState(0);
   const [document, setDocument] = useState<InstructionSummary | null>(null);
@@ -54,9 +60,9 @@ export function ExtensionsPanel({ state, onState }: { state: DesktopState; onSta
   const refresh = () => setRevision(value => value + 1);
   const updatePaths = async (paths: RunnerSettings["paths"]) => {
     if (!settings || disabled) return false;
-    setBusy(true); setFailed(false);
-    try { onState(await desktopApi.updateRunnerSettings(settings.target, settings.paths, paths)); if (alive.current) { setPendingRestart(true); refresh(); } return true; }
-    catch { if (alive.current) setFailed(true); return false; }
+    setBusy(true); setPathsError(null); setPathsApplied(false);
+    try { onState(await desktopApi.updateRunnerSettings(settings.target, settings.paths, paths)); if (alive.current) { setPathsApplied(true); refresh(); } return true; }
+    catch (value) { if (alive.current) setPathsError(normalizeDesktopError(value)); return false; }
     finally { if (alive.current) setBusy(false); }
   };
   const addFile = async (kind: "instructions" | "skills") => {
@@ -87,16 +93,20 @@ export function ExtensionsPanel({ state, onState }: { state: DesktopState; onSta
         event.preventDefault(); const next = TABS[(TABS.indexOf(value) + (event.key === "ArrowRight" ? 1 : TABS.length - 1)) % TABS.length]; setTab(next); window.document.getElementById(`extension-tab-${next}`)?.focus();
       }}>{value === "instructions" ? p("instructions") : value === "skills" ? "Skills" : value === "mcpProviders" ? c("mcpProviders") : r(value)}</button>)}
     </div>
+    <ManagedInstructionsPanel active={tab === "instructions"} settings={settings} disabled={disabled} onState={onState} onEnabled={refresh} />
+    {pathsApplied && projectTab && <p className="extension-apply-bar" role="status">{instructionsText("pathsApplied")}</p>}
+    {pathsError && projectTab && <div className="error-card" role="alert"><strong>{pathsError.message}</strong><span>{pathsError.next_action}</span><code>{pathsError.code}</code></div>}
     {failed && projectTab && <p role="alert" className="workspace-notice">{p("loadError")}</p>}
-    {pendingRestart && (projectTab || tab === "mcpProviders") && <div className="extension-apply-bar" role="status"><span>{p("needsRestart")}</span>{settings?.can_restart && <button className="secondary-button" onClick={() => void restart()} disabled={disabled}>{p("restartRunner")}</button>}</div>}
+    {pendingRestart && tab === "mcpProviders" && <div className="extension-apply-bar" role="status"><span>{p("needsRestart")}</span>{settings?.can_restart && <button className="secondary-button" onClick={() => void restart()} disabled={disabled}>{p("restartRunner")}</button>}</div>}
     {loading && projectTab && <p role="status">{p("loading")}</p>}
     {(!loading || !projectTab) && <section role="tabpanel" id={`extension-view-${tab}`} aria-labelledby={`extension-tab-${tab}`}>
       {tab === "codingAgents" && <CodingAgentsPanel state={state} onState={onState} settings={settings} onRestarted={() => { setPendingRestart(false); refresh(); }} />}
       {tab === "sshResources" && <SshResourcesPanel state={state} onState={onState} settings={settings} onRestarted={() => { setPendingRestart(false); refresh(); }} />}
       {tab === "instructions" && <>
-        {!!catalog?.instructions.files.length && <div className="extension-toolbar"><button type="button" className="secondary-button" disabled={!settings || disabled} onClick={() => void addFile("instructions")}>{p("addInstructions")}</button></div>}
+        <h3>{instructionsText("advanced")}</h3>
+        <div className="extension-toolbar"><button type="button" className="secondary-button" disabled={!settings || disabled} onClick={() => void addFile("instructions")}>{p("addInstructions")}</button></div>
         {catalog?.instructions.files.map(file => <article className="extension-row" key={`${file.source_scope}:${file.path}`}><div><strong>{file.source_scope === "runner" ? p("globalInstructions") : file.path.split(/[\\/]/).pop()}</strong><span>{file.source_scope === "runner" ? "Runner" : projectName(workspace.projects.find(row => row.id === project) || { id: project })} · {p("available")}</span><details><summary>{p("details")}</summary><code>{file.path}</code></details></div><button className="secondary-button" onClick={() => setDocument(file)} aria-label={`${p("open")} ${file.path.split(/[\\/]/).pop()}`}>{p("open")}</button></article>)}
-        {catalog?.instructions.scan_complete && !catalog.instructions.files.length && <WorkspaceEmptyState kind="document" message={p("noInstructions")} action={<button type="button" className="primary-button" disabled={!settings || disabled} onClick={() => void addFile("instructions")}>{p("addInstructions")}</button>} />}
+        {catalog?.instructions.scan_complete && !catalog.instructions.files.length && <WorkspaceEmptyState kind="document" message={p("noInstructions")} />}
         {catalog && !catalog.instructions.scan_complete && <p className="workspace-notice">{p("unavailable")}</p>}
       </>}
       {tab === "skills" && <>

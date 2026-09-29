@@ -16,6 +16,9 @@ import type { McpProviderRequest, TunnelProfileAction, TunnelProfileRequest } fr
 import type { CodingAgentRequest, SshRegisterRequest, SshResourcesSnapshot, SshMutationResult, RunnerCapabilityAuthorizationSnapshot } from "../models/runner-capabilities";
 
 export const desktopApi = {
+  managedInstructionsRead: () => invoke<import("../models/managed-instructions").ManagedInstructionsSnapshot>("managed_instructions_read"),
+  managedInstructionsSave: (expected_revision: string, content: string) => invoke<import("../models/managed-instructions").ManagedInstructionsSnapshot>("managed_instructions_save", { request: { expected_revision, content } }),
+  managedInstructionsEnable: (target: SettingsTarget, expected: RunnerPaths, expected_revision: string) => invoke<DesktopState>("managed_instructions_enable", { request: { target, expected, expected_revision } }),
   prepareProjectUnregister: (project: string) => invoke<import("../models/workspace").UnregisterObservation>("prepare_project_unregister", { project }),
   unregisterProject: ({ target, project, expected_revision }: import("../models/workspace").UnregisterObservation) => invoke<DesktopState>("unregister_project", { request: { target, project, expected_revision, confirmed: true } }),
   desktopBuildInfo: () => invoke<MachineBuildInfo>("get_desktop_build_info"),

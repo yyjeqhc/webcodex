@@ -220,6 +220,7 @@ jobs:
       - name: Check test inventory contract
         run: |
           bash scripts/test_inventory.sh --self-test
+          PYTHONDONTWRITEBYTECODE=1 python3 -m unittest scripts.tests.test_ci_rust_test
           bash scripts/test_inventory.sh
       - name: Check schema and metadata contracts
         run: |
@@ -286,7 +287,17 @@ jobs:
         with:
           shared-key: linux-ci
       - name: Run ${{ matrix.shard }} Rust tests
-        run: cargo test --locked ${{ matrix.packages }}
+        env:
+          CI_RUST_SHARD: ${{ matrix.shard }}
+        run: python3 scripts/ci_rust_test.py --report target/ci-test-reports/${{ matrix.shard }}.json -- cargo test --locked ${{ matrix.packages }}
+      - name: Upload bounded Rust test evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: rust-tests-${{ matrix.shard }}-${{ github.sha }}-${{ github.run_attempt }}
+          path: target/ci-test-reports/*.json
+          if-no-files-found: warn
+          retention-days: 7
 
   test-linux-tooling:
     # Release/tooling checks are mandatory on every PR, but do not need contract

@@ -755,15 +755,24 @@ impl BrowserBackend for CdpBackend {
 
     fn snapshot(&mut self, target_id: &str, max_depth: u32) -> BrowserResult<BackendSnapshot> {
         let deadline = Instant::now() + REQUEST_TIMEOUT;
-        let frame_tree =
-            self.page_call_until(target_id, "Page.getFrameTree", json!({}), false, deadline)?;
+        let endpoint = self.page_endpoint_until(target_id, deadline)?;
+        let mut websocket = open_loopback_websocket(&endpoint, deadline)?;
+        let frame_tree = cdp_call_on_websocket_until(
+            &mut websocket,
+            &mut self.next_id,
+            "Page.getFrameTree",
+            json!({}),
+            false,
+            deadline,
+        )?;
         let document_id = frame_tree
             .pointer("/frameTree/frame/loaderId")
             .and_then(Value::as_str)
             .unwrap_or("unknown-document")
             .to_string();
-        let accessibility = self.page_call_until(
-            target_id,
+        let accessibility = cdp_call_on_websocket_until(
+            &mut websocket,
+            &mut self.next_id,
             "Accessibility.getFullAXTree",
             json!({ "depth": max_depth.clamp(1, 32) }),
             false,
@@ -777,16 +786,16 @@ impl BrowserBackend for CdpBackend {
         // DOM classification is required for structured controls. A failed
         // document does not grant legacy click to descendants of browser-private
         // form controls. Nodes omitted from a successful index admit nothing.
-        let dom_root = self
-            .page_call_until(
-                target_id,
-                "DOM.getDocument",
-                json!({ "depth": DOM_CONTROL_INDEX_DEPTH, "pierce": true }),
-                false,
-                deadline,
-            )
-            .ok()
-            .and_then(|document| document.get("root").cloned());
+        let dom_root = cdp_call_on_websocket_until(
+            &mut websocket,
+            &mut self.next_id,
+            "DOM.getDocument",
+            json!({ "depth": DOM_CONTROL_INDEX_DEPTH, "pierce": true }),
+            false,
+            deadline,
+        )
+        .ok()
+        .and_then(|document| document.get("root").cloned());
         let (nodes, truncated) = project_ax_nodes(&raw_nodes, dom_root.as_ref());
         Ok(BackendSnapshot {
             document_id,
@@ -2410,6 +2419,16 @@ fn cdp_call_on_websocket_until(
                 })
             }
             Ok(_) => {}
+            Err(tungstenite::Error::Io(error))
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
+            {
+                // Socket timeouts vary by platform. Recheck the same absolute
+                // deadline above; never redispatch the request or renew its budget.
+                continue;
+            }
             Err(error) => {
                 return Err(if effect {
                     BrowserError::uncertain(
@@ -3034,10 +3053,7 @@ Connection: close
             started.elapsed() < Duration::from_millis(600),
             "non-matching CDP events must not renew the request deadline"
         );
-        assert!(matches!(
-            error.kind,
-            "cdp_receive_timeout" | "cdp_receive_failed"
-        ));
+        assert_eq!(error.kind, "cdp_receive_timeout");
         handle.join().unwrap();
     }
 
@@ -3425,3 +3441,7 @@ Connection: close
         handle.join().unwrap();
     }
 }
+
+#[cfg(test)]
+#[path = "cdp/tests/transport.rs"]
+mod transport_tests;

@@ -29,7 +29,10 @@ The two Git registries no longer live in `static OnceLock` instances. Replacing 
 Runtime starts a new in-memory registry, and dropping its final clone releases
 that registry. This is not a guarantee of persistence across process restart;
 it does not change content-derived snapshot identities or relax reauthorization.
-Live and sealed Changes retain their independent quotas from #769.
+Live and sealed Changes retain their independent numerical quotas from #769,
+now scoped per Runtime: 32 sealed / 8 per caller, and 8 live / 2 per caller.
+Clones share those budgets; distinct runtimes have independent budgets, so this
+is not a process-wide total cap when multiple runtimes are deliberately created.
 
 Validation calculation now builds a typed summary once, reads its fields,
 performs current-source classification, then serializes the existing public

@@ -110,13 +110,15 @@ though unreachable observation blobs/trees can be written to Git's object store.
 
 ### Independent snapshot retention quotas
 
-Sealed final results retain the original 32-per-process / 8-per-caller quota.
-Live inspection uses a separate 8-per-process / 2-per-caller quota. Both classes
-share the registry, identity checks and diff implementation, but an insertion may
-only evict its own class. The combined hard cap is 40 snapshots, not unbounded
-retention. The existing 24-hour expiry and replay-without-TTL-extension remain;
-24 hours is a maximum age, not guaranteed retention under same-class pressure.
-A Server restart still drops these process-local snapshots. This separation
+Each Runtime's registry retains at most 32 sealed final results / 8 per caller,
+and independently 8 live inspection snapshots / 2 per caller. Runtime clones
+share these budgets; independently constructed runtimes do not share entries or
+quotas. Both classes share identity checks and diff implementation, but an
+insertion may only evict its own class. The combined hard cap is 40 snapshots
+per Runtime, not a process-wide cap across independently constructed runtimes.
+The existing 24-hour expiry and replay-without-TTL-extension remain; 24 hours is
+a maximum age, not guaranteed retention under same-class pressure. Dropping the
+last Runtime clone or restarting the Server drops these in-memory snapshots. This separation
 changes no App request/schema/resource URI and requires no Host schema refresh.
 
 ## Mounted-card request budget

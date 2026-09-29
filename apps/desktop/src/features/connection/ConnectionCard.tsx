@@ -3,8 +3,8 @@ import { useLocale } from "../../i18n/locale";
 import { useProduct } from "../../i18n/product";
 import { connectionActive, type TunnelConnection, type TunnelProfileAction } from "../../models/connections-tools";
 
-export function ConnectionCard({ profile, canStart, busy, copied, autoProxyDetected, onAction, onEdit, onDelete, onCopy }: {
-  profile: TunnelConnection; canStart: boolean; busy: boolean; copied: boolean; autoProxyDetected: boolean;
+export function ConnectionCard({ profile, canStart, busy, copied, onAction, onEdit, onDelete, onCopy }: {
+  profile: TunnelConnection; canStart: boolean; busy: boolean; copied: boolean;
   onAction: (action: TunnelProfileAction) => void; onEdit: () => void; onDelete: () => void; onCopy: () => void;
 }) {
   const p = useProduct(); const c = useConnectionsTools(); const { formatTime } = useLocale();
@@ -20,7 +20,7 @@ export function ConnectionCard({ profile, canStart, busy, copied, autoProxyDetec
     : profile.last_error === "local_mcp_unavailable" ? "localUnavailable" : "tunnelUnavailable";
   // Readiness is asynchronous: use the observed per-profile failure, not only a
   // rejected start command. Never infer a proxy cause or silently switch routes.
-  const autoProxyRecovery = autoProxyDetected && profile.last_error === "tunnel_unavailable" && (
+  const autoProxyRecovery = profile.auto_proxy_used === true && profile.last_error === "tunnel_unavailable" && (
     !profile.reason_code || ["tunnel_client_download_failed", "tunnel_control_plane_unreachable", "tunnel_control_plane_probe_failed", "tunnel_daemon_not_ready", "tunnel_unavailable"].includes(profile.reason_code)
   );
   return <article className="connection-profile" aria-labelledby={`connection-${profile.id}`} data-tunnel-profile-id={profile.id}>

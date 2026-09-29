@@ -100,6 +100,7 @@ async fn start(
         events,
         root(),
         "http://127.0.0.1:62645/mcp".into(),
+        false,
         supervisor.clone(),
         ActivityLog::default(),
     );
@@ -259,6 +260,7 @@ async fn malformed_or_secret_bearing_child_failure_stays_local_and_safe() {
         events,
         root(),
         "http://127.0.0.1:62645/mcp".into(),
+        false,
         supervisor.clone(),
         activity.clone(),
     );

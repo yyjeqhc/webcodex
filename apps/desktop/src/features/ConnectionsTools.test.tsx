@@ -92,7 +92,7 @@ describe("Connections + Tools control surfaces", () => {
   it("shows proxy recovery for asynchronous readiness failure without a rejected start call", () => {
     const initial = state();
     initial.tunnel_proxy = { mode: "auto", custom_url: null, effective_source: "system", effective_proxy_present: true, system_proxy_detected: true };
-    initial.connections = connectionSnapshot(connectionFixture({ id: "work", name: "ChatGPT Work", lifecycle: "error", pid: null, ready: false, last_error: "tunnel_unavailable", failure_stage: "tunnel_daemon_readiness", reason_code: "tunnel_daemon_not_ready" }));
+    initial.connections = connectionSnapshot(connectionFixture({ id: "work", name: "ChatGPT Work", lifecycle: "error", pid: null, ready: false, last_error: "tunnel_unavailable", failure_stage: "tunnel_daemon_readiness", reason_code: "tunnel_daemon_not_ready", auto_proxy_used: true }));
     render(<Harness mode="connections" initial={initial} />);
     const card = screen.getByRole("article", { name: "ChatGPT Work" });
     expect(within(card).getByText(/Auto is using a detected proxy/)).toHaveTextContent("try Direct mode");
@@ -107,7 +107,7 @@ describe("Connections + Tools control surfaces", () => {
   ] as const)("shows specific recovery for %s instead of blaming credentials", (reason_code, failure_stage, message, proxyHint) => {
     const initial = state();
     initial.tunnel_proxy = { mode: "auto", custom_url: null, effective_source: "system", effective_proxy_present: true, system_proxy_detected: true };
-    initial.connections = connectionSnapshot(connectionFixture({ id: "work", name: "ChatGPT Work", lifecycle: "error", ready: false, last_error: "tunnel_unavailable", reason_code, failure_stage }));
+    initial.connections = connectionSnapshot(connectionFixture({ id: "work", name: "ChatGPT Work", lifecycle: "error", ready: false, last_error: "tunnel_unavailable", reason_code, failure_stage, auto_proxy_used: true }));
     render(<Harness mode="connections" initial={initial} />);
     const card = screen.getByRole("article", { name: "ChatGPT Work" });
     expect(card).toHaveTextContent(message);
@@ -116,11 +116,18 @@ describe("Connections + Tools control surfaces", () => {
     expect(api.tunnelProfileAction).not.toHaveBeenCalled();
   });
 
-  it.each(["direct", "custom"] as const)("does not suggest bypassing the explicit %s proxy choice", (mode) => {
-    const initial = state();
-    initial.tunnel_proxy = { mode, custom_url: mode === "custom" ? "http://127.0.0.1:7890" : null, effective_source: mode, effective_proxy_present: mode === "custom", system_proxy_detected: true };
-    initial.connections = connectionSnapshot(connectionFixture({ lifecycle: "error", ready: false, last_error: "tunnel_unavailable", failure_stage: "tunnel_daemon_readiness", reason_code: "tunnel_daemon_not_ready" }));
-    render(<Harness mode="connections" initial={initial} />);
+  it("uses the failed attempt's proxy evidence rather than the current global setting", () => {
+    const afterAutoFailure = state();
+    afterAutoFailure.tunnel_proxy = { mode: "direct", custom_url: null, effective_source: "direct", effective_proxy_present: false, system_proxy_detected: true };
+    afterAutoFailure.connections = connectionSnapshot(connectionFixture({ lifecycle: "error", ready: false, last_error: "tunnel_unavailable", failure_stage: "tunnel_daemon_readiness", reason_code: "tunnel_daemon_not_ready", auto_proxy_used: true }));
+    const { unmount } = render(<Harness mode="connections" initial={afterAutoFailure} />);
+    expect(screen.getByText(/Auto is using a detected proxy/)).toHaveTextContent("try Direct mode");
+    unmount();
+
+    const afterDirectFailure = state();
+    afterDirectFailure.tunnel_proxy = { mode: "auto", custom_url: null, effective_source: "system", effective_proxy_present: true, system_proxy_detected: true };
+    afterDirectFailure.connections = connectionSnapshot(connectionFixture({ lifecycle: "error", ready: false, last_error: "tunnel_unavailable", failure_stage: "tunnel_daemon_readiness", reason_code: "tunnel_daemon_not_ready", auto_proxy_used: false }));
+    render(<Harness mode="connections" initial={afterDirectFailure} />);
     expect(screen.queryByText(/Auto is using a detected proxy/)).not.toBeInTheDocument();
     expect(api.tunnelProfileAction).not.toHaveBeenCalled();
   });

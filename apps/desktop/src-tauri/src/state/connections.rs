@@ -307,6 +307,8 @@ impl DesktopCore {
         let local_mcp_url = format!("{}/mcp", runtime.server_url.trim_end_matches('/'));
         self.adapter.ensure_binaries(cancellation).await?;
         let proxy = effective_tunnel_proxy(&self.config.tunnel_proxy)?;
+        let auto_proxy_used =
+            self.config.tunnel_proxy.mode == TunnelProxyMode::Auto && proxy.url.is_some();
         let mut command = self
             .adapter
             .regular_tunnel_command(&env_file, proxy.url.as_deref())?;
@@ -329,6 +331,7 @@ impl DesktopCore {
             events,
             expected_root,
             local_mcp_url,
+            auto_proxy_used,
             self.supervisor.clone(),
             self.activity.clone(),
         );

@@ -21,6 +21,7 @@ export interface TunnelConnection {
   local_mcp_ready: boolean | null;
   failure_stage: string | null;
   reason_code: string | null;
+  auto_proxy_used: boolean | null;
   runtime_directory: string | null;
   health_url: string | null;
   log_file: string | null;

@@ -68,6 +68,9 @@ pub struct ConnectionRuntimeSnapshot {
     pub local_mcp_ready: Option<bool>,
     pub failure_stage: Option<String>,
     pub reason_code: Option<String>,
+    /// Whether this exact process attempt used an Auto-resolved proxy. This is
+    /// attempt evidence, not the current global proxy preference.
+    pub auto_proxy_used: Option<bool>,
     pub runtime_directory: Option<PathBuf>,
     pub health_url: Option<String>,
     pub log_file: Option<PathBuf>,
@@ -142,6 +145,7 @@ impl ConnectionRuntimes {
         events: MachineEventReceiver,
         expected_runtime_root: PathBuf,
         local_mcp_url: String,
+        auto_proxy_used: bool,
         supervisor: Arc<tokio::sync::Mutex<ProcessSupervisor>>,
         activity: ActivityLog,
     ) {
@@ -150,6 +154,7 @@ impl ConnectionRuntimes {
             lifecycle: ConnectionLifecycle::Starting,
             pid: process.pid,
             process_started: true,
+            auto_proxy_used: Some(auto_proxy_used),
             ..Default::default()
         };
         log(&mut state, "starting");

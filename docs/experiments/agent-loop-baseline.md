@@ -356,6 +356,62 @@ The schema-v1 JSON summary reports, when evidence is available:
 The summary includes an explicit `availability` object. Consumers must inspect it
 rather than assuming an absent metric is zero.
 
+### Input ergonomics (ModelErgonomics v13+)
+
+`input_ergonomics` reads the existing `action_events.summary_json.model_ergonomics`
+record. It adds no production table or migration. The report envelope stays schema
+v1, consistent with its existing additive metric sections; the persisted telemetry
+producer moves from v12 to v13 so old missing fields are not counted as zero use.
+
+The section reports `normalization_events`, `normalization_by_code`, and
+`normalization_by_tool`, plus `invalid_argument_rejections` and
+`invalid_arguments_by_tool`. Only successful canonical outer invocation records
+with a known closed normalization code contribute to normalization counts. Success
+is the invocation outcome, including successful durable admission, not a promise
+that an asynchronous command eventually succeeds. Failed results do not contribute
+even if malformed historical data contains a normalization field.
+
+Coverage is explicit: `measured_canonical_calls`, `eligible_events` (v13+),
+`eligible_successful_events`, `legacy_schema_events`, and
+`missing_or_invalid_record_events`. The rate is exactly
+`normalization_events / eligible_successful_events`; legacy v12 rows and records
+missing canonical identity/outcome evidence never enter that denominator. Zero
+eligible successes yields null, not zero. Unknown/malformed codes are omitted and
+counted in `unrecognized_normalization_events`; they make rate availability false
+rather than silently reporting an artificially low rate. The offline reader has a
+closed v13 wire-contract allowlist, not a runtime normalization/alias registry.
+Consult `availability.input_ergonomics` before interpreting the rate.
+
+`immediate_same_tool_repair_proxy` considers each selected canonical meaningful
+`success=false, error_kind=invalid_arguments` call. It inspects only the next
+meaningful call in the same exact ClientWindow and principal correlation. Both
+calls must have non-streaming, eligible continuity and ordered request/handoff
+timestamps; the successor must persist the exact predecessor trace relation with
+`window_transition_kind=serial`, have canonical telemetry, and not have ambiguous
+trace/predecessor identity. Count only a same-tool successful successor. Never skip
+an intervening meaningful call (including one without telemetry), cross principals,
+or use an arbitrary seconds threshold. Existing continuity lookup may resolve an
+unlinked intervening call or the exact successor outside the selected Session;
+those context rows never expand the normalization denominator.
+
+This is a **WebCodex-observed immediate same-tool corrective-call proxy**. It does
+not prove model turn identity, a causal repair, or that field spelling caused the
+failure. Legacy canonical records may contribute when they retain all necessary
+continuity evidence. Missing successor, streaming/overlap, incomplete identities,
+or context limits make the proxy `available=false` with null `count`/`by_tool`.
+`observed_count`/`observed_by_tool` retain only the proven subset; coverage and
+`unavailable_by_reason` explain the gap. A different immediate tool is a measured
+non-match, not permission to search ahead for eventual same-tool success. Existing
+manually annotated `repair_turns` remain separate and are never filled from this
+proxy. Trace-only reports mark input ergonomics unavailable.
+
+No raw arguments, parser error text, hints, stdout, Window/principal identities or
+per-event payloads are emitted by this section. Normalization counts describe use,
+not an experiment proving saved model turns. Collect v13 coverage after an explicit
+deployment, compare repeated correction patterns and known provider spellings,
+and measure proposed descriptor bytes before deciding whether another alias has
+concrete value. Do not infer the misspelled field from this aggregate alone.
+
 ### Authoritative, annotated, and unavailable facts
 
 **Authoritative from ActionAudit:** meaningful outer calls (also reported as the

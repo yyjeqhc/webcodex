@@ -133,7 +133,28 @@ Never fuzzy-correct unknown fields or tool names. Do not guess authority, target
 effect, retry, fence or idempotency fields. Keep the explicit process spelling
 repair local; do not add a general alias registry without several concrete
 normalizations needing one. Stable `input_normalization` codes, such as
-`argv_to_args`, make the avoided mechanical retries observable.
+`argv_to_args`, make normalization usage observable; counts do not prove how many
+model turns or corrective calls would otherwise have occurred.
+
+New aliases also need concrete return-on-cost evidence: a repeated mechanical
+correction pattern in dogfood/ActionAudit, a known Host/provider that consistently
+emits that spelling, or another explicit consumer requirement. When an alias must
+appear in the Direct Host input schema, compare its descriptor byte increase with
+observed corrective-call patterns and normalization usage. Do not populate every
+plausible synonym merely because a model might misspell a field. More aliases are
+not inherently more ergonomic: every extra spelling enlarges the model's selection
+and context surface. An immediate same-tool success alone does not establish the
+field that caused the failure; do not parse serde error prose to infer it.
+
+`ToolInputNormalizationCode` owns the four existing wire spellings and model hints.
+The parser, execution normalization, and result schema share that vocabulary.
+ModelErgonomics v13 adds only the optional typed `input_normalization_code` to the
+existing ActionAudit `summary.model_ergonomics` JSON. Capture canonical success
+before late model projection; omit the field for failures and unknown codes.
+Never persist the hint, command, arguments, path, or parser error as part of this
+metric. One successful invocation contributes at most one reported code, retaining
+existing result precedence when multiple normalization steps apply. Neither this
+measurement nor its absence changes runtime admission or retry semantics.
 
 `run_script(language=python)` is canonical; `python3` is not a language alias.
 Unknown spellings such as `timeout`, `workdir`, `command_args`, and

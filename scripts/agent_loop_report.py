@@ -13,6 +13,7 @@ import argparse
 import hashlib
 import json
 import math
+import re
 import sqlite3
 import sys
 from collections import Counter
@@ -60,6 +61,16 @@ CODE_MODE_COMPOSITION_NUMERIC_FIELDS = (
 # Additive fields may be absent from historical ActionAudit rows. They get their
 # own availability/missing accounting and never invalidate the core composition.
 CODE_MODE_COMPOSITION_OPTIONAL_NUMERIC_FIELDS = ("input_bytes",)
+
+# Closed v13 persisted wire vocabulary for this offline consumer, not alias rules.
+# Runtime/schema spellings are owned by ToolInputNormalizationCode in tool-contracts.
+INPUT_NORMALIZATION_CODES = frozenset((
+    "argv_to_args",
+    "run_process_sh_c_to_run_shell",
+    "run_process_bash_c_to_run_shell",
+    "run_process_bash_lc_to_login_run_shell",
+))
+INPUT_NORMALIZATION_SCHEMA_VERSION = 13
 
 
 class ReportError(ValueError):
@@ -320,6 +331,8 @@ e.window_started_at_ms, e.request_observed_at_ms, e.response_handed_at_ms,
 e.window_transition_kind, e.window_continuity_eligible,
 e.window_meaningful, e.started_at, e.server_trace_id, e.response_streaming,
 CASE WHEN json_valid(e.summary_json) THEN json_extract(e.summary_json, '$.model_ergonomics.schema_version') END AS model_ergonomics_version,
+CASE WHEN json_valid(e.summary_json) THEN json_extract(e.summary_json, '$.model_ergonomics.tool_name') END AS model_ergonomics_tool,
+CASE WHEN json_valid(e.summary_json) THEN json_type(e.summary_json, '$.model_ergonomics.success') END AS model_ergonomics_success_type,
 CASE WHEN json_valid(e.summary_json) THEN json_extract(e.summary_json, '$.model_ergonomics.job_convergence') END AS job_convergence_json,
 CASE WHEN json_valid(e.summary_json) THEN json_extract(e.summary_json, '$.model_ergonomics.readiness') END AS readiness_json,
 CASE WHEN json_valid(e.summary_json) THEN json_extract(e.summary_json, '$.previous_meaningful_call') END AS previous_meaningful_call
@@ -382,6 +395,9 @@ def _row_to_continuity_event(row: sqlite3.Row) -> dict[str, Any]:
             "previous_meaningful_call": row["previous_meaningful_call"],
             "model_ergonomics": {
                 "schema_version": row["model_ergonomics_version"],
+                "tool_name": row["model_ergonomics_tool"],
+                "success": (row["model_ergonomics_success_type"] == "true"
+                            if row["model_ergonomics_success_type"] in ("true", "false") else None),
                 "job_convergence": _parse_json_object(row["job_convergence_json"] or "{}", "job_convergence", str(row["event_id"])),
                 "readiness": _parse_json_object(row["readiness_json"] or "{}", "readiness", str(row["event_id"])),
             },
@@ -640,6 +656,156 @@ def load_audit_continuity_events(
 def _telemetry(event: dict[str, Any]) -> dict[str, Any] | None:
     value = event.get("summary", {}).get("model_ergonomics")
     return value if isinstance(value, dict) else None
+
+
+def _input_ergonomics_record(event: dict[str, Any]) -> dict[str, Any] | None:
+    """Require canonical identity/outcome evidence; never read raw arguments/errors."""
+    value = _telemetry(event)
+    if value is None or event.get("action_name") != "toolsCall":
+        return None
+    version, tool = value.get("schema_version"), value.get("tool_name")
+    if (type(version) is not int or version < 1 or type(value.get("success")) is not bool
+            or not isinstance(tool, str) or re.fullmatch(r"[a-z][a-z0-9_]{0,127}", tool) is None
+            or tool != event.get("operation")):
+        return None
+    return value
+
+
+def _immediate_input_repair_proxy(
+    candidates: list[dict[str, Any]],
+    selected: list[dict[str, Any]],
+    context: list[dict[str, Any]],
+    *, evidence_available: bool,
+) -> dict[str, Any]:
+    """Exact immediate meaningful-call adjacency, never a model-turn/causal claim."""
+    def key(event: dict[str, Any]) -> tuple[str, str, str] | None:
+        values = tuple(event.get(field) for field in (
+            "client_window_key", "principal_correlation_kind", "principal_correlation_id"))
+        return values if all(isinstance(value, str) and value for value in values) else None
+
+    def eligible(event: dict[str, Any]) -> bool:
+        started, handed = event.get("request_observed_at_ms"), event.get("response_handed_at_ms")
+        return (key(event) is not None and event.get("window_continuity_eligible") is True
+                and event.get("response_streaming") is False
+                and isinstance(event.get("server_trace_id"), str) and bool(event["server_trace_id"])
+                and type(started) is int and type(handed) is int and 0 <= started <= handed)
+
+    reasons: Counter[str] = Counter()
+    observed: Counter[str] = Counter()
+    evaluated = 0
+    if len(selected) + len(context) > 100_000:
+        reasons["continuity_context_limit"] = len(candidates) or 1
+    else:
+        # Selected full rows win over their bounded continuity projections.
+        by_id = {str(event["event_id"]): event for event in [*context, *selected]}
+        groups: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+        for event in sorted(by_id.values(), key=_audit_sort_key):
+            if event.get("action_name") == "toolsCall" and event.get("window_meaningful"):
+                scope = key(event)
+                if scope is not None:
+                    groups.setdefault(scope, []).append(event)
+        next_by_id: dict[str, dict[str, Any]] = {}
+        trace_counts: Counter[tuple[Any, Any]] = Counter()
+        successor_counts: Counter[tuple[Any, Any]] = Counter()
+        for scope, calls in groups.items():
+            next_by_id.update((str(before["event_id"]), after) for before, after in zip(calls, calls[1:]))
+            for event in calls:
+                trace = event.get("server_trace_id")
+                previous = event.get("summary", {}).get("previous_meaningful_call")
+                if isinstance(trace, str):
+                    trace_counts[(scope, trace)] += 1
+                if isinstance(previous, str):
+                    successor_counts[(scope, previous)] += 1
+        for failed in candidates:
+            if not eligible(failed):
+                reasons["rejection_continuity_unavailable"] += 1
+                continue
+            successor = next_by_id.get(str(failed["event_id"]))
+            if successor is None:
+                reasons["no_observed_successor"] += 1
+                continue
+            scope, trace = key(failed), failed["server_trace_id"]
+            if (trace_counts[(scope, trace)] != 1
+                    or successor_counts[(scope, trace)] > 1):
+                reasons["ambiguous_serial_identity"] += 1
+                continue
+            # Never skip an intervening meaningful call, even one missing telemetry.
+            next_record = _input_ergonomics_record(successor)
+            if (not eligible(successor) or next_record is None
+                    or successor.get("window_transition_kind") != "serial"
+                    or successor.get("summary", {}).get("previous_meaningful_call") != trace
+                    or successor["request_observed_at_ms"] < failed["response_handed_at_ms"]
+                    or trace_counts[(scope, successor.get("server_trace_id"))] != 1):
+                reasons["successor_continuity_unavailable"] += 1
+                continue
+            evaluated += 1
+            failed_record = _input_ergonomics_record(failed)
+            if next_record["success"] is True and next_record["tool_name"] == failed_record["tool_name"]:
+                observed[next_record["tool_name"]] += 1
+    available = evidence_available and not reasons
+    return {
+        "available": available,
+        "reason": (None if available else "canonical meaningful-call evidence is unavailable"
+                   if not evidence_available else "one or more rejections lack exact immediate successor continuity"),
+        "count": sum(observed.values()) if available else None,
+        "by_tool": dict(sorted(observed.items())) if available else None,
+        "observed_count": sum(observed.values()),
+        "observed_by_tool": dict(sorted(observed.items())),
+        "candidate_rejections": len(candidates),
+        "evaluated_rejections": evaluated,
+        "unavailable_rejections": len(candidates) - evaluated,
+        "unavailable_by_reason": dict(sorted(reasons.items())),
+        "interpretation": "WebCodex-observed immediate same-tool corrective-call proxy; does not prove model turn identity, causality, or a field-spelling failure",
+    }
+
+
+def _summarize_input_ergonomics(
+    audit_events: list[dict[str, Any]],
+    context: list[dict[str, Any]],
+    *, action_audit_available: bool,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    outer = [event for event in audit_events if event.get("action_name") == "toolsCall"]
+    records = [(event, value) for event in outer if (value := _input_ergonomics_record(event)) is not None]
+    eligible = [(event, value) for event, value in records
+                if value["schema_version"] >= INPUT_NORMALIZATION_SCHEMA_VERSION]
+    successful = [(event, value) for event, value in eligible if value["success"] is True]
+    by_code: Counter[str] = Counter()
+    by_tool: Counter[str] = Counter()
+    unknown_codes = 0
+    for _, value in successful:
+        code = value.get("input_normalization_code")
+        if code is None:
+            continue
+        if not isinstance(code, str) or code not in INPUT_NORMALIZATION_CODES:
+            unknown_codes += 1
+            continue
+        by_code[code] += 1
+        by_tool[value["tool_name"]] += 1
+    rejected = [(event, value) for event, value in records
+                if value["success"] is False and value.get("error_kind") == "invalid_arguments"]
+    rejection_tools = Counter(value["tool_name"] for _, value in rejected)
+    normalization_available = action_audit_available and bool(successful) and unknown_codes == 0
+    reason = (None if normalization_available else "unknown or malformed normalization codes"
+              if unknown_codes else "no successful canonical ModelErgonomics v13+ records")
+    return {
+        "measured_canonical_calls": len(records),
+        "eligible_events": len(eligible),
+        "eligible_successful_events": len(successful),
+        "legacy_schema_events": len(records) - len(eligible),
+        "missing_or_invalid_record_events": len(outer) - len(records),
+        "unrecognized_normalization_events": unknown_codes,
+        "normalization_events": sum(by_code.values()),
+        "normalization_by_code": dict(sorted(by_code.items())),
+        "normalization_by_tool": dict(sorted(by_tool.items())),
+        "normalization_rate": sum(by_code.values()) / len(successful) if normalization_available else None,
+        "normalization_rate_denominator": "eligible_successful_events: successful canonical ModelErgonomics v13+ records in the selected audit set",
+        "invalid_argument_rejections": len(rejected),
+        "invalid_arguments_by_tool": dict(sorted(rejection_tools.items())),
+        "immediate_same_tool_repair_proxy": _immediate_input_repair_proxy(
+            [event for event, _ in rejected if event.get("window_meaningful")], outer, context,
+            evidence_available=action_audit_available and any(event.get("window_meaningful") for event, _ in records),
+        ),
+    }, {"available": normalization_available, "reason": reason}
 
 
 def _summarize_job_convergence(selected: list[dict[str, Any]], context: list[dict[str, Any]]) -> dict[str, Any]:
@@ -1775,6 +1941,11 @@ def summarize(*, trace_root: Path | None, audit_db: Path | None, workflow_sessio
     )
     core["job_scheduling"] = job_scheduling
     core["availability"]["job_scheduling"] = job_scheduling_availability
+    input_ergonomics, input_ergonomics_availability = _summarize_input_ergonomics(
+        audit_events, continuity_events or [], action_audit_available=audit_db is not None,
+    )
+    core["input_ergonomics"] = input_ergonomics
+    core["availability"]["input_ergonomics"] = input_ergonomics_availability
     core["availability"]["runner_requests"] = runner_availability
     core["availability"]["job_handoffs"] = jobs_availability
     benchmark = _benchmark_metadata(case_manifest=case_manifest, case_id=case_id, variant=variant, surface=surface, base_revision=base_revision)
@@ -1802,6 +1973,7 @@ def summarize(*, trace_root: Path | None, audit_db: Path | None, workflow_sessio
         "notes": [
             "observed_span_ms is the span between observed WebCodex outer-call timestamps, not task wall time",
             "outside_webcodex_gap_ms contains only canonical serial meaningful-Window gaps and is not model reasoning time",
+            "input_ergonomics normalization rate excludes legacy/missing telemetry; its immediate same-tool corrective-call proxy proves neither model turns nor why the rejected call failed",
             "Runner request counts are observed enqueue events, not an asserted complete total",
             "repair_turns come only from the bounded run annotation sidecar and are never inferred from model text or private reasoning",
             "task_wall_time_ms is reported only when the sidecar supplies explicit independent task start/end timestamps",

@@ -97,6 +97,8 @@ class AgentLoopReportTests(unittest.TestCase):
         composition: dict[str, object] | None = None,
         readiness: dict[str, object] | None = None,
         job_convergence: dict[str, object] | None = None,
+        error_kind: str | None = None,
+        normalization_code: object | None = None,
         schema_version: int = 12,
     ) -> None:
         telemetry: dict[str, object] = {
@@ -109,11 +111,13 @@ class AgentLoopReportTests(unittest.TestCase):
         if not success:
             telemetry.update(
                 {
-                    "error_kind": "validation_failed",
+                    "error_kind": error_kind or "validation_failed",
                     "failure_kind": "completed_failure",
                     "recovery_kind": "inspect_diagnostic",
                 }
             )
+        if normalization_code is not None:
+            telemetry["input_normalization_code"] = normalization_code
         if readiness is not None:
             telemetry["readiness"] = readiness
         if job_convergence is not None:
@@ -164,6 +168,190 @@ class AgentLoopReportTests(unittest.TestCase):
                     "INSERT INTO action_event_workflow_links (event_id, workflow_session_id) VALUES (?, ?)",
                     (event_id, session),
                 )
+
+    def insert_input_event(self, event_id: str, **kwargs: object) -> None:
+        values = {"tool": "run_process", "schema_version": 13, "trace_id": event_id,
+                  "status": "success" if kwargs.get("success", True) else "failed"}
+        values.update(kwargs)
+        self.insert_event(event_id, **values)
+
+    def test_input_normalization_counts_and_v13_denominator(self) -> None:
+        for index, code in enumerate(sorted(report.INPUT_NORMALIZATION_CODES)):
+            self.insert_input_event(f"n{index}", normalization_code=code,
+                                    tool="run_detached_process" if index == 0 else "run_process")
+        self.insert_input_event("plain")
+        self.insert_input_event("rejected", success=False, error_kind="invalid_arguments")
+        self.insert_input_event("legacy", schema_version=12, normalization_code="argv_to_args")
+        self.insert_input_event("missing", include_telemetry=False)
+        result = self.summarize()
+        metrics = result["input_ergonomics"]
+        self.assertEqual(metrics["normalization_events"], 4)
+        self.assertEqual(metrics["normalization_by_code"], {code: 1 for code in report.INPUT_NORMALIZATION_CODES})
+        self.assertEqual(metrics["normalization_by_tool"], {"run_process": 3, "run_detached_process": 1})
+        self.assertEqual(metrics["measured_canonical_calls"], 7)
+        self.assertEqual(metrics["eligible_events"], 6)
+        self.assertEqual(metrics["eligible_successful_events"], 5)
+        self.assertEqual(metrics["legacy_schema_events"], 1)
+        self.assertEqual(metrics["missing_or_invalid_record_events"], 1)
+        self.assertEqual(metrics["normalization_rate"], 0.8)
+        self.assertEqual(metrics["invalid_argument_rejections"], 1)
+        self.assertEqual(metrics["invalid_arguments_by_tool"], {"run_process": 1})
+        self.assertTrue(result["availability"]["input_ergonomics"]["available"])
+
+    def test_input_repair_proxy_is_exact_adjacency_without_time_threshold(self) -> None:
+        self.insert_input_event("a", success=False, error_kind="invalid_arguments", schema_version=12)
+        self.insert_input_event("b", started=99_999_999, handed=100_000_000, transition="serial", previous_trace_id="a")
+        metrics = self.summarize()["input_ergonomics"]
+        proxy = metrics["immediate_same_tool_repair_proxy"]
+        self.assertTrue(proxy["available"])
+        self.assertEqual(proxy["count"], 1)
+        self.assertEqual(proxy["by_tool"], {"run_process": 1})
+        self.assertEqual(metrics["legacy_schema_events"], 1)
+        self.assertIn("does not prove model turn identity", proxy["interpretation"])
+        self.assertNotIn("repair_turns", metrics)
+
+    def test_input_repair_proxy_never_skips_a_different_meaningful_call(self) -> None:
+        self.insert_input_event("a", success=False, error_kind="invalid_arguments")
+        self.insert_input_event("b", tool="read_files", started=130, handed=140, transition="serial", previous_trace_id="a")
+        self.insert_input_event("c", started=150, handed=160, transition="serial", previous_trace_id="b")
+        proxy = self.summarize()["input_ergonomics"]["immediate_same_tool_repair_proxy"]
+        self.assertTrue(proxy["available"])
+        self.assertEqual(proxy["count"], 0)
+        self.assertEqual(proxy["evaluated_rejections"], 1)
+
+    def test_input_repair_proxy_noncanonical_meaningful_call_is_a_barrier(self) -> None:
+        self.insert_input_event("a", success=False, error_kind="invalid_arguments")
+        self.insert_input_event("b", include_telemetry=False, started=130, handed=140, transition="serial", previous_trace_id="a")
+        self.insert_input_event("c", started=150, handed=160, transition="serial", previous_trace_id="b")
+        proxy = self.summarize()["input_ergonomics"]["immediate_same_tool_repair_proxy"]
+        self.assertFalse(proxy["available"])
+        self.assertIsNone(proxy["count"])
+        self.assertEqual(proxy["observed_count"], 0)
+
+    def test_input_repair_proxy_ignores_only_nonmeaningful_calls(self) -> None:
+        self.insert_input_event("a", success=False, error_kind="invalid_arguments")
+        self.insert_input_event("b", meaningful=False, started=130, handed=140)
+        self.insert_input_event("c", started=150, handed=160, transition="serial", previous_trace_id="a")
+        self.assertEqual(self.summarize()["input_ergonomics"]["immediate_same_tool_repair_proxy"]["count"], 1)
+
+    def test_input_repair_proxy_resolves_unlinked_intervening_calls(self) -> None:
+        self.insert_input_event("a", success=False, error_kind="invalid_arguments")
+        self.insert_input_event("b", tool="read_files", link=False, started=130, handed=140, transition="serial", previous_trace_id="a")
+        self.insert_input_event("c", started=150, handed=160, transition="serial", previous_trace_id="b")
+        proxy = self.summarize()["input_ergonomics"]["immediate_same_tool_repair_proxy"]
+        self.assertTrue(proxy["available"])
+        self.assertEqual(proxy["count"], 0)
+
+    def test_input_repair_proxy_reads_exact_unlinked_successor_without_expanding_denominator(self) -> None:
+        self.insert_input_event("a", success=False, error_kind="invalid_arguments")
+        self.insert_input_event("b", link=False, normalization_code="argv_to_args", started=130, handed=140, transition="serial", previous_trace_id="a")
+        result = self.summarize()["input_ergonomics"]
+        self.assertEqual(result["immediate_same_tool_repair_proxy"]["count"], 1)
+        self.assertEqual(result["eligible_events"], 1)
+        self.assertEqual(result["eligible_successful_events"], 0)
+        self.assertEqual(result["normalization_events"], 0)
+        self.assertIsNone(result["normalization_rate"])
+
+    def test_input_repair_proxy_missing_evidence_does_not_become_zero(self) -> None:
+        for index, changes in enumerate([{"eligible": False}, {"window": None}, {"principal": None}, {"trace_id": None}]):
+            scope = f"window-{index}"
+            self.insert_input_event(f"a{index}", success=False, error_kind="invalid_arguments", **({"window": scope} | changes))
+            self.insert_input_event(f"b{index}", window=scope, started=130, handed=140, transition="serial", previous_trace_id=f"a{index}")
+        self.insert_input_event("good-a", window="good", success=False, error_kind="invalid_arguments")
+        self.insert_input_event("good-b", window="good", started=130, handed=140, transition="serial", previous_trace_id="good-a")
+        proxy = self.summarize()["input_ergonomics"]["immediate_same_tool_repair_proxy"]
+        self.assertFalse(proxy["available"])
+        self.assertIsNone(proxy["count"])
+        self.assertIsNone(proxy["by_tool"])
+        self.assertEqual(proxy["observed_count"], 1)
+        self.assertEqual(proxy["unavailable_rejections"], 4)
+
+    def test_input_repair_proxy_never_crosses_window_or_principal(self) -> None:
+        self.insert_input_event("a", success=False, error_kind="invalid_arguments")
+        self.insert_input_event("b", principal="foreign", started=130, handed=140, transition="serial", previous_trace_id="a")
+        self.insert_input_event("c", window="other", started=150, handed=160, transition="serial", previous_trace_id="a")
+        proxy = self.summarize()["input_ergonomics"]["immediate_same_tool_repair_proxy"]
+        self.assertFalse(proxy["available"])
+        self.assertEqual(proxy["observed_count"], 0)
+
+    def test_input_repair_proxy_rejects_overlap_and_wrong_predecessor(self) -> None:
+        for index, changes in enumerate([{"transition": "overlap"}, {"previous_trace_id": "not-the-failure"}, {"started": 110}]):
+            scope = f"window-{index}"
+            self.insert_input_event(f"a{index}", window=scope, success=False, error_kind="invalid_arguments")
+            args = {"window": scope, "started": 130, "handed": 140, "transition": "serial", "previous_trace_id": f"a{index}"}
+            args.update(changes)
+            self.insert_input_event(f"b{index}", **args)
+        proxy = self.summarize()["input_ergonomics"]["immediate_same_tool_repair_proxy"]
+        self.assertFalse(proxy["available"])
+        self.assertEqual(proxy["observed_count"], 0)
+        self.assertEqual(proxy["unavailable_rejections"], 3)
+
+    def test_input_repair_proxy_rejects_ambiguous_successor(self) -> None:
+        self.insert_input_event("a", success=False, error_kind="invalid_arguments")
+        self.insert_input_event("b", started=130, handed=140, transition="serial", previous_trace_id="a")
+        self.insert_input_event("c", started=150, handed=160, transition="serial", previous_trace_id="a")
+        proxy = self.summarize()["input_ergonomics"]["immediate_same_tool_repair_proxy"]
+        self.assertFalse(proxy["available"])
+        self.assertEqual(proxy["observed_count"], 0)
+        self.assertEqual(proxy["unavailable_by_reason"], {"ambiguous_serial_identity": 1})
+
+    def test_input_normalization_unknown_codes_and_raw_summary_never_leak(self) -> None:
+        self.insert_input_event("a", normalization_code="PRIVATE_UNKNOWN_CODE")
+        self.insert_input_event("b", normalization_code={"PRIVATE_KEY": "PRIVATE_VALUE"})
+        with sqlite3.connect(self.audit_db) as connection:
+            connection.execute("UPDATE action_events SET summary_json = json_set(summary_json, '$.raw_arguments', 'PRIVATE_ARGS', '$.output', 'PRIVATE_OUTPUT')")
+        result = self.summarize()
+        metrics = result["input_ergonomics"]
+        self.assertEqual(metrics["unrecognized_normalization_events"], 2)
+        self.assertEqual(metrics["normalization_events"], 0)
+        self.assertIsNone(metrics["normalization_rate"])
+        self.assertFalse(result["availability"]["input_ergonomics"]["available"])
+        self.assertNotIn("PRIVATE_", json.dumps(result))
+
+    def test_input_normalization_legacy_only_and_failed_codes_do_not_inflate_rate(self) -> None:
+        self.insert_input_event("old", schema_version=12, normalization_code="argv_to_args")
+        self.insert_input_event("failed", success=False, normalization_code="argv_to_args")
+        result = self.summarize()
+        metrics = result["input_ergonomics"]
+        self.assertEqual(metrics["legacy_schema_events"], 1)
+        self.assertEqual(metrics["eligible_events"], 1)
+        self.assertEqual(metrics["eligible_successful_events"], 0)
+        self.assertEqual(metrics["normalization_events"], 0)
+        self.assertIsNone(metrics["normalization_rate"])
+        self.assertFalse(result["availability"]["input_ergonomics"]["available"])
+
+    def test_input_repair_proxy_requires_boolean_success_in_context(self) -> None:
+        self.insert_input_event("a", success=False, error_kind="invalid_arguments")
+        self.insert_input_event("b", link=False, started=130, handed=140, transition="serial", previous_trace_id="a")
+        with sqlite3.connect(self.audit_db) as connection:
+            connection.execute("UPDATE action_events SET summary_json = json_set(summary_json, '$.model_ergonomics.success', 1) WHERE event_id = 'b'")
+        proxy = self.summarize()["input_ergonomics"]["immediate_same_tool_repair_proxy"]
+        self.assertFalse(proxy["available"])
+        self.assertEqual(proxy["observed_count"], 0)
+
+    def test_input_repair_proxy_missing_successor_is_unavailable(self) -> None:
+        self.insert_input_event("a", success=False, error_kind="invalid_arguments")
+        proxy = self.summarize()["input_ergonomics"]["immediate_same_tool_repair_proxy"]
+        self.assertFalse(proxy["available"])
+        self.assertIsNone(proxy["count"])
+        self.assertEqual(proxy["unavailable_by_reason"], {"no_observed_successor": 1})
+
+    def test_input_repair_proxy_same_tool_failure_is_not_a_repair(self) -> None:
+        self.insert_input_event("a", success=False, error_kind="invalid_arguments")
+        self.insert_input_event("b", success=False, error_kind="invalid_arguments", started=130, handed=140, transition="serial", previous_trace_id="a")
+        self.insert_input_event("c", started=150, handed=160, transition="serial", previous_trace_id="b")
+        proxy = self.summarize()["input_ergonomics"]["immediate_same_tool_repair_proxy"]
+        self.assertTrue(proxy["available"])
+        self.assertEqual(proxy["count"], 1)
+        self.assertEqual(proxy["evaluated_rejections"], 2)
+
+    def test_input_ergonomics_trace_only_is_unavailable(self) -> None:
+        root = self.write_trace("trace-input", [])
+        result = self.summarize(trace_root=root, audit_db=None, workflow_session_id=None)
+        self.assertFalse(result["availability"]["input_ergonomics"]["available"])
+        proxy = result["input_ergonomics"]["immediate_same_tool_repair_proxy"]
+        self.assertFalse(proxy["available"])
+        self.assertIsNone(proxy["count"])
 
     def summarize(self, **kwargs: object) -> dict[str, object]:
         arguments: dict[str, object] = {

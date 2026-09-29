@@ -1009,9 +1009,9 @@ pub struct ToolDefinition {
     /// no admission: ordinary model-visible tools use the gateway, while hidden
     /// tools and operator extensions retain their independent admission rules.
     pub adaptive_runtime_direct: Option<ToolAdaptiveDirectPolicy>,
-    /// GPT Actions follows canonical Adaptive routing unless this definition
-    /// declares a concrete protocol incompatibility or a gateway-only surface
-    /// budget exception.
+    /// Eligibility/exclusion metadata for the frozen GPT Actions adapter.
+    /// Its admitted names and Direct/Gateway placement come from legacy
+    /// snapshots, not from Adaptive rank or reason.
     pub gpt_action_exposure: ToolGptActionExposure,
     pub operator_extension_family: Option<ToolOperatorExtensionFamily>,
     /// Optional canonical selection semantics for ordinary execution tools.

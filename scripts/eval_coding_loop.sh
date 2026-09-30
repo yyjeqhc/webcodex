@@ -8,7 +8,7 @@ set -uo pipefail
 # runs three scripted cases through /api/tools/call, and emits a final JSON
 # summary as the last stdout line.
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_DIR"
 
@@ -348,20 +348,6 @@ print(json.dumps({
 PY
 }
 
-params_start_session() {
-    local title="$1"
-    python3 - "$RUNTIME_PROJECT_ID" "$title" <<'PY'
-import json
-import sys
-
-print(json.dumps({
-    "project": sys.argv[1],
-    "title": sys.argv[2],
-    "mode": "normal",
-}, separators=(",", ":")))
-PY
-}
-
 params_finish_task() {
     local session_id="$1"
     python3 - "$RUNTIME_PROJECT_ID" "$session_id" <<'PY'
@@ -432,7 +418,7 @@ call_tool() {
             ;;
     esac
     case "$tool" in
-        apply_text_edits)
+        edit_project_files)
             CASE_STRUCTURED_EDIT_CALLS=$((CASE_STRUCTURED_EDIT_CALLS + 1))
             ;;
     esac
@@ -663,15 +649,12 @@ start_case_session() {
     local title="$2"
     local params
 
-    if [ "$flow_kind" = "guided" ]; then
-        params="$(params_work_on_project "$title")"
-        call_tool "work_on_project" "$params"
-        assert_session_created "work_on_project" "$LAST_BODY" "output.session_id"
-    else
-        params="$(params_start_session "$title")"
-        call_tool "start_session" "$params"
-        assert_session_created "start_session" "$LAST_BODY" "output.session_id"
-    fi
+    # Both flows now use the supported exact bootstrap. The historical
+    # start_session entry was retired; baseline still uses manual closeout while
+    # guided uses finish_coding_task. Do not compare old startup counts as peers.
+    params="$(params_work_on_project "$title")"
+    call_tool "work_on_project" "$params"
+    assert_session_created "work_on_project" "$LAST_BODY" "output.session_id"
 }
 
 assert_handoff_available() {
@@ -746,7 +729,7 @@ recent = handoff.get("recent_failed_tools") or []
 ok = (
     data.get("success") is True
     and counts.get("failed_tool_calls", 0) >= 1
-    and any(item.get("tool_name") == "apply_text_edits" for item in recent if isinstance(item, dict))
+    and any(item.get("tool_name") == "edit_project_files" for item in recent if isinstance(item, dict))
 )
 sys.exit(0 if ok else 1)
 PY
@@ -1332,8 +1315,8 @@ print(json.dumps({
 }, separators=(",", ":")))
 PY
 )"
-    call_tool "apply_text_edits" "$params"
-    assert_success "apply_text_edits structured edit succeeds" "$LAST_BODY"
+    call_tool "edit_project_files" "$params"
+    assert_success "edit_project_files structured edit succeeds" "$LAST_BODY"
 
     params="$(python3 - "$RUNTIME_PROJECT_ID" "$session_id" <<'PY'
 import json
@@ -1463,9 +1446,9 @@ print(json.dumps({
 }, separators=(",", ":")))
 PY
 )"
-    call_tool "apply_text_edits" "$params"
+    call_tool "edit_project_files" "$params"
     assert_failure_error_kind \
-        "apply_text_edits mismatched read revision reports read_revision_path_mismatch" \
+        "edit_project_files mismatched read revision reports read_revision_path_mismatch" \
         "$LAST_BODY" "read_revision_path_mismatch"
     if python3 - "$LAST_BODY" <<'PY'
 import json
@@ -1558,8 +1541,8 @@ print(json.dumps({
 }, separators=(",", ":")))
 PY
 )"
-    call_tool "apply_text_edits" "$params"
-    assert_success "apply_text_edits recovery edit succeeds" "$LAST_BODY"
+    call_tool "edit_project_files" "$params"
+    assert_success "edit_project_files recovery edit succeeds" "$LAST_BODY"
 
     if [ "$CASE_FAILED_TOOL_CALLS" -ge 1 ]; then
         CASE_RECOVERED_FAILED_TOOL_CALLS=1
@@ -1696,6 +1679,13 @@ summary = {
 print(json.dumps(summary, separators=(",", ":"), sort_keys=True))
 PY
 }
+
+# Isolated shell contract fixtures source the real helpers without starting
+# services or repositories. This is not EVAL_SKIP_RUN's planned result report.
+if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
+    trap - INT TERM EXIT
+    return 0
+fi
 
 start_eval_services
 

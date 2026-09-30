@@ -54,13 +54,18 @@ It accepts the following evidence sources:
    thought, command, file content, credential, deployment identity, Project id,
    Workflow Session id, ClientWindow, tunnel id, or instance id.
 
-On the current runtime, `WEBCODEX_TOOL_REQUEST_TRACE=true`/metadata mode does not
-persist a per-trace `events.jsonl` tree. That is not a blocker for the core
-baseline because ActionAudit already persists the payload-safe outer/Window facts.
-If Runner enqueue observations are required, a capture made with full request
-trace can be passed with `--trace-root`; the profiler still ignores all full
-payload blobs. A missing trace root makes Runner-request metrics unavailable
-rather than zero.
+Current `WEBCODEX_TOOL_REQUEST_TRACE=true`/metadata capture persists bounded
+per-trace `events.jsonl`, including observed Runner request correlation and MCP
+request-policy selection. Pass that directory with `--trace-root`; full capture
+is not required and the profiler never opens raw payload blobs. Historical
+journal-only metadata captures are not backfilled. A missing trace root makes
+Runner-request metrics unavailable, not zero.
+
+The deterministic coding-loop harness uses `/api/tools/call`; it is not an MCP
+or Codex Apps client benchmark. Its canonical edit name is `edit_project_files`.
+For live Agent comparisons record the connection path (Apps, direct MCP or native),
+Host mode and model configuration separately; a Server manifest cannot prove which
+schemas a Host loaded. See [MCP client contracts](../implementation/mcp-client-contract-alignment.md).
 
 Trace persistence is fail-open observability, so `runner.requests_observed` means
 exactly that: enqueue records observed in the supplied trace tree. The report does

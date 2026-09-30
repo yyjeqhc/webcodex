@@ -295,6 +295,14 @@ async fn pre_environment_detection_uses_v043_build_identity_not_unknown_command_
             .unwrap()
             .ready
     );
+    let mut arm64 = f.candidate.artifacts["webcodex"].build_info.clone();
+    arm64.version = "0.4.3".into();
+    arm64.git_commit = Some(OFFICIAL_V043.into());
+    arm64.environment_data_format = None;
+    arm64.target = "aarch64-pc-windows-msvc".into();
+    arm64.architecture = "aarch64".into();
+    assert!(pre_environment(&arm64));
+
     let mut unsupported = f.candidate.artifacts["webcodex"].build_info.clone();
     unsupported.environment_data_format = None;
     unsupported.version = "0.4.2".into();

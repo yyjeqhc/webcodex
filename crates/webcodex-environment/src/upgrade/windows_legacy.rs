@@ -166,12 +166,15 @@ async fn probe_installed(path: &Path, name: &str) -> SetupResultValue<MachineBui
 }
 
 fn pre_environment(info: &MachineBuildInfo) -> bool {
+    let official_windows_target = matches!(
+        (info.target.as_str(), info.architecture.as_str()),
+        ("x86_64-pc-windows-msvc", "x86_64") | ("aarch64-pc-windows-msvc", "aarch64")
+    );
     info.version == "0.4.3"
         && info.git_commit.as_deref() == Some(OFFICIAL_V043)
         && info.git_dirty == Some(false)
         && info.environment_data_format.is_none()
-        && info.target == "x86_64-pc-windows-msvc"
-        && info.architecture == "x86_64"
+        && official_windows_target
 }
 
 async fn classify_inner(

@@ -21,6 +21,7 @@ import { ProjectsPanel } from "./features/projects/ProjectsPanel";
 import { ConnectionPanel } from "./features/connection/ConnectionPanel";
 import { ActivityPanel } from "./features/activity/ActivityPanel";
 import { SettingsPanel } from "./features/settings/SettingsPanel";
+import { RuntimeConsolePanel } from "./features/console/RuntimeConsolePanel";
 import { useLocale } from "./i18n/locale";
 import { desktopCommandDiagnostics, desktopErrorPresentation, operationLabel } from "./i18n/presentation";
 
@@ -136,7 +137,8 @@ function DesktopApp() {
         {navigation === "connection" && <ConnectionPanel state={state} onState={commitState} onSettings={openSettings} />}
         {navigation === "activity" && <ActivityPanel activity={activity} />}
         {navigation === "extensions" && <ExtensionsPanel state={state} onState={commitState} />}
-        {navigation === "settings" && <SettingsPanel state={state} onState={commitState} onChangeSetup={openSetup} onStopRuntime={() => void runStateOperation(desktopApi.stopLocalRuntime)} initialSection={settingsSection} onActivity={() => setNavigation("activity")} updates={updates} />}
+        {navigation === "console" && <RuntimeConsolePanel state={state} onSettings={() => openSettings("runtime")} />}
+        {navigation === "settings" && <SettingsPanel state={state} onState={commitState} onChangeSetup={openSetup} onStopRuntime={() => void runStateOperation(desktopApi.stopLocalRuntime)} initialSection={settingsSection} onActivity={() => setNavigation("activity")} onConnection={() => setNavigation("connection")} updates={updates} />}
       </main>
     </div></WorkspaceProvider>
   );

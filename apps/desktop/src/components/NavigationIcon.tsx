@@ -1,5 +1,5 @@
 import type { Navigation } from "./Sidebar";
-import { Activity, Blocks, Cable, FolderKanban, House, Settings2 } from "lucide-react";
+import { Activity, Blocks, Cable, FolderKanban, House, Monitor, Settings2 } from "lucide-react";
 
 const icons = {
   home: House,
@@ -8,6 +8,7 @@ const icons = {
   extensions: Blocks,
   activity: Activity,
   settings: Settings2,
+  console: Monitor,
 } satisfies Record<Navigation, typeof House>;
 
 export function NavigationIcon({ name }: { name: Navigation }) {

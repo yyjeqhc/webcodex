@@ -4,7 +4,7 @@ WebCodex 的兼容性由协议与功能能力决定，构建修订用于诊断�
 
 ## Desktop Shell 与 Runtime
 
-Desktop 保留项目选择、凭据引用、连接、配置和进程 ownership。Runtime 是 `webcodex`、`webcodex-server`、`webcodex-runner` 三个可执行文件，Windows 带 `.exe`。正式版默认使用内置 Runtime，也可以在“设置 → Runtime”选择外部文件夹，不需要修改 `.app` 或安装目录。
+Desktop 保留项目选择、凭据引用、连接、配置和进程 ownership。Runtime 是 `webcodex`、`webcodex-server`、`webcodex-runner` 三个可执行文件，Windows 带 `.exe`。正式版默认使用内置 Runtime，也可以在“设置 → Runtime 与服务”选择外部文件夹，不需要修改 `.app` 或安装目录。
 
 Desktop、CLI、Server、Runner 的 commit 与版本号不要求一致；dirty 构建允许使用并显示提示。这不等于任意自定义代码都可信或保证兼容。
 
@@ -38,11 +38,13 @@ cargo build --locked --profile dogfood -p webcodex-cli -p webcodex -p webcodex-r
 
 ## 故障排查与支持包
 
-“设置 → 故障排查”提供诊断中心。追踪默认 Off；Metadata 记录请求生命周期和关联信息，不记录完整参数/结果；Full 可能含敏感内容，仅建议临时开启，必须明确确认。
+“设置 → Runtime 与服务”先展示服务状态和本机服务的启动、停止、重启操作，再展示程序来源与兼容性；构建信息在“版本与文件详情”中。已安装环境的程序统一通过“关于与更新”升级。
+
+“设置 → 故障排查”按问题提供连接、活动、服务设置的入口，再展示报告导出和请求追踪；账户凭据恢复仍在这里。不支持的追踪修改会显示原因并禁用；已安装环境的 native Runtime authority 不允许此操作。追踪默认 Off；Metadata 记录请求生命周期和关联信息，不记录完整参数/结果；Full 可能含敏感内容，仅建议临时开启，必须明确确认。
 
 保存仅原子修改托管 Server 环境文件的 `WEBCODEX_TOOL_REQUEST_TRACE`，保留其他设置并去除同名重复项，不把环境正文传给 UI。“保存并重启 Runtime”仅重启托管本地 Server，并等待现有 Runner 重连；未确认生效时仍显示需重启/错误原因。
 
-“打开 Runtime Console”使用当前本地 Server 的 `/runtime`，不在 URL 中放凭据。“复制 Runtime Console 凭据”是独立敏感操作，由 native 层读取当前托管用户凭据并复制到剪贴板，不显示、不写入 Activity，不复制 Runner token。剪贴板管理器可能保留数据，请勿分享。
+主侧栏的“运行控制台”说明 Console 的用途，“在浏览器中打开”使用当前本地 Server 的 `/runtime`，不在 URL 中放凭据。“复制 Runtime Console 凭据”是独立敏感操作，由 native 层读取当前托管用户凭据并复制到剪贴板，不显示、不写入 Activity，不复制 Runner token。剪贴板管理器可能保留数据，请勿分享。
 
 “复制诊断报告”与“导出支持包”只使用固定安全投影，不包含项目代码、凭据、环境或 runner.toml 正文、任意 stdout/stderr、剪贴板或完整请求/结果。ZIP 只有报告 JSON、Markdown 与安全事件 JSON，不能覆盖已有文件。
 

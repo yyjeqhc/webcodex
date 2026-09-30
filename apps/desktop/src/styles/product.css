@@ -435,6 +435,33 @@
 .extensions-content .extension-category-heading h2 { margin-bottom: 10px; font-size: 22px; }
 .extension-category-heading p { margin: 0; max-width: 66ch; color: var(--ui-text-secondary); font-size: 15px; line-height: 1.7; }
 .configured-plugins h3 { margin: 28px 0 8px; font-size: 17px; }
+.console-launch { display: grid; justify-items: start; gap: 20px; padding: clamp(24px, 4vw, 40px); background: var(--ui-surface-secondary); border: 1px solid var(--ui-border-subtle); border-radius: var(--ui-radius-md); }
+.console-launch > svg { color: var(--ui-accent); }
+.console-launch p { max-width: 60ch; margin: 0; font-size: 18px; line-height: 1.7; }
+.console-launch button { display: flex; align-items: center; gap: 12px; }
+.console-account { margin-top: 36px; max-width: 64ch; }
+.console-account h2 { font-size: 19px; }
+.console-account .field-help { font-size: 15px; line-height: 1.7; margin-bottom: 20px; }
+.service-status-list { display: grid; gap: 0; margin-block: 24px; border-block: 1px solid var(--ui-border-subtle); }
+.service-status-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px 20px; padding-block: 18px; }
+.service-status-row + .service-status-row { border-top: 1px solid var(--ui-border-subtle); }
+.service-status-row > div:first-child { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.service-status-row h3 { margin: 0; font-size: 16px; }
+.service-status-row .shell-actions { margin: 0; }
+.diagnostics-routes { display: grid; margin-block: 8px 28px; }
+.diagnostics-routes > div { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-block: 18px; border-bottom: 1px solid var(--ui-border-subtle); }
+.diagnostics-routes p { margin: 0; max-width: 52ch; font-size: 15px; line-height: 1.65; }
+.diagnostics-routes button { flex-shrink: 0; }
+.runtime-settings-panel .field-help, .diagnostics-panel .field-help { font-size: 14px; line-height: 1.7; max-width: 68ch; }
+.diagnostics-panel h3 { margin: 0 0 12px; font-size: 18px; }
+.diagnostics-panel .shell-section-heading h2 { margin: 0; }
+.diagnostics-panel .shell-subsection > p { font-size: 15px; line-height: 1.7; }
+.runtime-settings-panel h2 { margin: 0 0 12px; font-size: 18px; }
+.runtime-settings-panel { padding-top: 28px; border-top: 1px solid var(--ui-border-subtle); margin-top: 36px; }
+.runtime-build-details { margin-block: 18px; }
+.diagnostics-panel .credential-recovery input { display: block; width: min(480px, 100%); margin-top: 10px; }
+@media (max-width: 1100px) { .diagnostics-routes > div { align-items: flex-start; flex-direction: column; } }
+@media (max-width: 600px) { .sidebar nav button { width: 32px; } }
 .extensions-content .extension-toolbar { justify-content: flex-start; gap: 12px; flex-wrap: wrap; }
 .extension-project-preview .activity-project-filter { margin-bottom: 24px; }
 .connection-context { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 28px; padding-block: 16px; margin-bottom: 24px; border-block: 1px solid var(--ui-border-subtle); font-size: 14px; color: var(--ui-text-secondary); }

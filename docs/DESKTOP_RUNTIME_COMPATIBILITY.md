@@ -44,7 +44,7 @@ A Server reachable at the configured address must also report an overlapping man
 
 ## Select a Runtime folder
 
-Open **Settings → Runtime**. The current source and the individual CLI/Server/Runner build identities are shown there. Choose **Select Runtime folder…**, then select an extracted official release archive or your own native build output directory.
+Open **Settings → Runtime & services**. Service status and local service controls come first. The current Runtime source and compatibility follow; individual CLI/Server/Runner identities are under **Version & file details**. Installed environments direct program updates to **About & updates** instead of offering an unsupported folder switch. Choose **Select Runtime folder…**, then select an extracted official release archive or your own native build output directory.
 
 Candidate inspection executes the selected binaries' bounded `--build-info-json` commands with a minimal environment. Choose only executables you intend to run. Probing verifies required files, executable status, declared native target/architecture, structured metadata, supported contract ranges and unchanged file hashes; it does not establish that modified code implements its declarations honestly.
 
@@ -92,13 +92,13 @@ On macOS, OS code signing, Gatekeeper and Computer Use permissions are separate 
 
 ## Diagnostics and tracing
 
-Open **Settings → Troubleshooting** for the Diagnostics Center. Metadata tracing records request lifecycle/correlation information without full tool argument/result bodies. Full tracing can contain sensitive inputs/results and requires explicit confirmation; enable it only temporarily.
+Open **Settings → Troubleshooting** for problem-specific links to Connections, Activity, and Runtime & services, followed by report export and request tracing. Installed-environment service controls are under Runtime & services; account credential recovery remains under Troubleshooting. Metadata tracing records request lifecycle/correlation information without full tool argument/result bodies. Unsupported tracing edits are disabled with an explanation, including installed environments whose native Runtime authority does not admit this operation. Full tracing can contain sensitive inputs/results and requires explicit confirmation; enable it only temporarily.
 
 Saving modifies only `WEBCODEX_TOOL_REQUEST_TRACE` in the managed Server environment. Other entries, including unknown settings and secrets, remain intact, duplicate target keys are removed, and an exact file-revision check prevents writing over a changed file. The entire environment is never sent to the WebView.
 
 **Save & Restart Runtime** restarts the Desktop-owned local Server and waits for the existing Runner to reconnect. It does not broad-kill a healthy Runner or user-managed service. Restart interruption is confirmed explicitly. If the effective mode differs because another setting overrides it or readiness is unconfirmed, Diagnostics keeps **Restart required** and a precise safe reason rather than claiming success.
 
-**Open Runtime Console** opens the current local Server's `/runtime` URL without a credential in the query or fragment. **Copy Runtime Console credential** is a separate sensitive action: after confirmation, native code copies the current managed user credential to the clipboard. It never returns it to the WebView, Activity or reports and rejects Runner `wc_agent_*` credentials. Clipboard managers may retain sensitive clipboard data; do not share it.
+The main sidebar’s **Runtime Console** destination explains its purpose and provides **Open in browser**, which opens the current local Server's `/runtime` URL without a credential in the query or fragment. **Copy Runtime Console credential** is a separate sensitive action: after confirmation, native code copies the current managed user credential to the clipboard. It never returns it to the WebView, Activity or reports and rejects Runner `wc_agent_*` credentials. Clipboard managers may retain sensitive clipboard data; do not share it.
 
 **Copy Diagnostic Report** and **Export Support Bundle** use fixed allowlisted projections. They include build/contract identities, readiness, tracing mode, safe event kinds and observed capabilities. They exclude credentials, environment/Runner-config contents, project files, arbitrary process output, clipboard contents and full request/result payloads. The ZIP contains only `diagnostic-report.json`, `diagnostic-report.md` and `activity-safe.json`, never a recursive copy of app data. Export requires a fresh `.zip` filename and does not overwrite existing files.
 

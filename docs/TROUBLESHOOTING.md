@@ -371,4 +371,4 @@ unsafe binary extensions.
 
 ## Desktop Diagnostics Center
 
-**Settings → Troubleshooting** provides safe report/support-bundle export, Off/Metadata/Full request tracing, local diagnostic locations and a credential-free Runtime Console URL. Full tracing and copying a managed user credential require explicit confirmation. See [Desktop Runtime compatibility](DESKTOP_RUNTIME_COMPATIBILITY.md) for ownership-aware recovery and how to interpret response handoff/continuation evidence.
+**Settings → Troubleshooting** provides problem-specific page links, safe report/support-bundle export, Off/Metadata/Full request tracing, and local diagnostic locations. Local service controls are in **Settings → Runtime & services**. The main sidebar’s **Runtime Console** destination provides its credential-free browser launch and separate sign-in credential action. Full tracing and copying a managed user credential require explicit confirmation. See [Desktop Runtime compatibility](DESKTOP_RUNTIME_COMPATIBILITY.md) for ownership-aware recovery and how to interpret response handoff/continuation evidence.

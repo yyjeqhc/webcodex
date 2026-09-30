@@ -3,6 +3,8 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { LocaleProvider } from "../i18n/locale";
 import { DesktopMantineProvider } from "../components/DesktopMantineProvider";
+import { RuntimeConsolePanel } from "./console/RuntimeConsolePanel";
+import { LocalServicesPanel } from "./settings/LocalServicesPanel";
 import { Sidebar } from "../components/Sidebar";
 import { RuntimePanel } from "./settings/RuntimePanel";
 import { DiagnosticsPanel } from "./settings/DiagnosticsPanel";
@@ -16,7 +18,7 @@ import type { DesktopState } from "../models/topology";
 import type { DiagnosticSnapshot, RuntimeSettings, RuntimeCandidate } from "../models/runtime-shell";
 import type { WindowDetail } from "../models/workspace";
 
-const api = vi.hoisted(() => ({ updateTunnelProxy: vi.fn(), runnerSettings: vi.fn(), runtimeSettings: vi.fn(), probeRuntime: vi.fn(), recheckRuntime: vi.fn(), switchRuntime: vi.fn(), getState: vi.fn(), diagnostics: vi.fn(), setToolRequestTracing: vi.fn(), copyDiagnosticReport: vi.fn(), copyRuntimeConsoleCredential: vi.fn(), exportSupportBundle: vi.fn(), openDiagnosticResource: vi.fn(), restorePreviousConfiguration: vi.fn(), computerPermissions: vi.fn(), desktopBuildInfo: vi.fn(), getLaunchAtLogin: vi.fn(), setLaunchAtLogin: vi.fn(), checkForUpdates: vi.fn(), remindUpdateLater: vi.fn(), openLatestRelease: vi.fn() }));
+const api = vi.hoisted(() => ({ updateTunnelProxy: vi.fn(), runnerSettings: vi.fn(), runtimeSettings: vi.fn(), probeRuntime: vi.fn(), recheckRuntime: vi.fn(), switchRuntime: vi.fn(), getState: vi.fn(), diagnostics: vi.fn(), setToolRequestTracing: vi.fn(), copyDiagnosticReport: vi.fn(), copyRuntimeConsoleCredential: vi.fn(), exportSupportBundle: vi.fn(), openDiagnosticResource: vi.fn(), restorePreviousConfiguration: vi.fn(), environmentServiceAction: vi.fn(), repairEnvironmentUserCredential: vi.fn(), computerPermissions: vi.fn(), desktopBuildInfo: vi.fn(), getLaunchAtLogin: vi.fn(), setLaunchAtLogin: vi.fn(), checkForUpdates: vi.fn(), remindUpdateLater: vi.fn(), openLatestRelease: vi.fn() }));
 const dialog = vi.hoisted(() => ({ open: vi.fn(), save: vi.fn() }));
 vi.mock("../lib/desktop-api", () => ({ desktopApi: api }));
 vi.mock("@tauri-apps/plugin-dialog", () => dialog);
@@ -50,7 +52,7 @@ describe("Runtime candidate and ownership semantics", () => {
   it("previews mixed revisions/versions without mutation and only activates after explicit confirmation", async () => {
     render(wrap(<RuntimePanel state={state} onState={vi.fn()} />));
     await screen.findByRole("heading", { name: "Current Runtime" });
-    fireEvent.click(screen.getByRole("button", { name: "Select Runtime folder…" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Select Runtime folder…" }));
     const previewHeading = await screen.findByRole("heading", { name: "Candidate Runtime" });
     const preview = previewHeading.parentElement as HTMLElement;
     expect(api.switchRuntime).not.toHaveBeenCalled();
@@ -107,6 +109,71 @@ it("links users from About to issues, source builds, and contribution guidance",
 });
 
 describe("Diagnostics are explicit and secret-free", () => {
+  it("shows rejected Console credential copies inside the confirmation without repeating the action", async () => {
+    api.copyRuntimeConsoleCredential.mockRejectedValueOnce({ code: "diagnostic_identity_changed", message: "Identity changed", next_action: "Refresh" });
+    render(wrap(<RuntimeConsolePanel state={state} onSettings={vi.fn()} />));
+    fireEvent.click(await screen.findByRole("button", { name: "Copy Runtime Console credential" }));
+    const confirmation = await screen.findByRole("dialog", { name: "Sensitive clipboard action" });
+    fireEvent.click(within(confirmation).getByRole("button", { name: "Copy sensitive credential" }));
+    expect(await within(confirmation).findByRole("alert")).toBeVisible();
+    expect(api.copyRuntimeConsoleCredential).toHaveBeenCalledExactlyOnceWith("identity-fence");
+    expect(screen.queryByText("Copied")).not.toBeInTheDocument();
+  });
+  it("explains unavailable Console access and sends a stopped Server to service settings", async () => {
+    const onSettings = vi.fn();
+    const view = render(wrap(<RuntimeConsolePanel state={{ ...state, readiness: { ...state.readiness, server: "stopped" } }} onSettings={onSettings} />));
+    await screen.findByText(/The Server is not ready/);
+    expect(screen.getByRole("button", { name: "Open in browser" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Runtime & services" }));
+    expect(onSettings).toHaveBeenCalledOnce();
+    expect(api.openDiagnosticResource).not.toHaveBeenCalled();
+    api.diagnostics.mockResolvedValue({ ...diagnostic, resources: [], can_copy_console_credential: false, credential_copy_fence: null });
+    view.rerender(wrap(<RuntimeConsolePanel state={{ ...state, topology: { ...state.topology!, server: { kind: "remote", url: "https://fixture-server.test" } } }} onSettings={onSettings} />));
+    await screen.findByText(/For a remote Server/);
+    expect(screen.queryByRole("button", { name: "Copy Runtime Console credential" })).not.toBeInTheDocument();
+  });
+  it("rejects an older Console observation after the Server identity changes", async () => {
+    let finish!: (value: DiagnosticSnapshot) => void;
+    api.diagnostics.mockReturnValueOnce(new Promise<DiagnosticSnapshot>(resolve => { finish = resolve; }));
+    const view = render(wrap(<RuntimeConsolePanel state={state} onSettings={vi.fn()} />));
+    api.diagnostics.mockResolvedValue({ ...diagnostic, resources: [], can_copy_console_credential: false, credential_copy_fence: null });
+    view.rerender(wrap(<RuntimeConsolePanel state={{ ...state, topology: { ...state.topology!, server: { kind: "remote", url: "https://fixture-server.test" } } }} onSettings={vi.fn()} />));
+    await screen.findByText(/For a remote Server/);
+    await act(async () => finish(diagnostic));
+    expect(screen.getByRole("button", { name: "Open in browser" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Copy Runtime Console credential" })).not.toBeInTheDocument();
+  });
+  it("uses the exact installed environment for local service controls without applying effects on load", async () => {
+    const persistent = { ...state, persistent_environment: "env-fixture", topology: { ...state.topology!, runner: { kind: "local" as const } } };
+    api.environmentServiceAction.mockResolvedValue(persistent);
+    render(wrap(<LocalServicesPanel state={persistent} onState={vi.fn()} />));
+    expect(api.environmentServiceAction).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Restart Local Runner" }));
+    await waitFor(() => expect(api.environmentServiceAction).toHaveBeenCalledExactlyOnceWith({ environmentId: "env-fixture", component: "runner", action: "restart" }));
+  });
+  it("explains managed Runtime updates and blocks unsupported tracing edits", async () => {
+    api.runtimeSettings.mockResolvedValue({ ...settings, can_switch: false, switch_unavailable_reason: "persistent_runtime_upgrade_required" });
+    const onUpdates = vi.fn();
+    render(wrap(<><RuntimePanel state={{ ...state, persistent_environment: "env-fixture" }} onState={vi.fn()} onUpdates={onUpdates} /><DiagnosticsPanel state={{ ...state, persistent_environment: "env-fixture" }} onState={vi.fn()} /></>));
+    await screen.findByText(/Update them through About & updates/);
+    expect(screen.queryByRole("button", { name: "Select Runtime folder…" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "About & updates" }));
+    expect(onUpdates).toHaveBeenCalledOnce();
+    expect(await screen.findByRole("combobox", { name: "Tool Request Tracing" })).toBeDisabled();
+    expect(screen.getByText(/Desktop cannot change tracing/)).toBeVisible();
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    expect(api.setToolRequestTracing).not.toHaveBeenCalled();
+  });
+  it("links problem-specific guidance to the matching page and keeps reports visible", async () => {
+    const onConnection = vi.fn(), onActivity = vi.fn(), onRuntime = vi.fn();
+    render(wrap(<DiagnosticsPanel state={state} onState={vi.fn()} onConnection={onConnection} onActivity={onActivity} onRuntime={onRuntime} />));
+    fireEvent.click(screen.getByRole("button", { name: "Connections" }));
+    fireEvent.click(screen.getByRole("button", { name: "Activity" }));
+    fireEvent.click(screen.getByRole("button", { name: "Runtime & services" }));
+    expect(onConnection).toHaveBeenCalledOnce(); expect(onActivity).toHaveBeenCalledOnce(); expect(onRuntime).toHaveBeenCalledOnce();
+    expect(await screen.findByRole("button", { name: "Copy Diagnostic Report" })).toBeVisible();
+    expect(screen.getByText("Latest tool call details", { selector: "summary" }).parentElement).not.toHaveAttribute("open");
+  });
   it("requires explicit Full trace confirmation, preserving the expected env revision", async () => {
     render(wrap(<DiagnosticsPanel state={state} onState={vi.fn()} />));
     fireEvent.change(await screen.findByRole("combobox", { name: "Tool Request Tracing" }), { target: { value: "full" } });
@@ -117,8 +184,10 @@ describe("Diagnostics are explicit and secret-free", () => {
     await waitFor(() => expect(api.setToolRequestTracing).toHaveBeenCalledExactlyOnceWith({ mode: "full", expected_revision: "env-fence", confirm_full: true, restart: false, confirm_interrupt: false }));
   });
   it("opens only the canonical Console resource and copies reports without returning credential bytes", async () => {
-    render(wrap(<DiagnosticsPanel state={state} onState={vi.fn()} />));
-    fireEvent.click(await screen.findByRole("button", { name: "Open Runtime Console" }));
+    render(wrap(<><RuntimeConsolePanel state={state} onSettings={vi.fn()} /><DiagnosticsPanel state={state} onState={vi.fn()} /></>));
+    const openConsole = await screen.findByRole("button", { name: "Open in browser" });
+    await waitFor(() => expect(openConsole).toBeEnabled());
+    fireEvent.click(openConsole);
     await waitFor(() => expect(api.openDiagnosticResource).toHaveBeenCalledExactlyOnceWith("runtime_console"));
     fireEvent.click(screen.getByRole("button", { name: "Copy Diagnostic Report" }));
     await waitFor(() => expect(api.copyDiagnosticReport).toHaveBeenCalledOnce());
@@ -137,7 +206,7 @@ it("keeps the six localized navigation labels and task-based Settings categories
   for (const label of ["首页", "项目", "活动", "连接", "扩展", "设置"]) expect(screen.getByRole("button", { name: label })).toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "Desktop 设置" })).toBeInTheDocument();
   expect(await screen.findByRole("checkbox", { name: "登录时启动 WebCodex" })).toBeInTheDocument();
-  for (const label of ["文件访问与权限", "故障排查", "Runtime", "网络", "关于与更新"]) {
+  for (const label of ["文件访问与权限", "故障排查", "Runtime 与服务", "网络", "关于与更新"]) {
     expect(screen.getByRole("tab", { name: label })).toHaveAttribute("aria-selected", "false");
   }
   const diagnostics = screen.getByRole("tab", { name: "故障排查" });
@@ -149,10 +218,10 @@ it("keeps the six localized navigation labels and task-based Settings categories
   expect(diagnosticsPanel).not.toHaveAttribute("role", "region");
   expect(screen.queryByRole("checkbox", { name: "登录时启动 WebCodex" })).not.toBeInTheDocument();
   expect(await screen.findByRole("combobox", { name: "工具请求追踪" })).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "打开 Runtime Console" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "运行控制台" })).toHaveAttribute("aria-keyshortcuts", "Control+7 Meta+7");
   expect(screen.getByRole("button", { name: "复制诊断报告" })).toBeInTheDocument();
 
-  const runtimeTab = screen.getByRole("tab", { name: "Runtime" });
+  const runtimeTab = screen.getByRole("tab", { name: "Runtime 与服务" });
   expect(runtimeTab).toHaveAttribute("aria-controls", "desktop-settings-runtime");
   fireEvent.click(runtimeTab);
   expect(runtimeTab).toHaveAttribute("aria-selected", "true");
@@ -187,7 +256,7 @@ it("opens requested recovery categories and supports keyboard category navigatio
   expect(screen.getByRole("tab", { name: "Troubleshooting" })).toHaveAttribute("aria-selected", "true");
   await screen.findByRole("combobox", { name: "Tool Request Tracing" });
   view.rerender(wrap(<SettingsPanel state={state} onState={vi.fn()} initialSection="runtime" />));
-  const runtimeTab = screen.getByRole("tab", { name: "Runtime" });
+  const runtimeTab = screen.getByRole("tab", { name: "Runtime & services" });
   expect(runtimeTab).toHaveAttribute("aria-selected", "true");
   fireEvent.keyDown(runtimeTab, { key: "Home" });
   expect(screen.getByRole("tab", { name: "General" })).toHaveFocus();

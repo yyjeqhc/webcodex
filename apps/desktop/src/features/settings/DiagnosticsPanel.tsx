@@ -1,51 +1,49 @@
 import { useEffect, useRef, useState } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { desktopApi } from "../../lib/desktop-api";
-import type { DesktopState } from "../../models/topology";
+import type { DesktopError, DesktopState } from "../../models/topology";
 import type { DiagnosticSnapshot, DiagnosticResource, TraceMode } from "../../models/runtime-shell";
+import { useProduct } from "../../i18n/product";
+import { useLocale } from "../../i18n/locale";
+import { useConnectionsTools } from "../../i18n/connections-tools";
 import { useShellText } from "../../i18n/runtime-shell";
-import { normalizeDesktopError } from "../../i18n/presentation";
+import { desktopErrorPresentation, normalizeDesktopError } from "../../i18n/presentation";
 import { WorkspaceDialog } from "../workspace/WorkspaceDialog";
 import { ContinuationFacts } from "../activity/ContinuationFacts";
 
-export function DiagnosticsPanel({ state, onState }: { state: DesktopState; onState: (state: DesktopState) => void }) {
-  const s = useShellText();
+export function DiagnosticsPanel({ state, onState, onActivity, onRuntime, onConnection }: { state: DesktopState; onState: (state: DesktopState) => void; onActivity?: () => void; onRuntime?: () => void; onConnection?: () => void }) {
+  const s = useShellText(); const p = useProduct(); const c = useConnectionsTools(); const { t } = useLocale();
   const [data, setData] = useState<DiagnosticSnapshot | null>(null);
   const [mode, setMode] = useState<TraceMode>("off");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<DesktopError | null>(null);
   const [notice, setNotice] = useState("");
   const [credentialRecoveryOpen, setCredentialRecoveryOpen] = useState(false);
   const [userToken, setUserToken] = useState("");
   const userTokenInput = useRef<HTMLInputElement>(null);
-  const [confirmation, setConfirmation] = useState<{ kind: "trace"; restart: boolean; jobs: number | null } | { kind: "credential" } | { kind: "restore" } | null>(null);
+  const [confirmation, setConfirmation] = useState<{ kind: "trace"; restart: boolean; jobs: number | null } | { kind: "restore" } | null>(null);
   const alive = useRef(true);
   const install = (next: DiagnosticSnapshot) => { if (alive.current) { setData(next); setMode(next.trace.mode); } };
   useEffect(() => {
     alive.current = true;
-    void Promise.resolve().then(() => desktopApi.diagnostics()).then(install).catch(value => { if (alive.current) setError(normalizeDesktopError(value).code); });
+    void Promise.resolve().then(() => desktopApi.diagnostics()).then(install).catch(value => { if (alive.current) setError(normalizeDesktopError(value)); });
     return () => { alive.current = false; };
   }, []);
   const disabled = busy || Boolean(state.current_operation);
   const persistentEnvironment = state.persistent_environment?.trim() || null;
-  const localServer = Boolean(persistentEnvironment && state.topology?.server.kind === "local");
-  const localRunner = Boolean(persistentEnvironment && state.topology?.runner.kind === "local");
+  const canTrace = Boolean(data?.trace.available && !persistentEnvironment);
   const act = async (action: () => Promise<void>) => {
     if (disabled) return;
     setBusy(true); setError(null); setNotice("");
-    try { await action(); } catch (value) { if (alive.current) setError(normalizeDesktopError(value).code); }
+    try { await action(); } catch (value) { if (alive.current) setError(normalizeDesktopError(value)); }
     finally { if (alive.current) setBusy(false); }
   };
   const saveTrace = async (restart: boolean, confirmed: boolean) => {
-    if (!data) return;
+    if (!data || !canTrace) return;
     const next = await desktopApi.setToolRequestTracing({ mode, expected_revision: data.trace.revision, confirm_full: mode === "full" && confirmed, restart, confirm_interrupt: restart && confirmed });
     if (alive.current) { setData({ ...data, trace: next }); setNotice(next.restart_required ? "Restart required" : "Saved"); setConfirmation(null); }
     onState(await desktopApi.getState());
   };
-  const serviceAction = (component: "server" | "runner", action: "start" | "stop" | "restart" | "repair_credential") => act(async () => {
-    if (!persistentEnvironment) return;
-    onState(await desktopApi.environmentServiceAction({ environmentId: persistentEnvironment, component, action }));
-  });
   const restoreServerUserCredential = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const token = userToken;
@@ -68,76 +66,29 @@ export function DiagnosticsPanel({ state, onState }: { state: DesktopState; onSt
   const confirmAction = () => act(async () => {
     if (!confirmation || !data) return;
     if (confirmation.kind === "trace") await saveTrace(confirmation.restart, true);
-    else if (confirmation.kind === "credential" && data.credential_copy_fence) {
-      await desktopApi.copyRuntimeConsoleCredential(data.credential_copy_fence);
-      if (alive.current) { setNotice("Copied"); setConfirmation(null); }
-    } else if (confirmation.kind === "restore" && data.configuration.primary_fingerprint) {
+    else if (confirmation.kind === "restore" && data.configuration.primary_fingerprint) {
       onState(await desktopApi.restorePreviousConfiguration(data.configuration.primary_fingerprint));
       if (alive.current) setConfirmation(null);
       install(await desktopApi.diagnostics());
     }
   });
   const resourceNames: [DiagnosticResource, string][] = [["app_data", "Open app data directory"], ["server_configuration", "Open Server configuration location"], ["trace_directory", "Open trace directory"], ["runtime_directory", "Open Runtime folder"]];
+  const presentation = error && desktopErrorPresentation(error, t);
+  const errorCard = presentation && <div className="error-card" role="alert"><strong>{presentation.title}</strong><span>{presentation.action}</span><details><summary>{p("details")}</summary><code>{error?.code}</code></details></div>;
   return <div className="diagnostics-panel" data-webcodex-panel="diagnostics">
-    <div className="shell-section-heading"><h2>{s("Diagnostics Center")}</h2><button type="button" className="secondary-button" disabled={disabled} onClick={() => void act(async () => install(await desktopApi.diagnostics()))}>{s("Refresh")}</button></div>
+    <div className="shell-section-heading"><h2>{p("resolveProblems")}</h2><button type="button" className="secondary-button" disabled={disabled} onClick={() => void act(async () => install(await desktopApi.diagnostics()))}>{s("Refresh")}</button></div>
+    <div className="diagnostics-routes">
+      {onConnection && <div><p>{p("tunnelTroubleshootingHelp")}</p><button type="button" className="secondary-button" onClick={onConnection}>{c("connections")}</button></div>}
+      {onActivity && <div><p>{p("activityTroubleshootingHelp")}</p><button type="button" className="secondary-button" onClick={onActivity}>{p("activity")}</button></div>}
+      {onRuntime && <div><p>{p("serviceRecoveryHelp")}</p><button type="button" className="secondary-button" onClick={onRuntime}>{p("runtimeAndServices")}</button></div>}
+    </div>
     {!data && !error && <p role="status">{s("Loading…")}</p>}
     {data && <>
       {data.configuration.reason_code && <section className="shell-notice warning" role="alert">
         <h3>{s("Configuration could not be migrated")}</h3><code>{data.configuration.reason_code}</code>
         <button type="button" className="secondary-button" disabled={disabled || !data.configuration.backup_available || !data.configuration.primary_fingerprint} onClick={() => setConfirmation({ kind: "restore" })}>{s("Restore previous configuration")}</button>
       </section>}
-      {persistentEnvironment && <div className="shell-subsection" data-testid="persistent-services">
-        <h3>{s("Persistent local services")}</h3>
-        <section className="shell-subsection" aria-label={s("Restore Server user credential")}>
-          <h4>{s("Restore Server user credential")}</h4>
-          {!credentialRecoveryOpen ? <button type="button" className="secondary-button" disabled={disabled} onClick={() => setCredentialRecoveryOpen(true)}>{s("Restore Server user credential")}</button> : <form onSubmit={restoreServerUserCredential}>
-            <label htmlFor="server-user-api-token">{s("Existing Server user API token")}</label>
-            <input ref={userTokenInput} id="server-user-api-token" type="password" autoComplete="current-password" value={userToken} onChange={event => setUserToken(event.target.value)} disabled={disabled} />
-            <div className="shell-actions">
-              <button type="submit" className="primary-button" disabled={disabled || userToken.length === 0}>{s("Save credential")}</button>
-              <button type="button" className="secondary-button" disabled={disabled} onClick={() => { setUserToken(""); if (userTokenInput.current) userTokenInput.current.value = ""; setCredentialRecoveryOpen(false); }}>{s("Cancel")}</button>
-            </div>
-          </form>}
-        </section>
-        {localServer && <section className="shell-subsection" aria-label={s("Local Server")}>
-          <h4>{s("Local Server")}</h4>
-          <p>{s("Status")}: {s(state.readiness.server)}</p>
-          <div className="shell-actions">
-            <button type="button" className="secondary-button" disabled={disabled} onClick={() => void serviceAction("server", "start")}>{s("Start")}</button>
-            <button type="button" className="secondary-button" disabled={disabled} onClick={() => void serviceAction("server", "stop")}>{s("Stop")}</button>
-            <button type="button" className="secondary-button" disabled={disabled} onClick={() => void serviceAction("server", "restart")}>{s("Restart")}</button>
-          </div>
-        </section>}
-        {localRunner && <section className="shell-subsection" aria-label={s("Local Runner")}>
-          <h4>{s("Local Runner")}</h4>
-          <p>{s("Status")}: {s(state.readiness.runner)}</p>
-          <div className="shell-actions">
-            <button type="button" className="secondary-button" disabled={disabled} onClick={() => void serviceAction("runner", "start")}>{s("Start")}</button>
-            <button type="button" className="secondary-button" disabled={disabled} onClick={() => void serviceAction("runner", "stop")}>{s("Stop")}</button>
-            <button type="button" className="secondary-button" disabled={disabled} onClick={() => void serviceAction("runner", "restart")}>{s("Restart")}</button>
-            {state.can_repair_runner_credential && <button type="button" className="secondary-button" disabled={disabled} onClick={() => void serviceAction("runner", "repair_credential")}>{s("Repair Runner credential")}</button>}
-          </div>
-          {state.can_repair_runner_credential && <p className="field-help">{s("Credential repair uses the native operating system prompt.")}</p>}
-        </section>}
-      </div>}
-      <div className="shell-subsection">
-        <h3>{s("Tool Request Tracing")}</h3>
-        <label htmlFor="desktop-trace-mode">{s("Tool Request Tracing")}</label>
-        <select id="desktop-trace-mode" value={mode} onChange={event => setMode(event.target.value as TraceMode)} disabled={disabled || !data.trace.available}>
-          <option value="off">{s("Off")}</option><option value="metadata">{s("Metadata")}</option><option value="full">{s("Full")}</option>
-        </select>
-        <p className="field-help">{s(mode === "full" ? "Full tracing may contain sensitive tool inputs and results. Enable it only temporarily." : "Metadata records lifecycle and correlation, not full tool arguments or results.")}</p>
-        <p>{s("Effective mode")}: {s(data.trace.effective_mode === "metadata" ? "Metadata" : data.trace.effective_mode === "full" ? "Full" : data.trace.effective_mode === "off" ? "Off" : "Unknown")}</p>
-        {data.trace.restart_required && <p role="status">{s("Restart required")}</p>}
-        {data.trace.error_code && <code>{data.trace.error_code}</code>}
-        <div className="shell-actions"><button type="button" className="secondary-button" disabled={disabled || !data.trace.available} onClick={() => void prepareTrace(false)}>{s("Save")}</button>
-          <button type="button" className="primary-button" disabled={disabled || !data.trace.available || !data.trace.can_restart} onClick={() => void prepareTrace(true)}>{s("Save & Restart Runtime")}</button></div>
-      </div>
-      <div className="shell-subsection">
-        <div className="shell-actions"><button type="button" className="secondary-button" disabled={disabled || !data.resources.includes("runtime_console")} onClick={() => void act(() => desktopApi.openDiagnosticResource("runtime_console"))}>{s("Open Runtime Console")}</button>
-          <button type="button" className="text-button" disabled={disabled || !data.can_copy_console_credential} onClick={() => setConfirmation({ kind: "credential" })}>{s("Copy Runtime Console credential")}</button></div>
-      </div>
-      <div className="shell-subsection">
+      <div className="shell-subsection diagnostics-support"><h3>{p("supportHelp")}</h3><p>{p("supportPurpose")}</p>
         <p className="field-help">{s("The report and support bundle exclude project code, credentials, configuration contents and full request/result payloads.")}</p>
         <div className="shell-actions"><button type="button" className="secondary-button" disabled={disabled} onClick={() => void act(async () => { await desktopApi.copyDiagnosticReport(); if (alive.current) setNotice("Copied"); })}>{s("Copy Diagnostic Report")}</button>
           <button type="button" className="secondary-button" disabled={disabled} onClick={() => void act(async () => {
@@ -146,17 +97,47 @@ export function DiagnosticsPanel({ state, onState }: { state: DesktopState; onSt
             await desktopApi.exportSupportBundle(path); if (alive.current) setNotice("Support bundle exported");
           })}>{s("Export Support Bundle")}</button></div>
       </div>
-      <div className="shell-subsection"><h3>{s("Latest observed Window")}</h3><ContinuationFacts value={data.report.last_webcodex_call} observedAt={data.observed_at_ms} /></div>
-      <div className="shell-actions">{resourceNames.filter(([kind]) => data.resources.includes(kind)).map(([kind, label]) => <button type="button" key={kind} className="text-button" disabled={disabled} onClick={() => void act(() => desktopApi.openDiagnosticResource(kind))}>{s(label)}</button>)}</div>
+      <div className="shell-subsection">
+        <h3>{s("Tool Request Tracing")}</h3>
+        <p className="field-help">{p("tracePurpose")}</p>
+        <label htmlFor="desktop-trace-mode">{s("Tool Request Tracing")}</label>
+        <select id="desktop-trace-mode" value={mode} onChange={event => setMode(event.target.value as TraceMode)} disabled={disabled || !canTrace}>
+          <option value="off">{s("Off")}</option><option value="metadata">{p("traceMetadata")}</option><option value="full">{p("traceFull")}</option>
+        </select>
+        <p className="field-help">{mode === "off" ? p("traceOffHelp") : s(mode === "full" ? "Full tracing may contain sensitive tool inputs and results. Enable it only temporarily." : "Metadata records lifecycle and correlation, not full tool arguments or results.")}</p>
+        {!canTrace && <p className="workspace-notice">{p("traceUnavailableHelp")}</p>}
+        <p>{s("Effective mode")}: {data.trace.effective_mode === "metadata" ? p("traceMetadata") : data.trace.effective_mode === "full" ? p("traceFull") : s(data.trace.effective_mode === "off" ? "Off" : "Unknown")}</p>
+        {data.trace.restart_required && <p role="status">{s("Restart required")}</p>}
+        {data.trace.error_code && <code>{data.trace.error_code}</code>}
+        <div className="shell-actions"><button type="button" className="secondary-button" disabled={disabled || !canTrace} onClick={() => void prepareTrace(false)}>{s("Save")}</button>
+          <button type="button" className="primary-button" disabled={disabled || !canTrace || !data.trace.can_restart} onClick={() => void prepareTrace(true)}>{s("Save & Restart Runtime")}</button></div>
+        <p className="field-help">{p("traceRestartHelp")}</p>
+      </div>
+      {persistentEnvironment && <div className="shell-subsection">
+        <h3>{p("accountRecovery")}</h3><p className="field-help">{p("accountRecoveryHelp")}</p>
+        <div className="credential-recovery">
+          {!credentialRecoveryOpen ? <button type="button" className="secondary-button" disabled={disabled} onClick={() => setCredentialRecoveryOpen(true)}>{s("Restore Server user credential")}</button> : <form onSubmit={restoreServerUserCredential}>
+            <label htmlFor="server-user-api-token">{s("Existing Server user API token")}</label>
+            <input ref={userTokenInput} id="server-user-api-token" type="password" autoComplete="current-password" value={userToken} onChange={event => setUserToken(event.target.value)} disabled={disabled} />
+            <div className="shell-actions">
+              <button type="submit" className="primary-button" disabled={disabled || userToken.length === 0}>{s("Save credential")}</button>
+              <button type="button" className="secondary-button" disabled={disabled} onClick={() => { setUserToken(""); if (userTokenInput.current) userTokenInput.current.value = ""; setCredentialRecoveryOpen(false); }}>{s("Cancel")}</button>
+            </div>
+          </form>}
+        </div>
+      </div>}
+      <details className="workspace-technical"><summary>{p("callDetails")}</summary><ContinuationFacts value={data.report.last_webcodex_call} observedAt={data.observed_at_ms} /></details>
+      <div className="shell-subsection"><h3>{p("diagnosticFiles")}</h3><p className="field-help">{p("diagnosticFilesHelp")}</p><div className="shell-actions">{resourceNames.filter(([kind]) => data.resources.includes(kind)).map(([kind, label]) => <button type="button" key={kind} className="text-button" disabled={disabled} onClick={() => void act(() => desktopApi.openDiagnosticResource(kind))}>{s(label)}</button>)}</div></div>
     </>}
     {notice && <p role="status">{s(notice)}</p>}{busy && <p role="status">{s("Loading…")}</p>}
-    {error && <p className="shell-notice warning" role="alert"><code>{error}</code><span>{s("Refresh")}</span></p>}
-    {confirmation && <WorkspaceDialog title={s(confirmation.kind === "trace" ? mode === "full" ? "Confirm full tracing" : "Runtime restart warning" : confirmation.kind === "credential" ? "Sensitive clipboard action" : "Restore configuration")} onClose={() => setConfirmation(null)} busy={disabled}>
+    {!confirmation && errorCard}
+    {confirmation && <WorkspaceDialog title={s(confirmation.kind === "trace" ? mode === "full" ? "Confirm full tracing" : "Runtime restart warning" : "Restore configuration")} onClose={() => setConfirmation(null)} busy={disabled}>
       {confirmation.kind === "trace" ? <>
         {mode === "full" && <p>{s("Full tracing may contain sensitive tool inputs and results. Enable it only temporarily.")}</p>}
         {confirmation.restart && <><p>{s("Server restart may interrupt in-flight requests; the existing Runner will reconnect.")}</p><p>{confirmation.jobs == null ? s("Job count is not confirmed.") : `${s("Active Jobs")}: ${confirmation.jobs}`}</p></>}
-      </> : <p>{s(confirmation.kind === "credential" ? "This copies the managed user credential to your clipboard. Do not share it; clipboard managers may retain it." : "Restore the previous known-good configuration without deleting Projects or credentials. Runtime will remain stopped until explicitly started.")}</p>}
-      <div className="shell-actions"><button type="button" className="secondary-button" disabled={disabled} onClick={() => setConfirmation(null)}>{s("Cancel")}</button><button type="button" className="primary-button" disabled={disabled} onClick={() => void confirmAction()}>{s(confirmation.kind === "credential" ? "Copy sensitive credential" : confirmation.kind === "restore" ? "Restore previous configuration" : confirmation.restart ? "Save & Restart Runtime" : "Confirm full tracing")}</button></div>
+      </> : <p>{s("Restore the previous known-good configuration without deleting Projects or credentials. Runtime will remain stopped until explicitly started.")}</p>}
+      {errorCard}
+      <div className="shell-actions"><button type="button" className="secondary-button" disabled={disabled} onClick={() => setConfirmation(null)}>{s("Cancel")}</button><button type="button" className="primary-button" disabled={disabled} onClick={() => void confirmAction()}>{s(confirmation.kind === "restore" ? "Restore previous configuration" : confirmation.restart ? "Save & Restart Runtime" : "Confirm full tracing")}</button></div>
     </WorkspaceDialog>}
   </div>;
 }

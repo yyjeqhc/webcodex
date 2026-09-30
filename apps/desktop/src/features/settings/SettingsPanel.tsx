@@ -14,7 +14,7 @@ import { AccentPicker } from "../../components/AccentPicker";
 import { RuntimePanel } from "./RuntimePanel";
 import { DiagnosticsPanel } from "./DiagnosticsPanel";
 import { AboutPanel } from "./AboutPanel";
-import { useShellText } from "../../i18n/runtime-shell";
+import { LocalServicesPanel } from "./LocalServicesPanel";
 import type { RuntimeUpdates } from "../../hooks/useRuntimeUpdates";
 
 const SECTIONS = ["general", "access", "network", "runtime", "diagnostics", "about"] as const;
@@ -27,6 +27,7 @@ export function SettingsPanel({
   onChangeSetup,
   onStopRuntime,
   onActivity,
+  onConnection,
   initialSection,
   updates,
 }: {
@@ -35,11 +36,11 @@ export function SettingsPanel({
   onChangeSetup?: () => void;
   onStopRuntime?: () => void;
   onActivity?: () => void;
+  onConnection?: () => void;
   initialSection?: "diagnostics" | "runtime" | "network" | "access";
   updates?: RuntimeUpdates;
 }) {
   const { locale, setLocale, t } = useLocale();
-  const s = useShellText();
   const [section, setSection] = useState<SettingsSection>(initialSection ?? "general");
   const [visited, setVisited] = useState<SettingsSection[]>([initialSection ?? "general"]);
   const selectSection = (next: SettingsSection) => {
@@ -63,7 +64,7 @@ export function SettingsPanel({
   const configuredProxyMode = state.tunnel_proxy.mode === "auto" ? t("settings.tunnelProxyAuto") : state.tunnel_proxy.mode === "direct" ? t("settings.tunnelProxyDirect") : t("settings.tunnelProxyCustom");
   const effectiveProxyPath = state.tunnel_proxy.effective_source === "system" ? p("systemProxy") : state.tunnel_proxy.effective_source === "environment" ? p("environmentProxy") : state.tunnel_proxy.effective_source === "custom" ? p("customProxy") : state.tunnel_proxy.effective_source === "invalid_custom" ? t("settings.tunnelProxyCustom") : t("settings.tunnelProxyDirectValue");
   const detectedProxy = state.tunnel_proxy.effective_source === "environment" ? p("environmentProxy") : state.tunnel_proxy.system_proxy_detected ? p("systemProxy") : p("notConfigured");
-  const labels: Record<SettingsSection, string> = { general: p("general"), access: p("accessAndPermissions"), network: p("network"), runtime: s("Runtime"), diagnostics: s("Troubleshooting"), about: p("aboutAndUpdates") };
+  const labels: Record<SettingsSection, string> = { general: p("general"), access: p("accessAndPermissions"), network: p("network"), runtime: p("runtimeAndServices"), diagnostics: p("troubleshooting"), about: p("aboutAndUpdates") };
   const descriptions: Record<SettingsSection, string> = { general: p("generalSummary"), access: p("accessSummary"), network: p("networkSummary"), runtime: p("runtimeSummary"), diagnostics: p("diagnosticsSummary"), about: p("aboutSummary") };
 
   useEffect(() => {
@@ -139,7 +140,7 @@ export function SettingsPanel({
       {visited.includes("access") && <ComputerPermissions />}
       </div>
       <div id="desktop-settings-diagnostics" hidden={section !== "diagnostics"}>
-        {visited.includes("diagnostics") && <DiagnosticsPanel state={state} onState={onState} />}
+        {visited.includes("diagnostics") && <DiagnosticsPanel state={state} onState={onState} onActivity={onActivity} onRuntime={() => selectSection("runtime")} onConnection={onConnection} />}
       </div>
       <div id="desktop-settings-network" hidden={section !== "network"} className="settings-network">
         <h2>{t("settings.tunnelProxy")}</h2>
@@ -156,23 +157,24 @@ export function SettingsPanel({
       </div>
       <div id="desktop-settings-runtime" hidden={section !== "runtime"}>
         <section className="settings-section">
-        <h2>{p("serverConnection")}</h2>
+        <h2>{p("serviceControls")}</h2><p className="field-help">{p("serviceControlsHelp")}</p>
+        {visited.includes("runtime") && <LocalServicesPanel state={state} onState={onState} />}
         <div className="connection-actions">
-          {onChangeSetup && <button type="button" className="secondary-button" disabled={operationBusy} onClick={onChangeSetup}>{p("serverConnection")}</button>}
-          {onStopRuntime && state.topology?.server.kind === "local" && state.readiness.runtime_ready && <button type="button" className="secondary-button" disabled={operationBusy} onClick={onStopRuntime}>{p("stop")} WebCodex</button>}
+          {onChangeSetup && <button type="button" className="secondary-button" disabled={operationBusy} onClick={onChangeSetup}>{p("changeServer")}</button>}
+          {!state.persistent_environment && onStopRuntime && state.topology?.server.kind === "local" && state.readiness.runtime_ready && <button type="button" className="secondary-button" disabled={operationBusy} onClick={onStopRuntime}>{p("stop")} WebCodex</button>}
         </div>
-        {runnerSettings && <button type="button" className="secondary-button" disabled={operationBusy || restartingRunner || !runnerSettings.can_restart} data-webcodex-action="restart-owned-runner" onClick={async () => {
+        {!state.persistent_environment && runnerSettings && <><p className="field-help">{p("restartRunnerHelp")}</p><button type="button" className="secondary-button" disabled={operationBusy || restartingRunner || !runnerSettings.can_restart} data-webcodex-action="restart-owned-runner" onClick={async () => {
           if (operationBusy || restartingRunner) return;
           setRestartingRunner(true); setRunnerError(null);
           try { onState(await desktopApi.restartOwnedRunner(runnerSettings.target)); }
           catch (value) { setRunnerError(normalizeDesktopError(value)); }
           finally { setRestartingRunner(false); }
-        }}>{p("restartRunner")}</button>}
+        }}>{p("restartRunner")}</button></>}
         {runnerError && <SettingsError error={runnerError} />}
-        {runnerSettings && <dl className="detail-list"><div><dt>Runner</dt><dd>{runnerSettings.target.config_path}</dd></div></dl>}
+        {runnerSettings && <details className="workspace-technical"><summary>{p("details")}</summary><dl className="detail-list"><div><dt>Runner</dt><dd>{runnerSettings.target.config_path}</dd></div></dl></details>}
         <PowerShellInstallGuidance state={state} onState={onState} />
         </section>
-        {visited.includes("runtime") && <RuntimePanel state={state} onState={onState} onActivity={onActivity} />}
+        {visited.includes("runtime") && <RuntimePanel state={state} onState={onState} onActivity={onActivity} onUpdates={() => selectSection("about")} />}
       </div>
       <div id="desktop-settings-about" hidden={section !== "about"}>
         {visited.includes("about") && <AboutPanel state={state} updates={updates} />}

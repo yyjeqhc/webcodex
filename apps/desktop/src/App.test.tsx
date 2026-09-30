@@ -222,8 +222,8 @@ function renderApp() {
 describe("semantic Desktop UI", () => {
   async function changeServerConnection() {
   fireEvent.click(screen.getByRole("button", { name: "设置" }));
-  fireEvent.click(screen.getByRole("tab", { name: "Runtime" }));
-  fireEvent.click(screen.getByRole("button", { name: "Server 连接" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Runtime 与服务" }));
+  fireEvent.click(screen.getByRole("button", { name: "更改 Server 连接" }));
 }
 async function editTunnel() {
   fireEvent.click(await screen.findByRole("button", { name: "连接" }));

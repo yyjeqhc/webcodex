@@ -96,10 +96,16 @@ try {
       await bounded(page, `Long allowed folder ${width} ${theme}`);
       report.checks.push(`Readable controls and preserved drafts ${width} ${theme}`);
 
-      for (const destination of ['projects', 'activity', 'connection', 'extensions']) {
+      for (const destination of ['projects', 'activity', 'connection', 'console', 'extensions']) {
         await page.locator(`[data-webcodex-action="navigate-${destination}"]`).click();
         await page.locator(`[data-webcodex-page="${destination}"]`).waitFor();
         await bounded(page, `${destination} ${width} ${theme}`);
+        if (destination === 'console') {
+          await page.locator('.console-account').waitFor();
+          assert(await page.locator('.console-launch .primary-button').isEnabled());
+          assert.equal(await page.evaluate(() => window.__fixtureCalls.some(call => call.cmd === 'open_diagnostic_resource' || call.cmd === 'copy_runtime_console_credential')), false, 'Console navigation never opens a browser or copies credentials');
+          await capture(page, `console-${width}-${theme}`);
+        }
         if (destination === 'activity') {
           const tabs = await page.locator('.workspace-tabs').evaluate(el => ({x: getComputedStyle(el).overflowX, y: getComputedStyle(el).overflowY, height: el.clientHeight, scrollHeight: el.scrollHeight}));
           assert.equal(tabs.x, 'visible'); assert.equal(tabs.y, 'visible');
@@ -121,6 +127,21 @@ try {
           report.checks.push(`Connection editor containment ${width} ${theme}`);
         }
       }
+      await page.locator('#extension-tab-nativePlugins').click();
+      await page.locator('.configured-plugins .extension-row').waitFor();
+      assert(await page.locator('.extension-category-heading p').isVisible());
+      await bounded(page, `Native Plugins ${width} ${theme}`);
+      await capture(page, `plugins-${width}-${theme}`);
+      await page.locator('.plugin-registration > button').click();
+      const pluginDialog = page.getByRole('dialog');
+      await pluginDialog.locator('#plugin-id').fill('fixture-unsubmitted');
+      const pluginBounds = await pluginDialog.boundingBox();
+      assert(pluginBounds.x >= 0 && pluginBounds.x + pluginBounds.width <= width + 1);
+      await bounded(page, `Plugin editor ${width} ${theme}`);
+      await capture(page, `plugin-editor-${width}-${theme}`);
+      await page.keyboard.press('Escape');
+      await pluginDialog.waitFor({ state: 'hidden' });
+      assert.equal(await page.evaluate(() => window.__fixtureCalls.some(call => call.cmd === 'add_runner_plugin')), false);
       await page.locator('#extension-tab-instructions').click();
       await page.locator('#managed-global-instructions').fill('Keep this unsaved instruction draft.');
       await page.locator('#instruction-files').waitFor();
@@ -160,14 +181,67 @@ try {
       await bounded(page, `Localized Settings ${locale} ${section}`);
     }
     await page.locator('[data-webcodex-action="navigate-extensions"]').click();
-    for (const category of ['codingAgents', 'sshResources', 'mcpProviders', 'skills', 'instructions']) {
+    for (const category of ['codingAgents', 'sshResources', 'mcpProviders', 'nativePlugins', 'skills', 'instructions']) {
       await page.locator(`#extension-tab-${category}`).click();
+      assert(await page.locator('.extension-category-heading p').isVisible());
       await bounded(page, `Localized Extensions ${locale} ${category}`);
       if (locale === 'zh-TW') await capture(page, `extensions-${category}-zh-TW`);
     }
+    await page.locator('[data-webcodex-action="navigate-console"]').click();
+    await page.locator('.console-account').waitFor();
+    await bounded(page, `Localized Console ${locale}`);
+    if (locale === 'zh-TW') await capture(page, 'console-zh-TW');
     await page.locator('[data-webcodex-action="navigate-settings"]').click();
   }
   await context.close();
+  // Installed environments expose OS-managed service controls, while program
+  // selection belongs to unified updates. All commands remain fixture-only.
+  for (const width of [1280, 390]) {
+    const installed = await browser.newContext({ viewport: { width, height: 960 }, reducedMotion: 'reduce' });
+    const page = await installed.newPage();
+    page.on('pageerror', error => report.errors.push(error.message));
+    await page.route('**/__fixture/desktop-state*', async route => {
+      const response = await route.fetch(); const state = await response.json();
+      state.persistent_environment = 'fixture-installed-environment';
+      state.topology.runner = { kind: 'local' };
+      await route.fulfill({ response, json: state });
+    });
+    await page.route('**/desktop-shim.js', async route => {
+      const response = await route.fetch(); let source = await response.text();
+      assert(source.includes('can_switch:true,switch_unavailable_reason:null'));
+      source = source.replace('can_switch:true,switch_unavailable_reason:null', "can_switch:false,switch_unavailable_reason:'persistent_runtime_upgrade_required'");
+      source = source.replace('can_copy_console_credential:false,credential_copy_fence:null', "can_copy_console_credential:true,credential_copy_fence:'fixture-account-fence'");
+      await route.fulfill({ response, body: source });
+    });
+    await page.goto(fixture.url + '/desktop/');
+    await page.locator('[data-webcodex-action="navigate-settings"]').click();
+    await page.locator('#desktop-settings-locale').selectOption('zh-CN');
+    await page.locator('#settings-tab-runtime').click();
+    await page.locator('.runtime-build-details').waitFor();
+    assert.equal(await page.locator('.service-status-row button').count(), 6);
+    assert.equal(await page.locator('[data-webcodex-panel="runtime"]').getByRole('button', { name: '选择 Runtime 文件夹…' }).count(), 0);
+    assert(await page.locator('[data-webcodex-panel="runtime"]').getByRole('button', { name: '关于与更新' }).isVisible());
+    await bounded(page, `Installed service settings ${width}`);
+    await capture(page, `installed-runtime-${width}`);
+    await page.locator('#settings-tab-diagnostics').click();
+    await page.locator('#desktop-trace-mode').waitFor();
+    assert(await page.locator('#desktop-trace-mode').isDisabled());
+    assert(await page.getByRole('button', { name: '恢复 Server 用户凭据' }).isVisible());
+    await bounded(page, `Installed diagnostics ${width}`);
+    await capture(page, `installed-diagnostics-${width}`);
+    await page.locator('[data-webcodex-action="navigate-console"]').click();
+    await page.getByRole('button', { name: '复制 Runtime Console 凭据' }).waitFor();
+    await bounded(page, `Installed Console login ${width}`);
+    await capture(page, `installed-console-${width}`);
+    await page.getByRole('button', { name: '复制 Runtime Console 凭据' }).click();
+    const confirmation = page.getByRole('dialog');
+    await confirmation.waitFor();
+    assert.equal(await page.evaluate(() => window.__fixtureCalls.some(call => call.cmd === 'copy_runtime_console_credential')), false);
+    await page.keyboard.press('Escape');
+    await confirmation.waitFor({ state: 'hidden' });
+    assert.equal(await page.evaluate(() => window.__fixtureCalls.some(call => ['environment_service_action', 'switch_runtime', 'set_tool_request_tracing', 'repair_environment_user_credential', 'copy_runtime_console_credential'].includes(call.cmd))), false);
+    await installed.close();
+  }
   assert.deepEqual(report.errors, [], 'renderer errors');
   console.log(JSON.stringify({ fixture: true, nativeBackend: false, checks: report.checks.length, screenshots: report.screenshots.length }));
 } finally {

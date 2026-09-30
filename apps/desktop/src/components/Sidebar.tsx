@@ -10,10 +10,10 @@ import { BrandMark } from "../../../../frontend/src/ui/BrandMark";
 import { ActionIcon, Menu, Tooltip } from "@mantine/core";
 import { Check, Languages, Monitor, Moon, Sun } from "lucide-react";
 import { motion, useReducedMotion } from "motion/react";
-export type Navigation = "home" | "projects" | "connection" | "extensions" | "activity" | "settings";
-export const NAVIGATION: Navigation[] = ["home", "projects", "activity", "connection", "extensions", "settings"];
+export type Navigation = "home" | "projects" | "connection" | "extensions" | "activity" | "settings" | "console";
+export const NAVIGATION: Navigation[] = ["home", "projects", "activity", "connection", "extensions", "settings", "console"];
 const NAVIGATION_GROUPS: Array<{ label: "nav.work" | "nav.configure"; items: Navigation[] }> = [
-  { label: "nav.work", items: ["home", "projects", "activity"] },
+  { label: "nav.work", items: ["home", "projects", "activity", "console"] },
   { label: "nav.configure", items: ["connection", "extensions", "settings"] },
 ];
 export function Sidebar({ state, navigation, setNavigation }: { state: DesktopState; navigation: Navigation; setNavigation: (page: Navigation) => void }) {
@@ -33,13 +33,14 @@ export function Sidebar({ state, navigation, setNavigation }: { state: DesktopSt
               <span className="nav-group-label">{t(group.label)}</span>
               {group.items.map((item) => {
                 const index = NAVIGATION.indexOf(item);
+                const label = item === "connection" ? c("connections") : item === "console" ? p("runtimeConsole") : t(`nav.${item}`);
                 return <button
                   key={item}
                   className={navigation === item ? "active" : ""}
                   onClick={() => setNavigation(item)}
                   aria-current={navigation === item ? "page" : undefined}
                   aria-keyshortcuts={`Control+${index + 1} Meta+${index + 1}`}
-                  title={`${item === "connection" ? c("connections") : t(`nav.${item}`)} (⌘ / Ctrl + ${index + 1})`}
+                  title={`${label} (⌘ / Ctrl + ${index + 1})`}
                   data-webcodex-action={`navigate-${item}`}
                 >
                   {navigation === item && <motion.span
@@ -50,7 +51,7 @@ export function Sidebar({ state, navigation, setNavigation }: { state: DesktopSt
                     aria-hidden="true"
                   />}
                   <NavigationIcon name={item} />
-                  <span className="nav-label">{item === "connection" ? c("connections") : t(`nav.${item}`)}</span>
+                  <span className="nav-label">{label}</span>
                   <kbd aria-hidden="true">{index + 1}</kbd>
                 </button>;
               })}

@@ -9,18 +9,41 @@ use webcodex_core::runner_protocol::{ShellJobContext, ShellJobValidationMetadata
 
 #[test]
 fn project_validation_rechecks_manifest_and_dependency_state_after_queueing() {
-    for (marker, dependency, change_dependency) in [
-        ("Cargo.toml", "Cargo.lock", false),
-        ("Cargo.toml", "Cargo.lock", true),
-        ("go.mod", "go.sum", false),
-        ("go.mod", "go.sum", true),
+    for (marker, dependency, change_dependency, member_cwd) in [
+        ("Cargo.toml", "Cargo.lock", false, false),
+        ("Cargo.toml", "Cargo.lock", true, false),
+        ("go.mod", "go.sum", false, false),
+        ("go.mod", "go.sum", true, false),
+        ("Cargo.toml", "Cargo.lock", false, true),
+        ("Cargo.toml", "Cargo.lock", true, true),
     ] {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().join("project");
         let registry = temp.path().join("registry");
         std::fs::create_dir_all(&root).unwrap();
         std::fs::create_dir_all(&registry).unwrap();
-        std::fs::write(root.join(marker), "").unwrap();
+        if member_cwd {
+            std::fs::create_dir_all(root.join("member")).unwrap();
+            std::fs::write(
+                root.join("Cargo.toml"),
+                r#"[workspace]
+members = ["member"]
+resolver = "2"
+"#,
+            )
+            .unwrap();
+            std::fs::write(
+                root.join("member/Cargo.toml"),
+                r#"[package]
+name = "member"
+version = "0.1.0"
+edition = "2021"
+"#,
+            )
+            .unwrap();
+        } else {
+            std::fs::write(root.join(marker), "").unwrap();
+        }
         std::fs::write(root.join(dependency), "").unwrap();
         std::fs::write(
             registry.join("demo.toml"),
@@ -37,7 +60,7 @@ fn project_validation_rechecks_manifest_and_dependency_state_after_queueing() {
         };
         let request = ProjectValidationRequest {
             project_id: "demo".into(),
-            cwd: None,
+            cwd: member_cwd.then(|| "member".into()),
             action: ProjectValidationAction::Check,
             adapter: ProjectValidationAdapter::Auto,
             scope: None,
@@ -68,7 +91,7 @@ fn project_validation_rechecks_manifest_and_dependency_state_after_queueing() {
             validation: Some(metadata),
             workflow_session_id: None,
             ssh_resource: None,
-            project_cwd: Some(".".into()),
+            project_cwd: Some(if member_cwd { "member" } else { "." }.into()),
             cwd: Some(cwd.to_string_lossy().into_owned()),
             purpose: Some("validation".into()),
             shell: None,
@@ -143,18 +166,21 @@ fn project_validation_rechecks_manifest_and_dependency_state_after_queueing() {
             .slot_reserved;
         manager.stop_all();
 
-        assert_eq!(result.status, "failed", "{marker}/{changed}: {result:?}");
+        assert_eq!(
+            result.status, "failed",
+            "{marker}/{changed}/member={member_cwd}: {result:?}"
+        );
         assert_eq!(
             result.command_execution_state,
             Some(ShellCommandExecutionState::NotStarted),
-            "{marker}/{changed}: {result:?}"
+            "{marker}/{changed}/member={member_cwd}: {result:?}"
         );
         assert!(
             result
                 .error
                 .as_deref()
                 .is_some_and(|error| error.contains("validation_plan_stale")),
-            "{marker}/{changed}: {result:?}"
+            "{marker}/{changed}/member={member_cwd}: {result:?}"
         );
         assert!(!reserved, "rejected validation retained the execution slot");
         assert!(lock_unpoison(&manager.queued).is_empty());

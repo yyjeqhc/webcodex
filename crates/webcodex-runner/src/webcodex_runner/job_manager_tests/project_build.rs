@@ -6,18 +6,41 @@ use webcodex_core::runner_operation::{
 
 #[test]
 fn project_build_rechecks_manifest_and_dependency_state_after_queueing() {
-    for (marker, dependency, change_dependency) in [
-        ("Cargo.toml", "Cargo.lock", false),
-        ("Cargo.toml", "Cargo.lock", true),
-        ("go.mod", "go.sum", false),
-        ("go.mod", "go.sum", true),
+    for (marker, dependency, change_dependency, member_cwd) in [
+        ("Cargo.toml", "Cargo.lock", false, false),
+        ("Cargo.toml", "Cargo.lock", true, false),
+        ("go.mod", "go.sum", false, false),
+        ("go.mod", "go.sum", true, false),
+        ("Cargo.toml", "Cargo.lock", false, true),
+        ("Cargo.toml", "Cargo.lock", true, true),
     ] {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().join("project");
         let registry = temp.path().join("registry");
         std::fs::create_dir_all(&root).unwrap();
         std::fs::create_dir_all(&registry).unwrap();
-        std::fs::write(root.join(marker), "").unwrap();
+        if member_cwd {
+            std::fs::create_dir_all(root.join("member")).unwrap();
+            std::fs::write(
+                root.join("Cargo.toml"),
+                r#"[workspace]
+members = ["member"]
+resolver = "2"
+"#,
+            )
+            .unwrap();
+            std::fs::write(
+                root.join("member/Cargo.toml"),
+                r#"[package]
+name = "member"
+version = "0.1.0"
+edition = "2021"
+"#,
+            )
+            .unwrap();
+        } else {
+            std::fs::write(root.join(marker), "").unwrap();
+        }
         std::fs::write(root.join(dependency), "").unwrap();
         std::fs::write(
             registry.join("demo.toml"),
@@ -33,7 +56,7 @@ fn project_build_rechecks_manifest_and_dependency_state_after_queueing() {
         };
         let request = ProjectBuildRequest {
             project_id: "demo".into(),
-            cwd: None,
+            cwd: member_cwd.then(|| "member".into()),
             adapter: ProjectBuildAdapter::Auto,
             scope: None,
         };
@@ -41,7 +64,7 @@ fn project_build_rechecks_manifest_and_dependency_state_after_queueing() {
             crate::webcodex_runner::project_build::plan(&policy, &registry, &request).unwrap();
         let mut context = structured_process_context(&cwd, plan.process.args.len(), false);
         context.runtime_project_id = Some("agent:structured-agent:demo".into());
-        context.project_cwd = Some(".".into());
+        context.project_cwd = Some(if member_cwd { "member" } else { "." }.into());
         context.purpose = Some("build".into());
         context
             .structured_execution
@@ -111,18 +134,21 @@ fn project_build_rechecks_manifest_and_dependency_state_after_queueing() {
             .slot_reserved;
         manager.stop_all();
         assert!(finished, "queued build worker did not terminate");
-        assert_eq!(result.status, "failed", "{marker}/{changed}: {result:?}");
+        assert_eq!(
+            result.status, "failed",
+            "{marker}/{changed}/member={member_cwd}: {result:?}"
+        );
         assert_eq!(
             result.command_execution_state,
             Some(ShellCommandExecutionState::NotStarted),
-            "{marker}/{changed}: {result:?}"
+            "{marker}/{changed}/member={member_cwd}: {result:?}"
         );
         assert!(
             result
                 .error
                 .as_deref()
                 .is_some_and(|error| error.contains("build_plan_stale")),
-            "{marker}/{changed}: {result:?}"
+            "{marker}/{changed}/member={member_cwd}: {result:?}"
         );
         assert!(!reserved, "rejected build retained the execution slot");
         assert!(!root.join("target").exists());

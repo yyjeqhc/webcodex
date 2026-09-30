@@ -38,6 +38,9 @@ Home shows Server, Runner, and connection status, a short ChatGPT handoff, and s
 Persistent environments use the shared setup and service lifecycle described in the [unified installation guide](unified-installation.md). Desktop also shows the Server-authorized fleet, including remote Runners and their projects; remote paths are display-only on this computer. A viewer has no local Runner. The [native acceptance record](unified-deployment-validation.md) distinguishes automated checks from real-machine installer and migration acceptance.
 
 You do not need to stop the runtime or OpenAI Secure Tunnel when ChatGPT moves between workspace directories. Compatible paths are resolved against current Runner policy and registered lazily by the runtime.
+
+Projects lists working folders before **Task execution devices**. Runner reads files and runs commands on each device; **Connected to Server** describes its service connection. An unavailable desktop session concerns screenshots, windows, mouse and keyboard actions. File and command tools do not depend on that session. Missing or stale observations remain unconfirmed, and a connected desktop session does not establish system permissions. The local permission shortcut opens Settings without starting services or requesting permissions.
+
 ## Connections and recovery
 
 Connection cards show observed Tunnel and local MCP reachability. Failures include a specific reason and a shortcut to proxy settings, Runtime, or diagnostics. The page shows the current network route; failure guidance uses the failed attempt’s proxy evidence and never changes routes automatically.

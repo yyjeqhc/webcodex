@@ -24,7 +24,7 @@ export interface RunnerOverview {
 }
 export interface ServerRunnerSummary {
   client_id: string; connected: boolean; status?: string;
-  computer_session_availability?: boolean;
+  computer_session_availability?: boolean | null;
 }
 export interface ServerOverview {
   runners?: ServerRunnerSummary[];

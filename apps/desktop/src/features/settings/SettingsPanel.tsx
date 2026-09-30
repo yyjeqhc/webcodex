@@ -35,7 +35,7 @@ export function SettingsPanel({
   onChangeSetup?: () => void;
   onStopRuntime?: () => void;
   onActivity?: () => void;
-  initialSection?: "diagnostics" | "runtime" | "network";
+  initialSection?: "diagnostics" | "runtime" | "network" | "access";
   updates?: RuntimeUpdates;
 }) {
   const { locale, setLocale, t } = useLocale();

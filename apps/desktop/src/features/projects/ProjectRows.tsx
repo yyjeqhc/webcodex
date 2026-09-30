@@ -22,7 +22,7 @@ export function ProjectRows({ projects }: { projects: WorkspaceProject[] }) {
 }
 function ProjectRow({ project, compact = false }: { project: WorkspaceProject; compact?: boolean }) {  const p = useProduct(); const { locale } = useLocale();
   const [git, setGit] = useState<GitSummary | null>(null);
-  const { revision, busy: workspaceBusy } = useWorkspace();
+  const { revision, busy: workspaceBusy, state } = useWorkspace();
   useEffect(() => { setGit(null); }, [project.id, project.connected]);
   useEffect(() => {
     if (workspaceBusy) return;
@@ -37,7 +37,7 @@ function ProjectRow({ project, compact = false }: { project: WorkspaceProject; c
   const activityValue = project.sessions ? `${project.sessions.active_sessions}${project.sessions.sessions_truncated ? "+" : ""}` : "—";
   const path = displayProjectPath(project.path);
   const runner = project.client_id || (project.id?.startsWith("agent:") ? project.id.split(":")[1] : undefined);
-  const origin = runner ? <span className="project-table-meta">Runner · {runner}</span> : null;
+  const origin = runner ? <span className="project-table-meta">{p("executionDevice")} · {runner === state.workspace_runner?.client_id ? p("thisComputer") : runner}</span> : null;
   const updated = observationTime(project.sessions?.latest_updated_at ? project.sessions.latest_updated_at * 1000 : null, locale);
   if (compact) return <article className="workspace-project-mobile-row" aria-label={name}>
     <h3>{name}</h3><div className="project-path" title={path}>{path}</div>{origin}

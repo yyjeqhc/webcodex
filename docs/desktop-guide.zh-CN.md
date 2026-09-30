@@ -37,6 +37,8 @@ Runner 文件系统 policy 仍然是权限边界。全新 Desktop 的本机 Runn
 
 持久环境使用[统一安装指南](unified-installation.zh-CN.md)中的共享配置和服务生命周期。Desktop 还显示 Server 授权的机器与项目清单；远程路径在此电脑仅作展示，不会作为本机目录使用。viewer 没有本机 Runner。[原生平台验收记录](unified-deployment-validation.md)明确区分自动检查与真实安装、迁移验收。
 
+项目页先展示工作目录，再展示**执行任务的设备**。Runner 是在这些设备上读取文件和执行命令的服务；“已连接 Server”表示该服务在线。**暂时无法接入桌面**仅说明截图、窗口及鼠标键盘操作所用的桌面会话不可用，文件与命令操作不依赖此状态。未上报或过期的桌面状态会单独标明，不会被当成不可用；桌面会话已连接也不代表系统权限已经授予。本机的检查按钮打开设置中的文件访问与权限，不会启动服务或自动申请权限。
+
 ChatGPT 在不同工作目录之间切换时，不需要先停止 Runtime 或 OpenAI Secure Tunnel。Runtime 会根据当前 Runner policy 解析兼容路径，并按需注册 Project。
 ## 连接与故障恢复
 

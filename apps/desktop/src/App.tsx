@@ -31,10 +31,10 @@ export default function App() {
 function DesktopApp() {
   const { t } = useLocale();
   const s = useShellText();
-  const [settingsSection, setSettingsSection] = useState<"diagnostics" | "runtime" | "network" | undefined>();
+  const [settingsSection, setSettingsSection] = useState<"diagnostics" | "runtime" | "network" | "access" | undefined>();
   const { state, activity, navigation, setNavigation, refreshing, preserveWorkspacePollDeadline, error, setError, cancelSubmittingId, showSetup, setShowSetup, setStartupAttempt, mainRef, commitState, openSetup, refresh, resumeRuntime, cancelCurrentOperation, runStateOperation } = useDesktopWorkspace();
   const updates = useRuntimeUpdates(Boolean(state && !state.current_operation && !state.configuration_issue));
-  const openSettings = (section: "diagnostics" | "runtime" | "network") => { setSettingsSection(section); setNavigation("settings"); };
+  const openSettings = (section: "diagnostics" | "runtime" | "network" | "access") => { setSettingsSection(section); setNavigation("settings"); };
   if (!state) {
     return (
       <main className="splash">
@@ -131,7 +131,7 @@ function DesktopApp() {
           />
         ))}
         {navigation === "projects" && (
-          <ProjectsPanel />
+          <ProjectsPanel onComputerSettings={() => openSettings("access")} />
         )}
         {navigation === "connection" && <ConnectionPanel state={state} onState={commitState} onSettings={openSettings} />}
         {navigation === "activity" && <ActivityPanel activity={activity} />}

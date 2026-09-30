@@ -129,16 +129,45 @@ describe("product workspace task flows", () => {
     native.invoke.mockImplementation((name, value) => value.request.kind === "overview"
       ? Promise.resolve({ ...overview, runners: [{ client_id: "mini", connected: true, computer_session_availability: true }] }) : normal(name, value));
     render(wrap(<ProjectsPanel />));
-    const fleet = await screen.findByRole("region", { name: "Authorized Runners" });
-    expect(fleet).toHaveTextContent("GUI session available");
+    const fleet = await screen.findByRole("region", { name: "Task execution devices" });
+    expect(fleet).toHaveTextContent("Desktop session connected");
     native.invoke.mockRejectedValue({ code: "workspace_server_unreachable" });
     fireEvent(document, new Event("visibilitychange"));
     await screen.findByRole("alert");
-    expect(fleet).toHaveTextContent("Status is stale · GUI session unavailable");
+    expect(fleet).toHaveTextContent("Refresh to confirm status");
+    expect(fleet).toHaveTextContent("Desktop session status needs a fresh check");
+    expect(fleet).not.toHaveTextContent("Desktop session unavailable");
     native.invoke.mockRejectedValue({ code: "workspace_permission_denied" });
     fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
-    await waitFor(() => expect(screen.queryByRole("region", { name: "Authorized Runners" })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole("region", { name: "Task execution devices" })).not.toBeInTheDocument());
     expect(screen.queryByRole("row", { name: "alpha" })).not.toBeInTheDocument();
+  });
+
+  it.each([
+    [true, "Desktop session connected"],
+    [false, "Desktop session unavailable"],
+    [undefined, "Desktop session status not reported"],
+    [null, "Desktop session status not reported"],
+  ])("explains the local device without treating %s desktop availability as a file-tool failure", async (availability, label) => {
+    const normal = native.invoke.getMockImplementation()!;
+    native.invoke.mockImplementation((name, value) => value.request.kind === "overview"
+      ? Promise.resolve({ ...overview, runners: [{ client_id: "mini", connected: true, computer_session_availability: availability }] }) : normal(name, value));
+    const openSettings = vi.fn();
+    render(wrap(<ProjectsPanel onComputerSettings={openSettings} />));
+    const devices = await screen.findByRole("region", { name: "Task execution devices" });
+    expect(within(devices).getByRole("heading", { name: "This computer" })).toBeInTheDocument();
+    expect(devices).toHaveTextContent(label);
+    expect(screen.getByRole("row", { name: "alpha" })).toHaveTextContent("Runs on · This computer");
+    if (availability === true) {
+      expect(devices).toHaveTextContent("still require system permissions");
+      expect(within(devices).queryByRole("button")).not.toBeInTheDocument();
+    } else {
+      if (availability === false) expect(devices).toHaveTextContent("File and command tools do not depend on this session");
+      else expect(devices).not.toHaveTextContent("Desktop session unavailable");
+      fireEvent.click(within(devices).getByRole("button", { name: "Check this computer’s permissions" }));
+      expect(openSettings).toHaveBeenCalledTimes(1);
+    }
+    expect(native.invoke.mock.calls.every(([command]) => command === "workspace_query")).toBe(true);
   });
 
   it("shows the authorized B/C fleet and GUI availability on a viewer with no local Runner", async () => {
@@ -153,12 +182,16 @@ describe("product workspace task flows", () => {
         ] })
       : value.request.kind === "projects" ? Promise.resolve({ projects, total: 2, truncated: false }) : normal(name, value));
     render(wrap(<ProjectsPanel />, viewer));
-    const fleet = await screen.findByRole("region", { name: "Authorized Runners" });
+    const fleet = await screen.findByRole("region", { name: "Task execution devices" });
     const rows = within(fleet).getAllByRole("listitem");
-    expect(rows[0]).toHaveTextContent("B · Online · GUI session available");
-    expect(rows[1]).toHaveTextContent("C · Status is stale · GUI session unavailable");
-    expect(screen.getByRole("row", { name: "alpha" })).toHaveTextContent("Runner · B");
-    expect(screen.getByRole("row", { name: "beta" })).toHaveTextContent("Runner · C");
+    expect(rows[0]).toHaveTextContent("Runner identifier · B");
+    expect(rows[0]).toHaveTextContent("Connected to Server");
+    expect(rows[0]).toHaveTextContent("Desktop session connected");
+    expect(rows[1]).toHaveTextContent("Runner identifier · C");
+    expect(rows[1]).toHaveTextContent("Refresh to confirm status");
+    expect(rows[1]).not.toHaveTextContent("Desktop session connected");
+    expect(screen.getByRole("row", { name: "alpha" })).toHaveTextContent("Runs on · B");
+    expect(screen.getByRole("row", { name: "beta" })).toHaveTextContent("Runs on · C");
     expect(screen.queryByRole("button", { name: "Add Project" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Unregister project/ })).not.toBeInTheDocument();
   });

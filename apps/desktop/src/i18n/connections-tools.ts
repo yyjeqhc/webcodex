@@ -51,9 +51,9 @@ export const CONNECTIONS_TOOLS_MESSAGES = {
   tunnelVerificationFailed: ["The tunnel client failed integrity verification. Retry the verified download; do not bypass verification.", "隧道客户端完整性校验失败。请重试下载，不要绕过校验。", "Die Integritätsprüfung des Tunnel-Clients ist fehlgeschlagen. Verifizierten Download erneut versuchen; Prüfung nicht umgehen.", "La vérification d’intégrité du client de tunnel a échoué. Relancez le téléchargement vérifié sans contourner la vérification.", "トンネルクライアントの整合性検証に失敗しました。検証を回避せず、ダウンロードを再試行してください。", "터널 클라이언트 무결성 검증에 실패했습니다. 검증을 우회하지 말고 다운로드를 다시 시도하세요.", "隧道客戶端完整性校驗失敗。請重試下載，不要繞過校驗。"],
   stopping: ["Stopping", "停止中", "Wird beendet", "Arrêt en cours", "停止処理中", "중지 중", "停止中"],
   logs: ["Connection events", "连接事件", "Verbindungsereignisse", "Événements de connexion", "接続イベント", "연결 이벤트", "連線事件"],
-  mcpProviders: ["MCP Providers", "MCP Providers", "MCP-Anbieter", "Fournisseurs MCP", "MCP プロバイダー", "MCP 공급자", "MCP Providers"],
-  addMcpProvider: ["Add MCP Provider", "添加 MCP Provider", "MCP-Anbieter hinzufügen", "Ajouter un fournisseur MCP", "MCP プロバイダーを追加", "MCP 공급자 추가", "新增 MCP Provider"],
-  providerName: ["Provider Name", "Provider 名称", "Anbietername", "Nom du fournisseur", "プロバイダー名", "공급자 이름", "Provider 名稱"],
+  mcpProviders: ["MCP servers", "MCP 工具服务", "MCP-Server", "Serveurs MCP", "MCP サーバー", "MCP 서버", "MCP 工具服務"],
+  addMcpProvider: ["Add MCP server", "添加 MCP 服务", "MCP-Server hinzufügen", "Ajouter un serveur MCP", "MCP サーバーを追加", "MCP 서버 추가", "新增 MCP 服務"],
+  providerName: ["Service name", "服务名称", "Dienstname", "Nom du service", "サービス名", "서비스 이름", "服務名稱"],
   command: ["Command", "命令", "Befehl", "Commande", "コマンド", "명령", "命令"],
   arguments: ["Arguments", "参数", "Argumente", "Arguments", "引数", "인수", "引數"],
   argsHelp: ["JSON array, e.g. [\"-y\", \"@playwright/mcp\"]. Use private environment fields for credentials.", "JSON 数组，例如 [\"-y\", \"@playwright/mcp\"]。凭据请放入私密环境变量。", "JSON-Array, z. B. [\"-y\", \"@playwright/mcp\"]. Zugangsdaten in private Umgebungsfelder eintragen.", "Tableau JSON, ex. [\"-y\", \"@playwright/mcp\"]. Utilisez l’environnement privé pour les identifiants.", "JSON 配列（例：[\"-y\", \"@playwright/mcp\"]）。認証情報は非公開の環境変数に入力してください。", "JSON 배열 예: [\"-y\", \"@playwright/mcp\"]. 자격 증명은 비공개 환경 변수에 입력하세요.", "JSON 陣列，例如 [\"-y\", \"@playwright/mcp\"]。憑據請放入私密環境變數。"],
@@ -68,11 +68,11 @@ export const CONNECTIONS_TOOLS_MESSAGES = {
   disabled: ["Disabled", "已禁用", "Deaktiviert", "Désactivé", "無効", "사용 안 함", "已禁用"],
   configured: ["Configured", "已配置", "Konfiguriert", "Configuré", "設定済み", "설정됨", "已設定"],
   saved: ["Saved", "已保存", "Gespeichert", "Enregistré", "保存済み", "저장됨", "已儲存"],
-  noProviders: ["No MCP Providers configured", "尚未配置 MCP Provider", "Keine MCP-Anbieter konfiguriert", "Aucun fournisseur MCP configuré", "MCP プロバイダーは未設定です", "설정된 MCP 공급자 없음", "尚未設定 MCP Provider"],
+  noProviders: ["No MCP servers configured", "尚未配置 MCP 工具服务", "Keine MCP-Server konfiguriert", "Aucun serveur MCP configuré", "MCP サーバーは未設定です", "설정된 MCP 서버 없음", "尚未設定 MCP 工具服務"],
   sharedProviders: ["Add tools for AI across all projects and connections. Save, then restart Runner to apply.", "为 AI 添加工具，所有项目与连接共用；保存后重启 Runner 生效。", "KI-Werkzeuge für alle Projekte und Verbindungen. Speichern und Runner neu starten.", "Ajoutez des outils IA partagés entre projets et connexions. Enregistrez puis redémarrez Runner.", "全プロジェクトと接続で共有する AI ツールです。保存後に Runner を再起動してください。", "모든 프로젝트와 연결에서 공유하는 AI 도구입니다. 저장 후 Runner를 다시 시작하세요.", "為 AI 新增工具，所有專案與連線共用；儲存後重新啟動 Runner 生效。"],
-  deleteProviderHelp: ["Delete this provider and its private values. Restart Runner to remove it from running tools.", "删除此 Provider 及其私密配置，重启 Runner 后从运行中的工具中移除。", "Anbieter und private Werte löschen. Runner neu starten, um laufende Werkzeuge zu aktualisieren.", "Supprimer ce fournisseur et ses valeurs privées. Redémarrez Runner pour actualiser les outils actifs.", "プロバイダーと非公開の値を削除します。実行中のツールに反映するには Runner を再起動してください。", "공급자와 비공개 값을 삭제합니다. 실행 중인 도구에 반영하려면 Runner를 다시 시작하세요.", "刪除此 Provider 及其私密設定，重啟 Runner 後從執行中的工具中移除。"],
-  nativePlugins: ["Advanced: Native Tool Plugins", "高级：Native Tool Plugins", "Erweitert: Native Tool-Plugins", "Avancé : plugins natifs", "詳細：ネイティブツールプラグイン", "고급: 네이티브 도구 플러그인", "高階：Native Tool Plugins"],
-  capacity: ["Enabled providers", "已启用的 Provider", "Aktivierte Anbieter", "Fournisseurs activés", "有効なプロバイダー", "활성 공급자", "已啟用的 Provider"],
+  deleteProviderHelp: ["Delete this MCP service and its private values. Restart Runner to remove it from running tools.", "删除此 MCP 服务及其私密配置，重启 Runner 后从运行中的工具中移除。", "MCP-Dienst und private Werte löschen. Runner neu starten, um laufende Werkzeuge zu aktualisieren.", "Supprimer ce service MCP et ses valeurs privées. Redémarrez Runner pour actualiser les outils actifs.", "MCP サービスと非公開の値を削除します。実行中のツールに反映するには Runner を再起動してください。", "MCP 서비스와 비공개 값을 삭제합니다. 실행 중인 도구에 반영하려면 Runner를 다시 시작하세요.", "刪除此 MCP 服務及其私密設定，重啟 Runner 後從執行中的工具中移除。"],
+  nativePlugins: ["Advanced: Native Tool Plugins", "高级：原生工具插件", "Erweitert: Native Tool-Plugins", "Avancé : plugins natifs", "詳細：ネイティブツールプラグイン", "고급: 네이티브 도구 플러그인", "高階：原生工具外掛"],
+  capacity: ["Enabled MCP servers", "已启用的 MCP 服务", "Aktivierte MCP-Server", "Serveurs MCP activés", "有効な MCP サーバー", "활성 MCP 서버", "已啟用的 MCP 服務"],
 } as const;
 export type ConnectionsToolsKey = keyof typeof CONNECTIONS_TOOLS_MESSAGES;
 export function connectionsToolsText(locale: string, key: ConnectionsToolsKey): string {

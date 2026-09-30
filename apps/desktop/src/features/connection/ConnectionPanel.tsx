@@ -9,7 +9,7 @@ import { useShellText } from "../../i18n/runtime-shell";
 import { EMPTY_CONNECTIONS, type TunnelConnection, type TunnelProfileAction } from "../../models/connections-tools";
 import { useProduct } from "../../i18n/product";
 import { useConnectionsTools } from "../../i18n/connections-tools";
-import { ChatgptObservation } from "../workspace/WorkspaceStatus";
+import { ChatgptObservation, tunnelReadinessText } from "../workspace/WorkspaceStatus";
 import { WorkspaceDialog } from "../workspace/WorkspaceDialog";
 import { ConnectionEditor } from "./ConnectionEditor";
 import { ConnectionCard } from "./ConnectionCard";
@@ -39,7 +39,7 @@ export function ConnectionPanel({ state, onState, onSettings }: { state: Desktop
   };
   return <section className="page-section workspace-page" aria-labelledby="connection-title" data-webcodex-page="connection">
     <header className="page-heading-row"><h1 id="connection-title">{c("connections")}</h1><button type="button" className="primary-button" disabled={disabled || profiles.config_error} onClick={() => { setSaved(false); setEditor({ profile: null }); }}>{c("addConnection")}</button></header>
-    <div className="connection-context"><span>{profiles.running} / {profiles.profiles.length} {p("running")}</span><span>{c("networkRoute")} · <strong>{route}</strong></span><button type="button" className="text-button" onClick={() => onSettings("network")}>{c("proxySettings")}</button></div>
+    <div className="connection-context"><span>{tunnelReadinessText(state.connections, p)}</span><span>{c("networkRoute")} · <strong>{route}</strong></span><button type="button" className="text-button" onClick={() => onSettings("network")}>{c("proxySettings")}</button></div>
     {state.topology?.server.kind === "remote" && <p className="workspace-notice"><code>{state.topology.server.url}</code></p>}
     {(!local || !state.readiness.runtime_ready) && <div className="workspace-notice"><p>{c(!local ? "localOnly" : "localRuntimeNeeded")}</p><button type="button" className="secondary-button" onClick={() => onSettings("runtime")}>{s("Runtime")}</button></div>}
     {profiles.config_error && <p role="alert" className="workspace-notice">{c("configError")}</p>}

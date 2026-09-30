@@ -149,7 +149,7 @@ describe("workspace configuration boundaries", () => {
 
   it("validates native Plugin arguments and writes only a new explicit registration", async () => {
     render(wrap(<ExtensionsPanel state={state} onState={onState} />));
-    fireEvent.click(screen.getByRole("tab", { name: "MCP Providers" }));
+    fireEvent.click(screen.getByRole("tab", { name: "MCP servers" }));
     fireEvent.click(screen.getByText("Advanced: Native Tool Plugins", { selector: "summary" }));
     fireEvent.click(await screen.findByText("Add a native Tool Plugin"));
     fireEvent.change(screen.getByLabelText("Plugin ID"), { target: { value: "new-plugin" } });
@@ -185,6 +185,10 @@ describe("workspace configuration boundaries", () => {
     await waitFor(() => expect(api.computerPermissions).toHaveBeenCalled());
     await waitFor(() => expect(screen.queryByText("WebCodex Runner")).not.toBeInTheDocument());
     expect(screen.queryByRole("button", { name: "Show Runner in Finder" })).not.toBeInTheDocument();
+    expect(await screen.findByText("Desktop cannot check system permissions on this platform. This does not establish whether desktop tools are available.")).toBeInTheDocument();
+    expect(screen.getByText(/confirm that this device is signed in to a desktop/)).toBeInTheDocument();
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+    expect(api.requestComputerPermission).not.toHaveBeenCalled();
   });
 
   it("opens the permission explanation only after foreground observation, never auto-grants", async () => {
@@ -217,7 +221,7 @@ describe("workspace configuration boundaries", () => {
 it("preserves capability-first tabs and Coding-only authorization after the shared UI merge", async () => {
   api.runnerCapabilityAuthorization.mockResolvedValue({ target, can_authorize: true, coding_agents: false, ssh_resources: false });
   render(wrap(<ExtensionsPanel state={state} onState={onState} />));
-  expect(screen.getAllByRole("tab").map(tab => tab.textContent)).toEqual(["Coding Agents", "SSH Resources", "MCP Providers", "Skills", "Instructions"]);
+  expect(screen.getAllByRole("tab").map(tab => tab.textContent)).toEqual(["Coding Agents", "SSH Resources", "MCP servers", "Skills", "Instructions"]);
   expect(screen.getByRole("tab", { name: "Coding Agents" })).toHaveAttribute("aria-selected", "true");
   expect(screen.queryByRole("button", { name: /^Projects:/ })).not.toBeInTheDocument();
   fireEvent.click(await screen.findByRole("button", { name: "Authorize Runner Capabilities" }));

@@ -287,7 +287,7 @@ try {
       const request = await page.evaluate(() => window.__fixtureCalls.find(call => call.cmd === 'update_runner_settings').args.request);
       assert.equal(request.target.client_id, 'fixture-runner');
       assert.deepEqual(request.paths, { instruction_files: ['/fixture/AGENTS.md'], skill_roots: ['/fixture/skills-next'] });
-      await page.getByRole('tab', { name: 'MCP Providers' }).click();
+      await page.getByRole('tab', { name: 'MCP servers' }).click();
       await page.getByText('Advanced: Native Tool Plugins', { exact: true }).click();
       await page.getByText('Add a native Tool Plugin', { exact: true }).click();
       await page.getByLabel('Plugin ID', { exact: true }).fill('ui-fixture-plugin');

@@ -135,10 +135,10 @@ describe("Desktop SSH Resources", () => {
     api.sshResources.mockResolvedValue(inventory([resource("managed"), resource("static", "static"), resource("pending", "managed", true)]));
     render(<Harness mode="ssh" />);
     await screen.findByRole("article", { name: "static" });
-    expect(within(screen.getByRole("article", { name: "static" })).getByText("Static · Active · Read only")).toBeInTheDocument();
+    expect(within(screen.getByRole("article", { name: "static" })).getByText("From config file · Active · Read only")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Remove static" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Remove managed" })).toBeEnabled();
-    expect(within(screen.getByRole("article", { name: "pending" })).getByText("Managed · Configured · Restart required")).toBeInTheDocument();
+    expect(within(screen.getByRole("article", { name: "pending" })).getByText("Managed by WebCodex · Configured · Restart required")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Restart Runner" })).toBeEnabled();
   });
 

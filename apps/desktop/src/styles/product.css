@@ -74,6 +74,7 @@
 .sidebar-preferences .accent-picker-compact .accent-current { width: 17px; height: 17px; }
 .sidebar-preferences .accent-picker-panel { top: auto; bottom: calc(100% + 8px); left: -8px; }
 .sidebar-status { padding-top: var(--ui-space-4); }
+.sidebar-status .sidebar-service-state { color: inherit; font-weight: inherit; white-space: nowrap; }
 
 .main-content {
   padding: clamp(28px, 3.5vw, 48px) clamp(28px, 4vw, 64px) 56px;
@@ -154,7 +155,7 @@
 .project-table-name { display: flex; align-items: center; gap: var(--ui-space-3); min-width: 0; }
 .project-table-name .project-row-main { min-width: 0; }
 .project-table-name h3 { overflow: hidden; margin: 0; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 600; }
-.project-activity-badge { min-width: 28px; text-transform: none; }
+.project-activity-badge { min-width: 32px; min-height: 26px; font-size: 14px; line-height: 1.4; text-transform: none; }
 .project-table-meta { display: inline-flex; align-items: center; max-width: 100%; gap: 6px; overflow: hidden; color: var(--ui-text-secondary); font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
 .project-table-meta svg { flex: 0 0 auto; color: var(--ui-text-tertiary); }
 .project-table-time { color: var(--ui-text-secondary); font-size: 14px; white-space: nowrap; }

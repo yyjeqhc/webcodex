@@ -63,7 +63,10 @@ export function ComputerPermissions({ welcome = false }: { welcome?: boolean }) 
     finally { requestInFlight.current = false; if (generation.current === current) setBusy(false); }
   };
   if (welcome && !showWelcome) return null;
-  if (!welcome && permissions && !permissions.supported) return null;
+  if (!welcome && permissions && !permissions.supported) return <section className="settings-section permission-panel" aria-labelledby="permission-settings-title">
+    <h2 id="permission-settings-title">{p("desktopAccess")}</h2>
+    <p>{p("desktopPermissionProbeUnavailable")}</p><p>{p("desktopAccessHelp")}</p>
+  </section>;
   const content = <>
     <h2 id={welcome ? "permission-welcome-title" : "permission-settings-title"}>Computer Use</h2>
     {permissions?.supported && <>

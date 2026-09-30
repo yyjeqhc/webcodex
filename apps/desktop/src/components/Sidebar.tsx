@@ -3,7 +3,7 @@ import type { DesktopState } from "../models/topology";
 import { LANGUAGES, useLocale } from "../i18n/locale";
 import { useProduct } from "../i18n/product";
 import { useConnectionsTools } from "../i18n/connections-tools";
-import { statusKey } from "../features/workspace/WorkspaceStatus";
+import { statusKey, tunnelReadinessText } from "../features/workspace/WorkspaceStatus";
 import { useAppearance } from "../hooks/useAppearance";
 import { AccentPicker } from "./AccentPicker";
 import { BrandMark } from "../../../../frontend/src/ui/BrandMark";
@@ -80,7 +80,7 @@ export function Sidebar({ state, navigation, setNavigation }: { state: DesktopSt
         </div>
         <div className="sidebar-status">
           <i className={`status-dot ${(hasLocalRunner ? state.readiness.runtime_ready : state.readiness.server === "ready") ? "ready" : "unknown"}`} aria-hidden="true" />
-          <div><strong>{hasLocalRunner ? `Runner · ${p(statusKey(state.readiness.runner))}` : `${p("serverConnection")} · ${p(statusKey(state.readiness.server))}`}</strong><span>{c("connections")} · {state.connections?.running ?? 0} / {state.connections?.profiles.length ?? 0}</span></div>
+          <div><strong>{p(hasLocalRunner ? "localExecutionService" : "serverConnection")}<span className="sidebar-service-state"> · {p(statusKey(hasLocalRunner ? state.readiness.runner : state.readiness.server))}</span></strong><span>{state.topology?.experience === "quick_share" ? `Quick Share · ${p(statusKey(state.readiness.exposure === "remote_ready" ? "ready" : state.readiness.exposure))}` : tunnelReadinessText(state.connections, p)}</span></div>
         </div>
       </aside>
   );

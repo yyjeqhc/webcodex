@@ -11,6 +11,7 @@ import { ChatgptObservation, observationTime, WorkspaceStatus } from "./Workspac
 import { DesktopMantineProvider } from "../../components/DesktopMantineProvider";
 import { Sidebar } from "../../components/Sidebar";
 import { Dashboard } from "../dashboard/Dashboard";
+import { connectionFixture, connectionSnapshot } from "../../test/connections-fixtures";
 
 const native = vi.hoisted(() => ({ invoke: vi.fn() }));
 const api = vi.hoisted(() => ({ managedInstructionsRead: vi.fn(async () => ({ path:"/fixture/desktop/instructions/AGENTS.md", exists:false, content:"", revision:"missing" })), prepareProjectUnregister: vi.fn(), unregisterProject: vi.fn(), runnerSettings: vi.fn(), updateRunnerSettings: vi.fn(), restartOwnedRunner: vi.fn(), addRunnerPlugin: vi.fn() }));
@@ -96,11 +97,11 @@ describe("product workspace task flows", () => {
     const viewer = { ...state, readiness: { ...state.readiness, runner: "stopped" as const },
       topology: { ...state.topology!, server: { kind: "remote" as const, url: "https://central.example" }, runner: { kind: "none" as const } } } as DesktopState;
     render(wrap(<><WorkspaceStatus state={viewer} /><Sidebar state={viewer} navigation="home" setNavigation={vi.fn()} /></>, viewer));
-    expect(screen.getByRole("status")).toHaveTextContent("ServerRunning");
-    expect(screen.getByRole("status")).toHaveTextContent("Local RunnerNot configured");
-    expect(screen.getByRole("status")).not.toHaveTextContent("RunnerStopped");
+    expect(screen.getByRole("status")).toHaveTextContent("Server ConnectionRunning");
+    expect(screen.getByRole("status")).toHaveTextContent("Local task serviceNot configured");
+    expect(screen.getByRole("status")).not.toHaveTextContent("Local task serviceStopped");
     expect(screen.getByRole("complementary")).toHaveTextContent("Server Connection · Running");
-    expect(screen.getByRole("complementary")).not.toHaveTextContent("Runner · Stopped");
+    expect(screen.getByRole("complementary")).not.toHaveTextContent("Local task service · Stopped");
     expect(viewer.readiness.runner).toBe("stopped");
   });
 
@@ -111,6 +112,23 @@ describe("product workspace task flows", () => {
       onChangeSetup={vi.fn()} onNavigate={vi.fn()} onStopQuickShare={vi.fn()} />, viewer));
     expect(screen.queryByRole("button", { name: "Add Project" })).not.toBeInTheDocument();
   });
+  it("describes locally ready tunnels without counting a live but unhealthy process as ready", () => {
+    const selected = { ...state, connections: connectionSnapshot(connectionFixture({ ready: false, process_started: true, lifecycle: "running" })) };
+    render(wrap(<><WorkspaceStatus state={selected} /><Sidebar state={selected} navigation="home" setNavigation={vi.fn()} /></>, selected));
+    expect(screen.getByRole("status")).toHaveTextContent("0 of 1 tunnels locally ready");
+    expect(screen.getByRole("complementary")).toHaveTextContent("0 of 1 tunnels locally ready");
+    expect(screen.queryByText("ChatGPT connected")).not.toBeInTheDocument();
+  });
+  it.each([
+    [connectionSnapshot(), "No tunnels configured"],
+    [{ ...connectionSnapshot(), config_error: true }, "Tunnel status unconfirmed"],
+    [undefined, "Tunnel status unconfirmed"],
+  ])("distinguishes missing configuration from unavailable tunnel observations", (connections, label) => {
+    const selected = { ...state, connections };
+    render(wrap(<WorkspaceStatus state={selected} />, selected));
+    expect(screen.getByRole("status")).toHaveTextContent(label);
+    expect(screen.getByRole("status")).not.toHaveTextContent("0 / 0");
+  });
   it.each([
     ["workspace_authentication_required", "User authentication is missing or expired. Restore your Server credential."],
     ["workspace_permission_denied", "This user does not have permission to view this Server data."],
@@ -120,7 +138,7 @@ describe("product workspace task flows", () => {
     render(wrap(<ProjectsPanel />));
     expect(await screen.findByRole("alert")).toHaveTextContent(message);
     expect(screen.queryByText("secret-response-body")).not.toBeInTheDocument();
-    expect(screen.queryByText("No Runtime projects observed yet")).not.toBeInTheDocument();
+    expect(screen.queryByText("No project folders to show")).not.toBeInTheDocument();
     if (code !== "workspace_server_unreachable") expect(screen.queryByRole("row", { name: "alpha" })).not.toBeInTheDocument();
   });
 
@@ -164,7 +182,7 @@ describe("product workspace task flows", () => {
     } else {
       if (availability === false) expect(devices).toHaveTextContent("File and command tools do not depend on this session");
       else expect(devices).not.toHaveTextContent("Desktop session unavailable");
-      fireEvent.click(within(devices).getByRole("button", { name: "Check this computer’s permissions" }));
+      fireEvent.click(within(devices).getByRole("button", { name: "Desktop access settings" }));
       expect(openSettings).toHaveBeenCalledTimes(1);
     }
     expect(native.invoke.mock.calls.every(([command]) => command === "workspace_query")).toBe(true);
@@ -204,7 +222,7 @@ describe("product workspace task flows", () => {
   });
 
   it("shows Runner Projects as read-only observed runtime inventory", async () => {
-    render(wrap(<ProjectsPanel />));    await screen.findByLabelText("2 active sessions"); expect(await screen.findAllByText("feat/export")).toHaveLength(2);
+    render(wrap(<ProjectsPanel />));    await screen.findByLabelText("2 open sessions"); expect(await screen.findAllByText("feat/export")).toHaveLength(2);
     expect(screen.getAllByRole("row")).toHaveLength(3);
     for (const row of screen.getAllByRole("row")) expect(within(row).queryByRole("button", { name: /Use project|Select project/ })).not.toBeInTheDocument();
     expect(screen.queryByText("Current")).not.toBeInTheDocument();
@@ -230,7 +248,7 @@ describe("product workspace task flows", () => {
         : value.request.kind === "project_git" && !savedId
         ? Promise.reject(new Error("Git metadata unavailable")) : normal(name, value));
     render(wrap(<ProjectsPanel />, selected));
-    await screen.findByLabelText("2 active sessions");
+    await screen.findByLabelText("2 open sessions");
     const row = screen.getByRole("row", { name: "repo" });
     expect(screen.getAllByRole("row")).toHaveLength(2);
     expect(within(row).getByText(observationTime(runner.sessions.latest_updated_at * 1000, "en-US"))).toBeInTheDocument();
@@ -244,7 +262,7 @@ describe("product workspace task flows", () => {
   it("keeps the Runner inventory observable without a Desktop default project", async () => {
     const emptyDefault = { ...state, project: null, saved_projects: [], readiness: { ...state.readiness, project: "none" as const, runtime_ready: false } };
     render(wrap(<ProjectsPanel />, emptyDefault));
-    await screen.findByLabelText("2 active sessions");
+    await screen.findByLabelText("2 open sessions");
     expect(screen.getAllByRole("row")).toHaveLength(3);
   });
   it("opens a Window's associated Workflow Session and presents product activity rather than a ledger", async () => {
@@ -334,7 +352,7 @@ describe("product workspace task flows", () => {
     expect(native.invoke).toHaveBeenCalledWith("workspace_query", { request: { kind: "instruction", project: alpha.id, source_scope: "project", path: "AGENTS.md", fingerprint: "revision-one" } });
     fireEvent.click(within(document).getByRole("button", { name: "Close" }));
     fireEvent.click(screen.getByRole("tab", { name: "Skills" })); expect(screen.getByText("Review changes")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("tab", { name: "MCP Providers" }));
+    fireEvent.click(screen.getByRole("tab", { name: "MCP servers" }));
     fireEvent.click(screen.getByText("Advanced: Native Tool Plugins", { selector: "summary" }));
     expect(screen.getByText(/3 tools/)).toBeInTheDocument();
     expect(native.invoke.mock.calls.some(([, value]) => value.request.kind === "plugin_reload")).toBe(false);
@@ -351,7 +369,7 @@ describe("product workspace task flows", () => {
     await waitFor(() => expect(overviewCalls).toBe(1));
     const switched = { ...state, workspace_runner: { client_id: "mini", server_url: "http://localhost", config_path: "new-runner.toml" } };
     view.rerender(wrap(<ProjectsPanel />, switched));
-    await screen.findByLabelText("2 active sessions");
+    await screen.findByLabelText("2 open sessions");
     await act(async () => { complete({ ...overview, projects: [{ ...alpha, id: "agent:old:other", name: "Stale project", path: "/old" }] }); });
     expect(screen.queryByText("Stale project")).not.toBeInTheDocument();
     expect(screen.getByRole("row", { name: "beta" })).toBeInTheDocument();
@@ -423,7 +441,7 @@ describe("inventory convergence", () => {
     const selected = { ...state, project: null };
     render(wrap(<ProjectsPanel />, selected));
     await waitFor(() => expect(screen.queryByRole("row", { name: "alpha" })).not.toBeInTheDocument());
-    if (empty) expect(screen.getByText("No Runtime projects observed yet")).toBeInTheDocument();    else expect(screen.getByRole("row", { name: "beta" })).toBeInTheDocument();
+    if (empty) expect(screen.getByText("No project folders to show")).toBeInTheDocument();    else expect(screen.getByRole("row", { name: "beta" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Add Project" })).not.toBeInTheDocument();
   });
   it.each([{ projects_truncated: true }, { connected: false }, { projects_available: false }, { visible_project_count: 1 }])("retains history on incomplete observation %s", async flags => {
@@ -436,7 +454,7 @@ describe("inventory convergence", () => {
 
 it("keeps Runner overview when only the default display Project disappears", async () => {
   const view = render(wrap(<ProjectsPanel />));
-  await screen.findByLabelText("2 active sessions");
+  await screen.findByLabelText("2 open sessions");
   const calls = native.invoke.mock.calls.filter(([, value]) => value.request.kind === "overview").length;
   const projectless = { ...state, project: null, saved_projects: [] };
   view.rerender(wrap(<ProjectsPanel />, projectless));

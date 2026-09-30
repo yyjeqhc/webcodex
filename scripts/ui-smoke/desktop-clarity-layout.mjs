@@ -16,6 +16,16 @@ const runners = [
   { client_id: 'another-device', connected: true, status: 'online', computer_session_availability: null },
   { client_id: 'stale-device', connected: true, status: 'stale', computer_session_availability: true },
 ];
+const connections = ['ChatGPT Personal', 'ChatGPT Work', 'Stopped connection'].map((name, index) => ({
+  id: `fixture-tunnel-${index}`, name, tunnel_id: `fixture-tunnel-id-${index}`, credential_present: true,
+  enabled: index !== 2, autostart: true, revision: 1, source: 'file', lifecycle: index === 0 ? 'running' : index === 1 ? 'error' : 'stopped',
+  ready: index === 0, pid: index === 2 ? null : 100 + index, health: index === 0 ? 'healthy' : index === 1 ? 'degraded' : 'unknown',
+  last_error: index === 1 ? 'tunnel_unavailable' : null, process_started: index !== 2, process_ready: index !== 2,
+  tunnel_ready: index === 0 ? true : index === 1 ? false : null, local_mcp_ready: index === 2 ? null : true,
+  failure_stage: index === 1 ? 'control_plane' : null, reason_code: index === 1 ? 'tunnel_control_plane_unreachable' : null,
+  auto_proxy_used: index === 1, runtime_directory: null, health_url: null, log_file: null, tunnel_client_pid: null, local_mcp_url: null, logs: [],
+}));
+const providers = ['Documentation tools', 'Browser tools'].map((name, index) => ({ id: `fixture-mcp-${index}`, name, command: 'npx', args: ['-y', '@playwright/mcp'], cwd: null, enabled: true, scope: 'runner', env_keys: [] }));
 const sessions = Array.from({ length: 4 }, (_, index) => ({ session_id: `fixture-session-${index}`, project_id: projects[index % 2].id, title: ['Review the export workflow and verify the changes', 'Continue the integration tests', 'Update project instructions', 'Investigate a failed build'][index], updated_at: Math.floor(now / 1000) - index * 100, lifecycle: index === 2 ? 'closed' : 'active', running_call: index === 0, running_jobs: index === 1 ? 1 : 0, running_jobs_complete: true, overview: { attention: { open_todos: index === 0 ? 2 : 0, open_questions: index === 1 ? 1 : 0, open_risks: index === 3 ? 1 : 0 }, reported_progress: { text: ['Checking the export handler and its tests', 'Waiting for the remaining test results', 'Instructions saved', 'Build output needs review'][index], reported_at: Math.floor(now / 1000) }, validation: { state: index === 3 ? 'failed' : 'unavailable', unresolved_failure_count: index === 3 ? 1 : 0 } } }));
 const windows = Array.from({ length: 10 }, (_, index) => ({ client_window_key: `fixture-window-${index}`, source: 'chatgpt', last_project: projects[index % 2].id, last_seen_at_ms: now - index * 30_000, last_meaningful_activity_at_ms: now - index * 30_000, active_count: index === 0 ? 1 : 0, linked_session_count: 1 }));
 const details = Object.fromEntries(windows.map((row, index) => [row.client_window_key, { ...row, linked_sessions: [{ project: row.last_project, workflow_session_id: sessions[index % 4].session_id, title: sessions[index % 4].title }], active_requests: index === 0 ? [{ server_trace_id: 'fixture-active', tool_name: 'read_files', project: row.last_project, started_at_ms: now - 2000, elapsed_ms: 2000 }] : [], activity: [{ meaningful: true, tool_name: ['read_files', 'apply_text_edits', 'run_command'][index % 3], project: row.last_project, status: index === 3 ? 'failed' : 'succeeded', started_at_ms: now - index * 30_000 - 1000, ended_at_ms: now - index * 30_000, request_observed_at_ms: now - index * 30_000 - 1000, response_handed_at_ms: now - index * 30_000, service_ms: 1000 }], sessions_truncated: false, activity_truncated: false }]));
@@ -40,6 +50,8 @@ try {
     await page.route('**/__fixture/desktop-state*', async route => {
       const response = await route.fetch(); const state = await response.json();
       state.workspace_runner = { client_id: 'fixture-runner', config_path: '/fixture/runner.toml', server_url: 'http://127.0.0.1:1' };
+      state.connections = { profiles: connections, running: 1, needs_attention: 1, config_error: false };
+      state.mcp_providers = { profiles: providers, revision: 1, restart_required: false, config_error: false, max_enabled: 8 };
       await route.fulfill({ response, json: state });
     });
     await page.route('**/desktop-shim.js', async route => {
@@ -49,6 +61,7 @@ try {
       const override = `if(request.kind==='overview')return ${JSON.stringify({ runners, projects_available: true, visible_projects: projects.length, projects, projects_truncated: false, recent_sessions: { sessions, truncated: false, scan_truncated: false } })};if(request.kind==='projects')return ${JSON.stringify({ projects, total: projects.length, truncated: false })};if(request.kind==='windows')return ${JSON.stringify({ windows })};if(request.kind==='window')return ${JSON.stringify(details)}[request.client_window_key];if(request.kind==='session')return ${JSON.stringify(sessions)}.find(row=>row.session_id===request.session_id);`;
       source = source.replace(marker, override + marker);
       source = source.replace("localStorage.setItem('webcodex.desktop.locale','en-US');", `localStorage.setItem('webcodex.desktop.locale',${JSON.stringify(locale)});`);
+      source = source.replace('let permissions={supported:true,foreground:true', 'let permissions={supported:false,foreground:false');
       await route.fulfill({ response, body: source });
     });
     await page.goto(fixture.url + '/desktop/');
@@ -90,10 +103,31 @@ try {
           }
         }
       }
+      if (destination === 'connection') {
+        assert.equal(await page.locator('.connection-profile').count(), 3);
+        assert.equal(await page.locator('.connection-recovery').count(), 1);
+        assert.equal(await page.locator('.connection-checks').count(), 2);
+      }
+      if (destination === 'extensions') {
+        await page.locator('#extension-tab-mcpProviders').click();
+        await page.locator('[data-mcp-provider-id="fixture-mcp-0"]').waitFor();
+        assert.equal(await page.locator('.mcp-provider-row').count(), 2);
+      }
       await bounded(page, `${destination} ${label}`);
-      if ((width === 1280 || width === 390) && destination === 'projects') {
-        const filename = `projects-${width}-${theme}${suffix}.png`;
+      if ((width === 1280 || width === 390) && ['home', 'projects', 'connection', 'extensions'].includes(destination)) {
+        const filename = `${destination}-${width}-${theme}${suffix}.png`;
         await page.screenshot({ path: path.join(output, filename), animations: 'disabled' }); report.screenshots.push(filename);
+      }
+      if (destination === 'projects') {
+        await page.locator('[data-runner-id="fixture-runner"] .secondary-button').click();
+        await page.locator('#desktop-settings-access .permission-panel h2').waitFor();
+        assert.equal(await page.locator('[data-webcodex-permission-owner]').count(), 0, 'unsupported system probes must not show permission claims');
+        assert.equal(await page.locator('#desktop-settings-access .permission-panel button').count(), 0, 'unsupported system probes must not offer grant actions');
+        await bounded(page, `Desktop access guidance ${label}`);
+        if (width === 1280 || width === 390) {
+          const filename = `desktop-access-${width}-${theme}${suffix}.png`;
+          await page.screenshot({ path: path.join(output, filename), animations: 'disabled' }); report.screenshots.push(filename);
+        }
       }
     }
     const mutations = await page.evaluate(() => window.__fixtureCalls.filter(call => /^(save_|update_|start_|stop_|restart_|remove_|register_|authorize_|environment_service_action)/.test(call.cmd)));

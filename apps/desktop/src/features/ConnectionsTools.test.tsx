@@ -43,7 +43,7 @@ beforeEach(() => {
 describe("Connections + Tools control surfaces", () => {
   it("shows 2/3 connections without degrading runtime and routes each action by identity", async () => {
     render(<Harness mode="connections" />);
-    expect(screen.getByText("2 / 3 Running")).toBeInTheDocument();
+    expect(screen.getByText("2 of 3 tunnels locally ready")).toBeInTheDocument();
     expect(within(screen.getByRole("article", { name: "ChatGPT Work" })).getByText("Connection unavailable")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Restart ChatGPT Personal" }));
     await waitFor(() => expect(api.tunnelProfileAction).toHaveBeenLastCalledWith("personal", "restart"));
@@ -71,7 +71,7 @@ describe("Connections + Tools control surfaces", () => {
     await waitFor(() => expect(within(work).getByRole("button", { name: "Start ChatGPT Work" })).toBeEnabled());
     expect(within(work).queryByRole("button", { name: "Stop ChatGPT Work" })).not.toBeInTheDocument();
     expect(within(screen.getByRole("article", { name: "ChatGPT Personal" })).getByText("Running")).toBeInTheDocument();
-    expect(screen.getByText("2 / 3 Running")).toBeInTheDocument();
+    expect(screen.getByText("2 of 3 tunnels locally ready")).toBeInTheDocument();
     fireEvent.click(within(work).getByRole("button", { name: "Start ChatGPT Work" }));
     await waitFor(() => expect(api.tunnelProfileAction).toHaveBeenLastCalledWith("work", "start"));
     expect(api.tunnelProfileAction.mock.calls.every(([id]) => id === "work")).toBe(true);
@@ -224,8 +224,8 @@ describe("Connections + Tools control surfaces", () => {
     api.saveMcpProvider.mockImplementation(async request => { captured.push(structuredClone(request)); return saved; });
     api.restartOwnedRunner.mockResolvedValue({ ...saved, mcp_providers: { ...saved.mcp_providers, restart_required: false } });
     render(<Harness mode="mcp" />);
-    fireEvent.click(screen.getByRole("button", { name: "Add MCP Provider" }));
-    fireEvent.change(screen.getByLabelText("Provider Name"), { target: { value: "Playwright" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add MCP server" }));
+    fireEvent.change(screen.getByLabelText("Service name"), { target: { value: "Playwright" } });
     fireEvent.change(screen.getByLabelText("Command"), { target: { value: "npx" } });
     fireEvent.change(screen.getByLabelText("Arguments"), { target: { value: '["-y","@playwright/mcp"]' } });
     fireEvent.click(screen.getByRole("button", { name: "Add Environment Variable" }));
@@ -247,8 +247,8 @@ describe("Connections + Tools control surfaces", () => {
 
   it("rejects invalid provider arguments without invoking or exposing backend errors", async () => {
     render(<Harness mode="mcp" />);
-    fireEvent.click(screen.getByRole("button", { name: "Add MCP Provider" }));
-    fireEvent.change(screen.getByLabelText("Provider Name"), { target: { value: "Database" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add MCP server" }));
+    fireEvent.change(screen.getByLabelText("Service name"), { target: { value: "Database" } });
     fireEvent.change(screen.getByLabelText("Command"), { target: { value: "node" } });
     fireEvent.change(screen.getByLabelText("Arguments"), { target: { value: '{"invalid":true}' } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));

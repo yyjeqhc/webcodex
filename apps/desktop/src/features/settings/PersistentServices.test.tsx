@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { LocaleProvider } from "../../i18n/locale";
 import { DesktopMantineProvider } from "../../components/DesktopMantineProvider";
 import { DiagnosticsPanel } from "./DiagnosticsPanel";
+import { LocalServicesPanel } from "./LocalServicesPanel";
 import type { DesktopState } from "../../models/topology";
 
 const api = vi.hoisted(() => ({ diagnostics: vi.fn(), environmentServiceAction: vi.fn(), repairEnvironmentUserCredential: vi.fn() }));
@@ -37,45 +38,49 @@ beforeEach(() => {
 describe("persistent local services", () => {
   it("shows local service actions and applies returned state after an explicit action", async () => {
     const onState = vi.fn();
-    render(wrap(<DiagnosticsPanel state={baseState} onState={onState} />));
+    render(wrap(<LocalServicesPanel state={baseState} onState={onState} />));
     const section = await screen.findByTestId("persistent-services");
-    expect(within(section).getByRole("heading", { name: "Local Server" })).toBeInTheDocument();
-    expect(within(section).getByRole("heading", { name: "Local Runner" })).toBeInTheDocument();
-    fireEvent.click(within(section).getAllByRole("button", { name: "Start" })[0]);
-    await waitFor(() => expect(api.environmentServiceAction).toHaveBeenCalledWith({ environmentId: "environment-1", component: "server", action: "start" }));
+    expect(within(section).getByRole("heading", { name: "Server Connection" })).toBeInTheDocument();
+    expect(within(section).getByRole("heading", { name: "Local task service" })).toBeInTheDocument();
+    expect(api.environmentServiceAction).not.toHaveBeenCalled();
+    fireEvent.click(within(section).getByRole("button", { name: "Start Local Server" }));
+    await waitFor(() => expect(api.environmentServiceAction).toHaveBeenCalledExactlyOnceWith({ environmentId: "environment-1", component: "server", action: "start" }));
     await waitFor(() => expect(onState).toHaveBeenCalledWith(baseState));
   });
 
   it("hides controls for absent or remote persistent components", async () => {
     const remote = { ...baseState, topology: { ...baseState.topology!, server: { kind: "remote" as const, url: "https://example.test" }, runner: { kind: "none" as const } } } as DesktopState;
-    render(wrap(<DiagnosticsPanel state={remote} onState={vi.fn()} />));
+    render(wrap(<LocalServicesPanel state={remote} onState={vi.fn()} />));
     expect(await screen.findByTestId("persistent-services")).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Local Server" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Local Runner" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Start" })).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Server Connection" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Local task service" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^(Start|Stop|Restart) Local/ })).not.toBeInTheDocument();
+    expect(api.environmentServiceAction).not.toHaveBeenCalled();
   });
 
   it("offers repair only when the backend capability is true and sends no credential to the webview", async () => {
     const state = { ...baseState, can_repair_runner_credential: false };
-    const { rerender } = render(wrap(<DiagnosticsPanel state={state} onState={vi.fn()} />));
+    const { rerender } = render(wrap(<LocalServicesPanel state={state} onState={vi.fn()} />));
     await screen.findByTestId("persistent-services");
     expect(screen.queryByRole("button", { name: "Repair Runner credential" })).not.toBeInTheDocument();
-    rerender(wrap(<DiagnosticsPanel state={baseState} onState={vi.fn()} />));
+    rerender(wrap(<LocalServicesPanel state={baseState} onState={vi.fn()} />));
     fireEvent.click(await screen.findByRole("button", { name: "Repair Runner credential" }));
     await waitFor(() => expect(api.environmentServiceAction).toHaveBeenCalledWith({ environmentId: "environment-1", component: "runner", action: "repair_credential" }));
     expect(screen.queryByLabelText("Existing Server user API token")).not.toBeInTheDocument();
   });
 
-  it("hides the section when no persistent environment exists", async () => {
-    render(wrap(<DiagnosticsPanel state={{ ...baseState, persistent_environment: null }} onState={vi.fn()} />));
-    await screen.findByRole("heading", { name: "Diagnostics Center" });
+  it("shows service observations without OS service controls when no persistent environment exists", async () => {
+    render(wrap(<LocalServicesPanel state={{ ...baseState, persistent_environment: null }} onState={vi.fn()} />));
+    expect(screen.getByRole("heading", { name: "Server Connection" })).toBeInTheDocument();
     expect(screen.queryByTestId("persistent-services")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^(Start|Stop|Restart) Local/ })).not.toBeInTheDocument();
+    expect(api.environmentServiceAction).not.toHaveBeenCalled();
   });
 
   it("surfaces only the safe error code returned by the service action", async () => {
     api.environmentServiceAction.mockRejectedValue({ code: "service_start_failed", message: "private host detail", next_action: "Retry" });
-    render(wrap(<DiagnosticsPanel state={baseState} onState={vi.fn()} />));
-    fireEvent.click((await screen.findAllByRole("button", { name: "Start" }))[0]);
+    render(wrap(<LocalServicesPanel state={baseState} onState={vi.fn()} />));
+    fireEvent.click(screen.getByRole("button", { name: "Start Local Server" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("service_start_failed");
     expect(screen.queryByText("private host detail")).not.toBeInTheDocument();
   });

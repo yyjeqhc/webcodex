@@ -92,6 +92,18 @@ export function useDesktopWorkspace() {
     setState(next);
   }, []);
 
+  const observeFailedOperation = useCallback(async (value: unknown, current: () => boolean = () => true) => {
+    if (!current()) return;
+    setError(normalizeDesktopError(value));
+    const observedVersion = stateVersionRef.current;
+    try {
+      const terminal = await desktopApi.getState();
+      if (current() && stateVersionRef.current === observedVersion) commitState(terminal);
+    } catch {
+      // Preserve the original failure if this best-effort observation fails.
+    }
+  }, [commitState]);
+
   const commitChatgptActivity = useCallback((next: DesktopState) => {
     stateVersionRef.current += 1;
     setState((current) => {
@@ -156,7 +168,7 @@ export function useDesktopWorkspace() {
           // Backend reconciliation owns every profile's autostart policy.
           commitState(next);
         } catch (value) {
-          if (!cancelled) setError(normalizeDesktopError(value));
+          await observeFailedOperation(value, () => !cancelled);
         } finally {
           if (!cancelled) setRefreshing(false);
         }
@@ -167,7 +179,7 @@ export function useDesktopWorkspace() {
     return () => {
       cancelled = true;
     };
-  }, [commitState, startupAttempt]);
+  }, [commitState, observeFailedOperation, startupAttempt]);
 
   useEffect(() => {
     if (!hasLoadedState) return;
@@ -251,7 +263,7 @@ export function useDesktopWorkspace() {
     try {
       commitState(await operation());
     } catch (value) {
-      setError(normalizeDesktopError(value));
+      await observeFailedOperation(value);
     }
   };
 
@@ -270,7 +282,7 @@ export function useDesktopWorkspace() {
     try {
       commitState(await desktopApi.resumeSavedRuntime());
     } catch (value) {
-      setError(normalizeDesktopError(value));
+      await observeFailedOperation(value);
     } finally {
       setRefreshing(false);
     }

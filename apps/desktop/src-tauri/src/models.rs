@@ -414,6 +414,8 @@ pub struct DesktopStateSnapshot {
     pub saved_projects: Vec<ProjectSelection>,
     pub topology: Option<RuntimeTopology>,
     pub readiness: ReadinessSnapshot,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_error: Option<crate::error::DesktopError>,
     pub project: Option<ProjectSelection>,
     pub binaries: Option<BinaryInfo>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -448,6 +450,7 @@ impl Default for DesktopStateSnapshot {
             saved_projects: Vec::new(),
             topology: None,
             readiness: ReadinessSnapshot::default(),
+            runtime_error: None,
             project: None,
             binaries: None,
             powershell_runtime: None,

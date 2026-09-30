@@ -367,6 +367,7 @@ impl DesktopCore {
             }
         }
         cancellation.check()?;
+        self.preflight_providers()?;
         let mut transaction = RuntimeSwitchExecution {
             core: self,
             candidate_source: candidate.source.clone(),
@@ -427,6 +428,17 @@ impl DesktopCore {
                 }
             }
         };
+        if matches!(
+            outcome.outcome.as_str(),
+            "rolled_back" | "recovery_required"
+        ) {
+            self.snapshot.runtime_error = Some(DesktopError::new(
+                if outcome.outcome == "rolled_back" { "runtime_change_rolled_back" } else { "runtime_rollback_failed" },
+                if outcome.outcome == "rolled_back" { "The Runtime change failed; the previous Runtime was restored" } else { "The Runtime change failed and the previous Runtime could not be restored" },
+                "Open Runtime settings to inspect the startup and rollback errors and select a verified Runtime.",
+            ).with_details(serde_json::json!({"reason_code":outcome.reason_code,"rollback_reason_code":outcome.rollback_reason_code})));
+            self.terminalize_failed_start(false);
+        }
         self.runtime_last_switch = Some(outcome.clone());
         self.snapshot.binaries = self.adapter.binaries().ok().map(ResolvedBinaries::info);
         self.publish_snapshot();
@@ -466,6 +478,7 @@ impl DesktopCore {
             .runtime
             .clone()
             .ok_or_else(|| runtime_selection::error("runtime_identity_unavailable"))?;
+        self.preflight_providers()?;
         self.snapshot.readiness.runtime_ready = false;
         self.snapshot.readiness.runner = RunnerReadiness::Connecting;
         if local_server {

@@ -202,6 +202,7 @@ export interface DesktopState {
   saved_projects?: ProjectSelection[];
   topology?: RuntimeTopology | null;
   readiness: ReadinessSnapshot;
+  runtime_error?: DesktopError | null;
   project?: ProjectSelection | null;
   binaries?: BinaryInfo | null;
   powershell_runtime?: PowerShellRuntimeSnapshot | null;

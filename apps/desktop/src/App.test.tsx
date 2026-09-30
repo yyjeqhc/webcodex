@@ -926,6 +926,28 @@ beforeEach(() => {
     expect(alert).toHaveTextContent("exit code 1");
   });
 
+  it("shows one provider failure on Home and opens the matching extension tab", async () => {
+    const failure = {
+      code: "mcp_provider_executable_unavailable",
+      message: "MCP provider cannot access its program",
+      next_action: "Edit or disable the provider",
+      details: { provider_kind: "mcp", provider_name: "Browser tools", provider_id: "browser" },
+    };
+    api.getState.mockResolvedValue({
+      ...readyState,
+      runtime_autostart: true,
+      runtime_error: failure,
+      readiness: { ...readyState.readiness, server: "stopped", runner: "stopped", runtime_ready: false },
+    });
+    api.resumeSavedRuntime.mockRejectedValue(failure);
+    renderApp();
+    await waitFor(() => expect(api.resumeSavedRuntime).toHaveBeenCalled());
+    await waitFor(() => expect(screen.getAllByRole("alert")).toHaveLength(1));
+    expect(screen.getByRole("alert")).toHaveTextContent("MCP · Browser tools");
+    fireEvent.click(screen.getByRole("button", { name: "修改或禁用扩展" }));
+    expect(await screen.findByRole("tab", { name: "MCP 工具服务" })).toHaveAttribute("aria-selected", "true");
+  });
+
   it("does not expose project reactivation when a historical default project needs attention", async () => {
     const historicalProjectError: DesktopState = {
       ...readyState,

@@ -21,13 +21,13 @@ import { WorkspaceDialog } from "../workspace/WorkspaceDialog";
 import { ProjectPicker } from "../../../../../frontend/src/ui/ProjectPicker";
 import { WorkspaceEmptyState } from "../../components/WorkspaceEmptyState";
 
-type ExtensionTab = "codingAgents" | "sshResources" | "instructions" | "skills" | "mcpProviders" | "nativePlugins";
+export type ExtensionTab = "codingAgents" | "sshResources" | "instructions" | "skills" | "mcpProviders" | "nativePlugins";
 const TABS: ExtensionTab[] = ["codingAgents", "sshResources", "mcpProviders", "nativePlugins", "skills", "instructions"];
 const TAB_ICONS = { codingAgents: Bot, sshResources: Terminal, mcpProviders: Network, nativePlugins: Blocks, skills: Puzzle, instructions: FileText };
 const TAB_PURPOSES = { codingAgents: "codingAgentsPurpose", sshResources: "sshPurpose", mcpProviders: "mcpPurpose", nativePlugins: "pluginsPurpose", skills: "skillsPurpose", instructions: "instructionsPurpose" } as const;
-export function ExtensionsPanel({ state, onState }: { state: DesktopState; onState: (state: DesktopState) => void }) {
+export function ExtensionsPanel({ state, onState, initialTab }: { state: DesktopState; onState: (state: DesktopState) => void; initialTab?: ExtensionTab }) {
   const { t } = useLocale(); const p = useProduct(); const c = useConnectionsTools(); const r = useRunnerCapabilitiesText(); const workspace = useWorkspace();
-  const [tab, setTab] = useState<ExtensionTab>("codingAgents");
+  const [tab, setTab] = useState<ExtensionTab>(initialTab ?? "codingAgents");
   const pathTab = tab === "instructions" || tab === "skills";
   const projectTab = pathTab || tab === "nativePlugins";
   const tabLabel = (value: ExtensionTab) => value === "instructions" || value === "nativePlugins" ? p(value) : value === "skills" ? "Skills" : value === "mcpProviders" ? c("mcpProviders") : r(value);

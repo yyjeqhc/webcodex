@@ -112,6 +112,12 @@ impl AppState {
                     ))
                 }
             };
+            if matches!(action, ServiceOperation::Start | ServiceOperation::Restart) {
+                core.preflight_providers()?;
+                if component == Component::Runner {
+                    core.reconcile_saved_providers().await?;
+                }
+            }
             NativeEnvironment::new()
                 .map_err(desktop_error)?
                 .control_service_for_environment(
@@ -345,6 +351,7 @@ impl DesktopCore {
         cancellation: &CancellationContext,
     ) -> DesktopResult<DesktopStateSnapshot> {
         cancellation.check()?;
+        self.preflight_providers()?;
         let legacy = self
             .config
             .topology
@@ -527,6 +534,7 @@ impl DesktopCore {
                     "Use the explicit local service controls in Settings.",
                 ));
             }
+            self.reconcile_saved_providers().await?;
             let result = if request.local_runner() && saved.runner_client_id.is_none() {
                 setup
                     .enable_runner(
@@ -570,6 +578,8 @@ impl DesktopCore {
         cancellation: &CancellationContext,
     ) -> DesktopResult<DesktopStateSnapshot> {
         cancellation.check()?;
+        self.preflight_providers()?;
+        self.reconcile_saved_providers().await?;
         let store = store()?;
         let mut setup = EnvironmentSetup::new(NativeEnvironment::new().map_err(desktop_error)?);
         let result = setup
@@ -844,12 +854,16 @@ impl DesktopCore {
         cancellation: &CancellationContext,
     ) -> DesktopResult<DesktopStateSnapshot> {
         cancellation.check()?;
+        self.preflight_providers()?;
+        self.reconcile_saved_providers().await?;
         let store = store()?;
         let native = NativeEnvironment::new().map_err(desktop_error)?;
         native
             .control_service(&store, Component::Runner, ServiceOperation::Restart)
             .await
             .map_err(desktop_error)?;
+        self.mcp_applied_revision = Some(self.mcp_providers.revision());
+        self.coding_agents_applied_revision = Some(self.coding_agents.revision());
         self.refresh_environment_status(cancellation).await
     }
 

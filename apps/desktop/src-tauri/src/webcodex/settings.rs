@@ -11,6 +11,8 @@ mod mcp;
 pub use mcp::reconcile_mcp;
 mod acp;
 pub use acp::reconcile_acp;
+mod provider_preflight;
+pub use provider_preflight::preflight_providers;
 
 const MAX_BYTES: u64 = 256 * 1024;
 

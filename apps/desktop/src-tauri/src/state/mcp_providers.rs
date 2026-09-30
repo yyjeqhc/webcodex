@@ -45,25 +45,39 @@ impl AppState {
 }
 
 impl DesktopCore {
-    pub(super) async fn prepare_runner_command(
-        &mut self,
-        identity: &RunnerRuntimeIdentity,
-    ) -> DesktopResult<std::process::Command> {
+    pub(super) fn preflight_providers(&self) -> DesktopResult<()> {
+        crate::webcodex::settings::preflight_providers(
+            self.config.runtime.as_ref(),
+            &self.mcp_providers,
+            &self.coding_agents,
+        )
+    }
+
+    pub(super) async fn reconcile_saved_providers(&self) -> DesktopResult<()> {
+        if let Some(runtime) = self
+            .config
+            .runtime
+            .as_ref()
+            .filter(|r| r.runner_config.is_some())
+        {
+            self.reconcile_providers(runtime).await?;
+        }
+        Ok(())
+    }
+
+    async fn reconcile_providers(&self, runtime: &StoredRuntime) -> DesktopResult<()> {
+        crate::webcodex::settings::preflight_providers(
+            Some(runtime),
+            &self.mcp_providers,
+            &self.coding_agents,
+        )?;
         let store = self.mcp_providers.clone();
         let coding_agents = self.coding_agents.clone();
         if !store.managed_ids().is_empty()
             || store.snapshot(None).config_error
             || coding_agents.needs_reconciliation()
         {
-            let runtime = StoredRuntime {
-                server_url: identity.server_url.clone(),
-                server_env_file: None,
-                runner_config: Some(identity.runner_config.clone()),
-                user_token_file: Some(identity.user_token_file.clone()),
-                runner_client_id: Some(identity.client_id.clone()),
-                project_id: None,
-                runtime_project_id: None,
-            };
+            let runtime = runtime.clone();
             tokio::task::spawn_blocking(move || {
                 // Detect ACP ownership conflicts before changing any capability.
                 crate::webcodex::settings::reconcile_acp(&runtime, &coding_agents, true)?;
@@ -73,6 +87,23 @@ impl DesktopCore {
             .await
             .map_err(|_| crate::mcp_providers::invalid())??;
         }
+        Ok(())
+    }
+
+    pub(super) async fn prepare_runner_command(
+        &mut self,
+        identity: &RunnerRuntimeIdentity,
+    ) -> DesktopResult<std::process::Command> {
+        let runtime = StoredRuntime {
+            server_url: identity.server_url.clone(),
+            server_env_file: None,
+            runner_config: Some(identity.runner_config.clone()),
+            user_token_file: Some(identity.user_token_file.clone()),
+            runner_client_id: Some(identity.client_id.clone()),
+            project_id: None,
+            runtime_project_id: None,
+        };
+        self.reconcile_providers(&runtime).await?;
         let mut command = self.adapter.local_runner_command(&identity.runner_config)?;
         self.mcp_providers.apply_to_command(&mut command)?;
         Ok(command)

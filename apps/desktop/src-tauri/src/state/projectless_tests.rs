@@ -29,7 +29,11 @@ async fn restart_projectless_full_runtime_observes_without_initial_setup_or_regi
         let data = &fixture.0;
         let runner = data.join("runner.toml");
         let token = data.join("token");
-        std::fs::write(&runner, "fixture").unwrap();
+        std::fs::write(
+            &runner,
+            "client_id = 'mini'\nserver_url = 'http://127.0.0.1:1'\n",
+        )
+        .unwrap();
         std::fs::write(&token, "fixture").unwrap();
         let mut core = DesktopCore::new(data.clone(), data.join("resources")).unwrap();
         core.config.topology = Some(RuntimeTopology {

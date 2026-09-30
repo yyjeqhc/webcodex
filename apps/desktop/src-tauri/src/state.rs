@@ -500,6 +500,12 @@ impl AppState {
             // Core's durable migration coordinator owns both restoration and
             // the unknown-result state. Generic supervisor cleanup could kill
             // a successfully restored original generation.
+            core.terminalize_failed_start(
+                result
+                    .as_ref()
+                    .err()
+                    .is_some_and(|e| e.code == "desktop_operation_cancelled"),
+            );
             core.publish_snapshot();
         } else if result.is_err() {
             let cancelled = result
@@ -508,6 +514,29 @@ impl AppState {
                 .is_some_and(|error| error.code == "desktop_operation_cancelled");
             let cleanup = self.cleanup_new_owned_processes(&baseline).await;
             core.reconcile_after_operation_failure(operation.kind, &baseline, cleanup, cancelled);
+            core.terminalize_failed_start(cancelled);
+            core.publish_snapshot();
+        }
+        if matches!(
+            operation.kind,
+            DesktopOperationKind::LocalSetup
+                | DesktopOperationKind::RemoteSetup
+                | DesktopOperationKind::RuntimeResume
+                | DesktopOperationKind::RunnerRestart
+                | DesktopOperationKind::RuntimeSwitch
+                | DesktopOperationKind::EnvironmentMigration
+                | DesktopOperationKind::EnvironmentService
+        ) {
+            if let Err(error) = &result {
+                core.snapshot.runtime_error =
+                    (error.code != "desktop_operation_cancelled").then(|| error.clone());
+            } else if !matches!(operation.kind, DesktopOperationKind::RuntimeSwitch)
+                || !core.runtime_last_switch.as_ref().is_some_and(|switch| {
+                    matches!(switch.outcome.as_str(), "rolled_back" | "recovery_required")
+                })
+            {
+                core.snapshot.runtime_error = None;
+            }
             core.publish_snapshot();
         }
         {
@@ -968,6 +997,42 @@ impl DesktopCore {
         snapshot
     }
 
+    fn terminalize_failed_start(&mut self, cancelled: bool) {
+        let server = if self.snapshot.readiness.server == ServerReadiness::Starting {
+            if cancelled {
+                ServerReadiness::Stopped
+            } else {
+                ServerReadiness::Error
+            }
+        } else {
+            self.snapshot.readiness.server.clone()
+        };
+        let runner = if self.snapshot.readiness.runner == RunnerReadiness::Connecting {
+            if cancelled {
+                RunnerReadiness::Stopped
+            } else {
+                RunnerReadiness::Error
+            }
+        } else {
+            self.snapshot.readiness.runner.clone()
+        };
+        let exposure = if self.snapshot.readiness.exposure == ExposureReadiness::Starting {
+            if cancelled {
+                ExposureReadiness::Disabled
+            } else {
+                ExposureReadiness::Error
+            }
+        } else {
+            self.snapshot.readiness.exposure.clone()
+        };
+        self.snapshot.readiness = aggregate_readiness(
+            server,
+            runner,
+            exposure,
+            self.snapshot.readiness.project.clone(),
+        );
+    }
+
     fn reconcile_after_operation_failure(
         &mut self,
         kind: DesktopOperationKind,
@@ -1069,6 +1134,7 @@ impl DesktopCore {
         cancellation: &CancellationContext,
     ) -> DesktopResult<DesktopStateSnapshot> {
         cancellation.check()?;
+        self.preflight_providers()?;
         if self.config.persistent_environment.is_some() {
             return self.resume_environment(cancellation).await;
         }
@@ -1287,6 +1353,7 @@ impl DesktopCore {
         cancellation: &CancellationContext,
     ) -> DesktopResult<DesktopStateSnapshot> {
         cancellation.check()?;
+        self.preflight_providers()?;
         let project = match project_path.map(str::trim).filter(|path| !path.is_empty()) {
             Some(path) => Some(self.adapter.inspect_project(path).await?),
             None => None,
@@ -1764,6 +1831,7 @@ impl DesktopCore {
         cancellation: &CancellationContext,
     ) -> DesktopResult<DesktopStateSnapshot> {
         cancellation.check()?;
+        self.preflight_providers()?;
         let server_url = crate::webcodex::validate_server_url(server_url)?;
         let project = self.adapter.inspect_project(project_path).await?;
         cancellation.check()?;

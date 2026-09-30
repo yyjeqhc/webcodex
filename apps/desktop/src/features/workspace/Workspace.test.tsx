@@ -249,7 +249,7 @@ describe("product workspace task flows", () => {
   });
   it("opens a Window's associated Workflow Session and presents product activity rather than a ledger", async () => {
     render(wrap(<ActivityPanel activity={[]} />));
-    expect(screen.getByRole("tab", { name: "ChatGPT calls" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "Tool calls" })).toHaveAttribute("aria-selected", "true");
     fireEvent.click(await screen.findByRole("button", { name: /Open call details:.*window-001/ }));
     const detail = await screen.findByRole("dialog", { name: "Request details · window-001" });
     fireEvent.click(await within(detail).findByRole("button", { name: /Fix export workflow/ }));
@@ -261,8 +261,69 @@ describe("product workspace task flows", () => {
     expect(native.invoke).toHaveBeenCalledWith("workspace_query", { request: { kind: "session", project: alpha.id, session_id: session.session_id } });
     fireEvent.click(within(workflow).getByRole("button", { name: "Close" }));
     fireEvent.click(screen.getByRole("tab", { name: "Workflow Sessions" }));
-    expect(await screen.findByRole("button", { name: /Fix export workflow/ })).toHaveTextContent("Active jobs 1");
-    expect(screen.getByRole("tab", { name: "System events" })).toHaveAttribute("aria-selected", "false");
+    const row = await screen.findByRole("button", { name: /Fix export workflow/ });
+    expect(within(row).getAllByText("Active jobs 1")).toHaveLength(1);
+    expect(row).not.toHaveTextContent("Active Jobs:");
+    expect(screen.getByRole("tab", { name: "Service events" })).toHaveAttribute("aria-selected", "false");
+  });
+  it("labels tool completion separately from response handoff and keeps transport evidence in details", async () => {
+    const normal = native.invoke.getMockImplementation()!;
+    native.invoke.mockImplementation((command, value) => value.request.kind === "windows"
+      ? Promise.resolve({ windows: [{ ...windowRow, active_count: 0 }] }) : normal(command, value));
+    render(wrap(<ActivityPanel activity={[]} />));
+    const row = await screen.findByRole("button", { name: /Open call details: Fix export workflow/ });
+    await within(row).findByText("Call completed");
+    expect(row).not.toHaveTextContent("HTTP");
+    expect(row).not.toHaveTextContent("Response handoff");
+    fireEvent.click(row);
+    const dialog = await screen.findByRole("dialog", { name: "Request details · window-001" });
+    expect((await within(dialog).findAllByText("Response handoff not confirmed")).length).toBeGreaterThan(0);
+  });
+  it("does not infer a call result when the preview observation fails", async () => {
+    const normal = native.invoke.getMockImplementation()!;
+    native.invoke.mockImplementation((command, value) => value.request.kind === "window" ? Promise.reject(new Error("unreachable")) : value.request.kind === "windows"
+      ? Promise.resolve({ windows: [{ ...windowRow, active_count: 0 }] }) : normal(command, value));
+    render(wrap(<ActivityPanel activity={[]} />));
+    const row = await screen.findByRole("button", { name: /Open call details: Tool calls/ });
+    expect(row).toHaveTextContent("Call result unconfirmed");
+    expect(row).not.toHaveTextContent("Call completed");
+  });
+  it("uses the active call's project and does not borrow another project's session title", async () => {
+    const normal = native.invoke.getMockImplementation()!;
+    native.invoke.mockImplementation((command, value) => value.request.kind === "window"
+      ? Promise.resolve({ ...windowRow, active_requests: [{ tool_name: "read_files", project: beta.id }], linked_sessions: [{ project: alpha.id, title: session.title }], activity: [] }) : normal(command, value));
+    render(wrap(<ActivityPanel activity={[]} />));
+    const row = await screen.findByRole("button", { name: /Open call details: read_files/ });
+    expect(row).toHaveTextContent("beta");
+    expect(row).not.toHaveTextContent("alpha");
+    expect(row).not.toHaveTextContent(session.title);
+  });
+  it("distinguishes an open idle session from running work and hides empty attention counts", async () => {
+    const normal = native.invoke.getMockImplementation()!;
+    const idle = { ...session, running_jobs: 0, overview: { attention: { open_todos: 0, open_questions: 0, open_risks: 0 } } };
+    native.invoke.mockImplementation((command, value) => value.request.kind === "overview"
+      ? Promise.resolve({ ...overview, recent_sessions: { sessions: [idle], truncated: false } }) : normal(command, value));
+    render(wrap(<ActivityPanel activity={[]} />));
+    fireEvent.click(screen.getByRole("tab", { name: "Workflow Sessions" }));
+    const row = await screen.findByRole("button", { name: /Fix export workflow/ });
+    expect(row).toHaveTextContent("Open");
+    expect(row).not.toHaveTextContent("In progress");
+    expect(row).not.toHaveTextContent("Active jobs");
+    expect(row).not.toHaveTextContent("unknown");
+  });
+  it.each([
+    ["passed", "檢查通過"], ["failed", "檢查失敗"], ["inconclusive", "檢查尚無明確結論"], ["not_run", "尚未執行檢查"], ["unavailable", "尚無可確認的檢查結果"],
+  ])("localizes %s validation evidence in Traditional Chinese session details", async (validation, label) => {
+    localStorage.setItem("webcodex.desktop.locale", "zh-TW");
+    const normal = native.invoke.getMockImplementation()!;
+    native.invoke.mockImplementation((command, value) => value.request.kind === "session"
+      ? Promise.resolve({ ...session, overview: { ...session.overview, validation: { state: validation } } }) : normal(command, value));
+    render(wrap(<ActivityPanel activity={[]} />));
+    fireEvent.click(screen.getByRole("tab", { name: "工作會話" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Fix export workflow/ }));
+    const dialog = await screen.findByRole("dialog", { name: "Fix export workflow" });
+    expect(await within(dialog).findByText(label)).toBeInTheDocument();
+    expect(dialog).not.toHaveTextContent(`: ${validation}`);
   });
   it("opens effective instructions, lists real Skills and reloads a provider only on request", async () => {
     render(wrap(<ExtensionsPanel state={state} onState={vi.fn()} />));

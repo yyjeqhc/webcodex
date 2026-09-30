@@ -8,7 +8,7 @@ import type { WindowDetail, WindowSummary } from "../../models/workspace";
 import { displayProjectPath, projectName, sessionTitle, useWorkspace, workspaceQuery } from "../workspace/WorkspaceContext";
 import { observationTime } from "../workspace/WorkspaceStatus";
 import { WindowActivityDetail } from "./WindowActivityDetail";
-import { WorkflowSessionDetail, sessionLifecycle, SessionAttention } from "./WorkflowSessionDetail";
+import { WorkflowSessionDetail, sessionLifecycle, SessionAttention, validationLabel } from "./WorkflowSessionDetail";
 import { SystemActivity } from "./SystemActivity";
 import { WorkspaceEmptyState } from "../../components/WorkspaceEmptyState";
 import { ProjectPicker } from "../../../../../frontend/src/ui/ProjectPicker";
@@ -54,45 +54,60 @@ export function ActivityPanel({ activity }: { activity: ActivityEntry[] }) {
   useEffect(() => { if (project && !workspace.projects.some(row => row.id === project)) setProject(""); }, [workspace.projects, project]);
   useEffect(() => { if (page * PAGE_SIZE >= windows.length && page > 0) setPage(0); }, [windows.length, page]);
   const projectLabel = (id?: string) => projectName(workspace.projects.find(row => row.id === id) || { id: id || "—" });
-  const labels: Record<Tab, string> = { windows: s("ChatGPT calls"), sessions: s("Workflow Sessions"), system: s("System events") };
+  const labels: Record<Tab, string> = { windows: p("toolCalls"), sessions: p("sessions"), system: p("serviceEvents") };
+  const descriptions: Record<Tab, string> = { windows: p("callHistoryHelp"), sessions: p("sessionHistoryHelp"), system: p("serviceHistoryHelp") };
   return <div className="page-section workspace-page" data-webcodex-page="activity">
-    <header className="page-heading-row"><h1>{p("activity")}</h1><button type="button" className="secondary-button" onClick={workspace.refresh}>{p("refresh")}</button></header>
+    <header className="page-heading-row"><h1>{p("activity")}</h1><button type="button" className="secondary-button" onClick={workspace.refresh} disabled={workspace.busy}>{p("refresh")}</button></header>
     <div className="workspace-tabs" role="tablist" aria-label={p("activity")}>{TABS.map(value => <button key={value} type="button" role="tab" id={`activity-tab-${value}`} aria-controls={`activity-view-${value}`} aria-selected={tab === value} tabIndex={tab === value ? 0 : -1} onClick={() => setTab(value)} onKeyDown={event => {
-      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-      event.preventDefault(); const next = TABS[(TABS.indexOf(value) + (event.key === "ArrowRight" ? 1 : TABS.length - 1)) % TABS.length]; setTab(next); document.getElementById(`activity-tab-${next}`)?.focus();
+      if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+      event.preventDefault(); const next = event.key === "Home" ? TABS[0] : event.key === "End" ? TABS[TABS.length - 1] : TABS[(TABS.indexOf(value) + (event.key === "ArrowRight" ? 1 : TABS.length - 1)) % TABS.length]; setTab(next); document.getElementById(`activity-tab-${next}`)?.focus();
     }}>{labels[value]}</button>)}</div>
-    {tab !== "system" && <div className="activity-project-filter"><span className="filter-label">{s("Project")}</span><ProjectPicker label={s("Project")} allLabel={p("allProjects")} emptyLabel={p("noMatches")} searchLabel={p("search")} value={project} onChange={setProject} options={workspace.projects.filter(row => row.id).map(row => ({ value: row.id, label: projectName(row), detail: displayProjectPath(row.path) }))} /></div>}
+    <p className="activity-description">{descriptions[tab]}</p>
+    {tab !== "system" && <div className="activity-view-toolbar">
+      <div className="activity-project-filter"><span className="filter-label">{s("Project")}</span><ProjectPicker label={s("Project")} allLabel={p("allProjects")} emptyLabel={p("noMatches")} searchLabel={p("search")} value={project} onChange={setProject} options={workspace.projects.filter(row => row.id).map(row => ({ value: row.id, label: projectName(row), detail: displayProjectPath(row.path) }))} /></div>
+      <div className="activity-counts">{tab === "windows" ? <><span>{p("callSources")} <strong>{windows.length}</strong></span><span>{p("callsInProgress")} <strong>{windows.reduce((total, row) => total + row.active_count, 0)}</strong></span></> : <><span>{p("sessions")} <strong>{sessions.length}</strong></span><span>{p("inProgress")} <strong>{sessions.filter(row => row.running_call || row.running_jobs > 0).length}</strong></span></>}</div>
+    </div>}
     {workspace.loading && <p role="status" className="workspace-notice">{p("loading")}</p>}
     <section role="tabpanel" id={`activity-view-${tab}`} aria-labelledby={`activity-tab-${tab}`}>
     {tab === "windows" && <>
-      <div className="activity-overview"><span>{s("Calls in progress")}: <strong>{windows.reduce((total, row) => total + row.active_count, 0)}</strong></span><span>{s("Recent work")}: <strong>{windows.length}</strong></span></div>
       {workspace.windowsError && <p role="alert">{p(workspace.windowsErrorReason)}</p>}
       {visible.map(row => {
         const detail = previews[row.client_window_key]; const latest = detail ? recentMeaningfulCalls(detail)[0] : undefined;
-        const linked = detail?.linked_sessions.slice().sort((a, b) => (b.last_linked_at_ms ?? 0) - (a.last_linked_at_ms ?? 0)).find(link => link.title);
         const active = detail?.active_requests?.[0]; const tool = active?.tool_name ?? latest?.tool_name;
-        const title = linked?.title ? sessionTitle(linked.title) : tool ?? `${s("ChatGPT calls")} · ${row.client_window_key.slice(-12)}`;
+        const observedProject = active?.project ?? latest?.project ?? row.last_project;
+        const linked = detail?.linked_sessions.slice().sort((a, b) => (b.last_linked_at_ms ?? 0) - (a.last_linked_at_ms ?? 0)).find(link => link.title && (!observedProject || link.project === observedProject));
+        const title = linked?.title ? sessionTitle(linked.title) : tool ?? p("toolCalls");
+        const outcome = latest ? executionLabel(latest.status) : "Unknown";
+        const status = row.active_count ? p("inProgress") : p(outcome === "Completed" ? "callCompleted" : outcome === "Failed" ? "callFailed" : outcome === "Cancelled" ? "callCancelled" : "callNotConfirmed");
         return <button type="button" className="activity-work-row" key={row.client_window_key} aria-label={`${s("Open call details")}: ${title} · ${row.client_window_key.slice(-12)}`} onClick={() => workspace.setSelection({ kind: "window", id: row.client_window_key })}>
           <span className="activity-work-icon" aria-hidden="true">{row.active_count ? <TerminalSquare size={18} /> : <MessageSquare size={18} />}</span>
-          <span className="activity-work-copy"><strong>{title}</strong><span>{projectLabel(latest?.project ?? row.last_project)}{tool ? ` · ${tool}` : ""}</span>
-            <span className="activity-evidence"><span>{row.active_count ? `${s("Requests in progress")}: ${row.active_count}` : latest ? s(executionLabel(latest.status)) : s("Not observed")}</span>
-              {latest && !row.active_count && <span>{s(latest.response_handed_at_ms == null ? "Response handoff not confirmed" : latest.response_streaming ? "Response stream started" : "Returned to HTTP framework")}</span>}
-              <span>{row.linked_session_count} {s("Workflow Sessions")}</span></span></span>
-          <span className="activity-work-trailing"><time>{observationTime(row.last_meaningful_activity_at_ms || row.last_seen_at_ms, locale)}</time><ArrowRight size={16} aria-hidden="true" /></span>
+          <span className="activity-work-copy">
+            <span className="session-row-heading"><strong>{title}</strong><span className={`workspace-badge ${row.active_count ? "working" : outcome === "Failed" ? "failed" : ""}`}>{status}</span></span>
+            {tool && <code className="activity-tool-name">{tool}</code>}
+            {row.active_count > 0 && <span className="activity-call-count">{p("callsInProgress")} {row.active_count}</span>}
+            <span className="activity-row-meta"><span>{projectLabel(observedProject)}</span><time>{observationTime(row.last_meaningful_activity_at_ms || row.last_seen_at_ms, locale)}</time><ArrowRight size={16} aria-hidden="true" /></span>
+          </span>
         </button>;
       })}
-      {windows.length > PAGE_SIZE && <nav className="shell-actions" aria-label={s("ChatGPT calls")}><button type="button" className="secondary-button" disabled={page === 0} onClick={() => setPage(value => value - 1)}>{s("Previous")}</button><span>{page + 1} / {Math.ceil(windows.length / PAGE_SIZE)}</span><button type="button" className="secondary-button" disabled={(page + 1) * PAGE_SIZE >= windows.length} onClick={() => setPage(value => value + 1)}>{s("Next")}</button></nav>}
+      {windows.length > PAGE_SIZE && <nav className="shell-actions activity-pagination" aria-label={p("toolCalls")}><button type="button" className="secondary-button" disabled={page === 0} onClick={() => setPage(value => value - 1)}>{s("Previous")}</button><span>{page + 1} / {Math.ceil(windows.length / PAGE_SIZE)}</span><button type="button" className="secondary-button" disabled={(page + 1) * PAGE_SIZE >= windows.length} onClick={() => setPage(value => value + 1)}>{s("Next")}</button></nav>}
       {!windows.length && !workspace.loading && <WorkspaceEmptyState kind="activity" message={p("noWindows")} action={<button type="button" className="secondary-button" onClick={workspace.refresh}>{p("refresh")}</button>} />}
     </>}
     {tab === "sessions" && <>
       {workspace.error && <p role="alert">{p(workspace.errorReason)}</p>}
-      {sessions.map(session => <button type="button" className="workspace-session-row" key={`${session.project_id}:${session.session_id}`} onClick={() => session.project_id && workspace.setSelection({ kind: "session", project: session.project_id, id: session.session_id })}>
-        <div className="session-row-heading"><strong>{sessionTitle(session.title)}</strong><span className={`workspace-badge ${session.running_call || session.running_jobs ? "working" : ""}`}>{session.running_call || session.running_jobs ? p("inProgress") : sessionLifecycle(session.lifecycle, p)}</span></div>
-        <span className="session-row-project">{projectLabel(session.project_id)} · {observationTime(session.updated_at * 1000, locale)}</span>
-        {session.overview.reported_progress?.text && <span className="session-row-task">{session.overview.reported_progress!.text}</span>}
-        <SessionAttention session={session} />
-        <div className="session-attention"><span>{s("Active Jobs")}: {session.running_jobs ?? 0}</span><span>{s("Validation")}: {session.overview.validation?.state ?? s("No validation evidence")}</span></div>
-      </button>)}
+      {sessions.map(session => {
+        const running = session.running_call || session.running_jobs > 0;
+        const validation = session.overview.validation?.state;
+        return <button type="button" className="activity-work-row workspace-session-row" key={`${session.project_id}:${session.session_id}`} onClick={() => session.project_id && workspace.setSelection({ kind: "session", project: session.project_id, id: session.session_id })}>
+          <span className="activity-work-icon" aria-hidden="true">{running ? <TerminalSquare size={18} /> : <MessageSquare size={18} />}</span>
+          <span className="activity-work-copy">
+            <span className="session-row-heading"><strong>{sessionTitle(session.title)}</strong><span className={`workspace-badge ${running ? "working" : ""}`}>{running ? p("inProgress") : sessionLifecycle(session.lifecycle, p)}</span></span>
+            {session.overview.reported_progress?.text && <span className="session-row-task">{session.overview.reported_progress.text}</span>}
+            <SessionAttention session={session} />
+            {validation && ["passed", "failed", "inconclusive", "not_run"].includes(validation) && <span className={`session-validation ${validation === "failed" ? "failed" : ""}`}>{validationLabel(validation, p)}</span>}
+            <span className="activity-row-meta"><span>{projectLabel(session.project_id)}</span><time>{observationTime(session.updated_at * 1000, locale)}</time><ArrowRight size={16} aria-hidden="true" /></span>
+          </span>
+        </button>;
+      })}
       {!sessions.length && !workspace.loading && <WorkspaceEmptyState kind="activity" message={p("noSessions")} action={<button type="button" className="secondary-button" onClick={workspace.refresh}>{p("refresh")}</button>} />}
       {workspace.runner?.recent_sessions?.truncated && <p className="field-help">{s("History is partial")}</p>}
     </>}

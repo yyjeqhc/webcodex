@@ -41,6 +41,8 @@ You do not need to stop the runtime or OpenAI Secure Tunnel when ChatGPT moves b
 
 Projects lists working folders before **Task execution devices**. Runner reads files and runs commands on each device; **Connected to Server** describes its service connection. An unavailable desktop session concerns screenshots, windows, mouse and keyboard actions. File and command tools do not depend on that session. Missing or stale observations remain unconfirmed, and a connected desktop session does not establish system permissions. The local permission shortcut opens Settings without starting services or requesting permissions.
 
+Activity separates **Tool calls**, **Workflow Sessions**, and **Service events**. Call sources show their latest call and open the full history. **Call completed** describes execution, not ChatGPT receipt. Sessions show progress, running jobs, and outstanding items; **Open** does not imply running. Check results use readable states, without duplicate job counts or empty attention items. HTTP delivery evidence and internal identifiers remain in details.
+
 ## Connections and recovery
 
 Connection cards show observed Tunnel and local MCP reachability. Failures include a specific reason and a shortcut to proxy settings, Runtime, or diagnostics. The page shows the current network route; failure guidance uses the failed attempt’s proxy evidence and never changes routes automatically.

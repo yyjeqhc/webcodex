@@ -21,7 +21,7 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
         def("job_write_input", super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible, TOOL_CATEGORY_JOB, Some(StructuredProcess), TOOL_PROVIDER_RUNNER,
             super::ToolSemanticContract { effect:super::ToolEffect::Execute, risk:JobRun,
-                approval:super::ToolApprovalPolicy::Standard, idempotency:super::ToolIdempotency::NonIdempotent },
+                approval:super::ToolApprovalPolicy::Standard, idempotency:super::ToolIdempotency::Keyed },
             Some(JOB_RUN), true, NoPath, false, true, super::ToolSessionEvidencePolicy::NONE),
         "Write bounded UTF-8 data or EOF to an existing run_process(interactive=true) Job. No new process, PTY, signal, stdin polling or automatic restart. Use one stable input_id per payload; exact same-id/same-data/close replay reconciles the retained receipt without resending, changed payload conflicts. Pending or uncertain delivery requires same-input reconciliation or observation, never a new id to retry. Written means OS pipe acceptance, not program consumption. At most 128 data writes per Job plus one empty EOF. New input is rejected while a write is pending or after closure; receipts are process-local and do not survive Runner replacement. Rechecks Job visibility, Project, Runner incarnation and capability; observe_jobs reads output and stop_job controls the process.",
         ),

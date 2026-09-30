@@ -1027,7 +1027,7 @@ fn interactive_pipe_schema_is_opt_in_and_input_is_adaptive_direct() {
     ));
     let definition = crate::lookup_tool_definition("job_write_input").unwrap();
     assert!(!definition.effect_annotations().read_only_hint);
-    assert!(!definition.effect_annotations().idempotent_hint);
+    assert!(definition.effect_annotations().idempotent_hint);
     assert_eq!(definition.adaptive_runtime_direct_rank(), Some(71));
     for field in [
         "command",

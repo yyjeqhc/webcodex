@@ -1013,12 +1013,18 @@ checkpoint, rather than prompting once per worker event. That coalescing must pr
 each Agent's identity and the authoritative Task, Attempt, Goal, privacy, and dispatch-fence
 boundaries.
 
-A Host may dispatch `ui/message` only for the exact current `agent_task_attempt` Wake and
-controller fence. A `delivery_unknown` outcome must be reconciled against that exact
-Attempt and dispatch identity rather than triggering a blind second Host send. After a
-resumed turn consumes the Wake, it must re-read the authoritative TaskAttempt and current
-checkpoint before continuing; neither Host delivery nor Wake consumption completes the
-Attempt or proves that reported work succeeded.
+An execution Host dispatch may use `ui/message` only for the exact current
+`agent_task_attempt` Wake, its authoritative TaskAttempt, and current Attempt controller
+fence. Controller-attention (`attention_event`) and Wait (`agent_wait_events`) Wakes are
+separate controller-routed sources: each dispatch must match that Wake's exact identity,
+target Agent, current carrier/controller generation, and dispatch-fence identity; neither
+source borrows or merges an execution Attempt's authority. For every Wake source, a
+`delivery_unknown` outcome must be reconciled against that same exact Wake/source,
+Agent, carrier/controller-generation, and dispatch-fence identity rather than triggering a blind
+second Host send. After a resumed turn consumes the Wake, it must re-read the authoritative
+source (the TaskAttempt for execution Wakes) and current checkpoint before continuing;
+neither Host delivery nor Wake consumption completes an Attempt or proves that reported
+work succeeded.
 
 Natural future source kinds include `deadline_reached`, Job terminal state,
 Plugin/external completion, and human approval. They should be added only when each has an

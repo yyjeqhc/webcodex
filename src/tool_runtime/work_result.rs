@@ -185,7 +185,7 @@ impl ToolRuntime {
         .await
     }
 
-    async fn authorize_work_result_project(
+    pub(super) async fn authorize_work_result_project(
         &self,
         project: &str,
         auth: Option<&AuthContext>,
@@ -194,9 +194,18 @@ impl ToolRuntime {
             .resolve_project_input_for_auth(project, auth)
             .await
             .map_err(|error| error.into_tool_result())?;
-        if project.trim() != resolved.resolved_id {
+        let issued_ref = matches!(
+            webcodex_core::model_reference::parse_model_reference(
+                project.trim(),
+                webcodex_core::model_reference::ModelReferenceKind::Project,
+            ),
+            Some(Ok(_))
+        );
+        // Resolution already checked principal, exact root fingerprint and
+        // current authority. Never generalize this to ambiguous friendly names.
+        if project.trim() != resolved.resolved_id && !issued_ref {
             return Err(ToolResult::err_with_output(
-                "Work Result requires the exact complete runtime project id",
+                "Work Result requires an exact runtime project id or issued project_ref",
                 json!({
                     "error_kind": "work_result_project_not_exact",
                     "failure_kind": "invalid_arguments",

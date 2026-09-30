@@ -69,6 +69,60 @@ async fn dispatch_shell_success(
 }
 
 #[tokio::test]
+async fn work_result_accepts_only_exact_issued_project_refs_not_friendly_aliases() {
+    let tmp = tempfile::tempdir().unwrap();
+    let runtime = runtime_with_reference_db(&tmp.path().join("refs.db"));
+    register_agent_projects(
+        &runtime,
+        "special",
+        None,
+        RunnerCapabilities::default(),
+        vec![project("special", "demo", "friendly", "/srv/demo", '1')],
+    )
+    .await;
+    let auth = auth_context(None, true);
+    let resolved = runtime
+        .resolve_project_input_for_auth("agent:special:demo", Some(&auth))
+        .await
+        .unwrap();
+    let reference = runtime
+        .project_reference_for_resolved(&resolved, Some(&auth))
+        .unwrap();
+    assert!(reference.starts_with("~p"));
+    // The exact Work Result resolver is the common path for card creation and
+    // refresh. Later resource URLs continue using the resolved canonical ID.
+    let accepted = runtime
+        .authorize_work_result_project(&reference, Some(&auth))
+        .await
+        .unwrap();
+    assert_eq!(accepted, "agent:special:demo");
+    assert!(runtime
+        .authorize_work_result_project("friendly", Some(&auth))
+        .await
+        .is_err());
+    assert!(runtime
+        .authorize_work_result_project("~p99999", Some(&auth))
+        .await
+        .is_err());
+    assert!(runtime
+        .authorize_work_result_project(&reference, Some(&auth_context(Some("other"), false)))
+        .await
+        .is_err());
+    register_agent_projects(
+        &runtime,
+        "special",
+        None,
+        RunnerCapabilities::default(),
+        vec![project("special", "demo", "friendly", "/srv/replaced", '2')],
+    )
+    .await;
+    assert!(runtime
+        .authorize_work_result_project(&reference, Some(&auth))
+        .await
+        .is_err());
+}
+
+#[tokio::test]
 async fn project_refs_route_exact_projects_without_bare_name_uniqueness() {
     let tmp = tempfile::tempdir().unwrap();
     let runtime = runtime_with_reference_db(&tmp.path().join("refs.db"));

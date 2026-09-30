@@ -510,21 +510,28 @@ fn tool_specs_describe_default_coding_loop_preferences() {
     }
 
     let run_process_desc = desc("run_process");
+    // Cover the selection and lifecycle choices, not the retired full prose.
+    // Interactive mode shares the tool but has a deliberately explicit contract.
     for phrase in [
         "native executable with structured literal argv",
-        "prefer this over run_shell unless shell grammar or a short related command chain is required",
+        "run_shell for shell grammar",
         "windows batch shims",
-        "bounded runner-owned quoting contract",
-        "persistent shell is only for retained same-process or named-ssh state, not command count",
-        "same execution and remains runner-owned",
-        "execution_state=pending",
+        "runner-owned quoting",
+        "persistent shell is only for retained same-process",
+        "same execution",
+        "owned by runner",
         "continue independent work",
         "sparse terminal job attention",
         "observe_jobs only for logs/details/recovery",
         "bounded wait_for_job_readiness when terminal outcome blocks progress",
         "run_detached_process",
         "survive runner restart/upgrade/stop/replacement",
-        "duration alone is not a reason to detach",
+        "never for duration alone",
+        "interactive=true",
+        "job_write_input",
+        "bytes/eof",
+        "no pty",
+        "structured validation evidence",
     ] {
         assert!(
             run_process_desc.contains(phrase),

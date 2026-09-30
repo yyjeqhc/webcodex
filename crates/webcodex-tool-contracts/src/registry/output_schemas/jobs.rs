@@ -452,7 +452,7 @@ fn job_structured_execution_metadata_schema() -> Value {
                 "properties": {
                     "execution_source": {
                         "type": "string",
-                        "enum": ["run_process", "run_detached_process", "run_script"]
+                        "enum": ["run_process", "run_process_interactive", "run_detached_process", "run_script"]
                     },
                     "language": {
                         "anyOf": [
@@ -1010,6 +1010,8 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
         }
         "run_process" => {
             let mut properties = vec![
+                ("interactive", schema_type("boolean", "Explicit open-pipe execution. No PTY or detached lifetime.")),
+                ("input_mode", json!({"type":"string","const":"pipe"})),
                 (
                     "duration_ms",
                     schema_type("integer", "Process duration in milliseconds. Diagnostic telemetry: omitted on ordinary synchronous terminal success and from the default model-facing failure projection."),
@@ -1116,7 +1118,11 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             schema["properties"]["output"]["properties"]["execution_source"]["enum"] =
                 json!(["run_process", "run_shell"]);
             schema["properties"]["output"]["allOf"] =
-                structured_execution_lifecycle_constraints("run_process");
+                json!([{
+                    "if":{"properties":{"interactive":{"const":true}},"required":["interactive"]},
+                    "then":{"required":["execution_state","job_id","job_status","input_mode","continuation"]},
+                    "else":{"allOf":structured_execution_lifecycle_constraints("run_process")}
+                }]);
             schema["allOf"] = json!([{
                 "if": {"properties": {"success": {"const": true}}, "required": ["success"]},
                 "then": {"properties": {"output": {"not": {"required": ["suggested_call"]}}}}
@@ -1466,6 +1472,14 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                     "Whether the collected job summaries exceeded the returned limit.",
                 ),
             ),
+        ])),
+        "job_write_input" => Some(wrapped_output_schema(vec![
+            ("job_id", schema_type("string", "The same existing interactive Job; no new execution.")),
+            ("input_id", schema_type("string", "Exact retained input receipt identity.")),
+            ("state", json!({"type":"string","enum":["pending","written","closed","outcome_unknown"],"description":"Pipe write state, not the application's consumption or Job completion."})),
+            ("bytes_written", schema_type("integer", "Bytes accepted by the OS pipe; not proof of consumption.")),
+            ("stdin_closed", schema_type("boolean", "True only after the owned pipe handle has closed.")),
+            ("execution_state", schema_type("string", "Input request result certainty, separate from Job lifecycle.")),
         ])),
         "stop_job" => Some(wrapped_output_schema(vec![
             (

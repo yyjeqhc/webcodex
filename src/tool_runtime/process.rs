@@ -272,7 +272,7 @@ pub(crate) fn classify_process_failure(message: &str) -> &'static str {
     }
 }
 
-fn validate_process_input(
+pub(super) fn validate_process_input(
     process: &ShellProcessArgv,
     stdin: Option<&str>,
     cwd: Option<&str>,
@@ -328,6 +328,7 @@ impl ToolRuntime {
         resolved: Option<&super::project_resolution::ResolvedProject>,
     ) -> Option<serde_json::Value> {
         let super::ToolCall::RunProcess {
+            interactive,
             project,
             executable,
             args,
@@ -342,7 +343,8 @@ impl ToolRuntime {
             return None;
         };
         let login = executable == "bash" && args.first().is_some_and(|flag| flag == "-lc");
-        if !matches!(executable.as_str(), "sh" | "bash")
+        if *interactive
+            || !matches!(executable.as_str(), "sh" | "bash")
             || args.len() != 2
             || !(args[0] == "-c" || login)
             || stdin.is_some()

@@ -144,6 +144,7 @@ impl ToolRuntime {
             | ToolCall::CodingAgentObserve { .. }
             | ToolCall::CodingAgentCancel { .. }
             | ToolCall::RunProcess { .. }
+            | ToolCall::JobWriteInput { .. }
             | ToolCall::RunDetachedProcess { .. }
             | ToolCall::RunScript { .. }
             | ToolCall::RunShell { .. }

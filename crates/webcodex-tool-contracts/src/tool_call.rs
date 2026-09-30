@@ -2117,12 +2117,17 @@ pub enum ToolCall {
         timeout_ms: Option<u64>,
     },
 
-    /// Execute one native process directly from a structured executable and
-    /// argv. No shell parser, environment mutation, PTY, or durable handoff is
-    /// part of this synchronous v1 contract.
+    /// Execute native argv. Ordinary calls use bounded synchronous handoff;
+    /// explicit interactive pipes return one public Job and retain stdin.
     RunProcess {
         /// Configured project id.
         project: String,
+        /// Keep a pipe open for subsequent job_write_input calls. No PTY or shell
+        /// Session. Returns the same public Job without waiting for input-dependent
+        /// completion. Requires job_process_input_v1; incompatible with initial stdin.
+        /// Send required input before waiting for terminal completion.
+        #[serde(default)]
+        interactive: bool,
         /// Executable name or path, resolved through the Runner execution environment. Native executables
         /// use literal argv. Windows .cmd/.bat shims use Runner-owned cmd.exe conversion with AutoRun and
         /// delayed expansion disabled; no model shell string. Batch paths/arguments reject quotes, %, !, ^,
@@ -4254,6 +4259,28 @@ pub enum ToolCall {
         shell: Option<ExecutionShell>,
     },
 
+    /// Send exact keyed bytes or EOF to an existing interactive Job.
+    JobWriteInput {
+        /// Exact authorized Project selector of the existing Job.
+        project: String,
+        /// Existing public interactive Job; never a process name or PID.
+        #[schemars(length(min = 1, max = 160))]
+        job_id: String,
+        /// Stable per-Job identity for this exact input and EOF choice. Reuse with
+        /// identical bytes to reconcile; changing bytes conflicts. Never choose a
+        /// new key merely because delivery is pending or unknown.
+        #[schemars(length(min = 1, max = 128))]
+        input_id: String,
+        /// UTF-8 bytes written literally to the pipe, at most 65536. Omit only for EOF.
+        #[serde(default)]
+        #[schemars(length(max = 65536))]
+        data: String,
+        /// Close stdin after these bytes. Empty data without close is rejected;
+        /// use observe_jobs for observation, not this effectful tool.
+        #[serde(default)]
+        close: bool,
+    },
+
     /// Stop a bounded runtime job after explicit confirmation.
     StopJob {
         /// Configured project id that must match the job project.
@@ -5921,6 +5948,7 @@ impl ToolCall {
             Self::MemoryScopePurge { .. } => "memory_scope_purge",
             Self::RunJob { .. } => "run_job",
             Self::StopJob { .. } => "stop_job",
+            Self::JobWriteInput { .. } => "job_write_input",
             Self::ObserveJobs { .. } => "observe_jobs",
             Self::WaitForJobReadiness { .. } => "wait_for_job_readiness",
             Self::WaitForJobTerminal { .. } => "wait_for_job_terminal",
@@ -6181,6 +6209,7 @@ impl ToolCall {
             | Self::MemoryDelete { project, .. }
             | Self::RunJob { project, .. }
             | Self::StopJob { project, .. }
+            | Self::JobWriteInput { project, .. }
             | Self::ListProjectFiles { project, .. }
             | Self::ListProjectTrackedFiles { project, .. }
             | Self::ProjectOverview { project, .. }

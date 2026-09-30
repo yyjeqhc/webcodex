@@ -13,6 +13,7 @@ impl ToolRuntime {
     ) -> ToolResult {
         match call {
             ToolCall::RunProcess {
+                interactive,
                 project,
                 executable,
                 args,
@@ -23,6 +24,22 @@ impl ToolRuntime {
                 cwd,
                 purpose,
             } => {
+                if interactive {
+                    return self
+                        .run_interactive_process(
+                            project,
+                            executable,
+                            args,
+                            stdin,
+                            timeout_secs,
+                            cwd,
+                            purpose,
+                            ssh_resource,
+                            session_id,
+                            auth,
+                        )
+                        .await;
+                }
                 self.run_process_with_contract_for_resource(
                     project,
                     executable,

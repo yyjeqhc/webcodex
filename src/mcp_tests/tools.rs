@@ -2411,7 +2411,9 @@ async fn mcp_tools_list_stateless_serialized_size_budget() {
     for (label, auth, max_tools, max_bytes) in [
         ("anonymous", None, 22, 60_000),
         ("scoped", Some(&scoped), 23, 62_000),
-        ("admin", Some(&admin), 29, 71_000),
+        // The optional interactive pipe contract adds input/output schema to
+        // run_process; the direct inventory count is intentionally unchanged.
+        ("admin", Some(&admin), 29, 72_000),
     ] {
         for app_enabled in [false, true] {
             let mut sizes = Vec::new();

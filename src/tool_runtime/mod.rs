@@ -53,6 +53,7 @@ mod helpers;
 mod hygiene;
 mod hygiene_tools;
 mod job_attention;
+mod job_input;
 mod job_query;
 mod job_terminal_wait;
 mod job_tools;

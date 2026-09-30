@@ -14,6 +14,7 @@ use std::time::{Duration, Instant};
 
 fn process_call(project: String, session_id: Option<String>) -> ToolCall {
     ToolCall::RunProcess {
+        interactive: false,
         project,
         executable: "argv-helper".to_string(),
         args: vec![
@@ -1523,6 +1524,7 @@ async fn run_process_six_hour_handoff_is_queryable_once_and_keeps_the_original_b
         &runtime,
         "process-slow-job",
         ToolCall::RunProcess {
+            interactive: false,
             project: project.clone(),
             executable: "argv-helper".to_string(),
             args: vec![
@@ -1644,6 +1646,7 @@ async fn run_process_zero_sync_wait_fails_before_execution_start() {
         let result = runtime
             .dispatch_with_auth(
                 ToolCall::RunProcess {
+                    interactive: false,
                     project: project.clone(),
                     executable: "argv-helper".to_string(),
                     args: Vec::new(),
@@ -1683,6 +1686,7 @@ async fn run_process_short_timeout_stays_direct_without_job_headroom() {
             runtime
                 .dispatch_with_auth(
                     ToolCall::RunProcess {
+                        interactive: false,
                         project,
                         executable: "argv-helper".to_string(),
                         args: Vec::new(),
@@ -1868,6 +1872,7 @@ async fn run_process_preserves_large_typed_argv_without_shell_parsing() {
             runtime
                 .dispatch_with_auth(
                     ToolCall::RunProcess {
+                        interactive: false,
                         project,
                         executable: "argv-helper".to_string(),
                         args: large_args,
@@ -2167,6 +2172,7 @@ async fn run_process_named_ssh_resource_fails_before_enqueue() {
         .is_none());
 
     let shell_form = ToolCall::RunProcess {
+        interactive: false,
         project: runner_project_runtime_id("process-ssh", "demo"),
         executable: "bash".to_string(),
         args: vec!["-c".to_string(), "printf unsafe".to_string()],
@@ -2197,6 +2203,7 @@ async fn run_process_validation_and_inspect_permission_boundaries_fail_closed() 
 
     for invalid in [
         ToolCall::RunProcess {
+            interactive: false,
             project: project.clone(),
             executable: String::new(),
             args: Vec::new(),
@@ -2208,6 +2215,7 @@ async fn run_process_validation_and_inspect_permission_boundaries_fail_closed() 
             purpose: None,
         },
         ToolCall::RunProcess {
+            interactive: false,
             project: project.clone(),
             executable: "sh".to_string(),
             args: vec!["-c".to_string(), "touch marker".to_string()],
@@ -2219,6 +2227,7 @@ async fn run_process_validation_and_inspect_permission_boundaries_fail_closed() 
             purpose: None,
         },
         ToolCall::RunProcess {
+            interactive: false,
             project: project.clone(),
             executable: "argv-helper".to_string(),
             args: vec!["bad\0arg".to_string()],
@@ -2230,6 +2239,7 @@ async fn run_process_validation_and_inspect_permission_boundaries_fail_closed() 
             purpose: None,
         },
         ToolCall::RunProcess {
+            interactive: false,
             project: project.clone(),
             executable: "argv-helper".to_string(),
             args: vec![String::new(); 257],
@@ -2241,6 +2251,7 @@ async fn run_process_validation_and_inspect_permission_boundaries_fail_closed() 
             purpose: None,
         },
         ToolCall::RunProcess {
+            interactive: false,
             project: project.clone(),
             executable: "argv-helper".to_string(),
             args: vec!["x".repeat(8_193)],
@@ -2252,6 +2263,7 @@ async fn run_process_validation_and_inspect_permission_boundaries_fail_closed() 
             purpose: None,
         },
         ToolCall::RunProcess {
+            interactive: false,
             project: project.clone(),
             executable: "argv-helper".to_string(),
             args: Vec::new(),
@@ -2263,6 +2275,7 @@ async fn run_process_validation_and_inspect_permission_boundaries_fail_closed() 
             purpose: None,
         },
         ToolCall::RunProcess {
+            interactive: false,
             project: project.clone(),
             executable: "argv-helper".to_string(),
             args: Vec::new(),
@@ -2274,6 +2287,7 @@ async fn run_process_validation_and_inspect_permission_boundaries_fail_closed() 
             purpose: None,
         },
         ToolCall::RunProcess {
+            interactive: false,
             project: project.clone(),
             executable: "argv-helper".to_string(),
             args: Vec::new(),
@@ -2663,6 +2677,7 @@ async fn shell_recovery_requires_raw_shell_policy_and_explicit_selection_capabil
         )
         .await;
         let call = ToolCall::RunProcess {
+            interactive: false,
             project: runner_project_runtime_id(client, "demo"),
             executable: "bash".to_string(),
             args: vec!["-c".to_string(), "printf unsafe".to_string()],

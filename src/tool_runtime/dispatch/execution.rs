@@ -13,6 +13,16 @@ impl ToolRuntime {
         structured_handoff_max_secs: Option<u64>,
     ) -> ToolResult {
         match call {
+            ToolCall::JobWriteInput {
+                project,
+                job_id,
+                input_id,
+                data,
+                close,
+            } => {
+                self.job_write_input(project, job_id, input_id, data, close, auth)
+                    .await
+            }
             ToolCall::CodingAgentStart {
                 project,
                 provider_id,

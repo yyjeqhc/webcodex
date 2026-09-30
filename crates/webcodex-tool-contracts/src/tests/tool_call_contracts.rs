@@ -956,6 +956,7 @@ fn from_tool_name_parses_structured_run_process_boundaries() {
     match call {
         ToolCall::RunProcess {
             project,
+            interactive,
             executable,
             args,
             cwd,
@@ -967,6 +968,7 @@ fn from_tool_name_parses_structured_run_process_boundaries() {
         } => {
             assert_eq!(project, "demo");
             assert_eq!(executable, "git");
+            assert!(!interactive);
             assert_eq!(
                 args,
                 ["status", "--porcelain", "two words", "$(literal)"].map(str::to_string)
@@ -996,6 +998,51 @@ fn from_tool_name_parses_structured_run_process_boundaries() {
             assert!(stdin.is_none());
         }
         other => panic!("expected RunProcess, got {other:?}"),
+    }
+}
+
+#[test]
+fn interactive_pipe_schema_is_opt_in_and_input_has_a_single_effectful_gateway_route() {
+    let ordinary =
+        ToolCall::from_tool_name("run_process", json!({"project":"p","executable":"python"}))
+            .unwrap();
+    assert!(matches!(
+        ordinary,
+        ToolCall::RunProcess {
+            interactive: false,
+            ..
+        }
+    ));
+    let interactive = ToolCall::from_tool_name(
+        "run_process",
+        json!({"project":"p","executable":"python","interactive":true}),
+    )
+    .unwrap();
+    assert!(matches!(
+        interactive,
+        ToolCall::RunProcess {
+            interactive: true,
+            ..
+        }
+    ));
+    let definition = crate::lookup_tool_definition("job_write_input").unwrap();
+    assert!(!definition.effect_annotations().read_only_hint);
+    assert!(!definition.effect_annotations().idempotent_hint);
+    assert!(definition.adaptive_runtime_direct_rank().is_none());
+    for field in [
+        "command",
+        "executable",
+        "runner_instance_id",
+        "pid",
+        "session_id",
+        "tty",
+    ] {
+        let mut value = json!({"project":"~p1","job_id":"exact","input_id":"same","data":"bytes"});
+        value[field] = json!("forbidden");
+        assert!(
+            ToolCall::from_tool_name("job_write_input", value).is_err(),
+            "{field}"
+        );
     }
 }
 

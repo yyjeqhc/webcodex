@@ -145,7 +145,18 @@ impl ToolCallAuditProjection for ToolCall {
                 "source_bytes": source.len(),
                 "timeout_ms": timeout_ms,
             }),
+            Self::JobWriteInput {
+                project,
+                job_id,
+                input_id,
+                data,
+                close,
+            } => serde_json::json!({
+                "project":project,"job_id":job_id,"input_id_present":!input_id.is_empty(),
+                "input_bytes":data.len(),"close":close,
+            }),
             Self::RunProcess {
+                interactive,
                 project,
                 executable,
                 args,
@@ -156,16 +167,21 @@ impl ToolCallAuditProjection for ToolCall {
                 purpose,
                 ..
             } => {
-                let identity = run_process_validation_identity(
-                    executable,
-                    args,
-                    stdin.as_deref(),
-                    cwd.as_deref(),
-                    purpose.as_ref().map(|purpose| purpose.as_str()),
-                );
+                let identity = if *interactive {
+                    None
+                } else {
+                    run_process_validation_identity(
+                        executable,
+                        args,
+                        stdin.as_deref(),
+                        cwd.as_deref(),
+                        purpose.as_ref().map(|purpose| purpose.as_str()),
+                    )
+                };
                 let mut value = serde_json::json!({
                     "project": project,
                     "executable_present": true,
+                    "interactive": interactive,
                     "arg_count": args.len(),
                     "stdin_present": stdin.is_some(),
                     "process_summary": process_preview(

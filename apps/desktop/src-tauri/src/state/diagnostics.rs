@@ -5,6 +5,8 @@ use crate::diagnostics::{
 };
 use crate::runtime_selection;
 use sha2::{Digest, Sha256};
+mod tracing;
+use tracing::effective_trace_mode;
 
 fn runtime_fence(runtime: &StoredRuntime) -> String {
     // Correlation only, not an authority token or a copy of credential bytes.
@@ -21,14 +23,14 @@ fn valid_console_user_credential(value: &str) -> bool {
 
 impl AppState {
     pub async fn diagnostics(&self) -> DesktopResult<DiagnosticSnapshot> {
-        let (settings, runtime, trace_path, recovery, mut resources, identity_fence) = {
+        let (settings, runtime, trace_target, recovery, mut resources, identity_fence) = {
             let slot = self.core.lock().await;
             let core = slot
                 .as_ref()
                 .ok_or_else(|| diagnostics::diagnostic_error("desktop_operation_busy"))?;
             let settings = core.runtime_settings_snapshot().await;
             let runtime = core.config.runtime.clone();
-            let trace_path = core.managed_server_environment().ok();
+            let trace_target = core.managed_trace_target().await;
             let backup = matches!(
                 read_stored_config(&desktop_state_backup_path(&core.config_path)),
                 Ok(StoredConfigFile::Valid { .. })
@@ -47,33 +49,29 @@ impl AppState {
                 ResourceKind::Github,
                 ResourceKind::ReportIssue,
             ];
-            if trace_path.is_some() {
+            if trace_target.is_ok() {
                 resources.push(ResourceKind::ServerConfiguration);
             }
             if core.adapter.binaries().is_ok() {
                 resources.push(ResourceKind::RuntimeDirectory);
             }
             let fence = runtime.as_ref().map(runtime_fence);
-            (settings, runtime, trace_path, recovery, resources, fence)
+            (settings, runtime, trace_target, recovery, resources, fence)
         };
-        let mut trace = trace_path
-            .as_deref()
-            .and_then(|path| diagnostics::inspect_trace(path, false).ok())
-            .unwrap_or(TraceSettings {
+        let mut trace = trace_target
+            .as_ref()
+            .map_err(Clone::clone)
+            .and_then(|target| target.inspect())
+            .unwrap_or_else(|error| TraceSettings {
                 mode: TraceMode::Off,
                 effective_mode: None,
                 revision: String::new(),
                 available: false,
                 restart_required: false,
                 can_restart: false,
-                error_code: Some("server_environment_unavailable".into()),
+                error_code: Some(error.code),
             });
-        trace.can_restart = self
-            .supervisor
-            .lock()
-            .await
-            .snapshot(ProcessKey::LocalServer)
-            .is_some_and(|p| p.owned_by_desktop);
+        let trace_path = trace_target.ok().map(|target| target.path);
         let (runner, windows) = if let Some(runtime) = &runtime {
             let (runner, windows) = tokio::join!(
                 crate::workspace::query(runtime, crate::workspace::WorkspaceRequest::Overview {}),
@@ -83,12 +81,9 @@ impl AppState {
         } else {
             (None, None)
         };
-        trace.effective_mode = runner
-            .as_ref()
-            .and_then(|r| r.get("tool_request_trace_mode"))
-            .and_then(Value::as_str)
-            .and_then(TraceMode::parse);
-        trace.restart_required = trace.available && trace.effective_mode != Some(trace.mode);
+        trace.effective_mode = runner.as_ref().and_then(effective_trace_mode);
+        trace.restart_required =
+            trace.available && trace.effective_mode.is_some_and(|mode| mode != trace.mode);
         if trace_path
             .as_deref()
             .and_then(diagnostics::trace_directory)
@@ -197,14 +192,10 @@ impl AppState {
             .await?;
         let mut saved = None;
         let result = async {
-            core.runtime_switch_authority().await?;
-            let path = core.managed_server_environment()?;
+            cancellation.check()?;
+            let target = core.managed_trace_target().await?;
             if request.restart {
-                if !core
-                    .process_snapshot(ProcessKey::LocalServer)
-                    .await
-                    .is_some_and(|p| p.owned_by_desktop)
-                {
+                if !target.can_restart {
                     return Err(diagnostics::diagnostic_error("server_not_owned"));
                 }
                 if let Some(runtime) = &core.config.runtime {
@@ -227,9 +218,10 @@ impl AppState {
             }
             let restart = request.restart;
             let requested_mode = request.mode;
+            cancellation.check()?;
             let mut trace = tokio::task::spawn_blocking(move || {
-                diagnostics::update_trace(
-                    &path,
+                let target = target;
+                target.update(
                     request.mode,
                     &request.expected_revision,
                     request.confirm_full,
@@ -244,40 +236,36 @@ impl AppState {
                     // partial outcome to generic operation cleanup as a fresh
                     // failed admission or retry the side effect automatically.
                     trace.restart_required = true;
-                    trace.error_code = Some(error.code);
+                    trace.error_code = Some(error.code.clone());
                     trace.can_restart = core
-                        .process_snapshot(ProcessKey::LocalServer)
+                        .managed_trace_target()
                         .await
-                        .is_some_and(|p| p.owned_by_desktop);
+                        .is_ok_and(|target| target.can_restart);
                     saved = Some(trace);
                     core.snapshot.readiness.runtime_ready = false;
+                    core.snapshot.runtime_error = Some(error);
+                    core.terminalize_failed_start(false);
                     return core.get_state().await;
                 }
-                let runtime =
-                    core.config.runtime.as_ref().ok_or_else(|| {
-                        diagnostics::diagnostic_error("runtime_identity_unavailable")
-                    })?;
-                let observed = crate::workspace::query(
-                    runtime,
-                    crate::workspace::WorkspaceRequest::Overview {},
-                )
-                .await
-                .ok();
-                trace.effective_mode = observed
-                    .as_ref()
-                    .and_then(|r| r.get("tool_request_trace_mode"))
-                    .and_then(Value::as_str)
-                    .and_then(TraceMode::parse);
-                trace.restart_required = trace.effective_mode != Some(requested_mode);
-                if trace.restart_required {
-                    trace.error_code =
-                        Some("trace_effective_mode_unconfirmed_or_overridden".into());
-                }
+            }
+            let runtime = core
+                .config
+                .runtime
+                .as_ref()
+                .ok_or_else(|| diagnostics::diagnostic_error("runtime_identity_unavailable"))?;
+            let observed =
+                crate::workspace::query(runtime, crate::workspace::WorkspaceRequest::Overview {})
+                    .await
+                    .ok();
+            trace.effective_mode = observed.as_ref().and_then(effective_trace_mode);
+            trace.restart_required = trace.effective_mode != Some(requested_mode);
+            if restart && trace.restart_required {
+                trace.error_code = Some("trace_effective_mode_unconfirmed_or_overridden".into());
             }
             trace.can_restart = core
-                .process_snapshot(ProcessKey::LocalServer)
+                .managed_trace_target()
                 .await
-                .is_some_and(|p| p.owned_by_desktop);
+                .is_ok_and(|target| target.can_restart);
             saved = Some(trace);
             core.get_state().await
         }
@@ -330,12 +318,14 @@ impl AppState {
             }
             ResourceKind::AppData => core.data_dir.clone(),
             ResourceKind::ServerConfiguration => core
-                .managed_server_environment()?
+                .managed_trace_target()
+                .await?
+                .path
                 .parent()
                 .ok_or_else(|| diagnostics::diagnostic_error("server_environment_unavailable"))?
                 .to_path_buf(),
             ResourceKind::TraceDirectory => {
-                diagnostics::trace_directory(&core.managed_server_environment()?)
+                diagnostics::trace_directory(&core.managed_trace_target().await?.path)
                     .ok_or_else(|| diagnostics::diagnostic_error("trace_directory_unavailable"))?
             }
             ResourceKind::RuntimeDirectory => core.adapter.binaries()?.directory.clone(),
@@ -440,6 +430,46 @@ impl DesktopCore {
         &mut self,
         cancellation: &CancellationContext,
     ) -> DesktopResult<()> {
+        self.preflight_providers()?;
+        if let Some(environment_id) = self.config.persistent_environment.clone() {
+            use webcodex_environment::{service::Component, NativeEnvironment, ServiceOperation};
+            let runtime = self
+                .config
+                .runtime
+                .clone()
+                .ok_or_else(|| diagnostics::diagnostic_error("runtime_identity_unavailable"))?;
+            cancellation.check()?;
+            NativeEnvironment::new()
+                .map_err(environment::desktop_error)?
+                .control_service_for_environment(
+                    &environment::store()?,
+                    Some(&environment_id),
+                    Component::Server,
+                    ServiceOperation::Restart,
+                )
+                .await
+                .map_err(environment::desktop_error)?;
+            self.snapshot.readiness.server = ServerReadiness::Starting;
+            self.snapshot.readiness.runtime_ready = false;
+            self.publish_snapshot();
+            let deadline = Deadline::after(Duration::from_secs(50));
+            self.wait_for_server(
+                &runtime.server_url,
+                runtime.server_env_file.as_deref(),
+                runtime.user_token_file.as_deref(),
+                cancellation,
+                deadline,
+                false,
+            )
+            .await?;
+            if let Some(identity) = runner_identity_from_config(&self.config) {
+                self.wait_for_runner(&identity, cancellation, deadline, false)
+                    .await?;
+            }
+            self.refresh_environment_status(cancellation).await?;
+            self.snapshot.runtime_error = None;
+            return Ok(());
+        }
         let identity = runner_identity_from_config(&self.config)
             .ok_or_else(|| diagnostics::diagnostic_error("runtime_identity_unavailable"))?;
         self.adapter.ensure_binaries(cancellation).await?;
@@ -471,6 +501,7 @@ impl DesktopCore {
         self.wait_for_runner(&identity, cancellation, deadline, false)
             .await?;
         self.refresh_runtime_status(cancellation).await?;
+        self.snapshot.runtime_error = None;
         Ok(())
     }
 }

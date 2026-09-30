@@ -50,7 +50,7 @@ pub use native::{
     validate_request, NativeEnvironment,
 };
 pub use privilege::run_privileged_service_request;
-pub use storage::{default_environment_dir, EnvironmentStore};
+pub use storage::{default_environment_dir, EnvironmentLock, EnvironmentStore};
 pub use types::*;
 
 pub use installer_authorization::{

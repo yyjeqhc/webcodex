@@ -186,7 +186,7 @@ describe("Diagnostics are explicit and secret-free", () => {
     fireEvent.click(screen.getByRole("button", { name: "Restart Local Runner" }));
     await waitFor(() => expect(api.environmentServiceAction).toHaveBeenCalledExactlyOnceWith({ environmentId: "env-fixture", component: "runner", action: "restart" }));
   });
-  it("explains managed Runtime updates and blocks unsupported tracing edits", async () => {
+  it("keeps program upgrades separate from tracing edits for an owned Environment", async () => {
     api.runtimeSettings.mockResolvedValue({ ...settings, can_switch: false, switch_unavailable_reason: "persistent_runtime_upgrade_required" });
     const onUpdates = vi.fn();
     render(wrap(<><RuntimePanel state={{ ...state, persistent_environment: "env-fixture" }} onState={vi.fn()} onUpdates={onUpdates} /><DiagnosticsPanel state={{ ...state, persistent_environment: "env-fixture" }} onState={vi.fn()} /></>));
@@ -194,10 +194,53 @@ describe("Diagnostics are explicit and secret-free", () => {
     expect(screen.queryByRole("button", { name: "Select Runtime folder…" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "About & updates" }));
     expect(onUpdates).toHaveBeenCalledOnce();
-    expect(await screen.findByRole("combobox", { name: "Tool Request Tracing" })).toBeDisabled();
-    expect(screen.getByText(/Desktop cannot change tracing/)).toBeVisible();
-    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    const selector = await screen.findByRole("combobox", { name: "Tool Request Tracing" });
+    expect(selector).toBeEnabled();
+    fireEvent.change(selector, { target: { value: "metadata" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(api.setToolRequestTracing).toHaveBeenCalledExactlyOnceWith({ mode: "metadata", expected_revision: "env-fence", confirm_full: false, restart: false, confirm_interrupt: false }));
+  });
+  it("shows remote tracing as an observation with specific guidance instead of disabled controls", async () => {
+    api.diagnostics.mockResolvedValue({ ...diagnostic, trace: { ...diagnostic.trace, mode: "off", effective_mode: "metadata", available: false, can_restart: false, error_code: "server_not_owned" } });
+    const remote = { ...state, persistent_environment: "joined-environment", topology: { ...state.topology!, server: { kind: "remote" as const, url: "https://fixture-server.test" } } };
+    render(wrap(<DiagnosticsPanel state={remote} onState={vi.fn()} />));
+    await screen.findByText(/Change its recording setting on the Server's machine/);
+    expect(screen.queryByRole("combobox", { name: "Tool Request Tracing" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
+    expect(within(screen.getByText("Server recording now").parentElement!).getByText("Timing & status only")).toBeVisible();
+    expect(screen.queryByText("Saved recording setting")).not.toBeInTheDocument();
     expect(api.setToolRequestTracing).not.toHaveBeenCalled();
+  });
+  it("explains unconfirmed mode without treating it as recording being off", async () => {
+    api.diagnostics.mockResolvedValue({ ...diagnostic, trace: { ...diagnostic.trace, effective_mode: null, restart_required: true } });
+    render(wrap(<DiagnosticsPanel state={state} onState={vi.fn()} />));
+    expect(await screen.findByText("Not yet confirmed")).toBeVisible();
+    expect(screen.getByText(/This does not mean recording is off/)).toBeVisible();
+    expect(screen.queryByText(/The saved setting is not active yet/)).not.toBeInTheDocument();
+    expect(within(screen.getByText("Saved recording setting").parentElement!).getByText("Off")).toBeVisible();
+    expect(api.setToolRequestTracing).not.toHaveBeenCalled();
+  });
+  it("keeps the running mode separate from the draft and a saved pending setting", async () => {
+    api.setToolRequestTracing.mockResolvedValue({ ...diagnostic.trace, mode: "metadata", effective_mode: "off", restart_required: true });
+    render(wrap(<DiagnosticsPanel state={state} onState={vi.fn()} />));
+    fireEvent.change(await screen.findByRole("combobox", { name: "Tool Request Tracing" }), { target: { value: "metadata" } });
+    expect(within(screen.getByText("Server recording now").parentElement!).getByText("Off")).toBeVisible();
+    expect(within(screen.getByText("Saved recording setting").parentElement!).getByText("Off")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await screen.findByText(/The saved setting is not active yet/);
+    expect(within(screen.getByText("Saved recording setting").parentElement!).getByText("Timing & status only")).toBeVisible();
+    expect(within(screen.getByText("Server recording now").parentElement!).getByText("Off")).toBeVisible();
+  });
+  it("confirms Server interruption before applying tracing through a service restart", async () => {
+    const persistent = { ...state, persistent_environment: "env-fixture" };
+    api.setToolRequestTracing.mockResolvedValue({ ...diagnostic.trace, mode: "metadata", effective_mode: "metadata" });
+    render(wrap(<DiagnosticsPanel state={persistent} onState={vi.fn()} />));
+    fireEvent.change(await screen.findByRole("combobox", { name: "Tool Request Tracing" }), { target: { value: "metadata" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save & Restart Server" }));
+    const confirmation = await screen.findByRole("dialog", { name: "Runtime restart warning" });
+    expect(api.setToolRequestTracing).not.toHaveBeenCalled();
+    fireEvent.click(within(confirmation).getByRole("button", { name: "Save & Restart Server" }));
+    await waitFor(() => expect(api.setToolRequestTracing).toHaveBeenCalledExactlyOnceWith({ mode: "metadata", expected_revision: "env-fence", confirm_full: false, restart: true, confirm_interrupt: true }));
   });
   it("links problem-specific guidance to the matching page and keeps reports visible", async () => {
     const onConnection = vi.fn(), onActivity = vi.fn(), onRuntime = vi.fn();

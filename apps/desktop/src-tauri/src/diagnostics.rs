@@ -229,18 +229,93 @@ pub fn update_trace(
         return Err(diagnostic_error("server_environment_invalid"));
     }
     let path_for_check = path.to_path_buf();
-    crate::state::write_atomic_file_with_hook(path, next.as_bytes(), |_| {
+    crate::state::write_atomic_file_with_hook(path, next.as_bytes(), |_temporary| {
         let current = read_env(&path_for_check)
             .map_err(|_| std::io::Error::other("environment unavailable"))?;
         if format!("{:x}", Sha256::digest(current.as_bytes())) != digest {
             return Err(std::io::Error::other("environment changed"));
         }
+        #[cfg(windows)]
+        preserve_windows_config_security(&path_for_check, _temporary)?;
         Ok(())
     })
     .map_err(|_| diagnostic_error("server_environment_write_unconfirmed"))?;
     let mut result = inspect_trace(path, false)?;
     result.restart_required = true;
     Ok(result)
+}
+
+#[cfg(windows)]
+fn preserve_windows_config_security(original: &Path, temporary: &Path) -> std::io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Foundation::LocalFree;
+    use windows_sys::Win32::Security::Authorization::{
+        GetNamedSecurityInfoW, SetNamedSecurityInfoW, SE_FILE_OBJECT,
+    };
+    use windows_sys::Win32::Security::{
+        GetSecurityDescriptorControl, DACL_SECURITY_INFORMATION, OWNER_SECURITY_INFORMATION,
+        PROTECTED_DACL_SECURITY_INFORMATION, SE_DACL_PROTECTED,
+        UNPROTECTED_DACL_SECURITY_INFORMATION,
+    };
+
+    // MoveFileEx replaces the owner as well as the file. An elevated Desktop's
+    // temporary file may otherwise acquire Administrators as its owner, which
+    // the native service's private-file check correctly rejects.
+    let original: Vec<u16> = original.as_os_str().encode_wide().chain(Some(0)).collect();
+    let mut temporary: Vec<u16> = temporary.as_os_str().encode_wide().chain(Some(0)).collect();
+    let mut owner = std::ptr::null_mut();
+    let mut dacl = std::ptr::null_mut();
+    let mut descriptor = std::ptr::null_mut();
+    let status = unsafe {
+        GetNamedSecurityInfoW(
+            original.as_ptr(),
+            SE_FILE_OBJECT,
+            OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+            &mut owner,
+            std::ptr::null_mut(),
+            &mut dacl,
+            std::ptr::null_mut(),
+            &mut descriptor,
+        )
+    };
+    let result = (|| {
+        if status != 0 {
+            return Err(std::io::Error::from_raw_os_error(status as i32));
+        }
+        if owner.is_null() || dacl.is_null() || descriptor.is_null() {
+            return Err(std::io::Error::other("configuration security unavailable"));
+        }
+        let mut control = 0;
+        let mut revision = 0;
+        if unsafe { GetSecurityDescriptorControl(descriptor, &mut control, &mut revision) } == 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        let protection = if control & SE_DACL_PROTECTED != 0 {
+            PROTECTED_DACL_SECURITY_INFORMATION
+        } else {
+            UNPROTECTED_DACL_SECURITY_INFORMATION
+        };
+        let status = unsafe {
+            SetNamedSecurityInfoW(
+                temporary.as_mut_ptr(),
+                SE_FILE_OBJECT,
+                OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION | protection,
+                owner,
+                std::ptr::null_mut(),
+                dacl,
+                std::ptr::null_mut(),
+            )
+        };
+        if status == 0 {
+            Ok(())
+        } else {
+            Err(std::io::Error::from_raw_os_error(status as i32))
+        }
+    })();
+    if !descriptor.is_null() {
+        unsafe { LocalFree(descriptor) };
+    }
+    result
 }
 
 pub fn trace_directory(path: &Path) -> Option<PathBuf> {

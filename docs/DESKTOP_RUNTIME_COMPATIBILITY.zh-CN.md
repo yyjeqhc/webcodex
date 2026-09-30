@@ -40,9 +40,11 @@ cargo build --locked --profile dogfood -p webcodex-cli -p webcodex -p webcodex-r
 
 “设置 → Runtime 与服务”先展示服务状态和本机服务的启动、停止、重启操作，再展示程序来源与兼容性；构建信息在“版本与文件详情”中。已安装环境的程序统一通过“关于与更新”升级。
 
-“设置 → 故障排查”按问题提供连接、活动、服务设置的入口，再展示报告导出和请求追踪；账户凭据恢复仍在这里。不支持的追踪修改会显示原因并禁用；已安装环境的 native Runtime authority 不允许此操作。追踪默认 Off；Metadata 记录请求生命周期和关联信息，不记录完整参数/结果；Full 可能含敏感内容，仅建议临时开启，必须明确确认。
+“设置 → 故障排查”按问题提供连接、活动、服务设置的入口，再展示报告导出和请求追踪；账户凭据恢复仍在这里。Desktop 自己启动的本机 Server，以及已验证归属当前用户的 Environment 本机 Server 服务，支持修改追踪。远程、系统级、所有权不明或配置不可用时显示具体原因，不再摆放无法操作的编辑控件；系统服务配置仍由管理员处理，保留服务账户的文件权限。追踪默认 Off；Metadata 记录请求生命周期和关联信息，不记录完整参数/结果；Full 可能含敏感内容，仅建议临时开启，必须明确确认。
 
-保存仅原子修改托管 Server 环境文件的 `WEBCODEX_TOOL_REQUEST_TRACE`，保留其他设置并去除同名重复项，不把环境正文传给 UI。“保存并重启 Runtime”仅重启托管本地 Server，并等待现有 Runner 重连；未确认生效时仍显示需重启/错误原因。
+“Server 当前记录方式”来自运行中 Server 报告的 `effective_config.tool_request_trace_mode`，与“已保存的记录方式”和尚未保存的下拉选择分开展示。读取失败显示“尚未确认”，不推断为关闭。保存仅原子修改托管 Server 环境文件的 `WEBCODEX_TOOL_REQUEST_TRACE`，下次 Server 启动时生效；保留其他设置并去除同名重复项，不把环境正文传给 UI。修订号绑定文件内容、路径和 Environment 身份，旧草稿不能改写新的目标；Environment 编辑持有 setup/installer 锁直到原子保存完成。
+
+“保存并重启 Server”使用原来的进程或 native 服务管理方式应用设置，有 Runner 时等待现有 Runner 重连，不杀掉健康 Runner，不接管用户自管服务。重启中断须明确确认；未确认生效时保留待应用状态和安全错误原因。重启失败仍保留已保存设置，readiness 进入终态，并记录具体 Runtime 错误。
 
 主侧栏的“运行控制台”说明 Console 的用途，“在浏览器中打开”使用当前本地 Server 的 `/runtime`，不在 URL 中放凭据。“复制 Runtime Console 凭据”是独立敏感操作，由 native 层读取当前托管用户凭据并复制到剪贴板，不显示、不写入 Activity，不复制 Runner token。剪贴板管理器可能保留数据，请勿分享。
 

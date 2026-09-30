@@ -31,7 +31,11 @@ export function DiagnosticsPanel({ state, onState, onActivity, onRuntime, onConn
   }, []);
   const disabled = busy || Boolean(state.current_operation);
   const persistentEnvironment = state.persistent_environment?.trim() || null;
-  const canTrace = Boolean(data?.trace.available && !persistentEnvironment);
+  const canTrace = Boolean(data?.trace.available);
+  const traceLabel = (value: TraceMode) => value === "metadata" ? p("traceMetadata") : value === "full" ? p("traceFull") : s("Off");
+  const unavailableHelp = state.topology?.server.kind === "remote" ? "traceRemoteHelp"
+    : data?.trace.error_code === "trace_system_service_read_only" ? "traceSystemHelp"
+    : !state.topology ? "traceSetupHelp" : "traceUnavailableHelp";
   const act = async (action: () => Promise<void>) => {
     if (disabled) return;
     setBusy(true); setError(null); setNotice("");
@@ -97,22 +101,27 @@ export function DiagnosticsPanel({ state, onState, onActivity, onRuntime, onConn
             await desktopApi.exportSupportBundle(path); if (alive.current) setNotice("Support bundle exported");
           })}>{s("Export Support Bundle")}</button></div>
       </div>
-      <div className="shell-subsection">
-        <h3>{s("Tool Request Tracing")}</h3>
+      <section className="shell-subsection" aria-labelledby="desktop-tracing-title">
+        <h3 id="desktop-tracing-title">{s("Tool Request Tracing")}</h3>
         <p className="field-help">{p("tracePurpose")}</p>
+        <dl className="runtime-facts">
+          <div><dt>{p("traceCurrentMode")}</dt><dd>{data.trace.effective_mode ? traceLabel(data.trace.effective_mode) : p("traceUnconfirmed")}</dd></div>
+          {canTrace && <div><dt>{p("traceSavedMode")}</dt><dd>{traceLabel(data.trace.mode)}</dd></div>}
+        </dl>
+        <p className="field-help">{data.trace.effective_mode ? p("traceCurrentHelp") : p("traceUnconfirmedHelp")}</p>
+        {canTrace ? <>
         <label htmlFor="desktop-trace-mode">{s("Tool Request Tracing")}</label>
-        <select id="desktop-trace-mode" value={mode} onChange={event => setMode(event.target.value as TraceMode)} disabled={disabled || !canTrace}>
+        <select id="desktop-trace-mode" value={mode} onChange={event => setMode(event.target.value as TraceMode)} disabled={disabled} aria-describedby="desktop-trace-mode-help">
           <option value="off">{s("Off")}</option><option value="metadata">{p("traceMetadata")}</option><option value="full">{p("traceFull")}</option>
         </select>
-        <p className="field-help">{mode === "off" ? p("traceOffHelp") : s(mode === "full" ? "Full tracing may contain sensitive tool inputs and results. Enable it only temporarily." : "Metadata records lifecycle and correlation, not full tool arguments or results.")}</p>
-        {!canTrace && <p className="workspace-notice">{p("traceUnavailableHelp")}</p>}
-        <p>{s("Effective mode")}: {data.trace.effective_mode === "metadata" ? p("traceMetadata") : data.trace.effective_mode === "full" ? p("traceFull") : s(data.trace.effective_mode === "off" ? "Off" : "Unknown")}</p>
-        {data.trace.restart_required && <p role="status">{s("Restart required")}</p>}
-        {data.trace.error_code && <code>{data.trace.error_code}</code>}
-        <div className="shell-actions"><button type="button" className="secondary-button" disabled={disabled || !canTrace} onClick={() => void prepareTrace(false)}>{s("Save")}</button>
-          <button type="button" className="primary-button" disabled={disabled || !canTrace || !data.trace.can_restart} onClick={() => void prepareTrace(true)}>{s("Save & Restart Runtime")}</button></div>
+        <p id="desktop-trace-mode-help" className="field-help">{mode === "off" ? p("traceOffHelp") : s(mode === "full" ? "Full tracing may contain sensitive tool inputs and results. Enable it only temporarily." : "Metadata records lifecycle and correlation, not full tool arguments or results.")}</p>
+        {data.trace.restart_required && data.trace.effective_mode && <p role="status">{p("tracePendingHelp")}</p>}
+        <div className="shell-actions"><button type="button" className="secondary-button" disabled={disabled} onClick={() => void prepareTrace(false)}>{s("Save")}</button>
+          {data.trace.can_restart && <button type="button" className="primary-button" disabled={disabled} onClick={() => void prepareTrace(true)}>{p("traceSaveRestart")}</button>}</div>
         <p className="field-help">{p("traceRestartHelp")}</p>
-      </div>
+        </> : <div className="workspace-notice"><p>{p(unavailableHelp)}</p>{onRuntime && state.topology?.server.kind !== "remote" && <button type="button" className="secondary-button" onClick={onRuntime}>{p("runtimeAndServices")}</button>}</div>}
+        {data.trace.error_code && <details className="workspace-technical"><summary>{p("details")}</summary><code>{data.trace.error_code}</code></details>}
+      </section>
       {persistentEnvironment && <div className="shell-subsection">
         <h3>{p("accountRecovery")}</h3><p className="field-help">{p("accountRecoveryHelp")}</p>
         <div className="credential-recovery">
@@ -137,7 +146,7 @@ export function DiagnosticsPanel({ state, onState, onActivity, onRuntime, onConn
         {confirmation.restart && <><p>{s("Server restart may interrupt in-flight requests; the existing Runner will reconnect.")}</p><p>{confirmation.jobs == null ? s("Job count is not confirmed.") : `${s("Active Jobs")}: ${confirmation.jobs}`}</p></>}
       </> : <p>{s("Restore the previous known-good configuration without deleting Projects or credentials. Runtime will remain stopped until explicitly started.")}</p>}
       {errorCard}
-      <div className="shell-actions"><button type="button" className="secondary-button" disabled={disabled} onClick={() => setConfirmation(null)}>{s("Cancel")}</button><button type="button" className="primary-button" disabled={disabled} onClick={() => void confirmAction()}>{s(confirmation.kind === "restore" ? "Restore previous configuration" : confirmation.restart ? "Save & Restart Runtime" : "Confirm full tracing")}</button></div>
+      <div className="shell-actions"><button type="button" className="secondary-button" disabled={disabled} onClick={() => setConfirmation(null)}>{s("Cancel")}</button><button type="button" className="primary-button" disabled={disabled} onClick={() => void confirmAction()}>{confirmation.kind === "trace" && confirmation.restart ? p("traceSaveRestart") : s(confirmation.kind === "restore" ? "Restore previous configuration" : "Confirm full tracing")}</button></div>
     </WorkspaceDialog>}
   </div>;
 }

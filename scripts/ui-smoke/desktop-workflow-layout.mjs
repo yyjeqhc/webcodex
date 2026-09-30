@@ -152,7 +152,7 @@ try {
   page.on('pageerror', error => report.errors.push(error.message));
   await page.goto(fixture.url + '/desktop/');
   await page.locator('[data-webcodex-action="navigate-settings"]').click();
-  for (const locale of ['zh-CN', 'en-US', 'de-DE', 'fr-FR', 'ja-JP', 'ko-KR']) {
+  for (const locale of ['zh-CN', 'zh-TW', 'en-US', 'de-DE', 'fr-FR', 'ja-JP', 'ko-KR']) {
     await page.locator('#settings-tab-general').click();
     await page.locator('#desktop-settings-locale').selectOption(locale);
     for (const section of ['general', 'access', 'network', 'runtime', 'diagnostics', 'about']) {
@@ -163,6 +163,7 @@ try {
     for (const category of ['codingAgents', 'sshResources', 'mcpProviders', 'skills', 'instructions']) {
       await page.locator(`#extension-tab-${category}`).click();
       await bounded(page, `Localized Extensions ${locale} ${category}`);
+      if (locale === 'zh-TW') await capture(page, `extensions-${category}-zh-TW`);
     }
     await page.locator('[data-webcodex-action="navigate-settings"]').click();
   }

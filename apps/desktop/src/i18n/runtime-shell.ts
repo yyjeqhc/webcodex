@@ -1,4 +1,5 @@
 import { useLocale } from "./locale";
+import zhTW from "./messages/shell-zh-TW.json";
 
 const zh: Record<string, string> = {
   "Stable updates can download automatically. Installation and closing Desktop always require your confirmation.": "稳定版更新可以自动下载；安装和退出 Desktop 始终需要你的明确确认。",
@@ -107,5 +108,6 @@ const serviceText: Record<string, Record<string, string>> = {
 export type ShellText = (text: string) => string;
 export function useShellText(): ShellText {
   const { locale } = useLocale();
-  return (text) => locale === "zh-CN" ? zh[text] ?? text : serviceText[locale]?.[text] ?? text;
+  const catalog: Record<string, string> | undefined = locale === "zh-CN" ? zh : locale === "zh-TW" ? zhTW : serviceText[locale];
+  return (text) => catalog?.[text] ?? text;
 }

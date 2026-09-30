@@ -2,6 +2,8 @@
 
 [English](desktop-install.md) | [简体中文](desktop-install.zh-CN.md)
 
+Desktop supports Simplified Chinese, Traditional Chinese (`zh-TW`), English, Japanese, Korean, German, and French. Change language in Settings; the selection persists and controls activity time formatting. Traditional Chinese uses dedicated catalogs. Raw backend diagnostics and tray menus remain English; file dialogs follow the operating system language.
+
 For normal Windows or macOS personal use, **WebCodex Desktop + the official
 OpenAI Secure Tunnel is the recommended path**. WebCodex Desktop runs the local
 Server and Runner; you send coding requests from **ChatGPT Web**. You do not

@@ -2,6 +2,8 @@
 
 [English](desktop-install.md) | [简体中文](desktop-install.zh-CN.md)
 
+Desktop 界面支持简体中文、繁體中文（`zh-TW`）、English、日本語、한국어、Deutsch 和 Français。可在设置中切换，选择会保存，活动时间也按所选语言格式显示。繁体中文使用独立翻译；原始后端诊断和系统托盘菜单仍为英文，文件选择器跟随操作系统语言。
+
 对于普通 Windows / macOS 个人用户，**最推荐的路径是 WebCodex Desktop +
 官方 OpenAI Secure Tunnel**。WebCodex Desktop 在本机运行 Server 和 Runner；
 真正向 AI 发送编程请求的界面是 **ChatGPT 网页版**。第一次使用不需要配置

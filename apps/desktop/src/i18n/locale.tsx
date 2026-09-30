@@ -3,6 +3,7 @@ import koKR from "./messages/ko-KR.json";
 import deDE from "./messages/de-DE.json";
 import frFR from "./messages/fr-FR.json";
 import zhCN from "./messages/zh-CN.json";
+import zhTW from "./messages/zh-TW.json";
 import enUS from "./messages/en-US.json";
 import {
   createContext,
@@ -15,6 +16,7 @@ import {
 
 export const LANGUAGES = [
   { value: "zh-CN", label: "简体中文" },
+  { value: "zh-TW", label: "繁體中文" },
   { value: "en-US", label: "English" },
   { value: "ja-JP", label: "日本語" },
   { value: "ko-KR", label: "한국어" },
@@ -29,6 +31,7 @@ export type MessageKey = keyof typeof zhCN;
 
 export const messages: Record<Locale, Record<MessageKey, string>> = {
   "zh-CN": zhCN,
+  "zh-TW": zhTW,
   "en-US": enUS,
   "ja-JP": jaJP,
   "ko-KR": koKR,

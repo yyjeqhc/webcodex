@@ -29,7 +29,7 @@ export interface RuntimeSettings {
 export interface RuntimeSwitchRequest { candidate_id: string; expected_selection_revision: number; confirm_interrupt: boolean }
 export type TraceMode = "off" | "metadata" | "full";
 export interface TraceSettings {
-  mode: TraceMode; effective_mode: TraceMode | null; revision: string; available: boolean; restart_required: boolean;
+  configured_mode: TraceMode | null; effective_mode: TraceMode | null; revision: string; can_edit: boolean; restart_required: boolean;
   can_restart: boolean; error_code: string | null;
 }
 export interface TraceUpdate { mode: TraceMode; expected_revision: string; confirm_full: boolean; restart: boolean; confirm_interrupt: boolean }

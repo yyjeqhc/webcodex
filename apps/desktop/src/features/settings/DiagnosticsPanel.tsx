@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { save } from "@tauri-apps/plugin-dialog";
 import { desktopApi } from "../../lib/desktop-api";
 import type { DesktopError, DesktopState } from "../../models/topology";
@@ -23,7 +24,7 @@ export function DiagnosticsPanel({ state, onState, onActivity, onRuntime, onConn
   const userTokenInput = useRef<HTMLInputElement>(null);
   const [confirmation, setConfirmation] = useState<{ kind: "trace"; restart: boolean; jobs: number | null } | { kind: "restore" } | null>(null);
   const alive = useRef(true);
-  const install = (next: DiagnosticSnapshot) => { if (alive.current) { setData(next); setMode(next.trace.mode); } };
+  const install = (next: DiagnosticSnapshot) => { if (alive.current) { setData(next); setMode(next.trace.configured_mode ?? "off"); } };
   useEffect(() => {
     alive.current = true;
     void Promise.resolve().then(() => desktopApi.diagnostics()).then(install).catch(value => { if (alive.current) setError(normalizeDesktopError(value)); });
@@ -31,7 +32,8 @@ export function DiagnosticsPanel({ state, onState, onActivity, onRuntime, onConn
   }, []);
   const disabled = busy || Boolean(state.current_operation);
   const persistentEnvironment = state.persistent_environment?.trim() || null;
-  const canTrace = Boolean(data?.trace.available);
+  const canTrace = Boolean(data?.trace.can_edit);
+  const displayedMode = canTrace ? mode : data?.trace.effective_mode;
   const traceLabel = (value: TraceMode) => value === "metadata" ? p("traceMetadata") : value === "full" ? p("traceFull") : s("Off");
   const unavailableHelp = state.topology?.server.kind === "remote" ? "traceRemoteHelp"
     : data?.trace.error_code === "trace_system_service_read_only" ? "traceSystemHelp"
@@ -106,20 +108,26 @@ export function DiagnosticsPanel({ state, onState, onActivity, onRuntime, onConn
         <p className="field-help">{p("tracePurpose")}</p>
         <dl className="runtime-facts">
           <div><dt>{p("traceCurrentMode")}</dt><dd>{data.trace.effective_mode ? traceLabel(data.trace.effective_mode) : p("traceUnconfirmed")}</dd></div>
-          {canTrace && <div><dt>{p("traceSavedMode")}</dt><dd>{traceLabel(data.trace.mode)}</dd></div>}
+          <div><dt>{p("traceSavedMode")}</dt><dd>{data.trace.configured_mode ? traceLabel(data.trace.configured_mode) : p("traceUnconfirmed")}</dd></div>
         </dl>
         <p className="field-help">{data.trace.effective_mode ? p("traceCurrentHelp") : p("traceUnconfirmedHelp")}</p>
-        {canTrace ? <>
         <label htmlFor="desktop-trace-mode">{s("Tool Request Tracing")}</label>
-        <select id="desktop-trace-mode" value={mode} onChange={event => setMode(event.target.value as TraceMode)} disabled={disabled} aria-describedby="desktop-trace-mode-help">
+        <select id="desktop-trace-mode" value={displayedMode ?? "unknown"} onChange={event => setMode(event.target.value as TraceMode)} disabled={disabled || !canTrace} aria-describedby={canTrace ? "desktop-trace-mode-help" : "desktop-trace-mode-help desktop-trace-authority-help"}>
+          {!canTrace && !data.trace.effective_mode && <option value="unknown">{p("traceUnconfirmed")}</option>}
           <option value="off">{s("Off")}</option><option value="metadata">{p("traceMetadata")}</option><option value="full">{p("traceFull")}</option>
         </select>
-        <p id="desktop-trace-mode-help" className="field-help">{mode === "off" ? p("traceOffHelp") : s(mode === "full" ? "Full tracing may contain sensitive tool inputs and results. Enable it only temporarily." : "Metadata records lifecycle and correlation, not full tool arguments or results.")}</p>
+        <p id="desktop-trace-mode-help" className="field-help">{!displayedMode ? p("traceUnconfirmedHelp") : displayedMode === "off" ? p("traceOffHelp") : s(displayedMode === "full" ? "Full tracing may contain sensitive tool inputs and results. Enable it only temporarily." : "Metadata records lifecycle and correlation, not full tool arguments or results.")}</p>
         {data.trace.restart_required && data.trace.effective_mode && <p role="status">{p("tracePendingHelp")}</p>}
+        {canTrace ? <>
         <div className="shell-actions"><button type="button" className="secondary-button" disabled={disabled} onClick={() => void prepareTrace(false)}>{s("Save")}</button>
           {data.trace.can_restart && <button type="button" className="primary-button" disabled={disabled} onClick={() => void prepareTrace(true)}>{p("traceSaveRestart")}</button>}</div>
         <p className="field-help">{p("traceRestartHelp")}</p>
-        </> : <div className="workspace-notice"><p>{p(unavailableHelp)}</p>{onRuntime && state.topology?.server.kind !== "remote" && <button type="button" className="secondary-button" onClick={onRuntime}>{p("runtimeAndServices")}</button>}</div>}
+        </> : <div className="workspace-notice" id="desktop-trace-authority-help"><p>{p(unavailableHelp)}</p>{onRuntime && state.topology?.server.kind !== "remote" && <button type="button" className="secondary-button" onClick={onRuntime}>{p("runtimeAndServices")}</button>}</div>}
+        {!canTrace && <div className="shell-actions">
+          {data.resources.includes("server_configuration") && <button type="button" className="secondary-button" disabled={disabled} onClick={() => void act(() => desktopApi.openDiagnosticResource("server_configuration"))}>{s("Open Server configuration location")}</button>}
+          <code>WEBCODEX_TOOL_REQUEST_TRACE=metadata</code>
+          <button type="button" className="secondary-button" disabled={disabled} onClick={() => void act(async () => { await writeText("WEBCODEX_TOOL_REQUEST_TRACE=metadata"); if (alive.current) setNotice("Copied"); })}>{p("traceCopyMetadata")}</button>
+        </div>}
         {data.trace.error_code && <details className="workspace-technical"><summary>{p("details")}</summary><code>{data.trace.error_code}</code></details>}
       </section>
       {persistentEnvironment && <div className="shell-subsection">
@@ -136,7 +144,7 @@ export function DiagnosticsPanel({ state, onState, onActivity, onRuntime, onConn
         </div>
       </div>}
       <details className="workspace-technical"><summary>{p("callDetails")}</summary><ContinuationFacts value={data.report.last_webcodex_call} observedAt={data.observed_at_ms} /></details>
-      <div className="shell-subsection"><h3>{p("diagnosticFiles")}</h3><p className="field-help">{p("diagnosticFilesHelp")}</p><div className="shell-actions">{resourceNames.filter(([kind]) => data.resources.includes(kind)).map(([kind, label]) => <button type="button" key={kind} className="text-button" disabled={disabled} onClick={() => void act(() => desktopApi.openDiagnosticResource(kind))}>{s(label)}</button>)}</div></div>
+      <div className="shell-subsection"><h3>{p("diagnosticFiles")}</h3><p className="field-help">{p("diagnosticFilesHelp")}</p><div className="shell-actions">{resourceNames.filter(([kind]) => data.resources.includes(kind) && (kind !== "server_configuration" || canTrace)).map(([kind, label]) => <button type="button" key={kind} className="text-button" disabled={disabled} onClick={() => void act(() => desktopApi.openDiagnosticResource(kind))}>{s(label)}</button>)}</div></div>
     </>}
     {notice && <p role="status">{s(notice)}</p>}{busy && <p role="status">{s("Loading…")}</p>}
     {!confirmation && errorCard}

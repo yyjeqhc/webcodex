@@ -110,7 +110,7 @@ fn owned_user_service_tracing_is_editable_and_keeps_credentials_and_setup_fences
     let f = Fixture::new();
     let target = f.target().unwrap();
     let initial = target.inspect().unwrap();
-    assert!(initial.available && initial.can_restart);
+    assert!(initial.can_edit && initial.can_restart);
     assert!(
         f.store.lock().is_err(),
         "setup/installer may not retarget an admitted edit"
@@ -131,7 +131,7 @@ fn owned_user_service_tracing_is_editable_and_keeps_credentials_and_setup_fences
         .unwrap()
         .expose()
         .contains("fixture-private-canary"));
-    assert_eq!(next.mode, TraceMode::Metadata);
+    assert_eq!(next.configured_mode, Some(TraceMode::Metadata));
     assert!(next.restart_required);
     assert!(
         next.effective_mode.is_none(),
@@ -249,4 +249,36 @@ fn linked_server_directory_is_rejected_before_a_configuration_write() {
     assert!(!std::fs::read_to_string(other.join("webcodex.env"))
         .unwrap()
         .contains("WEBCODEX_TOOL_REQUEST_TRACE"));
+}
+
+#[test]
+fn configuration_navigation_is_independent_of_edit_authority() {
+    let f = Fixture::new();
+    let expected = f.store.root().join("server/webcodex.env");
+    let original = f.contents();
+    let mut record = f.record.clone();
+    record.request.service_scope = ServiceScope::System;
+    f.store.save_environment(&record).unwrap();
+    assert_eq!(
+        f.target().err().unwrap().code,
+        "trace_system_service_read_only"
+    );
+    assert_eq!(
+        configuration_location(true, Some(&f.runtime), &expected).unwrap(),
+        expected.parent().unwrap()
+    );
+    record.request.service_scope = ServiceScope::User;
+    f.store.save_environment(&record).unwrap();
+    assert!(
+        persistent_trace_target(f.store.clone(), &record.environment_id, &f.runtime, |_| Ok(
+            false
+        ))
+        .is_err()
+    );
+    assert!(configuration_location(true, Some(&f.runtime), &expected).is_ok());
+    assert!(configuration_location(false, Some(&f.runtime), &expected).is_err());
+    let mut foreign = f.runtime.clone();
+    foreign.server_env_file = Some(f.store.root().join("foreign.env"));
+    assert!(configuration_location(true, Some(&foreign), &expected).is_err());
+    assert_eq!(f.contents(), original);
 }

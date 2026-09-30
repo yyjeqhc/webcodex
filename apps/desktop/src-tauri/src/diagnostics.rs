@@ -40,10 +40,10 @@ impl TraceMode {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TraceSettings {
-    pub mode: TraceMode,
+    pub configured_mode: Option<TraceMode>,
     pub effective_mode: Option<TraceMode>,
     pub revision: String,
-    pub available: bool,
+    pub can_edit: bool,
     pub restart_required: bool,
     pub can_restart: bool,
     pub error_code: Option<String>,
@@ -193,10 +193,14 @@ pub fn inspect_trace(path: &Path, can_restart: bool) -> DesktopResult<TraceSetti
         None
     };
     Ok(TraceSettings {
-        mode: mode.unwrap_or_default(),
+        configured_mode: if error.is_some() {
+            None
+        } else {
+            Some(mode.unwrap_or_default())
+        },
         effective_mode: None,
         revision: format!("{:x}", Sha256::digest(text.as_bytes())),
-        available: true,
+        can_edit: true,
         restart_required: false,
         can_restart,
         error_code: error.map(str::to_string),
@@ -507,7 +511,7 @@ pub fn report(
             "connection":snapshot.readiness.exposure,"runtime_ready":snapshot.readiness.runtime_ready,
             "connections_running":snapshot.connections.running,"connections_needing_attention":snapshot.connections.needs_attention,
             "connections":connection_health,"last_observed_chatgpt_activity_at_ms":snapshot.chatgpt_activity.as_ref().and_then(|a|a.last_meaningful_activity_at_ms)},
-        "diagnostics":{"trace_mode":trace.mode,"effective_trace_mode":trace.effective_mode,"restart_required":trace.restart_required,
+        "diagnostics":{"trace_mode":trace.configured_mode,"effective_trace_mode":trace.effective_mode,"restart_required":trace.restart_required,
             "current_operation":snapshot.current_operation.as_ref().map(|o|o.kind),
             "configuration_issue":snapshot.configuration_issue,"runtime_issue":runtime.unavailable_code},
         "computer_use":{"desktop_permissions":permissions,"runner_advertised_capabilities":cu},

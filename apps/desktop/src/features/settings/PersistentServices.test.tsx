@@ -12,7 +12,7 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({ save: vi.fn() }));
 
 const snapshot = {
   observed_at_ms: 1,
-  trace: { mode: "off", effective_mode: "off", revision: "fence", available: false, restart_required: false, can_restart: false, error_code: null },
+  trace: { configured_mode: "off", effective_mode: "off", revision: "fence", can_edit: false, restart_required: false, can_restart: false, error_code: null },
   configuration: { reason_code: null, backup_available: false, primary_fingerprint: null },
   resources: [], can_copy_console_credential: false, credential_copy_fence: null,
   report: { schema_version: 1, desktop: {}, last_webcodex_call: null }, markdown: "",

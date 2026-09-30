@@ -15,9 +15,9 @@ fn env_fixture(text: &str) -> PathBuf {
 fn trace_mode_updates_are_atomic_allowlisted_and_keep_unknown_entries() {
     let path=env_fixture("# operator settings\r\nWEBCODEX_TOKEN=private-canary\r\nCUSTOM_SETTING='literal value'\r\nWEBCODEX_MCP_COMPACT_SCHEMAS=true\r\n");
     let initial = inspect_trace(&path, true).unwrap();
-    assert_eq!(initial.mode, TraceMode::Off);
+    assert_eq!(initial.configured_mode, Some(TraceMode::Off));
     let next = update_trace(&path, TraceMode::Metadata, &initial.revision, false).unwrap();
-    assert_eq!(next.mode, TraceMode::Metadata);
+    assert_eq!(next.configured_mode, Some(TraceMode::Metadata));
     assert!(next.restart_required);
     let text = std::fs::read_to_string(&path).unwrap();
     assert!(text.contains("WEBCODEX_TOKEN=private-canary\r\n"));
@@ -27,9 +27,9 @@ fn trace_mode_updates_are_atomic_allowlisted_and_keep_unknown_entries() {
     let full = update_trace(&path, TraceMode::Full, &next.revision, false).unwrap_err();
     assert_eq!(full.code, "full_trace_confirmation_required");
     let full = update_trace(&path, TraceMode::Full, &next.revision, true).unwrap();
-    assert_eq!(full.mode, TraceMode::Full);
+    assert_eq!(full.configured_mode, Some(TraceMode::Full));
     let off = update_trace(&path, TraceMode::Off, &full.revision, false).unwrap();
-    assert_eq!(off.mode, TraceMode::Off);
+    assert_eq!(off.configured_mode, Some(TraceMode::Off));
     assert!(!serde_json::to_string(&off)
         .unwrap()
         .contains("private-canary"));
@@ -141,10 +141,10 @@ fn report_and_bundle_include_only_explicit_safe_projections() {
         switch_unavailable_reason: None,
     };
     let trace = TraceSettings {
-        mode: TraceMode::Off,
+        configured_mode: Some(TraceMode::Off),
         effective_mode: None,
         revision: "fence".into(),
-        available: true,
+        can_edit: true,
         restart_required: false,
         can_restart: false,
         error_code: None,

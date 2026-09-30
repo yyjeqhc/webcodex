@@ -22,6 +22,8 @@ const api = vi.hoisted(() => ({ updateTunnelProxy: vi.fn(), runnerSettings: vi.f
 const dialog = vi.hoisted(() => ({ open: vi.fn(), save: vi.fn() }));
 vi.mock("../lib/desktop-api", () => ({ desktopApi: api }));
 vi.mock("@tauri-apps/plugin-dialog", () => dialog);
+const clipboard = vi.hoisted(() => ({ writeText: vi.fn().mockResolvedValue(undefined) }));
+vi.mock("@tauri-apps/plugin-clipboard-manager", () => clipboard);
 const state = {
   project: { path: "/fixture/project", runtime_project_id: "agent:fixture:project", is_git_repository: true, allowed_root: "/fixture/project" },
   topology: { experience: "full", server: { kind: "local" }, exposure: { kind: "none" } }, current_operation: null,
@@ -33,7 +35,7 @@ const state = {
 const build = (binary: string, index = 0) => ({ schema_version: 1, binary, version: `0.${index + 4}.0`, git_commit: `${index + 1}`.repeat(12), git_dirty: index === 2, built_at: "100", target: "aarch64-apple-darwin", architecture: "aarch64", desktop_runtime_contract: { min_generation: 1, max_generation: 1 } });
 const candidate: RuntimeCandidate = { candidate_id: "candidate-fence", source: { kind: "custom", directory: "/fixture/custom" }, selection_revision: 3, checked_at_ms: 100, directory: "/fixture/custom", compatibility: "compatible", build_alignment: "different_version", advisories: ["different_source_revisions", "dirty_build_operator_responsibility"], error_code: null, fingerprint: "hash", binaries: ["webcodex", "webcodex-server", "webcodex-runner"].map((name, index) => ({ name, present: true, startup_check: "passed", metadata: build(name, index), sha256: "hash", error_code: null, diagnostics: null })) };
 const settings: RuntimeSettings = { source: { kind: "bundled" }, selection_revision: 3, desktop_contract: { min_generation: 1, max_generation: 1 }, selected: { ...candidate, source: { kind: "bundled" }, candidate_id: "" }, candidate: null, previous_source: null, last_switch: null, unavailable_code: null, active_jobs: 0, can_switch: true, switch_unavailable_reason: null };
-const diagnostic = { schema_version: 1, observed_at_ms: Date.now(), trace: { mode: "off", effective_mode: "off", revision: "env-fence", available: true, restart_required: false, can_restart: true, error_code: null }, configuration: { reason_code: null, backup_available: true, primary_fingerprint: "state-fence" }, resources: ["runtime_console", "app_data"], can_copy_console_credential: true, credential_copy_fence: "identity-fence", report: { schema_version: 1, desktop: build("webcodex-desktop"), last_webcodex_call: null }, markdown: "# Safe report" } as DiagnosticSnapshot;
+const diagnostic = { schema_version: 1, observed_at_ms: Date.now(), trace: { configured_mode: "off", effective_mode: "off", revision: "env-fence", can_edit: true, restart_required: false, can_restart: true, error_code: null }, configuration: { reason_code: null, backup_available: true, primary_fingerprint: "state-fence" }, resources: ["runtime_console", "app_data"], can_copy_console_credential: true, credential_copy_fence: "identity-fence", report: { schema_version: 1, desktop: build("webcodex-desktop"), last_webcodex_call: null }, markdown: "# Safe report" } as DiagnosticSnapshot;
 function wrap(child: React.ReactNode) { return <LocaleProvider><DesktopMantineProvider>{child}</DesktopMantineProvider></LocaleProvider>; }
 beforeEach(() => {
   vi.resetAllMocks(); localStorage.clear(); localStorage.setItem("webcodex.desktop.locale", "en-US");
@@ -41,7 +43,7 @@ beforeEach(() => {
   api.runtimeSettings.mockResolvedValue(structuredClone(settings)); api.getState.mockResolvedValue(state);
   api.probeRuntime.mockResolvedValue({ ...settings, candidate }); api.recheckRuntime.mockResolvedValue(settings);
   api.switchRuntime.mockResolvedValue({ outcome: "activated", reason_code: null, rollback_reason_code: null, selection_revision: 4, restart_required: false });
-  api.diagnostics.mockResolvedValue(structuredClone(diagnostic)); api.setToolRequestTracing.mockResolvedValue({ ...diagnostic.trace, mode: "full", restart_required: true });
+  api.diagnostics.mockResolvedValue(structuredClone(diagnostic)); api.setToolRequestTracing.mockResolvedValue({ ...diagnostic.trace, configured_mode: "full", restart_required: true });
   api.computerPermissions.mockResolvedValue({ supported: true, foreground: true, execution_process: "WebCodex Runner", execution_path: "/fixture/runtime/webcodex-runner", runner_accessibility: "unknown", runner_screen_recording: "unknown", desktop_accessibility: true, desktop_screen_recording: true });
   api.openDiagnosticResource.mockResolvedValue(undefined);
   api.getLaunchAtLogin.mockResolvedValue(false); api.desktopBuildInfo.mockResolvedValue(build("webcodex-desktop"));
@@ -200,15 +202,38 @@ describe("Diagnostics are explicit and secret-free", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(api.setToolRequestTracing).toHaveBeenCalledExactlyOnceWith({ mode: "metadata", expected_revision: "env-fence", confirm_full: false, restart: false, confirm_interrupt: false }));
   });
-  it("shows remote tracing as an observation with specific guidance instead of disabled controls", async () => {
-    api.diagnostics.mockResolvedValue({ ...diagnostic, trace: { ...diagnostic.trace, mode: "off", effective_mode: "metadata", available: false, can_restart: false, error_code: "server_not_owned" } });
+  it.each(["trace_system_service_read_only", "server_not_owned"])("keeps configuration navigation and safe copying available when edits fail: %s", async error_code => {
+    api.diagnostics.mockResolvedValue({ ...diagnostic, resources: ["server_configuration"], trace: { ...diagnostic.trace, configured_mode: null, effective_mode: "full", can_edit: false, can_restart: false, error_code } });
+    render(wrap(<DiagnosticsPanel state={state} onState={vi.fn()} />));
+    const selector = await screen.findByRole("combobox", { name: "Tool Request Tracing" });
+    expect(selector).toBeDisabled();
+    expect(selector).toHaveValue("full");
+    expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Save & Restart Server" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Open Server configuration location" }));
+    await waitFor(() => expect(api.openDiagnosticResource).toHaveBeenCalledWith("server_configuration"));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Copy metadata configuration" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "Copy metadata configuration" }));
+    await waitFor(() => expect(clipboard.writeText).toHaveBeenCalledWith("WEBCODEX_TOOL_REQUEST_TRACE=metadata"));
+    expect(api.setToolRequestTracing).not.toHaveBeenCalled();
+  });
+  it("does not infer off when a read-only Server cannot report its mode", async () => {
+    api.diagnostics.mockResolvedValue({ ...diagnostic, trace: { ...diagnostic.trace, configured_mode: null, effective_mode: null, can_edit: false, can_restart: false } });
+    render(wrap(<DiagnosticsPanel state={state} onState={vi.fn()} />));
+    const selector = await screen.findByRole("combobox", { name: "Tool Request Tracing" });
+    expect(selector).toBeDisabled();
+    expect(selector).toHaveValue("unknown");
+  });
+  it("keeps the remote tracing selector disabled at the effective mode", async () => {
+    api.diagnostics.mockResolvedValue({ ...diagnostic, trace: { ...diagnostic.trace, configured_mode: null, effective_mode: "metadata", can_edit: false, can_restart: false, error_code: "server_not_owned" } });
     const remote = { ...state, persistent_environment: "joined-environment", topology: { ...state.topology!, server: { kind: "remote" as const, url: "https://fixture-server.test" } } };
     render(wrap(<DiagnosticsPanel state={remote} onState={vi.fn()} />));
     await screen.findByText(/Change its recording setting on the Server's machine/);
-    expect(screen.queryByRole("combobox", { name: "Tool Request Tracing" })).not.toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Tool Request Tracing" })).toBeDisabled();
+    expect(screen.getByRole("combobox", { name: "Tool Request Tracing" })).toHaveValue("metadata");
     expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
     expect(within(screen.getByText("Server recording now").parentElement!).getByText("Timing & status only")).toBeVisible();
-    expect(screen.queryByText("Saved recording setting")).not.toBeInTheDocument();
+    expect(within(screen.getByText("Saved recording setting").parentElement!).getByText("Not yet confirmed")).toBeInTheDocument();
     expect(api.setToolRequestTracing).not.toHaveBeenCalled();
   });
   it("explains unconfirmed mode without treating it as recording being off", async () => {
@@ -221,7 +246,7 @@ describe("Diagnostics are explicit and secret-free", () => {
     expect(api.setToolRequestTracing).not.toHaveBeenCalled();
   });
   it("keeps the running mode separate from the draft and a saved pending setting", async () => {
-    api.setToolRequestTracing.mockResolvedValue({ ...diagnostic.trace, mode: "metadata", effective_mode: "off", restart_required: true });
+    api.setToolRequestTracing.mockResolvedValue({ ...diagnostic.trace, configured_mode: "metadata", effective_mode: "off", restart_required: true });
     render(wrap(<DiagnosticsPanel state={state} onState={vi.fn()} />));
     fireEvent.change(await screen.findByRole("combobox", { name: "Tool Request Tracing" }), { target: { value: "metadata" } });
     expect(within(screen.getByText("Server recording now").parentElement!).getByText("Off")).toBeVisible();
@@ -233,7 +258,7 @@ describe("Diagnostics are explicit and secret-free", () => {
   });
   it("confirms Server interruption before applying tracing through a service restart", async () => {
     const persistent = { ...state, persistent_environment: "env-fixture" };
-    api.setToolRequestTracing.mockResolvedValue({ ...diagnostic.trace, mode: "metadata", effective_mode: "metadata" });
+    api.setToolRequestTracing.mockResolvedValue({ ...diagnostic.trace, configured_mode: "metadata", effective_mode: "metadata" });
     render(wrap(<DiagnosticsPanel state={persistent} onState={vi.fn()} />));
     fireEvent.change(await screen.findByRole("combobox", { name: "Tool Request Tracing" }), { target: { value: "metadata" } });
     fireEvent.click(screen.getByRole("button", { name: "Save & Restart Server" }));

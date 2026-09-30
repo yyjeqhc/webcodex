@@ -112,7 +112,48 @@ fn persistent_trace_target(
     })
 }
 
+// Navigation only: do not read environment contents, acquire edit authority, or
+// change ACLs merely to reveal a known local configuration directory.
+fn configuration_location(
+    local: bool,
+    runtime: Option<&StoredRuntime>,
+    expected: &std::path::Path,
+) -> DesktopResult<PathBuf> {
+    if !local {
+        return Err(diagnostics::diagnostic_error("server_not_owned"));
+    }
+    let path = runtime.and_then(|runtime| runtime.server_env_file.as_deref());
+    if path != Some(expected) {
+        return Err(diagnostics::diagnostic_error(
+            "server_environment_not_managed",
+        ));
+    }
+    expected
+        .parent()
+        .filter(|parent| parent.is_dir())
+        .map(std::path::Path::to_path_buf)
+        .ok_or_else(|| diagnostics::diagnostic_error("server_environment_unavailable"))
+}
+
 impl DesktopCore {
+    pub(super) fn server_configuration_location(&self) -> DesktopResult<PathBuf> {
+        let expected = if self.config.persistent_environment.is_some() {
+            webcodex_environment::default_environment_dir()
+                .map_err(environment::desktop_error)?
+                .join("server/webcodex.env")
+        } else {
+            self.data_dir.join("runtime/local/webcodex.env")
+        };
+        configuration_location(
+            matches!(
+                self.config.topology.as_ref().map(|t| &t.server),
+                Some(ServerTopology::Local)
+            ),
+            self.config.runtime.as_ref(),
+            &expected,
+        )
+    }
+
     pub(super) async fn managed_trace_target(&self) -> DesktopResult<ManagedTraceTarget> {
         if self.configuration_issue.is_some() {
             return Err(diagnostics::diagnostic_error(

@@ -49,7 +49,7 @@ impl AppState {
                 ResourceKind::Github,
                 ResourceKind::ReportIssue,
             ];
-            if trace_target.is_ok() {
+            if core.server_configuration_location().is_ok() {
                 resources.push(ResourceKind::ServerConfiguration);
             }
             if core.adapter.binaries().is_ok() {
@@ -63,10 +63,10 @@ impl AppState {
             .map_err(Clone::clone)
             .and_then(|target| target.inspect())
             .unwrap_or_else(|error| TraceSettings {
-                mode: TraceMode::Off,
+                configured_mode: None,
                 effective_mode: None,
                 revision: String::new(),
-                available: false,
+                can_edit: false,
                 restart_required: false,
                 can_restart: false,
                 error_code: Some(error.code),
@@ -82,8 +82,10 @@ impl AppState {
             (None, None)
         };
         trace.effective_mode = runner.as_ref().and_then(effective_trace_mode);
-        trace.restart_required =
-            trace.available && trace.effective_mode.is_some_and(|mode| mode != trace.mode);
+        trace.restart_required = trace.configured_mode.is_some()
+            && trace
+                .effective_mode
+                .is_some_and(|mode| Some(mode) != trace.configured_mode);
         if trace_path
             .as_deref()
             .and_then(diagnostics::trace_directory)
@@ -317,13 +319,7 @@ impl AppState {
                 );
             }
             ResourceKind::AppData => core.data_dir.clone(),
-            ResourceKind::ServerConfiguration => core
-                .managed_trace_target()
-                .await?
-                .path
-                .parent()
-                .ok_or_else(|| diagnostics::diagnostic_error("server_environment_unavailable"))?
-                .to_path_buf(),
+            ResourceKind::ServerConfiguration => core.server_configuration_location()?,
             ResourceKind::TraceDirectory => {
                 diagnostics::trace_directory(&core.managed_trace_target().await?.path)
                     .ok_or_else(|| diagnostics::diagnostic_error("trace_directory_unavailable"))?

@@ -54,7 +54,7 @@ MCP 客户端需要已有的 `coding_agent:run` 和 `project:write` 授权才能
 
 以上是 `coding_agent_start` 的参数。`context_session_id` 要求独立的 Session 和 `runtime:read` 授权，且必须属于委派的准确 Project。它把有界交接和独立授权的 Goal 上下文作为引用数据注入 prompt；不会恢复来源 Session，也不会选择 recorder。此快照不读取当前文件或 Git。评审需要源码时，在 `instruction` 中加入明确选择的片段；合并后的 prompt 必须满足现有 64 KiB Run 输入上限。
 
-用 `coding_agent_observe` 观察返回的 Run，后续观察复用 observation token；需要取消时用 `coding_agent_cancel`。发起结果不确定时，观察同一 Run，不要发起替代调用。上下文属于发起指纹；复用 key 时保存的快照发生变化，会返回冲突。没有自动额度回退或模型切换。
+用 `coding_agent_observe` 观察返回的 Run：首次读取省略 token，以包含已保留的输出；后续复用这次观察返回的 observation token，只读取新事件。需要取消时用 `coding_agent_cancel`。发起结果不确定时，观察同一 Run，不要发起替代调用。上下文属于发起指纹；复用 key 时保存的快照发生变化，会返回冲突。没有自动额度回退或模型切换。
 
 适配器将明确提供的文本发送到运营者选择的接口，流式返回有界模型文本，只有正常完整响应才算成功。它不访问文件、不修改代码、不执行模型工具，也不保存模型对话。凭据必须有权使用配置的 API；账号登录本身不代表这项资格。审阅结果后，如果希望它在下一次账号或模型切换后保留，应显式将有用发现保存为 Session 决策或进度。委派模型的结论不能代替原生验证或批准证据。
 

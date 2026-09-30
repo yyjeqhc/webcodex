@@ -111,8 +111,9 @@ This snapshot does not fetch current files or Git. Include explicitly selected
 source excerpts in `instruction` when the review needs them; the combined prompt
 must fit the existing 64 KiB Run input bound.
 
-Observe the returned Run with `coding_agent_observe`; use its observation token
-for follow-ups. Use `coding_agent_cancel` to request cancellation. After an
+Observe the returned Run with `coding_agent_observe`; omit the token on the first
+read to include retained output, then use that observation's token for only-new
+follow-ups. Use `coding_agent_cancel` to request cancellation. After an
 uncertain start, observe the same Run rather than dispatching a replacement.
 Context belongs to the initiation fingerprint: changing the saved snapshot while
 reusing a key fails with a conflict. There is no automatic quota fallback or model

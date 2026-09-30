@@ -118,6 +118,19 @@ leakage, cancellation before response headers, deadline, input/response/output
 limits, invalid requests, single-use sessions, incomplete/empty results, and rejected
 model tools. They do not call a paid model or use real credentials.
 
+For the full local MCP → Server → WebSocket Runner → ACP → model API path:
+
+```sh
+cargo build --locked --profile dogfood -p webcodex --bin webcodex-server -p webcodex-runner --bin webcodex-runner
+python3 scripts/e2e_session_continuity_ws.py
+```
+
+The smoke isolates all state and uses a loopback model server. It verifies durable
+discovery and recovery after a Server restart with a second credential for the same
+WebCodex user, owner/scope denial, both API modes, sanitized context, original Run
+replay, changed-context conflicts, and retained closed history. `--bin-dir` can
+select binaries from a shared Cargo target directory.
+
 Protocol references: [official ACP v1 schema](https://github.com/agentclientprotocol/agent-client-protocol/blob/main/schema/v1/schema.json),
 [ACP prompt lifecycle](https://agentclientprotocol.com/protocol/prompt-turn),
 [OpenAI Responses streaming reference](https://platform.openai.com/docs/api-reference/responses-streaming).

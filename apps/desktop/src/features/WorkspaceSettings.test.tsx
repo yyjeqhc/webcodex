@@ -149,9 +149,8 @@ describe("workspace configuration boundaries", () => {
 
   it("validates native Plugin arguments and writes only a new explicit registration", async () => {
     render(wrap(<ExtensionsPanel state={state} onState={onState} />));
-    fireEvent.click(screen.getByRole("tab", { name: "MCP servers" }));
-    fireEvent.click(screen.getByText("Advanced: Native Tool Plugins", { selector: "summary" }));
-    fireEvent.click(await screen.findByText("Add a native Tool Plugin"));
+    fireEvent.click(screen.getByRole("tab", { name: "Native Plugins" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Add a native Tool Plugin" }));
     fireEvent.change(screen.getByLabelText("Plugin ID"), { target: { value: "new-plugin" } });
     fireEvent.change(screen.getByLabelText("Display name"), { target: { value: "New plugin" } });
     fireEvent.change(screen.getByLabelText("Executable"), { target: { value: "node" } });
@@ -164,6 +163,23 @@ describe("workspace configuration boundaries", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save registration" }));
     await waitFor(() => expect(api.addRunnerPlugin).toHaveBeenCalledWith(target, { id: "new-plugin", name: "New plugin", command: "node", args: ["/fixture/plugin.js"], cwd: null }));
     expect(args).toHaveValue("[]");
+  });
+
+  it("keeps registration failure feedback inside the Plugin editor and clears write-only arguments", async () => {
+    api.addRunnerPlugin.mockRejectedValueOnce({ code: "runner_settings_changed", message: "Settings changed", next_action: "Refresh" });
+    render(wrap(<ExtensionsPanel state={state} onState={onState} />));
+    fireEvent.click(screen.getByRole("tab", { name: "Native Plugins" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Add a native Tool Plugin" }));
+    const editor = await screen.findByRole("dialog", { name: "Add a native Tool Plugin" });
+    fireEvent.change(within(editor).getByLabelText("Plugin ID"), { target: { value: "new-plugin" } });
+    fireEvent.change(within(editor).getByLabelText("Display name"), { target: { value: "New plugin" } });
+    fireEvent.change(within(editor).getByLabelText("Executable"), { target: { value: "node" } });
+    fireEvent.change(within(editor).getByLabelText("Arguments (JSON array)"), { target: { value: '["fixture-argument"]' } });
+    fireEvent.click(within(editor).getByRole("button", { name: "Save registration" }));
+    expect(await within(editor).findByRole("alert")).toHaveTextContent("Refresh");
+    expect(within(editor).getByLabelText("Arguments (JSON array)")).toHaveValue("[]");
+    expect(api.addRunnerPlugin).toHaveBeenCalledTimes(1);
+    expect(api.restartOwnedRunner).not.toHaveBeenCalled();
   });
 
   it("identifies WebCodex Runner as the Computer Use execution owner and keeps Runner TCC status tri-state", async () => {
@@ -221,7 +237,7 @@ describe("workspace configuration boundaries", () => {
 it("preserves capability-first tabs and Coding-only authorization after the shared UI merge", async () => {
   api.runnerCapabilityAuthorization.mockResolvedValue({ target, can_authorize: true, coding_agents: false, ssh_resources: false });
   render(wrap(<ExtensionsPanel state={state} onState={onState} />));
-  expect(screen.getAllByRole("tab").map(tab => tab.textContent)).toEqual(["Coding Agents", "SSH Resources", "MCP servers", "Skills", "Instructions"]);
+  expect(screen.getAllByRole("tab").map(tab => tab.textContent)).toEqual(["Coding Agents", "SSH Resources", "MCP servers", "Native Plugins", "Skills", "Instructions"]);
   expect(screen.getByRole("tab", { name: "Coding Agents" })).toHaveAttribute("aria-selected", "true");
   expect(screen.queryByRole("button", { name: /^Projects:/ })).not.toBeInTheDocument();
   fireEvent.click(await screen.findByRole("button", { name: "Authorize Runner Capabilities" }));

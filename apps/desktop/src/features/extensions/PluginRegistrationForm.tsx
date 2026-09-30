@@ -1,28 +1,33 @@
 import { useState } from "react";
 import { useLocale } from "../../i18n/locale";
+import { useConnectionsTools } from "../../i18n/connections-tools";
 import type { PluginRegistration } from "../../models/topology";
+import { WorkspaceDialog } from "../workspace/WorkspaceDialog";
 
 export function PluginRegistrationForm({ disabled, onAdd }: { disabled: boolean; onAdd: (provider: PluginRegistration) => Promise<boolean> }) {
-  const { t } = useLocale();
+  const { t } = useLocale(); const c = useConnectionsTools();
+  const [opened, setOpened] = useState(false);
   const [id, setId] = useState("");
   const [name, setName] = useState("");
   const [command, setCommand] = useState("");
   const [args, setArgs] = useState("[]");
   const [cwd, setCwd] = useState("");
   const [invalid, setInvalid] = useState(false);
-  return <details className="plugin-registration">
-    <summary>{t("plugins.add")}</summary>
+  const [failed, setFailed] = useState(false);
+  return <div className="plugin-registration">
+    <button type="button" className="primary-button" disabled={disabled} onClick={() => setOpened(true)}>{t("plugins.add")}</button>
+    {opened && <WorkspaceDialog title={t("plugins.add")} onClose={() => setOpened(false)} busy={disabled}>
     <form onSubmit={async event => {
       event.preventDefault(); if (disabled) return;
-      setInvalid(false);
+      setInvalid(false); setFailed(false);
       let parsed: unknown;
       try { parsed = JSON.parse(args); } catch { setInvalid(true); return; }
       if (!Array.isArray(parsed) || !parsed.every(value => typeof value === "string")) { setInvalid(true); return; }
       // Arguments are write-only and are not retained after submission.
       setArgs("[]");
       if (await onAdd({ id: id.trim(), name: name.trim(), command: command.trim(), args: parsed, cwd: cwd.trim() || null })) {
-        setId(""); setName(""); setCommand(""); setCwd("");
-      }
+        setId(""); setName(""); setCommand(""); setCwd(""); setOpened(false);
+      } else setFailed(true);
     }}>
       <p className="field-help">{t("plugins.help")}</p>
       <div className="plugin-fields">
@@ -39,7 +44,9 @@ export function PluginRegistrationForm({ disabled, onAdd }: { disabled: boolean;
         <input id="plugin-cwd" value={cwd} onChange={e => setCwd(e.target.value)} maxLength={4096} disabled={disabled} autoComplete="off" spellCheck={false} />
       </div>
       {invalid && <p role="alert">{t("plugins.invalidArgs")}</p>}
+      {failed && <p role="alert" className="workspace-notice">{c("operationFailed")}</p>}
       <button type="submit" className="secondary-button" data-webcodex-action="add-plugin-registration" disabled={disabled}>{t("plugins.save")}</button>
     </form>
-  </details>;
+    </WorkspaceDialog>}
+  </div>;
 }

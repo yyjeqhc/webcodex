@@ -14,7 +14,7 @@ import { Dashboard } from "../dashboard/Dashboard";
 import { connectionFixture, connectionSnapshot } from "../../test/connections-fixtures";
 
 const native = vi.hoisted(() => ({ invoke: vi.fn() }));
-const api = vi.hoisted(() => ({ managedInstructionsRead: vi.fn(async () => ({ path:"/fixture/desktop/instructions/AGENTS.md", exists:false, content:"", revision:"missing" })), prepareProjectUnregister: vi.fn(), unregisterProject: vi.fn(), runnerSettings: vi.fn(), updateRunnerSettings: vi.fn(), restartOwnedRunner: vi.fn(), addRunnerPlugin: vi.fn() }));
+const api = vi.hoisted(() => ({ managedInstructionsRead: vi.fn(async () => ({ path:"/fixture/desktop/instructions/AGENTS.md", exists:false, content:"", revision:"missing" })), prepareProjectUnregister: vi.fn(), unregisterProject: vi.fn(), runnerSettings: vi.fn(), updateRunnerSettings: vi.fn(), restartOwnedRunner: vi.fn(), sshResources: vi.fn(), addRunnerPlugin: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: native.invoke }));
 vi.mock("../../lib/desktop-api", () => ({ desktopApi: api }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn() }));
@@ -40,6 +40,7 @@ beforeEach(() => {
   HTMLDialogElement.prototype.showModal = function () { this.setAttribute("open", ""); };
   HTMLDialogElement.prototype.close = function () { this.removeAttribute("open"); };
   api.runnerSettings.mockResolvedValue({ target: { client_id: "mini", config_path: "fixture.toml", server_url: "http://localhost" }, paths: { instruction_files: [], skill_roots: [] }, plugin_ids: [], can_restart: true });
+  api.sshResources.mockRejectedValue(new Error("fixture-unavailable"));
   native.invoke.mockImplementation(async (_command, { request }) => {
     switch (request.kind) {
       case "overview": return overview;
@@ -352,13 +353,27 @@ describe("product workspace task flows", () => {
     expect(native.invoke).toHaveBeenCalledWith("workspace_query", { request: { kind: "instruction", project: alpha.id, source_scope: "project", path: "AGENTS.md", fingerprint: "revision-one" } });
     fireEvent.click(within(document).getByRole("button", { name: "Close" }));
     fireEvent.click(screen.getByRole("tab", { name: "Skills" })); expect(screen.getByText("Review changes")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("tab", { name: "MCP servers" }));
-    fireEvent.click(screen.getByText("Advanced: Native Tool Plugins", { selector: "summary" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Native Plugins" }));
     expect(screen.getByText(/3 tools/)).toBeInTheDocument();
     expect(native.invoke.mock.calls.some(([, value]) => value.request.kind === "plugin_reload")).toBe(false);
     fireEvent.click(screen.getByRole("button", { name: "Reload" }));
     await waitFor(() => expect(native.invoke).toHaveBeenCalledWith("workspace_query", { request: { kind: "plugin_reload", project: alpha.id, plugin: "sample" } }));
     expect(api.restartOwnedRunner).not.toHaveBeenCalled();
+  });
+  it("explains every extension category and exposes native registrations without a project", async () => {
+    const runner = { target: state.workspace_runner!, paths: { instruction_files: [], skill_roots: [] }, plugin_ids: ["safe-delete"], can_restart: true };
+    api.runnerSettings.mockResolvedValue(runner);
+    render(wrap(<ExtensionsPanel state={{ ...state, project: null }} onState={vi.fn()} />));
+    for (const [label, purpose] of [["Coding Agents", "codingAgentsPurpose"], ["SSH Resources", "sshPurpose"], ["MCP servers", "mcpPurpose"], ["Native Plugins", "pluginsPurpose"], ["Skills", "skillsPurpose"], ["Instructions", "instructionsPurpose"]] as const) {
+      fireEvent.click(screen.getByRole("tab", { name: label }));
+      expect(screen.getByText(productText("en-US", purpose))).toBeVisible();
+    }
+    fireEvent.click(screen.getByRole("tab", { name: "Native Plugins" }));
+    expect(await screen.findByText("safe-delete")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Reload" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Add a native Tool Plugin" }));
+    expect(await screen.findByRole("dialog", { name: "Add a native Tool Plugin" })).toBeInTheDocument();
+    expect(api.addRunnerPlugin).not.toHaveBeenCalled();
   });
   it("rejects an older workspace result after a Runner identity change", async () => {
     let complete!: (value: unknown) => void;

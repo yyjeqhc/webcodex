@@ -431,6 +431,10 @@
 .extension-path-save-actions { padding-top: 16px; border-top: 1px solid var(--ui-border-subtle); }
 .extension-path-save-actions > span, .extension-path-add-actions > span { color: var(--ui-text-secondary); font-size: 14px; }
 .extensions-content > h2 { margin-top: 0; }
+.extension-category-heading { margin-bottom: 28px; }
+.extensions-content .extension-category-heading h2 { margin-bottom: 10px; font-size: 22px; }
+.extension-category-heading p { margin: 0; max-width: 66ch; color: var(--ui-text-secondary); font-size: 15px; line-height: 1.7; }
+.configured-plugins h3 { margin: 28px 0 8px; font-size: 17px; }
 .extensions-content .extension-toolbar { justify-content: flex-start; gap: 12px; flex-wrap: wrap; }
 .extension-project-preview .activity-project-filter { margin-bottom: 24px; }
 .connection-context { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 28px; padding-block: 16px; margin-bottom: 24px; border-block: 1px solid var(--ui-border-subtle); font-size: 14px; color: var(--ui-text-secondary); }

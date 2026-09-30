@@ -13,6 +13,7 @@ use webcodex_core::plugin::{
     PluginSelectionAnnotations, ProjectPluginCatalog, ProjectPluginCatalogEntry,
 };
 
+mod bootstrap_budget;
 mod jobs_attention;
 
 fn context_material<'a>(result: &'a ToolResult, key: &str) -> &'a Value {

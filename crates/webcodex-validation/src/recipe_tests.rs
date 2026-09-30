@@ -564,6 +564,66 @@ fn project_recipe_filtered_execution_is_deterministic_without_repeating_arg_buil
 }
 
 #[test]
+fn rust_member_manifest_digest_tracks_workspace_root_inputs() {
+    let temp = tempfile::tempdir().unwrap();
+    write(
+        temp.path(),
+        "Cargo.toml",
+        "[workspace]\nmembers=['member']\nresolver='2'\n",
+    );
+    write(temp.path(), "Cargo.lock", "version = 4\n");
+    write(
+        temp.path(),
+        "member/Cargo.toml",
+        "[package]\nname='member'\nversion='0.1.0'\nedition='2021'\n",
+    );
+
+    let resolve_member = || {
+        resolve(
+            temp.path(),
+            Some("member"),
+            Some(RecipeId::Rust),
+            &[SemanticCheck::Check],
+            None,
+        )
+        .unwrap()
+    };
+    let original = resolve_member();
+    assert_eq!(original.recipe_root_relative, "member");
+    assert_eq!(original.steps[0].args, ["check", "--all-targets"]);
+
+    write(
+        temp.path(),
+        "member/src/lib.rs",
+        "pub fn value() -> u8 { 1 }\n",
+    );
+    let source_only = resolve_member();
+    assert_eq!(source_only.manifest_digest, original.manifest_digest);
+    assert_eq!(source_only.invocation_digest, original.invocation_digest);
+
+    write(temp.path(), "Cargo.lock", "version = 3\n");
+    let lock_changed = resolve_member();
+    assert_ne!(lock_changed.manifest_digest, original.manifest_digest);
+    assert_eq!(lock_changed.invocation_digest, original.invocation_digest);
+
+    write(temp.path(), "Cargo.lock", "version = 4\n");
+    write(
+        temp.path(),
+        "Cargo.toml",
+        "[workspace]\nmembers=['member']\nresolver='2'\n[profile.dev]\nopt-level=1\n",
+    );
+    let workspace_manifest_changed = resolve_member();
+    assert_ne!(
+        workspace_manifest_changed.manifest_digest,
+        original.manifest_digest
+    );
+    assert_eq!(
+        workspace_manifest_changed.invocation_digest,
+        original.invocation_digest
+    );
+}
+
+#[test]
 fn unavailable_checks_and_unsupported_filters_fail_before_execution() {
     let go = tempfile::tempdir().unwrap();
     write(go.path(), "go.mod", "module example.test/fixture\n");

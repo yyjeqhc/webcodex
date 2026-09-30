@@ -8,7 +8,7 @@ use std::fs;
 use std::path::Path;
 use webcodex_core::runner_protocol::{normalize_rust_test_filter, ShellJobValidationStep};
 use webcodex_workspace::project_recipe::{
-    digest_project_recipe_files, project_recipe_dependency_state_files, read_project_recipe_file,
+    digest_project_recipe_files, project_recipe_provenance_files, read_project_recipe_file,
     resolve_project_recipe_root, ProjectRecipeResolutionError,
 };
 
@@ -166,22 +166,40 @@ pub fn resolve_validation_recipe_with_packages(
     } else {
         let manifest =
             read_project_recipe_file(root, &marker_path).map_err(map_project_recipe_error)?;
-        let (steps, extra_digest_files) = match recipe {
+        let (steps, provenance_files) = match recipe {
             RecipeId::Rust | RecipeId::Go => {
-                canonical_adapter_steps(recipe, checks, test_filter.as_deref(), package_scope)?
+                let steps =
+                    canonical_adapter_steps(recipe, checks, test_filter.as_deref(), package_scope)?;
+                let provenance_files = project_recipe_provenance_files(&resolved_root)
+                    .map_err(map_project_recipe_error)?
+                    .expect("canonical project validation adapters are Rust/Go");
+                (steps, provenance_files)
             }
-            RecipeId::Node => node_steps(&recipe_root, &manifest, checks)?,
-            RecipeId::Python => python_steps(&manifest, checks)?,
+            RecipeId::Node => {
+                let (steps, extra_digest_files) = node_steps(&recipe_root, &manifest, checks)?;
+                let provenance_files = std::iter::once(marker_path.clone())
+                    .chain(
+                        extra_digest_files
+                            .into_iter()
+                            .map(|file| recipe_root.join(file)),
+                    )
+                    .collect();
+                (steps, provenance_files)
+            }
+            RecipeId::Python => {
+                let (steps, extra_digest_files) = python_steps(&manifest, checks)?;
+                let provenance_files = std::iter::once(marker_path.clone())
+                    .chain(
+                        extra_digest_files
+                            .into_iter()
+                            .map(|file| recipe_root.join(file)),
+                    )
+                    .collect();
+                (steps, provenance_files)
+            }
         };
-        let manifest_digest = digest_project_recipe_files(
-            root,
-            std::iter::once(marker_path).chain(
-                extra_digest_files
-                    .into_iter()
-                    .map(|file| recipe_root.join(file)),
-            ),
-        )
-        .map_err(map_project_recipe_error)?;
+        let manifest_digest = digest_project_recipe_files(root, provenance_files)
+            .map_err(map_project_recipe_error)?;
         (steps, manifest_digest)
     };
     let invocation_digest = format!(
@@ -209,7 +227,7 @@ fn canonical_adapter_steps(
     checks: &[SemanticCheck],
     test_filter: Option<&str>,
     package_scope: Option<&[String]>,
-) -> Result<(Vec<ShellJobValidationStep>, Vec<&'static str>), RecipeError> {
+) -> Result<Vec<ShellJobValidationStep>, RecipeError> {
     let mut steps = Vec::with_capacity(checks.len());
     for check in checks {
         let operation = crate::project_validation_operation(
@@ -240,10 +258,7 @@ fn canonical_adapter_steps(
         })?;
         steps.push(plan.structured_step);
     }
-    let extra_digest_files = project_recipe_dependency_state_files(recipe)
-        .expect("canonical project validation adapters are Rust/Go")
-        .to_vec();
-    Ok((steps, extra_digest_files))
+    Ok(steps)
 }
 
 fn node_steps(

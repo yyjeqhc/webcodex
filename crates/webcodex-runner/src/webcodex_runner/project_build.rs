@@ -12,8 +12,8 @@ use webcodex_core::project_build::{
 };
 use webcodex_core::runner_operation::RunnerJobOperation;
 use webcodex_workspace::project_recipe::{
-    digest_project_recipe_files, project_recipe_dependency_state_files,
-    resolve_project_recipe_root, ProjectRecipeId, ProjectRecipeResolutionError,
+    digest_project_recipe_files, project_recipe_provenance_files, resolve_project_recipe_root,
+    ProjectRecipeId, ProjectRecipeResolutionError,
 };
 
 fn unavailable(code: &str, backend: Option<&str>) -> ProjectBuildPlanningResult {
@@ -79,16 +79,12 @@ pub(crate) fn plan(
 
     let process = canonical_project_build_process(backend.as_str(), request)
         .map_err(|_| unavailable("build_scope_invalid", Some(backend.as_str())))?;
-    let manifest_digest = digest_project_recipe_files(
-        &resolved.execution_root,
-        std::iter::once(resolved.marker_path()).chain(
-            project_recipe_dependency_state_files(backend)
-                .expect("project build supports only Rust/Go")
-                .iter()
-                .map(|file| resolved.absolute_root.join(file)),
-        ),
-    )
-    .map_err(|error| unavailable(map_recipe_error(error), Some(backend.as_str())))?;
+    let provenance_files = project_recipe_provenance_files(&resolved)
+        .map_err(|error| unavailable(map_recipe_error(error), Some(backend.as_str())))?
+        .expect("project build supports only Rust/Go");
+    let manifest_digest =
+        digest_project_recipe_files(&resolved.execution_root, provenance_files)
+            .map_err(|error| unavailable(map_recipe_error(error), Some(backend.as_str())))?;
 
     let plan = ProjectBuildPlan {
         provenance: ProjectBuildProvenance {

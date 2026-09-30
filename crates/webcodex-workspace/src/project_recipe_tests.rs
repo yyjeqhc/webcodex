@@ -217,15 +217,151 @@ fn source_digest_preserves_path_length_content_order_and_skips_missing_optional_
 }
 
 #[test]
-fn project_recipe_dependency_state_files_are_narrow_rust_go_source_truth() {
-    assert_eq!(
-        project_recipe_dependency_state_files(ProjectRecipeId::Rust),
-        Some(&["Cargo.lock"][..])
+fn project_recipe_provenance_files_preserve_flat_rust_go_source_truth() {
+    for (marker, manifest, recipe, dependency) in [
+        (
+            "Cargo.toml",
+            "[package]\nname='demo'\nversion='0.1.0'\n",
+            ProjectRecipeId::Rust,
+            "Cargo.lock",
+        ),
+        (
+            "go.mod",
+            "module example.test/demo\n",
+            ProjectRecipeId::Go,
+            "go.sum",
+        ),
+    ] {
+        let temp = tempfile::tempdir().unwrap();
+        write(temp.path(), marker, manifest);
+        let resolved = resolve_project_recipe_root(temp.path(), None, Some(recipe)).unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        assert_eq!(
+            project_recipe_provenance_files(&resolved).unwrap().unwrap(),
+            [root.join(marker), root.join(dependency)]
+        );
+    }
+
+    for (marker, recipe) in [
+        ("package.json", ProjectRecipeId::Node),
+        ("pyproject.toml", ProjectRecipeId::Python),
+    ] {
+        let temp = tempfile::tempdir().unwrap();
+        write(temp.path(), marker, "");
+        let resolved = resolve_project_recipe_root(temp.path(), None, Some(recipe)).unwrap();
+        assert!(project_recipe_provenance_files(&resolved)
+            .unwrap()
+            .is_none());
+    }
+}
+
+#[test]
+fn rust_member_provenance_includes_workspace_manifest_and_root_lockfile() {
+    let temp = tempfile::tempdir().unwrap();
+    write(
+        temp.path(),
+        "Cargo.toml",
+        "[workspace]\nmembers=['member']\nresolver='2'\n[workspace.package]\nversion='0.1.0'\nedition='2021'\n",
     );
-    assert_eq!(
-        project_recipe_dependency_state_files(ProjectRecipeId::Go),
-        Some(&["go.sum"][..])
+    write(
+        temp.path(),
+        "member/Cargo.toml",
+        "[package]\nname='member'\nversion.workspace=true\nedition.workspace=true\n",
     );
-    assert!(project_recipe_dependency_state_files(ProjectRecipeId::Node).is_none());
-    assert!(project_recipe_dependency_state_files(ProjectRecipeId::Python).is_none());
+    let resolved =
+        resolve_project_recipe_root(temp.path(), Some("member"), Some(ProjectRecipeId::Rust))
+            .unwrap();
+    let root = temp.path().canonicalize().unwrap();
+
+    assert_eq!(resolved.absolute_root, root.join("member"));
+    assert_eq!(
+        project_recipe_provenance_files(&resolved).unwrap().unwrap(),
+        [
+            root.join("member/Cargo.toml"),
+            root.join("Cargo.toml"),
+            root.join("Cargo.lock"),
+        ]
+    );
+}
+
+#[test]
+fn rust_member_workspace_inheritance_cannot_silently_escape_project_boundary() {
+    let temp = tempfile::tempdir().unwrap();
+    let project = temp.path().join("member");
+    write(
+        &project,
+        "Cargo.toml",
+        "[package]\nname='member'\nversion.workspace=true\nedition.workspace=true\n[dependencies]\nserde.workspace=true\n",
+    );
+    let resolved =
+        resolve_project_recipe_root(&project, None, Some(ProjectRecipeId::Rust)).unwrap();
+
+    assert_eq!(
+        project_recipe_provenance_files(&resolved).unwrap_err(),
+        ProjectRecipeResolutionError::SourceFileInvalid
+    );
+
+    // Arbitrary package metadata is not Cargo workspace inheritance.
+    write(
+        &project,
+        "Cargo.toml",
+        "[package]\nname='member'\nversion='0.1.0'\nedition='2021'\n[package.metadata]\nworkspace=true\n",
+    );
+    let standalone =
+        resolve_project_recipe_root(&project, None, Some(ProjectRecipeId::Rust)).unwrap();
+    assert!(project_recipe_provenance_files(&standalone).is_ok());
+}
+
+#[test]
+fn rust_member_explicit_workspace_path_selects_contained_workspace_sources() {
+    let temp = tempfile::tempdir().unwrap();
+    write(
+        temp.path(),
+        "workspace/Cargo.toml",
+        "[workspace]\nmembers=['../member']\nresolver='2'\n",
+    );
+    write(
+        temp.path(),
+        "member/Cargo.toml",
+        "[package]\nname='member'\nversion='0.1.0'\nworkspace='../workspace'\n",
+    );
+    let resolved =
+        resolve_project_recipe_root(temp.path(), Some("member"), Some(ProjectRecipeId::Rust))
+            .unwrap();
+    let root = temp.path().canonicalize().unwrap();
+
+    assert_eq!(
+        project_recipe_provenance_files(&resolved).unwrap().unwrap(),
+        [
+            root.join("member/Cargo.toml"),
+            root.join("workspace/Cargo.toml"),
+            root.join("workspace/Cargo.lock"),
+        ]
+    );
+}
+
+#[test]
+fn rust_member_explicit_workspace_path_cannot_escape_execution_root() {
+    let temp = tempfile::tempdir().unwrap();
+    let project = temp.path().join("project");
+    let outside = temp.path().join("outside");
+    fs::create_dir_all(&project).unwrap();
+    fs::create_dir_all(&outside).unwrap();
+    write(
+        &project,
+        "member/Cargo.toml",
+        "[package]\nname='member'\nversion='0.1.0'\nworkspace='../../outside'\n",
+    );
+    write(
+        &outside,
+        "Cargo.toml",
+        "[workspace]\nmembers=['../project/member']\nresolver='2'\n",
+    );
+    let resolved =
+        resolve_project_recipe_root(&project, Some("member"), Some(ProjectRecipeId::Rust)).unwrap();
+
+    assert_eq!(
+        project_recipe_provenance_files(&resolved).unwrap_err(),
+        ProjectRecipeResolutionError::SourceFileInvalid
+    );
 }

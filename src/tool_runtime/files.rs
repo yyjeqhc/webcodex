@@ -21,7 +21,7 @@ use super::tool_inputs::{
     ApplyFileChangeInput, ApplyFileChangeKind, ApplyTextEditInput, ApplyTextEditKind,
 };
 use super::tool_result::{SuggestedToolCall, ToolResult};
-use super::{file_listing, permissions, project_instructions};
+use super::{file_listing, project_instructions};
 use super::{SearchPatternMode, SearchResultMode, ToolRuntime};
 use crate::artifact_policy::{
     canonical_known_mime, export_presentation_mime, mime_is_compatible_with_path,

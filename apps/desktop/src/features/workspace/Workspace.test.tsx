@@ -52,7 +52,7 @@ beforeEach(() => {
       case "extensions": return { project: alpha.id, runner: "mini", can_reload_plugins: true,
         instructions: { files: [{ source_scope: "project", path: "AGENTS.md", fingerprint: "revision-one", total_lines: 2 }], scan_complete: true },
         skills: { available: true, catalog: { skills: [{ skill_id: "skill-1", name: "Review changes", description: "Review project changes", source_scope: "project" }] } },
-        plugins: { available: true, catalog: { plugins: [{ id: "sample", name: "Sample provider", status: "ready", tool_count: 3 }] } },
+        plugins: { available: true, catalog: { plugins: [{ plugin: "sample", name: "Sample provider", status: "ready", errorCode: null }] } },
       };
       case "instruction": return { content: "# Project instructions\nUse existing tests.", truncated: false };
       case "plugin_reload": return { reloaded: true };
@@ -354,7 +354,9 @@ describe("product workspace task flows", () => {
     fireEvent.click(within(document).getByRole("button", { name: "Close" }));
     fireEvent.click(screen.getByRole("tab", { name: "Skills" })); expect(screen.getByText("Review changes")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("tab", { name: "Native Plugins" }));
-    expect(screen.getByText(/3 tools/)).toBeInTheDocument();
+    const pluginRow = screen.getByText("Sample provider").closest("article")!;
+    expect(within(pluginRow).getByText("Available")).toBeInTheDocument();
+    expect(pluginRow).not.toHaveTextContent("— tools");
     expect(native.invoke.mock.calls.some(([, value]) => value.request.kind === "plugin_reload")).toBe(false);
     fireEvent.click(screen.getByRole("button", { name: "Reload" }));
     await waitFor(() => expect(native.invoke).toHaveBeenCalledWith("workspace_query", { request: { kind: "plugin_reload", project: alpha.id, plugin: "sample" } }));
@@ -374,6 +376,23 @@ describe("product workspace task flows", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add a native Tool Plugin" }));
     expect(await screen.findByRole("dialog", { name: "Add a native Tool Plugin" })).toBeInTheDocument();
     expect(api.addRunnerPlugin).not.toHaveBeenCalled();
+  });
+  it("shows canonical failed Plugin state with recovery guidance rather than a saved-registration status", async () => {
+    const normal = native.invoke.getMockImplementation()!;
+    native.invoke.mockImplementation(async (command, value) => {
+      const result = await normal(command, value);
+      return value.request.kind === "extensions" ? { ...result, plugins: { available: true, catalog: { plugins: [{ plugin: "artifact-tools", name: "Artifact tools", status: "failed", errorCode: "initialize_timeout" }] } } } : result;
+    });
+    render(wrap(<ExtensionsPanel state={state} onState={vi.fn()} />));
+    fireEvent.click(screen.getByRole("tab", { name: "Native Plugins" }));
+    const row = (await screen.findByText("Artifact tools")).closest("article")!;
+    expect(within(row).getByText("Failed to load")).toBeVisible();
+    expect(within(row).getByText(productText("en-US", "pluginFailureHelp"))).toBeVisible();
+    expect(row).not.toHaveTextContent("Registered");
+    expect(row).not.toHaveTextContent("— tools");
+    expect(native.invoke.mock.calls.some(([, value]) => value.request.kind === "plugin_reload")).toBe(false);
+    fireEvent.click(within(row).getByRole("button", { name: "Reload" }));
+    await waitFor(() => expect(native.invoke).toHaveBeenCalledWith("workspace_query", { request: { kind: "plugin_reload", project: alpha.id, plugin: "artifact-tools" } }));
   });
   it("rejects an older workspace result after a Runner identity change", async () => {
     let complete!: (value: unknown) => void;

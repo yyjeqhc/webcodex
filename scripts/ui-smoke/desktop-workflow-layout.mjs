@@ -211,6 +211,8 @@ try {
       assert(source.includes('can_switch:true,switch_unavailable_reason:null'));
       source = source.replace('can_switch:true,switch_unavailable_reason:null', "can_switch:false,switch_unavailable_reason:'persistent_runtime_upgrade_required'");
       source = source.replace('can_copy_console_credential:false,credential_copy_fence:null', "can_copy_console_credential:true,credential_copy_fence:'fixture-account-fence'");
+      assert(source.includes('plugins:[],truncated:false'));
+      source = source.replace('plugins:[],truncated:false', "plugins:[{plugin:'fixture-plugin',name:'Repository tools',status:'ready',errorCode:null},{plugin:'artifact-tools',name:'Artifact tools',status:'failed',errorCode:'initialize_timeout'}],truncated:false");
       await route.fulfill({ response, body: source });
     });
     await page.goto(fixture.url + '/desktop/');
@@ -239,6 +241,18 @@ try {
     assert.equal(await page.evaluate(() => window.__fixtureCalls.some(call => call.cmd === 'copy_runtime_console_credential')), false);
     await page.keyboard.press('Escape');
     await confirmation.waitFor({ state: 'hidden' });
+    await page.locator('[data-webcodex-action="navigate-extensions"]').click();
+    await page.locator('#extension-tab-nativePlugins').click();
+    await page.locator('.native-plugin-row').first().waitFor();
+    assert.equal(await page.locator('.native-plugin-row').count(), 2);
+    const failedPlugin = page.locator('[data-plugin-id="artifact-tools"]');
+    assert((await failedPlugin.innerText()).includes('加载失败'));
+    assert((await failedPlugin.innerText()).includes('检查注册配置和程序'));
+    assert.equal((await failedPlugin.innerText()).includes('已注册'), false);
+    assert.equal((await page.locator('.native-plugin-row').first().innerText()).includes('—'), false, 'Runner provider list has no tool count');
+    assert.equal(await page.evaluate(() => window.__fixtureCalls.some(call => call.cmd === 'workspace_query' && call.args.request.kind === 'plugin_reload')), false);
+    await bounded(page, `Canonical Plugin states ${width}`);
+    await capture(page, `plugin-states-${width}`);
     assert.equal(await page.evaluate(() => window.__fixtureCalls.some(call => ['environment_service_action', 'switch_runtime', 'set_tool_request_tracing', 'repair_environment_user_credential', 'copy_runtime_console_credential'].includes(call.cmd))), false);
     await installed.close();
   }

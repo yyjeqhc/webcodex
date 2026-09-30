@@ -55,12 +55,13 @@ export interface GitSummary {
 }
 export interface InstructionSummary { source_scope: "runner" | "project"; path: string; fingerprint: string; truncated: boolean; total_lines: number }
 export interface SkillSummary { skill_id: string; name: string; description?: string; source?: string; source_scope?: string; trust?: string; available?: boolean }
-export interface PluginSummary { id?: string; plugin?: string; name?: string; status?: string; tool_count?: number; tools?: unknown[] }
+// Native plugin_tool list returns Runner provider state, without tool counts.
+export interface PluginSummary { plugin: string; name: string; status: string; errorCode?: string | null }
 export interface ExtensionsSnapshot {
   project: string; runner: string; can_reload_plugins: boolean;
   instructions: { files: InstructionSummary[]; scan_complete: boolean; truncated: boolean };
   skills: { available: boolean; catalog?: { skills: SkillSummary[]; truncated?: boolean } };
-  plugins: { available: boolean; catalog?: { providers?: PluginSummary[]; plugins?: PluginSummary[]; truncated?: boolean } };
+  plugins: { available: boolean; catalog?: { plugins: PluginSummary[]; truncated?: boolean } };
 }
 export type WorkspaceRequest =
   | { kind: "overview" | "projects" | "runner_details" | "windows" }

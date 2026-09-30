@@ -22,7 +22,7 @@ Native Plugin 是**受信任的本地 executable**。WebCodex 不会 sandbox、�
 
 ## 配置 Plugin
 
-Desktop 在“扩展 → 原生 Plugin”提供独立分类，与 MCP 工具服务分开。添加可信程序后，上方显示已保存的注册项；下方选择项目，查看该项目 Runner 实际提供的工具。保存不启动 Plugin，需要明确重启所管理的 Runner 才会应用；重新加载仅针对所选项目中获授权的 Plugin。
+Desktop 在“扩展 → 原生 Plugin”提供独立分类，与 MCP 工具服务分开。添加可信程序后，上方显示已保存的注册项；下方选择项目，查看该项目 Runner 实际提供的工具。预览展示该 Runner 报告的插件加载状态，失败时给出处理建议和安全诊断码；它不是 Project-affine 工具目录，也不显示 provider-list 接口未提供的工具数量。保存不启动 Plugin，需要明确重启所管理的 Runner 才会应用；重新加载仅针对所选项目中获授权的 Plugin。
 
 Plugin 使用独立的 `runner.toml` 配置，不复用 MCP provider：
 

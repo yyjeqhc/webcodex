@@ -25,7 +25,7 @@ directly with the prepared Runner environment.
 
 ## Configure a Plugin
 
-Desktop exposes **Extensions → Native Plugins** separately from MCP servers. Add a trusted executable with **Add a native Tool Plugin**. Saved registrations are shown independently of live availability; select a Project in the lower preview to inspect the tools exposed by its Runner. Saving does not launch the Plugin. Apply the saved registration by explicitly restarting the owned Runner; reload operates only on the selected Project’s authorized Plugin.
+Desktop exposes **Extensions → Native Plugins** separately from MCP servers. Add a trusted executable with **Add a native Tool Plugin**. Saved registrations are shown independently of live availability; select a Project in the lower preview to inspect the tools exposed by its Runner. The preview shows the Runner’s reported provider loading state; a failed Plugin includes recovery guidance and its safe diagnostic code. It does not imply a Project-affine tool catalog or invent tool counts that the provider-list response does not supply. Saving does not launch the Plugin. Apply the saved registration by explicitly restarting the owned Runner; reload operates only on the selected Project’s authorized Plugin.
 
 Plugins have their own `runner.toml` section; they are not MCP providers:
 

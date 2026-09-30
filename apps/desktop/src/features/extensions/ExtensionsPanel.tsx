@@ -87,7 +87,7 @@ export function ExtensionsPanel({ state, onState }: { state: DesktopState; onSta
     catch { if (alive.current) setFailed(true); }
     finally { if (alive.current) setBusy(false); }
   };
-  const plugins = catalog?.plugins.catalog?.plugins || catalog?.plugins.catalog?.providers || [];
+  const plugins = catalog?.plugins.catalog?.plugins || [];
   const skills = catalog?.skills.catalog?.skills || [];
   return <div className="page-section workspace-page" data-webcodex-page="extensions">
     <header className="page-heading-row"><h1 id="extensions-title">{t("extensions.title")}</h1>{(projectTab || tab === "mcpProviders") && <button className="secondary-button" onClick={refresh} disabled={disabled || loading}>{p("refresh")}</button>}</header>
@@ -119,7 +119,7 @@ export function ExtensionsPanel({ state, onState }: { state: DesktopState; onSta
       {settings && !settings.plugin_ids.length && <p className="workspace-empty">{t("extensions.noPlugins")}</p>}
     </div>}
     <section className={projectTab ? "extension-project-preview" : undefined}>
-      {projectTab && <><h2>{p(tab === "nativePlugins" ? "projectPluginTools" : "projectExtensions")}</h2><div className="activity-project-filter"><span className="filter-label">{p("projects")}</span><ProjectPicker label={p("projects")} emptyLabel={p("noMatches")} searchLabel={p("search")} value={project} onChange={setProject} disabled={disabled} options={workspace.projects.filter(row => row.id).map(row => ({ value: row.id, label: projectName(row), detail: displayProjectPath(row.path) }))} /></div></>}
+      {projectTab && <><h2>{p(tab === "nativePlugins" ? "projectRunnerPlugins" : "projectExtensions")}</h2><div className="activity-project-filter"><span className="filter-label">{p("projects")}</span><ProjectPicker label={p("projects")} emptyLabel={p("noMatches")} searchLabel={p("search")} value={project} onChange={setProject} disabled={disabled} options={workspace.projects.filter(row => row.id).map(row => ({ value: row.id, label: projectName(row), detail: displayProjectPath(row.path) }))} /></div></>}
       {projectTab && !project && <WorkspaceEmptyState kind={tab === "instructions" ? "document" : "skill"} message={p("selectProjectPreview")} />}
       {tab === "codingAgents" && <CodingAgentsPanel state={state} onState={onState} settings={settings} onRestarted={() => { setPendingRestart(false); refresh(); }} />}
       {tab === "sshResources" && <SshResourcesPanel state={state} onState={onState} settings={settings} onRestarted={() => { setPendingRestart(false); refresh(); }} />}
@@ -136,14 +136,17 @@ export function ExtensionsPanel({ state, onState }: { state: DesktopState; onSta
       </>}
       {tab === "mcpProviders" && <McpProvidersPanel state={state} onState={onState} settings={settings} onRestarted={() => { setPendingRestart(false); refresh(); }} />}
       {tab === "nativePlugins" && <>
-        {plugins.map(plugin => <article className="extension-row" key={plugin.id || plugin.plugin}><div><strong>{plugin.name || plugin.id || plugin.plugin}</strong><span>{plugin.status === "error" ? p("unavailable") : plugin.status === "ready" || plugin.status === "available" ? p("available") : p("registered")} · {plugin.tool_count ?? plugin.tools?.length ?? "—"} {p("tools")}</span></div>
+        {plugins.map(plugin => <article className="extension-row native-plugin-row" key={plugin.plugin} data-plugin-id={plugin.plugin}><div><strong>{plugin.name || plugin.plugin}</strong><span>{p(plugin.status === "ready" ? "available" : plugin.status === "failed" ? "pluginLoadFailed" : "unavailable")}</span>
+          {plugin.status === "failed" && <p>{p("pluginFailureHelp")}</p>}
+          {plugin.errorCode && <details><summary>{p("details")}</summary><code>{plugin.errorCode}</code></details>}
+        </div>
           {catalog?.can_reload_plugins && <button className="secondary-button" disabled={disabled} onClick={async () => {
-            const id = plugin.id || plugin.plugin; if (!id || disabled) return; setBusy(true); setFailed(false);
+            const id = plugin.plugin; if (!id || disabled) return; setBusy(true); setFailed(false);
             try { await workspaceQuery({ kind: "plugin_reload", project, plugin: id }); if (alive.current) refresh(); }
             catch { if (alive.current) setFailed(true); } finally { if (alive.current) setBusy(false); }
           }}>{p("reload")}</button>}
         </article>)}
-        {catalog?.plugins.available && !plugins.length && <p className="workspace-empty">{p("noProjectPluginTools")}</p>}
+        {catalog?.plugins.available && !plugins.length && <p className="workspace-empty">{p("noRunnerPlugins")}</p>}
         {catalog && !catalog.plugins.available && <p className="workspace-notice">{p("unavailable")}</p>}
         {catalog?.plugins.catalog?.truncated && <p>{p("partial")}</p>}
       </>}

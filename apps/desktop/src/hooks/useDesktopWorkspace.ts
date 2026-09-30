@@ -139,11 +139,19 @@ export function useDesktopWorkspace() {
           initial.runtime_autostart
           && initial.topology.experience === "full",
         );
-        if (!resumeExisting) return;
+        const resumeConnections = !resumeExisting
+          && initial.topology.experience === "full"
+          && initial.topology.server.kind === "local"
+          && initial.readiness.runtime_ready
+          && !initial.quick_share
+          && initial.connections?.profiles.some(profile => profile.enabled && profile.autostart && !profile.process_started);
+        if (!resumeExisting && !resumeConnections) return;
 
         setRefreshing(true);
         try {
-          const next = await desktopApi.resumeSavedRuntime();
+          const next = resumeExisting
+            ? await desktopApi.resumeSavedRuntime()
+            : await desktopApi.resumeSavedConnections();
           if (cancelled) return;
           // Backend reconciliation owns every profile's autostart policy.
           commitState(next);

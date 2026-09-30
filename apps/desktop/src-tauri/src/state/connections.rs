@@ -7,6 +7,9 @@ use crate::connections::{
 use crate::tunnel_config::TunnelProfileRequest;
 use serde::Deserialize;
 
+#[cfg(test)]
+mod tests;
+
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ConnectionAction {
@@ -17,6 +20,26 @@ pub enum ConnectionAction {
 }
 
 impl AppState {
+    pub async fn resume_saved_connections(&self) -> DesktopResult<DesktopStateSnapshot> {
+        let (operation, cancellation, mut core, baseline) = self
+            .begin_operation(DesktopOperationKind::RegularTunnelStart, true)
+            .await?;
+        let result = async {
+            if core.configuration_issue.is_some() || super::environment::migration_in_progress() {
+                return Err(DesktopError::new(
+                    "configuration_unavailable",
+                    "Saved configuration is unavailable or being migrated",
+                    "Resolve the configuration issue before reconnecting.",
+                ));
+            }
+            core.autostart_connections(&cancellation).await?;
+            core.get_state().await
+        }
+        .await;
+        self.finish_operation(operation, cancellation, core, baseline, result)
+            .await
+    }
+
     pub async fn save_tunnel_profile(
         &self,
         request: TunnelProfileRequest,
@@ -392,7 +415,14 @@ impl DesktopCore {
         &mut self,
         cancellation: &CancellationContext,
     ) -> DesktopResult<()> {
-        if self.config.persistent_environment.is_some() {
+        if self.config.persistent_environment.is_some()
+            || !self.snapshot.readiness.runtime_ready
+            || self.snapshot.quick_share.is_some()
+            || !self.config.topology.as_ref().is_some_and(|topology| {
+                topology.experience == Experience::Full
+                    && matches!(topology.server, ServerTopology::Local)
+            })
+        {
             return cancellation.check();
         }
         for profile in self.tunnel_config.profiles() {

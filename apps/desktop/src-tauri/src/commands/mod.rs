@@ -265,6 +265,14 @@ pub async fn resume_saved_runtime(
 }
 
 #[tauri::command]
+pub async fn resume_saved_connections(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<DesktopStateSnapshot, DesktopError> {
+    project_state_result(&app, state.resume_saved_connections().await)
+}
+
+#[tauri::command]
 pub async fn update_tunnel_proxy(
     request: TunnelProxyRequest,
     app: AppHandle,

@@ -73,6 +73,7 @@ export const desktopApi = {
   refresh: () => invoke<DesktopState>("refresh_runtime_status"),
   observeChatgptActivity: () => invoke<DesktopState>("observe_chatgpt_activity"),
   resumeSavedRuntime: () => invoke<DesktopState>("resume_saved_runtime"),
+  resumeSavedConnections: () => invoke<DesktopState>("resume_saved_connections"),
   updateTunnelProxy: (mode: TunnelProxyMode, customUrl?: string | null) =>
     invoke<DesktopState>("update_tunnel_proxy", {
       request: { mode, customUrl: customUrl ?? null },

@@ -109,6 +109,7 @@ pub fn run() {
             commands::refresh_runtime_status,
             commands::observe_chatgpt_activity,
             commands::resume_saved_runtime,
+            commands::resume_saved_connections,
             commands::update_tunnel_proxy,
             commands::update_tunnel_config,
             commands::save_tunnel_profile,

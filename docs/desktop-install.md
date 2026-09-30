@@ -215,6 +215,8 @@ After saving any required change, continue to step 6.
 
 ## 6. Start the official OpenAI Secure Tunnel
 
+**Start automatically** in each connection controls restoration when Desktop opens. For a Desktop-managed local Runtime, enabled connections with autostart resume after Runtime becomes ready, including when Runtime autostart is off but Runtime is already running. **Stop** disables that connection, so reopening does not restart it. Persistent environments delegate Tunnel lifecycle to system services; opening Desktop observes their actual status without restarting stopped services.
+
 Open **Connection**, select **OpenAI Secure Tunnel**, then click **Start secure tunnel**. Selection alone does not start or stop processes. If an existing tunnel reports an error, stop it before starting again; failures remain visible with a retry path. When local handoff is ready, Desktop should show wording such as:
 
 > OpenAI Secure Tunnel ready; waiting for ChatGPT

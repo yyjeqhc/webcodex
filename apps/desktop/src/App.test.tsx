@@ -19,6 +19,7 @@ const api = vi.hoisted(() => ({
   refresh: vi.fn(),
   observeChatgptActivity: vi.fn(),
   resumeSavedRuntime: vi.fn(),
+  resumeSavedConnections: vi.fn(),
   updateTunnelProxy: vi.fn(),
   activity: vi.fn(),
   configureLocal: vi.fn(),
@@ -264,6 +265,7 @@ beforeEach(() => {
     api.openPowerShellInstallGuide.mockResolvedValue(undefined);
     api.setLaunchAtLogin.mockImplementation(async (enabled: boolean) => enabled);
     api.resumeSavedRuntime.mockResolvedValue(readyState);
+    api.resumeSavedConnections.mockResolvedValue(readyState);
     api.configureEnvironment.mockResolvedValue(readyState);
     api.configureLocal.mockResolvedValue(projectlessReadyState);
     api.observeChatgptActivity.mockResolvedValue(readyState);
@@ -1249,6 +1251,7 @@ beforeEach(() => {
     await waitFor(() => expect(api.refresh).toHaveBeenCalledTimes(1));
     expect(api.resumeSavedRuntime).not.toHaveBeenCalled();
     expect(api.startRegularTunnel).not.toHaveBeenCalled();
+    expect(api.resumeSavedConnections).not.toHaveBeenCalled();
   });
 
   it("leaves all profile autostart to backend reconciliation when resuming", async () => {
@@ -1259,6 +1262,24 @@ beforeEach(() => {
     await waitFor(() => expect(api.resumeSavedRuntime).toHaveBeenCalledTimes(1));
     await screen.findByRole("heading", { name: "工作概览", level: 1 });
     expect(api.startRegularTunnel).not.toHaveBeenCalled();
+    expect(api.tunnelProfileAction).not.toHaveBeenCalled();
+  });
+
+  it("reconciles saved connections when Runtime is already ready and Runtime autostart is off", async () => {
+    const initial = { ...readyState, runtime_autostart: false, connections: connectionSnapshot(connectionFixture({ lifecycle: "stopped", ready: false, pid: null, process_started: false })) };
+    api.getState.mockResolvedValue(initial);
+    api.resumeSavedConnections.mockResolvedValue(readyState);
+    renderApp();
+    await waitFor(() => expect(api.resumeSavedConnections).toHaveBeenCalledTimes(1));
+    expect(api.resumeSavedRuntime).not.toHaveBeenCalled();
+    expect(api.tunnelProfileAction).not.toHaveBeenCalled();
+  });
+
+  it.each([{ enabled: false, autostart: true }, { enabled: true, autostart: false }])("preserves manual connection preferences on launch: %j", async preferences => {
+    api.getState.mockResolvedValue({ ...readyState, runtime_autostart: false, connections: connectionSnapshot(connectionFixture(preferences)) });
+    renderApp();
+    await screen.findByRole("heading", { name: "工作概览", level: 1 });
+    expect(api.resumeSavedConnections).not.toHaveBeenCalled();
     expect(api.tunnelProfileAction).not.toHaveBeenCalled();
   });
 

@@ -134,32 +134,36 @@ impl AppState {
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clone();
-        if let Ok(mut supervisor) = self.supervisor.try_lock() {
-            let mut server = snapshot.readiness.server.clone();
-            let mut runner = snapshot.readiness.runner.clone();
-            if supervisor
-                .snapshot(ProcessKey::LocalServer)
-                .is_some_and(|p| matches!(p.phase, ProcessPhase::Exited | ProcessPhase::Failed))
-            {
-                server = ServerReadiness::Error;
+        // Native services own persistent runtime observations. Desktop's process
+        // registry must not overwrite them with absent or historical processes.
+        if snapshot.persistent_environment.is_none() {
+            if let Ok(mut supervisor) = self.supervisor.try_lock() {
+                let mut server = snapshot.readiness.server.clone();
+                let mut runner = snapshot.readiness.runner.clone();
+                if supervisor
+                    .snapshot(ProcessKey::LocalServer)
+                    .is_some_and(|p| matches!(p.phase, ProcessPhase::Exited | ProcessPhase::Failed))
+                {
+                    server = ServerReadiness::Error;
+                }
+                if supervisor
+                    .snapshot(ProcessKey::LocalRunner)
+                    .is_some_and(|p| matches!(p.phase, ProcessPhase::Exited | ProcessPhase::Failed))
+                {
+                    runner = RunnerReadiness::Error;
+                }
+                if server != snapshot.readiness.server || runner != snapshot.readiness.runner {
+                    snapshot.readiness = aggregate_readiness(
+                        server,
+                        runner,
+                        snapshot.readiness.exposure.clone(),
+                        snapshot.readiness.project.clone(),
+                    );
+                }
             }
-            if supervisor
-                .snapshot(ProcessKey::LocalRunner)
-                .is_some_and(|p| matches!(p.phase, ProcessPhase::Exited | ProcessPhase::Failed))
-            {
-                runner = RunnerReadiness::Error;
-            }
-            if server != snapshot.readiness.server || runner != snapshot.readiness.runner {
-                snapshot.readiness = aggregate_readiness(
-                    server,
-                    runner,
-                    snapshot.readiness.exposure.clone(),
-                    snapshot.readiness.project.clone(),
-                );
-            }
+            self.connections
+                .project(&mut snapshot.connections, snapshot.readiness.runtime_ready);
         }
-        self.connections
-            .project(&mut snapshot.connections, snapshot.readiness.runtime_ready);
         snapshot.current_operation = self.operations.current();
         snapshot.activity_sequence = self.activity.latest_sequence();
         if snapshot.openai_tunnel_config.source == crate::models::TunnelConfigSource::Environment {

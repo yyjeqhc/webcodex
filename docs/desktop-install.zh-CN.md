@@ -197,6 +197,8 @@ Windows 用户可以设置当前用户的持久环境变量。macOS 从 Finder /
 
 ## 6. 启动官方 OpenAI Secure Tunnel
 
+连接配置中的**自动启动**控制重开 Desktop 时是否恢复该连接。使用桌面管理的本机 Runtime 时，Runtime 就绪后会恢复已启用且允许自动启动的连接；这也适用于 Runtime 本身关闭了自动启动、但已经在运行的情况。点击**停止**会停用该连接，重开不会再次启动它。持久环境中的 Tunnel 由系统服务管理，打开 Desktop 会读取实际服务状态，不会重启已停止的服务。
+
 进入 **连接**，选择 **OpenAI Secure Tunnel**，再点击 **启动安全隧道**。仅选择连接方式不会启动或停止进程。已有隧道报错时，先点击停止，再重新启动；失败后页面会保留错误和重试入口。运行成功后，Desktop 会显示类似：
 
 > OpenAI Secure Tunnel 已就绪，等待 ChatGPT 连接

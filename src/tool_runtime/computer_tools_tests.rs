@@ -1,3 +1,4 @@
+use super::responses::{validate_computer_response, ComputerResponseContext};
 use super::*;
 use crate::tool_runtime::specialized::SpecializedAuthorityRequirement;
 
@@ -67,6 +68,79 @@ fn computer_auth(scopes: &[&str]) -> AuthContext {
     auth.scopes
         .extend(scopes.iter().map(|scope| (*scope).to_string()));
     auth
+}
+
+fn response_context(kind: &'static str) -> ComputerResponseContext<'static> {
+    ComputerResponseContext {
+        client_id: "msi",
+        kind,
+        list_limit: None,
+        expected_surface_id: Some("surface_test"),
+        accessibility_bounds: None,
+        expected_application_id: Some(APPLICATION_ID.to_string()),
+        expected_display_id: None,
+        expected_element_id: Some("element_child".to_string()),
+        expected_action: Some("focus".to_string()),
+        expected_key: None,
+        expected_key_modifiers: json!([]),
+        expected_text_bytes: None,
+        snapshot_advanced: false,
+        expected_snapshot_region: None,
+        expected_snapshot_max_width: None,
+        expected_snapshot_max_height: None,
+        pointer_context: None,
+        clipboard_write_context: Some(ClipboardWriteContext {
+            text_bytes: Some(5),
+        }),
+    }
+}
+
+#[test]
+fn computer_response_effect_success_is_bound_to_the_original_request() {
+    for (kind, mut receipt, field, mismatch) in [
+        (
+            "computer_control",
+            json!({"platform":"windows","surface_id":"surface_test","element_id":"element_child","action":"focus","success":true}),
+            "action",
+            json!("press"),
+        ),
+        (
+            "computer_launch_application",
+            json!({"platform":"windows","application_id":APPLICATION_ID,"success":true}),
+            "application_id",
+            json!(APPLICATION_ID_2),
+        ),
+        (
+            "computer_write_clipboard",
+            json!({"platform":"windows","text_bytes":5,"success":true}),
+            "text_bytes",
+            json!(6),
+        ),
+    ] {
+        let valid = validate_computer_response(receipt.clone(), response_context(kind));
+        assert!(valid.success, "{kind}: {:?}", valid.output);
+
+        receipt[field] = mismatch;
+        let result = validate_computer_response(receipt.clone(), response_context(kind));
+        assert!(!result.success, "{kind}");
+        assert_eq!(
+            result.output["execution_state"], "outcome_unknown",
+            "{kind}"
+        );
+
+        receipt["native_identity"] = json!("PRIVATE_RECEIPT_MUST_NOT_SURVIVE");
+        let result = validate_computer_response(receipt, response_context(kind));
+        assert!(!result.success, "{kind}");
+        assert!(!result
+            .output
+            .to_string()
+            .contains("PRIVATE_RECEIPT_MUST_NOT_SURVIVE"));
+        assert!(!result
+            .error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("PRIVATE_RECEIPT_MUST_NOT_SURVIVE"));
+    }
 }
 
 #[test]

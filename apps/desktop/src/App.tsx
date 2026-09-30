@@ -31,10 +31,10 @@ export default function App() {
 function DesktopApp() {
   const { t } = useLocale();
   const s = useShellText();
-  const [settingsSection, setSettingsSection] = useState<"diagnostics" | "runtime" | undefined>();
+  const [settingsSection, setSettingsSection] = useState<"diagnostics" | "runtime" | "network" | undefined>();
   const { state, activity, navigation, setNavigation, refreshing, preserveWorkspacePollDeadline, error, setError, cancelSubmittingId, showSetup, setShowSetup, setStartupAttempt, mainRef, commitState, openSetup, refresh, resumeRuntime, cancelCurrentOperation, runStateOperation } = useDesktopWorkspace();
   const updates = useRuntimeUpdates(Boolean(state && !state.current_operation && !state.configuration_issue));
-  const openSettings = (section: "diagnostics" | "runtime") => { setSettingsSection(section); setNavigation("settings"); };
+  const openSettings = (section: "diagnostics" | "runtime" | "network") => { setSettingsSection(section); setNavigation("settings"); };
   if (!state) {
     return (
       <main className="splash">
@@ -128,13 +128,12 @@ function DesktopApp() {
             onChangeSetup={openSetup}
             onNavigate={setNavigation}
             onStopQuickShare={() => void runStateOperation(desktopApi.stopQuickShare)}
-            onStopRuntime={() => void runStateOperation(desktopApi.stopLocalRuntime)}
           />
         ))}
         {navigation === "projects" && (
           <ProjectsPanel />
         )}
-        {navigation === "connection" && <ConnectionPanel state={state} onState={commitState} />}
+        {navigation === "connection" && <ConnectionPanel state={state} onState={commitState} onSettings={openSettings} />}
         {navigation === "activity" && <ActivityPanel activity={activity} />}
         {navigation === "extensions" && <ExtensionsPanel state={state} onState={commitState} />}
         {navigation === "settings" && <SettingsPanel state={state} onState={commitState} onChangeSetup={openSetup} onStopRuntime={() => void runStateOperation(desktopApi.stopLocalRuntime)} initialSection={settingsSection} onActivity={() => setNavigation("activity")} updates={updates} />}

@@ -73,7 +73,7 @@ export function ManagedInstructionsPanel({ active, settings, disabled, onState, 
     <p>{text("help")}</p>
     {file && <>
       <p>{enabled ? text("configured") : text("disabled")}</p>
-      <Textarea label={text("content")} id="managed-global-instructions" value={draft} onChange={event => { setDraft(event.currentTarget.value); setNotice(null); }} rows={12} disabled={blocked} spellCheck={false} autosize={false} />
+      <Textarea label={text("content")} id="managed-global-instructions" value={draft} onChange={event => { setDraft(event.currentTarget.value); setNotice(null); }} rows={8} disabled={blocked} spellCheck={false} autosize={false} />
       <p className="muted-text">{text("limit")} ({bytes.toLocaleString()} B)</p>
       {dirty && <p role="status">{text("unsaved")}</p>}
       {tooLarge && <p role="alert">{text("tooLarge")}</p>}

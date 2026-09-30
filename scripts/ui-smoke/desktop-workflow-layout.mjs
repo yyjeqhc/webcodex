@@ -25,6 +25,7 @@ async function bounded(page, label) {
 
 async function capture(page, name) {
   const filename = `${name}.png`;
+  await page.locator('.main-content').evaluate(el => { el.scrollTop = 0; });
   await page.screenshot({ path: path.join(output, filename), animations: 'disabled', caret: 'hide' });
   report.screenshots.push(filename);
 }
@@ -52,6 +53,7 @@ try {
       await page.locator('[data-webcodex-action="navigate-home"]').click();
       assert.equal(await page.locator('.readiness-banner').count(), 0, 'healthy Home avoids duplicate readiness facts');
       assert(await page.locator('.dashboard-handoff').isVisible());
+      assert.equal(await page.locator('.dashboard-activity-link, .workspace-project-table').count(), 0, 'Home leaves inventories to Projects and Activity');
       await bounded(page, `Home ${width} ${theme}`);
       await capture(page, `home-${width}-${theme}`);
 
@@ -98,6 +100,12 @@ try {
         await page.locator(`[data-webcodex-action="navigate-${destination}"]`).click();
         await page.locator(`[data-webcodex-page="${destination}"]`).waitFor();
         await bounded(page, `${destination} ${width} ${theme}`);
+        if (destination === 'activity') {
+          const tabs = await page.locator('.workspace-tabs').evaluate(el => ({x: getComputedStyle(el).overflowX, y: getComputedStyle(el).overflowY, height: el.clientHeight, scrollHeight: el.scrollHeight}));
+          assert.equal(tabs.x, 'visible'); assert.equal(tabs.y, 'visible');
+          assert(tabs.scrollHeight <= tabs.height + 1);
+          await capture(page, `activity-${width}-${theme}`);
+        }
         if (destination === 'connection') {
           await page.locator('[data-webcodex-page="connection"] .page-heading-row .primary-button').click();
           const dialog = page.getByRole('dialog');
@@ -116,10 +124,24 @@ try {
       await page.locator('#extension-tab-instructions').click();
       await page.locator('#managed-global-instructions').fill('Keep this unsaved instruction draft.');
       await page.locator('#instruction-files').waitFor();
-      assert(await page.locator('#skill-roots').isVisible(), 'path configuration is visible without a disclosure');
+      assert.equal(await page.locator('#skill-roots').isVisible(), false, 'Instructions only shows instruction paths');
+      await page.locator('#instruction-files').fill('/fixture/unsaved-instructions.md');
       await bounded(page, `Instructions ${width} ${theme}`);
       await capture(page, `instructions-${width}-${theme}`);
       await page.locator('#extension-tab-skills').click();
+      assert(await page.locator('#skill-roots').isVisible());
+      assert.equal(await page.locator('#instruction-files').isVisible(), false);
+      await page.locator('#skill-roots').fill('/fixture/unsaved-skills');
+      await bounded(page, `Skills ${width} ${theme}`);
+      await capture(page, `skills-${width}-${theme}`);
+      await page.locator('#extension-tab-instructions').click();
+      assert.equal(await page.locator('#instruction-files').inputValue(), '/fixture/unsaved-instructions.md');
+      await page.locator('.extension-project-preview .project-picker-trigger').click();
+      await page.locator('.project-picker-option[data-value="agent:fixture-runner:beta"]').click();
+      await page.waitForFunction(() => window.__fixtureCalls.some(call => call.cmd === 'workspace_query' && call.args.request.kind === 'extensions' && call.args.request.project === 'agent:fixture-runner:beta'));
+      assert.equal(await page.locator('#instruction-files').inputValue(), '/fixture/unsaved-instructions.md');
+      await page.locator('#extension-tab-skills').click();
+      assert.equal(await page.locator('#skill-roots').inputValue(), '/fixture/unsaved-skills');
       await page.locator('#extension-tab-instructions').click();
       assert.equal(await page.locator('#managed-global-instructions').inputValue(), 'Keep this unsaved instruction draft.');
       await context.close();
@@ -137,6 +159,12 @@ try {
       await page.locator(`#settings-tab-${section}`).click();
       await bounded(page, `Localized Settings ${locale} ${section}`);
     }
+    await page.locator('[data-webcodex-action="navigate-extensions"]').click();
+    for (const category of ['codingAgents', 'sshResources', 'mcpProviders', 'skills', 'instructions']) {
+      await page.locator(`#extension-tab-${category}`).click();
+      await bounded(page, `Localized Extensions ${locale} ${category}`);
+    }
+    await page.locator('[data-webcodex-action="navigate-settings"]').click();
   }
   await context.close();
   assert.deepEqual(report.errors, [], 'renderer errors');

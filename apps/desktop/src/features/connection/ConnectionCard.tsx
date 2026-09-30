@@ -1,32 +1,67 @@
-import { useConnectionsTools } from "../../i18n/connections-tools";
+import { useConnectionsTools, type ConnectionsToolsKey } from "../../i18n/connections-tools";
 import { useLocale } from "../../i18n/locale";
 import { useProduct } from "../../i18n/product";
+import { useShellText } from "../../i18n/runtime-shell";
 import { connectionActive, type TunnelConnection, type TunnelProfileAction } from "../../models/connections-tools";
 
-export function ConnectionCard({ profile, canStart, busy, copied, onAction, onEdit, onDelete, onCopy }: {
+type Recovery = { title: ConnectionsToolsKey; action: ConnectionsToolsKey; settings: "network" | "runtime" | "diagnostics" };
+function recoveryFor(profile: TunnelConnection): Recovery {
+  // A Stop error describes the latest control action even when the earlier
+  // connection failure's reason code is still retained for diagnostics.
+  if (profile.last_error === "stop_failed") return { title: "stopFailed", action: "stopRecovery", settings: "diagnostics" };
+  switch (profile.reason_code) {
+    case "tunnel_client_download_failed": return { title: "downloadFailedTitle", action: "tunnelDownloadFailed", settings: "network" };
+    case "tunnel_client_install_failed": return { title: "installFailedTitle", action: "tunnelInstallFailed", settings: "diagnostics" };
+    case "tunnel_client_verification_failed": return { title: "verificationFailedTitle", action: "tunnelVerificationFailed", settings: "diagnostics" };
+    case "tunnel_control_plane_unreachable":
+    case "tunnel_control_plane_probe_failed": return { title: "controlPlaneFailed", action: "networkRecovery", settings: "network" };
+    case "tunnel_daemon_start_failed": return { title: "daemonFailed", action: "diagnosticsRecovery", settings: "diagnostics" };
+    case "local_mcp_unavailable": return { title: "localMcpFailed", action: "localMcpRecovery", settings: "runtime" };
+    case "tunnel_daemon_not_ready":
+    case "tunnel_startup_failed":
+    case "tunnel_doctor_failed": return { title: "startupFailed", action: "networkRecovery", settings: "network" };
+  }
+  switch (profile.last_error) {
+    case "local_mcp_unavailable": return { title: "localMcpFailed", action: "localMcpRecovery", settings: "runtime" };
+    case "health_stale": return { title: "healthStale", action: "diagnosticsRecovery", settings: "diagnostics" };
+    case "protocol_invalid": return { title: "protocolFailed", action: "diagnosticsRecovery", settings: "diagnostics" };
+    case "process_exited": return { title: "processExited", action: "diagnosticsRecovery", settings: "diagnostics" };
+    case "start_failed": return { title: "daemonFailed", action: "diagnosticsRecovery", settings: "diagnostics" };
+    case "startup_timeout": return { title: "startupFailed", action: "networkRecovery", settings: "network" };
+    case "tunnel_unavailable": return { title: "connectionUnavailable", action: "networkRecovery", settings: "network" };
+    default: return { title: "connectionUnavailable", action: "diagnosticsRecovery", settings: "diagnostics" };
+  }
+}
+
+export function ConnectionCard({ profile, canStart, busy, copied, onAction, onEdit, onDelete, onCopy, onSettings }: {
   profile: TunnelConnection; canStart: boolean; busy: boolean; copied: boolean;
   onAction: (action: TunnelProfileAction) => void; onEdit: () => void; onDelete: () => void; onCopy: () => void;
+  onSettings: (section: "network" | "runtime" | "diagnostics") => void;
 }) {
-  const p = useProduct(); const c = useConnectionsTools(); const { formatTime } = useLocale();
+  const p = useProduct(); const c = useConnectionsTools(); const s = useShellText(); const { formatTime } = useLocale();
   const active = connectionActive(profile);
   // A failed child may already be reaped, but the enabled desired connection
   // still needs explicit Restart and Stop controls (Stop persists that intent).
   const canStop = active || (profile.enabled && profile.lifecycle === "error");
   const startAction = canStop ? "restart" : "start";
-  const status = profile.ready ? p("running") : profile.last_error || profile.lifecycle === "error" ? p("failed") : profile.lifecycle === "starting" ? p("starting") : profile.lifecycle === "stopping" ? c("stopping") : profile.lifecycle === "running" ? p("starting") : p("stopped");
-  const failureMessage = profile.reason_code === "tunnel_client_download_failed" ? "tunnelDownloadFailed"
-    : profile.reason_code === "tunnel_client_install_failed" ? "tunnelInstallFailed"
-    : profile.reason_code === "tunnel_client_verification_failed" ? "tunnelVerificationFailed"
-    : profile.last_error === "local_mcp_unavailable" ? "localUnavailable" : "tunnelUnavailable";
+  const failed = !profile.ready && Boolean(profile.last_error || profile.lifecycle === "error");
+  const recovery = recoveryFor(profile);
+  const healthStale = profile.last_error === "health_stale";
+  const status = profile.ready ? p("running") : failed ? c("connectionUnavailable") : profile.lifecycle === "starting" ? p("starting") : profile.lifecycle === "stopping" ? c("stopping") : profile.lifecycle === "running" ? p("starting") : p("stopped");
   // Readiness is asynchronous: use the observed per-profile failure, not only a
   // rejected start command. Never infer a proxy cause or silently switch routes.
   const autoProxyRecovery = profile.auto_proxy_used === true && profile.last_error === "tunnel_unavailable" && (
     !profile.reason_code || ["tunnel_client_download_failed", "tunnel_control_plane_unreachable", "tunnel_control_plane_probe_failed", "tunnel_daemon_not_ready", "tunnel_unavailable"].includes(profile.reason_code)
   );
   return <article className="connection-profile" aria-labelledby={`connection-${profile.id}`} data-tunnel-profile-id={profile.id}>
-    <header className="workspace-section-heading"><div><h2 id={`connection-${profile.id}`}>{profile.name}</h2><span className="workspace-observation">{c("secureTunnel")}</span></div><span className={`connection-state ${profile.ready ? "ready" : ""}`} role="status"><i className={`status-dot ${profile.ready ? "ready" : profile.last_error ? "error" : "unknown"}`} aria-hidden="true" />{status}</span></header>
+    <header className="workspace-section-heading"><div><h2 id={`connection-${profile.id}`}>{profile.name}</h2><span className="workspace-observation">{c("secureTunnel")}</span></div><span className={`connection-state ${profile.ready ? "ready" : ""}`} role="status"><i className={`status-dot ${profile.ready ? "ready" : failed ? "error" : "unknown"}`} aria-hidden="true" />{status}</span></header>
+    {(active || failed) && <dl className="connection-checks">{([[c("secureTunnel"), healthStale ? null : profile.tunnel_ready], [c("localMcp"), healthStale ? null : profile.local_mcp_ready]] as const).map(([label, ready]) => <div key={label}><dt>{label}</dt><dd><i className={`status-dot ${ready === true ? "ready" : ready === false ? "error" : "unknown"}`} aria-hidden="true" />{ready === true ? c("reachable") : ready === false ? c("unreachable") : healthStale ? c("awaitingStatus") : p("unknown")}</dd></div>)}</dl>}
     <div className="connection-id"><span>Tunnel ID</span><code>{profile.tunnel_id || "—"}</code>{profile.tunnel_id && <button type="button" className="text-button" aria-label={`${c("copyId")} ${profile.name}`} onClick={onCopy}>{copied ? p("copied") : c("copyId")}</button>}</div>
-    {profile.last_error && <div className="workspace-notice" role="status"><p>{c(failureMessage)}</p>{autoProxyRecovery && <p>{p("tunnelAutoProxyRecovery")}</p>}</div>}
+    {failed && <div className="connection-recovery" role="status"><strong>{c(recovery.title)}</strong><p>{c(recovery.action)}</p>{autoProxyRecovery && <p>{c("autoProxyHint")}</p>}
+      <button type="button" className="secondary-button" onClick={() => onSettings(recovery.settings)}>{recovery.settings === "network" ? c("proxySettings") : s(recovery.settings === "runtime" ? "Runtime" : "Troubleshooting")}</button>
+      <p className="connection-impact">{c("chatgptImpact")}</p>
+    </div>}
+    {!profile.credential_present && <p className="workspace-notice">{c("missingCredentials")}</p>}
     <div className="connection-actions">
       <button type="button" className="secondary-button" disabled={busy} aria-label={`${p("edit")} ${profile.name}`} onClick={onEdit}>{p("edit")}</button>
       <button type="button" className={active ? "secondary-button" : "primary-button"} disabled={busy || !canStart || !profile.credential_present} aria-label={`${p(startAction)} ${profile.name}`} onClick={() => onAction(startAction)}>{p(startAction)}</button>

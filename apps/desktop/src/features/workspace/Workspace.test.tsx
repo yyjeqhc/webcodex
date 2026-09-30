@@ -108,7 +108,7 @@ describe("product workspace task flows", () => {
     const viewer = { ...state, project: null, saved_projects: [], workspace_runner: null,
       topology: { ...state.topology!, server: { kind: "remote" as const, url: "https://central.example" }, runner: { kind: "none" as const } } } as DesktopState;
     render(wrap(<Dashboard state={viewer} refreshing={false} onRefresh={vi.fn()} onResumeRuntime={vi.fn()}
-      onChangeSetup={vi.fn()} onNavigate={vi.fn()} onStopQuickShare={vi.fn()} onStopRuntime={vi.fn()} />, viewer));
+      onChangeSetup={vi.fn()} onNavigate={vi.fn()} onStopQuickShare={vi.fn()} />, viewer));
     expect(screen.queryByRole("button", { name: "Add Project" })).not.toBeInTheDocument();
   });
   it.each([

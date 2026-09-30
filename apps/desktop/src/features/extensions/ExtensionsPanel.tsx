@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Bot, FileText, Network, Puzzle, Terminal } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { PluginRegistrationForm } from "./PluginRegistrationForm";
 import { McpProvidersPanel } from "./McpProvidersPanel";
@@ -22,6 +23,7 @@ import { WorkspaceEmptyState } from "../../components/WorkspaceEmptyState";
 
 type ExtensionTab = "codingAgents" | "sshResources" | "instructions" | "skills" | "mcpProviders";
 const TABS: ExtensionTab[] = ["codingAgents", "sshResources", "mcpProviders", "skills", "instructions"];
+const TAB_ICONS = { codingAgents: Bot, sshResources: Terminal, mcpProviders: Network, skills: Puzzle, instructions: FileText };
 export function ExtensionsPanel({ state, onState }: { state: DesktopState; onState: (state: DesktopState) => void }) {
   const { t } = useLocale(); const p = useProduct(); const c = useConnectionsTools(); const r = useRunnerCapabilitiesText(); const workspace = useWorkspace();
   const [tab, setTab] = useState<ExtensionTab>("codingAgents");
@@ -43,18 +45,20 @@ export function ExtensionsPanel({ state, onState }: { state: DesktopState; onSta
   useEffect(() => { if (project && !workspace.projects.some(row => row.id === project)) { setProject(""); setDocument(null); } }, [workspace.projects, project]);
   useEffect(() => {
     let cancelled = false;
-    setCatalog(null); setSettings(null); setFailed(false); setLoading(true); setDocument(null);
-    void Promise.allSettled([
-      project ? workspaceQuery<ExtensionsSnapshot>({ kind: "extensions", project }) : Promise.resolve(null),
-      desktopApi.runnerSettings(),
-    ]).then(([catalogResult, settingsResult]) => {
-      if (cancelled) return;
-      if (catalogResult.status === "fulfilled") setCatalog(catalogResult.value); else setFailed(true);
-      if (settingsResult.status === "fulfilled") setSettings(settingsResult.value);
-      setLoading(false);
-    });
+    setCatalog(null); setFailed(false); setLoading(true); setDocument(null);
+    void (project ? workspaceQuery<ExtensionsSnapshot>({ kind: "extensions", project }) : Promise.resolve(null))
+      .then(value => { if (!cancelled) setCatalog(value); })
+      .catch(() => { if (!cancelled) setFailed(true); })
+      .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [project, revision]);
+  // Runner paths are shared. Changing the project preview must not discard
+  // configuration drafts or reload their authority fence.
+  useEffect(() => {
+    let cancelled = false;
+    void desktopApi.runnerSettings().then(value => { if (!cancelled) setSettings(value); }).catch(() => { if (!cancelled) setSettings(null); });
+    return () => { cancelled = true; };
+  }, [revision]);
   const disabled = busy || Boolean(state.current_operation);
   const refresh = () => setRevision(value => value + 1);
   const updatePaths = async (paths: RunnerSettings["paths"]) => {
@@ -85,20 +89,23 @@ export function ExtensionsPanel({ state, onState }: { state: DesktopState; onSta
   const skills = catalog?.skills.catalog?.skills || [];
   return <div className="page-section workspace-page" data-webcodex-page="extensions">
     <header className="page-heading-row"><h1 id="extensions-title">{t("extensions.title")}</h1>{(projectTab || tab === "mcpProviders") && <button className="secondary-button" onClick={refresh} disabled={disabled || loading}>{p("refresh")}</button>}</header>
-    <div className="workspace-tabs" role="tablist" aria-label={t("extensions.title")}>
-      {TABS.map(value => <button type="button" role="tab" key={value} id={`extension-tab-${value}`} aria-controls={`extension-view-${value}`} aria-selected={tab === value} tabIndex={tab === value ? 0 : -1} onClick={() => setTab(value)} onKeyDown={event => {
-        if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-        event.preventDefault(); const next = TABS[(TABS.indexOf(value) + (event.key === "ArrowRight" ? 1 : TABS.length - 1)) % TABS.length]; setTab(next); window.document.getElementById(`extension-tab-${next}`)?.focus();
-      }}>{value === "instructions" ? p("instructions") : value === "skills" ? "Skills" : value === "mcpProviders" ? c("mcpProviders") : r(value)}</button>)}
+    <div className="extensions-layout">
+    <div className="extensions-navigation" role="tablist" aria-orientation="vertical" aria-label={t("extensions.title")}>
+      {TABS.map(value => { const Icon = TAB_ICONS[value]; return <button type="button" role="tab" key={value} id={`extension-tab-${value}`} aria-controls={`extension-view-${value}`} aria-selected={tab === value} tabIndex={tab === value ? 0 : -1} onClick={() => setTab(value)} onKeyDown={event => {
+        if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return;
+        event.preventDefault(); const next = event.key === "Home" ? TABS[0] : event.key === "End" ? TABS[TABS.length - 1] : TABS[(TABS.indexOf(value) + (["ArrowRight", "ArrowDown"].includes(event.key) ? 1 : TABS.length - 1)) % TABS.length]; setTab(next); window.document.getElementById(`extension-tab-${next}`)?.focus();
+      }}><Icon size={18} aria-hidden="true" />{value === "instructions" ? p("instructions") : value === "skills" ? "Skills" : value === "mcpProviders" ? c("mcpProviders") : r(value)}</button>; })}
     </div>
+    <div className="extensions-content" role="tabpanel" id={`extension-view-${tab}`} aria-labelledby={`extension-tab-${tab}`}>
     <ManagedInstructionsPanel active={tab === "instructions"} settings={settings} disabled={disabled} onState={onState} onEnabled={refresh} />
+    {settings && <div className={`extension-path-settings${tab === "skills" ? " primary" : ""}`} hidden={!projectTab}><h2>{p(tab === "skills" ? "skillPaths" : "instructionPaths")}</h2><ExtensionPathsEditor settings={settings} kind={tab === "skills" ? "skills" : "instructions"} disabled={disabled} onSave={updatePaths} /></div>}
     {pathsApplied && projectTab && <p className="extension-apply-bar" role="status">{instructionsText("pathsApplied")}</p>}
     {pathsError && projectTab && <div className="error-card" role="alert"><strong>{pathsError.message}</strong><span>{pathsError.next_action}</span><code>{pathsError.code}</code></div>}
     {failed && projectTab && <p role="alert" className="workspace-notice">{p("loadError")}</p>}
     {pendingRestart && tab === "mcpProviders" && <div className="extension-apply-bar" role="status"><span>{p("needsRestart")}</span>{settings?.can_restart && <button className="secondary-button" onClick={() => void restart()} disabled={disabled}>{p("restartRunner")}</button>}</div>}
     {loading && projectTab && <p role="status">{p("loading")}</p>}
-    {(!loading || !projectTab) && <section role="tabpanel" id={`extension-view-${tab}`} aria-labelledby={`extension-tab-${tab}`}>
-      {projectTab && <div className="activity-project-filter"><span className="filter-label">{p("projects")}</span><ProjectPicker label={p("projects")} emptyLabel={p("noMatches")} searchLabel={p("search")} value={project} onChange={setProject} disabled={disabled} options={workspace.projects.filter(row => row.id).map(row => ({ value: row.id, label: projectName(row), detail: displayProjectPath(row.path) }))} /></div>}
+    {(!loading || !projectTab) && <section className={projectTab ? "extension-project-preview" : undefined}>
+      {projectTab && <><h2>{p("projectExtensions")}</h2><div className="activity-project-filter"><span className="filter-label">{p("projects")}</span><ProjectPicker label={p("projects")} emptyLabel={p("noMatches")} searchLabel={p("search")} value={project} onChange={setProject} disabled={disabled} options={workspace.projects.filter(row => row.id).map(row => ({ value: row.id, label: projectName(row), detail: displayProjectPath(row.path) }))} /></div></>}
       {tab === "codingAgents" && <CodingAgentsPanel state={state} onState={onState} settings={settings} onRestarted={() => { setPendingRestart(false); refresh(); }} />}
       {tab === "sshResources" && <SshResourcesPanel state={state} onState={onState} settings={settings} onRestarted={() => { setPendingRestart(false); refresh(); }} />}
       {tab === "instructions" && <>
@@ -134,8 +141,9 @@ export function ExtensionsPanel({ state, onState }: { state: DesktopState; onSta
         }} />}
         </details>
       </>}
-      {settings && projectTab && <div className="extension-path-settings"><h2>{p("instructionAndSkillPaths")}</h2><ExtensionPathsEditor settings={settings} disabled={disabled} onSave={updatePaths} /></div>}
     </section>}
+    </div>
+    </div>
     {document && <InstructionDocument key={document.fingerprint} project={project} file={document} onClose={() => setDocument(null)} />}
   </div>;
 }

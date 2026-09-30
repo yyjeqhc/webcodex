@@ -344,19 +344,22 @@ beforeEach(() => {
     if (trigger === "automatic") api.refresh.mockResolvedValueOnce(selected);
     const runtime = deferred<DesktopState>();
     let refreshing = false;
-    let branch = "main";
+    let inventoryUpdated = false;
     api.refresh.mockImplementation(() => { refreshing = true; return runtime.promise; });
     const normal = workspace.invoke.getMockImplementation()!;
     workspace.invoke.mockImplementation((command, args) => {
       if (refreshing) return Promise.reject(new Error("workspace_unavailable"));
-      if (args.request.kind === "project_git") return Promise.resolve({ branch });
+      if (args.request.kind === "projects") return Promise.resolve(normal(command, args)).then(value => {
+        const projects = inventoryUpdated ? [...value.projects, { ...value.projects[0], id: "agent:desktop:another", path: "/fixture/another" }] : value.projects;
+        return { ...value, projects, total: projects.length };
+      });
       return normal(command, args);
     });
     vi.useFakeTimers();
     const view = renderApp();
     try {
       await act(async () => {});
-      expect(screen.getByText("main")).toBeInTheDocument();
+      expect(screen.getByText("1 · 管理工作目录")).toBeInTheDocument();
       // Isolate runtime observation from the independent 30-second activity observer.
       fireEvent.blur(window);
       const before = workspace.invoke.mock.calls.length;
@@ -364,18 +367,18 @@ beforeEach(() => {
       else await act(async () => { await vi.advanceTimersByTimeAsync(1_500); });
       await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
       expect(workspace.invoke.mock.calls.length).toBe(before);
-      expect(screen.getByText("main")).toBeInTheDocument();
+      expect(screen.getByText("1 · 管理工作目录")).toBeInTheDocument();
       expect(screen.queryByText("暂时无法刷新，请检查连接后重试。")).not.toBeInTheDocument();
       await act(async () => {
         refreshing = false;
-        branch = "updated-branch";
+        inventoryUpdated = true;
         if (outcome === "resolve") runtime.resolve({ ...selected, project: null });
         else runtime.reject({ code: "refresh_failed", message: "Fixture refresh failure" });
       });
       const count = () => workspace.invoke.mock.calls.filter(([, args]) => args.request.kind === "overview").length;
       expect(count()).toBe(2);
       expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("工作概览");
-      expect(screen.getByText("updated-branch")).toBeInTheDocument();
+      expect(screen.getByText("2 · 管理工作目录")).toBeInTheDocument();
       expect(screen.queryByText("暂时无法刷新，请检查连接后重试。")).not.toBeInTheDocument();
       if (trigger === "manual") {
         await act(async () => { await vi.advanceTimersByTimeAsync(15_000); });
@@ -465,11 +468,11 @@ beforeEach(() => {
 
   it("starts the named profile only after explicit action and permits retry", async () => {
     api.getState.mockResolvedValue(readyState);
-    api.tunnelProfileAction.mockRejectedValueOnce({ code: "tunnel_unavailable", message: "private-error-must-not-render" });
+    api.tunnelProfileAction.mockRejectedValueOnce({ code: "tunnel_unavailable", message: "private-error-must-not-render", next_action: "Check network" });
     renderApp(); fireEvent.click(await screen.findByRole("button", { name: "连接" }));
     expect(api.tunnelProfileAction).not.toHaveBeenCalled();
     const start = screen.getByRole("button", { name: "启动 ChatGPT" });
-    fireEvent.click(start); expect(await screen.findByRole("alert")).toHaveTextContent("未能应用更改");
+    fireEvent.click(start); expect(await screen.findByRole("alert")).toHaveTextContent("安全隧道不可用");
     expect(document.body.textContent).not.toContain("private-error-must-not-render");
     await waitFor(() => expect(start).toBeEnabled()); fireEvent.click(start);
     await waitFor(() => expect(api.tunnelProfileAction).toHaveBeenCalledTimes(2));
@@ -484,14 +487,14 @@ beforeEach(() => {
       process_started: true, process_ready: true, tunnel_ready: false, local_mcp_ready: true,
       failure_stage: "tunnel_control_plane", reason_code: "tunnel_control_plane_probe_failed",
     })) });
-    api.tunnelProfileAction.mockRejectedValueOnce({ code: "tunnel_unavailable", message: "Stop failed" });
+    api.tunnelProfileAction.mockRejectedValueOnce({ code: "tunnel_unavailable", message: "Stop failed", next_action: "Retry stop" });
     renderApp(); fireEvent.click(await screen.findByRole("button", { name: "连接" }));
     expect(screen.queryByRole("button", { name: "启动 ChatGPT" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByText("高级 · ChatGPT"));
     expect(screen.getByText("tunnel_control_plane")).toBeInTheDocument();
     expect(screen.getByText("tunnel_control_plane_probe_failed")).toBeInTheDocument();
     const stop = screen.getByRole("button", { name: "停止 ChatGPT" });
-    fireEvent.click(stop); expect(await screen.findByRole("alert")).toHaveTextContent("未能应用更改");
+    fireEvent.click(stop); expect(await screen.findByRole("alert")).toHaveTextContent("安全隧道不可用");
     await waitFor(() => expect(stop).toBeEnabled()); fireEvent.click(stop);
     await waitFor(() => expect(screen.getByRole("button", { name: "启动 ChatGPT" })).toBeEnabled());
     expect(api.tunnelProfileAction).toHaveBeenLastCalledWith("default", "stop");
@@ -500,7 +503,8 @@ beforeEach(() => {
 
   it("presents Projects as observed runtime state without a manual Add Project action", async () => {
     api.getState.mockResolvedValue(readyState);
-    renderApp(); await screen.findByRole("heading", { level: 3, name: "repo" });
+    renderApp(); await screen.findByRole("heading", { level: 1, name: "工作概览" });
+    expect(screen.queryByRole("heading", { name: "repo" })).not.toBeInTheDocument();
     expect(screen.queryByText("当前项目")).not.toBeInTheDocument();
     expect(screen.queryByText(/responsible process|Runtime Bearer|Runner 中执行/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "项目" }));
@@ -998,7 +1002,7 @@ beforeEach(() => {
     await screen.findByRole("heading", { level: 1, name: "工作概览" });
 
     fireEvent.click(screen.getByRole("button", { name: "连接" }));
-    expect(await screen.findByRole("status", { name: "工作区" })).toHaveTextContent("连接1 / 1 运行中");
+    expect(await screen.findByText("1 / 1 运行中")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "启动" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "停止 ChatGPT" })).toBeInTheDocument();
   });

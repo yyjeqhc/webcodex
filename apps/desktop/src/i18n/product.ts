@@ -3,8 +3,14 @@ import { useLocale } from "./locale";
 // Product vocabulary is grouped by task rather than by implementation module.
 // Column order: English, Chinese, German, French, Japanese, Korean.
 export const PRODUCT_MESSAGES = {
+  projectShortcut: ["Manage working folders", "管理工作目录", "Arbeitsordner verwalten", "Gérer les dossiers de travail", "作業フォルダーを管理", "작업 폴더 관리"],
+  activityShortcut: ["View calls and sessions", "查看调用与会话", "Aufrufe und Sitzungen ansehen", "Voir les appels et les sessions", "呼び出しとセッションを確認", "호출 및 세션 보기"],
+  extensionShortcut: ["Manage tools and instructions", "管理工具与指令", "Werkzeuge und Anweisungen verwalten", "Gérer les outils et les instructions", "ツールと指示を管理", "도구 및 지침 관리"],
+  instructionPaths: ["Additional instruction files", "额外指令文件", "Weitere Anweisungsdateien", "Fichiers d’instructions supplémentaires", "追加の指示ファイル", "추가 지침 파일"],
+  skillPaths: ["Skill folders", "Skill 文件夹", "Skill-Ordner", "Dossiers de Skills", "Skill フォルダー", "Skill 폴더"],
+  projectExtensions: ["Available to this project", "此项目可用的扩展", "Für dieses Projekt verfügbar", "Disponibles pour ce projet", "このプロジェクトで利用可能", "이 프로젝트에서 사용 가능"],
+
   overview: ["Overview", "工作概览", "Übersicht", "Vue d’ensemble", "概要", "개요"],
-  instructionAndSkillPaths: ["Instruction & Skill folders", "指令与 Skill 路径", "Anweisungs- und Skill-Pfade", "Chemins des instructions et Skills", "指示と Skill のパス", "지침 및 Skill 경로"],
   accessAndPermissions: ["Files & permissions", "文件访问与权限", "Dateien & Berechtigungen", "Fichiers et autorisations", "ファイルと権限", "파일 및 권한"],
   aboutAndUpdates: ["About & updates", "关于与更新", "Info & Updates", "À propos et mises à jour", "情報とアップデート", "정보 및 업데이트"],
   generalSummary: ["Make WebCodex comfortable to use on this computer.", "调整此电脑上的界面和启动偏好。", "Oberfläche und Startverhalten auf diesem Computer anpassen.", "Personnalisez l’interface et le démarrage sur cet ordinateur.", "このコンピューターの表示と起動を設定します。", "이 컴퓨터의 화면과 시작 환경을 설정하세요."],
@@ -14,7 +20,7 @@ export const PRODUCT_MESSAGES = {
   diagnosticsSummary: ["Check services, collect diagnostics, and recover from problems.", "检查服务、收集诊断信息并处理故障。", "Dienste prüfen, Diagnosen sammeln und Probleme beheben.", "Vérifiez les services, collectez des diagnostics et résolvez les problèmes.", "サービスの確認、診断情報の収集、問題の復旧を行います。", "서비스를 확인하고 진단 정보를 수집하며 문제를 해결하세요."],
   aboutSummary: ["Check your version and manage updates.", "查看版本并管理更新。", "Version prüfen und Updates verwalten.", "Vérifiez votre version et gérez les mises à jour.", "バージョンの確認とアップデートの管理を行います。", "버전을 확인하고 업데이트를 관리하세요."],
   continueInChatgpt: ["Continue in ChatGPT", "在 ChatGPT 中开始工作", "In ChatGPT weiterarbeiten", "Continuer dans ChatGPT", "ChatGPT で作業を続ける", "ChatGPT에서 계속하기"],
-  chatgptWorkflow: ["Describe what you want to do and give the working folder. Projects and activity appear here as AI works.", "描述你要做的事并提供工作目录；AI 开始工作后，项目和活动会出现在这里。", "Aufgabe und Arbeitsordner nennen. Projekte und Aktivitäten erscheinen hier, während die KI arbeitet.", "Décrivez votre tâche et indiquez le dossier de travail. Les projets et l’activité apparaîtront ici.", "やりたいことと作業フォルダーを伝えてください。AI の作業に応じてプロジェクトと履歴が表示されます。", "할 일과 작업 폴더를 알려주세요. AI가 작업하면 프로젝트와 활동이 여기에 표시됩니다."],
+  chatgptWorkflow: ["Describe your task and working folder in ChatGPT.", "在 ChatGPT 中描述任务并提供工作目录。", "Aufgabe und Arbeitsordner in ChatGPT angeben.", "Décrivez votre tâche et le dossier de travail dans ChatGPT.", "ChatGPT にタスクと作業フォルダーを伝えてください。", "ChatGPT에 작업과 작업 폴더를 알려주세요."],
   authorizedRunners: ["Authorized Runners", "获授权的 Runner", "Autorisierte Runner", "Runners autorisés", "許可された Runner", "권한이 있는 Runner"],
   thisComputer: ["This computer", "此电脑", "Dieser Computer", "Cet ordinateur", "このコンピューター", "이 컴퓨터"],
   online: ["Online", "在线", "Online", "En ligne", "オンライン", "온라인"],

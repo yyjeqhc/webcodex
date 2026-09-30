@@ -134,12 +134,7 @@
 .workspace-status-strip dd { gap: 8px; font-size: 15px; font-weight: 600; }
 .workspace-status-strip .status-dot { width: 8px; height: 8px; }
 .workspace-quick-actions { margin-bottom: var(--ui-space-6); }
-/* The overview carries tables and activity side by side. It can use the wide desktop canvas
-   while other detail pages keep the shorter reading measure. */
-.dashboard-page { width: min(1600px, 100%); margin-inline: 0; }
-.dashboard-content-grid { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(360px, .9fr); gap: clamp(var(--ui-space-6), 3vw, var(--ui-space-10)); }
-.dashboard-content-grid > .workspace-section { min-width: 0; margin-top: 0; }
-.dashboard-content-grid > .workspace-section + .workspace-section { padding-left: clamp(var(--ui-space-6), 3vw, var(--ui-space-10)); border-left: 1px solid var(--ui-border-subtle); }
+.dashboard-page { width: min(1080px, 100%); }
 .workspace-section-heading { margin-bottom: var(--ui-space-3); }
 .workspace-section-heading h2 { font-size: var(--ui-font-section); }
 .workspace-observation { font-size: 14px; }
@@ -166,16 +161,6 @@
 .project-column-branch { width: 19%; }.project-column-activity { width: 16%; }.project-column-updated { width: 15%; }
 
 .project-column-action { width: 132px; text-align: right; }
-/* Recent-session titles have a large min-content size. An implicit auto grid
-   track lets them escape the narrow activity column (including in WKWebView). */
-.dashboard-activity-list { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; }
-.dashboard-activity-link { min-width: 0; }
-.dashboard-activity-link .mantine-NavLink-label { display: block; }
-.dashboard-activity-link { border-bottom: 1px solid var(--ui-border-subtle); border-radius: 0; }
-.dashboard-activity-link:hover { background: var(--ui-surface-secondary); }
-.dashboard-activity-link .mantine-NavLink-label { overflow: hidden; font-size: 14px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
-.dashboard-activity-link .mantine-NavLink-description { margin-top: 4px; }
-.dashboard-activity-link .mantine-NavLink-section:last-child { color: var(--ui-text-secondary); font-size: 14px; }
 .workspace-project-mobile-row h3 { font-size: 14px; }
 .workspace-project-mobile-list { border-top: 1px solid var(--ui-border-subtle); }
 .workspace-project-mobile-row { display: grid; gap: 6px; padding: 12px 8px; min-height: 68px; border-bottom: 1px solid var(--ui-border-subtle); border-radius: 0; }
@@ -219,13 +204,13 @@
 .activity-project-filter .project-picker { width: min(280px, 70%); }
 .workspace-window-row, .workspace-session-row, .extension-row { padding-inline: 8px; }
 .workspace-window-row:hover, .workspace-session-row:hover { border-radius: var(--ui-radius-sm); }
-.settings-layout { display: grid; grid-template-columns: 190px minmax(0, 1fr); gap: 36px; align-items: start; }
-.settings-navigation { position: sticky; top: 0; display: grid; gap: 6px; padding-block: 4px; }
-.settings-navigation > button { display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 10px 12px; border: 0; border-radius: var(--ui-radius-sm); background: transparent; color: var(--ui-text-secondary); font-size: 14px; font-weight: 600; text-align: left; cursor: pointer; }
-.settings-navigation > button svg { flex-shrink: 0; }
-.settings-navigation > button:hover { background: var(--ui-surface-secondary); }
-.settings-navigation > button[aria-selected="true"] { background: var(--ui-accent-soft); color: var(--ui-accent-hover); }
-.settings-content { min-width: 0; padding-left: 32px; border-left: 1px solid var(--ui-border-subtle); }
+.settings-layout, .extensions-layout { display: grid; grid-template-columns: 190px minmax(0, 1fr); gap: 36px; align-items: start; }
+.settings-navigation, .extensions-navigation { position: sticky; top: 0; display: grid; gap: 6px; padding-block: 4px; }
+.settings-navigation > button, .extensions-navigation > button { display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 10px 12px; border: 0; border-radius: var(--ui-radius-sm); background: transparent; color: var(--ui-text-secondary); font-size: 14px; font-weight: 600; text-align: left; cursor: pointer; }
+.settings-navigation > button svg, .extensions-navigation > button svg { flex-shrink: 0; }
+.settings-navigation > button:hover, .extensions-navigation > button:hover { background: var(--ui-surface-secondary); }
+.settings-navigation > button[aria-selected="true"], .extensions-navigation > button[aria-selected="true"] { background: var(--ui-accent-soft); color: var(--ui-accent-hover); }
+.settings-content, .extensions-content { min-width: 0; padding-left: 32px; border-left: 1px solid var(--ui-border-subtle); }
 .settings-description { margin: 0 0 28px; color: var(--ui-text-secondary); font-size: 15px; }
 .settings-content .settings-section:first-child, .settings-content .runtime-settings-panel:first-child, .settings-content .diagnostics-panel:first-child { margin-top: 0; }
 .settings-page .settings-section { margin-top: 36px; }
@@ -261,7 +246,7 @@
 .extension-path-settings h2 { font-size: 18px; }
 .managed-instructions { margin-bottom: 36px; }
 .managed-instructions > p { color: var(--ui-text-secondary); font-size: 14px; }
-.managed-instructions textarea { min-height: 300px; line-height: 1.7; }
+.managed-instructions textarea { min-height: 220px; line-height: 1.7; }
 .workspace-tabs > button { min-height: 48px; padding-block: 12px; }
 .workspace-tabs { margin-bottom: 24px; }
 .settings-page .accent-picker-panel { right: 0; left: auto; }
@@ -271,11 +256,8 @@
 .accent-picker input[type="color"] { width: 38px; min-width: 38px; height: 30px; min-height: 30px; padding: 2px; }
 
 @media (max-width: 1100px) {
-  .dashboard-page { margin-inline: auto; }
-  .dashboard-content-grid { grid-template-columns: 1fr; gap: var(--ui-space-5); }
-  .dashboard-content-grid > .workspace-section + .workspace-section { padding: var(--ui-space-5) 0 0; border-top: 1px solid var(--ui-border-subtle); border-left: 0; }
-  .settings-layout { grid-template-columns: 170px minmax(0, 1fr); gap: 20px; }
-  .settings-content { padding-left: 20px; }
+  .settings-layout, .extensions-layout { grid-template-columns: 170px minmax(0, 1fr); gap: 20px; }
+  .settings-content, .extensions-content { padding-left: 20px; }
   .settings-page .setting-row { align-items: flex-start; flex-direction: column; gap: 12px; }
   .settings-page .setting-row select, .settings-page .accent-picker { width: min(300px, 100%); }
 }
@@ -288,9 +270,9 @@
   .sidebar { overflow: visible; }
   .brand > div:last-child, .sidebar-preferences, .sidebar-status { display: none; }
   .workspace-status-strip > div { padding-inline: var(--ui-space-3); }
-  .settings-layout { grid-template-columns: 1fr; gap: 24px; }
-  .settings-navigation { position: static; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; padding: 0 0 20px; border-bottom: 1px solid var(--ui-border-subtle); }
-  .settings-content { padding-left: 0; border-left: 0; }
+  .settings-layout, .extensions-layout { grid-template-columns: 1fr; gap: 24px; }
+  .settings-navigation, .extensions-navigation { position: static; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; padding: 0 0 20px; border-bottom: 1px solid var(--ui-border-subtle); }
+  .settings-content, .extensions-content { padding-left: 0; border-left: 0; }
   .settings-description { margin-bottom: 24px; }
   .dashboard-handoff { flex-wrap: wrap; padding: 20px; }
   .dashboard-handoff > div { flex-basis: calc(100% - 44px); }
@@ -308,7 +290,6 @@
   .workspace-status-strip > div:first-child { padding-left: var(--ui-space-3); }
   .workspace-status-strip > div:nth-child(2) { border-left: 1px solid var(--ui-border-subtle); }
   .workspace-status-strip > div:nth-child(3) { grid-column: 1 / -1; border-top: 1px solid var(--ui-border-subtle); border-left: 0; }
-  .dashboard-content-grid { gap: var(--ui-space-5); }
   .settings-page .setting-row select, .settings-page .accent-picker { width: 100%; }
   .settings-content .permission-row { grid-template-columns: minmax(0, 1fr); }
   .settings-content .permission-row > button { grid-column: 1; grid-row: auto; justify-self: start; max-width: 100%; }
@@ -383,3 +364,29 @@
 .call-history > li > div { display: grid; flex: 1; min-width: 0; gap: 4px; }
 .call-history > li > div > span, .call-history time { color: var(--ui-text-secondary); font-size: 14px; }
 .call-history > li > details { flex-basis: 100%; }
+
+.dashboard-shortcuts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; margin-block: 32px; }
+.dashboard-shortcuts > button { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; padding: 24px; border: 1px solid var(--ui-border-subtle); border-radius: var(--ui-radius-md); background: transparent; text-align: left; color: var(--ui-text-primary); cursor: pointer; }
+.dashboard-shortcuts > button:hover { background: var(--ui-surface-secondary); border-color: var(--ui-border-strong); }
+.dashboard-shortcuts > button > svg:first-child { grid-column: 1 / -1; margin-bottom: 8px; width: 22px; color: var(--ui-accent); }
+.dashboard-shortcuts > button > strong { font-size: 17px; }
+.dashboard-shortcuts > button > span { grid-column: 1; grid-row: 3; color: var(--ui-text-secondary); font-size: 14px; }
+.dashboard-shortcuts > button > svg:last-child { grid-column: 2; grid-row: 2; align-self: center; }
+.extensions-content > [role="status"] { margin-block: 24px; }
+.extensions-content h2 { margin: 0 0 18px; font-size: 18px; }
+.extension-project-preview { margin-top: 36px; padding-top: 28px; border-top: 1px solid var(--ui-border-subtle); }
+.extension-path-settings.primary { margin-top: 0; padding-top: 0; border-top: 0; }
+.connection-context { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 28px; padding-block: 16px; margin-bottom: 24px; border-block: 1px solid var(--ui-border-subtle); font-size: 14px; color: var(--ui-text-secondary); }
+.connection-context > button { margin-left: auto; }
+.connection-list { gap: 24px; border-top: 0; }
+.connection-profile { padding: 24px; border: 1px solid var(--ui-border-subtle); border-radius: var(--ui-radius-md); }
+.connection-profile h2 { font-size: 18px; }
+.connection-checks { display: flex; flex-wrap: wrap; gap: 12px 32px; margin-block: 20px; }
+.connection-checks > div { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-size: 14px; }
+.connection-checks dt { color: var(--ui-text-secondary); }
+.connection-checks dd { display: flex; align-items: center; gap: 6px; margin: 0; }
+.connection-recovery { padding: 20px; margin-block: 20px; border-left: 3px solid var(--ui-warning); border-radius: var(--ui-radius-sm); background: color-mix(in srgb, var(--ui-warning) 7%, var(--ui-surface)); }
+.connection-recovery > strong { font-size: 16px; }
+.connection-recovery > p { margin: 10px 0 16px; font-size: 14px; }
+.connection-recovery .connection-impact { margin: 16px 0 0; color: var(--ui-text-secondary); }
+@media (max-width: 768px) { .dashboard-shortcuts { grid-template-columns: 1fr; gap: 12px; } .dashboard-shortcuts > button { padding: 20px; } .connection-profile { padding: 20px; } }

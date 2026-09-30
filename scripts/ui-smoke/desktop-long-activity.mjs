@@ -19,19 +19,21 @@ try {
   const response=await route.fetch();let source=await response.text();
   const marker='recent_sessions:{sessions:[],truncated:false,scan_truncated:false}';
   assert.equal(source.split(marker).length,2);
-  const sessions=[0,1,2].map(index=>({session_id:'wc_sess_long_activity_'+index,project_id:'agent:fixture-runner:alpha',title:'Owner review with a deliberately long session description '.repeat(35),updated_at:Math.floor(Date.now()/1000),lifecycle:'active',mode:'normal'}));
+  const sessions=[0,1,2].map(index=>({session_id:'wc_sess_long_activity_'+index,project_id:'agent:fixture-runner:alpha',title:'Owner review with a deliberately long session description '.repeat(35),updated_at:Math.floor(Date.now()/1000),lifecycle:'active',mode:'normal',overview:{attention:{}}}));
   source=source.replace(marker,'recent_sessions:'+JSON.stringify({sessions,truncated:false,scan_truncated:false}));
   await route.fulfill({response,body:source});
  });
  for(const width of [768,1180,1440,1920]) {
   await page.setViewportSize({width,height:900});
   await page.goto(fixture.url+'/desktop/');
-  await page.locator('.dashboard-activity-link').first().waitFor();
+  await page.locator('[data-webcodex-action="navigate-activity"]').click();
+  await page.locator('#activity-tab-sessions').click();
+  await page.locator('.workspace-session-row').first().waitFor();
   const metrics=await page.evaluate(()=>{
-   const section=document.querySelector('[aria-labelledby="recent-activity-title"]');
+   const section=document.querySelector('#activity-view-sessions');
    const rect=section.getBoundingClientRect();
    return {viewport:innerWidth,documentWidth:document.documentElement.scrollWidth,sectionRight:rect.right,
-    links:[...document.querySelectorAll('.dashboard-activity-link')].map(link=>({right:link.getBoundingClientRect().right,width:link.getBoundingClientRect().width}))};
+    links:[...document.querySelectorAll('.workspace-session-row')].map(link=>({right:link.getBoundingClientRect().right,width:link.getBoundingClientRect().width}))};
   });
   results.push({width,...metrics});
   assert(metrics.documentWidth<=width+1,JSON.stringify(metrics));
@@ -40,7 +42,7 @@ try {
  for(const width of [390,1180]) {
   await page.setViewportSize({width,height:900});
   await page.goto(fixture.url+'/desktop/');
-  await page.getByRole('button',{name:/^Extensions/}).click();
+  await page.locator('[data-webcodex-action="navigate-extensions"]').click();
   await page.getByRole('button',{name:'Add Coding Agent',exact:true}).click();
   const dialog=page.getByRole('dialog');await dialog.waitFor();
   const bounds=await dialog.evaluate(element=>{

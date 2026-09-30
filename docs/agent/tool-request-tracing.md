@@ -94,6 +94,10 @@ argument layers without making that field part of ordinary user troubleshooting.
 
 ## Metadata evidence stages
 
+- `mcp_request_policy_selected`: the MCP adapter's validated effective profile,
+  Host budget and wait slices, with separate `deployment`/`request_header` sources
+  and a parsed requested-budget/cap comparison. No raw headers or brand inference.
+  This is Server selection evidence, not observed Host execution or delivery.
 - `supplied_arguments`: selected bounded arguments and `_wc` before MCP envelope
   parsing; gateway entry and selected target remain distinct. `_wc` is captured
   even on other ordinary tools, without copying their business payload. Suppressed

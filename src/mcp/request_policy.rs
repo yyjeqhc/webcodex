@@ -1,6 +1,9 @@
 //! Connection-configured, request-local MCP ergonomics. These headers are
 //! preferences, never capability/authority claims or a new tool surface.
-use crate::mcp_host::{McpHostConfig, McpHostProfile, McpHostRuntimePolicy};
+use crate::mcp_host::{
+    McpHostConfig, McpHostPolicySelection, McpHostPolicySource, McpHostProfile,
+    McpHostRuntimePolicy,
+};
 use salvo::http::HeaderMap;
 
 pub(super) const PROFILE_HEADER: &str = "x-webcodex-mcp-profile";
@@ -13,32 +16,54 @@ pub(super) const BUDGET_HEADER: &str = "x-webcodex-mcp-budget-secs";
 pub(super) fn resolve(
     headers: &HeaderMap,
     default: McpHostRuntimePolicy,
-) -> Result<McpHostRuntimePolicy, &'static str> {
+) -> Result<McpHostPolicySelection, &'static str> {
     let profile = singleton(headers, PROFILE_HEADER)?;
     let budget = singleton(headers, BUDGET_HEADER)?;
-    if profile.is_none() && budget.is_none() {
-        return Ok(default);
-    }
+    let source = |present| {
+        if present {
+            McpHostPolicySource::RequestHeader
+        } else {
+            McpHostPolicySource::Deployment
+        }
+    };
+    let profile_source = source(profile.is_some());
+    let budget_source = source(budget.is_some());
     let profile = match profile {
         None => default.profile,
         Some("direct") => McpHostProfile::Direct,
         Some("host_code_mode") => McpHostProfile::HostCodeMode,
         Some(_) => return Err("X-WebCodex-MCP-Profile must be direct or host_code_mode"),
     };
-    let budget = match budget {
-        None => default.host_budget_secs,
-        Some(value) => value
-            .parse::<u64>()
-            .ok()
-            .filter(|value| *value > 0)
-            .ok_or("X-WebCodex-MCP-Budget-Secs must be a positive integer")?
-            .min(default.host_budget_secs),
-    };
-    Ok(McpHostConfig {
-        profile,
-        host_budget_secs: Some(budget),
-    }
-    .runtime_policy())
+    let requested_budget_secs = budget
+        .map(|value| {
+            value
+                .parse::<u64>()
+                .ok()
+                .filter(|value| *value > 0)
+                .ok_or("X-WebCodex-MCP-Budget-Secs must be a positive integer")
+        })
+        .transpose()?;
+    let effective =
+        if profile_source == McpHostPolicySource::Deployment && requested_budget_secs.is_none() {
+            default
+        } else {
+            McpHostConfig {
+                profile,
+                host_budget_secs: Some(
+                    requested_budget_secs
+                        .unwrap_or(default.host_budget_secs)
+                        .min(default.host_budget_secs),
+                ),
+            }
+            .runtime_policy()
+        };
+    Ok(McpHostPolicySelection {
+        effective,
+        profile_source,
+        budget_source,
+        requested_budget_secs,
+        deployment_budget_secs: default.host_budget_secs,
+    })
 }
 
 fn singleton<'a>(headers: &'a HeaderMap, name: &str) -> Result<Option<&'a str>, &'static str> {

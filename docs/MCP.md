@@ -201,6 +201,12 @@ policy of their own request. `/api/tools/call`, result-text compatibility,
 `runtime_status.effective_config.mcp_host` remains the deployment snapshot, not a
 claim about every connected client's policy.
 
+Metadata/full trace records the actual selection as `mcp_request_policy_selected`:
+`selection.effective`, separate profile/budget sources, parsed requested budget
+and deployment cap. This distinguishes omitted headers from explicit defaults
+and a clamped request; raw headers are not retained. Normal results and authority
+are unchanged. See [client contracts and validation](implementation/mcp-client-contract-alignment.md).
+
 Ordinary work stays in the current turn: finish independent work, use one bounded
 `wait_for_job_readiness` join for blocking Jobs, then `observe_jobs` for needed
 results. At deadline reassess work/dependencies instead of mechanically refilling

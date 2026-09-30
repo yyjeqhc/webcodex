@@ -1803,6 +1803,28 @@ impl ToolRequestLifecycle {
         enqueue_metadata_event(&self.trace_id, phase, event);
     }
 
+    /// The MCP adapter supplies only its validated selection receipt. Never
+    /// inspect raw headers, infer the caller brand, or change the policy here.
+    pub(crate) fn capture_mcp_host_policy(
+        &self,
+        selection: &crate::mcp_host::McpHostPolicySelection,
+    ) {
+        if !self.enabled() {
+            return;
+        }
+        let mut event = base_event(&self.trace_id, "mcp_request_policy_selected");
+        merge_event_fields(
+            &mut event,
+            json!({
+                "selection": selection, "method": self.method,
+                "tool_name": self.tool_name,
+                "client_window_key": self.client_window.as_ref().map(ClientWindow::key),
+                "duration_ms": self.duration_ms(),
+            }),
+        );
+        enqueue_metadata_event(&self.trace_id, "request_policy", event);
+    }
+
     pub fn capture_payload_lazy<F>(&self, phase: &str, build: F)
     where
         F: FnOnce() -> Value,

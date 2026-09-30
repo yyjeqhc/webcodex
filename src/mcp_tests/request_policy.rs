@@ -2,6 +2,8 @@ use super::*;
 use crate::mcp::request_policy::{resolve, BUDGET_HEADER, PROFILE_HEADER};
 use crate::mcp_host::{McpHostConfig, McpHostProfile, McpHostRuntimePolicy};
 use salvo::http::{HeaderMap, HeaderValue};
+#[path = "request_policy/diagnostics.rs"]
+mod diagnostics;
 
 fn deployment() -> McpHostRuntimePolicy {
     McpHostConfig {
@@ -15,28 +17,43 @@ fn deployment() -> McpHostRuntimePolicy {
 fn request_policy_is_explicit_bounded_and_never_sticky() {
     let base = deployment();
     let mut headers = HeaderMap::new();
-    assert_eq!(resolve(&headers, base).unwrap(), base);
+    assert_eq!(resolve(&headers, base).unwrap().effective, base);
     headers.insert(PROFILE_HEADER, HeaderValue::from_static("direct"));
-    let direct = resolve(&headers, base).unwrap();
+    let direct = resolve(&headers, base).unwrap().effective;
     assert_eq!(direct.profile, McpHostProfile::Direct);
     assert_eq!(direct.initial_job_handoff_secs, 10);
     assert_eq!(direct.max_sync_wait_secs, 50);
     assert_eq!(direct.continuation_wait_secs, 50);
     assert_eq!(direct.host_budget_secs, 55);
     headers.insert(BUDGET_HEADER, HeaderValue::from_static("999999"));
-    assert_eq!(resolve(&headers, base).unwrap(), direct);
+    assert_eq!(resolve(&headers, base).unwrap().effective, direct);
     headers.insert(BUDGET_HEADER, HeaderValue::from_static("9"));
-    let bounded = resolve(&headers, base).unwrap();
+    let bounded = resolve(&headers, base).unwrap().effective;
     assert_eq!(bounded.host_budget_secs, 9);
     assert_eq!(bounded.max_sync_wait_secs, 4);
     headers.remove(PROFILE_HEADER);
     assert_eq!(
-        resolve(&headers, base).unwrap().profile,
+        resolve(&headers, base).unwrap().effective.profile,
         McpHostProfile::HostCodeMode
     );
     headers.clear();
-    assert_eq!(resolve(&headers, base).unwrap(), base);
+    assert_eq!(resolve(&headers, base).unwrap().effective, base);
     assert_eq!(base, deployment());
+    let mut selection_headers = HeaderMap::new();
+    selection_headers.insert(PROFILE_HEADER, HeaderValue::from_static("host_code_mode"));
+    selection_headers.insert(BUDGET_HEADER, HeaderValue::from_static("999999"));
+    let selection = resolve(&selection_headers, base).unwrap();
+    assert_eq!(selection.effective, base);
+    assert_eq!(
+        selection.profile_source,
+        crate::mcp_host::McpHostPolicySource::RequestHeader
+    );
+    assert_eq!(
+        selection.budget_source,
+        crate::mcp_host::McpHostPolicySource::RequestHeader
+    );
+    assert_eq!(selection.requested_budget_secs, Some(999999));
+    assert_eq!(selection.deployment_budget_secs, base.host_budget_secs);
 }
 
 #[test]
@@ -373,6 +390,61 @@ async fn request_policy_pending_wait_and_terminal_observe_keep_one_execution_wit
         .unwrap()
         .is_none());
     assert_eq!(runtime.mcp_host_policy, deployment());
+}
+
+#[tokio::test]
+async fn client_contract_published_coding_primitives_and_manifest_routes_agree() {
+    let (_tmp, db) = test_db();
+    let service = Service::new(build_test_router(
+        test_config(Some("secret")),
+        db,
+        Arc::new(test_runtime()),
+    ));
+    for params in [mcp_2026_params(json!({})), mcp_2026_ui_params(json!({}))] {
+        let listed = post(&service, "tools/list", params, None, None).await;
+        assert_eq!(listed.0, StatusCode::OK);
+        let tools = listed.1["result"]["tools"].as_array().unwrap();
+        assert!(!tools.iter().any(|tool| tool["name"] == "apply_text_edits"));
+        for (name, read_only) in [
+            ("read_files", true),
+            ("search_and_read", true),
+            ("wait_for_job_readiness", true),
+            ("edit_project_files", false),
+            ("run_process", false),
+        ] {
+            let spec = tools
+                .iter()
+                .find(|tool| tool["name"] == name)
+                .expect("frequent coding callable must be published");
+            assert!(spec["inputSchema"]["properties"]
+                .as_object()
+                .is_some_and(|p| !p.is_empty()));
+            assert_eq!(spec["annotations"]["readOnlyHint"], read_only);
+            let manifest = post(
+                &service,
+                "tools/call",
+                json!({"name":"tool_manifest","arguments":{"tool_name":name}}),
+                None,
+                None,
+            )
+            .await;
+            let canonical = &manifest.1["result"]["structuredContent"];
+            assert_eq!(canonical["success"], true, "{canonical}");
+            let route = &canonical["output"]["route"];
+            assert_eq!(route["primary"]["mode"], "direct");
+            assert_eq!(route["primary"]["tool"], name);
+            assert_eq!(route["fallback"]["tool"], "call_runtime_tool");
+            assert_eq!(route["tool_manifest_registers_host_tool"], false);
+        }
+        let gateway = tools
+            .iter()
+            .find(|tool| tool["name"] == "call_runtime_tool")
+            .unwrap();
+        assert_eq!(
+            gateway["annotations"]["readOnlyHint"], false,
+            "generic writes must not become parallel read hints"
+        );
+    }
 }
 
 #[tokio::test]

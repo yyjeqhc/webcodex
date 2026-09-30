@@ -107,6 +107,24 @@ pub(crate) struct McpHostRuntimePolicy {
     pub(crate) continuation_wait_secs: u64,
 }
 
+/// Request-local diagnostic receipt. It records selection, not Host capability,
+/// authority, execution lifetime, or proof that a response reached the client.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub(crate) struct McpHostPolicySelection {
+    pub(crate) effective: McpHostRuntimePolicy,
+    pub(crate) profile_source: McpHostPolicySource,
+    pub(crate) budget_source: McpHostPolicySource,
+    pub(crate) requested_budget_secs: Option<u64>,
+    pub(crate) deployment_budget_secs: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum McpHostPolicySource {
+    Deployment,
+    RequestHeader,
+}
+
 impl McpHostRuntimePolicy {
     /// One SSOT for model guidance defaults. Explicit request selection always
     /// wins; only MCP omission inherits the configured Host capability profile.

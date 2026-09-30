@@ -653,7 +653,7 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
             return;
         }
     };
-    let policy = match request_policy::resolve(req.headers(), runtime.mcp_host_policy) {
+    let policy_selection = match request_policy::resolve(req.headers(), runtime.mcp_host_policy) {
         Ok(policy) => policy,
         Err(message) => {
             // Reject ambiguous transport preferences before any tool/Job effect.
@@ -668,6 +668,7 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
             return;
         }
     };
+    let policy = policy_selection.effective;
     // Clone only the lightweight runtime view when a preference actually differs.
     // Stores, execution ownership and fences stay shared; policy never mutates
     // the deployment snapshot or leaks between concurrent requests.
@@ -690,6 +691,7 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
         }
     };
     guard.set_client_window(window.identity.as_ref());
+    guard.capture_mcp_host_policy(&policy_selection);
     guard.parsed("ok");
     let server_trace_id = guard.correlation_trace_id();
     let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();

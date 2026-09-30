@@ -32,6 +32,102 @@ fn handoff_brief_size_matches_buffered_json_bytes() {
     }
 }
 
+#[test]
+fn handoff_brief_restores_recorded_decisions_and_progress_after_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let ledger = dir.path().join("sessions.json");
+    let store = SessionStore::with_persistence(&ledger, 16, 200);
+    let session_id = start_session(&store, "continue the authorized project");
+    for (kind, message) in [
+        (
+            SessionMessageKind::Decision,
+            "保留当前数据库，先完成迁移测试",
+        ),
+        (
+            SessionMessageKind::Progress,
+            "Migration tests passed; UI review remains",
+        ),
+    ] {
+        store
+            .post_message(PostSessionMessageInput {
+                session_id: session_id.clone(),
+                kind,
+                message: message.to_string(),
+                tags: Vec::new(),
+                reply_to: None,
+                priority: SessionMessagePriority::Normal,
+            })
+            .unwrap();
+    }
+    store.flush_persistence();
+    let restored = SessionStore::with_persistence(&ledger, 16, 200);
+    let brief = brief_for(&restored, &session_id, false, None, false, None, None, true);
+    assert_eq!(brief["task"]["decisions"]["total"], 1);
+    assert_eq!(
+        brief["task"]["decisions"]["items"][0]["excerpt"],
+        "保留当前数据库，先完成迁移测试"
+    );
+    assert_eq!(
+        brief["task"]["recent_progress"]["items"][0]["excerpt"],
+        "Migration tests passed; UI review remains"
+    );
+    assert_eq!(
+        restored
+            .discussion_summary(&session_id, Some(20))
+            .unwrap()
+            .counts
+            .total,
+        2
+    );
+}
+
+#[test]
+fn handoff_brief_notes_redact_secrets_bound_unicode_and_report_missing_history() {
+    let store = store_with_limit(200);
+    let session_id = start_session(&store, "bounded recovery");
+    for index in 0..8 {
+        let message = if index % 2 == 0 {
+            format!("decision {index}: API_KEY=never-disclose-this-secret")
+        } else {
+            format!("decision {index}: {}", "界".repeat(800))
+        };
+        store
+            .post_message(PostSessionMessageInput {
+                session_id: session_id.clone(),
+                kind: SessionMessageKind::Decision,
+                message,
+                tags: Vec::new(),
+                reply_to: None,
+                priority: SessionMessagePriority::Normal,
+            })
+            .unwrap();
+    }
+    let brief = brief_for(&store, &session_id, false, None, false, None, None, true);
+    assert!(handoff_brief_size(&brief) < HANDOFF_BRIEF_HARD_MAX_BYTES);
+    assert!(!brief.to_string().contains("never-disclose-this-secret"));
+    let notes = &brief["task"]["decisions"];
+    assert_eq!(notes["total"], 8);
+    assert_eq!(notes["truncated"], true);
+    assert!(notes["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|note| note["excerpt"].as_str().unwrap().chars().count()
+            <= HANDOFF_INSTRUCTION_MAX_CHARS));
+    assert!(notes["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|note| note["excerpt"].as_str().unwrap().contains('界') && note["truncated"] == true));
+    let unavailable = brief_for(&store, &session_id, false, None, false, None, None, false);
+    assert!(unavailable["task"]["decisions"]["total"].is_null());
+    assert_eq!(unavailable["basis"]["complete"], false);
+    assert!(unavailable["basis"]["reason_codes"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("discussion_unavailable")));
+}
+
 fn store_with_limit(max_events: usize) -> SessionStore {
     SessionStore::new(16, max_events)
 }
@@ -299,6 +395,7 @@ fn brief_for_with_external(
     });
     build_handoff_brief(HandoffBriefInput {
         session_summary: &summary,
+        discussion: guidance_available.then_some(&discussion),
         continuation_feedback: &continuation,
         workspace_requested,
         workspace,
@@ -922,6 +1019,7 @@ fn handoff_brief_hard_limit_uses_actual_escaped_json_bytes() {
     workspace["branch"] = json!(format!("feature/{}", "🦀".repeat(256)));
     let brief = build_handoff_brief(HandoffBriefInput {
         session_summary: &summary,
+        discussion: Some(&discussion),
         continuation_feedback: &feedback,
         workspace_requested: true,
         workspace: Some(&workspace),

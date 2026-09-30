@@ -42,14 +42,15 @@ use super::model::{
     CompleteSessionMessageInput, CompleteSessionMessageOutcome, PersistedSessionLedger,
     PersistedSessionRecord, PersistedSessionSnapshot, PersistentShellEventEvidence,
     PostSessionMessageInput, ReplaceSessionMessageInput, ReplaceSessionMessageOutcome,
-    SessionCloseError, SessionCloseOutcome, SessionCounts, SessionCreateOptions, SessionEvent,
-    SessionExecutionContext, SessionExecutionContextUpdateError,
-    SessionExecutionContextUpdateOutcome, SessionGuardDenial, SessionGuards, SessionLifecycle,
-    SessionLifecycleDenial, SessionMessage, SessionMessageClosureKind, SessionMessageDelivery,
-    SessionMessageDeliveryOutcome, SessionMessageDeliveryReplay, SessionMessageError,
-    SessionMessagePriority, SessionMessageStatus, SessionRecord, SessionStoreStatus,
-    SessionSummary, SessionTransport, StoredSession, ToolCallExpectation, ToolCallRecorderMetadata,
-    ToolCallStart, ToolEffectEventEvidence, WithdrawSessionMessageOutcome, CALL_ID_PREFIX,
+    SessionCloseError, SessionCloseOutcome, SessionCounts, SessionCreateOptions,
+    SessionDiscoveryItem, SessionDiscoveryPage, SessionEvent, SessionExecutionContext,
+    SessionExecutionContextUpdateError, SessionExecutionContextUpdateOutcome, SessionGuardDenial,
+    SessionGuards, SessionLifecycle, SessionLifecycleDenial, SessionMessage,
+    SessionMessageClosureKind, SessionMessageDelivery, SessionMessageDeliveryOutcome,
+    SessionMessageDeliveryReplay, SessionMessageError, SessionMessagePriority,
+    SessionMessageStatus, SessionRecord, SessionStoreStatus, SessionSummary, SessionTransport,
+    StoredSession, ToolCallExpectation, ToolCallRecorderMetadata, ToolCallStart,
+    ToolEffectEventEvidence, WithdrawSessionMessageOutcome, CALL_ID_PREFIX,
     DEFAULT_MAX_EVENTS_PER_SESSION, DEFAULT_MAX_MESSAGES_PER_SESSION,
     DEFAULT_MAX_RETAINED_CLOSED_SESSIONS, DEFAULT_MAX_SESSIONS, DEFAULT_SUMMARY_LIMIT,
     EVENT_ID_PREFIX, MAX_CODING_INSTRUCTION_CHARS, MAX_INPUT_ARRAY_ITEMS,
@@ -767,6 +768,74 @@ impl SessionStore {
                 .map(|event| event.event_id.clone())
         })
         .flatten()
+    }
+
+    /// Discover only identities in the already-authorized exact Project and
+    /// creation-time authority group. Filter before counting/pagination; foreign
+    /// Sessions cannot affect totals or hide authorized rows behind a page limit.
+    /// Inventory ordering is presentation only, never an implicit resume rule.
+    pub fn discover_sessions(
+        &self,
+        project: &str,
+        owner_authority_fingerprint: &str,
+        lifecycle: Option<SessionLifecycle>,
+        offset: usize,
+        limit: usize,
+    ) -> SessionDiscoveryPage {
+        let limit = limit.clamp(1, 20);
+        let mut candidates = {
+            let inner = self.inner.lock().expect("session store mutex poisoned");
+            inner
+                .sessions
+                .values()
+                .filter(|record| {
+                    record.project() == Some(project)
+                        && record.owner_authority_fingerprint() == owner_authority_fingerprint
+                        && lifecycle.is_none_or(|state| record.lifecycle() == state)
+                })
+                .map(|record| (record.session_id().to_string(), record.updated_at()))
+                .collect::<Vec<_>>()
+        };
+        candidates.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| right.0.cmp(&left.0)));
+        let total = candidates.len();
+        let end = offset.saturating_add(limit).min(total);
+        let sessions = candidates
+            .into_iter()
+            .skip(offset)
+            .take(limit)
+            .filter_map(|(session_id, _)| {
+                self.with_record_for_query(&session_id, |record, _| {
+                    if record.project.as_deref() != Some(project)
+                        || record.owner_authority_fingerprint != owner_authority_fingerprint
+                        || lifecycle.is_some_and(|state| record.lifecycle != state)
+                    {
+                        return None;
+                    }
+                    let title = record.title.as_deref().map(|title| {
+                        redact_and_bound_instruction(title, 240)
+                            .chars()
+                            .take(240)
+                            .collect::<String>()
+                    });
+                    let title_truncated = title.as_deref() != record.title.as_deref();
+                    Some(SessionDiscoveryItem {
+                        session_id: record.session_id.clone(),
+                        title,
+                        title_truncated,
+                        lifecycle: record.lifecycle,
+                        created_at: record.created_at,
+                        updated_at: record.updated_at,
+                    })
+                })
+                .flatten()
+            })
+            .collect();
+        SessionDiscoveryPage {
+            total,
+            offset,
+            next_offset: (end < total).then_some(end),
+            sessions,
+        }
     }
 
     /// Bounded, read-only Workflow Session rows for one exact runtime project.

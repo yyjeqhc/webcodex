@@ -151,6 +151,7 @@ fn brief_for(
     });
     build_handoff_brief(HandoffBriefInput {
         session_summary: &summary,
+        discussion: guidance_available.then_some(&discussion),
         continuation_feedback: &continuation,
         workspace_requested,
         workspace,

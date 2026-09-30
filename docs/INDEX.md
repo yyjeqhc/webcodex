@@ -11,6 +11,7 @@ Start with the goal that matches what you are trying to do.
 - [Full Setup](PERSONAL_SETUP.md) — CLI, existing Server, Linux, and advanced regular Server + Runner setup
 - [AI-assisted setup](AI_ONBOARDING.md) — have an AI agent configure WebCodex using ordinary user language
 - [MCP](MCP.md) — ChatGPT, Claude, and other MCP clients
+- [Session continuity](SESSION_CONTINUITY.md) — save context, continue across accounts/windows, and delegate model API reviews
 
 ## I only want to try it for a few minutes
 

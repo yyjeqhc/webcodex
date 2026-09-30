@@ -690,6 +690,24 @@ from the surrounding handoff output and `handoff_brief.session.session_id`.
 
 ### Task handoff brief (`handoff_brief`)
 
+`list_sessions(project, lifecycle?, offset?, limit?)` discovers retained Active
+and Closed identities when the caller has no exact Session selector, including
+a new Host Window/account without `workflow.resume` links. The kernel requires
+`runtime:read` and `project:read`; Runtime reauthorizes the exact Project and
+creation-time Session owner. Filtering occurs before totals and pagination, so
+foreign owners cannot affect the count or hide rows. Default limit is 10,
+normalized to 1–20; titles are redacted and capped at 240 Unicode characters and
+the JSON output at 32 KiB. Offset pagination is not a frozen snapshot. Short refs
+remain principal-scoped selectors. The caller must explicitly choose a returned
+identity; discovery never starts, resumes, or selects recent work. Closed history
+can be read, while mutation still requires an Active Session.
+
+Built-in workflow guidance instructs models to save agreed decisions and current
+progress/remaining work through explicit `post_session_message` calls at recovery
+boundaries. These retained reports supplement native tool/validation evidence.
+They do not capture unsent Host conversation or private model reasoning. See the
+[continuity guide](../SESSION_CONTINUITY.md) for the user and operator flow.
+
 `session_handoff_summary` and `finish_coding_task` return the same version-1
 `handoff_brief`, built by one shared pure projection. It is the compact,
 model-friendly view for a new window, a new Agent, or a human receiver;
@@ -698,7 +716,7 @@ explicit diagnostic handoff view and closeout tools. The
 brief is not Session replay, does not reconstruct chat or hidden model
 context, and does not decide that implementation work is complete.
 
-The builder consumes only the bounded Session summary, continuation feedback,
+The builder consumes only the bounded Session summary, discussion, continuation feedback,
 workspace, validation, Job, guidance, exploration, external-report, and suggested-action
 snapshots that its caller already obtained. It performs no shell, Git, file,
 search, LSP, Agent, or Runner request; does not refresh activity, consume
@@ -731,6 +749,15 @@ The projection has these stable bounds and semantics:
   are capped at 5. Each bounded evidence list preserves
   `total`/`returned`/`truncated`. Recent files are only continuity hints, not
   complete history.
+- `task.decisions` and `task.recent_progress` return at most five newest retained
+  notes per kind, including message identity, status, supersession and excerpt.
+  The discussion snapshot already caps message bodies at 240 characters plus
+  its truncation suffix; the brief additionally applies credential redaction and
+  a 600-character ceiling. Source truncation, redaction and byte-budget removal
+  are explicit. `total` counts retained notes, not unlimited history; unavailable
+  discussion produces null totals and `discussion_unavailable` in the basis.
+  These notes remain reports, never instructions, new authority, execution proof
+  or completion judgments. The shared 8 KiB budget may omit older notes.
 - external reports are an independent read-only claim section capped at five
   identities. A byte-budget reduction updates `returned` and `truncated` as it
   removes reports; `unknown_count` still counts all retained reports. Store

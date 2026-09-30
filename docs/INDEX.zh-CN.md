@@ -11,6 +11,7 @@
 - [完整使用指南](PERSONAL_SETUP.zh-CN.md) —— CLI、已有 Server、Linux 与高级普通 Server + Runner 配置
 - [AI 辅助接入](AI_ONBOARDING.zh-CN.md) —— 让 AI 帮你按普通用户语言完成配置
 - [MCP](MCP.zh-CN.md) —— ChatGPT、Claude 与其他 MCP 客户端
+- [任务接续](SESSION_CONTINUITY.zh-CN.md) —— 保存上下文、跨账号或窗口继续，以及委派 API 模型评审
 
 ## 我只想先试几分钟
 

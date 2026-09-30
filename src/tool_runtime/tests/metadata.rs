@@ -594,6 +594,7 @@ async fn coding_agent_start_uses_canonical_runner_capability_gate() {
             None,
             None,
             None,
+            None,
         )
         .await;
 

@@ -5,13 +5,14 @@
 //! queries an Agent/Runner, refreshes activity, mutates a Workflow Session,
 //! consumes guidance, or invokes an LLM.
 
+use crate::model::MAX_MESSAGE_SUMMARY_CHARS;
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
 use std::io::{self, Write};
 
 use crate::{
-    normalize_observed_project_path, redact_and_bound_instruction, SessionSummary,
-    EXPLORATION_CONTINUITY_ACTION,
+    normalize_observed_project_path, redact_and_bound_instruction, SessionDiscussionSummary,
+    SessionMessage, SessionSummary, EXPLORATION_CONTINUITY_ACTION,
 };
 
 pub const HANDOFF_BRIEF_HARD_MAX_BYTES: usize = 8 * 1024;
@@ -20,6 +21,7 @@ pub const HANDOFF_CHANGED_PATHS_MAX_ITEMS: usize = 12;
 pub const HANDOFF_RECENT_FILES_MAX_ITEMS: usize = 8;
 pub const HANDOFF_OPEN_FAILURES_MAX_ITEMS: usize = 5;
 pub const HANDOFF_NEXT_ACTIONS_MAX_ITEMS: usize = 5;
+const HANDOFF_MESSAGE_MAX_ITEMS: usize = 5;
 
 const HANDOFF_FAILURE_NAME_MAX_CHARS: usize = 240;
 const HANDOFF_BRANCH_MAX_CHARS: usize = 256;
@@ -28,6 +30,9 @@ const HANDOFF_BRANCH_MAX_CHARS: usize = 256;
 /// pure projection.
 pub struct HandoffBriefInput<'a> {
     pub session_summary: &'a SessionSummary,
+    /// Explicitly recorded decisions/progress, independent of tool execution
+    /// evidence. These reports never become instructions or completion proof.
+    pub discussion: Option<&'a SessionDiscussionSummary>,
     pub continuation_feedback: &'a Value,
     pub workspace_requested: bool,
     pub workspace: Option<&'a Value>,
@@ -213,6 +218,9 @@ pub fn build_handoff_brief(input: HandoffBriefInput<'_>) -> Value {
     if !input.guidance_available {
         basis_reasons.insert("guidance_unavailable");
     }
+    if input.discussion.is_none() {
+        basis_reasons.insert("discussion_unavailable");
+    }
 
     let progress_state = progress_state(
         input.session_summary,
@@ -250,6 +258,14 @@ pub fn build_handoff_brief(input: HandoffBriefInput<'_>) -> Value {
         "task": {
             "root_instruction": root_instruction,
             "latest_instruction": latest_instruction,
+            "decisions": project_message_notes(
+                &input.session_summary.session_id,
+                input.discussion.map(|discussion| (discussion.counts.decision, discussion.recent_decisions.as_slice())),
+            ),
+            "recent_progress": project_message_notes(
+                &input.session_summary.session_id,
+                input.discussion.map(|discussion| (discussion.counts.progress, discussion.recent_progress.as_slice())),
+            ),
         },
         "workspace": workspace.value,
         "progress": {
@@ -327,6 +343,37 @@ fn instruction_projection(instruction: Option<&str>) -> Value {
     json!({
         "excerpt": excerpt,
         "truncated": truncated,
+    })
+}
+
+fn project_message_notes(session_id: &str, source: Option<(usize, &[SessionMessage])>) -> Value {
+    let total = source.map(|(total, _)| total);
+    let items = source
+        .map(|(_, messages)| {
+            messages
+                .iter()
+                .filter(|message| message.session_id == session_id)
+                .take(HANDOFF_MESSAGE_MAX_ITEMS)
+                .map(|message| {
+                    let text = instruction_projection(Some(&message.message));
+                    json!({
+                        "message_id": message.message_id,
+                        "status": message.status,
+                        "created_at": message.created_at,
+                        "excerpt": text["excerpt"],
+                        "truncated": text["truncated"] == true
+                            || message.message.chars().count() > MAX_MESSAGE_SUMMARY_CHARS,
+                        "superseded_by_message_id": message.superseded_by_message_id,
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    json!({
+        "total": total,
+        "returned": items.len(),
+        "truncated": total.is_some_and(|total| total > items.len()),
+        "items": items,
     })
 }
 
@@ -813,6 +860,8 @@ fn enforce_hard_limit(brief: &mut Value) {
         && pop_external_observation(brief)
     {}
     for pointer in [
+        "/task/recent_progress",
+        "/task/decisions",
         "/progress/recent_files",
         "/progress/changes",
         "/validation/open_failures",

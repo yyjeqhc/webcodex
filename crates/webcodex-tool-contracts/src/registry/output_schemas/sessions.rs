@@ -273,6 +273,27 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 ),
             ),
         ])),
+        "list_sessions" => Some(wrapped_output_schema(vec![
+            ("project", schema_type("string", "Exact authorized Runtime Project.")),
+            ("total", schema_type("integer", "Retained Sessions matching exact Project, caller authority, and optional lifecycle.")),
+            ("offset", schema_type("integer", "Requested inventory offset.")),
+            ("next_offset", nullable_schema("integer", "Next inventory offset; null when this page reaches the retained inventory end. Not a frozen-snapshot cursor.")),
+            ("selection", json!({"type": "string", "const": "caller_must_choose_exact_session"})),
+            ("sessions", json!({
+                "type": "array", "maxItems": 20,
+                "items": {"type": "object", "additionalProperties": false,
+                    "properties": {
+                        "session_id": {"type": "string"},
+                        "session_ref": {"type": "string", "pattern": "^~s[1-9][0-9]{0,18}$"},
+                        "title": {"anyOf": [{"type": "string", "maxLength": 240}, {"type": "null"}]},
+                        "title_truncated": {"type": "boolean"},
+                        "lifecycle": {"type": "string", "enum": ["active", "closed"]},
+                        "created_at": {"type": "integer"}, "updated_at": {"type": "integer"}
+                    },
+                    "required": ["session_id", "title", "title_truncated", "lifecycle", "created_at", "updated_at"]
+                }
+            })),
+        ])),
         "session_summary" => Some(wrapped_output_schema(vec![
             ("session_id", schema_type("string", "Canonical wc_sess_* Workflow Session id.")),
             ("session_ref", schema_type("string", "Server-issued principal-scoped ~sN selector for this exact Workflow Session. Selector only; use re-runs ordinary authorization and lifecycle checks.")),

@@ -191,6 +191,7 @@ impl ToolCallAuditProjection for ToolCall {
                 provider_id,
                 idempotency_key,
                 instruction,
+                context_session_id,
                 config,
                 timeout_secs,
                 recording_session_id: _,
@@ -199,6 +200,7 @@ impl ToolCallAuditProjection for ToolCall {
                 "provider_id": provider_id,
                 "idempotency_key_present": !idempotency_key.is_empty(),
                 "instruction_bytes": instruction.len(),
+                "context_session_present": context_session_id.is_some(),
                 "config_count": config.as_ref().map(std::collections::BTreeMap::len).unwrap_or_default(),
                 "timeout_secs": timeout_secs,
             }),
@@ -2187,6 +2189,17 @@ impl ToolCallAuditProjection for ToolCall {
                 "category": category,
                 "features": features,
                 "summary_only": summary_only,
+                "limit": limit,
+            }),
+            Self::ListSessions {
+                project,
+                lifecycle,
+                offset,
+                limit,
+            } => serde_json::json!({
+                "project": project,
+                "lifecycle": lifecycle,
+                "offset": offset,
                 "limit": limit,
             }),
             Self::SessionSummary { session_id, limit } => serde_json::json!({

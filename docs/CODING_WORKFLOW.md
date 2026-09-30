@@ -66,13 +66,19 @@ When `work_on_project`, `start_session`, `session_summary`, or an explicit hando
 
 ## Tool strategy guidance
 
+For account/window switches, save agreed decisions and current progress with
+`post_session_message`. If the old Session identity is missing, discover with
+`list_sessions(project)`, explicitly select a candidate, then read its handoff
+before resuming. See [Session continuity](SESSION_CONTINUITY.md) for the full
+recovery and configured model review flow.
+
 `work_on_project` accepts an optional `guidance_profile`. An explicit value always
 wins for guidance only. MCP omission uses the current request's
 `X-WebCodex-MCP-Profile`, or the deployment `WEBCODEX_MCP_HOST_PROFILE` when absent.
 See [request-local client policy](MCP.md#request-local-client-policy); HTTP headers
 select transport timing independently from this tool argument. Non-MCP/internal
 omission falls back to `direct`.
-Workflow contract v27 returns shared `guidance`, `model_protocol` and review `roles`,
+Workflow contract v28 returns shared `guidance`, `model_protocol` and review `roles`,
 plus only the selected `tool_strategy`, when explicitly requested through
 `context_request=["webcodex.workflow"]`. The selection is request-local: choose again
 on exact resume without changing Session identity or business state. It is never

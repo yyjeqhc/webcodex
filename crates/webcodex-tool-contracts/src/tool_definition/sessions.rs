@@ -1,8 +1,9 @@
 use super::RunnerCapabilityRequirement::{GitOrShell, InternalPosixScript, OwnerOnly};
 use super::ToolVisibility::{ModelHidden, ModelVisible};
 use super::{
-    adaptive_runtime_direct, def, model_spec, permission_risk, requires_explicit_business_session,
-    ToolDefinition, PERMISSION_RISK_WRITE, TOOL_CATEGORY_SESSION, TOOL_CATEGORY_VALIDATION,
+    adaptive_runtime_direct, def, model_spec, permission_risk, require_all_scopes,
+    requires_explicit_business_session, ToolDefinition, PERMISSION_RISK_WRITE,
+    TOOL_CATEGORY_SESSION, TOOL_CATEGORY_VALIDATION,
 };
 use crate::metadata::{
     ToolPathHint::None as NoPath, ToolRisk::Read, PROJECT_READ, PROJECT_WRITE, RUNTIME_READ,
@@ -40,6 +41,28 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             super::ToolActivityInteraction::NonMeaningful,
         ),
     ),
+
+    require_all_scopes(model_spec(
+        def(
+            "list_sessions",
+            super::ToolAuditPolicy::typed_fields(&[
+                super::ToolAuditResultField::value("project"),
+                super::ToolAuditResultField::value("total"),
+                super::ToolAuditResultField::array_len("returned", "sessions"),
+                super::ToolAuditResultField::value("error_kind"),
+            ]),
+            ModelVisible, TOOL_CATEGORY_SESSION, None, TOOL_PROVIDER_CONTROL,
+            super::ToolSemanticContract {
+                effect: super::ToolEffect::Observe,
+                risk: Read,
+                approval: super::ToolApprovalPolicy::None,
+                idempotency: super::ToolIdempotency::PureRead,
+            },
+            Some(RUNTIME_READ), true, NoPath, false, false,
+            super::ToolSessionEvidencePolicy::NONE,
+        ).with_activity(super::ToolActivityPresentation::Support, super::ToolActivityInteraction::NonMeaningful),
+        "Read-only recovery discovery when the exact Session id is missing, including a new Host window or account using the same WebCodex authority. Requires an authorized exact Project and lists only that caller's creation-time Session authority group, including retained Closed history. Lifecycle filter is optional; offset defaults to 0, limit to 10 and is normalized to 1..20. Titles are redacted/bounded and output is capped at 32 KiB. Counts exclude foreign authority groups. Inventory pagination is not a frozen snapshot. Explicitly choose a returned session_id/session_ref, then read session_handoff_summary. Active work needs explicit bootstrap with the selected Session; Closed is historical only. Discovery never infers current/recent work, resumes a Session, grants authority, or restores hidden chat context.",
+    ), &[RUNTIME_READ, PROJECT_READ]),
 
     requires_explicit_business_session(model_spec(
         def(
@@ -112,7 +135,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 super::ToolActivityPresentation::Support,
                 super::ToolActivityInteraction::Meaningful,
             ),
-            "Canonical bootstrap for ordinary coding/review. Prefer principal-scoped project_ref; project or client_id+path. project_ref reauthorizes Project. mode=worktree isolated worktree: project reauthorizes source, resolves an exact Git base with Project authority, and returns managed Project/ref plus a fresh Workflow Session; never retarget source Session or guess paths. Omit session_id for fresh work; this does not imply a fresh model context. Exact resume needs an active accessible Session and never guesses prior Session. Read AGENTS.md/CLAUDE.md via _wc.context=[\"project.instructions\"]; Runtime re-observes instruction files; do not immediately reread complete bodies. For fresh or uncertain model context request webcodex.workflow. Reuse successful workspace state, available semantic navigation, sufficient startup Skills/Plugins; refresh stale facts. goal_context has no authority. guidance_profile guides; include_extension_catalog controls Skills/Plugins. checkout does not require Git.",
+            "Canonical bootstrap for ordinary coding/review. Prefer principal-scoped project_ref; project or client_id+path. project_ref reauthorizes Project. mode=worktree resolves an exact Git base with Project authority, returning managed Project/ref and fresh Workflow Session; never retarget source Session or guess paths. Omit session_id for fresh work; this does not imply a fresh model context. Exact resume needs an active accessible Session and never guesses prior Session; missing id: list_sessions(project), then explicitly choose. Read AGENTS.md/CLAUDE.md via _wc.context=[\"project.instructions\"]; Runtime re-observes instruction files; do not immediately reread complete bodies. For fresh or uncertain model context request webcodex.workflow. Reuse successful workspace state, available semantic navigation and sufficient startup Skills/Plugins; refresh stale facts. goal_context has no authority. guidance_profile guides; include_extension_catalog controls Skills/Plugins. checkout does not require Git.",
         )
         .with_gpt_action_description("Start/resume exact Project work. Prefer project_ref; canonical id or client_id+path also work. Exact resume accepts session_ref/session_id; sparse goal_context supports explicit Goal reuse. MCP context sidecars are unavailable here."),
         10,

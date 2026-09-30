@@ -286,6 +286,25 @@ impl StoredSession {
     }
 }
 
+/// Compact recovery inventory. No ledger, credentials, or execution defaults.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct SessionDiscoveryItem {
+    pub session_id: String,
+    pub title: Option<String>,
+    pub title_truncated: bool,
+    pub lifecycle: SessionLifecycle,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct SessionDiscoveryPage {
+    pub total: usize,
+    pub offset: usize,
+    pub next_offset: Option<usize>,
+    pub sessions: Vec<SessionDiscoveryItem>,
+}
+
 /// Options for creating a new session. Using a struct keeps the
 /// `start_session*` family stable as new session-creation inputs (such as
 /// project instructions) are added.

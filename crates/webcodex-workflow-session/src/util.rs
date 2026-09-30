@@ -52,16 +52,8 @@ pub(super) fn is_sensitive_key(key: &str) -> bool {
 }
 
 pub(super) fn looks_like_secret_string(value: &str) -> bool {
-    let value = value.to_ascii_lowercase();
-    value.contains("bearer ")
-        || value.contains("wc_pat_")
-        || value.contains("wc_oat_")
-        || value.contains("wc_ort_")
-        || value.contains("wc_agent_")
-        || value.contains("wc_acct_")
-        || value.contains("wc_pair_")
-        || value.contains("wc_csec_")
-        || value.contains("client_secret")
+    webcodex_core::sensitive_text::secret_like_value(value)
+        || value.to_ascii_lowercase().contains("client_secret")
 }
 
 pub(super) fn bound_summary_string(value: &str) -> String {

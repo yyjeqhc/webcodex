@@ -32,11 +32,13 @@ Bootstrap 或 discovery 返回 `project_ref` 后，普通 Project-scoped tool ca
 
 ## 工具策略 guidance
 
+需要切换账号或窗口时，用 `post_session_message` 保存已确认的决策和当前进度。不知道旧 Session 身份时，通过 `list_sessions(project)` 发现并显式选择候选，读取交接后再恢复。完整恢复及已配置模型评审流程见[任务接续](SESSION_CONTINUITY.zh-CN.md)。
+
 `work_on_project` 的 `guidance_profile` 是可选的：显式值只覆盖指导文本；MCP 省略时
 使用当次请求的 `X-WebCodex-MCP-Profile`，header 省略才使用部署默认
 `WEBCODEX_MCP_HOST_PROFILE`。HTTP header 独立决定返回/等待策略，见
 [MCP 客户端策略](MCP.zh-CN.md#同一-server-的客户端策略)。非 MCP/internal
-调用省略时仍回退到 `direct`。Workflow contract v27 保持共享的 `guidance`、
+调用省略时仍回退到 `direct`。Workflow contract v28 保持共享的 `guidance`、
 `model_protocol` 和 review `roles`，并在显式 `context_request=["webcodex.workflow"]`
 时通过 `tool_strategy` 返回本次请求选中的 effective 策略。
 

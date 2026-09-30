@@ -8,8 +8,8 @@
 use super::tool_inputs::CheckpointValidationInput;
 use super::tool_inputs::{
     default_true, deserialize_optional_coding_guidance_profile, ApplyFileChangeInput,
-    CodingGuidanceProfile, ExecutionPurpose, ExecutionShell, GoalLifecycleInput, SessionMode,
-    WorkOnProjectMode,
+    CodingGuidanceProfile, ExecutionPurpose, ExecutionShell, GoalLifecycleInput,
+    SessionLifecycleInput, SessionMode, WorkOnProjectMode,
 };
 use crate::{lookup_tool_definition, model_visible_tool_names_csv};
 use schemars::JsonSchema;
@@ -1669,6 +1669,22 @@ pub enum ToolCall {
         path: String,
     },
 
+    /// Discover retained caller-authorized Workflow Sessions in one exact Project.
+    /// Discovery never selects, resumes, creates, or records into a Session implicitly.
+    ListSessions {
+        #[schemars(length(min = 1))]
+        project: String,
+        /// Omit to list both active and retained closed Sessions.
+        #[serde(default)]
+        lifecycle: Option<SessionLifecycleInput>,
+        /// Inventory offset; concurrent Session changes can change page membership.
+        #[serde(default)]
+        offset: Option<usize>,
+        /// Defaults to 10; the Server normalizes values to 1..20.
+        #[serde(default)]
+        limit: Option<usize>,
+    },
+
     /// Return a bounded structured summary of recorded session ledger data for
     /// an explicit session id.
     SessionSummary {
@@ -2236,6 +2252,14 @@ pub enum ToolCall {
         /// telemetry bodies.
         #[schemars(length(min = 1, max = 65536))]
         instruction: String,
+        /// Optional exact authorized Workflow Session or session_ref to quote as bounded recovery
+        /// context for this Run. Requires runtime:read and matching Project/Session authority;
+        /// does not resume the source Session, select a recorder, or grant execution authority.
+        /// The resulting snapshot is part of the initiation intent; if it changes under the same
+        /// idempotency_key, observe the original Run rather than dispatching a replacement.
+        #[serde(default)]
+        #[schemars(regex(pattern = "^(wc_sess_[A-Za-z0-9_.-]+|~s[1-9][0-9]*)$"))]
+        context_session_id: Option<String>,
         /// Optional explicit run-level ACP config overrides. Omission or {} sends no caller-requested
         /// set_config_option calls; Runner-owned forced_config policy may still apply its own values.
         /// Every caller key/value must be live-advertised and operator-allowed before prompt dispatch.
@@ -5776,6 +5800,7 @@ impl ToolCall {
             Self::WorkResultActivityDetail { .. } => "work_result_activity_detail",
             Self::WorkResultSendMessage { .. } => "work_result_send_message",
             Self::ChangesFileDiff { .. } => "changes_file_diff",
+            Self::ListSessions { .. } => "list_sessions",
             Self::SessionSummary { .. } => "session_summary",
             Self::UpdateSessionContext { .. } => "update_session_context",
             Self::CloseSession { .. } => "close_session",
@@ -6113,7 +6138,8 @@ impl ToolCall {
 
     pub fn project(&self) -> Option<&str> {
         match self {
-            Self::RecordExternalObservation { project, .. }
+            Self::ListSessions { project, .. }
+            | Self::RecordExternalObservation { project, .. }
             | Self::ListExternalObservations { project, .. } => Some(project),
             #[cfg(feature = "experimental-code-mode")]
             Self::CodeModeExec { project, .. }

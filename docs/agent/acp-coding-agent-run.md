@@ -48,6 +48,17 @@ Workflow Session. Recorder provenance never crosses the Server/Runner execution
 request, never grants Run authority, and never stores prompt/reasoning/tool
 bodies or the private ACP session id.
 
+`coding_agent_start.context_session_id` is a separate explicit recovery source.
+It requires independent `runtime:read`, Session ownership and exact Project
+matching before dispatch. It quotes the bounded handoff and separately authorized
+Goal context into the prompt without resuming the source, inferring a recorder,
+granting authority, or fetching current files/Git. The combined prompt retains
+the 64 KiB input bound. The frozen snapshot participates in the intent fingerprint;
+changed context under the same key conflicts. After an uncertain start, observe
+the original Run instead of regenerating context and dispatching replacement
+work. The [model API adapter](../../integrations/model_gateway/README.md) is an
+operator-configured text-only ACP provider using the same Run contract.
+
 The Runner durable record intentionally retains only recovery identity and
 certainty metadata. Immediately before writing `session/prompt`, it durably
 crosses `prompt_dispatch_may_have_occurred`; any nonterminal restart from that

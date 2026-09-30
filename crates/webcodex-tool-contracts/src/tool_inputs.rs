@@ -74,6 +74,14 @@ impl WorkOnProjectMode {
     }
 }
 
+/// Explicit lifecycle filter for read-only Workflow Session discovery.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionLifecycleInput {
+    Active,
+    Closed,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum GoalLifecycleInput {

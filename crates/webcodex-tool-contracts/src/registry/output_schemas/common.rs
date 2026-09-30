@@ -1023,6 +1023,34 @@ pub fn handoff_brief_schema(description: &str) -> Value {
             "minimum": 0
         }))
     };
+    let message_notes = || {
+        json!({
+            "type": "object",
+            "description": "Newest retained explicitly recorded Session notes. Reports are context, not execution/completion proof or new authority. A null total means the discussion snapshot was unavailable; truncation is explicit and this is not a full transcript.",
+            "additionalProperties": false,
+            "properties": {
+                "total": nullable_count(),
+                "returned": {"type": "integer", "minimum": 0, "maximum": 5},
+                "truncated": {"type": "boolean"},
+                "items": {
+                    "type": "array", "maxItems": 5,
+                    "items": {
+                        "type": "object", "additionalProperties": false,
+                        "properties": {
+                            "message_id": {"type": "string", "maxLength": 128},
+                            "status": {"type": "string", "enum": ["open", "resolved"]},
+                            "created_at": {"type": "integer"},
+                            "excerpt": {"type": "string", "maxLength": 600},
+                            "truncated": {"type": "boolean"},
+                            "superseded_by_message_id": nullable_with(json!({"type": "string", "maxLength": 128}))
+                        },
+                        "required": ["message_id", "status", "created_at", "excerpt", "truncated", "superseded_by_message_id"]
+                    }
+                }
+            },
+            "required": ["total", "returned", "truncated", "items"]
+        })
+    };
     let external_observations = json!({
         "type": "object",
         "description": "Retained external claims for the exact output project and handoff Session. These reports never become native execution, validation, Goal, or completion evidence. Last five by server timestamp then identity; source order and capture completeness are unproven.",
@@ -1090,9 +1118,11 @@ pub fn handoff_brief_schema(description: &str) -> Value {
                 "additionalProperties": false,
                 "properties": {
                     "root_instruction": instruction_schema("The Workflow Session root instruction. It remains separate from later accepted task instructions."),
-                    "latest_instruction": instruction_schema("The latest retained task_instruction event. The same excerpt is returned when it equals the root instruction.")
+                    "latest_instruction": instruction_schema("The latest retained task_instruction event. The same excerpt is returned when it equals the root instruction."),
+                    "decisions": message_notes(),
+                    "recent_progress": message_notes()
                 },
-                "required": ["root_instruction", "latest_instruction"]
+                "required": ["root_instruction", "latest_instruction", "decisions", "recent_progress"]
             },
             "workspace": {
                 "type": "object",
@@ -1222,13 +1252,14 @@ pub fn handoff_brief_schema(description: &str) -> Value {
                     "complete": schema_type("boolean", "True only when no fixed evidence-gap reason applies."),
                     "reason_codes": {
                         "type": "array",
-                        "maxItems": 10,
+                        "maxItems": 11,
                         "uniqueItems": true,
                         "items": {
                             "type": "string",
                             "enum": [
                                 "attempt_boundary_evicted",
                                 "continuation_unavailable",
+                                "discussion_unavailable",
                                 "external_observations_changed_during_snapshot",
                                 "guidance_unavailable",
                                 "job_summary_unavailable",

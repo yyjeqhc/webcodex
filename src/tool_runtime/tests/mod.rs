@@ -16,6 +16,7 @@ mod checkpoint;
 mod code_mode;
 #[cfg(feature = "experimental-code-mode")]
 mod code_mode_e2b;
+mod coding_agent_context;
 mod coding_agent_discovery;
 mod coding_task;
 mod coding_task_semantic_navigation;
@@ -58,6 +59,7 @@ mod schema;
 mod script;
 mod search_and_read;
 mod search_project_texts;
+mod session_discovery;
 mod session_shells;
 mod sessions;
 mod sessions_git;

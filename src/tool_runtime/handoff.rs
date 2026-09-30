@@ -498,6 +498,7 @@ impl ToolRuntime {
         }
         output["handoff_brief"] = build_handoff_brief(HandoffBriefInput {
             session_summary: &projection_closeout_session,
+            discussion: guidance_available.then_some(&discussion),
             continuation_feedback: output.get("continuation_feedback").unwrap_or(&Value::Null),
             workspace_requested: include_workspace,
             workspace: output.get("workspace"),

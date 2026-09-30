@@ -48,7 +48,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 ),
                 &[CODING_AGENT_RUN, webcodex_core::authority::SCOPE_PROJECT_WRITE],
             ),
-            "Start one idempotent delegated ACP coding-agent Run on an exact registered Project and logical Runner provider. Autonomous execution may outlive this request; after any uncertain start, reuse the same idempotency key and observe the same Run rather than dispatching a replacement.",
+            "Start one idempotent delegated ACP Run on an exact Project and logical Runner provider; configured model API adapters can perform text reasoning/review. Optional context_session_id quotes an independently authorized bounded handoff and explicit Goal context; no source resume, recorder inference, or authority transfer. Current files/Git are not fetched. The context snapshot is part of the intent: a changed snapshot under the same key conflicts. Autonomous execution may outlive this request; after any uncertain start observe the same Run rather than dispatching a replacement. Choose providers only from the exact Runner inventory; no automatic quota/model switching.",
         ),
         PERMISSION_RISK_JOB,
     ),

@@ -258,9 +258,10 @@ pub const TOOL_RECOMMENDED_FLOWS: &[ToolRecommendedFlow] = &[
     },
     ToolRecommendedFlow {
         name: "handoff",
-        summary: "Handoff/recovery only: use session_summary for lightweight ledger reads. Use session_handoff_summary only for missing task context or explicit transfer, never routine progress polling. Coordinator posts a todo; worker reads it with get_session_assignment and completes with that fence.",
-        manifest_purpose: "Coordinate independent Workflow Sessions through atomic assignment snapshots, required assignment-fenced completions, and explicit generic message-state delta observation without sharing execution history, authority, subscriptions, or automatic wake-up.",
+        summary: "Handoff/recovery only: list_sessions(project) -> choose exact Session. session_summary reads ledger; session_handoff_summary only for missing task context or transfer, never routine progress polling. Save decisions/progress. get_session_assignment -> complete_session_message with its fence.",
+        manifest_purpose: "Recover missing Session identity with caller-authorized list_sessions(project), explicitly choose a returned identity, then read session_handoff_summary; discovery never resumes work. Save explicit decisions/progress with post_session_message. Coordinate independent Workflow Sessions through atomic assignment snapshots, required assignment-fenced completions, and explicit generic message-state delta observation without sharing execution history, authority, subscriptions, or automatic wake-up.",
         tools: &[
+            "list_sessions",
             "session_summary",
             "post_session_message",
             "session_handoff_summary",

@@ -69,6 +69,15 @@ impl ToolRuntime {
                 )
                 .await
             }
+            ToolCall::ListSessions {
+                project,
+                lifecycle,
+                offset,
+                limit,
+            } => {
+                self.list_sessions_tool(project, lifecycle, offset, limit, auth)
+                    .await
+            }
             ToolCall::SessionSummary { session_id, limit } => {
                 self.session_summary_tool(session_id, limit, auth).await
             }
@@ -194,6 +203,95 @@ impl ToolRuntime {
             }
             _ => unreachable!("non-session tool routed to session dispatcher"),
         }
+    }
+
+    pub(crate) async fn list_sessions_tool(
+        &self,
+        project: String,
+        lifecycle: Option<webcodex_tool_contracts::SessionLifecycleInput>,
+        offset: Option<usize>,
+        limit: Option<usize>,
+        auth: Option<&AuthContext>,
+    ) -> ToolResult {
+        let resolved = match self.resolve_project_input_for_auth(&project, auth).await {
+            Ok(resolved) => resolved,
+            Err(error) => return error.into_tool_result(),
+        };
+        let owner = match workflow_session_authority_fingerprint(auth) {
+            Ok(owner) => owner,
+            Err(_) => {
+                return ToolResult::err_with_output(
+                    "session_authority_identity_unavailable",
+                    json!({
+                        "error_kind": "session_authority_identity_unavailable", "state_changed": false,
+                    }),
+                )
+            }
+        };
+        let lifecycle = lifecycle.map(|state| match state {
+            webcodex_tool_contracts::SessionLifecycleInput::Active => {
+                sessions::SessionLifecycle::Active
+            }
+            webcodex_tool_contracts::SessionLifecycleInput::Closed => {
+                sessions::SessionLifecycle::Closed
+            }
+        });
+        let offset = offset.unwrap_or(0);
+        let page = self.sessions.discover_sessions(
+            &resolved.resolved_id,
+            &owner,
+            lifecycle,
+            offset,
+            limit.unwrap_or(10),
+        );
+        let mut rows = Vec::new();
+        for item in &page.sessions {
+            // Discovery is no authority grant. Recheck each exact target before
+            // projecting it or minting its caller-scoped short selector.
+            if self
+                .authorize_session_target(&item.session_id, "list_sessions", auth)
+                .await
+                .is_err()
+            {
+                continue;
+            }
+            let mut row = serde_json::to_value(item).expect("Session discovery item serializes");
+            if let Some(session_ref) = self.session_reference_for_id(&item.session_id, auth) {
+                row["session_ref"] = json!(session_ref);
+            }
+            rows.push(row);
+        }
+        let mut output = json!({
+            "project": resolved.resolved_id,
+            "total": page.total,
+            "offset": offset,
+            "next_offset": page.next_offset,
+            "sessions": rows,
+            "selection": "caller_must_choose_exact_session",
+        });
+        // Bound the actual UTF-8 JSON output, including principal-scoped refs.
+        // Removed rows remain discoverable on the next ordinary inventory page.
+        const MAX_RESULT_BYTES: usize = 32 * 1024;
+        while serde_json::to_vec(&output)
+            .expect("Session discovery serializes")
+            .len()
+            > MAX_RESULT_BYTES
+        {
+            let rows = output["sessions"]
+                .as_array_mut()
+                .expect("Session discovery rows");
+            if rows.pop().is_none() {
+                return ToolResult::err_with_output(
+                    "session_discovery_result_too_large",
+                    json!({
+                        "error_kind": "session_discovery_result_too_large", "state_changed": false,
+                    }),
+                );
+            }
+            let next = offset.saturating_add(rows.len());
+            output["next_offset"] = json!(next);
+        }
+        ToolResult::ok(output)
     }
 
     pub(crate) async fn start_session_tool(

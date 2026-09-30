@@ -1839,6 +1839,7 @@ fn coding_agent_audit_is_body_free_for_requests_and_observations() {
         )])),
         timeout_secs: Some(60),
         recording_session_id: Some("wc_sess_safe".to_string()),
+        context_session_id: Some("wc_sess_context".to_string()),
     }
     .session_log_arguments();
     let request_serialized = serde_json::to_string(&typed_request).unwrap();
@@ -1850,6 +1851,8 @@ fn coding_agent_audit_is_body_free_for_requests_and_observations() {
     assert!(!request_serialized.contains("agent\""));
     assert!(typed_request.get("recording_session_id").is_none());
     assert!(!request_serialized.contains("wc_sess_safe"));
+    assert_eq!(typed_request["context_session_present"], true);
+    assert!(!request_serialized.contains("wc_sess_context"));
 
     let observe_request = json!({
         "run_id": "wc_agent_run_safe",

@@ -149,6 +149,7 @@ pub enum RunnerJobOperation {
     StartValidation(RunnerJobValidationOperation),
     StartBuild(RunnerJobBuildOperation),
     StartProcess(RunnerJobProcessOperation),
+    StartInteractiveProcess(RunnerJobProcessOperation),
     StartDetachedProcess(RunnerJobProcessOperation),
     StartScript(RunnerJobScriptOperation),
     StartSkillResource(RunnerJobSkillResourceOperation),
@@ -161,9 +162,9 @@ impl RunnerJobOperation {
             Self::StartShell(operation) => &operation.job_id,
             Self::StartValidation(operation) => &operation.job_id,
             Self::StartBuild(operation) => &operation.job_id,
-            Self::StartProcess(operation) | Self::StartDetachedProcess(operation) => {
-                &operation.job_id
-            }
+            Self::StartProcess(operation)
+            | Self::StartInteractiveProcess(operation)
+            | Self::StartDetachedProcess(operation) => &operation.job_id,
             Self::StartScript(operation) => &operation.job_id,
             Self::StartSkillResource(operation) => &operation.job_id,
             Self::Stop { job_id } => job_id,
@@ -175,9 +176,9 @@ impl RunnerJobOperation {
             Self::StartShell(operation) => Some(&operation.context),
             Self::StartValidation(operation) => Some(&operation.context),
             Self::StartBuild(operation) => Some(&operation.context),
-            Self::StartProcess(operation) | Self::StartDetachedProcess(operation) => {
-                Some(&operation.context)
-            }
+            Self::StartProcess(operation)
+            | Self::StartInteractiveProcess(operation)
+            | Self::StartDetachedProcess(operation) => Some(&operation.context),
             Self::StartScript(operation) => Some(&operation.context),
             Self::StartSkillResource(operation) => Some(&operation.context),
             Self::Stop { .. } => None,
@@ -189,9 +190,9 @@ impl RunnerJobOperation {
             Self::StartShell(operation) => operation.cwd.as_deref(),
             Self::StartValidation(operation) => operation.cwd.as_deref(),
             Self::StartBuild(operation) => operation.cwd.as_deref(),
-            Self::StartProcess(operation) | Self::StartDetachedProcess(operation) => {
-                operation.cwd.as_deref()
-            }
+            Self::StartProcess(operation)
+            | Self::StartInteractiveProcess(operation)
+            | Self::StartDetachedProcess(operation) => operation.cwd.as_deref(),
             Self::StartScript(operation) => operation.cwd.as_deref(),
             Self::StartSkillResource(operation) => operation.cwd.as_deref(),
             Self::Stop { .. } => None,
@@ -232,16 +233,23 @@ impl RunnerJobOperation {
                 validation_tool: None,
                 assertion_name: None,
             }),
-            Self::StartProcess(operation) => Some(ShellJobStructuredExecutionMetadata {
-                execution_source: "run_process".to_string(),
-                language: None,
-                script_bytes: None,
-                arg_count: operation.process.args.len(),
-                stdin_present: operation.stdin.is_some(),
-                validation_identity: correlation.0,
-                validation_tool: correlation.1,
-                assertion_name: correlation.2,
-            }),
+            Self::StartProcess(operation) | Self::StartInteractiveProcess(operation) => {
+                Some(ShellJobStructuredExecutionMetadata {
+                    execution_source: if matches!(self, Self::StartInteractiveProcess(_)) {
+                        "run_process_interactive"
+                    } else {
+                        "run_process"
+                    }
+                    .to_string(),
+                    language: None,
+                    script_bytes: None,
+                    arg_count: operation.process.args.len(),
+                    stdin_present: operation.stdin.is_some(),
+                    validation_identity: correlation.0,
+                    validation_tool: correlation.1,
+                    assertion_name: correlation.2,
+                })
+            }
             Self::StartDetachedProcess(operation) => Some(ShellJobStructuredExecutionMetadata {
                 execution_source: "run_detached_process".to_string(),
                 language: None,
@@ -671,6 +679,7 @@ pub enum RunnerOperation {
     RunInternalPosixScript(RunnerScriptOperation),
     RunSkillResource(RunnerSkillResourceOperation),
     Job(RunnerJobOperation),
+    JobInput(crate::job_input::JobInputRequest),
     File(RunnerFileOperation),
     Project(RunnerProjectOperation),
     Computer(RunnerComputerOperation),
@@ -703,11 +712,13 @@ impl RunnerOperation {
             Self::RunScript(_) => "run_script",
             Self::RunInternalPosixScript(_) => "run_internal_posix_script",
             Self::RunSkillResource(_) => RUNNER_SKILL_EXECUTION_REQUEST_KIND,
+            Self::JobInput(_) => "job_write_input",
             Self::Job(operation) => match operation {
                 RunnerJobOperation::StartShell(_) => "start_job",
                 RunnerJobOperation::StartValidation(_) => "start_validation_job",
                 RunnerJobOperation::StartBuild(_) => "start_build_job",
                 RunnerJobOperation::StartProcess(_) => "start_process_job",
+                RunnerJobOperation::StartInteractiveProcess(_) => "start_interactive_process_job",
                 RunnerJobOperation::StartDetachedProcess(_) => "start_detached_process_job",
                 RunnerJobOperation::StartScript(_) => "start_script_job",
                 RunnerJobOperation::StartSkillResource(_) => "start_skill_resource_job",
@@ -897,6 +908,11 @@ fn encode_operation(
             wire.content = Some(content);
             wire.timeout_secs = operation.timeout_secs;
         }
+        RunnerOperation::JobInput(input) => {
+            input.validate()?;
+            wire.content = Some(serde_json::to_string(&input).map_err(|_| "job_input_encode")?);
+            wire.timeout_secs = 3;
+        }
         RunnerOperation::Job(operation) => encode_job_operation(&mut wire, operation)?,
         RunnerOperation::File(operation) => {
             let payload = operation.payload().clone();
@@ -1044,6 +1060,7 @@ fn encode_job_operation(
         RunnerJobOperation::StartValidation(_) => "start_validation_job",
         RunnerJobOperation::StartBuild(_) => "start_build_job",
         RunnerJobOperation::StartProcess(_) => "start_process_job",
+        RunnerJobOperation::StartInteractiveProcess(_) => "start_interactive_process_job",
         RunnerJobOperation::StartDetachedProcess(_) => "start_detached_process_job",
         RunnerJobOperation::StartScript(_) => "start_script_job",
         RunnerJobOperation::StartSkillResource(_) => "start_skill_resource_job",
@@ -1112,6 +1129,7 @@ fn encode_job_operation(
             wire.job_context = Some(operation.context);
         }
         RunnerJobOperation::StartProcess(operation)
+        | RunnerJobOperation::StartInteractiveProcess(operation)
         | RunnerJobOperation::StartDetachedProcess(operation) => {
             validate_structured_job_common(
                 operation.cwd.as_deref(),
@@ -1190,6 +1208,26 @@ fn decode_operation(wire: &RunnerRequest) -> Result<RunnerOperation, String> {
     }
     let no_special = || ensure_special_payloads_absent(wire);
     match wire.kind.as_str() {
+        "job_write_input" => {
+            no_special()?;
+            ensure_no_file_fields_except_content(wire)?;
+            if wire.job_id.is_some()
+                || wire.job_context.is_some()
+                || wire.cwd.is_some()
+                || wire.stdin.is_some()
+                || !wire.command.is_empty()
+            {
+                return Err("job_input_incompatible_fields".into());
+            }
+            let input: crate::job_input::JobInputRequest = serde_json::from_str(bounded_content(
+                wire,
+                crate::job_input::MAX_BYTES * 6 + 2048,
+                "job input",
+            )?)
+            .map_err(|_| "job_input_invalid_payload")?;
+            input.validate()?;
+            Ok(RunnerOperation::JobInput(input))
+        }
         "run_shell" => {
             no_special()?;
             ensure_no_file_fields_except_max_bytes(wire)?;
@@ -1290,6 +1328,7 @@ fn decode_operation(wire: &RunnerRequest) -> Result<RunnerOperation, String> {
         | "start_validation_job"
         | "start_build_job"
         | "start_process_job"
+        | "start_interactive_process_job"
         | "start_detached_process_job"
         | "start_script_job"
         | "start_skill_resource_job"
@@ -1687,7 +1726,7 @@ fn decode_job_operation(wire: &RunnerRequest) -> Result<RunnerJobOperation, Stri
             }
             Ok(job)
         }
-        "start_process_job" | "start_detached_process_job" => {
+        "start_process_job" | "start_detached_process_job" | "start_interactive_process_job" => {
             ensure_only_process_payload(wire)?;
             if !wire.command.is_empty() || context.ssh_resource.is_some() {
                 return Err("typed process Job contains incompatible execution fields".to_string());
@@ -1711,8 +1750,13 @@ fn decode_job_operation(wire: &RunnerRequest) -> Result<RunnerJobOperation, Stri
                 timeout_secs: wire.timeout_secs,
                 context,
             };
+            if wire.kind == "start_interactive_process_job" && operation.stdin.is_some() {
+                return Err("interactive_process_requires_job_write_input".into());
+            }
             let job = if wire.kind == "start_detached_process_job" {
                 RunnerJobOperation::StartDetachedProcess(operation)
+            } else if wire.kind == "start_interactive_process_job" {
+                RunnerJobOperation::StartInteractiveProcess(operation)
             } else {
                 RunnerJobOperation::StartProcess(operation)
             };

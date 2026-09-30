@@ -11,6 +11,7 @@ pub mod cargo_test_count;
 pub mod coding_agent;
 pub mod compact;
 pub mod desktop_runtime_contract;
+pub mod job_input;
 pub mod job_observation;
 pub mod lsp_bridge;
 pub mod mcp_gateway;

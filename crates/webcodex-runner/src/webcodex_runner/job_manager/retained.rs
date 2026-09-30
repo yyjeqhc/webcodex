@@ -206,6 +206,9 @@ impl JobManager {
                 job.snapshot.activity = Some(activity);
             }
             if runner_job_is_terminal(&job.snapshot.status) || delta.finished {
+                if let Some(input) = &job.input {
+                    input.finish();
+                }
                 job.snapshot.activity = None;
                 job.snapshot.ended_at.get_or_insert(now);
                 job.snapshot.exit_code = delta.exit_code;

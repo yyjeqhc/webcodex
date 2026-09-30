@@ -658,9 +658,13 @@ runner_capabilities! {
         #[serde(default)]
         pub structured_execution_jobs: bool = false;
     }
-    /// Explicit authority for durable detached native-process Jobs whose payload tree is
-    /// handed off to the detached supervisor. Missing on older Runners is false and
-    /// is never inferred from structured process argv or ordinary durable Job support.
+    /// Explicit opt-in pipe-input Jobs. Never infer this additive feature from
+    /// generation 2, ordinary structured execution, or persistent shells.
+    JobProcessInput => RUNNER_CAPABILITY_JOB_PROCESS_INPUT("job_process_input_v1"),
+    v2_baseline = false {
+        #[serde(default, rename = "job_process_input_v1", skip_serializing_if = "is_false")]
+        pub job_process_input: bool = false;
+    }
     DetachedProcessJobs => RUNNER_CAPABILITY_DETACHED_PROCESS_JOBS("detached_process_jobs"),
     v2_baseline = false {
         /// Durable detached native-process ownership handoff. This is an additive
@@ -2745,6 +2749,7 @@ mod envelope_tests {
                 structured_script_python: true,
                 internal_posix_script: true,
                 structured_execution_jobs: true,
+                job_process_input: true,
                 detached_process_jobs: true,
                 lsp_read_only_navigation: false,
                 lsp_call_hierarchy: false,

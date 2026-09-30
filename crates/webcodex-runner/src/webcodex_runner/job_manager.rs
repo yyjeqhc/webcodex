@@ -262,6 +262,7 @@ struct RunningJob {
     /// job's worker thread so it can poll the direct child and terminate the
     /// whole tree, but there is never more than one live `ManagedChild`.
     child: Option<Arc<Mutex<ManagedChild>>>,
+    input: Option<Arc<input::InputChannel>>,
     stop_requested: Arc<AtomicBool>,
     slot_reserved: bool,
 }
@@ -360,6 +361,8 @@ use lifecycle::{
 };
 #[cfg(all(test, windows))]
 use lifecycle::{post_spawn_interruption_delta, post_spawn_interruption_reason};
+mod input;
+mod interactive;
 mod lifecycle;
 mod local_shell;
 mod process;

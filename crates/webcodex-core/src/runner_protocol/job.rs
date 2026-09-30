@@ -892,6 +892,15 @@ impl ShellJobStructuredExecutionMetadata {
                     && self.script_bytes.is_none()
                     && self.arg_count <= PROCESS_ARG_MAX_COUNT
             }
+            "run_process_interactive" => {
+                self.language.is_none()
+                    && self.script_bytes.is_none()
+                    && self.arg_count <= PROCESS_ARG_MAX_COUNT
+                    && !self.stdin_present
+                    && self.validation_identity.is_none()
+                    && self.validation_tool.is_none()
+                    && self.assertion_name.is_none()
+            }
             "project_build" => {
                 self.language.is_none()
                     && self.script_bytes.is_none()

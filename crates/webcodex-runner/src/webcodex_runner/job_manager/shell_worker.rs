@@ -94,6 +94,32 @@ impl JobManager {
                 return;
             }
         };
+        let input = if matches!(&operation, RunnerJobOperation::StartInteractiveProcess(_)) {
+            let attached = child
+                .child_mut()
+                .stdin
+                .take()
+                .ok_or_else(|| std::io::Error::other("stdin pipe missing"))
+                .and_then(input::InputChannel::attach);
+            match attached {
+                Ok(input) => Some(input),
+                Err(_) => {
+                    drop(child);
+                    self.update_and_send(
+                        &job_id,
+                        post_spawn_interruption_delta(
+                            &operation,
+                            start.elapsed().as_millis() as u64,
+                            "interactive input initialization failed",
+                        ),
+                    );
+                    self.start_available_queued();
+                    return;
+                }
+            }
+        } else {
+            None
+        };
         let mut stdout = child.child_mut().stdout.take();
         let mut stderr = child.child_mut().stderr.take();
         let mut child = Arc::new(Mutex::new(child));
@@ -109,6 +135,7 @@ impl JobManager {
             if rejection.is_none() {
                 if let Some(job) = job.as_mut() {
                     job.child = Some(child.clone());
+                    job.input = input.clone();
                 }
             }
             rejection

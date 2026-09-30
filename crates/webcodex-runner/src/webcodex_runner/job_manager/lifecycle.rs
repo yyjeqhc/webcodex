@@ -88,6 +88,7 @@ pub(super) fn job_prestart_lifecycle(
         RunnerJobOperation::StartShell(_)
         | RunnerJobOperation::StartBuild(_)
         | RunnerJobOperation::StartProcess(_)
+        | RunnerJobOperation::StartInteractiveProcess(_)
         | RunnerJobOperation::StartDetachedProcess(_)
         | RunnerJobOperation::StartScript(_)
         | RunnerJobOperation::StartSkillResource(_) => Some(ShellCommandExecutionState::NotStarted),
@@ -115,6 +116,7 @@ pub(crate) fn decode_failure_prestart_lifecycle(
         "start_job"
             | "start_build_job"
             | "start_process_job"
+            | "start_interactive_process_job"
             | "start_detached_process_job"
             | "start_script_job"
             | "start_skill_resource_job"
@@ -125,8 +127,11 @@ pub(crate) fn decode_failure_prestart_lifecycle(
 pub(super) fn post_spawn_interruption_lifecycle(
     operation: &RunnerJobOperation,
 ) -> Option<ShellCommandExecutionState> {
-    matches!(operation, RunnerJobOperation::StartShell(_))
-        .then_some(ShellCommandExecutionState::OutcomeUnknown)
+    matches!(
+        operation,
+        RunnerJobOperation::StartShell(_) | RunnerJobOperation::StartInteractiveProcess(_)
+    )
+    .then_some(ShellCommandExecutionState::OutcomeUnknown)
 }
 
 pub(super) fn post_spawn_interruption_reason(

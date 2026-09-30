@@ -1564,6 +1564,7 @@ fn runner_register_capabilities(cfg: &RunnerConfig) -> RunnerCapabilities {
     capabilities.set(RunnerCapabilityId::StructuredScriptPython, true);
     capabilities.set(RunnerCapabilityId::InternalPosixScript, true);
     capabilities.set(RunnerCapabilityId::StructuredExecutionJobs, true);
+    capabilities.set(RunnerCapabilityId::JobProcessInput, true);
     // Detached process ownership is an independent additive authority. Until
     // each native backend is implemented and dogfooded it must fail closed
     // rather than being inferred from structured process + durable Jobs.

@@ -181,6 +181,7 @@ impl JobManager {
                         runner_instance_id: runner_instance_id.to_string(),
                         snapshot,
                         child: None,
+                        input: None,
                         stop_requested: Arc::new(AtomicBool::new(record.stop_requested)),
                         slot_reserved: active,
                     },

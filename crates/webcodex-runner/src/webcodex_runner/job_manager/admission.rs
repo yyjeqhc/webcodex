@@ -161,6 +161,7 @@ pub(super) fn validate_runner_job_context_operation(
             }
         }
         RunnerJobOperation::StartProcess(operation)
+        | RunnerJobOperation::StartInteractiveProcess(operation)
         | RunnerJobOperation::StartDetachedProcess(operation) => {
             if context.ssh_resource.is_some() {
                 return Err("typed process Job request shape is invalid".to_string());
@@ -406,6 +407,7 @@ impl JobManager {
                         activity: None,
                     },
                     child: None,
+                    input: None,
                     stop_requested: Arc::new(AtomicBool::new(false)),
                     slot_reserved,
                 },
@@ -441,6 +443,7 @@ impl JobManager {
             return;
         }
         match &start.operation {
+            RunnerJobOperation::StartInteractiveProcess(_) => self.start_interactive_process(start),
             RunnerJobOperation::StartDetachedProcess(_) => self.start_detached_process_job(start),
             RunnerJobOperation::StartBuild(_)
             | RunnerJobOperation::StartProcess(_)

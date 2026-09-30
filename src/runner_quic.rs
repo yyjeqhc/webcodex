@@ -619,6 +619,7 @@ mod tests {
             structured_script_python: false,
             internal_posix_script: false,
             structured_execution_jobs: false,
+            job_process_input: false,
             detached_process_jobs: false,
             lsp_read_only_navigation: false,
             lsp_call_hierarchy: false,

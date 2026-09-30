@@ -2409,11 +2409,11 @@ async fn mcp_tools_list_stateless_serialized_size_budget() {
     // continuation presentations are hidden. All 18 App-only protocol tools
     // remain present with Apps on; they are not ordinary model-tool savings.
     for (label, auth, max_tools, max_bytes) in [
-        ("anonymous", None, 22, 60_000),
-        ("scoped", Some(&scoped), 23, 62_000),
-        // The optional interactive pipe contract adds input/output schema to
-        // run_process; the direct inventory count is intentionally unchanged.
-        ("admin", Some(&admin), 29, 72_000),
+        ("anonymous", None, 23, 62_000),
+        ("scoped", Some(&scoped), 24, 64_000),
+        // Interactive pipe input is a CoreWorkflow Direct tool paired with
+        // run_process, so each ordinary Adaptive inventory gains one descriptor.
+        ("admin", Some(&admin), 30, 74_000),
     ] {
         for app_enabled in [false, true] {
             let mut sizes = Vec::new();

@@ -49,9 +49,8 @@ class InteractiveSmoke(Smoke):
         self.rpc_id += 1
         response=self.post("/mcp",{"jsonrpc":"2.0","id":self.rpc_id,"method":"tools/list","params":{}},token)
         names={tool.get("name") for tool in response.get("result",{}).get("tools",[])}
-        check({"run_process","read_files","edit_project_files","observe_jobs","wait_for_job_readiness","call_runtime_tool"} <= names,
+        check({"run_process","job_write_input","read_files","edit_project_files","observe_jobs","wait_for_job_readiness","call_runtime_tool"} <= names,
               "fresh stateless tool inventory is missing a core callable")
-        check("job_write_input" not in names,"input should remain a gateway capability, not another Direct tool")
 
     def raw_tool(self, name, args, token, *, direct=False):
         self.rpc_id += 1
@@ -106,9 +105,9 @@ class InteractiveSmoke(Smoke):
         check(isinstance(job,str),"public Job identity missing")
         return job
 
-    def write(self, job, key, data="", close=False, *, success=True, project=None, token=None):
+    def write(self, job, key, data="", close=False, *, success=True, project=None, token=None, direct=True):
         return self.call("job_write_input", {"project":project or self.project_ref,"job_id":job,
-            "input_id":key,"data":data,"close":close}, token, success=success)
+            "input_id":key,"data":data,"close":close}, token, direct=direct, success=success)
 
     def prepare(self):
         self.env["WEBCODEX_MCP_HOST_PROFILE"]="host_code_mode"
@@ -168,7 +167,7 @@ class InteractiveSmoke(Smoke):
         program="import sys; from pathlib import Path; print('ready>', end='', flush=True)\nfor line in sys.stdin:\n with open('received.txt','a',encoding='utf-8') as f: f.write(line)\n print('echo:'+line,end='',flush=True)\nprint('eof',flush=True)"
         job=self.start_pipe(program,90);self.ready_prompt(job)
         first=self.write(job,"one","你好\n");check(first["state"]=="written","small write not acknowledged")
-        check(self.write(job,"one","你好\n")==first,"same input receipt changed unexpectedly")
+        check(self.write(job,"one","你好\n",direct=False)==first,"gateway fallback changed retained receipt")
         conflict=self.write(job,"one","different\n",success=False)
         check(conflict.get("error_kind")=="job_input_conflict","changed id did not conflict")
         self.write(job,"wrong-project","forbidden",project="agent:input-runner:other",success=False)

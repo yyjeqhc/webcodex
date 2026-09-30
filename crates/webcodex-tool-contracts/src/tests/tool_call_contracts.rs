@@ -1002,7 +1002,7 @@ fn from_tool_name_parses_structured_run_process_boundaries() {
 }
 
 #[test]
-fn interactive_pipe_schema_is_opt_in_and_input_has_a_single_effectful_gateway_route() {
+fn interactive_pipe_schema_is_opt_in_and_input_is_adaptive_direct() {
     let ordinary =
         ToolCall::from_tool_name("run_process", json!({"project":"p","executable":"python"}))
             .unwrap();
@@ -1028,7 +1028,7 @@ fn interactive_pipe_schema_is_opt_in_and_input_has_a_single_effectful_gateway_ro
     let definition = crate::lookup_tool_definition("job_write_input").unwrap();
     assert!(!definition.effect_annotations().read_only_hint);
     assert!(!definition.effect_annotations().idempotent_hint);
-    assert!(definition.adaptive_runtime_direct_rank().is_none());
+    assert_eq!(definition.adaptive_runtime_direct_rank(), Some(71));
     for field in [
         "command",
         "executable",

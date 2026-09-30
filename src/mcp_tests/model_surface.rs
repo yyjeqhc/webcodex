@@ -151,6 +151,7 @@ async fn adaptive_tools_list_exposes_ranked_direct_tools_and_gateway() {
         "search_and_read",
         "edit_project_files",
         "run_process",
+        "job_write_input",
         "run_script",
         "run_shell",
         "cargo_check",
@@ -171,6 +172,42 @@ async fn adaptive_tools_list_exposes_ranked_direct_tools_and_gateway() {
             "{required} must derive direct admission from ToolDefinition rank"
         );
     }
+}
+
+#[tokio::test]
+async fn interactive_job_input_prefers_direct_and_keeps_gateway_fallback() {
+    let runtime = test_runtime();
+    let outcome = handle_mcp_request(
+        &runtime,
+        rpc(
+            "tools/call",
+            Some(json!(69)),
+            mcp_2026_params(json!({
+                "name": "tool_manifest",
+                "arguments": {"tool_name": "job_write_input"}
+            })),
+        ),
+        None,
+    )
+    .await;
+    let McpOutcome::Ok(value) = outcome else {
+        panic!("job_write_input manifest must succeed");
+    };
+    let output = &value["result"]["structuredContent"]["output"];
+    assert_eq!(output["route"]["primary"]["mode"], "direct");
+    assert_eq!(output["route"]["primary"]["tool"], "job_write_input");
+    assert_eq!(output["route"]["fallback"]["mode"], "gateway");
+    assert_eq!(output["route"]["fallback"]["tool"], "call_runtime_tool");
+    assert_eq!(output["route"]["fallback"]["target"], "job_write_input");
+    assert_eq!(
+        output["route"]["fallback"]["when"],
+        "direct_callable_unavailable"
+    );
+    assert_eq!(
+        output["route"]["fallback"]["blocked_when_mcp_apps_enabled"],
+        false
+    );
+    assert_eq!(output["route"]["tool_manifest_registers_host_tool"], false);
 }
 
 #[tokio::test]

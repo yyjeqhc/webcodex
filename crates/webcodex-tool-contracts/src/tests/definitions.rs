@@ -931,6 +931,7 @@ fn adaptive_runtime_direct_declarations_are_visible_ranked_and_unique() {
     for (name, expected_rank) in [
         ("import_conversation_files_to_project", 55),
         ("project_artifact", 56),
+        ("job_write_input", 71),
         ("run_script", 74),
         ("run_shell", 75),
         ("observe_jobs", 80),

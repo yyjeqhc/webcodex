@@ -10,9 +10,11 @@ ConPTY, shell Session, REPL service, detached process, or automatic next-turn ho
 continuation. Programs must support pipes and flush their output; TTY-only
 applications are outside this slice.
 
-`job_write_input` is one model-visible gateway capability, not another Direct tool
-or execution launcher. Output observation and waiting remain separate read-only
-operations (`observe_jobs`, `wait_for_job_readiness`); stopping remains explicit
+`job_write_input` is a model-visible Adaptive Runtime Direct capability paired with
+`run_process(interactive=true)`, with `call_runtime_tool` retained as its gateway
+fallback. It is not another execution launcher. Output observation and waiting
+remain separate read-only operations (`observe_jobs`, `wait_for_job_readiness`);
+stopping remains explicit
 `stop_job(confirm=true)`. Existing batch read/edit/image and short-ref contracts
 are exercised by the same opt-in real MCP/WS workflow fixture.
 
@@ -118,8 +120,9 @@ root-replaced refs fail closed.
 replay, conflicting data/EOF, pending delivery/backpressure, partial failure,
 handle-close ordering, quota and reserved EOF. Server/registry tests check public
 Job identity, permission/capability/Project fences, pre-dequeue revocation and
-untrusted receipt validation. Tool schema tests keep default EOF behavior and
-only one effectful input gateway; ordinary Job/read interfaces remain read-only.
+untrusted receipt validation. Tool schema tests keep default EOF behavior and one
+canonical effectful input operation exposed Direct with the ordinary Adaptive
+gateway fallback; Job/read observation interfaces remain read-only.
 
 Run after building matching dogfood binaries:
 
@@ -139,7 +142,7 @@ not a recommendation for model heartbeat polling.
 
 ### Final Linux verification
 
-With runtime source frozen, the default Server library passed **3,155 tests**
+With runtime source frozen, the default Server library passed **3,156 tests**
 (3 existing ignored), the Runner binary suite passed **973 tests** (4 existing
 ignored), Runner Registry passed **311**, tool contracts with all features passed
 **276**, and the new Core input-contract selection passed **3**. The native
@@ -155,15 +158,16 @@ to a proven cause. The relevant ACP/transport code and assertions were unchanged
 this is not a claim that those tests' intermittent timing sensitivity is fixed.
 
 The opt-in real MCP/WS fixture passed all workflow and interactive scenarios on
-the development build. Its initial failures revealed fixture assumptions rather
+the development build, including Direct input plus same-receipt gateway fallback
+without duplicate delivery. Its initial failures revealed fixture assumptions rather
 than permission exceptions: it needed explicit 2026-07-28 request metadata for
 `_wc`, and the existing terminal timeout status is `timeout`, not `failed`.
 Production protocol admission and Job lifecycle values were not loosened.
 Deployment acceptance uses a rebuilt clean commit, not an unstated dirty artifact.
 
-The optional `interactive` input/output contract modestly increases schema bytes;
-the administrator direct-inventory soft budget is now 72,000 instead of 71,000
-bytes, with the **same 29 direct tools**. The complete workflow guidance was not
+The optional `interactive` input/output contract and Direct input capability
+modestly increase schema bytes; the administrator direct-inventory soft budget is
+**74,000 bytes** with **30 direct tools**. The complete workflow guidance was not
 expanded to carry per-tool interaction details; required-input-before-wait guidance
 belongs to the process contract. No transport or payload safety ceiling was raised.
 Native Windows/macOS execution, PTY/ConPTY, a paid coding agent, and a real Codex

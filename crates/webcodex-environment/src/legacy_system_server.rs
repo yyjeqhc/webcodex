@@ -1592,13 +1592,21 @@ fn rename_data_noreplace(
     }
     let source_name = c"data-stage";
     let target_name = c"data";
+    // `renameat2` is a glibc 2.28+ symbol, but the published Linux artifacts
+    // keep a glibc 2.17 floor (docs/RELEASE_CHECKLIST.md). Issue the raw
+    // syscall instead: it needs only the kernel side (Linux >= 3.15) and adds
+    // no new `GLIBC_*` symbol requirement. The `as c_long` casts are
+    // load-bearing - `libc::syscall` is variadic and glibc reads every
+    // argument back as a `c_long`, so a bare `RawFd` would leave the upper
+    // bits of that register undefined.
     let result = unsafe {
-        libc::renameat2(
-            src.as_raw_fd(),
+        libc::syscall(
+            libc::SYS_renameat2,
+            src.as_raw_fd() as libc::c_long,
             source_name.as_ptr(),
-            dst.as_raw_fd(),
+            dst.as_raw_fd() as libc::c_long,
             target_name.as_ptr(),
-            libc::RENAME_NOREPLACE,
+            libc::RENAME_NOREPLACE as libc::c_long,
         )
     };
     if result != 0 {

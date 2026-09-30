@@ -176,13 +176,25 @@ impl DesktopCore {
             .await
             .map_err(|_| diagnostics::diagnostic_error("server_environment_unavailable"))?;
         }
-        self.runtime_switch_authority().await?;
+        self.local_trace_target(self.process_snapshot(ProcessKey::LocalServer).await)
+    }
+
+    fn local_trace_target(
+        &self,
+        server: Option<crate::process::ProcessSnapshot>,
+    ) -> DesktopResult<ManagedTraceTarget> {
+        // Editing this file does not switch binaries or control the Runner.
+        // A stopped Server does not remove authority over its managed config.
+        if server.as_ref().is_some_and(|p| !p.owned_by_desktop) {
+            return Err(diagnostics::diagnostic_error("server_not_owned"));
+        }
+        let path = self.managed_server_environment()?;
+        let parent = path.parent().expect("fixed Server directory");
+        EnvironmentStore::open(parent.to_path_buf()).map_err(environment::desktop_error)?;
+        webcodex_environment::read_secret(&path).map_err(environment::desktop_error)?;
         Ok(ManagedTraceTarget {
-            path: self.managed_server_environment()?,
-            can_restart: self
-                .process_snapshot(ProcessKey::LocalServer)
-                .await
-                .is_some_and(|p| p.owned_by_desktop),
+            path,
+            can_restart: server.is_some_and(|p| p.owned_by_desktop),
             environment_id: None,
             _environment_lock: None,
         })

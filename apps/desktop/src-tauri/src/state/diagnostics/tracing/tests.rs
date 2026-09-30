@@ -282,3 +282,144 @@ fn configuration_navigation_is_independent_of_edit_authority() {
     assert!(configuration_location(true, Some(&foreign), &expected).is_err());
     assert_eq!(f.contents(), original);
 }
+
+// Runs on Windows too, using the native private-file writer/ACL fixture.
+fn local_core(f: &Fixture) -> DesktopCore {
+    let data = f._temp.path().join("desktop");
+    let mut core = DesktopCore::new(data.clone(), data.join("resources")).unwrap();
+    let local = EnvironmentStore::open(data.join("runtime/local")).unwrap();
+    local.save_environment(&f.record).unwrap();
+    let path = local.root().join("webcodex.env");
+    std::fs::rename(local.root().join("environment.json"), &path).unwrap();
+    std::fs::write(&path, "WEBCODEX_TOOL_REQUEST_TRACE=off\n").unwrap();
+    core.config.persistent_environment = None;
+    core.config.runtime = Some(StoredRuntime {
+        server_env_file: Some(path),
+        ..f.runtime.clone()
+    });
+    core.config.topology = Some(RuntimeTopology {
+        experience: Experience::Full,
+        server: ServerTopology::Local,
+        runner: RunnerTopology::Local,
+        exposure: Exposure::None,
+        enrollment: Enrollment::ManagedPairing,
+    });
+    core
+}
+
+#[test]
+fn desktop_child_server_tracing_is_editable_without_a_persistent_environment() {
+    let f = Fixture::new();
+    let core = local_core(&f);
+    let mut server = crate::process::ProcessSnapshot {
+        kind: ProcessKey::LocalServer,
+        generation: 1,
+        phase: crate::process::ProcessPhase::Running,
+        pid: Some(123),
+        exit_code: None,
+        owned_by_desktop: true,
+    };
+    let target = core.local_trace_target(Some(server.clone())).unwrap();
+    let trace = target.inspect().unwrap();
+    assert!(trace.can_edit);
+    assert!(trace.can_restart);
+    assert_eq!(trace.error_code, None);
+    let saved = target
+        .update(TraceMode::Metadata, &trace.revision, false)
+        .unwrap();
+    assert_eq!(saved.configured_mode, Some(TraceMode::Metadata));
+    server.owned_by_desktop = false;
+    assert_eq!(
+        core.local_trace_target(Some(server)).err().unwrap().code,
+        "server_not_owned"
+    );
+}
+
+#[tokio::test]
+async fn stopped_server_config_edit_does_not_require_runtime_switch_authority() {
+    let f = Fixture::new();
+    let mut core = local_core(&f);
+    // Port availability governs starting/replacing a Server, not saving its file.
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    core.config.runtime.as_mut().unwrap().server_url =
+        format!("http://{}", listener.local_addr().unwrap());
+    assert!(core.runtime_switch_authority().await.is_err());
+    let target = core.managed_trace_target().await.unwrap();
+    let trace = target.inspect().unwrap();
+    assert!(trace.can_edit);
+    assert!(!trace.can_restart);
+    assert_eq!(trace.error_code, None);
+    target
+        .update(TraceMode::Metadata, &trace.revision, false)
+        .unwrap();
+    core.config.runtime.as_mut().unwrap().server_env_file = f.runtime.server_env_file.clone();
+    assert_eq!(
+        core.managed_trace_target().await.err().unwrap().code,
+        "server_environment_not_managed"
+    );
+    core.config.topology.as_mut().unwrap().server = ServerTopology::Remote {
+        url: "https://example.invalid".into(),
+    };
+    assert_eq!(
+        core.managed_trace_target().await.err().unwrap().code,
+        "server_not_owned"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn local_trace_rejects_non_private_files_and_linked_ancestors() {
+    use std::os::unix::fs::PermissionsExt;
+    let f = Fixture::new();
+    let core = local_core(&f);
+    let path = core
+        .config
+        .runtime
+        .as_ref()
+        .unwrap()
+        .server_env_file
+        .as_ref()
+        .unwrap();
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o644)).unwrap();
+    assert!(core.managed_trace_target().await.is_err());
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let parent = path.parent().unwrap();
+    let other = core.data_dir.join("other");
+    std::fs::rename(parent, &other).unwrap();
+    std::os::unix::fs::symlink(other, parent).unwrap();
+    assert!(core.managed_trace_target().await.is_err());
+}
+
+#[cfg(windows)]
+#[tokio::test]
+#[ignore = "Desktop Windows real-process lane: supervised PowerShell children"]
+async fn desktop_real_process_windows_owned_children_allow_local_tracing() {
+    let f = Fixture::new();
+    let core = local_core(&f);
+    let mut supervisor = core.supervisor.lock().await;
+    for key in [ProcessKey::LocalServer, ProcessKey::LocalRunner] {
+        let mut command = std::process::Command::new("powershell.exe");
+        command.args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "$null = [Console]::In.ReadToEnd()",
+        ]);
+        // Mirror the production stdin liveness lease; the supervisor drains
+        // both output pipes and closes stdin when stopping each child.
+        if let Err(error) = supervisor.spawn_owned(key, command, false).await {
+            supervisor.stop(ProcessKey::LocalServer).await;
+            panic!("fixture start failed: {}", error.code);
+        }
+    }
+    drop(supervisor);
+    let result = core
+        .managed_trace_target()
+        .await
+        .and_then(|target| target.inspect());
+    core.stop_process(ProcessKey::LocalRunner).await;
+    core.stop_process(ProcessKey::LocalServer).await;
+    let trace = result.unwrap();
+    assert!(trace.can_edit && trace.can_restart);
+    assert_eq!(trace.error_code, None);
+}

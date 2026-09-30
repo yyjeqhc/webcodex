@@ -188,6 +188,18 @@ describe("Diagnostics are explicit and secret-free", () => {
     fireEvent.click(screen.getByRole("button", { name: "Restart Local Runner" }));
     await waitFor(() => expect(api.environmentServiceAction).toHaveBeenCalledExactlyOnceWith({ environmentId: "env-fixture", component: "runner", action: "restart" }));
   });
+  it.each([true, false])("enables tracing for a non-persistent Windows local Runtime (owned Server: %s)", async owned => {
+    const windowsState = { ...state, persistent_environment: null, binaries: { ...state.binaries!, directory: "C:\\WebCodex\\runtime" } };
+    api.desktopBuildInfo.mockResolvedValue({ ...build("webcodex-desktop"), target: "x86_64-pc-windows-msvc", architecture: "x86_64" });
+    api.runtimeSettings.mockResolvedValue({ ...settings, can_switch: false, switch_unavailable_reason: "runtime_not_owned" });
+    api.diagnostics.mockResolvedValue({ ...diagnostic, trace: { ...diagnostic.trace, can_restart: owned } });
+    render(wrap(<DiagnosticsPanel state={windowsState} onState={vi.fn()} />));
+    expect(await screen.findByRole("combobox", { name: "Tool Request Tracing" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+    if (owned) expect(screen.getByRole("button", { name: "Save & Restart Server" })).toBeEnabled();
+    else expect(screen.queryByRole("button", { name: "Save & Restart Server" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/administrator|system service/i)).not.toBeInTheDocument();
+  });
   it("keeps program upgrades separate from tracing edits for an owned Environment", async () => {
     api.runtimeSettings.mockResolvedValue({ ...settings, can_switch: false, switch_unavailable_reason: "persistent_runtime_upgrade_required" });
     const onUpdates = vi.fn();

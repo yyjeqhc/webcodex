@@ -106,7 +106,6 @@ describe("workspace configuration boundaries", () => {
   it("applies exact-target instruction and Skill paths without Runner restart", async () => {
     render(wrap(<ExtensionsPanel state={state} onState={onState} />));
     fireEvent.click(screen.getByRole("tab", { name: "Instructions" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Manage" }));
     const input = await screen.findByLabelText("Global instruction files");
     fireEvent.change(input, { target: { value: "/fixture/new.md" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));

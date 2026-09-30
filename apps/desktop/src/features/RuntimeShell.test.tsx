@@ -16,7 +16,7 @@ import type { DesktopState } from "../models/topology";
 import type { DiagnosticSnapshot, RuntimeSettings, RuntimeCandidate } from "../models/runtime-shell";
 import type { WindowDetail } from "../models/workspace";
 
-const api = vi.hoisted(() => ({ runnerSettings: vi.fn(), runtimeSettings: vi.fn(), probeRuntime: vi.fn(), recheckRuntime: vi.fn(), switchRuntime: vi.fn(), getState: vi.fn(), diagnostics: vi.fn(), setToolRequestTracing: vi.fn(), copyDiagnosticReport: vi.fn(), copyRuntimeConsoleCredential: vi.fn(), exportSupportBundle: vi.fn(), openDiagnosticResource: vi.fn(), restorePreviousConfiguration: vi.fn(), computerPermissions: vi.fn(), desktopBuildInfo: vi.fn(), getLaunchAtLogin: vi.fn(), setLaunchAtLogin: vi.fn(), checkForUpdates: vi.fn(), remindUpdateLater: vi.fn(), openLatestRelease: vi.fn() }));
+const api = vi.hoisted(() => ({ updateTunnelProxy: vi.fn(), runnerSettings: vi.fn(), runtimeSettings: vi.fn(), probeRuntime: vi.fn(), recheckRuntime: vi.fn(), switchRuntime: vi.fn(), getState: vi.fn(), diagnostics: vi.fn(), setToolRequestTracing: vi.fn(), copyDiagnosticReport: vi.fn(), copyRuntimeConsoleCredential: vi.fn(), exportSupportBundle: vi.fn(), openDiagnosticResource: vi.fn(), restorePreviousConfiguration: vi.fn(), computerPermissions: vi.fn(), desktopBuildInfo: vi.fn(), getLaunchAtLogin: vi.fn(), setLaunchAtLogin: vi.fn(), checkForUpdates: vi.fn(), remindUpdateLater: vi.fn(), openLatestRelease: vi.fn() }));
 const dialog = vi.hoisted(() => ({ open: vi.fn(), save: vi.fn() }));
 vi.mock("../lib/desktop-api", () => ({ desktopApi: api }));
 vi.mock("@tauri-apps/plugin-dialog", () => dialog);
@@ -95,7 +95,7 @@ describe("Runtime candidate and ownership semantics", () => {
 
 it("links users from About to issues, source builds, and contribution guidance", async () => {
   render(wrap(<AboutPanel state={state} />));
-  expect(await screen.findByText("Found a problem? Issues and pull requests are welcome. You can build current main from source and test a fix locally.")).toBeInTheDocument();
+  expect(await screen.findByRole("heading", { name: "About WebCodex" })).toBeInTheDocument();
   for (const [label, resource] of [
     ["Report issue", "report_issue"],
     ["Build from source", "desktop_development"],
@@ -131,41 +131,77 @@ describe("Diagnostics are explicit and secret-free", () => {
   });
 });
 
-it("keeps the six localized navigation labels and semantically pressable Settings disclosures", async () => {
+it("keeps the six localized navigation labels and task-based Settings categories", async () => {
   localStorage.setItem("webcodex.desktop.locale", "zh-CN");
   render(wrap(<><Sidebar navigation="settings" setNavigation={vi.fn()} state={state} /><SettingsPanel state={state} onState={vi.fn()} onChangeSetup={vi.fn()} /></>));
   for (const label of ["首页", "项目", "活动", "连接", "扩展", "设置"]) expect(screen.getByRole("button", { name: label })).toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "Desktop 设置" })).toBeInTheDocument();
   expect(await screen.findByRole("checkbox", { name: "登录时启动 WebCodex" })).toBeInTheDocument();
-  for (const label of ["故障排查", "Runtime", "网络", "高级"]) {
-    expect(screen.getByRole("button", { name: label })).toHaveAttribute("aria-expanded", "false");
+  for (const label of ["文件访问与权限", "故障排查", "Runtime", "网络", "关于与更新"]) {
+    expect(screen.getByRole("tab", { name: label })).toHaveAttribute("aria-selected", "false");
   }
-  const disclosure = screen.getByRole("button", { name: "故障排查" });
-  expect(disclosure.parentElement).toHaveAttribute("data-webcodex-page", "settings");
-  expect(disclosure).toHaveAttribute("aria-controls", "desktop-settings-diagnostics");
-  fireEvent.click(disclosure);
-  expect(disclosure).toHaveAttribute("aria-expanded", "true");
+  const diagnostics = screen.getByRole("tab", { name: "故障排查" });
+  expect(diagnostics).toHaveAttribute("aria-controls", "desktop-settings-diagnostics");
+  fireEvent.click(diagnostics);
+  expect(diagnostics).toHaveAttribute("aria-selected", "true");
   const diagnosticsPanel = document.getElementById("desktop-settings-diagnostics");
-  expect(diagnosticsPanel).toBeInTheDocument();
+  expect(diagnosticsPanel).toBeVisible();
   expect(diagnosticsPanel).not.toHaveAttribute("role", "region");
-  expect(diagnosticsPanel?.parentElement).toHaveAttribute("data-webcodex-page", "settings");
+  expect(screen.queryByRole("checkbox", { name: "登录时启动 WebCodex" })).not.toBeInTheDocument();
   expect(await screen.findByRole("combobox", { name: "工具请求追踪" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "打开 Runtime Console" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "复制诊断报告" })).toBeInTheDocument();
 
-  const runtimeDisclosure = screen.getByRole("button", { name: "Runtime" });
-  expect(runtimeDisclosure).toHaveAttribute("aria-controls", "desktop-settings-runtime");
-  fireEvent.click(runtimeDisclosure);
-  expect(runtimeDisclosure).toHaveAttribute("aria-expanded", "true");
+  const runtimeTab = screen.getByRole("tab", { name: "Runtime" });
+  expect(runtimeTab).toHaveAttribute("aria-controls", "desktop-settings-runtime");
+  fireEvent.click(runtimeTab);
+  expect(runtimeTab).toHaveAttribute("aria-selected", "true");
   expect(await screen.findByRole("button", { name: "选择 Runtime 文件夹…" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "使用内置 Runtime" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "重新检查 Runtime" })).toBeInTheDocument();
 });
 
+it("preserves network and tracing drafts while categories change without applying effects", async () => {
+  render(wrap(<SettingsPanel state={state} onState={vi.fn()} />));
+  expect(api.runtimeSettings).not.toHaveBeenCalled();
+  expect(api.diagnostics).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("tab", { name: "Network" }));
+  fireEvent.change(screen.getByLabelText("Proxy mode"), { target: { value: "custom" } });
+  const proxy = screen.getByLabelText("Proxy URL");
+  fireEvent.change(proxy, { target: { value: "http://127.0.0.1:7890" } });
+  fireEvent.click(screen.getByRole("tab", { name: "Troubleshooting" }));
+  const trace = await screen.findByRole("combobox", { name: "Tool Request Tracing" });
+  fireEvent.change(trace, { target: { value: "metadata" } });
+  fireEvent.click(screen.getByRole("tab", { name: "Network" }));
+  expect(screen.getByLabelText("Proxy URL")).toHaveValue("http://127.0.0.1:7890");
+  fireEvent.click(screen.getByRole("tab", { name: "Troubleshooting" }));
+  expect(screen.getByRole("combobox", { name: "Tool Request Tracing" })).toHaveValue("metadata");
+  expect(api.diagnostics).toHaveBeenCalledTimes(1);
+  expect(api.setToolRequestTracing).not.toHaveBeenCalled();
+  expect(api.updateTunnelProxy).not.toHaveBeenCalled();
+  expect(api.switchRuntime).not.toHaveBeenCalled();
+});
+
+it("opens requested recovery categories and supports keyboard category navigation", async () => {
+  const view = render(wrap(<SettingsPanel state={state} onState={vi.fn()} initialSection="diagnostics" />));
+  expect(screen.getByRole("tab", { name: "Troubleshooting" })).toHaveAttribute("aria-selected", "true");
+  await screen.findByRole("combobox", { name: "Tool Request Tracing" });
+  view.rerender(wrap(<SettingsPanel state={state} onState={vi.fn()} initialSection="runtime" />));
+  const runtimeTab = screen.getByRole("tab", { name: "Runtime" });
+  expect(runtimeTab).toHaveAttribute("aria-selected", "true");
+  fireEvent.keyDown(runtimeTab, { key: "Home" });
+  expect(screen.getByRole("tab", { name: "General" })).toHaveFocus();
+  fireEvent.keyDown(screen.getByRole("tab", { name: "General" }), { key: "ArrowDown" });
+  expect(screen.getByRole("tab", { name: "Files & permissions" })).toHaveFocus();
+  expect(screen.getByRole("button", { name: "Add folder" })).toBeInTheDocument();
+  fireEvent.keyDown(screen.getByRole("tab", { name: "Files & permissions" }), { key: "End" });
+  expect(screen.getByRole("tab", { name: "About & updates" })).toHaveFocus();
+});
+
 it("explains configured Tunnel mode, detected proxy, and effective Auto connection path", async () => {
   const networkState = { ...state, tunnel_proxy: { mode: "auto", custom_url: null, effective_source: "system", effective_proxy_present: true, system_proxy_detected: true }, readiness: { ...state.readiness, exposure: "degraded" } } as DesktopState;
   render(wrap(<SettingsPanel state={networkState} onState={vi.fn()} />));
-  const disclosure = screen.getByRole("button", { name: "Network" });
+  const disclosure = screen.getByRole("tab", { name: "Network" });
   fireEvent.click(disclosure);
   const panel = document.getElementById("desktop-settings-network") as HTMLElement;
   const routing = panel.querySelector("[data-webcodex-tunnel-routing]") as HTMLElement;
@@ -181,7 +217,7 @@ it("explains configured Tunnel mode, detected proxy, and effective Auto connecti
 it("shows an environment proxy as detected when Auto selects it", async () => {
   const networkState = { ...state, tunnel_proxy: { mode: "auto", custom_url: null, effective_source: "environment", effective_proxy_present: true, system_proxy_detected: false } } as DesktopState;
   render(wrap(<SettingsPanel state={networkState} onState={vi.fn()} />));
-  fireEvent.click(screen.getByRole("button", { name: "Network" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Network" }));
   const panel = document.getElementById("desktop-settings-network") as HTMLElement;
   const routing = panel.querySelector("[data-webcodex-tunnel-routing]") as HTMLElement;
   expect(within(routing).getAllByText("Desktop proxy environment")).toHaveLength(2);

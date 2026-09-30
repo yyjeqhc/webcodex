@@ -26,6 +26,7 @@ export function ReadinessBanner({ state, onState, onDiagnostics, onRuntime, onCo
     if (!current.can_restart) throw { code: "runner_not_owned", message: "Runner is not managed by Desktop", next_action: "Open Diagnostics" };
     return desktopApi.restartOwnedRunner(current.target);
   });
+  if (healthy) return null;
   return <section className={`readiness-banner ${healthy ? "ready" : "attention"}`} aria-label={s("WebCodex Ready")}>
     <div><h2>{s(title)}</h2><dl className="runtime-facts"><div><dt>{s("Runtime")}</dt><dd>{runtimeReady ? s("Compatible") : s(starting ? "Runtime is starting" : stopped ? "Runtime is stopped" : "Runtime unavailable")}</dd></div>
       <div><dt>{s("Project")}</dt><dd>{noProject ? s("No default project") : projectReady ? s("Ready") : s("Needs attention")}</dd></div>

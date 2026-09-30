@@ -28,7 +28,7 @@ For temporary sharing of one project, choose Quick Share and a connection provid
 
 ## Start each day on Home
 
-Home prioritizes Runtime, Runner, connection, and observed ChatGPT status. A local Full Runtime is healthy with no default Project; Project readiness is not a prerequisite for starting Desktop.
+Home shows a workspace overview with Server, Runner, connections, recent projects, and activity. A short handoff explains how to start work in ChatGPT with a task and working folder. Healthy state avoids duplicate readiness information; problems still expose recovery actions. A local Full Runtime is healthy with no default Project; Project readiness is not a prerequisite for starting Desktop.
 
 - **Projects** shows observed Runtime Projects only. Project lifecycle is driven by model/runtime path resolution rather than Desktop buttons.
 - **Activity** and **Extensions** operate on the Runtime Project associated with the selected Session or observed context.
@@ -55,11 +55,11 @@ A real observed project call verifies prior client use, not current host presenc
 | An existing tunnel reports an error | Stop it, then start it again; stop failures remain visible and can be retried |
 | Tunnel ready but clipboard handoff failed | Use Copy Tunnel ID on Connection, or select the displayed ID and copy manually; no restart needed |
 | Tunnel ready, waiting for ChatGPT | Configure the Tunnel in ChatGPT and ask it to work in the intended workspace |
-**Settings → OpenAI Tunnel network** controls automatic, direct, and custom HTTP proxy modes. Stop a running tunnel before changing its proxy, save, then start it again.
+**Settings → Network** controls automatic, direct, and custom HTTP proxy modes. Stop a running tunnel before changing its proxy, save, then start it again.
 
 ## Instructions, Skills, and native Tool Plugins
 
-When this computer has a local Runner and a selected local project, **Extensions** shows that project's conventional `AGENTS.md` location, global instruction file paths, configured Skill roots, and saved native Plugin IDs. A displayed `AGENTS.md` location is not a claim that the file exists; edit its contents using the project editor. Save up to 16 absolute instruction paths and 16 absolute Skill roots. Saves target the exact observed local Runner configuration and reject stale path edits, preserving unrelated configuration, comments, credentials, and existing provider settings. A viewer does not configure a remote Runner's local files through this panel.
+When this computer has a local Runner and a selected local project, **Extensions** shows that project's conventional `AGENTS.md` location, global instruction file paths, configured Skill roots, and saved native Plugin IDs. A displayed `AGENTS.md` location is not a claim that the file exists; edit its contents using the project editor. Instruction and Skill path configuration is directly visible in those tabs, without opening Manage. Save up to 16 absolute instruction paths and 16 absolute Skill roots. Saves target the exact observed local Runner configuration and reject stale path edits, preserving unrelated configuration, comments, credentials, and existing provider settings. A viewer does not configure a remote Runner's local files through this panel.
 
 **Add a native Tool Plugin** registers a new trusted provider by ID, display name, executable, string-array arguments, and optional absolute working directory. Existing IDs are never overwritten. Arguments are write-only and cleared after submission; use configuration profiles for credentials. The saved registration list is not a live health check. Existing registration edits/removal and advanced provider fields remain in the shown Runner configuration file.
 
@@ -77,13 +77,13 @@ If the local Server exits during startup, expand the error's **Details**. Deskto
 
 **Activity** shows newest entries first. Search content or sources, or select **Warnings and errors only**. Filtering never deletes records.
 
-**Settings** contains language, launch at login, Computer Use permissions on macOS, Tunnel networking, and diagnostics. You can also switch language at the bottom of the sidebar. Supported languages are 简体中文, English, 日本語, 한국어, Deutsch, and Français. The selection is remembered across restarts, and activity times follow the selected locale. System tray menus and raw backend diagnostics remain in English; the operating system controls native file-picker language.
+**Settings** groups controls into General, Files & permissions, Network, Runtime, Troubleshooting, and About & updates. Selecting a category shows its configuration directly. Switching categories preserves network and tracing drafts without saving or restarting services. General contains language, appearance, and launch at login; Files & permissions contains allowed Runner folders and macOS Computer Use permissions. You can also switch language at the bottom of the sidebar. Supported languages are 简体中文, English, 日本語, 한국어, Deutsch, and Français. The selection is remembered across restarts, and activity times follow the selected locale. System tray menus and raw backend diagnostics remain in English; the operating system controls native file-picker language.
 
 Closing the window hides Desktop in the menu bar or system tray. Persistent Server, Runner, and Tunnel services continue independently of that window, including when Desktop quits. **Quit WebCodex** ends Desktop and processes it directly owns, such as a temporary Quick Share and legacy Desktop-owned runtime or regular Tunnel. Use the explicit Diagnostics controls for Core-managed local services; they appear only for components this computer owns. A viewer has no local Runner control, and a Server-only computer has no Runner control. A custom legacy service can be observed through its Server connection without Desktop taking over its lifecycle. Home's legacy Desktop-managed runtime stop also updates its saved startup preference; it does not stop an independent service.
 
-Use **⌘ + 1–6** on macOS or **Ctrl + 1–6** on Windows to switch between Home, Projects, Connection, Extensions, Activity, and Settings. Navigation shortcuts also work inside inputs and language selectors; ordinary typing and text-editing shortcuts remain available. Use Tab to focus controls and Enter to activate them; diagnostic disclosure controls also support the keyboard.
+Use **⌘ + 1–6** on macOS or **Ctrl + 1–6** on Windows to switch between Home, Projects, Activity, Connections, Extensions, and Settings. Navigation shortcuts also work inside inputs and language selectors; ordinary typing and text-editing shortcuts remain available. Use Tab to focus controls and Enter to activate them; Settings categories support Up/Down arrows and Home/End.
 
-Runtime controls on Home and technical diagnostics in Settings are collapsed by default. An explicit stop displays Stopped with a Start action. Activity prioritizes results; enable Show process details for routine process events. Configure Tunnel ID and credentials on Connection; API keys are never displayed.
+Runtime and Troubleshooting have dedicated Settings categories with their main actions visible. An explicit stop displays Stopped with a Start action. Activity prioritizes results; enable Show process details for routine process events. Configure Tunnel ID and credentials on Connection; API keys are never displayed.
 
 ### Projectless Runtime
 

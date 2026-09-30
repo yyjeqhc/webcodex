@@ -57,7 +57,6 @@ export function ActivityPanel({ activity }: { activity: ActivityEntry[] }) {
   const labels: Record<Tab, string> = { windows: s("ChatGPT calls"), sessions: s("Workflow Sessions"), system: s("System events") };
   return <div className="page-section workspace-page" data-webcodex-page="activity">
     <header className="page-heading-row"><h1>{p("activity")}</h1><button type="button" className="secondary-button" onClick={workspace.refresh}>{p("refresh")}</button></header>
-    <p className="field-help activity-explainer">{s("Calls show observed MCP execution and WebCodex handler return. Sessions group durable work; system events describe Desktop-owned services.")}</p>
     <div className="workspace-tabs" role="tablist" aria-label={p("activity")}>{TABS.map(value => <button key={value} type="button" role="tab" id={`activity-tab-${value}`} aria-controls={`activity-view-${value}`} aria-selected={tab === value} tabIndex={tab === value ? 0 : -1} onClick={() => setTab(value)} onKeyDown={event => {
       if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
       event.preventDefault(); const next = TABS[(TABS.indexOf(value) + (event.key === "ArrowRight" ? 1 : TABS.length - 1)) % TABS.length]; setTab(next); document.getElementById(`activity-tab-${next}`)?.focus();

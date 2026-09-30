@@ -23,6 +23,13 @@ For interactive Browser Use, run `npm --prefix scripts/ui-smoke run serve` and u
 
 This is not a substitute for native permission, installer, real Tunnel, or Windows platform testing. Native Rust tests independently cover configuration preservation, stale-target rejection, process ownership, project inventory, and Server/Runner PID preservation on failed Tunnel replacement.
 
+For focused Desktop layout checks after building `apps/desktop`, run
+`node scripts/ui-smoke/desktop-workflow-layout.mjs`. This covers the six Settings
+categories, preserved drafts, explicit-effect boundaries, readable form controls,
+visible instruction/Skill paths, and long-folder containment at 1440, 1280, 1024,
+768, and 390 pixels in both themes, including Chinese and English. Fixture
+screenshots and `report.json` go to `artifacts/desktop-workflow/`.
+
 For focused Runtime workflow layout checks after building `frontend`, run
 `node scripts/ui-smoke/runtime-workflow.mjs`. This checks visible running calls,
 Project attribution, expanded Session activity, and horizontal overflow at 1440,

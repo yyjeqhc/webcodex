@@ -280,7 +280,6 @@ try {
       assert.equal(await page.locator('.activity-project-filter').count(), 0);
       report.checks.push('Merged Coding Agents-only explicit authorization, deferred activation, and SSH dialog');
       await page.getByRole('tab', { name: 'Instructions', exact: true }).click();
-      await page.getByRole('button', { name: 'Manage' }).click();
       await page.getByLabel('Global instruction files').fill('/fixture/AGENTS.md');
       await page.getByLabel('Configured Skill roots').fill('/fixture/skills-next');
       await page.locator('[data-webcodex-action="save-runner-settings"]').click();

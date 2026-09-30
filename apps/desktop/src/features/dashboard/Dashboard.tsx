@@ -1,10 +1,10 @@
 import type { DesktopState } from "../../models/topology";
 import { ActionIcon, Badge, Button, NavLink, Tooltip } from "@mantine/core";
-import { ArrowRight, History, MonitorSmartphone } from "lucide-react";
+import { ArrowRight, History, MessageSquare, MonitorSmartphone } from "lucide-react";
 import { useProduct } from "../../i18n/product";
 import { useConnectionsTools } from "../../i18n/connections-tools";
 import { useLocale } from "../../i18n/locale";
-import { displayProjectPath, projectName, sameProject, sessionTitle, useWorkspace } from "../workspace/WorkspaceContext";
+import { sessionTitle, useWorkspace } from "../workspace/WorkspaceContext";
 import { WorkspaceStatus, ChatgptObservation, observationTime } from "../workspace/WorkspaceStatus";
 import { ProjectRows } from "../projects/ProjectRows";
 
@@ -21,10 +21,9 @@ export function Dashboard(props: DashboardProps) {
   const workspace = useWorkspace();
   const recent = workspace.sessions.slice(0, 3);
   const busy = Boolean(state.current_operation);
-  const currentProject = state.project ? workspace.projects.find(project => sameProject(project, state.project!)) : undefined;
   return <section className="page-section workspace-page dashboard-page" aria-labelledby="home-title" data-webcodex-page="home">
     <header className="page-heading-row">
-      <div><span className="eyebrow">{p("workspace")}</span><h1 id="home-title">{currentProject ? projectName(currentProject) : "WebCodex"}</h1>{currentProject?.path && <code className="dashboard-project-path">{displayProjectPath(currentProject.path)}</code>}</div>
+      <div><h1 id="home-title">{p("overview")}</h1></div>
       <div className="dashboard-heading-actions">
         <Button className="secondary-button" variant="default" disabled={busy || props.refreshing} onClick={() => void props.onRefresh()}>{p("refresh")}</Button>
       </div>
@@ -32,8 +31,13 @@ export function Dashboard(props: DashboardProps) {
     <WorkspaceStatus state={state} />
     <div className="workspace-quick-actions">
       <span>{workspace.projects.length} {p("projects")}</span>
-      <Button className="secondary-button" variant="default" aria-label={`${p("manage")} ${c("connections")}`} onClick={() => onNavigate("connection")}>{c("connections")}</Button>
+      <Button className="secondary-button" variant="default" aria-label={p("recentActivity")} onClick={() => onNavigate("activity")}>{p("activity")}</Button>
       {!state.readiness.runtime_ready && <Button className="secondary-button" variant="default" onClick={state.readiness.next_action_kind === "restart_quick_share" ? props.onChangeSetup : props.onResumeRuntime} disabled={busy}>{state.readiness.next_action_kind === "restart_quick_share" ? p("restart") + " Quick Share" : p("start") + " WebCodex"}</Button>}
+    </div>
+    <div className="dashboard-handoff">
+      <MessageSquare size={22} aria-hidden="true" />
+      <div><h2>{p("continueInChatgpt")}</h2><p>{p("chatgptWorkflow")}</p></div>
+      <Button className="secondary-button" variant="default" aria-label={`${p("manage")} ${c("connections")}`} onClick={() => onNavigate("connection")}>{c("connections")}<ArrowRight size={16} aria-hidden="true" /></Button>
     </div>
     <div className="dashboard-content-grid">
     <section className="workspace-section ui-workbench-surface" aria-labelledby="recent-projects-title">

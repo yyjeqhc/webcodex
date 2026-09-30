@@ -7,16 +7,16 @@ const legacySelector = 'input:not([type="radio"]), select';
 
 assert.match(
   css,
-  new RegExp(`${escapeRegExp(fullWidthSelector)}\\s*\\{[^}]*width:\\s*100%;[^}]*height:\\s*39px;`),
-  "text/password/url inputs and selects must retain the full-width 39px input contract",
+  new RegExp(`${escapeRegExp(fullWidthSelector)}\\s*\\{[^}]*width:\\s*100%;[^}]*height:\\s*44px;`),
+  "text/password/url inputs and selects must retain the full-width 44px input contract",
 );
 assert.ok(
-  !css.includes(`${legacySelector} { width: 100%; height: 39px;`),
+  !css.includes(`${legacySelector} { width: 100%; height: 44px;`),
   "checkboxes must not re-enter the legacy full-width input selector",
 );
 assert.match(
   css,
-  /input\[type="checkbox"\]\s*\{[^}]*width:\s*16px;[^}]*height:\s*16px;/,
+  /input\[type="checkbox"\]\s*\{[^}]*width:\s*18px;[^}]*height:\s*18px;/,
   "checkboxes must keep an explicit compact sizing contract",
 );
 assert.match(

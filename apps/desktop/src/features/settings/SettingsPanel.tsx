@@ -1,4 +1,5 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState } from "react";
+import { CircleHelp, FolderLock, Info, Monitor, Network, Settings2 } from "lucide-react";
 import { desktopApi } from "../../lib/desktop-api";
 import type { DesktopError, DesktopState, TunnelProxyMode } from "../../models/topology";
 import { LANGUAGES, useLocale } from "../../i18n/locale";
@@ -15,6 +16,10 @@ import { DiagnosticsPanel } from "./DiagnosticsPanel";
 import { AboutPanel } from "./AboutPanel";
 import { useShellText } from "../../i18n/runtime-shell";
 import type { RuntimeUpdates } from "../../hooks/useRuntimeUpdates";
+
+const SECTIONS = ["general", "access", "network", "runtime", "diagnostics", "about"] as const;
+type SettingsSection = typeof SECTIONS[number];
+const SECTION_ICONS = { general: Settings2, access: FolderLock, network: Network, runtime: Monitor, diagnostics: CircleHelp, about: Info };
 
 export function SettingsPanel({
   state,
@@ -35,11 +40,13 @@ export function SettingsPanel({
 }) {
   const { locale, setLocale, t } = useLocale();
   const s = useShellText();
-  const [diagnosticsOpen, setDiagnosticsOpen] = useState(initialSection === "diagnostics");
-  const [runtimeOpen, setRuntimeOpen] = useState(initialSection === "runtime");
-  const [networkOpen, setNetworkOpen] = useState(false);
-  const [advancedOpen, setAdvancedOpen] = useState(false);
-  useEffect(() => { if (initialSection === "diagnostics") setDiagnosticsOpen(true); if (initialSection === "runtime") setRuntimeOpen(true); }, [initialSection]);
+  const [section, setSection] = useState<SettingsSection>(initialSection ?? "general");
+  const [visited, setVisited] = useState<SettingsSection[]>([initialSection ?? "general"]);
+  const selectSection = (next: SettingsSection) => {
+    setSection(next);
+    setVisited(current => current.includes(next) ? current : [...current, next]);
+  };
+  useEffect(() => { if (initialSection) selectSection(initialSection); }, [initialSection]);
   const { appearance, setAppearance, accent, setAccent } = useAppearance();
   const p = useProduct();
   const [runnerSettings, setRunnerSettings] = useState<RunnerSettings | null>(null);
@@ -56,6 +63,8 @@ export function SettingsPanel({
   const configuredProxyMode = state.tunnel_proxy.mode === "auto" ? t("settings.tunnelProxyAuto") : state.tunnel_proxy.mode === "direct" ? t("settings.tunnelProxyDirect") : t("settings.tunnelProxyCustom");
   const effectiveProxyPath = state.tunnel_proxy.effective_source === "system" ? p("systemProxy") : state.tunnel_proxy.effective_source === "environment" ? p("environmentProxy") : state.tunnel_proxy.effective_source === "custom" ? p("customProxy") : state.tunnel_proxy.effective_source === "invalid_custom" ? t("settings.tunnelProxyCustom") : t("settings.tunnelProxyDirectValue");
   const detectedProxy = state.tunnel_proxy.effective_source === "environment" ? p("environmentProxy") : state.tunnel_proxy.system_proxy_detected ? p("systemProxy") : p("notConfigured");
+  const labels: Record<SettingsSection, string> = { general: p("general"), access: p("accessAndPermissions"), network: p("network"), runtime: s("Runtime"), diagnostics: s("Troubleshooting"), about: p("aboutAndUpdates") };
+  const descriptions: Record<SettingsSection, string> = { general: p("generalSummary"), access: p("accessSummary"), network: p("networkSummary"), runtime: p("runtimeSummary"), diagnostics: p("diagnosticsSummary"), about: p("aboutSummary") };
 
   useEffect(() => {
     let cancelled = false;
@@ -98,6 +107,23 @@ export function SettingsPanel({
   return (
     <section className="page-section workspace-page settings-page" aria-labelledby="settings-title" data-webcodex-page="settings">
       <header className="page-heading-row"><h1 id="settings-title">{t("settings.title")}</h1></header>
+      <div className="settings-layout">
+      <div className="settings-navigation" role="tablist" aria-label={t("settings.title")} aria-orientation="vertical">
+        {SECTIONS.map(value => {
+          const Icon = SECTION_ICONS[value];
+          return <button type="button" role="tab" key={value} id={`settings-tab-${value}`} aria-controls={`desktop-settings-${value}`} aria-selected={section === value} tabIndex={section === value ? 0 : -1} onClick={() => selectSection(value)} onKeyDown={event => {
+            if (!["ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return;
+            event.preventDefault();
+            const next = event.key === "Home" ? SECTIONS[0] : event.key === "End" ? SECTIONS[SECTIONS.length - 1] : SECTIONS[(SECTIONS.indexOf(value) + (event.key === "ArrowDown" ? 1 : SECTIONS.length - 1)) % SECTIONS.length];
+            selectSection(next); document.getElementById(`settings-tab-${next}`)?.focus();
+          }}><Icon size={18} aria-hidden="true" /><span>{labels[value]}</span></button>;
+        })}
+      </div>
+      <div className="settings-content">
+      <p className="settings-description">{descriptions[section]}</p>
+      {/* Keep visited views mounted so switching categories preserves drafts and
+          in-flight operations. Plain containers keep controls reachable in WebKit. */}
+      <div id="desktop-settings-general" hidden={section !== "general"}>
       <section className="settings-section" aria-labelledby="settings-general-title">
         <h2 id="settings-general-title">{p("general")}</h2>
         <div className="setting-row"><label htmlFor="desktop-settings-locale">{t("locale.label")}</label><select id="desktop-settings-locale" value={locale} onChange={event => setLocale(event.target.value as typeof locale)} data-webcodex-control="locale">{LANGUAGES.map(language => <option key={language.value} value={language.value}>{language.label}</option>)}</select></div>
@@ -107,15 +133,16 @@ export function SettingsPanel({
         {launchAtLoginError && <SettingsError error={launchAtLoginError} />}
         <div className="setting-row"><span>{p("background")}</span><span className="setting-value">{p("keepRunning")}</span></div>
       </section>
+      </div>
+      <div id="desktop-settings-access" hidden={section !== "access"}>
       <RunnerFileAccess settings={runnerSettings} disabled={operationBusy} onState={onState} onSettings={setRunnerSettings} />
-      <ComputerPermissions />
-      <SettingsDisclosure id="desktop-settings-diagnostics" label={s("Troubleshooting")} open={diagnosticsOpen} onOpenChange={setDiagnosticsOpen}>
-        <DiagnosticsPanel state={state} onState={onState} />
-      </SettingsDisclosure>
-      <SettingsDisclosure id="desktop-settings-runtime" label={s("Runtime")} open={runtimeOpen} onOpenChange={setRuntimeOpen}>
-        <RuntimePanel state={state} onState={onState} onActivity={onActivity} />
-      </SettingsDisclosure>
-      <SettingsDisclosure id="desktop-settings-network" label={p("network")} open={networkOpen} onOpenChange={setNetworkOpen}>
+      {visited.includes("access") && <ComputerPermissions />}
+      </div>
+      <div id="desktop-settings-diagnostics" hidden={section !== "diagnostics"}>
+        {visited.includes("diagnostics") && <DiagnosticsPanel state={state} onState={onState} />}
+      </div>
+      <div id="desktop-settings-network" hidden={section !== "network"} className="settings-network">
+        <h2>{t("settings.tunnelProxy")}</h2>
         <div className="field-group"><label htmlFor="desktop-tunnel-proxy-mode">{t("settings.tunnelProxy")}</label><select id="desktop-tunnel-proxy-mode" value={proxyMode} onChange={event => setProxyMode(event.target.value as TunnelProxyMode)} disabled={savingProxy || operationBusy} data-webcodex-control="tunnel-proxy-mode"><option value="auto">{t("settings.tunnelProxyAuto")}</option><option value="direct">{t("settings.tunnelProxyDirect")}</option><option value="custom">{t("settings.tunnelProxyCustom")}</option></select></div>
         {proxyMode === "custom" && <div className="field-group"><label htmlFor="desktop-tunnel-proxy-url">{t("settings.tunnelProxyCustomUrl")}</label><input id="desktop-tunnel-proxy-url" value={customProxy} onChange={event => setCustomProxy(event.target.value)} placeholder="http://127.0.0.1:7890" disabled={savingProxy || operationBusy} spellCheck={false} data-webcodex-control="tunnel-proxy-url" /></div>}
         <dl className="detail-list" data-webcodex-tunnel-routing>
@@ -126,8 +153,10 @@ export function SettingsPanel({
         </dl>
         <button type="button" className="secondary-button" onClick={() => void saveProxy()} disabled={savingProxy || operationBusy || (proxyMode === "custom" && !customProxy.trim())} data-webcodex-action="save-tunnel-proxy">{savingProxy ? p("loading") : p("saveApply")}</button>
         {proxyError && <SettingsError error={proxyError} />}
-      </SettingsDisclosure>
-      <SettingsDisclosure id="desktop-settings-advanced" label={p("advanced")} open={advancedOpen} onOpenChange={setAdvancedOpen}>
+      </div>
+      <div id="desktop-settings-runtime" hidden={section !== "runtime"}>
+        <section className="settings-section">
+        <h2>{p("serverConnection")}</h2>
         <div className="connection-actions">
           {onChangeSetup && <button type="button" className="secondary-button" disabled={operationBusy} onClick={onChangeSetup}>{p("serverConnection")}</button>}
           {onStopRuntime && state.topology?.server.kind === "local" && state.readiness.runtime_ready && <button type="button" className="secondary-button" disabled={operationBusy} onClick={onStopRuntime}>{p("stop")} WebCodex</button>}
@@ -142,49 +171,15 @@ export function SettingsPanel({
         {runnerError && <SettingsError error={runnerError} />}
         {runnerSettings && <dl className="detail-list"><div><dt>Runner</dt><dd>{runnerSettings.target.config_path}</dd></div></dl>}
         <PowerShellInstallGuidance state={state} onState={onState} />
-      </SettingsDisclosure>
-      <AboutPanel state={state} updates={updates} />
+        </section>
+        {visited.includes("runtime") && <RuntimePanel state={state} onState={onState} onActivity={onActivity} />}
+      </div>
+      <div id="desktop-settings-about" hidden={section !== "about"}>
+        {visited.includes("about") && <AboutPanel state={state} updates={updates} />}
+      </div>
+      </div>
+      </div>
     </section>
-  );
-}
-
-function SettingsDisclosure({
-  id,
-  label,
-  open,
-  onOpenChange,
-  children,
-}: {
-  id: string;
-  label: string;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  children: ReactNode;
-}) {
-  return (
-    <>
-      <button
-        type="button"
-        className="settings-disclosure-trigger"
-        aria-label={label}
-        aria-expanded={open}
-        aria-controls={id}
-        onClick={() => onOpenChange(!open)}
-      >
-        {label}
-      </button>
-      {open && (
-        // Keep the controlled panel out of the macOS named-landmark path. WebKit
-        // currently exposes named regions as AX leaves (AXChildren=0), which
-        // makes otherwise standard descendants unreachable to semantic Computer Use.
-        // The trigger still carries the disclosure contract through
-        // aria-expanded + aria-controls, while the descendants retain their own
-        // native heading/input/button semantics.
-        <div id={id} className="settings-disclosure-panel" data-webcodex-disclosure-panel={label}>
-          {children}
-        </div>
-      )}
-    </>
   );
 }
 

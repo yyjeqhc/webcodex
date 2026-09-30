@@ -36,7 +36,6 @@ export function ExtensionsPanel({ state, onState }: { state: DesktopState; onSta
   const instructionsText = useInstructionsText();
   const [pathsApplied, setPathsApplied] = useState(false);
   const [pathsError, setPathsError] = useState<DesktopError | null>(null);
-  const [manage, setManage] = useState(false);
   const [revision, setRevision] = useState(0);
   const [document, setDocument] = useState<InstructionSummary | null>(null);
   const alive = useRef(true);
@@ -86,7 +85,6 @@ export function ExtensionsPanel({ state, onState }: { state: DesktopState; onSta
   const skills = catalog?.skills.catalog?.skills || [];
   return <div className="page-section workspace-page" data-webcodex-page="extensions">
     <header className="page-heading-row"><h1 id="extensions-title">{t("extensions.title")}</h1>{(projectTab || tab === "mcpProviders") && <button className="secondary-button" onClick={refresh} disabled={disabled || loading}>{p("refresh")}</button>}</header>
-    {projectTab && <div className="activity-project-filter"><span className="filter-label">{p("projects")}</span><ProjectPicker label={p("projects")} emptyLabel={p("noMatches")} searchLabel={p("search")} value={project} onChange={setProject} disabled={disabled} options={workspace.projects.filter(row => row.id).map(row => ({ value: row.id, label: projectName(row), detail: displayProjectPath(row.path) }))} /></div>}
     <div className="workspace-tabs" role="tablist" aria-label={t("extensions.title")}>
       {TABS.map(value => <button type="button" role="tab" key={value} id={`extension-tab-${value}`} aria-controls={`extension-view-${value}`} aria-selected={tab === value} tabIndex={tab === value ? 0 : -1} onClick={() => setTab(value)} onKeyDown={event => {
         if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
@@ -100,6 +98,7 @@ export function ExtensionsPanel({ state, onState }: { state: DesktopState; onSta
     {pendingRestart && tab === "mcpProviders" && <div className="extension-apply-bar" role="status"><span>{p("needsRestart")}</span>{settings?.can_restart && <button className="secondary-button" onClick={() => void restart()} disabled={disabled}>{p("restartRunner")}</button>}</div>}
     {loading && projectTab && <p role="status">{p("loading")}</p>}
     {(!loading || !projectTab) && <section role="tabpanel" id={`extension-view-${tab}`} aria-labelledby={`extension-tab-${tab}`}>
+      {projectTab && <div className="activity-project-filter"><span className="filter-label">{p("projects")}</span><ProjectPicker label={p("projects")} emptyLabel={p("noMatches")} searchLabel={p("search")} value={project} onChange={setProject} disabled={disabled} options={workspace.projects.filter(row => row.id).map(row => ({ value: row.id, label: projectName(row), detail: displayProjectPath(row.path) }))} /></div>}
       {tab === "codingAgents" && <CodingAgentsPanel state={state} onState={onState} settings={settings} onRestarted={() => { setPendingRestart(false); refresh(); }} />}
       {tab === "sshResources" && <SshResourcesPanel state={state} onState={onState} settings={settings} onRestarted={() => { setPendingRestart(false); refresh(); }} />}
       {tab === "instructions" && <>
@@ -135,7 +134,7 @@ export function ExtensionsPanel({ state, onState }: { state: DesktopState; onSta
         }} />}
         </details>
       </>}
-      {settings && projectTab && <div className="workspace-technical"><button className="text-button" onClick={() => setManage(value => !value)} aria-expanded={manage}>{p("manage")}</button>{manage && <ExtensionPathsEditor settings={settings} disabled={disabled} onSave={updatePaths} />}</div>}
+      {settings && projectTab && <div className="extension-path-settings"><h2>{p("instructionAndSkillPaths")}</h2><ExtensionPathsEditor settings={settings} disabled={disabled} onSave={updatePaths} /></div>}
     </section>}
     {document && <InstructionDocument key={document.fingerprint} project={project} file={document} onClose={() => setDocument(null)} />}
   </div>;

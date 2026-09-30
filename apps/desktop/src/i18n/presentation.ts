@@ -138,6 +138,7 @@ const enrollmentErrors = new Set([
   "webcodex_command_timeout",
 ]);
 const commandPhasePresentation: Record<string, { title: MessageKey; action: MessageKey }> = {
+  runtime_probe: { title: "error.binaryTitle", action: "error.binaryAction" },
   server_init: { title: "error.serverTitle", action: "error.serverAction" },
   server_status: { title: "error.serverTitle", action: "error.serverAction" },
   pairing_create: { title: "error.enrollmentTitle", action: "error.enrollmentAction" },

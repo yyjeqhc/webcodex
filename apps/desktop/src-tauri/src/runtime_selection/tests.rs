@@ -187,6 +187,19 @@ async fn a_present_file_is_not_startup_evidence() {
         .io_kind
         .is_some());
     assert_eq!(view.binaries[1].present, Some(false));
+    let failure = ResolvedBinaries::resolve_source_until(
+        &RuntimeSource::Custom {
+            directory: dir.path().into(),
+        },
+        None,
+        &CancellationContext::never(),
+        Deadline::after(std::time::Duration::from_secs(5)),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(failure.code, "webcodex_command_start_failed");
+    assert_eq!(failure.details.as_ref().unwrap()["phase"], "runtime_probe");
+    assert_eq!(failure.details.as_ref().unwrap()["executable"], "webcodex");
 }
 
 #[cfg(unix)]

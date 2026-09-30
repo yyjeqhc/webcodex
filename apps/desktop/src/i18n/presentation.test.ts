@@ -6,6 +6,12 @@ import { desktopCommandDiagnostics, desktopErrorPresentation } from "./presentat
 const zh = (key: MessageKey) => messages["zh-CN"][key];
 
 describe("Desktop command error presentation", () => {
+  it("routes Runtime launch and exit failures to binary recovery during setup", () => {
+    for (const code of ["webcodex_command_start_failed", "webcodex_command_failed", "webcodex_command_timeout"]) {
+      const error: DesktopError = { code, message: "failed", next_action: "Recheck Runtime", details: { phase: "runtime_probe", logical_command: "build-info" } };
+      expect(desktopErrorPresentation(error, zh)).toEqual({ title: messages["zh-CN"]["error.binaryTitle"], action: messages["zh-CN"]["error.binaryAction"] });
+    }
+  });
   it("uses the safe command phase to present the failing subsystem", () => {
     const error: DesktopError = {
       code: "webcodex_command_failed",

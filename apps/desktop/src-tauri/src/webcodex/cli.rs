@@ -109,10 +109,26 @@ impl ResolvedBinaries {
         )
         .await?;
         resolved.ok_or_else(|| {
-            crate::runtime_selection::error(
-                view.error_code
-                    .as_deref()
-                    .unwrap_or("build_info_unverifiable"),
+            let failed = view
+                .binaries
+                .iter()
+                .find(|binary| binary.error_code.is_some());
+            with_command_diagnostics(
+                crate::runtime_selection::error(
+                    view.error_code
+                        .as_deref()
+                        .unwrap_or("build_info_unverifiable"),
+                ),
+                Path::new(
+                    failed
+                        .map(|binary| binary.name.as_str())
+                        .unwrap_or("webcodex"),
+                ),
+                CliCommandContext::new("runtime_probe", "build-info"),
+                failed
+                    .and_then(|binary| binary.diagnostics.as_ref())
+                    .and_then(|diagnostics| diagnostics.exit_code),
+                None,
             )
         })
     }

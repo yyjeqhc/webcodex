@@ -661,6 +661,10 @@ jobs:
         run: cargo check --locked --workspace
       - name: Run Windows library and CLI tests
         run: cargo test --locked -p webcodex-runner-config -p webcodex-process -p webcodex-cli
+      - name: Run Windows unified upgrade transactions including native v0.4.3 fixture
+        run: cargo test --locked -p webcodex-environment --lib upgrade::
+      - name: Test Windows unified installer routing and Desktop build freshness
+        run: python -m unittest scripts.tests.test_prepare_windows_unified_installer scripts.tests.test_desktop_runtime_manifest scripts.tests.test_desktop_frontend_build
       - name: Test optional Codex observation adapter on Windows
         run: python -m unittest discover -s integrations/codex -p 'test_*.py' -v
       - name: Run Windows search fallback tests

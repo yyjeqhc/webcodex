@@ -106,6 +106,10 @@ macOS 的开机恢复以系统和项目所在磁盘已解锁为前提。FileVaul
 
 Linux 和 macOS 的已有安装升级，要求原用户先针对候选包和自己的 EnvironmentStore 运行 Core `upgrade-prepare`。管理员用 `installer-authorize` 授权该 receipt；包钩子会将它与候选包及稳定 runtime 目录核对，不会打开 root 的默认 EnvironmentStore。包完成阶段由 root 下的已安装 CLI 通过窄范围 owner-context broker 运行 `installer-finish`。只有 Core 提交 owner 事务后才报告成功；失败时保留授权 receipt 供恢复。全新安装使用隔离的安装事务目录，不会启动服务。Windows 外层安装器以当前用户身份运行，在调用内层 Tauri 安装器前准备并验证该用户的 Store，完成后运行 `upgrade-finish`。
 
+Windows 会由绑定候选包 manifest 的新 CLI 单独判定安装类型和 Environment 所有权。官方 x64 v0.4.3 通过旧 build identity 及缺少 Environment 数据格式声明识别，不会向旧 CLI 发送 Environment 命令。完整但尚未配置 Environment 的新版安装也走独立的程序包事务。升级前须退出旧 Desktop 并停止其 Server/Runner；程序不可访问或正在运行、安装不完整、用户不匹配、存在无法对应 owner 的 Windows 服务时，会阻止替换。候选 CLI 保存私有备份并生成 `windows-package-prepared.json`，绑定原用户 SID、四个精确文件目标、事务及已发布 manifest。调用内层安装器前核对凭据和旧文件；完成阶段核对四个安装文件的 hash 和 build-info 启动结果；回滚恢复原来的四个程序。此流程不会创建 Environment、注册 Runner、修改 provider 配置或迁移 Server 数据。已有 Environment 保留已安装 CLI 和现有 owner 事务路径。
+
+如果程序回滚失败，请保留所选 Environment 目录内的 `windows-package-upgrade.json` 和 `upgrade-backups/`。停止相关程序后，使用已验证的新 CLI 执行 `environment package-upgrade-rollback --expected-runtime-dir <原安装目录>/webcodex-runtime --environment-dir <原Environment目录> --json`。不要删除恢复文件或修改事务目标。原生 Windows 测试包含兼容 v0.4.3 的 PE 夹具，其 Environment 命令返回 exit 2；真实官方安装器验收仍待执行。
+
 重新安装完全相同且已验证的包会走只读、幂等验证路径，即使尚未配置 Environment 也一样。Unix 上没有 Environment 时，安装器仍会拒绝不同版本的包，需要由 owner 准备恢复记录；同包校验不能用作替换不同文件的许可。已有 Environment 的不同候选包仍需要 owner receipt 流程和已发布 source manifest 验证。
 
 回滚范围严格遵循包所拥有的文件。Linux 恢复受管 Desktop 可执行文件；macOS 恢复完整 `.app` bundle；Windows 只快照并恢复四个精确受管可执行文件：`WebCodex.exe` 和 `webcodex-runtime/` 下的 CLI、Server、Runner。系统菜单项、`.desktop` 文件和卸载元数据由包管理器负责，不属于应用回滚快照。Core 也会快照 runtime 可执行文件和 Environment 数据。已安装 CLI 损坏后的恢复和完整外层安装器回滚仍需原生验证。旧 CLI 服务迁移是上文单独说明的显式 Linux 流程，不会在安装时自动执行。以上升级和迁移流程尚未通过原生 Windows NSIS、macOS package 或 Debian package 验收。

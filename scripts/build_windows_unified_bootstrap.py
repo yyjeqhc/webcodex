@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import shutil
@@ -27,6 +28,18 @@ def nsis_quote(path: Path) -> str:
     return f'"{value}"'
 
 
+def candidate_hash_command(expected_sha256: str) -> str:
+    # The program is fixed code. The path travels through the child environment,
+    # never through PowerShell source (user temp paths can contain quotes or $).
+    script = (
+        "$ErrorActionPreference='Stop'; try { "
+        "$h=(Get-FileHash -Algorithm SHA256 -LiteralPath $env:WEBCODEX_INSTALLER_CANDIDATE_CLI).Hash.ToLowerInvariant(); "
+        f"if($h -ne '{expected_sha256}') {{ exit 1 }}; exit 0 "
+        "} catch { exit 1 }"
+    )
+    return base64.b64encode(script.encode("utf-16le")).decode("ascii")
+
+
 def render(candidate_dir: Path, inner_installer: Path, output: Path, platform: str) -> str:
     manifest, files = candidate.validate_candidate(candidate_dir, platform)
     inner = inner_installer.resolve(strict=True)
@@ -49,6 +62,8 @@ def render(candidate_dir: Path, inner_installer: Path, output: Path, platform: s
         'Var WebCodexExisting',
         'Var WebCodexCandidate',
         'Var WebCodexTrustedCLI',
+        'Var WebCodexPackageUpgrade',
+        'Var WebCodexForeignServices',
         'Var WebCodexOldDesktop',
         'Var WebCodexUpgradePrepared',
         '',
@@ -74,6 +89,8 @@ def render(candidate_dir: Path, inner_installer: Path, output: Path, platform: s
         '',
         'Section "-WebCodexUnifiedBootstrap"',
         '  StrCpy $WebCodexExisting 0',
+        '  StrCpy $WebCodexPackageUpgrade 0',
+        '  StrCpy $WebCodexForeignServices 0',
         '  ReadRegStr $R3 HKCU "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\WebCodex Desktop" "InstallLocation"',
         '  ${If} $R3 != ""',
         '    StrCpy $WebCodexExisting 1',
@@ -91,7 +108,7 @@ def render(candidate_dir: Path, inner_installer: Path, output: Path, platform: s
         '  ${EndIf}',
         '  StrCpy $R2 $R0 8',
         '  ${If} $R2 == "WebCodex"',
-        '    StrCpy $WebCodexExisting 1',
+        '    StrCpy $WebCodexForeignServices 1',
         '  ${EndIf}',
         '  IntOp $R1 $R1 + 1',
         '  Goto webcodex_service_scan',
@@ -106,17 +123,52 @@ def render(candidate_dir: Path, inner_installer: Path, output: Path, platform: s
     for name in candidate.BINARIES:
         lines.append(f'  File /oname={name}.exe {nsis_quote(files[name])}')
     lines.extend([
-        f'  ExecWait \'"$WINDIR\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -NonInteractive -Command "$h=(Get-FileHash -Algorithm SHA256 -LiteralPath $args[0]).Hash.ToLowerInvariant(); if($h -ne {manifest["artifacts"]["webcodex"]["sha256"]}){{exit 1}}" "$WebCodexCandidate\\artifacts\\bin\\webcodex.exe"\' $0',
+        '  System::Call \'kernel32::SetEnvironmentVariableW(w "WEBCODEX_INSTALLER_CANDIDATE_CLI", w "$WebCodexCandidate\\artifacts\\bin\\webcodex.exe") i .r0\'',
+        '  ${If} $0 == 0',
+        '    SetErrorLevel 1',
+        '    Abort',
+        '  ${EndIf}',
+        f'  ExecWait \'"$WINDIR\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -NonInteractive -EncodedCommand {candidate_hash_command(manifest["artifacts"]["webcodex"]["sha256"])}\' $0',
         '  ${If} $0 != 0',
         '    MessageBox MB_ICONSTOP "WebCodex candidate CLI failed its manifest-bound SHA-256 check."',
         '    SetErrorLevel 1',
         '    Abort',
         '  ${EndIf}',
         '  StrCpy $WebCodexTrustedCLI "$WebCodexCandidate\\artifacts\\bin\\webcodex.exe"',
-        '  ${If} $WebCodexExisting == 1',
-        '    ${If} ${FileExists} "$WebCodexInstallDir\\webcodex-runtime\\webcodex.exe"',
-        '      StrCpy $WebCodexTrustedCLI "$WebCodexInstallDir\\webcodex-runtime\\webcodex.exe"',
-        '    ${EndIf}',
+        '  ${If} $WebCodexEnvironmentDir == ""',
+        '    nsExec::ExecToStack \'"$WebCodexTrustedCLI" environment installer-classify --expected-runtime-dir "$WebCodexInstallDir\\webcodex-runtime" --json\'',
+        '  ${Else}',
+        '    nsExec::ExecToStack \'"$WebCodexTrustedCLI" environment installer-classify --expected-runtime-dir "$WebCodexInstallDir\\webcodex-runtime" --environment-dir "$WebCodexEnvironmentDir" --json\'',
+        '  ${EndIf}',
+        '  Pop $0',
+        '  Pop $1',
+        'webcodex_classification_trim:',
+        '  StrCpy $R0 $1 1 -1',
+        '  ${If} $R0 == "$\\r"',
+        '  ${OrIf} $R0 == "$\\n"',
+        '    StrCpy $1 $1 -1',
+        '    Goto webcodex_classification_trim',
+        '  ${EndIf}',
+        '  ${If} $0 != 0',
+        '    MessageBox MB_ICONSTOP "The installed package identity or Environment ownership could not be verified. Quit the old Desktop and stop its Runtime before retrying."',
+        '    SetErrorLevel 1',
+        '    Abort',
+        '  ${EndIf}',
+        '  ${If} $1 == \'{"kind":"environment"}\'',
+        '    StrCpy $WebCodexTrustedCLI "$WebCodexInstallDir\\webcodex-runtime\\webcodex.exe"',
+        '  ${ElseIf} $1 == \'{"kind":"legacy"}\'',
+        '    StrCpy $WebCodexPackageUpgrade 1',
+        '  ${ElseIf} $1 == \'{"kind":"unconfigured"}\'',
+        '    StrCpy $WebCodexPackageUpgrade 1',
+        '  ${ElseIf} $1 != \'{"kind":"fresh"}\'',
+        '    SetErrorLevel 1',
+        '    Abort',
+        '  ${EndIf}',
+        '  ${If} $WebCodexForeignServices == 1',
+        '  ${AndIf} $1 != \'{"kind":"environment"}\'',
+        '    MessageBox MB_ICONSTOP "Windows contains WebCodex services without a matching Environment owner. Recover their original ownership before upgrading."',
+        '    SetErrorLevel 1',
+        '    Abort',
         '  ${EndIf}',
         '  ${If} $WebCodexExisting == 1',
         '    ExecWait \'"$WebCodexTrustedCLI" environment installer-verify-same --candidate-dir "$WebCodexCandidate" --expected-runtime-dir "$WebCodexInstallDir\\webcodex-runtime" --json\' $0',
@@ -124,10 +176,14 @@ def render(candidate_dir: Path, inner_installer: Path, output: Path, platform: s
         '      Goto webcodex_bootstrap_done',
         '    ${EndIf}',
         '  ${EndIf}',
+        '  ${If} $WebCodexPackageUpgrade == 1',
+        '    Call WebCodexPackagePreflight',
+        '  ${Else}',
         '  ${If} $WebCodexEnvironmentDir == ""',
         '    ExecWait \'"$WebCodexTrustedCLI" environment upgrade-preflight --candidate-dir "$WebCodexCandidate" --json\' $0',
         '  ${Else}',
         '    ExecWait \'"$WebCodexTrustedCLI" environment upgrade-preflight --candidate-dir "$WebCodexCandidate" --environment-dir "$WebCodexEnvironmentDir" --json\' $0',
+        '  ${EndIf}',
         '  ${EndIf}',
         '  ${If} $0 != 0',
         '    MessageBox MB_ICONSTOP "WebCodex upgrade preflight rejected this installer."',
@@ -135,10 +191,14 @@ def render(candidate_dir: Path, inner_installer: Path, output: Path, platform: s
         '    Abort',
         '  ${EndIf}',
         '  StrCpy $WebCodexUpgradePrepared 1',
+        '  ${If} $WebCodexPackageUpgrade == 1',
+        '    Call WebCodexPackagePrepare',
+        '  ${Else}',
         '  ${If} $WebCodexEnvironmentDir == ""',
         '    ExecWait \'"$WebCodexTrustedCLI" environment upgrade-prepare --candidate-dir "$WebCodexCandidate" --json\' $0',
         '  ${Else}',
         '    ExecWait \'"$WebCodexTrustedCLI" environment upgrade-prepare --candidate-dir "$WebCodexCandidate" --environment-dir "$WebCodexEnvironmentDir" --json\' $0',
+        '  ${EndIf}',
         '  ${EndIf}',
         '  ${If} $0 != 0',
         '    Call WebCodexRollback',
@@ -147,10 +207,14 @@ def render(candidate_dir: Path, inner_installer: Path, output: Path, platform: s
         '    Abort',
         '  ${EndIf}',
         '  ${If} $WebCodexExisting == 1',
+        '    ${If} $WebCodexPackageUpgrade == 1',
+        '      Call WebCodexPackageVerify',
+        '    ${Else}',
         '    ${If} $WebCodexEnvironmentDir == ""',
         '      ExecWait \'"$WebCodexTrustedCLI" environment installer-verify --candidate-dir "$WebCodexCandidate" --expected-runtime-dir "$WebCodexInstallDir\\webcodex-runtime" --json\' $0',
         '    ${Else}',
         '      ExecWait \'"$WebCodexTrustedCLI" environment installer-verify --candidate-dir "$WebCodexCandidate" --expected-runtime-dir "$WebCodexInstallDir\\webcodex-runtime" --environment-dir "$WebCodexEnvironmentDir" --json\' $0',
+        '    ${EndIf}',
         '    ${EndIf}',
         '    ${If} $0 != 0',
         '      Call WebCodexRollback',
@@ -172,10 +236,14 @@ def render(candidate_dir: Path, inner_installer: Path, output: Path, platform: s
         '    SetErrorLevel 1',
         '    Abort',
         '  ${EndIf}',
+        '  ${If} $WebCodexPackageUpgrade == 1',
+        '    Call WebCodexPackageFinish',
+        '  ${Else}',
         '  ${If} $WebCodexEnvironmentDir == ""',
         '    ExecWait \'"$WebCodexInstallDir\\webcodex-runtime\\webcodex.exe" environment upgrade-finish --json\' $0',
         '  ${Else}',
         '    ExecWait \'"$WebCodexInstallDir\\webcodex-runtime\\webcodex.exe" environment upgrade-finish --environment-dir "$WebCodexEnvironmentDir" --json\' $0',
+        '  ${EndIf}',
         '  ${EndIf}',
         '  ${If} $0 != 0',
         '    Call WebCodexRollback',
@@ -200,12 +268,17 @@ def render(candidate_dir: Path, inner_installer: Path, output: Path, platform: s
         '',
         'Function WebCodexRollback',
         '  ${If} $WebCodexUpgradePrepared == 1',
+        '    ${If} $WebCodexPackageUpgrade == 1',
+        '      Call WebCodexPackageRollback',
+        '    ${Else}',
         '    ${If} $WebCodexEnvironmentDir == ""',
         '      ExecWait \'"$WebCodexTrustedCLI" environment upgrade-rollback --json\' $0',
         '    ${Else}',
         '      ExecWait \'"$WebCodexTrustedCLI" environment upgrade-rollback --environment-dir "$WebCodexEnvironmentDir" --json\' $0',
         '    ${EndIf}',
-        '    ${If} ${FileExists} "$WebCodexOldDesktop"',
+        '    ${EndIf}',
+        '    ${If} $WebCodexPackageUpgrade == 0',
+        '    ${AndIf} ${FileExists} "$WebCodexOldDesktop"',
         '      CopyFiles /SILENT "$WebCodexOldDesktop" "$WebCodexInstallDir\\WebCodex.exe"',
         '    ${EndIf}',
         '    ${If} $0 != 0',
@@ -223,6 +296,19 @@ def render(candidate_dir: Path, inner_installer: Path, output: Path, platform: s
         'FunctionEnd',
         '',
     ])
+    for step in ("preflight", "prepare", "verify", "finish", "rollback"):
+        arguments = ' --candidate-dir "$WebCodexCandidate"' if step in ("preflight", "prepare", "verify") else ""
+        command = f'"$WebCodexCandidate\\artifacts\\bin\\webcodex.exe" environment package-upgrade-{step}{arguments} --expected-runtime-dir "$WebCodexInstallDir\\webcodex-runtime"'
+        lines.extend([
+            f"Function WebCodexPackage{step.title()}",
+            '  ${If} $WebCodexEnvironmentDir == ""',
+            f"    ExecWait '{command} --json' $0",
+            '  ${Else}',
+            f"    ExecWait '{command} --environment-dir \"$WebCodexEnvironmentDir\" --json' $0",
+            '  ${EndIf}',
+            'FunctionEnd',
+            '',
+        ])
     return "\n".join(lines)
 
 

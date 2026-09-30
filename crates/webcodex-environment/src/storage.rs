@@ -294,7 +294,7 @@ pub(crate) fn atomic_private_write(path: &Path, bytes: &[u8]) -> SetupResultValu
 }
 
 #[cfg(windows)]
-fn secure_windows_path(path: &Path) -> SetupResultValue<()> {
+pub(crate) fn secure_windows_path(path: &Path) -> SetupResultValue<()> {
     // The native ACL implementation is shared with service identity validation.
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Security::Authorization::{

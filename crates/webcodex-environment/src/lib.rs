@@ -64,6 +64,7 @@ pub use layout::installed_desktop_runtime_directory;
 pub use legacy_cli::{migrate_legacy_cli_user_runner, LegacyCliRunnerInput};
 #[cfg(target_os = "linux")]
 pub use legacy_system_server::{migrate_legacy_cli_system_server, LegacyCliServerInput};
+pub use upgrade::windows_legacy;
 pub use upgrade::{
     ensure_upgrade_idle_under_lock, verify_prepared_installation, verify_same_installed_package,
     verify_upgrade_candidate, CandidateArtifact, CandidateDesktop, PreparedInstallationReceipt,

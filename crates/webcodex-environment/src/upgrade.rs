@@ -12,6 +12,7 @@ use std::path::{Component as PathComponent, Path, PathBuf};
 use webcodex_core::desktop_runtime_contract::{MachineBuildInfo, DESKTOP_RUNTIME_CONTRACT};
 mod desktop_tree;
 mod observation;
+pub mod windows_legacy;
 pub use observation::{upgrade_observation, UpgradeObservation, UpgradeOutcome};
 
 const COMPONENTS: [&str; 4] = [
@@ -22,7 +23,7 @@ const COMPONENTS: [&str; 4] = [
 ];
 const DATA_FORMAT: u16 = 1;
 const SNAPSHOT_LIMIT: u64 = 16 * 1024 * 1024 * 1024;
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct UpgradeCandidate {
     pub version: String,
     pub source_sha: String,
@@ -37,7 +38,7 @@ pub struct UpgradeCandidate {
     #[serde(default)]
     pub desktop: Option<CandidateDesktop>,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CandidateDesktop {
     pub path: PathBuf,
     pub sha256: String,
@@ -45,7 +46,7 @@ pub struct CandidateDesktop {
     #[serde(default)]
     pub managed_files: BTreeMap<String, String>,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CandidateArtifact {
     pub path: PathBuf,
     pub sha256: String,
@@ -711,6 +712,11 @@ fn error(code: &str, message: &str) -> SetupDiagnostic {
 /// Call while holding `EnvironmentStore::lock()` before any non-upgrade
 /// operation can mutate services, projects, credentials, or setup state.
 pub fn ensure_upgrade_idle_under_lock(store: &EnvironmentStore) -> SetupResultValue<()> {
+    windows_legacy::ensure_idle(store)?;
+    ensure_upgrade_idle_environment(store)
+}
+
+fn ensure_upgrade_idle_environment(store: &EnvironmentStore) -> SetupResultValue<()> {
     let journal: Option<UpgradeJournal> = store.read_json("upgrade.json")?;
     if journal.is_some_and(|journal| !matches!(journal.phase, Phase::Committed | Phase::RolledBack))
     {

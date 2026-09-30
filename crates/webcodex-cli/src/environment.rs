@@ -3,7 +3,7 @@ use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use webcodex_environment::*;
 
-const USAGE: &str = "webcodex environment <COMMAND>\n\nconfigure [--create | --join URL] [--runner] [--project PATH | --no-project]\n          [--scope user|system]\n          [--code-stdin | --token-file PATH] [--new-pairing-code]\nresume    [--code-stdin] [--new-pairing-code] [--token-file PATH]\ninvite\nadd-project PATH [--code-stdin] [--new-pairing-code]\nremove-project PROJECT_ID\nstatus|doctor\nstart|stop|restart <server|runner|tunnel> [--profile PROFILE]\nrepair-credential runner\nrepair-user-credential [--token-file PATH]\nuninstall-service <server|runner|tunnel> [--profile PROFILE]\nconfigure-tunnel [PROFILE] [--credentials-file PATH]\ntunnel-status [PROFILE]\nremove-tunnel [PROFILE]\nupgrade-preflight|upgrade-prepare --candidate-dir PATH [--development-build]\nupgrade-finish|upgrade-rollback\nmigrate-legacy-runner --join URL --project PATH --token-file PATH [--profile PROFILE] (Linux)\nmigrate-legacy-server --user NAME --token-file PATH --listen ORIGINAL_ADDR [--server-url URL] (Linux)\ninstaller-authorize --upgrade-receipt PATH --candidate-dir PATH\ninstaller-apply --upgrade-receipt PATH --candidate-dir PATH --installer-file PATH --installer-target TARGET (OS authorization required)\ninstaller-verify --candidate-dir PATH\ninstaller-verify-same --candidate-dir PATH --expected-runtime-dir PATH\ninstaller-finish|installer-cancel\n\nPublic environment commands accept --json and --environment-dir PATH.\nInstaller finalization uses only the fixed owner authorization.\nAdvanced: --bin-dir PATH (configure and explicit migration).\n--runner enables local work without requiring an initial project.\nNew environments default to user services; saved environments retain their manager.\nUser scope: Linux systemd user manager (linger-dependent), macOS login LaunchAgent, Windows signed-in user task.\nSystem scope: boot services with explicit OS authorization; no automatic fallback.\nSame-machine creation issues separate local credentials automatically, without pairing input.\nViewer-only uses a user credential; pairing codes are only for Runner machines.\nTunnel credentials use hidden input or a protected JSON file with tunnel_id and api_key.\n";
+const USAGE: &str = "webcodex environment <COMMAND>\n\nconfigure [--create | --join URL] [--runner] [--project PATH | --no-project]\n          [--scope user|system]\n          [--code-stdin | --token-file PATH] [--new-pairing-code]\nresume    [--code-stdin] [--new-pairing-code] [--token-file PATH]\ninvite\nadd-project PATH [--code-stdin] [--new-pairing-code]\nremove-project PROJECT_ID\nstatus|doctor\nstart|stop|restart <server|runner|tunnel> [--profile PROFILE]\nrepair-credential runner\nrepair-user-credential [--token-file PATH]\nuninstall-service <server|runner|tunnel> [--profile PROFILE]\nconfigure-tunnel [PROFILE] [--credentials-file PATH]\ntunnel-status [PROFILE]\nremove-tunnel [PROFILE]\nupgrade-preflight|upgrade-prepare --candidate-dir PATH [--development-build]\nupgrade-finish|upgrade-rollback\nmigrate-legacy-runner --join URL --project PATH --token-file PATH [--profile PROFILE] (Linux)\nmigrate-legacy-server --user NAME --token-file PATH --listen ORIGINAL_ADDR [--server-url URL] (Linux)\ninstaller-authorize --upgrade-receipt PATH --candidate-dir PATH\ninstaller-apply --upgrade-receipt PATH --candidate-dir PATH --installer-file PATH --installer-target TARGET (OS authorization required)\ninstaller-verify --candidate-dir PATH\ninstaller-verify-same --candidate-dir PATH --expected-runtime-dir PATH\ninstaller-classify --expected-runtime-dir PATH (Windows)\npackage-upgrade-preflight|package-upgrade-prepare|package-upgrade-verify --candidate-dir PATH --expected-runtime-dir PATH (Windows)\npackage-upgrade-finish|package-upgrade-rollback --expected-runtime-dir PATH (Windows)\ninstaller-finish|installer-cancel\n\nPublic environment commands accept --json and --environment-dir PATH.\nInstaller finalization uses only the fixed owner authorization.\nAdvanced: --bin-dir PATH (configure and explicit migration).\n--runner enables local work without requiring an initial project.\nNew environments default to user services; saved environments retain their manager.\nUser scope: Linux systemd user manager (linger-dependent), macOS login LaunchAgent, Windows signed-in user task.\nSystem scope: boot services with explicit OS authorization; no automatic fallback.\nSame-machine creation issues separate local credentials automatically, without pairing input.\nViewer-only uses a user credential; pairing codes are only for Runner machines.\nTunnel credentials use hidden input or a protected JSON file with tunnel_id and api_key.\n";
 
 #[derive(Default)]
 struct Input {
@@ -328,6 +328,58 @@ async fn run_inner(args: &[String]) -> Result<String, String> {
         .unwrap_or_else(default_environment_dir)
         .map_err(|e| e.to_string())?;
     let store = EnvironmentStore::open(absolute(&root)?).map_err(|e| e.to_string())?;
+    if input.command == "installer-classify" || input.command.starts_with("package-upgrade-") {
+        let runtime = absolute(
+            input
+                .expected_runtime_dir
+                .as_deref()
+                .ok_or("Specify --expected-runtime-dir PATH")?,
+        )?;
+        if input.command == "installer-classify" {
+            let kind = windows_legacy::classify(&store, &runtime)
+                .await
+                .map_err(|e| e.to_string())?;
+            return Ok(serde_json::json!({"kind":kind}).to_string());
+        }
+        match input.command.as_str() {
+            "package-upgrade-preflight" | "package-upgrade-prepare" | "package-upgrade-verify" => {
+                let candidate = absolute(
+                    input
+                        .candidate_dir
+                        .as_deref()
+                        .ok_or("Specify --candidate-dir PATH")?,
+                )?;
+                match input.command.as_str() {
+                    "package-upgrade-preflight" => {
+                        let result = windows_legacy::preflight(&store, &candidate, &runtime)
+                            .await
+                            .map_err(|e| e.to_string())?;
+                        if !result.ready {
+                            return Err(serde_json::to_string(&result).unwrap_or_default());
+                        }
+                    }
+                    "package-upgrade-prepare" => {
+                        windows_legacy::prepare(&store, &candidate, &runtime)
+                            .await
+                            .map_err(|e| e.to_string())?
+                    }
+                    _ => {
+                        windows_legacy::verify(&store, &candidate, &runtime)
+                            .await
+                            .map_err(|e| e.to_string())?;
+                    }
+                }
+            }
+            "package-upgrade-finish" => windows_legacy::finish(&store, &runtime)
+                .await
+                .map_err(|e| e.to_string())?,
+            "package-upgrade-rollback" => {
+                windows_legacy::rollback(&store, &runtime).map_err(|e| e.to_string())?
+            }
+            _ => return Err("Unknown package upgrade command".into()),
+        }
+        return Ok("{\"ready\":true}".into());
+    }
     let mut core = EnvironmentSetup::new(NativeEnvironment::new().map_err(|e| e.to_string())?);
     match input.command.as_str() {
         "upgrade-preflight" | "upgrade-prepare" => {

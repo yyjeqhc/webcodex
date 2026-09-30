@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import hashlib
+import base64
 import importlib.util
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -165,12 +167,56 @@ class WindowsUnifiedNsisTests(unittest.TestCase):
             self.assertIn("/S /UPDATE /D=$WebCodexInstallDir", section)
             self.assertIn("upgrade-finish", section)
             self.assertIn("upgrade-rollback", script)
+            self.assertIn("installer-classify", section)
+            # CLI JSON has a trailing newline; nsExec output must be normalized
+            # before exact, fail-closed installation-kind comparisons.
+            self.assertIn('StrCpy $R0 $1 1 -1', section)
+            self.assertIn('"$\\r"', section)
+            self.assertIn('"$\\n"', section)
+            self.assertIn('StrCpy $WebCodexPackageUpgrade 1', section)
+            for step in ("Preflight", "Prepare", "Verify", "Finish", "Rollback"):
+                self.assertIn(f"Call WebCodexPackage{step}", script)
+                body = script.split(f"Function WebCodexPackage{step}\n", 1)[1].split("FunctionEnd", 1)[0]
+                self.assertIn(f'environment package-upgrade-{step.lower()}', body)
+                self.assertIn('"$WebCodexCandidate\\artifacts\\bin\\webcodex.exe"', body)
+                self.assertIn('--expected-runtime-dir "$WebCodexInstallDir\\webcodex-runtime"', body)
+                self.assertIn('--environment-dir "$WebCodexEnvironmentDir"', body)
+            # Candidate trust is established before classification; only the
+            # explicitly matched Environment owner delegates to installed CLI.
+            self.assertLess(section.index("manifest-bound SHA-256 check"), section.index("installer-classify"))
+            self.assertLess(section.index('"kind":"environment"'), section.index('StrCpy $WebCodexTrustedCLI "$WebCodexInstallDir'))
+            self.assertIn('"kind":"legacy"', section)
+            self.assertIn('"kind":"unconfigured"', section)
             self.assertIn(r'"$WebCodexTrustedCLI" environment upgrade-rollback', script)
-            self.assertIn("Get-FileHash -Algorithm SHA256", section)
+            self.assertIn("SetEnvironmentVariableW", section)
+            self.assertIn("-EncodedCommand", section)
             self.assertIn("manifest-bound SHA-256 check", section)
             self.assertIn('"$WebCodexTrustedCLI" environment installer-verify-same', section)
-            self.assertNotIn('ExecWait \'"$WebCodexCandidate\\artifacts\\bin\\webcodex.exe" environment', section)
             self.assertNotIn("File ", function_bodies)
+
+    def test_candidate_hash_check_quotes_the_digest_and_keeps_paths_out_of_source(self):
+        expected = "a" * 64
+        program = base64.b64decode(bootstrap.candidate_hash_command(expected)).decode("utf-16le")
+        self.assertIn(f"$h -ne '{expected}'", program)
+        self.assertIn("-LiteralPath $env:WEBCODEX_INSTALLER_CANDIDATE_CLI", program)
+        self.assertIn("catch { exit 1 }", program)
+        self.assertNotIn("$args", program)
+
+    @unittest.skipUnless(os.name == "nt", "requires native Windows PowerShell")
+    def test_native_candidate_hash_check_accepts_only_exact_bytes_in_quoted_paths(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "candidate with 'quote' and $variable.exe"
+            path.write_bytes(pe(0x8664))
+            encoded = bootstrap.candidate_hash_command(hashlib.sha256(path.read_bytes()).hexdigest())
+            command = [str(Path(os.environ["SystemRoot"]) / "System32/WindowsPowerShell/v1.0/powershell.exe"),
+                       "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded]
+            env = {**os.environ, "WEBCODEX_INSTALLER_CANDIDATE_CLI": str(path)}
+            for action, expected in ((None, 0), (lambda: path.write_bytes(b"tampered"), 1), (path.unlink, 1)):
+                if action:
+                    action()
+                result = subprocess.run(command, env=env, stdin=subprocess.DEVNULL,
+                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
+                self.assertEqual(result.returncode, expected)
 
     def test_rejects_pe_architecture_mismatch_before_rendering_nsis(self):
         with tempfile.TemporaryDirectory() as temp:

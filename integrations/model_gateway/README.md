@@ -100,6 +100,12 @@ Runner records as failure. HTTP errors expose only `http_<status>`; response bod
 exception details, tokens and headers are never reported. Invalid ACP requests use
 standard JSON-RPC error codes and safe fixed messages.
 
+For SSE, `response.completed` or chat's normal `stop` followed by `[DONE]` is the
+completion boundary; the adapter closes the response instead of waiting for HTTP
+EOF. Streamed Responses output-item declarations are checked as well as the final
+snapshot, so a forbidden tool item is not silently accepted if the final summary
+omits it.
+
 Cancellation promptly answers the active prompt with `stopReason: cancelled`,
 blocks further output and attempts to interrupt the connection. A network request
 already accepted by a provider may still consume resources; cancellation does not

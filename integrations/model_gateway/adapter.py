@@ -192,7 +192,6 @@ class Adapter:
             total = 0
             pending = b""
             data = []
-            complete = False
             while True:
                 remaining = task["deadline"] - time.monotonic()
                 if task["cancel"].is_set():
@@ -216,12 +215,18 @@ class Adapter:
                             if data:
                                 event = b"\n".join(data).decode("utf-8")
                                 data = []
-                                complete = self.event(task, event) or complete
+                                if self.event(task, event):
+                                    # API completion is the boundary, not HTTP EOF:
+                                    # a proxy may keep the transport alive afterwards.
+                                    # Ignore trailing transport bytes, close once in
+                                    # finally, and never retry a completed request.
+                                    if not task["output_bytes"]:
+                                        raise Failure("empty_model_response")
+                                    return
                         elif line.startswith(b"data:"):
                             data.append(line[5:].lstrip(b" "))
             if is_sse:
-                if pending or data or not complete:
-                    raise Failure("incomplete_model_response")
+                raise Failure("incomplete_model_response")
             else:
                 self.document(task, json.loads(pending))
             if not task["output_bytes"]:
@@ -239,6 +244,8 @@ class Adapter:
             kind = value.get("type")
             if kind == "response.output_text.delta":
                 self.chunk(task, value.get("delta"))
+            elif kind in ("response.output_item.added", "response.output_item.done"):
+                self.reject_tools([value.get("item")])
             elif kind == "response.completed":
                 if value.get("response", {}).get("status") != "completed":
                     raise Failure("incomplete_model_response")
@@ -268,7 +275,7 @@ class Adapter:
 
     @staticmethod
     def reject_tools(output):
-        if not isinstance(output, list) or any(item.get("type") not in ("message", "reasoning") for item in output):
+        if not isinstance(output, list) or any(not isinstance(item, dict) or item.get("type") not in ("message", "reasoning") for item in output):
             raise Failure("unsupported_model_tool")
 
     def document(self, task, value):

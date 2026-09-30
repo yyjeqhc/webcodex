@@ -139,6 +139,26 @@ class GatewayTest(unittest.TestCase):
         self.assertEqual(text, "你好 🌎")
         self.assertEqual(frame["result"]["stopReason"], "end_turn")
 
+    def test_completion_returns_before_transport_eof(self):
+        release = threading.Event()
+        def open_stream(h):
+            h.send_response(200)
+            h.send_header("Content-Type", "text/event-stream")
+            h.end_headers()
+            h.wfile.write(b'data: {"type":"response.output_text.delta","delta":"finished"}\n\ndata: {"type":"response.completed","response":{"status":"completed","output":[]}}\n\n')
+            h.wfile.flush()
+            release.wait(5)  # EOF is withheld until after the prompt result.
+        self.action = open_stream
+        self.start("--timeout", "1")
+        try:
+            self.prompt()
+            text, frame = self.terminal()
+            self.assertEqual(text, "finished")
+            self.assertEqual(frame["result"]["stopReason"], "end_turn")
+            self.assertEqual(len(self.requests), 1)
+        finally:
+            release.set()
+
     def test_chat_sse(self):
         self.action = lambda h: self.sse(h, [
             {"choices": [{"delta": {"content": "review"}, "finish_reason": None}]},

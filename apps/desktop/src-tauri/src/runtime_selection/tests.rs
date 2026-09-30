@@ -70,6 +70,11 @@ async fn different_revisions_versions_and_dirty_builds_are_accepted_with_advisor
     let (view, resolved) = candidate(&dir).await;
     assert_eq!(view.compatibility, ProtocolCompatibility::Compatible);
     assert!(view
+        .binaries
+        .iter()
+        .all(|binary| binary.present == Some(true)
+            && binary.startup_check == BinaryStartupCheck::Passed));
+    assert!(view
         .advisories
         .contains(&"different_source_revisions".to_string()));
     assert!(view
@@ -110,6 +115,15 @@ async fn malformed_unknown_wrong_architecture_and_incompatible_are_not_trusted()
         let (view, resolved) = candidate(&dir).await;
         assert!(resolved.is_none());
         assert_eq!(view.error_code.as_deref(), Some(expected));
+        assert_eq!(view.binaries[1].startup_check, BinaryStartupCheck::Passed);
+        assert_eq!(
+            view.compatibility,
+            if matches!(case, 1 | 2) {
+                ProtocolCompatibility::Incompatible
+            } else {
+                ProtocolCompatibility::Unknown
+            }
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 }
@@ -121,6 +135,12 @@ async fn missing_custom_and_missing_binary_never_fall_back() {
     std::fs::remove_file(dir.join("webcodex-runner")).unwrap();
     let (view, resolved) = candidate(&dir).await;
     assert_eq!(view.error_code.as_deref(), Some("binary_missing"));
+    assert_eq!(view.compatibility, ProtocolCompatibility::Unknown);
+    assert_eq!(view.binaries[2].present, Some(false));
+    assert_eq!(
+        view.binaries[2].startup_check,
+        BinaryStartupCheck::NotChecked
+    );
     assert!(resolved.is_none());
     std::fs::remove_dir_all(&dir).unwrap();
     let (view, resolved) = candidate(&dir).await;
@@ -129,6 +149,118 @@ async fn missing_custom_and_missing_binary_never_fall_back() {
         Some("runtime_directory_missing")
     );
     assert!(resolved.is_none());
+}
+
+#[tokio::test]
+async fn a_present_file_is_not_startup_evidence() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(file_name("webcodex"));
+    std::fs::write(&path, "not an executable image").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let (view, resolved) = probe(
+        RuntimeSource::Custom {
+            directory: dir.path().into(),
+        },
+        None,
+        0,
+        &CancellationContext::never(),
+        Deadline::after(std::time::Duration::from_secs(5)),
+    )
+    .await
+    .unwrap();
+    assert!(resolved.is_none());
+    assert_eq!(view.compatibility, ProtocolCompatibility::Unknown);
+    assert_eq!(view.binaries[0].present, Some(true));
+    assert_eq!(view.binaries[0].startup_check, BinaryStartupCheck::Failed);
+    assert_eq!(
+        view.binaries[0].error_code.as_deref(),
+        Some("webcodex_command_start_failed")
+    );
+    assert!(view.binaries[0]
+        .diagnostics
+        .as_ref()
+        .unwrap()
+        .io_kind
+        .is_some());
+    assert_eq!(view.binaries[1].present, Some(false));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn execution_permission_does_not_prove_successful_startup() {
+    let dir = fixture(|_, _| {});
+    std::fs::write(dir.join("webcodex"), "#!/bin/sh\nexit 17\n").unwrap();
+    let (view, resolved) = candidate(&dir).await;
+    assert!(resolved.is_none());
+    assert_eq!(view.compatibility, ProtocolCompatibility::Unknown);
+    let binary = &view.binaries[0];
+    assert_eq!(binary.present, Some(true));
+    assert_eq!(binary.startup_check, BinaryStartupCheck::Failed);
+    assert_eq!(
+        binary.error_code.as_deref(),
+        Some("webcodex_command_failed")
+    );
+    assert_eq!(binary.diagnostics.as_ref().unwrap().exit_code, Some(17));
+    assert!(binary.sha256.is_some());
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn windows_launch_status_is_preserved_without_output_or_paths() {
+    let failure = DesktopError::new(
+        "webcodex_command_failed",
+        "private message",
+        "private action",
+    )
+    .with_details(serde_json::json!({
+        "exit_code": 0xc0000022_u32 as i32,
+        "stderr": "private output",
+        "executable": "private path",
+        "reason_code": "private detail",
+    }));
+    let diagnostics = probe_diagnostics(&failure).unwrap();
+    assert_eq!(diagnostics.exit_code.unwrap() as u32, 0xc0000022);
+    let value = serde_json::to_value(diagnostics).unwrap();
+    assert_eq!(value.as_object().unwrap().len(), 2);
+    assert!(!value.to_string().contains("private"));
+    assert!(probe_diagnostics(&error("unused")).is_none());
+}
+
+#[test]
+fn denied_file_inspection_does_not_claim_the_file_is_missing() {
+    use std::io::ErrorKind;
+    assert_eq!(
+        presence_after_inspection_error(ErrorKind::NotFound),
+        Some(false)
+    );
+    assert_eq!(
+        presence_after_inspection_error(ErrorKind::PermissionDenied),
+        None
+    );
+    assert_eq!(presence_after_inspection_error(ErrorKind::Other), None);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_missing_execute_bit_blocks_startup_without_protocol_evidence() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = fixture(|_, _| {});
+    std::fs::set_permissions(dir.join("webcodex"), std::fs::Permissions::from_mode(0o600)).unwrap();
+    let (view, resolved) = candidate(&dir).await;
+    assert!(resolved.is_none());
+    assert_eq!(view.compatibility, ProtocolCompatibility::Unknown);
+    assert_eq!(view.binaries[0].present, Some(true));
+    assert_eq!(view.binaries[0].startup_check, BinaryStartupCheck::Failed);
+    assert_eq!(
+        view.binaries[0].error_code.as_deref(),
+        Some("binary_not_executable")
+    );
+    assert!(view.binaries[0].metadata.is_none());
+    std::fs::remove_dir_all(dir).unwrap();
 }
 
 #[cfg(unix)]

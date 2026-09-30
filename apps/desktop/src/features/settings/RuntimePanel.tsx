@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { desktopApi } from "../../lib/desktop-api";
 import type { DesktopError, DesktopState } from "../../models/topology";
-import type { RuntimeCandidate, RuntimeSettings, RuntimeSource, RuntimeSwitchResult } from "../../models/runtime-shell";
+import type { BinaryProbe, RuntimeCandidate, RuntimeSettings, RuntimeSource, RuntimeSwitchResult } from "../../models/runtime-shell";
 import { useShellText } from "../../i18n/runtime-shell";
 import { useProduct } from "../../i18n/product";
 import { useLocale } from "../../i18n/locale";
@@ -66,7 +66,7 @@ export function RuntimePanel({ state, onState, onActivity, onUpdates }: { state:
       <dl className="runtime-facts"><div><dt>{s("Source")}</dt><dd>{s(settings.source.kind === "bundled" ? "Bundled" : "Custom")}</dd></div></dl>
       {settings.source.kind === "custom" && <code className="runtime-directory">{settings.source.directory}</code>}
       {settings.selected && <BinaryFacts candidate={settings.selected} checkedDesktopContract={settings.desktop_contract} />}
-      {(settings.unavailable_code || settings.selected?.error_code) && <div className="shell-notice warning" role="alert"><strong>{s("Selected Runtime is unavailable")}</strong><p>{p("runtimeUnavailableHelp")}</p><code>{settings.unavailable_code || settings.selected?.error_code}</code></div>}
+      {settings.unavailable_code && !settings.selected?.error_code && <div className="shell-notice warning" role="alert"><strong>{s("Selected Runtime is unavailable")}</strong><p>{p("runtimeUnavailableHelp")}</p><code>{settings.unavailable_code}</code></div>}
       {!settings.can_switch && <div className="shell-notice"><p>{p(switchHelp)}</p>{switchHelp === "runtimeManagedHelp" && onUpdates && <button type="button" className="secondary-button" onClick={onUpdates}>{p("aboutAndUpdates")}</button>}<details><summary>{p("details")}</summary><code>{settings.switch_unavailable_reason}</code></details></div>}
     </> : !error && <p role="status">{s("Loading…")}</p>}
     <div className="shell-actions">
@@ -102,18 +102,38 @@ function BinaryFacts({ candidate, checkedDesktopContract }: { candidate: Runtime
     <dl className="runtime-facts"><div><dt>{s("Compatibility")}</dt><dd>{s(candidate.compatibility === "compatible" ? "Compatible" : candidate.compatibility === "incompatible" ? "Incompatible" : "Unknown")}</dd></div></dl>
     {candidate.compatibility === "compatible" && !candidate.error_code && <p className="field-help">{p("runtimeReadyHelp")}</p>}
     {candidate.compatibility !== "compatible" && !candidate.error_code && <p className="field-help">{p("runtimeUnavailableHelp")}</p>}
+    {candidate.error_code && <div className="shell-notice warning" role="alert"><strong>{p("runtimeVerificationFailed")}</strong><p>{p(candidate.compatibility === "incompatible" ? "runtimeMismatchHelp" : candidate.compatibility === "unknown" && candidate.binaries.length ? "runtimeCheckUnconfirmedHelp" : "runtimeUnavailableHelp")}</p><details><summary>{p("details")}</summary><code>{candidate.error_code}</code></details></div>}
     {candidate.advisories.includes("runtime_files_changed_restart_required") && <p className="workspace-notice" role="status">{p("needsRestart")}</p>}
+    {!!candidate.binaries.length && <div className="runtime-binary-list" aria-label={s("Required binaries")}>{candidate.binaries.map(binary => <article key={binary.name}>
+      <h4>{binary.name}</h4><dl className="runtime-facts"><div><dt>{s("File")}</dt><dd>{binary.present === null ? p("runtimeFileUnconfirmed") : s(binary.present ? "Present" : "Missing")}</dd></div><div><dt>{p("runtimeStartupCheck")}</dt><dd>{p(binary.startup_check === "passed" ? "runtimeStartupPassed" : binary.startup_check === "failed" ? "runtimeStartupFailed" : "runtimeStartupNotChecked")}</dd></div></dl>
+      {binary.error_code && <p className="field-help">{p(binaryFailureHelp(binary))}</p>}
+      {(binary.metadata || binary.error_code) && <details className="workspace-technical"><summary>{p("details")}</summary>
+        {binary.metadata && <dl className="runtime-facts"><div><dt>{s("Version")}</dt><dd>{binary.metadata.version}</dd></div><div><dt>{s("Revision")}</dt><dd><code>{binary.metadata.git_commit ?? s("Unknown")}</code>{binary.metadata.git_dirty && <span className="workspace-badge">{s("Dirty build")}</span>}</dd></div>
+          <div><dt>{s("Target / architecture")}</dt><dd>{binary.metadata.target} / {binary.metadata.architecture}</dd></div><div><dt>{s("Desktop contract")}</dt><dd>[{binary.metadata.desktop_runtime_contract.min_generation}, {binary.metadata.desktop_runtime_contract.max_generation}]</dd></div></dl>}
+        {binary.error_code && <code className="runtime-probe-error">{binary.error_code}</code>}
+        {binary.diagnostics?.exit_code != null && <p>{p("runtimeExitCode")}: <code>{binary.diagnostics.exit_code} / 0x{(binary.diagnostics.exit_code >>> 0).toString(16).padStart(8, "0").toUpperCase()}</code></p>}
+        {binary.diagnostics?.io_kind && <p><code>{binary.diagnostics.io_kind}</code></p>}
+      </details>}
+    </article>)}</div>}
     <details className="workspace-technical runtime-build-details"><summary>{p("buildDetails")}</summary>
     <dl className="runtime-facts">
       {checkedDesktopContract && <div><dt>{s("Desktop contract")}</dt><dd>[{checkedDesktopContract.min_generation}, {checkedDesktopContract.max_generation}]</dd></div>}
       <div><dt>{s("Build alignment")}</dt><dd>{s(({ exact: "Exact", different_commit: "Different revisions", different_version: "Different versions", dirty: "Dirty build", unknown: "Unknown" })[candidate.build_alignment])}</dd></div></dl>
-    {!!candidate.binaries.length && <div className="runtime-binary-list" aria-label={s("Required binaries")}>{candidate.binaries.map(binary => <article key={binary.name}>
-      <h4>{binary.name}</h4><dl className="runtime-facts"><div><dt>{s("File")}</dt><dd>{s(binary.present ? "Present" : "Missing")}</dd></div><div><dt>{s("Executable")}</dt><dd>{binary.executable ? "✓" : "—"}</dd></div>
-        {binary.metadata && <><div><dt>{s("Version")}</dt><dd>{binary.metadata.version}</dd></div><div><dt>{s("Revision")}</dt><dd><code>{binary.metadata.git_commit ?? s("Unknown")}</code>{binary.metadata.git_dirty && <span className="workspace-badge">{s("Dirty build")}</span>}</dd></div>
-          <div><dt>{s("Target / architecture")}</dt><dd>{binary.metadata.target} / {binary.metadata.architecture}</dd></div><div><dt>{s("Desktop contract")}</dt><dd>[{binary.metadata.desktop_runtime_contract.min_generation}, {binary.metadata.desktop_runtime_contract.max_generation}]</dd></div></>}
-      </dl>{binary.error_code && <code className="runtime-probe-error">{binary.error_code}</code>}</article>)}</div>}
     {candidate.advisories.length > 0 && <p className="field-help">{s("Build revisions are diagnostic identity, not compatibility gates.")} {s("Operator responsibility")}</p>}
     </details>
-    {candidate.error_code && <p role="alert"><span>{p("runtimeUnavailableHelp")}</span> <code>{candidate.error_code}</code></p>}
   </>;
+}
+
+function binaryFailureHelp(binary: BinaryProbe) {
+  if (binary.diagnostics?.io_kind === "PermissionDenied" || (binary.diagnostics?.exit_code != null && (binary.diagnostics.exit_code >>> 0) === 0xC0000022)) return "runtimeAccessDeniedHelp";
+  switch (binary.error_code) {
+    case "binary_missing": return "runtimeFileMissingHelp";
+    case "runtime_file_unreadable": return "runtimeFileUnreadableHelp";
+    case "binary_not_executable":
+    case "webcodex_command_start_failed": return "runtimeStartFailedHelp";
+    case "webcodex_command_timeout": return "runtimeProbeTimeoutHelp";
+    case "binary_architecture_mismatch": return "runtimeArchitectureMismatchHelp";
+    case "runtime_contract_incompatible": return "runtimeMismatchHelp";
+    default: return "runtimeMetadataFailedHelp";
+  }
 }

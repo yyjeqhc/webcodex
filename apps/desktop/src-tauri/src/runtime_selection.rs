@@ -28,13 +28,28 @@ pub enum RuntimeSource {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum BinaryStartupCheck {
+    NotChecked,
+    Passed,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BinaryProbeDiagnostics {
+    pub exit_code: Option<i32>,
+    pub io_kind: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BinaryProbe {
     pub name: String,
-    pub present: bool,
-    pub executable: bool,
+    pub present: Option<bool>,
+    pub startup_check: BinaryStartupCheck,
     pub metadata: Option<MachineBuildInfo>,
     pub sha256: Option<String>,
     pub error_code: Option<String>,
+    pub diagnostics: Option<BinaryProbeDiagnostics>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -171,17 +186,39 @@ pub fn file_digest(path: &Path) -> DesktopResult<String> {
     Ok(format!("{:x}", hasher.finalize()))
 }
 
-fn executable(path: &Path) -> bool {
+fn has_execute_permission(metadata: &std::fs::Metadata) -> bool {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        return std::fs::metadata(path)
-            .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0);
+        metadata.permissions().mode() & 0o111 != 0
     }
     #[cfg(not(unix))]
     {
-        path.is_file()
+        // Windows has no Unix execute bit. Only the bounded startup probe below
+        // supplies execution evidence; file existence never does.
+        let _ = metadata;
+        true
     }
+}
+
+fn probe_diagnostics(error: &DesktopError) -> Option<BinaryProbeDiagnostics> {
+    let details = error.details.as_ref()?;
+    let diagnostics = BinaryProbeDiagnostics {
+        exit_code: details
+            .get("exit_code")
+            .and_then(serde_json::Value::as_i64)
+            .and_then(|code| i32::try_from(code).ok()),
+        io_kind: details
+            .get("io_kind")
+            .and_then(serde_json::Value::as_str)
+            .filter(|kind| kind.len() <= 64 && kind.bytes().all(|byte| byte.is_ascii_alphabetic()))
+            .map(str::to_string),
+    };
+    (diagnostics.exit_code.is_some() || diagnostics.io_kind.is_some()).then_some(diagnostics)
+}
+
+fn presence_after_inspection_error(kind: std::io::ErrorKind) -> Option<bool> {
+    (kind == std::io::ErrorKind::NotFound).then_some(false)
 }
 
 fn host_compatible(info: &MachineBuildInfo) -> bool {
@@ -205,17 +242,39 @@ async fn probe_binary(
 ) -> DesktopResult<BinaryProbe> {
     let mut result = BinaryProbe {
         name: name.into(),
-        present: path.is_file(),
-        executable: executable(path),
+        present: None,
+        startup_check: BinaryStartupCheck::NotChecked,
         metadata: None,
         sha256: None,
         error_code: None,
+        diagnostics: None,
     };
-    if !result.present {
+    let metadata = match std::fs::metadata(path) {
+        Ok(metadata) => metadata,
+        Err(e) => {
+            result.present = presence_after_inspection_error(e.kind());
+            result.error_code = Some(
+                if result.present == Some(false) {
+                    "binary_missing"
+                } else {
+                    "runtime_file_unreadable"
+                }
+                .into(),
+            );
+            result.diagnostics = Some(BinaryProbeDiagnostics {
+                exit_code: None,
+                io_kind: Some(format!("{:?}", e.kind())),
+            });
+            return Ok(result);
+        }
+    };
+    result.present = Some(metadata.is_file());
+    if !metadata.is_file() {
         result.error_code = Some("binary_missing".into());
         return Ok(result);
     }
-    if !result.executable {
+    if !has_execute_permission(&metadata) {
+        result.startup_check = BinaryStartupCheck::Failed;
         result.error_code = Some("binary_not_executable".into());
         return Ok(result);
     }
@@ -243,8 +302,13 @@ async fn probe_binary(
     .await;
     match info {
         Err(e) if e.code == "desktop_operation_cancelled" => return Err(e),
-        Err(_) => result.error_code = Some("build_info_unverifiable".into()),
+        Err(e) => {
+            result.startup_check = BinaryStartupCheck::Failed;
+            result.diagnostics = probe_diagnostics(&e);
+            result.error_code = Some(e.code);
+        }
         Ok(info) => {
+            result.startup_check = BinaryStartupCheck::Passed;
             let validation = info.validate(name).map_err(str::to_string);
             match validation {
                 Err(code) => result.error_code = Some(code),
@@ -265,7 +329,14 @@ async fn probe_binary(
     let owned = path.to_path_buf();
     let after = tokio::task::spawn_blocking(move || file_digest(&owned))
         .await
-        .map_err(|_| error("binary_probe_failed"))??;
+        .map_err(|_| error("binary_probe_failed"))?;
+    let after = match after {
+        Ok(digest) => digest,
+        Err(e) => {
+            result.error_code = Some(e.code);
+            return Ok(result);
+        }
+    };
     if before != after {
         result.error_code = Some("runtime_candidate_changed".into());
     }
@@ -319,7 +390,16 @@ pub async fn probe(
         );
     }
     if let Some(code) = view.binaries.iter().find_map(|b| b.error_code.clone()) {
-        view.compatibility = ProtocolCompatibility::Incompatible;
+        // Missing, unreadable or blocked executables provide no protocol
+        // evidence. Only observed incompatible metadata proves a mismatch.
+        if view.binaries.iter().any(|binary| {
+            matches!(
+                binary.error_code.as_deref(),
+                Some("runtime_contract_incompatible" | "binary_architecture_mismatch")
+            )
+        }) {
+            view.compatibility = ProtocolCompatibility::Incompatible;
+        }
         view.error_code = Some(code);
         return Ok((view, None));
     }
@@ -481,11 +561,12 @@ pub fn candidate_from_resolved(
             .iter()
             .map(|build| BinaryProbe {
                 name: build.binary.clone(),
-                present: true,
-                executable: true,
+                present: Some(true),
+                startup_check: BinaryStartupCheck::Passed,
                 metadata: Some(build.clone()),
                 sha256: None,
                 error_code: None,
+                diagnostics: None,
             })
             .collect(),
         compatibility: if binaries.builds.len() == 3 {

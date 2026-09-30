@@ -50,6 +50,10 @@ Candidate inspection executes the selected binaries' bounded `--build-info-json`
 
 The candidate preview does not change active processes or the persisted selection. Different versions, different revisions, and dirty builds are accepted with advisories when the contracts overlap. Missing/non-executable files, wrong observable architecture, unsupported/malformed metadata or disjoint contracts block activation.
 
+File presence and **Startup check** are separate observations. A present file is not proof of permission to execute, including on Windows. Startup passes only when the bounded `--build-info-json` command succeeds and returns readable build information; declarations are then validated separately. Missing or unreadable files show **Not checked**, and filesystem inspection failures leave presence **Unconfirmed** rather than claiming the file is missing. A failed probe keeps compatibility **Unknown** unless observed build information proves an architecture or contract mismatch. All unverified candidates remain blocked from activation.
+
+The required-file checks and recovery guidance are visible without expanding build details. Failure details retain only the process exit code and safe I/O error kind, never arbitrary stderr or command output. For example, Windows `0xC0000022` means access was denied during startup; it does not identify Defender, AppLocker or another security component as the cause. Check OS protection history and collect a scoped launch trace when needed. A quarantined or missing executable is a separate case. These observations do not change OS security policy, restore quarantined files, or restart services.
+
 Choose **Use this Runtime** only after reviewing the preview. **Use bundled Runtime** stages the bundled candidate for the same explicit confirmation flow. **Recheck Runtime** observes the currently selected files; it does not silently restart services or approve changed bytes.
 
 ### Switching, Jobs, and rollback

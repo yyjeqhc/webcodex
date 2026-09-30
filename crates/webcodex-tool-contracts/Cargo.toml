@@ -14,7 +14,9 @@ workspace-checkpoints = []
 [dependencies]
 webcodex-core = { path = "../webcodex-core" }
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# Integral `.0` read fences must survive JSON parsing exactly up to 2^53-1.
+# The default fast float parser can misread 9007199254740991.0 by one.
+serde_json = { version = "1", features = ["float_roundtrip"] }
 schemars = "=1.2.2"
 
 [dev-dependencies]

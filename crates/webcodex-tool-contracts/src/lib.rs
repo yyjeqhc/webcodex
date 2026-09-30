@@ -7,6 +7,7 @@
 
 pub mod input_normalization;
 pub mod metadata;
+mod read_revision;
 pub mod registry;
 pub mod request_schema;
 mod schema_generation;

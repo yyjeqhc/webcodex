@@ -351,6 +351,7 @@ enum ApplyFileChangeWireInput {
         #[schemars(length(min = 1))]
         path: String,
         #[schemars(range(min = 1, max = 9007199254740991u64))]
+        #[serde(deserialize_with = "crate::read_revision::deserialize")]
         expected_read_revision: u64,
         /// All edits resolve against the original read snapshot; use ONE change per file.
         #[schemars(length(min = 1, max = 20))]
@@ -365,6 +366,7 @@ enum ApplyFileChangeWireInput {
         #[schemars(length(min = 1))]
         path: String,
         #[schemars(range(min = 1, max = 9007199254740991u64))]
+        #[serde(deserialize_with = "crate::read_revision::deserialize")]
         expected_read_revision: u64,
     },
     Rename {
@@ -373,6 +375,7 @@ enum ApplyFileChangeWireInput {
         #[schemars(length(min = 1))]
         to_path: String,
         #[schemars(range(min = 1, max = 9007199254740991u64))]
+        #[serde(deserialize_with = "crate::read_revision::deserialize")]
         expected_read_revision: u64,
     },
 }
@@ -454,11 +457,6 @@ impl<'de> Deserialize<'de> for ApplyFileChangeInput {
                     Some(expected_read_revision),
                 ),
             };
-        if revision.is_some_and(|r| !(1..=9_007_199_254_740_991).contains(&r)) {
-            return Err(serde::de::Error::custom(
-                "expected_read_revision must be a positive JSON-safe integer",
-            ));
-        }
         Ok(Self {
             kind,
             path,

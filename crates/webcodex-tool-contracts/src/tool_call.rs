@@ -438,13 +438,7 @@ fn deserialize_optional_read_revision<'de, D>(deserializer: D) -> Result<Option<
 where
     D: serde::Deserializer<'de>,
 {
-    let revision = u64::deserialize(deserializer)?;
-    if !(1..=9_007_199_254_740_991_u64).contains(&revision) {
-        return Err(serde::de::Error::custom(
-            "expected_read_revision must be a positive JSON-safe integer",
-        ));
-    }
-    Ok(Some(revision))
+    crate::read_revision::deserialize(deserializer).map(Some)
 }
 
 fn deserialize_non_empty_job_id<'de, D>(deserializer: D) -> Result<String, D::Error>

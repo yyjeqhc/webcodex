@@ -3,6 +3,8 @@ use crate::runner_protocol::{
     RunnerPolicySummary, RunnerResultPayload, ShellCommandExecutionState,
 };
 use response::{mcp_runtime_tool_result_fallback, McpToolResultPresentation};
+#[path = "structured_failure/client_contract.rs"]
+mod client_contract;
 use webcodex_core::mcp_gateway::{
     McpGatewayContent, McpGatewayProvider, McpGatewayRequest, McpGatewayResponse,
     McpGatewayResponsePayload, McpGatewayTool, McpGatewayToolResult,

@@ -1276,7 +1276,7 @@ beforeEach(() => {
   });
 
   it.each([{ enabled: false, autostart: true }, { enabled: true, autostart: false }])("preserves manual connection preferences on launch: %j", async preferences => {
-    api.getState.mockResolvedValue({ ...readyState, runtime_autostart: false, connections: connectionSnapshot(connectionFixture(preferences)) });
+    api.getState.mockResolvedValue({ ...readyState, runtime_autostart: false, connections: connectionSnapshot(connectionFixture({ ...preferences, process_started: false, lifecycle: "stopped", ready: false, pid: null })) });
     renderApp();
     await screen.findByRole("heading", { name: "工作概览", level: 1 });
     expect(api.resumeSavedConnections).not.toHaveBeenCalled();

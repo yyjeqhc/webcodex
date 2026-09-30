@@ -3,6 +3,13 @@ import { useLocale } from "./locale";
 // Product vocabulary is grouped by task rather than by implementation module.
 // Column order: English, Simplified Chinese, German, French, Japanese, Korean, Traditional Chinese.
 export const PRODUCT_MESSAGES = {
+  sharedPaths: ["Shared by all projects. Save to apply without restarting Runner.", "所有项目共用，保存后生效，无需重启 Runner。", "Für alle Projekte. Speichern wendet die Änderung ohne Runner-Neustart an.", "Partagés par tous les projets. Enregistrez sans redémarrer le Runner.", "全プロジェクト共通です。保存すると再起動せず適用されます。", "모든 프로젝트에서 공유합니다. 저장하면 Runner 재시작 없이 적용됩니다.", "所有專案共用，儲存後生效，無需重新啟動 Runner。"],
+  absolutePath: ["Full file or folder path", "文件或文件夹的完整路径", "Vollständiger Datei- oder Ordnerpfad", "Chemin complet du fichier ou dossier", "ファイルまたはフォルダーのフルパス", "파일 또는 폴더의 전체 경로", "檔案或資料夾的完整路徑"],
+  enterPath: ["Enter a path", "输入路径", "Pfad eingeben", "Saisir un chemin", "パスを入力", "경로 입력", "輸入路徑"],
+  pathLimit: ["Up to 16 paths", "最多 16 个路径", "Bis zu 16 Pfade", "16 chemins maximum", "最大 16 パス", "최대 16개 경로", "最多 16 個路徑"],
+  selectProjectPreview: ["Choose a project to see which extensions it can use.", "选择项目，查看它实际可以使用的扩展。", "Projekt wählen, um verfügbare Erweiterungen zu sehen.", "Choisissez un projet pour voir ses extensions disponibles.", "プロジェクトを選択し、利用可能な拡張機能を確認します。", "프로젝트를 선택하여 사용 가능한 확장을 확인하세요.", "選擇專案，查看它實際可以使用的擴充功能。"],
+  noProjectSkills: ["No Skills available to this project. Add a Skill folder above.", "此项目暂无可用 Skill，可在上方添加 Skill 文件夹。", "Keine Skills verfügbar. Oben einen Skill-Ordner hinzufügen.", "Aucun Skill disponible. Ajoutez un dossier de Skills ci-dessus.", "利用可能な Skill がありません。上で Skill フォルダーを追加してください。", "사용 가능한 Skill이 없습니다. 위에서 Skill 폴더를 추가하세요.", "此專案暫無可用 Skill，可在上方新增 Skill 資料夾。"],
+  settingsUnavailable: ["Runner settings could not be read. Check the connection and refresh.", "无法读取 Runner 设置，请检查连接后刷新。", "Runner-Einstellungen nicht verfügbar. Verbindung prüfen und aktualisieren.", "Paramètres du Runner indisponibles. Vérifiez la connexion et actualisez.", "Runner 設定を読み込めません。接続を確認し更新してください。", "Runner 설정을 읽지 못했습니다. 연결을 확인하고 새로 고침하세요.", "無法讀取 Runner 設定，請檢查連線後重新整理。"],
   projectShortcut: ["Manage working folders", "管理工作目录", "Arbeitsordner verwalten", "Gérer les dossiers de travail", "作業フォルダーを管理", "작업 폴더 관리", "管理工作目錄"],
   activityShortcut: ["View calls and sessions", "查看调用与会话", "Aufrufe und Sitzungen ansehen", "Voir les appels et les sessions", "呼び出しとセッションを確認", "호출 및 세션 보기", "檢視呼叫與會話"],
   extensionShortcut: ["Manage tools and instructions", "管理工具与指令", "Werkzeuge und Anweisungen verwalten", "Gérer les outils et les instructions", "ツールと指示を管理", "도구 및 지침 관리", "管理工具與指令"],

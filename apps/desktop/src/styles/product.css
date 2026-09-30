@@ -376,6 +376,19 @@
 .extensions-content h2 { margin: 0 0 18px; font-size: 18px; }
 .extension-project-preview { margin-top: 36px; padding-top: 28px; border-top: 1px solid var(--ui-border-subtle); }
 .extension-path-settings.primary { margin-top: 0; padding-top: 0; border-top: 0; }
+.extension-path-editor { gap: 16px; padding-top: 0; }
+.extension-scope-note { margin: 0; color: var(--ui-text-secondary); font-size: 14px; line-height: 1.6; }
+.extension-path-list { display: grid; gap: 12px; }
+.extension-path-row { display: grid; grid-template-columns: 24px minmax(0, 1fr) 44px; gap: 10px; align-items: center; }
+.extension-path-number { color: var(--ui-text-tertiary); font-size: 14px; text-align: center; }
+.extension-path-remove { display: grid; place-items: center; min-width: 44px; padding: 0; }
+.extension-path-add-actions, .extension-path-save-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.extension-path-add-actions .ui-mantine-button, .extension-path-save-actions .ui-mantine-button { min-height: 44px; }
+.extension-path-save-actions { padding-top: 16px; border-top: 1px solid var(--ui-border-subtle); }
+.extension-path-save-actions > span, .extension-path-add-actions > span { color: var(--ui-text-secondary); font-size: 14px; }
+.extensions-content > h2 { margin-top: 0; }
+.extensions-content .extension-toolbar { justify-content: flex-start; gap: 12px; flex-wrap: wrap; }
+.extension-project-preview .activity-project-filter { margin-bottom: 24px; }
 .connection-context { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 28px; padding-block: 16px; margin-bottom: 24px; border-block: 1px solid var(--ui-border-subtle); font-size: 14px; color: var(--ui-text-secondary); }
 .connection-context > button { margin-left: auto; }
 .connection-list { gap: 24px; border-top: 0; }

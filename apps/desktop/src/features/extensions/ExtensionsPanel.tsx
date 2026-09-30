@@ -31,6 +31,7 @@ export function ExtensionsPanel({ state, onState }: { state: DesktopState; onSta
   const [project, setProject] = useState(state.project?.runtime_project_id || "");
   const [catalog, setCatalog] = useState<ExtensionsSnapshot | null>(null);
   const [settings, setSettings] = useState<RunnerSettings | null>(null);
+  const [settingsFailed, setSettingsFailed] = useState(false);
   const [loading, setLoading] = useState(false);
   const [failed, setFailed] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -56,27 +57,25 @@ export function ExtensionsPanel({ state, onState }: { state: DesktopState; onSta
   // configuration drafts or reload their authority fence.
   useEffect(() => {
     let cancelled = false;
-    void desktopApi.runnerSettings().then(value => { if (!cancelled) setSettings(value); }).catch(() => { if (!cancelled) setSettings(null); });
+    setSettingsFailed(false);
+    void desktopApi.runnerSettings().then(value => { if (!cancelled) setSettings(value); }).catch(() => { if (!cancelled) setSettingsFailed(true); });
     return () => { cancelled = true; };
   }, [revision]);
   const disabled = busy || Boolean(state.current_operation);
   const refresh = () => setRevision(value => value + 1);
   const updatePaths = async (paths: RunnerSettings["paths"]) => {
-    if (!settings || disabled) return false;
+    if (!settings || disabled || settingsFailed) return false;
     setBusy(true); setPathsError(null); setPathsApplied(false);
     try { onState(await desktopApi.updateRunnerSettings(settings.target, settings.paths, paths)); if (alive.current) { setPathsApplied(true); refresh(); } return true; }
     catch (value) { if (alive.current) setPathsError(normalizeDesktopError(value)); return false; }
     finally { if (alive.current) setBusy(false); }
   };
-  const addFile = async (kind: "instructions" | "skills") => {
-    if (!settings || disabled) return;
+  const browsePath = async (kind: "instructions" | "skills") => {
+    if (!settings || disabled || settingsFailed) return null;
     try {
       const target = await open({ title: p(kind === "instructions" ? "addInstructions" : "addSkill"), directory: kind === "skills", multiple: false });
-      if (!target || typeof target !== "string" || !alive.current) return;
-      const key = kind === "instructions" ? "instruction_files" : "skill_roots";
-      if (settings.paths[key].includes(target)) return;
-      await updatePaths({ ...settings.paths, [key]: [...settings.paths[key], target] });
-    } catch { if (alive.current) setFailed(true); }
+      return typeof target === "string" && alive.current ? target : null;
+    } catch (value) { if (alive.current) setPathsError(normalizeDesktopError(value)); return null; }
   };
   const restart = async () => {
     if (!settings?.can_restart || disabled) return;
@@ -97,28 +96,28 @@ export function ExtensionsPanel({ state, onState }: { state: DesktopState; onSta
       }}><Icon size={18} aria-hidden="true" />{value === "instructions" ? p("instructions") : value === "skills" ? "Skills" : value === "mcpProviders" ? c("mcpProviders") : r(value)}</button>; })}
     </div>
     <div className="extensions-content" role="tabpanel" id={`extension-view-${tab}`} aria-labelledby={`extension-tab-${tab}`}>
+    {settingsFailed && <div className="extension-apply-bar" role="alert"><span>{p("settingsUnavailable")}</span><button type="button" className="secondary-button" disabled={disabled} onClick={refresh}>{p("refresh")}</button></div>}
+    {!projectTab && <h2>{tab === "mcpProviders" ? c("mcpProviders") : r(tab)}</h2>}
     <ManagedInstructionsPanel active={tab === "instructions"} settings={settings} disabled={disabled} onState={onState} onEnabled={refresh} />
-    {settings && <div className={`extension-path-settings${tab === "skills" ? " primary" : ""}`} hidden={!projectTab}><h2>{p(tab === "skills" ? "skillPaths" : "instructionPaths")}</h2><ExtensionPathsEditor settings={settings} kind={tab === "skills" ? "skills" : "instructions"} disabled={disabled} onSave={updatePaths} /></div>}
+    {settings && <div className={`extension-path-settings${tab === "skills" ? " primary" : ""}`} hidden={!projectTab}><h2>{p(tab === "skills" ? "skillPaths" : "instructionPaths")}</h2><ExtensionPathsEditor settings={settings} kind={tab === "skills" ? "skills" : "instructions"} disabled={disabled || settingsFailed} onSave={updatePaths} onBrowse={browsePath} /></div>}
     {pathsApplied && projectTab && <p className="extension-apply-bar" role="status">{instructionsText("pathsApplied")}</p>}
     {pathsError && projectTab && <div className="error-card" role="alert"><strong>{pathsError.message}</strong><span>{pathsError.next_action}</span><code>{pathsError.code}</code></div>}
     {failed && projectTab && <p role="alert" className="workspace-notice">{p("loadError")}</p>}
     {pendingRestart && tab === "mcpProviders" && <div className="extension-apply-bar" role="status"><span>{p("needsRestart")}</span>{settings?.can_restart && <button className="secondary-button" onClick={() => void restart()} disabled={disabled}>{p("restartRunner")}</button>}</div>}
     {loading && projectTab && <p role="status">{p("loading")}</p>}
-    {(!loading || !projectTab) && <section className={projectTab ? "extension-project-preview" : undefined}>
+    <section className={projectTab ? "extension-project-preview" : undefined}>
       {projectTab && <><h2>{p("projectExtensions")}</h2><div className="activity-project-filter"><span className="filter-label">{p("projects")}</span><ProjectPicker label={p("projects")} emptyLabel={p("noMatches")} searchLabel={p("search")} value={project} onChange={setProject} disabled={disabled} options={workspace.projects.filter(row => row.id).map(row => ({ value: row.id, label: projectName(row), detail: displayProjectPath(row.path) }))} /></div></>}
+      {projectTab && !project && <WorkspaceEmptyState kind={tab === "instructions" ? "document" : "skill"} message={p("selectProjectPreview")} />}
       {tab === "codingAgents" && <CodingAgentsPanel state={state} onState={onState} settings={settings} onRestarted={() => { setPendingRestart(false); refresh(); }} />}
       {tab === "sshResources" && <SshResourcesPanel state={state} onState={onState} settings={settings} onRestarted={() => { setPendingRestart(false); refresh(); }} />}
       {tab === "instructions" && <>
-        <h3>{instructionsText("advanced")}</h3>
-        <div className="extension-toolbar"><button type="button" className="secondary-button" disabled={!settings || disabled} onClick={() => void addFile("instructions")}>{p("addInstructions")}</button></div>
         {catalog?.instructions.files.map(file => <article className="extension-row" key={`${file.source_scope}:${file.path}`}><div><strong>{file.source_scope === "runner" ? p("globalInstructions") : file.path.split(/[\\/]/).pop()}</strong><span>{file.source_scope === "runner" ? "Runner" : projectName(workspace.projects.find(row => row.id === project) || { id: project })} · {p("available")}</span><details><summary>{p("details")}</summary><code>{file.path}</code></details></div><button className="secondary-button" onClick={() => setDocument(file)} aria-label={`${p("open")} ${file.path.split(/[\\/]/).pop()}`}>{p("open")}</button></article>)}
         {catalog?.instructions.scan_complete && !catalog.instructions.files.length && <WorkspaceEmptyState kind="document" message={p("noInstructions")} />}
         {catalog && !catalog.instructions.scan_complete && <p className="workspace-notice">{p("unavailable")}</p>}
       </>}
       {tab === "skills" && <>
-        {!!skills.length && <div className="extension-toolbar"><button type="button" className="secondary-button" onClick={() => void addFile("skills")} disabled={!settings || disabled}>{p("addSkill")}</button></div>}
         {skills.map(skill => <article className="extension-row" key={skill.skill_id}><div><strong>{skill.name}</strong><p>{skill.description}</p><span>{skill.source_scope === "project" ? projectName(workspace.projects.find(row => row.id === project) || { id: project }) : "Runner"} · {p("available")}</span></div><details><summary>{p("details")}</summary><code>{skill.trust}</code></details></article>)}
-        {catalog?.skills.available && !skills.length && <WorkspaceEmptyState kind="skill" message={p("noExtensions")} action={<button type="button" className="primary-button" onClick={() => void addFile("skills")} disabled={!settings || disabled}>{p("addSkill")}</button>} />}
+        {catalog?.skills.available && !skills.length && <WorkspaceEmptyState kind="skill" message={p("noProjectSkills")} />}
         {catalog && !catalog.skills.available && <p className="workspace-notice">{p("unavailable")}</p>}
         {catalog?.skills.catalog?.truncated && <p>{p("partial")}</p>}
       </>}
@@ -141,7 +140,7 @@ export function ExtensionsPanel({ state, onState }: { state: DesktopState; onSta
         }} />}
         </details>
       </>}
-    </section>}
+    </section>
     </div>
     </div>
     {document && <InstructionDocument key={document.fingerprint} project={project} file={document} onClose={() => setDocument(null)} />}

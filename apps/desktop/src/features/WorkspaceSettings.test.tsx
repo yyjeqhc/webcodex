@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { useState } from "react";
 import { MantineProvider } from "@mantine/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -113,6 +113,38 @@ describe("workspace configuration boundaries", () => {
     await screen.findByText("Instruction and Skill paths applied without restarting Runner.");
     expect(screen.queryByRole("button", { name: "Restart Runner" })).not.toBeInTheDocument();
     expect(api.restartOwnedRunner).not.toHaveBeenCalled();
+  });
+
+  it("stages picked Skill folders before an explicit exact-target save", async () => {
+    const observed = structuredClone(settings.paths);
+    dialog.open.mockResolvedValueOnce("/fixture/picked-skills");
+    render(wrap(<ExtensionsPanel state={state} onState={onState} />));
+    fireEvent.click(screen.getByRole("tab", { name: "Skills" }));
+    await screen.findByLabelText("Configured Skill roots");
+    fireEvent.click(screen.getByRole("button", { name: "Add Skill Folder" }));
+    await waitFor(() => expect(screen.getByLabelText("Configured Skill roots 2")).toHaveValue("/fixture/picked-skills"));
+    expect(dialog.open).toHaveBeenCalledWith(expect.objectContaining({ directory: true, multiple: false }));
+    expect(api.updateRunnerSettings).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(api.updateRunnerSettings).toHaveBeenCalledExactlyOnceWith(target, observed, { ...observed, skill_roots: [...observed.skill_roots, "/fixture/picked-skills"] }));
+    expect(api.restartOwnedRunner).not.toHaveBeenCalled();
+  });
+
+  it("keeps path drafts visible through a failed settings refresh and permits recovery", async () => {
+    render(wrap(<ExtensionsPanel state={state} onState={onState} />));
+    fireEvent.click(screen.getByRole("tab", { name: "Skills" }));
+    const input = await screen.findByLabelText("Configured Skill roots");
+    fireEvent.change(input, { target: { value: "/fixture/unsaved-skills" } });
+    api.runnerSettings.mockRejectedValueOnce(new Error("fixture settings unavailable"));
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Runner settings could not be read");
+    expect(input).toHaveValue("/fixture/unsaved-skills");
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    fireEvent.click(within(alert).getByRole("button", { name: "Refresh" }));
+    await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());
+    expect(input).toHaveValue("/fixture/unsaved-skills");
+    expect(api.updateRunnerSettings).not.toHaveBeenCalled();
   });
 
   it("validates native Plugin arguments and writes only a new explicit registration", async () => {

@@ -1,7 +1,7 @@
 use super::agent_attention::{require_agent_attention_event_for_wake, AgentAttentionSource};
 use super::agent_task::{
-    replace_agent_task_attempt_controller_in_transaction, AGENT_TASK_ENDPOINT_DISPATCH_GRACE_MS,
-    AGENT_TASK_ENDPOINT_TAKEOVER_LEASE_MS,
+    replace_agent_task_attempt_controller_in_transaction, AttemptAuthority,
+    AGENT_TASK_ENDPOINT_DISPATCH_GRACE_MS, AGENT_TASK_ENDPOINT_TAKEOVER_LEASE_MS,
 };
 use super::agent_wait::{
     require_agent_wait_for_wake, resume_agent_wait_for_wake_in_transaction,
@@ -2602,16 +2602,15 @@ fn bind_agent_task_wake_carrier(
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .map_err(store_error)?;
-    replace_agent_task_attempt_controller_in_transaction(
-        transaction,
+    let authority = AttemptAuthority::validated(
         principal,
         task_id,
         task_attempt_id,
         &wake.target_agent_id,
         &attempt_fence,
         attempt_controller_generation,
-        now,
     )?;
+    replace_agent_task_attempt_controller_in_transaction(transaction, principal, authority, now)?;
     let changed = transaction
         .execute(
             "UPDATE wc_agent_task_endpoint_executions
@@ -2918,14 +2917,18 @@ fn fence_agent_task_controllers_for_endpoint_loss(
             kind: principal_kind,
             digest: principal_digest,
         };
-        replace_agent_task_attempt_controller_in_transaction(
-            transaction,
+        let authority = AttemptAuthority::validated(
             &principal,
             &task_id,
             &attempt_id,
             &assignee_agent_id,
             &attempt_fence,
             attempt_controller_generation,
+        )?;
+        replace_agent_task_attempt_controller_in_transaction(
+            transaction,
+            &principal,
+            authority,
             now,
         )?;
     }

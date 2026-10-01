@@ -1312,15 +1312,15 @@ impl Database {
         attempt_fence: &str,
         attempt_controller_generation: i64,
     ) -> Result<AgentTaskEndpointExecutionMutation, CommunicationStoreError> {
-        self.start_agent_task_endpoint_continuation_with_now(
+        let authority = AttemptAuthority::validated(
             principal,
             task_id,
             attempt_id,
             assignee_agent_id,
             attempt_fence,
             attempt_controller_generation,
-            now_unix_ms(),
-        )
+        )?;
+        self.start_agent_task_endpoint_continuation_with_now(principal, authority, now_unix_ms())
     }
 
     #[cfg(test)]
@@ -1335,29 +1335,7 @@ impl Database {
         attempt_controller_generation: i64,
         now: i64,
     ) -> Result<AgentTaskEndpointExecutionMutation, CommunicationStoreError> {
-        self.start_agent_task_endpoint_continuation_with_now(
-            principal,
-            task_id,
-            attempt_id,
-            assignee_agent_id,
-            attempt_fence,
-            attempt_controller_generation,
-            now,
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn start_agent_task_endpoint_continuation_with_now(
-        &self,
-        principal: &CommunicationPrincipal,
-        task_id: &str,
-        attempt_id: &str,
-        assignee_agent_id: &str,
-        attempt_fence: &str,
-        attempt_controller_generation: i64,
-        now: i64,
-    ) -> Result<AgentTaskEndpointExecutionMutation, CommunicationStoreError> {
-        validate_attempt_mutation_inputs(
+        let authority = AttemptAuthority::validated(
             principal,
             task_id,
             attempt_id,
@@ -1365,15 +1343,21 @@ impl Database {
             attempt_fence,
             attempt_controller_generation,
         )?;
+        self.start_agent_task_endpoint_continuation_with_now(principal, authority, now)
+    }
+
+    fn start_agent_task_endpoint_continuation_with_now(
+        &self,
+        principal: &CommunicationPrincipal,
+        authority: AttemptAuthority<'_>,
+        now: i64,
+    ) -> Result<AgentTaskEndpointExecutionMutation, CommunicationStoreError> {
+        let task_id = authority.task_id;
+        let attempt_id = authority.attempt_id;
+        let assignee_agent_id = authority.assignee_agent_id;
         let start_identity_fingerprint = digest_json(
             "webcodex.agent-task.endpoint-continuation.start.v1",
-            &json!({
-                "task_id": task_id,
-                "attempt_id": attempt_id,
-                "assignee_agent_id": assignee_agent_id,
-                "attempt_fence": attempt_fence,
-                "attempt_controller_generation": attempt_controller_generation,
-            }),
+            &authority.identity_json(),
         )
         .expect("AgentTask endpoint continuation identity serializes");
         let mut conn = self.lock_connection(crate::StoreDomain::AgentTask);
@@ -1414,15 +1398,7 @@ impl Database {
             });
         }
 
-        let _attempt = require_current_attempt(
-            &transaction,
-            &task,
-            attempt_id,
-            assignee_agent_id,
-            attempt_fence,
-            attempt_controller_generation,
-            now,
-        )?;
+        let _attempt = require_current_attempt(&transaction, &task, authority, now)?;
         if load_coding_run_binding_for_attempt(&transaction, task_id, attempt_id)?.is_some() {
             return Err(CommunicationStoreError::new(
                 "agent_task_execution_backend_conflict",
@@ -1501,17 +1477,15 @@ impl Database {
         attempt_fence: &str,
         attempt_controller_generation: i64,
     ) -> Result<AgentTaskAttemptHeartbeatMutation, CommunicationStoreError> {
-        self.heartbeat_agent_task_attempt_with_now(
+        let authority = AttemptAuthority::validated(
             principal,
             task_id,
             attempt_id,
             assignee_agent_id,
             attempt_fence,
             attempt_controller_generation,
-            None,
-            None,
-            None,
-        )
+        )?;
+        self.heartbeat_agent_task_attempt_with_now(principal, authority, None, None, None)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1526,13 +1500,17 @@ impl Database {
         active_turn_wake_id: Option<&str>,
         active_turn_consume_token: Option<&str>,
     ) -> Result<AgentTaskAttemptHeartbeatMutation, CommunicationStoreError> {
-        self.heartbeat_agent_task_attempt_with_now(
+        let authority = AttemptAuthority::validated(
             principal,
             task_id,
             attempt_id,
             assignee_agent_id,
             attempt_fence,
             attempt_controller_generation,
+        )?;
+        self.heartbeat_agent_task_attempt_with_now(
+            principal,
+            authority,
             active_turn_wake_id,
             active_turn_consume_token,
             None,
@@ -1551,17 +1529,15 @@ impl Database {
         attempt_controller_generation: i64,
         now: i64,
     ) -> Result<AgentTaskAttemptHeartbeatMutation, CommunicationStoreError> {
-        self.heartbeat_agent_task_attempt_with_now(
+        let authority = AttemptAuthority::validated(
             principal,
             task_id,
             attempt_id,
             assignee_agent_id,
             attempt_fence,
             attempt_controller_generation,
-            None,
-            None,
-            Some(now),
-        )
+        )?;
+        self.heartbeat_agent_task_attempt_with_now(principal, authority, None, None, Some(now))
     }
 
     #[cfg(test)]
@@ -1578,33 +1554,7 @@ impl Database {
         active_turn_consume_token: Option<&str>,
         now: i64,
     ) -> Result<AgentTaskAttemptHeartbeatMutation, CommunicationStoreError> {
-        self.heartbeat_agent_task_attempt_with_now(
-            principal,
-            task_id,
-            attempt_id,
-            assignee_agent_id,
-            attempt_fence,
-            attempt_controller_generation,
-            active_turn_wake_id,
-            active_turn_consume_token,
-            Some(now),
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn heartbeat_agent_task_attempt_with_now(
-        &self,
-        principal: &CommunicationPrincipal,
-        task_id: &str,
-        attempt_id: &str,
-        assignee_agent_id: &str,
-        attempt_fence: &str,
-        attempt_controller_generation: i64,
-        active_turn_wake_id: Option<&str>,
-        active_turn_consume_token: Option<&str>,
-        now: Option<i64>,
-    ) -> Result<AgentTaskAttemptHeartbeatMutation, CommunicationStoreError> {
-        validate_attempt_mutation_inputs(
+        let authority = AttemptAuthority::validated(
             principal,
             task_id,
             attempt_id,
@@ -1612,6 +1562,26 @@ impl Database {
             attempt_fence,
             attempt_controller_generation,
         )?;
+        self.heartbeat_agent_task_attempt_with_now(
+            principal,
+            authority,
+            active_turn_wake_id,
+            active_turn_consume_token,
+            Some(now),
+        )
+    }
+
+    fn heartbeat_agent_task_attempt_with_now(
+        &self,
+        principal: &CommunicationPrincipal,
+        authority: AttemptAuthority<'_>,
+        active_turn_wake_id: Option<&str>,
+        active_turn_consume_token: Option<&str>,
+        now: Option<i64>,
+    ) -> Result<AgentTaskAttemptHeartbeatMutation, CommunicationStoreError> {
+        let task_id = authority.task_id;
+        let attempt_id = authority.attempt_id;
+        let assignee_agent_id = authority.assignee_agent_id;
         let active_turn_proof = match (active_turn_wake_id, active_turn_consume_token) {
             (None, None) => None,
             (Some(wake_id), Some(consume_token)) => {
@@ -1640,15 +1610,7 @@ impl Database {
             .map_err(store_error)?;
         let now = now.unwrap_or_else(now_unix_ms);
         let task = load_owned_task(&transaction, principal, task_id, now)?;
-        let attempt = require_current_attempt(
-            &transaction,
-            &task,
-            attempt_id,
-            assignee_agent_id,
-            attempt_fence,
-            attempt_controller_generation,
-            now,
-        )?;
+        let attempt = require_current_attempt(&transaction, &task, authority, now)?;
 
         let renewal_window_ms = if let Some((wake_id, consume_token)) = active_turn_proof {
             let consume_token_hash =
@@ -1755,7 +1717,7 @@ impl Database {
         expected_controller_generation: i64,
         now: i64,
     ) -> Result<AgentTaskAttemptRecord, CommunicationStoreError> {
-        validate_attempt_mutation_inputs(
+        let authority = AttemptAuthority::validated(
             principal,
             task_id,
             attempt_id,
@@ -1770,11 +1732,7 @@ impl Database {
         let record = replace_agent_task_attempt_controller_in_transaction(
             &transaction,
             principal,
-            task_id,
-            attempt_id,
-            assignee_agent_id,
-            attempt_fence,
-            expected_controller_generation,
+            authority,
             now,
         )?;
         transaction.commit().map_err(store_error)?;
@@ -1795,13 +1753,17 @@ impl Database {
         terminal_reason: Option<&str>,
         completion_key: &str,
     ) -> Result<AgentTaskAttemptCompletionMutation, CommunicationStoreError> {
-        self.complete_agent_task_attempt_with_now(
+        let authority = AttemptAuthority::validated(
             principal,
             task_id,
             attempt_id,
             assignee_agent_id,
             attempt_fence,
             attempt_controller_generation,
+        )?;
+        self.complete_agent_task_attempt_with_now(
+            principal,
+            authority,
             outcome,
             terminal_result,
             terminal_reason,
@@ -1826,13 +1788,17 @@ impl Database {
         completion_key: &str,
         now: i64,
     ) -> Result<AgentTaskAttemptCompletionMutation, CommunicationStoreError> {
-        self.complete_agent_task_attempt_with_now(
+        let authority = AttemptAuthority::validated(
             principal,
             task_id,
             attempt_id,
             assignee_agent_id,
             attempt_fence,
             attempt_controller_generation,
+        )?;
+        self.complete_agent_task_attempt_with_now(
+            principal,
+            authority,
             outcome,
             terminal_result,
             terminal_reason,
@@ -1845,25 +1811,16 @@ impl Database {
     fn complete_agent_task_attempt_with_now(
         &self,
         principal: &CommunicationPrincipal,
-        task_id: &str,
-        attempt_id: &str,
-        assignee_agent_id: &str,
-        attempt_fence: &str,
-        attempt_controller_generation: i64,
+        authority: AttemptAuthority<'_>,
         outcome: AgentTaskState,
         terminal_result: Option<&str>,
         terminal_reason: Option<&str>,
         completion_key: &str,
         now: Option<i64>,
     ) -> Result<AgentTaskAttemptCompletionMutation, CommunicationStoreError> {
-        validate_attempt_mutation_inputs(
-            principal,
-            task_id,
-            attempt_id,
-            assignee_agent_id,
-            attempt_fence,
-            attempt_controller_generation,
-        )?;
+        let task_id = authority.task_id;
+        let attempt_id = authority.attempt_id;
+        let assignee_agent_id = authority.assignee_agent_id;
         if !outcome.terminal() {
             return Err(CommunicationStoreError::new(
                 "invalid_agent_task_completion_outcome",
@@ -1874,11 +1831,11 @@ impl Database {
         let terminal_reason = validate_optional_terminal_text(terminal_reason, "terminal_reason")?;
         let completion_key = validate_idempotency_key(completion_key)?;
         let request_hash = task_request_hash(&json!({
-            "task_id": task_id,
-            "attempt_id": attempt_id,
-            "assignee_agent_id": assignee_agent_id,
-            "attempt_fence": attempt_fence,
-            "attempt_controller_generation": attempt_controller_generation,
+            "task_id": authority.task_id,
+            "attempt_id": authority.attempt_id,
+            "assignee_agent_id": authority.assignee_agent_id,
+            "attempt_fence": authority.attempt_fence,
+            "attempt_controller_generation": authority.attempt_controller_generation,
             "outcome": outcome.as_str(),
             "terminal_result": terminal_result,
             "terminal_reason": terminal_reason,
@@ -1922,15 +1879,7 @@ impl Database {
             });
         }
 
-        let _attempt = require_current_attempt(
-            &transaction,
-            &task,
-            attempt_id,
-            assignee_agent_id,
-            attempt_fence,
-            attempt_controller_generation,
-            now,
-        )?;
+        let _attempt = require_current_attempt(&transaction, &task, authority, now)?;
         let attempt_state = match outcome {
             AgentTaskState::Succeeded => AgentTaskAttemptState::Succeeded,
             AgentTaskState::Failed => AgentTaskAttemptState::Failed,
@@ -2021,14 +1970,18 @@ impl Database {
         attempt_fence: &str,
         attempt_controller_generation: i64,
     ) -> Result<AgentTaskCodingRunStartContext, CommunicationStoreError> {
-        self.agent_task_coding_run_start_context_with_now(
+        let authority = AttemptAuthority::validated(
             principal,
-            project,
             task_id,
             attempt_id,
             assignee_agent_id,
             attempt_fence,
             attempt_controller_generation,
+        )?;
+        self.agent_task_coding_run_start_context_with_now(
+            principal,
+            project,
+            authority,
             now_unix_ms(),
         )
     }
@@ -2046,31 +1999,7 @@ impl Database {
         attempt_controller_generation: i64,
         now: i64,
     ) -> Result<AgentTaskCodingRunStartContext, CommunicationStoreError> {
-        self.agent_task_coding_run_start_context_with_now(
-            principal,
-            project,
-            task_id,
-            attempt_id,
-            assignee_agent_id,
-            attempt_fence,
-            attempt_controller_generation,
-            now,
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn agent_task_coding_run_start_context_with_now(
-        &self,
-        principal: &CommunicationPrincipal,
-        project: &str,
-        task_id: &str,
-        attempt_id: &str,
-        assignee_agent_id: &str,
-        attempt_fence: &str,
-        attempt_controller_generation: i64,
-        now: i64,
-    ) -> Result<AgentTaskCodingRunStartContext, CommunicationStoreError> {
-        validate_attempt_mutation_inputs(
+        let authority = AttemptAuthority::validated(
             principal,
             task_id,
             attempt_id,
@@ -2078,6 +2007,18 @@ impl Database {
             attempt_fence,
             attempt_controller_generation,
         )?;
+        self.agent_task_coding_run_start_context_with_now(principal, project, authority, now)
+    }
+
+    fn agent_task_coding_run_start_context_with_now(
+        &self,
+        principal: &CommunicationPrincipal,
+        project: &str,
+        authority: AttemptAuthority<'_>,
+        now: i64,
+    ) -> Result<AgentTaskCodingRunStartContext, CommunicationStoreError> {
+        let task_id = authority.task_id;
+        let attempt_id = authority.attempt_id;
         let conn = self.lock_connection(crate::StoreDomain::AgentTask);
         let task = load_owned_task(&conn, principal, task_id, now)?;
         let referenced_project = task.referenced_project_id.as_deref().ok_or_else(|| {
@@ -2092,15 +2033,7 @@ impl Database {
                 "Requested Project does not match AgentTask referenced_project_id",
             ));
         }
-        let attempt = require_current_attempt(
-            &conn,
-            &task,
-            attempt_id,
-            assignee_agent_id,
-            attempt_fence,
-            attempt_controller_generation,
-            now,
-        )?;
+        let attempt = require_current_attempt(&conn, &task, authority, now)?;
         if load_endpoint_execution_for_attempt(&conn, task_id, attempt_id)?.is_some() {
             return Err(CommunicationStoreError::new(
                 "agent_task_execution_backend_conflict",
@@ -2125,17 +2058,15 @@ impl Database {
         attempt_controller_generation: i64,
         intent: &AgentTaskCodingRunBindingIntent,
     ) -> Result<AgentTaskCodingRunPrepared, CommunicationStoreError> {
-        self.prepare_agent_task_coding_run_with_now(
+        let authority = AttemptAuthority::validated(
             principal,
-            project,
             task_id,
             attempt_id,
             assignee_agent_id,
             attempt_fence,
             attempt_controller_generation,
-            intent,
-            None,
-        )
+        )?;
+        self.prepare_agent_task_coding_run_with_now(principal, project, authority, intent, None)
     }
 
     #[cfg(test)]
@@ -2152,33 +2083,7 @@ impl Database {
         intent: &AgentTaskCodingRunBindingIntent,
         now: i64,
     ) -> Result<AgentTaskCodingRunPrepared, CommunicationStoreError> {
-        self.prepare_agent_task_coding_run_with_now(
-            principal,
-            project,
-            task_id,
-            attempt_id,
-            assignee_agent_id,
-            attempt_fence,
-            attempt_controller_generation,
-            intent,
-            Some(now),
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn prepare_agent_task_coding_run_with_now(
-        &self,
-        principal: &CommunicationPrincipal,
-        project: &str,
-        task_id: &str,
-        attempt_id: &str,
-        assignee_agent_id: &str,
-        attempt_fence: &str,
-        attempt_controller_generation: i64,
-        intent: &AgentTaskCodingRunBindingIntent,
-        now: Option<i64>,
-    ) -> Result<AgentTaskCodingRunPrepared, CommunicationStoreError> {
-        validate_attempt_mutation_inputs(
+        let authority = AttemptAuthority::validated(
             principal,
             task_id,
             attempt_id,
@@ -2186,6 +2091,25 @@ impl Database {
             attempt_fence,
             attempt_controller_generation,
         )?;
+        self.prepare_agent_task_coding_run_with_now(
+            principal,
+            project,
+            authority,
+            intent,
+            Some(now),
+        )
+    }
+
+    fn prepare_agent_task_coding_run_with_now(
+        &self,
+        principal: &CommunicationPrincipal,
+        project: &str,
+        authority: AttemptAuthority<'_>,
+        intent: &AgentTaskCodingRunBindingIntent,
+        now: Option<i64>,
+    ) -> Result<AgentTaskCodingRunPrepared, CommunicationStoreError> {
+        let task_id = authority.task_id;
+        let attempt_id = authority.attempt_id;
         let mut conn = self.lock_connection(crate::StoreDomain::AgentTask);
         let transaction = conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -2204,15 +2128,7 @@ impl Database {
                 "CodingAgentRun Project does not match AgentTask referenced_project_id",
             ));
         }
-        let _attempt = require_current_attempt(
-            &transaction,
-            &task,
-            attempt_id,
-            assignee_agent_id,
-            attempt_fence,
-            attempt_controller_generation,
-            now,
-        )?;
+        let _attempt = require_current_attempt(&transaction, &task, authority, now)?;
         if load_endpoint_execution_for_attempt(&transaction, task_id, attempt_id)?.is_some() {
             return Err(CommunicationStoreError::new(
                 "agent_task_execution_backend_conflict",
@@ -2360,7 +2276,7 @@ impl Database {
         attempt_controller_generation: i64,
         binding_intent_fingerprint: &str,
     ) -> Result<AgentTaskCodingRunDispatchClaim, CommunicationStoreError> {
-        validate_attempt_mutation_inputs(
+        let authority = AttemptAuthority::validated(
             principal,
             task_id,
             attempt_id,
@@ -2374,15 +2290,7 @@ impl Database {
             .map_err(store_error)?;
         let now = now_unix_ms();
         let task = load_owned_task(&transaction, principal, task_id, now)?;
-        let _attempt = require_current_attempt(
-            &transaction,
-            &task,
-            attempt_id,
-            assignee_agent_id,
-            attempt_fence,
-            attempt_controller_generation,
-            now,
-        )?;
+        let _attempt = require_current_attempt(&transaction, &task, authority, now)?;
         let binding = load_coding_run_binding_for_attempt(&transaction, task_id, attempt_id)?
             .ok_or_else(|| {
                 CommunicationStoreError::new(
@@ -3459,48 +3367,71 @@ fn retire_pre_dispatch_endpoint_execution_for_attempt(
     Ok(())
 }
 
-fn validate_attempt_mutation_inputs(
-    principal: &CommunicationPrincipal,
-    task_id: &str,
-    attempt_id: &str,
-    assignee_agent_id: &str,
-    attempt_fence: &str,
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct AttemptAuthority<'a> {
+    task_id: &'a str,
+    attempt_id: &'a str,
+    assignee_agent_id: &'a str,
+    attempt_fence: &'a str,
     attempt_controller_generation: i64,
-) -> Result<(), CommunicationStoreError> {
-    validate_communication_principal(principal)?;
-    validate_id(task_id, AGENT_TASK_ID_PREFIX, "invalid_agent_task_id")?;
-    validate_id(
-        attempt_id,
-        AGENT_TASK_ATTEMPT_ID_PREFIX,
-        "invalid_agent_task_attempt_id",
-    )?;
-    validate_id(
-        assignee_agent_id,
-        DURABLE_AGENT_ID_PREFIX,
-        "invalid_agent_id",
-    )?;
-    validate_proof(
-        attempt_fence,
-        AGENT_TASK_ATTEMPT_FENCE_PREFIX,
-        "invalid_agent_task_attempt_fence",
-    )?;
-    if attempt_controller_generation < 1 {
-        return Err(CommunicationStoreError::new(
-            "invalid_agent_task_attempt_controller_generation",
-            "attempt_controller_generation must be at least 1",
-        ));
-    }
-    Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
+impl<'a> AttemptAuthority<'a> {
+    pub(crate) fn validated(
+        principal: &CommunicationPrincipal,
+        task_id: &'a str,
+        attempt_id: &'a str,
+        assignee_agent_id: &'a str,
+        attempt_fence: &'a str,
+        attempt_controller_generation: i64,
+    ) -> Result<Self, CommunicationStoreError> {
+        validate_communication_principal(principal)?;
+        validate_id(task_id, AGENT_TASK_ID_PREFIX, "invalid_agent_task_id")?;
+        validate_id(
+            attempt_id,
+            AGENT_TASK_ATTEMPT_ID_PREFIX,
+            "invalid_agent_task_attempt_id",
+        )?;
+        validate_id(
+            assignee_agent_id,
+            DURABLE_AGENT_ID_PREFIX,
+            "invalid_agent_id",
+        )?;
+        validate_proof(
+            attempt_fence,
+            AGENT_TASK_ATTEMPT_FENCE_PREFIX,
+            "invalid_agent_task_attempt_fence",
+        )?;
+        if attempt_controller_generation < 1 {
+            return Err(CommunicationStoreError::new(
+                "invalid_agent_task_attempt_controller_generation",
+                "attempt_controller_generation must be at least 1",
+            ));
+        }
+        Ok(Self {
+            task_id,
+            attempt_id,
+            assignee_agent_id,
+            attempt_fence,
+            attempt_controller_generation,
+        })
+    }
+
+    fn identity_json(self) -> serde_json::Value {
+        json!({
+            "task_id": self.task_id,
+            "attempt_id": self.attempt_id,
+            "assignee_agent_id": self.assignee_agent_id,
+            "attempt_fence": self.attempt_fence,
+            "attempt_controller_generation": self.attempt_controller_generation,
+        })
+    }
+}
+
 fn require_current_attempt(
     conn: &Connection,
     task: &StoredTask,
-    attempt_id: &str,
-    assignee_agent_id: &str,
-    attempt_fence: &str,
-    attempt_controller_generation: i64,
+    authority: AttemptAuthority<'_>,
     now: i64,
 ) -> Result<StoredAttempt, CommunicationStoreError> {
     if task.stored_state.terminal() {
@@ -3510,29 +3441,29 @@ fn require_current_attempt(
         .latest_attempt
         .as_ref()
         .map(|attempt| attempt.attempt_id.as_str())
-        != Some(attempt_id)
+        != Some(authority.attempt_id)
     {
         return Err(CommunicationStoreError::new(
             "agent_task_attempt_stale",
             "AgentTaskAttempt is not the latest authoritative Attempt",
         ));
     }
-    if task.assignee_agent_id.as_deref() != Some(assignee_agent_id) {
+    if task.assignee_agent_id.as_deref() != Some(authority.assignee_agent_id) {
         return Err(CommunicationStoreError::new(
             "agent_task_assignee_mismatch",
             "AgentTask current assignee does not match the Attempt caller assertion",
         ));
     }
-    let attempt =
-        load_attempt_for_task(conn, &task.task_id, attempt_id, now)?.ok_or_else(|| {
+    let attempt = load_attempt_for_task(conn, &task.task_id, authority.attempt_id, now)?
+        .ok_or_else(|| {
             CommunicationStoreError::new(
                 "agent_task_attempt_not_found",
                 "AgentTaskAttempt does not exist",
             )
         })?;
-    if attempt.assignee_agent_id != assignee_agent_id
-        || attempt.attempt_fence != attempt_fence
-        || attempt.attempt_controller_generation != attempt_controller_generation
+    if attempt.assignee_agent_id != authority.assignee_agent_id
+        || attempt.attempt_fence != authority.attempt_fence
+        || attempt.attempt_controller_generation != authority.attempt_controller_generation
     {
         return Err(CommunicationStoreError::new(
             "agent_task_attempt_stale",
@@ -3550,45 +3481,32 @@ fn require_current_attempt(
     Ok(attempt)
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn replace_agent_task_attempt_controller_in_transaction(
     transaction: &Transaction<'_>,
     principal: &CommunicationPrincipal,
-    task_id: &str,
-    attempt_id: &str,
-    assignee_agent_id: &str,
-    attempt_fence: &str,
-    expected_controller_generation: i64,
+    authority: AttemptAuthority<'_>,
     now: i64,
 ) -> Result<AgentTaskAttemptRecord, CommunicationStoreError> {
-    let task = load_owned_task(transaction, principal, task_id, now)?;
-    let attempt = require_current_attempt(
-        transaction,
-        &task,
-        attempt_id,
-        assignee_agent_id,
-        attempt_fence,
-        expected_controller_generation,
-        now,
-    )?;
+    let task = load_owned_task(transaction, principal, authority.task_id, now)?;
+    let attempt = require_current_attempt(transaction, &task, authority, now)?;
     let next_generation = attempt.attempt_controller_generation.saturating_add(1);
     transaction
         .execute(
             "UPDATE wc_agent_task_attempts
              SET attempt_controller_generation = ?2
              WHERE attempt_id = ?1",
-            params![attempt_id, next_generation],
+            params![authority.attempt_id, next_generation],
         )
         .map_err(store_error)?;
     transaction
         .execute(
             "UPDATE wc_agent_tasks SET updated_at_unix_ms = MAX(updated_at_unix_ms, ?2)
              WHERE task_id = ?1",
-            params![task_id, now],
+            params![authority.task_id, now],
         )
         .map_err(store_error)?;
-    let attempt =
-        load_attempt_for_task(transaction, task_id, attempt_id, now)?.ok_or_else(|| {
+    let attempt = load_attempt_for_task(transaction, authority.task_id, authority.attempt_id, now)?
+        .ok_or_else(|| {
             CommunicationStoreError::new(
                 "agent_task_attempt_not_found",
                 "AgentTaskAttempt disappeared after controller replacement",

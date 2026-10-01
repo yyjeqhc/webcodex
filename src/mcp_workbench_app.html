@@ -40,6 +40,7 @@
   let projectNext = null, projectGeneration = 0, projectDiscoveryMessage = "";
   let refreshTimer = null, listNext = null, busyOverview = false, contextBusy = false, contextGeneration = 0;
   let modalities = {}, contextAdapter = false, contextId = null, content = [], overviewGeneration = 0;
+  let contextQueue = Promise.resolve(), queuedReferences = 0;
   const pending = new Map(), reads = new Map();
   const object = v => v !== null && typeof v === "object" && !Array.isArray(v);
   const bounded = (v, n) => typeof v === "string" && v.length > 0 && v.length <= n && !/[\u0000-\u001f]/.test(v);
@@ -79,9 +80,11 @@
   function option(value, title) { const node = document.createElement("option"); node.value = value; node.textContent = title; return node; }
   function renderProjects() {
     el("projectSelect").replaceChildren(option("", "Choose a Project"));
-    for (const item of projects) el("projectSelect").append(option(item._meta?.project_ref || item._meta?.project || item.uri, item.title || item.name));
-    if (project && !projects.some(item => [item._meta?.project_ref,item._meta?.project,item.uri].includes(project))) el("projectSelect").append(option(project, project));
-    el("projectSelect").value = project;
+    const value = item => item._meta?.project || item._meta?.project_ref || item.uri;
+    for (const item of projects) el("projectSelect").append(option(value(item), item.title || item.name));
+    const selected = projects.find(item => [item._meta?.project_ref,item._meta?.project,item.uri].includes(project));
+    if (project && !selected) el("projectSelect").append(option(project, project));
+    el("projectSelect").value = selected ? value(selected) : project;
   }
   function renderSessions() {
     el("sessionSelect").replaceChildren(option("", "Project overview · no Session selected"));
@@ -113,7 +116,7 @@
     el("selectionState").textContent = area === "Goals" ? "Your Goals · across Projects" : !project ? projectDiscoveryMessage || "Choose a Project to begin." : area === "Artifacts" && !session ? "Choose a Workflow Session to browse its artifacts." : "Project · " + project + (session ? " · Session · " + session : " · No Session selected");
     el("projectReference").hidden = !projectLink();
     el("projectReference").textContent = acceptsReferences() ? "Add Project reference" : "Prepare Project reference text";
-    el("projectReference").disabled = !ready || disposed || contextBusy;
+    el("projectReference").disabled = !ready || disposed;
   }
   function projectLink() { return projects.find(item => [item._meta?.project_ref,item._meta?.project,item.uri].includes(project)) || selectedProjectLink; }
   async function chooseProject(value, selectedSession = "") {
@@ -266,7 +269,7 @@
     for (const block of content) {
       const node=document.createElement("div"); node.className="row";
       const name=document.createElement("div"); name.className="row-copy"; name.textContent=block.title || block.name || blockUri(block) || "Attached context";
-      const remove=document.createElement("button"); remove.type="button"; remove.textContent="Remove"; remove.disabled=contextBusy || disposed; remove.onclick=()=>void updateContext(content.filter(item=>item!==block));
+      const remove=document.createElement("button"); remove.type="button"; remove.textContent="Remove"; remove.disabled=contextBusy || queuedReferences > 0 || disposed; remove.onclick=()=>void queueContextAction(()=>updateContext(content.filter(item=>item!==block)));
       node.append(name,remove);el("references").append(node);
     }
     el("copyLabel").hidden=acceptsReferences();
@@ -290,7 +293,25 @@
     } catch(error) { if (!disposed && generation===contextGeneration) el("referenceStatus").textContent=errorMessage(error); }
     finally { if (!disposed) {contextBusy=false;renderReferences();} }
   }
+  async function queueContextAction(action, generation = null) {
+    if (disposed) return;
+    if (queuedReferences >= MAX_REFERENCES) {el("referenceStatus").textContent="Reference queue is full. Wait for the pending references to finish.";return;}
+    const revision=contextGeneration;
+    queuedReferences++;renderReferences();
+    const request=contextQueue.then(()=>{
+      if (disposed || revision !== contextGeneration || generation !== null && generation !== scope) return;
+      return action();
+    });
+    contextQueue=request.catch(()=>{});
+    try {await request;}
+    catch(error) {if (!disposed && revision===contextGeneration) el("referenceStatus").textContent=errorMessage(error);}
+    finally {queuedReferences--;if (!disposed) renderReferences();}
+  }
   async function addReference(item) {
+    if (!ready || disposed) return;
+    await queueContextAction(()=>addReferenceNow(item),scope);
+  }
+  async function addReferenceNow(item) {
     if (!ready || disposed || contextBusy) return;
     if (content.some(block=>blockUri(block)===item.uri)) {el("referenceStatus").textContent="Reference already selected.";return;}
     if (content.length >= MAX_REFERENCES) {el("referenceStatus").textContent="Reference limit reached (12).";return;}

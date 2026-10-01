@@ -86,6 +86,16 @@ test("explicit launch scope works in either notification order and reads only ov
   }
 });
 
+test("named launch maps canonical Project IDs to a visible option when discovery includes short refs",async()=>{
+  const view=app("mcp_workbench_app.html");
+  view.toolInput({project:"~p1"});
+  view.toolResult({project,projects:page([{...projectItem,_meta:{...projectItem._meta,project_ref:"~p1"}}])});
+  await initialize(view);
+  assert.equal(view.nodes.projectSelect.value,project);
+  assert.ok(view.nodes.projectSelect.children.some(option=>option.value===view.nodes.projectSelect.value));
+  assert.equal(view.calls("work_result_state")[0].params.arguments.project,project);
+});
+
 test("Session list never chooses a candidate and artifacts require explicit Session",async()=>{
   const view=await launch();await selectProject(view);
   await view.reply(view.calls("list_sessions")[0],toolResult({sessions:[{session_id,title:"A Session"}],next_offset:null}));
@@ -207,6 +217,49 @@ test("context failure does not claim selection; remove replaces complete App con
   view.nodes.references.children[0].children[1].onclick();await flush();
   assert.equal(refs(view)[2].params.content.length,0);
   await view.reply(refs(view)[2],{});assert.equal(view.nodes.references.children.length,0);
+});
+
+const anotherFile={...fileItem,uri:"webcodex-resource://file/YWdlbnQ6ZGVtbw/cm9vdA/c3JjL2IucnM",name:"src/b.rs",_meta:{...fileItem._meta,path:"src/b.rs"}};
+for (const modality of ["text","resource"]) test(`${modality} rapid reference selections preserve both resources across Host acknowledgements`,async()=>{
+  const view=await launch({[modality]:{}});await files(view,[fileItem,anotherFile]);
+  rowActions(view)[1].onclick();
+  view.nodes.rows.children[1].children[1].children[1].onclick();await flush();
+  assert.equal(readRequests(view).length,1);
+  await view.reply(readRequests(view)[0],toolResult({uri:fileUri,kind:"file",data:{text:"First reference"}}));
+  assert.equal(refs(view).length,1);
+  await view.reply(refs(view)[0],{});
+  assert.equal(readRequests(view).length,2);
+  await view.reply(readRequests(view)[1],toolResult({uri:anotherFile.uri,kind:"file",data:{text:"Second reference"}}));
+  assert.equal(refs(view).length,2);
+  assert.equal(refs(view)[1].params.content.length,2);
+  assert.match(JSON.stringify(refs(view)[1].params.content),/First reference/);
+  assert.match(JSON.stringify(refs(view)[1].params.content),/Second reference/);
+  await view.reply(refs(view)[1],{});
+  assert.equal(view.nodes.references.children.length,2);
+  assert.equal(view.sent.filter(request=>request.method==="ui/message").length,0);
+});
+
+test("resourceLink rapid selections serialize complete context updates without losing the second choice",async()=>{
+  const view=await launch({resourceLink:{}});await files(view,[fileItem,anotherFile]);
+  rowActions(view)[1].onclick();
+  view.nodes.rows.children[1].children[1].children[1].onclick();await flush();
+  assert.equal(refs(view).length,1);
+  await view.reply(refs(view)[0],{});
+  assert.equal(refs(view).length,2);
+  assert.deepEqual(JSON.parse(JSON.stringify(refs(view)[1].params.content)),[fileItem,anotherFile]);
+  await view.reply(refs(view)[1],{});
+  assert.equal(view.nodes.references.children.length,2);
+});
+
+test("canonical Host removal invalidates queued reference selections as well as an in-flight update",async()=>{
+  const view=app("mcp_workbench_app.html");view.toolInput({});view.toolResult({projects:page([projectItem])});
+  await initialize(view,{resourceLink:{}},null,true);await files(view,[fileItem,anotherFile]);
+  rowActions(view)[1].onclick();
+  view.nodes.rows.children[1].children[1].children[1].onclick();await flush();
+  view.notification("ui/notifications/host-context-changed",{"openai/modelContext":{updateId:"removed",content:[]}});await flush();
+  await view.reply(refs(view)[0],{_meta:{"openai/modelContext":{updateId:"previous"}}});
+  assert.equal(refs(view).length,1);
+  assert.equal(view.nodes.references.children.length,0);
 });
 
 test("OpenAI canonical context restores remount references and follows host removal without messages",async()=>{

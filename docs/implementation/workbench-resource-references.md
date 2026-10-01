@@ -81,6 +81,8 @@ canonically. Overview reuses Work Result; files and outputs require explicit
 Project/Session selection. Goals remain usable without a selected Project.
 Switches clear stale results and fence delayed replies. Hidden views pause refresh;
 teardown cancels pending view work. Repeated previews re-read current content.
+Reference selections queue sequentially so a pending Host acknowledgement does
+not drop later selections; canonical Host changes invalidate stale queued actions.
 
 The primary reference action calls `ui/update-model-context`, replacing the View's
 selected references without sending a message or starting a task. Standard

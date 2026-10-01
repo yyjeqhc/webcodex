@@ -3413,6 +3413,7 @@ pub enum ToolCall {
     /// Accept one exact `ArtifactHandoffGrant` as the destination principal and
     /// import its frozen source snapshot through the existing Control↔Runner
     /// artifact transfer path.
+    #[serde(rename = "import_artifact_handoff")]
     AcceptArtifactHandoff {
         /// Opaque durable grant id created by the source authority.
         #[schemars(length(min = 1, max = 128))]
@@ -3461,7 +3462,8 @@ pub enum ToolCall {
     },
 
     /// Read metadata for a project artifact up to 256 MiB using bounded streaming hashing.
-    /// Zip files are counted but never extracted.    ReadProjectArtifactMetadata {
+    /// Zip files are counted but never extracted.
+    ReadProjectArtifactMetadata {
         /// Runner-registered project id.
         project: String,
         /// Project-relative artifact path.

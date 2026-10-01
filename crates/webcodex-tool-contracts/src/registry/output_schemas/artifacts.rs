@@ -182,7 +182,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 schema_type("string", "Canonical artifact presentation MIME type."),
             ),
         ])),
-        "accept_artifact_handoff" => Some(wrapped_output_schema(vec![
+        "import_artifact_handoff" => Some(wrapped_output_schema(vec![
             (
                 "acceptance_id",
                 schema_type("string", "Durable logical acceptance/import id."),

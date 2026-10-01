@@ -502,10 +502,11 @@ fn tool_definitions_drive_session_and_permission_policy() {
         ("save_project_artifact", PERMISSION_RISK_ARTIFACT_WRITE),
         ("import_host_files", PERMISSION_RISK_ARTIFACT_WRITE),
         ("transfer_project_artifact", PERMISSION_RISK_ARTIFACT_WRITE),
-        ("accept_artifact_handoff", PERMISSION_RISK_ARTIFACT_WRITE),
+        ("import_artifact_handoff", PERMISSION_RISK_ARTIFACT_WRITE),
         ("finish_artifact_upload", PERMISSION_RISK_ARTIFACT_WRITE),
         ("abort_artifact_upload", PERMISSION_RISK_ARTIFACT_WRITE),
-        ("save_computer_snapshot", PERMISSION_RISK_ARTIFACT_WRITE),        ("apply_patch", PERMISSION_RISK_PATCH),
+        ("save_computer_snapshot", PERMISSION_RISK_ARTIFACT_WRITE),
+        ("apply_patch", PERMISSION_RISK_PATCH),
         ("apply_unified_diff", PERMISSION_RISK_PATCH),
         #[cfg(feature = "workspace-checkpoints")]
         ("restore_workspace_checkpoint", PERMISSION_RISK_PATCH),

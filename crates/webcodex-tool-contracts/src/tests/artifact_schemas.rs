@@ -119,9 +119,9 @@ fn transfer_project_artifact_has_two_project_contract_and_no_payload_field() {
 }
 
 #[test]
-fn accept_artifact_handoff_requires_destination_write_without_source_authority() {
-    let definition = lookup_tool_definition("accept_artifact_handoff")
-        .expect("accept_artifact_handoff definition");
+fn import_artifact_handoff_requires_destination_write_without_source_authority() {
+    let definition = lookup_tool_definition("import_artifact_handoff")
+        .expect("import_artifact_handoff definition");
     assert_eq!(definition.metadata.effect, ToolEffect::Mutate);
     assert_eq!(definition.metadata.risk, ToolRisk::ProjectWrite);
     assert_eq!(definition.metadata.approval, ToolApprovalPolicy::Standard);
@@ -133,7 +133,7 @@ fn accept_artifact_handoff_requires_destination_write_without_source_authority()
     assert!(definition.metadata.requires_project);
 
     let specs = registered_tool_specs();
-    let spec = spec_named(&specs, "accept_artifact_handoff");
+    let spec = spec_named(&specs, "import_artifact_handoff");
     let props = spec.input_schema["properties"].as_object().unwrap();
     assert_eq!(spec.input_schema["additionalProperties"], false);
     assert_eq!(
@@ -195,7 +195,7 @@ fn accept_artifact_handoff_requires_destination_write_without_source_authority()
     }
 
     let call = ToolCall::from_tool_name(
-        "accept_artifact_handoff",
+        "import_artifact_handoff",
         json!({
             "grant_id": "wc_handoff_mZmZmZmZmZmZmZmZ",
             "destination_project": "agent:destination:project",
@@ -204,8 +204,8 @@ fn accept_artifact_handoff_requires_destination_write_without_source_authority()
             "idempotency_key": "accept-1"
         }),
     )
-    .expect("accept_artifact_handoff parses");
-    assert_eq!(call.tool_name(), "accept_artifact_handoff");
+    .expect("import_artifact_handoff parses");
+    assert_eq!(call.tool_name(), "import_artifact_handoff");
     assert_eq!(call.project(), Some("agent:destination:project"));
 }
 

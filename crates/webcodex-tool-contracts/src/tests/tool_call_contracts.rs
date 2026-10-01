@@ -1341,7 +1341,7 @@ fn tool_call_project_accessor_covers_project_tool_specs() {
                 // already_unregistered outcome remains representable.
                 None
             }
-            "accept_artifact_handoff" => args
+            "import_artifact_handoff" => args
                 .get("destination_project")
                 .and_then(Value::as_str)
                 .map(str::to_string),

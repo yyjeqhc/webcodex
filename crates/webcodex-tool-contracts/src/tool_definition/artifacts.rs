@@ -101,7 +101,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             require_all_scopes(
                 def(
-                    "accept_artifact_handoff",
+                    "import_artifact_handoff",
                     super::ToolAuditPolicy::TYPED_CANONICAL,
                     ModelVisible,
                     TOOL_CATEGORY_ARTIFACT,
@@ -123,7 +123,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 &[PROJECT_WRITE],
             ),
             "Accept one exact artifact handoff grant as its bound destination principal and import the frozen source snapshot into the destination Project. Requires only destination project:write; the grant authorizes the exact source read. Control revalidates destination authority and grant state, re-reads the source snapshot through the existing snapshot-fenced Runner export path, fails stale on changed bytes, and streams bounded internal chunks into the existing destination artifact upload protocol. Same idempotency_key + complete request replays the original result; conflicting or one-shot replay fails closed.",
-        ).with_gpt_action_description("Accept an exact artifact handoff grant into the bound destination Project. Requires destination project:write only. Reuses snapshot-fenced Control↔Runner transfer, fails stale, and reconciles keyed retries."),
+        ),
         PERMISSION_RISK_ARTIFACT_WRITE,
     ),
     adaptive_runtime_direct(

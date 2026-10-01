@@ -2895,7 +2895,8 @@ pub(super) async fn handle_call(
     // shared ToolRuntime kernel; preserve those failed attempts in generic
     // telemetry without creating a second record for normal kernel calls.
     // Preserve omission versus explicit false before canonical bool parsing.
-    project_mcp_model_argument_defaults(&params.name, &mut params.arguments);    let invocation_facts = crate::tool_runtime::model_ergonomics_telemetry::invocation::InvocationFacts::from_arguments(&raw_mcp_arguments);
+    project_mcp_model_argument_defaults(&params.name, &mut params.arguments);
+    let invocation_facts = crate::tool_runtime::model_ergonomics_telemetry::invocation::InvocationFacts::from_arguments(&raw_mcp_arguments);
     let mut pre_kernel_model_ergonomics =
         ModelErgonomicsTimer::start_with_arguments(&params.name, &params.arguments);
     if stateless_2026 {
@@ -3068,7 +3069,8 @@ pub(super) async fn handle_call(
     };
     debug_assert_eq!(outcome.success, result.success);
     if params.name == "read_tool_manifest" {
-        project_mcp_model_manifest_defaults(&mut result);    }
+        project_mcp_model_manifest_defaults(&mut result);
+    }
     project_job_terminal_resume_suggested_call(
         app_enabled
             && job_terminal_continuation_app_admitted

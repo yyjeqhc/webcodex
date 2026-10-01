@@ -84,5 +84,6 @@
   "skill_activate": "activate_skill",
   "skill_remove_revision": "remove_skill_revision",
   "ssh_resource": "manage_ssh_resource",
-  "import_conversation_files_to_project": "import_host_files"
+  "import_conversation_files_to_project": "import_host_files",
+  "accept_artifact_handoff": "import_artifact_handoff"
 }

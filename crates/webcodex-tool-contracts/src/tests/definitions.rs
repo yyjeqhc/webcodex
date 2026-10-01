@@ -1106,7 +1106,8 @@ fn turn_economy_descriptors_stay_converged_and_bounded() {
         "preflight transactionally",
         "dry_run",
         "review_changes when Git review is useful",
-        "task-appropriate validation",        "outcome_unknown",
+        "task-appropriate validation",
+        "outcome_unknown",
     ] {
         assert!(
             edits.description.contains(phrase),

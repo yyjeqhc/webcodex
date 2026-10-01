@@ -106,7 +106,11 @@ fn work_result_app_internal_tool(tool_name: Option<&str>) -> bool {
     matches!(
         tool_name,
         Some(
-            "present_work_result"
+            "open_webcodex_workbench"
+                | "search_webcodex_resources"
+                | "read_webcodex_resource"
+                | "list_sessions"
+                | "present_work_result"
                 | "work_result_state"
                 | "work_result_activity_detail"
                 | "work_result_send_message"

@@ -59,6 +59,29 @@ fn page(mut items: Vec<Value>, total: usize, offset: usize, limit: usize, incomp
 }
 
 impl ToolRuntime {
+    pub(crate) async fn open_webcodex_workbench(&self,project:Option<String>,session:Option<String>,auth:Option<&AuthContext>)->ToolResult {
+        if session.is_some() && project.is_none() {return error("resource_project_required");}
+        let project=match project {
+            Some(raw)=>{
+                if super::kernel::check_runtime_tool_scope(auth,"list_projects").is_err(){return error("resource_access_denied")}
+                match self.resolve_project_input_for_auth(&raw,auth).await{Ok(r)=>Some(r.resolved_id),Err(_)=>return error("resource_unavailable")}
+            },None=>None,
+        };
+        let session=match session {
+            Some(raw)=>{
+                if super::kernel::check_runtime_tool_scope(auth,"session_summary").is_err(){return error("resource_access_denied")}
+                let id=match self.canonicalize_explicit_session_selector(&raw,auth){Ok(id)=>id,Err(_)=>return error("resource_unavailable")};
+                if self.authorize_session_target(&id,"session_summary",auth).await.is_err(){return error("resource_unavailable")}
+                if self.sessions.summary(&id,Some(1)).and_then(|summary|summary.project).as_ref()!=project.as_ref(){return error("resource_unavailable")}
+                Some(id)
+            },None=>None,
+        };
+        let found=self.search_webcodex_resources(WebcodexResourceKind::Project,None,project.clone(),None,None,None,auth).await;
+        if project.is_some() && !found.success{return found;}
+        let projects=if found.success{found.output}else{json!({"items":[],"total":0,"offset":0,"limit":50,"next_offset":null,"list_truncated":true,"incomplete":"project_discovery_unavailable"})};
+        ToolResult::ok(json!({"project":project,"session_id":session,"projects":projects,"selection":"caller_must_choose_project_and_session"}))
+    }
+
     // Use the canonical kernel for each exact domain observation. This includes
     // scope, Project, Runner, sensitive-path and permission checks, without a
     // Session recorder or an invented ClientWindow.

@@ -440,3 +440,6 @@ fn readiness_audit_correlation_retains_exact_jobs_without_guessing_project() {
     assert!(correlation.resolved_project.is_none());
     assert!(correlation.async_job_id.is_none());
 }
+
+#[path = "mcp_tests/workbench_app.rs"]
+mod workbench_app;

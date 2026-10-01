@@ -1,0 +1,390 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>WebCodex Workbench</title>
+<style>
+:root{color-scheme:light dark;font:13px/1.5 var(--font-sans,ui-sans-serif,system-ui,sans-serif);--border:color-mix(in srgb,CanvasText 16%,transparent);--muted:color-mix(in srgb,CanvasText 62%,transparent);--surface:color-mix(in srgb,Canvas 94%,CanvasText 6%);--accent:light-dark(#2563eb,#60a5fa)}
+*{box-sizing:border-box}body{margin:0;padding:2px;background:transparent;color:CanvasText}button,input,select,textarea{font:inherit;color:inherit}button,select,input,textarea{border:1px solid var(--border);border-radius:8px;background:Canvas;padding:7px 10px}button{cursor:pointer}button:hover:not(:disabled){background:var(--surface)}button:disabled{opacity:.5;cursor:default}button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid var(--accent);outline-offset:2px}[hidden]{display:none!important}.card{border:1px solid var(--border);border-radius:14px;overflow:hidden;background:Canvas}header{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;background:var(--surface);border-bottom:1px solid var(--border);gap:10px}h1{font-size:16px;margin:0}h2{font-size:14px;margin:0 0 10px}p{margin:6px 0}.muted{color:var(--muted)}.selection{display:flex;flex-wrap:wrap;gap:12px;padding:14px 16px;border-bottom:1px solid var(--border)}label{display:grid;gap:4px;flex:1;min-width:180px}select{width:100%}nav{display:flex;gap:4px;padding:8px 12px;border-bottom:1px solid var(--border);flex-wrap:wrap}nav button{border-color:transparent;background:transparent}nav button[aria-selected=true]{color:var(--accent);background:color-mix(in srgb,var(--accent) 12%,transparent)}.body{display:grid;grid-template-columns:minmax(0,1fr) minmax(220px,32%)}.main{min-width:0;padding:16px}.side{border-left:1px solid var(--border);padding:16px;min-width:0}.row{display:flex;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid var(--border)}.row-copy{flex:1;min-width:0;overflow-wrap:anywhere}.row-name{font-weight:600}.row-actions{display:flex;gap:6px;flex-wrap:wrap}.toolbar{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}.toolbar input{flex:1;min-width:120px}pre,textarea{white-space:pre-wrap;overflow-wrap:anywhere;width:100%;font:12px/1.5 var(--font-mono,ui-monospace,monospace)}pre{max-height:420px;overflow:auto;background:var(--surface);padding:12px;border-radius:8px}.summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px}.metric{border:1px solid var(--border);border-radius:10px;padding:12px}.metric strong{display:block;margin-top:4px;font-size:14px}.preview{margin-top:16px;border-top:1px solid var(--border);padding-top:16px}footer{padding:10px 16px;border-top:1px solid var(--border);color:var(--muted)}@media(max-width:640px){.body{grid-template-columns:1fr}.side{border-left:0;border-top:1px solid var(--border)}.row{align-items:flex-start;flex-wrap:wrap}.row-actions{width:100%}.selection label{min-width:140px}}
+</style>
+</head>
+<body>
+<div class="card">
+<header><div><h1>WebCodex Workbench</h1><p class="muted">Browse work and choose references for your next message.</p></div><button id="refresh" type="button">Refresh</button></header>
+<div class="selection"><label for="projectSelect">Project<select id="projectSelect"><option value="">Choose a Project</option></select></label><label for="sessionSelect">Workflow Session<select id="sessionSelect"><option value="">Project overview · no Session selected</option></select></label><button id="sessionsMore" type="button" hidden>More Sessions</button></div>
+<form id="projectSearchForm" class="toolbar" style="padding:0 16px"><input id="projectQuery" aria-label="Find Projects" placeholder="Find a Project" maxlength="200"/><button id="projectSearch" type="submit">Find Projects</button><button id="projectsMore" type="button" hidden>More Projects</button></form>
+<nav role="tablist" aria-label="Workbench areas"><button id="tabOverview" role="tab" aria-controls="panelOverview">Overview</button><button id="tabFiles" role="tab" aria-controls="panelFiles">Files</button><button id="tabGoals" role="tab" aria-controls="panelGoals">Goals</button><button id="tabArtifacts" role="tab" aria-controls="panelArtifacts">Artifacts</button></nav>
+<div class="body"><main class="main">
+<p id="selectionState" class="muted">Choose a Project to begin.</p>
+<section id="panelOverview" role="tabpanel" aria-labelledby="tabOverview"><h2>Project overview</h2><div id="overview" class="summary"></div><button id="projectReference" type="button" hidden>Add Project reference</button></section>
+<section id="panelFiles" role="tabpanel" aria-labelledby="tabFiles" hidden><h2>Project files</h2><p class="muted">Read a file to see a bounded preview.</p></section>
+<section id="panelGoals" role="tabpanel" aria-labelledby="tabGoals" hidden><h2>Your Goals</h2><p class="muted">Your Goals are shared across Projects.</p></section>
+<section id="panelArtifacts" role="tabpanel" aria-labelledby="tabArtifacts" hidden><h2>Session artifacts</h2><p class="muted">Observed outputs from the explicitly selected Workflow Session.</p></section>
+<div id="browser" hidden><form id="searchForm" class="toolbar"><input id="query" aria-label="Search resources" placeholder="Filter by name" maxlength="200"/><button type="submit">Search</button></form><div id="rows"></div><p id="coverage" class="muted"></p><button id="more" type="button" hidden>Show more</button></div>
+<section id="preview" class="preview" hidden aria-label="Resource preview"><h2 id="previewTitle"></h2><p id="previewMeta" class="muted"></p><pre id="previewContent"></pre><button id="closePreview" type="button">Close preview</button></section>
+</main><aside class="side" aria-label="Selected references"><h2>References</h2><p id="referenceHint" class="muted">References are added only when you choose them.</p><div id="references"></div><p id="referenceStatus" role="status" class="muted"></p><label id="copyLabel" for="referenceText" hidden>Copy references<textarea id="referenceText" readonly rows="6"></textarea></label></aside></div>
+<footer id="status" role="status" aria-live="polite">Connecting to Host…</footer>
+</div>
+<script>
+(() => {
+  "use strict";
+  const el = id => document.getElementById(id);
+  const AREAS = ["Overview", "Files", "Goals", "Artifacts"];
+  const KINDS = { Files: "file", Goals: "goal", Artifacts: "artifact" };
+  const MAX_JSON = 262144, MAX_PREVIEW = 24576, MAX_REFERENCE = 4096, MAX_REFERENCES = 12;
+  let ready = false, disposed = false, rpcId = 0, scope = 0, listGeneration = 0, previewGeneration = 0;
+  let selectedProjectLink = null;
+  let project = "", session = "", area = "Overview", projects = [], sessions = [], sessionNext = null;
+  let launchInput = null, launchOutput = null, userSelected = false, projectSearchStarted = false;
+  let projectNext = null, projectGeneration = 0, projectDiscoveryMessage = "";
+  let refreshTimer = null, listNext = null, busyOverview = false, contextBusy = false, contextGeneration = 0;
+  let modalities = {}, contextAdapter = false, contextId = null, content = [], overviewGeneration = 0;
+  const pending = new Map(), reads = new Map();
+  const object = v => v !== null && typeof v === "object" && !Array.isArray(v);
+  const bounded = (v, n) => typeof v === "string" && v.length > 0 && v.length <= n && !/[\u0000-\u001f]/.test(v);
+  const uriValid = uri => bounded(uri, 8192) && /^webcodex-resource:\/\/(?:project\/[A-Za-z0-9_-]+\/[A-Za-z0-9_-]+|file\/[A-Za-z0-9_-]+\/[A-Za-z0-9_-]+\/[A-Za-z0-9_-]+|goal\/[A-Za-z0-9_-]+)$/.test(uri);
+  const linkValid = link => object(link) && link.type === "resource_link" && uriValid(link.uri) && bounded(link.name, 4096);
+  function notify(method, params) { parent.postMessage({jsonrpc:"2.0",method,params}, "*"); }
+  function rpc(method, params, generation = null) {
+    if (disposed) return Promise.reject(new Error("Workbench closed"));
+    const id = ++rpcId;
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => { pending.delete(id); reject(new Error("Host request timed out")); }, 10000);
+      pending.set(id, {resolve,reject,timer,generation});
+      parent.postMessage({jsonrpc:"2.0",id,method,params}, "*");
+    });
+  }
+  function envelope(result) {
+    if (object(result?.result)) result = result.result;
+    const valid = v => object(v) && typeof v.success === "boolean" && ("output" in v || "error" in v);
+    if (valid(result?.structuredContent)) return result.structuredContent;
+    if (valid(result)) return result;
+    let bytes = 0;
+    for (const block of (Array.isArray(result?.content) ? result.content.slice(0,16) : [])) {
+      if (block?.type !== "text" || typeof block.text !== "string") continue;
+      bytes += new TextEncoder().encode(block.text).length;
+      if (bytes > MAX_JSON) break;
+      try { const value = JSON.parse(block.text); if (valid(value)) return value; } catch (_) {}
+    }
+    throw new Error("Missing or invalid structured tool result");
+  }
+  async function tool(name, args, generation = scope) {
+    const result = envelope(await rpc("tools/call", {name,arguments:args}, generation));
+    if (!result.success) throw new Error(typeof result.error === "string" ? result.error.slice(0,512) : "Tool failed");
+    if (!object(result.output)) throw new Error("Invalid tool output");
+    return result.output;
+  }
+  function errorMessage(error) { return "Unavailable: " + String(error.message || error).slice(0,512); }
+  function option(value, title) { const node = document.createElement("option"); node.value = value; node.textContent = title; return node; }
+  function renderProjects() {
+    el("projectSelect").replaceChildren(option("", "Choose a Project"));
+    for (const item of projects) el("projectSelect").append(option(item._meta?.project_ref || item._meta?.project || item.uri, item.title || item.name));
+    if (project && !projects.some(item => [item._meta?.project_ref,item._meta?.project,item.uri].includes(project))) el("projectSelect").append(option(project, project));
+    el("projectSelect").value = project;
+  }
+  function renderSessions() {
+    el("sessionSelect").replaceChildren(option("", "Project overview · no Session selected"));
+    for (const item of sessions) el("sessionSelect").append(option(item.session_id, item.title || item.session_ref || item.session_id));
+    if (session && !sessions.some(item => item.session_id === session)) el("sessionSelect").append(option(session, session));
+    el("sessionSelect").value = session;
+    el("sessionSelect").disabled = !ready || !project || disposed;
+    el("sessionsMore").hidden = sessionNext === null;
+  }
+  function clearScope() {
+    scope++; listGeneration++; previewGeneration++; overviewGeneration++;
+    for (const [id, entry] of pending) if (entry.generation !== null) {
+      clearTimeout(entry.timer); pending.delete(id); entry.reject(new Error("Selection changed"));
+      notify("notifications/cancelled", {requestId:id,reason:"Selection changed"});
+    }
+    reads.clear(); busyOverview = false; listNext = null;
+    el("rows").replaceChildren(); el("overview").replaceChildren(); el("coverage").textContent = "";
+    el("preview").hidden = true; el("previewContent").textContent = ""; el("previewTitle").textContent = "";
+    el("more").hidden = true; stopRefresh();
+  }
+  function updateControls() {
+    el("projectSelect").disabled = !ready || disposed;
+    el("refresh").disabled = !ready || disposed;
+    el("projectSearch").disabled = !ready || disposed;
+    el("projectsMore").disabled = !ready || disposed;
+    renderSessions();
+    const validSelection = area === "Goals" || !!project && (area !== "Artifacts" || !!session);
+    el("browser").hidden = area === "Overview" || !validSelection;
+    el("selectionState").textContent = area === "Goals" ? "Your Goals · across Projects" : !project ? projectDiscoveryMessage || "Choose a Project to begin." : area === "Artifacts" && !session ? "Choose a Workflow Session to browse its artifacts." : "Project · " + project + (session ? " · Session · " + session : " · No Session selected");
+    el("projectReference").hidden = !projectLink();
+    el("projectReference").textContent = acceptsReferences() ? "Add Project reference" : "Prepare Project reference text";
+    el("projectReference").disabled = !ready || disposed || contextBusy;
+  }
+  function projectLink() { return projects.find(item => [item._meta?.project_ref,item._meta?.project,item.uri].includes(project)) || selectedProjectLink; }
+  async function chooseProject(value, selectedSession = "") {
+    if (disposed) return;
+    clearScope(); selectedProjectLink = projects.find(item => [item._meta?.project_ref,item._meta?.project,item.uri].includes(value)) || null; project = value; session = selectedSession; sessions = []; sessionNext = null;
+    el("query").value = ""; renderProjects(); updateControls();
+    if (!ready || !project && area !== "Goals") return;
+    if (project) void loadSessions(false);
+    void loadArea(false);
+  }
+  function chooseSession(value) {
+    clearScope(); session = value; el("query").value = ""; updateControls();
+    if (ready && (project || area === "Goals")) void loadArea(false);
+  }
+  function selectArea(value, focus = false) {
+    area = value; listGeneration++; previewGeneration++; listNext = null;
+    el("rows").replaceChildren(); el("coverage").textContent = ""; el("more").hidden = true; el("query").value = "";
+    el("preview").hidden = true; el("previewContent").textContent = "";
+    for (const name of AREAS) { el("panel"+name).hidden = name !== area; el("tab"+name).setAttribute("aria-selected", String(name === area)); el("tab"+name).setAttribute("tabindex", name === area ? "0" : "-1"); }
+    updateControls(); stopRefresh();
+    if (focus) el("tab"+value).focus?.();
+    if (ready && (project || area === "Goals")) void loadArea(false);
+  }
+  function validatePage(output, kind) {
+    if (!Array.isArray(output.items) || output.items.length > 100 || !output.items.every(link => linkValid(link) && link._meta?.kind === kind)) throw new Error("Invalid resource search result");
+    if (output.next_offset !== undefined && output.next_offset !== null && (!Number.isSafeInteger(output.next_offset) || output.next_offset < 0)) throw new Error("Invalid search continuation");
+    return output;
+  }
+  async function loadProjects(append = false, force = false) {
+    if (!ready || projectSearchStarted && !force && !append || disposed || append && projectNext === null) return;
+    const local = ++projectGeneration, offset = append ? projectNext : 0;
+    const query = Array.from(String(el("projectQuery").value || "").trim()).slice(0,200).join("");
+    projectSearchStarted = true;
+    try {
+      const output = validatePage(await tool("search_webcodex_resources", {kind:"project",offset,limit:100,...(query ? {query} : {})}, null), "project");
+      if (disposed || local !== projectGeneration) return;
+      projects = append ? [...projects,...output.items].slice(0,500) : output.items;
+      projectNext = projects.length < 500 && Number.isSafeInteger(output.next_offset) && output.next_offset > offset ? output.next_offset : null;
+      el("projectsMore").hidden = projectNext === null;
+      projectDiscoveryMessage = output.incomplete === "project_discovery_unavailable" ? "Project discovery unavailable. Your Goals can still be browsed." : output.list_truncated || output.incomplete ? "Project list is partial. Use Find Projects to narrow the list." : "";
+      renderProjects(); updateControls();
+      el("status").textContent = projectDiscoveryMessage || "Choose a Project.";
+    } catch (error) { if (!disposed && local === projectGeneration) {projectSearchStarted = false; projectDiscoveryMessage = "Project discovery unavailable. Your Goals can still be browsed."; updateControls(); el("status").textContent = errorMessage(error);} }
+  }
+  async function loadSessions(append) {
+    const generation = scope, offset = append ? sessionNext : 0;
+    if (!project || offset === null || disposed) return;
+    try {
+      const output = await tool("list_sessions", {project,offset,limit:50});
+      if (disposed || generation !== scope) return;
+      if (!Array.isArray(output.sessions) || output.sessions.length > 100 || !output.sessions.every(item => object(item) && bounded(item.session_id,256))) throw new Error("Invalid Session list");
+      sessions = append ? [...sessions,...output.sessions].slice(0,500) : output.sessions;
+      sessionNext = Number.isSafeInteger(output.next_offset) && output.next_offset > offset ? output.next_offset : null;
+      renderSessions();
+    } catch (error) { if (!disposed && generation === scope) el("status").textContent = errorMessage(error); }
+  }
+  function metric(label, value) { const node=document.createElement("div"); node.className="metric"; const key=document.createElement("span"); key.className="muted"; key.textContent=label; const val=document.createElement("strong"); val.textContent=String(value); node.append(key,val); return node; }
+  function activityLabel(activity) {
+    if (!object(activity) || activity.available === false) return "Activity unavailable";
+    const active = Array.isArray(activity.active_requests) ? activity.active_requests.find(item => bounded(item?.label,4096)) : null;
+    if (active) return active.label;
+    const events = Array.isArray(activity.events) ? activity.events.filter(item => bounded(item?.label,4096) && Number.isFinite(item.ended_at_ms)) : [];
+    const latest = events.reduce((last,item) => !last || item.ended_at_ms > last.ended_at_ms ? item : last,null);
+    return latest?.label || "No activity observed";
+  }
+  async function loadOverview() {
+    if (busyOverview || !project || document.hidden) return;
+    const generation = scope, local = ++overviewGeneration; busyOverview = true;
+    try {
+      const output = await tool("work_result_state", {project,...(session ? {session_id:session} : {})});
+      if (disposed || generation !== scope || local !== overviewGeneration || area !== "Overview") return;
+      const state = output.work_result;
+      if (!object(state) || ![project,projectLink()?._meta?.project].filter(Boolean).includes(state.project) || session && state.session_id !== session) throw new Error("Work Result selection mismatch");
+      el("overview").replaceChildren(
+        metric("Workspace", state.workspace?.git_available === false ? "Git unavailable" : state.workspace?.clean === true ? "Clean" : state.workspace?.clean === false ? "Changed" : "Unavailable"),
+        metric("Branch", state.workspace?.branch || "Unavailable"),
+        metric("Activity", activityLabel(state.activity)),
+        metric("Checks", session ? state.validation?.current_status || state.validation?.status || "No check evidence" : "Choose a Session"));
+      el("status").textContent="Overview updated.";
+    } catch(error) { if (!disposed && generation === scope && local === overviewGeneration && area === "Overview") el("status").textContent=errorMessage(error); }
+    finally { if (generation === scope) {busyOverview=false; scheduleRefresh();} }
+  }
+  function row(item) {
+    const node=document.createElement("div"); node.className="row";
+    const copy=document.createElement("div"); copy.className="row-copy";
+    const title=document.createElement("div"); title.className="row-name"; title.textContent=item.title || item.name;
+    const description=document.createElement("div"); description.className="muted"; description.textContent=String(item.description || "").slice(0,1024);
+    copy.append(title,description);
+    const actions=document.createElement("div"); actions.className="row-actions";
+    const read=document.createElement("button"); read.type="button"; read.textContent="Preview"; read.onclick=()=>void preview(item);
+    const add=document.createElement("button"); add.type="button"; add.textContent=acceptsReferences() ? "Add reference" : "Prepare reference text"; add.onclick=()=>void addReference(item);
+    actions.append(read,add); node.append(copy,actions); return node;
+  }
+  async function loadList(append) {
+    const generation=scope, local=++listGeneration, selectedArea=area, offset=append ? listNext : 0;
+    if (!project && area !== "Goals" || area === "Artifacts" && !session || offset === null || document.hidden) return;
+    if (!append) {el("rows").replaceChildren(); listNext=null; el("more").hidden=true;}
+    el("status").textContent="Loading " + area.toLowerCase() + "…";
+    try {
+      const args={kind:KINDS[area],...(area === "Goals" ? {} : {project}),offset,limit:50};
+      if (el("query").value.trim()) args.query=Array.from(el("query").value.trim()).slice(0,200).join("");
+      if (area === "Artifacts") args.session_id=session;
+      const output=validatePage(await tool("search_webcodex_resources",args),args.kind);
+      if (disposed || generation !== scope || local !== listGeneration || area !== selectedArea) return;
+      const canonical=projectLink()?._meta?.project;
+      if (output.items.some(item => item._meta?.project && ![project,canonical].includes(item._meta.project))) throw new Error("Resource Project selection mismatch");
+      for (const item of output.items.slice(0,500-el("rows").children.length)) el("rows").append(row(item));
+      listNext=el("rows").children.length < 500 && Number.isSafeInteger(output.next_offset) && output.next_offset > offset ? output.next_offset : null;
+      el("more").hidden=listNext===null;
+      el("coverage").textContent=(output.items.length ? `${offset + output.items.length} shown` : "No resources found.") + (output.list_truncated || output.incomplete ? " · Partial results" : "");
+      el("status").textContent="Updated " + area.toLowerCase() + ".";
+    } catch(error) { if (!disposed && generation === scope && local === listGeneration) el("status").textContent=errorMessage(error); }
+  }
+  function loadArea(append) { return area === "Overview" ? loadOverview() : loadList(append); }
+  function materialize(item) {
+    if (reads.has(item.uri)) return reads.get(item.uri);
+    if (reads.size >= 32) return Promise.reject(new Error("Too many resource previews are loading. Try again after one completes."));
+    const request = tool("read_webcodex_resource", {uri:item.uri}).then(output=>{
+      if (output.uri !== item.uri || !["project","file","goal","artifact"].includes(output.kind) || !("data" in output)) throw new Error("Invalid resource read result");
+      return output;
+    }).finally(()=>{if (reads.get(item.uri) === request) reads.delete(item.uri);});
+    reads.set(item.uri,request);
+    return request;
+  }
+  function limitText(value, maximum) {
+    const text=typeof value === "string" ? value : JSON.stringify(value,null,2);
+    const bytes=new TextEncoder().encode(text);
+    if (bytes.length <= maximum) return text;
+    let low=0, high=Math.min(text.length,maximum-40);
+    while(low < high) { const middle=Math.ceil((low+high)/2); if(new TextEncoder().encode(text.slice(0,middle)).length <= maximum-40) low=middle; else high=middle-1; }
+    if (low > 0 && /[\uD800-\uDBFF]/.test(text[low-1])) low--;
+    return text.slice(0,low)+"\n[Preview truncated]";
+  }
+  async function preview(item) {
+    const generation=scope, local=++previewGeneration;
+    el("preview").hidden=false; el("previewTitle").textContent=item.title || item.name; el("previewContent").textContent="Loading preview…"; el("previewMeta").textContent=item.uri;
+    try {
+      const output=await materialize(item);
+      if (disposed || generation !== scope || local !== previewGeneration) return;
+      const data = output.data;
+      const readable = output.kind === "file" && object(data) && typeof data.text === "string" ? data.text : output.kind === "file" && object(data) && typeof data.content === "string" ? data.content : data;
+      el("previewContent").textContent=limitText(readable,MAX_PREVIEW);
+      el("previewMeta").textContent=item.uri+(output.version ? " · Version " + output.version : "")+(output.truncated ? " · Partial content" : "");
+    } catch(error) { if (!disposed && generation===scope && local===previewGeneration) el("previewContent").textContent=errorMessage(error); }
+  }
+  const blockUri = block => block?.type === "resource_link" ? block.uri : block?.type === "resource" ? block.resource?.uri : block?.type === "text" ? /^WebCodex reference\nURI: ([^\n]+)\n/.exec(block.text || "")?.[1] : null;
+  function acceptsReferences() { return ["resourceLink","resource","text"].some(key=>object(modalities[key])); }
+  function renderReferences() {
+    el("references").replaceChildren();
+    for (const block of content) {
+      const node=document.createElement("div"); node.className="row";
+      const name=document.createElement("div"); name.className="row-copy"; name.textContent=block.title || block.name || blockUri(block) || "Attached context";
+      const remove=document.createElement("button"); remove.type="button"; remove.textContent="Remove"; remove.disabled=contextBusy || disposed; remove.onclick=()=>void updateContext(content.filter(item=>item!==block));
+      node.append(name,remove);el("references").append(node);
+    }
+    el("copyLabel").hidden=acceptsReferences();
+    el("referenceHint").textContent=el("copyLabel").hidden ? "Add references to the model context for your next message." : "This Host does not accept references. Choose resources, then copy the bounded text below.";
+    if (!el("copyLabel").hidden) el("referenceText").value=content.map(block=>block.text || blockUri(block)).join("\n\n");
+    updateControls();
+  }
+  async function updateContext(next) {
+    if (disposed || contextBusy) return;
+    if (new TextEncoder().encode(JSON.stringify(next)).length > 65536) {el("referenceStatus").textContent="References exceed the context size limit. Remove a reference first.";return;}
+    if (next.length > MAX_REFERENCES) {el("referenceStatus").textContent="Reference limit reached (12).";return;}
+    if (!acceptsReferences()) {content=next;renderReferences();return;}
+    const generation=contextGeneration;contextBusy=true;renderReferences();el("referenceStatus").textContent="Updating references…";
+    try {
+      const result=await rpc("ui/update-model-context",{content:next});
+      if (disposed || generation !== contextGeneration) return;
+      content=next;
+      const id=result?._meta?.["openai/modelContext"]?.updateId;
+      if (contextAdapter && bounded(id,256)) contextId=id;
+      el("referenceStatus").textContent="References ready for your next message.";
+    } catch(error) { if (!disposed && generation===contextGeneration) el("referenceStatus").textContent=errorMessage(error); }
+    finally { if (!disposed) {contextBusy=false;renderReferences();} }
+  }
+  async function addReference(item) {
+    if (!ready || disposed || contextBusy) return;
+    if (content.some(block=>blockUri(block)===item.uri)) {el("referenceStatus").textContent="Reference already selected.";return;}
+    if (content.length >= MAX_REFERENCES) {el("referenceStatus").textContent="Reference limit reached (12).";return;}
+    const generation=scope, contextRevision=contextGeneration;
+    let block=item;
+    if (!object(modalities.resourceLink)) {
+      el("referenceStatus").textContent="Reading bounded reference…";
+      try {
+        const output=await materialize(item);
+        if (disposed || generation!==scope || contextRevision!==contextGeneration) return;
+        const text="WebCodex reference\nURI: " + item.uri + "\n" + (item.title || item.name) + "\n" + limitText(output.data,MAX_REFERENCE);
+        block=object(modalities.resource) ? {type:"resource",resource:{uri:item.uri,mimeType:"text/plain",text}} : {type:"text",text};
+      } catch(error) {if (!disposed && generation===scope) el("referenceStatus").textContent=errorMessage(error);return;}
+    }
+    if (!contextBusy && !content.some(existing=>blockUri(existing)===item.uri)) await updateContext([...content,block]);
+  }
+  function syncContext(hostContext) {
+    if (!contextAdapter || !object(hostContext) || !("openai/modelContext" in hostContext)) return;
+    const state=hostContext["openai/modelContext"];
+    if (state !== null && (!object(state) || !bounded(state.updateId,256) || state.content !== undefined && !Array.isArray(state.content))) return;
+    if (state !== null && state.updateId === contextId) return;
+    contextGeneration++;contextId=state?.updateId || null;
+    content=state?.content?.slice(0,MAX_REFERENCES).filter(block=>uriValid(blockUri(block)) && (block.type !== "resource_link" || linkValid(block)) && JSON.stringify(block).length <= MAX_JSON) || [];
+    el("referenceStatus").textContent=content.length ? "References synchronized with Host." : "References cleared.";
+    renderReferences();
+  }
+  function stopRefresh() { if (refreshTimer !== null) clearTimeout(refreshTimer); refreshTimer=null; }
+  function scheduleRefresh() {
+    stopRefresh();
+    if (ready && !disposed && !document.hidden && project && area === "Overview") refreshTimer=setTimeout(()=>{refreshTimer=null;void loadOverview();},10000);
+  }
+  function applyLaunch() {
+    if (!ready || userSelected || !launchInput && !launchOutput) return;
+    const selected=launchOutput?.project || launchInput?.project || "";
+    const selectedSession=launchOutput?.session_id || launchInput?.session_id || "";
+    if (bounded(selected,4096)) {
+      if (project !== selected || session !== selectedSession) void chooseProject(selected,bounded(selectedSession,256) ? selectedSession : "");
+    }
+    else {updateControls();if(projectDiscoveryMessage)el("status").textContent=projectDiscoveryMessage;if (!projects.length) void loadProjects();}
+  }
+  function acceptResult(result) {
+    try {
+      const output=envelope(result);
+      if (!output.success) throw new Error(typeof output.error === "string" ? output.error : "Launcher failed");
+      if (!object(output.output)) throw new Error("Invalid launcher output");
+      launchOutput=output.output;
+      if (output.output.projects) {const page=validatePage(output.output.projects,"project");projects=page.items;projectDiscoveryMessage=page.incomplete === "project_discovery_unavailable" ? "Project discovery unavailable. Your Goals can still be browsed." : page.list_truncated || page.incomplete ? "Project list is partial. Use Find Projects to narrow the list." : "";projectGeneration++;projectSearchStarted=true;projectNext=Number.isSafeInteger(page.next_offset) && page.next_offset > 0 ? page.next_offset : null;el("projectsMore").hidden=projectNext===null;renderProjects();}
+      updateControls();applyLaunch();
+    } catch(error) {if (!disposed) {el("status").textContent=errorMessage(error); if (ready && !project) void loadProjects();} }
+  }
+  function teardown() {
+    if (disposed) return; disposed=true;scope++;listGeneration++;previewGeneration++;contextGeneration++;stopRefresh();
+    for (const [id,entry] of pending) {clearTimeout(entry.timer);notify("notifications/cancelled",{requestId:id,reason:"Workbench closed"});entry.reject(new Error("Workbench closed"));}
+    pending.clear();updateControls();
+  }
+  addEventListener("message",event=>{
+    if (event.source !== parent || disposed && event.data?.method !== "ui/resource-teardown") return;
+    const msg=event.data;
+    if (!object(msg) || msg.jsonrpc !== "2.0") return;
+    if (pending.has(msg.id)) {const entry=pending.get(msg.id);pending.delete(msg.id);clearTimeout(entry.timer);msg.error ? entry.reject(new Error(String(msg.error.message || "Host error"))) : entry.resolve(msg.result);return;}
+    if (msg.method === "ui/notifications/tool-input") {
+      const args=msg.params?.arguments;
+      if (!object(args) || args.project !== undefined && !bounded(args.project,4096) || args.session_id !== undefined && !bounded(args.session_id,256) || args.session_id && !args.project) {el("status").textContent="Invalid launcher selection.";return;}
+      launchInput=args;applyLaunch();
+    } else if (msg.method === "ui/notifications/tool-result") acceptResult(msg.params);
+    else if (msg.method === "ui/notifications/host-context-changed") syncContext(msg.params);
+    else if (msg.method === "ui/resource-teardown") {teardown();if ("id" in msg) parent.postMessage({jsonrpc:"2.0",id:msg.id,result:{}},"*");}
+  });
+  el("projectSelect").onchange=()=>{userSelected=true;void chooseProject(el("projectSelect").value);};
+  el("sessionSelect").onchange=()=>{userSelected=true;chooseSession(el("sessionSelect").value);};
+  el("sessionsMore").onclick=()=>void loadSessions(true);
+  el("projectSearchForm").onsubmit=event=>{event.preventDefault();void loadProjects(false,true);};
+  el("projectsMore").onclick=()=>void loadProjects(true);
+  el("refresh").onclick=()=>{if(area === "Goals"){void loadArea(false);}else if(project) {void loadSessions(false);void loadArea(false);}else{projectSearchStarted=false;void loadProjects();}};
+  el("more").onclick=()=>void loadList(true);
+  el("searchForm").onsubmit=event=>{event.preventDefault();void loadList(false);};
+  el("projectReference").onclick=()=>{const item=projectLink();if(item)void addReference(item);};
+  el("closePreview").onclick=()=>{previewGeneration++;el("preview").hidden=true;el("previewContent").textContent="";};
+  for (const name of AREAS) {
+    el("tab"+name).onclick=()=>selectArea(name);
+    el("tab"+name).onkeydown=event=>{const index=AREAS.indexOf(area);const next=event.key==="ArrowRight" ? AREAS[(index+1)%4] : event.key==="ArrowLeft" ? AREAS[(index+3)%4] : event.key==="Home" ? AREAS[0] : event.key==="End" ? AREAS[3] : null;if(next){event.preventDefault();selectArea(next,true);}};
+  }
+  addEventListener("visibilitychange",()=>{stopRefresh();if(!disposed && ready && !document.hidden && (project || area === "Goals"))void loadArea(false);});
+  addEventListener("pagehide",teardown,{once:true});addEventListener("beforeunload",teardown,{once:true});
+  el("projectQuery").value="";
+  selectArea("Overview");renderProjects();renderReferences();
+  rpc("ui/initialize",{protocolVersion:"2026-01-26",appInfo:{name:"webcodex-workbench",title:"WebCodex Workbench",version:"1.0.0"},appCapabilities:{}}).then(result=>{
+    if (disposed) return;
+    if (!object(result) || result.protocolVersion !== "2026-01-26") throw new Error("Unsupported Host protocol");
+    modalities=object(result.hostCapabilities?.updateModelContext) ? result.hostCapabilities.updateModelContext : {};
+    contextAdapter=object(result.hostCapabilities?.experimental?.["openai/modelContext"]);
+    ready=true;notify("ui/notifications/initialized",{});renderReferences();syncContext(result.hostContext);el("status").textContent="Ready.";applyLaunch();
+  }).catch(error=>{if(!disposed){el("status").textContent=errorMessage(error);updateControls();}});
+})();
+</script>
+</body>
+</html>

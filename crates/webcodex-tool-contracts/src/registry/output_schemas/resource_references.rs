@@ -3,6 +3,10 @@ use super::common::wrapped_output_schema;
 
 pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
     match name {
+        "open_webcodex_workbench"=>Some(wrapped_output_schema(vec![
+            ("project",json!({"type":["string","null"]})),("session_id",json!({"type":["string","null"]})),
+            ("projects",json!({"type":"object"})),("selection",json!({"const":"caller_must_choose_project_and_session"})),
+        ])),
         "search_webcodex_resources" => Some(wrapped_output_schema(vec![
             ("items", json!({"type":"array","maxItems":100,"items":{"type":"object","required":["type","uri","name"],"properties":{
                 "type":{"const":"resource_link"},"uri":{"type":"string","maxLength":8192},"name":{"type":"string","maxLength":200},

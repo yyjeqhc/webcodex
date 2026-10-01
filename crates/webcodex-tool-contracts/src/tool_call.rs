@@ -3309,6 +3309,15 @@ pub enum ToolCall {
         idempotency_key: String,
     },
 
+    /// Open the readonly workbench. Empty arguments show a chooser; a Project is selected only
+    /// when explicitly supplied. Session selection never creates a recorder or execution context.
+    OpenWebcodexWorkbench {
+        #[serde(default)]
+        project: Option<String>,
+        #[serde(default)]
+        session_id: Option<String>,
+    },
+
     /// Search bounded authorized resources. File and artifact searches require an explicit project;
     /// artifact search additionally requires an exact retained Workflow Session.
     SearchWebcodexResources {
@@ -5968,6 +5977,7 @@ impl ToolCall {
             Self::PresentGoalPlan { .. } => "present_goal_plan",
             Self::GoalPlanSync { .. } => "goal_plan_sync",
             Self::CheckpointGoal { .. } => "checkpoint_goal",
+            Self::OpenWebcodexWorkbench { .. } => "open_webcodex_workbench",
             Self::SearchWebcodexResources { .. } => "search_webcodex_resources",
             Self::ReadWebcodexResource { .. } => "read_webcodex_resource",
             Self::ListGoals { .. } => "list_goals",

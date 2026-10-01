@@ -307,6 +307,13 @@ pub(super) fn mcp_tools_list_payload_with_features_for_auth(
         })
         .collect::<Vec<_>>();
     if app_enabled && stateless_2026 {
+        // The View uses the existing authorized Session discovery implementation.
+        if !tools.iter().any(|tool|tool["name"]=="list_sessions") {
+            if let Some(definition)=crate::tool_runtime::tool_definition::lookup_tool_definition("list_sessions") {
+                let spec=crate::tool_runtime::registry::ToolDescriptor{name:"list_sessions".into(),description:definition.model_spec.expect("public Session descriptor").description.into()}.into_spec();
+                for spec in filter_specs_for_oauth(vec![spec],auth) {let mut value=mcp_tool_spec_json(spec,compact,false);attach_app_visibility(&mut value);tools.push(value);}
+            }
+        }
         let mut app_specs = filter_specs_for_oauth(
             crate::tool_runtime::goal_plan_app_tool_specs()
                 .into_iter()
@@ -1194,6 +1201,10 @@ fn mcp_tool_spec_json(mut spec: ToolSpec, compact: bool, app_enabled: bool) -> V
             meta.insert("openai/fileParams".to_string(), json!(["openaiFileIdRefs"]));
         }
     }
+    if app_enabled && tool_name=="open_webcodex_workbench" {
+        attach_app_metadata(&mut value, resources::MCP_WORKBENCH_UI_RESOURCE_URI);
+        value["title"]=json!("Projects & Resources");
+    }
     if app_enabled && presentation::tool_supports_result_app(&tool_name) {
         attach_app_metadata(&mut value, resources::MCP_RESULT_UI_RESOURCE_URI);
     }
@@ -1889,7 +1900,7 @@ pub(super) struct McpInvocationEnvelope {
 fn mcp_invocation_envelope_supported_fields(tool: &str) -> Vec<&'static str> {
     if matches!(
         tool,
-        "goal_plan_sync" | "work_result_state" | "changes_file_diff"
+        "goal_plan_sync" | "work_result_state" | "changes_file_diff" | "open_webcodex_workbench" | "search_webcodex_resources" | "read_webcodex_resource"
     ) || is_host_continuation_app_tool_name(tool)
     {
         return Vec::new();
@@ -2584,7 +2595,8 @@ pub(super) async fn handle_call(
         && crate::tool_runtime::stateless_operator_extension_tool_specs()
             .iter()
             .any(|spec| spec.name == params.name);
-    let direct_denied = !app_only_goal_plan_sync
+    let workbench_view_call = server_mcp_apps_enabled && stateless_2026 && matches!(params.name.as_str(),"search_webcodex_resources"|"read_webcodex_resource"|"list_sessions"|"open_webcodex_workbench");
+    let direct_denied = !workbench_view_call && !app_only_goal_plan_sync
         && !app_only_work_result_state
         && !app_only_work_result_activity_detail
         && !app_only_work_result_send_message
@@ -2653,7 +2665,7 @@ pub(super) async fn handle_call(
     // Goal Plan sync accepts only goal_id; Work Result reads carry their exact
     // business Session separately. Discard a hand-crafted unadvertised
     // recorder provenance before the kernel sees any of these calls.
-    if matches!(
+    if workbench_view_call || matches!(
         params.name.as_str(),
         "goal_plan_sync" | "work_result_state" | "work_result_send_message" | "changes_file_diff"
     ) {
@@ -2827,7 +2839,7 @@ pub(super) async fn handle_call(
             )
         }
     };
-    if app_only_work_result_state
+    if workbench_view_call || app_only_work_result_state
         || app_only_work_result_activity_detail
         || app_only_work_result_send_message
         || app_only_changes_file_diff

@@ -60,6 +60,9 @@ pub(super) const MCP_RESULT_UI_RESOURCE_LEGACY_URIS: &[&str] = &[
     "ui://webcodex/result/v2",
     "ui://webcodex/result/v3",
 ];
+pub(super) const MCP_WORKBENCH_UI_RESOURCE_URI: &str = "ui://webcodex/workbench/v1";
+const MCP_WORKBENCH_APP_HTML: &str = include_str!("../mcp_workbench_app.html");
+
 pub(super) const MCP_WORK_RESULT_UI_RESOURCE_URI: &str = "ui://webcodex/work-result/v14";
 // Hosts can retain previously shipped Work Result / Changes resources across
 // deploys. Keep those URIs readable with the current safe template, but only the
@@ -152,6 +155,11 @@ pub(super) fn mcp_result_app_resource_meta(domain: Option<&str>) -> Value {
 
 pub(super) fn mcp_app_resources_list(domain: Option<&str>) -> Value {
     let mut result = mcp_computer_app_resources_list(domain);
+    result["resources"].as_array_mut().expect("App resource list").push(json!({
+        "uri":MCP_WORKBENCH_UI_RESOURCE_URI,"name":"WebCodex Projects & Resources",
+        "description":"Readonly project selection, work overview and authorized resource references.",
+        "mimeType":MCP_UI_RESOURCE_MIME_TYPE,"_meta":mcp_app_resource_meta(domain)
+    }));
     result["resources"]
         .as_array_mut()
         .expect("computer App resource list must be an array")
@@ -330,6 +338,9 @@ pub(super) fn mcp_job_terminal_continuation_app_resource_read(
 }
 
 fn mcp_static_app_resource_read(uri: &str, domain: Option<&str>) -> Option<Value> {
+    if uri==MCP_WORKBENCH_UI_RESOURCE_URI {return Some(json!({"contents":[{
+        "uri":uri,"mimeType":MCP_UI_RESOURCE_MIME_TYPE,"text":MCP_WORKBENCH_APP_HTML,"_meta":mcp_app_resource_meta(domain)
+    }]}));}
     mcp_computer_app_resource_read(uri, domain)
         .or_else(|| mcp_work_result_app_resource_read(uri, domain))
         .or_else(|| mcp_result_app_resource_read(uri, domain))

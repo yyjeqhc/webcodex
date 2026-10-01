@@ -40,5 +40,5 @@ const OP_START_AGENT_TASK_ATTEMPT: &str = "start_agent_task_attempt";
 const OP_COMPLETE_AGENT_TASK_ATTEMPT: &str = "complete_agent_task_attempt";
 
 include!("agent_task/models.rs");
-include!("agent_task/database.rs");
+include!("agent_task/operations.rs");
 include!("agent_task/invariants.rs");

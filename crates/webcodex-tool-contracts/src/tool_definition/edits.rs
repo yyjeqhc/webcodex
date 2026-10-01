@@ -65,8 +65,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                     super::ToolHostOrchestrationHint::sequential()
                         .with_native_batch_field("changes"),
                 ),
-                "Primary project editor: read_files → edit_project_files → show_changes → structured validation. Use ONE change per file. edit/delete/rename require expected_read_revision; create requires content. Exact edits fail closed on ambiguity; replace_range edits 1-based inclusive lines from the same original snapshot. Batches are preflighted transactionally and the Runner rechecks source before mutation. dry_run plans only. Stale state returns read_files recovery; outcome_unknown requires workspace observation before another write.",
-            ).with_gpt_action_description("Read files, then edit/create/delete/rename transactionally. Existing sources require expected_read_revision. Exact edits fail closed on ambiguity; stale source requires reread. Optional dry_run. Review changes and validate. Unknown outcomes require workspace observation before another write."),
+                "Project editor: read_files → edit_project_files → review_changes when Git review is useful → task-appropriate validation. One change per file. For existing-file edits/deletes/renames, set expected_read_revision from read_files.read_revision; create requires content. Exact edits fail closed on ambiguity; replace_range edits 1-based inclusive lines from that snapshot. Batches preflight transactionally; the Runner rechecks source before mutation. dry_run plans only. Stale state returns read_files recovery; outcome_unknown requires workspace observation before another write.",
+            ).with_gpt_action_description("Read files, then edit/create/delete/rename transactionally. Existing-file edits/deletes/renames require expected_read_revision from read_files.read_revision. Exact edits fail closed; stale source requires reread. Optional dry_run. Use review_changes when Git review is useful, then validate as needed. Unknown outcomes require observation before another write."),
             PERMISSION_RISK_WRITE,
         ),
         60,

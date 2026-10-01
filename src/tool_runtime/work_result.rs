@@ -333,6 +333,9 @@ impl ToolRuntime {
             );
             projection["session"] = work_result_session(summary);
             projection["session_id"] = json!(summary.session_id);
+            if let Some(outputs) = super::task_outputs::retained_task_outputs(summary) {
+                projection["task_outputs"] = outputs;
+            }
             if let Some(detail) = self.workflow_session_console_detail(
                 &resolved_project,
                 &summary.session_id,

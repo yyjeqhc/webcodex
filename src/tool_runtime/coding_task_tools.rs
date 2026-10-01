@@ -52,6 +52,7 @@ impl ToolRuntime {
             ToolCall::FinishCodingTask {
                 project,
                 session_id,
+                outputs,
                 summary_only,
                 include_diff,
                 include_workspace,
@@ -62,6 +63,7 @@ impl ToolRuntime {
                 self.finish_coding_task(
                     project,
                     session_id,
+                    outputs,
                     summary_only,
                     include_diff,
                     include_workspace,

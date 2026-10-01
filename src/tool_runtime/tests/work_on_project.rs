@@ -4377,6 +4377,7 @@ fn finish_coding_task_remains_optional_and_advisory() {
         "advisory",
         "does not decide task completion",
         "generate the user-facing final report",
+        "presence does not prove content",
     ] {
         assert!(
             description.contains(phrase),

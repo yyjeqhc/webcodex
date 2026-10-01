@@ -205,6 +205,13 @@ pub(super) fn context_result_summary_for_tool_result(
 ) -> Option<Value> {
     let policy = audit_policy_for_tool(tool_name)?;
     let summary = match policy.context {
+        ToolAuditContextPolicy::TaskOutputs => {
+            let outputs: webcodex_core::task_outputs::TaskOutputs =
+                serde_json::from_value(output.get("task_outputs")?.clone()).ok()?;
+            return outputs
+                .valid()
+                .then(|| serde_json::json!({"task_outputs": outputs}));
+        }
         ToolAuditContextPolicy::Omit => return None,
         ToolAuditContextPolicy::ResultProjection => match policy.result {
             // Reuse the same result declaration for either canonical raw evidence

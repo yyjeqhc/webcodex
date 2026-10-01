@@ -212,12 +212,12 @@ fn edit_project_files_guidance_is_read_native() {
     let spec = spec_named(&specs, "edit_project_files");
     for phrase in [
         "read_files",
-        "ONE change per file",
+        "One change per file",
         "expected_read_revision",
-        "preflighted transactionally",
+        "preflight transactionally",
         "outcome_unknown",
-        "show_changes",
-        "structured validation",
+        "review_changes when Git review is useful",
+        "task-appropriate validation",
     ] {
         assert!(spec.description.contains(phrase), "{phrase}");
     }

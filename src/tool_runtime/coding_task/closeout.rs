@@ -12,6 +12,7 @@ impl ToolRuntime {
         &self,
         project: String,
         session_id: String,
+        outputs: Vec<String>,
         summary_only: bool,
         include_diff: Option<bool>,
         include_workspace: Option<bool>,
@@ -20,6 +21,9 @@ impl ToolRuntime {
         include_validation_summary: Option<bool>,
         auth: Option<&AuthContext>,
     ) -> ToolResult {
+        if !super::super::task_outputs::validate_task_output_paths(&outputs) {
+            return ToolResult::err_with_output("outputs must contain at most 16 unique non-sensitive project-relative file paths (512 UTF-8 bytes each)", json!({"error_kind":"invalid_task_outputs"}));
+        }
         // summary_only never returns raw change provenance, so generating bounded
         // diff bodies cannot make the compact result more decision-complete. Keep
         // full closeout behavior unchanged while allowing the common compact path
@@ -65,6 +69,14 @@ impl ToolRuntime {
             );
         }
         let mut final_warnings = Vec::new();
+        let task_outputs = if outputs.is_empty() {
+            None
+        } else {
+            Some(
+                self.observe_task_outputs(&resolved.resolved_id, &session_id, outputs, auth)
+                    .await,
+            )
+        };
 
         let mut review_snapshot_reuse = json!({
             "status": "miss",
@@ -393,6 +405,9 @@ impl ToolRuntime {
         if let Some(presentation) = work_result_presentation {
             output["presentation"] = presentation;
         }
+        if let Some(outputs) = task_outputs.as_ref() {
+            output["task_outputs"] = json!(outputs);
+        }
         output["suggested_next_actions"] = json!(finish_suggested_next_actions(&output));
         output["handoff_brief"] = build_handoff_brief(HandoffBriefInput {
             session_summary: &projection_closeout_session_summary,
@@ -560,6 +575,15 @@ pub(super) fn finish_decision_output(output: &Value) -> Value {
         decision["goal_follow_up"] = follow_up.clone();
     }
     apply_compact_workflow_outcomes(&mut decision, true, Some(hygiene_checked));
+    if let Some(outputs) = output
+        .get("task_outputs")
+        .and_then(|value| {
+            serde_json::from_value::<webcodex_core::task_outputs::TaskOutputs>(value.clone()).ok()
+        })
+        .filter(|outputs| outputs.valid())
+    {
+        super::super::task_outputs::attach_task_outputs(&mut decision, &outputs);
+    }
     let verdict = decision
         .get("verdict")
         .cloned()
@@ -593,6 +617,9 @@ pub(super) fn compact_finish_output(decision: &Value) -> Value {
     }
     if let Some(follow_up) = decision.get("goal_follow_up") {
         output["goal_follow_up"] = follow_up.clone();
+    }
+    if let Some(outputs) = decision.get("task_outputs") {
+        output["task_outputs"] = outputs.clone();
     }
     output
 }

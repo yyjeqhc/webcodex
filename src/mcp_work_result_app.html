@@ -265,6 +265,12 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
       <button id="viewResults" class="refresh" type="button">View changed files</button>
     </div>
     <div id="panelResults" class="card-panel" role="tabpanel" aria-labelledby="tabResults" hidden>
+      <section id="taskOutputsSection" class="section" hidden>
+        <div class="section-head"><h2>Task outputs</h2><span id="taskOutputsSummary" class="stats-inline"></span></div>
+        <p id="taskOutputsObserved" class="secondary"></p>
+        <div id="taskOutputsList" class="workspace-files" role="list" aria-label="Task outputs"></div>
+        <p id="taskOutputsAction" class="secondary"></p>
+      </section>
       <section id="finalChanges" class="section" hidden>
         <div class="section-head"><h2>Final changes</h2><span id="frozenStats" class="stats-inline"></span></div>
         <div id="frozenSummary" class="primary"></div>
@@ -274,7 +280,7 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
         <button id="frozenCollapse" class="refresh" type="button">Collapse all files</button>
         <div id="frozenFooter" class="secondary"></div>
       </section>
-      <section class="section">
+      <section id="workspaceChangesSection" class="section">
         <div class="section-head"><h2>Workspace changes</h2><span id="workspaceStats" class="stats-inline"></span></div>
         <div id="workspaceStatus" class="primary">Waiting for files…</div>
         <p class="secondary">Current uncommitted changes in this Project, including other work. Final task changes are shown separately above.</p>
@@ -590,12 +596,30 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     if (value.session_id !== undefined && !validSession(value.session_id)) return null;
     if (!validWindowIdentity(value.window) || !validWorkspace(value.workspace) || !validActivity(value.activity) || !validWindowActivity(value.window_activity) || !validCollaboration(value.collaboration)) return null;
     if (!validJobs(value.jobs, value.session_id)) return null;
+    if (value.task_outputs !== undefined && (!validSession(value.session_id) || !validTaskOutputs(value.task_outputs))) return null;
     if (value.validation !== undefined && !validValidation(value.validation)) return null;
     if (value.review !== undefined && !validReview(value.review)) return null;
     if (value.session !== undefined && !validSessionState(value.session)) return null;
     if (value.workflow !== undefined && !validWorkflow(value.workflow)) return null;
     if (value.final_changes !== undefined && (!validSession(value.session_id) || !validFrozen(value.final_changes))) return null;
     return value;
+  }
+
+  function validTaskOutputs(outputs) {
+    if (!outputs || typeof outputs !== "object" || !Array.isArray(outputs.items) || !outputs.items.length || outputs.items.length > 16) return false;
+    if (!Number.isSafeInteger(outputs.observed_at) || outputs.observed_at < 0) return false;
+    const paths = new Set();
+    for (const file of outputs.items) {
+      if (!file || !validPath(file.path, 512) || file.path === "." || paths.has(file.path) || new TextEncoder().encode(file.path).length > 512) return false;
+      paths.add(file.path);
+      if (!["verified", "missing", "unavailable"].includes(file.status)) return false;
+      if (file.status === "verified") {
+        if (!safeCount(file.file_bytes) || typeof file.sha256 !== "string" || !/^[0-9a-f]{64}$/.test(file.sha256)) return false;
+        if (typeof file.mime_type !== "string" || !/^[\x21-\x7e]{1,128}$/.test(file.mime_type)) return false;
+      } else if (file.sha256 !== undefined || file.file_bytes !== undefined || file.mime_type !== undefined) return false;
+    }
+    return ["verified", "missing", "unavailable"].every(status => safeCount(outputs[status + "_count"])
+      && outputs[status + "_count"] === outputs.items.filter(file => file.status === status).length);
   }
 
   function callToolResultOf(result) {
@@ -1406,6 +1430,7 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     renderWindowCurrentActivity(state.activity);
     renderWindowActivity(state.window_activity);
     renderJobs(state.jobs);
+    renderTaskOutputs(state.task_outputs);
     if (!state.activity.active && state.jobs?.available && state.jobs.active) {
       el("activityStatus").textContent = "Work continuing in the background";
       el("activityDetail").textContent = "This task still has background work. Current execution states are shown below.";
@@ -1413,12 +1438,13 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     }
     renderMessages(state.collaboration);
     renderWorkspace(state.workspace);
+    el("workspaceChangesSection").hidden = !state.workspace.git_available && !!state.task_outputs;
     el("resultChecks").hidden = !state.session_id || (!state.validation && !state.review);
     if (state.validation) renderValidation(state.validation);
     else { el("validationStatus").textContent = "Check status unavailable"; el("validationMeta").textContent = ""; }
     if (state.review) renderReview(state.review);
     else { el("reviewStatus").textContent = "Review status unavailable"; el("reviewMeta").textContent = ""; }
-    el("viewResults").textContent = hasFinalChanges ? "View final result" : `View changed files · ${state.workspace.files_total}`;
+    el("viewResults").textContent = state.task_outputs ? "View task results" : hasFinalChanges ? "View final result" : `View changed files · ${state.workspace.files_total}`;
     el("finalChanges").hidden = !hasFinalChanges;
 
     if (state.activity.active || state.jobs?.active) {
@@ -1430,6 +1456,41 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     } else {
       el("badge").className = "badge";
       el("badge").textContent = "Waiting";
+    }
+  }
+
+  function renderTaskOutputs(outputs) {
+    el("taskOutputsSection").hidden = !outputs;
+    const root = el("taskOutputsList"); root.replaceChildren();
+    el("taskOutputsAction").textContent = "";
+    if (!outputs) return;
+    el("taskOutputsSummary").textContent = `${outputs.verified_count} observed · ${outputs.missing_count} missing · ${outputs.unavailable_count} unavailable`;
+    el("taskOutputsObserved").textContent = `Files observed ${new Date(outputs.observed_at * 1000).toLocaleString()}. Task-specific checks are shown separately; files may change after this observation.`;
+    for (const file of outputs.items) {
+      const row = document.createElement("article"); row.className = "workflow-row"; row.setAttribute("role", "listitem");
+      const title = document.createElement("strong"); title.textContent = file.path; row.append(title);
+      const status = document.createElement("p"); status.className = "secondary";
+      status.textContent = file.status === "verified" ? `${file.file_bytes} bytes · ${file.mime_type}` : file.status === "missing" ? "File missing" : "File could not be verified";
+      row.append(status);
+      if (file.status === "verified") {
+        const details = document.createElement("details");
+        const summary = document.createElement("summary"); summary.textContent = "File details";
+        const hash = document.createElement("code"); hash.textContent = "SHA-256 · " + file.sha256;
+        details.append(summary, hash); row.append(details);
+        const button = document.createElement("button"); button.type = "button"; button.className = "refresh"; button.textContent = "Get file in chat";
+        button.onclick = async () => {
+          if (tornDown || !hostInitialized || button.disabled) return;
+          const current = () => !tornDown && lastRenderedState?.task_outputs === outputs;
+          button.disabled = true;
+          try {
+            await send("ui/message", { role: "user", content: [{ type: "text", text: `Export the task output ${JSON.stringify(file.path)} from Project ${identity.project} to this chat using project_artifact(action=export). First check that its current SHA-256 matches the observed ${file.sha256}; if it changed, explain that before exporting.` }] });
+            if (current()) el("taskOutputsAction").textContent = "File requested in chat.";
+          } catch (_) { if (current()) el("taskOutputsAction").textContent = "Could not request the file. Try again."; }
+          finally { if (current()) button.disabled = false; }
+        };
+        row.append(button);
+      }
+      root.append(row);
     }
   }
 

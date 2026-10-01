@@ -1705,6 +1705,7 @@ fn from_tool_name_parses_finish_coding_task_workspace_projection_flag() {
 
     match call {
         ToolCall::FinishCodingTask {
+            outputs,
             project,
             session_id,
             summary_only,
@@ -1714,6 +1715,7 @@ fn from_tool_name_parses_finish_coding_task_workspace_projection_flag() {
             include_handoff,
             include_validation_summary,
         } => {
+            assert!(outputs.is_empty());
             assert_eq!(project, "agent:client:demo");
             assert_eq!(session_id, "wc_sess_demo");
             assert!(summary_only);

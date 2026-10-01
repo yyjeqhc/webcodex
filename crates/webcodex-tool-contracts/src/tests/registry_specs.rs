@@ -357,13 +357,13 @@ fn tool_specs_describe_default_coding_loop_preferences() {
 
     let apply_text_edits_desc = desc("edit_project_files");
     for phrase in [
-        "primary project editor",
+        "project editor",
         "read_files",
         "expected_read_revision",
         "exact edits fail closed on ambiguity",
         "replace_range",
-        "same original snapshot",
-        "preflighted transactionally",
+        "from that snapshot",
+        "preflight transactionally",
         "runner rechecks source",
         "stale state returns read_files recovery",
         "outcome_unknown",

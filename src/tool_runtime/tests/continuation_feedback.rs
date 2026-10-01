@@ -699,6 +699,7 @@ async fn finish_coding_task_continuation_matches_handoff_attempt_without_rerunni
     let finish = runtime
         .dispatch_with_auth(
             ToolCall::FinishCodingTask {
+                outputs: Vec::new(),
                 project: project.clone(),
                 session_id: session_id.clone(),
                 summary_only: false,

@@ -32,10 +32,40 @@ fn finish_changes_schema() -> Value {
     })
 }
 
+fn task_outputs_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Bounded independently observed output files. Presence and SHA do not prove task-specific content/count/format correctness; observed_at identifies a snapshot, not current filesystem state.",
+        "required": ["items", "verified_count", "missing_count", "unavailable_count", "observed_at"],
+        "properties": {
+            "items": {
+                "type": "array", "minItems": 1, "maxItems": 16,
+                "items": {
+                    "type": "object", "additionalProperties": false,
+                    "required": ["path", "status"],
+                    "properties": {
+                        "path": {"type": "string", "minLength": 1, "maxLength": 512},
+                        "status": {"type": "string", "enum": ["verified", "missing", "unavailable"]},
+                        "file_bytes": {"type": "integer", "minimum": 0},
+                        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                        "mime_type": {"type": "string", "minLength": 1, "maxLength": 128}
+                    }
+                }
+            },
+            "verified_count": {"type": "integer", "minimum": 0, "maximum": 16},
+            "missing_count": {"type": "integer", "minimum": 0, "maximum": 16},
+            "unavailable_count": {"type": "integer", "minimum": 0, "maximum": 16},
+            "observed_at": {"type": "integer", "minimum": 0, "description": "Observation Unix timestamp in seconds."}
+        }
+    })
+}
+
 pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
     match name {
         "work_on_project" => Some(work_on_project_output_schema()),
         "finish_coding_task" => Some(wrapped_output_schema(vec![
+            ("task_outputs", task_outputs_schema()),
             ("goal_follow_up", super::goals::active_goal_context_schema()),
             (
                 "summary_only",

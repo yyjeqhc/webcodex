@@ -103,7 +103,7 @@ async fn read_project_artifact_metadata_routes_to_agent_file_op() {
         serde_json::from_str(req.content.as_deref().expect("artifact payload")).unwrap();
     assert_eq!(
         payload,
-        json!({"path":"sample.zip","max_bytes":MAX_PROJECT_ARTIFACT_BYTES,"allow_missing":false})
+        json!({"path":"sample.zip","max_bytes":super::super::MAX_PROJECT_ARTIFACT_EXPORT_BYTES,"allow_missing":false})
     );
 
     complete_patch_agent_request(
@@ -770,7 +770,10 @@ async fn project_artifact_metadata_routes_to_canonical_runner_operation() {
         serde_json::from_str(req.content.as_deref().expect("artifact payload")).unwrap();
     assert_eq!(payload["path"], "artifacts/smoke/missing.artifact");
     assert_eq!(payload["allow_missing"], true);
-    assert_eq!(payload["max_bytes"], MAX_PROJECT_ARTIFACT_BYTES);
+    assert_eq!(
+        payload["max_bytes"],
+        super::super::MAX_PROJECT_ARTIFACT_EXPORT_BYTES
+    );
     assert!(payload.get("action").is_none());
 
     complete_patch_agent_request(

@@ -441,6 +441,7 @@ async fn finish_coding_task_validation_available_when_ledger_has_validation_even
             runtime
                 .dispatch_with_auth(
                     ToolCall::FinishCodingTask {
+                        outputs: Vec::new(),
                         project,
                         session_id,
                         summary_only: false,
@@ -553,6 +554,7 @@ async fn finish_coding_task_validation_available_when_ledger_has_validation_even
             runtime
                 .dispatch_with_auth(
                     ToolCall::FinishCodingTask {
+                        outputs: Vec::new(),
                         project,
                         session_id,
                         summary_only: true,

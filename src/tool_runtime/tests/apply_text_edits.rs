@@ -286,7 +286,7 @@ fn apply_text_edits_occurrence_and_recovery_schemas_are_model_visible() {
         assert_eq!(action_edit["oneOf"].as_array().unwrap().len(), 5);
     }
     assert!(spec.description.contains("expected_read_revision"));
-    assert!(spec.description.contains("preflighted transactionally"));
+    assert!(spec.description.contains("preflight transactionally"));
     assert!(spec.description.contains("replace_range"));
     assert!(
         spec.description.chars().count() <= crate::tool_runtime::MODEL_TOOL_DESCRIPTION_MAX_CHARS

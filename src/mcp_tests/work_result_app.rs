@@ -36,7 +36,7 @@ async fn handle_with_server_apps_enabled(
 async fn work_result_descriptor_is_explicit_sparse_app_only_and_resource_backed() {
     assert_eq!(
         MCP_WORK_RESULT_UI_RESOURCE_URI,
-        "ui://webcodex/work-result/v13"
+        "ui://webcodex/work-result/v14"
     );
     assert!(MCP_WORK_RESULT_UI_RESOURCE_LEGACY_URIS.contains(&"ui://webcodex/work-result/v9"));
     assert!(MCP_WORK_RESULT_UI_RESOURCE_LEGACY_URIS.contains(&"ui://webcodex/work-result/v10"));
@@ -532,6 +532,10 @@ fn work_result_html_is_bounded_live_progress_ui() {
         MCP_WORK_RESULT_APP_HTML.contains("Changed content"),
         "live workspace file contents should be rendered in Results"
     );
+    // Output export is an explicit user action, covered by executable App tests;
+    // refresh and mounting still never send an automatic chat message.
+    assert!(MCP_WORK_RESULT_APP_HTML.contains("Get file in chat"));
+    assert!(MCP_WORK_RESULT_APP_HTML.contains("First check that its current SHA-256"));
     for forbidden in [
         "Linked work conversation",
         "No linked work conversation",
@@ -546,7 +550,6 @@ fn work_result_html_is_bounded_live_progress_ui() {
         "indexedDB",
         "fetch(",
         "WebSocket",
-        "ui/message",
         "continuationToken",
         "authority_fingerprint",
         "baseline_tree",

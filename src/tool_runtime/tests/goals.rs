@@ -1927,6 +1927,7 @@ async fn workflow_session_link_is_identity_only_and_finish_coding_task_does_not_
             runtime
                 .dispatch_with_auth(
                     ToolCall::FinishCodingTask {
+                        outputs: Vec::new(),
                         project,
                         session_id,
                         summary_only: true,

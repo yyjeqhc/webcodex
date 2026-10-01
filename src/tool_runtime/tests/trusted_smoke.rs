@@ -285,6 +285,7 @@ async fn trusted_agent_smoke_full_chain_has_zero_approval_interruptions() {
     let finish = dispatch_with_local_agent(
         &runtime,
         ToolCall::FinishCodingTask {
+            outputs: Vec::new(),
             project: project.clone(),
             session_id: session_id.clone(),
             summary_only: false,

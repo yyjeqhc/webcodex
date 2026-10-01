@@ -78,9 +78,9 @@ pub(crate) fn builtin_coding_workflow_projection_with_policy(
         "role_selection": "Ordinary implementation uses default guidance. Use independent_review only for an explicit independent review pass. Roles never grant authority.",
         "guidance": [
             "Follow host safety and user/project scope/rules; carry authorized work to concrete, reviewable completion. Ask only for missing requirements/authority; guidance grants no authority.",
-            "Verify Project/branch/HEAD/changes/nested rules. Recovery/compaction/exact Session resume is continuation: reuse still-current Git/read/validation/Job facts; revalidate changed snapshots/HEAD/worktree/instructions.",
+            "Verify Project/changes/nested rules, plus branch/HEAD for Git work. Recovery/compaction/exact Session resume is continuation: reuse still-current Git/read/validation/Job facts; revalidate changed snapshots/HEAD/worktree/instructions.",
             "Preserve unrelated work; push/publish/deploy/restart need explicit action/target. If a user answer/Job/validation/result is not a dependency, continue independent work; wait only on real dependencies.",
-            "Ordinary implementation is default: map cross-layer changes end to end; use compiler/schema/exhaustiveness failures for gaps; minimize concepts, avoid speculative redesign.",
+            "For inspection, files/data/artifacts, diagnostics, or coding: inspect → act or produce → review → task-fit validation → deliver. Coding maps cross-layer changes end to end; choose Git/Cargo/commit only when needed. Coding: compiler/schema/exhaustiveness failures expose gaps; avoid speculative redesign.",
             "Validation failure is evidence, not queue cleanliness. Fix dependent blockers; continue otherwise. Reuse assertion_name; outcome_unknown fails closed. After Rust stabilizes, format once. Development validation may overlap independent work; covered-source edits make it stale for final evidence.",
             "For closeout evidence, freeze source covered by final validation. Continue read-only review/docs/external inspection; if covered source must change, invalidate that evidence and rerun the appropriate final validation.",
             "Keep one execution/Job. Generated calls carry follow_up_kind. mechanically_followable is an exact continuation: copy args unchanged after Host inputSchema validation. fallback_recovery is recovery/detail/dependency, never auto-followed. Pending Job continuation is fallback_recovery; passive Job attention may surface.",
@@ -103,7 +103,7 @@ pub(crate) fn builtin_coding_workflow_projection_with_policy(
             "runner_targeting": "For exact Runner client_id, use runtime_status(client_id=...) or list_projects(client_id=...) before treating it as absent.",
             "persistent_shell": "Local: run_process=literal argv; run_shell=shell grammar/short chains; run_script=program-like scripts; specialize for added semantics. Persistent shell only for repeated named-SSH state or local same-process state.",
             "work_result_presentation": "For substantial Project work in a stable client Window, call present_work_result(project) exactly once immediately after the first successful project-scoped WebCodex action. Do not wait for work_on_project, a Workflow Session, mutation, validation, or closeout. The mounted card refreshes the same Window ActionAudit activity as WebUI, including observe/diagnostic actions; optional linked Session collaboration and final changes may appear later. Never repeat presentation or model-poll it in the same Window. Tiny one-step/read-only lookups may skip it; finish may suggest it only as a fallback if no card was presented.",
-            "normal_closeout": "Source/validation/open evidence: finish_coding_task(summary_only=true). No established Goal means no Goal closeout. For existing goal_follow_up load webcodex.goal_workflow and preserve unresolved obligations; changing preference never completes a Goal implicitly. Read/planning/artifact: finalize directly; explicitly close an established Goal only after verified completion."
+            "normal_closeout": "Source/validation/open evidence: finish_coding_task(summary_only=true). Artifact tasks: pass outputs after task-appropriate count/content/format checks; read-only tasks without deliverables omit outputs. No established Goal means no Goal closeout. For goal_follow_up, load webcodex.goal_workflow and preserve unresolved obligations; preference changes never complete a Goal. Read/planning/artifact: finalize directly; close established Goals only after verified completion."
         },
         "roles": {
             "independent_review": {
@@ -174,8 +174,10 @@ fn host_orchestration_catalog() -> Value {
 fn tool_strategy_guidance(profile: CodingGuidanceProfile) -> &'static [&'static str] {
     match profile {
         CodingGuidanceProfile::Direct => &[
-            "Project source mutation: read_files → edit_project_files. Existing-file edits use expected_read_revision; choose exact edits for unique text and replace_range for deterministic whole-line rewrites from that same snapshot.",
-            "Use run_script/Python for computation, inspection, generation, or non-source transforms; never use it to bypass edit_project_files revision fences, rollback, or sensitive-path policy.",
+            "General loop: inspect → act/produce → review → task-fit validation → deliver. Non-Git work can use list_project_files/read_files; Git, Cargo checks, and commits are task-dependent.",
+            "Text source edits: read_files → edit_project_files with its read_revision fence; use exact edits for unique text and replace_range for deterministic whole-line rewrites. Review with review_changes when Git review is useful.",
+            "Use artifact import/export or transfer_project_artifact for binary files; do not rename or transform binary payloads through text edits. Use run_script/Python for computation or non-source transforms, then independently verify generated/report outputs.",
+            "Never use scripts to bypass edit_project_files revision fences, rollback, or sensitive-path policy.",
             "Coalesce known work: read_files(items), search_project_texts(queries), search_and_read for search→source inspection, cargo_check(packages), and one edit_project_files batch. Keep result-dependent operations sequential; avoid ritual model turns.",
             "Simple observation: direct primitive. Batch predetermined independent observations; adaptive follow-ups stay sequential across model calls.",
             "Known target: bounded targeted reads. Broad discovery: small files/count search then targeted reads. Avoid ritual turns.",

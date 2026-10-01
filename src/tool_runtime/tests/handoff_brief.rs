@@ -599,6 +599,7 @@ async fn assert_finish_and_handoff_shared_external_brief(include_handoff: bool) 
             runtime
                 .dispatch_with_auth(
                     ToolCall::FinishCodingTask {
+                        outputs: Vec::new(),
                         project,
                         session_id,
                         summary_only: false,

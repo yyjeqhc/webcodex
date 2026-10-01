@@ -36,7 +36,9 @@ pub use common::{
 };
 
 fn base_output_schema_for_tool(name: &str) -> Value {
-    if let Some(schema) = resource_references::output_schema_for_tool(name) { return schema; }
+    if let Some(schema) = resource_references::output_schema_for_tool(name) {
+        return schema;
+    }
     if let Some(schema) = agent_tasks::output_schema_for_tool(name) {
         return schema;
     }

@@ -1159,8 +1159,14 @@ impl ToolRuntime {
         limit: Option<usize>,
         offset: Option<usize>,
     ) -> ToolResult {
-        if query.as_ref().is_some_and(|q| q.chars().count() > 200 || q.contains('\0')) {
-            return list_tracked_error("invalid_query", "query must be at most 200 characters without NUL".to_string());
+        if query
+            .as_ref()
+            .is_some_and(|q| q.chars().count() > 200 || q.contains('\0'))
+        {
+            return list_tracked_error(
+                "invalid_query",
+                "query must be at most 200 characters without NUL".to_string(),
+            );
         }
         let scope_input = path.as_deref().unwrap_or("").trim().to_string();
         if !scope_input.is_empty() && scope_input != "." {
@@ -1273,8 +1279,15 @@ impl ToolRuntime {
         let (bounded_raw, producer_budget_hit) = bounded_tracked_source(&raw);
         let (paths, unterminated_record) = super::file_listing::parse_nul_separated(bounded_raw);
         let list_truncated = producer_budget_hit || unterminated_record;
-        let listing =
-            super::file_listing::build_listing_with_query(&paths, &scope, &globs, query.as_deref(), depth, limit, offset);
+        let listing = super::file_listing::build_listing_with_query(
+            &paths,
+            &scope,
+            &globs,
+            query.as_deref(),
+            depth,
+            limit,
+            offset,
+        );
         ToolResult::ok(listing.to_json(&project, &scope, list_truncated))
     }
 

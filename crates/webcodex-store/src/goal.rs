@@ -632,7 +632,14 @@ impl Database {
             .map_err(goal_store_error)?;
         let goal_ids = statement
             .query_map(
-                params![principal.kind, principal.digest, lifecycle, query, limit as i64, offset_i64],
+                params![
+                    principal.kind,
+                    principal.digest,
+                    lifecycle,
+                    query,
+                    limit as i64,
+                    offset_i64
+                ],
                 |row| row.get::<_, String>(0),
             )
             .map_err(goal_store_error)?

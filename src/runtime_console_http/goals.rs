@@ -182,7 +182,8 @@ async fn goals_for_auth(
     if let Some(project) = project {
         let _ = exact_console_project_for_auth(runtime, auth, project).await?;
     }
-    let page = tool_output(runtime.list_goals(Some(auth), None, None, Some(0), Some(GOAL_LIST_LIMIT)))?;
+    let page =
+        tool_output(runtime.list_goals(Some(auth), None, None, Some(0), Some(GOAL_LIST_LIMIT)))?;
     let rows = page
         .get("goals")
         .and_then(Value::as_array)

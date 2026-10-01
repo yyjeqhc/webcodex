@@ -63,7 +63,9 @@ fn goal_query_filters_owned_title_and_objective_before_pagination() {
     hidden.title = "Release 100%_安全 hidden".to_string();
     db.create_goal_at(&other, hidden, T0 + 2).unwrap();
 
-    let page = db.list_goals(&owner, None, Some(" release "), 0, 1).unwrap();
+    let page = db
+        .list_goals(&owner, None, Some(" release "), 0, 1)
+        .unwrap();
     assert_eq!(page.total_count, 2);
     assert_eq!(page.goals[0].goal_id, second.goal.summary.goal_id);
     assert_eq!(page.next_offset, Some(1));
@@ -76,8 +78,18 @@ fn goal_query_filters_owned_title_and_objective_before_pagination() {
         assert_eq!(page.total_count, 1, "query {query}");
         assert_eq!(page.goals[0].goal_id, first.goal.summary.goal_id);
     }
-    assert_eq!(db.list_goals(&owner, None, Some("不存在"), 0, 10).unwrap().total_count, 0);
-    assert_eq!(db.list_goals(&owner, None, Some("   "), 0, 10).unwrap().total_count, 2);
+    assert_eq!(
+        db.list_goals(&owner, None, Some("不存在"), 0, 10)
+            .unwrap()
+            .total_count,
+        0
+    );
+    assert_eq!(
+        db.list_goals(&owner, None, Some("   "), 0, 10)
+            .unwrap()
+            .total_count,
+        2
+    );
 
     db.update_goal_at(
         &owner,
@@ -92,11 +104,22 @@ fn goal_query_filters_owned_title_and_objective_before_pagination() {
         },
         "query-complete",
         T0 + 3,
-    ).unwrap();
-    let page = db.list_goals(&owner, Some(GoalLifecycle::Active), Some("release"), 0, 10).unwrap();
+    )
+    .unwrap();
+    let page = db
+        .list_goals(&owner, Some(GoalLifecycle::Active), Some("release"), 0, 10)
+        .unwrap();
     assert_eq!(page.total_count, 1);
     assert_eq!(page.goals[0].goal_id, second.goal.summary.goal_id);
-    let page = db.list_goals(&owner, Some(GoalLifecycle::Completed), Some("release"), 0, 10).unwrap();
+    let page = db
+        .list_goals(
+            &owner,
+            Some(GoalLifecycle::Completed),
+            Some("release"),
+            0,
+            10,
+        )
+        .unwrap();
     assert_eq!(page.total_count, 1);
     assert_eq!(page.goals[0].goal_id, first.goal.summary.goal_id);
 }
@@ -107,9 +130,16 @@ fn goal_query_rejects_oversized_and_nul_inputs() {
     let db = Database::open(&temp.path().join("goal-query-bounds.db")).unwrap();
     let owner = principal('a');
     for query in ["界".repeat(201), "bad\0query".to_string()] {
-        assert_eq!(db.list_goals(&owner, None, Some(&query), 0, 10).unwrap_err().code(), "invalid_goal_list_query");
+        assert_eq!(
+            db.list_goals(&owner, None, Some(&query), 0, 10)
+                .unwrap_err()
+                .code(),
+            "invalid_goal_list_query"
+        );
     }
-    assert!(db.list_goals(&owner, None, Some(&"界".repeat(200)), 0, 10).is_ok());
+    assert!(db
+        .list_goals(&owner, None, Some(&"界".repeat(200)), 0, 10)
+        .is_ok());
 }
 
 #[test]
@@ -541,12 +571,17 @@ fn prepare_goal_workflow_is_atomic_revision_one_owned_controller_and_keyed() {
         "goal_idempotency_conflict"
     );
 
-    let before_failures = db.list_goals(&owner, None, None, 0, 100).unwrap().total_count;
+    let before_failures = db
+        .list_goals(&owner, None, None, 0, 100)
+        .unwrap()
+        .total_count;
     assert!(db
         .prepare_goal_workflow_at(&owner, "not-a-session", input("invalid-session"), T0 + 4)
         .is_err());
     assert_eq!(
-        db.list_goals(&owner, None, None, 0, 100).unwrap().total_count,
+        db.list_goals(&owner, None, None, 0, 100)
+            .unwrap()
+            .total_count,
         before_failures
     );
 
@@ -564,7 +599,9 @@ fn prepare_goal_workflow_is_atomic_revision_one_owned_controller_and_keyed() {
     assert_eq!(missing_error.code(), foreign_error.code());
     assert_eq!(missing_error.message(), foreign_error.message());
     assert_eq!(
-        db.list_goals(&owner, None, None, 0, 100).unwrap().total_count,
+        db.list_goals(&owner, None, None, 0, 100)
+            .unwrap()
+            .total_count,
         before_failures
     );
 
@@ -592,7 +629,9 @@ fn prepare_goal_workflow_is_atomic_revision_one_owned_controller_and_keyed() {
             .unwrap();
     }
     assert_eq!(
-        db.list_goals(&owner, None, None, 0, 100).unwrap().total_count,
+        db.list_goals(&owner, None, None, 0, 100)
+            .unwrap()
+            .total_count,
         before_failures
     );
 
@@ -631,7 +670,9 @@ fn prepare_goal_workflow_is_atomic_revision_one_owned_controller_and_keyed() {
         assert_eq!(orphan_count, 0);
     }
     assert_eq!(
-        db.list_goals(&owner, None, None, 0, 100).unwrap().total_count,
+        db.list_goals(&owner, None, None, 0, 100)
+            .unwrap()
+            .total_count,
         before_failures
     );
 

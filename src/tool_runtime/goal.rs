@@ -1344,7 +1344,13 @@ impl ToolRuntime {
         let Some(db) = self.communication_db.as_ref() else {
             return goal_store_unavailable();
         };
-        match db.list_goals(&principal, lifecycle, query.as_deref(), offset.unwrap_or(0), limit) {
+        match db.list_goals(
+            &principal,
+            lifecycle,
+            query.as_deref(),
+            offset.unwrap_or(0),
+            limit,
+        ) {
             Ok(page) => serialized_goal_success(page),
             Err(error) => goal_error(error, RecoveryKind::Reobserve),
         }

@@ -190,7 +190,15 @@ async fn run_mocked_tracked_listing(
         let runtime = runtime.clone();
         async move {
             runtime
-                .list_project_tracked_files(project, None, None, None, depth, Some(limit), Some(offset))
+                .list_project_tracked_files(
+                    project,
+                    None,
+                    None,
+                    None,
+                    depth,
+                    Some(limit),
+                    Some(offset),
+                )
                 .await
         }
     });

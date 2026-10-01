@@ -2,12 +2,45 @@ use super::*;
 use crate::metadata::{ToolPathHint::None as NoPath, ToolRisk::Read};
 
 const fn resource_tool(name: &'static str, description: &'static str, rank: u16) -> ToolDefinition {
-    adaptive_runtime_direct(model_spec(require_any_scopes(def(
-        name, ToolAuditPolicy::TYPED_CANONICAL.session_input(ToolAuditSessionInputPolicy::OmitTopLevel(&["uri", "query"])),
-        ToolVisibility::ModelVisible, TOOL_CATEGORY_PROJECT, None, TOOL_PROVIDER_CONTROL,
-        ToolSemanticContract { effect: ToolEffect::Observe, risk: Read, approval: ToolApprovalPolicy::None, idempotency: ToolIdempotency::PureRead },
-        None, false, NoPath, false, false, ToolSessionEvidencePolicy::NONE,
-    ), &[crate::metadata::PROJECT_READ, crate::metadata::COMMUNICATION_READ]).with_activity(ToolActivityPresentation::Support, ToolActivityInteraction::NonMeaningful), description), rank, ToolDirectReason::CoreWorkflow)
+    adaptive_runtime_direct(
+        model_spec(
+            require_any_scopes(
+                def(
+                    name,
+                    ToolAuditPolicy::TYPED_CANONICAL.session_input(
+                        ToolAuditSessionInputPolicy::OmitTopLevel(&["uri", "query"]),
+                    ),
+                    ToolVisibility::ModelVisible,
+                    TOOL_CATEGORY_PROJECT,
+                    None,
+                    TOOL_PROVIDER_CONTROL,
+                    ToolSemanticContract {
+                        effect: ToolEffect::Observe,
+                        risk: Read,
+                        approval: ToolApprovalPolicy::None,
+                        idempotency: ToolIdempotency::PureRead,
+                    },
+                    None,
+                    false,
+                    NoPath,
+                    false,
+                    false,
+                    ToolSessionEvidencePolicy::NONE,
+                ),
+                &[
+                    crate::metadata::PROJECT_READ,
+                    crate::metadata::COMMUNICATION_READ,
+                ],
+            )
+            .with_activity(
+                ToolActivityPresentation::Support,
+                ToolActivityInteraction::NonMeaningful,
+            ),
+            description,
+        ),
+        rank,
+        ToolDirectReason::CoreWorkflow,
+    )
 }
 
 // Authorization is selected by resource kind inside the canonical service. A common

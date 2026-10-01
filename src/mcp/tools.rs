@@ -308,11 +308,28 @@ pub(super) fn mcp_tools_list_payload_with_features_for_auth(
         .collect::<Vec<_>>();
     if app_enabled && stateless_2026 {
         // The View uses the existing authorized Session discovery implementation.
-        if !tools.iter().any(|tool|tool["name"]=="list_sessions") {
-            if let Some(definition)=crate::tool_runtime::tool_definition::lookup_tool_definition("list_sessions") {
-                let description=if compact {"List authorized Sessions for an explicitly selected Project. Page with offset/limit and select an exact session_id before browsing recorded outputs."} else {definition.model_spec.expect("public Session descriptor").description};
-                let spec=crate::tool_runtime::registry::ToolDescriptor{name:"list_sessions".into(),description:description.into()}.into_spec();
-                for spec in filter_specs_for_oauth(vec![spec],auth) {let mut value=mcp_tool_spec_json(spec,compact,false);attach_app_visibility(&mut value);tools.push(value);}
+        if !tools.iter().any(|tool| tool["name"] == "list_sessions") {
+            if let Some(definition) =
+                crate::tool_runtime::tool_definition::lookup_tool_definition("list_sessions")
+            {
+                let description = if compact {
+                    "List authorized Sessions for an explicitly selected Project. Page with offset/limit and select an exact session_id before browsing recorded outputs."
+                } else {
+                    definition
+                        .model_spec
+                        .expect("public Session descriptor")
+                        .description
+                };
+                let spec = crate::tool_runtime::registry::ToolDescriptor {
+                    name: "list_sessions".into(),
+                    description: description.into(),
+                }
+                .into_spec();
+                for spec in filter_specs_for_oauth(vec![spec], auth) {
+                    let mut value = mcp_tool_spec_json(spec, compact, false);
+                    attach_app_visibility(&mut value);
+                    tools.push(value);
+                }
             }
         }
         let mut app_specs = filter_specs_for_oauth(
@@ -353,15 +370,21 @@ pub(super) fn mcp_tools_list_payload_with_features_for_auth(
         })
         .collect::<Vec<_>>();
         tools.append(&mut app_specs);
-        if ["list_projects","list_goals"].iter().any(|tool|crate::tool_runtime::kernel::check_runtime_tool_scope(auth,tool).is_ok()) {
-            let mut mention=json!({
+        if ["list_projects", "list_goals"]
+            .iter()
+            .any(|tool| crate::tool_runtime::kernel::check_runtime_tool_scope(auth, tool).is_ok())
+        {
+            let mut mention = json!({
                 "name":"search_mentions","description":"Search authorized WebCodex Projects and owned Goals for resource references. Files and artifacts require explicit Workbench selection.",
                 "inputSchema":{"type":"object","properties":{"query":{"type":"string","maxLength":200}},"required":["query"],"additionalProperties":false},
                 "outputSchema":{"type":"object","properties":{"items":{"type":"array","maxItems":20,"items":{"type":"object","required":["type","uri","name"],"properties":{"type":{"const":"resource_link"},"uri":{"type":"string"},"name":{"type":"string"},"title":{"type":"string"},"description":{"type":"string"},"mimeType":{"type":"string"},"_meta":{"type":"object"}},"additionalProperties":false}}},"required":["items"],"additionalProperties":false},
                 "annotations":{"readOnlyHint":true},"_meta":{"openai/extensions":{"mentions/search":{}},"ui":{"visibility":["app"]}}
             });
             if compact {
-                mention.as_object_mut().expect("mention descriptor").remove("outputSchema");
+                mention
+                    .as_object_mut()
+                    .expect("mention descriptor")
+                    .remove("outputSchema");
                 super::discovery::compact_tool(&mut mention);
             }
             tools.push(mention);
@@ -1215,10 +1238,15 @@ fn mcp_tool_spec_json(mut spec: ToolSpec, compact: bool, app_enabled: bool) -> V
             meta.insert("openai/fileParams".to_string(), json!(["openaiFileIdRefs"]));
         }
     }
-    if app_enabled && tool_name=="open_webcodex_workbench" {
+    if app_enabled && tool_name == "open_webcodex_workbench" {
         attach_app_metadata(&mut value, resources::MCP_WORKBENCH_UI_RESOURCE_URI);
-        value["title"]=json!("Projects & Resources");
-        if let Some(meta)=tool_meta_object(&mut value) {meta.insert("openai/ui".into(),json!({"entrypoints":[{"type":"global"},{"type":"thread"}]}));}
+        value["title"] = json!("Projects & Resources");
+        if let Some(meta) = tool_meta_object(&mut value) {
+            meta.insert(
+                "openai/ui".into(),
+                json!({"entrypoints":[{"type":"global"},{"type":"thread"}]}),
+            );
+        }
     }
     if app_enabled && presentation::tool_supports_result_app(&tool_name) {
         attach_app_metadata(&mut value, resources::MCP_RESULT_UI_RESOURCE_URI);
@@ -1920,8 +1948,11 @@ fn mcp_invocation_envelope_supported_fields(tool: &str) -> Vec<&'static str> {
     {
         return Vec::new();
     }
-    if matches!(tool,"open_webcodex_workbench"|"search_webcodex_resources"|"read_webcodex_resource") {
-        return vec!["ack","ack_ref","context"];
+    if matches!(
+        tool,
+        "open_webcodex_workbench" | "search_webcodex_resources" | "read_webcodex_resource"
+    ) {
+        return vec!["ack", "ack_ref", "context"];
     }
     if matches!(
         tool,
@@ -2116,37 +2147,76 @@ pub(super) async fn handle_call(
     };
     // OpenAI's search contract is a host-only adapter. It composes the ordinary
     // authorized resource service and never becomes a generic runtime gateway.
-    if params.name=="search_mentions" {
+    if params.name == "search_mentions" {
         if !server_mcp_apps_enabled || !stateless_2026 {
-            return McpOutcome::BadRequest(rpc_error(id,-32602,"Resource mentions are unavailable on this protocol surface"));
+            return McpOutcome::BadRequest(rpc_error(
+                id,
+                -32602,
+                "Resource mentions are unavailable on this protocol surface",
+            ));
         }
         #[derive(Deserialize)]
         #[serde(deny_unknown_fields)]
-        struct MentionQuery {query:String}
-        let query=match serde_json::from_value::<MentionQuery>(params.arguments) {
-            Ok(value) if value.query.chars().count()<=200 && !value.query.contains('\0')=>value.query,
-            _=>return McpOutcome::BadRequest(rpc_error(id,-32602,"Invalid mention query")),
-        };
-        let mut items=Vec::new();let mut incomplete=Vec::new();
-        for (kind,tool,label) in [
-            (webcodex_tool_contracts::tool_call::WebcodexResourceKind::Project,"list_projects","project"),
-            (webcodex_tool_contracts::tool_call::WebcodexResourceKind::Goal,"list_goals","goal"),
-        ] {
-            if crate::tool_runtime::kernel::check_runtime_tool_scope(auth,tool).is_err(){continue;}
-            let found=runtime.search_webcodex_resources(kind,Some(query.clone()),None,None,None,Some(10),auth).await;
-            if found.success {
-                if let Some(rows)=found.output["items"].as_array(){items.extend(rows.iter().cloned());}
-                if found.output["list_truncated"]==true {incomplete.push(label);}
-            } else {incomplete.push(label);}
+        struct MentionQuery {
+            query: String,
         }
-        let mut result=json!({"content":[],"structuredContent":{"items":items}});
-        if !incomplete.is_empty() {
-            result["_meta"]=json!({"webcodex/incompleteResourceKinds":incomplete});
-            if result["structuredContent"]["items"].as_array().is_some_and(|items|items.is_empty()) {
-                result["isError"]=json!(true);result["content"]=json!([{"type":"text","text":"Resource search is incomplete; use search_webcodex_resources for domain details."}]);
+        let query = match serde_json::from_value::<MentionQuery>(params.arguments) {
+            Ok(value) if value.query.chars().count() <= 200 && !value.query.contains('\0') => {
+                value.query
+            }
+            _ => return McpOutcome::BadRequest(rpc_error(id, -32602, "Invalid mention query")),
+        };
+        let mut items = Vec::new();
+        let mut incomplete = Vec::new();
+        for (kind, tool, label) in [
+            (
+                webcodex_tool_contracts::tool_call::WebcodexResourceKind::Project,
+                "list_projects",
+                "project",
+            ),
+            (
+                webcodex_tool_contracts::tool_call::WebcodexResourceKind::Goal,
+                "list_goals",
+                "goal",
+            ),
+        ] {
+            if crate::tool_runtime::kernel::check_runtime_tool_scope(auth, tool).is_err() {
+                continue;
+            }
+            let found = runtime
+                .search_webcodex_resources(
+                    kind,
+                    Some(query.clone()),
+                    None,
+                    None,
+                    None,
+                    Some(10),
+                    auth,
+                )
+                .await;
+            if found.success {
+                if let Some(rows) = found.output["items"].as_array() {
+                    items.extend(rows.iter().cloned());
+                }
+                if found.output["list_truncated"] == true {
+                    incomplete.push(label);
+                }
+            } else {
+                incomplete.push(label);
             }
         }
-        return McpOutcome::Ok(rpc_result(id,mcp_stateless_result(result,false)));
+        let mut result = json!({"content":[],"structuredContent":{"items":items}});
+        if !incomplete.is_empty() {
+            result["_meta"] = json!({"webcodex/incompleteResourceKinds":incomplete});
+            if result["structuredContent"]["items"]
+                .as_array()
+                .is_some_and(|items| items.is_empty())
+            {
+                result["isError"] = json!(true);
+                result["content"] = json!([{"type":"text","text":"Resource search is incomplete; use search_webcodex_resources for domain details."}]);
+            }
+        }
+        return McpOutcome::Ok(rpc_result(id, mcp_stateless_result(result, false)));
     }
     let app_call_id = if stateless_2026 && is_host_continuation_app_tool_name(&params.name) {
         match strip_agent_continuation_app_call_id(&mut params.arguments) {
@@ -2647,8 +2717,17 @@ pub(super) async fn handle_call(
         && crate::tool_runtime::stateless_operator_extension_tool_specs()
             .iter()
             .any(|spec| spec.name == params.name);
-    let workbench_view_call = server_mcp_apps_enabled && stateless_2026 && matches!(params.name.as_str(),"search_webcodex_resources"|"read_webcodex_resource"|"list_sessions"|"open_webcodex_workbench");
-    let direct_denied = !workbench_view_call && !app_only_goal_plan_sync
+    let workbench_view_call = server_mcp_apps_enabled
+        && stateless_2026
+        && matches!(
+            params.name.as_str(),
+            "search_webcodex_resources"
+                | "read_webcodex_resource"
+                | "list_sessions"
+                | "open_webcodex_workbench"
+        );
+    let direct_denied = !workbench_view_call
+        && !app_only_goal_plan_sync
         && !app_only_work_result_state
         && !app_only_work_result_activity_detail
         && !app_only_work_result_send_message
@@ -2717,10 +2796,15 @@ pub(super) async fn handle_call(
     // Goal Plan sync accepts only goal_id; Work Result reads carry their exact
     // business Session separately. Discard a hand-crafted unadvertised
     // recorder provenance before the kernel sees any of these calls.
-    if workbench_view_call || matches!(
-        params.name.as_str(),
-        "goal_plan_sync" | "work_result_state" | "work_result_send_message" | "changes_file_diff"
-    ) {
+    if workbench_view_call
+        || matches!(
+            params.name.as_str(),
+            "goal_plan_sync"
+                | "work_result_state"
+                | "work_result_send_message"
+                | "changes_file_diff"
+        )
+    {
         session_id = None;
     } else {
         session_id = match canonicalize_recording_session_id(runtime, session_id, auth) {
@@ -2891,7 +2975,8 @@ pub(super) async fn handle_call(
             )
         }
     };
-    if workbench_view_call || app_only_work_result_state
+    if workbench_view_call
+        || app_only_work_result_state
         || app_only_work_result_activity_detail
         || app_only_work_result_send_message
         || app_only_changes_file_diff

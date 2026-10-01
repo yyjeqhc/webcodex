@@ -302,6 +302,8 @@ mod plugin_tools;
 mod protocol;
 #[path = "mcp_tests/request_policy.rs"]
 mod request_policy;
+#[path = "mcp_tests/resource_references.rs"]
+mod resource_references;
 #[path = "mcp_tests/response.rs"]
 mod response_tests;
 #[path = "mcp_tests/result_app.rs"]
@@ -316,8 +318,6 @@ mod structured_failure;
 mod tools;
 #[path = "mcp_tests/work_result_app.rs"]
 mod work_result_app;
-#[path = "mcp_tests/resource_references.rs"]
-mod resource_references;
 
 // =========================================================================
 // HTTP integration tests — exercise the real Salvo router + AuthMiddleware.

@@ -443,3 +443,6 @@ fn readiness_audit_correlation_retains_exact_jobs_without_guessing_project() {
 
 #[path = "mcp_tests/workbench_app.rs"]
 mod workbench_app;
+
+#[path = "mcp_tests/resource_mentions.rs"]
+mod resource_mentions;

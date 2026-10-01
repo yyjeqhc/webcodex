@@ -106,7 +106,8 @@ fn work_result_app_internal_tool(tool_name: Option<&str>) -> bool {
     matches!(
         tool_name,
         Some(
-            "open_webcodex_workbench"
+            "search_mentions"
+                | "open_webcodex_workbench"
                 | "search_webcodex_resources"
                 | "read_webcodex_resource"
                 | "list_sessions"

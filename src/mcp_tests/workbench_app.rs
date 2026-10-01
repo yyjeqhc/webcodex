@@ -25,6 +25,7 @@ async fn workbench_app_descriptor_accepts_empty_input_and_preserves_existing_car
     }
     let outcome=handle_with_server_apps_enabled(&runtime,serde_json::from_value(json!({"jsonrpc":"2.0","id":2,"method":"resources/read","params":{"uri":super::super::resources::MCP_WORKBENCH_UI_RESOURCE_URI,"_meta":stateless_ui_meta()}})).unwrap(),None,true).await;
     let McpOutcome::Ok(value)=outcome else {panic!("workbench resource failed")};
+    assert_eq!(value["result"]["contents"][0]["_meta"]["openai/ui"],json!({"availableDisplayModes":["inline","fullscreen"],"preferredDisplayMode":"inline"}));
     let html=value["result"]["contents"][0]["text"].as_str().unwrap();
     assert!(html.contains("ui/update-model-context"));
     assert!(!html.contains("ui/message"));

@@ -53,7 +53,10 @@ fn link(uri: String, name: &str, description: &str, meta: Value) -> Value {
     json!({"type":"resource_link","uri":uri,"name":name.chars().take(200).collect::<String>(),"title":name.chars().take(200).collect::<String>(),"description":description.chars().take(300).collect::<String>(),"_meta":meta})
 }
 fn page(mut items: Vec<Value>, total: usize, offset: usize, limit: usize, incomplete: bool) -> ToolResult {
+    if items.iter().any(|item|item["uri"].as_str().is_none_or(|uri|uri.len()>8192)){return error("resource_identity_too_large");}
+    let had_items=!items.is_empty();
     while serde_json::to_vec(&items).map(|v|v.len()).unwrap_or(usize::MAX)>48*1024 {if items.pop().is_none(){break;}}
+    if had_items && items.is_empty(){return error("resource_page_item_too_large");}
     let next = (!incomplete && offset.saturating_add(items.len()) < total).then_some(offset.saturating_add(items.len()));
     ToolResult::ok(json!({"items":items,"total":total,"offset":offset,"limit":limit,"next_offset":next,"list_truncated":incomplete}))
 }
@@ -223,6 +226,16 @@ impl ToolRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn oversized_resource_page_never_returns_a_nonadvancing_cursor() {
+        let item=link(goal_uri("wc_goal_1234567890123456"),"Goal","bounded",json!({"path":"x".repeat(60*1024)}));
+        let result=page(vec![item],1,0,50,false);
+        assert!(!result.success);
+        assert_eq!(result.output["error_kind"],"resource_page_item_too_large");
+        let result=page(vec![link("x".repeat(8193),"File","bounded",json!({}))],1,0,50,false);
+        assert!(!result.success);
+        assert_eq!(result.output["error_kind"],"resource_identity_too_large");
+    }
     #[test]
     fn resource_identity_is_canonical_and_pins_root_and_path() {
         let uri=file_uri("agent:runner:project","root-one","src/中文 %_.rs");

@@ -81,6 +81,7 @@ async fn goal_reference_reads_latest_owned_goal_and_hides_foreign_content() {
     assert!(current.output["data"].to_string().contains("Latest title"));
     assert!(!current.output["data"].to_string().contains("Original title"));
     assert_eq!(current.output["content_policy"], "latest_at_read");
+    assert_eq!(current.output["version"],2);
     let no_scope = reader("owner", &[SCOPE_PROJECT_READ]);
     assert!(!runtime.read_webcodex_resource(&uri, Some(&no_scope)).await.success);
     assert!(!search(&runtime, WebcodexResourceKind::Goal, None, None, &no_scope).await.success);

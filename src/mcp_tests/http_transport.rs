@@ -2956,10 +2956,10 @@ async fn http_mcp_protocol_error_matrix_preserves_ids() {
         ),
         (
             "unknown method",
-            json!({"jsonrpc": "2.0", "id": 5, "method": "resources/list", "params": {}}),
+            json!({"jsonrpc": "2.0", "id": 5, "method": "no_such_method", "params": {}}),
             5,
             -32601,
-            Some("resources/list"),
+            Some("no_such_method"),
         ),
         (
             "invalid jsonrpc",

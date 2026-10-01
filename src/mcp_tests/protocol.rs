@@ -300,7 +300,7 @@ async fn mcp_unknown_method_is_bad_request() {
     let runtime = test_runtime();
     let outcome = handle_mcp_request(
         &runtime,
-        rpc("resources/list", Some(Value::from(6)), json!({})),
+        rpc("no_such_method", Some(Value::from(6)), json!({})),
         None,
     )
     .await;
@@ -310,7 +310,7 @@ async fn mcp_unknown_method_is_bad_request() {
             assert!(value["error"]["message"]
                 .as_str()
                 .unwrap()
-                .contains("resources/list"));
+                .contains("no_such_method"));
         }
         other => panic!("expected BadRequest, got {:?}", other),
     }

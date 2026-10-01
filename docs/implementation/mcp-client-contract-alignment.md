@@ -202,3 +202,11 @@ read continuation before drawing performance conclusions. This patch does not
 start paid Agents, alter real client settings or claim that a private Apps cache
 has refreshed. Native PTY/stdin parity is a separate test scenario, not implied
 by durable Jobs.
+
+## Projects & Resources
+
+The readonly Workbench, stable resource URI, MCP read parity, and optional OpenAI
+entrypoints/mentions contracts are documented in
+[workbench-resource-references.md](workbench-resource-references.md). Resource tools
+remain available with Apps disabled; live Host acceptance is recorded separately
+from source validation.

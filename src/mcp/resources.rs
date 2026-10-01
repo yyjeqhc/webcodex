@@ -339,7 +339,9 @@ pub(super) fn mcp_job_terminal_continuation_app_resource_read(
 
 fn mcp_static_app_resource_read(uri: &str, domain: Option<&str>) -> Option<Value> {
     if uri==MCP_WORKBENCH_UI_RESOURCE_URI {return Some(json!({"contents":[{
-        "uri":uri,"mimeType":MCP_UI_RESOURCE_MIME_TYPE,"text":MCP_WORKBENCH_APP_HTML,"_meta":mcp_app_resource_meta(domain)
+        "uri":uri,"mimeType":MCP_UI_RESOURCE_MIME_TYPE,"text":MCP_WORKBENCH_APP_HTML,"_meta":{
+            "ui":mcp_app_resource_meta(domain)["ui"],"openai/ui":{"availableDisplayModes":["inline","fullscreen"],"preferredDisplayMode":"inline"}
+        }
     }]}));}
     mcp_computer_app_resource_read(uri, domain)
         .or_else(|| mcp_work_result_app_resource_read(uri, domain))

@@ -9,14 +9,13 @@ No dependency, package version, release workflow or production configuration is
 changed. These two modules have independent commits and independent ownership
 boundaries; they are not merged into a common abstraction.
 
-The initial audit also covered the four large Git/file/bootstrap/transport test
-files, ToolCall, Desktop state, and the proposed Attempt authority value object.
-The Host blocked creation of the batch-test move script and execution of the
-separate ToolCall extraction script. Neither operation was rerouted or replayed.
-The four original test files, ToolCall and Desktop state remain unchanged. This
-round completes the independent Detached Job and Trace slices instead; it does
-not describe the entire larger roadmap as finished. Attempt selectors need their
-own reviewed validation/fingerprint change, not an incidental mechanical move.
+The initial checkpoint also audited the four large Git/file/bootstrap/transport
+test files, ToolCall, Desktop state, AgentTask Attempt authority, and deeper
+AgentTask store layering. At that checkpoint the Host had blocked two mechanical
+move scripts, so those files were intentionally left unchanged while Detached Job
+and Trace landed independently. The follow-up continuation described below
+completes those remaining structural boundaries without changing product
+capabilities or public tool behavior.
 
 ## Detached Job
 
@@ -138,3 +137,109 @@ No native Windows/macOS compile/execution, full all-features workspace suite,
 MCP conformance referee, paid model, deployment, production service operation or
 state migration was performed. Native platform body/gate comparison does not
 substitute for the platform CI lanes before any eventual merge or release.
+
+## Follow-up: remaining v0.5 structural cleanup
+
+The continuation starts from `d8ccd1d31bde25143170ec8f191a39bcdbffb117`
+and keeps the existing `feat/v0.5-tool-surface-standardization` branch. It adds
+six reviewable commits after the earlier Detached Job and Trace work:
+
+| Commit | Boundary |
+|---|---|
+| `e6b93b67` | split the four oversized runtime/Runner test sources by behavior |
+| `df2fb3f2` | split ToolCall input types, canonical enum, and parsing/normalization |
+| `a4b95f29` | model the exact AgentTask Attempt authority tuple |
+| `abbaa8d9` | separate Desktop state facade/core/readiness/persistence/tunnel/tests |
+| `5e176f4d` | split AgentTask models and invariants from the facade |
+| `837c10b6` | track the AgentTask operations slice under a non-ignored filename |
+
+### Same-module physical splits
+
+The large tests, ToolCall, Desktop state, and the final AgentTask file split use
+same-module `include!` boundaries. This keeps Rust module identity, private helper
+visibility, test names, and caller paths unchanged while making file ownership
+readable:
+
+```text
+src/tool_runtime/tests/
+  git.rs                         86-line facade
+    git/                         review/mutations, diff hunks, show changes, review reads
+  work_on_project.rs             1,062-line facade/bootstrap helpers
+    work_on_project/             surface, bootstrap/path source, resume, workflow/overview
+  files.rs                       55-line facade
+    files/                       mutations/audit, listing/parsing, search, artifacts/reads
+
+crates/webcodex-runner/src/webcodex_runner/
+  transport_tests.rs             26-line facade
+    transport_tests/             telemetry, shutdown, polling, transport, inventory, proxy/QUIC
+
+crates/webcodex-tool-contracts/src/
+  tool_call.rs                   54-line facade
+    tool_call/                   input_types.rs, canonical_enum.rs, parsing.rs
+
+apps/desktop/src-tauri/src/
+  state.rs                       97-line facade
+    state/                       app_state, desktop_core, readiness, persistence, tunnel, tests
+
+crates/webcodex-store/src/
+  agent_task.rs                  44-line facade
+    agent_task/                  models.rs, operations.rs, invariants.rs
+```
+
+For each of the four test files, ToolCall, Desktop state, and the final AgentTask
+physical split, concatenating the facade prefix and included files reproduced the
+pre-split logical source byte-for-byte. The first two attempted cut points exposed
+only incomplete Rust item attributes (`#[test]` and multi-line derive/serde
+attributes); the cuts were moved to complete item boundaries before validation.
+
+`agent_task/operations.rs` deliberately avoids the filename `database.rs`: the
+repository root `.gitignore` has a broad `data*` rule, which would silently ignore
+that pathname. The immediately following `837c10b6` commit records the complete
+operations slice so a fresh checkout does not depend on an ignored working-tree
+file.
+
+### AttemptAuthority
+
+AgentTask's exact live-Attempt authority is now represented internally as one
+validated value object containing:
+
+- `task_id`;
+- `attempt_id`;
+- `assignee_agent_id`;
+- `attempt_fence`;
+- `attempt_controller_generation`.
+
+These are the same five fields previously validated and compared independently.
+The Endpoint continuation start fingerprint consumes the same object, so the
+fingerprint and current-Attempt fencing cannot drift by accidentally omitting one
+selector. Completion idempotency keeps the same flat JSON field set. Public
+Database method signatures, durable schema, proof formats, error codes, SQL
+state transitions, lease rules, and retry semantics are unchanged. Agent Wake
+controller replacement constructs the same authority object before entering the
+shared transaction helper.
+
+### Follow-up verification
+
+Final Linux validation after the Rust source was frozen:
+
+| Check | Result |
+|---|---:|
+| Complete default Server library | 3,152 passed, 3 ignored |
+| Complete Runner all-target tests | 975 passed, 4 ignored |
+| Complete `webcodex-store` tests | 230 passed, 1 ignored |
+| Complete `webcodex-tool-contracts` tests | 274 passed |
+| AgentTask focused regression set | 51 passed |
+| Desktop all-target tests, final rerun | 270 passed, 4 ignored |
+| Workspace `cargo check --all-targets` | passed |
+| Desktop `cargo check --all-targets` via its manifest | passed |
+
+The first Desktop all-target run had one failure in
+`unowned_remote_system_or_changed_targets_cannot_edit_the_server_environment`:
+the observed error was `setup_busy` instead of the expected `server_not_owned`.
+The exact test passed alone immediately afterward, and the complete Desktop suite
+then passed 270/270 on the single full rerun. No source change was made between
+those runs; this is retained as validation history rather than hidden as a clean
+first pass.
+
+No push, deploy, rebase, release, native Windows/macOS execution, all-features
+workspace suite, or production state migration is part of this continuation.

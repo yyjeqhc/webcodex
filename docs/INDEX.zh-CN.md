@@ -46,6 +46,7 @@
 ## 我想参与开发或发布
 
 - [Desktop 开发与打包](DESKTOP_DEVELOPMENT.zh-CN.md) —— 从源码运行 Desktop，并本地构建/验证 Windows 与 macOS 原生安装包
+- [赞助与项目支持](SPONSORSHIP.zh-CN.md) —— 社区赞助、基础设施支持、项目合作与展示原则
 
 下面 `docs/agent/` 中的页面属于 maintainer/internal contract。它们会有意保留
 protocol field、兼容名称和实现 invariant；普通用户不需要为了使用 WebCodex 而学习

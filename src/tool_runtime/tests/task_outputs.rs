@@ -35,6 +35,18 @@ fn task_outputs_reject_ambiguous_protected_and_unbounded_paths() {
 fn task_outputs_require_complete_exact_metadata_and_never_trust_failure_prose() {
     let item = observed("result.csv");
     assert_eq!(item.status, TaskOutputStatus::Verified);
+    let unknown_mime = task_output_observation(
+        "big.bin".into(),
+        &ToolResult::ok(json!({
+            "path":"big.bin", "exists":true, "bytes":10 * 1024 * 1024 + 1,
+            "sha256":"a".repeat(64), "mime_type":null
+        })),
+    );
+    assert_eq!(unknown_mime.status, TaskOutputStatus::Verified);
+    assert_eq!(
+        unknown_mime.mime_type.as_deref(),
+        Some("application/octet-stream")
+    );
     for result in [
         ToolResult::ok(
             json!({"path":"other.csv","exists":true,"bytes":12,"sha256":"a".repeat(64),"mime_type":"text/plain"}),

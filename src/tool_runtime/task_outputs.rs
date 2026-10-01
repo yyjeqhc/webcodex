@@ -40,10 +40,16 @@ pub(crate) fn task_output_observation(path: String, result: &ToolResult) -> Task
             .get("sha256")
             .and_then(Value::as_str)
             .map(str::to_string);
-        item.mime_type = output
-            .get("mime_type")
-            .and_then(Value::as_str)
-            .map(str::to_string);
+        item.mime_type = match output.get("mime_type") {
+            // Unknown MIME is valid for regular artifacts. Use the same safe
+            // presentation fallback as artifact export; bytes and SHA still
+            // come exclusively from the Runner observation.
+            None | Some(Value::Null) => Some(
+                webcodex_core::artifact_policy::export_presentation_mime(&item.path, None),
+            ),
+            Some(Value::String(mime)) => Some(mime.clone()),
+            _ => None,
+        };
         let probe = TaskOutputs {
             items: vec![item.clone()],
             verified_count: 1,

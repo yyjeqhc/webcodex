@@ -198,8 +198,10 @@ class WindowsUnifiedNsisTests(unittest.TestCase):
         expected = "a" * 64
         program = base64.b64decode(bootstrap.candidate_hash_command(expected)).decode("utf-16le")
         self.assertIn(f"$h -ne '{expected}'", program)
-        self.assertIn("-LiteralPath $env:WEBCODEX_INSTALLER_CANDIDATE_CLI", program)
+        self.assertIn("[System.IO.File]::OpenRead($env:WEBCODEX_INSTALLER_CANDIDATE_CLI)", program)
+        self.assertIn("[System.Security.Cryptography.SHA256]::Create()", program)
         self.assertIn("catch { exit 1 }", program)
+        self.assertNotIn("Get-FileHash", program)
         self.assertNotIn("$args", program)
 
     @unittest.skipUnless(os.name == "nt", "requires native Windows PowerShell")

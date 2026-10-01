@@ -29,11 +29,16 @@ def nsis_quote(path: Path) -> str:
 
 
 def candidate_hash_command(expected_sha256: str) -> str:
-    # The program is fixed code. The path travels through the child environment,
-    # never through PowerShell source (user temp paths can contain quotes or $).
+    # Keep the candidate path out of PowerShell source. Use .NET file/crypto APIs
+    # directly instead of PowerShell provider cmdlets so exact-path hashing does
+    # not depend on provider parsing or hosted-runner cmdlet behavior.
     script = (
         "$ErrorActionPreference='Stop'; try { "
-        "$h=(Get-FileHash -Algorithm SHA256 -LiteralPath $env:WEBCODEX_INSTALLER_CANDIDATE_CLI).Hash.ToLowerInvariant(); "
+        "$s=[System.IO.File]::OpenRead($env:WEBCODEX_INSTALLER_CANDIDATE_CLI); try { "
+        "$sha=[System.Security.Cryptography.SHA256]::Create(); try { "
+        "$h=([System.BitConverter]::ToString($sha.ComputeHash($s))).Replace('-','').ToLowerInvariant() "
+        "} finally { $sha.Dispose() } "
+        "} finally { $s.Dispose() }; "
         f"if($h -ne '{expected_sha256}') {{ exit 1 }}; exit 0 "
         "} catch { exit 1 }"
     )

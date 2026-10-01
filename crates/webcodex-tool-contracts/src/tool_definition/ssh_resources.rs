@@ -6,7 +6,7 @@ use crate::metadata::{
 
 pub(super) const DEFINITIONS: &[ToolDefinition] = &[model_spec(
     def(
-        "ssh_resource",
+        "manage_ssh_resource",
         super::ToolAuditPolicy::TYPED_CANONICAL,
         ModelVisible,
         TOOL_CATEGORY_RUNTIME,
@@ -25,5 +25,5 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[model_spec(
         false,
         super::ToolSessionEvidencePolicy::NONE,
     ),
-    "Discover and manage Runner-local named SSH resources only when PersistentShell needs a durable remote target. Start with action=list on one exact Runner; register/remove require its opaque revision binding. After a registration that requires restart, restart the Runner, list again, bind the active name with update_session_context, then discover open_session_shell/session_shell_exec. For one-shot SSH without persistent state, keep run_process. Targets and authentication details are never returned.",
+    "Discover and manage Runner-local named SSH resources only when PersistentShell needs a durable remote target. Start with action=list on one exact Runner; register/remove require its opaque revision binding. After a registration that requires restart, restart the Runner, list again, bind the active name with update_session_context, then discover open_session_shell/execute_session_shell. For one-shot SSH without persistent state, keep run_process. Targets and authentication details are never returned.",
 )];

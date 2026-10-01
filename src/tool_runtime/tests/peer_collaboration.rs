@@ -194,7 +194,7 @@ async fn control_communication_peer_message_uses_canonical_replay_path() {
         &runtime,
         &auth,
         &sender,
-        "runtime_status",
+        "get_runtime_status",
         json!({"compact": true}),
         control.clone(),
     )
@@ -209,7 +209,7 @@ async fn control_communication_peer_message_uses_canonical_replay_path() {
         &runtime,
         &auth,
         &sender,
-        "runtime_status",
+        "get_runtime_status",
         json!({"compact": true}),
         control,
     )
@@ -285,7 +285,7 @@ async fn ordinary_peer_message_is_projected_once_on_the_next_tool_result() {
         &runtime,
         &auth,
         &recipient,
-        "runtime_status",
+        "get_runtime_status",
         json!({"compact": true}),
         ToolInvocationMetadata::default(),
     )
@@ -312,7 +312,7 @@ async fn ordinary_peer_message_is_projected_once_on_the_next_tool_result() {
         &runtime,
         &auth,
         &recipient,
-        "runtime_status",
+        "get_runtime_status",
         json!({"compact": true}),
         ToolInvocationMetadata::default(),
     )
@@ -362,7 +362,7 @@ async fn ack_required_peer_message_repeats_on_omission_and_current_ack_suppresse
             &runtime,
             &auth,
             &recipient,
-            "runtime_status",
+            "get_runtime_status",
             json!({"compact": true}),
             ToolInvocationMetadata::default(),
         )
@@ -381,7 +381,7 @@ async fn ack_required_peer_message_repeats_on_omission_and_current_ack_suppresse
         &runtime,
         &auth,
         &recipient,
-        "runtime_status",
+        "get_runtime_status",
         json!({"compact": true}),
         ToolInvocationMetadata {
             ack_session_message_ids: vec![message_id.clone()],
@@ -399,7 +399,7 @@ async fn ack_required_peer_message_repeats_on_omission_and_current_ack_suppresse
         &runtime,
         &auth,
         &recipient,
-        "runtime_status",
+        "get_runtime_status",
         json!({"compact": true}),
         ToolInvocationMetadata::default(),
     )
@@ -572,7 +572,7 @@ async fn peer_discovery_is_same_project_but_contact_survives_project_change() {
         &runtime,
         &auth,
         &peer,
-        "runtime_status",
+        "get_runtime_status",
         json!({"compact": true}),
         ToolInvocationMetadata::default(),
     )
@@ -609,7 +609,7 @@ async fn peer_discovery_is_same_project_but_contact_survives_project_change() {
         &runtime,
         &auth,
         &peer,
-        "runtime_status",
+        "get_runtime_status",
         json!({"compact": true}),
         ToolInvocationMetadata::default(),
     )
@@ -739,7 +739,7 @@ async fn peer_message_input_is_trimmed_deduplicated_and_empty_rejected() {
         &runtime,
         &auth,
         &recipient,
-        "runtime_status",
+        "get_runtime_status",
         json!({"compact": true}),
         ToolInvocationMetadata::default(),
     )
@@ -825,7 +825,7 @@ async fn newly_unprojected_message_is_not_starved_by_old_ack_reminders() {
         &runtime,
         &auth,
         &recipient,
-        "runtime_status",
+        "get_runtime_status",
         json!({"compact": true}),
         ToolInvocationMetadata::default(),
     )
@@ -857,7 +857,7 @@ async fn newly_unprojected_message_is_not_starved_by_old_ack_reminders() {
         &runtime,
         &auth,
         &recipient,
-        "runtime_status",
+        "get_runtime_status",
         json!({"compact": true}),
         ToolInvocationMetadata::default(),
     )
@@ -980,15 +980,15 @@ async fn operator_attention_only_model_activity_consumes_and_acknowledges() {
     let id = posted.output["message_id"].as_str().unwrap().to_string();
     for tool in [
         "present_work_result",
-        "work_result_state",
-        "work_result_send_message",
-        "changes_file_diff",
+        "get_work_result_state",
+        "send_work_result_message",
+        "read_changed_file_diff",
     ] {
         let arguments = match tool {
-            "work_result_send_message" => {
+            "send_work_result_message" => {
                 json!({"project":"agent:missing:project","message":"another","delivery_key":"another-key"})
             }
-            "changes_file_diff" => {
+            "read_changed_file_diff" => {
                 json!({"project":"agent:missing:project","session_id":format!("wc_sess_{}","a".repeat(32)),"snapshot_id":"invalid","path":"file"})
             }
             _ => json!({"project":"agent:missing:project"}),
@@ -1031,7 +1031,7 @@ async fn operator_attention_only_model_activity_consumes_and_acknowledges() {
         &runtime,
         &auth,
         &window,
-        "runtime_status",
+        "get_runtime_status",
         json!({}),
         ToolInvocationMetadata {
             window_reply: Some(
@@ -1061,7 +1061,7 @@ async fn operator_attention_only_model_activity_consumes_and_acknowledges() {
         &runtime,
         &auth,
         &window,
-        "runtime_status",
+        "get_runtime_status",
         json!({}),
         ToolInvocationMetadata {
             ack_session_message_ids: vec![id.clone()],

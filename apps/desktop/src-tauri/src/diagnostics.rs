@@ -483,7 +483,7 @@ pub fn report(
     let mut cu = serde_json::Map::new();
     for name in [
         "computer_observe",
-        "computer_control",
+        "control_computer",
         "computer_snapshot_region",
         "computer_accessibility_observe",
         "computer_accessibility_action",

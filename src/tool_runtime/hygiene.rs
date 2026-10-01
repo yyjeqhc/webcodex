@@ -1,4 +1,4 @@
-//! `workspace_hygiene_check` — read-only workspace inspection tool.
+//! `check_workspace_hygiene` — read-only workspace inspection tool.
 //!
 //! Detects workspace pollution risks before deployment smoke, model handoff,
 //! or real development: dirty worktree, untracked temporary/smoke/anchor
@@ -338,7 +338,7 @@ fn hygiene_recommendation(kind: HygieneKind) -> String {
             "review whether this file should be tracked or ignored".to_string()
         }
         HygieneKind::DirtyWorktree => {
-            "review changes with show_changes or git_diff before proceeding".to_string()
+            "review changes with read_workspace_changes or git_diff before proceeding".to_string()
         }
     }
 }
@@ -510,7 +510,7 @@ fn hygiene_verdict(
         push_unique_reason(&mut warning_reasons, "truncated_by_limit");
         push_unique_action(
             &mut actions,
-            "rerun workspace_hygiene_check with a higher max_findings if needed",
+            "rerun check_workspace_hygiene with a higher max_findings if needed",
         );
     }
 

@@ -18,7 +18,7 @@ use webcodex_core::authority::SCOPE_JOB_DETACH;
 pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
     adaptive_runtime_direct(
         model_spec(
-        def("job_write_input", super::ToolAuditPolicy::TYPED_CANONICAL,
+        def("write_job_input", super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible, TOOL_CATEGORY_JOB, Some(StructuredProcess), TOOL_PROVIDER_RUNNER,
             super::ToolSemanticContract { effect:super::ToolEffect::Execute, risk:JobRun,
                 approval:super::ToolApprovalPolicy::Standard, idempotency:super::ToolIdempotency::Keyed },
@@ -87,7 +87,7 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
                 true,
                 super::ToolSessionEvidencePolicy::NONE,
             ),
-            "Run one native executable with structured literal argv. Use run_shell for shell grammar/short chains and run_script for program text. interactive=true retains piped stdin and returns a public Job for keyed job_write_input bytes/EOF; no PTY, initial stdin, named SSH or structured validation evidence. Otherwise stdin is a bounded payload then EOF. Windows batch shims use Runner-owned quoting. timeout_secs defaults to 60s and clamps at 7 days. Pending stays the same execution, owned by Runner: retain its exact continuation as fallback and continue independent work. Same-Window/Project/Session calls may surface sparse terminal Job attention. Use observe_jobs only for logs/details/recovery; bounded wait_for_job_readiness when terminal outcome blocks progress. No automatic next turn or redispatch. Persistent shell is only for retained same-process or repeated named-SSH state. Use run_detached_process only when the child must survive Runner restart/upgrade/stop/replacement, never for duration alone.",        )
+            "Run one native executable with structured literal argv. Use run_shell for shell grammar/short chains and run_script for program text. interactive=true retains piped stdin and returns a public Job for keyed write_job_input bytes/EOF; no PTY, initial stdin, named SSH or structured validation evidence. Otherwise stdin is a bounded payload then EOF. Windows batch shims use Runner-owned quoting. timeout_secs defaults to 60s and clamps at 7 days. Pending stays the same execution, owned by Runner: retain its exact continuation as fallback and continue independent work. Same-Window/Project/Session calls may surface sparse terminal Job attention. Use observe_jobs only for logs/details/recovery; bounded wait_for_job_readiness when terminal outcome blocks progress. No automatic next turn or redispatch. Persistent shell is only for retained same-process or repeated named-SSH state. Use run_detached_process only when the child must survive Runner restart/upgrade/stop/replacement, never for duration alone.",        )
         .with_execution(super::ToolExecutionContract::new(
             super::ToolExecutionForm::NativeArgv,
             super::ToolExecutionLifetime::Runner,
@@ -236,11 +236,11 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
                 true,
                 super::ToolSessionEvidencePolicy::NONE.persistent_shell(super::PersistentShellEvidenceAction::Open),
             ),
-            "Open one bounded long-lived shell for an explicit Workflow Session. Primary use: one shell for repeated commands on the active named SSH resource in execution_context.resource, preserving remote cwd/env/exports/functions/umask. Local sh/bash or Windows PowerShell remains supported only when same local shell-process state is actually required, not merely for several commands. New SSH targets use ssh_resource list/register, Runner restart, list again, then update_session_context; no per-shell host/resource parameter. The SSH target does not need WebCodex Runner.",
+            "Open one bounded long-lived shell for an explicit Workflow Session. Primary use: one shell for repeated commands on the active named SSH resource in execution_context.resource, preserving remote cwd/env/exports/functions/umask. Local sh/bash or Windows PowerShell remains supported only when same local shell-process state is actually required, not merely for several commands. New SSH targets use manage_ssh_resource list/register, Runner restart, list again, then update_session_context; no per-shell host/resource parameter. The SSH target does not need WebCodex Runner.",
     )),
     requires_explicit_business_session(model_spec(
             def(
-                "session_shell_exec",
+                "execute_session_shell",
                 super::ToolAuditPolicy::TYPED_CANONICAL.session_input(
                     super::ToolAuditSessionInputPolicy::OmitTopLevel(&[
                         "command",
@@ -274,7 +274,7 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
     ))),
     requires_explicit_business_session(model_spec(
         def(
-            "session_shell_status",
+            "get_session_shell_status",
             super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_EXECUTION,
@@ -544,7 +544,7 @@ pub(super) const LISTING_DEFINITIONS: &[ToolDefinition] = &[
         ),
 
     def(
-        "job_terminal_continuation_bind",
+        "bind_job_terminal_continuation",
         super::ToolAuditPolicy::typed_fields(&[
             super::ToolAuditResultField::pointer("wait_id", "/job_terminal_continuation/wait_id"),
             super::ToolAuditResultField::pointer("job_id", "/job_terminal_continuation/job_id"),
@@ -574,7 +574,7 @@ pub(super) const LISTING_DEFINITIONS: &[ToolDefinition] = &[
         super::ToolActivityInteraction::NonMeaningful,
     ),
     def(
-        "job_terminal_continuation_state",
+        "get_job_terminal_continuation_state",
         super::ToolAuditPolicy::typed_fields(&[
             super::ToolAuditResultField::pointer("wait_id", "/job_terminal_continuation/wait_id"),
             super::ToolAuditResultField::pointer("job_id", "/job_terminal_continuation/job_id"),
@@ -604,7 +604,7 @@ pub(super) const LISTING_DEFINITIONS: &[ToolDefinition] = &[
         super::ToolActivityInteraction::NonMeaningful,
     ),
     def(
-        "job_terminal_continuation_prepare",
+        "prepare_job_terminal_continuation",
         super::ToolAuditPolicy::typed_fields(&[
             super::ToolAuditResultField::value("wait_id"),
             super::ToolAuditResultField::value("job_id"),
@@ -636,7 +636,7 @@ pub(super) const LISTING_DEFINITIONS: &[ToolDefinition] = &[
         super::ToolActivityInteraction::NonMeaningful,
     ),
     def(
-        "job_terminal_continuation_finish",
+        "finish_job_terminal_continuation",
         super::ToolAuditPolicy::typed_fields(&[
             super::ToolAuditResultField::value("wait_id"),
             super::ToolAuditResultField::value("job_id"),
@@ -668,7 +668,7 @@ pub(super) const LISTING_DEFINITIONS: &[ToolDefinition] = &[
         super::ToolActivityInteraction::NonMeaningful,
     ),
     def(
-        "job_terminal_continuation_unbind",
+        "unbind_job_terminal_continuation",
         super::ToolAuditPolicy::typed_fields(&[
             super::ToolAuditResultField::pointer("wait_id", "/job_terminal_continuation/wait_id"),
             super::ToolAuditResultField::pointer("job_id", "/job_terminal_continuation/job_id"),
@@ -698,7 +698,7 @@ pub(super) const LISTING_DEFINITIONS: &[ToolDefinition] = &[
         super::ToolActivityInteraction::NonMeaningful,
     ),
     def(
-        "job_tail",
+        "read_job_tail",
         super::ToolAuditPolicy::TYPED_CANONICAL,
         ModelHidden,
         TOOL_CATEGORY_JOB,

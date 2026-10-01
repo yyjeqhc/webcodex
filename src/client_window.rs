@@ -219,7 +219,7 @@ mod tests {
     #[test]
     fn stateless_mcp_window_uses_openai_session_metadata() {
         let params = serde_json::json!({
-            "name": "runtime_status",
+            "name": "get_runtime_status",
             "arguments": {},
             "_meta": {"openai/session": "chat-session-opaque-value"}
         });
@@ -242,7 +242,7 @@ mod tests {
     #[test]
     fn stateless_mcp_window_without_valid_openai_session_stays_unidentified() {
         for params in [
-            serde_json::json!({"name": "runtime_status", "arguments": {}}),
+            serde_json::json!({"name": "get_runtime_status", "arguments": {}}),
             serde_json::json!({"_meta": {}}),
             serde_json::json!({"_meta": {"openai/session": ""}}),
             serde_json::json!({"_meta": {"openai/session": 42}}),

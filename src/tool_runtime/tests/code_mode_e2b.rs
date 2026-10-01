@@ -22,7 +22,7 @@ const E2B_MUTATION_ONLY_POLICY: OrchestrationPolicy = OrchestrationPolicy {
     frontend: "code_mode_e2b_test",
     policy_name: "Code Mode E2b test",
     admitted_tools: &["edit_project_files"],
-    denied_tools: &["code_mode_exec_mutating"],
+    denied_tools: &["execute_mutating_code_mode"],
     additional_forbidden_argument_fields: &[],
     child_return_timing: crate::tool_runtime::return_timing::ToolReturnTimingPolicy::unconstrained(
     ),
@@ -1393,7 +1393,7 @@ async fn direct_edit_project_files_does_not_acquire_experimental_orchestration_f
 async fn e1_and_e2a_remain_unable_to_dispatch_apply_text_edits_after_e2b() {
     let (_root, runtime, project, _session_id) =
         e2b_fixture("e2b-stage-isolation", "before\n").await;
-    for tool_name in ["code_mode_exec", "code_mode_exec_effectful"] {
+    for tool_name in ["execute_code_mode", "execute_effectful_code_mode"] {
         let session = runtime.sessions.start_session(
             Some(project.clone()),
             Some(format!("isolation {tool_name}")),
@@ -1401,7 +1401,7 @@ async fn e1_and_e2a_remain_unable_to_dispatch_apply_text_edits_after_e2b() {
         let result = runtime
             .dispatch_with_auth(
                 match tool_name {
-                    "code_mode_exec" => ToolCall::CodeModeExec {
+                    "execute_code_mode" => ToolCall::CodeModeExec {
                         project: project.clone(),
                         session_id: session.session_id,
                         source: "try { await tools.edit_project_files({changes:[{kind:'create',path:'forbidden.txt',content:'x'}]}); } catch (e) { text(String(e)); }".to_string(),
@@ -1442,7 +1442,7 @@ async fn e2b_parent_omits_retired_continuity_overlays_after_nested_edit() {
         runtime_for_call
             .call_tool_with_invocation_metadata(
                 ToolCallRequest {
-                    tool_name: "code_mode_exec_mutating".to_string(),
+                    tool_name: "execute_mutating_code_mode".to_string(),
                     arguments: json!({
                         "project": project_for_call,
                         "session_id": session_for_call,
@@ -1497,9 +1497,9 @@ async fn e2b_denies_shell_other_mutation_nested_jobs_and_recursion_before_busine
         "write_file",
         "git_commit",
         "plugin_tool",
-        "code_mode_exec",
-        "code_mode_exec_effectful",
-        "code_mode_exec_mutating",
+        "execute_code_mode",
+        "execute_effectful_code_mode",
+        "execute_mutating_code_mode",
     ] {
         let source =
             format!("try {{ await tools.{tool}({{}}); }} catch (error) {{ text(String(error)); }}");
@@ -1533,7 +1533,7 @@ async fn e2b_missing_outer_write_scope_rejects_before_nested_dispatch() {
     let outcome = runtime
         .call_tool_with_context(
             ToolCallRequest {
-                tool_name: "code_mode_exec_mutating".to_string(),
+                tool_name: "execute_mutating_code_mode".to_string(),
                 arguments: json!({
                     "project": project,
                     "session_id": session_id,

@@ -51,7 +51,7 @@ async fn git_status_with_session_id_records_git_read_event() {
     assert_eq!(summary.counts.tool_calls, 1);
     assert_eq!(summary.counts.read_like, 1);
     assert_eq!(summary.counts.git_like, 1);
-    let event = finished_event(&summary, "git_status");
+    let event = finished_event(&summary, "get_git_status");
     assert!(event.git_like);
     assert!(event.read_like);
 }
@@ -302,12 +302,12 @@ async fn git_log_snapshot_continuation_survives_head_advance_without_gap_or_dupl
     let snapshot = first.output["head_commit"].as_str().unwrap().to_string();
     assert_eq!(snapshot.len(), 40);
     let first_next = &first.output["suggested_call"];
-    assert_eq!(first_next["tool"], "git_log");
+    assert_eq!(first_next["tool"], "read_git_log");
     assert_eq!(first_next["follow_up_kind"], "mechanically_followable");
     webcodex_tool_contracts::test_support::validate_generated_tool_call_against_registered_input_schema(
         first_next,
     )
-    .expect("git_log paging call must pass the current registered inputSchema");
+    .expect("read_git_log paging call must pass the current registered inputSchema");
     assert_eq!(
         first_next["arguments"]["project"],
         agent_test_project_id("git-log-multipage")
@@ -319,10 +319,10 @@ async fn git_log_snapshot_continuation_survives_head_advance_without_gap_or_dupl
         first_next["tool"].as_str().unwrap(),
         first_next["arguments"].clone(),
     )
-    .expect("git_log suggested_call must be parser-ready");
+    .expect("read_git_log suggested_call must be parser-ready");
     let mut projected_first = ToolResult::ok(first.output.clone());
     crate::model_surface::project_tool_result_suggested_calls(
-        "git_log",
+        "read_git_log",
         &mut projected_first,
         &|target| crate::model_surface::suggested_tool_call_route(target, false),
     );
@@ -332,7 +332,7 @@ async fn git_log_snapshot_continuation_survives_head_advance_without_gap_or_dupl
         crate::model_surface::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME
     );
     assert_eq!(projected_next["follow_up_kind"], "mechanically_followable");
-    assert_eq!(projected_next["arguments"]["tool"], "git_log");
+    assert_eq!(projected_next["arguments"]["tool"], "read_git_log");
     assert_eq!(
         projected_next["arguments"]["arguments"],
         first_next["arguments"]
@@ -367,14 +367,14 @@ async fn git_log_snapshot_continuation_survives_head_advance_without_gap_or_dupl
     webcodex_tool_contracts::test_support::validate_generated_tool_call_against_registered_input_schema(
         second_next,
     )
-    .expect("second git_log paging call must pass the current registered inputSchema");
+    .expect("second read_git_log paging call must pass the current registered inputSchema");
     assert_eq!(second_next["arguments"]["head_commit"], snapshot);
     assert_eq!(second_next["arguments"]["skip"], 4);
     let final_call = ToolCall::from_tool_name(
         second_next["tool"].as_str().unwrap(),
         second_next["arguments"].clone(),
     )
-    .expect("second git_log suggested_call must be parser-ready");
+    .expect("second read_git_log suggested_call must be parser-ready");
     let final_stdout = git_log_stdout_at_head(root, &snapshot, 2, 4);
     let final_page =
         run_git_log_tool_call_with_stdout("git-log-multipage", final_call, final_stdout, &snapshot)
@@ -629,7 +629,7 @@ async fn git_log_read_only_session_allowed_and_recorded() {
     assert_eq!(summary.counts.tool_calls, 1);
     assert_eq!(summary.counts.read_like, 1);
     assert_eq!(summary.counts.git_like, 1);
-    let event = finished_event(&summary, "git_log");
+    let event = finished_event(&summary, "read_git_log");
     assert!(event.read_like);
     assert!(event.git_like);
     assert!(!event.write_like);

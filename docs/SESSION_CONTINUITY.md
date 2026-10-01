@@ -49,7 +49,7 @@ The recovery sequence is:
 2. Select one exact `session_id` or returned `session_ref`. Ordering is only for
    display; a title, newest row or the word “continue” does not resolve an
    ambiguous task choice.
-3. Read `session_handoff_summary(session_id)`; an explicit matching `project` is optional. The compact
+3. Read `read_session_handoff_summary(session_id)`; an explicit matching `project` is optional. The compact
    `handoff_brief.task.decisions` and `recent_progress` include the newest
    recorded notes, their status, supersession, and coverage/truncation. The
    default brief stays below 8 KiB. Use the diagnostic handoff or authorized
@@ -110,7 +110,7 @@ through `work_on_project` or `list_runners`, then explicitly choose a configured
 }
 ```
 
-These are `coding_agent_start` arguments. `context_session_id` requires
+These are `start_coding_agent` arguments. `context_session_id` requires
 independent Session and `runtime:read` authorization and must match the exact
 delegated Project. It quotes the bounded handoff and separately authorized Goal
 context into the prompt; it neither resumes that Session nor chooses a recorder.
@@ -118,9 +118,9 @@ This snapshot does not fetch current files or Git. Include explicitly selected
 source excerpts in `instruction` when the review needs them; the combined prompt
 must fit the existing 64 KiB Run input bound.
 
-Observe the returned Run with `coding_agent_observe`; omit the token on the first
+Observe the returned Run with `observe_coding_agent`; omit the token on the first
 read to include retained output, then use that observation's token for only-new
-follow-ups. Use `coding_agent_cancel` to request cancellation. After an
+follow-ups. Use `cancel_coding_agent` to request cancellation. After an
 uncertain start, observe the same Run rather than dispatching a replacement.
 Context belongs to the initiation fingerprint: changing the saved snapshot while
 reusing a key fails with a conflict. There is no automatic quota fallback or model

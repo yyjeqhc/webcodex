@@ -727,7 +727,7 @@ async fn generic_runtime_ssh_resource_dispatch_preserves_native_requests_and_res
                 runtime
                     .call_tool_with_context(
                         ToolCallRequest {
-                            tool_name: "ssh_resource".into(),
+                            tool_name: "manage_ssh_resource".into(),
                             arguments,
                         },
                         ToolCallContext {

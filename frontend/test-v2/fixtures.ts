@@ -19,7 +19,7 @@ export function sessionItem(overrides: Partial<SessionListItem> = {}): SessionLi
     current_activity: undefined,
     last_activity: {
       kind: "review",
-      tool: "show_changes",
+      tool: "read_workspace_changes",
       state: "success",
       execution_state: "completed",
       job_handoff: false,

@@ -326,7 +326,7 @@ async fn coding_workflow_full_diagnostic_has_no_binding_projection() {
     assert!(contains_string(inspect, "read_files"));
     assert!(contains_string(inspect, "search_project_texts"));
     assert!(contains_string(inspect, "review_changes"));
-    assert!(!contains_string(inspect, "show_changes"));
+    assert!(!contains_string(inspect, "read_workspace_changes"));
     assert!(!contains_string(inspect, "read_file"));
     assert!(!contains_string(inspect, "search_project_text"));
     let edit = result.output["recommended_flow"]["edit"]
@@ -568,11 +568,11 @@ async fn coding_workflow_full_startup_verdict_accepts_clean_workspace() {
     assert_startup_verdict_shape(verdict);
     assert_eq!(verdict["status"], "pass");
     assert_eq!(verdict["blocking"], false);
-    assert_check_status(verdict, "runtime_status", "pass");
+    assert_check_status(verdict, "get_runtime_status", "pass");
     assert_check_status(verdict, "workspace", "pass");
     assert_check_status(verdict, "jobs", "pass");
     assert_check_status(verdict, "agent", "pass");
-    assert_check_status(verdict, "tool_manifest", "pass");
+    assert_check_status(verdict, "read_tool_manifest", "pass");
     assert_compact_verdict_safe(verdict, "startup clean verdict");
 }
 
@@ -1393,7 +1393,7 @@ async fn finish_coding_task_requires_explicit_session_and_returns_structured_fie
     );
     assert_eq!(
         result.output["review_evidence"]["tools"],
-        json!(["show_changes"])
+        json!(["read_workspace_changes"])
     );
     assert_review_evidence_tools_safe(&result.output["review_evidence"]);
     assert!(result.output["hygiene"].is_null());
@@ -1716,8 +1716,8 @@ async fn finish_coding_task_summary_only_is_compact_for_clean_project() {
     }
     assert_no_raw_validation_output_fields(&result.output, "summary_only finish structured output");
     assert!(
-        !serialized.contains("\"show_changes\":"),
-        "summary_only finish leaked raw show_changes payload: {serialized}"
+        !serialized.contains("\"read_workspace_changes\":"),
+        "summary_only finish leaked raw read_workspace_changes payload: {serialized}"
     );
 }
 
@@ -1829,7 +1829,7 @@ async fn finish_coding_task_summary_only_uses_review_evidence_without_projecting
     record_coding_task_tool_event(
         &runtime,
         &session_id,
-        "show_changes",
+        "read_workspace_changes",
         json!({"project": project, "include_diff": false}),
         true,
         json!({}),
@@ -3791,11 +3791,11 @@ fn assert_review_evidence_tools_safe(review_evidence: &Value) {
                 "read_files"
                     | "list_project_files"
                     | "search_project_texts"
-                    | "git_diff_hunks"
-                    | "git_review_summary"
-                    | "show_changes"
-                    | "git_status"
-                    | "workspace_hygiene_check"
+                    | "read_git_diff_hunks"
+                    | "read_git_review_summary"
+                    | "read_workspace_changes"
+                    | "get_git_status"
+                    | "check_workspace_hygiene"
             ),
             "unexpected review evidence tool name {tool}"
         );
@@ -4020,7 +4020,7 @@ async fn session_handoff_summary_only_with_agent_limit(
         runtime,
         client_id,
         &task,
-        "session_handoff_summary summary_only",
+        "read_session_handoff_summary summary_only",
     )
     .await;
     task.await.unwrap()
@@ -4046,7 +4046,7 @@ async fn coding_workflow_full_diagnostic_recommended_flow_projects_to_visible_ma
 
     let manifest_tools: std::collections::BTreeSet<&str> = result.output["tool_manifest"]["tools"]
         .as_array()
-        .expect("tool_manifest.tools")
+        .expect("read_tool_manifest.tools")
         .iter()
         .filter_map(|tool| tool["name"].as_str())
         .collect();

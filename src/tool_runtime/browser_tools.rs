@@ -131,7 +131,7 @@ impl ToolRuntime {
         let identity = json!({"action": call.action_name()});
         let permit = self
             .govern_specialized_invocation(
-                "browser_observe",
+                "observe_browser",
                 policy,
                 transport,
                 recording_session_id,
@@ -163,7 +163,7 @@ impl ToolRuntime {
         let identity = json!({"action": call.action_name()});
         let permit = self
             .govern_specialized_invocation(
-                "browser_act",
+                "control_browser",
                 policy,
                 transport,
                 recording_session_id,
@@ -1104,7 +1104,7 @@ impl BrowserRecoveryContext {
                 "client_id": self.client_id,
             }),
         };
-        SuggestedToolCall::fallback_recovery("browser_observe", arguments)
+        SuggestedToolCall::fallback_recovery("observe_browser", arguments)
     }
 
     fn to_recovery(&self, reason: &str) -> Value {
@@ -1129,7 +1129,7 @@ fn browser_delivery_failure(
             "outcome_unknown",
             false,
             Some(recovery.to_recovery(
-                "effect may have reached the Browser; reconcile with browser_observe and never blindly retry",
+                "effect may have reached the Browser; reconcile with observe_browser and never blindly retry",
             )),
         )
     }
@@ -1295,7 +1295,7 @@ mod tests {
         assert_eq!(result.output["execution_state"], "outcome_unknown");
         assert_eq!(
             result.output["recovery"]["suggested_call"]["tool"],
-            "browser_observe"
+            "observe_browser"
         );
         assert_eq!(
             result.output["recovery"]["suggested_call"]["arguments"]["action"],

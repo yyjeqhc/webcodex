@@ -1,4 +1,4 @@
-//! `session_handoff_summary` — read-only structured handoff for degraded or
+//! `read_session_handoff_summary` — read-only structured handoff for degraded or
 //! contaminated execution context recovery (GPT long-task window routed to a
 //! degraded/contaminated context, context pollution, or continuing in a fresh
 //! window), multi-agent, and multi-window scenarios.
@@ -157,7 +157,7 @@ impl ToolRuntime {
         let include_validation = include_validation.unwrap_or(true);
 
         let authorized_target = match self
-            .authorize_session_target(&session_id, "session_handoff_summary", auth)
+            .authorize_session_target(&session_id, "read_session_handoff_summary", auth)
             .await
         {
             Ok(resolved) => resolved,
@@ -183,7 +183,7 @@ impl ToolRuntime {
                 if session_project != requested.resolved_id {
                     return session_project_mismatch_result(
                         &session_id,
-                        "session_handoff_summary",
+                        "read_session_handoff_summary",
                         &SessionProjectMismatch {
                             session_project: session_project.to_string(),
                             request_project: requested.resolved_id,
@@ -551,7 +551,7 @@ impl ToolRuntime {
         ToolResult::ok(output)
     }
 
-    /// Build a bounded workspace summary reusing the read-only `show_changes`
+    /// Build a bounded workspace summary reusing the read-only `read_workspace_changes`
     /// git inspection path. Returns only clean/branch/head/counts/warnings/
     /// suggested_next_actions — never hunks, full diffs, or file contents.
     async fn handoff_workspace_summary(
@@ -654,7 +654,7 @@ impl ToolRuntime {
     }
 
     /// Build a bounded checkpoint summary using the read-only
-    /// `workspace_checkpoint_list` path. Returns the latest
+    /// `list_workspace_checkpoints` path. Returns the latest
     /// `last_known_good` checkpoint (preferring `validation_status == passed`)
     /// and a bounded recent list. Never returns validation.commands or diffs.
     #[cfg(feature = "workspace-checkpoints")]
@@ -1059,7 +1059,10 @@ fn compact_workflow_outcomes(
 
     if !workspace_checked {
         push_unique(&mut warning_reasons, "workspace_not_checked");
-        push_unique_action(&mut actions, "run show_changes before final handoff");
+        push_unique_action(
+            &mut actions,
+            "run read_workspace_changes before final handoff",
+        );
     }
     let workspace_conflicts = count_field(output, "workspace_conflicts");
     if workspace_conflicts > 0 {
@@ -1071,12 +1074,15 @@ fn compact_workflow_outcomes(
         .is_some_and(|clean| !clean)
     {
         push_unique(&mut warning_reasons, "workspace_dirty");
-        push_unique_action(&mut actions, "review workspace changes with show_changes");
+        push_unique_action(
+            &mut actions,
+            "review workspace changes with read_workspace_changes",
+        );
     }
 
     if let Some(false) = hygiene_checked {
         push_unique(&mut warning_reasons, "hygiene_not_checked");
-        push_unique_action(&mut actions, "run workspace_hygiene_check before closeout");
+        push_unique_action(&mut actions, "run check_workspace_hygiene before closeout");
     }
     if output
         .get("hygiene_clean")
@@ -1598,7 +1604,10 @@ fn handoff_suggested_next_actions(output: &Value) -> Vec<String> {
                 .and_then(Value::as_bool)
                 .unwrap_or(true);
             if !clean {
-                push(&mut actions, "review workspace changes with show_changes");
+                push(
+                    &mut actions,
+                    "review workspace changes with read_workspace_changes",
+                );
             }
         }
     }

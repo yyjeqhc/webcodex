@@ -131,9 +131,9 @@ pub(super) fn window_summary_internal_tool(tool: Option<&str>) -> bool {
         tool,
         Some(
             "present_work_result"
-                | "work_result_state"
-                | "work_result_send_message"
-                | "changes_file_diff"
+                | "get_work_result_state"
+                | "send_work_result_message"
+                | "read_changed_file_diff"
         )
     )
 }

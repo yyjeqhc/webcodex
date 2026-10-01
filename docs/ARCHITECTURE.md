@@ -82,7 +82,7 @@ Maintainer-level lifecycle and Agent Task/TaskAttempt details live in [Durable A
 
 The Server also owns an independent durable **Goal** domain for high-level intent/control state. A Goal answers what the user ultimately wants and the authoritative high-level lifecycle of that intent. It is not a Workflow Session, Agent Task, Job, Project selector, credential, or execution authority. Goal references to Agent Tasks and Workflow Sessions are explicit correlation only; dereferencing those ids always re-runs the referenced domain's normal authorization.
 
-Stateless MCP 2026 can optionally present one exact Goal through the sparse Goal Plan App. `present_goal_plan(goal_id)` is the sole model-visible App-bound entry; the View converges through the ModelHidden/app-only `goal_plan_sync(goal_id)` read. Both are bounded observations over the same SQLite Goal truth and carry no Project, Runner, Job, Workflow Session mutation, or Host-continuation authority. Existing coding tools do not require Goal identity and keep their normal/native presentation.
+Stateless MCP 2026 can optionally present one exact Goal through the sparse Goal Plan App. `present_goal_plan(goal_id)` is the sole model-visible App-bound entry; the View converges through the ModelHidden/app-only `sync_goal_plan(goal_id)` read. Both are bounded observations over the same SQLite Goal truth and carry no Project, Runner, Job, Workflow Session mutation, or Host-continuation authority. Existing coding tools do not require Goal identity and keep their normal/native presentation.
 
 ## Goal, Job, and Workflow Session continuity
 
@@ -171,7 +171,7 @@ Runtime Console -----------------------> canonical Server HTTP/kernel paths abov
   remains accepted and is ignored when disabled; dormant Runner checkpoint
   wire operations fail closed. Workflow Session explicit handoff recovery,
   collaboration ACK/message observation, validation evidence, and Jobs remain always active.
-  The shared workspace path policy stays compiled for `project_overview`.
+  The shared workspace path policy stays compiled for `read_project_overview`.
 - `auth` / `oauth_http` / `db` — authentication, OAuth endpoints, and
   persistence.
 - `webcodex-runner` crates — the Runner binary: config, transport, project
@@ -327,7 +327,7 @@ effect, proven-no-state-change failure classification, and structured validation
 identity kind. Workflow Session consumes those
 semantic declarations but retains the typed, bounded projectors that decode tool
 results, normalize paths, enforce privacy limits, and persist durable evidence.
-Dynamic request conditions such as `show_changes(include_diff=true)` remain in the
+Dynamic request conditions such as `read_workspace_changes(include_diff=true)` remain in the
 projector rather than becoming declaration-time request parsing.
 
 `ToolCall` remains the exhaustive typed authority for business requests and audit

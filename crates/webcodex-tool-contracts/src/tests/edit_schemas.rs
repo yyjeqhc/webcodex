@@ -217,8 +217,7 @@ fn edit_project_files_guidance_is_read_native() {
         "preflight transactionally",
         "outcome_unknown",
         "review_changes when Git review is useful",
-        "task-appropriate validation",
-    ] {
+        "task-appropriate validation",    ] {
         assert!(spec.description.contains(phrase), "{phrase}");
     }
 }

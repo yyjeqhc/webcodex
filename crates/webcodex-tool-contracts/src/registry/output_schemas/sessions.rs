@@ -294,7 +294,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 }
             })),
         ])),
-        "session_summary" => Some(wrapped_output_schema(vec![
+        "read_session_summary" => Some(wrapped_output_schema(vec![
             ("session_id", schema_type("string", "Canonical wc_sess_* Workflow Session id.")),
             ("session_ref", schema_type("string", "Server-issued principal-scoped ~sN selector for this exact Workflow Session. Selector only; use re-runs ordinary authorization and lifecycle checks.")),
             (
@@ -473,8 +473,8 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 schema_type("integer", "Unix timestamp of the session's last update."),
             ),
         ])),
-        "validation_summary" => Some(validation_summary_tool_output_schema()),
-        "work_result_state" => {
+        "read_validation_summary" => Some(validation_summary_tool_output_schema()),
+        "get_work_result_state" => {
             let mut schema = wrapped_output_schema(vec![("work_result", open_object_schema("Lightweight card state."))]);
             let output = &mut schema["properties"]["output"];
             output["properties"]["work_result_files"] = open_object_schema("Explicit bounded immutable file page or per-file diff; identity reauthorized on every request.");
@@ -485,13 +485,13 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
         "present_work_result" => Some(wrapped_output_schema(vec![(
             "work_result",
             open_object_schema("Bounded persistent card state for one exact Project and current client Window. Presentation and App refreshes expose the same bounded Window ActionAudit activity used by WebUI, including observe/diagnostic actions; Window collaboration is a read-only Operator/peer transcript independent of Sessions; linked Session evidence and sealed final_changes are optional."),
-        )])),        "work_result_send_message" => Some(wrapped_output_schema(vec![
+        )])),        "send_work_result_message" => Some(wrapped_output_schema(vec![
             ("success", schema_type("boolean", "Always true on success.")),
             ("message_id", schema_type("string", "Created or replayed wc_msg_* message id.")),
             ("replayed", schema_type("boolean", "True when the exact delivery key replayed an already retained message.")),
             ("state_changed", schema_type("boolean", "True only when a new message was created.")),
         ])),
-        "changes_file_diff" => Some(wrapped_output_schema(vec![(
+        "read_changed_file_diff" => Some(wrapped_output_schema(vec![(
             "changes_file_diff",
             open_object_schema("Bounded lazy unified diff for one advertised path in the Work Result sealed final snapshot."),
         )])),
@@ -596,7 +596,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ("todo", open_object_schema("Resolved todo with resolved_by_message_id correlation.")),
             ("answer", open_object_schema("Created answer with reply_to and trusted author_session_id when available.")),
         ])),
-        "session_discussion_summary" => Some(wrapped_output_schema(vec![
+        "read_session_discussion_summary" => Some(wrapped_output_schema(vec![
             ("success", schema_type("boolean", "Always true on success.")),
             (
                 "session_id",
@@ -667,7 +667,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 ),
             ),
         ])),
-        "session_handoff_summary" | "session_handoff_state" => Some(wrapped_output_schema(vec![
+        "read_session_handoff_summary" | "get_session_handoff_state" => Some(wrapped_output_schema(vec![
             (
                 "diagnostic",
                 schema_type("boolean", "True only when detailed evidence was explicitly requested."),

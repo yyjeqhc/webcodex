@@ -96,7 +96,7 @@ fn tool_definitions_are_session_evidence_policy_ssot() {
     );
     #[cfg(feature = "workspace-checkpoints")]
     assert_eq!(
-        lookup_tool_definition("workspace_checkpoint_create")
+        lookup_tool_definition("create_workspace_checkpoint")
             .unwrap()
             .session_evidence
             .failure,
@@ -110,7 +110,7 @@ fn tool_definitions_are_session_evidence_policy_ssot() {
         ToolExplorationEvidence::ReadBatch
     );
     assert_eq!(
-        lookup_tool_definition("goto_definition")
+        lookup_tool_definition("find_definition")
             .unwrap()
             .session_evidence
             .exploration,
@@ -124,28 +124,28 @@ fn tool_definitions_are_session_evidence_policy_ssot() {
         ToolChangedPathEvidence::ResultField("affected_files")
     );
     assert_eq!(
-        lookup_tool_definition("session_shell_exec")
+        lookup_tool_definition("execute_session_shell")
             .unwrap()
             .session_evidence
             .persistent_shell,
         Some(PersistentShellEvidenceAction::Exec)
     );
     assert_eq!(
-        lookup_tool_definition("show_changes")
+        lookup_tool_definition("read_workspace_changes")
             .unwrap()
             .session_evidence
             .diff_review,
         ToolDiffReviewEvidence::ArgumentBool("include_diff")
     );
     assert_eq!(
-        lookup_tool_definition("show_changes")
+        lookup_tool_definition("read_workspace_changes")
             .unwrap()
             .session_evidence
             .review,
         ToolReviewEvidence::WorkspaceReview
     );
     assert_eq!(
-        lookup_tool_definition("workspace_hygiene_check")
+        lookup_tool_definition("check_workspace_hygiene")
             .unwrap()
             .session_evidence
             .review,
@@ -179,7 +179,7 @@ fn tool_definitions_drive_session_and_permission_policy() {
     use crate::tool_policy::lookup_tool_definition;
 
     let computer_control =
-        lookup_tool_definition("computer_control").expect("computer control gateway");
+        lookup_tool_definition("control_computer").expect("computer control gateway");
     assert!(computer_control.is_write_like());
     assert!(computer_control.requires_permission());
     assert_eq!(computer_control.metadata().risk, ToolRisk::ComputerControl);
@@ -199,7 +199,7 @@ fn tool_definitions_drive_session_and_permission_policy() {
         ("run_shell", ToolEffect::Execute, ToolRisk::JobRun),
         ("cargo_check", ToolEffect::Execute, ToolRisk::JobRun),
         (
-            "computer_control",
+            "control_computer",
             ToolEffect::Execute,
             ToolRisk::ComputerControl,
         ),
@@ -412,10 +412,10 @@ fn tool_definitions_drive_session_and_permission_policy() {
     assert_eq!(
         change_summary_tools,
         vec![
-            "git_review_summary",
+            "read_git_review_summary",
             "review_changes",
-            "show_changes",
-            "git_diff_hunks",
+            "read_workspace_changes",
+            "read_git_diff_hunks",
         ]
     );
 
@@ -444,28 +444,28 @@ fn tool_definitions_drive_session_and_permission_policy() {
             "record_external_observation",
             "list_external_observations",
             "finish_coding_task",
-            "session_summary",
+            "read_session_summary",
             "update_session_context",
             "close_session",
-            "validation_summary",
+            "read_validation_summary",
             "post_session_message",
             "list_session_messages",
             "get_session_assignment",
             "observe_session_messages",
             "resolve_session_message",
             "complete_session_message",
-            "session_discussion_summary",
-            "session_handoff_summary",
-            "session_handoff_state",
+            "read_session_discussion_summary",
+            "read_session_handoff_summary",
+            "get_session_handoff_state",
             #[cfg(feature = "experimental-code-mode")]
-            "code_mode_exec",
+            "execute_code_mode",
             #[cfg(feature = "experimental-code-mode")]
-            "code_mode_exec_effectful",
+            "execute_effectful_code_mode",
             #[cfg(feature = "experimental-code-mode")]
-            "code_mode_exec_mutating",
+            "execute_mutating_code_mode",
             "open_session_shell",
-            "session_shell_exec",
-            "session_shell_status",
+            "execute_session_shell",
+            "get_session_shell_status",
             "close_session_shell"
         ]
     );
@@ -483,9 +483,9 @@ fn tool_definitions_drive_session_and_permission_policy() {
     assert_eq!(
         artifact_upload_path_binding_tools,
         vec![
-            "artifact_upload_chunk",
-            "artifact_upload_finish",
-            "artifact_upload_abort"
+            "upload_artifact_chunk",
+            "finish_artifact_upload",
+            "abort_artifact_upload"
         ]
     );
 
@@ -506,13 +506,12 @@ fn tool_definitions_drive_session_and_permission_policy() {
         ),
         ("transfer_project_artifact", PERMISSION_RISK_ARTIFACT_WRITE),
         ("accept_artifact_handoff", PERMISSION_RISK_ARTIFACT_WRITE),
-        ("artifact_upload_finish", PERMISSION_RISK_ARTIFACT_WRITE),
-        ("artifact_upload_abort", PERMISSION_RISK_ARTIFACT_WRITE),
-        ("computer_save_snapshot", PERMISSION_RISK_ARTIFACT_WRITE),
-        ("apply_patch", PERMISSION_RISK_PATCH),
+        ("finish_artifact_upload", PERMISSION_RISK_ARTIFACT_WRITE),
+        ("abort_artifact_upload", PERMISSION_RISK_ARTIFACT_WRITE),
+        ("save_computer_snapshot", PERMISSION_RISK_ARTIFACT_WRITE),        ("apply_patch", PERMISSION_RISK_PATCH),
         ("apply_unified_diff", PERMISSION_RISK_PATCH),
         #[cfg(feature = "workspace-checkpoints")]
-        ("workspace_checkpoint_restore", PERMISSION_RISK_PATCH),
+        ("restore_workspace_checkpoint", PERMISSION_RISK_PATCH),
         ("write_project_file", PERMISSION_RISK_WRITE),
         ("edit_project_files", PERMISSION_RISK_WRITE),
         ("assign_agent_task", PERMISSION_RISK_WRITE),
@@ -524,8 +523,8 @@ fn tool_definitions_drive_session_and_permission_policy() {
         ("detach_agent_endpoint", PERMISSION_RISK_WRITE),
         ("consume_agent_deliveries", PERMISSION_RISK_WRITE),
         ("consume_agent_wake", PERMISSION_RISK_WRITE),
-        ("coding_agent_cancel", PERMISSION_RISK_WRITE),
-        ("computer_control", PERMISSION_RISK_WRITE),
+        ("cancel_coding_agent", PERMISSION_RISK_WRITE),
+        ("control_computer", PERMISSION_RISK_WRITE),
         ("computer_key_input", PERMISSION_RISK_WRITE),
         ("update_session_context", PERMISSION_RISK_WRITE),
         ("close_session", PERMISSION_RISK_WRITE),
@@ -540,14 +539,14 @@ fn tool_definitions_drive_session_and_permission_policy() {
     assert_eq!(close_session.approval, ToolApprovalPolicy::None);
     assert!(!runtime_tool_requires_permission("close_session"));
 
-    let cancel = lookup_tool_definition("coding_agent_cancel")
+    let cancel = lookup_tool_definition("cancel_coding_agent")
         .unwrap()
         .metadata();
     assert_eq!(cancel.effect, ToolEffect::Mutate);
     assert_eq!(cancel.risk, ToolRisk::RunControl);
     assert_eq!(cancel.approval, ToolApprovalPolicy::InheritFromStart);
     assert_eq!(cancel.idempotency, ToolIdempotency::DesiredState);
-    assert!(!runtime_tool_requires_permission("coding_agent_cancel"));
+    assert!(!runtime_tool_requires_permission("cancel_coding_agent"));
 
     assert_eq!(
         runtime_tool_session_risk_class("__unknown__"),
@@ -673,13 +672,20 @@ fn assert_agent_capability_lookup_rejects_non_runtime_name(name: &str) {
 fn workspace_checkpoints_disabled_registry_and_discovery() {
     assert!(registered_tool_specs()
         .iter()
-        .all(|spec| !spec.name.starts_with("workspace_checkpoint_")));
+        .all(|spec| crate::lookup_tool_definition(&spec.name)
+            .is_none_or(|d| d.category != crate::TOOL_CATEGORY_CHECKPOINT)));
     assert!(crate::tool_catalog::group_tool_names_by_category(
         model_visible_tool_definitions().map(|definition| definition.name)
     )
     .get("checkpoint")
     .is_none());
-    for suffix in ["create", "list", "show", "restore", "delete"] {
-        assert!(lookup_tool_definition(&format!("workspace_checkpoint_{suffix}")).is_none());
+    for name in [
+        "create_workspace_checkpoint",
+        "list_workspace_checkpoints",
+        "read_workspace_checkpoint",
+        "restore_workspace_checkpoint",
+        "delete_workspace_checkpoint",
+    ] {
+        assert!(lookup_tool_definition(name).is_none());
     }
 }

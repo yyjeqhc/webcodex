@@ -14,9 +14,9 @@ pub(super) fn selected(tool: &str) -> bool {
         "work_on_project"
             | "read_files"
             | "search_project_texts"
-            | "search_and_read"
+            | "search_and_read_project_texts"
             | "run_process"
-            | "job_write_input"
+            | "write_job_input"
             | "run_shell"
             | "run_script"
             | "run_detached_process"
@@ -31,8 +31,8 @@ pub(super) fn selected(tool: &str) -> bool {
             | "observe_jobs"
             | "wait_for_job_readiness"
             | "wait_for_job_terminal"
-            | "git_commit_paths"
-            | "git_restore_paths"
+            | "commit_git_paths"
+            | "restore_git_paths"
             | "review_changes"
     )
 }

@@ -311,12 +311,12 @@ wait_for_server() {
     return 1
 }
 
-runtime_status() { api_post /api/runtime/status '{}'; }
+get_runtime_status() { api_post /api/runtime/status '{}'; }
 
 wait_for_agent_online() {
     for _ in $(seq 1 60); do
         check_deadline
-        local body; body="$(runtime_status || true)"
+        local body; body="$(get_runtime_status || true)"
         if [ "$(json_get "$body" output.runners.online_count)" = "1" ]; then
             echo "$body"; return 0
         fi
@@ -328,7 +328,7 @@ wait_for_agent_online() {
 wait_for_reconciliation_capability() {
     for _ in $(seq 1 60); do
         check_deadline
-        local body; body="$(runtime_status || true)"
+        local body; body="$(get_runtime_status || true)"
         local cap; cap="$(json_get "$body" output.runners.clients.0.capabilities.job_state_reconciliation)"
         if [ "$cap" = "True" ]; then
             echo "$body"; return 0
@@ -528,7 +528,7 @@ ONLINE_LAPSED=0
 for _ in $(seq 1 80); do
     check_deadline
     if [ "$(date +%s)" -gt "$ONLINE_DEADLINE" ]; then break; fi
-    d_body="$(runtime_status || true)"
+    d_body="$(get_runtime_status || true)"
     if [ "$(json_get "$d_body" output.runners.online_count)" = "0" ]; then
         ONLINE_LAPSED=1; break
     fi
@@ -601,7 +601,7 @@ wait_for_agent_online >/dev/null || { fail "E: no-reconciliation Runner did not 
 pass "E: no-reconciliation Runner registered without job_state_reconciliation"
 
 # The capability is not advertised (field absent or false).
-BODY_CAP="$(runtime_status)"
+BODY_CAP="$(get_runtime_status)"
 E_CAP="$(json_get "$BODY_CAP" output.runners.clients.0.capabilities.job_state_reconciliation)"
 if [ "$E_CAP" = "True" ]; then
     fail "E: no-reconciliation Runner unexpectedly advertised reconciliation"

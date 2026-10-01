@@ -1,11 +1,11 @@
 use super::*;
 
 const JOB_APP_TOOLS: [&str; 5] = [
-    "job_terminal_continuation_bind",
-    "job_terminal_continuation_state",
-    "job_terminal_continuation_prepare",
-    "job_terminal_continuation_finish",
-    "job_terminal_continuation_unbind",
+    "bind_job_terminal_continuation",
+    "get_job_terminal_continuation_state",
+    "prepare_job_terminal_continuation",
+    "finish_job_terminal_continuation",
+    "unbind_job_terminal_continuation",
 ];
 
 fn tool<'a>(payload: &'a Value, name: &str) -> Option<&'a Value> {
@@ -268,7 +268,7 @@ async fn job_terminal_hidden_kernel_entry_is_fail_closed_without_protocol_capabi
                 "wait_id": wait_id,
                 "binding_id": binding_id,
             });
-            if name == "job_terminal_continuation_finish" {
+            if name == "finish_job_terminal_continuation" {
                 arguments["attempt_id"] = json!(attempt_id);
                 arguments["outcome"] = json!("dispatch_accepted");
             }
@@ -304,12 +304,12 @@ fn job_terminal_continuation_app_source_encodes_bounded_pull_and_single_dispatch
     for required in [
         "ui/initialize",
         "ui/notifications/tool-input",
-        "job_terminal_continuation_bind",
-        "job_terminal_continuation_state",
-        "job_terminal_continuation_prepare",
+        "bind_job_terminal_continuation",
+        "get_job_terminal_continuation_state",
+        "prepare_job_terminal_continuation",
         "ui/message",
-        "job_terminal_continuation_finish",
-        "job_terminal_continuation_unbind",
+        "finish_job_terminal_continuation",
+        "unbind_job_terminal_continuation",
         "visibilitychange",
         "pagehide",
         "beforeunload",

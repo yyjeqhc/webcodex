@@ -312,7 +312,7 @@ async fn run_runner_git_commit_paths(
     let script = request
         .script
         .as_ref()
-        .expect("git_commit_paths must use a typed internal script");
+        .expect("commit_git_paths must use a typed internal script");
     assert_eq!(script.language.as_str(), "sh");
     assert!(script.script.contains("git update-ref"));
     assert!(script.script.contains("git commit-tree"));
@@ -458,7 +458,7 @@ fn git_commit_paths_audit_keeps_message_private_and_exact_head_bounded() {
         "message": private_message,
     });
     let raw = super::super::tool_audit::session_log_arguments_for_tool_request(
-        "git_commit_paths",
+        "commit_git_paths",
         &arguments,
     );
     assert_eq!(raw["expected_head_valid"], true);
@@ -467,7 +467,7 @@ fn git_commit_paths_audit_keeps_message_private_and_exact_head_bounded() {
     assert_eq!(raw["paths"], json!(["src/tool_runtime/git.rs"]));
     assert!(!raw.to_string().contains(private_message));
 
-    let call = ToolCall::from_tool_name("git_commit_paths", arguments).unwrap();
+    let call = ToolCall::from_tool_name("commit_git_paths", arguments).unwrap();
     let typed = call.session_log_arguments();
     assert_eq!(typed["expected_head_valid"], true);
     assert_eq!(typed["message_present"], true);
@@ -740,9 +740,9 @@ async fn git_restore_replacement_after_dispatch_reports_outcome_unknown_without_
 
 #[test]
 fn git_diff_hunks_tool_is_known_and_schema_is_bounded() {
-    assert!(is_known_tool_name("git_diff_hunks"));
+    assert!(is_known_tool_name("read_git_diff_hunks"));
     let call = ToolCall::from_tool_name(
-        "git_diff_hunks",
+        "read_git_diff_hunks",
         json!({
             "project":"agent:oe:webcodex",
             "paths":["src/runtime_http.rs"],
@@ -766,7 +766,7 @@ fn git_diff_hunks_tool_is_known_and_schema_is_bounded() {
     ));
 
     let specs = registered_tool_specs();
-    let spec = spec_named(&specs, "git_diff_hunks");
+    let spec = spec_named(&specs, "read_git_diff_hunks");
     let props = spec.input_schema["properties"].as_object().unwrap();
     for field in [
         "project",
@@ -802,7 +802,7 @@ fn git_diff_hunks_tool_is_known_and_schema_is_bounded() {
     }
     assert!(spec.input_schema.get("allOf").is_none());
     let committed_call = ToolCall::from_tool_name(
-        "git_diff_hunks",
+        "read_git_diff_hunks",
         json!({
             "project": "agent:oe:webcodex",
             "base_commit": "A".repeat(40),
@@ -821,7 +821,7 @@ fn git_diff_hunks_tool_is_known_and_schema_is_bounded() {
         } if base == "A".repeat(40) && head == "b".repeat(40)
     ));
     let committed_false_call = ToolCall::from_tool_name(
-        "git_diff_hunks",
+        "read_git_diff_hunks",
         json!({
             "project": "agent:oe:webcodex",
             "base_commit": "A".repeat(40),
@@ -840,7 +840,7 @@ fn git_diff_hunks_tool_is_known_and_schema_is_bounded() {
         }
     ));
     assert!(ToolCall::from_tool_name(
-        "git_diff_hunks",
+        "read_git_diff_hunks",
         json!({
             "project": "agent:oe:webcodex",
             "continuation": "x".repeat(GIT_DIFF_HUNKS_CONTINUATION_MAX_BYTES + 1),
@@ -889,7 +889,7 @@ fn git_diff_hunks_session_audit_redacts_continuation() {
     });
 
     let raw_summary = super::super::tool_audit::session_log_arguments_for_tool_request(
-        "git_diff_hunks",
+        "read_git_diff_hunks",
         &arguments,
     );
     assert_eq!(raw_summary["project"], "agent:oe:webcodex");
@@ -907,7 +907,7 @@ fn git_diff_hunks_session_audit_redacts_continuation() {
         .unwrap()
         .contains(continuation));
 
-    let call = ToolCall::from_tool_name("git_diff_hunks", arguments.clone()).unwrap();
+    let call = ToolCall::from_tool_name("read_git_diff_hunks", arguments.clone()).unwrap();
     let typed_summary = call.session_log_arguments();
     assert_eq!(typed_summary["project"], "agent:oe:webcodex");
     assert_eq!(typed_summary["paths"], raw_summary["paths"]);
@@ -921,7 +921,7 @@ fn git_diff_hunks_session_audit_redacts_continuation() {
         .contains(continuation));
 
     let defensive =
-        super::super::sessions::session_input_summary_for_tool("git_diff_hunks", &arguments);
+        super::super::sessions::session_input_summary_for_tool("read_git_diff_hunks", &arguments);
     assert_eq!(defensive["project"], "agent:oe:webcodex");
     assert_eq!(defensive["paths"], raw_summary["paths"]);
     assert_eq!(defensive["max_hunks"], 7);
@@ -941,9 +941,9 @@ fn git_diff_hunks_session_audit_redacts_continuation() {
     runtime.sessions.record_tool_call_started(
         Some(&session.session_id),
         crate::tool_runtime::sessions::SessionTransport::Api,
-        "git_diff_hunks",
+        "read_git_diff_hunks",
         &arguments,
-        crate::tool_runtime::sessions::session_tool_contract("git_diff_hunks"),
+        crate::tool_runtime::sessions::session_tool_contract("read_git_diff_hunks"),
     );
     let summary = runtime
         .sessions
@@ -971,7 +971,7 @@ fn git_diff_hunks_session_audit_redacts_continuation() {
         "continuation": continuation,
     });
     let committed_summary = super::super::tool_audit::session_log_arguments_for_tool_request(
-        "git_diff_hunks",
+        "read_git_diff_hunks",
         &committed_arguments,
     );
     assert_eq!(committed_summary["base_commit"], "a".repeat(40));
@@ -982,7 +982,7 @@ fn git_diff_hunks_session_audit_redacts_continuation() {
 
     let private_hunk = "PRIVATE_GIT_DIFF_HUNK_BODY_91e2";
     let result_summary = super::super::tool_audit::session_log_result_for_tool(
-        "git_diff_hunks",
+        "read_git_diff_hunks",
         &json!({
             "project": "agent:oe:webcodex",
             "scope": {
@@ -1017,9 +1017,9 @@ fn git_diff_hunks_session_audit_redacts_continuation() {
 
 #[test]
 fn show_changes_tool_is_known_and_parses() {
-    assert!(is_known_tool_name("show_changes"));
+    assert!(is_known_tool_name("read_workspace_changes"));
     let call = ToolCall::from_tool_name(
-        "show_changes",
+        "read_workspace_changes",
         json!({
             "project": "agent:oe:webcodex",
             "include_diff": true,
@@ -1043,17 +1043,17 @@ fn show_changes_tool_is_known_and_parses() {
     ));
 
     let specs = registered_tool_specs();
-    let spec = spec_named(&specs, "show_changes");
+    let spec = spec_named(&specs, "read_workspace_changes");
     let output_props = spec.output_schema["properties"]["output"]["properties"]
         .as_object()
         .unwrap();
     assert!(
         output_props.contains_key("verdict"),
-        "show_changes output schema should expose verdict"
+        "read_workspace_changes output schema should expose verdict"
     );
     assert!(
         output_props.contains_key("diff_stat_status"),
-        "show_changes output schema should expose strict diff-stat observation"
+        "read_workspace_changes output schema should expose strict diff-stat observation"
     );
 }
 
@@ -1124,7 +1124,7 @@ async fn run_runner_git_diff_hunks_page_with_budget(
     let script = request
         .script
         .as_ref()
-        .expect("git_diff_hunks must carry a typed internal script")
+        .expect("read_git_diff_hunks must carry a typed internal script")
         .script
         .clone();
     let (exit_code, stdout, stderr) = run_runner_shell_request_locally(&request);
@@ -1307,7 +1307,7 @@ async fn run_parser_ready_worktree_git_diff_hunks_call(
         ..
     } = parsed
     else {
-        panic!("recovery next_call must target git_diff_hunks");
+        panic!("recovery next_call must target read_git_diff_hunks");
     };
     assert!(base_commit.is_none() && head_commit.is_none());
     let (result, _, _) = run_runner_git_diff_hunks_page_with_budget(
@@ -1350,7 +1350,7 @@ async fn run_parser_ready_committed_git_diff_hunks_call(
         ..
     } = parsed
     else {
-        panic!("recovery next_call must target git_diff_hunks");
+        panic!("recovery next_call must target read_git_diff_hunks");
     };
     assert!(
         cached.is_none(),
@@ -1470,7 +1470,7 @@ async fn run_runner_git_diff_hunks_committed_page_with_options(
     for _ in 0..16 {
         assert!(
             tokio::time::Instant::now() < deadline,
-            "committed git_diff_hunks did not finish within 10 seconds for client {client_id}"
+            "committed read_git_diff_hunks did not finish within 10 seconds for client {client_id}"
         );
         if task.is_finished() {
             break;
@@ -1485,7 +1485,7 @@ async fn run_runner_git_diff_hunks_committed_page_with_options(
             let payload = request
                 .script
                 .as_ref()
-                .expect("committed git_diff_hunks must use typed internal scripts");
+                .expect("committed read_git_diff_hunks must use typed internal scripts");
             let script = payload.script.clone();
             assert!(script.contains("GIT_NO_REPLACE_OBJECTS=1"));
             assert!(script.contains("GIT_NO_LAZY_FETCH=1"));
@@ -1511,7 +1511,7 @@ async fn run_runner_git_diff_hunks_committed_page_with_options(
             ] {
                 assert!(
                     !script.contains(forbidden),
-                    "committed git_diff_hunks must remain read-only; found {forbidden}: {script}"
+                    "committed read_git_diff_hunks must remain read-only; found {forbidden}: {script}"
                 );
             }
             if script.contains(" diff ") {
@@ -1538,7 +1538,7 @@ async fn run_runner_git_diff_hunks_committed_page_with_options(
     }
     assert!(
         task.is_finished(),
-        "committed git_diff_hunks exceeded its 16-request protocol bound for client {client_id}"
+        "committed read_git_diff_hunks exceeded its 16-request protocol bound for client {client_id}"
     );
     (task.await.unwrap(), page_stdout_bytes, scripts)
 }
@@ -3283,7 +3283,7 @@ fn assert_git_diff_hunks_sparse_recovery_calls_parse(recovery: &Value) {
             if let Some(call) = value.get("next_call") {
                 assert_eq!(call["follow_up_kind"], "mechanically_followable");
                 webcodex_tool_contracts::test_support::validate_generated_tool_call_against_registered_input_schema(call)
-                    .expect("git_diff_hunks recovery next_call must pass registered inputSchema");
+                    .expect("read_git_diff_hunks recovery next_call must pass registered inputSchema");
                 ToolCall::from_tool_name(call["tool"].as_str().unwrap(), call["arguments"].clone())
                     .expect("each recovery lane must parse directly");
             }
@@ -3294,7 +3294,7 @@ fn assert_git_diff_hunks_sparse_recovery_calls_parse(recovery: &Value) {
 fn assert_git_diff_hunks_recovery_call_parses(recovery: &Value) {
     assert_eq!(recovery["follow_up_kind"], "mechanically_followable");
     webcodex_tool_contracts::test_support::validate_generated_tool_call_against_registered_input_schema(recovery)
-        .expect("git_diff_hunks generated follow-up must pass registered inputSchema");
+        .expect("read_git_diff_hunks generated follow-up must pass registered inputSchema");
     let tool = recovery["tool"]
         .as_str()
         .expect("recovery tool must be a string");
@@ -4172,7 +4172,7 @@ async fn git_diff_hunks_hunk_line_limit_does_not_create_fake_continuation() {
         .unwrap()
         .contains("+new-079"));
     let mut projected = ToolResult::ok(page.output.clone());
-    sparsify_complete_git_review_success("git_diff_hunks", &mut projected);
+    sparsify_complete_git_review_success("read_git_diff_hunks", &mut projected);
     assert_eq!(
         projected.output, page.output,
         "truncated recovery evidence must never be sparsified"
@@ -4234,7 +4234,7 @@ async fn git_diff_hunks_hunk_fragment_continuation_reconstructs_over_400_line_hu
     );
     assert_eq!(
         recovery["current_hunk"]["next_call"]["tool"],
-        "git_diff_hunks"
+        "read_git_diff_hunks"
     );
     assert_eq!(
         recovery["current_hunk"]["next_call"]["arguments"]["paths"],
@@ -4355,7 +4355,7 @@ async fn git_diff_hunks_complete_model_projection_keeps_scope_and_drops_derived_
 
     let canonical = page.output.clone();
     let mut projected = ToolResult::ok(canonical.clone());
-    sparsify_complete_git_review_success("git_diff_hunks", &mut projected);
+    sparsify_complete_git_review_success("read_git_diff_hunks", &mut projected);
     let output = &projected.output;
     assert_eq!(output["project"], project);
     assert_eq!(output["paths"], json!(["a.txt"]));
@@ -4991,7 +4991,7 @@ fn show_changes_command_is_read_only() {
         let forbidden = ["python3", "-c"].join(" ");
         assert!(
             !cmd.contains(&forbidden),
-            "show_changes command must not invoke a Python helper: {cmd}"
+            "read_workspace_changes command must not invoke a Python helper: {cmd}"
         );
         for forbidden in [
             " clean",
@@ -5008,7 +5008,7 @@ fn show_changes_command_is_read_only() {
         ] {
             assert!(
                 !cmd.contains(forbidden),
-                "show_changes command must not contain '{}': {}",
+                "read_workspace_changes command must not contain '{}': {}",
                 forbidden,
                 cmd
             );
@@ -5310,7 +5310,10 @@ fn show_changes_unborn_repository_emits_empty_complete_head_frame() {
     let command = show_changes_command(false, 20, 80);
     let wrapped = format!("sh -c {}", shell_single_quote(&command));
     let (exit, stdout, stderr) = run_command_full_capture(&wrapped, tmp.path(), 30);
-    assert_eq!(exit, 0, "unborn show_changes failed: {stderr}\n{stdout}");
+    assert_eq!(
+        exit, 0,
+        "unborn read_workspace_changes failed: {stderr}\n{stdout}"
+    );
     assert!(stdout.len() <= SHOW_CHANGES_OUTPUT_BUDGET_BYTES);
     let frames = split_show_changes_stdout(&stdout, false);
     assert!(frames.head.is_empty());
@@ -5568,7 +5571,7 @@ fn show_changes_complete_diff_does_not_handoff_to_git_diff_hunks() {
         .iter()
         .any(|action| action
             .as_str()
-            .is_some_and(|action| action.contains("git_diff_hunks"))));
+            .is_some_and(|action| action.contains("read_git_diff_hunks"))));
     assert_show_changes_envelope_value_matches_schema(&output, "complete diff handoff");
 }
 
@@ -5612,7 +5615,7 @@ fn show_changes_complete_model_projection_removes_only_derived_review_metadata()
         .is_some());
 
     let mut projected = ToolResult::ok(canonical.clone());
-    sparsify_complete_git_review_success("show_changes", &mut projected);
+    sparsify_complete_git_review_success("read_workspace_changes", &mut projected);
     let output = &projected.output;
     for retained in [
         "project",
@@ -5696,7 +5699,7 @@ fn show_changes_diff_respects_max_hunks() {
         "page-only truncation must not make a returned hunk look source-incomplete"
     );
     let next_call = &output["diff_review_handoff"]["next_call"];
-    assert_eq!(next_call["tool"], "git_diff_hunks");
+    assert_eq!(next_call["tool"], "read_git_diff_hunks");
     assert_eq!(next_call["arguments"]["project"], "demo");
     assert_eq!(next_call["arguments"]["cached"], false);
     assert_eq!(next_call["arguments"]["paths"], json!([]));
@@ -5710,16 +5713,16 @@ fn show_changes_diff_respects_max_hunks() {
         !crate::tool_runtime::tool_definition::is_adaptive_runtime_direct_tool(
             next_call["tool"].as_str().unwrap()
         ),
-        "git_diff_hunks stays an exact/gateway specialist"
+        "read_git_diff_hunks stays an exact/gateway specialist"
     );
     let actions = output["suggested_next_actions"].as_array().unwrap();
     assert!(!actions
         .iter()
-        .any(|action| action == "review workspace changes with show_changes"));
+        .any(|action| action == "review workspace changes with read_workspace_changes"));
     assert!(actions.iter().any(|action| action
-        == "continue the diff review with git_diff_hunks; use paths to narrow scope when useful"));
+        == "continue the diff review with read_git_diff_hunks; use paths to narrow scope when useful"));
     assert!(actions.iter().any(|action| action
-        == "follow git_diff_hunks recovery.later_hunks.next_call while has_more=true"));
+        == "follow read_git_diff_hunks recovery.later_hunks.next_call while has_more=true"));
     assert!(!actions.iter().any(|action| action
         .as_str()
         .is_some_and(|action| action.contains("recovery.current_hunk.next_call"))));
@@ -5766,9 +5769,9 @@ fn show_changes_diff_respects_max_hunk_lines() {
     assert_git_diff_hunks_recovery_call_parses(next_call);
     let actions = output["suggested_next_actions"].as_array().unwrap();
     assert!(actions.iter().any(|action| action
-        == "follow git_diff_hunks recovery.current_hunk.next_call; after the fresh handoff observation it may use bounded refinement or an exact hunk-fragment continuation"));
+        == "follow read_git_diff_hunks recovery.current_hunk.next_call; after the fresh handoff observation it may use bounded refinement or an exact hunk-fragment continuation"));
     assert!(!actions.iter().any(|action| action
-        == "follow git_diff_hunks recovery.later_hunks.next_call while has_more=true"));
+        == "follow read_git_diff_hunks recovery.later_hunks.next_call while has_more=true"));
     assert_show_changes_envelope_value_matches_schema(&output, "hunk line handoff");
 }
 
@@ -5807,7 +5810,7 @@ fn show_changes_combined_hunk_count_and_line_truncation_keeps_both_guidance_path
     assert_git_diff_hunks_recovery_call_parses(next_call);
     let actions = output["suggested_next_actions"].as_array().unwrap();
     assert!(actions.iter().any(|action| action
-        == "follow git_diff_hunks recovery.later_hunks.next_call while has_more=true"));
+        == "follow read_git_diff_hunks recovery.later_hunks.next_call while has_more=true"));
     assert!(actions.iter().any(|action| action
         .as_str()
         .is_some_and(|action| action.contains("recovery.current_hunk.next_call"))));
@@ -5840,13 +5843,13 @@ async fn show_changes_untracked_preview_truncation_does_not_create_diff_handoff(
     let actions = output["suggested_next_actions"].as_array().unwrap();
     assert!(!actions
         .iter()
-        .any(|action| action == "review workspace changes with show_changes"));
+        .any(|action| action == "review workspace changes with read_workspace_changes"));
     assert!(actions
         .iter()
         .any(|action| action == "inspect the relevant untracked files separately"));
     assert!(!actions.iter().any(|action| action
         .as_str()
-        .is_some_and(|action| action.contains("git_diff_hunks"))));
+        .is_some_and(|action| action.contains("read_git_diff_hunks"))));
 }
 
 #[test]
@@ -5880,10 +5883,10 @@ fn show_changes_large_diff_does_not_depend_on_runner_retained_tail() {
 
 #[test]
 fn show_changes_schema_covers_truncation_and_transport_fields() {
-    let schema = crate::tool_runtime::registry::output_schema_for_tool("show_changes");
+    let schema = crate::tool_runtime::registry::output_schema_for_tool("read_workspace_changes");
     let properties = schema["properties"]["output"]["properties"]
         .as_object()
-        .expect("show_changes output properties");
+        .expect("read_workspace_changes output properties");
     for field in [
         "files_total",
         "files_returned",
@@ -5906,7 +5909,7 @@ fn show_changes_schema_covers_truncation_and_transport_fields() {
     assert_eq!(handoff["required"], json!(["next_call"]));
     assert_eq!(
         handoff["properties"]["next_call"]["properties"]["tool"]["const"],
-        "git_diff_hunks"
+        "read_git_diff_hunks"
     );
     assert_eq!(
         handoff["properties"]["next_call"]["properties"]["arguments"]["additionalProperties"],
@@ -5955,7 +5958,7 @@ async fn show_changes_include_diff_agent_command_does_not_enqueue_python_helper(
     let payload = req
         .script
         .as_ref()
-        .expect("show_changes must carry a typed internal script");
+        .expect("read_workspace_changes must carry a typed internal script");
     assert_eq!(
         payload.language,
         crate::runner_protocol::ShellScriptLanguage::Sh
@@ -5964,7 +5967,7 @@ async fn show_changes_include_diff_agent_command_does_not_enqueue_python_helper(
     let forbidden = ["python3", "-c"].join(" ");
     assert!(
         !payload.script.contains(&forbidden),
-        "show_changes include_diff must not enqueue a Python helper: {}",
+        "read_workspace_changes include_diff must not enqueue a Python helper: {}",
         payload.script
     );
     assert!(payload.script.contains("git diff --unified="));
@@ -6434,7 +6437,7 @@ async fn show_changes_untracked_sensitive_path_preview_is_skipped() {
     assert_verdict_omits_raw_output_and_sensitive_values(
         &output["verdict"],
         &["RUNNER_TOKEN=secret", "API_TOKEN=secret"],
-        "show_changes sensitive preview verdict",
+        "read_workspace_changes sensitive preview verdict",
     );
 }
 
@@ -6595,7 +6598,7 @@ async fn show_changes_with_session_id_returns_session_block_and_records_call() {
         .unwrap();
     assert_eq!(summary.counts.tool_calls, 2);
     assert_eq!(summary.counts.change_summary_like, 1);
-    let event = finished_event(&summary, "show_changes");
+    let event = finished_event(&summary, "read_workspace_changes");
     assert!(event.git_like);
     assert!(event.change_summary_like);
 }
@@ -6671,7 +6674,7 @@ fn git_read_commands_are_non_mutating_and_log_is_bounded() {
     ] {
         assert!(
             !log.contains(forbidden),
-            "git_log command must not contain {forbidden:?}: {log}"
+            "read_git_log command must not contain {forbidden:?}: {log}"
         );
     }
 }
@@ -6741,7 +6744,7 @@ async fn run_git_review_summary_via_agent(
     while !task.is_finished() {
         assert!(
             tokio::time::Instant::now() < deadline,
-            "git_review_summary did not finish within {timeout_secs} seconds for client {client_id}"
+            "read_git_review_summary did not finish within {timeout_secs} seconds for client {client_id}"
         );
         if let Some(request) = probe_patch_agent_request(runtime, client_id).await {
             assert_eq!(request.kind, "run_internal_posix_script");
@@ -6749,7 +6752,7 @@ async fn run_git_review_summary_via_agent(
             let payload = request
                 .script
                 .as_ref()
-                .expect("git_review_summary must use a typed internal script");
+                .expect("read_git_review_summary must use a typed internal script");
             assert_eq!(
                 payload.language,
                 crate::runner_protocol::ShellScriptLanguage::Sh
@@ -6784,7 +6787,7 @@ async fn run_git_review_summary_via_agent(
             ] {
                 assert!(
                     !payload.script.contains(forbidden),
-                    "git_review_summary internal script must remain read-only; found {forbidden}: {}",
+                    "read_git_review_summary internal script must remain read-only; found {forbidden}: {}",
                     payload.script
                 );
             }
@@ -6795,7 +6798,7 @@ async fn run_git_review_summary_via_agent(
             let (exit_code, stdout, stderr) = run_runner_shell_request_locally(&request);
             assert_eq!(
                 exit_code, 0,
-                "git_review_summary internal script failed\nscript:\n{}\nstdout:\n{}\nstderr:\n{}",
+                "read_git_review_summary internal script failed\nscript:\n{}\nstdout:\n{}\nstderr:\n{}",
                 payload.script, stdout, stderr
             );
             complete_patch_agent_request(
@@ -6953,7 +6956,7 @@ async fn git_review_summary_maps_exact_committed_range_without_raw_diff() {
     assert!(!serialized.contains("RAW_SECRET_BODY_MARKER_NEW"));
     assert!(!serialized.contains("@@ -"));
 
-    let audit = crate::tool_runtime::audit_safe_result_for_tool("git_review_summary", output);
+    let audit = crate::tool_runtime::audit_safe_result_for_tool("read_git_review_summary", output);
     assert!(
         audit.get("files").is_none(),
         "audit must not persist paths/symbols: {audit}"
@@ -7555,7 +7558,7 @@ fn git_review_summary_tool_schema_metadata_and_oauth_are_read_only() {
     let base = "a".repeat(40);
     let head = "b".repeat(40);
     let call = ToolCall::from_tool_name(
-        "git_review_summary",
+        "read_git_review_summary",
         json!({
             "project": SAMPLE_PROJECT,
             "base_commit": base,
@@ -7563,7 +7566,7 @@ fn git_review_summary_tool_schema_metadata_and_oauth_are_read_only() {
             "session_id": "wc_sess_review"
         }),
     )
-    .expect("git_review_summary should parse through generic ToolCall");
+    .expect("read_git_review_summary should parse through generic ToolCall");
     match call {
         ToolCall::GitReviewSummary {
             project,
@@ -7576,11 +7579,11 @@ fn git_review_summary_tool_schema_metadata_and_oauth_are_read_only() {
             assert_eq!(head_commit, "b".repeat(40));
             assert_eq!(session_id.as_deref(), Some("wc_sess_review"));
         }
-        other => panic!("expected git_review_summary, got {other:?}"),
+        other => panic!("expected read_git_review_summary, got {other:?}"),
     }
     let malformed_request_audit =
         crate::tool_runtime::tool_audit::session_log_arguments_for_tool_request(
-            "git_review_summary",
+            "read_git_review_summary",
             &json!({
                 "project": SAMPLE_PROJECT,
                 "base_commit": "a".repeat(40),
@@ -7603,7 +7606,7 @@ fn git_review_summary_tool_schema_metadata_and_oauth_are_read_only() {
     assert_eq!(request_audit["head_commit_valid"], true);
     let malformed = "source-like-invalid-value".repeat(1024);
     let malformed_audit = crate::tool_runtime::tool_audit::session_log_arguments_for_tool_request(
-        "git_review_summary",
+        "read_git_review_summary",
         &json!({
             "project": SAMPLE_PROJECT,
             "base_commit": malformed,
@@ -7630,14 +7633,15 @@ fn git_review_summary_tool_schema_metadata_and_oauth_are_read_only() {
         .unwrap()
         .contains("source-like-invalid-value"));
     let definition =
-        crate::tool_runtime::tool_definition::lookup_tool_definition("git_review_summary")
-            .expect("git_review_summary definition");
+        crate::tool_runtime::tool_definition::lookup_tool_definition("read_git_review_summary")
+            .expect("read_git_review_summary definition");
     assert_eq!(
         definition.metadata.authority,
         crate::tool_runtime::metadata::ToolAuthorityPolicy::Require(SCOPE_PROJECT_READ)
     );
     assert!(definition.visibility.is_model_visible());
-    let metadata = lookup_tool_metadata("git_review_summary").expect("git_review_summary metadata");
+    let metadata =
+        lookup_tool_metadata("read_git_review_summary").expect("read_git_review_summary metadata");
     assert_eq!(metadata.risk, ToolRisk::Read);
     assert_eq!(
         metadata.authority,
@@ -7650,14 +7654,14 @@ fn git_review_summary_tool_schema_metadata_and_oauth_are_read_only() {
     );
     assert!(!metadata.destructive);
     assert_eq!(
-        oauth_scope_policy_for_runtime_tool("git_review_summary"),
+        oauth_scope_policy_for_runtime_tool("read_git_review_summary"),
         OAuthToolScopePolicy::Require(SCOPE_PROJECT_READ)
     );
     let specs = crate::tool_runtime::registered_tool_specs();
     let spec = specs
         .iter()
-        .find(|spec| spec.name == "git_review_summary")
-        .expect("git_review_summary public spec");
+        .find(|spec| spec.name == "read_git_review_summary")
+        .expect("read_git_review_summary public spec");
     assert!(spec
         .description
         .contains("Specialist exact committed-range review map"));
@@ -7672,7 +7676,7 @@ fn git_review_summary_tool_schema_metadata_and_oauth_are_read_only() {
             "^[0-9A-Fa-f]{40}$"
         );
     }
-    let output = crate::tool_runtime::registry::output_schema_for_tool("git_review_summary");
+    let output = crate::tool_runtime::registry::output_schema_for_tool("read_git_review_summary");
     let payload = &output["properties"]["output"];
     for field in [
         "scope",
@@ -7811,7 +7815,7 @@ async fn run_show_changes_via_agent(
     while !task.is_finished() {
         assert!(
             tokio::time::Instant::now() < deadline,
-            "show_changes did not finish within 10 seconds for client {client_id}"
+            "read_workspace_changes did not finish within 10 seconds for client {client_id}"
         );
         if let Some(req) = probe_patch_agent_request(runtime, client_id).await {
             assert_eq!(req.kind, "run_internal_posix_script");
@@ -7819,7 +7823,7 @@ async fn run_show_changes_via_agent(
             let payload = req
                 .script
                 .as_ref()
-                .expect("show_changes must carry a typed internal script");
+                .expect("read_workspace_changes must carry a typed internal script");
             assert_eq!(
                 payload.language,
                 crate::runner_protocol::ShellScriptLanguage::Sh
@@ -8116,7 +8120,7 @@ fn show_changes_preserves_sentinel_text_in_tracked_filename() {
 }
 
 fn assert_show_changes_envelope_matches_schema(label: &str, result: &ToolResult) {
-    let schema = crate::tool_runtime::registry::output_schema_for_tool("show_changes");
+    let schema = crate::tool_runtime::registry::output_schema_for_tool("read_workspace_changes");
     let envelope = json!({
         "success": result.success,
         "output": result.output,
@@ -8124,14 +8128,14 @@ fn assert_show_changes_envelope_matches_schema(label: &str, result: &ToolResult)
     });
     crate::tool_runtime::startup_brief::validate_schema_instance_for_test(&envelope, &schema)
         .unwrap_or_else(|error| {
-            panic!("{label} show_changes schema mismatch: {error}\n{envelope}")
+            panic!("{label} read_workspace_changes schema mismatch: {error}\n{envelope}")
         });
 }
 
-/// Validate a bare `show_changes` output `Value` against the output schema by
+/// Validate a bare `read_workspace_changes` output `Value` against the output schema by
 /// wrapping it in the success envelope.
 fn assert_show_changes_envelope_value_matches_schema(output: &Value, label: &str) {
-    let schema = crate::tool_runtime::registry::output_schema_for_tool("show_changes");
+    let schema = crate::tool_runtime::registry::output_schema_for_tool("read_workspace_changes");
     let envelope = json!({
         "success": true,
         "output": output,
@@ -8139,12 +8143,12 @@ fn assert_show_changes_envelope_value_matches_schema(output: &Value, label: &str
     });
     crate::tool_runtime::startup_brief::validate_schema_instance_for_test(&envelope, &schema)
         .unwrap_or_else(|error| {
-            panic!("{label} show_changes schema mismatch: {error}\n{envelope}")
+            panic!("{label} read_workspace_changes schema mismatch: {error}\n{envelope}")
         });
 }
 
-/// Run the production-bounded `show_changes` command in a local repo and
-/// parse it into the structured `show_changes` output value, the same way the
+/// Run the production-bounded `read_workspace_changes` command in a local repo and
+/// parse it into the structured `read_workspace_changes` output value, the same way the
 /// runtime does (without the separate untracked-preview collection).
 fn bounded_show_changes_output(
     root: &Path,
@@ -8478,7 +8482,10 @@ async fn show_changes_status_failure_is_not_masked_by_successful_diff() {
     let runtime = test_runtime();
     let project = register_runner_project_at_path(&runtime, "gsf", "demo", tmp.path()).await;
     let result = run_show_changes_via_agent(&runtime, "gsf", project, None, false).await;
-    assert!(!result.success, "status failure must fail show_changes");
+    assert!(
+        !result.success,
+        "status failure must fail read_workspace_changes"
+    );
     assert_eq!(
         result.output["status_observation"]["status"],
         "command_failed"
@@ -8606,10 +8613,10 @@ fn non_git_show_changes_preserves_unobserved_state() {
 
 #[test]
 fn show_changes_schema_explicitly_models_upstream_and_nullable_observation() {
-    let schema = crate::tool_runtime::registry::output_schema_for_tool("show_changes");
+    let schema = crate::tool_runtime::registry::output_schema_for_tool("read_workspace_changes");
     let properties = schema["properties"]["output"]["properties"]
         .as_object()
-        .expect("show_changes output properties");
+        .expect("read_workspace_changes output properties");
     for field in [
         "upstream_status",
         "upstream_reason_code",
@@ -8676,7 +8683,7 @@ fn assert_verdict_omits_raw_output_and_sensitive_values(
     }
 }
 
-/// Helper: run the bounded show_changes command with full stdout/stderr capture
+/// Helper: run the bounded read_workspace_changes command with full stdout/stderr capture
 /// (large outputs exceed the pipe buffer) and return (stdout_bytes, stdout).
 fn run_bounded_show_changes_full(
     root: &Path,
@@ -8688,7 +8695,7 @@ fn run_bounded_show_changes_full(
     let (exit, stdout, stderr) = run_command_full_capture(&cmd, root, 30);
     assert_eq!(
         exit, 0,
-        "show_changes failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        "read_workspace_changes failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
     (stdout.len(), stdout, stderr)
 }
@@ -8755,7 +8762,7 @@ fn show_changes_long_path_diff_budgets_complete_preambles_and_bytes() {
     assert_git_diff_hunks_recovery_call_parses(&output["diff_review_handoff"]["next_call"]);
     let actions = output["suggested_next_actions"].as_array().unwrap();
     assert!(actions.iter().any(|action| action
-        == "follow git_diff_hunks recovery.later_hunks.next_call while has_more=true"));
+        == "follow read_git_diff_hunks recovery.later_hunks.next_call while has_more=true"));
     assert_show_changes_envelope_value_matches_schema(&output, "diff byte handoff");
 
     let mut rejected_seen = false;
@@ -8846,7 +8853,7 @@ fn show_changes_hunk_limit_does_not_leak_subsequent_file_bodies_or_preambles() {
     );
 }
 
-/// Parse already-captured frames into the structured show_changes output,
+/// Parse already-captured frames into the structured read_workspace_changes output,
 /// reusing the captured stderr (avoids re-running the command).
 fn bounded_show_changes_output_from_frames(
     frames: &ShowChangesStdout,
@@ -9134,7 +9141,7 @@ async fn show_changes_runtime_rejects_stat_only_failure_for_both_diff_modes() {
         let payload = req
             .script
             .as_ref()
-            .expect("show_changes must carry a typed internal script");
+            .expect("read_workspace_changes must carry a typed internal script");
         assert_eq!(
             payload.language,
             crate::runner_protocol::ShellScriptLanguage::Sh
@@ -9247,9 +9254,12 @@ async fn show_changes_runtime_rejects_unavailable_diff_stat_observation() {
     let payload = req
         .script
         .as_ref()
-        .expect("show_changes must carry a typed internal script");
+        .expect("read_workspace_changes must carry a typed internal script");
     let (command_exit, stdout, stderr) = run_command_full_capture(&payload.script, repo.path(), 30);
-    assert_eq!(command_exit, 0, "show_changes command failed: {stderr}");
+    assert_eq!(
+        command_exit, 0,
+        "read_workspace_changes command failed: {stderr}"
+    );
     let missing_stat_exit = stdout.replacen("diff_stat_exit=0", "xiff_stat_exit=0", 1);
     complete_patch_agent_request(
         &runtime,
@@ -9511,7 +9521,7 @@ async fn show_changes_runtime_propagates_full_diff_failure_as_tool_failure() {
     let payload = req
         .script
         .as_ref()
-        .expect("show_changes must carry a typed internal script");
+        .expect("read_workspace_changes must carry a typed internal script");
     let full = format!("{ext_env} {}", payload.script);
     let (exit, stdout, stderr) = run_command_full_capture(&full, tmp.path(), 30);
     complete_patch_agent_request(&runtime, "extd", &req.request_id, exit, &stdout, &stderr).await;
@@ -9520,7 +9530,7 @@ async fn show_changes_runtime_propagates_full_diff_failure_as_tool_failure() {
     // though the production-side diff filter succeeded.
     assert!(
         !result.success,
-        "show_changes must fail when the full git diff fails: {:?}",
+        "read_workspace_changes must fail when the full git diff fails: {:?}",
         result.error
     );
     assert_eq!(result.output["diff_status"]["status"], "command_failed");

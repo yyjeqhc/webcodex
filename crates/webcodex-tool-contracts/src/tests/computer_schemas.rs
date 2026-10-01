@@ -40,15 +40,18 @@ fn tool_specs_hide_legacy_sync_wait_from_process_and_script_discovery() {
 fn computer_primary_surface_is_three_canonical_tools() {
     let names = registered_tool_specs()
         .into_iter()
-        .filter(|spec| spec.name.starts_with("computer_"))
+        .filter(|spec| {
+            crate::lookup_tool_definition(&spec.name)
+                .is_some_and(|d| d.category == crate::TOOL_CATEGORY_COMPUTER)
+        })
         .map(|spec| spec.name)
         .collect::<Vec<_>>();
     assert_eq!(
         names,
         vec![
-            "computer_observe".to_string(),
-            "computer_control".to_string(),
-            "computer_save_snapshot".to_string(),
+            "observe_computer".to_string(),
+            "control_computer".to_string(),
+            "save_computer_snapshot".to_string(),
         ]
     );
 }
@@ -56,7 +59,7 @@ fn computer_primary_surface_is_three_canonical_tools() {
 #[test]
 fn computer_observe_schema_is_closed_read_only_action_union() {
     let specs = registered_tool_specs();
-    let spec = spec_named(&specs, "computer_observe");
+    let spec = spec_named(&specs, "observe_computer");
     assert_eq!(spec.annotations["readOnlyHint"], true);
     assert_eq!(spec.annotations["destructiveHint"], false);
     let expected = [
@@ -135,7 +138,7 @@ fn computer_observe_schema_is_closed_read_only_action_union() {
 #[test]
 fn computer_control_schema_is_closed_action_union() {
     let specs = registered_tool_specs();
-    let spec = spec_named(&specs, "computer_control");
+    let spec = spec_named(&specs, "control_computer");
     assert_eq!(spec.annotations["readOnlyHint"], false);
     assert_eq!(spec.annotations["destructiveHint"], true);
     let expected = [
@@ -201,7 +204,7 @@ fn computer_control_schema_is_closed_action_union() {
 #[test]
 fn computer_gateway_outputs_cover_preserved_observation_and_control_shapes() {
     let specs = registered_tool_specs();
-    let observe = spec_named(&specs, "computer_observe");
+    let observe = spec_named(&specs, "observe_computer");
     let observe_output = observe.output_schema["properties"]["output"]["properties"]
         .as_object()
         .unwrap();
@@ -230,7 +233,7 @@ fn computer_gateway_outputs_cover_preserved_observation_and_control_shapes() {
         false
     );
 
-    let control = spec_named(&specs, "computer_control");
+    let control = spec_named(&specs, "control_computer");
     let control_output = control.output_schema["properties"]["output"]["properties"]
         .as_object()
         .unwrap();
@@ -263,7 +266,7 @@ fn computer_gateway_outputs_cover_preserved_observation_and_control_shapes() {
 #[test]
 fn computer_save_snapshot_remains_separate_create_only_project_write() {
     let specs = registered_tool_specs();
-    let spec = spec_named(&specs, "computer_save_snapshot");
+    let spec = spec_named(&specs, "save_computer_snapshot");
     assert_eq!(
         required_fields(spec),
         vec![
@@ -276,7 +279,7 @@ fn computer_save_snapshot_remains_separate_create_only_project_write() {
     let props = spec.input_schema["properties"].as_object().unwrap();
     assert_schema_fields!(
         props,
-        "computer_save_snapshot input schema",
+        "save_computer_snapshot input schema",
         present: ["project", "path", "client_id", "surface_id", "region", "max_width", "max_height", "session_id"],
         absent: ["overwrite", "format", "quality", "mime_type", "content_base64", "save"]
     );
@@ -286,7 +289,7 @@ fn computer_save_snapshot_remains_separate_create_only_project_write() {
         .unwrap();
     assert_schema_fields!(
         output,
-        "computer_save_snapshot output schema",
+        "save_computer_snapshot output schema",
         present: ["project", "path", "client_id", "surface_id", "source_width", "source_height", "region", "width", "height", "mime_type", "file_bytes", "sha256", "saved"],
         absent: ["content_base64", "captured_at_unix_ms"]
     );

@@ -106,13 +106,13 @@ fn suggested_tool_call_schema_recognizer_is_strict_and_structural() {
 
     let canonical = suggested_tool_call_schema(
         webcodex_core::runtime_contract::GeneratedFollowUpKind::MechanicallyFollowable,
-        "git_log",
+        "read_git_log",
         json!({"type": "object", "additionalProperties": false, "properties": {}}),
         "next page",
     );
     assert_eq!(
         suggested_tool_call_schema_target(&canonical),
-        Some("git_log")
+        Some("read_git_log")
     );
     assert_eq!(
         canonical["properties"]["follow_up_kind"]["const"],
@@ -123,7 +123,7 @@ fn suggested_tool_call_schema_recognizer_is_strict_and_structural() {
         "type": "object",
         "additionalProperties": false,
         "properties": {
-            "tool": {"type": "string", "const": "git_log"},
+            "tool": {"type": "string", "const": "read_git_log"},
             "arguments": {"type": "object"},
             "payload": {"type": "string"}
         },
@@ -135,7 +135,7 @@ fn suggested_tool_call_schema_recognizer_is_strict_and_structural() {
         "type": "object",
         "additionalProperties": true,
         "properties": {
-            "tool": {"type": "string", "const": "git_log"},
+            "tool": {"type": "string", "const": "read_git_log"},
             "arguments": {"type": "object"}
         },
         "required": ["tool", "arguments"]
@@ -263,10 +263,10 @@ fn registered_generated_next_step_schemas_declare_host_execution_posture() {
 
 #[test]
 fn session_summary_output_schema_exposes_durable_retention_separately_from_response_slicing() {
-    let schema = output_schema_for_tool("session_summary");
+    let schema = output_schema_for_tool("read_session_summary");
     let properties = schema["properties"]["output"]["properties"]
         .as_object()
-        .expect("session_summary output properties");
+        .expect("read_session_summary output properties");
 
     for field in [
         "events_total",
@@ -293,8 +293,8 @@ fn session_summary_output_schema_exposes_durable_retention_separately_from_respo
 fn observation_schemas_do_not_repeat_static_continuation_semantics() {
     let specs = registered_tool_specs();
     for name in [
-        "coding_agent_start",
-        "coding_agent_observe",
+        "start_coding_agent",
+        "observe_coding_agent",
         "observe_session_messages",
     ] {
         let spec = spec_named(&specs, name);
@@ -338,7 +338,7 @@ fn observation_schemas_do_not_repeat_static_continuation_semantics() {
 #[test]
 fn git_diff_hunks_recovery_schema_accepts_only_sparse_actionable_lanes() {
     let specs = registered_tool_specs();
-    let git = spec_named(&specs, "git_diff_hunks");
+    let git = spec_named(&specs, "read_git_diff_hunks");
     let schema = &git.output_schema["properties"]["output"]["properties"]["recovery"];
     let arguments = json!({
         "project": "agent:special:webcodex", "paths": ["a.txt"],
@@ -346,7 +346,7 @@ fn git_diff_hunks_recovery_schema_accepts_only_sparse_actionable_lanes() {
     });
     let refine = json!({"current_hunk": {
         "reason_code": "larger_max_hunk_lines_available",
-        "next_call": {"follow_up_kind": "mechanically_followable", "tool": "git_diff_hunks", "arguments": arguments}
+        "next_call": {"follow_up_kind": "mechanically_followable", "tool": "read_git_diff_hunks", "arguments": arguments}
     }});
     test_support::validate_schema_instance(&refine, schema).unwrap();
     let mut fragment = refine.clone();
@@ -428,7 +428,7 @@ fn inspection_truthfulness_schemas_keep_typed_missing_and_canonical_diff_recover
         .unwrap()
         .contains(&json!("not_found")));
 
-    let show_changes = spec_named(&specs, "show_changes");
+    let show_changes = spec_named(&specs, "read_workspace_changes");
     let properties = &show_changes.output_schema["properties"]["output"]["properties"];
     assert!(properties["hunks"]["description"]
         .as_str()
@@ -448,7 +448,7 @@ fn inspection_truthfulness_schemas_keep_typed_missing_and_canonical_diff_recover
     assert_eq!(handoff["required"], json!(["next_call"]));
     assert_eq!(
         handoff["properties"]["next_call"]["properties"]["tool"]["const"],
-        "git_diff_hunks"
+        "read_git_diff_hunks"
     );
     for legacy in ["scope", "reason", "truncation_reasons", "recovery"] {
         assert!(handoff["properties"].get(legacy).is_none(), "{legacy}");
@@ -669,7 +669,7 @@ fn job_terminal_continuation_output_schemas_are_sparse_and_private_app_payload_i
         assert!(!properties.contains_key(forbidden), "leaked {forbidden}");
     }
 
-    let prepare = output_schema_for_tool("job_terminal_continuation_prepare");
+    let prepare = output_schema_for_tool("prepare_job_terminal_continuation");
     let automatic_message = &prepare["properties"]["output"]["properties"]["app_protocol"]
         ["properties"]["automatic_message"];
     assert_eq!(automatic_message["type"], "string");
@@ -826,7 +826,7 @@ fn goal_plan_observability_schema_is_bounded_soft_and_payload_free() {
 #[test]
 fn git_diff_hunks_output_schema_keeps_page_and_model_budgets_distinct() {
     let specs = registered_tool_specs();
-    let spec = spec_named(&specs, "git_diff_hunks");
+    let spec = spec_named(&specs, "read_git_diff_hunks");
     let output = &spec.output_schema["properties"]["output"]["properties"];
     assert!(output["max_page_bytes"]["description"]
         .as_str()
@@ -854,7 +854,7 @@ fn git_log_and_directory_listing_expose_parser_ready_next_pages() {
     let specs = registered_tool_specs();
 
     let git_log =
-        &spec_named(&specs, "git_log").output_schema["properties"]["output"]["properties"];
+        &spec_named(&specs, "read_git_log").output_schema["properties"]["output"]["properties"];
     assert!(git_log["next_skip"]["anyOf"].is_array());
     assert!(git_log["next_skip"]["description"]
         .as_str()
@@ -931,7 +931,7 @@ fn tracked_listing_schema_separates_source_incomplete_from_safe_page_truncation(
 #[test]
 fn continuation_feedback_output_schemas_are_synchronized() {
     let specs = registered_tool_specs();
-    for name in ["finish_coding_task", "session_handoff_summary"] {
+    for name in ["finish_coding_task", "read_session_handoff_summary"] {
         let spec = spec_named(&specs, name);
         let properties = &spec.output_schema["properties"]["output"]["properties"];
         assert!(
@@ -942,14 +942,14 @@ fn continuation_feedback_output_schemas_are_synchronized() {
         );
     }
 
-    let validation_spec = spec_named(&specs, "validation_summary");
+    let validation_spec = spec_named(&specs, "read_validation_summary");
     let validation_properties =
         &validation_spec.output_schema["properties"]["output"]["properties"];
     assert!(
         validation_properties
             .as_object()
             .is_some_and(|properties| properties.contains_key("validation_delta")),
-        "validation_summary output schema should expose validation_delta"
+        "read_validation_summary output schema should expose validation_delta"
     );
 }
 
@@ -959,7 +959,7 @@ fn continuation_feedback_schema_is_strict_on_core_objects() {
     let schema = continuation_feedback_subschema(&specs, "finish_coding_task");
     assert_all_objects_strict(&schema, "continuation_feedback", &[]);
 
-    let validation_spec = spec_named(&specs, "validation_summary");
+    let validation_spec = spec_named(&specs, "read_validation_summary");
     let delta =
         &validation_spec.output_schema["properties"]["output"]["properties"]["validation_delta"];
     assert_eq!(
@@ -1221,7 +1221,7 @@ fn model_visible_tool_definitions_have_explicit_output_schema_coverage() {
 #[test]
 fn ssh_resource_declares_explicit_canonical_action_output_fields() {
     let specs = registered_tool_specs();
-    let spec = spec_named(&specs, "ssh_resource");
+    let spec = spec_named(&specs, "manage_ssh_resource");
     let fields = output_schema_field_names(spec);
     for field in [
         "runner",
@@ -1234,7 +1234,10 @@ fn ssh_resource_declares_explicit_canonical_action_output_fields() {
         "error_kind",
         "dispatch_state",
     ] {
-        assert!(fields.contains(field), "ssh_resource missing {field}");
+        assert!(
+            fields.contains(field),
+            "manage_ssh_resource missing {field}"
+        );
     }
     assert_ne!(fields, default_output_schema_field_names());
 }
@@ -1928,8 +1931,8 @@ fn key_tool_output_schemas_include_expected_fields() {
         "warnings",
     ] {
         assert!(
-            has_output_field("project_overview", field),
-            "project_overview missing {field}"
+            has_output_field("read_project_overview", field),
+            "read_project_overview missing {field}"
         );
     }
     assert!(
@@ -2051,12 +2054,12 @@ fn key_tool_output_schemas_include_expected_fields() {
         "suggested_call",
     ] {
         assert!(
-            has_output_field("read_project_artifact", field),
-            "read_project_artifact missing {field}"
+            has_output_field("read_project_artifact_chunk", field),
+            "read_project_artifact_chunk missing {field}"
         );
     }
     let artifact_specs = registered_tool_specs();
-    let artifact_next = &spec_named(&artifact_specs, "read_project_artifact").output_schema
+    let artifact_next = &spec_named(&artifact_specs, "read_project_artifact_chunk").output_schema
         ["properties"]["output"]["properties"]["suggested_call"]["properties"]["arguments"];
     assert_eq!(
         artifact_next["required"],
@@ -2094,12 +2097,12 @@ fn key_tool_output_schemas_include_expected_fields() {
     ];
     for field in upload_progress_fields {
         assert!(
-            has_output_field("artifact_upload_begin", field),
-            "artifact_upload_begin missing {field}"
+            has_output_field("begin_artifact_upload", field),
+            "begin_artifact_upload missing {field}"
         );
         assert!(
-            has_output_field("artifact_upload_chunk", field),
-            "artifact_upload_chunk missing {field}"
+            has_output_field("upload_artifact_chunk", field),
+            "upload_artifact_chunk missing {field}"
         );
     }
     for field in [
@@ -2113,8 +2116,8 @@ fn key_tool_output_schemas_include_expected_fields() {
         "committed",
     ] {
         assert!(
-            has_output_field("artifact_upload_finish", field),
-            "artifact_upload_finish missing {field}"
+            has_output_field("finish_artifact_upload", field),
+            "finish_artifact_upload missing {field}"
         );
     }
     for field in [
@@ -2129,8 +2132,8 @@ fn key_tool_output_schemas_include_expected_fields() {
         "changed_path_details",
     ] {
         assert!(
-            has_output_field("artifact_upload_abort", field),
-            "artifact_upload_abort missing {field}"
+            has_output_field("abort_artifact_upload", field),
+            "abort_artifact_upload missing {field}"
         );
     }
     for field in [
@@ -2148,11 +2151,11 @@ fn key_tool_output_schemas_include_expected_fields() {
         "quic",
     ] {
         assert!(
-            has_output_field("runtime_status", field),
-            "runtime_status missing {field}"
+            has_output_field("get_runtime_status", field),
+            "get_runtime_status missing {field}"
         );
     }
-    assert!(!has_output_field("runtime_status", "agents"));
+    assert!(!has_output_field("get_runtime_status", "agents"));
     for field in ["runners", "summary", "count"] {
         assert!(has_output_field("list_runners", field));
     }
@@ -2303,8 +2306,8 @@ fn cleanup_tool_output_schemas_include_metadata_fields() {
 
     for field in ["restored_paths", "command_result"] {
         assert!(
-            output_schema_properties(&specs, "git_restore_paths").contains_key(field),
-            "git_restore_paths missing {field}"
+            output_schema_properties(&specs, "restore_git_paths").contains_key(field),
+            "restore_git_paths missing {field}"
         );
     }
     for field in ["discarded_untracked_paths", "command_result"] {
@@ -2314,7 +2317,7 @@ fn cleanup_tool_output_schemas_include_metadata_fields() {
         );
     }
 
-    let restored = output_schema_property(&specs, "git_restore_paths", "restored_paths");
+    let restored = output_schema_property(&specs, "restore_git_paths", "restored_paths");
     assert_eq!(restored["type"], "array");
     assert_eq!(restored["items"]["type"], "string");
 
@@ -2328,7 +2331,7 @@ fn cleanup_tool_output_schemas_include_metadata_fields() {
 fn cleanup_output_schemas_describe_result_metadata_only() {
     let specs = registered_tool_specs();
 
-    for tool in ["git_restore_paths", "discard_untracked"] {
+    for tool in ["restore_git_paths", "discard_untracked"] {
         let props = output_schema_properties(&specs, tool);
         for forbidden in [
             "content",
@@ -2425,7 +2428,7 @@ fn cleanup_and_compatibility_write_output_schemas_do_not_advertise_broad_exfiltr
     specs.extend(exact_manifest_specialist_tool_specs());
 
     for tool in [
-        "git_restore_paths",
+        "restore_git_paths",
         "discard_untracked",
         "write_project_file",
     ] {
@@ -2471,10 +2474,10 @@ fn cleanup_and_compatibility_write_output_schemas_do_not_advertise_broad_exfiltr
 #[test]
 fn computer_recovery_output_schemas_use_canonical_action_shapes() {
     let specs = registered_tool_specs();
-    for spec in specs
-        .iter()
-        .filter(|spec| spec.name.starts_with("computer_"))
-    {
+    for spec in specs.iter().filter(|spec| {
+        crate::lookup_tool_definition(&spec.name)
+            .is_some_and(|d| d.category == crate::TOOL_CATEGORY_COMPUTER)
+    }) {
         let props = spec.output_schema["properties"]["output"]["properties"]
             .as_object()
             .unwrap_or_else(|| panic!("{} output properties", spec.name));
@@ -2495,7 +2498,7 @@ fn computer_recovery_output_schemas_use_canonical_action_shapes() {
         );
     }
 
-    let suggested = output_schema_property(&specs, "computer_control", "suggested_call");
+    let suggested = output_schema_property(&specs, "control_computer", "suggested_call");
     let variants = suggested["oneOf"]
         .as_array()
         .expect("Computer suggested_call oneOf");
@@ -2511,7 +2514,7 @@ fn computer_recovery_output_schemas_use_canonical_action_shapes() {
         let variant = variants
             .iter()
             .find(|variant| {
-                variant["properties"]["tool"]["const"] == "computer_observe"
+                variant["properties"]["tool"]["const"] == "observe_computer"
                     && variant["properties"]["arguments"]["properties"]["action"]["const"] == action
             })
             .unwrap_or_else(|| panic!("missing Computer recovery action {action}"));
@@ -2528,13 +2531,13 @@ fn computer_recovery_output_schemas_use_canonical_action_shapes() {
         variant["properties"]["tool"]["const"] == "read_project_artifact_metadata"
     }));
 
-    let schema = output_schema_for_tool("computer_observe");
+    let schema = output_schema_for_tool("observe_computer");
     let canonical_recovery = json!({
         "success": false,
         "output": {
             "suggested_call": {
                 "follow_up_kind": "fallback_recovery",
-                "tool": "computer_observe",
+                "tool": "observe_computer",
                 "arguments": {"action": "windows", "client_id": "special"}
             }
         },
@@ -2550,14 +2553,14 @@ fn computer_recovery_output_schemas_use_canonical_action_shapes() {
     assert!(test_support::validate_schema_instance(&legacy, &schema).is_err());
 
     let mut duplicate_recovery_shape = canonical_recovery;
-    duplicate_recovery_shape["output"]["reconcile_with"] = json!("computer_observe");
+    duplicate_recovery_shape["output"]["reconcile_with"] = json!("observe_computer");
     assert!(test_support::validate_schema_instance(&duplicate_recovery_shape, &schema).is_err());
 }
 
 #[test]
 fn skill_load_declares_exact_loading_and_ambiguity_output_contract() {
     let specs = registered_tool_specs();
-    let fields = output_schema_field_names(spec_named(&specs, "skill_load"));
+    let fields = output_schema_field_names(spec_named(&specs, "load_skill"));
     for field in [
         "catalog_revision",
         "descriptor",
@@ -2572,14 +2575,14 @@ fn skill_load_declares_exact_loading_and_ambiguity_output_contract() {
         "discovery_truncated",
         "error_kind",
     ] {
-        assert!(fields.contains(field), "skill_load missing {field}");
+        assert!(fields.contains(field), "load_skill missing {field}");
     }
     assert_ne!(fields, default_output_schema_field_names());
 }
 
 #[test]
 fn skill_recovery_output_schema_accepts_canonical_shapes_and_declares_legacy_rejection() {
-    let schema = output_schema_for_tool("skill_install");
+    let schema = output_schema_for_tool("install_skill");
     let actionable = json!({
         "success": false,
         "output": {
@@ -2590,7 +2593,7 @@ fn skill_recovery_output_schema_accepts_canonical_shapes_and_declares_legacy_rej
             "state_changed": null,
             "suggested_call": {
                 "follow_up_kind": "fallback_recovery",
-                "tool": "skill_versions",
+                "tool": "list_skill_versions",
                 "arguments": {
                     "project": "agent:test:demo",
                     "skill_key": "demo"
@@ -2608,15 +2611,15 @@ fn skill_recovery_output_schema_accepts_canonical_shapes_and_declares_legacy_rej
         .unwrap()
         .remove("suggested_call");
     family_only["output"]["recovery_kind"] = json!("reconcile");
-    family_only["output"]["reconcile_with"] = json!("skill_versions");
+    family_only["output"]["reconcile_with"] = json!("list_skill_versions");
     test_support::validate_schema_instance(&family_only, &schema).unwrap();
 
     let mut legacy = actionable.clone();
-    legacy["output"]["recovery_tool"] = json!("skill_versions");
+    legacy["output"]["recovery_tool"] = json!("list_skill_versions");
     assert!(test_support::validate_schema_instance(&legacy, &schema).is_err());
 
     let mut duplicate_recovery_shape = actionable.clone();
-    duplicate_recovery_shape["output"]["reconcile_with"] = json!("skill_versions");
+    duplicate_recovery_shape["output"]["reconcile_with"] = json!("list_skill_versions");
     assert!(test_support::validate_schema_instance(&duplicate_recovery_shape, &schema).is_err());
 
     let recovery_constraints = schema["properties"]["output"]["allOf"]
@@ -2869,7 +2872,7 @@ fn output_schema_description_text(props: &serde_json::Map<String, Value>) -> Str
 
 #[test]
 fn validation_summary_schema_exposes_optional_recoverable_assertion_label_only() {
-    let schema = output_schema_for_tool("validation_summary");
+    let schema = output_schema_for_tool("read_validation_summary");
     let event = &schema["properties"]["output"]["properties"]["validation"]["properties"]["events"]
         ["items"];
     let properties = event["properties"].as_object().unwrap();
@@ -2988,8 +2991,8 @@ fn finish_coding_task_output_schema_describes_ledger_validation_summary() {
     let nested_recovery =
         &nested_show_changes["properties"]["diff_review_handoff"]["properties"]["next_call"];
     assert_eq!(
-        nested_recovery["properties"]["tool"]["const"], "git_diff_hunks",
-        "finish_coding_task must formally expose nested show_changes recovery"
+        nested_recovery["properties"]["tool"]["const"], "read_git_diff_hunks",
+        "finish_coding_task must formally expose nested read_workspace_changes recovery"
     );
     assert_eq!(
         nested_recovery["properties"]["arguments"]["additionalProperties"],
@@ -3065,48 +3068,48 @@ fn finish_coding_task_output_schema_describes_ledger_validation_summary() {
 #[test]
 fn session_handoff_summary_schema_exposes_ledger_validation_summary() {
     let specs = registered_tool_specs();
-    let spec = spec_named(&specs, "session_handoff_summary");
+    let spec = spec_named(&specs, "read_session_handoff_summary");
     let input_props = spec.input_schema["properties"].as_object().unwrap();
     assert!(
         input_props.contains_key("include_validation"),
-        "session_handoff_summary input schema should include include_validation"
+        "read_session_handoff_summary input schema should include include_validation"
     );
     assert!(
         input_props.contains_key("diagnostic"),
-        "session_handoff_summary input schema should include diagnostic"
+        "read_session_handoff_summary input schema should include diagnostic"
     );
 
-    let schema = output_schema_for_tool("session_handoff_summary");
+    let schema = output_schema_for_tool("read_session_handoff_summary");
     let output_props = schema["properties"]["output"]["properties"]
         .as_object()
         .unwrap();
     assert!(
         output_props.contains_key("validation"),
-        "session_handoff_summary output schema should include validation"
+        "read_session_handoff_summary output schema should include validation"
     );
     assert!(
         output_props.contains_key("review_evidence"),
-        "session_handoff_summary output schema should include review_evidence"
+        "read_session_handoff_summary output schema should include review_evidence"
     );
     assert!(
         output_props.contains_key("permissions"),
-        "session_handoff_summary output schema should include permissions"
+        "read_session_handoff_summary output schema should include permissions"
     );
     assert!(
         output_props.contains_key("tool_failures"),
-        "session_handoff_summary output schema should include classified tool failures"
+        "read_session_handoff_summary output schema should include classified tool failures"
     );
     assert!(
         output_props.contains_key("expected_failed_tool_calls"),
-        "session_handoff_summary output schema should include expected failed tool calls"
+        "read_session_handoff_summary output schema should include expected failed tool calls"
     );
     assert!(
         output_props.contains_key("unexpected_failed_tool_calls"),
-        "session_handoff_summary output schema should include unexpected failed tool calls"
+        "read_session_handoff_summary output schema should include unexpected failed tool calls"
     );
     assert!(
         output_props.contains_key("expectation_mismatches"),
-        "session_handoff_summary output schema should include expectation mismatches"
+        "read_session_handoff_summary output schema should include expectation mismatches"
     );
     for field in [
         "task_outcome",
@@ -3116,7 +3119,7 @@ fn session_handoff_summary_schema_exposes_ledger_validation_summary() {
     ] {
         assert!(
             output_props.contains_key(field),
-            "session_handoff_summary output schema should include {field}"
+            "read_session_handoff_summary output schema should include {field}"
         );
     }
     assert_outcome_model_schema_fields(output_props);
@@ -3364,8 +3367,8 @@ fn run_skill_resource_success_requires_provenance_and_keeps_lifecycle_constraint
 
 #[test]
 fn browser_observation_schema_accepts_canonical_runner_output_and_rejects_private_ids() {
-    let observe = crate::output_schema_for_tool("browser_observe");
-    let act = crate::output_schema_for_tool("browser_act");
+    let observe = crate::output_schema_for_tool("observe_browser");
+    let act = crate::output_schema_for_tool("control_browser");
     let observe_ok = |output: Value| {
         test_support::validate_schema_instance(
             &json!({"success": true, "output": output, "error": null}),
@@ -3508,7 +3511,7 @@ fn browser_observation_schema_accepts_canonical_runner_output_and_rejects_privat
 
 #[test]
 fn browser_batch_schema_is_closed_bounded_and_reports_partial_certainty() {
-    let schema = crate::input_schema_for_tool("browser_act");
+    let schema = crate::input_schema_for_tool("control_browser");
     let request = json!({
         "action": "batch", "client_id": "mini",
         "browser_id": "browser_abcdefghijklmnop", "page_id": "page_abcdefghijklmnop",
@@ -3550,7 +3553,7 @@ fn browser_batch_schema_is_closed_bounded_and_reports_partial_certainty() {
         invalid["operations"] = json!(operations);
         assert!(test_support::validate_schema_instance(&invalid, &schema).is_err());
     }
-    let output = crate::output_schema_for_tool("browser_act");
+    let output = crate::output_schema_for_tool("control_browser");
     for (state, stopped_state, remaining) in [
         ("completed", "not_started", 2),
         ("outcome_unknown", "outcome_unknown", 1),

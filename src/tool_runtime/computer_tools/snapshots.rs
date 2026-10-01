@@ -155,7 +155,7 @@ impl ToolRuntime {
             Some(project_id) if !project_id.is_empty() => project_id.to_string(),
             _ => {
                 return ToolResult::err(
-                    "computer_save_snapshot resolved target project identity is invalid",
+                    "save_computer_snapshot resolved target project identity is invalid",
                 )
             }
         };

@@ -164,39 +164,41 @@ async fn mcp_tools_list_exposes_canonical_coding_bootstrap_and_runtime_status_ux
         ("gateway", Some("call_runtime_tool"))
     );
 
-    let runtime_props = tool("runtime_status")["inputSchema"]["properties"]
+    let runtime_props = tool("get_runtime_status")["inputSchema"]["properties"]
         .as_object()
-        .expect("runtime_status inputSchema properties");
+        .expect("get_runtime_status inputSchema properties");
     for field in ["compact", "summary_only"] {
         assert!(
             runtime_props.contains_key(field),
-            "MCP runtime_status schema should expose {field}"
+            "MCP get_runtime_status schema should expose {field}"
         );
         assert_eq!(runtime_props[field]["type"], "boolean");
     }
 
-    assert!(tools.iter().all(|tool| tool["name"] != "project_overview"));
-    let overview = registered_tool("project_overview");
+    assert!(tools
+        .iter()
+        .all(|tool| tool["name"] != "read_project_overview"));
+    let overview = registered_tool("read_project_overview");
     assert_eq!(
-        crate::model_surface::adaptive_runtime_tool_invocation_route("project_overview"),
+        crate::model_surface::adaptive_runtime_tool_invocation_route("read_project_overview"),
         ("gateway", Some("call_runtime_tool"))
     );
     let overview_props = overview.input_schema["properties"]
         .as_object()
-        .expect("project_overview inputSchema properties");
+        .expect("read_project_overview inputSchema properties");
     for field in ["project", "path", "max_depth", "limit"] {
         assert!(
             overview_props.contains_key(field),
-            "MCP project_overview schema should expose {field}"
+            "MCP read_project_overview schema should expose {field}"
         );
     }
     let overview_output = overview.output_schema["properties"]["output"]["properties"]
         .as_object()
-        .expect("project_overview outputSchema properties");
+        .expect("read_project_overview outputSchema properties");
     for field in ["project_types", "key_files", "top_level", "scan"] {
         assert!(
             overview_output.contains_key(field),
-            "MCP project_overview output schema should expose {field}"
+            "MCP read_project_overview output schema should expose {field}"
         );
     }
 }
@@ -210,7 +212,7 @@ async fn mcp_tools_call_runtime_status_returns_content() {
         rpc(
             "tools/call",
             Some(Value::from(11)),
-            json!({"name": "runtime_status", "arguments": {}}),
+            json!({"name": "get_runtime_status", "arguments": {}}),
         ),
         None,
     )
@@ -253,7 +255,7 @@ async fn mcp_tools_call_show_changes_returns_structured_tool_error() {
             Some(Value::from(14)),
             json!({
                 "name": "call_runtime_tool",
-                "arguments": {"tool": "show_changes", "arguments": {"project": "agent:nope:nope"}}
+                "arguments": {"tool": "read_workspace_changes", "arguments": {"project": "agent:nope:nope"}}
             }),
         ),
         None,
@@ -297,13 +299,13 @@ fn mcp_suggested_call_output_schema_tracks_adaptive_route() {
     );
     assert!(
         crate::mcp::tools::adaptive_runtime_gateway_target_admitted_for_test(
-            "skill_versions",
+            "list_skill_versions",
             true
         )
     );
     assert!(
         !crate::mcp::tools::adaptive_runtime_gateway_target_admitted_for_test(
-            "skill_versions",
+            "list_skill_versions",
             false
         ),
         "ModelHidden Skill management recovery must require the stateless operator-extension admission context"
@@ -394,9 +396,9 @@ async fn mcp_runtime_status_defaults_sparse_preserves_explicit_full_and_gateway_
             (json!({"compact": false, "summary_only": true}), true),
         ] {
             let params = if gateway {
-                adaptive_runtime_gateway_params("runtime_status", arguments)
+                adaptive_runtime_gateway_params("get_runtime_status", arguments)
             } else {
-                json!({"name": "runtime_status", "arguments": arguments})
+                json!({"name": "get_runtime_status", "arguments": arguments})
             };
             let McpOutcome::Ok(value) =
                 handle_mcp_request(&runtime, rpc("tools/call", Some(json!(1)), params), None).await
@@ -427,18 +429,18 @@ async fn mcp_runtime_status_defaults_sparse_preserves_explicit_full_and_gateway_
             "tools/call",
             Some(json!(2)),
             mcp_2026_params(json!({
-                "name": "tool_manifest",
-                "arguments": {"tool_name": "runtime_status"}
+                "name": "read_tool_manifest",
+                "arguments": {"tool_name": "get_runtime_status"}
             })),
         ),
         None,
     )
     .await
     else {
-        panic!("runtime_status manifest")
+        panic!("get_runtime_status manifest")
     };
     let manifest_output = &manifest["result"]["structuredContent"]["output"];
-    assert_eq!(manifest_output["name"], "runtime_status");
+    assert_eq!(manifest_output["name"], "get_runtime_status");
     assert_eq!(
         manifest_output["input_schema"]["properties"]["compact"]["default"],
         true
@@ -452,15 +454,15 @@ async fn mcp_runtime_status_defaults_sparse_preserves_explicit_full_and_gateway_
 
     let canonical = runtime
         .dispatch(
-            crate::tool_runtime::ToolCall::from_tool_name("runtime_status", json!({})).unwrap(),
+            crate::tool_runtime::ToolCall::from_tool_name("get_runtime_status", json!({})).unwrap(),
         )
         .await;
     assert!(canonical.output.get("authority").is_some());
     assert_eq!(
-        webcodex_tool_contracts::input_schema_for_tool("runtime_status")["properties"]["compact"]
-            ["default"],
+        webcodex_tool_contracts::input_schema_for_tool("get_runtime_status")["properties"]
+            ["compact"]["default"],
         false,
-        "canonical/API runtime_status default must remain full"
+        "canonical/API get_runtime_status default must remain full"
     );
 }
 

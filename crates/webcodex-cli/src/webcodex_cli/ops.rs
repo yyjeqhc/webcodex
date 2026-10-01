@@ -134,7 +134,7 @@ pub(crate) async fn run_ops_command(command: OpsCommand) -> Result<OpsCommandOut
                 Ok(runtime) => ops_status_report(&opts.server_url, &Some(runtime)),
                 Err(failure) => ops_http_failure_report(
                     &opts.server_url,
-                    "runtime_status",
+                    "get_runtime_status",
                     failure,
                     token.is_some(),
                 ),
@@ -155,7 +155,7 @@ pub(crate) async fn run_ops_command(command: OpsCommand) -> Result<OpsCommandOut
                 Ok(runtime) => ops_runners_report(&opts.server_url, &Some(runtime)),
                 Err(failure) => ops_http_failure_report(
                     &opts.server_url,
-                    "runtime_status",
+                    "get_runtime_status",
                     failure,
                     token.is_some(),
                 ),
@@ -179,7 +179,7 @@ pub(crate) async fn run_ops_command(command: OpsCommand) -> Result<OpsCommandOut
                 }
                 Err(failure) => ops_http_failure_report(
                     &opts.common.server_url,
-                    "runtime_status",
+                    "get_runtime_status",
                     failure,
                     token.is_some(),
                 ),
@@ -236,7 +236,7 @@ pub(crate) async fn run_ops_command(command: OpsCommand) -> Result<OpsCommandOut
                 Err(failure) => {
                     let report = ops_http_failure_report(
                         &opts.common.server_url,
-                        "runtime_status",
+                        "get_runtime_status",
                         failure,
                         token.is_some(),
                     );
@@ -276,7 +276,7 @@ pub(crate) async fn run_ops_command(command: OpsCommand) -> Result<OpsCommandOut
                     &opts.common.server_url,
                     &opts.common.server_http,
                     token.as_deref(),
-                    "show_changes",
+                    "read_workspace_changes",
                     json!({"project": opts.project, "include_diff": false}),
                 )
                 .await
@@ -285,7 +285,7 @@ pub(crate) async fn run_ops_command(command: OpsCommand) -> Result<OpsCommandOut
                     Err(failure) => {
                         let report = ops_http_failure_report(
                             &opts.common.server_url,
-                            "show_changes",
+                            "read_workspace_changes",
                             failure,
                             token.is_some(),
                         );
@@ -300,7 +300,7 @@ pub(crate) async fn run_ops_command(command: OpsCommand) -> Result<OpsCommandOut
                     &opts.common.server_url,
                     &opts.common.server_http,
                     token.as_deref(),
-                    "workspace_hygiene_check",
+                    "check_workspace_hygiene",
                     json!({"project": opts.project}),
                 )
                 .await
@@ -309,7 +309,7 @@ pub(crate) async fn run_ops_command(command: OpsCommand) -> Result<OpsCommandOut
                     Err(failure) => {
                         let report = ops_http_failure_report(
                             &opts.common.server_url,
-                            "workspace_hygiene_check",
+                            "check_workspace_hygiene",
                             failure,
                             token.is_some(),
                         );
@@ -607,14 +607,14 @@ pub(crate) fn ops_status_report(server_url: &str, runtime: &Option<Value>) -> Op
         return OpsReport {
             verdict: verdict.finish(),
             summary: json!({"runtime_reachable": false}),
-            source: source_json(server_url, None, "runtime_status"),
+            source: source_json(server_url, None, "get_runtime_status"),
         };
     };
     let runtime_commit_value = runtime_commit(runtime);
     if runtime.get("service").and_then(Value::as_str).is_none() {
         verdict.fail_reason(
             "malformed_runtime_status",
-            "rerun runtime_status directly and inspect server logs",
+            "rerun get_runtime_status directly and inspect server logs",
         );
     }
 
@@ -715,7 +715,7 @@ pub(crate) fn ops_status_report(server_url: &str, runtime: &Option<Value>) -> Op
     OpsReport {
         verdict: verdict.finish(),
         summary,
-        source: source_json(server_url, runtime_commit_value, "runtime_status"),
+        source: source_json(server_url, runtime_commit_value, "get_runtime_status"),
     }
 }
 
@@ -729,7 +729,7 @@ pub(crate) fn ops_runners_report(server_url: &str, runtime: &Option<Value>) -> O
         return OpsReport {
             verdict: verdict.finish(),
             summary: json!({"runtime_reachable": false, "runners": []}),
-            source: source_json(server_url, None, "runtime_status"),
+            source: source_json(server_url, None, "get_runtime_status"),
         };
     };
     let clients = runner_clients(runtime);
@@ -767,7 +767,7 @@ pub(crate) fn ops_runners_report(server_url: &str, runtime: &Option<Value>) -> O
     OpsReport {
         verdict: verdict.finish(),
         summary,
-        source: source_json(server_url, runtime_commit(runtime), "runtime_status"),
+        source: source_json(server_url, runtime_commit(runtime), "get_runtime_status"),
     }
 }
 
@@ -788,7 +788,7 @@ pub(crate) fn ops_runner_report(
                 "runtime_reachable": false,
                 "client_id": expected_client_id,
             }),
-            source: source_json(server_url, None, "runtime_status"),
+            source: source_json(server_url, None, "get_runtime_status"),
         };
     };
     let focus = runtime.get("focus").filter(|value| value.is_object());
@@ -804,7 +804,7 @@ pub(crate) fn ops_runner_report(
                 "client_id": expected_client_id,
                 "connected": false,
             }),
-            source: source_json(server_url, runtime_commit(runtime), "runtime_status"),
+            source: source_json(server_url, runtime_commit(runtime), "get_runtime_status"),
         };
     };
     if focus.get("client_id").and_then(Value::as_str) != Some(expected_client_id) {
@@ -826,7 +826,7 @@ pub(crate) fn ops_runner_report(
     OpsReport {
         verdict: verdict.finish(),
         summary,
-        source: source_json(server_url, runtime_commit(runtime), "runtime_status"),
+        source: source_json(server_url, runtime_commit(runtime), "get_runtime_status"),
     }
 }
 
@@ -989,7 +989,7 @@ pub(crate) fn ops_smoke_preflight_report(
         if show_clean != Some(true) {
             verdict.fail_reason(
                 "workspace_dirty",
-                "review show_changes output and clean or commit workspace changes",
+                "review read_workspace_changes output and clean or commit workspace changes",
             );
         }
         if show_verdict.as_deref() == Some("fail") || show_verdict.is_none() {
@@ -998,7 +998,7 @@ pub(crate) fn ops_smoke_preflight_report(
                     "show_changes_verdict:{}",
                     show_verdict.as_deref().unwrap_or("unknown")
                 ),
-                "rerun show_changes directly and inspect the failure",
+                "rerun read_workspace_changes directly and inspect the failure",
             );
         }
     }
@@ -1011,7 +1011,7 @@ pub(crate) fn ops_smoke_preflight_report(
         if hygiene_clean != Some(true) {
             verdict.fail_reason(
                 "hygiene_not_clean",
-                "review workspace_hygiene_check findings before deploy smoke",
+                "review check_workspace_hygiene findings before deploy smoke",
             );
         }
         if hygiene_verdict.as_deref() == Some("fail") || hygiene_verdict.is_none() {
@@ -1020,7 +1020,7 @@ pub(crate) fn ops_smoke_preflight_report(
                     "hygiene_verdict:{}",
                     hygiene_verdict.as_deref().unwrap_or("unknown")
                 ),
-                "rerun workspace_hygiene_check directly and inspect the failure",
+                "rerun check_workspace_hygiene directly and inspect the failure",
             );
         } else if hygiene_verdict.as_deref() == Some("warn") {
             verdict.warn_reason(
@@ -1257,7 +1257,7 @@ pub(crate) fn render_ops_smoke_preflight(
         display_value(&report.summary["workspace"]["clean"])
     ));
     out.push_str(&format!(
-        "  show_changes.verdict.status: {}\n",
+        "  read_workspace_changes.verdict.status: {}\n",
         display_value(&report.summary["workspace"]["show_changes_verdict_status"])
     ));
     out.push_str("Hygiene:\n");
@@ -1355,17 +1355,17 @@ fn smoke_preflight_source_json(
     called_show_changes: bool,
     called_hygiene: bool,
 ) -> Value {
-    let mut tools = vec![json!("runtime_status"), json!("list_projects")];
+    let mut tools = vec![json!("get_runtime_status"), json!("list_projects")];
     if called_show_changes {
-        tools.push(json!("show_changes"));
+        tools.push(json!("read_workspace_changes"));
     }
     if called_hygiene {
-        tools.push(json!("workspace_hygiene_check"));
+        tools.push(json!("check_workspace_hygiene"));
     }
     json!({
         "server_url": server_url,
         "runtime_commit": runtime_commit,
-        "tool": "runtime_status",
+        "tool": "get_runtime_status",
         "tools": tools,
     })
 }

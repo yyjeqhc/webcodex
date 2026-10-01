@@ -21,13 +21,13 @@ fn bounded_requests_keep_actual_selectors_without_body_or_credential_values() {
     assert!(!text.contains("large-private-script"));
     assert!(!text.contains("never-copy"));
     assert!(request("read_tool_trace", &json!({"trace_ref":"secret"})).is_none());
-    assert!(request("work_result_state", &json!({})).is_none());
+    assert!(request("get_work_result_state", &json!({})).is_none());
 }
 
 #[test]
 fn context_is_diagnostic_even_on_nonselected_tools_and_logs_are_not_copied() {
     let requested = request(
-        "runtime_status",
+        "get_runtime_status",
         &json!({"_wc":{"context":["webcodex.workflow"]}}),
     )
     .unwrap();
@@ -35,7 +35,7 @@ fn context_is_diagnostic_even_on_nonselected_tools_and_logs_are_not_copied() {
         requested["value"]["arguments"]["omitted"],
         "tool_not_selected"
     );
-    let receipt = result("runtime_status", &json!({"success":true,"output":{"context_projection":{"materials":[{"key":"webcodex.workflow","status":"unavailable","reason_code":"context_projection_budget_exceeded"}]}}})).unwrap();
+    let receipt = result("get_runtime_status", &json!({"success":true,"output":{"context_projection":{"materials":[{"key":"webcodex.workflow","status":"unavailable","reason_code":"context_projection_budget_exceeded"}]}}})).unwrap();
     assert_eq!(
         receipt["value"]["output"]["context"]["materials"][0]["reason_code"],
         "context_projection_budget_exceeded"

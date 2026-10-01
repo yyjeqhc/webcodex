@@ -506,7 +506,7 @@ where
         .is_some_and(|token| token.len() > GIT_DIFF_HUNKS_CONTINUATION_MAX_BYTES)
     {
         return Err(serde::de::Error::custom(
-            "continuation exceeds the git_diff_hunks size bound",
+            "continuation exceeds the read_git_diff_hunks size bound",
         ));
     }
     Ok(token)
@@ -1451,7 +1451,7 @@ pub enum GitReviewScopeInput {
 pub enum ToolCall {
     /// List registered tool runtime tools.
     ListTools {
-        /// Optional tool_manifest category filter such as artifact, edit, session, git, or runtime.
+        /// Optional read_tool_manifest category filter such as artifact, edit, session, git, or runtime.
         #[serde(default)]
         category: Option<String>,
         /// Optional loose feature filter such as artifact_upload, upload, read, edit, session, git, or
@@ -1597,20 +1597,20 @@ pub enum ToolCall {
         /// detailed validation history.
         #[serde(default)]
         summary_only: bool,
-        /// Include bounded diff hunks in the full closeout show_changes payload. Defaults to true for
+        /// Include bounded diff hunks in the full closeout read_workspace_changes payload. Defaults to true for
         /// full closeout. summary_only never returns raw change provenance and therefore omits diff
         /// generation regardless of this field.
         #[serde(default)]
         include_diff: Option<bool>,
         /// Defaults to true. When include_handoff=true, controls whether the nested handoff summary
-        /// includes its workspace block; the top-level finish workspace/show_changes check remains
+        /// includes its workspace block; the top-level finish workspace/read_workspace_changes check remains
         /// unchanged.
         #[serde(default)]
         include_workspace: Option<bool>,
-        /// Include workspace_hygiene_check output. Defaults to true.
+        /// Include check_workspace_hygiene output. Defaults to true.
         #[serde(default)]
         include_hygiene: Option<bool>,
-        /// Include session_handoff_summary output. Defaults to true.
+        /// Include read_session_handoff_summary output. Defaults to true.
         #[serde(default)]
         include_handoff: Option<bool>,
         /// Include deterministic validation-like session ledger event summary when available. Defaults to
@@ -1637,6 +1637,7 @@ pub enum ToolCall {
 
     /// App-only read of the same Window card projection. Optional Session identity
     /// selects authorized Server Job state and is deliberately excluded from generic recording.
+    #[serde(rename = "get_work_result_state")]
     WorkResultState {
         project: String,
         #[serde(default)]
@@ -1651,6 +1652,7 @@ pub enum ToolCall {
 
     /// Work Result App-only lazy read of one completed call in the current
     /// canonical Host Window. The Window identity is supplied only by Host sideband.
+    #[serde(rename = "read_work_result_activity_detail")]
     WorkResultActivityDetail {
         project: String,
         #[schemars(length(min = 1, max = 128))]
@@ -1660,6 +1662,7 @@ pub enum ToolCall {
     /// Work Result App-only collaboration write. The App fixes the business kind
     /// to guidance + requires_ack and supplies one bounded replay key so uncertain
     /// Host delivery can be retried without duplicating the retained message.
+    #[serde(rename = "send_work_result_message")]
     WorkResultSendMessage {
         project: String,
         /// Optional exact work context explicitly linked to the current Window; never the recipient.
@@ -1677,6 +1680,7 @@ pub enum ToolCall {
     /// Work Result App-only lazy read from one opaque frozen final-changes snapshot.
     /// Business session identity is deliberately excluded from generic Session
     /// recording so user expansion clicks cannot become Session work events.
+    #[serde(rename = "read_changed_file_diff")]
     ChangesFileDiff {
         project: String,
         session_id: String,
@@ -1702,6 +1706,7 @@ pub enum ToolCall {
 
     /// Return a bounded structured summary of recorded session ledger data for
     /// an explicit session id.
+    #[serde(rename = "read_session_summary")]
     SessionSummary {
         /// Required explicit wc_sess_* Workflow Session id from a compatible Session bootstrap.
         session_id: String,
@@ -1742,6 +1747,7 @@ pub enum ToolCall {
     /// Read bounded structured validation evidence already present in an
     /// explicit project-scoped session ledger. Never executes validation,
     /// shell commands, Runner requests, or project file reads.
+    #[serde(rename = "read_validation_summary")]
     ValidationSummary {
         /// Required complete runtime project id from list_projects. Must match the project scoped to
         /// session_id.
@@ -1958,6 +1964,7 @@ pub enum ToolCall {
     },
 
     /// Return a bounded structured aggregate of session-local ledger discussion.
+    #[serde(rename = "read_session_discussion_summary")]
     SessionDiscussionSummary {
         /// Required wc_sess_* id whose message board should be summarized.
         session_id: String,
@@ -1973,6 +1980,7 @@ pub enum ToolCall {
     /// optional workspace, checkpoint, and ledger-derived validation metadata.
     /// Read-only; never calls an LLM or generates natural-language summaries.
     /// Model/API exposure is derived from the canonical ToolDefinition surface.
+    #[serde(rename = "read_session_handoff_summary")]
     SessionHandoffSummary {
         /// Required explicit wc_sess_* business Session id to summarize.
         session_id: String,
@@ -2006,6 +2014,7 @@ pub enum ToolCall {
 
     /// Adapter/API-only exact recovery read. Uses the canonical handoff projection
     /// without exposing the business Session through generic recorder semantics.
+    #[serde(rename = "get_session_handoff_state")]
     SessionHandoffState {
         /// Required exact runtime Project; must match the authorized Session Project.
         project: String,
@@ -2016,6 +2025,7 @@ pub enum ToolCall {
     /// Create a bounded last-known-good workspace checkpoint outside the
     /// project worktree.
     #[cfg(feature = "workspace-checkpoints")]
+    #[serde(rename = "create_workspace_checkpoint")]
     WorkspaceCheckpointCreate {
         project: String,
         #[serde(default)]
@@ -2036,6 +2046,7 @@ pub enum ToolCall {
 
     /// List checkpoint metadata for a project without returning diffs.
     #[cfg(feature = "workspace-checkpoints")]
+    #[serde(rename = "list_workspace_checkpoints")]
     WorkspaceCheckpointList {
         project: String,
         #[serde(default)]
@@ -2047,6 +2058,7 @@ pub enum ToolCall {
     /// Show bounded checkpoint metadata and file lists without full diff
     /// content.
     #[cfg(feature = "workspace-checkpoints")]
+    #[serde(rename = "read_workspace_checkpoint")]
     WorkspaceCheckpointShow {
         project: String,
         checkpoint_id: String,
@@ -2058,6 +2070,7 @@ pub enum ToolCall {
 
     /// Restore a workspace checkpoint after explicit confirmation.
     #[cfg(feature = "workspace-checkpoints")]
+    #[serde(rename = "restore_workspace_checkpoint")]
     WorkspaceCheckpointRestore {
         project: String,
         checkpoint_id: String,
@@ -2068,6 +2081,7 @@ pub enum ToolCall {
 
     /// Delete a persisted checkpoint file after explicit confirmation.
     #[cfg(feature = "workspace-checkpoints")]
+    #[serde(rename = "delete_workspace_checkpoint")]
     WorkspaceCheckpointDelete {
         project: String,
         checkpoint_id: String,
@@ -2080,6 +2094,7 @@ pub enum ToolCall {
     /// Workflow Session are mandatory outer authority targets; nested calls may
     /// not select either target.
     #[cfg(feature = "experimental-code-mode")]
+    #[serde(rename = "execute_code_mode")]
     CodeModeExec {
         /// Required Project target. Nested JavaScript tool calls cannot select or override Project authority.
         project: String,
@@ -2101,6 +2116,7 @@ pub enum ToolCall {
     /// envelope is consequential, while every admitted nested child still enters
     /// ordinary canonical ToolRuntime authority and evidence paths.
     #[cfg(feature = "experimental-code-mode")]
+    #[serde(rename = "execute_effectful_code_mode")]
     CodeModeExecEffectful {
         /// Required Project target. Nested JavaScript tool calls cannot select or override Project authority.
         project: String,
@@ -2121,6 +2137,7 @@ pub enum ToolCall {
     /// Execute one experimental E2c bounded coding cell. The outer envelope
     /// requires ProjectWrite and JobRun authority; children remain canonical.
     #[cfg(feature = "experimental-code-mode")]
+    #[serde(rename = "execute_mutating_code_mode")]
     CodeModeExecMutating {
         /// Required Project target. Nested JavaScript tool calls cannot select or override Project authority.
         project: String,
@@ -2143,7 +2160,7 @@ pub enum ToolCall {
     RunProcess {
         /// Configured project id.
         project: String,
-        /// Keep a pipe open for subsequent job_write_input calls. No PTY or shell
+        /// Keep a pipe open for subsequent write_job_input calls. No PTY or shell
         /// Session. Returns the same public Job without waiting for input-dependent
         /// completion. Requires job_process_input_v1; incompatible with initial stdin.
         /// Send required input before waiting for terminal completion.
@@ -2253,6 +2270,7 @@ pub enum ToolCall {
         #[serde(default)]
         purpose: Option<ExecutionPurpose>,
     },
+    #[serde(rename = "start_coding_agent")]
     CodingAgentStart {
         /// Exact registered Project id. It resolves the Runner and fixes ACP session cwd to that Project
         /// root; cwd is not a filesystem sandbox.
@@ -2296,8 +2314,9 @@ pub enum ToolCall {
         #[serde(skip)]
         recording_session_id: Option<String>,
     },
+    #[serde(rename = "observe_coding_agent")]
     CodingAgentObserve {
-        /// Opaque CodingAgentRun id returned by coding_agent_start. Knowing the id alone grants no
+        /// Opaque CodingAgentRun id returned by start_coding_agent. Knowing the id alone grants no
         /// authority.
         #[schemars(regex(pattern = "^wc_agent_run_[A-Za-z0-9_.-]+$"))]
         run_id: String,
@@ -2313,6 +2332,7 @@ pub enum ToolCall {
         #[serde(default)]
         wait_secs: Option<u64>,
     },
+    #[serde(rename = "cancel_coding_agent")]
     CodingAgentCancel {
         /// Opaque CodingAgentRun id to cancel. Cancellation never starts or retries work and must be
         /// followed by observation for authoritative terminal state.
@@ -2443,6 +2463,7 @@ pub enum ToolCall {
     },
 
     /// Execute one framed command in an already-open persistent shell.
+    #[serde(rename = "execute_session_shell")]
     SessionShellExec {
         /// Exact Workflow Session project id.
         project: String,
@@ -2468,6 +2489,7 @@ pub enum ToolCall {
     },
 
     /// Read Runner-authoritative lifecycle state for a persistent shell.
+    #[serde(rename = "get_session_shell_status")]
     SessionShellStatus {
         /// Exact Workflow Session project id.
         project: String,
@@ -2552,6 +2574,7 @@ pub enum ToolCall {
     },
 
     /// Restore tracked paths with `git restore -- <paths>`.
+    #[serde(rename = "restore_git_paths")]
     GitRestorePaths {
         /// Runner-registered project id.
         project: String,
@@ -2578,10 +2601,11 @@ pub enum ToolCall {
     },
 
     /// Commit exactly requested changed paths behind an exact HEAD fence.
+    #[serde(rename = "commit_git_paths")]
     GitCommitPaths {
         /// Runner-registered project id.
         project: String,
-        /// Exact current 40-hex HEAD fence; normally copy show_changes.head.commit immediately before
+        /// Exact current 40-hex HEAD fence; normally copy read_workspace_changes.head.commit immediately before
         /// committing.
         #[schemars(length(min = 40, max = 40))]
         #[schemars(regex(pattern = "^[0-9A-Fa-f]{40}$"))]
@@ -2602,6 +2626,7 @@ pub enum ToolCall {
     },
 
     /// Run `git status` on a project.
+    #[serde(rename = "get_git_status")]
     GitStatus {
         /// Configured project id.
         project: String,
@@ -2613,6 +2638,7 @@ pub enum ToolCall {
     },
 
     /// Return bounded structured recent git commit history.
+    #[serde(rename = "read_git_log")]
     GitLog {
         /// Runner-registered project id.
         project: String,
@@ -2636,6 +2662,7 @@ pub enum ToolCall {
     },
 
     /// Return bounded structured hunks from `git diff`.
+    #[serde(rename = "read_git_diff_hunks")]
     GitDiffHunks {
         /// Runner-registered project id.
         project: String,
@@ -2679,7 +2706,7 @@ pub enum ToolCall {
             default,
             deserialize_with = "deserialize_optional_git_diff_hunks_continuation"
         )]
-        /// Compact opaque runtime continuation returned by git_diff_hunks. Copy it verbatim only through
+        /// Compact opaque runtime continuation returned by read_git_diff_hunks. Copy it verbatim only through
         /// the returned parser-ready suggested_call; do not interpret it. It may identify either a
         /// later-record page cursor or the next complete-line fragment of one exact hunk; token type is
         /// opaque and scope/fence-bound. Repeat its exact original effective scope/paging inputs unchanged
@@ -2691,6 +2718,7 @@ pub enum ToolCall {
     },
 
     /// Return a deterministic bounded review map for an exact committed range.
+    #[serde(rename = "read_git_review_summary")]
     GitReviewSummary {
         /// Runner-registered project id.
         project: String,
@@ -2727,7 +2755,7 @@ pub enum ToolCall {
         /// Maximum complete lines per returned hunk.
         #[serde(default)]
         max_hunk_lines: Option<usize>,
-        /// Raw producer page budget, clamped by the same git_diff_hunks engine.
+        /// Raw producer page budget, clamped by the same read_git_diff_hunks engine.
         #[schemars(range(min = 0))]
         #[serde(default)]
         max_page_bytes: Option<usize>,
@@ -3009,6 +3037,7 @@ pub enum ToolCall {
     },
 
     /// Load one Skill definition by unique exact Unicode case-folded name.
+    #[serde(rename = "load_skill")]
     SkillLoad {
         /// Required authorized runtime Project id.
         #[schemars(length(min = 1))]
@@ -3031,7 +3060,7 @@ pub enum ToolCall {
     RunSkillResource {
         /// Configured project id.
         project: String,
-        /// Opaque Runner Skill identity returned by skill_load or skill_list.
+        /// Opaque Runner Skill identity returned by load_skill or list_skills.
         #[schemars(regex(pattern = "^wc_skill_[A-Za-z0-9_-]{21}[AQgw]$"))]
         skill_id: String,
         /// Skill-package-relative script path under scripts/. Absolute paths and traversal are rejected.
@@ -3089,6 +3118,7 @@ pub enum ToolCall {
     /// Fresh bounded discovery of project-scoped Agent Skills. This tool is
     /// model-hidden globally and exposed only by capable Stateless MCP Full
     /// Operator surfaces.
+    #[serde(rename = "list_skills")]
     SkillList {
         /// Required authorized runtime Project id.
         #[schemars(length(min = 1))]
@@ -3112,6 +3142,7 @@ pub enum ToolCall {
     },
 
     /// Read one bounded UTF-8 text resource from a selected Skill package.
+    #[serde(rename = "read_skill_file")]
     SkillReadFile {
         #[schemars(length(min = 1))]
         project: String,
@@ -3136,6 +3167,7 @@ pub enum ToolCall {
         session_id: Option<String>,
     },
 
+    #[serde(rename = "list_skill_versions")]
     SkillVersions {
         #[schemars(length(min = 1))]
         project: String,
@@ -3152,6 +3184,7 @@ pub enum ToolCall {
         session_id: Option<String>,
     },
 
+    #[serde(rename = "install_skill")]
     SkillInstall {
         #[schemars(length(min = 1))]
         project: String,
@@ -3174,6 +3207,7 @@ pub enum ToolCall {
         session_id: Option<String>,
     },
 
+    #[serde(rename = "activate_skill")]
     SkillActivate {
         #[schemars(length(min = 1))]
         project: String,
@@ -3190,6 +3224,7 @@ pub enum ToolCall {
         session_id: Option<String>,
     },
 
+    #[serde(rename = "remove_skill_revision")]
     SkillRemoveRevision {
         #[schemars(length(min = 1))]
         project: String,
@@ -3289,6 +3324,7 @@ pub enum ToolCall {
     /// current Window relation, Session/Goal/Project authority and epoch dedup,
     /// may commit one durable stall Attention/Wake, then returns the final bounded
     /// Goal Plan projection. No caller timing or authority selectors are accepted.
+    #[serde(rename = "sync_goal_plan")]
     GoalPlanSync {
         #[schemars(regex(pattern = "^wc_goal_[A-Za-z0-9_-]{16}$"))]
         goal_id: String,
@@ -3493,6 +3529,7 @@ pub enum ToolCall {
     },
 
     /// App-only exact read of one caller-owned AgentWait.
+    #[serde(rename = "get_agent_wait_state")]
     AgentWaitState { wait_id: String },
 
     /// Create explicit durable Agent work independent from communication messages and execution backends.
@@ -3882,6 +3919,7 @@ pub enum ToolCall {
     },
 
     /// App-only bind of one live Host View to an exact freshly attached Endpoint generation.
+    #[serde(rename = "bind_agent_continuation")]
     AgentContinuationBind {
         #[schemars(regex(pattern = "^wc_dagent_[A-Za-z0-9_-]{16}$"))]
         agent_id: String,
@@ -3894,6 +3932,7 @@ pub enum ToolCall {
     },
 
     /// App-only same-Window recovery for one exact naturally expired Endpoint.
+    #[serde(rename = "recover_agent_continuation_endpoint")]
     AgentContinuationRecoverEndpoint {
         #[schemars(regex(pattern = "^wc_dagent_[A-Za-z0-9_-]{16}$"))]
         agent_id: String,
@@ -3906,6 +3945,7 @@ pub enum ToolCall {
     },
 
     /// App-only exact Host heartbeat plus bounded authoritative state refresh.
+    #[serde(rename = "get_agent_continuation_state")]
     AgentContinuationState {
         #[schemars(regex(pattern = "^wc_dagent_[A-Za-z0-9_-]{16}$"))]
         agent_id: String,
@@ -3918,6 +3958,7 @@ pub enum ToolCall {
     },
 
     /// App-only pre-fence acquire through the durable Wake claim state machine.
+    #[serde(rename = "acquire_agent_continuation_wake")]
     AgentContinuationWakeAcquire {
         #[schemars(regex(pattern = "^wc_dagent_[A-Za-z0-9_-]{16}$"))]
         agent_id: String,
@@ -3930,6 +3971,7 @@ pub enum ToolCall {
     },
 
     /// App-only crossing of the existing durable dispatch fence immediately before ui/message.
+    #[serde(rename = "prepare_agent_continuation_wake")]
     AgentContinuationWakePrepare {
         #[schemars(regex(pattern = "^wc_dagent_[A-Za-z0-9_-]{16}$"))]
         agent_id: String,
@@ -3946,6 +3988,7 @@ pub enum ToolCall {
     },
 
     /// App-only record of Host dispatch acceptance or conservative post-fence uncertainty.
+    #[serde(rename = "finish_agent_continuation_wake")]
     AgentContinuationWakeFinish {
         #[schemars(regex(pattern = "^wc_dagent_[A-Za-z0-9_-]{16}$"))]
         agent_id: String,
@@ -3963,6 +4006,7 @@ pub enum ToolCall {
     },
 
     /// App-only best-effort withdrawal of one exact process-local Host View binding.
+    #[serde(rename = "unbind_agent_continuation")]
     AgentContinuationUnbind {
         #[schemars(regex(pattern = "^wc_dagent_[A-Za-z0-9_-]{16}$"))]
         agent_id: String,
@@ -4197,6 +4241,7 @@ pub enum ToolCall {
 
     /// Search/list explicit durable project Memory. Model-hidden globally and
     /// exposed only when Stateless MCP 2026 admits the Memory protocol capability.
+    #[serde(rename = "search_memory")]
     MemorySearch {
         project: String,
         #[serde(default)]
@@ -4214,6 +4259,7 @@ pub enum ToolCall {
     },
 
     /// Read one explicit durable project Memory body.
+    #[serde(rename = "read_memory")]
     MemoryRead {
         project: String,
         memory_key: String,
@@ -4224,6 +4270,7 @@ pub enum ToolCall {
     },
 
     /// Create or CAS-update explicit durable project Memory guidance.
+    #[serde(rename = "set_memory")]
     MemorySet {
         project: String,
         memory_key: String,
@@ -4243,6 +4290,7 @@ pub enum ToolCall {
     },
 
     /// CAS-delete explicit durable project Memory guidance.
+    #[serde(rename = "delete_memory")]
     MemoryDelete {
         project: String,
         memory_key: String,
@@ -4252,6 +4300,7 @@ pub enum ToolCall {
     },
 
     /// Admin-only paginated inventory of durable project Memory scopes.
+    #[serde(rename = "list_memory_scopes")]
     MemoryScopeList {
         #[serde(default)]
         offset: Option<usize>,
@@ -4260,6 +4309,7 @@ pub enum ToolCall {
     },
 
     /// Admin-only explicit purge of one non-current durable Memory scope.
+    #[serde(rename = "purge_memory_scope")]
     MemoryScopePurge {
         memory_scope_id: String,
         expected_catalog_revision: String,
@@ -4302,6 +4352,7 @@ pub enum ToolCall {
     },
 
     /// Send exact keyed bytes or EOF to an existing interactive Job.
+    #[serde(rename = "write_job_input")]
     JobWriteInput {
         /// Exact authorized Project selector of the existing Job.
         project: String,
@@ -4427,6 +4478,7 @@ pub enum ToolCall {
     },
 
     /// App-only bind of one live Host View to one exact Job terminal wait.
+    #[serde(rename = "bind_job_terminal_continuation")]
     JobTerminalContinuationBind {
         #[schemars(regex(pattern = "^wc_job_wait_[A-Za-z0-9_-]{16}$"))]
         wait_id: String,
@@ -4435,6 +4487,7 @@ pub enum ToolCall {
     },
 
     /// App-only sparse state read for one exact current Job terminal binding.
+    #[serde(rename = "get_job_terminal_continuation_state")]
     JobTerminalContinuationState {
         #[schemars(regex(pattern = "^wc_job_wait_[A-Za-z0-9_-]{16}$"))]
         wait_id: String,
@@ -4443,6 +4496,7 @@ pub enum ToolCall {
     },
 
     /// App-only crossing of the existing durable Job terminal delivery fence.
+    #[serde(rename = "prepare_job_terminal_continuation")]
     JobTerminalContinuationPrepare {
         #[schemars(regex(pattern = "^wc_job_wait_[A-Za-z0-9_-]{16}$"))]
         wait_id: String,
@@ -4451,6 +4505,7 @@ pub enum ToolCall {
     },
 
     /// App-only record of Host ui/message acceptance or conservative uncertainty.
+    #[serde(rename = "finish_job_terminal_continuation")]
     JobTerminalContinuationFinish {
         #[schemars(regex(pattern = "^wc_job_wait_[A-Za-z0-9_-]{16}$"))]
         wait_id: String,
@@ -4462,6 +4517,7 @@ pub enum ToolCall {
     },
 
     /// App-only best-effort withdrawal of one exact process-local Job View binding.
+    #[serde(rename = "unbind_job_terminal_continuation")]
     JobTerminalContinuationUnbind {
         #[schemars(regex(pattern = "^wc_job_wait_[A-Za-z0-9_-]{16}$"))]
         wait_id: String,
@@ -4539,6 +4595,7 @@ pub enum ToolCall {
     /// Return a deterministic, bounded, metadata-only overview of an
     /// Runner-registered project. The owning Runner scans directory entries;
     /// file contents are never read and no LLM is used.
+    #[serde(rename = "read_project_overview")]
     ProjectOverview {
         /// Full Runner runtime project id (legacy agent:<client_id>:<project_id> identity).
         project: String,
@@ -4589,6 +4646,7 @@ pub enum ToolCall {
 
     /// Search for text and immediately read bounded source ranges around the
     /// returned matches in one model-visible round trip.
+    #[serde(rename = "search_and_read_project_texts")]
     SearchAndRead {
         /// Runner-registered project id.
         project: String,
@@ -4626,6 +4684,7 @@ pub enum ToolCall {
     /// branch/head, parsed status counts/files, diff stat, warnings, suggested
     /// next actions, and optional bounded diff hunks. Routed to the owning
     /// agent.
+    #[serde(rename = "read_workspace_changes")]
     ShowChanges {
         /// Runner-registered project id.
         project: String,
@@ -4673,6 +4732,7 @@ pub enum ToolCall {
 
     /// Read bounded, sanitized persisted activity for the current Host Window.
     /// Window identity is accepted only from the adapter's ToolCallContext.
+    #[serde(rename = "read_current_window_activity")]
     CurrentWindowActivity {
         /// Maximum returned events, clamped to 1..50 (default 20).
         #[serde(default)]
@@ -4688,6 +4748,7 @@ pub enum ToolCall {
     /// `wait_secs`, 1..=60) until the current opaque Job observation token
     /// differs or the Job becomes terminal; it is never a subscription or streaming
     /// connection.
+    #[serde(rename = "read_job_tail")]
     JobTail {
         job_id: String,
         #[serde(default)]
@@ -4817,6 +4878,7 @@ pub enum ToolCall {
     /// Preferred unified read-side facade for Project artifacts. Physical
     /// dispatch remains action-specific: Runner-backed metadata/inspection and
     /// MCP presentation/authority for native images and complete export.
+    #[serde(rename = "inspect_project_artifact")]
     ProjectArtifact {
         /// Runner-registered project id.
         project: String,
@@ -4866,6 +4928,7 @@ pub enum ToolCall {
     /// MCP callers may request one complete, size-limited PNG/JPEG/WebP for
     /// native image content framing; that transport-only option is deliberately
     /// not part of the generic REST schema.
+    #[serde(rename = "read_project_artifact_chunk")]
     ReadProjectArtifact {
         /// Runner-registered project id.
         project: String,
@@ -4900,6 +4963,7 @@ pub enum ToolCall {
 
     /// Begin a chunked binary artifact upload bounded to 256 MiB. The agent
     /// creates a project-local temporary upload file and returns an opaque id.
+    #[serde(rename = "begin_artifact_upload")]
     ArtifactUploadBegin {
         /// Runner-registered project id.
         project: String,
@@ -4925,13 +4989,14 @@ pub enum ToolCall {
     },
 
     /// Append one base64-encoded chunk, at most 1 MiB decoded, to an upload.
+    #[serde(rename = "upload_artifact_chunk")]
     ArtifactUploadChunk {
         /// Runner-registered project id.
         project: String,
-        /// Required project-relative path; must exactly match the path used in artifact_upload_begin to
+        /// Required project-relative path; must exactly match the path used in begin_artifact_upload to
         /// bind upload_id to the target.
         path: String,
-        /// Opaque wc_upload_* id from artifact_upload_begin.
+        /// Opaque wc_upload_* id from begin_artifact_upload.
         upload_id: String,
         /// Expected current upload byte offset.
         offset: usize,
@@ -4945,13 +5010,14 @@ pub enum ToolCall {
     },
 
     /// Verify and atomically commit a bounded artifact upload.
+    #[serde(rename = "finish_artifact_upload")]
     ArtifactUploadFinish {
         /// Runner-registered project id.
         project: String,
-        /// Required project-relative path; must exactly match the path used in artifact_upload_begin to
+        /// Required project-relative path; must exactly match the path used in begin_artifact_upload to
         /// bind upload_id to the target.
         path: String,
-        /// Opaque wc_upload_* id from artifact_upload_begin.
+        /// Opaque wc_upload_* id from begin_artifact_upload.
         upload_id: String,
         /// Optional explicit wc_sess_* Workflow Session id from a prior compatible bootstrap. When
         /// provided, this tool call is recorded in that exact Session ledger; omission leaves the call
@@ -4961,13 +5027,14 @@ pub enum ToolCall {
     },
 
     /// Abort a bounded artifact upload and remove its temporary files.
+    #[serde(rename = "abort_artifact_upload")]
     ArtifactUploadAbort {
         /// Runner-registered project id.
         project: String,
-        /// Required project-relative path; must exactly match the path used in artifact_upload_begin to
+        /// Required project-relative path; must exactly match the path used in begin_artifact_upload to
         /// bind upload_id to the target.
         path: String,
-        /// Opaque wc_upload_* id from artifact_upload_begin.
+        /// Opaque wc_upload_* id from begin_artifact_upload.
         upload_id: String,
         /// Optional explicit wc_sess_* Workflow Session id from a prior compatible bootstrap. When
         /// provided, this tool call is recorded in that exact Session ledger; omission leaves the call
@@ -5007,6 +5074,7 @@ pub enum ToolCall {
     /// or stdout/stderr bodies. Suspicious secret files are identified by
     /// path/name only. Model/API exposure is derived from the canonical
     /// ToolDefinition surface.
+    #[serde(rename = "check_workspace_hygiene")]
     WorkspaceHygieneCheck {
         /// Runtime project id.
         project: String,
@@ -5028,6 +5096,7 @@ pub enum ToolCall {
     /// List all Runner-registered runtime Projects.
 
     /// Probe Runner-side language-server availability without starting it.
+    #[serde(rename = "get_lsp_status")]
     LspStatus {
         /// Full Runner runtime project id (legacy wire form agent:<client_id>:<project_id>).
         project: String,
@@ -5039,6 +5108,7 @@ pub enum ToolCall {
     },
 
     /// Hierarchical document symbols for a project-relative supported source file.
+    #[serde(rename = "list_document_symbols")]
     DocumentSymbols {
         /// Full Runner runtime project id (legacy wire form agent:<client_id>:<project_id>).
         project: String,
@@ -5057,6 +5127,7 @@ pub enum ToolCall {
     },
 
     /// Latest bounded language-server diagnostics for a project-relative supported source file.
+    #[serde(rename = "read_document_diagnostics")]
     DocumentDiagnostics {
         /// Full Runner runtime project id (legacy wire form agent:<client_id>:<project_id>).
         project: String,
@@ -5075,6 +5146,7 @@ pub enum ToolCall {
     },
 
     /// Hover information at a 1-based Unicode scalar position.
+    #[serde(rename = "read_symbol_hover")]
     Hover {
         /// Full Runner runtime project id (legacy wire form agent:<client_id>:<project_id>).
         project: String,
@@ -5094,6 +5166,7 @@ pub enum ToolCall {
     },
 
     /// Bounded workspace symbols matching a non-empty query.
+    #[serde(rename = "list_workspace_symbols")]
     WorkspaceSymbols {
         /// Full Runner runtime project id (legacy wire form agent:<client_id>:<project_id>).
         project: String,
@@ -5113,6 +5186,7 @@ pub enum ToolCall {
     },
 
     /// Goto definition at a 1-based Unicode scalar position.
+    #[serde(rename = "find_definition")]
     GotoDefinition {
         /// Full Runner runtime project id (legacy wire form agent:<client_id>:<project_id>).
         project: String,
@@ -5165,6 +5239,7 @@ pub enum ToolCall {
     },
 
     /// Bounded incoming/outgoing semantic call hierarchy at a source position.
+    #[serde(rename = "read_call_hierarchy")]
     CallHierarchy {
         /// Full Runner runtime project id (legacy wire form agent:<client_id>:<project_id>).
         project: String,
@@ -5199,18 +5274,23 @@ pub enum ToolCall {
     },
 
     /// Read-only Browser observation gateway with closed typed actions.
+    #[serde(rename = "observe_browser")]
     BrowserObserve(BrowserObserveToolCall),
 
     /// Effectful Browser gateway with action-sensitive authority resolved before dispatch.
+    #[serde(rename = "control_browser")]
     BrowserAct(BrowserActToolCall),
 
     /// Read-only Computer observation gateway. The closed action enum preserves exact per-action semantics.
+    #[serde(rename = "observe_computer")]
     ComputerObserve(ComputerObserveToolCall),
 
     /// Effectful Computer control gateway. Exact action authority/capability is resolved before dispatch.
+    #[serde(rename = "control_computer")]
     ComputerControl(ComputerControlToolCall),
 
     /// Capture one exact window snapshot and persist it directly as a create-only project artifact.
+    #[serde(rename = "save_computer_snapshot")]
     ComputerSaveSnapshot {
         /// Target project that will receive the create-only snapshot artifact.
         #[schemars(length(min = 1))]
@@ -5222,7 +5302,7 @@ pub enum ToolCall {
         /// Exact Runner client_id whose desktop is observed.
         #[schemars(length(min = 1, max = 128))]
         client_id: String,
-        /// Opaque process-local surface_id returned by computer_observe(action=windows).
+        /// Opaque process-local surface_id returned by observe_computer(action=windows).
         #[schemars(length(min = 1, max = 128))]
         surface_id: String,
         /// Optional rectangle in the revalidated surface coordinate space. It must fit fully inside the
@@ -5378,6 +5458,7 @@ pub enum ToolCall {
 
     /// Validate the candidate at one exact Runner process's startup-bound config
     /// path without mutating active configuration or instantiating providers.
+    #[serde(rename = "check_runner_config")]
     RunnerConfigCheck {
         /// Exact caller-visible Runner client_id whose startup-bound runner.toml candidate is checked. No
         /// filesystem path is accepted.
@@ -5387,13 +5468,14 @@ pub enum ToolCall {
 
     /// Activate the disk candidate on one exact Runner process with an optimistic
     /// active-generation fence. The Runner never accepts a filesystem path here.
+    #[serde(rename = "reload_runner_config")]
     RunnerConfigReload {
         /// Exact caller-visible Runner client_id whose startup-bound runner.toml candidate is activated. No
         /// filesystem path is accepted.
         #[schemars(length(min = 1, max = 128))]
         client_id: String,
-        /// Optimistic active-config generation fence previously observed from runner_config_check,
-        /// runtime_status, or list_runners. A mismatch is rejected before candidate validation or mutation.
+        /// Optimistic active-config generation fence previously observed from check_runner_config,
+        /// get_runtime_status, or list_runners. A mismatch is rejected before candidate validation or mutation.
         #[schemars(range(min = 1))]
         expected_generation: u64,
     },
@@ -5406,6 +5488,7 @@ pub enum ToolCall {
     /// Stable gateway for Runner-local managed SSH resources. The static
     /// ToolDefinition is a worst-case discovery contract; exact execution
     /// policy is classified from `action` before specialized governance.
+    #[serde(rename = "manage_ssh_resource")]
     SshResource(SshResourceToolCall),
 
     /// Return a structured runtime health/observability summary.
@@ -5413,6 +5496,7 @@ pub enum ToolCall {
     /// This is a read-only observability tool: it never exposes tokens,
     /// secrets, full env, or stdout/stderr. It returns service metadata,
     /// Project config status, Runner summaries, and Job counts.
+    #[serde(rename = "get_runtime_status")]
     RuntimeStatus {
         /// True selects sparse health, Project/Job counts and protocol/build/source alignment without
         /// inventories. Canonical/API default is false (full diagnostics); MCP defaults omission to true.
@@ -5453,6 +5537,7 @@ pub enum ToolCall {
     /// introspection; list/filter mode stays schema-free, while exact tool_name
     /// mode exposes only that tool's input schema. Never exposes tokens, secrets,
     /// internal paths, or output schemas.
+    #[serde(rename = "read_tool_manifest")]
     ToolManifest {
         #[schemars(length(min = 1, max = 128))]
         /// Optional exact model-visible runtime tool name for one-tool contract discovery.
@@ -5557,7 +5642,7 @@ fn validate_coding_project_source_shape(tool_name: &str, arguments: &Value) -> R
 }
 
 fn validate_project_artifact_arguments(name: &str, arguments: &Value) -> Result<(), String> {
-    if name != "project_artifact" {
+    if name != "inspect_project_artifact" {
         return Ok(());
     }
     let Some(object) = arguments.as_object() else {
@@ -5567,7 +5652,7 @@ fn validate_project_artifact_arguments(name: &str, arguments: &Value) -> Result<
         .get("action")
         .and_then(Value::as_str)
         .ok_or_else(|| {
-            "invalid arguments for tool 'project_artifact': action is required".to_string()
+            "invalid arguments for tool 'inspect_project_artifact': action is required".to_string()
         })?;
     let action_fields: &[&str] = match action {
         "metadata" => &["allow_missing"],
@@ -5575,7 +5660,7 @@ fn validate_project_artifact_arguments(name: &str, arguments: &Value) -> Result<
         "image" | "export" => &[],
         _ => {
             return Err(format!(
-                "invalid arguments for tool 'project_artifact': unsupported action '{action}'; expected metadata, inspect, image, or export"
+                "invalid arguments for tool 'inspect_project_artifact': unsupported action '{action}'; expected metadata, inspect, image, or export"
             ))
         }
     };
@@ -5589,7 +5674,7 @@ fn validate_project_artifact_arguments(name: &str, arguments: &Value) -> Result<
         Ok(())
     } else {
         Err(format!(
-            "invalid arguments for tool 'project_artifact': action={action} does not accept field(s) {}",
+            "invalid arguments for tool 'inspect_project_artifact': action={action} does not accept field(s) {}",
             invalid.join(", ")
         ))
     }
@@ -5599,7 +5684,10 @@ fn validate_read_project_artifact_expected_sha256(
     name: &str,
     arguments: &Value,
 ) -> Result<(), String> {
-    if !matches!(name, "read_project_artifact" | "project_artifact") {
+    if !matches!(
+        name,
+        "read_project_artifact_chunk" | "inspect_project_artifact"
+    ) {
         return Ok(());
     }
     let Some(object) = arguments.as_object() else {
@@ -5757,7 +5845,7 @@ impl ToolCall {
         // callers an actionable discovery hint.
         let definition = lookup_tool_definition(name).ok_or_else(|| {
             format!(
-                "unknown tool '{}'. Available tools: {}. Call tool_manifest with \
+                "unknown tool '{}'. Available tools: {}. Call read_tool_manifest with \
                  an exact tool_name (or use its category/intent views) to discover \
                  accepted model-visible tool names.",
                 name,
@@ -5782,7 +5870,7 @@ impl ToolCall {
         let normalization = canonicalize_process_argv_alias(name, &mut arguments)?
             .then_some(crate::ToolInputNormalizationCode::ArgvToArgs);
         canonicalize_cargo_check_packages(name, &mut arguments)?;
-        if name == "tool_manifest" {
+        if name == "read_tool_manifest" {
             if let Some(object) = arguments.as_object_mut() {
                 if !object.contains_key("include_recommended_flows") {
                     let exact_lookup = object.contains_key("tool_name");
@@ -5811,13 +5899,13 @@ impl ToolCall {
                 }
             }
         }
-        if name == "read_project_artifact"
+        if name == "read_project_artifact_chunk"
             && arguments
                 .as_object()
                 .is_some_and(|object| object.contains_key("max_bytes"))
         {
             return Err(
-                "invalid arguments for tool 'read_project_artifact': field 'max_bytes' is no longer supported; use 'length'"
+                "invalid arguments for tool 'read_project_artifact_chunk': field 'max_bytes' is no longer supported; use 'length'"
                     .to_string(),
             );
         }
@@ -5849,7 +5937,7 @@ impl ToolCall {
             if missing_path {
                 return Err(format!(
                     "invalid arguments for tool '{}': path is required and must match the path \
-                     used by artifact_upload_begin to bind upload_id to the requested target path",
+                     used by begin_artifact_upload to bind upload_id to the requested target path",
                     name
                 ));
             }
@@ -5901,15 +5989,15 @@ impl ToolCall {
             Self::WorkOnProject { .. } => "work_on_project",
             Self::FinishCodingTask { .. } => "finish_coding_task",
             Self::PresentWorkResult { .. } => "present_work_result",
-            Self::WorkResultState { .. } => "work_result_state",
-            Self::WorkResultActivityDetail { .. } => "work_result_activity_detail",
-            Self::WorkResultSendMessage { .. } => "work_result_send_message",
-            Self::ChangesFileDiff { .. } => "changes_file_diff",
+            Self::WorkResultState { .. } => "get_work_result_state",
+            Self::WorkResultActivityDetail { .. } => "read_work_result_activity_detail",
+            Self::WorkResultSendMessage { .. } => "send_work_result_message",
+            Self::ChangesFileDiff { .. } => "read_changed_file_diff",
             Self::ListSessions { .. } => "list_sessions",
-            Self::SessionSummary { .. } => "session_summary",
+            Self::SessionSummary { .. } => "read_session_summary",
             Self::UpdateSessionContext { .. } => "update_session_context",
             Self::CloseSession { .. } => "close_session",
-            Self::ValidationSummary { .. } => "validation_summary",
+            Self::ValidationSummary { .. } => "read_validation_summary",
             Self::RecordExternalObservation { .. } => "record_external_observation",
             Self::ListExternalObservations { .. } => "list_external_observations",
             Self::PostSessionMessage { .. } => "post_session_message",
@@ -5919,47 +6007,47 @@ impl ToolCall {
             Self::ObserveSessionMessages { .. } => "observe_session_messages",
             Self::ResolveSessionMessage { .. } => "resolve_session_message",
             Self::CompleteSessionMessage { .. } => "complete_session_message",
-            Self::SessionDiscussionSummary { .. } => "session_discussion_summary",
-            Self::SessionHandoffSummary { .. } => "session_handoff_summary",
-            Self::SessionHandoffState { .. } => "session_handoff_state",
+            Self::SessionDiscussionSummary { .. } => "read_session_discussion_summary",
+            Self::SessionHandoffSummary { .. } => "read_session_handoff_summary",
+            Self::SessionHandoffState { .. } => "get_session_handoff_state",
             #[cfg(feature = "workspace-checkpoints")]
-            Self::WorkspaceCheckpointCreate { .. } => "workspace_checkpoint_create",
+            Self::WorkspaceCheckpointCreate { .. } => "create_workspace_checkpoint",
             #[cfg(feature = "workspace-checkpoints")]
-            Self::WorkspaceCheckpointList { .. } => "workspace_checkpoint_list",
+            Self::WorkspaceCheckpointList { .. } => "list_workspace_checkpoints",
             #[cfg(feature = "workspace-checkpoints")]
-            Self::WorkspaceCheckpointShow { .. } => "workspace_checkpoint_show",
+            Self::WorkspaceCheckpointShow { .. } => "read_workspace_checkpoint",
             #[cfg(feature = "workspace-checkpoints")]
-            Self::WorkspaceCheckpointRestore { .. } => "workspace_checkpoint_restore",
+            Self::WorkspaceCheckpointRestore { .. } => "restore_workspace_checkpoint",
             #[cfg(feature = "workspace-checkpoints")]
-            Self::WorkspaceCheckpointDelete { .. } => "workspace_checkpoint_delete",
+            Self::WorkspaceCheckpointDelete { .. } => "delete_workspace_checkpoint",
             #[cfg(feature = "experimental-code-mode")]
-            Self::CodeModeExec { .. } => "code_mode_exec",
+            Self::CodeModeExec { .. } => "execute_code_mode",
             #[cfg(feature = "experimental-code-mode")]
-            Self::CodeModeExecEffectful { .. } => "code_mode_exec_effectful",
+            Self::CodeModeExecEffectful { .. } => "execute_effectful_code_mode",
             #[cfg(feature = "experimental-code-mode")]
-            Self::CodeModeExecMutating { .. } => "code_mode_exec_mutating",
+            Self::CodeModeExecMutating { .. } => "execute_mutating_code_mode",
             Self::RunProcess { .. } => "run_process",
             Self::RunDetachedProcess { .. } => "run_detached_process",
-            Self::CodingAgentStart { .. } => "coding_agent_start",
-            Self::CodingAgentObserve { .. } => "coding_agent_observe",
-            Self::CodingAgentCancel { .. } => "coding_agent_cancel",
+            Self::CodingAgentStart { .. } => "start_coding_agent",
+            Self::CodingAgentObserve { .. } => "observe_coding_agent",
+            Self::CodingAgentCancel { .. } => "cancel_coding_agent",
             Self::RunScript { .. } => "run_script",
             Self::RunShell { .. } => "run_shell",
             Self::OpenSessionShell { .. } => "open_session_shell",
-            Self::SessionShellExec { .. } => "session_shell_exec",
-            Self::SessionShellStatus { .. } => "session_shell_status",
+            Self::SessionShellExec { .. } => "execute_session_shell",
+            Self::SessionShellStatus { .. } => "get_session_shell_status",
             Self::CloseSessionShell { .. } => "close_session_shell",
             Self::ApplyPatch { .. } => "apply_patch",
             Self::ApplyUnifiedDiff { .. } => "apply_unified_diff",
             Self::DeleteProjectFiles { .. } => "delete_project_files",
-            Self::GitRestorePaths { .. } => "git_restore_paths",
+            Self::GitRestorePaths { .. } => "restore_git_paths",
             Self::DiscardUntracked { .. } => "discard_untracked",
-            Self::GitCommitPaths { .. } => "git_commit_paths",
-            Self::GitStatus { .. } => "git_status",
-            Self::GitDiffHunks { .. } => "git_diff_hunks",
-            Self::GitReviewSummary { .. } => "git_review_summary",
+            Self::GitCommitPaths { .. } => "commit_git_paths",
+            Self::GitStatus { .. } => "get_git_status",
+            Self::GitDiffHunks { .. } => "read_git_diff_hunks",
+            Self::GitReviewSummary { .. } => "read_git_review_summary",
             Self::ReviewChanges { .. } => "review_changes",
-            Self::GitLog { .. } => "git_log",
+            Self::GitLog { .. } => "read_git_log",
             Self::CargoFmt { .. } => "cargo_fmt",
             Self::CargoCheck { .. } => "cargo_check",
             Self::CargoTest { .. } => "cargo_test",
@@ -5967,19 +6055,19 @@ impl ToolCall {
             Self::ProjectValidate { .. } => "project_validate",
             Self::GoTest { .. } => "go_test",
             Self::ReadFiles { .. } => "read_files",
-            Self::SkillLoad { .. } => "skill_load",
+            Self::SkillLoad { .. } => "load_skill",
             Self::RunSkillResource { .. } => "run_skill_resource",
-            Self::SkillList { .. } => "skill_list",
-            Self::SkillReadFile { .. } => "skill_read_file",
-            Self::SkillVersions { .. } => "skill_versions",
-            Self::SkillInstall { .. } => "skill_install",
-            Self::SkillActivate { .. } => "skill_activate",
-            Self::SkillRemoveRevision { .. } => "skill_remove_revision",
+            Self::SkillList { .. } => "list_skills",
+            Self::SkillReadFile { .. } => "read_skill_file",
+            Self::SkillVersions { .. } => "list_skill_versions",
+            Self::SkillInstall { .. } => "install_skill",
+            Self::SkillActivate { .. } => "activate_skill",
+            Self::SkillRemoveRevision { .. } => "remove_skill_revision",
             Self::PrepareGoalWorkflow { .. } => "prepare_goal_workflow",
             Self::CreateGoal { .. } => "create_goal",
             Self::GetGoal { .. } => "get_goal",
             Self::PresentGoalPlan { .. } => "present_goal_plan",
-            Self::GoalPlanSync { .. } => "goal_plan_sync",
+            Self::GoalPlanSync { .. } => "sync_goal_plan",
             Self::CheckpointGoal { .. } => "checkpoint_goal",
             Self::OpenWebcodexWorkbench { .. } => "open_webcodex_workbench",
             Self::SearchWebcodexResources { .. } => "search_webcodex_resources",
@@ -5991,7 +6079,7 @@ impl ToolCall {
             Self::WaitForAgentEvents { .. } => "wait_for_agent_events",
             Self::ReadAgentWait { .. } => "read_agent_wait",
             Self::CancelAgentWait { .. } => "cancel_agent_wait",
-            Self::AgentWaitState { .. } => "agent_wait_state",
+            Self::AgentWaitState { .. } => "get_agent_wait_state",
             Self::CreateAgentTask { .. } => "create_agent_task",
             Self::ListAgentTasks { .. } => "list_agent_tasks",
             Self::ReadAgentTask { .. } => "read_agent_task",
@@ -6010,13 +6098,13 @@ impl ToolCall {
             Self::RotateAgentContinuationEndpoint { .. } => "rotate_agent_continuation_endpoint",
 
             Self::PresentAgentContinuation { .. } => "present_agent_continuation",
-            Self::AgentContinuationBind { .. } => "agent_continuation_bind",
-            Self::AgentContinuationRecoverEndpoint { .. } => "agent_continuation_recover_endpoint",
-            Self::AgentContinuationState { .. } => "agent_continuation_state",
-            Self::AgentContinuationWakeAcquire { .. } => "agent_continuation_wake_acquire",
-            Self::AgentContinuationWakePrepare { .. } => "agent_continuation_wake_prepare",
-            Self::AgentContinuationWakeFinish { .. } => "agent_continuation_wake_finish",
-            Self::AgentContinuationUnbind { .. } => "agent_continuation_unbind",
+            Self::AgentContinuationBind { .. } => "bind_agent_continuation",
+            Self::AgentContinuationRecoverEndpoint { .. } => "recover_agent_continuation_endpoint",
+            Self::AgentContinuationState { .. } => "get_agent_continuation_state",
+            Self::AgentContinuationWakeAcquire { .. } => "acquire_agent_continuation_wake",
+            Self::AgentContinuationWakePrepare { .. } => "prepare_agent_continuation_wake",
+            Self::AgentContinuationWakeFinish { .. } => "finish_agent_continuation_wake",
+            Self::AgentContinuationUnbind { .. } => "unbind_agent_continuation",
             Self::DetachAgentEndpoint { .. } => "detach_agent_endpoint",
             Self::CreateConversation { .. } => "create_conversation",
             Self::ListConversations { .. } => "list_conversations",
@@ -6026,72 +6114,71 @@ impl ToolCall {
             Self::ConsumeAgentDeliveries { .. } => "consume_agent_deliveries",
             Self::BootstrapAgentConversation { .. } => "bootstrap_agent_conversation",
             Self::ConsumeAgentWake { .. } => "consume_agent_wake",
-            Self::MemorySearch { .. } => "memory_search",
-            Self::MemoryRead { .. } => "memory_read",
-            Self::MemorySet { .. } => "memory_set",
-            Self::MemoryDelete { .. } => "memory_delete",
-            Self::MemoryScopeList { .. } => "memory_scope_list",
-            Self::MemoryScopePurge { .. } => "memory_scope_purge",
+            Self::MemorySearch { .. } => "search_memory",
+            Self::MemoryRead { .. } => "read_memory",
+            Self::MemorySet { .. } => "set_memory",
+            Self::MemoryDelete { .. } => "delete_memory",
+            Self::MemoryScopeList { .. } => "list_memory_scopes",
+            Self::MemoryScopePurge { .. } => "purge_memory_scope",
             Self::RunJob { .. } => "run_job",
             Self::StopJob { .. } => "stop_job",
-            Self::JobWriteInput { .. } => "job_write_input",
+            Self::JobWriteInput { .. } => "write_job_input",
             Self::ObserveJobs { .. } => "observe_jobs",
             Self::WaitForJobReadiness { .. } => "wait_for_job_readiness",
             Self::WaitForJobTerminal { .. } => "wait_for_job_terminal",
             Self::PresentJobTerminalContinuation { .. } => "present_job_terminal_continuation",
-            Self::JobTerminalContinuationBind { .. } => "job_terminal_continuation_bind",
-            Self::JobTerminalContinuationState { .. } => "job_terminal_continuation_state",
-            Self::JobTerminalContinuationPrepare { .. } => "job_terminal_continuation_prepare",
-            Self::JobTerminalContinuationFinish { .. } => "job_terminal_continuation_finish",
-            Self::JobTerminalContinuationUnbind { .. } => "job_terminal_continuation_unbind",
+            Self::JobTerminalContinuationBind { .. } => "bind_job_terminal_continuation",
+            Self::JobTerminalContinuationState { .. } => "get_job_terminal_continuation_state",
+            Self::JobTerminalContinuationPrepare { .. } => "prepare_job_terminal_continuation",
+            Self::JobTerminalContinuationFinish { .. } => "finish_job_terminal_continuation",
+            Self::JobTerminalContinuationUnbind { .. } => "unbind_job_terminal_continuation",
             Self::ListProjectFiles { .. } => "list_project_files",
             Self::ListProjectTrackedFiles { .. } => "list_project_tracked_files",
-            Self::ProjectOverview { .. } => "project_overview",
+            Self::ProjectOverview { .. } => "read_project_overview",
             Self::SearchProjectTexts { .. } => "search_project_texts",
-            Self::SearchAndRead { .. } => "search_and_read",
-            Self::ShowChanges { .. } => "show_changes",
-            Self::WorkspaceHygieneCheck { .. } => "workspace_hygiene_check",
+            Self::SearchAndRead { .. } => "search_and_read_project_texts",
+            Self::ShowChanges { .. } => "read_workspace_changes",
+            Self::WorkspaceHygieneCheck { .. } => "check_workspace_hygiene",
             Self::ListJobs { .. } => "list_jobs",
-            Self::CurrentWindowActivity { .. } => "current_window_activity",
-            Self::JobTail { .. } => "job_tail",
+            Self::CurrentWindowActivity { .. } => "read_current_window_activity",
+            Self::JobTail { .. } => "read_job_tail",
             Self::WriteProjectFile { .. } => "write_project_file",
             Self::SaveProjectArtifact { .. } => "save_project_artifact",
             Self::ImportConversationFilesToProject { .. } => "import_conversation_files_to_project",
             Self::TransferProjectArtifact { .. } => "transfer_project_artifact",
             Self::AcceptArtifactHandoff { .. } => "accept_artifact_handoff",
-            Self::ProjectArtifact { .. } => "project_artifact",
-            Self::ReadProjectArtifactMetadata { .. } => "read_project_artifact_metadata",
-            Self::ReadProjectArtifact { .. } => "read_project_artifact",
-            Self::ArtifactUploadBegin { .. } => "artifact_upload_begin",
-            Self::ArtifactUploadChunk { .. } => "artifact_upload_chunk",
-            Self::ArtifactUploadFinish { .. } => "artifact_upload_finish",
-            Self::ArtifactUploadAbort { .. } => "artifact_upload_abort",
+            Self::ProjectArtifact { .. } => "inspect_project_artifact",            Self::ReadProjectArtifactMetadata { .. } => "read_project_artifact_metadata",
+            Self::ReadProjectArtifact { .. } => "read_project_artifact_chunk",
+            Self::ArtifactUploadBegin { .. } => "begin_artifact_upload",
+            Self::ArtifactUploadChunk { .. } => "upload_artifact_chunk",
+            Self::ArtifactUploadFinish { .. } => "finish_artifact_upload",
+            Self::ArtifactUploadAbort { .. } => "abort_artifact_upload",
             Self::ApplyTextEdits { .. } => "edit_project_files",
-            Self::LspStatus { .. } => "lsp_status",
-            Self::DocumentSymbols { .. } => "document_symbols",
-            Self::DocumentDiagnostics { .. } => "document_diagnostics",
-            Self::Hover { .. } => "hover",
-            Self::WorkspaceSymbols { .. } => "workspace_symbols",
-            Self::GotoDefinition { .. } => "goto_definition",
+            Self::LspStatus { .. } => "get_lsp_status",
+            Self::DocumentSymbols { .. } => "list_document_symbols",
+            Self::DocumentDiagnostics { .. } => "read_document_diagnostics",
+            Self::Hover { .. } => "read_symbol_hover",
+            Self::WorkspaceSymbols { .. } => "list_workspace_symbols",
+            Self::GotoDefinition { .. } => "find_definition",
             Self::FindReferences { .. } => "find_references",
-            Self::CallHierarchy { .. } => "call_hierarchy",
-            Self::BrowserObserve(..) => "browser_observe",
-            Self::BrowserAct(..) => "browser_act",
-            Self::ComputerObserve(..) => "computer_observe",
-            Self::ComputerControl(..) => "computer_control",
-            Self::ComputerSaveSnapshot { .. } => "computer_save_snapshot",
+            Self::CallHierarchy { .. } => "read_call_hierarchy",
+            Self::BrowserObserve(..) => "observe_browser",
+            Self::BrowserAct(..) => "control_browser",
+            Self::ComputerObserve(..) => "observe_computer",
+            Self::ComputerControl(..) => "control_computer",
+            Self::ComputerSaveSnapshot { .. } => "save_computer_snapshot",
             Self::ListProjects { .. } => "list_projects",
             Self::RegisterProject { .. } => "register_project",
             Self::UnregisterProject { .. } => "unregister_project",
             Self::CreateProject { .. } => "create_project",
             Self::ListRunners { .. } => "list_runners",
-            Self::RunnerConfigCheck { .. } => "runner_config_check",
-            Self::RunnerConfigReload { .. } => "runner_config_reload",
+            Self::RunnerConfigCheck { .. } => "check_runner_config",
+            Self::RunnerConfigReload { .. } => "reload_runner_config",
             Self::PluginTool(_) => "plugin_tool",
-            Self::SshResource(_) => "ssh_resource",
-            Self::RuntimeStatus { .. } => "runtime_status",
+            Self::SshResource(_) => "manage_ssh_resource",
+            Self::RuntimeStatus { .. } => "get_runtime_status",
             Self::ReadToolTrace { .. } => "read_tool_trace",
-            Self::ToolManifest { .. } => "tool_manifest",
+            Self::ToolManifest { .. } => "read_tool_manifest",
         }
     }
 

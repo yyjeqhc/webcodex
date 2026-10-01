@@ -322,7 +322,7 @@ impl ToolRuntime {
         instruction: &str,
         auth: Option<&AuthContext>,
     ) -> Result<String, ToolResult> {
-        if super::kernel::check_runtime_tool_scope(auth, "session_handoff_summary").is_err() {
+        if super::kernel::check_runtime_tool_scope(auth, "read_session_handoff_summary").is_err() {
             return Err(coding_agent_error(
                 "insufficient_scope",
                 "Context recovery requires runtime:read",
@@ -582,7 +582,7 @@ impl ToolRuntime {
                         client.coding_agent_providers.as_deref()
                     ));
                 error.output["suggested_call"] = SuggestedToolCall::fallback_recovery(
-                    "runtime_status",
+                    "get_runtime_status",
                     json!({"client_id": client.client_id, "compact": true}),
                 )
                 .to_value();
@@ -1795,7 +1795,7 @@ fn run_recovery_kind(run: &CodingAgentRunSnapshot) -> &'static str {
 
 fn coding_agent_project_not_writable_result(run_id: &str) -> ToolResult {
     ToolResult::err_with_output(
-        "coding_agent_start requires a Project with allow_patch=true",
+        "start_coding_agent requires a Project with allow_patch=true",
         json!({
             "error_kind": "coding_agent_project_not_writable",
             "failure_kind": "policy_rejected",

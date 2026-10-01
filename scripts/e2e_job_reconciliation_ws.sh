@@ -311,12 +311,12 @@ wait_for_server() {
     return 1
 }
 
-runtime_status() { api_post /api/runtime/status '{}'; }
+get_runtime_status() { api_post /api/runtime/status '{}'; }
 
 wait_for_agent_online() {
     for _ in $(seq 1 60); do
         check_deadline
-        local body; body="$(runtime_status || true)"
+        local body; body="$(get_runtime_status || true)"
         if [ "$(json_get "$body" output.runners.online_count)" = "1" ]; then
             echo "$body"
             return 0
@@ -331,7 +331,7 @@ wait_for_agent_online() {
 wait_for_reconciliation_capability() {
     for _ in $(seq 1 60); do
         check_deadline
-        local body; body="$(runtime_status || true)"
+        local body; body="$(get_runtime_status || true)"
         local cap; cap="$(json_get "$body" output.runners.clients.0.capabilities.job_state_reconciliation)"
         if [ "$cap" = "True" ]; then
             echo "$body"; return 0

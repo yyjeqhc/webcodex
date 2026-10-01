@@ -4,7 +4,7 @@ use serde_json::json;
 #[test]
 fn browser_batch_audit_omits_nested_field_values_and_upload_paths() {
     let projection = session_log_arguments_for_tool_request(
-        "browser_act",
+        "control_browser",
         &json!({
             "action": "batch", "client_id": "mini", "browser_id": "browser_abcdefghijklmnop",
             "page_id": "page_abcdefghijklmnop", "operations": [
@@ -24,7 +24,7 @@ fn browser_batch_audit_omits_nested_field_values_and_upload_paths() {
 fn browser_effect_request_audit_drops_sensitive_text_and_url() {
     let text_secret = "PASSWORD_SECRET_123";
     let text = session_log_arguments_for_tool_request(
-        "browser_act",
+        "control_browser",
         &json!({
             "action":"input_text",
             "client_id":"msi",
@@ -42,7 +42,7 @@ fn browser_effect_request_audit_drops_sensitive_text_and_url() {
 
     let option_secret = "PRIVATE_OPTION_SECRET";
     let option = session_log_arguments_for_tool_request(
-        "browser_act",
+        "control_browser",
         &json!({
             "action":"select_option",
             "client_id":"msi",
@@ -61,7 +61,7 @@ fn browser_effect_request_audit_drops_sensitive_text_and_url() {
 
     let value_secret = "PRIVATE_VALUE_SECRET";
     let value = session_log_arguments_for_tool_request(
-        "browser_act",
+        "control_browser",
         &json!({
             "action":"set_value",
             "client_id":"msi",
@@ -80,7 +80,7 @@ fn browser_effect_request_audit_drops_sensitive_text_and_url() {
 
     let private_path = "private/resume-SECRET.pdf";
     let upload = session_log_arguments_for_tool_request(
-        "browser_act",
+        "control_browser",
         &json!({
             "action":"upload_file",
             "client_id":"msi",
@@ -101,7 +101,7 @@ fn browser_effect_request_audit_drops_sensitive_text_and_url() {
 
     let private_url = "https://example.test/path?token=URL_QUERY_SECRET";
     let navigate = session_log_arguments_for_tool_request(
-        "browser_act",
+        "control_browser",
         &json!({
             "action":"navigate",
             "client_id":"msi",
@@ -143,7 +143,7 @@ fn browser_observation_audit_keeps_only_bounded_metadata() {
         "raw_ax":"RAW_AX_SECRET",
         "debugger_url":"DEBUGGER_SECRET"
     });
-    let projected = session_log_result_for_tool("browser_observe", &output);
+    let projected = session_log_result_for_tool("observe_browser", &output);
     assert_eq!(projected["node_count"], 1);
     assert_eq!(projected["page_count"], 1);
     assert_eq!(projected["projected_node_count"], 1);
@@ -195,7 +195,7 @@ fn browser_control_result_audit_drops_page_text_and_url() {
         "url":"https://example.test/?secret=PRIVATE_QUERY",
         "value":"PRIVATE_FORM_VALUE"
     });
-    let projected = session_log_result_for_tool("browser_act", &output);
+    let projected = session_log_result_for_tool("control_browser", &output);
     assert_eq!(projected["requested_count"], 4);
     assert_eq!(projected["completed_count"], 2);
     assert_eq!(projected["stopped_at_index"], 2);

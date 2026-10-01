@@ -23,7 +23,7 @@ Client:
 - `webcodex doctor` passes for a canonical project, or advanced
   `webcodex ops status --strict --server-url https://your-domain.example`
   passes for a managed deployment.
-- `list_runners` / `runtime_status` shows the Runner online.
+- `list_runners` / `get_runtime_status` shows the Runner online.
 
 ## Identify the failing layer first
 
@@ -34,12 +34,12 @@ Runner. First determine whether the request reached WebCodex at all.
 | --- | --- | --- |
 | ChatGPT reports `FORBIDDEN: This conversation does not support developer MCPs` or says the current conversation disabled the developer MCP server | ChatGPT Host / conversation MCP admission, when no matching request reaches WebCodex | Verify WebCodex independently from the operator/Runner host; then test the Host connection separately |
 | WebCodex returns HTTP 401/403, an MCP authentication error, or a normal structured ToolResult failure | Server authentication / authorization / ToolRuntime | Check the user/API credential, OAuth scopes, Server logs, and the exact WebCodex error |
-| `runtime_status` succeeds but shows the Runner offline or the project missing | Runner / project registration | Use `webcodex runner status` and bounded Runner logs on the Runner host |
+| `get_runtime_status` succeeds but shows the Runner offline or the project missing | Runner / project registration | Use `webcodex runner status` and bounded Runner logs on the Runner host |
 | `plugin_tool` reaches WebCodex and returns `ready=false`, `plugin_check_busy`, `plugin_reload_busy`, or another Plugin diagnostic | WebCodex Native Tool Plugin runtime | Use `webcodex plugin check/list/describe/reload` and the [Native Tool Plugin guide](PLUGINS.md) |
 
 The first row is important: if the ChatGPT Host refuses to dispatch
-`runtime_status`, the displayed `FORBIDDEN` text is **not** a WebCodex
-`runtime_status` result. Restarting or reconfiguring the Runner cannot repair a
+`get_runtime_status`, the displayed `FORBIDDEN` text is **not** a WebCodex
+`get_runtime_status` result. Restarting or reconfiguring the Runner cannot repair a
 request that never reached the Server.
 
 ### ChatGPT says developer MCP is disabled or unsupported
@@ -105,7 +105,7 @@ When reporting this class of issue, include only safe evidence:
 - ChatGPT surface and whether the same MCP works in a fresh conversation;
 - `webcodex --version` and `webcodex-runner --version`;
 - sanitized `webcodex runner status` / `webcodex ops status` output;
-- if another conversation/client can still call `runtime_status`, its sanitized build/connection-layer summary;
+- if another conversation/client can still call `get_runtime_status`, its sanitized build/connection-layer summary;
 - whether a matching Server request/trace was observed at the failure time.
 
 Do **not** publish access tokens, OAuth secrets, `Authorization` headers,
@@ -288,7 +288,7 @@ sudo webcodex runner logs --scope system --lines 100
 
 Also verify the server URL, local token files, and Runner `allowed_roots`. Missing or empty `allowed_roots` defaults to `$HOME`; explicit `allowed_roots` replaces that default.
 
-### `tool_manifest` discovery is too broad
+### `read_tool_manifest` discovery is too broad
 
 Pass an exact `tool_name`, or narrow discovery by `category` / `intent`. Use
 the current MCP schema and returned invocation route; renamed tools do not
@@ -302,7 +302,7 @@ new service and check `journalctl -u webcodex` for startup or auth errors.
 
 ### Runner is offline
 
-Run `runtime_status` or `list_runners`, then check the Runner host:
+Run `get_runtime_status` or `list_runners`, then check the Runner host:
 
 ```bash
 webcodex runner status --scope user
@@ -339,18 +339,18 @@ custom `--service-file` was used during install, pass that same absolute path
 and scope to later commands. WebCodex does not silently migrate or overwrite a
 unit in the other scope.
 
-### Non-git smoke workspace cannot run `git_status`
+### Non-git smoke workspace cannot run `get_git_status`
 
-`git_status` requires a git repository for a clean deployment smoke result.
+`get_git_status` requires a git repository for a clean deployment smoke result.
 Initialize the disposable smoke project with git and an initial commit, or point
 the smoke at another safe Runner-backed git project.
 
 
 
-### `artifact_upload_chunk` says `path` is missing
+### `upload_artifact_chunk` says `path` is missing
 
-`artifact_upload_chunk`, `artifact_upload_finish`, and `artifact_upload_abort`
-must repeat the exact `path` used by `artifact_upload_begin`. This binds the
+`upload_artifact_chunk`, `finish_artifact_upload`, and `abort_artifact_upload`
+must repeat the exact `path` used by `begin_artifact_upload`. This binds the
 opaque `upload_id` to the requested target artifact path.
 
 ### `application/octet-stream` is rejected for an unsafe extension

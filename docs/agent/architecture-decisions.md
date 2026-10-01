@@ -231,12 +231,12 @@ See also [`TESTING.md`](../TESTING.md).
   `unresolved_failures`, and separate evidence-gap facts. Resolved or stale
   history is advisory; only current actionable command/test failures are hard
   blockers.
-- `validation_summary` is a read of existing ledger evidence; it does not
+- `read_validation_summary` is a read of existing ledger evidence; it does not
   re-run Cargo/shell or replace `finish_coding_task`. Handoff and finish reuse
   this projection instead of building independent validation truth.
 - `continuation_feedback` (surfaced by `finish_coding_task` and
-  `session_handoff_summary`; its `validation_delta` part
-  also by `validation_summary`) is a deterministic, read-only projection of
+  `read_session_handoff_summary`; its `validation_delta` part
+  also by `read_validation_summary`) is a deterministic, read-only projection of
   the prior attempt over existing ledger/evidence/Job/message-board state. It
   is never an LLM summary, never a new verdict, never a second attempt state
   machine, and introduces no new persistent table. Validation delta is only
@@ -283,7 +283,7 @@ canonical authority mode.
 | `restricted` | Consequential runtime tools deny (`restricted_requires_human_authorization`); there is no separate Connector approval loop |
 | Legacy env set | Unambiguous legacy values migrate: `dev_auto_approve` → `trusted_agent`, `require_approval` → `restricted`; legacy-only configuration reports `migrated_env:WEBCODEX_PERMISSION_MODE`. Unknown or conflicting legacy/current values remain invalid and fail closed with source `rejected_legacy_env:WEBCODEX_PERMISSION_MODE` |
 | Shared surfaces | Both modes share the same tool implementations, schemas, session model, evidence, and audit records |
-| Projection | `runtime_status` and internal full startup diagnostics report one canonical `authority` object; the sparse external `work_on_project` projection omits it. The old `permissions` profile object is deleted |
+| Projection | `get_runtime_status` and internal full startup diagnostics report one canonical `authority` object; the sparse external `work_on_project` projection omits it. The old `permissions` profile object is deleted |
 
 Hard boundaries are never relaxed by authority mode: OAuth scopes, project
 boundary/allowed roots, explicitly read-only sessions, path and sensitive-path
@@ -306,7 +306,7 @@ it never infers readiness from configuration.
 | Full-runtime start/continue | `work_on_project(session_id=<id>)` continues exactly that authorized Active same-project Session; omission creates a fresh Workflow Session. Stable window or credential identity never selects a Workflow Session. `work_on_project` calls the shared coding workflow engine directly; there is no second internal ToolCall identity |
 | Canonical model coding bootstrap | `work_on_project` is the external runtime coding bootstrap. `registered_tool_specs` defines the canonical model-visible runtime universe used by discovery and generic ToolCall admission. There is one model-facing runtime contract: Adaptive Runtime. Canonical `ToolDefinition` rank defines direct admission/order; ordinary model-visible long-tail tools use `call_runtime_tool`; an admitted direct target may also use the gateway as an invocation fallback. Retired wire names such as `start_coding_task` fail closed before dispatch. |
 | Adaptive Runtime presentation | MCP project the same canonical Adaptive routing policy. Protocol/App-only extensions are admitted independently by server-owned protocol capability and App metadata; they do not create another runtime surface. Direct/gateway dispatch preserves the target tool's scopes, Project authority, permission, argument, Runner capability, effect, and Session/ACK semantics. `WEBCODEX_MCP_COMPACT_SCHEMAS` changes MCP discovery schema projection only; unset defaults to compact discovery and explicit true/false overrides that projection. Runtime status, MCP initialize/discover/info, and tools/list audit summaries do not emit a redundant runtime-surface taxonomy. |
-| Meaningful-activity rule | `last_successful_tool_call` records only successful meaningful calls, scoped by principal/project/surface/session/tool. `runtime_status`, `list_tools`, `list_runners`, `list_projects`, and `tool_manifest` never refresh it. Bounded in-memory store; no arguments, outputs, or secrets |
+| Meaningful-activity rule | `last_successful_tool_call` records only successful meaningful calls, scoped by principal/project/surface/session/tool. `get_runtime_status`, `list_tools`, `list_runners`, `list_projects`, and `read_tool_manifest` never refresh it. Bounded in-memory store; no arguments, outputs, or secrets |
 | Independence | Layers degrade independently; `not_observed` on one layer must not be collapsed into a global offline verdict |
 
 ---
@@ -335,7 +335,7 @@ No alias or dual shape is kept for the removed flags (consistent with §2).
 ## 9. Mixed-version diagnostics without compatibility fallback
 
 Runner registration reports `process_started_at` and
-`build {version, git_commit, git_dirty}`; `runtime_status` projects
+`build {version, git_commit, git_dirty}`; `get_runtime_status` projects
 package/protocol compatibility separately from exact source alignment.
 
 | Decision | Choice |

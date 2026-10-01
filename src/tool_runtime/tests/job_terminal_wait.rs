@@ -431,7 +431,7 @@ async fn app_binding_uses_hashed_host_sideband_only_and_never_returns_raw_identi
     let wait_id = armed.output["wait_id"].as_str().unwrap().to_string();
     let raw_host_session = "PRIVATE_CHATGPT_HOST_SESSION_12345";
     let params = json!({
-        "name": "job_terminal_continuation_bind",
+        "name": "bind_job_terminal_continuation",
         "arguments": {},
         "_meta": {"openai/session": raw_host_session}
     });

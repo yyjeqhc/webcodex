@@ -31,8 +31,8 @@ and independently authorizes its Project.
 
 Transcript reads never consume attention. Only model-visible tool activity
 projects pending Operator messages and updates projection timestamps;
-`present_work_result`, `work_result_state`, `work_result_send_message`, and
-`changes_file_diff` do not. The existing exact-ID ACK transport carries Session,
+`present_work_result`, `get_work_result_state`, `send_work_result_message`, and
+`read_changed_file_diff` do not. The existing exact-ID ACK transport carries Session,
 Peer, and Operator message IDs without changing the historical wrapper field name.
 The WebUI and Work Result card label these states Saved, Included in tool result,
 and Acknowledged;
@@ -90,11 +90,11 @@ Inbound peer transcript rows omit it, just as model-facing peer delivery does.
 
 1. **Coordinator posts one bounded todo to `C`.** Use `post_session_message(kind="todo")`. Include the objective, scope, prohibitions, exact stable identifiers, and expected answer shape.
 2. **Worker starts its own Session `W`.** Do not resume `C` just to accept the assignment.
-3. **Worker atomically reads the executable assignment.** Call `get_session_assignment(session_id=C, message_id=<todo_id>)` once before work. That exact store snapshot contains the open todo, all retained direct replies within the bound, and the opaque `assignment_fence`. `session_handoff_summary` may provide broader background, while `list_session_messages` remains generic browsing; neither substitutes for this executable assignment read.
+3. **Worker atomically reads the executable assignment.** Call `get_session_assignment(session_id=C, message_id=<todo_id>)` once before work. That exact store snapshot contains the open todo, all retained direct replies within the bound, and the opaque `assignment_fence`. `read_session_handoff_summary` may provide broader background, while `list_session_messages` remains generic browsing; neither substitutes for this executable assignment read.
 4. **Worker performs the task under `W`.** Reads, edits, shell/process calls, validation, review evidence, Jobs, checkpoints, and other authoritative activity stay attached to `W`.
 5. **Worker completes the exact todo atomically.** Use `complete_session_message(session_id=C, message_id=<todo_id>, answer=<bounded answer>, completion_key=<caller key>, expected_assignment_fence=<exact assignment_fence>)`. On Stateless MCP 2026, `_wc.record=W` remains separate recorder provenance and is stripped before concrete parsing. One Session-store mutation creates exactly one `kind=answer` reply, resolves the todo, and records the todo -> answer correlation.
 6. **Stale or incomplete assignment state is not a blind retry.** `assignment_stale` returns `state_changed=false` plus the current assignment and a durable `fresh_assignment_fence` only when the exact current state is provable. Re-evaluate that returned assignment before using its fresh fence. `assignment_history_lost` and `assignment_too_large` are non-completable from the stale context.
-7. **Coordinator reads and validates the result from `C`.** Use exact todo/reply browsing, `session_discussion_summary`, or `session_handoff_summary`, then explicitly re-observe any authoritative Project/Git/Job/artifact state referenced by the answer before consequential follow-up.
+7. **Coordinator reads and validates the result from `C`.** Use exact todo/reply browsing, `read_session_discussion_summary`, or `read_session_handoff_summary`, then explicitly re-observe any authoritative Project/Git/Job/artifact state referenced by the answer before consequential follow-up.
 
 ```text
 coordinator C
@@ -170,7 +170,7 @@ The collaboration panel establishes an observation baseline before reading the r
 
 A completed answer can identify the independent worker with `author_session_id` only when the completion carries an already-authorized explicit recorder; without that recorder, no author Session is inferred from caller auth, client window, or other ambient state. It is not a caller-authored claim. In Stateless MCP 2026, that recorder is `_wc.record`: explicit invocation provenance metadata, not a transport Session and not an authority grant; the legacy `mcp-session-id` header remains irrelevant.
 
-The coordinator may then explicitly inspect `session_handoff_summary(worker_session_id)` if it has authority to that Session. WebCodex does not copy the worker's transcript, validation, diff review, Job logs, or workspace evidence into the coordinator Session merely because the answer references `W`.
+The coordinator may then explicitly inspect `read_session_handoff_summary(worker_session_id)` if it has authority to that Session. WebCodex does not copy the worker's transcript, validation, diff review, Job logs, or workspace evidence into the coordinator Session merely because the answer references `W`.
 
 Session message bodies are explicit bounded collaboration payloads. Ordinary tool audit stores metadata such as target Session/message ids, body byte counts, tag counts, correlation ids, completion identity, and safe author provenance; it does not persist a second copy of the full todo/answer body or raw completion key.
 

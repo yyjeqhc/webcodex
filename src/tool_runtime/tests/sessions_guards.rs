@@ -751,10 +751,10 @@ async fn read_only_session_rejects_all_artifact_upload_tools_without_base64_leak
     assert_eq!(summary.counts.failed, 4);
     assert_eq!(summary.counts.write_like, 4);
     for tool_name in [
-        "artifact_upload_begin",
-        "artifact_upload_chunk",
-        "artifact_upload_finish",
-        "artifact_upload_abort",
+        "begin_artifact_upload",
+        "upload_artifact_chunk",
+        "finish_artifact_upload",
+        "abort_artifact_upload",
     ] {
         let event = finished_event(&summary, tool_name);
         assert_eq!(event.status.as_deref(), Some("failed"), "{tool_name}");
@@ -770,9 +770,9 @@ async fn read_only_session_rejects_all_artifact_upload_tools_without_base64_leak
         .iter()
         .rev()
         .find(|event| {
-            event.kind == "tool_call_started" && event.tool_name == "artifact_upload_chunk"
+            event.kind == "tool_call_started" && event.tool_name == "upload_artifact_chunk"
         })
-        .expect("started event for artifact_upload_chunk");
+        .expect("started event for upload_artifact_chunk");
     let input_summary = started.input_summary.as_ref().unwrap();
     assert_eq!(input_summary["path"], "artifacts/imports/blocked.txt");
     assert_eq!(input_summary["upload_id"], "wc_upload_test_1");
@@ -1061,7 +1061,7 @@ fn project_tool_schemas_include_optional_session_id() {
     assert!(start_session_output["properties"]["output"]["properties"]
         .get("lifecycle")
         .is_some());
-    let session_summary = spec_named(&specs, "session_summary");
+    let session_summary = spec_named(&specs, "read_session_summary");
     assert!(
         session_summary.output_schema["properties"]["output"]["properties"]
             .get("mode")
@@ -1086,9 +1086,9 @@ fn project_tool_schemas_include_optional_session_id() {
         "read_files",
         "run_shell",
         "edit_project_files",
-        "git_status",
-        "git_log",
-        "show_changes",
+        "get_git_status",
+        "read_git_log",
+        "read_workspace_changes",
     ] {
         let spec = spec_named(&specs, name);
         assert!(
@@ -1130,7 +1130,7 @@ fn project_tool_schemas_include_optional_session_id() {
         assert_eq!(session_hint["type"], "object");
         assert_eq!(
             session_hint["properties"]["suggested_next_tool"]["enum"],
-            json!(["session_discussion_summary"])
+            json!(["read_session_discussion_summary"])
         );
         assert_eq!(
             session_hint["properties"]["attention_required"]["const"],
@@ -1142,7 +1142,7 @@ fn project_tool_schemas_include_optional_session_id() {
         );
         assert_eq!(
             session_hint["properties"]["attention_instruction"]["enum"],
-            json!(["A Session message requiring acknowledgement is pending. Read session_discussion_summary before continuing."])
+            json!(["A Session message requiring acknowledgement is pending. Read read_session_discussion_summary before continuing."])
         );
         for optional in [
             "attention_required",

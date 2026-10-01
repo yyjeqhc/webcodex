@@ -10,7 +10,7 @@ fn finish_actions_prefer_review_changes_when_nested_show_changes_hands_off() {
         "changes": {
             "show_changes": {
                 "diff_review_handoff": {
-                    "next_call": {"follow_up_kind": "mechanically_followable", "tool": "git_diff_hunks", "arguments": {}}
+                    "next_call": {"follow_up_kind": "mechanically_followable", "tool": "read_git_diff_hunks", "arguments": {}}
                 }
             }
         },
@@ -24,11 +24,11 @@ fn finish_actions_prefer_review_changes_when_nested_show_changes_hands_off() {
     }));
     assert_eq!(
         output["changes"]["show_changes"]["diff_review_handoff"]["next_call"]["tool"],
-        "git_diff_hunks"
+        "read_git_diff_hunks"
     );
     assert!(!actions
         .iter()
-        .any(|action| action == "review workspace changes with show_changes"));
+        .any(|action| action == "review workspace changes with read_workspace_changes"));
 }
 
 #[test]

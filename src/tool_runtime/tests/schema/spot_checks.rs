@@ -3,13 +3,13 @@ use super::*;
 #[test]
 fn tool_specs_git_log_schema() {
     let specs = registered_tool_specs();
-    let spec = spec_named(&specs, "git_log");
+    let spec = spec_named(&specs, "read_git_log");
     let required = required_fields(spec);
     assert_eq!(required, vec!["project".to_string()]);
     let props = spec.input_schema["properties"].as_object().unwrap();
     assert_schema_fields!(
         props,
-        "git_log input schema",
+        "read_git_log input schema",
         present: ["project", "head_commit", "limit", "skip", "session_id"]
     );
     let output_props = spec.output_schema["properties"]["output"]["properties"]
@@ -17,7 +17,7 @@ fn tool_specs_git_log_schema() {
         .unwrap();
     assert_schema_fields!(
         output_props,
-        "git_log output schema",
+        "read_git_log output schema",
         present: [
             "project",
             "head_commit",
@@ -38,13 +38,13 @@ fn tool_specs_git_log_schema() {
 #[test]
 fn tool_specs_show_changes_schema() {
     let specs = registered_tool_specs();
-    let spec = spec_named(&specs, "show_changes");
+    let spec = spec_named(&specs, "read_workspace_changes");
     let required = required_fields(spec);
     assert_eq!(required, vec!["project".to_string()]);
     let props = spec.input_schema["properties"].as_object().unwrap();
     assert_schema_fields!(
         props,
-        "show_changes input schema",
+        "read_workspace_changes input schema",
         present: [
             "project",
             "session_id",
@@ -59,7 +59,7 @@ fn tool_specs_show_changes_schema() {
         .unwrap();
     assert_schema_fields!(
         output_props,
-        "show_changes output schema",
+        "read_workspace_changes output schema",
         present: [
             "project",
             "branch",
@@ -242,10 +242,10 @@ fn job_activity_is_required_nullable_on_explicit_job_observation_surfaces() {
 fn tool_specs_schema_spot_checks() {
     let cases: Vec<(&str, Vec<&str>, Vec<&str>)> = vec![
         ("delete_project_files", vec!["project", "paths"], vec![]),
-        ("git_restore_paths", vec!["project", "paths"], vec![]),
+        ("restore_git_paths", vec!["project", "paths"], vec![]),
         ("discard_untracked", vec!["project", "paths"], vec![]),
         (
-            "project_overview",
+            "read_project_overview",
             vec!["project"],
             vec!["path", "max_depth", "limit"],
         ),

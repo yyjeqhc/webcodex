@@ -32,7 +32,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     adaptive_runtime_direct(
         requires_explicit_business_session(model_spec(
             def(
-                "code_mode_exec",
+                "execute_code_mode",
                 super::ToolAuditPolicy::typed_fields(RESULT_AUDIT_FIELDS),
                 ModelVisible,
                 TOOL_CATEGORY_RUNTIME,
@@ -60,7 +60,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     adaptive_runtime_direct(
         requires_explicit_business_session(model_spec(
             def(
-                "code_mode_exec_effectful",
+                "execute_effectful_code_mode",
                 super::ToolAuditPolicy::typed_fields(EFFECTFUL_RESULT_AUDIT_FIELDS),
                 ModelVisible,
                 TOOL_CATEGORY_RUNTIME,
@@ -88,7 +88,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         permission_risk(
             requires_explicit_business_session(model_spec(
                 super::require_all_scopes(def(
-                    "code_mode_exec_mutating",
+                    "execute_mutating_code_mode",
                     super::ToolAuditPolicy::typed_fields(EFFECTFUL_RESULT_AUDIT_FIELDS),
                     ModelVisible,
                     TOOL_CATEGORY_RUNTIME,

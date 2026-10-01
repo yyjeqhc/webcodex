@@ -956,7 +956,7 @@ fn targeted_inventory_schemas_and_tool_parsing_are_bounded() {
 
     let status_spec = specs
         .iter()
-        .find(|spec| spec.name == "runtime_status")
+        .find(|spec| spec.name == "get_runtime_status")
         .unwrap();
     assert_eq!(
         status_spec.input_schema["properties"]["client_id"]["maxLength"],
@@ -1016,7 +1016,7 @@ fn targeted_inventory_schemas_and_tool_parsing_are_bounded() {
     ));
 
     let status = ToolCall::from_tool_name(
-        "runtime_status",
+        "get_runtime_status",
         serde_json::json!({"client_id": "special", "compact": true}),
     )
     .unwrap();
@@ -1064,7 +1064,7 @@ fn targeted_inventory_tool_calls_reject_unknown_filter_fields() {
             "clinet_id",
         ),
         (
-            "runtime_status",
+            "get_runtime_status",
             serde_json::json!({"clinet_id": "special"}),
             "clinet_id",
         ),

@@ -133,16 +133,16 @@ fn work_result_app_internal_tools_do_not_start_live_window_activity() {
     for tool in [
         "present_work_result",
         "work_result_thread_panel",
-        "work_result_state",
-        "work_result_activity_detail",
-        "work_result_send_message",
-        "changes_file_diff",
+        "get_work_result_state",
+        "read_work_result_activity_detail",
+        "send_work_result_message",
+        "read_changed_file_diff",
     ] {
         assert!(work_result_app_internal_tool(Some(tool)), "{tool}");
     }
     for tool in [
-        "runtime_status",
-        "current_window_activity",
+        "get_runtime_status",
+        "read_current_window_activity",
         "observe_jobs",
         "read_files",
     ] {

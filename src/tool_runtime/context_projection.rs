@@ -470,7 +470,7 @@ impl ToolRuntime {
             };
             if resolved.resolved_id != project
                 || self
-                    .authorize_session_target(&session_id, "session_handoff_summary", auth)
+                    .authorize_session_target(&session_id, "read_session_handoff_summary", auth)
                     .await
                     .is_err()
             {
@@ -515,7 +515,7 @@ impl ToolRuntime {
                 .get("session_ref")
                 .unwrap_or(&candidates[0]["session_id"]);
             projection["suggested_call"] = SuggestedToolCall::fallback_recovery(
-                "session_handoff_summary",
+                "read_session_handoff_summary",
                 json!({"session_id": session_selector}),
             )
             .to_value();

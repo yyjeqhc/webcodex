@@ -3,7 +3,7 @@
 This integration records bounded **external reports** in an explicitly selected
 WebCodex Workflow Session. It does not install Hooks, change trust, create a
 Session/Goal, execute commands, or migrate a conversation. The Server now projects
-these claims read-only in `session_handoff_summary`. The optional read-only local
+these claims read-only in `read_session_handoff_summary`. The optional read-only local
 consumer and optional automatic entry below can inspect that brief and the optional
 read-only Goal recovery context described below; export remains follow-up work. This
 does not establish real two-sided UI acceptance.
@@ -46,7 +46,7 @@ event, and the explicit ingestion/read calls are deliberately excluded from the
 business Workflow Session event ledger so adapter traffic cannot evict native
 execution evidence. The first adapter also has no durable source sequence: list
 results therefore expose `coverage.complete=false` and do not claim complete capture
-or source execution ordering. `session_handoff_summary` includes the last five
+or source execution ordering. `read_session_handoff_summary` includes the last five
 retained reports in `handoff_brief.external_observations`, with exact source IDs,
 unknown count, truncation and explicit incomplete coverage. Use
 `list_external_observations` to inspect all retained reports (at most 256).
@@ -142,8 +142,8 @@ python3 /absolute/path/read_handoff.py --config /private/operator/observation.js
 ```
 
 This uses the same private operator configuration and calls the hidden
-`session_handoff_state` API ingress for its exact Project and Workflow Session.
-That ingress reuses the canonical `session_handoff_summary` projection, but it is
+`get_session_handoff_state` API ingress for its exact Project and Workflow Session.
+That ingress reuses the canonical `read_session_handoff_summary` projection, but it is
 non-meaningful adapter traffic and deliberately does not expose its business
 Session through generic recorder semantics. It therefore does not append Workflow
 Session tool-call telemetry or refresh Goal liveness. Standard request/audit

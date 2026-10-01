@@ -191,7 +191,7 @@ pub fn sample_tool_args_for_spec(spec: &ToolSpec) -> Value {
     }
     // SSH action is a free-form String with custom cross-field parser validation,
     // not a schema enum. List requires an exact Runner selector.
-    if spec.name == "ssh_resource" {
+    if spec.name == "manage_ssh_resource" {
         args.insert("action".into(), json!("list"));
         args.insert("runner".into(), json!("runner-a"));
     }

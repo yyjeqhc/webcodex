@@ -102,7 +102,7 @@ impl ToolRuntime {
         let identity = json!({"action": call.action_name()});
         let permit = self
             .govern_specialized_invocation(
-                "computer_observe",
+                "observe_computer",
                 policy,
                 transport,
                 recording_session_id,
@@ -134,7 +134,7 @@ impl ToolRuntime {
         let identity = json!({"action": call.action_name()});
         let permit = self
             .govern_specialized_invocation(
-                "computer_control",
+                "control_computer",
                 policy,
                 transport,
                 recording_session_id,

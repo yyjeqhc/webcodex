@@ -261,7 +261,7 @@ async fn hard_policy_deny_still_suppresses_permission_attach() {
         .sessions
         .summary(&session.session_id, Some(20))
         .unwrap();
-    let event = finished_event(&summary, "artifact_upload_begin");
+    let event = finished_event(&summary, "begin_artifact_upload");
     assert!(event.permission.is_none());
 }
 

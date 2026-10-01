@@ -221,7 +221,7 @@ fn assert_model_facing_surfaces_do_not_list_name(name: &str) {
     let manifest = runtime.compact_tool_manifest_payload();
     assert!(
         !serde_json::to_string(&manifest).unwrap().contains(name),
-        "{name} must not appear in compact tool_manifest"
+        "{name} must not appear in compact read_tool_manifest"
     );
     let list_tools = runtime.list_tools_payload(ListToolsOptions {
         category: None,

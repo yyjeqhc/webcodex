@@ -850,7 +850,7 @@ mod tests {
     #[test]
     fn success_record_uses_exact_utf8_tool_result_bytes() {
         let result = ToolResult::ok(json!({"text": "中文", "count": 2}));
-        let record = completion("tool_manifest", 7)
+        let record = completion("read_tool_manifest", 7)
             .record_for_tool_result(&result)
             .unwrap();
         let expected = serde_json::to_vec(&result).unwrap().len() as u64;
@@ -862,7 +862,7 @@ mod tests {
         );
         assert_eq!(record.duration_ms, 7);
         assert!(record.success);
-        assert_eq!(record.tool_name, "tool_manifest");
+        assert_eq!(record.tool_name, "read_tool_manifest");
         assert_eq!(record.tool_category, "runtime");
         assert_eq!(record.error_kind, None);
         assert_eq!(record.failure_kind, None);
@@ -871,7 +871,7 @@ mod tests {
 
     #[test]
     fn non_work_on_project_omits_bootstrap_preference_facts() {
-        let record = completion("tool_manifest", 0)
+        let record = completion("read_tool_manifest", 0)
             .record_for_tool_result(&ToolResult::ok(json!({})))
             .unwrap();
         assert_eq!(record.schema_version, 13);
@@ -1037,7 +1037,7 @@ mod tests {
                 "message": private
             }),
         );
-        let record = completion("computer_control", 3)
+        let record = completion("control_computer", 3)
             .record_for_tool_result(&result)
             .unwrap();
         assert!(!record.success);
@@ -1061,7 +1061,7 @@ mod tests {
             "failure_kind": "outcome_unknown",
             "recovery_kind": "retry_same"
         }));
-        let record = completion("tool_manifest", 0)
+        let record = completion("read_tool_manifest", 0)
             .record_for_tool_result(&result)
             .unwrap();
         assert_eq!(record.error_kind, None);
@@ -1080,7 +1080,7 @@ mod tests {
                 "execution_state": "maybe"
             }),
         );
-        let record = completion("tool_manifest", 0)
+        let record = completion("read_tool_manifest", 0)
             .record_for_tool_result(&result)
             .unwrap();
         assert_eq!(record.error_kind, None);
@@ -1210,7 +1210,7 @@ mod tests {
         let serialized = serde_json::to_string(&record).unwrap();
         assert!(!serialized.contains(private));
 
-        for tool in ["read_files", "tool_manifest"] {
+        for tool in ["read_files", "read_tool_manifest"] {
             let record = completion(tool, 0)
                 .record_for_tool_result(&ToolResult::ok(json!({"changed": true})))
                 .unwrap();

@@ -23,7 +23,9 @@ impl ToolRuntime {
                 let project = match project_resolution {
                     Some(Ok(project)) => project,
                     Some(Err(error)) => return error.into_tool_result(),
-                    None => return ToolResult::err("code_mode_exec requires a resolved Project"),
+                    None => {
+                        return ToolResult::err("execute_code_mode requires a resolved Project")
+                    }
                 };
                 let (result, composition) = self
                     .code_mode_exec(
@@ -52,7 +54,7 @@ impl ToolRuntime {
                     Some(Err(error)) => return error.into_tool_result(),
                     None => {
                         return ToolResult::err(
-                            "code_mode_exec_effectful requires a resolved Project",
+                            "execute_effectful_code_mode requires a resolved Project",
                         )
                     }
                 };
@@ -83,7 +85,7 @@ impl ToolRuntime {
                     Some(Err(error)) => return error.into_tool_result(),
                     None => {
                         return ToolResult::err(
-                            "code_mode_exec_mutating requires a resolved Project",
+                            "execute_mutating_code_mode requires a resolved Project",
                         )
                     }
                 };

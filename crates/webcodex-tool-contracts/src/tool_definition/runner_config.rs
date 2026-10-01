@@ -12,7 +12,7 @@ use crate::metadata::{
 pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
             def(
-                "runner_config_check",
+                "check_runner_config",
                 super::ToolAuditPolicy::TYPED_CANONICAL,
                 ModelVisible,
                 TOOL_CATEGORY_RUNTIME,
@@ -36,7 +36,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     permission_risk(
             model_spec(
                 def(
-                    "runner_config_reload",
+                    "reload_runner_config",
                     super::ToolAuditPolicy::TYPED_CANONICAL,
                     ModelVisible,
                     TOOL_CATEGORY_RUNTIME,

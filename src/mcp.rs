@@ -90,7 +90,7 @@ fn runtime(depot: &Depot) -> Option<Arc<ToolRuntime>> {
 // observation correlation, not client liveness evidence or authority. No other
 // arguments, Goal body, or Host binding are copied into the activity ledger.
 fn goal_plan_observation_id(tool_name: Option<&str>, params: &Value) -> Option<String> {
-    if tool_name != Some("goal_plan_sync") {
+    if tool_name != Some("sync_goal_plan") {
         return None;
     }
     let id = params.pointer("/arguments/goal_id")?.as_str()?;
@@ -113,10 +113,10 @@ fn work_result_app_internal_tool(tool_name: Option<&str>) -> bool {
                 | "list_sessions"
                 | "present_work_result"
                 | "work_result_thread_panel"
-                | "work_result_state"
-                | "work_result_activity_detail"
-                | "work_result_send_message"
-                | "changes_file_diff"
+                | "get_work_result_state"
+                | "read_work_result_activity_detail"
+                | "send_work_result_message"
+                | "read_changed_file_diff"
         )
     )
 }

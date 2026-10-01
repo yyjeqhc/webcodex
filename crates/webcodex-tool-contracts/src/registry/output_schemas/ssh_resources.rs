@@ -31,7 +31,7 @@ fn inventory_entry_schema() -> Value {
 }
 
 pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
-    if name != "ssh_resource" {
+    if name != "manage_ssh_resource" {
         return None;
     }
     Some(wrapped_output_schema(vec![

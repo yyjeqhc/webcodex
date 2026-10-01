@@ -959,7 +959,7 @@ pub(super) fn push_path(paths: &mut Vec<String>, path: &str) {
 
 /// Compute whether a tool call should contribute to `diff_review_count`.
 ///
-/// Only reads a safe boolean (`include_diff`) from arguments for `show_changes`.
+/// Only reads a safe boolean (`include_diff`) from arguments for `read_workspace_changes`.
 /// Does not store raw input, command text, or diff content.
 pub(super) fn diff_review_like_for_tool(tool_name: &str, arguments: &Value) -> bool {
     match runtime_tool_session_evidence_policy(tool_name).diff_review {
@@ -1331,7 +1331,7 @@ mod result_expectation_tests {
     fn persistent_shell_evidence_accepts_compact_base64url_shell_id() {
         let shell_id = "wc_shell_AAAAAAAA-AAAAAA_";
         let evidence = persistent_shell_event_evidence_for_tool_result(
-            "session_shell_exec",
+            "execute_session_shell",
             &json!({
                 "shell_id": shell_id,
                 "shell_state": "running",
@@ -1347,15 +1347,15 @@ mod result_expectation_tests {
     #[test]
     fn result_expectation_session_shell_exec_reuses_shared_contract_without_exit_code_list() {
         assert!(tool_supports_model_facing_result_expectation(
-            "session_shell_exec"
+            "execute_session_shell"
         ));
         validate_model_facing_result_expectation(
-            "session_shell_exec",
+            "execute_session_shell",
             &json!({"result_expectation": "observe"}),
         )
         .unwrap();
         assert!(validate_model_facing_result_expectation(
-            "session_shell_exec",
+            "execute_session_shell",
             &json!({"accepted_exit_codes": [0, 1]}),
         )
         .is_err());

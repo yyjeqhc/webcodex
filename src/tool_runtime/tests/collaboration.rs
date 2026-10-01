@@ -844,7 +844,7 @@ async fn collaboration_two_sessions_keep_execution_history_and_explicit_provenan
 
     let handoff = call_with_recorder(
         &runtime,
-        "session_handoff_summary",
+        "read_session_handoff_summary",
         json!({
             "session_id": coordinator.session_id,
             "include_workspace": false,
@@ -995,7 +995,7 @@ async fn collaboration_two_sessions_keep_execution_history_and_explicit_provenan
 
     let worker_tools = tool_names(&runtime, &worker.session_id);
     for expected in [
-        "session_handoff_summary",
+        "read_session_handoff_summary",
         "list_session_messages",
         "complete_session_message",
     ] {
@@ -1010,7 +1010,7 @@ async fn collaboration_two_sessions_keep_execution_history_and_explicit_provenan
         .any(|tool| tool == "post_session_message"));
     assert!(!coordinator_tools
         .iter()
-        .any(|tool| tool == "session_handoff_summary"));
+        .any(|tool| tool == "read_session_handoff_summary"));
     assert!(!coordinator_tools
         .iter()
         .any(|tool| tool == "complete_session_message"));
@@ -1685,7 +1685,7 @@ async fn project_scoped_session_authority_rejects_recycled_project_identity() {
 
     let oauth_read = call_with_recorder(
         &runtime,
-        "session_summary",
+        "read_session_summary",
         json!({"session_id": session_id}),
         None,
         &alice_oauth,
@@ -1716,7 +1716,7 @@ async fn project_scoped_session_authority_rejects_recycled_project_identity() {
     .await;
     let before = runtime.sessions.summary(&session_id, Some(100)).unwrap();
     let denied_calls = [
-        ("session_summary", json!({"session_id": session_id})),
+        ("read_session_summary", json!({"session_id": session_id})),
         (
             "list_session_messages",
             json!({"session_id": session_id, "message_id": todo_id}),
@@ -1736,11 +1736,11 @@ async fn project_scoped_session_authority_rejects_recycled_project_identity() {
             }),
         ),
         (
-            "session_discussion_summary",
+            "read_session_discussion_summary",
             json!({"session_id": session_id}),
         ),
         (
-            "session_handoff_summary",
+            "read_session_handoff_summary",
             json!({
                 "session_id": session_id,
                 "include_workspace": false,
@@ -1814,7 +1814,7 @@ async fn project_scoped_session_authority_rejects_recycled_project_identity() {
     .await;
     let restored_owner = call_with_recorder(
         &runtime,
-        "session_summary",
+        "read_session_summary",
         json!({"session_id": session_id}),
         None,
         &alice,
@@ -1866,7 +1866,7 @@ async fn projectless_session_owner_authority_blocks_known_ids_from_foreign_princ
         .assignment_fence;
 
     let denied_calls = [
-        ("session_summary", json!({"session_id": session_id})),
+        ("read_session_summary", json!({"session_id": session_id})),
         (
             "post_session_message",
             json!({"session_id": session_id, "kind": "note", "message": "Bob note"}),
@@ -1890,11 +1890,11 @@ async fn projectless_session_owner_authority_blocks_known_ids_from_foreign_princ
             }),
         ),
         (
-            "session_discussion_summary",
+            "read_session_discussion_summary",
             json!({"session_id": session_id}),
         ),
         (
-            "session_handoff_summary",
+            "read_session_handoff_summary",
             json!({
                 "session_id": session_id,
                 "include_workspace": false,
@@ -1917,7 +1917,7 @@ async fn projectless_session_owner_authority_blocks_known_ids_from_foreign_princ
 
     let alice_summary = call_with_recorder(
         &runtime,
-        "session_summary",
+        "read_session_summary",
         json!({"session_id": session_id}),
         None,
         &alice,
@@ -1982,7 +1982,7 @@ async fn projectless_owner_fingerprint_survives_restart_without_raw_principal_ma
     let restored = test_runtime().with_session_ledger(&ledger);
     let alice_read = call_with_recorder(
         &restored,
-        "session_summary",
+        "read_session_summary",
         json!({"session_id": session_id}),
         None,
         &alice,
@@ -1992,7 +1992,7 @@ async fn projectless_owner_fingerprint_survives_restart_without_raw_principal_ma
     assert!(alice_read.success, "{:?}", alice_read.error);
     let bob_read = call_with_recorder(
         &restored,
-        "session_summary",
+        "read_session_summary",
         json!({"session_id": session_id}),
         None,
         &bob,
@@ -2050,7 +2050,7 @@ async fn legacy_projectless_owner_hash_is_not_accepted_after_restart() {
     assert!(restored.sessions.summary(&session_id, None).is_some());
     let denied = call_with_recorder(
         &restored,
-        "session_summary",
+        "read_session_summary",
         json!({"session_id": session_id}),
         None,
         &alice,

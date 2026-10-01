@@ -281,7 +281,7 @@ mod tests {
 
     #[test]
     fn tool_metadata_show_changes_is_project_read_observation() {
-        let metadata = lookup_tool_metadata("show_changes").unwrap();
+        let metadata = lookup_tool_metadata("read_workspace_changes").unwrap();
         assert_eq!(metadata.provider_id, TOOL_PROVIDER_RUNNER);
         assert_eq!(metadata.effect, ToolEffect::Observe);
         assert_eq!(metadata.risk, ToolRisk::Read);
@@ -313,7 +313,7 @@ mod tests {
     #[test]
     #[cfg(feature = "workspace-checkpoints")]
     fn checkpoint_metadata_separates_effect_from_existing_authority() {
-        let create = lookup_tool_metadata("workspace_checkpoint_create").unwrap();
+        let create = lookup_tool_metadata("create_workspace_checkpoint").unwrap();
         assert_eq!(create.provider_id, TOOL_PROVIDER_NATIVE);
         assert_eq!(create.effect, ToolEffect::Mutate);
         assert_eq!(create.risk, ToolRisk::CheckpointManage);
@@ -325,7 +325,7 @@ mod tests {
         );
         assert!(create.requires_project);
 
-        for name in ["workspace_checkpoint_list", "workspace_checkpoint_show"] {
+        for name in ["list_workspace_checkpoints", "read_workspace_checkpoint"] {
             let metadata = lookup_tool_metadata(name).unwrap();
             assert_eq!(metadata.provider_id, TOOL_PROVIDER_NATIVE, "{name}");
             assert_eq!(metadata.effect, ToolEffect::Observe, "{name}");
@@ -340,8 +340,8 @@ mod tests {
             assert!(metadata.requires_project, "{name}");
         }
         for name in [
-            "workspace_checkpoint_restore",
-            "workspace_checkpoint_delete",
+            "restore_workspace_checkpoint",
+            "delete_workspace_checkpoint",
         ] {
             let metadata = lookup_tool_metadata(name).unwrap();
             assert_eq!(metadata.provider_id, TOOL_PROVIDER_NATIVE, "{name}");
@@ -371,16 +371,16 @@ mod tests {
             "apply_unified_diff",
             "delete_project_files",
             "save_project_artifact",
-            "artifact_upload_begin",
-            "artifact_upload_chunk",
-            "artifact_upload_finish",
-            "artifact_upload_abort",
-            "git_restore_paths",
+            "begin_artifact_upload",
+            "upload_artifact_chunk",
+            "finish_artifact_upload",
+            "abort_artifact_upload",
+            "restore_git_paths",
             "discard_untracked",
             #[cfg(feature = "workspace-checkpoints")]
-            "workspace_checkpoint_restore",
+            "restore_workspace_checkpoint",
             #[cfg(feature = "workspace-checkpoints")]
-            "workspace_checkpoint_delete",
+            "delete_workspace_checkpoint",
             "register_project",
             "unregister_project",
             "create_project",

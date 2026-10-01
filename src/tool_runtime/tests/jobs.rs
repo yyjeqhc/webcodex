@@ -540,7 +540,7 @@ fn project_execution_output_schemas_do_not_advertise_server_local_executor() {
         "run_script",
         "run_shell",
         "run_job",
-        "job_tail",
+        "read_job_tail",
     ] {
         let schema = super::super::registry::output_schema_for_tool(name);
         let executor = &schema["properties"]["output"]["properties"]["executor"];

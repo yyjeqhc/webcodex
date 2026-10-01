@@ -32,8 +32,8 @@ no production `codex-acp` default. The provider child is always spawned after
 `env_clear()` and receives only configured mappings. Missing source variables
 fail before provider process start.
 
-P1 exposes exactly three model tools: `coding_agent_start`,
-`coding_agent_observe`, and `coding_agent_cancel`. They require the independent
+P1 exposes exactly three model tools: `start_coding_agent`,
+`observe_coding_agent`, and `cancel_coding_agent`. They require the independent
 `coding_agent:run` OAuth scope. Direct shared-key, open-anonymous, project
 credentials, existing OAuth clients, `project:write`, `job:run`, and `mcp:local`
 do not imply it. The hosted shared-key OAuth bridge can add this scope only via
@@ -87,7 +87,7 @@ The intended user flow is:
 
 ```text
 ChatGPT / API client
-  -> coding_agent_start
+  -> start_coding_agent
   -> exact WebCodex Project + Runner + configured ACP provider
   -> CodingAgentRun R
   -> Runner-owned ACP child
@@ -459,7 +459,7 @@ concrete need rather than pretending P1 already has per-value policy.
 
 ### Fields remote callers never control
 
-`coding_agent_start` must not accept:
+`start_coding_agent` must not accept:
 
 - executable or argv;
 - arbitrary environment or secret/API-key material;
@@ -566,7 +566,7 @@ local coding agent**. It must not promise parity with WebCodex `read_files` /
 
 ## 8. Permission-request exceptional path
 
-The normal WebCodex authority decision happens once at `coding_agent_start`:
+The normal WebCodex authority decision happens once at `start_coding_agent`:
 
 ```text
 caller auth + exact Project + provider fence + config override policy
@@ -584,7 +584,7 @@ P1 nevertheless must implement the callback. The minimum safe behavior is:
 - emit a bounded sanitized `permission_request` Run event;
 - enter `waiting_permission` while a bounded response deadline is active;
 - never choose an allow option automatically;
-- if `coding_agent_cancel` cancels the prompt while a permission request is
+- if `cancel_coding_agent` cancels the prompt while a permission request is
   outstanding, answer that request with ACP `Cancelled` as required by v1 and
   then continue the cancel path;
 - if only the permission-response deadline expires, answer ACP `Cancelled`.
@@ -654,7 +654,7 @@ that is distinct from replaying the old initiation.
 
 ## 10. Initiation and retry safety
 
-`coding_agent_start` is consequential autonomous execution. It needs a required
+`start_coding_agent` is consequential autonomous execution. It needs a required
 bounded caller-chosen `idempotency_key`, using the same semantic pattern as
 `run_detached_process` but a separate CodingAgentRun namespace.
 
@@ -725,14 +725,14 @@ in-flight prompt completed, partially acted, or never ran.
 The planned model surface is:
 
 ```text
-coding_agent_start
-coding_agent_observe
-coding_agent_cancel
+start_coding_agent
+observe_coding_agent
+cancel_coding_agent
 ```
 
 P0 does not implement these tools.
 
-`coding_agent_observe` should accept:
+`observe_coding_agent` should accept:
 
 ```text
 run_id
@@ -790,7 +790,7 @@ content.
 
 ### Cancel
 
-`coding_agent_cancel` requires exact Run authorization and should be idempotent.
+`cancel_coding_agent` requires exact Run authorization and should be idempotent.
 For an active prompt the Runner sends `session/cancel` once, then observes the
 same prompt toward terminal state. It must not launch a replacement session or
 prompt.
@@ -947,12 +947,12 @@ Add a `CodingAgentRun` registry/runtime path separate from `jobs.rs`, with:
 Only after the internal vertical slice is typed and tested, add exactly:
 
 ```text
-coding_agent_start
-coding_agent_observe
-coding_agent_cancel
+start_coding_agent
+observe_coding_agent
+cancel_coding_agent
 ```
 
-`coding_agent_start` inputs should be limited to Project, logical provider id,
+`start_coding_agent` inputs should be limited to Project, logical provider id,
 required idempotency key, prompt/instruction, optional explicit validated
 `config`, timeout, and optional Workflow Session provenance as appropriate. The
 Server resolves and fences the exact Runner/provider instance internally. The

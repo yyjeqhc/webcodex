@@ -62,7 +62,7 @@ handoff, and finish can reason about the same unit of work.
 - Checkpoint-related task continuity
 - Session-local message board
 - Validation evidence and closeout summaries
-- Handoff / finish tooling (`session_handoff_summary`, `finish_coding_task`, …)
+- Handoff / finish tooling (`read_session_handoff_summary`, `finish_coding_task`, …)
 
 Workflow Session lifecycle is independent from the durable `wc_goal_*` Goal domain. A Session may be explicitly correlated to a Goal, but that correlation grants no Session/Project authority and does not make the Session the Goal's lifecycle owner. In particular, `finish_coding_task` does not transition a Goal to `completed`; any Goal transition is a separate explicit Goal-domain mutation.
 
@@ -177,7 +177,7 @@ it is not a model-context token or cursor.
 
 Normal continuous work has no context-revision ACK input, automatic recovery
 delta, or handoff suggestion on unrelated tool results. When task context is
-missing, the model explicitly calls `session_handoff_summary` with the exact
+missing, the model explicitly calls `read_session_handoff_summary` with the exact
 `session_id`. No identity, Project, window, transport, or recent-call state can
 select a Session implicitly. The authorized business Session supplies its Project
 when `project` is omitted; an explicit Project still passes the normal equality
@@ -216,9 +216,9 @@ fences, completion keys, message-observation tokens, and their durable revision
 keep their existing semantics. A handoff neither ACKs nor resolves a message and
 grants no authority.
 
-Stateless MCP 2026 tools also accept an explicit bounded `_wc.context` envelope sidecar request. It is independent of collaboration ACKs and handoff recovery and is removed before concrete `ToolCall` parsing. A static canonical material registry authorizes every requested material before its provider is read: `webcodex.workflow` is public; `project.instructions` requires the resolved Project plus `project:read`; `jobs.attention` requires the exact resolved Project plus canonical `runtime:read` and reuses the authorized active-Job summary (at most eight recent Jobs) without selecting a business Session; `skills.catalog` additionally requires the admitted Skill runtime protocol capability; `plugins.catalog` requires the resolved Project plus both `project:read` and `plugin:inspect`; and `memory.bootstrap` requires the admitted Memory protocol capability plus both `project:read` and `memory:read`. Scope or material-capability denial is nonfatal to the main ToolResult and returns a bounded unavailable material without provider content. Unknown material keys are nonfatal and remain open-ended at the MCP schema layer. Sidecar material is projected only after the main tool effect or observation has completed, never grants authority, never retroactively makes requested guidance a precondition of that effect, never records caller-read state, and never infers a Project or model-memory state from a Workflow Session, connection, credential, `Mcp-Session-Id`, or hidden window identity. A model that has lost Project rules or durable Memory guidance must recover `project.instructions` and/or `memory.bootstrap` on an observation call, use `memory_read` when detailed Memory content is needed, reason over that context, and only then issue a later mutation that must obey it. Legacy MCP and generic REST do not expose this sidecar request contract.
+Stateless MCP 2026 tools also accept an explicit bounded `_wc.context` envelope sidecar request. It is independent of collaboration ACKs and handoff recovery and is removed before concrete `ToolCall` parsing. A static canonical material registry authorizes every requested material before its provider is read: `webcodex.workflow` is public; `project.instructions` requires the resolved Project plus `project:read`; `jobs.attention` requires the exact resolved Project plus canonical `runtime:read` and reuses the authorized active-Job summary (at most eight recent Jobs) without selecting a business Session; `skills.catalog` additionally requires the admitted Skill runtime protocol capability; `plugins.catalog` requires the resolved Project plus both `project:read` and `plugin:inspect`; and `memory.bootstrap` requires the admitted Memory protocol capability plus both `project:read` and `memory:read`. Scope or material-capability denial is nonfatal to the main ToolResult and returns a bounded unavailable material without provider content. Unknown material keys are nonfatal and remain open-ended at the MCP schema layer. Sidecar material is projected only after the main tool effect or observation has completed, never grants authority, never retroactively makes requested guidance a precondition of that effect, never records caller-read state, and never infers a Project or model-memory state from a Workflow Session, connection, credential, `Mcp-Session-Id`, or hidden window identity. A model that has lost Project rules or durable Memory guidance must recover `project.instructions` and/or `memory.bootstrap` on an observation call, use `read_memory` when detailed Memory content is needed, reason over that context, and only then issue a later mutation that must obey it. Legacy MCP and generic REST do not expose this sidecar request contract.
 
-Project Memory is a separate durable knowledge plane from Workflow Session continuity. `memory_search`/`memory_read` require both `project:read` and `memory:read`; `memory_set`/`memory_delete` require both `project:write` and `memory:manage`, with mutations still passing the independent permission evaluator. Direct shared-key runtime credentials explicitly carry both Memory scopes, while Open Anonymous, ProjectCredential, Project Share, and legacy/default OAuth client scope sets do not gain them from project scopes. A Memory `memory_key` is logical semantic identity, `memory_id` identifies the current incarnation, the internal `definition_hash` identifies canonical model-relevant content, and model-facing `revision` is a generation-bound state ETag/CAS identity; delete and identical recreate therefore produce a different `memory_id` and `revision`. Session events never create or consolidate Memory automatically. `ack_session_message_ids` and Session `ack_ref` are limited to ACK-required collaboration messages and never acknowledge Memory. Memory reads/searches may leave bounded metadata-only consequences in Session history, but Memory bodies, summaries, search results, and `memory.bootstrap` projections are not copied into durable Session recovery. Re-registering the same runtime Project id to a different authoritative registered root resolves to a distinct internal Memory scope rather than inheriting the old root's Memory.
+Project Memory is a separate durable knowledge plane from Workflow Session continuity. `search_memory`/`read_memory` require both `project:read` and `memory:read`; `set_memory`/`delete_memory` require both `project:write` and `memory:manage`, with mutations still passing the independent permission evaluator. Direct shared-key runtime credentials explicitly carry both Memory scopes, while Open Anonymous, ProjectCredential, Project Share, and legacy/default OAuth client scope sets do not gain them from project scopes. A Memory `memory_key` is logical semantic identity, `memory_id` identifies the current incarnation, the internal `definition_hash` identifies canonical model-relevant content, and model-facing `revision` is a generation-bound state ETag/CAS identity; delete and identical recreate therefore produce a different `memory_id` and `revision`. Session events never create or consolidate Memory automatically. `ack_session_message_ids` and Session `ack_ref` are limited to ACK-required collaboration messages and never acknowledge Memory. Memory reads/searches may leave bounded metadata-only consequences in Session history, but Memory bodies, summaries, search results, and `memory.bootstrap` projections are not copied into durable Session recovery. Re-registering the same runtime Project id to a different authoritative registered root resolves to a distinct internal Memory scope rather than inheriting the old root's Memory.
 
 ### Message observation state
 
@@ -306,7 +306,7 @@ one-shot/background capability is independent of named SSH persistent-shell
 support.
 
 Raw shell text has one shared model-authored ceiling of 16,000 UTF-8 bytes for
-`run_shell`, raw `run_job`, and `session_shell_exec`. Larger shell program text
+`run_shell`, raw `run_job`, and `execute_session_shell`. Larger shell program text
 belongs in `run_script`; large literal data belongs in stdin, files, or
 artifacts. Control may internally expand an explicit `sh`/`bash` command while
 POSIX-quoting it for the existing Runner wire, so the internal raw-shell wire
@@ -360,8 +360,8 @@ The canonical runtime has a separate, command-oriented `PersistentShell` model:
 
 ```text
 open_session_shell
-session_shell_exec
-session_shell_status
+execute_session_shell
+get_session_shell_status
 close_session_shell
 ```
 
@@ -501,7 +501,7 @@ The MCP adapter creates an immutable runtime view; it never stores this preferen
 in the Session or changes shared execution ownership. Non-MCP/internal omission
 falls back to `direct`. Available explicit values are `direct`, `host_code_mode` for
 Host-supplied native orchestration in every build, or `code_mode` for WebCodex nested
-orchestration only in Experimental Code Mode builds. Host-native guidance favors canonical batches and `search_and_read`,
+orchestration only in Experimental Code Mode builds. Host-native guidance favors canonical batches and `search_and_read_project_texts`,
 allows independent cross-tool observations and dependent branching within one
 Host cell, keeps raw ToolResults in that cell, and warns against Job polling and
 stale validation after covered source changes. It does not assert that WebCodex
@@ -512,10 +512,10 @@ changes no admission, authority, effects, validation or Job semantics. An unavai
 profile fails parsing. `work_on_project` startup and later `webcodex.workflow` context
 refreshes use the same effective-profile resolver, preventing Direct/HostCodeMode drift.
 
-`current_window_activity` observes persisted ActionAudit activity for the exact
+`read_current_window_activity` observes persisted ActionAudit activity for the exact
 ClientWindow supplied by the current adapter request. Its input cannot select
 another Window. It remains available through the canonical adaptive runtime
-gateway and `tool_manifest` without expanding the default direct tool inventory.
+gateway and `read_tool_manifest` without expanding the default direct tool inventory.
 It requires `runtime:read` and a non-anonymous authenticated
 principal, fixes that principal,
 and reapplies current Project visibility to every event and Workflow Session
@@ -534,7 +534,7 @@ Repository instruction files are still re-observed and Session metadata/delta
 status still update even though instruction bodies are absent from the primary
 output. The default bounded
 extension catalog contains selection metadata only: Skills are drawn from the
-same canonical union as `skill_list` (project `.agents/skills`, Runner-configured
+same canonical union as `list_skills` (project `.agents/skills`, Runner-configured
 live `skills.roots`, and active Runner-managed Skill Store packages), while
 Plugins are limited to ready committed providers whose configured `cwd` matches
 the authoritative Project root. Skill bodies, Plugin schemas, bindings, native
@@ -573,8 +573,8 @@ guard failures) apply only to Workflow Sessions.
 ### Continuation feedback (`continuation_feedback`)
 
 `continuation_feedback` is a **deterministic, read-only projection** surfaced
-by `finish_coding_task`, `session_handoff_summary`, and (as `validation_delta`)
-`validation_summary`. The internal coding-startup implementation also consumes
+by `finish_coding_task`, `read_session_handoff_summary`, and (as `validation_delta`)
+`read_validation_summary`. The internal coding-startup implementation also consumes
 this projection while building canonical `work_on_project` startup state. It is derived only from existing
 persistent state — the Workflow Session ledger, validation evidence, bounded
 Job metadata, and the session message board — and it is never a substitute for
@@ -611,7 +611,7 @@ a `finish_coding_task` verdict.
   previews, file contents, symbol/hover/diagnostic bodies, arbitrary result
   JSON, shell commands/output, or the absolute repository root for this
   workset. Paths are deduplicated newest successful observation first.
-  Enumeration tools such as `project_overview`, `list_project_files`, and
+  Enumeration tools such as `read_project_overview`, `list_project_files`, and
   `list_project_tracked_files`, Git diff lists, failed calls, error text, and
   shell output are not exploration evidence. The workset is segmented by the
   same attempt boundary; when that boundary was evicted,
@@ -623,7 +623,7 @@ a `finish_coding_task` verdict.
   continuation feedback returns at most 100 with the real total and
   truncation state. This is a hint for model judgment only: startup never
   reads, searches, or navigates those paths automatically.
-- **Handoff is independent of the display limit:** `session_handoff_summary`
+- **Handoff is independent of the display limit:** `read_session_handoff_summary`
   builds its display list from the caller-supplied `limit`, but
   `continuation_feedback` reads an independent bounded evidence snapshot (the
   maximum retained event window), so a small display limit cannot shrink the
@@ -680,7 +680,7 @@ adapter has no durable source sequence, so list results explicitly report incomp
 coverage and must not be interpreted as complete capture or source execution order.
 See [`../../integrations/codex/README.md`](../../integrations/codex/README.md) for
 the optional adapter, capacity/recovery contract and unverified Host boundaries.
-The authorized `session_handoff_summary` handoff brief now includes a bounded
+The authorized `read_session_handoff_summary` handoff brief now includes a bounded
 `external_observations` section, separate from native progress and validation.
 It shows the last five retained reports in server timestamp and identity order,
 with exact adapter/event IDs, tool,
@@ -716,7 +716,7 @@ boundaries. These retained reports supplement native tool/validation evidence.
 They do not capture unsent Host conversation or private model reasoning. See the
 [continuity guide](../SESSION_CONTINUITY.md) for the user and operator flow.
 
-`session_handoff_summary` and `finish_coding_task` return the same version-1
+`read_session_handoff_summary` and `finish_coding_task` return the same version-1
 `handoff_brief`, built by one shared pure projection. It is the compact,
 model-friendly view for a new window, a new Agent, or a human receiver;
 `continuation_feedback` remains the more detailed evidence available from the
@@ -732,11 +732,11 @@ guidance, append a ledger event, or call an LLM; and stores no new Session
 data. `work_on_project` intentionally does not return `handoff_brief`, so the
 standard startup core's worst-case size does not grow.
 
-A direct internal `session_handoff_summary(...)` call does not add business
+A direct internal `read_session_handoff_summary(...)` call does not add business
 events beyond those snapshots. Calls through MCP, REST, or runtime dispatch
 remain subject to the uniform recorder and normally append exactly
 `tool_call_started` and `tool_call_finished`. This telemetry is not guidance
-consumption or a handoff-builder mutation, and `session_handoff_summary` must
+consumption or a handoff-builder mutation, and `read_session_handoff_summary` must
 not receive a recorder bypass.
 
 The projection has these stable bounds and semantics:
@@ -794,7 +794,7 @@ characters while retaining lifecycle/mode, progress and validation status,
 attention counts, basis, and deterministic/LLM flags.
 
 A new window can start a new Session normally and then explicitly read the old
-Session with `session_handoff_summary(session_id=...)`. Explicit
+Session with `read_session_handoff_summary(session_id=...)`. Explicit
 `resume_session_id` remains available when the caller truly intends to resume
 the same active Session and continues to obey the existing identity,
 lifecycle, project, guard, and binding rules.
@@ -1017,7 +1017,7 @@ This lifecycle is **orthogonal** to Workflow Session start/finish tools.
 
 - Not a coding / workflow session
 - Not a substitute for canonical coding-startup / `work_on_project` evidence
-- Not an input to `session_summary`, message board, or `finish_coding_task`
+- Not an input to `read_session_summary`, message board, or `finish_coding_task`
 - Not automatically correlated to any `wc_sess_*`
 
 ---
@@ -1112,7 +1112,7 @@ renamed without an explicit compatibility migration:
   business `session_id` from `recording_session_id`
 - MCP tool input schemas for session tools
 - Runtime tool names (`start_session`, `work_on_project`,
-  `session_summary`, …); retired wire names are not part of this external surface
+  `read_session_summary`, …); retired wire names are not part of this external surface
 
 ### Internal vs external naming
 

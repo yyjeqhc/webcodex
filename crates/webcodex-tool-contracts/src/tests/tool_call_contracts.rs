@@ -12,7 +12,7 @@ fn from_tool_name_parses_unit_tools_without_arguments() {
         "list_tools",
         "list_projects",
         "list_runners",
-        "runtime_status",
+        "get_runtime_status",
     ] {
         let call = ToolCall::from_tool_name(name, Value::Null).unwrap_or_else(|e| panic!("{}", e));
         assert!(
@@ -39,66 +39,69 @@ fn from_tool_name_parses_unit_tools_with_empty_object() {
 #[test]
 fn code_mode_exec_is_not_a_tool_call_without_feature() {
     let error = ToolCall::from_tool_name(
-        "code_mode_exec",
+        "execute_code_mode",
         json!({
             "project": "agent:special:demo",
             "session_id": format!("wc_sess_{}", "1".repeat(32)),
             "source": "text('x')",
         }),
     )
-    .expect_err("feature-off parser must reject code_mode_exec");
-    assert!(error.contains("unknown tool 'code_mode_exec'"), "{error}");
-    assert!(!is_known_tool_name("code_mode_exec"));
-    assert!(!known_tool_names().any(|name| name == "code_mode_exec"));
+    .expect_err("feature-off parser must reject execute_code_mode");
+    assert!(
+        error.contains("unknown tool 'execute_code_mode'"),
+        "{error}"
+    );
+    assert!(!is_known_tool_name("execute_code_mode"));
+    assert!(!known_tool_names().any(|name| name == "execute_code_mode"));
     assert!(!registered_tool_specs()
         .iter()
-        .any(|spec| spec.name == "code_mode_exec"));
+        .any(|spec| spec.name == "execute_code_mode"));
 }
 
 #[cfg(not(feature = "experimental-code-mode"))]
 #[test]
 fn code_mode_exec_effectful_is_not_a_tool_call_without_feature() {
     let error = ToolCall::from_tool_name(
-        "code_mode_exec_effectful",
+        "execute_effectful_code_mode",
         json!({
             "project": "agent:special:demo",
             "session_id": format!("wc_sess_{}", "2".repeat(32)),
             "source": "text('x')",
         }),
     )
-    .expect_err("feature-off parser must reject code_mode_exec_effectful");
+    .expect_err("feature-off parser must reject execute_effectful_code_mode");
     assert!(
-        error.contains("unknown tool 'code_mode_exec_effectful'"),
+        error.contains("unknown tool 'execute_effectful_code_mode'"),
         "{error}"
     );
-    assert!(!is_known_tool_name("code_mode_exec_effectful"));
-    assert!(!known_tool_names().any(|name| name == "code_mode_exec_effectful"));
+    assert!(!is_known_tool_name("execute_effectful_code_mode"));
+    assert!(!known_tool_names().any(|name| name == "execute_effectful_code_mode"));
     assert!(!registered_tool_specs()
         .iter()
-        .any(|spec| spec.name == "code_mode_exec_effectful"));
+        .any(|spec| spec.name == "execute_effectful_code_mode"));
 }
 
 #[cfg(not(feature = "experimental-code-mode"))]
 #[test]
 fn code_mode_exec_mutating_is_not_a_tool_call_without_feature() {
     let error = ToolCall::from_tool_name(
-        "code_mode_exec_mutating",
+        "execute_mutating_code_mode",
         json!({
             "project": "agent:special:demo",
             "session_id": format!("wc_sess_{}", "3".repeat(32)),
             "source": "text('x')",
         }),
     )
-    .expect_err("feature-off parser must reject code_mode_exec_mutating");
+    .expect_err("feature-off parser must reject execute_mutating_code_mode");
     assert!(
-        error.contains("unknown tool 'code_mode_exec_mutating'"),
+        error.contains("unknown tool 'execute_mutating_code_mode'"),
         "{error}"
     );
-    assert!(!is_known_tool_name("code_mode_exec_mutating"));
-    assert!(!known_tool_names().any(|name| name == "code_mode_exec_mutating"));
+    assert!(!is_known_tool_name("execute_mutating_code_mode"));
+    assert!(!known_tool_names().any(|name| name == "execute_mutating_code_mode"));
     assert!(!registered_tool_specs()
         .iter()
-        .any(|spec| spec.name == "code_mode_exec_mutating"));
+        .any(|spec| spec.name == "execute_mutating_code_mode"));
 }
 
 #[test]
@@ -408,7 +411,7 @@ fn agent_wait_calls_parse_closed_selectors() {
     .unwrap();
     assert!(matches!(read, ToolCall::ReadAgentWait { .. }));
     let state = ToolCall::from_tool_name(
-        "agent_wait_state",
+        "get_agent_wait_state",
         json!({"wait_id": "wc_agent_wait_ZmZmZmZmZmZmZmZm".to_string()}),
     )
     .unwrap();
@@ -422,14 +425,14 @@ fn runner_config_tools_parse_closed_contracts_and_keep_governance_split() {
     };
 
     let check =
-        ToolCall::from_tool_name("runner_config_check", json!({"client_id": "special"})).unwrap();
+        ToolCall::from_tool_name("check_runner_config", json!({"client_id": "special"})).unwrap();
     assert!(matches!(
         check,
         ToolCall::RunnerConfigCheck { ref client_id } if client_id == "special"
     ));
 
     let reload = ToolCall::from_tool_name(
-        "runner_config_reload",
+        "reload_runner_config",
         json!({"client_id": "special", "expected_generation": 7}),
     )
     .unwrap();
@@ -443,11 +446,11 @@ fn runner_config_tools_parse_closed_contracts_and_keep_governance_split() {
 
     for (name, args) in [
         (
-            "runner_config_check",
+            "check_runner_config",
             json!({"client_id": "special", "path": "/tmp/forbidden"}),
         ),
         (
-            "runner_config_reload",
+            "reload_runner_config",
             json!({"client_id": "special", "expected_generation": 7, "path": "/tmp/forbidden"}),
         ),
     ] {
@@ -456,7 +459,7 @@ fn runner_config_tools_parse_closed_contracts_and_keep_governance_split() {
     assert!(ToolCall::from_tool_name("runner_config", json!({"action": "check"})).is_err());
     assert!(lookup_tool_definition("describe_config").is_none());
 
-    let check_definition = lookup_tool_definition("runner_config_check").unwrap();
+    let check_definition = lookup_tool_definition("check_runner_config").unwrap();
     assert_eq!(check_definition.metadata.effect, ToolEffect::Observe);
     assert_eq!(check_definition.metadata.risk, ToolRisk::Read);
     assert_eq!(check_definition.metadata.approval, ToolApprovalPolicy::None);
@@ -475,7 +478,7 @@ fn runner_config_tools_parse_closed_contracts_and_keep_governance_split() {
         )
     );
 
-    let reload_definition = lookup_tool_definition("runner_config_reload").unwrap();
+    let reload_definition = lookup_tool_definition("reload_runner_config").unwrap();
     assert_eq!(reload_definition.metadata.effect, ToolEffect::Mutate);
     assert_eq!(reload_definition.metadata.risk, ToolRisk::RunControl);
     assert_eq!(
@@ -501,7 +504,7 @@ fn runner_config_tools_parse_closed_contracts_and_keep_governance_split() {
 #[test]
 fn ssh_resource_parses_as_canonical_gateway_with_closed_action_vocabulary() {
     let list = ToolCall::from_tool_name(
-        "ssh_resource",
+        "manage_ssh_resource",
         json!({"action": "list", "runner": "special"}),
     )
     .unwrap();
@@ -515,7 +518,7 @@ fn ssh_resource_parses_as_canonical_gateway_with_closed_action_vocabulary() {
     ));
 
     let register = ToolCall::from_tool_name(
-        "ssh_resource",
+        "manage_ssh_resource",
         json!({
             "action": "register",
             "binding": "wc_sbind_ASNFZ4mrze8BI0VniavN7w",
@@ -539,7 +542,7 @@ fn ssh_resource_parses_as_canonical_gateway_with_closed_action_vocabulary() {
         json!({"action": "probe", "runner": "special"}),
         json!({"action": "list", "runner": "special", "unknown": true}),
     ] {
-        assert!(ToolCall::from_tool_name("ssh_resource", invalid).is_err());
+        assert!(ToolCall::from_tool_name("manage_ssh_resource", invalid).is_err());
     }
 }
 
@@ -601,7 +604,7 @@ fn from_tool_name_parses_bounded_list_tools_options() {
 fn call_hierarchy_parser_preserves_default_and_oversized_positive_limit_for_runtime_normalization()
 {
     let omitted = ToolCall::from_tool_name(
-        "call_hierarchy",
+        "read_call_hierarchy",
         json!({
             "project": "agent:test:demo",
             "path": "src/main.rs",
@@ -621,7 +624,7 @@ fn call_hierarchy_parser_preserves_default_and_oversized_positive_limit_for_runt
     ));
 
     let oversized = ToolCall::from_tool_name(
-        "call_hierarchy",
+        "read_call_hierarchy",
         json!({
             "project": "agent:test:demo",
             "path": "src/main.rs",
@@ -715,7 +718,7 @@ fn tool_manifest_default_flows_follow_discovery_shape() {
         json!({"tool_name": "cargo_test"}),
         json!({"tool_name": "cargo_test", "include_recommended_flows": false}),
     ] {
-        let call = ToolCall::from_tool_name("tool_manifest", arguments).unwrap();
+        let call = ToolCall::from_tool_name("read_tool_manifest", arguments).unwrap();
         assert!(matches!(
             call,
             ToolCall::ToolManifest {
@@ -726,7 +729,7 @@ fn tool_manifest_default_flows_follow_discovery_shape() {
     }
 
     let exact_opt_in = ToolCall::from_tool_name(
-        "tool_manifest",
+        "read_tool_manifest",
         json!({"tool_name": "cargo_test", "include_recommended_flows": true}),
     )
     .unwrap();
@@ -743,7 +746,7 @@ fn tool_manifest_default_flows_follow_discovery_shape() {
         json!({"category": "validation"}),
         json!({"intent": "coding"}),
     ] {
-        let call = ToolCall::from_tool_name("tool_manifest", arguments).unwrap();
+        let call = ToolCall::from_tool_name("read_tool_manifest", arguments).unwrap();
         assert!(matches!(
             call,
             ToolCall::ToolManifest {
@@ -757,15 +760,15 @@ fn tool_manifest_default_flows_follow_discovery_shape() {
 #[test]
 fn artifact_upload_followup_tools_missing_path_error_is_actionable() {
     for name in [
-        "artifact_upload_chunk",
-        "artifact_upload_finish",
-        "artifact_upload_abort",
+        "upload_artifact_chunk",
+        "finish_artifact_upload",
+        "abort_artifact_upload",
     ] {
         let err =
             ToolCall::from_tool_name(name, json!({"upload_id": "wc_upload_test_1"})).unwrap_err();
         assert!(
             err.contains("path is required")
-                && err.contains("artifact_upload_begin")
+                && err.contains("begin_artifact_upload")
                 && err.contains("bind upload_id"),
             "{name}: {err}"
         );
@@ -1025,7 +1028,7 @@ fn interactive_pipe_schema_is_opt_in_and_input_is_adaptive_direct() {
             ..
         }
     ));
-    let definition = crate::lookup_tool_definition("job_write_input").unwrap();
+    let definition = crate::lookup_tool_definition("write_job_input").unwrap();
     assert!(!definition.effect_annotations().read_only_hint);
     assert!(definition.effect_annotations().idempotent_hint);
     assert_eq!(definition.adaptive_runtime_direct_rank(), Some(71));
@@ -1040,7 +1043,7 @@ fn interactive_pipe_schema_is_opt_in_and_input_is_adaptive_direct() {
         let mut value = json!({"project":"~p1","job_id":"exact","input_id":"same","data":"bytes"});
         value[field] = json!("forbidden");
         assert!(
-            ToolCall::from_tool_name("job_write_input", value).is_err(),
+            ToolCall::from_tool_name("write_job_input", value).is_err(),
             "{field}"
         );
     }
@@ -1244,7 +1247,7 @@ fn from_tool_name_rejects_retired_inspection_tools_and_parses_retained_git_tools
             .unwrap_err();
     assert!(error.contains("unknown tool"), "{error}");
 
-    let call = ToolCall::from_tool_name("git_status", json!({"project": "demo"})).unwrap();
+    let call = ToolCall::from_tool_name("get_git_status", json!({"project": "demo"})).unwrap();
     assert!(matches!(call, ToolCall::GitStatus { .. }));
 
     for name in ["git_diff", "git_diff_summary"] {
@@ -1305,7 +1308,7 @@ fn from_tool_name_rejects_missing_required_field() {
         err
     );
 
-    let err = ToolCall::from_tool_name("job_tail", json!({})).unwrap_err();
+    let err = ToolCall::from_tool_name("read_job_tail", json!({})).unwrap_err();
     assert!(err.contains("job_id"));
 }
 
@@ -1368,7 +1371,7 @@ fn tool_call_project_accessor_covers_project_tool_specs() {
     // when provided, so the kernel can report it and authorize the workspace
     // git inspection path.
     let handoff = ToolCall::from_tool_name(
-        "session_handoff_summary",
+        "read_session_handoff_summary",
         json!({"session_id": "wc_sess_x", "project": "agent:oe:private-drop"}),
     )
     .unwrap();
@@ -1377,17 +1380,17 @@ fn tool_call_project_accessor_covers_project_tool_specs() {
     // Adapter-only handoff state keeps its exact business target but never
     // exposes that Session through the generic recorder projection.
     let handoff_state = ToolCall::from_tool_name(
-        "session_handoff_state",
+        "get_session_handoff_state",
         json!({"session_id": "wc_sess_x", "project": "agent:oe:private-drop"}),
     )
     .unwrap();
     assert_eq!(handoff_state.project(), Some("agent:oe:private-drop"));
     assert_eq!(handoff_state.session_id(), None);
-    assert!(is_model_hidden_tool_name("session_handoff_state"));
+    assert!(is_model_hidden_tool_name("get_session_handoff_state"));
     assert!(runtime_tool_requires_explicit_business_session(
-        "session_handoff_state"
+        "get_session_handoff_state"
     ));
-    let activity = runtime_tool_activity_semantics("session_handoff_state");
+    let activity = runtime_tool_activity_semantics("get_session_handoff_state");
     assert_eq!(activity.presentation.as_str(), "support");
     assert!(!activity.interaction.is_meaningful());
 }
@@ -1438,12 +1441,12 @@ fn from_tool_name_unknown_tool_lists_available_tools_and_hint() {
     let err = ToolCall::from_tool_name("definitely_not_a_tool", Value::Null).unwrap_err();
     assert!(err.contains("definitely_not_a_tool"));
     assert!(
-        err.contains("tool_manifest") && err.contains("tool_name"),
+        err.contains("read_tool_manifest") && err.contains("tool_name"),
         "unknown-tool error should hint at canonical discovery: {}",
         err
     );
     // Should list at least a couple of known tool names.
-    assert!(err.contains("show_changes"));
+    assert!(err.contains("read_workspace_changes"));
     assert!(err.contains("edit_project_files"));
     for hidden in EXACT_MANIFEST_SPECIALIST_TOOL_NAMES {
         assert!(
@@ -1526,7 +1529,7 @@ fn known_tool_names_matches_spec_count() {
 
 #[test]
 fn from_tool_name_parses_runtime_status() {
-    let call = ToolCall::from_tool_name("runtime_status", Value::Null).unwrap();
+    let call = ToolCall::from_tool_name("get_runtime_status", Value::Null).unwrap();
     assert!(matches!(
         call,
         ToolCall::RuntimeStatus {
@@ -1536,7 +1539,7 @@ fn from_tool_name_parses_runtime_status() {
         }
     ));
     // Also accepts an empty object.
-    let call = ToolCall::from_tool_name("runtime_status", json!({})).unwrap();
+    let call = ToolCall::from_tool_name("get_runtime_status", json!({})).unwrap();
     assert!(matches!(
         call,
         ToolCall::RuntimeStatus {
@@ -1546,7 +1549,7 @@ fn from_tool_name_parses_runtime_status() {
         }
     ));
     let call = ToolCall::from_tool_name(
-        "runtime_status",
+        "get_runtime_status",
         json!({"compact": true, "summary_only": true}),
     )
     .unwrap();
@@ -1730,7 +1733,7 @@ fn from_tool_name_parses_finish_coding_task_workspace_projection_flag() {
 #[test]
 fn project_overview_tool_call_parses() {
     let call = ToolCall::from_tool_name(
-        "project_overview",
+        "read_project_overview",
         json!({
             "project": "agent:client:demo",
             "path": "crates/example",
@@ -1840,7 +1843,8 @@ fn from_tool_name_parses_phase_a_tools() {
     }
 
     let call =
-        ToolCall::from_tool_name("job_tail", json!({"job_id": "abc", "tail_lines": 10})).unwrap();
+        ToolCall::from_tool_name("read_job_tail", json!({"job_id": "abc", "tail_lines": 10}))
+            .unwrap();
     match call {
         ToolCall::JobTail {
             job_id,
@@ -1889,7 +1893,7 @@ fn from_tool_name_parses_unified_diff_and_cleanup_tools() {
     );
 
     let restore = ToolCall::from_tool_name(
-        "git_restore_paths",
+        "restore_git_paths",
         json!({"project":"agent:c:p","paths":["README.md"]}),
     )
     .unwrap();
@@ -2190,7 +2194,7 @@ fn code_mode_exec_parses_outer_authority() {
     const PRIVATE_SOURCE: &str = "const secret = 'NEVER_PERSIST_CODE_MODE_SOURCE'; text(secret);";
     let session_id = format!("wc_sess_{}", "1".repeat(32));
     let call = ToolCall::from_tool_name(
-        "code_mode_exec",
+        "execute_code_mode",
         json!({
             "project": "agent:special:demo",
             "session_id": session_id,
@@ -2199,7 +2203,7 @@ fn code_mode_exec_parses_outer_authority() {
         }),
     )
     .unwrap();
-    assert_eq!(call.tool_name(), "code_mode_exec");
+    assert_eq!(call.tool_name(), "execute_code_mode");
     assert_eq!(call.project(), Some("agent:special:demo"));
     assert_eq!(call.session_id(), Some(session_id.as_str()));
 }
@@ -2211,7 +2215,7 @@ fn code_mode_exec_effectful_parses_outer_authority() {
         "const secret = 'NEVER_PERSIST_EFFECTFUL_CODE_MODE_SOURCE'; text(secret);";
     let session_id = format!("wc_sess_{}", "2".repeat(32));
     let call = ToolCall::from_tool_name(
-        "code_mode_exec_effectful",
+        "execute_effectful_code_mode",
         json!({
             "project": "agent:special:demo",
             "session_id": session_id,
@@ -2220,7 +2224,7 @@ fn code_mode_exec_effectful_parses_outer_authority() {
         }),
     )
     .unwrap();
-    assert_eq!(call.tool_name(), "code_mode_exec_effectful");
+    assert_eq!(call.tool_name(), "execute_effectful_code_mode");
     assert_eq!(call.project(), Some("agent:special:demo"));
     assert_eq!(call.session_id(), Some(session_id.as_str()));
 }
@@ -2333,12 +2337,12 @@ fn agent_continuation_bind_requires_view_fence() {
         "expected_controller_generation": 1,
         "binding_id": binding_id,
     });
-    let call = ToolCall::from_tool_name("agent_continuation_bind", args.clone()).unwrap();
+    let call = ToolCall::from_tool_name("bind_agent_continuation", args.clone()).unwrap();
     assert!(
         matches!(&call, ToolCall::AgentContinuationBind { binding_id: parsed, .. } if parsed == &binding_id)
     );
     args.as_object_mut().unwrap().remove("binding_id");
-    assert!(ToolCall::from_tool_name("agent_continuation_bind", args).is_err());
+    assert!(ToolCall::from_tool_name("bind_agent_continuation", args).is_err());
 }
 
 #[test]
@@ -2359,7 +2363,7 @@ fn job_terminal_continuation_calls_require_explicit_wait_and_private_view_fence(
     ));
 
     let bind = ToolCall::from_tool_name(
-        "job_terminal_continuation_bind",
+        "bind_job_terminal_continuation",
         json!({"wait_id": wait_id, "binding_id": binding_id}),
     )
     .unwrap();
@@ -2369,7 +2373,7 @@ fn job_terminal_continuation_calls_require_explicit_wait_and_private_view_fence(
         args.as_object_mut()
             .unwrap()
             .insert(forbidden.to_string(), json!("caller-authored-routing"));
-        let error = ToolCall::from_tool_name("job_terminal_continuation_bind", args)
+        let error = ToolCall::from_tool_name("bind_job_terminal_continuation", args)
             .expect_err("routing/authority sideband must not be accepted in business input");
         assert!(error.contains("unknown field"), "{error}");
     }
@@ -2425,24 +2429,24 @@ fn guidance_profile_defaults_and_schema_follow_compiled_availability() {
 
 #[test]
 fn current_window_activity_has_no_model_supplied_window_selector() {
-    let input = crate::request_schema::input_schema_for_tool("current_window_activity");
+    let input = crate::request_schema::input_schema_for_tool("read_current_window_activity");
     let properties = input["properties"].as_object().unwrap();
     assert!(properties.contains_key("limit"));
     assert!(properties.contains_key("include_nonmeaningful"));
     assert!(!properties.contains_key("client_window_key"));
     assert!(!properties.contains_key("window"));
     assert!(ToolCall::from_tool_name(
-        "current_window_activity",
+        "read_current_window_activity",
         json!({
             "client_window_key": "foreign"
         })
     )
     .is_err());
     assert_eq!(
-        ToolCall::from_tool_name("current_window_activity", json!({"limit":20}))
+        ToolCall::from_tool_name("read_current_window_activity", json!({"limit":20}))
             .unwrap()
             .tool_name(),
-        "current_window_activity"
+        "read_current_window_activity"
     );
 }
 
@@ -2450,8 +2454,8 @@ fn current_window_activity_has_no_model_supplied_window_selector() {
 fn current_window_activity_description_keeps_timing_factual_and_overlap_explicit() {
     let spec = registered_tool_specs()
         .into_iter()
-        .find(|spec| spec.name == "current_window_activity")
-        .expect("current_window_activity ToolSpec");
+        .find(|spec| spec.name == "read_current_window_activity")
+        .expect("read_current_window_activity ToolSpec");
     let description = spec.description.as_str();
     for phrase in [
         "WebCodex-observed request timing only",

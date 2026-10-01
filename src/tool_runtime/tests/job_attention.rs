@@ -22,7 +22,7 @@ async fn attention(
     runtime
         .add_passive_job_attention(
             &mut result,
-            "git_status",
+            "get_git_status",
             Some(project),
             session_id,
             Some(window),
@@ -38,7 +38,7 @@ async fn attention(
         let before = serde_json::to_vec(&previous).unwrap().len();
         eprintln!("job_attention: {before} -> {after} bytes");
         assert_eq!(before - after, 15);
-        let schema = crate::tool_runtime::registry::output_schema_for_tool("git_status");
+        let schema = crate::tool_runtime::registry::output_schema_for_tool("get_git_status");
         crate::tool_runtime::startup_brief::validate_schema_instance_for_test(
             &serde_json::to_value(&result).unwrap(),
             &schema,
@@ -83,7 +83,7 @@ async fn passive_attention_requires_exact_business_relation_and_deduplicates_sta
     runtime
         .add_passive_job_attention(
             &mut diagnostic,
-            "current_window_activity",
+            "read_current_window_activity",
             Some(&project),
             Some(&session),
             Some(&window),
@@ -281,7 +281,7 @@ async fn passive_attention_requires_exact_business_relation_and_deduplicates_sta
     runtime
         .add_passive_job_attention(
             &mut failure,
-            "git_status",
+            "get_git_status",
             Some(&project),
             Some(&session),
             Some(&window),

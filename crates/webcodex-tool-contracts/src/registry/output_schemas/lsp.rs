@@ -8,7 +8,7 @@ use super::common::{array_schema, open_object_schema, wrapped_typed_output_schem
 
 pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
     match name {
-        "lsp_status" => Some(wrapped_typed_output_schema::<LspStatusResult>(vec![(
+        "get_lsp_status" => Some(wrapped_typed_output_schema::<LspStatusResult>(vec![(
             "servers",
             array_schema(
                 open_object_schema(
@@ -17,23 +17,25 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 "Per-language server availability and running state.",
             ),
         )])),
-        "document_symbols" => Some(wrapped_typed_output_schema::<DocumentSymbolsResult>(vec![
-            (
-                "symbols",
-                array_schema(
-                    open_object_schema("Document symbol node with name/kind/range/children."),
-                    "Bounded hierarchical symbol tree.",
+        "list_document_symbols" => {
+            Some(wrapped_typed_output_schema::<DocumentSymbolsResult>(vec![
+                (
+                    "symbols",
+                    array_schema(
+                        open_object_schema("Document symbol node with name/kind/range/children."),
+                        "Bounded hierarchical symbol tree.",
+                    ),
                 ),
-            ),
-        ])),
-        "document_diagnostics" => Some(wrapped_typed_output_schema::<DocumentDiagnosticsResult>(
+            ]))
+        }
+        "read_document_diagnostics" => Some(
+            wrapped_typed_output_schema::<DocumentDiagnosticsResult>(Vec::new()),
+        ),
+        "read_symbol_hover" => Some(wrapped_typed_output_schema::<HoverResult>(Vec::new())),
+        "list_workspace_symbols" => Some(wrapped_typed_output_schema::<WorkspaceSymbolsResult>(
             Vec::new(),
         )),
-        "hover" => Some(wrapped_typed_output_schema::<HoverResult>(Vec::new())),
-        "workspace_symbols" => Some(wrapped_typed_output_schema::<WorkspaceSymbolsResult>(
-            Vec::new(),
-        )),
-        "goto_definition" | "find_references" => {
+        "find_definition" | "find_references" => {
             Some(wrapped_typed_output_schema::<LocationsResult>(vec![(
                 "locations",
                 array_schema(
@@ -42,7 +44,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 ),
             )]))
         }
-        "call_hierarchy" => Some(wrapped_typed_output_schema::<CallHierarchyResult>(vec![
+        "read_call_hierarchy" => Some(wrapped_typed_output_schema::<CallHierarchyResult>(vec![
             (
                 "roots",
                 array_schema(

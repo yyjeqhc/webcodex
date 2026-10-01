@@ -165,7 +165,7 @@ fn shell_success_preserves_selected_context_output_loss_and_sidecars() {
         "command_summary",
         "cwd",
         "shell",
-        "ssh_resource",
+        "manage_ssh_resource",
         "stdout_tail",
         "stderr_tail",
         "stdout_lines",

@@ -229,7 +229,7 @@ pub(crate) fn decide_for_required_tool(
     }
 }
 
-/// Canonical authority profile projection (runtime_status / coding-task
+/// Canonical authority profile projection (get_runtime_status / coding-task
 /// startup / health surfaces). Never exposes tokens or raw policy internals.
 pub(crate) fn authority_profile_payload_for(config: &EffectiveAuthorityConfig) -> Value {
     let auto = config.auto_authorize();

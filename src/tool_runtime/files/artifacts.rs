@@ -17,18 +17,18 @@ pub(crate) struct ProjectArtifactExportSnapshot {
     pub(crate) name: String,
 }
 
-/// Default returned segment size for `read_project_artifact`. This tool returns
+/// Default returned segment size for `read_project_artifact_chunk`. This tool returns
 /// base64 content in the JSON response, so keep chunks bounded for model-facing responses.
 pub(crate) const DEFAULT_READ_PROJECT_ARTIFACT_LENGTH: usize = 32 * 1024; // 32 KiB
 
-/// Maximum returned segment size for `read_project_artifact`.
+/// Maximum returned segment size for `read_project_artifact_chunk`.
 pub(crate) const MAX_READ_PROJECT_ARTIFACT_LENGTH: usize = 64 * 1024; // 64 KiB
 
 /// Internal Control↔Runner artifact streaming chunk size. This is deliberately
 /// separate from the model-facing inspection bound above.
 pub(crate) const INTERNAL_ARTIFACT_TRANSFER_CHUNK_BYTES: usize = 1024 * 1024; // 1 MiB
 
-/// Maximum decoded size accepted for one `artifact_upload_chunk` request.
+/// Maximum decoded size accepted for one `upload_artifact_chunk` request.
 pub(crate) const MAX_PROJECT_ARTIFACT_UPLOAD_CHUNK_BYTES: usize = 1024 * 1024; // 1 MiB
 
 /// Hard cap for a base64-encoded artifact payload plus JSON overhead.
@@ -742,7 +742,7 @@ impl ToolRuntime {
                 path.clone(),
                 "read_project_artifact",
                 payload,
-                "read_project_artifact",
+                "read_project_artifact_chunk",
             )
             .await
         {
@@ -816,7 +816,7 @@ impl ToolRuntime {
                         arguments["session_id"] = json!(session_id);
                     }
                     obj["suggested_call"] = SuggestedToolCall::mechanically_followable(
-                        "read_project_artifact",
+                        "read_project_artifact_chunk",
                         arguments,
                     )
                     .to_value();
@@ -904,7 +904,7 @@ impl ToolRuntime {
             path,
             payload,
             "artifact_upload_begin",
-            "artifact_upload_begin",
+            "begin_artifact_upload",
         )
         .await
     }
@@ -954,7 +954,7 @@ impl ToolRuntime {
             path,
             payload,
             "artifact_upload_chunk",
-            "artifact_upload_chunk",
+            "upload_artifact_chunk",
         )
         .await
     }
@@ -980,7 +980,7 @@ impl ToolRuntime {
             path,
             payload,
             "artifact_upload_finish",
-            "artifact_upload_finish",
+            "finish_artifact_upload",
         )
         .await
     }
@@ -1006,7 +1006,7 @@ impl ToolRuntime {
             path,
             payload,
             "artifact_upload_abort",
-            "artifact_upload_abort",
+            "abort_artifact_upload",
         )
         .await
     }

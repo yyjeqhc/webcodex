@@ -73,7 +73,7 @@ impl ToolRuntime {
 
             ToolCall::SshResource(_) => {
                 unreachable!(
-                    "ssh_resource is dispatched before generic static ToolDefinition policy"
+                    "manage_ssh_resource is dispatched before generic static ToolDefinition policy"
                 )
             }
 

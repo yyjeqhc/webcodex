@@ -428,7 +428,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     try {
       // One effectful App primitive owns observation, authoritative stall
       // reconciliation, and the final projection. No conditional second RPC.
-      const response = await send("tools/call", { name: "goal_plan_sync", arguments: { goal_id: goalId } });
+      const response = await send("tools/call", { name: "sync_goal_plan", arguments: { goal_id: goalId } });
       const plan = extractPlan(response);
       if (!plan || !acceptIdentity(plan.goal_id)) throw new Error("Invalid Goal Plan state");
       if (plan.revision < lastRevision || (plan.revision === lastRevision && lastLifecycle !== null && plan.lifecycle !== lastLifecycle)) {

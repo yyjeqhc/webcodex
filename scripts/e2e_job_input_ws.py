@@ -49,8 +49,24 @@ class InteractiveSmoke(Smoke):
         self.rpc_id += 1
         response=self.post("/mcp",{"jsonrpc":"2.0","id":self.rpc_id,"method":"tools/list","params":{}},token)
         names={tool.get("name") for tool in response.get("result",{}).get("tools",[])}
-        check({"run_process","job_write_input","read_files","edit_project_files","observe_jobs","wait_for_job_readiness","call_runtime_tool"} <= names,
+        check({"run_process","write_job_input","read_files","edit_project_files","observe_jobs","wait_for_job_readiness","call_runtime_tool"} <= names,
               "fresh stateless tool inventory is missing a core callable")
+        check(not names.intersection({"runtime_status", "tool_manifest", "job_write_input", "project_artifact"}),
+              "retired v0.4 name reappeared in live MCP discovery")
+        for old in ["runtime_status", "tool_manifest", "job_write_input"]:
+            self.rpc_id += 1
+            rejected=self.post("/mcp", {"jsonrpc":"2.0", "id":self.rpc_id, "method":"tools/call",
+                "params":{"name":"call_runtime_tool", "arguments":{"tool":old,"arguments":{}}}}, token)
+            outcome=rejected.get("result", {}).get("structuredContent", {})
+            check("error" in rejected or outcome.get("success") is False,
+                  "retired tool must not dispatch through a compatibility alias")
+        for method,path in [("GET","/openapi.json"),("POST","/api/actions/read_files"),("POST","/api/artifacts/import")]:
+            request=Request(self.url+path, data=b"{}" if method=="POST" else None,
+                method=method, headers={"Authorization":"Bearer "+token,"Content-Type":"application/json"})
+            try:
+                with self.opener.open(request,timeout=10) as response: code=response.status
+            except HTTPError as error: code=error.code; error.close()
+            check(code==404, f"retired HTTP adapter still mounted: {path}, status={code}")
 
     def raw_tool(self, name, args, token, *, direct=False):
         self.rpc_id += 1
@@ -106,7 +122,7 @@ class InteractiveSmoke(Smoke):
         return job
 
     def write(self, job, key, data="", close=False, *, success=True, project=None, token=None, direct=True):
-        return self.call("job_write_input", {"project":project or self.project_ref,"job_id":job,
+        return self.call("write_job_input", {"project":project or self.project_ref,"job_id":job,
             "input_id":key,"data":data,"close":close}, token, direct=direct, success=success)
 
     def prepare(self):
@@ -152,13 +168,13 @@ class InteractiveSmoke(Smoke):
         self.call("edit_project_files",{"project":self.project_ref,"changes":[{"kind":"edit","path":"one.txt",
             "expected_read_revision":revisions[0],"edits":[{"kind":"replace_exact","old_text":"after","new_text":"stale"}]}]},direct=True,success=False)
         check((self.project_dir/"one.txt").read_text()=="after one\n","stale edit wrote data")
-        self.call("search_and_read",{"project":self.project_ref,"query":{"pattern":"after","path":"one.txt","pattern_mode":"literal"}},direct=True)
+        self.call("search_and_read_project_texts",{"project":self.project_ref,"query":{"pattern":"after","path":"one.txt","pattern_mode":"literal"}},direct=True)
         # A generated 1x1 PNG is only a local binary fixture, never transferred as
         # model-authored Base64. Verify MCP image delivery bytes in the client.
         def chunk(kind,data):return struct.pack(">I",len(data))+kind+data+struct.pack(">I",zlib.crc32(kind+data)&0xffffffff)
         png=b"\x89PNG\r\n\x1a\n"+chunk(b"IHDR",struct.pack(">IIBBBBB",1,1,8,2,0,0,0))+chunk(b"IDAT",zlib.compress(b"\0\xff\0\0"))+chunk(b"IEND",b"")
         (self.project_dir/"pixel.png").write_bytes(png)
-        image=self.raw_tool("project_artifact",{"project":self.project_ref,"path":"pixel.png","action":"image"},self.owner,direct=True)
+        image=self.raw_tool("inspect_project_artifact",{"project":self.project_ref,"path":"pixel.png","action":"image"},self.owner,direct=True)
         images=[block for block in image.get("content",[]) if block.get("type")=="image"]
         check(len(images)==1 and images[0].get("mimeType")=="image/png" and base64.b64decode(images[0]["data"])==png,"MCP native image lost or rewritten")
         print("PASS: short Project/Session refs, batch reads/edits, numeric fence, stale rejection, compound search and native image")
@@ -172,7 +188,7 @@ class InteractiveSmoke(Smoke):
         check(conflict.get("error_kind")=="job_input_conflict","changed id did not conflict")
         self.write(job,"wrong-project","forbidden",project="agent:input-runner:other",success=False)
         self.write(job,"foreign","forbidden",project=self.project,token=self.foreign,success=False)
-        self.call("job_write_input",{"project":self.project_ref,"job_id":job,"input_id":"not-a-poll"},success=False)
+        self.call("write_job_input",{"project":self.project_ref,"job_id":job,"input_id":"not-a-poll"},success=False)
         # Server restart must recover the same native process and receipt, not
         # replay its start or the input. The Runner is left continuously alive.
         pid=self.runner.pid;stop(self.server);self.start_server();self.wait_ready(self.project,self.owner);self.initialize(self.owner)

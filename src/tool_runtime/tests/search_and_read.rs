@@ -15,7 +15,7 @@ fn start_inspection(
 ) -> tokio::task::JoinHandle<ToolResult> {
     let runtime = runtime.clone();
     let call = ToolCall::from_tool_name(
-        "search_and_read",
+        "search_and_read_project_texts",
         json!({
             "project": project,
             "session_id": session_id,
@@ -39,7 +39,7 @@ fn start_batched_inspection_with_one_invalid_query(
 ) -> tokio::task::JoinHandle<ToolResult> {
     let runtime = runtime.clone();
     let call = ToolCall::from_tool_name(
-        "search_and_read",
+        "search_and_read_project_texts",
         json!({
             "project": project,
             "session_id": session_id,
@@ -83,7 +83,8 @@ async fn complete_search(runtime: &ToolRuntime, client_id: &str, lines: &[usize]
 }
 
 fn validate_compound_schema(result: &ToolResult) {
-    let schema = crate::tool_runtime::registry::output_schema_for_tool("search_and_read");
+    let schema =
+        crate::tool_runtime::registry::output_schema_for_tool("search_and_read_project_texts");
     crate::tool_runtime::startup_brief::validate_schema_instance_for_test(
         &serde_json::to_value(result).unwrap(),
         &schema,
@@ -99,7 +100,7 @@ async fn zero_match_include_glob_reports_nonleaking_exclusion_hint() {
     let project = register_runner_project_at_path(&runtime, client_id, "demo", root.path()).await;
     let session = runtime.sessions.start_session(Some(project.clone()), None);
     let call = ToolCall::from_tool_name(
-        "search_and_read",
+        "search_and_read_project_texts",
         json!({
             "project": project,
             "session_id": session.session_id,
@@ -223,7 +224,9 @@ async fn search_and_read_returns_one_source_block_for_overlapping_matches() {
     let finished = summary
         .events
         .iter()
-        .find(|event| event.kind == "tool_call_finished" && event.tool_name == "search_and_read")
+        .find(|event| {
+            event.kind == "tool_call_finished" && event.tool_name == "search_and_read_project_texts"
+        })
         .expect("compound inspection completion event");
     assert_eq!(finished.observed_paths, vec!["src/lib.rs"]);
 }

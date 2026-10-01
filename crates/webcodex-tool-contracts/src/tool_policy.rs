@@ -406,7 +406,7 @@ pub fn runtime_tool_supports_passive_job_attention(name: &str) -> bool {
     is_model_visible_tool_name(name)
         && !matches!(
             name,
-            "current_window_activity"
+            "read_current_window_activity"
                 | "plugin_tool"
                 | "run_job"
                 | "run_detached_process"

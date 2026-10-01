@@ -1163,7 +1163,7 @@ mod tests {
             &window,
             "trace-status",
             "tools/call",
-            Some("runtime_status"),
+            Some("get_runtime_status"),
             Some(("username", "alice")),
             1_200,
         );
@@ -1322,7 +1322,7 @@ mod tests {
             &window,
             "trace-goal-plan-state",
             "tools/call",
-            Some("goal_plan_sync"),
+            Some("sync_goal_plan"),
             Some(("username", "alice")),
             1_000,
         );

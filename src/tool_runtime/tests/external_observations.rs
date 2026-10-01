@@ -280,7 +280,7 @@ async fn external_reports_reach_default_and_diagnostic_handoff_without_native_pr
     assert!(compact.success, "{compact:?}");
     let handoff_spec = crate::tool_runtime::registered_tool_specs()
         .into_iter()
-        .find(|spec| spec.name == "session_handoff_summary")
+        .find(|spec| spec.name == "read_session_handoff_summary")
         .unwrap();
     crate::tool_runtime::startup_brief::validate_schema_instance_for_test(
         &json!({"success": true, "output": compact.output.clone()}),
@@ -327,7 +327,7 @@ async fn external_reports_reach_default_and_diagnostic_handoff_without_native_pr
     assert_eq!(after.events_total, before.events_total + 4);
     assert!(after.events[before.events.len()..]
         .iter()
-        .all(|event| event.tool_name == "session_handoff_summary"));
+        .all(|event| event.tool_name == "read_session_handoff_summary"));
 
     let other =
         register_runner_project_at_path(&runtime, "handoff-external-other", "p", tmp.path()).await;

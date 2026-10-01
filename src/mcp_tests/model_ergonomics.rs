@@ -389,7 +389,7 @@ async fn http_mcp_direct_gateway_fallback_is_queryable_without_wrong_route_telem
             "method": "tools/call",
             "params": mcp_2026_params(json!({
                 "name": crate::mcp::tools::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME,
-                "arguments": {"tool": "runtime_status", "arguments": {"summary_only": true}}
+                "arguments": {"tool": "get_runtime_status", "arguments": {"summary_only": true}}
             }))
         }))
         .send(&service)
@@ -413,7 +413,7 @@ async fn http_mcp_direct_gateway_fallback_is_queryable_without_wrong_route_telem
         .collect::<Vec<_>>();
     assert_eq!(telemetry.len(), 1);
     let fallback = &telemetry[0];
-    assert_eq!(fallback["tool_name"], "runtime_status");
+    assert_eq!(fallback["tool_name"], "get_runtime_status");
     assert_eq!(fallback["success"], true);
     assert!(fallback["error_kind"].is_null());
     assert_ne!(fallback["error_kind"], "wrong_invocation_route");
@@ -593,7 +593,7 @@ async fn http_mcp_code_mode_persists_only_bounded_composition_telemetry() {
             "id": 401,
             "method": "tools/call",
             "params": {
-                "name": "code_mode_exec",
+                "name": "execute_code_mode",
                 "arguments": {
                     "project": exact_project,
                     "session_id": session.session_id,
@@ -615,7 +615,7 @@ async fn http_mcp_code_mode_persists_only_bounded_composition_telemetry() {
         .list_action_events("code-mode-composition-audit", 10)
         .unwrap();
     assert_eq!(events.len(), 1, "one outer call must create one audit row");
-    assert_eq!(events[0].operation.as_deref(), Some("code_mode_exec"));
+    assert_eq!(events[0].operation.as_deref(), Some("execute_code_mode"));
     let summary: Value = serde_json::from_str(&events[0].summary_json).unwrap();
     let composition = &summary["code_mode_composition"];
     assert_eq!(composition["nested_calls"], 0);
@@ -714,7 +714,7 @@ async fn metadata_audit_retains_envelope_context_without_full_payloads() {
     for (id, name, arguments) in [
         (
             901,
-            "runtime_status",
+            "get_runtime_status",
             json!({"_wc": {"context": ["webcodex.workflow", "PRIVATE_UNKNOWN_CONTEXT"], "ack": []}}),
         ),
         (
@@ -732,7 +732,7 @@ async fn metadata_audit_retains_envelope_context_without_full_payloads() {
             .json(&json!({"jsonrpc": "2.0", "id": id, "method": "tools/call", "params": mcp_2026_params(json!({"name": name, "arguments": arguments}))}))
             .send(&service).await;
         let body: Value = response.take_json().await.unwrap();
-        if name == "runtime_status" {
+        if name == "get_runtime_status" {
             assert_eq!(body["result"]["isError"], false, "{body}");
         }
     }

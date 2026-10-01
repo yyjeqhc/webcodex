@@ -27,7 +27,7 @@ const nextState = {
     ...baseState.review,
     total: 2,
     read_only_inspection_count: 1,
-    tools: ["show_changes", "git_review_summary"],
+    tools: ["read_workspace_changes", "read_git_review_summary"],
   },
   session: {
     ...baseState.session,
@@ -261,7 +261,7 @@ test("initial private Work Result fallback renders when Host omits structuredCon
   assert.equal(view.nodes.taskTitle.textContent, "Work Result test");
   assert.equal(view.nodes.badge.textContent, "Waiting");
   assert.equal(view.nodes.refresh.disabled, false);
-  assert.equal(view.calls("work_result_state").length, 0);
+  assert.equal(view.calls("get_work_result_state").length, 0);
 });
 test("Window card renders and refreshes before any Workflow Session exists", async () => {
   const windowOnlyState = {
@@ -289,8 +289,8 @@ test("Window card renders and refreshes before any Workflow Session exists", asy
   assert.equal(view.nodes.messageInput.disabled, true);
   assert.equal(view.timers.size, 1);
   await view.fireTimers(10000);
-  assert.equal(view.calls("work_result_state").length, 1);
-  assert.deepEqual({ ...view.calls("work_result_state")[0].params.arguments }, { project });
+  assert.equal(view.calls("get_work_result_state").length, 1);
+  assert.deepEqual({ ...view.calls("get_work_result_state")[0].params.arguments }, { project });
 });
 
 test("missing initial machine result recovers once through app-only content fallback", async () => {
@@ -302,8 +302,8 @@ test("missing initial machine result recovers once through app-only content fall
   });
   await flush();
   assert.notEqual(view.nodes.status.textContent, "This task card is unavailable");
-  assert.equal(view.calls("work_result_state").length, 1);
-  await view.reply(view.calls("work_result_state")[0], contentOnly(toolResult({ work_result: baseState })));
+  assert.equal(view.calls("get_work_result_state").length, 1);
+  await view.reply(view.calls("get_work_result_state")[0], contentOnly(toolResult({ work_result: baseState })));
   assert.equal(view.nodes.taskTitle.textContent, "Work Result test");
   assert.equal(view.nodes.refresh.disabled, false);
   assert.match(view.nodes.status.textContent, /Updated|Up to date|Live/);
@@ -315,7 +315,7 @@ test("Activity stays focused while Results exposes live files", async () => {
   await view.initialize();
   assert.equal(view.nodes.taskTitle.textContent, "Work Result test");
   assert.equal(view.nodes.activityStatus.textContent, "Reviewed changes");
-  assert.doesNotMatch(view.nodes.activityStatus.textContent, /show_changes|session event/i);
+  assert.doesNotMatch(view.nodes.activityStatus.textContent, /read_workspace_changes|session event/i);
   assert.equal(view.nodes.windowCoverage.textContent, "2 observed events");
   assert.equal(view.nodes.windowActivity.children.length, 2);
   assert.equal(view.nodes.panelResults.hidden, true);
@@ -408,7 +408,7 @@ test("unchanged state_version refresh still advances wall-clock idle copy withou
   view.advanceTime(20_000);
   view.nodes.refresh.onclick();
   await flush();
-  await view.reply(view.calls("work_result_state")[0], toolResult({ work_result: recent }));
+  await view.reply(view.calls("get_work_result_state")[0], toolResult({ work_result: recent }));
   assert.equal(view.nodes.badge.textContent, "Idle");
   assert.equal(view.nodes.activityStatus.textContent, "No WebCodex activity");
   assert.equal(view.nodes.activityAge.textContent, "Idle for 1m");
@@ -454,8 +454,8 @@ test("card composer retries uncertain delivery with the same payload across cont
   view.nodes.messageInput.oninput();
   view.nodes.composer.onsubmit({ preventDefault() {} });
   await flush();
-  assert.equal(view.calls("work_result_send_message").length, 1);
-  const first = view.calls("work_result_send_message")[0];
+  assert.equal(view.calls("send_work_result_message").length, 1);
+  const first = view.calls("send_work_result_message")[0];
   assert.equal(first.params.arguments.project, project);
   assert.equal(first.params.arguments.session_id, session_id);
   assert.equal(first.params.arguments.message, "Use the existing retry mechanism.");
@@ -468,8 +468,8 @@ test("card composer retries uncertain delivery with the same payload across cont
   await flush();
   view.nodes.composer.onsubmit({ preventDefault() {} });
   await flush();
-  assert.equal(view.calls("work_result_send_message").length, 2);
-  const second = view.calls("work_result_send_message")[1];
+  assert.equal(view.calls("send_work_result_message").length, 2);
+  const second = view.calls("send_work_result_message")[1];
   assert.deepEqual(second.params.arguments, first.params.arguments);
 
   await view.reply(second, contentOnly(toolResult({
@@ -479,7 +479,7 @@ test("card composer retries uncertain delivery with the same payload across cont
     replayed: true,
     state_changed: false,
   })));
-  assert.equal(view.calls("work_result_state").length, 1);
+  assert.equal(view.calls("get_work_result_state").length, 1);
   const refreshed = {
     ...baseState,
     state_version: `wr2_${"e".repeat(64)}`,
@@ -491,7 +491,7 @@ test("card composer retries uncertain delivery with the same payload across cont
       ],
     },
   };
-  await view.reply(view.calls("work_result_state")[0], contentOnly(toolResult({ work_result: refreshed })));
+  await view.reply(view.calls("get_work_result_state")[0], contentOnly(toolResult({ work_result: refreshed })));
   assert.equal(view.nodes.messageInput.value, "");
   assert.equal(view.nodes.messages.children[0].children[1].children.at(-1).textContent, "Saved");
 });
@@ -505,14 +505,14 @@ test("card conflict is deterministic and the next explicit send gets a new deliv
   view.nodes.messageInput.oninput();
   view.nodes.composer.onsubmit({ preventDefault() {} });
   await flush();
-  const first = view.calls("work_result_send_message")[0];
+  const first = view.calls("send_work_result_message")[0];
   await view.reply(first, { structuredContent: { success: false, output: { failure_kind: "conflict", error_kind: "delivery_key_conflict", state_changed: false }, error: "delivery_key_conflict" } });
   assert.equal(view.nodes.messageInput.value, "Keep conflict draft");
   assert.equal(view.nodes.sendMessage.textContent, "Send");
   assert.equal(view.nodes.composerState.textContent, "Message could not be sent");
   view.nodes.composer.onsubmit({ preventDefault() {} });
   await flush();
-  const second = view.calls("work_result_send_message")[1];
+  const second = view.calls("send_work_result_message")[1];
   assert.notEqual(second.params.arguments.delivery_key, first.params.arguments.delivery_key);
 });
 
@@ -525,7 +525,7 @@ test("card invalid context preserves the draft and rebuilds payload on the next 
   view.nodes.messageInput.oninput();
   view.nodes.composer.onsubmit({ preventDefault() {} });
   await flush();
-  const first = view.calls("work_result_send_message")[0];
+  const first = view.calls("send_work_result_message")[0];
   await view.reply(first, { structuredContent: { success: false, output: { failure_kind: "invalid_context", error_kind: "session_context_unlinked", state_changed: false }, error: "Session context is not explicitly linked to this Window" } });
   assert.equal(view.nodes.messageInput.value, "Keep context draft");
   assert.equal(view.nodes.composerState.textContent, "Context is no longer available");
@@ -534,7 +534,7 @@ test("card invalid context preserves the draft and rebuilds payload on the next 
   await flush();
   view.nodes.composer.onsubmit({ preventDefault() {} });
   await flush();
-  const second = view.calls("work_result_send_message")[1];
+  const second = view.calls("send_work_result_message")[1];
   assert.notEqual(second.params.arguments.delivery_key, first.params.arguments.delivery_key);
   assert.equal(second.params.arguments.session_id, replacement.session_id);
 });
@@ -551,7 +551,7 @@ test("card sends normally before a Session exists", async () => {
   view.nodes.messageInput.oninput();
   view.nodes.composer.onsubmit({ preventDefault() {} });
   await flush();
-  const sendCall = view.calls("work_result_send_message")[0];
+  const sendCall = view.calls("send_work_result_message")[0];
   assert.equal(sendCall.params.arguments.project, project);
   assert.equal(sendCall.params.arguments.message, "Window only");
   assert.equal(Object.prototype.hasOwnProperty.call(sendCall.params.arguments, "session_id"), false);
@@ -562,12 +562,12 @@ for (const first of ["input", "result"]) {
     const view = app("mcp_work_result_app.html");
     if (first === "input") view.toolInput(input);
     else view.toolResult({ work_result: baseState });
-    assert.equal(view.calls("work_result_state").length, 0);
+    assert.equal(view.calls("get_work_result_state").length, 0);
     await view.initialize();
     if (first === "input") view.toolResult({ work_result: baseState });
     else view.toolInput(input);
     await flush();
-    assert.equal(view.calls("work_result_state").length, 0);
+    assert.equal(view.calls("get_work_result_state").length, 0);
     assert.equal(view.nodes.windowCoverage.textContent, "2 observed events");
     assert.equal(view.nodes.windowActivity.children.length, 2);
     assert.equal(view.nodes.refresh.disabled, false);
@@ -578,14 +578,14 @@ test("input-only bootstrap waits for a user Refresh before reading state", async
   const view = app("mcp_work_result_app.html");
   view.toolInput(input);
   await view.initialize();
-  assert.equal(view.calls("work_result_state").length, 0);
+  assert.equal(view.calls("get_work_result_state").length, 0);
   assert.equal(view.nodes.refresh.disabled, false);
   assert.match(view.nodes.status.textContent, /Waiting for Window activity/);
   view.nodes.refresh.onclick();
   await flush();
-  assert.equal(view.calls("work_result_state").length, 1);
-  assert.deepEqual({ ...view.calls("work_result_state")[0].params.arguments }, { project, session_id });
-  await view.reply(view.calls("work_result_state")[0], toolResult({ work_result: baseState }));
+  assert.equal(view.calls("get_work_result_state").length, 1);
+  assert.deepEqual({ ...view.calls("get_work_result_state")[0].params.arguments }, { project, session_id });
+  await view.reply(view.calls("get_work_result_state")[0], toolResult({ work_result: baseState }));
   assert.equal(view.nodes.windowCoverage.textContent, "2 observed events");
   assert.equal(view.nodes.status.textContent, "Updated");
 });
@@ -598,7 +598,7 @@ test("matching Work input/result identity is idempotent and unchanged initial st
   view.nodes.activityDetail.textContent = "sentinel";
   view.toolResult({ work_result: baseState });
   await flush();
-  assert.equal(view.calls("work_result_state").length, 0);
+  assert.equal(view.calls("get_work_result_state").length, 0);
   assert.equal(view.nodes.activityDetail.textContent, "sentinel");
 });
 
@@ -607,21 +607,21 @@ test("live progress performs bounded app-only polling and adapts to visibility",
   view.toolInput(input);
   view.toolResult({ work_result: baseState });
   await view.initialize();
-  assert.equal(view.calls("work_result_state").length, 0);
+  assert.equal(view.calls("get_work_result_state").length, 0);
   await view.fireTimers(10000);
-  assert.equal(view.calls("work_result_state").length, 1);
-  assert.deepEqual({ ...view.calls("work_result_state")[0].params.arguments }, { project, session_id });
-  await view.reply(view.calls("work_result_state")[0], toolResult({ work_result: nextState }));
+  assert.equal(view.calls("get_work_result_state").length, 1);
+  assert.deepEqual({ ...view.calls("get_work_result_state")[0].params.arguments }, { project, session_id });
+  await view.reply(view.calls("get_work_result_state")[0], toolResult({ work_result: nextState }));
   assert.equal(view.nodes.activityStatus.textContent, "Running checks");
   assert.equal(view.nodes.activityAge.textContent, "Active now");
   assert.equal(view.nodes.badge.textContent, "Working");
   await view.fireTimers(10000);
-  assert.equal(view.calls("work_result_state").length, 2);
-  await view.reply(view.calls("work_result_state")[1], toolResult({ work_result: nextState }));
+  assert.equal(view.calls("get_work_result_state").length, 2);
+  await view.reply(view.calls("get_work_result_state")[1], toolResult({ work_result: nextState }));
   await view.visibility(true);
   assert.equal(view.timers.size, 0);
   await view.fireTimers(10000);
-  assert.equal(view.calls("work_result_state").length, 2);
+  assert.equal(view.calls("get_work_result_state").length, 2);
   await view.visibility(false);
   assert.equal([...view.timers.values()].some(timer => timer.delay === 250), true);
   assert.equal(view.timers.size, 1);
@@ -639,9 +639,9 @@ test("closed linked Session does not stop Window-level automatic polling", async
   await view.initialize();
   assert.equal(view.timers.size, 1);
   await view.fireTimers(10000);
-  assert.equal(view.calls("work_result_state").length, 1);
-  assert.deepEqual({ ...view.calls("work_result_state")[0].params.arguments }, { project, session_id });
-  await view.reply(view.calls("work_result_state")[0], toolResult({ work_result: closedState }));
+  assert.equal(view.calls("get_work_result_state").length, 1);
+  assert.deepEqual({ ...view.calls("get_work_result_state")[0].params.arguments }, { project, session_id });
+  await view.reply(view.calls("get_work_result_state")[0], toolResult({ work_result: closedState }));
   assert.equal(view.nodes.refresh.disabled, false);
   assert.equal(view.nodes.status.textContent, "Live");
 });
@@ -657,12 +657,12 @@ test("unchanged active Session pauses automatic polling after bounded idle time 
   await view.visibility(false);
   assert.equal(view.timers.size, 0);
   assert.match(view.nodes.status.textContent, /Updates paused/);
-  assert.equal(view.calls("work_result_state").length, 0);
+  assert.equal(view.calls("get_work_result_state").length, 0);
 
   view.nodes.refresh.onclick();
   await flush();
-  assert.equal(view.calls("work_result_state").length, 1);
-  await view.reply(view.calls("work_result_state")[0], toolResult({ work_result: baseState }));
+  assert.equal(view.calls("get_work_result_state").length, 1);
+  await view.reply(view.calls("get_work_result_state")[0], toolResult({ work_result: baseState }));
   assert.equal(view.nodes.status.textContent, "Up to date");
   assert.equal([...view.timers.values()].some(timer => timer.delay === 10000), true);
 });
@@ -674,11 +674,11 @@ test("user Refresh performs one exact state read and updates the snapshot", asyn
   await view.initialize();
   view.nodes.refresh.onclick();
   await flush();
-  assert.equal(view.calls("work_result_state").length, 1);
-  assert.deepEqual({ ...view.calls("work_result_state")[0].params.arguments }, { project, session_id });
+  assert.equal(view.calls("get_work_result_state").length, 1);
+  assert.deepEqual({ ...view.calls("get_work_result_state")[0].params.arguments }, { project, session_id });
   assert.equal(view.nodes.refresh.disabled, true);
   assert.equal(view.nodes.refresh.textContent, "Refreshing…");
-  await view.reply(view.calls("work_result_state")[0], toolResult({ work_result: nextState }));
+  await view.reply(view.calls("get_work_result_state")[0], toolResult({ work_result: nextState }));
   assert.equal(view.nodes.windowCoverage.textContent, "3 observed events");
   assert.equal(view.nodes.windowActivity.children.length, 4);
   assert.equal(view.nodes.status.textContent, "Updated");
@@ -694,13 +694,13 @@ test("in-flight Refresh clicks coalesce and a later user click performs one new 
   view.nodes.refresh.onclick();
   view.nodes.refresh.onclick();
   await flush();
-  assert.equal(view.calls("work_result_state").length, 1);
-  await view.reply(view.calls("work_result_state")[0], toolResult({ work_result: baseState }));
+  assert.equal(view.calls("get_work_result_state").length, 1);
+  await view.reply(view.calls("get_work_result_state")[0], toolResult({ work_result: baseState }));
   assert.equal(view.nodes.status.textContent, "Up to date");
   view.nodes.refresh.onclick();
   await flush();
-  assert.equal(view.calls("work_result_state").length, 2);
-  assert.deepEqual({ ...view.calls("work_result_state")[1].params.arguments }, { project, session_id });
+  assert.equal(view.calls("get_work_result_state").length, 2);
+  assert.deepEqual({ ...view.calls("get_work_result_state")[1].params.arguments }, { project, session_id });
 });
 
 test("failed Refresh preserves the last valid snapshot and remains retryable", async () => {
@@ -711,23 +711,23 @@ test("failed Refresh preserves the last valid snapshot and remains retryable", a
 
   view.nodes.refresh.onclick();
   await flush();
-  await view.reply(view.calls("work_result_state")[0], { structuredContent: { success: false, output: { error_kind: "workspace_unavailable" } } });
+  await view.reply(view.calls("get_work_result_state")[0], { structuredContent: { success: false, output: { error_kind: "workspace_unavailable" } } });
   assert.equal(view.nodes.windowCoverage.textContent, "2 observed events");
   assert.match(view.nodes.status.textContent, /Refresh unavailable/);
   assert.equal(view.nodes.refresh.disabled, false);
 
   view.nodes.refresh.onclick();
   await flush();
-  assert.equal(view.calls("work_result_state").length, 2);
-  await view.reject(view.calls("work_result_state")[1]);
+  assert.equal(view.calls("get_work_result_state").length, 2);
+  await view.reject(view.calls("get_work_result_state")[1]);
   assert.equal(view.nodes.windowCoverage.textContent, "2 observed events");
   assert.match(view.nodes.status.textContent, /Refresh unavailable/);
   assert.equal(view.nodes.refresh.disabled, false);
 
   view.nodes.refresh.onclick();
   await flush();
-  assert.equal(view.calls("work_result_state").length, 3);
-  await view.reply(view.calls("work_result_state")[2], toolResult({ work_result: baseState }));
+  assert.equal(view.calls("get_work_result_state").length, 3);
+  await view.reply(view.calls("get_work_result_state")[2], toolResult({ work_result: baseState }));
   assert.equal(view.nodes.status.textContent, "Up to date");
 });
 
@@ -741,7 +741,7 @@ for (const first of ["input", "result"]) {
     if (first === "input") view.toolResult({ work_result: { ...baseState, ...foreign } });
     else view.toolInput(foreign);
     await flush();
-    assert.equal(view.calls("work_result_state").length, 0);
+    assert.equal(view.calls("get_work_result_state").length, 0);
     assert.equal(view.nodes.status.textContent, "This task card is unavailable");
     assert.equal(view.nodes.refresh.disabled, true);
     assert.equal(view.timers.size, 0);
@@ -755,7 +755,7 @@ test("malformed authoritative Refresh state fails closed", async () => {
   view.toolInput(input);
   view.nodes.refresh.onclick();
   await flush();
-  await view.reply(view.calls("work_result_state")[0], toolResult({ work_result: { ...baseState, state_version: "bad" } }));
+  await view.reply(view.calls("get_work_result_state")[0], toolResult({ work_result: { ...baseState, state_version: "bad" } }));
   assert.equal(view.nodes.status.textContent, "This task card is unavailable");
   assert.equal(view.nodes.refresh.disabled, true);
 });
@@ -805,7 +805,7 @@ test("Window coverage stays explicit when retained activity is truncated", async
   await view.initialize();
   assert.equal(view.nodes.windowCoverage.textContent, "Showing 2 of 41 observed events");
   assert.equal(view.nodes.windowActivity.children.length, 2);
-  assert.equal(view.calls("work_result_state").length, 0);
+  assert.equal(view.calls("get_work_result_state").length, 0);
 });
 
 for (const method of ["ui/resource-teardown", "pagehide", "beforeunload"]) {
@@ -816,11 +816,11 @@ for (const method of ["ui/resource-teardown", "pagehide", "beforeunload"]) {
     view.toolInput(input);
     view.nodes.refresh.onclick();
     await flush();
-    const request = view.calls("work_result_state")[0];
+    const request = view.calls("get_work_result_state")[0];
     await view.teardown(method);
     await view.reply(request, toolResult({ work_result: nextState }));
     await view.visibility(false);
-    assert.equal(view.calls("work_result_state").length, 1);
+    assert.equal(view.calls("get_work_result_state").length, 1);
     assert.equal(view.timers.size, 0);
     assert.equal(view.nodes.windowCoverage.textContent, "2 observed events");
   });
@@ -831,7 +831,7 @@ test("invalid Project input never refreshes", async () => {
     const view = app("mcp_work_result_app.html");
     view.toolInput(bad);
     await flush();
-    assert.equal(view.calls("work_result_state").length, 0);
+    assert.equal(view.calls("get_work_result_state").length, 0);
     assert.equal(view.nodes.status.textContent, "This task card is unavailable");
     assert.equal(view.nodes.refresh.disabled, true);
     assert.equal(view.timers.size, 0);
@@ -848,10 +848,10 @@ test("idle unchanged polling backs off without losing hidden-tab teardown", asyn
     const delay = timers[0].delay;
     if (elapsed + delay > 600000) break;
     elapsed += delay; view.advanceTime(delay); await view.fireTimers(delay);
-    const call = view.calls("work_result_state").at(-1);
+    const call = view.calls("get_work_result_state").at(-1);
     await view.reply(call, toolResult({ work_result: baseState }));
   }
-  assert(view.calls("work_result_state").length <= 8, "steady idle card should not poll every 10/30 seconds forever");
+  assert(view.calls("get_work_result_state").length <= 8, "steady idle card should not poll every 10/30 seconds forever");
   assert([...view.timers.values()].some(timer => timer.delay === 120000));
   await view.visibility(true);
   assert.equal(view.timers.size, 0);
@@ -905,8 +905,8 @@ async function frozenView(first = "input", state = frozenWork()) {
 for (const first of ["input", "result"]) {
   test(`Work Result frozen ${first}-first bootstrap renders bounded metadata without any lazy read`, async () => {
     const view = await frozenView(first);
-    assert.equal(view.calls("changes_file_diff").length, 0);
-    assert.equal(view.calls("work_result_state").length, 0);
+    assert.equal(view.calls("read_changed_file_diff").length, 0);
+    assert.equal(view.calls("get_work_result_state").length, 0);
     assert.equal(view.nodes.finalChanges.hidden, false);
     assert.equal(view.nodes.frozenSummary.textContent, "Changed 7 files");
     assert.equal(view.nodes.frozenFiles.children.length, 5);
@@ -931,18 +931,18 @@ test("both file lists fold independently and show-less preserves cached final no
   view.nodes.frozenCollapse.onclick();
   assert.equal(row.wrap.hidden, true);
   assert.equal(row.button.getAttribute("aria-expanded"), "false");
-  await view.reply(view.calls("changes_file_diff")[0], frozenDiff());
+  await view.reply(view.calls("read_changed_file_diff")[0], frozenDiff());
   row.button.onclick(); await flush();
-  assert.equal(view.calls("changes_file_diff").length, 1);
+  assert.equal(view.calls("read_changed_file_diff").length, 1);
 });
 
 test("final file metadata loads subsequent pages only after explicit more", async () => {
   const files = Array.from({ length: 24 }, (_, index) => frozenFile(index));
   const view = await frozenView("input", frozenWork({ files, files_total: 30, files_changed: 30, files_returned: 24, files_truncated: true }));
   for (let i = 0; i < 4; i++) { view.nodes.frozenMore.onclick(); await flush(); }
-  assert.equal(view.calls("work_result_state").length, 0);
+  assert.equal(view.calls("get_work_result_state").length, 0);
   view.nodes.frozenMore.onclick(); await flush();
-  const request = view.calls("work_result_state")[0];
+  const request = view.calls("get_work_result_state")[0];
   assert.equal(request.params.arguments.files.offset, 24);
   assert.equal(request.params.arguments.files.snapshot_id, snapshot_id);
   assert.equal(request.params.arguments.session_id, session_id);
@@ -953,7 +953,7 @@ test("final file metadata loads subsequent pages only after explicit more", asyn
   view.nodes.frozenMore.onclick(); await flush();
   assert.equal(view.nodes.frozenFiles.children.length, 30);
   assert.equal(view.nodes.frozenMore.hidden, true);
-  assert.equal(view.calls("changes_file_diff").length, 0);
+  assert.equal(view.calls("read_changed_file_diff").length, 0);
 });
 
 test("live rows share one snapshot acquisition, load one diff, and keep collapse cached", async () => {
@@ -964,21 +964,21 @@ test("live rows share one snapshot acquisition, load one diff, and keep collapse
   view.toolResult({ work_result: state }); await view.initialize();
   const first = view.nodes.workspaceFiles.children[0];
   assert.equal(first.children[1].children.length, 1);
-  assert.equal(view.calls("work_result_state").length, 0);
+  assert.equal(view.calls("get_work_result_state").length, 0);
   first.children[0].onclick(); first.children[0].onclick(); first.children[0].onclick(); await flush();
-  assert.equal(view.calls("work_result_state").length, 1);
-  await view.reply(view.calls("work_result_state")[0], toolResult({ work_result_files: {
+  assert.equal(view.calls("get_work_result_state").length, 1);
+  await view.reply(view.calls("get_work_result_state")[0], toolResult({ work_result_files: {
     project, session_id: null, snapshot_id, offset: 0, next_offset: 24, files_total: 30, source_truncated: false,
     files: Array.from({ length: 24 }, (_, i) => frozenFile(i)),
   } }));
-  const diff = view.calls("work_result_state")[1];
+  const diff = view.calls("get_work_result_state")[1];
   assert.equal(diff.params.arguments.files.path, "src/file_0.rs");
   assert.equal(diff.params.arguments.files.snapshot_id, snapshot_id);
   await view.reply(diff, toolResult({ work_result_files: {
     project, session_id: null, snapshot_id, path: "src/file_0.rs", diff: "+literal <text>\n", truncated: false,
   } }));
   first.children[0].onclick(); first.children[0].onclick(); await flush();
-  assert.equal(view.calls("work_result_state").length, 2);
+  assert.equal(view.calls("get_work_result_state").length, 2);
   assert.equal(first.children[1].children[1].children[0].textContent, "+literal <text>");
   view.nodes.workspaceMore.onclick(); await flush();
   assert.equal(view.nodes.workspaceFiles.children.length, 10);
@@ -987,7 +987,7 @@ test("live rows share one snapshot acquisition, load one diff, and keep collapse
   assert.equal(view.nodes.workspaceFiles.children[0], first);
   view.nodes.workspaceCollapse.onclick();
   assert.equal(first.children[1].hidden, true);
-  assert.equal(view.calls("work_result_state").length, 2);
+  assert.equal(view.calls("get_work_result_state").length, 2);
 });
 
 test("refreshing file snapshot ignores an older page and leaves the new more button usable", async () => {
@@ -996,12 +996,12 @@ test("refreshing file snapshot ignores an older page and leaves the new more but
   const view = app("mcp_work_result_app.html");
   view.toolResult({ work_result: state }); await view.initialize();
   view.nodes.workspaceMore.onclick(); await flush();
-  await view.reply(view.calls("work_result_state")[0], toolResult({ work_result_files: {
+  await view.reply(view.calls("get_work_result_state")[0], toolResult({ work_result_files: {
     project, session_id: null, snapshot_id, offset: 0, next_offset: 24, files_total: 30, source_truncated: false,
     files: Array.from({ length: 24 }, (_, i) => frozenFile(i)),
   } }));
   for (let i = 0; i < 4; i++) { view.nodes.workspaceMore.onclick(); await flush(); }
-  const oldPage = view.calls("work_result_state")[1];
+  const oldPage = view.calls("get_work_result_state")[1];
   assert.equal(oldPage.params.arguments.files.offset, 24);
   assert.equal(view.nodes.workspaceMore.disabled, true);
   view.nodes.workspaceReload.onclick();
@@ -1013,7 +1013,7 @@ test("refreshing file snapshot ignores an older page and leaves the new more but
   } }));
   assert.equal(view.nodes.workspaceFiles.children[0], row);
   assert.equal(view.nodes.workspaceMore.disabled, false);
-  assert.equal(view.calls("work_result_state").length, 2);
+  assert.equal(view.calls("get_work_result_state").length, 2);
   assert.doesNotMatch(view.nodes.workspaceMeta.textContent, /unavailable/);
 });
 
@@ -1021,17 +1021,17 @@ test("a file page cannot replace its Project and sealed changes cannot retarget 
   const view = await frozenView();
   view.nodes.workspaceMore.hidden = false;
   view.nodes.workspaceMore.onclick(); await flush();
-  await view.reply(view.calls("work_result_state")[0], toolResult({ work_result_files: {
+  await view.reply(view.calls("get_work_result_state")[0], toolResult({ work_result_files: {
     project: "agent:special:foreign", session_id: null, snapshot_id, offset: 0, next_offset: null,
     files_total: 1, source_truncated: false, files: [frozenFile(0)],
   } }));
   assert.match(view.nodes.workspaceMeta.textContent, /unavailable/);
-  assert.equal(view.calls("work_result_state").length, 1);
+  assert.equal(view.calls("get_work_result_state").length, 1);
   view.toolResult({ work_result: { ...frozenWork(), session_id: `wc_sess_${"3".repeat(32)}` } });
   await flush();
   assert.equal(view.nodes.status.textContent, "This task card is unavailable");
   assert.equal(view.nodes.refresh.disabled, true);
-  assert.equal(view.calls("changes_file_diff").length, 0);
+  assert.equal(view.calls("read_changed_file_diff").length, 0);
 });
 
 test("frozen expansion reads the exact four-part identity once and re-expansion uses the local cache", async () => {
@@ -1039,15 +1039,15 @@ test("frozen expansion reads the exact four-part identity once and re-expansion 
   const nodes = frozenNodes(view);
   nodes.button.onclick(); nodes.button.onclick(); nodes.button.onclick();
   await flush();
-  assert.equal(view.calls("changes_file_diff").length, 1);
-  assert.deepEqual({ ...view.calls("changes_file_diff")[0].params.arguments }, { project, session_id, snapshot_id, path: "src/file_0.rs" });
-  await view.reply(view.calls("changes_file_diff")[0], contentOnly(frozenDiff()));
+  assert.equal(view.calls("read_changed_file_diff").length, 1);
+  assert.deepEqual({ ...view.calls("read_changed_file_diff")[0].params.arguments }, { project, session_id, snapshot_id, path: "src/file_0.rs" });
+  await view.reply(view.calls("read_changed_file_diff")[0], contentOnly(frozenDiff()));
   assert.equal(nodes.state.textContent, "File changes");
   assert.equal(nodes.pre.children.some(line => line.textContent === "+new" && line.className.includes("added")), true);
   assert.equal(nodes.pre.children.some(line => line.textContent === "-old" && line.className.includes("deleted")), true);
   nodes.button.onclick(); nodes.button.onclick();
   await flush();
-  assert.equal(view.calls("changes_file_diff").length, 1);
+  assert.equal(view.calls("read_changed_file_diff").length, 1);
 });
 
 test("Show more and live Refresh preserve pending frozen nodes, initial identity, and cached diffs", async () => {
@@ -1061,22 +1061,22 @@ test("Show more and live Refresh preserve pending frozen nodes, initial identity
   assert.equal(frozenNodes(view).root, nodes.root);
   view.nodes.refresh.onclick();
   await flush();
-  await view.reply(view.calls("work_result_state")[0], toolResult({ work_result: nextState }));
+  await view.reply(view.calls("get_work_result_state")[0], toolResult({ work_result: nextState }));
   assert.equal(view.nodes.finalChanges.hidden, false);
   assert.equal(view.nodes.frozenSummary.textContent, "Changed 7 files");
   assert.equal(frozenNodes(view).root, nodes.root);
-  await view.reply(view.calls("changes_file_diff")[0], frozenDiff());
+  await view.reply(view.calls("read_changed_file_diff")[0], frozenDiff());
   assert.equal(nodes.state.textContent, "File changes");
   nodes.button.onclick(); nodes.button.onclick();
-  assert.equal(view.calls("changes_file_diff").length, 1);
-  assert.equal(view.calls("changes_file_diff")[0].params.arguments.snapshot_id, snapshot_id);
+  assert.equal(view.calls("read_changed_file_diff").length, 1);
+  assert.equal(view.calls("read_changed_file_diff")[0].params.arguments.snapshot_id, snapshot_id);
 });
 
 test("initial snapshot is idempotent and its late arrival cannot roll back an explicit live refresh", async () => {
   const view = app("mcp_work_result_app.html");
   view.toolInput(input); await view.initialize();
   view.nodes.refresh.onclick(); await flush();
-  await view.reply(view.calls("work_result_state")[0], toolResult({ work_result: nextState }));
+  await view.reply(view.calls("get_work_result_state")[0], toolResult({ work_result: nextState }));
   view.toolResult({ work_result: frozenWork() });
   const root = frozenNodes(view).root;
   view.toolResult({ work_result: frozenWork() });
@@ -1092,13 +1092,13 @@ test("live progress card adopts the first sealed final snapshot from a later sta
   await view.initialize();
   assert.equal(view.nodes.finalChanges.hidden, true);
   view.nodes.refresh.onclick(); await flush();
-  await view.reply(view.calls("work_result_state")[0], toolResult({ work_result: frozenWork() }));
+  await view.reply(view.calls("get_work_result_state")[0], toolResult({ work_result: frozenWork() }));
   assert.equal(view.nodes.finalChanges.hidden, false);
   assert.equal(view.nodes.frozenSummary.textContent, "Changed 7 files");
   assert.match(view.nodes.status.textContent, /Live · final changes available/);
   const root = frozenNodes(view).root;
   view.nodes.refresh.onclick(); await flush();
-  await view.reply(view.calls("work_result_state")[1], toolResult({ work_result: frozenWork() }));
+  await view.reply(view.calls("get_work_result_state")[1], toolResult({ work_result: frozenWork() }));
   assert.equal(frozenNodes(view).root, root);
   assert.equal(view.nodes.refresh.disabled, false);
 });
@@ -1107,18 +1107,18 @@ test("metadata and lazy diff truncation remain truthful within bounded initial r
   const view = await frozenView("result", frozenWork({ files_changed: 30, files_total: 30, files_truncated: true }));
   assert.match(view.nodes.frozenFooter.textContent, /showing 5 of 30 files/);
   frozenNodes(view).button.onclick(); await flush();
-  await view.reply(view.calls("changes_file_diff")[0], frozenDiff({ truncated: true, bytes_total: 50000, lines_total: 2000 }));
+  await view.reply(view.calls("read_changed_file_diff")[0], frozenDiff({ truncated: true, bytes_total: 50000, lines_total: 2000 }));
   assert.match(frozenNodes(view).state.textContent, /partial \(\d+\/2000 lines\)/);
 });
 
 test("renamed and binary files retain their metadata in lazy frozen responses", async () => {
   const view = await frozenView();
   frozenNodes(view, 3).button.onclick(); await flush();
-  assert.equal(view.calls("changes_file_diff")[0].params.arguments.path, "src/new_name.rs");
-  await view.reply(view.calls("changes_file_diff")[0], frozenDiff({ path: "src/new_name.rs", previous_path: "src/old_name.rs", kind: "renamed" }));
+  assert.equal(view.calls("read_changed_file_diff")[0].params.arguments.path, "src/new_name.rs");
+  await view.reply(view.calls("read_changed_file_diff")[0], frozenDiff({ path: "src/new_name.rs", previous_path: "src/old_name.rs", kind: "renamed" }));
   assert.equal(frozenNodes(view, 3).state.textContent, "File changes");
   frozenNodes(view, 4).button.onclick(); await flush();
-  await view.reply(view.calls("changes_file_diff")[1], frozenDiff({ path: "assets/blob.bin", binary: true, diff: "Binary files differ\n" }));
+  await view.reply(view.calls("read_changed_file_diff")[1], frozenDiff({ path: "assets/blob.bin", binary: true, diff: "Binary files differ\n" }));
   assert.match(frozenNodes(view, 4).state.textContent, /Binary file/);
 });
 
@@ -1132,7 +1132,7 @@ for (const change of [
   test(`frozen lazy response fails closed for ${Object.keys(change).join(",")}`, async () => {
     const view = await frozenView();
     frozenNodes(view).button.onclick(); await flush();
-    await view.reply(view.calls("changes_file_diff")[0], frozenDiff(change));
+    await view.reply(view.calls("read_changed_file_diff")[0], frozenDiff(change));
     assert.match(view.nodes.status.textContent, /task card is unavailable/);
     assert.equal(view.nodes.finalChanges.hidden, true);
     assert.equal(view.nodes.frozenFiles.children.length, 0);
@@ -1152,7 +1152,7 @@ for (const change of [
 ]) {
   test(`invalid initial frozen metadata is never an identity or file capability: ${JSON.stringify(change).slice(0, 70)}`, async () => {
     const view = await frozenView("input", frozenWork(change));
-    assert.equal(view.calls("changes_file_diff").length, 0);
+    assert.equal(view.calls("read_changed_file_diff").length, 0);
     assert.equal(view.nodes.refresh.disabled, true);
     assert.match(view.nodes.status.textContent, /task card is unavailable/);
   });
@@ -1161,11 +1161,11 @@ for (const change of [
 test("expired/unavailable snapshots never fall back to live diff or automatically retry", async () => {
   const view = await frozenView();
   frozenNodes(view).button.onclick(); await flush();
-  await view.reply(view.calls("changes_file_diff")[0], { structuredContent: { success: false, output: { error_kind: "changes_snapshot_unavailable" } } });
+  await view.reply(view.calls("read_changed_file_diff")[0], { structuredContent: { success: false, output: { error_kind: "changes_snapshot_unavailable" } } });
   assert.match(frozenNodes(view).state.textContent, /Changes unavailable/);
   await view.fireTimers(10000); await view.visibility(false);
-  assert.equal(view.calls("changes_file_diff").length, 1);
-  assert.equal(view.calls("work_result_state").length, 0);
+  assert.equal(view.calls("read_changed_file_diff").length, 1);
+  assert.equal(view.calls("get_work_result_state").length, 0);
   assert.equal(view.timers.size, 1);
 });
 
@@ -1176,11 +1176,11 @@ for (const via of ["initial", "refresh"]) {
     if (via === "initial") view.toolResult({ work_result: replacement });
     else {
       view.nodes.refresh.onclick(); await flush();
-      await view.reply(view.calls("work_result_state")[0], toolResult({ work_result: replacement }));
+      await view.reply(view.calls("get_work_result_state")[0], toolResult({ work_result: replacement }));
     }
     assert.equal(view.nodes.finalChanges.hidden, true);
     assert.equal(view.nodes.refresh.disabled, true);
-    assert.equal(view.calls("changes_file_diff").length, 0);
+    assert.equal(view.calls("read_changed_file_diff").length, 0);
   });
 }
 
@@ -1196,8 +1196,8 @@ test("cached legacy Changes resource payload is not promoted into authoritative 
   view.toolInput(input); await view.initialize();
   view.toolResult({ changes: { version: 3, project, session_id, ...finalChanges } });
   assert.match(view.nodes.status.textContent, /task card is unavailable/);
-  assert.equal(view.calls("work_result_state").length, 0);
-  assert.equal(view.calls("changes_file_diff").length, 0);
+  assert.equal(view.calls("get_work_result_state").length, 0);
+  assert.equal(view.calls("read_changed_file_diff").length, 0);
 });
 
 for (const method of ["ui/resource-teardown", "pagehide", "beforeunload"]) {
@@ -1205,12 +1205,12 @@ for (const method of ["ui/resource-teardown", "pagehide", "beforeunload"]) {
     const view = await frozenView();
     const nodes = frozenNodes(view);
     nodes.button.onclick(); await flush();
-    const request = view.calls("changes_file_diff")[0];
+    const request = view.calls("read_changed_file_diff")[0];
     await view.teardown(method);
     await view.reply(request, frozenDiff({ diff: "+late\n" }));
     nodes.button.onclick(); nodes.button.onclick();
     assert.equal(nodes.pre.children.length, 0);
-    assert.equal(view.calls("changes_file_diff").length, 1);
+    assert.equal(view.calls("read_changed_file_diff").length, 1);
     assert.equal(view.timers.size, 0);
   });
 }
@@ -1225,24 +1225,24 @@ test("Activity and Collaboration tabs preserve Window activity and drafts across
   assert.equal(view.nodes.sessionIdentity.textContent, "Session · " + session_id);
   assert.equal(view.nodes.windowSource.textContent, "Source · mcp");
   assert.equal(view.nodes.windowActivity.children.length, 2);
-  assert.equal(view.nodes.windowActivity.children[0].children[0].children[0].children[0].textContent, "runtime_status");
+  assert.equal(view.nodes.windowActivity.children[0].children[0].children[0].children[0].textContent, "get_runtime_status");
   assert.equal(view.nodes.windowActivity.children[0].children[0].children[1].textContent, "Observe · Succeeded");
-  assert.equal(view.nodes.windowActivity.children[1].children[0].children[0].children[0].textContent, "show_changes");
+  assert.equal(view.nodes.windowActivity.children[1].children[0].children[0].children[0].textContent, "read_workspace_changes");
   assert.equal(view.nodes.windowActivity.children.every(row => row.tagName === "DETAILS" && row.open === false), true);
-  assert.equal(view.calls("work_result_activity_detail").length, 0);
+  assert.equal(view.calls("read_work_result_activity_detail").length, 0);
   view.nodes.messageInput.value = "Keep my draft";
   view.nodes.tabCollaboration.onclick();
   assert.equal(view.nodes.panelCollaboration.hidden, false);
   assert.equal(view.nodes.panelActivity.hidden, true);
   assert.equal(view.nodes.messageInput.value, "Keep my draft");
-  assert.equal(view.calls("work_result_send_message").length, 0);
-  assert.equal(view.calls("work_result_state").length, 0);
+  assert.equal(view.calls("send_work_result_message").length, 0);
+  assert.equal(view.calls("get_work_result_state").length, 0);
   view.nodes.tabCollaboration.onkeydown({ key: "ArrowLeft", preventDefault() {} });
   assert.equal(view.nodes.tabResults.getAttribute("aria-selected"), "true");
   view.nodes.tabResults.onkeydown({ key: "ArrowLeft", preventDefault() {} });
   assert.equal(view.nodes.tabActivity.getAttribute("aria-selected"), "true");
   view.nodes.refresh.onclick(); await flush();
-  await view.reply(view.calls("work_result_state")[0], toolResult({ work_result: nextState }));
+  await view.reply(view.calls("get_work_result_state")[0], toolResult({ work_result: nextState }));
   assert.equal(view.nodes.panelActivity.hidden, false);
   assert.equal(view.nodes.windowActivity.children.length, 4);
   assert.equal(view.nodes.messageInput.value, "Keep my draft");
@@ -1256,7 +1256,7 @@ for (const workflow of [
   view.toolResult({ work_result: { ...baseState, workflow } });
   await view.initialize();
   assert.equal(view.nodes.badge.textContent, "Unavailable");
-  assert.equal(view.calls("work_result_state").length, 0);
+  assert.equal(view.calls("get_work_result_state").length, 0);
 });
 
 test("Window card sends without a Session and keeps pending context on uncertain retry", async () => {
@@ -1270,13 +1270,13 @@ test("Window card sends without a Session and keeps pending context on uncertain
   view.nodes.messageInput.oninput();
   view.nodes.composer.onsubmit({ preventDefault() {} });
   await flush();
-  const first = view.calls("work_result_send_message")[0];
+  const first = view.calls("send_work_result_message")[0];
   assert.equal(first.params.arguments.session_id, undefined);
   await view.fireTimers(10000);
   view.toolResult({ work_result: { ...baseState, state_version: `wr2_${"a".repeat(64)}` } });
   view.nodes.composer.onsubmit({ preventDefault() {} });
   await flush();
-  const retry = view.calls("work_result_send_message")[1];
+  const retry = view.calls("send_work_result_message")[1];
   assert.deepEqual(retry.params.arguments, first.params.arguments);
 });
 
@@ -1290,7 +1290,7 @@ test("unrelated activity refresh preserves message nodes and the user's draft", 
   const article = view.nodes.messages.children[0];
   view.nodes.messageInput.value = "My draft";
   view.nodes.refresh.onclick(); await flush();
-  await view.reply(view.calls("work_result_state")[0], toolResult({ work_result: { ...nextState, collaboration: { ...collaboration, can_send: false } } }));
+  await view.reply(view.calls("get_work_result_state")[0], toolResult({ work_result: { ...nextState, collaboration: { ...collaboration, can_send: false } } }));
   assert.equal(view.nodes.messages.children[0], article);
   assert.equal(view.nodes.messageInput.value, "My draft");
   assert.equal(view.nodes.messageInput.disabled, true);
@@ -1305,14 +1305,14 @@ for (const receipt of [{}, toolResult({}), toolResult({ message_id: 42 })]) {
     view.nodes.messageInput.oninput();
     view.nodes.composer.onsubmit({ preventDefault() {} });
     await flush();
-    const first = view.calls("work_result_send_message")[0];
+    const first = view.calls("send_work_result_message")[0];
     await view.reply(first, receipt);
     assert.equal(view.nodes.sendMessage.textContent, "Retry");
     assert.equal(view.nodes.messageInput.value, "Keep this exact message");
     assert.equal(view.nodes.messageInput.disabled, true);
     view.nodes.composer.onsubmit({ preventDefault() {} });
     await flush();
-    assert.deepEqual(view.calls("work_result_send_message")[1].params.arguments, first.params.arguments);
+    assert.deepEqual(view.calls("send_work_result_message")[1].params.arguments, first.params.arguments);
   });
 }
 
@@ -1325,7 +1325,7 @@ test("Window activity renders oldest-first and keeps the latest call last", asyn
   view.toolResult({ work_result: state });
   await view.initialize();
   const titles = view.nodes.windowActivity.children.map(row => row.children[0].children[0].children[0].textContent);
-  assert.deepEqual(titles, ["runtime_status", "show_changes", "run_shell"]);
+  assert.deepEqual(titles, ["get_runtime_status", "read_workspace_changes", "run_shell"]);
   assert.equal(view.nodes.windowActivity.children.at(-1).children[0].children[1].textContent, "Running");
 });
 
@@ -1333,19 +1333,19 @@ test("completed Window call details are folded and loaded once on first expansio
   const view = app("mcp_work_result_app.html");
   view.toolResult({ work_result: baseState });
   await view.initialize();
-  const row = view.nodes.windowActivity.children.find(item => item.children[0].children[0].children[0].textContent === "show_changes");
+  const row = view.nodes.windowActivity.children.find(item => item.children[0].children[0].children[0].textContent === "read_workspace_changes");
   assert.equal(row.tagName, "DETAILS");
   assert.equal(row.open, false);
-  assert.equal(view.calls("work_result_activity_detail").length, 0);
+  assert.equal(view.calls("read_work_result_activity_detail").length, 0);
   row.open = true;
   row.ontoggle();
   await flush();
-  assert.equal(view.calls("work_result_activity_detail").length, 1);
+  assert.equal(view.calls("read_work_result_activity_detail").length, 1);
   assert.deepEqual(
-    { ...view.calls("work_result_activity_detail")[0].params.arguments },
+    { ...view.calls("read_work_result_activity_detail")[0].params.arguments },
     { project, server_trace_id: "trace-reviewed" },
   );
-  await view.reply(view.calls("work_result_activity_detail")[0], toolResult({
+  await view.reply(view.calls("read_work_result_activity_detail")[0], toolResult({
     activity_detail: {
       server_trace_id: "trace-reviewed",
       started_at_ms: 1_999_999_989_000,
@@ -1353,7 +1353,7 @@ test("completed Window call details are folded and loaded once on first expansio
       duration_ms: 1000,
       service_ms: 740,
       method: "tools/call",
-      tool_name: "show_changes",
+      tool_name: "read_workspace_changes",
       project,
       status: "success",
       meaningful: true,
@@ -1365,7 +1365,7 @@ test("completed Window call details are folded and loaded once on first expansio
   row.open = false; row.ontoggle();
   row.open = true; row.ontoggle();
   await flush();
-  assert.equal(view.calls("work_result_activity_detail").length, 1);
+  assert.equal(view.calls("read_work_result_activity_detail").length, 1);
 });
 
 test("card renders each concurrent call and reconciles completion by exact trace", async () => {
@@ -1408,8 +1408,8 @@ test("long-running calls keep polling and failed automatic reads identify stale 
   view.toolResult({ work_result: state }); await view.initialize();
   view.advanceTime(31 * 60 * 1000);
   await view.fireTimers(10000);
-  assert.equal(view.calls("work_result_state").length, 1);
-  await view.reject(view.calls("work_result_state")[0]);
+  assert.equal(view.calls("get_work_result_state").length, 1);
+  await view.reject(view.calls("get_work_result_state")[0]);
   assert.match(view.nodes.status.textContent, /Refresh unavailable.*last snapshot/);
   assert([...view.timers.values()].some(timer => timer.delay === 20000));
 });
@@ -1448,16 +1448,16 @@ test("Results shows live file states and checks, preserving nodes on unrelated r
   assert.equal(preview.children[1].children[1].children[0].textContent, '<not markup>');
   assert.equal(view.nodes.validationStatus.textContent, 'Checks passed');
   assert.equal(view.nodes.finalChanges.hidden, true);
-  assert.equal(view.calls('work_result_state').length, 0);
+  assert.equal(view.calls('get_work_result_state').length, 0);
   view.nodes.refresh.onclick(); await flush();
-  await view.reply(view.calls('work_result_state')[0], toolResult({ work_result: { ...state, state_version: `wr2_${'b'.repeat(64)}` } }));
+  await view.reply(view.calls('get_work_result_state')[0], toolResult({ work_result: { ...state, state_version: `wr2_${'b'.repeat(64)}` } }));
   assert.equal(view.nodes.workspaceFiles.children[0], row);
   assert.equal(view.nodes.panelResults.hidden, false);
   view.nodes.messageInput.value = 'Existing draft';
   view.nodes.discussResults.onclick();
   assert.equal(view.nodes.panelCollaboration.hidden, false);
   assert.equal(view.nodes.messageInput.value, 'Existing draft');
-  assert.equal(view.calls('work_result_send_message').length, 0);
+  assert.equal(view.calls('send_work_result_message').length, 0);
 });
 
 test("clean workspace refresh removes old files without claiming success", async () => {
@@ -1465,7 +1465,7 @@ test("clean workspace refresh removes old files without claiming success", async
   view.toolResult({ work_result: baseState }); await view.initialize();
   view.nodes.tabResults.onclick();
   view.nodes.refresh.onclick(); await flush();
-  await view.reply(view.calls('work_result_state')[0], toolResult({ work_result: nextState }));
+  await view.reply(view.calls('get_work_result_state')[0], toolResult({ work_result: nextState }));
   assert.equal(view.nodes.workspaceFiles.children.length, 0);
   assert.equal(view.nodes.workspaceStatus.textContent, 'No uncommitted changes');
   assert.equal(view.nodes.validationStatus.textContent, 'Checks need attention');
@@ -1498,18 +1498,18 @@ test("final results and current workspace remain separate across refresh", async
   assert.equal(view.nodes.finalChanges.hidden, false);
   assert.match(view.nodes.workspaceFiles.children[0].children[0].textContent, /src\/a.rs/);
   view.nodes.refresh.onclick(); await flush();
-  await view.reply(view.calls('work_result_state')[0], toolResult({ work_result: { ...nextState, final_changes: finalChanges } }));
+  await view.reply(view.calls('get_work_result_state')[0], toolResult({ work_result: { ...nextState, final_changes: finalChanges } }));
   assert.equal(frozenNodes(view).root, frozen.root);
   assert.equal(view.nodes.workspaceFiles.children.length, 0);
   assert.equal(view.nodes.finalChanges.hidden, false);
-  assert.equal(view.calls('changes_file_diff').length, 0);
+  assert.equal(view.calls('read_changed_file_diff').length, 0);
 });
 
 test("unsafe live file paths fail closed and clear previously displayed results", async () => {
   const view = app("mcp_work_result_app.html");
   view.toolResult({ work_result: baseState }); await view.initialize();
   view.nodes.refresh.onclick(); await flush();
-  await view.reply(view.calls('work_result_state')[0], toolResult({ work_result: { ...nextState, workspace: { ...baseState.workspace, files: [{ path: '../private' }] } } }));
+  await view.reply(view.calls('get_work_result_state')[0], toolResult({ work_result: { ...nextState, workspace: { ...baseState.workspace, files: [{ path: '../private' }] } } }));
   assert.equal(view.nodes.workspaceFiles.children.length, 0);
   assert.equal(view.nodes.workspaceStatus.textContent, 'Changes unavailable');
   assert.equal(view.nodes.refresh.disabled, true);
@@ -1532,7 +1532,7 @@ test("exact Session Job transitions through normal refresh without a model tool 
     items: [{ ...runningJobs.items[0], status: "completed", state: "terminal", outcome: "passed" }],
   } };
   await view.fireTimers(10000);
-  const call = view.calls("work_result_state").at(-1);
+  const call = view.calls("get_work_result_state").at(-1);
   assert.deepEqual({ ...call.params.arguments }, { project, session_id });
   await view.reply(call, toolResult({ work_result: terminal }));
   await flush();
@@ -1559,7 +1559,7 @@ test("background executions separate live work from folded outcomes without decl
   assert.equal(view.nodes.activityAge.textContent, "");
   view.nodes.jobResults.open = true;
   view.nodes.refresh.onclick(); await flush();
-  await view.reply(view.calls("work_result_state")[0], toolResult({ work_result: {
+  await view.reply(view.calls("get_work_result_state")[0], toolResult({ work_result: {
     ...baseState, state_version: nextState.state_version, jobs: { ...runningJobs, active: false, items: [
       { ...runningJobs.items[0], state: "terminal", status: "completed", outcome: "passed" },
     ] },
@@ -1616,7 +1616,7 @@ test("Window-linked Session does not become Job authority on refresh", async () 
   await view.initialize();
   assert.equal(view.nodes.jobsSection.hidden, true);
   await view.fireTimers(10000);
-  assert.deepEqual({ ...view.calls("work_result_state")[0].params.arguments }, { project });
+  assert.deepEqual({ ...view.calls("get_work_result_state")[0].params.arguments }, { project });
 });
 
 test("Job failures and recovery remain bounded labels and conflicting Session fails closed", async () => {
@@ -1639,7 +1639,7 @@ test("active Jobs use the existing timer and preserve hidden and teardown fences
   view.toolResult({ work_result: { ...baseState, jobs: runningJobs } });
   await view.initialize();
   await view.fireTimers(10000);
-  const call = view.calls("work_result_state")[0];
+  const call = view.calls("get_work_result_state")[0];
   view.notification("ui/resource-teardown", {});
   await view.reply(call, toolResult({ work_result: nextState }));
   await flush();
@@ -1653,7 +1653,7 @@ test("result-first Job state cannot be rebound by a different explicit Session",
   view.toolInput({ project, session_id: `wc_sess_${"2".repeat(32)}` });
   await view.initialize();
   assert.equal(view.nodes.badge.textContent, "Unavailable");
-  assert.equal(view.calls("work_result_state").length, 0);
+  assert.equal(view.calls("get_work_result_state").length, 0);
 });
 
 for (const jobs of [

@@ -7,7 +7,7 @@ use super::common::{
 
 pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
     match name {
-        "current_window_activity" => Some(wrapped_output_schema(vec![
+        "read_current_window_activity" => Some(wrapped_output_schema(vec![
             ("status", json!({"type":"string","enum":["available","unavailable"]})),
             ("reason_code", schema_type("string", "Bounded reason when current Window, authenticated principal, runtime:read, or activity storage is unavailable.")),
             ("events", json!({"type":"array","maxItems":50,"description":"Newest first, sanitized current-Window events after principal and current Project visibility filtering. No arguments, outputs, raw payloads, native paths, credentials, or principal identifiers.","items":{"type":"object","additionalProperties":false,"properties":{
@@ -26,7 +26,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ("active_requests", json!({"type":"array","maxItems":8,"items":{"type":"object","additionalProperties":false,"properties":{"server_trace_id":{"type":"string"},"tool_name":{"type":["string","null"]},"started_at_ms":{"type":"integer"}},"required":["server_trace_id","tool_name","started_at_ms"]}})),
             ("truncated", schema_type("boolean", "Visible events from the bounded recent scan were omitted by the presentation or serialized byte bound; this is not a lifetime-history completeness claim.")),
         ])),
-        "runtime_status" => Some(wrapped_output_schema(vec![
+        "get_runtime_status" => Some(wrapped_output_schema(vec![
             ("mcp_host", open_object_schema("Sparse status: effective MCP Host profile.")),
             ("compatibility", open_object_schema("Sparse fleet protocol, build/source alignment and mixed-build evidence; no per-Runner rows.")),
             ("connection", open_object_schema("Sparse process, transport and Project registry states without timestamps.")),
@@ -36,14 +36,14 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 "mcp_compact_schemas",
                 schema_type(
                     "boolean",
-                    "Whether MCP tools/list omits outputSchema while retaining tool names, descriptions, inputSchema, and annotations. This is MCP discovery schema compaction, not runtime_status compact=true response shaping.",
+                    "Whether MCP tools/list omits outputSchema while retaining tool names, descriptions, inputSchema, and annotations. This is MCP discovery schema compaction, not get_runtime_status compact=true response shaping.",
                 ),
             ),
             (
                 "effective_config",
                 json!({
                     "type": "object",
-                    "description": "Safe allowlisted effective configuration of the running Server. This is distinct from runtime_status compact=true response shaping and from health or transport state.",
+                    "description": "Safe allowlisted effective configuration of the running Server. This is distinct from get_runtime_status compact=true response shaping and from health or transport state.",
                     "additionalProperties": false,
                     "properties": {
                         "auth": {
@@ -261,7 +261,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 schema_type("string", "Recommended next discovery action."),
             ),
         ])),
-        "tool_manifest" => {
+        "read_tool_manifest" => {
             let fields = vec![
             (
                 "name",
@@ -285,7 +285,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 "routing_note",
                 schema_type(
                     "string",
-                    "Model-facing routing guidance. tool_manifest discovery never dynamically registers a new Host tool.",
+                    "Model-facing routing guidance. read_tool_manifest discovery never dynamically registers a new Host tool.",
                 ),
             ),
             (
@@ -441,8 +441,8 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             (
                 "available_intents",
                 array_schema(
-                    schema_type("string", "Supported tool_manifest intent name."),
-                    "Stable list of supported tool_manifest intent names used for discovery filtering only.",
+                    schema_type("string", "Supported read_tool_manifest intent name."),
+                    "Stable list of supported read_tool_manifest intent names used for discovery filtering only.",
                 ),
             ),
             (

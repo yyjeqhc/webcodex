@@ -8,7 +8,7 @@ use super::common::{
 fn read_project_artifact_suggested_call_schema() -> Value {
     suggested_tool_call_schema(
         webcodex_core::runtime_contract::GeneratedFollowUpKind::MechanicallyFollowable,
-        "read_project_artifact",
+        "read_project_artifact_chunk",
         json!({
             "type": "object",
             "description": "Parser-ready next ranged read of the same exact full-file artifact incarnation.",
@@ -43,7 +43,7 @@ fn read_project_artifact_suggested_call_schema() -> Value {
 fn project_artifact_suggested_call_schema() -> Value {
     suggested_tool_call_schema(
         webcodex_core::runtime_contract::GeneratedFollowUpKind::MechanicallyFollowable,
-        "project_artifact",
+        "inspect_project_artifact",
         json!({
             "type": "object",
             "description": "Parser-ready continuation for one more bounded inspect of the same exact full-file artifact incarnation.",
@@ -71,7 +71,7 @@ fn project_artifact_suggested_call_schema() -> Value {
                 "expected_sha256"
             ]
         }),
-        "Parser-ready advisory continuation for project_artifact(action=inspect). It carries the observed full-file SHA-256 fence and grants no Project or Session authority.",
+        "Parser-ready advisory continuation for inspect_project_artifact(action=inspect). It carries the observed full-file SHA-256 fence and grants no Project or Session authority.",
     )
 }
 
@@ -79,8 +79,11 @@ fn project_artifact_output_schema() -> Value {
     let mut merged = wrapped_output_schema(vec![]);
     let target = merged["properties"]["output"]["properties"]
         .as_object_mut()
-        .expect("project_artifact output properties");
-    for specialist in ["read_project_artifact_metadata", "read_project_artifact"] {
+        .expect("inspect_project_artifact output properties");
+    for specialist in [
+        "read_project_artifact_metadata",
+        "read_project_artifact_chunk",
+    ] {
         let source = output_schema_for_tool(specialist).expect("artifact specialist output schema");
         let properties = source["properties"]["output"]["properties"]
             .as_object()
@@ -97,7 +100,7 @@ fn project_artifact_output_schema() -> Value {
         "name".to_string(),
         schema_type(
             "string",
-            "Safe basename presented by project_artifact(action=export).",
+            "Safe basename presented by inspect_project_artifact(action=export).",
         ),
     );
     target.insert(
@@ -117,7 +120,7 @@ fn project_artifact_output_schema() -> Value {
 
 pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
     match name {
-        "project_artifact" => Some(project_artifact_output_schema()),
+        "inspect_project_artifact" => Some(project_artifact_output_schema()),
         "save_project_artifact" => Some(wrapped_output_schema(vec![
             (
                 "path",
@@ -287,7 +290,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 nullable_schema("integer", "Zip entry count, when cheaply detected."),
             ),
         ])),
-        "artifact_upload_begin" | "artifact_upload_chunk" => Some(wrapped_output_schema(vec![
+        "begin_artifact_upload" | "upload_artifact_chunk" => Some(wrapped_output_schema(vec![
             (
                 "path",
                 schema_type("string", "Project-relative artifact path."),
@@ -325,10 +328,10 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ),
             (
                 "committed",
-                schema_type("boolean", "False until artifact_upload_finish succeeds."),
+                schema_type("boolean", "False until finish_artifact_upload succeeds."),
             ),
         ])),
-        "artifact_upload_finish" => Some(wrapped_output_schema(vec![
+        "finish_artifact_upload" => Some(wrapped_output_schema(vec![
             (
                 "path",
                 schema_type("string", "Project-relative artifact path."),
@@ -366,7 +369,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 schema_type("boolean", "True when commit completed."),
             ),
         ])),
-        "artifact_upload_abort" => Some(wrapped_output_schema(vec![
+        "abort_artifact_upload" => Some(wrapped_output_schema(vec![
             (
                 "path",
                 schema_type("string", "Project-relative artifact path."),
@@ -429,7 +432,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 ),
             ),
         ])),
-        "read_project_artifact" => Some(wrapped_output_schema(vec![
+        "read_project_artifact_chunk" => Some(wrapped_output_schema(vec![
             (
                 "path",
                 schema_type("string", "Project-relative artifact path."),

@@ -234,11 +234,11 @@ export function workItemFromProjectSession(
 export function intentForActivity(activity: Pick<SessionActivity, "kind" | "tool">): ProgressIntent {
   const kind = (activity.kind || "").toLowerCase();
   const tool = (activity.tool || "").toLowerCase();
-  const explorationTool = tool === "rg" || tool === "read_files" || tool === "search_and_read" || tool === "search_project_texts" || tool === "find" || tool.startsWith("list_");
+  const explorationTool = tool === "rg" || tool === "read_files" || tool === "search_and_read_project_texts" || tool === "search_project_texts" || tool === "find" || tool.startsWith("list_");
   if (/explor|read|search|inspect/.test(kind) || explorationTool) return "explored";
   if (/edit|write|patch|mutat/.test(kind) || /apply|edit|write|create|delete|rename/.test(tool)) return "edited";
   if (/valid|test|check|build|format/.test(kind) || /test|check|build|fmt|clippy/.test(tool)) return "tested";
-  if (/review|diff/.test(kind) || /review|diff|show_changes|git_status/.test(tool)) return "reviewed";
+  if (/review|diff/.test(kind) || /review|diff|read_workspace_changes|git_status/.test(tool)) return "reviewed";
   if (/delegat|agent_task|handoff/.test(kind) || /delegate|agent_task/.test(tool)) return "delegated";
   if (/wait|block/.test(kind) || /wait_for|observe_jobs/.test(tool)) return "waiting";
   if (/run|shell|process|job|exec/.test(kind) || /run_|cargo|shell|process/.test(tool)) return "ran";

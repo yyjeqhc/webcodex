@@ -102,7 +102,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     ),
     require_all_scopes(
         def(
-            "agent_wait_state",
+            "get_agent_wait_state",
             super::ToolAuditPolicy::typed_fields(&[
                 super::ToolAuditResultField::pointer("wait_id", "/agent_wait/wait_id"),
                 super::ToolAuditResultField::pointer("state", "/agent_wait/state"),

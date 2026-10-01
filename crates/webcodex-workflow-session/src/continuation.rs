@@ -1137,7 +1137,7 @@ fn build_suggested_next_actions(
 // ---------------------------------------------------------------------------
 
 /// Public, pure read-only entry: build only the validation delta from a
-/// ledger-derived validation summary value. Used by `validation_summary` so
+/// ledger-derived validation summary value. Used by `read_validation_summary` so
 /// the delta stays a read-only projection that never re-runs validation,
 /// mutates the ledger, or changes the verdict.
 pub fn validation_delta_value(validation: &Value) -> Value {

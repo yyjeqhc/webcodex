@@ -65,7 +65,7 @@ async fn extension_paths_check_then_reload_once_with_the_observed_generation() {
     assert!(edit.candidate_unchanged().unwrap());
     assert_eq!(
         calls.iter().map(|row| row.0).collect::<Vec<_>>(),
-        ["runner_config_check", "runner_config_reload"]
+        ["check_runner_config", "reload_runner_config"]
     );
     assert_eq!(
         calls[1].1,
@@ -125,9 +125,9 @@ async fn uncertain_reload_preserves_candidate_without_replay_even_if_generation_
         assert_eq!(
             calls,
             [
-                "runner_config_check",
-                "runner_config_reload",
-                "runner_config_check"
+                "check_runner_config",
+                "reload_runner_config",
+                "check_runner_config"
             ]
         );
     }
@@ -157,7 +157,7 @@ async fn external_config_edit_before_reload_is_never_replaced_or_applied() {
     let mut calls = 0;
     let error = apply_with_control("local", &edit, |tool, _| {
         calls += 1;
-        assert_eq!(tool, "runner_config_check");
+        assert_eq!(tool, "check_runner_config");
         std::fs::write(&path, "# external change").unwrap();
         ready(Ok(check(4)))
     })

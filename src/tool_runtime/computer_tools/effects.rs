@@ -5,16 +5,16 @@ use super::*;
 pub(super) fn computer_error_recovery_message(error_kind: &str, error: &str) -> String {
     match error_kind {
         "stale_element" => format!(
-            "{error}; reacquire a fresh element_id with computer_observe(action=find_elements) on the same surface"
+            "{error}; reacquire a fresh element_id with observe_computer(action=find_elements) on the same surface"
         ),
         "stale_surface" => format!(
-            "{error}; reacquire a fresh surface_id with computer_observe(action=windows) before continuing"
+            "{error}; reacquire a fresh surface_id with observe_computer(action=windows) before continuing"
         ),
         "stale_application" => format!(
-            "{error}; reacquire a fresh application_id with computer_observe(action=applications) before another launch"
+            "{error}; reacquire a fresh application_id with observe_computer(action=applications) before another launch"
         ),
         "stale_display" => format!(
-            "{error}; reacquire a fresh display_id with computer_observe(action=displays) before continuing"
+            "{error}; reacquire a fresh display_id with observe_computer(action=displays) before continuing"
         ),
         _ => error.to_string(),
     }
@@ -60,7 +60,7 @@ fn computer_observe_suggested_recovery(
         .as_object_mut()
         .expect("Computer observe recovery arguments are an object")
         .insert("action".to_string(), json!(action));
-    computer_suggested_recovery(result, "computer_observe", arguments)
+    computer_suggested_recovery(result, "observe_computer", arguments)
 }
 
 fn computer_reconcile_recovery(
@@ -89,7 +89,7 @@ pub(super) fn computer_error_with_client(
         // The original finder filters are not retained here. Knowing only the
         // canonical gateway family is insufficient to manufacture a safe finder call.
         "stale_element" => {
-            computer_reconcile_recovery(result, RecoveryKind::Reobserve, "computer_observe")
+            computer_reconcile_recovery(result, RecoveryKind::Reobserve, "observe_computer")
         }
         "stale_surface" => match client_id {
             Some(client_id) => computer_observe_suggested_recovery(
@@ -98,7 +98,7 @@ pub(super) fn computer_error_with_client(
                 json!({"client_id": client_id}),
             ),
             None => {
-                computer_reconcile_recovery(result, RecoveryKind::Reobserve, "computer_observe")
+                computer_reconcile_recovery(result, RecoveryKind::Reobserve, "observe_computer")
             }
         },
         "stale_application" => match client_id {
@@ -108,7 +108,7 @@ pub(super) fn computer_error_with_client(
                 json!({"client_id": client_id}),
             ),
             None => {
-                computer_reconcile_recovery(result, RecoveryKind::Reobserve, "computer_observe")
+                computer_reconcile_recovery(result, RecoveryKind::Reobserve, "observe_computer")
             }
         },
         "stale_display" => match client_id {
@@ -118,7 +118,7 @@ pub(super) fn computer_error_with_client(
                 json!({"client_id": client_id}),
             ),
             None => {
-                computer_reconcile_recovery(result, RecoveryKind::Reobserve, "computer_observe")
+                computer_reconcile_recovery(result, RecoveryKind::Reobserve, "observe_computer")
             }
         },
         "invalid_request" => result.with_recovery(RecoveryKind::FixInput),
@@ -179,7 +179,7 @@ pub(super) fn computer_pointer_effect_not_started(
             )
         }
         "stale_snapshot_generation" => {
-            computer_reconcile_recovery(result, RecoveryKind::Reobserve, "computer_observe")
+            computer_reconcile_recovery(result, RecoveryKind::Reobserve, "observe_computer")
         }
         "invalid_request" => result.with_recovery(RecoveryKind::FixInput),
         "permission_denied" => result.with_recovery(RecoveryKind::UserAction),
@@ -192,7 +192,7 @@ fn computer_pointer_effect_spent_not_started(
     context: &PointerRequestContext,
 ) -> ToolResult {
     let safe_message = format!(
-        "{message}; snapshot_generation is spent. Reconcile with computer_observe(action=snapshot_display) before another pointer effect"
+        "{message}; snapshot_generation is spent. Reconcile with observe_computer(action=snapshot_display) before another pointer effect"
     );
     let result = computer_pointer_effect_not_started("not_started", &safe_message, context);
     if valid_display_id(&context.display_id) {
@@ -202,7 +202,7 @@ fn computer_pointer_effect_spent_not_started(
             json!({"client_id": context.client_id, "display_id": context.display_id}),
         )
     } else {
-        computer_reconcile_recovery(result, RecoveryKind::Reobserve, "computer_observe")
+        computer_reconcile_recovery(result, RecoveryKind::Reobserve, "observe_computer")
     }
 }
 
@@ -211,7 +211,7 @@ pub(super) fn computer_pointer_effect_outcome_unknown(
     context: &PointerRequestContext,
 ) -> ToolResult {
     let safe_message = format!(
-        "{message}; do not blindly retry. Reconcile with computer_observe(action=snapshot_display) first"
+        "{message}; do not blindly retry. Reconcile with observe_computer(action=snapshot_display) first"
     );
     let result = ToolResult::err_with_output(
         safe_message.clone(),
@@ -231,7 +231,7 @@ pub(super) fn computer_pointer_effect_outcome_unknown(
             json!({"client_id": context.client_id, "display_id": context.display_id}),
         )
     } else {
-        computer_reconcile_recovery(result, RecoveryKind::Reobserve, "computer_observe")
+        computer_reconcile_recovery(result, RecoveryKind::Reobserve, "observe_computer")
     }
 }
 
@@ -439,7 +439,7 @@ pub(super) fn computer_application_effect_outcome_unknown(
     application_id: &str,
 ) -> ToolResult {
     let safe_message = format!(
-        "{message}; do not blindly retry. Reconcile with computer_observe(action=windows) first"
+        "{message}; do not blindly retry. Reconcile with observe_computer(action=windows) first"
     );
     let result = ToolResult::err_with_output(
         safe_message.clone(),
@@ -475,7 +475,7 @@ pub(super) fn computer_application_launch_runner_error(
     match classify_runner_error(error) {
         "stale_application" => computer_application_effect_not_started(
             "stale_application",
-            "application_id is stale; run computer_observe(action=applications) again before another launch",
+            "application_id is stale; run observe_computer(action=applications) again before another launch",
             client_id,
             application_id,
         ),

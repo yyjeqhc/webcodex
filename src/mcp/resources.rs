@@ -143,7 +143,7 @@ pub(super) fn mcp_computer_app_resources_list(domain: Option<&str>) -> Value {
         "resources": [{
             "uri": MCP_COMPUTER_UI_RESOURCE_URI,
             "name": "WebCodex Computer",
-            "description": "Minimal read-only WebCodex Computer screenshot card that performs only the standard MCP Apps handshake and renders native images returned by computer_observe snapshot actions.",
+            "description": "Minimal read-only WebCodex Computer screenshot card that performs only the standard MCP Apps handshake and renders native images returned by observe_computer snapshot actions.",
             "mimeType": MCP_UI_RESOURCE_MIME_TYPE,
             "_meta": mcp_computer_app_resource_meta(domain)
         }]
@@ -575,13 +575,13 @@ impl McpSnapshotResourceKind {
             return None;
         }
         match tool_name {
-            "browser_observe"
+            "observe_browser"
                 if output.get("browser_id").is_some() && output.get("page_id").is_some() =>
             {
                 Some(Self::Browser)
             }
-            "computer_observe" if output.get("display_id").is_some() => Some(Self::Display),
-            "computer_observe" => Some(Self::Window),
+            "observe_computer" if output.get("display_id").is_some() => Some(Self::Display),
+            "observe_computer" => Some(Self::Window),
             _ => None,
         }
     }
@@ -806,7 +806,7 @@ pub(super) fn mcp_runtime_tool_result_with_snapshot_resource(
     result_presentation: McpToolResultPresentation,
 ) -> Value {
     let native_image_requested = as_image_requested
-        || (matches!(tool_name, "computer_observe" | "browser_observe")
+        || (matches!(tool_name, "observe_computer" | "observe_browser")
             && result.output.get("content_base64").is_some());
     if native_image_requested && result.success {
         match mcp_native_image_tool_result(tool_name, &mut result, snapshot_caller) {
@@ -1749,12 +1749,12 @@ pub(super) fn project_artifact_presentation_mode(
     arguments: &Value,
 ) -> ProjectArtifactPresentationMode {
     match tool_name {
-        "read_project_artifact"
+        "read_project_artifact_chunk"
             if arguments.get("as_image").and_then(Value::as_bool) == Some(true) =>
         {
             ProjectArtifactPresentationMode::Image
         }
-        "project_artifact" => match arguments.get("action").and_then(Value::as_str) {
+        "inspect_project_artifact" => match arguments.get("action").and_then(Value::as_str) {
             Some("image") => ProjectArtifactPresentationMode::Image,
             Some("export") => ProjectArtifactPresentationMode::Export,
             _ => ProjectArtifactPresentationMode::None,
@@ -1764,7 +1764,7 @@ pub(super) fn project_artifact_presentation_mode(
 }
 
 fn artifact_export_operation_label(_tool_name: &str) -> &'static str {
-    "project_artifact(action=export)"
+    "inspect_project_artifact(action=export)"
 }
 
 #[derive(Debug, Default)]
@@ -1817,7 +1817,7 @@ pub(super) fn prepare_tool_call(
         None
     };
     let snapshot_resource_caller =
-        if stateless_2026 && matches!(tool_name, "computer_observe" | "browser_observe") {
+        if stateless_2026 && matches!(tool_name, "observe_computer" | "observe_browser") {
             mcp_artifact_export_caller_binding(auth).ok()
         } else {
             None
@@ -1852,7 +1852,7 @@ pub(super) fn adapt_tool_result(
         ));
     }
     if artifact_presentation == ProjectArtifactPresentationMode::Image
-        || matches!(tool_name, "computer_observe" | "browser_observe")
+        || matches!(tool_name, "observe_computer" | "observe_browser")
     {
         return McpResourceToolResultAdaptation::Framed(
             mcp_runtime_tool_result_with_snapshot_resource(

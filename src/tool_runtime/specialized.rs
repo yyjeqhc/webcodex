@@ -38,10 +38,10 @@ pub(crate) async fn try_dispatch_specialized_gateway(
         request.tool_name.as_str(),
         crate::plugin_gateway::PLUGIN_TOOL_NAME
             | crate::ssh_resource_gateway::SSH_RESOURCE_TOOL_NAME
-            | "browser_observe"
-            | "browser_act"
-            | "computer_observe"
-            | "computer_control"
+            | "observe_browser"
+            | "control_browser"
+            | "observe_computer"
+            | "control_computer"
     ) {
         return None;
     }
@@ -689,7 +689,7 @@ mod tests {
 
         let read = runtime
             .govern_specialized_invocation(
-                "browser_observe",
+                "observe_browser",
                 SpecializedOperationPolicy::read(
                     SpecializedSource::Browser,
                     "targets",
@@ -706,7 +706,7 @@ mod tests {
 
         let denied = runtime
             .govern_specialized_invocation(
-                "browser_act",
+                "control_browser",
                 SpecializedOperationPolicy::consequential(
                     SpecializedSource::Browser,
                     "navigate",
@@ -740,7 +740,7 @@ mod tests {
         );
         let read = runtime
             .govern_specialized_invocation(
-                "browser_observe",
+                "observe_browser",
                 SpecializedOperationPolicy::read(
                     SpecializedSource::Browser,
                     "targets",
@@ -758,7 +758,7 @@ mod tests {
 
         let denied = runtime
             .govern_specialized_invocation(
-                "browser_act",
+                "control_browser",
                 SpecializedOperationPolicy::consequential(
                     SpecializedSource::Browser,
                     "click",

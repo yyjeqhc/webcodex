@@ -81,17 +81,17 @@ Windows 继续使用 Runner 已有的 `PATH` / `PATHEXT` native executable 规�
 
 Native Plugin 是 Runner-owned capability。provider 的具体 Tool 永远不会加入
 Server-global WebCodex tool namespace，也不会被追加到外层 MCP `tools/list`。Plugin
-可以定义 `safe_delete`、`runtime_status` 或其他合法 provider-local 名称；它们不需要
+可以定义 `safe_delete`、`get_runtime_status` 或其他合法 provider-local 名称；它们不需要
 和 WebCodex builtin、其他 Runner 或同一 Runner 的其他 provider 做全局避让。
 
 唯一稳定的 model-facing 入口是一等 WebCodex 工具 `plugin_tool`。它的 ToolSpec 走和
 其他 WebCodex 工具相同的 canonical metadata/registry 链路，schema 与 Runner 是否在线、
 安装了哪些 Plugin 无关。因此即使当前没有 Plugin-capable Runner，
-`tool_manifest(tool_name="plugin_tool")` 也能返回准确 gateway contract。
+`read_tool_manifest(tool_name="plugin_tool")` 也能返回准确 gateway contract。
 `work_on_project` 还可以在 startup 中提供一个有界、Project-affine 的 Plugin selection catalog。它只包含 configured `cwd` 解析后与 authoritative Project root 一致且当前 ready/committed 的 provider tool；其他目录的 provider 不会自动进入 catalog。该 projection 不会暴露 provider path、command/argv/environment、schema、provider instance identity 或 invocation binding。Runner gateway 和模型 projection 都按序列化后的字节数截断 catalog；`total_count` 与 `catalog_revision` 仍描述完整目录。模型选择后仍必须走 canonical `plugin_tool describe -> call`。在支持 context sidecar 的 surface 上，同时具备 `project:read` 与 `plugin:inspect` 的调用者也可以显式请求 `plugins.catalog` 获取同类 Project-affine metadata。
 
 MCP 与 Runtime API 复用同一个 canonical `plugin_tool` parser 和 action-aware
-executor，不存在独立的客户端实现或工具名称兼容表。按照当前 `tool_manifest`
+executor，不存在独立的客户端实现或工具名称兼容表。按照当前 `read_tool_manifest`
 返回的调用路径，向已获准的 gateway 传入正常 business arguments：
 ```json
 {"action":"describe","runner":"my-runner","plugin":"repo-tools","tool":"safe_delete"}
@@ -201,13 +201,13 @@ set 原样保留；全部成功后才原子替换。被删除的 provider 会立
 reload 前运行 `check` 不会替换当前 committed provider set，也不会创建 binding。成功的
 check candidate 会被销毁，不会偷偷复用成下一次 reload provider。
 
-`runner_config_reload` 与 `plugin_tool reload` 共用同一个 Plugin candidate
+`reload_runner_config` 与 `plugin_tool reload` 共用同一个 Plugin candidate
 admission/commit primitive。修改 `[plugins]` 不需要为了 Plugin 生效而重启 Runner：generic
 Runner config reload 会在同一次 activation 中 live apply Plugin candidate；`plugin_tool
 reload` 则提供更窄、只需要 `plugin:manage` 的专门入口。Plugin management authority 不会
 因此获得修改其他 Runner config 的权限。
 
-`runner_config_check` 仍然只是 Runner config 的结构性检查：读取/解析 startup-bound
+`check_runner_config` 仍然只是 Runner config 的结构性检查：读取/解析 startup-bound
 `runner.toml`、验证配置边界并分类 restart-only 字段，不会启动 disposable Plugin process。
 需要检查 executable resolution 以及 Plugin `initialize -> tools/list` protocol/admission 时，
 使用 `plugin_tool check(runner, plugin)`。

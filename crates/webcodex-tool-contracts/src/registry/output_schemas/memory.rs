@@ -62,7 +62,7 @@ fn memory_scope_descriptor_schema() -> Value {
 
 pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
     match name {
-        "memory_search" => Some(wrapped_output_schema(vec![
+        "search_memory" => Some(wrapped_output_schema(vec![
             ("project", schema_type("string", "Resolved Project id.")),
             (
                 "catalog_revision",
@@ -111,7 +111,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 schema_type("boolean", "Always false for search failures."),
             ),
         ])),
-        "memory_read" => Some(wrapped_output_schema(vec![
+        "read_memory" => Some(wrapped_output_schema(vec![
             ("project", schema_type("string", "Resolved Project id.")),
             (
                 "memory_id",
@@ -176,7 +176,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 schema_type("boolean", "Always false for read failures."),
             ),
         ])),
-        "memory_set" => Some(wrapped_output_schema(vec![
+        "set_memory" => Some(wrapped_output_schema(vec![
             ("project", schema_type("string", "Resolved Project id.")),
             (
                 "memory_id",
@@ -217,7 +217,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 ),
             ),
         ])),
-        "memory_delete" => Some(wrapped_output_schema(vec![
+        "delete_memory" => Some(wrapped_output_schema(vec![
             ("project", schema_type("string", "Resolved Project id.")),
             (
                 "memory_id",
@@ -248,7 +248,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 schema_type("string", "Current revision on stale delete CAS."),
             ),
         ])),
-        "memory_scope_list" => Some(wrapped_output_schema(vec![
+        "list_memory_scopes" => Some(wrapped_output_schema(vec![
             ("total_count", schema_type("integer", "Total durable Memory scope count.")),
             ("returned_count", schema_type("integer", "Scope descriptors returned in this page.")),
             ("offset", schema_type("integer", "Effective page offset.")),
@@ -258,7 +258,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ("error_kind", schema_type("string", "Stable lifecycle/store error code.")),
             ("state_changed", schema_type("boolean", "Always false for list failures.")),
         ])),
-        "memory_scope_purge" => Some(wrapped_output_schema(vec![
+        "purge_memory_scope" => Some(wrapped_output_schema(vec![
             ("memory_scope_id", schema_type("string", "Opaque Memory scope identity.")),
             ("catalog_revision", nullable_schema("string", "Purged catalog revision, or null when already absent.")),
             ("current_catalog_revision", schema_type("string", "Current catalog revision when the CAS fence is stale.")),

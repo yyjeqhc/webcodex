@@ -68,7 +68,7 @@ test verifies exact/category/summary/full-list requests and refusal to expose
 Memory without its capability. No published schema or card resource changes are
 intended. No runtime restart or deployment is needed to measure the source tests.
 
-The broad all-feature `tool_manifest` selection passed 35 tests. An additional
+The broad all-feature `read_tool_manifest` selection passed 35 tests. An additional
 exact experimental Code Mode stage test exposed the existing 16 KiB guarded-edit
 projection ceiling: read-only and validation stages succeeded, guarded-edit
 reported `code_mode_projection_too_large`. The same targeted test was run on a

@@ -749,7 +749,7 @@ import sys
 
 data = json.loads(sys.argv[1])
 out = data.get("output") or {}
-changes = ((out.get("changes") or {}).get("show_changes") or {})
+changes = ((out.get("changes") or {}).get("read_workspace_changes") or {})
 files = changes.get("files") or []
 ok = (
     data.get("success") is True
@@ -961,32 +961,32 @@ complete_case_session() {
         fi
     else
         params="$(params_workspace_hygiene "$session_id")"
-        call_tool "workspace_hygiene_check" "$params"
-        assert_success "workspace_hygiene_check succeeds" "$LAST_BODY"
+        call_tool "check_workspace_hygiene" "$params"
+        assert_success "check_workspace_hygiene succeeds" "$LAST_BODY"
 
         params="$(params_session_handoff "$session_id")"
-        call_tool "session_handoff_summary" "$params"
-        assert_success "session_handoff_summary succeeds" "$LAST_BODY"
-        assert_handoff_available "session_handoff_summary returns handoff" "$LAST_BODY" "output"
+        call_tool "read_session_handoff_summary" "$params"
+        assert_success "read_session_handoff_summary succeeds" "$LAST_BODY"
+        assert_handoff_available "read_session_handoff_summary returns handoff" "$LAST_BODY" "output"
         capture_validation_metrics "$LAST_BODY" "output.validation"
 
         if [ "$case_name" = "small_structured_line_edit" ]; then
             assert_validation_available \
-                "session_handoff_summary validation summary is available" \
+                "read_session_handoff_summary validation summary is available" \
                 "$LAST_BODY" \
                 "output.validation"
         elif [ "$case_name" = "failed_call_recovery" ]; then
             assert_validation_unavailable \
-                "session_handoff_summary validation summary is unavailable without validation events" \
+                "read_session_handoff_summary validation summary is unavailable without validation events" \
                 "$LAST_BODY" \
                 "output.validation"
             assert_handoff_failed_tool_metadata \
-                "session_handoff_summary includes failed tool metadata" \
+                "read_session_handoff_summary includes failed tool metadata" \
                 "$LAST_BODY" \
                 "output"
         else
             assert_validation_unavailable \
-                "session_handoff_summary validation summary is unavailable without validation events" \
+                "read_session_handoff_summary validation summary is unavailable without validation events" \
                 "$LAST_BODY" \
                 "output.validation"
         fi
@@ -1218,8 +1218,8 @@ print(json.dumps({
 }, separators=(",", ":")))
 PY
 )"
-    call_tool "show_changes" "$params"
-    assert_success "show_changes succeeds" "$LAST_BODY"
+    call_tool "read_workspace_changes" "$params"
+    assert_success "read_workspace_changes succeeds" "$LAST_BODY"
 
     complete_case_session "$flow_kind" "$session_id" "inspect_only"
 
@@ -1331,8 +1331,8 @@ print(json.dumps({
 }, separators=(",", ":")))
 PY
 )"
-    call_tool "show_changes" "$params"
-    assert_success "show_changes after edit succeeds" "$LAST_BODY"
+    call_tool "read_workspace_changes" "$params"
+    assert_success "read_workspace_changes after edit succeeds" "$LAST_BODY"
     if python3 - "$LAST_BODY" <<'PY'
 import json
 import sys
@@ -1348,9 +1348,9 @@ ok = (
 sys.exit(0 if ok else 1)
 PY
     then
-        case_ok "show_changes reports src/lib.rs as changed"
+        case_ok "read_workspace_changes reports src/lib.rs as changed"
     else
-        case_fail "show_changes did not report src/lib.rs as changed"
+        case_fail "read_workspace_changes did not report src/lib.rs as changed"
     fi
 
     params="$(python3 - "$RUNTIME_PROJECT_ID" "$session_id" <<'PY'
@@ -1564,8 +1564,8 @@ print(json.dumps({
 }, separators=(",", ":")))
 PY
 )"
-    call_tool "show_changes" "$params"
-    assert_success "show_changes after recovery succeeds" "$LAST_BODY"
+    call_tool "read_workspace_changes" "$params"
+    assert_success "read_workspace_changes after recovery succeeds" "$LAST_BODY"
 
     complete_case_session "$flow_kind" "$session_id" "failed_call_recovery"
 

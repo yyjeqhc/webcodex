@@ -20,13 +20,15 @@ mod tests {
         assert_eq!(DEFINITIONS.len(), 2);
         let observe = DEFINITIONS[0]
             .model_spec
-            .expect("browser_observe model spec");
-        let act = DEFINITIONS[1].model_spec.expect("browser_act model spec");
+            .expect("observe_browser model spec");
+        let act = DEFINITIONS[1]
+            .model_spec
+            .expect("control_browser model spec");
         let observe_schema_bytes =
-            serde_json::to_vec(&crate::input_schema_for_tool("browser_observe"))
+            serde_json::to_vec(&crate::input_schema_for_tool("observe_browser"))
                 .unwrap()
                 .len();
-        let act_schema_bytes = serde_json::to_vec(&crate::input_schema_for_tool("browser_act"))
+        let act_schema_bytes = serde_json::to_vec(&crate::input_schema_for_tool("control_browser"))
             .unwrap()
             .len();
         let combined_schema_bytes = observe_schema_bytes + act_schema_bytes;
@@ -53,7 +55,7 @@ mod tests {
 pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
         def(
-            "browser_observe",
+            "observe_browser",
             super::ToolAuditPolicy::typed_semantic(
                 super::ToolAuditSemanticResultPolicy::BrowserObservation,
             ),
@@ -74,13 +76,13 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             false,
             super::ToolSessionEvidencePolicy::NONE,
         ),
-        "Guaranteed read-only Browser observation gateway with the closed actions targets, browsers, pages, snapshot, screenshot, console, network, and diagnostics. Browser/Page/Element identities are opaque and process-local. Snapshot auto mode compacts large pages to admitted controls and semantic choices such as select options; full/interactive and bounded max_nodes/max_depth are explicit overrides. An actionable node includes element_id and actions, the only browser_act effects it admits. Diagnostics supports a monotonic since_cursor delta for new console/network activity, with summarized new errors/warnings/4xx/5xx/failures; include_all flags expose the matching retained events. Projections stay bounded and report truncation. Screenshots use the shared native-image delivery contract at the MCP boundary. Exact Runner capability and browser:read authority are checked before dispatch. No effect, process launch, arbitrary protocol input, script execution, profile attachment, or shell fallback is available here.",
+        "Guaranteed read-only Browser observation gateway with the closed actions targets, browsers, pages, snapshot, screenshot, console, network, and diagnostics. Browser/Page/Element identities are opaque and process-local. Snapshot auto mode compacts large pages to admitted controls and semantic choices such as select options; full/interactive and bounded max_nodes/max_depth are explicit overrides. An actionable node includes element_id and actions, the only control_browser effects it admits. Diagnostics supports a monotonic since_cursor delta for new console/network activity, with summarized new errors/warnings/4xx/5xx/failures; include_all flags expose the matching retained events. Projections stay bounded and report truncation. Screenshots use the shared native-image delivery contract at the MCP boundary. Exact Runner capability and browser:read authority are checked before dispatch. No effect, process launch, arbitrary protocol input, script execution, profile attachment, or shell fallback is available here.",
     ),
     require_any_scopes(
         permission_risk(
             model_spec(
                 def(
-                    "browser_act",
+                    "control_browser",
                     super::ToolAuditPolicy::typed_semantic(
                         super::ToolAuditSemanticResultPolicy::BrowserControl,
                     ),

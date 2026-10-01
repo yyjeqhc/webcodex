@@ -188,7 +188,7 @@ fn git_log_suggested_call(
     if let Some(session_id) = session_id {
         arguments.insert("session_id".to_string(), json!(session_id));
     }
-    SuggestedToolCall::mechanically_followable("git_log", Value::Object(arguments)).to_value()
+    SuggestedToolCall::mechanically_followable("read_git_log", Value::Object(arguments)).to_value()
 }
 
 impl ToolRuntime {
@@ -205,7 +205,7 @@ impl ToolRuntime {
                 Ok(value) => Some(value),
                 Err(reason) => {
                     return ToolResult::err_with_output(
-                        format!("git_log failed: {reason}"),
+                        format!("read_git_log failed: {reason}"),
                         json!({
                             "project": project,
                             "error_kind": reason,

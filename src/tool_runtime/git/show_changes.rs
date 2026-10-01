@@ -38,12 +38,12 @@ const SHOW_CHANGES_MAX_HUNK_LINES: usize = 240;
 const SHOW_CHANGES_DIFF_CONTEXT_LINES: usize = 20;
 const SHOW_CHANGES_SESSION_SIGNAL_EVENT_LIMIT: usize = 30;
 const SHOW_CHANGES_MAX_SESSION_EVENT_LIMIT: usize = 200;
-/// Maximum number of changed-file records `show_changes` emits on the
+/// Maximum number of changed-file records `read_workspace_changes` emits on the
 /// production side. The total count stays exact (all entries are counted); only
 /// the returned records are bounded so a multi-thousand-file status never
 /// overflows ordinary Runner result-retention headroom.
 pub(crate) const SHOW_CHANGES_MAX_STATUS_FILES: usize = 200;
-/// Production-side stdout budget for the whole `show_changes` command. The
+/// Production-side stdout budget for the whole `read_workspace_changes` command. The
 /// command is constructed so its worst-case raw stdout stays under this value,
 /// which is itself below the ordinary Runner per-stream result-retention default
 /// of 256 KiB, with room for protocol framing and error text. That retention
@@ -238,7 +238,7 @@ pub(crate) fn parse_show_changes_status_observation(
     }
 }
 
-/// Build the graceful-degradation payload returned by `show_changes` when the
+/// Build the graceful-degradation payload returned by `read_workspace_changes` when the
 /// project is not a git repository. Git-backed status/diff is reported as
 /// unavailable without dumping git's noisy stderr/usage; the session
 /// sub-summary is still layered on by the caller via
@@ -330,7 +330,7 @@ fn non_git_show_changes_payload_with_observation(
     payload
 }
 
-/// Build the read-only, production-bounded `show_changes` command.
+/// Build the read-only, production-bounded `read_workspace_changes` command.
 ///
 /// Unlike an unbounded `git status` capture, the status is *streamed* line by
 /// line through a POSIX `while read` loop that:
@@ -551,7 +551,7 @@ pub(crate) fn show_changes_command(
         .join("\n")
 }
 
-/// Parsed, production-bounded `show_changes` stdout frames. The status result
+/// Parsed, production-bounded `read_workspace_changes` stdout frames. The status result
 /// frame carries the authoritative `files_*` and per-category counts reported
 /// by the command's streaming loop, so totals stay exact even when the
 /// returned file records were truncated by the production-side limit.
@@ -1161,7 +1161,7 @@ pub(crate) fn parse_show_changes_output(
 }
 
 /// Map a full `git diff` exit code to the structured `diff_status` object
-/// reported by `show_changes`. `observed` means the diff exit code was
+/// reported by `read_workspace_changes`. `observed` means the diff exit code was
 /// captured (0 = clean diff, non-zero = command failure); `command_failed`
 /// means a non-zero exit was observed; `output_unavailable` means the exit
 /// code could not be captured by the production-side loop.
@@ -1904,7 +1904,10 @@ fn suggested_next_actions_for(
         push_unique_action(&mut actions, "commit or revert changes after review");
     }
     if session.failed {
-        push_unique_action(&mut actions, "review failed tool calls in session_summary");
+        push_unique_action(
+            &mut actions,
+            "review failed tool calls in read_session_summary",
+        );
     }
     if session.write_like {
         push_unique_action(&mut actions, "review changed paths from this session");
@@ -2002,7 +2005,10 @@ fn refresh_show_changes_suggestions(output: &mut Value, session: Option<SessionA
             "git status unavailable; inspect the status failure before relying on worktree cleanliness".to_string()
         }];
         if session.failed {
-            push_unique_action(&mut actions, "review failed tool calls in session_summary");
+            push_unique_action(
+                &mut actions,
+                "review failed tool calls in read_session_summary",
+            );
         }
         if session.write_like {
             push_unique_action(&mut actions, "review changed paths from this session");
@@ -2084,7 +2090,10 @@ fn set_show_changes_verdict(output: &mut Value) {
         .is_some_and(|clean| !clean)
     {
         push_unique_reason(&mut warning_reasons, "workspace_dirty");
-        push_unique_action(&mut actions, "review workspace changes with show_changes");
+        push_unique_action(
+            &mut actions,
+            "review workspace changes with read_workspace_changes",
+        );
     }
     if output
         .pointer("/counts/conflicted")
@@ -2105,7 +2114,7 @@ fn set_show_changes_verdict(output: &mut Value) {
         push_unique_reason(&mut blocking_reasons, "git_inspection_failed");
         push_unique_action(
             &mut actions,
-            "rerun show_changes or inspect git status directly",
+            "rerun read_workspace_changes or inspect git status directly",
         );
     }
 
@@ -2122,7 +2131,7 @@ fn set_show_changes_verdict(output: &mut Value) {
         .and_then(Value::as_bool)
         .unwrap_or(false);
     if hunks_truncated {
-        actions.retain(|action| action != "review workspace changes with show_changes");
+        actions.retain(|action| action != "review workspace changes with read_workspace_changes");
         let diff_truncation_reasons = output
             .get("truncation_reasons")
             .and_then(Value::as_array)
@@ -2154,7 +2163,7 @@ fn set_show_changes_verdict(output: &mut Value) {
             .and_then(Value::as_str)
             .unwrap_or_default();
         let canonical_recovery_call = SuggestedToolCall::mechanically_followable(
-            "git_diff_hunks",
+            "read_git_diff_hunks",
             json!({
                 "project": project,
                 "cached": false,
@@ -2171,18 +2180,18 @@ fn set_show_changes_verdict(output: &mut Value) {
         push_unique_reason(&mut warning_reasons, "truncated_by_limit");
         push_unique_action(
             &mut actions,
-            "continue the diff review with git_diff_hunks; use paths to narrow scope when useful",
+            "continue the diff review with read_git_diff_hunks; use paths to narrow scope when useful",
         );
         if page_truncated {
             push_unique_action(
                 &mut actions,
-                "follow git_diff_hunks recovery.later_hunks.next_call while has_more=true",
+                "follow read_git_diff_hunks recovery.later_hunks.next_call while has_more=true",
             );
         }
         if hunk_line_truncated {
             push_unique_action(
                 &mut actions,
-                "follow git_diff_hunks recovery.current_hunk.next_call; after the fresh handoff observation it may use bounded refinement or an exact hunk-fragment continuation",
+                "follow read_git_diff_hunks recovery.current_hunk.next_call; after the fresh handoff observation it may use bounded refinement or an exact hunk-fragment continuation",
             );
         }
     } else if let Some(object) = output.as_object_mut() {
@@ -2194,7 +2203,7 @@ fn set_show_changes_verdict(output: &mut Value) {
         .and_then(Value::as_bool)
         .unwrap_or(false);
     if untracked_previews_truncated {
-        actions.retain(|action| action != "review workspace changes with show_changes");
+        actions.retain(|action| action != "review workspace changes with read_workspace_changes");
         push_unique_reason(&mut warning_reasons, "truncated_by_limit");
         push_unique_action(
             &mut actions,
@@ -2629,23 +2638,23 @@ set +e
             ToolResult::ok(payload)
         } else {
             let error = if !status_observed {
-                "show_changes git status unavailable".to_string()
+                "read_workspace_changes git status unavailable".to_string()
             } else if !diff_stat_ok {
                 match frames.diff_stat_exit {
                     Some(code) => format!(
-                        "show_changes git diff-stat inspection failed with exit code {code}"
+                        "read_workspace_changes git diff-stat inspection failed with exit code {code}"
                     ),
-                    None => "show_changes git diff-stat inspection unavailable".to_string(),
+                    None => "read_workspace_changes git diff-stat inspection unavailable".to_string(),
                 }
             } else if include_diff && !diff_ok {
                 match frames.diff_exit {
                     Some(code) => {
-                        format!("show_changes git diff inspection failed with exit code {code}")
+                        format!("read_workspace_changes git diff inspection failed with exit code {code}")
                     }
-                    None => "show_changes git diff inspection unavailable".to_string(),
+                    None => "read_workspace_changes git diff inspection unavailable".to_string(),
                 }
             } else {
-                "show_changes git inspection failed".to_string()
+                "read_workspace_changes git inspection failed".to_string()
             };
             ToolResult {
                 success: false,

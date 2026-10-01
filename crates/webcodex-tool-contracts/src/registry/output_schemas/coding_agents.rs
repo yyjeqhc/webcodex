@@ -116,13 +116,13 @@ fn common_run_fields() -> Vec<(&'static str, Value)> {
 pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
     let mut fields = common_run_fields();
     match name {
-        "coding_agent_start" => {
+        "start_coding_agent" => {
             fields.push(("available_providers", provider_inventory_schema()));
             fields.push((
                 "suggested_call",
                 suggested_tool_call_schema(
                     webcodex_core::runtime_contract::GeneratedFollowUpKind::FallbackRecovery,
-                    "runtime_status",
+                    "get_runtime_status",
                     json!({
                         "type": "object",
                         "additionalProperties": false,
@@ -141,7 +141,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ));
             Some(wrapped_output_schema(fields))
         }
-        "coding_agent_observe" => {
+        "observe_coding_agent" => {
             fields.extend([
                 ("events", array_schema(event_schema(), "Only-new retained normalized CodingAgentRun events; raw ACP JSON is never exposed.")),
                 ("observation_token", schema_type("string", "Opaque Run-bound token for the next observation.")),
@@ -151,7 +151,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ]);
             Some(wrapped_output_schema(fields))
         }
-        "coding_agent_cancel" => {
+        "cancel_coding_agent" => {
             fields.push((
                 "cancel_requested",
                 schema_type(
@@ -197,7 +197,7 @@ mod tests {
         assert_eq!(terminal["anyOf"][0]["additionalProperties"], false);
         assert_eq!(terminal["anyOf"][1]["type"], "null");
 
-        let observe = output_schema_for_tool("coding_agent_observe").unwrap();
+        let observe = output_schema_for_tool("observe_coding_agent").unwrap();
         let serialized = serde_json::to_string(&observe).unwrap();
         assert!(serialized.contains("agent_message"));
         assert!(!serialized.contains("agentmessage"));

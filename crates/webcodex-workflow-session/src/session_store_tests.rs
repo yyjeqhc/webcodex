@@ -27,7 +27,7 @@ fn session_tool_contract(tool_name: &str) -> SessionToolContract {
         "read_file" => (true, false, false, SessionPathHint::SinglePath),
         "write_project_file" => (false, true, false, SessionPathHint::SinglePath),
         "edit_project_files" => (false, true, false, SessionPathHint::PathList),
-        "run_shell" | "session_shell_exec" | "cargo_check" => {
+        "run_shell" | "execute_session_shell" | "cargo_check" => {
             (false, false, true, SessionPathHint::None)
         }
         _ => (true, false, false, SessionPathHint::None),
@@ -47,7 +47,7 @@ fn session_tool_contract(tool_name: &str) -> SessionToolContract {
 #[test]
 fn compound_search_observation_uses_nested_successful_matches() {
     let paths = crate::events::observed_paths_for_successful_result(
-        "search_and_read",
+        "search_and_read_project_texts",
         Vec::new(),
         &json!({
             "search": {"matches": [
@@ -60,7 +60,7 @@ fn compound_search_observation_uses_nested_successful_matches() {
     );
     assert_eq!(paths, vec!["src/lib.rs"]);
     let empty = crate::events::observed_paths_for_successful_result(
-        "search_and_read",
+        "search_and_read_project_texts",
         Vec::new(),
         &json!({"search": {"matches": []}, "reads": []}),
     );
@@ -111,9 +111,9 @@ fn default_session_retention_exceeds_model_summary_window_and_persists() {
         let start = store.record_tool_call_started(
             Some(&session.session_id),
             SessionTransport::Api,
-            "runtime_status",
+            "get_runtime_status",
             &json!({"probe": index}),
-            session_tool_contract("runtime_status"),
+            session_tool_contract("get_runtime_status"),
         );
         store.record_tool_call_finished(start, true, &json!({"ok": true}), None, None);
     }
@@ -196,9 +196,9 @@ fn retained_task_instruction_identity_survives_summary_tail_and_fences_later_att
         let start = store.record_tool_call_started(
             Some(&session_id),
             SessionTransport::Api,
-            "runtime_status",
+            "get_runtime_status",
             &json!({"probe": index}),
-            session_tool_contract("runtime_status"),
+            session_tool_contract("get_runtime_status"),
         );
         store.record_tool_call_finished(start, true, &json!({"ok": true}), None, None);
     }
@@ -247,12 +247,12 @@ fn input_summary_redacts_sensitive_keys() {
     store.record_tool_call_started(
         Some(&summary.session_id),
         SessionTransport::Api,
-        "runtime_status",
+        "get_runtime_status",
         &json!({
             "token": "super-secret-token",
             "command": "curl -H 'Authorization: Bearer wc_pat_never_store'"
         }),
-        session_tool_contract("runtime_status"),
+        session_tool_contract("get_runtime_status"),
     );
     let summary = store.summary(&summary.session_id, Some(10)).unwrap();
     assert_eq!(
@@ -668,7 +668,7 @@ fn persistent_shell_evidence_survives_restore_without_command_or_output() {
     let start = store.record_tool_call_started(
         Some(&session.session_id),
         SessionTransport::Api,
-        "session_shell_exec",
+        "execute_session_shell",
         &json!({
             "project": "agent:oe:private-drop",
             "session_id": session.session_id.clone(),
@@ -677,7 +677,7 @@ fn persistent_shell_evidence_survives_restore_without_command_or_output() {
             "command_summary": "export PRIVATE_LEDGER_VALUE=secret",
             "command_present": true
         }),
-        session_tool_contract("session_shell_exec"),
+        session_tool_contract("execute_session_shell"),
     );
     store.record_tool_call_finished(
         start,

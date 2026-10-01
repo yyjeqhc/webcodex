@@ -11,7 +11,7 @@ Phase 1 intentionally exposes only two primary model-facing tools while retainin
 precise native Runner operations internally:
 
 ```text
-browser_observe / browser_act
+observe_browser / control_browser
         -> closed typed action enums
         -> canonical specialized governance
         -> exact Runner capability + operation
@@ -20,9 +20,9 @@ browser_observe / browser_act
         -> Chromium-family browser
 ```
 
-`browser_observe` is guaranteed read-only and has the closed actions `targets`,
+`observe_browser` is guaranteed read-only and has the closed actions `targets`,
 `browsers`, `pages`, `snapshot`, `screenshot`, `console`, `network`, and `diagnostics`.
-`browser_act` has the closed actions `launch`, `new_page`, `navigate`, `reload`,
+`control_browser` has the closed actions `launch`, `new_page`, `navigate`, `reload`,
 `click`, `input_text`, `select_option`, `set_value`, `upload_file`, `batch`, `key`,
 `clear_diagnostics`, `close_page`, and `close_browser`. The model surface does not expose one MCP tool
 per CDP primitive, and it does not accept arbitrary protocol methods, scripts,
@@ -37,7 +37,7 @@ failure attribution without inflating the model tool inventory.
 
 ### Bounded form batches
 
-`browser_act(action=batch)` sends one `browser_batch` Runner invocation containing
+`control_browser(action=batch)` sends one `browser_batch` Runner invocation containing
 1..32 ordered `input_text`, `select_option`, `set_value`, `click`, or `upload_file`
 operations for one exact Browser/page. Each operation carries only an opaque
 element identity and its action-specific value; upload additionally supplies the
@@ -76,18 +76,18 @@ remains `ready_for_review`.
 
 Browser uses independent scopes:
 
-- `browser:read` for `browser_observe`;
-- `browser:launch` for `browser_act(action=launch)`;
-- `browser:control` for the remaining `browser_act` effects.
+- `browser:read` for `observe_browser`;
+- `browser:launch` for `control_browser(action=launch)`;
+- `browser:control` for the remaining `control_browser` effects.
 
-The outer `browser_act` ToolDefinition admits callers that hold control or launch
+The outer `control_browser` ToolDefinition admits callers that hold control or launch
 authority, but that union is only catalog admission. The canonical specialized
 governance path resolves the exact action and exact scope before any effect can be
 dispatched. Browser control uses `ToolRisk::BrowserControl`, Standard permission,
 and non-idempotent effect semantics. Internal process creation is an implementation
 detail of Browser launch; it does not grant shell, generic process, or Job
-authority. A ReadOnly Workflow Session may call `browser_observe` and must reject
-`browser_act` before dispatch.
+authority. A ReadOnly Workflow Session may call `observe_browser` and must reject
+`control_browser` before dispatch.
 
 Browser tools are model-visible but deliberately do not expand the Local Coding or
 Adaptive Runtime startup-direct schemas. Local Coding does not expose them;
@@ -97,7 +97,7 @@ Operator may expose them directly.
 ## Runner capabilities and lifecycle
 
 The Runner advertises independent registration-required capabilities:
-`browser_observe`, `browser_control`, `browser_launch`,
+`observe_browser`, `browser_control`, `browser_launch`,
 `browser_element_action_admission`, and `browser_batch`. They are absent/false on
 older Runners and are never inferred by the Server from OS identity, protocol
 generation, shell support, Computer capabilities, or an assumed browser install.
@@ -178,7 +178,7 @@ Before any element effect (`click`, `input_text`, `select_option`, `set_value`, 
 `upload_file`), the runtime re-observes the current page document and requires the
 complete fence to remain exact. A stale failure never guesses or
 retargets a replacement element; recovery is a fresh
-`browser_observe(action=snapshot, ...)`.
+`observe_browser(action=snapshot, ...)`.
 
 Model-authored navigation permits only absolute `http` and `https` URLs. The
 runtime may use `about:blank` internally for safe page creation/startup, but callers
@@ -200,8 +200,8 @@ Transport loss, timeout, Runner interruption, or a later failed stage after an
 earlier Browser effect was submitted must not be converted into a retry-safe
 failure. WebCodex never automatically repeats navigation, click, text input, key
 input, page creation, close, or launch. `outcome_unknown` returns an observation
-first recovery call, normally `browser_observe(action=pages)` or
-`browser_observe(action=snapshot)`, so the caller reconciles current state before
+first recovery call, normally `observe_browser(action=pages)` or
+`observe_browser(action=snapshot)`, so the caller reconciles current state before
 choosing another effect.
 
 ## Privacy and image delivery
@@ -214,7 +214,7 @@ form values, caller input text, or query-bearing navigation URLs. `input_text`
 audit records only presence and byte length; navigation audit records URL presence,
 not the URL.
 
-`browser_observe(action=screenshot)` returns a bounded PNG from the Runner data
+`observe_browser(action=screenshot)` returns a bounded PNG from the Runner data
 plane. At the MCP boundary it reuses the shared native-image framing used by
 Computer snapshots: the Base64 body is moved into an MCP image content block and
 removed from structured content, which records `content_delivery=mcp_image`.

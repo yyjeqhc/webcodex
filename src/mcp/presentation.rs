@@ -66,9 +66,9 @@ fn tool_has_result_presentation_projection(tool_name: &str) -> bool {
             | "cargo_check"
             | "cargo_test"
             | "go_test"
-            | "validation_summary"
-            | "show_changes"
-            | "git_review_summary"
+            | "read_validation_summary"
+            | "read_workspace_changes"
+            | "read_git_review_summary"
     )
 }
 
@@ -1222,9 +1222,9 @@ fn presentation_from_call_result(tool_name: &str, call_result: &Value) -> Option
         "list_jobs" => list_jobs_presentation(output),
         "observe_jobs" => observe_jobs_presentation(output),
         "cargo_check" | "cargo_test" | "go_test" => validation_run_presentation(tool_name, output),
-        "validation_summary" => validation_summary_presentation(output),
-        "show_changes" => show_changes_presentation(output),
-        "git_review_summary" => git_review_presentation(output),
+        "read_validation_summary" => validation_summary_presentation(output),
+        "read_workspace_changes" => show_changes_presentation(output),
+        "read_git_review_summary" => git_review_presentation(output),
         _ => None,
     }
 }

@@ -147,7 +147,7 @@ fn bootstrap_guidance_reuses_observations_with_explicit_freshness_exceptions() {
         "do not poll it",
         "initial branch/HEAD/status observation",
         "mutation fences",
-        "without lsp_status",
+        "without get_lsp_status",
         "probe_timeout",
         "complete/sufficient startup Skills/Plugins catalog",
         "broader/refreshed discovery",

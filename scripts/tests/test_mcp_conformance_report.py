@@ -535,7 +535,7 @@ class ReportGateTests(unittest.TestCase):
                 "specVersion": "2025-11-25",
                 "context": "stateful response to 'tools/list'",
                 "errors": ["ListToolsResult/tools/1/outputSchema: must have required property 'type' (result of 'tools/list')"],
-                "message": {"jsonrpc": "2.0", "id": 1, "result": {"tools": [{"name": "other"}, {"name": "ssh_resource"}]}},
+                "message": {"jsonrpc": "2.0", "id": 1, "result": {"tools": [{"name": "other"}, {"name": "manage_ssh_resource"}]}},
             }],
         }
         actual = json.loads(json.dumps(expected))
@@ -543,7 +543,7 @@ class ReportGateTests(unittest.TestCase):
             "ListToolsResult/tools/2/outputSchema: must have required property 'type' (result of 'tools/list')"
         ]
         actual["details"]["violations"][0]["message"]["result"]["tools"] = [
-            {"name": "inserted"}, {"name": "other"}, {"name": "ssh_resource"}
+            {"name": "inserted"}, {"name": "other"}, {"name": "manage_ssh_resource"}
         ]
         self.assertEqual(
             report_gate.check_evidence_sha256(expected),
@@ -559,7 +559,7 @@ class ReportGateTests(unittest.TestCase):
                 "specVersion": "2025-11-25",
                 "context": "stateful response to 'tools/list'",
                 "errors": ["ListToolsResult/tools/0/outputSchema: must have required property 'type' (result of 'tools/list')"],
-                "message": {"jsonrpc": "2.0", "id": 1, "result": {"tools": [{"name": "ssh_resource"}]}},
+                "message": {"jsonrpc": "2.0", "id": 1, "result": {"tools": [{"name": "manage_ssh_resource"}]}},
             }],
         }
         actual = json.loads(json.dumps(expected))

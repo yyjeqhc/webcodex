@@ -7,7 +7,7 @@ use crate::tool_runtime::startup_brief::{
 };
 use serde_json::{json, Value};
 
-const SKILL_HINT: &str = "Use skills.catalog or skill_list for broader or refreshed discovery.";
+const SKILL_HINT: &str = "Use skills.catalog or list_skills for broader or refreshed discovery.";
 const PLUGIN_HINT: &str = "Use plugins.catalog or explicit plugin_tool list and describe for broader or current schema discovery.";
 
 // Independent JSON oracle for the original greedy-prefix wire contract. Keep
@@ -153,7 +153,7 @@ fn startup_catalog_unavailable_is_not_a_successfully_empty_catalog() {
                 "skills_catalog_unavailable"
             )),
             "skills_catalog_unavailable",
-            "Use skills.catalog or skill_list for explicit discovery when available.",
+            "Use skills.catalog or list_skills for explicit discovery when available.",
         ),
         (
             json!(StartupPluginsCatalog::unavailable(

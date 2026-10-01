@@ -100,7 +100,7 @@ pub(in crate::tool_runtime::tests) fn show_changes_output_from_command(
     let (exit_code, stdout, stderr, _) = run_command_sync(&command, root, 30);
     assert_eq!(
         exit_code, 0,
-        "show_changes command failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        "read_workspace_changes command failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
     let frames = split_show_changes_stdout(&stdout, include_diff);
     let mut output = parse_show_changes_output(

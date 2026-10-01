@@ -121,7 +121,7 @@ pub enum RunnerCapabilityRequirement {
     /// Runner-authoritative Codex Patch parsing plus transactional file mutation.
     /// This additive request kind is never inferred from generic file-write support.
     ApplyPatch,
-    /// `git_status` / `git_diff` (Runner path runs git via shell; accept either
+    /// `get_git_status` / `git_diff` (Runner path runs git via shell; accept either
     /// an explicit `git` capability or `shell`).
     GitOrShell,
     /// `run_job` (Runner path starts an async job).
@@ -1144,7 +1144,7 @@ pub struct ToolRecommendedFlow {
     pub tools: &'static [&'static str],
 }
 
-/// Model-facing task intent for compact `tool_manifest` discovery views.
+/// Model-facing task intent for compact `read_tool_manifest` discovery views.
 /// Distinct from `category` (taxonomy) and recommended flows (short loop hints).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ToolManifestIntent {

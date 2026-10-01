@@ -22,7 +22,7 @@ from typing import Any, Iterable
 
 SCHEMA_VERSION = 1
 DEFAULT_CASE_MANIFEST = Path(__file__).with_name("agent_loop_cases.json")
-CODE_MODE_TOOLS = frozenset(("code_mode_exec", "code_mode_exec_effectful", "code_mode_exec_mutating"))
+CODE_MODE_TOOLS = frozenset(("execute_code_mode", "execute_effectful_code_mode", "execute_mutating_code_mode"))
 CANONICAL_CODE_MODE_SURFACES = ("read_only", "validation", "guarded_edit")
 CODE_MODE_SURFACES = frozenset(CANONICAL_CODE_MODE_SURFACES)
 LEGACY_CODE_MODE_SURFACE_ALIASES = {
@@ -959,14 +959,14 @@ _JOB_SCHEDULING_INDEPENDENT_TOOLS = frozenset(
     {
         "read_files",
         "search_project_texts",
-        "search_and_read",
+        "search_and_read_project_texts",
         "review_changes",
-        "show_changes",
-        "git_log",
-        "git_status",
-        "git_diff_hunks",
-        "git_review_summary",
-        "project_artifact",
+        "read_workspace_changes",
+        "read_git_log",
+        "get_git_status",
+        "read_git_diff_hunks",
+        "read_git_review_summary",
+        "inspect_project_artifact",
     }
 )
 

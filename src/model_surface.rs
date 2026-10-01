@@ -509,7 +509,7 @@ mod tests {
         ] {
             assert!(tool_requires_direct_app_presentation(tool), "{tool}");
         }
-        for ordinary in ["run_shell", "run_script", "show_changes"] {
+        for ordinary in ["run_shell", "run_script", "read_workspace_changes"] {
             assert!(
                 !tool_requires_direct_app_presentation(ordinary),
                 "{ordinary}"
@@ -571,13 +571,13 @@ mod tests {
 
     #[test]
     fn hidden_tools_fail_closed_without_protocol_admission() {
-        assert!(!is_model_visible_tool_name("skill_list"));
+        assert!(!is_model_visible_tool_name("list_skills"));
         assert_eq!(
-            adaptive_runtime_gateway_target_route("skill_list"),
+            adaptive_runtime_gateway_target_route("list_skills"),
             AdaptiveRuntimeGatewayTargetRoute::Unknown
         );
         assert_eq!(
-            adaptive_runtime_tool_invocation_route_with_operator_extension("skill_list", true),
+            adaptive_runtime_tool_invocation_route_with_operator_extension("list_skills", true),
             (
                 TOOL_SURFACE_AVAILABILITY_GATEWAY,
                 Some(ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME)
@@ -595,7 +595,7 @@ mod tests {
 
     #[test]
     fn browser_tools_stay_gateway_only_on_adaptive_runtime() {
-        for tool_name in ["browser_observe", "browser_act"] {
+        for tool_name in ["observe_browser", "control_browser"] {
             assert!(adaptive_runtime_direct_tool_definitions()
                 .iter()
                 .all(|definition| definition.name != tool_name));
@@ -620,9 +620,9 @@ mod tests {
         }
         for expected in [
             "list_runners",
-            "git_log",
-            "read_project_artifact",
-            "skill_versions",
+            "read_git_log",
+            "read_project_artifact_chunk",
+            "list_skill_versions",
         ] {
             assert!(
                 targets.contains(expected),
@@ -639,7 +639,7 @@ mod tests {
         }
 
         assert_eq!(
-            adaptive_runtime_tool_invocation_route("session_discussion_summary"),
+            adaptive_runtime_tool_invocation_route("read_session_discussion_summary"),
             (TOOL_SURFACE_AVAILABILITY_DIRECT, None),
             "session_hint.suggested_next_tool remains a non-parser-ready direct-only hint"
         );
@@ -662,18 +662,18 @@ mod tests {
                 json!({"include_projects": false, "summary_only": true}),
             ),
             (
-                "git_log",
-                "git_log",
+                "read_git_log",
+                "read_git_log",
                 json!({"project": "demo", "head_commit": "0123456789012345678901234567890123456789", "limit": 20, "skip": 20}),
             ),
             (
-                "read_project_artifact",
-                "read_project_artifact",
+                "read_project_artifact_chunk",
+                "read_project_artifact_chunk",
                 json!({"project": "demo", "path": "out.bin", "encoding": "base64", "offset": 65536, "length": 65536, "expected_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}),
             ),
             (
-                "skill_install",
-                "skill_versions",
+                "install_skill",
+                "list_skill_versions",
                 json!({"project": "demo", "skill_key": "trusted-skill"}),
             ),
         ] {
@@ -685,7 +685,7 @@ mod tests {
                 "representative edge {source_tool}->{target_tool} should remain Adaptive gateway-routed"
             );
             let canonical_schema = webcodex_tool_contracts::output_schema_for_tool(source_tool);
-            let follow_up_kind = if matches!(source_tool, "work_on_project" | "skill_install") {
+            let follow_up_kind = if matches!(source_tool, "work_on_project" | "install_skill") {
                 "fallback_recovery"
             } else {
                 "mechanically_followable"
@@ -906,7 +906,7 @@ mod tests {
             webcodex_tool_contracts::output_schema_for_tool("finish_coding_task");
         let canonical_call = json!({
             "follow_up_kind": "mechanically_followable",
-            "tool": "git_diff_hunks",
+            "tool": "read_git_diff_hunks",
             "arguments": {
                 "project": "demo",
                 "cached": false,
@@ -938,13 +938,13 @@ mod tests {
             ["diff_review_handoff"]["next_call"];
         assert_eq!(current_call["tool"], ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME);
         assert_eq!(current_call["follow_up_kind"], "mechanically_followable");
-        assert_eq!(current_call["arguments"]["tool"], "git_diff_hunks");
+        assert_eq!(current_call["arguments"]["tool"], "read_git_diff_hunks");
         assert_eq!(
             current_call["arguments"]["arguments"], canonical_call["arguments"],
             "current Adaptive routing must gateway-wrap the exact specialist recovery call"
         );
         let synthetic_gateway_route = |target: &str| {
-            if target == "git_diff_hunks" {
+            if target == "read_git_diff_hunks" {
                 SuggestedToolCallRoute::Gateway(ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME)
             } else {
                 SuggestedToolCallRoute::Direct
@@ -959,7 +959,7 @@ mod tests {
         let projected_call = &projected_value["output"]["changes"]["show_changes"]
             ["diff_review_handoff"]["next_call"];
         assert_eq!(projected_call["tool"], ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME);
-        assert_eq!(projected_call["arguments"]["tool"], "git_diff_hunks");
+        assert_eq!(projected_call["arguments"]["tool"], "read_git_diff_hunks");
         assert_eq!(
             projected_call["arguments"]["arguments"],
             canonical_call["arguments"]
@@ -976,7 +976,7 @@ mod tests {
         );
         assert_eq!(
             projected_call_schema["properties"]["arguments"]["properties"]["tool"]["const"],
-            "git_diff_hunks"
+            "read_git_diff_hunks"
         );
         crate::tool_runtime::startup_brief::validate_schema_instance_for_test(
             &projected_value,

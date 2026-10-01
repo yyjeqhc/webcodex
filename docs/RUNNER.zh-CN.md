@@ -60,7 +60,7 @@ transport-specific v1 首个注册帧中，共享 Runner envelope 不再携带�
 精确的 protocol-generation field、baseline capability list、registration grammar 与 compatibility test matrix 属于 maintainer/wire contract，有意不放在这份运维指南中。
 
 ChatGPT Host 提示“当前会话不支持 developer MCP”并不是 Runner heartbeat 或 reconnect
-结果。如果 ChatGPT 连 `runtime_status` 都无法 dispatch，应先在本机执行
+结果。如果 ChatGPT 连 `get_runtime_status` 都无法 dispatch，应先在本机执行
 `webcodex runner status` 并查看有界 Runner 日志，再决定是否重启或修改 Runner 配置。
 Host / Server / Runner 的分层判断见[故障排查](TROUBLESHOOTING.zh-CN.md)。
 
@@ -115,9 +115,9 @@ runtime 工具 `register_project` 与 `create_project` 让客户端在在线 Run
 
 ## Skill 来源
 
-`skill_list` 继续只暴露一个 catalog，但其中保留三种彼此独立的 ownership / lifecycle：
+`list_skills` 继续只暴露一个 catalog，但其中保留三种彼此独立的 ownership / lifecycle：
 
-**自 v0.4.2 起可用：** configured live Runner Skill roots 与 Managed Runner Skill Store 会共同参与这个统一 catalog。v0.4.1 的 `skill_list` 不会隐式扫描 `~/.codex/skills`；如果希望该目录参与 v0.4.2+ discovery，必须在 `[skills].roots` 中显式配置。
+**自 v0.4.2 起可用：** configured live Runner Skill roots 与 Managed Runner Skill Store 会共同参与这个统一 catalog。v0.4.1 的 `list_skills` 不会隐式扫描 `~/.codex/skills`；如果希望该目录参与 v0.4.2+ discovery，必须在 `[skills].roots` 中显式配置。
 
 | 来源 | 位置 / owner | Trust | 版本语义 |
 | --- | --- | --- | --- |
@@ -150,8 +150,8 @@ roots = [
 
 每个 root 直接包含 `<root>/<package>/SKILL.md`，package 内可以有 `references/`
 与 `scripts/` 等 resource。WebCodex 不会修改 configured root 内的文件，也不会把
-它们复制到 managed Store；`skill_install`、`skill_activate` 与
-`skill_remove_revision` 仍然只修改 managed Store。这里的“不修改”不等于“不可执行”：
+它们复制到 managed Store；`install_skill`、`activate_skill` 与
+`remove_skill_revision` 仍然只修改 managed Store。这里的“不修改”不等于“不可执行”：
 operator 配置的 trusted Skill 中，受支持的 `scripts/*.py` / `scripts/*.sh` 可以通过
 `run_skill_resource` 执行。
 
@@ -168,12 +168,12 @@ Skill 文件本身是 live 的：修改 `SKILL.md` 或 resource 后，下一次 
 `SKILL.md` definition，并不会把 resource bytes 固定为 immutable 内容；
 `run_skill_resource` 会在执行时重新读取脚本，并通过 `skill_sha256` 返回实际执行 bytes 的
 SHA-256。Managed installed Skill 还会用 `expected_package_revision` fence immutable package。
-只有修改 `roots` 配置列表时才需要按正式流程先执行 `runner_config_check`，再携带当前
-generation 执行 `runner_config_reload`；该字段支持 hot reload，不需要重启 Runner 进程。
+只有修改 `roots` 配置列表时才需要按正式流程先执行 `check_runner_config`，再携带当前
+generation 执行 `reload_runner_config`；该字段支持 hot reload，不需要重启 Runner 进程。
 
 ## Runner build identity
 
-Runner 连接后，`runtime_status(client_id=...)` 与 `list_runners` 会暴露有界、非敏感的 binary identity：package version、Git commit/dirty 状态、build timestamp、Cargo target triple 与 architecture。旧 Runner 可以缺省这些 optional 字段。该信息用于部署与 source-alignment 诊断，不包含 executable path、environment、token 或 credential；连接前仍可用 `webcodex-runner --version` 做本机 identity 检查。
+Runner 连接后，`get_runtime_status(client_id=...)` 与 `list_runners` 会暴露有界、非敏感的 binary identity：package version、Git commit/dirty 状态、build timestamp、Cargo target triple 与 architecture。旧 Runner 可以缺省这些 optional 字段。该信息用于部署与 source-alignment 诊断，不包含 executable path、environment、token 或 credential；连接前仍可用 `webcodex-runner --version` 做本机 identity 检查。
 
 ## Runner 级 configured instructions
 
@@ -222,7 +222,7 @@ observation 前重新核对父目录 identity，因此并发父目录替换不�
 或令整个 Project bootstrap 失败。
 
 修改 `[instructions].files` 路径列表时，按正式流程编辑 `runner.toml`，先
-`runner_config_check`，再携带当前 generation 执行 `runner_config_reload`；无需重启
+`check_runner_config`，再携带当前 generation 执行 `reload_runner_config`；无需重启
 Runner。文件内容本身始终是 live 的：直接修改 configured `AGENTS.md` 后，下一次
 `work_on_project` / 新 Project bootstrap 会重新读取，不需要 config reload。每个 Project
 bootstrap 都会独立观察当前 Runner-global instructions；v1 不做跨 Project context 去重。
@@ -485,7 +485,7 @@ default_cwd = "/opt/webcodex-edge"
 generation；已经启动的 SSH 命令继续自己的有界生命周期，不会被重定向、replay
 或盲目重试。
 
-有权限的模型 client 也可以通过 MCP `ssh_resource` 工具登记 Runner-local SSH
+有权限的模型 client 也可以通过 MCP `manage_ssh_resource` 工具登记 Runner-local SSH
 resource。`list` 只返回安全的逻辑名称、`static|managed`、active/pending-restart 状态，
 以及绑定 exact Runner 与 registry revision 的 opaque binding。`register` 接受一个用户
 明确提供的 OpenSSH destination argv 与可选 default cwd；`remove` 只删除 managed
@@ -513,9 +513,9 @@ Runner 可以通过在仓库机器上运行的语言服务器提供只读语义�
 | Python | `pyright` | `pyproject.toml`、`setup.py`、`requirements.txt`、… |
 | TypeScript / JavaScript | `typescript-language-server` | `tsconfig.json`、`package.json`、… |
 
-工具包括 `lsp_status`、`document_symbols`、`goto_definition`、
-`find_references`、`document_diagnostics`、`hover` 与 `workspace_symbols`。
-独立的 `call_hierarchy` 操作在 Runner 内完成 prepare 以及有界的
+工具包括 `get_lsp_status`、`list_document_symbols`、`find_definition`、
+`find_references`、`read_document_diagnostics`、`hover` 与 `list_workspace_symbols`。
+独立的 `read_call_hierarchy` 操作在 Runner 内完成 prepare 以及有界的
 incoming/outgoing 广度优先遍历；canonical Connector 将其投影为 `code_impact`，
 不会暴露原始协议方法或不透明 LSP item data。
 它们只读、project-bound，并且被约束为启动语言服务器绝不执行仓库代码或拉取依赖。
@@ -559,14 +559,14 @@ User scope 使用 `systemctl --user`；system scope 使用 `/etc/systemd/system`
 对已经运行的 Runner，修改配置时使用正式的 first-class 流程，不再查 PID 或手工发信号：
 
 1. 编辑该 Runner 启动时绑定的现有 `runner.toml`。
-2. 调用 `runner_config_check(client_id=...)`。它只读取这个绑定路径，不激活 candidate，
+2. 调用 `check_runner_config(client_id=...)`。它只读取这个绑定路径，不激活 candidate，
    返回当前 generation 以及有界的 validation/restart 元数据。
 3. candidate 有效后调用
-   `runner_config_reload(client_id=..., expected_generation=<current_generation>)`。
+   `reload_runner_config(client_id=..., expected_generation=<current_generation>)`。
    optimistic generation fence 会在激活前拒绝 stale caller。
-4. reload 后调用 `runtime_status(client_id=...)`（或 `list_runners`）检查当前运行状态。
+4. reload 后调用 `get_runtime_status(client_id=...)`（或 `list_runners`）检查当前运行状态。
 
-`runner_config_reload` 不写 `runner.toml`，只激活磁盘上已经存在的 candidate。policy、
+`reload_runner_config` 不写 `runner.toml`，只激活磁盘上已经存在的 candidate。policy、
 shell、configured Skill roots、configured instruction files、Native Plugin 与静态 SSH resource
 中可热加载的字段可以立即生效；`restart_required_fields`
 报告的字段仍保持 startup-only，重启前不会假装已在线生效。无效 candidate 保留旧 active

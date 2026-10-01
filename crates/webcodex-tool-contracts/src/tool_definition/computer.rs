@@ -15,7 +15,7 @@ const COMPUTER_CONTROL_GATEWAY_SCOPES: &[&str] = &[COMPUTER_CONTROL, COMPUTER_LA
 pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
         def(
-            "computer_observe",
+            "observe_computer",
             super::ToolAuditPolicy::typed_semantic(
                 super::ToolAuditSemanticResultPolicy::ComputerObservation,
             ),
@@ -29,7 +29,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         permission_risk(
             model_spec(
                 def(
-                    "computer_control",
+                    "control_computer",
                     super::ToolAuditPolicy::typed_semantic(
                         super::ToolAuditSemanticResultPolicy::ComputerControl,
                     ),
@@ -46,7 +46,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     require_all_scopes(
         model_spec(
             def(
-                "computer_save_snapshot",
+                "save_computer_snapshot",
                 super::ToolAuditPolicy::typed_fields(&[
                     super::ToolAuditResultField::value("project"),
                     super::ToolAuditResultField::value("path"),
@@ -78,7 +78,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 false,
                 super::ToolSessionEvidencePolicy::NONE,
             ),
-            "Save one exact window snapshot as a create-only project artifact without returning image bytes. Reuses computer_observe(action=snapshot_window) region/downscale semantics and requires computer:read plus project:write. No overwrite or encoding control. Unknown writes require artifact-metadata reconciliation before retry.",
+            "Save one exact window snapshot as a create-only project artifact without returning image bytes. Reuses observe_computer(action=snapshot_window) region/downscale semantics and requires computer:read plus project:write. No overwrite or encoding control. Unknown writes require artifact-metadata reconciliation before retry.",
         ),
         &[PROJECT_WRITE, COMPUTER_READ],
     ),

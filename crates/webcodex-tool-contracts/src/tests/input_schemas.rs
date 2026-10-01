@@ -168,7 +168,7 @@ fn batch_inspection_result_budget_schema_defers_bounds_to_runtime_clamp() {
 #[test]
 fn git_diff_hunks_page_budget_schema_defers_bounds_to_runtime_clamp() {
     let specs = registered_tool_specs();
-    let schema = &spec_named(&specs, "git_diff_hunks").input_schema;
+    let schema = &spec_named(&specs, "read_git_diff_hunks").input_schema;
     let page = &schema["properties"]["max_page_bytes"];
     assert_eq!(page["type"], "integer");
     assert_eq!(
@@ -214,7 +214,7 @@ fn git_diff_hunks_page_budget_schema_defers_bounds_to_runtime_clamp() {
 #[test]
 fn git_diff_hunks_schema_leaves_committed_range_relationships_to_runtime() {
     let specs = registered_tool_specs();
-    let schema = &spec_named(&specs, "git_diff_hunks").input_schema;
+    let schema = &spec_named(&specs, "read_git_diff_hunks").input_schema;
     let base = "a".repeat(40);
     let head = "b".repeat(40);
 
@@ -576,7 +576,7 @@ fn cargo_test_schema_explains_execution_proof_policy() {
 #[test]
 fn raw_shell_tools_expose_the_shared_authored_command_bound() {
     let specs = registered_tool_specs();
-    for name in ["run_shell", "run_job", "session_shell_exec"] {
+    for name in ["run_shell", "run_job", "execute_session_shell"] {
         let spec = spec_named(&specs, name);
         let command = &spec.input_schema["properties"]["command"];
         assert_eq!(command["maxLength"], RAW_SHELL_COMMAND_MAX_BYTES, "{name}");
@@ -593,7 +593,7 @@ fn execution_purpose_schemas_share_canonical_vocabulary_and_validators_do_not_ac
         "run_script",
         "run_shell",
         "run_job",
-        "session_shell_exec",
+        "execute_session_shell",
     ] {
         let purpose = &spec_named(&specs, name).input_schema["properties"]["purpose"];
         assert_eq!(purpose["enum"], json!(EXECUTION_PURPOSE_VALUES), "{name}");
@@ -868,7 +868,7 @@ fn tool_specs_optional_fields_are_not_required() {
 #[test]
 fn git_log_head_commit_schema_requires_exact_40_hex() {
     let specs = registered_tool_specs();
-    let spec = spec_named(&specs, "git_log");
+    let spec = spec_named(&specs, "read_git_log");
     let head = &spec.input_schema["properties"]["head_commit"];
     assert_eq!(head["type"], "string");
     assert_eq!(head["minLength"], 40);
@@ -884,7 +884,7 @@ fn tool_specs_covers_expected_tool_set() {
         "list_tools",
         "list_projects",
         "list_runners",
-        "runtime_status",
+        "get_runtime_status",
         "create_agent_task",
         "list_agent_tasks",
         "read_agent_task",
@@ -900,34 +900,34 @@ fn tool_specs_covers_expected_tool_set() {
         "run_job",
         "stop_job",
         "read_files",
-        "git_status",
-        "git_diff_hunks",
-        "git_log",
-        "show_changes",
-        "workspace_hygiene_check",
+        "get_git_status",
+        "read_git_diff_hunks",
+        "read_git_log",
+        "read_workspace_changes",
+        "check_workspace_hygiene",
         #[cfg(feature = "workspace-checkpoints")]
-        "workspace_checkpoint_create",
+        "create_workspace_checkpoint",
         #[cfg(feature = "workspace-checkpoints")]
-        "workspace_checkpoint_list",
+        "list_workspace_checkpoints",
         #[cfg(feature = "workspace-checkpoints")]
-        "workspace_checkpoint_show",
+        "read_workspace_checkpoint",
         #[cfg(feature = "workspace-checkpoints")]
-        "workspace_checkpoint_restore",
+        "restore_workspace_checkpoint",
         #[cfg(feature = "workspace-checkpoints")]
-        "workspace_checkpoint_delete",
+        "delete_workspace_checkpoint",
         "delete_project_files",
-        "git_restore_paths",
+        "restore_git_paths",
         "discard_untracked",
-        "project_overview",
+        "read_project_overview",
         "list_project_tracked_files",
         "list_jobs",
         "save_project_artifact",
         "read_project_artifact_metadata",
-        "read_project_artifact",
-        "artifact_upload_begin",
-        "artifact_upload_chunk",
-        "artifact_upload_finish",
-        "artifact_upload_abort",
+        "read_project_artifact_chunk",
+        "begin_artifact_upload",
+        "upload_artifact_chunk",
+        "finish_artifact_upload",
+        "abort_artifact_upload",
         "register_project",
         "create_project",
     ] {
@@ -1074,11 +1074,11 @@ fn heartbeat_agent_task_attempt_active_turn_proof_is_paired_and_server_timed() {
 #[test]
 fn code_mode_exec_schema_keeps_authority_outer_bound_and_source_bounded() {
     let specs = registered_tool_specs();
-    let spec = spec_named(&specs, "code_mode_exec");
+    let spec = spec_named(&specs, "execute_code_mode");
     let properties = spec.input_schema["properties"].as_object().unwrap();
     assert_schema_fields!(
         properties,
-        "code_mode_exec input schema",
+        "execute_code_mode input schema",
         present: ["project", "session_id", "source", "timeout_ms"],
         absent: [
             "recording_session_id",
@@ -1110,11 +1110,11 @@ fn code_mode_exec_schema_keeps_authority_outer_bound_and_source_bounded() {
 #[test]
 fn code_mode_effectful_schema_keeps_authority_outer_bound_and_deadline_explicit() {
     let specs = registered_tool_specs();
-    let spec = spec_named(&specs, "code_mode_exec_effectful");
+    let spec = spec_named(&specs, "execute_effectful_code_mode");
     let properties = spec.input_schema["properties"].as_object().unwrap();
     assert_schema_fields!(
         properties,
-        "code_mode_exec_effectful input schema",
+        "execute_effectful_code_mode input schema",
         present: ["project", "session_id", "source", "timeout_ms"],
         absent: [
             "recording_session_id",
@@ -1140,11 +1140,11 @@ fn code_mode_effectful_schema_keeps_authority_outer_bound_and_deadline_explicit(
 #[test]
 fn code_mode_mutating_schema_keeps_authority_outer_bound_and_mutation_scope_narrow() {
     let specs = registered_tool_specs();
-    let spec = spec_named(&specs, "code_mode_exec_mutating");
+    let spec = spec_named(&specs, "execute_mutating_code_mode");
     let properties = spec.input_schema["properties"].as_object().unwrap();
     assert_schema_fields!(
         properties,
-        "code_mode_exec_mutating input schema",
+        "execute_mutating_code_mode input schema",
         present: ["project", "session_id", "source", "timeout_ms"],
         absent: [
             "recording_session_id",
@@ -1175,11 +1175,11 @@ fn code_mode_mutating_schema_keeps_authority_outer_bound_and_mutation_scope_narr
 #[test]
 fn coding_agent_start_keeps_recorder_provenance_out_of_business_input() {
     let specs = registered_tool_specs();
-    let spec = spec_named(&specs, "coding_agent_start");
+    let spec = spec_named(&specs, "start_coding_agent");
     let properties = spec.input_schema["properties"].as_object().unwrap();
     assert!(!properties.contains_key("recording_session_id"));
     assert!(ToolCall::from_tool_name(
-        "coding_agent_start",
+        "start_coding_agent",
         json!({
             "project": "demo",
             "provider_id": "codex",
@@ -1196,7 +1196,7 @@ fn agent_continuation_bind_requires_canonical_view_fence_without_model_exposure(
     let specs = crate::registry::agent_continuation_app_tool_specs();
     let bind = specs
         .iter()
-        .find(|spec| spec.name == "agent_continuation_bind")
+        .find(|spec| spec.name == "bind_agent_continuation")
         .unwrap();
     assert_eq!(
         bind.input_schema["properties"]["binding_id"]["pattern"],
@@ -1237,11 +1237,11 @@ fn job_terminal_continuation_app_contract_is_exact_wait_plus_private_view_fence_
     assert_eq!(
         names,
         vec![
-            "job_terminal_continuation_bind",
-            "job_terminal_continuation_state",
-            "job_terminal_continuation_prepare",
-            "job_terminal_continuation_finish",
-            "job_terminal_continuation_unbind",
+            "bind_job_terminal_continuation",
+            "get_job_terminal_continuation_state",
+            "prepare_job_terminal_continuation",
+            "finish_job_terminal_continuation",
+            "unbind_job_terminal_continuation",
         ]
     );
     let binding_id = format!(
@@ -1287,7 +1287,7 @@ fn job_terminal_continuation_app_contract_is_exact_wait_plus_private_view_fence_
 
     let bind = specs
         .iter()
-        .find(|spec| spec.name == "job_terminal_continuation_bind")
+        .find(|spec| spec.name == "bind_job_terminal_continuation")
         .unwrap();
     assert!(test_support::validate_schema_instance(
         &json!({"wait_id": wait_id, "binding_id": binding_id}),
@@ -1296,7 +1296,7 @@ fn job_terminal_continuation_app_contract_is_exact_wait_plus_private_view_fence_
     .is_ok());
     let finish = specs
         .iter()
-        .find(|spec| spec.name == "job_terminal_continuation_finish")
+        .find(|spec| spec.name == "finish_job_terminal_continuation")
         .unwrap();
     assert_eq!(
         finish.input_schema["properties"]["attempt_id"]["pattern"],
@@ -1340,7 +1340,7 @@ fn skill_runtime_and_management_schemas_preserve_typed_bounds() {
     assert!(cwd_description.contains("business cwd"));
     assert!(!cwd_description.contains("run_process"));
 
-    let list = input_schema_for_tool("skill_list");
+    let list = input_schema_for_tool("list_skills");
     assert_eq!(list["properties"]["project"]["minLength"], 1);
     assert_eq!(list["properties"]["query"]["maxLength"], 200);
     assert_eq!(list["properties"]["limit"]["maximum"], 64);
@@ -1349,7 +1349,7 @@ fn skill_runtime_and_management_schemas_preserve_typed_bounds() {
         "^wc_skillcat_[A-Za-z0-9_-]{43}$"
     );
 
-    let read = input_schema_for_tool("skill_read_file");
+    let read = input_schema_for_tool("read_skill_file");
     assert_eq!(read["properties"]["project"]["minLength"], 1);
     assert_eq!(
         read["properties"]["skill_id"]["pattern"],
@@ -1363,7 +1363,7 @@ fn skill_runtime_and_management_schemas_preserve_typed_bounds() {
         "^[0-9a-f]{64}$"
     );
 
-    let versions = input_schema_for_tool("skill_versions");
+    let versions = input_schema_for_tool("list_skill_versions");
     assert_eq!(versions["properties"]["skill_key"]["maxLength"], 96);
     assert_eq!(
         versions["properties"]["skill_key"]["pattern"],
@@ -1371,7 +1371,7 @@ fn skill_runtime_and_management_schemas_preserve_typed_bounds() {
     );
     assert_eq!(versions["properties"]["limit"]["maximum"], 64);
 
-    let install = input_schema_for_tool("skill_install");
+    let install = input_schema_for_tool("install_skill");
     assert_eq!(install["properties"]["artifact_path"]["maxLength"], 1024);
     assert_eq!(
         install["properties"]["expected_artifact_sha256"]["pattern"],
@@ -1380,7 +1380,7 @@ fn skill_runtime_and_management_schemas_preserve_typed_bounds() {
     assert_eq!(install["properties"]["idempotency_key"]["maxLength"], 128);
     assert_eq!(install["properties"]["activate"]["default"], false);
 
-    for name in ["skill_activate", "skill_remove_revision"] {
+    for name in ["activate_skill", "remove_skill_revision"] {
         let schema = input_schema_for_tool(name);
         assert_eq!(schema["properties"]["skill_key"]["maxLength"], 96, "{name}");
         assert_eq!(

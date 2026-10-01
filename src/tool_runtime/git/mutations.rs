@@ -112,7 +112,7 @@ fn git_commit_paths_script(expected_head: &str, paths: &[String], message: &str)
          tree=$(GIT_INDEX_FILE=\"$index_file\" git write-tree) || {{ printf '{GIT_COMMIT_RESULT_PREFIX} status=tree_failed\\n'; exit 30; }}\n\
          printf '%s' {message} > \"$msg_file\"\n\
          new=$(git commit-tree \"$tree\" -p \"$expected\" < \"$msg_file\") || {{ printf '{GIT_COMMIT_RESULT_PREFIX} status=commit_create_failed\\n'; exit 31; }}\n\
-         if ! git update-ref -m 'webcodex git_commit_paths' HEAD \"$new\" \"$expected\"; then actual=$(git rev-parse --verify HEAD 2>/dev/null || true); printf '{GIT_COMMIT_RESULT_PREFIX} status=head_update_failed actual=%s\\n' \"$actual\"; exit 32; fi\n\
+         if ! git update-ref -m 'webcodex commit_git_paths' HEAD \"$new\" \"$expected\"; then actual=$(git rev-parse --verify HEAD 2>/dev/null || true); printf '{GIT_COMMIT_RESULT_PREFIX} status=head_update_failed actual=%s\\n' \"$actual\"; exit 32; fi\n\
          if ! git reset -q \"$new\" --{reset_args}; then printf '{GIT_COMMIT_RESULT_PREFIX} status=index_cleanup_failed previous=%s new=%s\\n' \"$expected\" \"$new\"; exit 33; fi\n\
          printf '{GIT_COMMIT_RESULT_PREFIX} status=success previous=%s new=%s\\n' \"$expected\" \"$new\"\n"
     )
@@ -167,7 +167,7 @@ fn git_commit_paths_failure_output(
 fn git_commit_paths_outcome_unknown(expected_head: &str, reason: &str) -> ToolResult {
     ToolResult::err_with_output(
         format!(
-            "git_commit_paths outcome is unknown: {reason}. Do not retry the commit blindly; observe HEAD/status first."
+            "commit_git_paths outcome is unknown: {reason}. Do not retry the commit blindly; observe HEAD/status first."
         ),
         json!({
             "committed": null,
@@ -351,7 +351,7 @@ impl ToolRuntime {
                         "Runner returned a mutation-like commit marker with inconsistent SHA or exit-code evidence",
                     ),
                     status => ToolResult::err_with_output(
-                        format!("git_commit_paths rejected or failed: {status}"),
+                        format!("commit_git_paths rejected or failed: {status}"),
                         git_commit_paths_failure_output(&expected_head, status, marker.actual_head),
                     ),
                 }

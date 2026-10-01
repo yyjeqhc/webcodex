@@ -50,7 +50,7 @@ impl ToolRuntime {
         auth: Option<&AuthContext>,
     ) -> ToolResult {
         if let Err(result) = self
-            .authorize_session_target(&session_id, "validation_summary", auth)
+            .authorize_session_target(&session_id, "read_validation_summary", auth)
             .await
         {
             return result;
@@ -70,7 +70,11 @@ impl ToolRuntime {
                 session_project: summary.project.unwrap_or_else(|| "<unscoped>".to_string()),
                 request_project: resolved.resolved_id,
             };
-            return session_project_mismatch_result(&session_id, "validation_summary", &mismatch);
+            return session_project_mismatch_result(
+                &session_id,
+                "read_validation_summary",
+                &mismatch,
+            );
         }
         let limit = limit
             .unwrap_or(DEFAULT_PUBLIC_VALIDATION_EVENT_LIMIT)

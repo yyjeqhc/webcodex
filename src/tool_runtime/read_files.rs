@@ -1629,7 +1629,7 @@ mod tests {
                 "risk": u64::MAX
             },
             "highest_priority": "high",
-            "suggested_next_tool": "session_discussion_summary"
+            "suggested_next_tool": "read_session_discussion_summary"
         });
         assert!(serde_json::to_vec(&result).unwrap().len() <= MAX_SERIALIZED_OUTPUT_BYTES);
     }

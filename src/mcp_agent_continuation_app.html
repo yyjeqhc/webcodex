@@ -464,7 +464,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
 
   async function refreshWaitState() {
     if (!waitId || tornDown) return;
-    const response = await callTool("agent_wait_state", { wait_id: waitId });
+    const response = await callTool("get_agent_wait_state", { wait_id: waitId });
     const output = outputOf(response);
     if (!toolCallSucceeded(response) || !output || !acceptWaitProjection(output.agent_wait)) {
       throw new Error("Wait state was not accepted");
@@ -593,7 +593,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
     const selector = identitySnapshot();
     if (!selector) throw definitiveFailure();
     bindAttempts++;
-    const response = await callTool("agent_continuation_bind", exactArgsFor(selector, { binding_id: viewBindingId }));
+    const response = await callTool("bind_agent_continuation", exactArgsFor(selector, { binding_id: viewBindingId }));
     if (tornDown || !snapshotIsCurrent(selector)) return false;
     const callResult = callToolResultOf(response);
     const structured = structuredOf(callResult);
@@ -619,7 +619,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
   async function heartbeat() {
     const selector = identitySnapshot();
     if (!selector) return null;
-    const response = await callTool("agent_continuation_state", exactArgsFor(selector, { binding_id: bindingId }));
+    const response = await callTool("get_agent_continuation_state", exactArgsFor(selector, { binding_id: bindingId }));
     if (tornDown || !snapshotIsCurrent(selector)) return null;
     const projection = projectionOf(response);
     if (!toolCallSucceeded(response) || !projection || !acceptIdentity(projection)) {
@@ -643,7 +643,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
       outcome,
     });
     try {
-      const response = await callTool("agent_continuation_wake_finish", args);
+      const response = await callTool("finish_agent_continuation_wake", args);
       if (!toolCallSucceeded(response)) throw new Error("Continuation finish was not accepted");
       pendingFinish = null;
       return true;
@@ -667,14 +667,14 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
   }
 
   async function acquire() {
-    const response = await callTool("agent_continuation_wake_acquire", exactArgs({ binding_id: bindingId }));
+    const response = await callTool("acquire_agent_continuation_wake", exactArgs({ binding_id: bindingId }));
     if (!toolCallSucceeded(response)) throw new Error("Continuation acquire was not accepted");
     const output = outputOf(response);
     return validAcquiredWake(output && output.wake);
   }
 
   async function prepare(wake) {
-    const response = await callTool("agent_continuation_wake_prepare", exactArgs({
+    const response = await callTool("prepare_agent_continuation_wake", exactArgs({
       binding_id: bindingId,
       wake_id: wake.wake_id,
       attempt_id: wake.attempt_id,
@@ -747,7 +747,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
       let accepted = null;
       for (let attempt = 0; attempt < MAX_ENDPOINT_RECOVERY_ATTEMPTS; attempt++) {
         try {
-          const response = await callTool("agent_continuation_recover_endpoint", exactArgsFor(stale, {
+          const response = await callTool("recover_agent_continuation_endpoint", exactArgsFor(stale, {
             binding_id: viewBindingId,
           }));
           if (tornDown || !snapshotIsCurrent(stale)) return false;
@@ -901,7 +901,7 @@ h1 { margin: 0; font-size: 15px; font-weight: 650; overflow-wrap: anywhere; }
       id,
       method: "tools/call",
       params: {
-        name: "agent_continuation_unbind",
+        name: "unbind_agent_continuation",
         arguments: diagnostic.arguments,
       },
     }, "*");

@@ -7,7 +7,7 @@ use super::common::{
 
 pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
     match name {
-        "workspace_checkpoint_create" => Some(wrapped_output_schema(vec![
+        "create_workspace_checkpoint" => Some(wrapped_output_schema(vec![
             (
                 "checkpoint_id",
                 schema_type("string", "Created wc_ckpt_* id."),
@@ -80,7 +80,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 ),
             ),
         ])),
-        "workspace_checkpoint_list" => Some(wrapped_output_schema(vec![
+        "list_workspace_checkpoints" => Some(wrapped_output_schema(vec![
             ("project", schema_type("string", "Project input.")),
             (
                 "resolved_project",
@@ -95,7 +95,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 ),
             ),
         ])),
-        "workspace_checkpoint_show" => Some(wrapped_output_schema(vec![
+        "read_workspace_checkpoint" => Some(wrapped_output_schema(vec![
             ("checkpoint_id", schema_type("string", "Checkpoint id.")),
             ("project", schema_type("string", "Project input.")),
             (
@@ -144,7 +144,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 ),
             ),
         ])),
-        "workspace_checkpoint_restore" => Some(wrapped_output_schema(vec![
+        "restore_workspace_checkpoint" => Some(wrapped_output_schema(vec![
             (
                 "restored",
                 schema_type("boolean", "True when restore completed."),
@@ -177,7 +177,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 ),
             ),
         ])),
-        "workspace_checkpoint_delete" => Some(wrapped_output_schema(vec![
+        "delete_workspace_checkpoint" => Some(wrapped_output_schema(vec![
             (
                 "deleted",
                 schema_type("boolean", "True when checkpoint file was deleted."),

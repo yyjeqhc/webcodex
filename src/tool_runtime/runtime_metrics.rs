@@ -344,7 +344,7 @@ impl RuntimeMetrics for TracingRuntimeMetrics {
             tracing::info!(
                 metric,
                 value,
-                tool = "code_mode_exec",
+                tool = "execute_code_mode",
                 surface = "runtime",
                 "runtime_metric"
             );
@@ -352,21 +352,21 @@ impl RuntimeMetrics for TracingRuntimeMetrics {
         tracing::info!(
             metric = "code_mode_runtime_duration_seconds",
             value = observation.duration_ms as f64 / 1000.0,
-            tool = "code_mode_exec",
+            tool = "execute_code_mode",
             surface = "runtime",
             "runtime_metric"
         );
         tracing::info!(
             metric = "code_mode_slot_wait_seconds",
             value = observation.slot_wait_ms as f64 / 1000.0,
-            tool = "code_mode_exec",
+            tool = "execute_code_mode",
             surface = "runtime",
             "runtime_metric"
         );
         tracing::info!(
             metric = "code_mode_input_bytes",
             value = observation.input_bytes as u64,
-            tool = "code_mode_exec",
+            tool = "execute_code_mode",
             surface = "runtime",
             "runtime_metric"
         );
@@ -374,7 +374,7 @@ impl RuntimeMetrics for TracingRuntimeMetrics {
             tracing::info!(
                 metric = "code_mode_nested_tool_calls_total",
                 value = *value as u64,
-                tool = "code_mode_exec",
+                tool = "execute_code_mode",
                 nested_tool,
                 surface = "runtime",
                 "runtime_metric"

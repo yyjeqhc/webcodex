@@ -33,9 +33,9 @@ fn post_message(store: &SessionStore, session_id: &str, kind: SessionMessageKind
 fn session_tool_contract(tool_name: &str) -> SessionToolContract {
     let (read_like, write_like, shell_like, path_hint) = match tool_name {
         "read_file" => (true, false, false, SessionPathHint::SinglePath),
-        "session_summary" => (true, false, false, SessionPathHint::None),
+        "read_session_summary" => (true, false, false, SessionPathHint::None),
         "run_shell" => (false, true, true, SessionPathHint::None),
-        "write_project_file" | "post_session_message" | "memory_set" | "close_session" => {
+        "write_project_file" | "post_session_message" | "set_memory" | "close_session" => {
             (false, true, false, SessionPathHint::None)
         }
         other => panic!("unexpected synthetic lifecycle tool contract: {other}"),
@@ -512,9 +512,9 @@ fn closed_session_coldifies_payload_and_queries_without_reheating() {
     let query_start = store.record_tool_call_started(
         Some(&session.session_id),
         SessionTransport::Api,
-        "session_summary",
+        "read_session_summary",
         &json!({"session_id": session.session_id.clone()}),
-        session_tool_contract("session_summary"),
+        session_tool_contract("read_session_summary"),
     );
     store.record_tool_call_finished(query_start, true, &json!({"success": true}), None, None);
     assert_eq!(
@@ -807,8 +807,8 @@ fn closed_session_denies_mutation_tools_allows_query() {
     assert!(store
         .lifecycle_denial(
             &session.session_id,
-            "memory_set",
-            session_tool_contract("memory_set")
+            "set_memory",
+            session_tool_contract("set_memory")
         )
         .is_some());
 
@@ -823,8 +823,8 @@ fn closed_session_denies_mutation_tools_allows_query() {
     assert!(store
         .lifecycle_denial(
             &session.session_id,
-            "session_summary",
-            session_tool_contract("session_summary")
+            "read_session_summary",
+            session_tool_contract("read_session_summary")
         )
         .is_none());
     assert!(store

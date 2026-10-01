@@ -627,13 +627,13 @@ fn bound_line(line: &str) -> String {
 
 /// Full default startup recommended flow. Reuses the shared
 /// `TOOL_RECOMMENDED_FLOWS` group definitions so top-level startup guidance
-/// does not drift from `tool_manifest.recommended_flows`.
+/// does not drift from `read_tool_manifest.recommended_flows`.
 pub(super) fn recommended_flow_payload() -> Value {
     recommended_flow_groups(None)
 }
 
 /// Project top-level `recommended_flow` onto tools present in the embedded
-/// `tool_manifest`. Group keys stay fixed; empty groups are allowed.
+/// `read_tool_manifest`. Group keys stay fixed; empty groups are allowed.
 pub(super) fn recommended_flow_payload_for_manifest_tools(manifest: &Value) -> Value {
     let visible: HashSet<&str> = manifest
         .get("tools")
@@ -730,7 +730,7 @@ pub(super) fn startup_verdict(
 
     push_startup_check(
         &mut checks,
-        "runtime_status",
+        "get_runtime_status",
         runtime_status_check(output, runtime_status_call_failed),
     );
     push_startup_check(&mut checks, "workspace", workspace_check(output));
@@ -742,18 +742,18 @@ pub(super) fn startup_verdict(
     );
     push_startup_check(
         &mut checks,
-        "tool_manifest",
+        "read_tool_manifest",
         startup_tool_manifest_check(output, tool_manifest_requested),
     );
 
     for check in &checks {
         match check.get("reason").and_then(Value::as_str) {
             Some("runtime_status_call_failed") => {
-                push_unique_action(&mut actions, "inspect runtime_status directly")
+                push_unique_action(&mut actions, "inspect get_runtime_status directly")
             }
             Some("workspace_dirty") => push_unique_action(
                 &mut actions,
-                "inspect existing worktree changes with show_changes and preserve them while editing",
+                "inspect existing worktree changes with read_workspace_changes and preserve them while editing",
             ),
             Some("workspace_conflicts") => push_unique_action(
                 &mut actions,
@@ -767,14 +767,14 @@ pub(super) fn startup_verdict(
             }
             Some("tool_manifest_not_requested") => push_unique_action(
                 &mut actions,
-                "request tool_manifest if workflow discovery is needed",
+                "request read_tool_manifest if workflow discovery is needed",
             ),
             Some("truncated_by_limit") => push_unique_action(
                 &mut actions,
-                "continue with the bounded tool_manifest or request a focused category",
+                "continue with the bounded read_tool_manifest or request a focused category",
             ),
             Some("tool_manifest_unavailable") => {
-                push_unique_action(&mut actions, "inspect tool_manifest directly")
+                push_unique_action(&mut actions, "inspect read_tool_manifest directly")
             }
             _ => {}
         }

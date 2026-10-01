@@ -39,7 +39,7 @@ For nontrivial bulk changes, read the file and revision, optionally call
 guard. The actual request resolves all matches and fences again. A simple,
 obvious bulk edit may be applied directly. Dry-run creates no future mutation
 authority. The compact success `change_summary` reports counts; use
-`show_changes`, `git_diff_hunks`, or `git_review_summary` for semantic review.
+`read_workspace_changes`, `read_git_diff_hunks`, or `read_git_review_summary` for semantic review.
 
 Use this exact cardinality contract for known repeated fixtures or struct
 literals instead of an ad-hoc Python or sed global rewrite. It does not infer
@@ -318,7 +318,7 @@ secondary to the tool result.
 This is a presentation/projection rule, not permission to weaken the underlying
 protocol. In particular:
 
-- missing task context is recovered explicitly with `session_handoff_summary`;
+- missing task context is recovered explicitly with `read_session_handoff_summary`;
 - collaboration ACKs require request-scoped retained-message proof;
 - a ClientWindow must not select a Workflow Session;
 - support metadata must not become execution authority.
@@ -422,7 +422,7 @@ still represent real work.
 Contract consistency tests iterate `tool_definitions()` rather than maintaining a second
 complete name/risk/capability table. Each ToolDefinition owns exactly one category;
 `group_tool_names_by_category` derives sorted, non-overlapping category projections
-from the caller's already-admitted tool selection. `list_tools` and `tool_manifest`
+from the caller's already-admitted tool selection. `list_tools` and `read_tool_manifest`
 use the same taxonomy. Intent ranking and recommended flows remain deliberately
 cross-category workflow views, not another category registry. Categories and Direct
 rank never grant authority or determine execution/Activity semantics. Structured-validation
@@ -513,7 +513,7 @@ Current Adaptive Runtime owns one optional `ToolAdaptiveDirectPolicy { rank,
 reason }` in `ToolDefinition.adaptive_runtime_direct`. Each dedicated descriptor
 has exactly one `ToolDirectReason` and a unique rank; derived rank/reason methods
 keep callers independent of the representation. `None` grants no admission: an
-ordinary admitted model-visible tool uses exact `tool_manifest` discovery plus
+ordinary admitted model-visible tool uses exact `read_tool_manifest` discovery plus
 `call_runtime_tool`, while ModelHidden and operator extensions keep their existing
 visibility/admission boundaries. Rank or reason changes are presentation/routing
 changes, not renames, authority changes or new ToolCalls. Neither the policy nor
@@ -683,14 +683,14 @@ and generic telemetry capture bounded facts, then the model receipt is compacted
 Existing process/script/Skill and validation success shapes are unchanged.
 `run_shell` removes lifecycle/Job/timing bookkeeping only for proven synchronous
 exit-zero completion without Job/recovery identity or observation ambiguity. It
-retains runtime-selected `command_summary`, `cwd`, `shell`, any `ssh_resource`,
+retains runtime-selected `command_summary`, `cwd`, `shell`, any `manage_ssh_resource`,
 nonempty output, truncation/loss, expectations, normalization and sidecars. Failure,
 timeout, uncertainty and exceptional handoff remain rich; normal pending receipts
 still contain `execution_state=pending` and the exact continuation.
 
 ### Runtime status projections
 
-Canonical `runtime_status` and HTTP/API omission retain full diagnostic output.
+Canonical `get_runtime_status` and HTTP/API omission retain full diagnostic output.
 MCP supplies `compact=true` only when the argument is omitted, for both direct
 and `call_runtime_tool` calls. Use `compact=false` (without `summary_only=true`)
 for full diagnostics. `summary_only=true` is still an alias for sparse status.

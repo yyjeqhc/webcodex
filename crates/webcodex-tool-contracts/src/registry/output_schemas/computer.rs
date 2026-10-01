@@ -178,7 +178,7 @@ fn merged_gateway_output_schema(names: &[&str]) -> Value {
 
 fn raw_output_schema_for_tool(name: &str) -> Option<Value> {
     match name {
-        "computer_observe" => Some(merged_gateway_output_schema(&[
+        "observe_computer" => Some(merged_gateway_output_schema(&[
             "computer_list_targets",
             "computer_list_windows",
             "computer_list_displays",
@@ -191,7 +191,7 @@ fn raw_output_schema_for_tool(name: &str) -> Option<Value> {
             "computer_snapshot_display",
             "computer_read_clipboard",
         ])),
-        "computer_control" => Some(merged_gateway_output_schema(&[
+        "control_computer" => Some(merged_gateway_output_schema(&[
             "computer_launch_application",
             "computer_activate_window",
             "__computer_element_control",
@@ -528,7 +528,7 @@ fn raw_output_schema_for_tool(name: &str) -> Option<Value> {
             ),
             ("content_base64", json!({"type": "string"})),
         ])),
-        "computer_save_snapshot" => Some(wrapped_output_schema(vec![
+        "save_computer_snapshot" => Some(wrapped_output_schema(vec![
             ("project", json!({"type": "string", "minLength": 1})),
             (
                 "path",
@@ -666,25 +666,25 @@ fn computer_suggested_recovery_schema() -> Value {
         "oneOf": [
             suggested_tool_call_schema(
                 webcodex_core::runtime_contract::GeneratedFollowUpKind::FallbackRecovery,
-                "computer_observe",
+                "observe_computer",
                 client_arguments("windows"),
                 "Parser-ready advisory window re-observation using the exact Runner already owned by the failed Computer request. It grants no authority and is not an effect retry."
             ),
             suggested_tool_call_schema(
                 webcodex_core::runtime_contract::GeneratedFollowUpKind::FallbackRecovery,
-                "computer_observe",
+                "observe_computer",
                 client_arguments("applications"),
                 "Parser-ready advisory application re-observation using the exact Runner already owned by the failed Computer request. It grants no authority and is not an effect retry."
             ),
             suggested_tool_call_schema(
                 webcodex_core::runtime_contract::GeneratedFollowUpKind::FallbackRecovery,
-                "computer_observe",
+                "observe_computer",
                 client_arguments("displays"),
                 "Parser-ready advisory display re-observation using the exact Runner already owned by the failed Computer request. It grants no authority and is not an effect retry."
             ),
             suggested_tool_call_schema(
                 webcodex_core::runtime_contract::GeneratedFollowUpKind::FallbackRecovery,
-                "computer_observe",
+                "observe_computer",
                 json!({
                     "type": "object",
                     "additionalProperties": false,
@@ -723,7 +723,7 @@ fn apply_computer_recovery_contract(schema: &mut Value) {
         "reconcile_with".to_string(),
         json!({
             "type": "string",
-            "enum": ["computer_observe", "read_project_artifact_metadata"],
+            "enum": ["observe_computer", "read_project_artifact_metadata"],
             "description": "Non-actionable recovery family hint used only when a complete safe invocation cannot be proven. It is not execution authority."
         }),
     );

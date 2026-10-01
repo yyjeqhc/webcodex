@@ -1896,7 +1896,10 @@ async fn provider_tool_names_never_enter_outer_mcp_inventory() {
         "runner-instance-a",
         "repo-tools-a",
         "provider-instance-a",
-        vec![plugin_tool("safe_delete"), plugin_tool("runtime_status")],
+        vec![
+            plugin_tool("safe_delete"),
+            plugin_tool("get_runtime_status"),
+        ],
     )
     .await;
     register_plugin_runner(
@@ -1921,7 +1924,7 @@ async fn provider_tool_names_never_enter_outer_mcp_inventory() {
     assert_eq!(
         names
             .iter()
-            .filter(|name| **name == "runtime_status")
+            .filter(|name| **name == "get_runtime_status")
             .count(),
         1
     );
@@ -2038,7 +2041,7 @@ async fn tool_manifest_returns_sparse_static_plugin_tool_contract_without_runner
             "tools/call",
             Some(json!(7061)),
             mcp_2026_params(json!({
-                "name": "tool_manifest",
+                "name": "read_tool_manifest",
                 "arguments": {
                     "tool_name": crate::plugin_gateway::PLUGIN_TOOL_NAME,
                     "include_recommended_flows": false,
@@ -2050,7 +2053,7 @@ async fn tool_manifest_returns_sparse_static_plugin_tool_contract_without_runner
     )
     .await;
     let McpOutcome::Ok(value) = outcome else {
-        panic!("tool_manifest(plugin_tool) must succeed without any Runner inventory");
+        panic!("read_tool_manifest(plugin_tool) must succeed without any Runner inventory");
     };
     let output = &value["result"]["structuredContent"]["output"];
     assert_eq!(output["name"], crate::plugin_gateway::PLUGIN_TOOL_NAME);

@@ -29,13 +29,13 @@ export const baseState = {
   review: {
     available: true, total: 1, history_partial: false, read_only_inspection_count: 0, search_count: 0,
     diff_review_count: 1, workspace_review_count: 1, hygiene_review_count: 0,
-    tools: ["show_changes"],
+    tools: ["read_workspace_changes"],
   },
   session: {
     lifecycle: "active", events_total: 7, events_returned: 7, history_partial: false,
     updated_at: 1789812000, title: "Work Result test",
     latest_activity: {
-      tool: "show_changes", kind: "tool_call_finished", timestamp: 1789812000,
+      tool: "read_workspace_changes", kind: "tool_call_finished", timestamp: 1789812000,
       status: "completed", duration_ms: 42,
     },
   },
@@ -49,8 +49,8 @@ export const baseState = {
     events_returned: 2, events_observed: 2, truncated: false,
     last_activity_at_ms: 1_999_999_990_000,
     events: [
-      { label: "Reviewed changes", tool_name: "show_changes", server_trace_id: "trace-reviewed", kind: "review", status: "success", meaningful: true, started_at_ms: 1_999_999_989_000, ended_at_ms: 1_999_999_990_000, duration_ms: 1000 },
-      { label: "Observed Runtime status", tool_name: "runtime_status", server_trace_id: "trace-runtime", kind: null, status: "success", meaningful: false, started_at_ms: 1_999_999_980_000, ended_at_ms: 1_999_999_980_100, duration_ms: 100 },
+      { label: "Reviewed changes", tool_name: "read_workspace_changes", server_trace_id: "trace-reviewed", kind: "review", status: "success", meaningful: true, started_at_ms: 1_999_999_989_000, ended_at_ms: 1_999_999_990_000, duration_ms: 1000 },
+      { label: "Observed Runtime status", tool_name: "get_runtime_status", server_trace_id: "trace-runtime", kind: null, status: "success", meaningful: false, started_at_ms: 1_999_999_980_000, ended_at_ms: 1_999_999_980_100, duration_ms: 100 },
     ],
   },
   collaboration: { available: true, can_send: true, messages: [] },

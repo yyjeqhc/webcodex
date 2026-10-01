@@ -95,7 +95,7 @@ async fn http_client_presentation_matrix_preserves_native_failure() {
                 &service,
                 json!({
                     "name": "call_runtime_tool", "arguments": {
-                        "tool": "show_changes", "arguments": {"project": "agent:missing:missing"}
+                        "tool": "read_workspace_changes", "arguments": {"project": "agent:missing:missing"}
                     },
                 }),
                 meta,
@@ -129,8 +129,8 @@ async fn http_openai_protocol_errors_remain_jsonrpc_errors() {
     ));
     for modern in [false, true] {
         for params in [
-            json!({"name": "call_runtime_tool", "arguments": {"tool": "show_changes", "arguments": {"project": 42}}}),
-            json!({"name": "call_runtime_tool", "arguments": {"tool": "show_changes", "arguments": []}}),
+            json!({"name": "call_runtime_tool", "arguments": {"tool": "read_workspace_changes", "arguments": {"project": 42}}}),
+            json!({"name": "call_runtime_tool", "arguments": {"tool": "read_workspace_changes", "arguments": []}}),
             // A malformed envelope must still fail McpToolCallParams deserialization.
             json!({"name": 42, "arguments": {}}),
         ] {
@@ -156,7 +156,7 @@ async fn http_openai_protocol_errors_remain_jsonrpc_errors() {
     ] {
         let (status, body) = http_call(
             &service,
-            json!({"name": "show_changes", "arguments": {"project": "missing"}}),
+            json!({"name": "read_workspace_changes", "arguments": {"project": "missing"}}),
             json!({"io.modelcontextprotocol/clientInfo": info}),
             true,
         )
@@ -191,8 +191,8 @@ fn resource_failure_fallbacks_use_canonical_presentation_policy() {
         );
         for tool in [
             "computer_observe",
-            "browser_observe",
-            "read_project_artifact",
+            "observe_browser",
+            "read_project_artifact_chunk",
         ] {
             assert_eq!(
                 mcp_runtime_tool_result_with_snapshot_resource(
@@ -245,8 +245,8 @@ async fn gateway_and_app_canonical_failures_use_request_presentation() {
             json!({"project": "agent:missing:missing"}),
         ),
         adaptive_runtime_gateway_params("unknown_target", json!({})),
-        json!({"name": "goal_plan_sync", "arguments": {"goal_id": "wc_goal_AAAAAAAAAAAAAAAA"}}),
-        json!({"name": "agent_continuation_state", "arguments": {
+        json!({"name": "sync_goal_plan", "arguments": {"goal_id": "wc_goal_AAAAAAAAAAAAAAAA"}}),
+        json!({"name": "get_agent_continuation_state", "arguments": {
             "agent_id": "wc_dagent_AAAAAAAAAAAAAAAA", "endpoint_id": "wc_endpoint_AAAAAAAAAAAAAAAA",
             "expected_controller_generation": 1, "binding_id": "wc_host_binding_AAAAAAAAAAAAAAAAAAAAAA"
         }}),

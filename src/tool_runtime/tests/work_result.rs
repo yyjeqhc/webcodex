@@ -46,7 +46,7 @@ fn review(total: u64) -> Value {
         "diff_review_count": total,
         "workspace_review_count": total,
         "hygiene_review_count": 0,
-        "tools": ["show_changes", "git_review_summary"]
+        "tools": ["read_workspace_changes", "read_git_review_summary"]
     })
 }
 
@@ -203,7 +203,7 @@ fn work_result_state_version_matches_buffered_projection_hash() {
             "history": [{"kind": "test", "name": "unicode::你好"}]
         }),
         &json!({"status": "failed", "unresolved_failure_count": 1, "evidence_gap_event_count": 2}),
-        &json!({"available": true, "total": 2, "tools": ["show_changes", "git_review_summary"]}),
+        &json!({"available": true, "total": 2, "tools": ["read_workspace_changes", "read_git_review_summary"]}),
         true,
     );
     let expected = format!(
@@ -461,7 +461,7 @@ async fn refresh_window_work_result_once(
             runtime
                 .call_tool_with_invocation_metadata(
                     ToolCallRequest {
-                        tool_name: "work_result_state".into(),
+                        tool_name: "get_work_result_state".into(),
                         arguments: json!({"project": project}),
                     },
                     ToolCallContext {
@@ -550,7 +550,7 @@ async fn work_result_window_card_needs_no_session_and_uses_all_window_activity()
         &auth,
         &window,
         &project,
-        "runtime_status",
+        "get_runtime_status",
         2_000,
         false,
     );
@@ -589,7 +589,7 @@ async fn work_result_window_card_needs_no_session_and_uses_all_window_activity()
     );
     assert!(events
         .iter()
-        .any(|event| event["tool_name"] == "runtime_status"));
+        .any(|event| event["tool_name"] == "get_runtime_status"));
     assert!(events
         .iter()
         .any(|event| event["meaningful"] == false && event["label"] == "Observed Runtime status"));
@@ -793,10 +793,10 @@ async fn work_result_progress_uses_latest_meaningful_session_activity() {
     let meaningful = runtime.sessions.record_tool_call_started_with_options(
         Some(&session.session_id),
         crate::tool_runtime::sessions::SessionTransport::Api,
-        "show_changes",
+        "read_workspace_changes",
         &json!({"project": project, "include_diff": false}),
         Some(project.clone()),
-        crate::tool_runtime::sessions::session_tool_contract("show_changes"),
+        crate::tool_runtime::sessions::session_tool_contract("read_workspace_changes"),
     );
     runtime.sessions.record_tool_call_finished(
         meaningful,
@@ -832,7 +832,7 @@ async fn work_result_progress_uses_latest_meaningful_session_activity() {
     .await;
     assert!(state.success, "{:?}", state.error);
     assert_eq!(
-        state.output["work_result"]["session"]["latest_activity"]["tool"], "show_changes",
+        state.output["work_result"]["session"]["latest_activity"]["tool"], "read_workspace_changes",
         "presentation-only Session events must not masquerade as work progress"
     );
     let workflow = &state.output["work_result"]["workflow"];
@@ -1124,7 +1124,7 @@ async fn work_result_collaboration_is_window_first_without_creating_session() {
         ToolProtocolCapabilities, ToolTransport,
     };
     let send = runtime.call_tool_with_invocation_metadata(
-        ToolCallRequest { tool_name: "work_result_send_message".into(), arguments: json!({"project":project,"message":"Check tests","delivery_key":"card-1"}) },
+        ToolCallRequest { tool_name: "send_work_result_message".into(), arguments: json!({"project":project,"message":"Check tests","delivery_key":"card-1"}) },
         ToolCallContext { transport: ToolTransport::Mcp, session_id: None, auth: Some(&auth), window: Some(&window), record_oauth_scope_denials: false, host_file_import_trust: HostFileImportTrust::Untrusted },
         ToolInvocationMetadata::default(), ToolProtocolCapabilities {work_result_app:true,..Default::default()},
     ).await;
@@ -1153,7 +1153,7 @@ async fn work_result_collaboration_is_window_first_without_creating_session() {
             runtime
                 .call_tool_with_invocation_metadata(
                     ToolCallRequest {
-                        tool_name: "work_result_state".into(),
+                        tool_name: "get_work_result_state".into(),
                         arguments: json!({"project":project}),
                     },
                     ToolCallContext {
@@ -1313,7 +1313,7 @@ async fn work_result_and_runtime_console_share_window_collaboration_truth() {
     let call = |metadata: ToolInvocationMetadata| {
         runtime.call_tool_with_invocation_metadata(
             ToolCallRequest {
-                tool_name: "runtime_status".into(),
+                tool_name: "get_runtime_status".into(),
                 arguments: json!({"compact": true}),
             },
             ToolCallContext {
@@ -1398,7 +1398,7 @@ fn work_result_tool_contract_requires_project_and_accepts_optional_session() {
         .is_err(),
         "the retired presentation must not parse as a compatibility alias"
     );
-    for name in ["present_work_result", "work_result_state"] {
+    for name in ["present_work_result", "get_work_result_state"] {
         let project_only = ToolCall::from_tool_name(name, json!({"project": "agent:x:y"})).unwrap();
         assert_eq!(project_only.tool_name(), name);
         assert!(ToolCall::from_tool_name(
@@ -1429,10 +1429,10 @@ fn work_result_tool_contract_requires_project_and_accepts_optional_session() {
             "message": "hello"
         }),
     ] {
-        assert!(ToolCall::from_tool_name("work_result_send_message", incomplete).is_err());
+        assert!(ToolCall::from_tool_name("send_work_result_message", incomplete).is_err());
     }
     let send = ToolCall::from_tool_name(
-        "work_result_send_message",
+        "send_work_result_message",
         json!({
             "project": "agent:x:y",
             "session_id": format!("wc_sess_{}", "1".repeat(32)),
@@ -1441,7 +1441,7 @@ fn work_result_tool_contract_requires_project_and_accepts_optional_session() {
         }),
     )
     .unwrap();
-    assert_eq!(send.tool_name(), "work_result_send_message");
+    assert_eq!(send.tool_name(), "send_work_result_message");
 }
 
 #[path = "work_result/frozen_changes.rs"]

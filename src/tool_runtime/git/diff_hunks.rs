@@ -603,7 +603,7 @@ fn git_diff_hunks_failure(
     stderr: &str,
 ) -> ToolResult {
     ToolResult::err_with_output(
-        format!("git_diff_hunks failed: {reason_code}"),
+        format!("read_git_diff_hunks failed: {reason_code}"),
         json!({
             "project": project,
             "paths": paths,
@@ -634,7 +634,7 @@ fn git_diff_hunks_source_failure(
         .map(|output| bounded_git_diff_hunks_stderr(&output.stderr))
         .unwrap_or_default();
     ToolResult::err_with_output(
-        format!("git_diff_hunks failed: {reason_code}"),
+        format!("read_git_diff_hunks failed: {reason_code}"),
         json!({
             "project": project,
             "paths": paths,
@@ -759,7 +759,7 @@ fn git_diff_hunks_recovery_value(
 
     let continuation_call = next_continuation.map(|continuation| {
         SuggestedToolCall::mechanically_followable(
-            "git_diff_hunks",
+            "read_git_diff_hunks",
             git_diff_hunks_call_arguments(
                 project,
                 paths,
@@ -827,7 +827,7 @@ fn git_diff_hunks_recovery_value(
     };
     let refinement_call = refinement_recoverable.then(|| {
         SuggestedToolCall::mechanically_followable(
-            "git_diff_hunks",
+            "read_git_diff_hunks",
             git_diff_hunks_call_arguments(
                 project,
                 &omitted_line_paths,
@@ -843,7 +843,7 @@ fn git_diff_hunks_recovery_value(
     });
     let fragment_call = fragment_recoverable.then(|| {
         SuggestedToolCall::mechanically_followable(
-            "git_diff_hunks",
+            "read_git_diff_hunks",
             git_diff_hunks_call_arguments(
                 project,
                 paths,

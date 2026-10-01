@@ -7,7 +7,7 @@ use super::common::{
 
 pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
     match name {
-        "project_overview" => Some(wrapped_output_schema(vec![
+        "read_project_overview" => Some(wrapped_output_schema(vec![
             ("schema_version", schema_type("integer", "Overview schema version.")),
             ("project", schema_type("string", "Resolved runtime project id.")),
             ("path", schema_type("string", "Project-relative overview scope; empty means project root.")),

@@ -405,9 +405,9 @@ max_output_bytes = 262144
 ```
 
 After editing the already-running Runner's startup-bound `runner.toml`, use
-`runner_config_check(client_id=...)`, then pass its `current_generation` to
-`runner_config_reload(client_id=..., expected_generation=...)`, then inspect
-`runtime_status(client_id=...)`. Check never activates the candidate; reload never
+`check_runner_config(client_id=...)`, then pass its `current_generation` to
+`reload_runner_config(client_id=..., expected_generation=...)`, then inspect
+`get_runtime_status(client_id=...)`. Check never activates the candidate; reload never
 writes the file. Invalid candidates preserve the active snapshot/generation, and
 `restart_required_fields` names startup-only changes that are not claimed live
 until restart. Unix service reload/SIGHUP remains a compatibility trigger for the
@@ -570,7 +570,7 @@ returned by the Runtime Console API.
 
 ### Runtime job API trust model
 
-`observe_jobs`, `list_jobs`, and `job_tail` are intended for trusted
+`observe_jobs`, `list_jobs`, and `read_job_tail` are intended for trusted
 single-operator deployments. They are not a tenant boundary between mutually
 untrusted users. Do not expose one runtime to multiple untrusted users without
 adding job-owner isolation; use separate server/runtime instances instead.

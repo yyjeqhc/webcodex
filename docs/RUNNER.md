@@ -68,7 +68,7 @@ The exact protocol-generation field names, baseline capability list, registratio
 
 A ChatGPT Host message that the current conversation does not support developer
 MCPs is not a Runner heartbeat or reconnect result. If ChatGPT cannot dispatch
-`runtime_status`, first run `webcodex runner status` locally (and inspect bounded
+`get_runtime_status`, first run `webcodex runner status` locally (and inspect bounded
 Runner logs) before restarting or changing Runner configuration. See
 [Troubleshooting](TROUBLESHOOTING.md) for the Host-vs-Server-vs-Runner decision
 tree.
@@ -135,10 +135,10 @@ Runner's `allowed_roots` policy.
 
 ## Skill sources
 
-`skill_list` presents one catalog while preserving three distinct ownership and
+`list_skills` presents one catalog while preserving three distinct ownership and
 lifecycle models:
 
-**Available since v0.4.2:** configured live Runner Skill roots and the Managed Runner Skill Store participate in this unified catalog. WebCodex v0.4.1 `skill_list` did not implicitly scan `~/.codex/skills`; configure `[skills].roots` explicitly on v0.4.2+ when that directory should participate.
+**Available since v0.4.2:** configured live Runner Skill roots and the Managed Runner Skill Store participate in this unified catalog. WebCodex v0.4.1 `list_skills` did not implicitly scan `~/.codex/skills`; configure `[skills].roots` explicitly on v0.4.2+ when that directory should participate.
 
 | Source | Location / owner | Trust | Version semantics |
 | --- | --- | --- | --- |
@@ -174,7 +174,7 @@ roots = [
 A root has the form `<root>/<package>/SKILL.md`, with optional package resources
 such as `references/` and `scripts/`. These directories are read directly by the
 Runner. WebCodex does not modify files in configured roots or copy them into the
-managed Store; `skill_install`, `skill_activate`, and `skill_remove_revision`
+managed Store; `install_skill`, `activate_skill`, and `remove_skill_revision`
 continue to mutate only that Store. This non-mutating behavior does not make the
 source non-executable: `run_skill_resource` may execute supported `scripts/*.py`
 or `scripts/*.sh` from an operator-configured trusted Skill.
@@ -195,12 +195,12 @@ bytes: `run_skill_resource` re-reads the selected script at execution and return
 `skill_sha256` for the actual bytes executed. Managed installed Skills additionally
 use `expected_package_revision` to fence the immutable package. Changing the
 configured `roots` list is a hot-reloadable Runner configuration change: edit
-`runner.toml`, run `runner_config_check`, then `runner_config_reload` with the
+`runner.toml`, run `check_runner_config`, then `reload_runner_config` with the
 current generation. No Runner process restart is required.
 
 ## Runner build identity
 
-A connected Runner reports bounded, non-secret binary identity through `runtime_status(client_id=...)` and `list_runners`: package version, Git commit/dirty state, build timestamp, Cargo target triple, and architecture. Older Runners may omit any of these optional fields. This is intended for deployment/source-alignment diagnostics; executable paths, environment, tokens, and credentials are not included. `webcodex-runner --version` remains the local pre-connection identity check.
+A connected Runner reports bounded, non-secret binary identity through `get_runtime_status(client_id=...)` and `list_runners`: package version, Git commit/dirty state, build timestamp, Cargo target triple, and architecture. Older Runners may omit any of these optional fields. This is intended for deployment/source-alignment diagnostics; executable paths, environment, tokens, and credentials are not included. `webcodex-runner --version` remains the local pre-connection identity check.
 
 ## Runner-level configured instructions
 
@@ -257,7 +257,7 @@ sources make the instruction scan incomplete without exposing their native paths
 or failing the entire Project bootstrap.
 
 Changing `[instructions].files` is hot-reloadable: edit `runner.toml`, run
-`runner_config_check`, then `runner_config_reload` with the current generation.
+`check_runner_config`, then `reload_runner_config` with the current generation.
 No Runner restart is required. The files themselves remain live: editing a
 configured `AGENTS.md` is visible to the next `work_on_project`/new Project
 bootstrap without any config reload. Each Project bootstrap observes the current
@@ -631,7 +631,7 @@ generation; already-started SSH commands keep their own bounded lifecycle and
 are never redirected, replayed, or blindly retried.
 
 Authorized model clients can also onboard Runner-local SSH resources with the
-`ssh_resource` MCP tool. `list` returns only safe logical names plus
+`manage_ssh_resource` MCP tool. `list` returns only safe logical names plus
 `static|managed`, active/pending-restart state, and an opaque exact-Runner /
 registry-revision binding. `register` accepts one explicit OpenSSH destination
 argv and optional default cwd; `remove` deletes only managed desired state.
@@ -665,9 +665,9 @@ run on the repository machine:
 | Python | `pyright` | `pyproject.toml`, `setup.py`, `requirements.txt`, … |
 | TypeScript / JavaScript | `typescript-language-server` | `tsconfig.json`, `package.json`, … |
 
-The tools are `lsp_status`, `document_symbols`, `goto_definition`,
-`find_references`, `document_diagnostics`, `hover`, and `workspace_symbols`.
-The distinct `call_hierarchy` operation performs prepare plus bounded
+The tools are `get_lsp_status`, `list_document_symbols`, `find_definition`,
+`find_references`, `read_document_diagnostics`, `hover`, and `list_workspace_symbols`.
+The distinct `read_call_hierarchy` operation performs prepare plus bounded
 incoming/outgoing breadth-first traversal inside the Runner. The canonical
 Connector projects it as `code_impact`; raw protocol methods and opaque LSP
 item data are never exposed.
@@ -716,20 +716,20 @@ For an already-running Runner, use the first-class configuration workflow instea
 of finding its PID or sending signals manually:
 
 1. Edit the Runner's existing startup-bound `runner.toml`.
-2. Call `runner_config_check(client_id=...)`. It reads only that bound path, does
+2. Call `check_runner_config(client_id=...)`. It reads only that bound path, does
    not activate the candidate, and returns the current generation plus bounded
    validation/restart metadata.
 3. If valid, call
-   `runner_config_reload(client_id=..., expected_generation=<current_generation>)`.
+   `reload_runner_config(client_id=..., expected_generation=<current_generation>)`.
    The optimistic generation fence rejects stale callers before activation.
-4. Inspect `runtime_status(client_id=...)` (or `list_runners`) after reload.
+4. Inspect `get_runtime_status(client_id=...)` (or `list_runners`) after reload.
 
-`runner_config_reload` never writes `runner.toml`; it only activates the candidate
+`reload_runner_config` never writes `runner.toml`; it only activates the candidate
 already on disk. Hot-reloadable policy, shell, configured Skill roots, configured
 instruction files, Native Plugin, and static SSH-resource changes can become active
 immediately, while fields reported in `restart_required_fields`
 remain startup-only until the Runner restarts. Invalid candidates leave the active
-snapshot and generation unchanged. Managed `ssh_resource` mutations are different:
+snapshot and generation unchanged. Managed `manage_ssh_resource` mutations are different:
 they use a frozen startup snapshot and require a Runner restart exactly when the
 tool reports `restart_required=true`.
 

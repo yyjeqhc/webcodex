@@ -13,7 +13,7 @@ fn supports_model_facing_result_expectation(tool_name: &str) -> bool {
         "run_process"
             | "run_script"
             | "run_shell"
-            | "session_shell_exec"
+            | "execute_session_shell"
             | "cargo_fmt"
             | "cargo_check"
             | "cargo_test"

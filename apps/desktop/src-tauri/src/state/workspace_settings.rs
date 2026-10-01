@@ -199,7 +199,7 @@ where
     Fut: std::future::Future<Output = DesktopResult<Value>>,
 {
     let checked = call(
-        "runner_config_check",
+        "check_runner_config",
         serde_json::json!({"client_id": client_id}),
     )
     .await;
@@ -218,7 +218,7 @@ where
         ));
     }
     let reload = call(
-        "runner_config_reload",
+        "reload_runner_config",
         serde_json::json!({
             "client_id": client_id, "expected_generation": generation
         }),
@@ -227,11 +227,11 @@ where
     let applied = match reload {
         Ok(value) if value.get("success").and_then(Value::as_bool) == Some(true) => reload_generation_applied(&value, generation),
         Ok(value) if reload_outcome_unknown(&value) => {
-            let observed = call("runner_config_check", serde_json::json!({"client_id":client_id})).await;
+            let observed = call("check_runner_config", serde_json::json!({"client_id":client_id})).await;
             Err(uncertain_reload(observed))
         }
         Err(_) => {
-            let observed = call("runner_config_check", serde_json::json!({"client_id":client_id})).await;
+            let observed = call("check_runner_config", serde_json::json!({"client_id":client_id})).await;
             Err(uncertain_reload(observed))
         }
         Ok(_) => Err(settings_error("runner_config_reload_failed", "Runner rejected the settings reload", "The unchanged on-disk candidate will be restored. Reconnect and reload settings before trying again.")),

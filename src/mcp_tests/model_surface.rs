@@ -64,7 +64,7 @@ async fn model_workflow_policy_changes_never_change_cached_tools_schemas_routes_
                     "update_goal",
                     "present_agent_continuation",
                 ] {
-                    let args = json!({"name":"tool_manifest", "arguments":{"tool_name":tool}});
+                    let args = json!({"name":"read_tool_manifest", "arguments":{"tool_name":tool}});
                     let params = if apps {
                         mcp_2026_ui_params(args)
                     } else {
@@ -122,12 +122,12 @@ async fn adaptive_tools_list_exposes_ranked_direct_tools_and_gateway() {
             .as_array()
             .expect("tools array")
             .iter()
-            .find(|tool| tool["name"] == "code_mode_exec")
-            .expect("experimental Code Mode feature must expose code_mode_exec directly");
+            .find(|tool| tool["name"] == "execute_code_mode")
+            .expect("experimental Code Mode feature must expose execute_code_mode directly");
         let code_mode_bytes = serde_json::to_vec(code_mode).unwrap().len();
         assert!(
             code_mode_bytes <= MAX_EXPERIMENTAL_CODE_MODE_TOOL_BYTES,
-            "experimental code_mode_exec compact schema cost {code_mode_bytes} exceeded {MAX_EXPERIMENTAL_CODE_MODE_TOOL_BYTES} bytes"
+            "experimental execute_code_mode compact schema cost {code_mode_bytes} exceeded {MAX_EXPERIMENTAL_CODE_MODE_TOOL_BYTES} bytes"
         );
     }
     assert!(
@@ -148,10 +148,10 @@ async fn adaptive_tools_list_exposes_ranked_direct_tools_and_gateway() {
         "work_on_project",
         "read_files",
         "search_project_texts",
-        "search_and_read",
+        "search_and_read_project_texts",
         "edit_project_files",
         "run_process",
-        "job_write_input",
+        "write_job_input",
         "run_script",
         "run_shell",
         "cargo_check",
@@ -161,7 +161,7 @@ async fn adaptive_tools_list_exposes_ranked_direct_tools_and_gateway() {
         "wait_for_job_readiness",
         "present_work_result",
         "present_goal_plan",
-        "skill_load",
+        "load_skill",
     ] {
         assert!(
             names.contains(&required),
@@ -183,22 +183,22 @@ async fn interactive_job_input_prefers_direct_and_keeps_gateway_fallback() {
             "tools/call",
             Some(json!(69)),
             mcp_2026_params(json!({
-                "name": "tool_manifest",
-                "arguments": {"tool_name": "job_write_input"}
+                "name": "read_tool_manifest",
+                "arguments": {"tool_name": "write_job_input"}
             })),
         ),
         None,
     )
     .await;
     let McpOutcome::Ok(value) = outcome else {
-        panic!("job_write_input manifest must succeed");
+        panic!("write_job_input manifest must succeed");
     };
     let output = &value["result"]["structuredContent"]["output"];
     assert_eq!(output["route"]["primary"]["mode"], "direct");
-    assert_eq!(output["route"]["primary"]["tool"], "job_write_input");
+    assert_eq!(output["route"]["primary"]["tool"], "write_job_input");
     assert_eq!(output["route"]["fallback"]["mode"], "gateway");
     assert_eq!(output["route"]["fallback"]["tool"], "call_runtime_tool");
-    assert_eq!(output["route"]["fallback"]["target"], "job_write_input");
+    assert_eq!(output["route"]["fallback"]["target"], "write_job_input");
     assert_eq!(
         output["route"]["fallback"]["when"],
         "direct_callable_unavailable"
@@ -215,8 +215,8 @@ async fn specialist_tools_remain_discoverable_with_canonical_gateway_contracts()
     let runtime = test_runtime();
     let listed = crate::mcp::tools::mcp_tools_list_payload_with_compact(false);
     for name in [
-        "show_changes",
-        "session_handoff_summary",
+        "read_workspace_changes",
+        "read_session_handoff_summary",
         "rotate_agent_continuation_endpoint",
         "run_skill_resource",
         "wait_for_agent_events",
@@ -236,7 +236,7 @@ async fn specialist_tools_remain_discoverable_with_canonical_gateway_contracts()
                 "tools/call",
                 Some(json!(67)),
                 mcp_2026_params(json!({
-                    "name": "tool_manifest", "arguments": {"tool_name": name}
+                    "name": "read_tool_manifest", "arguments": {"tool_name": name}
                 })),
             ),
             None,
@@ -336,7 +336,7 @@ async fn retired_endpoint_name_is_absent_from_adaptive_exact_discovery() {
             "tools/call",
             Some(json!(69)),
             mcp_2026_params(json!({
-                "name":"tool_manifest", "arguments":{"tool_name":old}
+                "name":"read_tool_manifest", "arguments":{"tool_name":old}
             })),
         ),
         None,
@@ -361,7 +361,7 @@ async fn long_tail_manifest_routes_through_call_runtime_tool() {
             "tools/call",
             Some(json!(61)),
             mcp_2026_params(json!({
-                "name": "tool_manifest",
+                "name": "read_tool_manifest",
                 "arguments": {"tool_name": "apply_patch"}
             })),
         ),
@@ -369,7 +369,7 @@ async fn long_tail_manifest_routes_through_call_runtime_tool() {
     )
     .await;
     let McpOutcome::Ok(value) = outcome else {
-        panic!("tool_manifest must succeed");
+        panic!("read_tool_manifest must succeed");
     };
     let output = &value["result"]["structuredContent"]["output"];
     assert_eq!(output["route"]["primary"]["mode"], "gateway");
@@ -382,7 +382,7 @@ async fn long_tail_manifest_routes_through_call_runtime_tool() {
 #[tokio::test]
 async fn closeout_helpers_remain_visible_with_exact_gateway_contracts() {
     let runtime = test_runtime();
-    for name in ["workspace_hygiene_check", "finish_coding_task"] {
+    for name in ["check_workspace_hygiene", "finish_coding_task"] {
         let definition =
             crate::tool_runtime::tool_definition::lookup_tool_definition(name).unwrap();
         assert!(definition.visibility.is_model_visible());
@@ -399,7 +399,7 @@ async fn closeout_helpers_remain_visible_with_exact_gateway_contracts() {
                 "tools/call",
                 Some(json!(66)),
                 mcp_2026_params(json!({
-                    "name": "tool_manifest", "arguments": {"tool_name": name},
+                    "name": "read_tool_manifest", "arguments": {"tool_name": name},
                 })),
             ),
             None,
@@ -495,12 +495,12 @@ async fn long_tail_and_direct_targets_are_both_admitted_through_gateway() {
 
 #[test]
 fn hidden_protocol_extensions_require_protocol_admission() {
-    assert!(!crate::tool_runtime::tool_definition::is_model_visible_tool_name("skill_list"));
+    assert!(!crate::tool_runtime::tool_definition::is_model_visible_tool_name("list_skills"));
     assert!(
-        !crate::mcp::tools::adaptive_runtime_gateway_target_admitted_for_test("skill_list", false,)
+        !crate::mcp::tools::adaptive_runtime_gateway_target_admitted_for_test("list_skills", false,)
     );
     assert!(
-        crate::mcp::tools::adaptive_runtime_gateway_target_admitted_for_test("skill_list", true,)
+        crate::mcp::tools::adaptive_runtime_gateway_target_admitted_for_test("list_skills", true,)
     );
     assert!(
         !crate::mcp::tools::adaptive_runtime_gateway_target_admitted_for_test(
@@ -617,7 +617,9 @@ async fn pruned_tools_keep_exact_manifest_and_canonical_gateway_validation() {
             rpc(
                 "tools/call",
                 Some(json!(1)),
-                mcp_2026_params(json!({"name": "tool_manifest", "arguments": {"tool_name": name}})),
+                mcp_2026_params(
+                    json!({"name": "read_tool_manifest", "arguments": {"tool_name": name}}),
+                ),
             ),
             None,
         )

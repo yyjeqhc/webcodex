@@ -314,7 +314,7 @@ mod tests {
 
     #[test]
     fn business_session_schema_documents_short_ref_without_leaking_recorder_wrapper() {
-        let summary = input_schema_for_tool("session_summary");
+        let summary = input_schema_for_tool("read_session_summary");
         let session = &summary["properties"]["session_id"];
         assert_eq!(session["type"], "string");
         assert!(
@@ -334,7 +334,7 @@ mod tests {
         assert!(!run["required"].as_array().unwrap().contains(&json!("cwd")));
         assert_eq!(run["additionalProperties"], false);
 
-        let artifact = input_schema_for_tool("project_artifact");
+        let artifact = input_schema_for_tool("inspect_project_artifact");
         assert_eq!(artifact["additionalProperties"], false);
         assert_eq!(
             artifact["properties"]["action"]["enum"],
@@ -365,7 +365,7 @@ mod tests {
             false
         );
 
-        let artifact = input_schema_for_tool("project_artifact");
+        let artifact = input_schema_for_tool("inspect_project_artifact");
         assert_eq!(
             artifact["properties"]["action"]["enum"],
             json!(["metadata", "inspect", "image", "export"])

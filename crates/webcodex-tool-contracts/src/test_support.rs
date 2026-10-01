@@ -287,7 +287,7 @@ mod tests {
         });
         validate_schema_instance(&json!({"suggested_call": {}}), &schema).unwrap();
         assert!(validate_schema_instance(
-            &json!({"suggested_call": {}, "reconcile_with": "skill_versions"}),
+            &json!({"suggested_call": {}, "reconcile_with": "list_skill_versions"}),
             &schema,
         )
         .is_err());

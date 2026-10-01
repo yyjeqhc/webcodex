@@ -41,7 +41,7 @@ fn fixture() -> (tempfile::TempDir, Arc<crate::Database>, ToolRuntime) {
             4,
             Some("a".repeat(64)),
             "agent:special:one",
-            "work_result_state",
+            "get_work_result_state",
             false,
         ),
     ] {

@@ -116,7 +116,7 @@ fn request_audit_omits_plugin_ssh_native_path_and_observation_secrets() {
         "target": SSH_TARGET,
         "default_cwd": SSH_CWD
     });
-    let ssh_summary = session_log_arguments_for_tool_request("ssh_resource", &ssh);
+    let ssh_summary = session_log_arguments_for_tool_request("manage_ssh_resource", &ssh);
     assert_eq!(ssh_summary["action"], "register");
     for key in [
         "runner_present",
@@ -202,7 +202,7 @@ fn agent_continuation_app_audit_omits_host_binding_and_resume_secrets() {
         "attempt_id": "wc_wake_attempt_3d3d3d3d3d3d3d3d"
     });
     let arguments =
-        session_log_arguments_for_tool_request("agent_continuation_wake_prepare", &args);
+        session_log_arguments_for_tool_request("prepare_agent_continuation_wake", &args);
     let arguments_text = serde_json::to_string(&arguments).unwrap();
     assert_eq!(arguments["agent_id"], args["agent_id"]);
     assert_eq!(arguments["wake_id"], args["wake_id"]);
@@ -222,7 +222,7 @@ fn agent_continuation_app_audit_omits_host_binding_and_resume_secrets() {
             "automatic_message": "consume_token=wc_wake_consume_PRIVATE_TOKEN\nPRIVATE MESSAGE BODY"
         }
     });
-    let projected = session_log_result_for_tool("agent_continuation_wake_prepare", &result);
+    let projected = session_log_result_for_tool("prepare_agent_continuation_wake", &result);
     let projected_text = serde_json::to_string(&projected).unwrap();
     assert_eq!(projected["wake_id"], args["wake_id"]);
     assert_eq!(projected["dispatch_observation"], "dispatch_prepared");
@@ -256,7 +256,7 @@ fn job_terminal_continuation_app_audit_omits_binding_and_private_message() {
         "binding_id": binding_id
     });
     let prepare_args =
-        session_log_arguments_for_tool_request("job_terminal_continuation_prepare", &prepare_input);
+        session_log_arguments_for_tool_request("prepare_job_terminal_continuation", &prepare_input);
     let prepare_args_text = serde_json::to_string(&prepare_args).unwrap();
     assert_eq!(prepare_args["wait_id"], wait_id);
     assert!(!prepare_args_text.contains(&binding_id));
@@ -270,7 +270,7 @@ fn job_terminal_continuation_app_audit_omits_binding_and_private_message() {
         "outcome": "dispatch_accepted"
     });
     let finish_args =
-        session_log_arguments_for_tool_request("job_terminal_continuation_finish", &finish_input);
+        session_log_arguments_for_tool_request("finish_job_terminal_continuation", &finish_input);
     let finish_args_text = serde_json::to_string(&finish_args).unwrap();
     assert_eq!(finish_args["wait_id"], wait_id);
     assert_eq!(finish_args["attempt_id"], attempt_id);
@@ -290,7 +290,7 @@ fn job_terminal_continuation_app_audit_omits_binding_and_private_message() {
             "binding_id": binding_id
         }
     });
-    let projected = session_log_result_for_tool("job_terminal_continuation_prepare", &result);
+    let projected = session_log_result_for_tool("prepare_job_terminal_continuation", &result);
     let projected_text = serde_json::to_string(&projected).unwrap();
     assert_eq!(projected["wait_id"], wait_id);
     assert_eq!(projected["attempt_id"], attempt_id);
@@ -321,7 +321,7 @@ fn computer_application_list_ledger_omits_names_ids_and_native_identity() {
         "count": 1,
         "truncated": false
     });
-    let summary = session_log_result_for_tool("computer_observe", &output);
+    let summary = session_log_result_for_tool("observe_computer", &output);
     let serialized = serde_json::to_string(&summary).unwrap();
     assert_eq!(summary, json!({"count": 1, "truncated": false}));
     assert!(!serialized.contains("Private App"));
@@ -360,7 +360,7 @@ fn trace_reader_audit_result_never_persists_raw_payload() {
 #[test]
 fn skill_runtime_audit_results_are_metadata_only() {
     let list = session_log_result_for_tool(
-        "skill_list",
+        "list_skills",
         &json!({
             "project": "agent:test:demo",
             "catalog_revision": "wc_skillcat_deadbeef",
@@ -378,7 +378,7 @@ fn skill_runtime_audit_results_are_metadata_only() {
     assert!(list.get("skills").is_none());
 
     let read = session_log_result_for_tool(
-        "skill_read_file",
+        "read_skill_file",
         &json!({
             "project": "agent:test:demo",
             "skill_id": "wc_skill_ASNFZ4mrze8BI0VniavN7w",
@@ -403,7 +403,7 @@ fn skill_runtime_audit_results_are_metadata_only() {
 #[test]
 fn skill_management_audit_omits_paths_keys_and_package_bodies() {
     let args = session_log_arguments_for_tool_request(
-        "skill_install",
+        "install_skill",
         &json!({
             "project": "agent:test:demo",
             "skill_key": "demo",
@@ -442,7 +442,7 @@ fn skill_management_audit_omits_paths_keys_and_package_bodies() {
     assert_eq!(typed_args["idempotency_key_present"], true);
 
     let versions = session_log_result_for_tool(
-        "skill_versions",
+        "list_skill_versions",
         &json!({
             "project": "agent:test:demo",
             "skill_id": "wc_skill_ASNFZ4mrze8BI0VniavN7w",
@@ -464,7 +464,7 @@ fn skill_management_audit_omits_paths_keys_and_package_bodies() {
     assert!(versions.get("versions").is_none());
 
     let install = session_log_result_for_tool(
-        "skill_install",
+        "install_skill",
         &json!({
             "project": "agent:test:demo",
             "skill_id": "wc_skill_ASNFZ4mrze8BI0VniavN7w",
@@ -847,7 +847,7 @@ fn memory_audit_is_metadata_only_for_search_read_set_and_delete() {
     let memory_id = "wc_mem_iavN7wEjRWeJq83v";
 
     let search_args = session_log_arguments_for_tool_request(
-        "memory_search",
+        "search_memory",
         &json!({
             "project": "agent:test:demo",
             "query": private_query,
@@ -862,7 +862,7 @@ fn memory_audit_is_metadata_only_for_search_read_set_and_delete() {
     assert_eq!(search_args["tag_count"], 1);
 
     let set_args = session_log_arguments_for_tool_request(
-        "memory_set",
+        "set_memory",
         &json!({
             "project": "agent:test:demo",
             "memory_key": "policy",
@@ -899,7 +899,7 @@ fn memory_audit_is_metadata_only_for_search_read_set_and_delete() {
     }
 
     let search_result = session_log_result_for_tool(
-        "memory_search",
+        "search_memory",
         &json!({
             "project": "agent:test:demo",
             "catalog_revision": format!("wc_memcat_{}", "b".repeat(64)),
@@ -921,7 +921,7 @@ fn memory_audit_is_metadata_only_for_search_read_set_and_delete() {
     assert!(search_result.get("memories").is_none());
 
     let read_result = session_log_result_for_tool(
-        "memory_read",
+        "read_memory",
         &json!({
             "project": "agent:test:demo",
             "memory_id": memory_id,
@@ -941,7 +941,7 @@ fn memory_audit_is_metadata_only_for_search_read_set_and_delete() {
     assert_eq!(read_result["returned_body_bytes"], private_body.len());
 
     let set_result = session_log_result_for_tool(
-        "memory_set",
+        "set_memory",
         &json!({
             "project": "agent:test:demo",
             "memory_id": memory_id,
@@ -960,7 +960,7 @@ fn memory_audit_is_metadata_only_for_search_read_set_and_delete() {
     }
 
     let delete_result = session_log_result_for_tool(
-        "memory_delete",
+        "delete_memory",
         &json!({
             "project": "agent:test:demo",
             "memory_id": memory_id,
@@ -976,7 +976,7 @@ fn memory_audit_is_metadata_only_for_search_read_set_and_delete() {
     let scope_id = format!("wc_memscope_{}", "c".repeat(64));
     let catalog_revision = format!("wc_memcat_{}", "e".repeat(64));
     let purge_args = session_log_arguments_for_tool_request(
-        "memory_scope_purge",
+        "purge_memory_scope",
         &json!({
             "memory_scope_id": scope_id,
             "expected_catalog_revision": catalog_revision,
@@ -997,7 +997,7 @@ fn memory_audit_is_metadata_only_for_search_read_set_and_delete() {
     assert_eq!(typed_purge["expected_catalog_revision"], catalog_revision);
 
     let scope_list = session_log_result_for_tool(
-        "memory_scope_list",
+        "list_memory_scopes",
         &json!({
             "total_count": 1,
             "returned_count": 1,
@@ -1034,7 +1034,7 @@ fn memory_audit_is_metadata_only_for_search_read_set_and_delete() {
     }
 
     let purge = session_log_result_for_tool(
-        "memory_scope_purge",
+        "purge_memory_scope",
         &json!({
             "memory_scope_id": scope_id,
             "catalog_revision": catalog_revision,
@@ -1084,7 +1084,7 @@ fn computer_display_list_ledger_omits_ids_and_native_topology() {
         "count": 1,
         "truncated": false
     });
-    let summary = session_log_result_for_tool("computer_observe", &output);
+    let summary = session_log_result_for_tool("observe_computer", &output);
     let serialized = serde_json::to_string(&summary).unwrap();
     assert_eq!(summary, json!({"count": 1, "truncated": false}));
     assert!(!serialized.contains("display_"));
@@ -1104,7 +1104,7 @@ fn computer_display_snapshot_ledger_omits_image_and_native_topology() {
         "max_height": 768,
         "global_x": -1920
     });
-    let request_summary = session_log_arguments_for_tool_request("computer_observe", &request);
+    let request_summary = session_log_arguments_for_tool_request("observe_computer", &request);
     assert_eq!(request_summary, json!({}));
     let typed_request = ToolCall::ComputerObserve(ComputerObserveToolCall::SnapshotDisplay {
         client_id: "msi".to_string(),
@@ -1132,7 +1132,7 @@ fn computer_display_snapshot_ledger_omits_image_and_native_topology() {
         "global_x": -1920,
         "scale_factor": 1.25
     });
-    let summary = session_log_result_for_tool("computer_observe", &output);
+    let summary = session_log_result_for_tool("observe_computer", &output);
     let serialized = serde_json::to_string(&summary).unwrap();
     assert_eq!(summary["display_id"], display_id);
     assert_eq!(summary["snapshot_generation"], 9);
@@ -1154,7 +1154,7 @@ fn computer_clipboard_ledger_omits_body_hashes_and_native_state() {
         "hwnd": "PRIVATE_HWND",
     });
     let read_request_summary =
-        session_log_arguments_for_tool_request("computer_observe", &read_request);
+        session_log_arguments_for_tool_request("observe_computer", &read_request);
     assert_eq!(read_request_summary, json!({}));
     let typed_read = ToolCall::ComputerObserve(ComputerObserveToolCall::ReadClipboard {
         client_id: "msi".to_string(),
@@ -1173,7 +1173,7 @@ fn computer_clipboard_ledger_omits_body_hashes_and_native_state() {
         "native_handle": "PRIVATE_HGLOBAL",
     });
     let write_request_summary =
-        session_log_arguments_for_tool_request("computer_control", &write_request);
+        session_log_arguments_for_tool_request("control_computer", &write_request);
     assert_eq!(write_request_summary, json!({}));
     let typed_write = ToolCall::ComputerControl(ComputerControlToolCall::WriteClipboard {
         client_id: "msi".to_string(),
@@ -1195,7 +1195,7 @@ fn computer_clipboard_ledger_omits_body_hashes_and_native_state() {
         "hwnd": "PRIVATE_HWND",
         "native_owner": "PRIVATE_OWNER",
     });
-    let read_summary = session_log_result_for_tool("computer_observe", &read_output);
+    let read_summary = session_log_result_for_tool("observe_computer", &read_output);
     assert_eq!(read_summary["available"], true);
     assert_eq!(read_summary["text_bytes"], PRIVATE_TEXT.len());
     let read_serialized = serde_json::to_string(&read_summary).unwrap();
@@ -1219,7 +1219,7 @@ fn computer_clipboard_ledger_omits_body_hashes_and_native_state() {
         "hglobal": "PRIVATE_HGLOBAL",
         "clipboard_owner": "PRIVATE_OWNER",
     });
-    let write_summary = session_log_result_for_tool("computer_control", &write_output);
+    let write_summary = session_log_result_for_tool("control_computer", &write_output);
     assert_eq!(write_summary["text_bytes"], PRIVATE_TEXT.len());
     assert_eq!(write_summary["success"], true);
     let write_serialized = serde_json::to_string(&write_summary).unwrap();
@@ -1246,7 +1246,7 @@ fn computer_pointer_ledger_keeps_only_source_space_and_opaque_lifecycle_metadata
         "global_x": -1599,
         "native_identity": "PRIVATE_NATIVE_ID"
     });
-    let request_summary = session_log_arguments_for_tool_request("computer_control", &request);
+    let request_summary = session_log_arguments_for_tool_request("control_computer", &request);
     assert_eq!(request_summary, json!({}));
     let typed_request = ToolCall::ComputerControl(ComputerControlToolCall::PointerClick {
         client_id: "msi".to_string(),
@@ -1282,7 +1282,7 @@ fn computer_pointer_ledger_keeps_only_source_space_and_opaque_lifecycle_metadata
         "cursor_native_x": 160.5,
         "held_buttons": 0
     });
-    let summary = session_log_result_for_tool("computer_control", &output);
+    let summary = session_log_result_for_tool("control_computer", &output);
     let serialized = serde_json::to_string(&summary).unwrap();
     assert_eq!(summary["display_id"], display_id);
     assert_eq!(summary["snapshot_generation"], 11);
@@ -1318,7 +1318,7 @@ fn computer_application_launch_ledger_keeps_only_opaque_lifecycle_metadata() {
         "path": "C:\\Private\\app.exe",
         "display_name": "Private App"
     });
-    let summary = session_log_result_for_tool("computer_control", &output);
+    let summary = session_log_result_for_tool("control_computer", &output);
     assert_eq!(
         summary,
         json!({
@@ -1350,7 +1350,7 @@ fn computer_list_ledger_result_omits_window_content() {
         "count": 1,
         "truncated": false
     });
-    let summary = session_log_result_for_tool("computer_observe", &output);
+    let summary = session_log_result_for_tool("observe_computer", &output);
     let serialized = serde_json::to_string(&summary).unwrap();
     assert_eq!(summary, json!({"count": 1, "truncated": false}));
     assert!(!serialized.contains("Confidential"));
@@ -1382,7 +1382,7 @@ fn computer_accessibility_tree_ledger_result_omits_semantic_content() {
         "max_depth": 6,
         "max_nodes": 128
     });
-    let summary = session_log_result_for_tool("computer_observe", &output);
+    let summary = session_log_result_for_tool("observe_computer", &output);
     let serialized = serde_json::to_string(&summary).unwrap();
     assert_eq!(summary["surface_id"], "surface_safe");
     assert_eq!(summary["node_count"], 1);
@@ -1406,7 +1406,7 @@ fn computer_find_elements_audit_omits_label_and_semantic_result_content() {
         "focused": false,
         "limit": 4,
     });
-    let request_summary = session_log_arguments_for_tool_request("computer_observe", &request);
+    let request_summary = session_log_arguments_for_tool_request("observe_computer", &request);
     let request_serialized = serde_json::to_string(&request_summary).unwrap();
     assert_eq!(request_summary["client_id"], "mini");
     assert_eq!(request_summary["surface_id"], "surface_safe");
@@ -1453,7 +1453,7 @@ fn computer_find_elements_audit_omits_label_and_semantic_result_content() {
         "scanned_nodes": 18,
         "truncated": false
     });
-    let result_summary = session_log_result_for_tool("computer_observe", &output);
+    let result_summary = session_log_result_for_tool("observe_computer", &output);
     let result_serialized = serde_json::to_string(&result_summary).unwrap();
     assert_eq!(result_summary["surface_id"], "surface_safe");
     assert_eq!(result_summary["count"], 1);
@@ -1471,7 +1471,7 @@ fn computer_element_state_ledger_omits_content_derived_state() {
         "surface_id": "surface_safe",
         "element_id": "element_safe",
     });
-    let request_summary = session_log_arguments_for_tool_request("computer_observe", &request);
+    let request_summary = session_log_arguments_for_tool_request("observe_computer", &request);
     assert_eq!(request_summary, request);
 
     let output = json!({
@@ -1487,7 +1487,7 @@ fn computer_element_state_ledger_omits_content_derived_state() {
         "can_focus": true,
         "can_input_text": false
     });
-    let summary = session_log_result_for_tool("computer_observe", &output);
+    let summary = session_log_result_for_tool("observe_computer", &output);
     assert_eq!(summary["surface_id"], "surface_safe");
     assert_eq!(summary["element_id"], "element_safe");
     assert_eq!(summary["observation_generation"], 9);
@@ -1511,7 +1511,7 @@ fn computer_activate_window_ledger_is_exact_metadata_only() {
         "client_id": "mini",
         "surface_id": "surface_safe",
     });
-    let request_summary = session_log_arguments_for_tool_request("computer_control", &request);
+    let request_summary = session_log_arguments_for_tool_request("control_computer", &request);
     assert_eq!(request_summary, request);
 
     let output = json!({
@@ -1521,7 +1521,7 @@ fn computer_activate_window_ledger_is_exact_metadata_only() {
         "application": "PRIVATE APP",
         "title": "PRIVATE WINDOW"
     });
-    let summary = session_log_result_for_tool("computer_control", &output);
+    let summary = session_log_result_for_tool("control_computer", &output);
     let serialized = serde_json::to_string(&summary).unwrap();
     assert_eq!(summary["surface_id"], "surface_safe");
     assert_eq!(summary["success"], true);
@@ -1541,7 +1541,7 @@ fn computer_control_ledger_result_is_metadata_only() {
         "title": "PRIVATE CONTROL TARGET",
         "value": "SUPER_SECRET_VALUE"
     });
-    let summary = session_log_result_for_tool("computer_control", &output);
+    let summary = session_log_result_for_tool("control_computer", &output);
     let serialized = serde_json::to_string(&summary).unwrap();
     assert_eq!(summary["surface_id"], "surface_safe");
     assert_eq!(summary["element_id"], "element_safe");
@@ -1559,7 +1559,7 @@ fn computer_scroll_to_element_ledger_is_metadata_only() {
         "surface_id": "surface_safe",
         "element_id": "element_safe",
     });
-    let request_summary = session_log_arguments_for_tool_request("computer_control", &request);
+    let request_summary = session_log_arguments_for_tool_request("control_computer", &request);
     assert_eq!(request_summary, request);
 
     let output = json!({
@@ -1570,7 +1570,7 @@ fn computer_scroll_to_element_ledger_is_metadata_only() {
         "title": "PRIVATE SCROLLED TARGET",
         "value": "SUPER_SECRET_VALUE"
     });
-    let summary = session_log_result_for_tool("computer_control", &output);
+    let summary = session_log_result_for_tool("control_computer", &output);
     let serialized = serde_json::to_string(&summary).unwrap();
     assert_eq!(summary["surface_id"], "surface_safe");
     assert_eq!(summary["element_id"], "element_safe");
@@ -1590,7 +1590,7 @@ fn computer_key_input_ledger_is_closed_metadata_only() {
         "native_key": "MUST_NOT_PERSIST",
         "keycode": 123
     });
-    let request_summary = session_log_arguments_for_tool_request("computer_control", &request);
+    let request_summary = session_log_arguments_for_tool_request("control_computer", &request);
     assert_eq!(request_summary, json!({}));
     let typed_request = ToolCall::ComputerControl(ComputerControlToolCall::Key {
         client_id: "mini".to_string(),
@@ -1611,7 +1611,7 @@ fn computer_key_input_ledger_is_closed_metadata_only() {
         "title": "PRIVATE FOCUSED TARGET",
         "value": "SUPER_SECRET_VALUE"
     });
-    let summary = session_log_result_for_tool("computer_control", &output);
+    let summary = session_log_result_for_tool("control_computer", &output);
     let serialized = serde_json::to_string(&summary).unwrap();
     assert_eq!(summary["surface_id"], "surface_safe");
     assert_eq!(summary["key"], "tab");
@@ -1631,7 +1631,7 @@ fn computer_text_input_request_and_result_never_persist_text() {
         "element_id": "element_safe",
         "text": secret,
     });
-    let request_summary = session_log_arguments_for_tool_request("computer_control", &request);
+    let request_summary = session_log_arguments_for_tool_request("control_computer", &request);
     let request_serialized = serde_json::to_string(&request_summary).unwrap();
     assert_eq!(request_summary["client_id"], "mini");
     assert_eq!(request_summary["surface_id"], "surface_safe");
@@ -1661,7 +1661,7 @@ fn computer_text_input_request_and_result_never_persist_text() {
         "text": secret,
         "value": secret,
     });
-    let result_summary = session_log_result_for_tool("computer_control", &output);
+    let result_summary = session_log_result_for_tool("control_computer", &output);
     let result_serialized = serde_json::to_string(&result_summary).unwrap();
     assert_eq!(result_summary["text_bytes"], secret.len());
     assert_eq!(result_summary["success"], true);
@@ -1680,7 +1680,7 @@ fn computer_snapshot_ledger_request_omits_region_coordinates() {
         "max_width": 800,
         "max_height": 600
     });
-    let summary = session_log_arguments_for_tool_request("computer_observe", &request);
+    let summary = session_log_arguments_for_tool_request("observe_computer", &request);
     let serialized = serde_json::to_string(&summary).unwrap();
     assert_eq!(summary["region_present"], true);
     assert_eq!(summary["max_width"], 800);
@@ -1716,7 +1716,7 @@ fn computer_snapshot_ledger_result_omits_image_and_titles() {
         "captured_at_unix_ms": 1700000000000u64,
         "content_base64": "SUPER_SECRET_SCREENSHOT_BYTES"
     });
-    let summary = session_log_result_for_tool("computer_observe", &output);
+    let summary = session_log_result_for_tool("observe_computer", &output);
     let serialized = serde_json::to_string(&summary).unwrap();
     assert_eq!(summary["surface_id"], "surface_safe");
     assert_eq!(summary["width"], 900);
@@ -1743,7 +1743,7 @@ fn computer_save_snapshot_audit_omits_image_digest_region_coordinates_and_sessio
         "session_id": "wc_sess_private"
     });
     let request_summary =
-        session_log_arguments_for_tool_request("computer_save_snapshot", &request);
+        session_log_arguments_for_tool_request("save_computer_snapshot", &request);
     let request_serialized = serde_json::to_string(&request_summary).unwrap();
     assert_eq!(request_summary["project"], "agent:target:demo");
     assert_eq!(request_summary["path"], "artifacts/ui.jpg");
@@ -1795,7 +1795,7 @@ fn computer_save_snapshot_audit_omits_image_digest_region_coordinates_and_sessio
         "content_base64": "SUPER_SECRET_SCREENSHOT_BYTES",
         "surface": {"application": "Private App", "title": "Confidential"}
     });
-    let result_summary = session_log_result_for_tool("computer_save_snapshot", &output);
+    let result_summary = session_log_result_for_tool("save_computer_snapshot", &output);
     let result_serialized = serde_json::to_string(&result_summary).unwrap();
     assert_eq!(result_summary["saved"], true);
     assert_eq!(result_summary["file_bytes"], 12345);
@@ -1825,7 +1825,7 @@ fn coding_agent_audit_is_body_free_for_requests_and_observations() {
         "timeout_secs": 60,
         "recording_session_id": "wc_sess_safe"
     });
-    let request_summary = session_log_arguments_for_tool_request("coding_agent_start", &request);
+    let request_summary = session_log_arguments_for_tool_request("start_coding_agent", &request);
     assert_eq!(request_summary, json!({}));
 
     let typed_request = ToolCall::CodingAgentStart {
@@ -1860,7 +1860,7 @@ fn coding_agent_audit_is_body_free_for_requests_and_observations() {
         "wait_secs": 3
     });
     let observe_request_summary =
-        session_log_arguments_for_tool_request("coding_agent_observe", &observe_request);
+        session_log_arguments_for_tool_request("observe_coding_agent", &observe_request);
     let observe_request_serialized = serde_json::to_string(&observe_request_summary).unwrap();
     assert_eq!(observe_request_summary["token_present"], true);
     assert!(!observe_request_serialized.contains(TOKEN));
@@ -1883,7 +1883,7 @@ fn coding_agent_audit_is_body_free_for_requests_and_observations() {
         "terminal": null,
         "recovery_kind": "reobserve"
     });
-    let result_summary = session_log_result_for_tool("coding_agent_observe", &output);
+    let result_summary = session_log_result_for_tool("observe_coding_agent", &output);
     let result_serialized = serde_json::to_string(&result_summary).unwrap();
     assert_eq!(result_summary["event_count"], 3);
     assert_eq!(

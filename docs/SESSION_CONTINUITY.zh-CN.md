@@ -26,7 +26,7 @@ WebCodex 接收工具参数和结果，不会获得宿主对话中的每句话�
 
 1. 不知道项目身份时，通过 `list_projects` 发现授权 Project。调用 `list_sessions(project)`，可用 `lifecycle` 筛选，或用 `offset`、`limit` 分页。只统计并返回准确 Project 下、属于调用者 authority group 的 Session。
 2. 选择一个准确的 `session_id` 或返回的 `session_ref`。列表顺序仅用于展示；标题、最新一行或“继续”两个字都不能替代存在歧义时的任务选择。
-3. 读取 `session_handoff_summary(session_id)`，也可显式提供匹配的 `project`。紧凑的 `handoff_brief.task.decisions` 和 `recent_progress` 带回最近记录的消息、状态、替代关系，以及覆盖范围和截断信息。默认 brief 小于 8 KiB；需要更多保留的待办、风险或消息详情时，使用 diagnostic handoff 或授权的 `list_session_messages`。行动前复查当前 Git、文件及过期的测试结论。
+3. 读取 `read_session_handoff_summary(session_id)`，也可显式提供匹配的 `project`。紧凑的 `handoff_brief.task.decisions` 和 `recent_progress` 带回最近记录的消息、状态、替代关系，以及覆盖范围和截断信息。默认 brief 小于 8 KiB；需要更多保留的待办、风险或消息详情时，使用 diagnostic handoff 或授权的 `list_session_messages`。行动前复查当前 Git、文件及过期的测试结论。
 4. Active Session 可通过默认 checkout 模式的 `work_on_project(session_id, instruction, ...)` 显式恢复；已授权 Session 提供绑定的 Project，显式 Project 仍必须匹配。后续 Project 工具复用返回的 `project_ref`；当前模型需要项目规则和工作流时，请求 `_wc.context=["project.instructions", "webcodex.workflow"]`。Closed Session 可供恢复读取，但不能重新打开；应创建新任务并显式带入选定的上下文。
 
 原 Window 可用时，也可请求 `_wc.context=["workflow.resume"]` 获取已授权候选的 `session_ref` 及可用的当前 `project_ref`。这不会自动选定、恢复任务或设置 recorder。Fresh work 和 `mode="worktree"` 仍须明确 Project source。
@@ -54,9 +54,9 @@ MCP 客户端需要已有的 `coding_agent:run` 和 `project:write` 授权才能
 }
 ```
 
-以上是 `coding_agent_start` 的参数。`context_session_id` 要求独立的 Session 和 `runtime:read` 授权，且必须属于委派的准确 Project。它把有界交接和独立授权的 Goal 上下文作为引用数据注入 prompt；不会恢复来源 Session，也不会选择 recorder。此快照不读取当前文件或 Git。评审需要源码时，在 `instruction` 中加入明确选择的片段；合并后的 prompt 必须满足现有 64 KiB Run 输入上限。
+以上是 `start_coding_agent` 的参数。`context_session_id` 要求独立的 Session 和 `runtime:read` 授权，且必须属于委派的准确 Project。它把有界交接和独立授权的 Goal 上下文作为引用数据注入 prompt；不会恢复来源 Session，也不会选择 recorder。此快照不读取当前文件或 Git。评审需要源码时，在 `instruction` 中加入明确选择的片段；合并后的 prompt 必须满足现有 64 KiB Run 输入上限。
 
-用 `coding_agent_observe` 观察返回的 Run：首次读取省略 token，以包含已保留的输出；后续复用这次观察返回的 observation token，只读取新事件。需要取消时用 `coding_agent_cancel`。发起结果不确定时，观察同一 Run，不要发起替代调用。上下文属于发起指纹；复用 key 时保存的快照发生变化，会返回冲突。没有自动额度回退或模型切换。
+用 `observe_coding_agent` 观察返回的 Run：首次读取省略 token，以包含已保留的输出；后续复用这次观察返回的 observation token，只读取新事件。需要取消时用 `cancel_coding_agent`。发起结果不确定时，观察同一 Run，不要发起替代调用。上下文属于发起指纹；复用 key 时保存的快照发生变化，会返回冲突。没有自动额度回退或模型切换。
 
 适配器将明确提供的文本发送到运营者选择的接口，流式返回有界模型文本，只有正常完整响应才算成功。它不访问文件、不修改代码、不执行模型工具，也不保存模型对话。凭据必须有权使用配置的 API；账号登录本身不代表这项资格。审阅结果后，如果希望它在下一次账号或模型切换后保留，应显式将有用发现保存为 Session 决策或进度。委派模型的结论不能代替原生验证或批准证据。
 

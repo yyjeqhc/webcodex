@@ -63,7 +63,7 @@ async fn interactive_start_is_public_without_waiting_and_input_keeps_exact_job()
         let job_id = job_id.clone();
         let auth = auth.clone();
         async move {
-            runtime.dispatch_with_auth(ToolCall::from_tool_name("job_write_input",json!({
+            runtime.dispatch_with_auth(ToolCall::from_tool_name("write_job_input",json!({
             "project":project,"job_id":job_id,"input_id":"request-1","data":"hello\n","close":true
         })).unwrap(),Some(&auth)).await
         }
@@ -159,7 +159,7 @@ async fn malformed_input_receipt_remains_unknown_not_a_successful_write() {
                 runtime
                     .dispatch_with_auth(
                         ToolCall::from_tool_name(
-                            "job_write_input",
+                            "write_job_input",
                             json!({
                                 "project":project,"job_id":job_id,"input_id":"x","data":"abc"
                             }),
@@ -283,7 +283,7 @@ async fn existing_job_input_cannot_be_retargeted_to_another_project_or_principal
         let result = runtime
             .dispatch_with_auth(
                 ToolCall::from_tool_name(
-                    "job_write_input",
+                    "write_job_input",
                     json!({
                         "project":target,"job_id":id,"input_id":"x","data":"abc"
                     }),

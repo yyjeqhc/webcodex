@@ -112,7 +112,7 @@ pub fn output_schema_for_tool(name: &str) -> Option<Value> {
             ("state_changed", schema_type("boolean","Whether this call first created the Wait and any immediate terminal-source matches.")),
         ]),
         "read_agent_wait" => wrapped_output_schema(vec![("agent_wait", wait_model_schema())]),
-        "agent_wait_state" => wrapped_output_schema(vec![("agent_wait", wait_schema())]),
+        "get_agent_wait_state" => wrapped_output_schema(vec![("agent_wait", wait_schema())]),
         "cancel_agent_wait" => wrapped_output_schema(vec![
             ("agent_wait", wait_model_schema()),
             ("replayed", schema_type("boolean","True for exact keyed cancellation replay.")),

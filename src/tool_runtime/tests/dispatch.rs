@@ -40,7 +40,7 @@ fn kernel_adapter_futures_stay_heap_bounded() {
         host_file_import_trust: HostFileImportTrust::Untrusted,
     };
     let request = || ToolCallRequest {
-        tool_name: "runtime_status".to_string(),
+        tool_name: "get_runtime_status".to_string(),
         arguments: json!({"compact": true}),
     };
 

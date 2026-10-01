@@ -30,7 +30,7 @@ Depending on the token, scopes, client surface, session state, and agent policy,
 - Apply structured line edits or checked patches.
 - Run structured validation helpers such as Cargo format, check, and test.
 - Request bounded shell commands or async jobs when the deployment exposes them.
-- Produce `show_changes`, `workspace_hygiene_check`, `finish_coding_task`, and `session_handoff_summary` evidence for review.
+- Produce `read_workspace_changes`, `check_workspace_hygiene`, `finish_coding_task`, and `read_session_handoff_summary` evidence for review.
 
 ## What The Online Model Cannot Do
 
@@ -77,7 +77,7 @@ Use them only when:
 - The resulting output will not expose secrets.
 - A human can review the command, output summary, and workspace state.
 
-Prefer structured tools first: `read_file`, `search_project_text`, structured edits, `apply_unified_diff`, `cargo_fmt`, `cargo_check`, `cargo_test`, `show_changes`, and `workspace_hygiene_check`.
+Prefer structured tools first: `read_file`, `search_project_text`, structured edits, `apply_unified_diff`, `cargo_fmt`, `cargo_check`, `cargo_test`, `read_workspace_changes`, and `check_workspace_hygiene`.
 
 ## Token Handling
 
@@ -131,7 +131,7 @@ Use the narrowest revocation that matches the risk:
 - Rotate an agent token if the agent credential may have leaked.
 - Rotate server bootstrap/admin credentials if they were exposed.
 
-After revocation, verify with `runtime_status`, `list_projects`, and a read-only client call.
+After revocation, verify with `get_runtime_status`, `list_projects`, and a read-only client call.
 
 ## Reporting Vulnerabilities
 

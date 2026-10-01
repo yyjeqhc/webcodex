@@ -56,11 +56,11 @@ Checks covered by active mode:
 
   1. GET /healthz reports Server readiness.
   2. Bounded discovery works through /api/tools/list and tool_manifest.
-  3. artifact_upload_begin, artifact_upload_chunk, and artifact_upload_finish.
+  3. begin_artifact_upload, upload_artifact_chunk, and artifact_upload_finish.
   4. read_project_artifact_metadata and read_project_artifact.
-  5. artifact_upload_abort cleanup for a second temporary upload.
+  5. abort_artifact_upload cleanup for a second temporary upload.
   6. delete_project_files cleanup of the committed smoke artifact.
-  7. git_status and show_changes report a clean worktree after cleanup.
+  7. get_git_status and read_workspace_changes report a clean worktree after cleanup.
 Active mode refuses non-smoke project ids unless
 WEBCODEX_SMOKE_ALLOW_NON_SMOKE_PROJECT=1 is set. Custom artifact paths must stay
 under artifacts/smoke/ unless WEBCODEX_SMOKE_ALLOW_CUSTOM_PATHS=1 is set.
@@ -344,8 +344,8 @@ PY
 check_clean_git_status() {
     local label="$1"
     local body
-    body="$(call_tool git_status "$(make_json_object project "$PROJECT_ID")")"
-    if ! check_success "$label git_status succeeds" "$body"; then
+    body="$(call_tool get_git_status "$(make_json_object project "$PROJECT_ID")")"
+    if ! check_success "$label get_git_status succeeds" "$body"; then
         return 1
     fi
 
@@ -354,22 +354,22 @@ check_clean_git_status() {
     exit_code="$(json_get "$body" output.exit_code)"
     stdout="$(json_get "$body" output.stdout)"
     if [ "$exit_code" = "0" ] && [ -z "$stdout" ]; then
-        pass "$label git_status is clean"
+        pass "$label get_git_status is clean"
     else
-        fail "$label git_status is not clean or not a git repo (exit_code=${exit_code}, stdout=$(body_preview "$stdout"))"
+        fail "$label get_git_status is not clean or not a git repo (exit_code=${exit_code}, stdout=$(body_preview "$stdout"))"
         return 1
     fi
 
-    body="$(call_tool show_changes "$(make_json_object project "$PROJECT_ID" include_diff __false__)")"
-    if ! check_success "$label show_changes succeeds" "$body"; then
+    body="$(call_tool read_workspace_changes "$(make_json_object project "$PROJECT_ID" include_diff __false__)")"
+    if ! check_success "$label read_workspace_changes succeeds" "$body"; then
         return 1
     fi
 
     if [ "$(json_get "$body" output.git_available)" = "True" ] && \
        [ "$(json_get "$body" output.clean)" = "True" ]; then
-        pass "$label show_changes reports git_available=true and clean=true"
+        pass "$label read_workspace_changes reports git_available=true and clean=true"
     else
-        fail "$label show_changes is not clean/git-backed (git_available=$(json_get "$body" output.git_available), clean=$(json_get "$body" output.clean))"
+        fail "$label read_workspace_changes is not clean/git-backed (git_available=$(json_get "$body" output.git_available), clean=$(json_get "$body" output.clean))"
         return 1
     fi
 }
@@ -410,21 +410,21 @@ fi
 
 body="$(api_post /api/tools/list '{"summary_only":true,"category":"artifact","limit":20}')"
 if json_tools_include "$body" tools \
-    artifact_upload_begin artifact_upload_chunk artifact_upload_finish \
-    artifact_upload_abort read_project_artifact_metadata read_project_artifact >/dev/null; then
+    begin_artifact_upload upload_artifact_chunk finish_artifact_upload \
+    abort_artifact_upload read_project_artifact_metadata read_project_artifact_chunk >/dev/null; then
     pass "bounded listRuntimeTools summary exposes artifact transfer tools"
 else
     fail "bounded listRuntimeTools summary missing expected artifact tools ($(body_preview "$body"))"
 fi
 
-body="$(call_tool tool_manifest "$(make_json_object category artifact include_recommended_flows __false__ include_risk_summary __false__)")"
-if check_success "tool_manifest(category=artifact) succeeds" "$body"; then
+body="$(call_tool read_tool_manifest "$(make_json_object category artifact include_recommended_flows __false__ include_risk_summary __false__)")"
+if check_success "read_tool_manifest(category=artifact) succeeds" "$body"; then
     if json_tools_include "$body" output.tools \
-        artifact_upload_begin artifact_upload_chunk artifact_upload_finish \
-        artifact_upload_abort read_project_artifact_metadata read_project_artifact >/dev/null; then
-        pass "tool_manifest(category=artifact) exposes artifact transfer tools"
+        begin_artifact_upload upload_artifact_chunk finish_artifact_upload \
+        abort_artifact_upload read_project_artifact_metadata read_project_artifact_chunk >/dev/null; then
+        pass "read_tool_manifest(category=artifact) exposes artifact transfer tools"
     else
-        fail "tool_manifest(category=artifact) missing expected artifact tools"
+        fail "read_tool_manifest(category=artifact) missing expected artifact tools"
     fi
 fi
 
@@ -465,13 +465,13 @@ begin_params="$(make_json_object \
     expected_sha256 "$PAYLOAD_SHA256" \
     mime_type text/plain \
     overwrite __true__)"
-body="$(call_tool artifact_upload_begin "$begin_params")"
-if check_success "artifact_upload_begin succeeds" "$body"; then
+body="$(call_tool begin_artifact_upload "$begin_params")"
+if check_success "begin_artifact_upload succeeds" "$body"; then
     upload_id="$(json_get "$body" output.upload_id)"
     if [ -n "$upload_id" ]; then
-        pass "artifact_upload_begin returns upload_id"
+        pass "begin_artifact_upload returns upload_id"
     else
-        fail "artifact_upload_begin did not return upload_id"
+        fail "begin_artifact_upload did not return upload_id"
     fi
 fi
 
@@ -482,20 +482,20 @@ if [ -n "$upload_id" ]; then
         upload_id "$upload_id" \
         offset __int__:0 \
         content_base64 "$PAYLOAD_BASE64")"
-    body="$(call_tool artifact_upload_chunk "$chunk_params")"
-    check_success "artifact_upload_chunk succeeds" "$body" || true
+    body="$(call_tool upload_artifact_chunk "$chunk_params")"
+    check_success "upload_artifact_chunk succeeds" "$body" || true
 
     finish_params="$(make_json_object \
         project "$PROJECT_ID" \
         path "$ARTIFACT_PATH" \
         upload_id "$upload_id")"
-    body="$(call_tool artifact_upload_finish "$finish_params")"
-    if check_success "artifact_upload_finish succeeds" "$body"; then
+    body="$(call_tool finish_artifact_upload "$finish_params")"
+    if check_success "finish_artifact_upload succeeds" "$body"; then
         artifact_committed=1
         if [ "$(json_get "$body" output.sha256)" = "$PAYLOAD_SHA256" ]; then
-            pass "artifact_upload_finish verifies expected sha256"
+            pass "finish_artifact_upload verifies expected sha256"
         else
-            fail "artifact_upload_finish sha256 mismatch"
+            fail "finish_artifact_upload sha256 mismatch"
         fi
     fi
 fi
@@ -505,8 +505,8 @@ if [ -n "$upload_id" ] && [ "$artifact_committed" -eq 0 ]; then
         project "$PROJECT_ID" \
         path "$ARTIFACT_PATH" \
         upload_id "$upload_id")"
-    body="$(call_tool artifact_upload_abort "$abort_unfinished_params")"
-    check_success "artifact_upload_abort cleanup for unfinished upload succeeds" "$body" || true
+    body="$(call_tool abort_artifact_upload "$abort_unfinished_params")"
+    check_success "abort_artifact_upload cleanup for unfinished upload succeeds" "$body" || true
 fi
 
 if [ "$artifact_committed" -eq 1 ]; then
@@ -526,13 +526,13 @@ if [ "$artifact_committed" -eq 1 ]; then
         path "$ARTIFACT_PATH" \
         offset __int__:0 \
         length "__int__:$PAYLOAD_BYTES")"
-    body="$(call_tool read_project_artifact "$read_params")"
-    if check_success "read_project_artifact succeeds" "$body"; then
+    body="$(call_tool read_project_artifact_chunk "$read_params")"
+    if check_success "read_project_artifact_chunk succeeds" "$body"; then
         if [ "$(json_get "$body" output.content_base64)" = "$PAYLOAD_BASE64" ] && \
            [ "$(json_get "$body" output.eof)" = "True" ]; then
-            pass "read_project_artifact returns expected base64 segment"
+            pass "read_project_artifact_chunk returns expected base64 segment"
         else
-            fail "read_project_artifact content/eof mismatch"
+            fail "read_project_artifact_chunk content/eof mismatch"
         fi
     fi
 fi
@@ -543,8 +543,8 @@ abort_begin_params="$(make_json_object \
     expected_bytes __int__:1 \
     mime_type text/plain \
     overwrite __true__)"
-body="$(call_tool artifact_upload_begin "$abort_begin_params")"
-if check_success "artifact_upload_begin for abort cleanup succeeds" "$body"; then
+body="$(call_tool begin_artifact_upload "$abort_begin_params")"
+if check_success "begin_artifact_upload for abort cleanup succeeds" "$body"; then
     abort_upload_id="$(json_get "$body" output.upload_id)"
 fi
 
@@ -553,12 +553,12 @@ if [ -n "$abort_upload_id" ]; then
         project "$PROJECT_ID" \
         path "$ABORT_PATH" \
         upload_id "$abort_upload_id")"
-    body="$(call_tool artifact_upload_abort "$abort_params")"
-    if check_success "artifact_upload_abort cleanup succeeds" "$body"; then
+    body="$(call_tool abort_artifact_upload "$abort_params")"
+    if check_success "abort_artifact_upload cleanup succeeds" "$body"; then
         if [ "$(json_get "$body" output.aborted)" = "True" ]; then
-            pass "artifact_upload_abort reports aborted=true"
+            pass "abort_artifact_upload reports aborted=true"
         else
-            fail "artifact_upload_abort did not report aborted=true"
+            fail "abort_artifact_upload did not report aborted=true"
         fi
     fi
 fi

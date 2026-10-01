@@ -11,8 +11,8 @@ not discover, reconstruct, or persist Workflow Sessions or conversation history.
 ## Runner configuration
 
 Configure one logical provider per fixed API/model/credential audience. Multiple
-entries allow the caller to select a backend with `coding_agent_start`'s existing
-`provider_id`; use `coding_agent_observe` and `coding_agent_cancel` for its existing
+entries allow the caller to select a backend with `start_coding_agent`'s existing
+`provider_id`; use `observe_coding_agent` and `cancel_coding_agent` for its existing
 run lifecycle. Runner authorization, project identity, concurrency, durable
 dispatch certainty, and cancellation remain authoritative. Changing models or
 API endpoints requires operator configuration and Runner restart.

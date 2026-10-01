@@ -382,7 +382,7 @@ async fn ssh_http_transport_uses_fixed_gateway_and_native_token_only() {
             }
             let body: Value =
                 serde_json::from_slice(&bytes[header_end..header_end + length]).unwrap();
-            assert_eq!(body["tool"], "ssh_resource");
+            assert_eq!(body["tool"], "manage_ssh_resource");
             assert!(!body.to_string().contains("fixture-native-token"));
             calls.push(body["params"]["action"].as_str().unwrap().to_owned());
             if let Some(response) = response {

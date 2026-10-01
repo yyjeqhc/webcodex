@@ -69,13 +69,21 @@ async fn specialized_dispatch_maps_each_gateway_action_scope_without_static_poli
             json!({"action":"reload", "runner":"runner"}),
             SCOPE_PLUGIN_MANAGE,
         ),
-        ("ssh_resource", json!({"action":"list"}), SCOPE_SSH_LOCAL),
         (
-            "ssh_resource",
+            "manage_ssh_resource",
+            json!({"action":"list"}),
+            SCOPE_SSH_LOCAL,
+        ),
+        (
+            "manage_ssh_resource",
             json!({"action":"register"}),
             SCOPE_SSH_LOCAL,
         ),
-        ("ssh_resource", json!({"action":"remove"}), SCOPE_SSH_LOCAL),
+        (
+            "manage_ssh_resource",
+            json!({"action":"remove"}),
+            SCOPE_SSH_LOCAL,
+        ),
     ] {
         let request = ToolCallRequest {
             tool_name: tool_name.to_string(),
@@ -98,7 +106,7 @@ async fn specialized_dispatch_maps_each_gateway_action_scope_without_static_poli
 #[tokio::test]
 async fn specialized_dispatch_parse_failures_never_fall_through() {
     let runtime = ToolRuntime::new_for_tests();
-    for tool_name in ["plugin_tool", "ssh_resource"] {
+    for tool_name in ["plugin_tool", "manage_ssh_resource"] {
         for arguments in [
             json!(null),
             json!({}),
@@ -155,7 +163,7 @@ async fn specialized_dispatch_preserves_recording_authority_denial_as_tool_resul
             "session_authority_denied",
         ),
     ] {
-        for tool_name in ["plugin_tool", "ssh_resource"] {
+        for tool_name in ["plugin_tool", "manage_ssh_resource"] {
             let request = ToolCallRequest {
                 tool_name: tool_name.to_string(),
                 arguments: json!({"action":"list"}),

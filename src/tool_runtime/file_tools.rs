@@ -84,10 +84,14 @@ impl ToolRuntime {
                     (None, Some(queries)) if !queries.is_empty() && queries.len() <= 8 => queries,
                     (Some(_), Some(_)) => {
                         return ToolResult::err(
-                            "search_and_read accepts query or queries, not both",
+                            "search_and_read_project_texts accepts query or queries, not both",
                         )
                     }
-                    _ => return ToolResult::err("search_and_read requires query or 1..8 queries"),
+                    _ => {
+                        return ToolResult::err(
+                            "search_and_read_project_texts requires query or 1..8 queries",
+                        )
+                    }
                 };
                 match project_resolution {
                     Some(Ok(resolved)) => {
@@ -210,10 +214,12 @@ impl ToolRuntime {
                         if suggested_call
                             .get("tool")
                             .and_then(serde_json::Value::as_str)
-                            == Some("read_project_artifact")
+                            == Some("read_project_artifact_chunk")
                         {
-                            suggested_call
-                                .insert("tool".to_string(), serde_json::json!("project_artifact"));
+                            suggested_call.insert(
+                                "tool".to_string(),
+                                serde_json::json!("inspect_project_artifact"),
+                            );
                             if let Some(arguments) = suggested_call
                                 .get_mut("arguments")
                                 .and_then(serde_json::Value::as_object_mut)
@@ -229,7 +235,7 @@ impl ToolRuntime {
                 super::ProjectArtifactAction::Image => {
                     if !matches!(transport, SessionTransport::Mcp) {
                         ToolResult::err_with_output(
-                            "project_artifact action=image requires MCP native-image transport",
+                            "inspect_project_artifact action=image requires MCP native-image transport",
                             serde_json::json!({
                                 "error_kind": "unsupported_transport",
                                 "action": "image",
@@ -253,7 +259,7 @@ impl ToolRuntime {
                 super::ProjectArtifactAction::Export => {
                     if !matches!(transport, SessionTransport::Mcp) {
                         ToolResult::err_with_output(
-                            "project_artifact action=export requires Stateless MCP 2026 ResourceLink transport",
+                            "inspect_project_artifact action=export requires Stateless MCP 2026 ResourceLink transport",
                             serde_json::json!({
                                 "error_kind": "unsupported_transport",
                                 "action": "export",
@@ -268,7 +274,7 @@ impl ToolRuntime {
                             }
                             Some(Err(error)) => error.into_tool_result(),
                             None => ToolResult::err(
-                                "project_artifact action=export requires an exact resolved Runner project",
+                                "inspect_project_artifact action=export requires an exact resolved Runner project",
                             ),
                         }
                     }

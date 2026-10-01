@@ -1706,18 +1706,18 @@ fn tool_suppresses_payload_capture(tool_name: Option<&str>) -> bool {
         tool_name,
         Some(
             "read_tool_trace"
-                | "agent_continuation_bind"
-                | "agent_continuation_recover_endpoint"
-                | "agent_continuation_state"
-                | "agent_continuation_wake_acquire"
-                | "agent_continuation_wake_prepare"
-                | "agent_continuation_wake_finish"
-                | "agent_continuation_unbind"
-                | "job_terminal_continuation_bind"
-                | "job_terminal_continuation_state"
-                | "job_terminal_continuation_prepare"
-                | "job_terminal_continuation_finish"
-                | "job_terminal_continuation_unbind"
+                | "bind_agent_continuation"
+                | "recover_agent_continuation_endpoint"
+                | "get_agent_continuation_state"
+                | "acquire_agent_continuation_wake"
+                | "prepare_agent_continuation_wake"
+                | "finish_agent_continuation_wake"
+                | "unbind_agent_continuation"
+                | "bind_job_terminal_continuation"
+                | "get_job_terminal_continuation_state"
+                | "prepare_job_terminal_continuation"
+                | "finish_job_terminal_continuation"
+                | "unbind_job_terminal_continuation"
         )
     )
 }
@@ -2228,11 +2228,11 @@ mod tests {
     #[test]
     fn job_terminal_app_tools_suppress_full_payload_capture() {
         for name in [
-            "job_terminal_continuation_bind",
-            "job_terminal_continuation_state",
-            "job_terminal_continuation_prepare",
-            "job_terminal_continuation_finish",
-            "job_terminal_continuation_unbind",
+            "bind_job_terminal_continuation",
+            "get_job_terminal_continuation_state",
+            "prepare_job_terminal_continuation",
+            "finish_job_terminal_continuation",
+            "unbind_job_terminal_continuation",
         ] {
             assert!(
                 tool_suppresses_payload_capture(Some(name)),
@@ -2366,7 +2366,7 @@ mod tests {
 
         let raw_window = "chatgpt-window-opaque-secret";
         let params = json!({
-            "name": "runtime_status",
+            "name": "get_runtime_status",
             "arguments": {},
             "_meta": {"openai/session": raw_window}
         });
@@ -2381,7 +2381,7 @@ mod tests {
                 trace_id.into(),
                 "none",
                 "tools/call",
-                Some("runtime_status".into()),
+                Some("get_runtime_status".into()),
             );
             guard.set_client_window(Some(&window));
             guard.parsed("ok");
@@ -2394,7 +2394,7 @@ mod tests {
             absent_trace_id.into(),
             "none",
             "tools/call",
-            Some("runtime_status".into()),
+            Some("get_runtime_status".into()),
         );
         absent.parsed("ok");
         absent.mark_completed();
@@ -2569,13 +2569,13 @@ mod tests {
         reset_trace_store_accounting();
 
         for tool_name in [
-            "agent_continuation_bind",
-            "agent_continuation_recover_endpoint",
-            "agent_continuation_state",
-            "agent_continuation_wake_acquire",
-            "agent_continuation_wake_prepare",
-            "agent_continuation_wake_finish",
-            "agent_continuation_unbind",
+            "bind_agent_continuation",
+            "recover_agent_continuation_endpoint",
+            "get_agent_continuation_state",
+            "acquire_agent_continuation_wake",
+            "prepare_agent_continuation_wake",
+            "finish_agent_continuation_wake",
+            "unbind_agent_continuation",
         ] {
             let trace_id = Uuid::new_v4().to_string();
             let mut guard = ToolRequestLifecycle::new(

@@ -357,9 +357,9 @@ max_output_bytes = 262144
 ```
 
 编辑已经运行的 Runner 启动时绑定的 `runner.toml` 后，先调用
-`runner_config_check(client_id=...)`，再把返回的 `current_generation` 作为
-`runner_config_reload(client_id=..., expected_generation=...)` 的 fence，最后调用
-`runtime_status(client_id=...)` 检查状态。check 不激活 candidate；reload 也不写配置文件。
+`check_runner_config(client_id=...)`，再把返回的 `current_generation` 作为
+`reload_runner_config(client_id=..., expected_generation=...)` 的 fence，最后调用
+`get_runtime_status(client_id=...)` 检查状态。check 不激活 candidate；reload 也不写配置文件。
 无效 candidate 保留旧 active snapshot/generation，`restart_required_fields` 明确列出仍需
 重启、且不会假装已经在线生效的 startup-only 变更。Unix service reload/SIGHUP 仍保留为
 调用同一 reload primitive 的兼容 trigger，但 first-class config control 不依赖它。身份、
@@ -496,7 +496,7 @@ Server 在 `/runtime` 提供 Runtime Console。它通过与 ToolRuntime 相同�
 
 ### Runtime job API 信任模型
 
-`observe_jobs`、`list_jobs` 与 `job_tail` 面向受信的单运维者部署。它们
+`observe_jobs`、`list_jobs` 与 `read_job_tail` 面向受信的单运维者部署。它们
 不是互不信任用户之间的租户边界。不要把单个 runtime 暴露给多个不受信用户，除非
 为无项目 job API 增加 job-owner 隔离；否则请使用独立的 server/runtime 实例。
 

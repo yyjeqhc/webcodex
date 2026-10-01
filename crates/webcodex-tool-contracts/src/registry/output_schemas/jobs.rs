@@ -1345,7 +1345,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             let mut schema = wrapped_output_schema(properties);
             schema["properties"]["output"]["allOf"] =
                 structured_execution_lifecycle_constraints("run_shell");
-            schema["description"] = json!("Ordinary proven synchronous terminal success is sparse: success=true implies completed exit 0 and no active Job. Runtime-selected command_summary, cwd, shell and any ssh_resource remain explicit. Nonempty output, truncation/loss, expectations and sidecars remain. Failure, uncertainty and exceptional/recovery results retain rich lifecycle evidence; normal pending handoff remains execution_state plus continuation.");
+            schema["description"] = json!("Ordinary proven synchronous terminal success is sparse: success=true implies completed exit 0 and no active Job. Runtime-selected command_summary, cwd, shell and any manage_ssh_resource remain explicit. Nonempty output, truncation/loss, expectations and sidecars remain. Failure, uncertainty and exceptional/recovery results retain rich lifecycle evidence; normal pending handoff remains execution_state plus continuation.");
             for key in ["duration_ms", "exit_code", "command_started", "command_completed",
                 "command_ok", "failure_kind", "tool_failure", "executor", "execution_source",
                 "execution_state", "promoted_to_job", "terminal", "job_id", "job_status",
@@ -1395,8 +1395,8 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             Some(schema)
         }
         "open_session_shell"
-        | "session_shell_exec"
-        | "session_shell_status"
+        | "execute_session_shell"
+        | "get_session_shell_status"
         | "close_session_shell" => Some(persistent_shell_output_schema()),
         "run_job" => {
             let mut schema = wrapped_output_schema(vec![
@@ -1473,7 +1473,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 ),
             ),
         ])),
-        "job_write_input" => Some(wrapped_output_schema(vec![
+        "write_job_input" => Some(wrapped_output_schema(vec![
             ("job_id", schema_type("string", "The same existing interactive Job; no new execution.")),
             ("input_id", schema_type("string", "Exact retained input receipt identity.")),
             ("state", json!({"type":"string","enum":["pending","written","closed","outcome_unknown"],"description":"Pipe write state, not the application's consumption or Job completion."})),
@@ -1550,12 +1550,12 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
         "present_job_terminal_continuation" => Some(wrapped_output_schema(vec![
             ("job_terminal_continuation", job_terminal_continuation_projection_schema()),
         ])),
-        "job_terminal_continuation_bind" | "job_terminal_continuation_unbind" => Some(wrapped_output_schema(vec![
+        "bind_job_terminal_continuation" | "unbind_job_terminal_continuation" => Some(wrapped_output_schema(vec![
             ("job_terminal_continuation", job_terminal_continuation_projection_schema()),
             ("host_binding", job_terminal_host_binding_schema()),
             ("state_changed", schema_type("boolean", "Whether the process-local Host binding changed.")),
         ])),
-        "job_terminal_continuation_state" => Some(wrapped_output_schema(vec![
+        "get_job_terminal_continuation_state" => Some(wrapped_output_schema(vec![
             ("job_terminal_continuation", job_terminal_continuation_projection_schema()),
             ("host_binding", job_terminal_host_binding_schema()),
             ("app_protocol", json!({
@@ -1567,7 +1567,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 "required": ["prepared_attempt_id"]
             })),
         ])),
-        "job_terminal_continuation_prepare" => Some(wrapped_output_schema(vec![
+        "prepare_job_terminal_continuation" => Some(wrapped_output_schema(vec![
             ("wait_id", schema_type("string", "Exact Job terminal wait identity.")),
             ("job_id", schema_type("string", "Exact Job execution identity.")),
             ("delivery_state", schema_type("string", "Prepared delivery state.")),
@@ -1581,7 +1581,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 "required": ["automatic_message"]
             })),
         ])),
-        "job_terminal_continuation_finish" => Some(wrapped_output_schema(vec![
+        "finish_job_terminal_continuation" => Some(wrapped_output_schema(vec![
             ("wait_id", schema_type("string", "Exact Job terminal wait identity.")),
             ("job_id", schema_type("string", "Exact Job execution identity.")),
             ("attempt_id", schema_type("string", "Exact durable delivery attempt identity.")),
@@ -1636,7 +1636,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             }}]
         })),
         "observe_jobs" => Some(observe_jobs_output_schema()),
-        "job_tail" => {
+        "read_job_tail" => {
             let mut schema = wrapped_output_schema(vec![
             ("job_id", schema_type("string", "Runtime job id.")),
             ("suggested_call", list_jobs_recovery_call_schema(false)),

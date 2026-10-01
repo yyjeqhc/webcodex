@@ -665,7 +665,7 @@ impl Database {
             return Ok(None);
         }
         let (last_seen, latest_gap): (Option<i64>, Option<i64>) = transaction.query_row(
-            "SELECT MAX(CASE WHEN action_name = 'toolsCall' AND operation = 'goal_plan_sync'
+            "SELECT MAX(CASE WHEN action_name = 'toolsCall' AND operation = 'sync_goal_plan'
                                   AND window_meaningful = 0 AND status = 'success'
                                   AND window_started_at_ms IS NOT NULL
                                   AND window_started_at_ms >= 0

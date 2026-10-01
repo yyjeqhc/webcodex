@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn read_project_artifact_uses_only_canonical_length_bound() {
     let specs = registered_tool_specs();
-    let spec = spec_named(&specs, "read_project_artifact");
+    let spec = spec_named(&specs, "read_project_artifact_chunk");
     let props = spec.input_schema["properties"].as_object().unwrap();
     assert!(props.contains_key("length"));
     assert_eq!(props["length"]["maximum"], 65536);
@@ -14,7 +14,7 @@ fn read_project_artifact_uses_only_canonical_length_bound() {
     assert_eq!(expected_sha256["pattern"], "^[0-9a-f]{64}$");
     assert!(
         !props.contains_key("max_bytes"),
-        "read_project_artifact must not advertise the retired max_bytes alias"
+        "read_project_artifact_chunk must not advertise the retired max_bytes alias"
     );
 }
 
@@ -36,14 +36,14 @@ fn read_project_artifact_metadata_schema_exposes_allow_missing() {
 fn artifact_upload_followup_descriptions_explain_required_path_binding() {
     let specs = registered_tool_specs();
     for name in [
-        "artifact_upload_chunk",
-        "artifact_upload_finish",
-        "artifact_upload_abort",
+        "upload_artifact_chunk",
+        "finish_artifact_upload",
+        "abort_artifact_upload",
     ] {
         let spec = spec_named(&specs, name);
         assert!(
             spec.description.contains("path is required")
-                && spec.description.contains("artifact_upload_begin")
+                && spec.description.contains("begin_artifact_upload")
                 && spec.description.contains("binds upload_id"),
             "{name}: {}",
             spec.description
@@ -53,7 +53,7 @@ fn artifact_upload_followup_descriptions_explain_required_path_binding() {
             .unwrap();
         assert!(
             path_desc.contains("Required")
-                && path_desc.contains("must exactly match the path used in artifact_upload_begin")
+                && path_desc.contains("must exactly match the path used in begin_artifact_upload")
                 && path_desc.contains("bind upload_id"),
             "{name}: {path_desc}"
         );
@@ -211,8 +211,8 @@ fn accept_artifact_handoff_requires_destination_write_without_source_authority()
 
 #[test]
 fn project_artifact_is_compact_typed_project_read_facade() {
-    let definition =
-        lookup_tool_definition("project_artifact").expect("project_artifact definition");
+    let definition = lookup_tool_definition("inspect_project_artifact")
+        .expect("inspect_project_artifact definition");
     assert_eq!(definition.metadata.effect, ToolEffect::Observe);
     assert_eq!(definition.metadata.risk, ToolRisk::Read);
     assert_eq!(definition.metadata.approval, ToolApprovalPolicy::None);
@@ -224,7 +224,7 @@ fn project_artifact_is_compact_typed_project_read_facade() {
     assert!(!definition.requires_permission());
 
     let specs = registered_tool_specs();
-    let spec = spec_named(&specs, "project_artifact");
+    let spec = spec_named(&specs, "inspect_project_artifact");
     let props = spec.input_schema["properties"].as_object().unwrap();
     assert_eq!(spec.input_schema["additionalProperties"], false);
     assert_eq!(
@@ -238,18 +238,18 @@ fn project_artifact_is_compact_typed_project_read_facade() {
     assert!(!props.contains_key("encoding"));
     assert!(spec.input_schema.get("allOf").is_none());
     assert!(ToolCall::from_tool_name(
-        "project_artifact",
+        "inspect_project_artifact",
         json!({"project":"demo","path":"a.bin","action":"metadata","offset":0}),
     )
     .is_err());
     assert!(ToolCall::from_tool_name(
-        "project_artifact",
+        "inspect_project_artifact",
         json!({"project":"demo","path":"a.bin","action":"inspect","offset":0,"length":1024}),
     )
     .is_ok());
     let output_props = spec.output_schema["properties"]["output"]["properties"]
         .as_object()
-        .expect("project_artifact output properties");
+        .expect("inspect_project_artifact output properties");
     for field in [
         "path",
         "exists",
@@ -267,7 +267,10 @@ fn project_artifact_is_compact_typed_project_read_facade() {
         );
     }
     let suggested = &output_props["suggested_call"];
-    assert_eq!(suggested["properties"]["tool"]["const"], "project_artifact");
+    assert_eq!(
+        suggested["properties"]["tool"]["const"],
+        "inspect_project_artifact"
+    );
     assert_eq!(
         suggested["properties"]["arguments"]["properties"]["action"]["const"],
         "inspect"

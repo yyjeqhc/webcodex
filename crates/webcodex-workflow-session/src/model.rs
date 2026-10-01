@@ -610,7 +610,7 @@ pub struct ToolCallStart {
     pub change_summary_like: bool,
     /// Safe boolean metadata: true when this call contributes to
     /// `review_evidence.diff_review_count` (git diff tools, or
-    /// `show_changes(include_diff=true)`). Never stores raw input or diffs.
+    /// `read_workspace_changes(include_diff=true)`). Never stores raw input or diffs.
     pub diff_review_like: bool,
     pub changed_paths: Vec<String>,
     /// Validated project-relative paths that the call may establish as
@@ -750,7 +750,7 @@ pub struct SessionEvent {
     pub shell_like: bool,
     pub git_like: bool,
     pub change_summary_like: bool,
-    /// Safe boolean: git diff tools, or `show_changes` with `include_diff=true`.
+    /// Safe boolean: git diff tools, or `read_workspace_changes` with `include_diff=true`.
     /// Defaults to false for legacy ledger rows that omit the field.
     #[serde(default)]
     pub diff_review_like: bool,

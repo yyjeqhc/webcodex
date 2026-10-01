@@ -9,10 +9,10 @@ use webcodex_core::runtime_contract::GeneratedFollowUpKind;
 fn git_log_suggested_call_schema() -> Value {
     suggested_tool_call_schema(
         GeneratedFollowUpKind::MechanicallyFollowable,
-        "git_log",
+        "read_git_log",
         json!({
             "type": "object",
-            "description": "Parser-ready git_log arguments for the next page of the same exact history snapshot.",
+            "description": "Parser-ready read_git_log arguments for the next page of the same exact history snapshot.",
             "additionalProperties": false,
             "properties": {
                 "project": {"type": "string", "minLength": 1},
@@ -28,14 +28,14 @@ fn git_log_suggested_call_schema() -> Value {
             },
             "required": ["project", "head_commit", "limit", "skip"]
         }),
-        "Parser-ready advisory git_log call for the next page of the same exact commit snapshot. It grants no Project or Session authority.",
+        "Parser-ready advisory read_git_log call for the next page of the same exact commit snapshot. It grants no Project or Session authority.",
     )
 }
 
 fn git_diff_hunks_recovery_arguments_schema() -> Value {
     json!({
         "type": "object",
-        "description": "Parser-ready git_diff_hunks arguments for one bounded recovery step.",
+        "description": "Parser-ready read_git_diff_hunks arguments for one bounded recovery step.",
         "additionalProperties": false,
         "properties": {
             "project": {"type": "string"},
@@ -59,9 +59,9 @@ fn git_diff_hunks_recovery_arguments_schema() -> Value {
 fn git_diff_hunks_recovery_call_schema() -> Value {
     suggested_tool_call_schema(
         GeneratedFollowUpKind::MechanicallyFollowable,
-        "git_diff_hunks",
+        "read_git_diff_hunks",
         git_diff_hunks_recovery_arguments_schema(),
-        "Parser-ready advisory git_diff_hunks call for later-record continuation, proven bounded parameter refinement, or exact current-hunk fragment continuation. It grants no authority and is not the continuation identity itself.",
+        "Parser-ready advisory read_git_diff_hunks call for later-record continuation, proven bounded parameter refinement, or exact current-hunk fragment continuation. It grants no authority and is not the continuation identity itself.",
     )
 }
 
@@ -132,7 +132,7 @@ fn git_diff_hunks_recovery_schema() -> Value {
 fn show_changes_handoff_arguments_schema() -> Value {
     json!({
         "type": "object",
-        "description": "Ready-to-call worktree git_diff_hunks arguments. paths stays empty when show_changes cannot prove a narrower omitted-line path.",
+        "description": "Ready-to-call worktree read_git_diff_hunks arguments. paths stays empty when read_workspace_changes cannot prove a narrower omitted-line path.",
         "additionalProperties": false,
         "properties": {
             "project": {"type": "string"},
@@ -181,7 +181,7 @@ fn show_changes_diff_file_schema() -> Value {
 
 pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
     match name {
-        "git_commit_paths" => Some(wrapped_output_schema(vec![
+        "commit_git_paths" => Some(wrapped_output_schema(vec![
             ("committed", nullable_schema("boolean", "True only when the exact-path commit is known to have completed; null when dispatch outcome is unknown.")),
             ("expected_head", schema_type("string", "Exact caller-supplied HEAD fence.")),
             ("previous_head", nullable_schema("string", "Known parent HEAD used by the successful commit, or null before it is proven.")),
@@ -199,7 +199,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ("failure_kind", nullable_schema("string", "Stable bounded commit rejection/failure kind.")),
             ("hook_policy", schema_type("string", "Always bypassed_exact_tree: commit-tree is used so hooks cannot add unrelated paths.")),
         ])),
-        "git_status" => Some(wrapped_output_schema(vec![
+        "get_git_status" => Some(wrapped_output_schema(vec![
             (
                 "exit_code",
                 nullable_schema("integer", "Git command exit code."),
@@ -213,7 +213,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ("summary", nullable_schema("object", "Initial-page bounded review summary; continuation pages may omit it.")),
             ("files", array_schema(open_object_schema("Bounded changed-file metadata."), "Initial-page changed files; continuation pages may return an empty array.")),
             ("signals", array_schema(open_object_schema("Bounded deterministic or Session review signal."), "Initial-page review signals; continuation pages may return an empty array.")),
-            ("diff", nullable_schema("object", "One bounded page from the existing git_diff_hunks engine, preserving its source fences and recovery semantics.")),
+            ("diff", nullable_schema("object", "One bounded page from the existing read_git_diff_hunks engine, preserving its source fences and recovery semantics.")),
             ("continuation", nullable_schema("string", "Opaque same-snapshot review continuation, or null when no bounded page continuation is available.")),
             (
                 "next_call",
@@ -229,7 +229,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ),
             ("reason_code", nullable_schema("string", "Stable failure/stale reason when review cannot proceed.")),
         ])),
-        "git_review_summary" => Some(wrapped_output_schema(vec![
+        "read_git_review_summary" => Some(wrapped_output_schema(vec![
             ("project", schema_type("string", "Runtime project input.")),
             (
                 "scope",
@@ -273,7 +273,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ),
             ("reason_code", nullable_schema("string", "Stable structured failure reason when review observation cannot proceed.")),
         ])),
-        "git_diff_hunks" => Some(wrapped_output_schema(vec![
+        "read_git_diff_hunks" => Some(wrapped_output_schema(vec![
             ("project", schema_type("string", "Runtime project input.")),
             (
                 "paths",
@@ -341,7 +341,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ),
             ("stderr", schema_type("string", "Bounded Git diff stderr.")),
         ])),
-        "git_log" => Some(wrapped_output_schema(vec![
+        "read_git_log" => Some(wrapped_output_schema(vec![
             ("project", schema_type("string", "Runtime project id.")),
             (
                 "head_commit",
@@ -378,7 +378,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ),
             ("suggested_call", git_log_suggested_call_schema()),
         ])),
-        "show_changes" => Some(wrapped_output_schema(vec![
+        "read_workspace_changes" => Some(wrapped_output_schema(vec![
             ("project", schema_type("string", "Runtime project id.")),
             (
                 "git_available",
@@ -647,14 +647,14 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 "diff_review_handoff",
                 json!({
                     "type": "object",
-                    "description": "Present only when bounded show_changes diff hunks are incomplete. next_call is the sole model-facing handoff action; top-level truncation_reasons retain the diagnostic cause.",
+                    "description": "Present only when bounded read_workspace_changes diff hunks are incomplete. next_call is the sole model-facing handoff action; top-level truncation_reasons retain the diagnostic cause.",
                     "additionalProperties": false,
                     "properties": {
                         "next_call": suggested_tool_call_schema(
                             GeneratedFollowUpKind::MechanicallyFollowable,
-                            "git_diff_hunks",
+                            "read_git_diff_hunks",
                             show_changes_handoff_arguments_schema(),
-                            "Parser-ready first focused diff-review call. It starts a fresh git_diff_hunks observation and carries no invented continuation identity.",
+                            "Parser-ready first focused diff-review call. It starts a fresh read_git_diff_hunks observation and carries no invented continuation identity.",
                         )
                     },
                     "required": ["next_call"]
@@ -704,9 +704,9 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
 }
 
 pub(super) fn show_changes_output_value_schema() -> Value {
-    output_schema_for_tool("show_changes")
-        .expect("show_changes output schema")
+    output_schema_for_tool("read_workspace_changes")
+        .expect("read_workspace_changes output schema")
         .pointer("/properties/output")
         .cloned()
-        .expect("show_changes wrapped output value schema")
+        .expect("read_workspace_changes wrapped output value schema")
 }

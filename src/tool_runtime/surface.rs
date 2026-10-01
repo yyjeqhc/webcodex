@@ -566,7 +566,7 @@ impl ToolRuntime {
                 registered_tool_categories()
             },
             "recommended_flows": recommended_flows(),
-            "recommended_next": "Use tool_manifest directly for focused discovery; long-tail Adaptive Runtime tools are invoked through call_runtime_tool.",
+            "recommended_next": "Use read_tool_manifest directly for focused discovery; long-tail Adaptive Runtime tools are invoked through call_runtime_tool.",
             "hint": "Prefer exact tool_name or category/intent filters for compact discovery; availability describes routing only and grants no authority.",
         });
         if !bounded_request {
@@ -685,7 +685,7 @@ impl ToolRuntime {
             "requested_limit": Value::Null,
             "categories": Value::Object(exact_categories),
             "tools": [compact_manifest_tool_entry(spec)],
-            "routing_note": "tool_manifest only describes an existing route; it never dynamically registers a new Host tool. Follow route.primary, or route.fallback when the direct callable is unavailable and the fallback is not blocked by MCP App presentation requirements.",
+            "routing_note": "read_tool_manifest only describes an existing route; it never dynamically registers a new Host tool. Follow route.primary, or route.fallback when the direct callable is unavailable and the fallback is not blocked by MCP App presentation requirements.",
         });
         if let Some(execution) = runtime_tool_execution_contract(spec.name.as_str()) {
             output["contract"]["execution"] = manifest_execution_projection(execution);
@@ -716,7 +716,7 @@ impl ToolRuntime {
 
     pub(crate) fn compact_tool_manifest_payload(&self) -> Value {
         self.tool_manifest_payload(None, None, true, true, ToolProtocolCapabilities::default())
-            .expect("default tool_manifest payload without intent must succeed")
+            .expect("default read_tool_manifest payload without intent must succeed")
     }
 
     pub(crate) fn compact_tool_manifest_payload_bounded(
@@ -884,7 +884,7 @@ fn unknown_tool_manifest_intent_result(unknown: &str) -> ToolResult {
     let available_intents = available_tool_manifest_intent_names();
     ToolResult::err_with_output(
         format!(
-            "unknown tool_manifest intent '{}'. Available intents: {}.",
+            "unknown read_tool_manifest intent '{}'. Available intents: {}.",
             unknown,
             available_intents.join(", ")
         ),
@@ -893,7 +893,7 @@ fn unknown_tool_manifest_intent_result(unknown: &str) -> ToolResult {
             "intent": unknown,
             "available_intents": available_intents,
             "message": format!(
-                "unknown tool_manifest intent '{}'; use one of: {}",
+                "unknown read_tool_manifest intent '{}'; use one of: {}",
                 unknown,
                 available_intents.join(", ")
             ),
@@ -903,7 +903,7 @@ fn unknown_tool_manifest_intent_result(unknown: &str) -> ToolResult {
 
 fn unknown_tool_manifest_tool_result(tool_name: &str) -> ToolResult {
     ToolResult::err_with_output(
-        format!("unknown tool_manifest tool_name '{tool_name}'"),
+        format!("unknown read_tool_manifest tool_name '{tool_name}'"),
         json!({
             "code": "unknown_tool_manifest_tool",
             "tool_name": tool_name,
@@ -914,7 +914,7 @@ fn unknown_tool_manifest_tool_result(tool_name: &str) -> ToolResult {
 
 fn tool_manifest_exact_filter_conflict_result() -> ToolResult {
     ToolResult::err_with_output(
-        "tool_manifest tool_name cannot be combined with category or intent",
+        "read_tool_manifest tool_name cannot be combined with category or intent",
         json!({
             "code": "tool_manifest_exact_filter_conflict",
             "message": "tool_name selects one exact contract; omit category and intent",
@@ -1318,7 +1318,13 @@ fn list_tool_matches_feature(name: &str, feature: &str) -> bool {
     }
     match feature {
         "artifact" => category == TOOL_CATEGORY_ARTIFACT,
-        "artifact_upload" | "upload" => name.starts_with("artifact_upload_"),
+        "artifact_upload" | "upload" => matches!(
+            name,
+            "begin_artifact_upload"
+                | "upload_artifact_chunk"
+                | "finish_artifact_upload"
+                | "abort_artifact_upload"
+        ),
         "read" => {
             runtime_tool_metadata(name).effect.read_only_hint()
                 || name.starts_with("read_")

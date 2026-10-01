@@ -170,7 +170,7 @@ fn spawn_e2c_mcp_call(
         let outcome = runtime
             .call_tool_with_context(
                 ToolCallRequest {
-                    tool_name: "code_mode_exec_mutating".to_string(),
+                    tool_name: "execute_mutating_code_mode".to_string(),
                     arguments: json!({
                         "project": project,
                         "session_id": session_id,
@@ -269,7 +269,7 @@ async fn e2c_guarded_edit_then_check_or_test_keeps_execution_and_source_truth_se
         );
         crate::tool_runtime::startup_brief::validate_schema_instance_for_test(
             &serde_json::to_value(&result).unwrap(),
-            &crate::tool_runtime::registry::output_schema_for_tool("code_mode_exec_mutating"),
+            &crate::tool_runtime::registry::output_schema_for_tool("execute_mutating_code_mode"),
         )
         .expect("E2c receipt must match canonical schema");
         let emitted = emitted_json(&result);
@@ -686,7 +686,7 @@ async fn e2c_job_handoff_has_exact_continuation_and_later_write_invalidates_term
     assert_eq!(after["current_evidence"]["status"], "stale", "{after}");
     let handoff = canonical_call(
         &runtime,
-        "session_handoff_summary",
+        "read_session_handoff_summary",
         json!({
             "session_id": session,
             "project": project,
@@ -784,7 +784,7 @@ async fn e2c_outer_requires_both_write_and_job_scopes_before_running_js() {
         .collect();
         let auth = oauth_bridge_auth_context("scope-hash", &scopes);
         let outcome = runtime.call_tool_with_context(ToolCallRequest {
-            tool_name:"code_mode_exec_mutating".into(),arguments:json!({"project":project,"session_id":session,"source":"text('must not run')"}),
+            tool_name:"execute_mutating_code_mode".into(),arguments:json!({"project":project,"session_id":session,"source":"text('must not run')"}),
         }, ToolCallContext {transport:ToolTransport::Mcp,session_id:None,auth:Some(&auth),window:None,
             record_oauth_scope_denials:true,host_file_import_trust:HostFileImportTrust::Untrusted}).await;
         assert!(

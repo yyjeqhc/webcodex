@@ -240,12 +240,12 @@ wait_for_server() {
     return 1
 }
 
-runtime_status() { api_post /api/runtime/status '{}'; }
+get_runtime_status() { api_post /api/runtime/status '{}'; }
 
 wait_for_agent_online() {
     for _ in $(seq 1 60); do
         check_deadline
-        local body; body="$(runtime_status || true)"
+        local body; body="$(get_runtime_status || true)"
         if [ "$(json_get "$body" output.runners.online_count)" = "1" ]; then
             echo "$body"
             return 0
@@ -258,7 +258,7 @@ wait_for_agent_online() {
 wait_for_agent_offline() {
     for _ in $(seq 1 90); do
         check_deadline
-        local body; body="$(runtime_status || true)"
+        local body; body="$(get_runtime_status || true)"
         if [ "$(json_get "$body" output.runners.online_count)" = "0" ]; then
             echo "$body"
             return 0
@@ -377,7 +377,7 @@ wait_for_server || { fail "server did not restart"; exit 1; }
 BODY="$(wait_for_agent_online)" || { fail "runner did not auto-reconnect after server restart"; exit 1; }
 pass "runner auto-reconnected after server restart"
 
-SUMMARY_BODY="$(api_post /api/tools/call "{\"tool\":\"session_summary\",\"params\":{\"session_id\":\"${SESSION_ID}\"}}")"
+SUMMARY_BODY="$(api_post /api/tools/call "{\"tool\":\"read_session_summary\",\"params\":{\"session_id\":\"${SESSION_ID}\"}}")"
 assert_eq "durable session resumable via explicit session_id" \
     "$(json_get "$SUMMARY_BODY" success)" "True"
 

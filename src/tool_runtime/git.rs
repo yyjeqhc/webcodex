@@ -38,8 +38,10 @@ pub(crate) fn sparsify_complete_git_review_success(tool_name: &str, result: &mut
         return;
     };
     match tool_name {
-        "git_diff_hunks" => self::diff_hunks::sparsify_complete_git_diff_hunks_output(output),
-        "show_changes" => self::show_changes::sparsify_complete_show_changes_output(output),
+        "read_git_diff_hunks" => self::diff_hunks::sparsify_complete_git_diff_hunks_output(output),
+        "read_workspace_changes" => {
+            self::show_changes::sparsify_complete_show_changes_output(output)
+        }
         _ => {}
     }
 }

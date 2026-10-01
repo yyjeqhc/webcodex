@@ -56,7 +56,8 @@ fn tool_definitions_cover_known_names_and_public_specs() {
 #[cfg(feature = "experimental-code-mode")]
 #[test]
 fn experimental_code_mode_is_visible_read_only_and_feature_scoped() {
-    let definition = lookup_tool_definition("code_mode_exec").expect("code_mode_exec definition");
+    let definition =
+        lookup_tool_definition("execute_code_mode").expect("execute_code_mode definition");
     let metadata = definition.metadata();
     assert!(definition.visibility.is_model_visible());
     assert_eq!(metadata.effect, ToolEffect::Observe);
@@ -66,7 +67,7 @@ fn experimental_code_mode_is_visible_read_only_and_feature_scoped() {
     assert_eq!(definition.adaptive_runtime_direct_rank(), Some(45));
     assert!(registered_tool_specs()
         .iter()
-        .any(|spec| spec.name == "code_mode_exec"));
+        .any(|spec| spec.name == "execute_code_mode"));
     assert_eq!(definition.category, TOOL_CATEGORY_RUNTIME);
     for intent in ["coding", "audit", "exploration"] {
         assert!(
@@ -75,18 +76,18 @@ fn experimental_code_mode_is_visible_read_only_and_feature_scoped() {
                 .find(|profile| profile.name == intent)
                 .unwrap()
                 .tools
-                .contains(&"code_mode_exec"),
+                .contains(&"execute_code_mode"),
             "{intent}"
         );
     }
-    assert!(is_adaptive_runtime_direct_tool("code_mode_exec"));
+    assert!(is_adaptive_runtime_direct_tool("execute_code_mode"));
 }
 
 #[cfg(feature = "experimental-code-mode")]
 #[test]
 fn experimental_code_mode_effectful_has_conservative_e2a_envelope() {
-    let definition = lookup_tool_definition("code_mode_exec_effectful")
-        .expect("code_mode_exec_effectful definition");
+    let definition = lookup_tool_definition("execute_effectful_code_mode")
+        .expect("execute_effectful_code_mode definition");
     let metadata = definition.metadata();
     assert!(definition.visibility.is_model_visible());
     assert_eq!(metadata.effect, ToolEffect::Execute);
@@ -96,21 +97,21 @@ fn experimental_code_mode_effectful_has_conservative_e2a_envelope() {
     assert_eq!(definition.adaptive_runtime_direct_rank(), Some(105));
     assert!(definition.requires_explicit_business_session());
     assert_eq!(
-        runtime_tool_composition_policy("code_mode_exec_effectful"),
+        runtime_tool_composition_policy("execute_effectful_code_mode"),
         ToolCompositionPolicy::Denied,
         "Code Mode must never recursively compose itself"
     );
     assert!(registered_tool_specs()
         .iter()
-        .any(|spec| spec.name == "code_mode_exec_effectful"));
+        .any(|spec| spec.name == "execute_effectful_code_mode"));
     assert_eq!(definition.category, TOOL_CATEGORY_RUNTIME);
 }
 
 #[cfg(feature = "experimental-code-mode")]
 #[test]
 fn experimental_code_mode_mutating_has_conservative_e2c_combined_authority_envelope() {
-    let definition = lookup_tool_definition("code_mode_exec_mutating")
-        .expect("code_mode_exec_mutating definition");
+    let definition = lookup_tool_definition("execute_mutating_code_mode")
+        .expect("execute_mutating_code_mode definition");
     let metadata = definition.metadata();
     assert!(definition.visibility.is_model_visible());
     assert_eq!(metadata.effect, ToolEffect::Mutate);
@@ -133,16 +134,18 @@ fn experimental_code_mode_mutating_has_conservative_e2c_combined_authority_envel
     assert_eq!(definition.adaptive_runtime_direct_rank(), Some(65));
     assert!(definition.requires_explicit_business_session());
     assert_eq!(
-        runtime_tool_composition_policy("code_mode_exec_mutating"),
+        runtime_tool_composition_policy("execute_mutating_code_mode"),
         ToolCompositionPolicy::Denied,
         "Code Mode must never recursively compose itself"
     );
     assert!(registered_tool_specs()
         .iter()
-        .any(|spec| spec.name == "code_mode_exec_mutating"));
+        .any(|spec| spec.name == "execute_mutating_code_mode"));
     assert_eq!(definition.category, TOOL_CATEGORY_RUNTIME);
-    assert!(CODING_INTENT_TOOL_NAMES.contains(&"code_mode_exec_mutating"));
-    assert!(is_adaptive_runtime_direct_tool("code_mode_exec_mutating"));
+    assert!(CODING_INTENT_TOOL_NAMES.contains(&"execute_mutating_code_mode"));
+    assert!(is_adaptive_runtime_direct_tool(
+        "execute_mutating_code_mode"
+    ));
 }
 
 #[cfg(feature = "experimental-code-mode")]
@@ -151,13 +154,13 @@ fn code_mode_composition_policy_is_canonical_closed_and_independent_from_fronten
     const E1_TOOLS: &[&str] = &[
         "read_files",
         "search_project_texts",
-        "project_overview",
+        "read_project_overview",
         "list_project_tracked_files",
-        "git_status",
-        "git_log",
-        "git_diff_hunks",
-        "git_review_summary",
-        "show_changes",
+        "get_git_status",
+        "read_git_log",
+        "read_git_diff_hunks",
+        "read_git_review_summary",
+        "read_workspace_changes",
     ];
     for name in E1_TOOLS {
         let definition = lookup_tool_definition(name).unwrap_or_else(|| panic!("missing {name}"));
@@ -189,9 +192,9 @@ fn code_mode_composition_policy_is_canonical_closed_and_independent_from_fronten
         "observe_jobs",
         "apply_patch",
         "write_project_file",
-        "code_mode_exec",
-        "code_mode_exec_effectful",
-        "code_mode_exec_mutating",
+        "execute_code_mode",
+        "execute_effectful_code_mode",
+        "execute_mutating_code_mode",
     ] {
         assert_eq!(
             runtime_tool_composition_policy(name),
@@ -209,9 +212,9 @@ fn code_mode_composition_policy_is_canonical_closed_and_independent_from_fronten
 #[test]
 fn experimental_code_mode_is_absent_without_feature() {
     for name in [
-        "code_mode_exec",
-        "code_mode_exec_effectful",
-        "code_mode_exec_mutating",
+        "execute_code_mode",
+        "execute_effectful_code_mode",
+        "execute_mutating_code_mode",
     ] {
         assert!(lookup_tool_definition(name).is_none(), "{name}");
         assert!(!known_tool_names().any(|known| known == name), "{name}");
@@ -238,7 +241,7 @@ fn experimental_code_mode_is_absent_without_feature() {
 
 #[test]
 fn final_changes_requires_the_typed_internal_posix_runner_capability() {
-    for name in ["present_work_result", "changes_file_diff"] {
+    for name in ["present_work_result", "read_changed_file_diff"] {
         let requirement = runtime_tool_runner_capability(name)
             .unwrap_or_else(|| panic!("{name} must require its real Runner execution capability"));
         assert_eq!(
@@ -267,21 +270,21 @@ fn tool_definitions_are_activity_semantics_ssot() {
         ("run_shell", Work, Meaningful, Run),
         ("cargo_test", Work, Meaningful, Test),
         ("cargo_check", Work, Meaningful, Test),
-        ("git_review_summary", Work, Meaningful, Review),
-        ("git_diff_hunks", Work, Meaningful, Review),
-        ("show_changes", Work, Meaningful, Review),
-        ("lsp_status", Work, Meaningful, Navigate),
+        ("read_git_review_summary", Work, Meaningful, Review),
+        ("read_git_diff_hunks", Work, Meaningful, Review),
+        ("read_workspace_changes", Work, Meaningful, Review),
+        ("get_lsp_status", Work, Meaningful, Navigate),
         ("finish_coding_task", Work, Meaningful, Review),
         ("observe_jobs", Transport, Meaningful, NoKind),
         ("wait_for_job_readiness", Transport, Meaningful, NoKind),
         ("list_jobs", Support, Meaningful, NoKind),
-        ("session_handoff_summary", Support, Meaningful, NoKind),
-        ("session_handoff_state", Support, NonMeaningful, NoKind),
+        ("read_session_handoff_summary", Support, Meaningful, NoKind),
+        ("get_session_handoff_state", Support, NonMeaningful, NoKind),
         ("work_on_project", Support, Meaningful, NoKind),
-        ("validation_summary", Support, Meaningful, NoKind),
-        ("runtime_status", Support, NonMeaningful, NoKind),
-        ("tool_manifest", Support, NonMeaningful, NoKind),
-        ("goal_plan_sync", Transport, NonMeaningful, NoKind),
+        ("read_validation_summary", Support, Meaningful, NoKind),
+        ("get_runtime_status", Support, NonMeaningful, NoKind),
+        ("read_tool_manifest", Support, NonMeaningful, NoKind),
+        ("sync_goal_plan", Transport, NonMeaningful, NoKind),
         (
             "bootstrap_agent_conversation",
             Transport,
@@ -289,7 +292,12 @@ fn tool_definitions_are_activity_semantics_ssot() {
             NoKind,
         ),
         ("consume_agent_wake", Transport, NonMeaningful, NoKind),
-        ("agent_continuation_state", Transport, NonMeaningful, NoKind),
+        (
+            "get_agent_continuation_state",
+            Transport,
+            NonMeaningful,
+            NoKind,
+        ),
     ] {
         assert_eq!(
             runtime_tool_activity_semantics(name),
@@ -303,31 +311,31 @@ fn tool_definitions_are_activity_semantics_ssot() {
     }
 
     for name in [
-        "runtime_status",
+        "get_runtime_status",
         "list_tools",
         "list_runners",
         "list_projects",
-        "tool_manifest",
+        "read_tool_manifest",
         "read_tool_trace",
-        "goal_plan_sync",
+        "sync_goal_plan",
         "bootstrap_agent_conversation",
         "consume_agent_wake",
-        "work_result_state",
-        "work_result_send_message",
-        "session_handoff_state",
-        "agent_wait_state",
-        "agent_continuation_bind",
-        "agent_continuation_recover_endpoint",
-        "agent_continuation_state",
-        "agent_continuation_wake_acquire",
-        "agent_continuation_wake_prepare",
-        "agent_continuation_wake_finish",
-        "agent_continuation_unbind",
-        "job_terminal_continuation_bind",
-        "job_terminal_continuation_state",
-        "job_terminal_continuation_prepare",
-        "job_terminal_continuation_finish",
-        "job_terminal_continuation_unbind",
+        "get_work_result_state",
+        "send_work_result_message",
+        "get_session_handoff_state",
+        "get_agent_wait_state",
+        "bind_agent_continuation",
+        "recover_agent_continuation_endpoint",
+        "get_agent_continuation_state",
+        "acquire_agent_continuation_wake",
+        "prepare_agent_continuation_wake",
+        "finish_agent_continuation_wake",
+        "unbind_agent_continuation",
+        "bind_job_terminal_continuation",
+        "get_job_terminal_continuation_state",
+        "prepare_job_terminal_continuation",
+        "finish_job_terminal_continuation",
+        "unbind_job_terminal_continuation",
     ] {
         assert_eq!(
             runtime_tool_activity_interaction(name),
@@ -346,7 +354,7 @@ fn tool_definitions_are_activity_semantics_ssot() {
         "unknown names must preserve the legacy conservative meaningful default"
     );
 
-    let hidden = lookup_tool_definition("job_tail").expect("job_tail definition");
+    let hidden = lookup_tool_definition("read_job_tail").expect("read_job_tail definition");
     assert!(hidden.visibility.is_model_hidden());
     let hidden_activity = hidden.activity_semantics();
     assert_eq!(hidden_activity.presentation, Work);
@@ -384,7 +392,7 @@ fn execution_selection_contract_is_canonical_closed_and_sparse() {
             ToolExecutionContract::new(NativeArgv, Supervisor, AsyncImmediate, ObserveJobs),
         ),
         (
-            "session_shell_exec",
+            "execute_session_shell",
             ToolExecutionContract::new(
                 PersistentShellCommand,
                 SessionShellLifetime,
@@ -422,7 +430,7 @@ fn execution_selection_contract_is_canonical_closed_and_sparse() {
     for name in [
         "read_files",
         "edit_project_files",
-        "show_changes",
+        "read_workspace_changes",
         "observe_jobs",
         "stop_job",
         "open_session_shell",
@@ -452,29 +460,35 @@ fn host_orchestration_hints_are_static_guidance_independent_from_nested_composit
             false,
         ),
         (
-            "search_and_read",
+            "search_and_read_project_texts",
             Denied,
             IndependentParallelRead,
             Some("queries"),
             true,
         ),
-        ("git_status", Parallel, IndependentParallelRead, None, false),
         (
-            "git_diff_hunks",
+            "get_git_status",
             Parallel,
             IndependentParallelRead,
             None,
             false,
         ),
         (
-            "git_review_summary",
+            "read_git_diff_hunks",
             Parallel,
             IndependentParallelRead,
             None,
             false,
         ),
         (
-            "runtime_status",
+            "read_git_review_summary",
+            Parallel,
+            IndependentParallelRead,
+            None,
+            false,
+        ),
+        (
+            "get_runtime_status",
             Denied,
             IndependentParallelRead,
             None,
@@ -590,12 +604,12 @@ fn every_runtime_tool_has_an_explicit_fail_closed_audit_contract() {
     }
 
     assert_eq!(
-        runtime_tool_audit_policy("coding_agent_observe").map(|policy| policy.result),
+        runtime_tool_audit_policy("observe_coding_agent").map(|policy| policy.result),
         Some(ToolAuditResultPolicy::Semantic(
             ToolAuditSemanticResultPolicy::CodingAgentObservation
         ))
     );
-    for name in ["git_commit_paths", "git_review_summary"] {
+    for name in ["commit_git_paths", "read_git_review_summary"] {
         assert_eq!(
             runtime_tool_audit_policy(name).map(|policy| policy.request),
             Some(ToolAuditRequestPolicy::TypedDropNullValues),
@@ -640,7 +654,7 @@ fn stop_job_preserves_one_canonical_effect() {
     for name in [
         "read_files",
         "search_project_texts",
-        "git_status",
+        "get_git_status",
         "edit_project_files",
     ] {
         let schema = input_schema_for_tool(name);
@@ -778,7 +792,7 @@ fn adaptive_direct_reason_is_independent_of_domain_and_authority() {
 
     for (name, reason) in [
         ("read_files", ToolDirectReason::CoreWorkflow),
-        ("project_artifact", ToolDirectReason::CoreWorkflow),
+        ("inspect_project_artifact", ToolDirectReason::CoreWorkflow),
         (
             "import_conversation_files_to_project",
             ToolDirectReason::HostIntegration,
@@ -794,7 +808,9 @@ fn adaptive_direct_reason_is_independent_of_domain_and_authority() {
         );
     }
     assert_eq!(
-        lookup_tool_definition("project_artifact").unwrap().category,
+        lookup_tool_definition("inspect_project_artifact")
+            .unwrap()
+            .category,
         lookup_tool_definition("import_conversation_files_to_project")
             .unwrap()
             .category
@@ -889,8 +905,8 @@ fn adaptive_runtime_direct_declarations_are_visible_ranked_and_unique() {
 
     for (name, expected_rank) in [
         ("import_conversation_files_to_project", 55),
-        ("project_artifact", 56),
-        ("job_write_input", 71),
+        ("inspect_project_artifact", 56),
+        ("write_job_input", 71),
         ("run_script", 74),
         ("run_shell", 75),
         ("observe_jobs", 80),
@@ -907,32 +923,32 @@ fn adaptive_runtime_direct_declarations_are_visible_ranked_and_unique() {
     }
 
     for name in [
-        "show_changes",
-        "session_handoff_summary",
+        "read_workspace_changes",
+        "read_session_handoff_summary",
         "rotate_agent_continuation_endpoint",
         "run_skill_resource",
         "list_jobs",
         "stop_job",
         "run_detached_process",
         "transfer_project_artifact",
-        "workspace_hygiene_check",
+        "check_workspace_hygiene",
         "finish_coding_task",
-        "runner_config_check",
-        "runner_config_reload",
-        "ssh_resource",
+        "check_runner_config",
+        "reload_runner_config",
+        "manage_ssh_resource",
         "open_session_shell",
-        "session_shell_exec",
-        "session_shell_status",
+        "execute_session_shell",
+        "get_session_shell_status",
         "close_session_shell",
         "save_project_artifact",
-        "read_project_artifact",
-        "artifact_upload_begin",
-        "artifact_upload_chunk",
-        "artifact_upload_finish",
-        "artifact_upload_abort",
+        "read_project_artifact_chunk",
+        "begin_artifact_upload",
+        "upload_artifact_chunk",
+        "finish_artifact_upload",
+        "abort_artifact_upload",
         "go_test",
-        "git_diff_hunks",
-        "git_review_summary",
+        "read_git_diff_hunks",
+        "read_git_review_summary",
     ] {
         let definition = lookup_tool_definition(name).expect("model-visible long-tail definition");
         assert!(definition.visibility.is_model_visible(), "{name}");
@@ -944,7 +960,7 @@ fn adaptive_runtime_direct_declarations_are_visible_ranked_and_unique() {
     }
 
     for (name, expected_rank, expected_authority) in [
-        ("session_discussion_summary", 15, RUNTIME_READ),
+        ("read_session_discussion_summary", 15, RUNTIME_READ),
         ("review_changes", 120, PROJECT_READ),
     ] {
         let definition = derived
@@ -991,8 +1007,8 @@ fn adaptive_runtime_direct_declarations_are_visible_ranked_and_unique() {
 
     let git_review = registered_tool_specs()
         .into_iter()
-        .find(|spec| spec.name == "git_review_summary")
-        .expect("git_review_summary ToolSpec");
+        .find(|spec| spec.name == "read_git_review_summary")
+        .expect("read_git_review_summary ToolSpec");
     assert!(git_review
         .description
         .contains("Specialist exact committed-range review map"));
@@ -1093,8 +1109,7 @@ fn turn_economy_descriptors_stay_converged_and_bounded() {
         "preflight transactionally",
         "dry_run",
         "review_changes when Git review is useful",
-        "task-appropriate validation",
-        "outcome_unknown",
+        "task-appropriate validation",        "outcome_unknown",
     ] {
         assert!(
             edits.description.contains(phrase),
@@ -1149,24 +1164,24 @@ fn operator_extension_families_are_definition_owned_and_registry_derived() {
     };
 
     let cases: &[(ToolOperatorExtensionFamily, &[&str])] = &[
-        (SkillRuntime, &["skill_list", "skill_read_file"]),
+        (SkillRuntime, &["list_skills", "read_skill_file"]),
         (
             SkillManagement,
             &[
-                "skill_versions",
-                "skill_install",
-                "skill_activate",
-                "skill_remove_revision",
+                "list_skill_versions",
+                "install_skill",
+                "activate_skill",
+                "remove_skill_revision",
             ],
         ),
-        (MemoryRuntime, &["memory_search", "memory_read"]),
+        (MemoryRuntime, &["search_memory", "read_memory"]),
         (
             MemoryManagement,
             &[
-                "memory_set",
-                "memory_delete",
-                "memory_scope_list",
-                "memory_scope_purge",
+                "set_memory",
+                "delete_memory",
+                "list_memory_scopes",
+                "purge_memory_scope",
             ],
         ),
         (TraceDiagnostics, &["read_tool_trace"]),
@@ -1256,7 +1271,7 @@ fn run_skill_resource_contract_distinguishes_live_configured_and_managed_fences(
     );
 
     let extension_specs = stateless_operator_extension_tool_specs();
-    let list_spec = spec_named(&extension_specs, "skill_list")
+    let list_spec = spec_named(&extension_specs, "list_skills")
         .description
         .to_ascii_lowercase();
     assert!(list_spec.contains("webcodex does not modify configured skill roots"));
@@ -1296,14 +1311,14 @@ fn code_mode_discovery_ranks_inspection_before_specialized_effects_without_chang
             .position(|candidate| *candidate == name)
             .unwrap()
     };
-    assert!(position("code_mode_exec") < position("code_mode_exec_mutating"));
-    assert!(position("edit_project_files") < position("code_mode_exec_mutating"));
-    assert!(position("code_mode_exec") < position("code_mode_exec_effectful"));
-    assert!(position("cargo_test") < position("code_mode_exec_effectful"));
+    assert!(position("execute_code_mode") < position("execute_mutating_code_mode"));
+    assert!(position("edit_project_files") < position("execute_mutating_code_mode"));
+    assert!(position("execute_code_mode") < position("execute_effectful_code_mode"));
+    assert!(position("cargo_test") < position("execute_effectful_code_mode"));
     for name in [
-        "code_mode_exec",
-        "code_mode_exec_effectful",
-        "code_mode_exec_mutating",
+        "execute_code_mode",
+        "execute_effectful_code_mode",
+        "execute_mutating_code_mode",
     ] {
         assert_eq!(
             lookup_tool_definition(name).unwrap().category,
@@ -1318,7 +1333,7 @@ fn code_mode_discovery_ranks_inspection_before_specialized_effects_without_chang
     let specs = registered_tool_specs();
     let read = specs
         .iter()
-        .find(|spec| spec.name == "code_mode_exec")
+        .find(|spec| spec.name == "execute_code_mode")
         .unwrap();
     for phrase in [
         "direct tool for one simple observation",

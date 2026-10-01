@@ -10,7 +10,7 @@ in `/root/git/webcodex-review` on `refactor/tool-surface-categories`, starting a
 A read-only SQLite aggregation on sf `/var/lib/webcodex/webcodex.db`,
 `action_events`, ended at 2026-09-28 13:21:14 UTC:
 
-| Window | All ActionAudit events | work_result_state | Share |
+| Window | All ActionAudit events | get_work_result_state | Share |
 |---|---:|---:|---:|
 | Retained history | 304,623 | 6,037 | 1.98% |
 | Rolling last seven days | 31,253 | 6,037 | 19.32% |
@@ -82,12 +82,12 @@ folding component; the diff DOM and request are created only on expansion.
 Initial display is five rows, with explicit More, Show fewer, Collapse all and
 per-file toggles. Collapsing/re-expanding reuses the exact cached result.
 
-The existing App-only `work_result_state` accepts an optional `files` request.
+The existing App-only `get_work_result_state` accepts an optional `files` request.
 Omission keeps its state behavior. A first workspace request creates an immutable
 snapshot; later metadata pages and diffs pin that snapshot id. Final Changes use
 their existing sealed snapshot and exact Session. Both paths share the existing
 Changes registry, bounded metadata parser and safe Git diff producer rather than
-independent live/final implementations. The existing `changes_file_diff` remains
+independent live/final implementations. The existing `read_changed_file_diff` remains
 valid for final per-file reads.
 
 Metadata pages contain at most 24 files. Initial final payloads are still bounded

@@ -52,7 +52,7 @@ pub struct QuicServerConfig {
 }
 
 /// Non-sensitive server-side QUIC listener status exposed through
-/// `runtime_status`. This intentionally carries only operator-safe fields:
+/// `get_runtime_status`. This intentionally carries only operator-safe fields:
 /// listen address, ALPN, started flag, and a short sanitized error.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct QuicRuntimeStatus {

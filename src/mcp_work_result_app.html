@@ -798,7 +798,7 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     diffInFlight.add(file.path);
     state.textContent = "Loading changes…";
     try {
-      const response = await send("tools/call", { name: "changes_file_diff", arguments: {
+      const response = await send("tools/call", { name: "read_changed_file_diff", arguments: {
         project: identity.project, session_id: snapshot.session_id, snapshot_id: snapshot.snapshot_id, path: file.path,
       } });
       if (tornDown) return;
@@ -914,7 +914,7 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
   }
 
   async function readFilesPage(current, session, offset) {
-    const response = await send("tools/call", { name: "work_result_state", arguments: {
+    const response = await send("tools/call", { name: "get_work_result_state", arguments: {
       project: identity.project, ...(session ? { session_id: session } : {}),
       files: { ...(current ? { snapshot_id: current.snapshot_id } : {}), offset },
     } }, 60000);
@@ -961,7 +961,7 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     try {
       const source = await ensureWorkspaceSnapshot();
       if (tornDown || epoch !== workspaceEpoch) return;
-      const response = await send("tools/call", { name: "work_result_state", arguments: {
+      const response = await send("tools/call", { name: "get_work_result_state", arguments: {
         project: identity.project, files: { snapshot_id: source.snapshot_id, path: file.path },
       } }, 60000);
       if (tornDown || epoch !== workspaceEpoch) return;
@@ -1280,7 +1280,7 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     root.textContent = "Loading details…";
     try {
       const response = await send("tools/call", {
-        name: "work_result_activity_detail",
+        name: "read_work_result_activity_detail",
         arguments: { project: lastRenderedState.project, server_trace_id: trace },
       });
       if (tornDown) return;
@@ -1533,7 +1533,7 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     el("composerState").textContent = "Sending…";
     updateComposerControl();
     try {
-      const response = await send("tools/call", { name: "work_result_send_message", arguments: pendingSend });
+      const response = await send("tools/call", { name: "send_work_result_message", arguments: pendingSend });
       if (tornDown) return;
       const receipt = structuredOf(response);
       if (!receipt || (receipt.success === true && (typeof receipt.output?.message_id !== "string" || !MESSAGE_ID.test(receipt.output.message_id)))) {
@@ -1615,7 +1615,7 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     updateRefreshControl();
     if (!automatic) el("status").textContent = "Refreshing…";
     try {
-      const response = await send("tools/call", { name: "work_result_state", arguments: { project: identity.project, ...(explicitSession ? { session_id: explicitSession } : {}) } });
+      const response = await send("tools/call", { name: "get_work_result_state", arguments: { project: identity.project, ...(explicitSession ? { session_id: explicitSession } : {}) } });
       if (tornDown) return;
       const structured = structuredOf(response);
       if (!structured) {

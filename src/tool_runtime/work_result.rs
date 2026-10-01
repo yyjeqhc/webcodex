@@ -70,7 +70,7 @@ impl ToolRuntime {
         auth: Option<&AuthContext>,
         window: Option<&ClientWindow>,
     ) -> ToolResult {
-        self.exact_work_result(project, session_id, "work_result_state", auth, window)
+        self.exact_work_result(project, session_id, "get_work_result_state", auth, window)
             .await
     }
 
@@ -624,8 +624,8 @@ fn work_result_observed_label(tool: &str, current: bool, meaningful: bool) -> &'
     }
     match tool {
         "observe_jobs" => "Observed job progress",
-        "runtime_status" => "Observed Runtime status",
-        "current_window_activity" => "Observed Window activity",
+        "get_runtime_status" => "Observed Runtime status",
+        "read_current_window_activity" => "Observed Window activity",
         "list_jobs" => "Observed Jobs",
         _ => "Observed WebCodex activity",
     }

@@ -146,7 +146,7 @@ impl ToolRuntime {
                 );
             }
             if self
-                .authorize_session_target(session, "work_result_send_message", auth)
+                .authorize_session_target(session, "send_work_result_message", auth)
                 .await
                 .is_err()
             {

@@ -262,7 +262,7 @@ fixed acceptance tasks below. Each pair used the same task definition and Git
 base, and the bounded annotation recorded zero contract-repair turns. These are
 observations from this run, not a general speed claim.
 
-These measurements predate the later `search_and_read` compound Direct primitive
+These measurements predate the later `search_and_read_project_texts` compound Direct primitive
 added on main. Future paired runs must include that tool when it is the simplest
 sufficient Direct control. The A/B outer-call deltas below remain evidence for the
 recorded Git base, not an estimate of the current-main advantage; rebaseline them

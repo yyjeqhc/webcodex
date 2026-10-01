@@ -160,7 +160,7 @@ because it resolves previously uncertain execution visibility. No status-text
 heuristic classifies recovery. Server restart may repeat one bounded
 active snapshot; historical terminal records establish a baseline rather than being
 replayed as new completion. The cursor is not durable authority. Failure or
-omission of attention leaves the main tool result intact. `current_window_activity`
+omission of attention leaves the main tool result intact. `read_current_window_activity`
 is a nonmeaningful diagnostic observation and neither receives nor consumes passive
 attention. Explicit `jobs.attention` retains its Project-level scope and zero-active
 summary independently of this cursor.
@@ -186,7 +186,7 @@ Three identities have different lifetimes:
 | `job_id` | Identity of one already-dispatched execution | Active: when the same reconciliation-capable Runner process survives and reports inventory. Terminal public ordinary Jobs: also via the Server receipt within its original bounded retention window. |
 | `after_observation_token` | Opaque lifecycle and bounded log-delta state for one observed Job snapshot | No. Its Server epoch is process-local; a surviving Job should return a reset baseline and fresh token immediately after restart. |
 
-A dropped `observe_jobs`, `job_tail`, or other observation request therefore does **not**
+A dropped `observe_jobs`, `read_job_tail`, or other observation request therefore does **not**
 mean that the underlying Job was lost. The caller should keep the original
 `job_id` and observe authoritative Job state again before considering any retry.
 
@@ -274,11 +274,11 @@ both as “retry the command” risks duplicate effects.
 
 Before retrying work, collect safe runtime facts:
 
-1. Use `runtime_status` / `list_runners` to establish the current Server build,
+1. Use `get_runtime_status` / `list_runners` to establish the current Server build,
    Runner connection state, `client_id`, process-scoped `agent_instance_id`,
    reconciliation capability, and Job concurrency state. If reconciliation logs
    are available, cross-check `process_started_at` there; it is not part of the
-   current `runtime_status` / `list_runners` projection.
+   current `get_runtime_status` / `list_runners` projection.
 2. Determine whether the Runner process changed. If it changed, do not claim the
    same-process Server-restart recovery contract was violated.
 3. If the Runner process is unchanged, inspect the registration/reconciliation
@@ -410,7 +410,7 @@ Do not conflate the Job execution pool with other limits. In particular:
 - polling request dispatch has its own in-flight bound;
 - persistent shells have their own bounded population/lifecycle.
 
-Changing one does not redefine the others. `runtime_status` / `list_runners`
+Changing one does not redefine the others. `get_runtime_status` / `list_runners`
 should be used for current `job_concurrency { limit, running, queued }` facts
 instead of inferring capacity from the number of browser/model windows. These
 are bounded lifecycle-status counts, not an exact free-slot calculation:
@@ -468,7 +468,7 @@ consulting structured lifecycle state.
 
 ### Job observation tools
 
-For `job_tail` and `observe_jobs`, the top-level description plus
+For `read_job_tail` and `observe_jobs`, the top-level description plus
 observation-field schemas should make clear that:
 
 - observation never launches or retries the Job;
@@ -518,7 +518,7 @@ terminal Job does not rewrite them or join live Registry state into Activity.
 
 ### Runtime/operator observation tools
 
-Descriptions for `runtime_status`, `list_runners`, and related operator surfaces
+Descriptions for `get_runtime_status`, `list_runners`, and related operator surfaces
 should distinguish connection health from execution capacity and expose safe
 facts needed to diagnose recovery:
 
@@ -649,4 +649,4 @@ unknown; they never become evidence of "no observe". The report consumes at most
 100,000 rows and one million predecessor links for this analysis and exports
 only aggregate counters/distributions, not relations or identities. Existing
 Action Audit retention and failure isolation apply. Nothing is added to ordinary
-`runtime_status`, model results, discovery, or nested Code Mode contracts.
+`get_runtime_status`, model results, discovery, or nested Code Mode contracts.

@@ -200,7 +200,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     require_all_scopes(
         permission_risk(
             def(
-                "agent_continuation_bind",
+                "bind_agent_continuation",
                 super::ToolAuditPolicy::typed_fields(&[
                     super::ToolAuditResultField::pointer("agent_id", "/agent_continuation/agent_id"),
                     super::ToolAuditResultField::pointer("endpoint_id", "/agent_continuation/endpoint_id"),
@@ -236,7 +236,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     require_all_scopes(
         permission_risk(
             def(
-                "agent_continuation_recover_endpoint",
+                "recover_agent_continuation_endpoint",
                 super::ToolAuditPolicy::typed_fields(&[
                     super::ToolAuditResultField::pointer("agent_id", "/agent_continuation/agent_id"),
                     super::ToolAuditResultField::pointer("endpoint_id", "/agent_continuation/endpoint_id"),
@@ -276,7 +276,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     require_all_scopes(
         permission_risk(
             def(
-                "agent_continuation_state",
+                "get_agent_continuation_state",
                 super::ToolAuditPolicy::typed_fields(&[
                     super::ToolAuditResultField::pointer("agent_id", "/agent_continuation/agent_id"),
                     super::ToolAuditResultField::pointer("endpoint_id", "/agent_continuation/endpoint_id"),
@@ -314,7 +314,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     require_all_scopes(
         permission_risk(
             def(
-                "agent_continuation_wake_acquire",
+                "acquire_agent_continuation_wake",
                 super::ToolAuditPolicy::typed_fields(&[
                     super::ToolAuditResultField::value("agent_id"),
                     super::ToolAuditResultField::value("endpoint_id"),
@@ -352,7 +352,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     require_all_scopes(
         permission_risk(
             def(
-                "agent_continuation_wake_prepare",
+                "prepare_agent_continuation_wake",
                 super::ToolAuditPolicy::typed_fields(&[
                     super::ToolAuditResultField::value("agent_id"),
                     super::ToolAuditResultField::value("endpoint_id"),
@@ -391,7 +391,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     require_all_scopes(
         permission_risk(
             def(
-                "agent_continuation_wake_finish",
+                "finish_agent_continuation_wake",
                 super::ToolAuditPolicy::typed_fields(&[
                     super::ToolAuditResultField::value("agent_id"),
                     super::ToolAuditResultField::value("endpoint_id"),
@@ -432,7 +432,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     require_all_scopes(
         permission_risk(
             def(
-                "agent_continuation_unbind",
+                "unbind_agent_continuation",
                 super::ToolAuditPolicy::typed_fields(&[
                     super::ToolAuditResultField::value("agent_id"),
                     super::ToolAuditResultField::value("endpoint_id"),

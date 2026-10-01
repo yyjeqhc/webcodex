@@ -630,13 +630,13 @@ async fn validation_summary_surfaces_validation_delta_without_shell_or_new_event
         .len();
     assert_eq!(
         events_after, events_before,
-        "validation_summary appended events"
+        "read_validation_summary appended events"
     );
     assert!(
         probe_patch_agent_request(&runtime, "vsummary-agent")
             .await
             .is_none(),
-        "validation_summary enqueued an agent request"
+        "read_validation_summary enqueued an agent request"
     );
 }
 
@@ -765,9 +765,9 @@ fn meaningful_tool_classification_excludes_status_and_manifest_queries() {
     // Pure status/manifest/summary queries must never count as work progress.
     for name in [
         "runtime_status",
-        "tool_manifest",
+        "read_tool_manifest",
         "list_tools",
-        "session_summary",
+        "read_session_summary",
     ] {
         assert!(
             !is_meaningful(name),
@@ -778,7 +778,7 @@ fn meaningful_tool_classification_excludes_status_and_manifest_queries() {
     for name in [
         "edit_project_files",
         "run_shell",
-        "show_changes",
+        "read_workspace_changes",
         "cargo_test",
     ] {
         assert!(is_meaningful(name), "{name} should count as meaningful");
@@ -939,7 +939,7 @@ fn record_exploration_event(
 }
 
 /// Project-scoped variants of the helpers above for real entry tests that
-/// dispatch tools against a registered agent project (e.g. validation_summary).
+/// dispatch tools against a registered agent project (e.g. read_validation_summary).
 fn add_instruction_for(
     runtime: &ToolRuntime,
     session_id: &str,

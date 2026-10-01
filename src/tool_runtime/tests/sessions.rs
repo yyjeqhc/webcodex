@@ -250,7 +250,10 @@ async fn session_inbox_hint_reports_open_guidance_without_text() {
     assert_eq!(hint["open_counts"]["todo"], 0);
     assert_eq!(hint["open_counts"]["risk"], 0);
     assert_eq!(hint["highest_priority"], "high");
-    assert_eq!(hint["suggested_next_tool"], "session_discussion_summary");
+    assert_eq!(
+        hint["suggested_next_tool"],
+        "read_session_discussion_summary"
+    );
     assert!(hint.get("attention_required").is_none());
     assert!(hint.get("attention_reason").is_none());
     assert!(hint.get("attention_instruction").is_none());
@@ -301,7 +304,7 @@ async fn high_ack_guidance_hint_is_actionable_and_inner_recorder_projects_attent
     assert_eq!(raw_hint["attention_reason"], "session_message_requires_ack");
     assert_eq!(
         raw_hint["attention_instruction"],
-        "A Session message requiring acknowledgement is pending. Read session_discussion_summary before continuing."
+        "A Session message requiring acknowledgement is pending. Read read_session_discussion_summary before continuing."
     );
 
     // No outer recording_session_id is supplied here. The existing authorized
@@ -316,7 +319,10 @@ async fn high_ack_guidance_hint_is_actionable_and_inner_recorder_projects_attent
 
     assert!(result.success, "{:?}", result.error);
     let hint = &result.output["session_hint"];
-    assert_eq!(hint["suggested_next_tool"], "session_discussion_summary");
+    assert_eq!(
+        hint["suggested_next_tool"],
+        "read_session_discussion_summary"
+    );
     assert!(hint.get("attention_required").is_none());
     assert!(hint.get("attention_reason").is_none());
     assert!(hint.get("attention_instruction").is_none());
@@ -430,7 +436,10 @@ async fn session_inbox_hint_counts_question_todo_and_risk() {
     assert_eq!(hint["open_counts"]["todo"], 1);
     assert_eq!(hint["open_counts"]["risk"], 1);
     assert_eq!(hint["highest_priority"], "normal");
-    assert_eq!(hint["suggested_next_tool"], "session_discussion_summary");
+    assert_eq!(
+        hint["suggested_next_tool"],
+        "read_session_discussion_summary"
+    );
     assert!(hint.get("attention_required").is_none());
     assert!(hint.get("attention_reason").is_none());
     assert!(hint.get("attention_instruction").is_none());

@@ -1,4 +1,4 @@
-//! Closed Desktop facade over the canonical Server `ssh_resource` gateway.
+//! Closed Desktop facade over the canonical Server `manage_ssh_resource` gateway.
 //! Only a short-lived observation is held here, never a second SSH registry.
 //! Credentials, targets and canonical gateway bindings never enter public state.
 use crate::models::StoredRuntime;
@@ -369,7 +369,7 @@ impl Gateway for HttpGateway {
         let response = client
             .post(url)
             .bearer_auth(token.trim())
-            .json(&json!({"tool":"ssh_resource", "params":arguments}))
+            .json(&json!({"tool":"manage_ssh_resource", "params":arguments}))
             .send()
             .await;
         drop(token);

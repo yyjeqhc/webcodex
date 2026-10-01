@@ -332,7 +332,7 @@ async fn server_issued_project_ref_crosses_real_project_scoped_dispatch_paths() 
 
     // Git uses a specialized dispatcher that historically repeated the same
     // auth-less resolution mistake as shell. Exercise that boundary too.
-    let git = ToolCall::from_tool_name("git_status", json!({"project": project_ref})).unwrap();
+    let git = ToolCall::from_tool_name("get_git_status", json!({"project": project_ref})).unwrap();
     let git_task = tokio::spawn({
         let runtime = runtime.clone();
         let auth = alice.clone();

@@ -18,7 +18,7 @@ use webcodex_core::ssh_resource::{
     validate_response_for_request, SshResourceRequest, SshResourceResponse,
 };
 
-pub(crate) const SSH_RESOURCE_TOOL_NAME: &str = "ssh_resource";
+pub(crate) const SSH_RESOURCE_TOOL_NAME: &str = "manage_ssh_resource";
 const MAX_BINDINGS: usize = 256;
 const RUNNER_WAIT_TIMEOUT: Duration = Duration::from_secs(65);
 
@@ -162,10 +162,10 @@ pub(crate) fn operation_policy(
     let action = arguments
         .get("action")
         .and_then(Value::as_str)
-        .ok_or("ssh_resource action is required")?;
+        .ok_or("manage_ssh_resource action is required")?;
     SshResourceOperation::parse(action)
         .map(SshResourceOperation::policy)
-        .ok_or("ssh_resource action must be one of list, register, or remove")
+        .ok_or("manage_ssh_resource action must be one of list, register, or remove")
 }
 
 #[derive(Debug, Clone)]
@@ -412,7 +412,7 @@ pub(crate) async fn call(
         Err(_) => {
             return error_result(GatewayError::new(
                 "ssh_resource_invalid",
-                "ssh_resource arguments are invalid",
+                "manage_ssh_resource arguments are invalid",
             ))
         }
     };
@@ -862,7 +862,7 @@ fn required<'a>(value: &'a Option<String>, field: &'static str) -> Result<&'a st
 fn binding_required_error() -> GatewayError {
     GatewayError::new(
         "ssh_resource_binding_required",
-        "a current opaque binding from ssh_resource action=list is required",
+        "a current opaque binding from manage_ssh_resource action=list is required",
     )
     .recovery("List SSH resources on the intended exact Runner, then retry with its binding.")
 }
@@ -966,7 +966,7 @@ mod tests {
         ] {
             crate::tool_runtime::startup_brief::validate_schema_instance_for_test(&value, &schema)
                 .unwrap_or_else(|error| {
-                    panic!("ssh_resource MCP schema rejected {value}: {error}")
+                    panic!("manage_ssh_resource MCP schema rejected {value}: {error}")
                 });
         }
     }

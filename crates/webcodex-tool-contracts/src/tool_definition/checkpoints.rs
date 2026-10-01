@@ -13,7 +13,7 @@ use crate::metadata::{
 pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     git_like(model_spec(
         def(
-            "workspace_checkpoint_create",
+            "create_workspace_checkpoint",
             super::ToolAuditPolicy::TYPED_CANONICAL.context(
                 super::ToolAuditContextPolicy::Fields(&[
                     super::ToolAuditResultField::value("checkpoint_id"),
@@ -50,7 +50,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     )),
     model_spec(
         def(
-            "workspace_checkpoint_list",
+            "list_workspace_checkpoints",
             super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_CHECKPOINT,
@@ -73,7 +73,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     ),
     model_spec(
         def(
-            "workspace_checkpoint_show",
+            "read_workspace_checkpoint",
             super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_CHECKPOINT,
@@ -97,7 +97,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     git_like(permission_risk(
         model_spec(
             def(
-            "workspace_checkpoint_restore",
+            "restore_workspace_checkpoint",
             super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_CHECKPOINT,
@@ -122,7 +122,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     )),
     model_spec(
         def(
-            "workspace_checkpoint_delete",
+            "delete_workspace_checkpoint",
             super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_CHECKPOINT,

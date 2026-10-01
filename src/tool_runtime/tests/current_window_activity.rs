@@ -114,7 +114,7 @@ async fn current_window_activity_is_scoped_sanitized_and_reports_observed_timing
         &window,
         project,
         "wc_sess_visible",
-        "current_window_activity",
+        "read_current_window_activity",
         5000,
         5001,
         false,
@@ -200,7 +200,7 @@ async fn current_window_activity_is_scoped_sanitized_and_reports_observed_timing
         &window,
         "self-trace",
         "tools/call",
-        Some("current_window_activity"),
+        Some("read_current_window_activity"),
         Some((&principal_kind, &principal_id)),
         8000,
     );
@@ -219,7 +219,8 @@ async fn current_window_activity_is_scoped_sanitized_and_reports_observed_timing
         .iter()
         .all(|request| request["server_trace_id"] != "self-trace"));
     drop(self_guard);
-    let schema = crate::tool_runtime::registry::output_schema_for_tool("current_window_activity");
+    let schema =
+        crate::tool_runtime::registry::output_schema_for_tool("read_current_window_activity");
     crate::tool_runtime::startup_brief::validate_schema_instance_for_test(
         &json!({"success":true,"output":result.output}),
         &schema,
@@ -383,7 +384,7 @@ async fn current_window_activity_never_infers_overlap_from_a_short_gap() {
         &window,
         project,
         "wc_sess_overlap_facts",
-        "git_status",
+        "get_git_status",
         1000,
         1010,
         true,
@@ -394,7 +395,7 @@ async fn current_window_activity_never_infers_overlap_from_a_short_gap() {
         &window,
         project,
         "wc_sess_overlap_facts",
-        "runtime_status",
+        "get_runtime_status",
         1110,
         1120,
         true,

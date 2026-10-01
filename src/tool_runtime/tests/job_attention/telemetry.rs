@@ -253,7 +253,7 @@ async fn job_convergence_terminal_delivery_uses_existing_server_timestamp() {
     let result = attention(&runtime, &project, Some(&session), &window, &auth).await;
     let facts = runtime
         .job_convergence_record(
-            "git_status",
+            "get_git_status",
             &result,
             &ToolCallCorrelation::default(),
             Some(&auth),
@@ -269,14 +269,16 @@ async fn job_convergence_terminal_delivery_uses_existing_server_timestamp() {
     let again = attention(&runtime, &project, Some(&session), &window, &auth).await;
     assert!(runtime
         .job_convergence_record(
-            "git_status",
+            "get_git_status",
             &again,
             &ToolCallCorrelation::default(),
             Some(&auth),
             Some(&window)
         )
         .is_none());
-    let mut completion = ModelErgonomicsTimer::start("git_status").unwrap().finish();
+    let mut completion = ModelErgonomicsTimer::start("get_git_status")
+        .unwrap()
+        .finish();
     completion.job_convergence = Some(facts);
     let record = completion.record_for_tool_result(&result).unwrap();
     assert!(serde_json::to_value(record).unwrap()["job_convergence"].is_object());

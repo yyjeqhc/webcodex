@@ -47,7 +47,7 @@ impl PostRecordResponse<'_> {
         let canonical_audit_output = canonical_audit_output(self.tool_name, &result.output);
         plan.project(&mut result);
         self.add_recorder_gap_hint(&mut result);
-        if self.tool_name == "tool_manifest" {
+        if self.tool_name == "read_tool_manifest" {
             crate::tool_runtime::surface::sparsify_tool_manifest_model_result(&mut result);
         }
         crate::tool_runtime::result_projection::sparsify_failure_model_result_metadata(

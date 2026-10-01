@@ -38,7 +38,7 @@ a Runner wire-generation migration and does not add permanent observation aliase
 ## Upgrade status
 
 The owner clarified that this migration keeps `DESKTOP_RUNTIME_CONTRACT` at
-`[1, 1]`. Its scope is the raw `runtime_status` / `list_runners` observations and
+`[1, 1]`. Its scope is the raw `get_runtime_status` / `list_runners` observations and
 their first-party consumers, not the management command contracts Desktop
 deserializes. Runner registration, transport, and build-info wire fields and
 Runner wire generation remain unchanged.

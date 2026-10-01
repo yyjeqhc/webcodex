@@ -162,7 +162,7 @@ pub(super) fn build_inbox_hint(record: &SessionRecord) -> Option<SessionInboxHin
             .then_some(SESSION_INBOX_ACK_REQUIRED_ATTENTION_REASON),
         attention_instruction: ack_required_message
             .then_some(SESSION_INBOX_ACK_REQUIRED_ATTENTION_INSTRUCTION),
-        suggested_next_tool: "session_discussion_summary",
+        suggested_next_tool: "read_session_discussion_summary",
     })
 }
 

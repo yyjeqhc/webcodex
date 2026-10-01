@@ -1,4 +1,4 @@
-//! Tests for the `workspace_hygiene_check` read-only runtime tool.
+//! Tests for the `check_workspace_hygiene` read-only runtime tool.
 
 use super::super::*;
 use super::support::*;
@@ -11,7 +11,7 @@ use tempfile::TempDir;
 // Helpers
 // =========================================================================
 
-/// Dispatch `workspace_hygiene_check` against an agent-registered project and
+/// Dispatch `check_workspace_hygiene` against an agent-registered project and
 /// complete its internal read-only agent shell requests locally.
 async fn dispatch_hygiene_with_agent(
     runtime: &ToolRuntime,
@@ -94,10 +94,10 @@ async fn setup_clean_git_repo(
 
 #[test]
 fn workspace_hygiene_check_is_known_and_in_specs() {
-    assert!(is_known_tool_name("workspace_hygiene_check"));
+    assert!(is_known_tool_name("check_workspace_hygiene"));
 
     let specs = registered_tool_specs();
-    let spec = spec_named(&specs, "workspace_hygiene_check");
+    let spec = spec_named(&specs, "check_workspace_hygiene");
 
     // Input schema: project is required, others optional.
     let required = required_fields(spec);
@@ -105,7 +105,7 @@ fn workspace_hygiene_check_is_known_and_in_specs() {
 
     // Metadata: read-only, project:read.
     let metadata =
-        crate::tool_runtime::metadata::lookup_tool_metadata("workspace_hygiene_check").unwrap();
+        crate::tool_runtime::metadata::lookup_tool_metadata("check_workspace_hygiene").unwrap();
     assert_eq!(
         metadata.effect,
         crate::tool_runtime::metadata::ToolEffect::Observe
@@ -128,7 +128,7 @@ fn workspace_hygiene_check_is_known_and_in_specs() {
         .unwrap();
     assert!(
         output_props.contains_key("verdict"),
-        "workspace_hygiene_check output schema should expose verdict"
+        "check_workspace_hygiene output schema should expose verdict"
     );
     assert!(
         !output_props.contains_key("suggested_next_actions"),
@@ -139,13 +139,13 @@ fn workspace_hygiene_check_is_known_and_in_specs() {
         .is_some_and(|description| description.contains("Sparse non-zero")));
 
     // tool_manifest category: cleanup.
-    assert_eq!(tool_manifest_category("workspace_hygiene_check"), "cleanup");
+    assert_eq!(tool_manifest_category("check_workspace_hygiene"), "cleanup");
 }
 
 #[test]
 fn workspace_hygiene_check_stays_long_tail() {
     assert_eq!(
-        webcodex_tool_contracts::runtime_tool_adaptive_direct_rank("workspace_hygiene_check"),
+        webcodex_tool_contracts::runtime_tool_adaptive_direct_rank("check_workspace_hygiene"),
         None
     );
 }
@@ -588,7 +588,7 @@ async fn workspace_hygiene_check_read_only_session_allowed() {
 
     assert!(
         result.success,
-        "read_only session should allow workspace_hygiene_check: {:?}",
+        "read_only session should allow check_workspace_hygiene: {:?}",
         result.error
     );
     assert!(result.output.get("session_recorded").is_none());
@@ -632,10 +632,10 @@ async fn workspace_hygiene_check_input_summary_is_bounded() {
         .events
         .iter()
         .rev()
-        .find(|e| e.kind == "tool_call_started" && e.tool_name == "workspace_hygiene_check")
+        .find(|e| e.kind == "tool_call_started" && e.tool_name == "check_workspace_hygiene")
         .unwrap_or_else(|| {
             panic!(
-                "missing started event for workspace_hygiene_check: {:?}",
+                "missing started event for check_workspace_hygiene: {:?}",
                 summary.events
             )
         });
@@ -682,9 +682,9 @@ async fn workspace_hygiene_check_input_summary_is_bounded() {
 
 #[test]
 fn workspace_hygiene_check_tool_is_known_and_parses() {
-    assert!(is_known_tool_name("workspace_hygiene_check"));
+    assert!(is_known_tool_name("check_workspace_hygiene"));
     let call = ToolCall::from_tool_name(
-        "workspace_hygiene_check",
+        "check_workspace_hygiene",
         json!({
             "project": "agent:oe:webcodex",
             "max_findings": 25,
@@ -702,7 +702,7 @@ fn workspace_hygiene_check_tool_is_known_and_parses() {
             session_id: Some(ref session_id),
         } if project == "agent:oe:webcodex" && session_id == "wc_sess_1234"
     ));
-    assert_eq!(call.tool_name(), "workspace_hygiene_check");
+    assert_eq!(call.tool_name(), "check_workspace_hygiene");
     assert_eq!(call.project(), Some("agent:oe:webcodex"));
     assert_eq!(call.session_id(), Some("wc_sess_1234"));
 

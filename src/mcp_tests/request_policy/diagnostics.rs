@@ -15,7 +15,7 @@ fn request_policy_metadata_receipts_record_selection_not_client_brand_or_history
         let runtime = Arc::new(test_runtime().with_mcp_host_policy(deployment()));
         let service = Service::new(build_test_router(test_config(Some("secret")), db, runtime));
         for (profile, budget) in [(None,None),(Some("direct"),Some("9")),(Some("host_code_mode"),Some("999999")),(None,Some("8"))] {
-            let params = json!({"name":"tool_manifest","arguments":{"tool_name":"read_files"},
+            let params = json!({"name":"read_tool_manifest","arguments":{"tool_name":"read_files"},
                 "_meta":{"io.modelcontextprotocol/clientInfo":{"name":"openai-mcp","version":"fixture"}}});
             let response = post(&service,"tools/call",params,profile,budget).await;
             assert_eq!(response.0,StatusCode::OK,"{}",response.1);

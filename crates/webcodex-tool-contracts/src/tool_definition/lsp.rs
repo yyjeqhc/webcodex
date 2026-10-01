@@ -10,7 +10,7 @@ use crate::metadata::{
 pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
         def(
-            "lsp_status",
+            "get_lsp_status",
             super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_LSP,
@@ -34,7 +34,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     ),
     model_spec(
         def(
-            "document_symbols",
+            "list_document_symbols",
             super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_LSP,
@@ -57,7 +57,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     ),
     model_spec(
         def(
-            "document_diagnostics",
+            "read_document_diagnostics",
             super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_LSP,
@@ -80,7 +80,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     ),
     model_spec(
         def(
-            "hover",
+            "read_symbol_hover",
             super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_LSP,
@@ -99,11 +99,11 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             false,
             super::ToolSessionEvidencePolicy::NONE.exploration(super::ToolExplorationEvidence::Navigation(super::ToolNavigationEvidenceKind::Hover)),
         ),
-        "Read-only hover for a Project-relative supported source file at a 1-based Unicode scalar position via its configured Runner-side language server. MarkupContent and MarkedString forms are normalized to bounded markdown/plaintext; invalid optional ranges are omitted.",
+        "Read-only read_symbol_hover for a Project-relative supported source file at a 1-based Unicode scalar position via its configured Runner-side language server. MarkupContent and MarkedString forms are normalized to bounded markdown/plaintext; invalid optional ranges are omitted.",
     ),
     model_spec(
         def(
-            "workspace_symbols",
+            "list_workspace_symbols",
             super::ToolAuditPolicy::TYPED_CANONICAL.session_input(
                 super::ToolAuditSessionInputPolicy::OmitTopLevel(&["query"]),
             ),
@@ -128,7 +128,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     ),
     model_spec(
         def(
-            "goto_definition",
+            "find_definition",
             super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_LSP,
@@ -174,7 +174,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     ),
     model_spec(
         def(
-            "call_hierarchy",
+            "read_call_hierarchy",
             super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_LSP,

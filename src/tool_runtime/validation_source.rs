@@ -142,9 +142,9 @@ pub(crate) fn observes_potential_mutation(call: &super::ToolCall) -> bool {
     let name = call.tool_name();
     if matches!(
         name,
-        "code_mode_exec"
-            | "code_mode_exec_effectful"
-            | "code_mode_exec_mutating"
+        "execute_code_mode"
+            | "execute_effectful_code_mode"
+            | "execute_mutating_code_mode"
             | "project_validate"
             | "cargo_check"
             | "cargo_test"

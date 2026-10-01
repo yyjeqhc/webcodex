@@ -42,7 +42,7 @@ use super::sessions::{canonical_tool_call_finished_events, SessionEvent};
 use super::tool_definition::runtime_tool_approval_policy;
 use super::tool_result::{RecoveryKind, ToolResult};
 
-/// Canonical authority profile (runtime_status / coding-task startup).
+/// Canonical authority profile (get_runtime_status / coding-task startup).
 pub(crate) fn authority_profile_payload() -> Value {
     policy::authority_profile_payload_for(&EffectiveAuthorityConfig::from_env())
 }

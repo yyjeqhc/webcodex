@@ -1,3 +1,4 @@
+mod canonical_names;
 use crate::*;
 use serde_json::{json, Value};
 use std::collections::BTreeSet;

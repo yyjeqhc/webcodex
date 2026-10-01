@@ -583,7 +583,7 @@ async fn reconcile_reload_generation(
     let checked = runtime_tool_call(
         server_url,
         token,
-        "runner_config_check",
+        "check_runner_config",
         json!({"client_id": client_id}),
     )
     .await
@@ -788,7 +788,7 @@ pub(crate) async fn run_project_activate(opts: ProjectActivateOptions) -> Result
         let checked = runtime_tool_call(
             &server_url,
             &token,
-            "runner_config_check",
+            "check_runner_config",
             json!({"client_id": client_id}),
         )
         .await?;
@@ -844,7 +844,7 @@ pub(crate) async fn run_project_activate(opts: ProjectActivateOptions) -> Result
         let reload = runtime_tool_call(
             &server_url,
             &token,
-            "runner_config_reload",
+            "reload_runner_config",
             json!({"client_id": client_id, "expected_generation": generation}),
         )
         .await;
@@ -1353,19 +1353,19 @@ mod tests {
         let canonical_project = project.canonicalize().unwrap();
         let responses = vec![
             (
-                "tool:runner_config_check",
+                "tool:check_runner_config",
                 json!({"success":true,"output":{"valid":true,"current_generation":1,"restart_required":false}}),
             ),
             (
-                "tool:runner_config_reload",
+                "tool:reload_runner_config",
                 json!({"success":false,"output":{"execution_state":"not_started","error_code":"config_generation_conflict","current_generation":2},"error":"generation changed"}),
             ),
             (
-                "tool:runner_config_check",
+                "tool:check_runner_config",
                 json!({"success":true,"output":{"valid":true,"current_generation":2,"restart_required":false}}),
             ),
             (
-                "tool:runner_config_reload",
+                "tool:reload_runner_config",
                 json!({"success":true,"output":{"execution_state":"completed","valid":true,"current_generation":3,"restart_required":false}}),
             ),
             (
@@ -1420,15 +1420,15 @@ mod tests {
         let canonical_project = project.canonicalize().unwrap();
         let responses = vec![
             (
-                "tool:runner_config_check",
+                "tool:check_runner_config",
                 json!({"success":true,"output":{"valid":true,"current_generation":7,"restart_required":false}}),
             ),
             (
-                "tool:runner_config_reload",
+                "tool:reload_runner_config",
                 json!({"success":false,"output":{"execution_state":"outcome_unknown","error_code":"operation_indeterminate"},"error":"response lost"}),
             ),
             (
-                "tool:runner_config_check",
+                "tool:check_runner_config",
                 json!({"success":true,"output":{"valid":true,"current_generation":8,"restart_required":false}}),
             ),
             (
@@ -1462,11 +1462,11 @@ mod tests {
         assert_eq!(
             requests
                 .iter()
-                .filter(|request| request_json(request)["tool"] == "runner_config_reload")
+                .filter(|request| request_json(request)["tool"] == "reload_runner_config")
                 .count(),
             1
         );
-        assert_eq!(request_json(&requests[2])["tool"], "runner_config_check");
+        assert_eq!(request_json(&requests[2])["tool"], "check_runner_config");
         assert!(requests[3].starts_with("POST /api/projects/resolve-or-register "));
     }
 
@@ -1477,15 +1477,15 @@ mod tests {
         std::fs::create_dir_all(&project).unwrap();
         let responses = vec![
             (
-                "tool:runner_config_check",
+                "tool:check_runner_config",
                 json!({"success":true,"output":{"valid":true,"current_generation":7,"restart_required":false}}),
             ),
             (
-                "tool:runner_config_reload",
+                "tool:reload_runner_config",
                 json!({"success":false,"output":{"execution_state":"outcome_unknown","error_code":"operation_indeterminate"},"error":"response lost"}),
             ),
             (
-                "tool:runner_config_check",
+                "tool:check_runner_config",
                 json!({"success":true,"output":{"valid":true,"current_generation":7,"restart_required":false}}),
             ),
         ];
@@ -1512,7 +1512,7 @@ mod tests {
         assert_eq!(
             requests
                 .iter()
-                .filter(|request| request_json(request)["tool"] == "runner_config_reload")
+                .filter(|request| request_json(request)["tool"] == "reload_runner_config")
                 .count(),
             1,
             "uncertain reload with unchanged generation must never be retried"

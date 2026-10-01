@@ -87,7 +87,7 @@ async fn mcp_2026_computer_app_is_minimal_handshake_and_snapshot_only() {
         .iter()
         .any(|tool| { tool["name"] == crate::mcp::tools::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME }));
     assert!(
-        !tools.iter().any(|tool| tool["name"] == "computer_observe"),
+        !tools.iter().any(|tool| tool["name"] == "observe_computer"),
         "Computer observation remains model-visible long tail and must use call_runtime_tool"
     );
     for retired in [
@@ -103,7 +103,7 @@ async fn mcp_2026_computer_app_is_minimal_handshake_and_snapshot_only() {
         .as_array()
         .unwrap()
         .iter()
-        .any(|tool| tool["name"] == "computer_observe"));
+        .any(|tool| tool["name"] == "observe_computer"));
 
     let resources = handle_mcp_request(
         &runtime,
@@ -264,7 +264,7 @@ async fn mcp_2026_computer_app_is_minimal_handshake_and_snapshot_only() {
     assert!(names
         .iter()
         .any(|tool| { tool["name"] == crate::mcp::tools::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME }));
-    assert!(!names.iter().any(|tool| tool["name"] == "computer_observe"));
+    assert!(!names.iter().any(|tool| tool["name"] == "observe_computer"));
 
     let no_ui_resources = handle_mcp_request(
         &runtime,
@@ -334,7 +334,7 @@ async fn mcp_computer_snapshot_resource_links_are_unique_caller_bound_and_scope_
 
     for generation in 1..=4u64 {
         let framed = mcp_runtime_tool_result_with_snapshot_resource(
-            "computer_observe",
+            "observe_computer",
             false,
             ToolResult::ok(json!({
                 "client_id": "msi",
@@ -431,7 +431,7 @@ async fn mcp_computer_snapshot_resource_links_are_unique_caller_bound_and_scope_
     let window_auth = snapshot_auth("snapshot-window-owner", false);
     let window_caller = mcp_artifact_export_caller_binding(Some(&window_auth)).unwrap();
     let window = mcp_runtime_tool_result_with_snapshot_resource(
-        "computer_observe",
+        "observe_computer",
         false,
         ToolResult::ok(json!({
             "client_id": "mini",

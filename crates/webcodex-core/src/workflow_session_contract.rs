@@ -46,7 +46,7 @@ pub fn tool_supports_model_facing_result_expectation(tool_name: &str) -> bool {
         "run_process"
             | "run_script"
             | "run_shell"
-            | "session_shell_exec"
+            | "execute_session_shell"
             | "cargo_fmt"
             | "cargo_check"
             | "cargo_test"
@@ -218,7 +218,7 @@ pub fn is_valid_session_message_id(value: &str) -> bool {
 
 pub const SESSION_INBOX_ACK_REQUIRED_ATTENTION_REASON: &str = "session_message_requires_ack";
 pub const SESSION_INBOX_ACK_REQUIRED_ATTENTION_INSTRUCTION: &str =
-    "A Session message requiring acknowledgement is pending. Read session_discussion_summary before continuing.";
+    "A Session message requiring acknowledgement is pending. Read read_session_discussion_summary before continuing.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]

@@ -1553,7 +1553,7 @@ mod tests {
     }
 
     /// A QUIC-registered Runner must surface protocol generation 2 and the
-    /// `quic` transport in `list_runners` (used by runtime_status / list_runners).
+    /// `quic` transport in `list_runners` (used by get_runtime_status / list_runners).
     #[tokio::test]
     async fn quic_runner_surfaces_transport_and_protocol_in_list() {
         let (cert_der, key_der) = self_signed_cert();

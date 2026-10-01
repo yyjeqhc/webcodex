@@ -942,9 +942,9 @@ async fn artifact_upload_chunk_session_log_arguments_do_not_store_base64() {
         .iter()
         .rev()
         .find(|event| {
-            event.kind == "tool_call_started" && event.tool_name == "artifact_upload_chunk"
+            event.kind == "tool_call_started" && event.tool_name == "upload_artifact_chunk"
         })
-        .expect("started event for artifact_upload_chunk");
+        .expect("started event for upload_artifact_chunk");
     let input_summary = started
         .input_summary
         .as_ref()
@@ -1212,7 +1212,7 @@ async fn artifact_upload_begin_policy_rejection_is_classified() {
         .summary(&session.session_id, Some(20))
         .unwrap();
     assert_eq!(summary.counts.failed, 1);
-    let event = finished_event(&summary, "artifact_upload_begin");
+    let event = finished_event(&summary, "begin_artifact_upload");
     assert_eq!(event.failure_kind.as_deref(), Some("policy_rejected"));
     assert_eq!(event.error_kind.as_deref(), Some("policy_rejected"));
     assert!(event.permission.is_none());
@@ -4550,7 +4550,7 @@ async fn project_overview_routes_to_owning_agent_and_returns_structured_metadata
     assert_eq!(request.kind, "file_project_overview");
     assert!(
         request.command.is_empty(),
-        "project_overview must not use shell"
+        "read_project_overview must not use shell"
     );
     let options: Value = serde_json::from_str(request.content.as_deref().unwrap()).unwrap();
     assert_eq!(options["max_depth"], 4);
@@ -4567,16 +4567,16 @@ async fn project_overview_routes_to_owning_agent_and_returns_structured_metadata
     assert_eq!(result.output["scan"]["limit"], 20);
     let declared_output = registered_tool_specs()
         .into_iter()
-        .find(|spec| spec.name == "project_overview")
-        .expect("project_overview spec")
+        .find(|spec| spec.name == "read_project_overview")
+        .expect("read_project_overview spec")
         .output_schema["properties"]["output"]["properties"]
         .as_object()
-        .expect("project_overview output schema")
+        .expect("read_project_overview output schema")
         .clone();
     for key in result.output.as_object().unwrap().keys() {
         assert!(
             declared_output.contains_key(key),
-            "runtime project_overview output key {key} is missing from schema"
+            "runtime read_project_overview output key {key} is missing from schema"
         );
     }
     let serialized = result.output.to_string();
@@ -4690,7 +4690,7 @@ async fn project_read_adapters_reject_out_of_project_paths_before_agent_dispatch
             None,
         ),
         (
-            "project_overview absolute path",
+            "read_project_overview absolute path",
             ToolCall::ProjectOverview {
                 project: project.clone(),
                 session_id: None,
@@ -4701,7 +4701,7 @@ async fn project_read_adapters_reject_out_of_project_paths_before_agent_dispatch
             None,
         ),
         (
-            "project_overview parent traversal",
+            "read_project_overview parent traversal",
             ToolCall::ProjectOverview {
                 project: project.clone(),
                 session_id: None,

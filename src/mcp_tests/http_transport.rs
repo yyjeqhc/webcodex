@@ -321,7 +321,7 @@ async fn stateless_full_trace_preserves_raw_context_request_and_records_clean_ef
         &service,
         "secret",
         41,
-        "runtime_status",
+        "get_runtime_status",
         arguments.clone(),
         None,
     )
@@ -397,14 +397,14 @@ async fn stateless_full_trace_correlates_only_hashed_openai_window_body() {
     let raw_window = "openai-window-trace-opaque-secret";
 
     for id in [51_i64, 52_i64] {
-        let mut params = mcp_2026_params(json!({"name": "runtime_status", "arguments": {}}));
+        let mut params = mcp_2026_params(json!({"name": "get_runtime_status", "arguments": {}}));
         params["_meta"]["openai/session"] = json!(raw_window);
         let (status, body) = stateless_2026_jsonrpc(
             &service,
             "secret",
             Some(MCP_STATELESS_PROTOCOL_VERSION),
             Some("tools/call"),
-            Some("runtime_status"),
+            Some("get_runtime_status"),
             None,
             json!({
                 "jsonrpc": "2.0",
@@ -461,7 +461,8 @@ async fn stateless_full_trace_correlates_only_hashed_openai_window_body() {
             .map(|line| serde_json::from_str::<Value>(line).unwrap())
             .collect::<Vec<_>>();
         if let Some(parsed) = events.iter().find(|event| {
-            event["event"] == "mcp_tool_request_parsed" && event["tool_name"] == "runtime_status"
+            event["event"] == "mcp_tool_request_parsed"
+                && event["tool_name"] == "get_runtime_status"
         }) {
             traced_requests += 1;
             let trace_id = parsed["server_trace_id"]
@@ -566,7 +567,7 @@ async fn mcp_tools_call_writes_a_summary_action_audit_row() {
             "jsonrpc": "2.0",
             "id": 1,
             "method": "tools/call",
-            "params": {"name": "runtime_status", "arguments": {"summary_only": true}}
+            "params": {"name": "get_runtime_status", "arguments": {"summary_only": true}}
         }))
         .send(&service)
         .await;
@@ -655,7 +656,7 @@ async fn mcp_tools_call_writes_a_summary_action_audit_row() {
     };
     assert_eq!(endpoint, "/mcp");
     assert_eq!(action, "toolsCall");
-    assert_eq!(operation, "runtime_status");
+    assert_eq!(operation, "get_runtime_status");
     assert_eq!(status, "success");
     let request_observed_at_ms = request_observed_at_ms.expect("canonical MCP request start");
     let response_handed_at_ms = response_handed_at_ms.expect("canonical MCP response handoff");
@@ -679,7 +680,7 @@ async fn mcp_tools_call_writes_a_summary_action_audit_row() {
     );
     let telemetry = &summary["model_ergonomics"];
     assert_eq!(telemetry["schema_version"], 13);
-    assert_eq!(telemetry["tool_name"], "runtime_status");
+    assert_eq!(telemetry["tool_name"], "get_runtime_status");
     assert_eq!(telemetry["tool_category"], "runtime");
     assert_eq!(telemetry["success"], true);
     assert_eq!(
@@ -705,7 +706,7 @@ async fn mcp_tools_call_writes_a_summary_action_audit_row() {
         .json(&json!({
             "jsonrpc": "2.0",
             "method": "tools/call",
-            "params": {"name": "runtime_status", "arguments": {"summary_only": true}}
+            "params": {"name": "get_runtime_status", "arguments": {"summary_only": true}}
         }))
         .send(&service)
         .await;
@@ -810,7 +811,7 @@ async fn mcp_pre_kernel_wrapper_validation_still_records_generic_attempt() {
             "jsonrpc": "2.0",
             "id": 102,
             "method": "tools/call",
-            "params": {"name": "runtime_status", "arguments": arguments}
+            "params": {"name": "get_runtime_status", "arguments": arguments}
         }))
         .send(&service)
         .await;
@@ -821,14 +822,14 @@ async fn mcp_pre_kernel_wrapper_validation_still_records_generic_attempt() {
     let summary: String = db
         .conn_for_tests()
         .query_row(
-            "SELECT summary_json FROM action_events WHERE operation = 'runtime_status'",
+            "SELECT summary_json FROM action_events WHERE operation = 'get_runtime_status'",
             [],
             |row| row.get(0),
         )
         .unwrap();
     let summary: Value = serde_json::from_str(&summary).unwrap();
     let telemetry = &summary["model_ergonomics"];
-    assert_eq!(telemetry["tool_name"], "runtime_status");
+    assert_eq!(telemetry["tool_name"], "get_runtime_status");
     assert_eq!(telemetry["tool_category"], "runtime");
     assert_eq!(telemetry["success"], false);
     assert_eq!(telemetry["error_kind"], "invalid_arguments");
@@ -870,7 +871,7 @@ async fn mcp_pat_tools_call_persists_user_attribution() {
             "jsonrpc": "2.0",
             "id": 1,
             "method": "tools/call",
-            "params": {"name": "runtime_status", "arguments": {"summary_only": true}}
+            "params": {"name": "get_runtime_status", "arguments": {"summary_only": true}}
         }))
         .send(&service)
         .await;
@@ -1581,7 +1582,7 @@ async fn http_mcp_2026_explicit_handoff_without_context_ack_body() {
         &service,
         "secret",
         229,
-        "session_handoff_summary",
+        "read_session_handoff_summary",
         json!({"session_id": session_id}),
         None,
     )
@@ -1605,7 +1606,7 @@ async fn http_mcp_2026_explicit_handoff_without_context_ack_body() {
         &service,
         "secret",
         230,
-        "session_handoff_summary",
+        "read_session_handoff_summary",
         json!({"session_id": session_id, "diagnostic": true}),
         None,
     )
@@ -1617,7 +1618,10 @@ async fn http_mcp_2026_explicit_handoff_without_context_ack_body() {
     assert!(output["handoff_brief"].is_object());
     // The retired field is now an unknown input, including on the gateway.
     for (tool, arguments) in [
-        ("runtime_status", json!({"ack_session_context_revision": 0})),
+        (
+            "get_runtime_status",
+            json!({"ack_session_context_revision": 0}),
+        ),
         (
             "call_runtime_tool",
             json!({"tool": "list_tools", "arguments": {}, "ack_session_context_revision": 0}),
@@ -2547,7 +2551,7 @@ async fn http_mcp_2026_tools_call_requires_matching_name_and_accepts_base64_sent
     let (_tmp, db) = test_db();
     let runtime = Arc::new(test_runtime());
     let service = Service::new(build_test_router(config, db, runtime));
-    let params = mcp_2026_params(json!({"name": "runtime_status", "arguments": {}}));
+    let params = mcp_2026_params(json!({"name": "get_runtime_status", "arguments": {}}));
 
     for (label, name_header, id) in [
         ("missing name", None, 204),
@@ -2568,7 +2572,7 @@ async fn http_mcp_2026_tools_call_requires_matching_name_and_accepts_base64_sent
         assert_eq!(body["error"]["code"], MCP_HEADER_MISMATCH);
     }
 
-    let encoded = general_purpose::STANDARD.encode("runtime_status");
+    let encoded = general_purpose::STANDARD.encode("get_runtime_status");
     let encoded = format!("=?base64?{encoded}?=");
     let (status, body) = stateless_2026_jsonrpc(
         &service,
@@ -2900,7 +2904,12 @@ async fn http_mcp_tools_call_uses_result_envelope_for_success_and_business_failu
     let service = Service::new(build_test_router(config, db, runtime));
 
     for (id, name, arguments, expected_is_error) in [
-        (3, "runtime_status", json!({"summary_only": true}), false),
+        (
+            3,
+            "get_runtime_status",
+            json!({"summary_only": true}),
+            false,
+        ),
         (
             31,
             "read_files",

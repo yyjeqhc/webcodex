@@ -279,7 +279,7 @@ impl ToolRuntime {
     }
 
     /// Deterministic repository structure overview for the coding startup
-    /// brief. Reuses the existing `project_overview` implementation and keeps
+    /// brief. Reuses the existing `read_project_overview` implementation and keeps
     /// every safety property: directory entries, file types, and the git
     /// tracked index only; no file bodies, no project code execution, no
     /// symlink following, no protected/sensitive/build/cache paths, and only

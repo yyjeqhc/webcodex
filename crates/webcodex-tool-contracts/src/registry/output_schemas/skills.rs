@@ -74,7 +74,7 @@ fn skill_load_candidate_schema() -> Value {
 fn skill_versions_recovery_call_schema() -> Value {
     suggested_tool_call_schema(
         webcodex_core::runtime_contract::GeneratedFollowUpKind::FallbackRecovery,
-        "skill_versions",
+        "list_skill_versions",
         json!({
             "type": "object",
             "additionalProperties": false,
@@ -89,14 +89,14 @@ fn skill_versions_recovery_call_schema() -> Value {
             },
             "required": ["project", "skill_key"]
         }),
-        "Parser-ready advisory skill_versions reconciliation using only the exact Project and logical Skill key owned by the failed mutation. On Adaptive Runtime this target remains a discovered call_runtime_tool gateway action; the call grants no authority and is not mutation retry permission.",
+        "Parser-ready advisory list_skill_versions reconciliation using only the exact Project and logical Skill key owned by the failed mutation. On Adaptive Runtime this target remains a discovered call_runtime_tool gateway action; the call grants no authority and is not mutation retry permission.",
     )
 }
 
 fn apply_skill_recovery_contract(name: &str, schema: &mut Value) {
     let mutation = matches!(
         name,
-        "skill_install" | "skill_activate" | "skill_remove_revision"
+        "install_skill" | "activate_skill" | "remove_skill_revision"
     );
     {
         let properties = schema["properties"]["output"]["properties"]
@@ -111,8 +111,8 @@ fn apply_skill_recovery_contract(name: &str, schema: &mut Value) {
                 "reconcile_with".to_string(),
                 json!({
                     "type": "string",
-                    "const": "skill_versions",
-                    "description": "Non-actionable reconciliation-family hint used only when a complete safe skill_versions invocation cannot be proven. It grants no authority."
+                    "const": "list_skill_versions",
+                    "description": "Non-actionable reconciliation-family hint used only when a complete safe list_skill_versions invocation cannot be proven. It grants no authority."
                 }),
             );
         }
@@ -170,12 +170,12 @@ mod tests {
     #[test]
     fn skill_recovery_schemas_use_exact_call_or_family_only_without_legacy_alias() {
         for tool in [
-            "skill_list",
-            "skill_read_file",
-            "skill_versions",
-            "skill_install",
-            "skill_activate",
-            "skill_remove_revision",
+            "list_skills",
+            "read_skill_file",
+            "list_skill_versions",
+            "install_skill",
+            "activate_skill",
+            "remove_skill_revision",
         ] {
             let schema = output_schema_for_tool(tool).expect("Skill output schema");
             let properties = schema["properties"]["output"]["properties"]
@@ -193,13 +193,16 @@ mod tests {
                 .any(|constraint| { constraint["not"]["required"] == json!(["recovery_tool"]) }));
         }
 
-        for tool in ["skill_install", "skill_activate", "skill_remove_revision"] {
+        for tool in ["install_skill", "activate_skill", "remove_skill_revision"] {
             let schema = output_schema_for_tool(tool).expect("Skill mutation output schema");
             let properties = schema["properties"]["output"]["properties"]
                 .as_object()
                 .expect("Skill mutation output properties");
             let suggested = &properties["suggested_call"];
-            assert_eq!(suggested["properties"]["tool"]["const"], "skill_versions");
+            assert_eq!(
+                suggested["properties"]["tool"]["const"],
+                "list_skill_versions"
+            );
             assert_eq!(
                 suggested["properties"]["arguments"]["required"],
                 json!(["project", "skill_key"])
@@ -208,14 +211,14 @@ mod tests {
                 suggested["properties"]["arguments"]["additionalProperties"],
                 false
             );
-            assert_eq!(properties["reconcile_with"]["const"], "skill_versions");
+            assert_eq!(properties["reconcile_with"]["const"], "list_skill_versions");
         }
     }
 }
 
 pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
     let mut schema = match name {
-        "skill_load" => Some(wrapped_output_schema(vec![
+        "load_skill" => Some(wrapped_output_schema(vec![
             ("project", schema_type("string", "Resolved Project id.")),
             (
                 "catalog_revision",
@@ -256,7 +259,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ("error_kind", schema_type("string", "Stable guard/error code on failure.")),
             ("state_changed", schema_type("boolean", "Always false for Skill loading failures.")),
         ])),
-        "skill_list" => Some(wrapped_output_schema(vec![
+        "list_skills" => Some(wrapped_output_schema(vec![
             ("project", schema_type("string", "Resolved Project id.")),
             (
                 "catalog_revision",
@@ -340,7 +343,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 schema_type("boolean", "Always false for Skill runtime failures."),
             ),
         ])),
-        "skill_read_file" => Some(wrapped_output_schema(vec![
+        "read_skill_file" => Some(wrapped_output_schema(vec![
             ("project", schema_type("string", "Resolved Project id.")),
             (
                 "skill_id",
@@ -404,7 +407,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 schema_type("boolean", "Always false for Skill runtime failures."),
             ),
         ])),
-        "skill_versions" => Some(wrapped_output_schema(vec![
+        "list_skill_versions" => Some(wrapped_output_schema(vec![
             ("project", schema_type("string", "Resolved Project id.")),
             ("skill_id", schema_type("string", "Runner-scoped opaque Skill identity.")),
             ("skill_key", schema_type("string", "Stable logical operator Skill key.")),
@@ -430,7 +433,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ("state_changed", schema_type("boolean", "Always false for version observation.")),
         ])),
 
-        "skill_install" => Some(wrapped_output_schema(vec![
+        "install_skill" => Some(wrapped_output_schema(vec![
             ("project", schema_type("string", "Authorized source Project id.")),
             ("skill_id", schema_type("string", "Runner-scoped opaque Skill identity.")),
             ("skill_key", schema_type("string", "Logical operator Skill key.")),
@@ -450,7 +453,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ("error_kind", schema_type("string", "Stable error code on failure.")),
             ("state_changed", nullable_schema("boolean", "Observed mutation flag when outcome is known; null when the mutation outcome is unknown.")),
         ])),
-        "skill_activate" => Some(wrapped_output_schema(vec![
+        "activate_skill" => Some(wrapped_output_schema(vec![
             ("project", schema_type("string", "Resolved Project id.")),
             ("skill_id", schema_type("string", "Runner-scoped opaque Skill identity.")),
             ("skill_key", schema_type("string", "Logical operator Skill key.")),
@@ -465,7 +468,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ("error_kind", schema_type("string", "Stable error code on failure.")),
             ("state_changed", nullable_schema("boolean", "Observed mutation flag when outcome is known; null when the mutation outcome is unknown.")),
         ])),
-        "skill_remove_revision" => Some(wrapped_output_schema(vec![
+        "remove_skill_revision" => Some(wrapped_output_schema(vec![
             ("project", schema_type("string", "Resolved Project id.")),
             ("skill_id", schema_type("string", "Runner-scoped opaque Skill identity.")),
             ("skill_key", schema_type("string", "Logical operator Skill key.")),

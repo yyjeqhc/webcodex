@@ -10,14 +10,14 @@ use crate::metadata::{
     ADMIN, JOB_RUN, PROJECT_READ, TOOL_PROVIDER_RUNNER,
 };
 
-/// Project Skill runtime tools. `skill_load` is the narrow direct model path;
+/// Project Skill runtime tools. `load_skill` is the narrow direct model path;
 /// the broader discovery/read compatibility tools remain hidden operator
 /// extensions. Kernel capability and authority gates remain authoritative.
 pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     adaptive_runtime_direct(
         model_spec(
             def(
-                "skill_load",
+                "load_skill",
                 super::ToolAuditPolicy::typed_fields(&[
                     super::ToolAuditResultField::value("project"),
                     super::ToolAuditResultField::value("catalog_revision"),
@@ -122,7 +122,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             &[PROJECT_READ, JOB_RUN],
         ),
     def(
-        "skill_list",
+        "list_skills",
         super::ToolAuditPolicy::typed_fields(&[
             super::ToolAuditResultField::value("project"),
             super::ToolAuditResultField::value("catalog_revision"),
@@ -165,7 +165,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     )
     .with_operator_extension_family(ToolOperatorExtensionFamily::SkillRuntime),
     def(
-        "skill_read_file",
+        "read_skill_file",
         super::ToolAuditPolicy::typed_fields(&[
             super::ToolAuditResultField::value("project"),
             super::ToolAuditResultField::value("skill_id"),
@@ -216,7 +216,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     )
     .with_operator_extension_family(ToolOperatorExtensionFamily::SkillRuntime),
     def(
-        "skill_versions",
+        "list_skill_versions",
         super::ToolAuditPolicy::typed_fields(&[
             super::ToolAuditResultField::value("project"),
             super::ToolAuditResultField::value("skill_id"),
@@ -248,7 +248,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     )
     .with_operator_extension_family(ToolOperatorExtensionFamily::SkillManagement),
     def(
-        "skill_install",
+        "install_skill",
         super::ToolAuditPolicy::typed_fields(&[
             super::ToolAuditResultField::value("project"),
             super::ToolAuditResultField::value("skill_id"),
@@ -286,7 +286,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     )
     .with_operator_extension_family(ToolOperatorExtensionFamily::SkillManagement),
     def(
-        "skill_activate",
+        "activate_skill",
         super::ToolAuditPolicy::typed_fields(&[
             super::ToolAuditResultField::value("project"),
             super::ToolAuditResultField::value("skill_id"),
@@ -319,7 +319,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     )
     .with_operator_extension_family(ToolOperatorExtensionFamily::SkillManagement),
     def(
-        "skill_remove_revision",
+        "remove_skill_revision",
         super::ToolAuditPolicy::typed_fields(&[
             super::ToolAuditResultField::value("project"),
             super::ToolAuditResultField::value("skill_id"),

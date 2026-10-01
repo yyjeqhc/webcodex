@@ -1137,11 +1137,11 @@ mod tests {
         for (tool, expected) in [
             ("read_files", "Read"),
             ("search_project_texts", "Searched"),
-            ("lsp_status", "Navigated"),
+            ("get_lsp_status", "Navigated"),
             ("edit_project_files", "Edited"),
             ("cargo_test", "Tested"),
             ("run_process", "Ran"),
-            ("git_review_summary", "Reviewed"),
+            ("read_git_review_summary", "Reviewed"),
             ("observe_jobs", "Used"),
         ] {
             assert_eq!(semantic_kind_for_tool(tool), expected, "{tool}");
@@ -1235,7 +1235,7 @@ mod tests {
             ToolActivityPresentation::Transport
         );
         assert_eq!(
-            activity_presentation_for_tool("goal_plan_sync"),
+            activity_presentation_for_tool("sync_goal_plan"),
             ToolActivityPresentation::Transport
         );
     }

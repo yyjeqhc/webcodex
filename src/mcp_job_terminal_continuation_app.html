@@ -258,7 +258,7 @@
   async function bind() {
     if (!hostInitialized || !waitId || !viewBindingId || tornDown) return false;
     bindAttempted = true;
-    const response = await callTool("job_terminal_continuation_bind", {
+    const response = await callTool("bind_job_terminal_continuation", {
       wait_id: waitId,
       binding_id: viewBindingId,
     });
@@ -276,7 +276,7 @@
 
   async function state() {
     if (!waitId || !bindingId || tornDown) return null;
-    const response = await callTool("job_terminal_continuation_state", {
+    const response = await callTool("get_job_terminal_continuation_state", {
       wait_id: waitId,
       binding_id: bindingId,
     });
@@ -296,7 +296,7 @@
 
   async function finish(attemptId, outcome) {
     try {
-      const response = await callTool("job_terminal_continuation_finish", {
+      const response = await callTool("finish_job_terminal_continuation", {
         wait_id: waitId,
         binding_id: bindingId,
         attempt_id: attemptId,
@@ -337,7 +337,7 @@
       || autoResumeSuppressed || autoResumeNotBeforeMs === null || Date.now() < autoResumeNotBeforeMs) return;
     let response;
     try {
-      response = await callTool("job_terminal_continuation_prepare", {
+      response = await callTool("prepare_job_terminal_continuation", {
         wait_id: waitId,
         binding_id: bindingId,
       });
@@ -481,7 +481,7 @@
       id,
       method: "tools/call",
       params: {
-        name: "job_terminal_continuation_unbind",
+        name: "unbind_job_terminal_continuation",
         arguments: { wait_id: waitId, binding_id: viewBindingId },
       },
     }, "*");

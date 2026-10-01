@@ -490,8 +490,8 @@ fn tool_call_trace_effective_arguments(tool: &str, params: &Value) -> Value {
 /// Accepted shapes:
 /// - `{"tool":"list_tools"}`
 /// - `{"tool":"list_tools","params":null}`
-/// - `{"tool":"show_changes","params":{"project":"agent:c:p"}}`
-/// - `{"tool":"git_status","params":{"project":"agent:c:p"},"recording_session_id":"wc_sess_..."}`
+/// - `{"tool":"read_workspace_changes","params":{"project":"agent:c:p"}}`
+/// - `{"tool":"get_git_status","params":{"project":"agent:c:p"},"recording_session_id":"wc_sess_..."}`
 ///
 /// `params` is the only tool-argument container. Top-level
 /// `recording_session_id` remains request metadata and is not injected into
@@ -568,13 +568,13 @@ pub async fn runtime_status(req: &mut Request, depot: &mut Depot, res: &mut Resp
     let Some(arguments) = parse_optional_json_body(req, res).await else {
         return;
     };
-    let call = match ToolCall::from_tool_name("runtime_status", arguments) {
+    let call = match ToolCall::from_tool_name("get_runtime_status", arguments) {
         Ok(call) => call,
         Err(error) => {
             render_result(
                 res,
                 &audit,
-                "runtime_status",
+                "get_runtime_status",
                 None,
                 crate::tool_runtime::ToolResult::err(error),
             );
@@ -583,7 +583,7 @@ pub async fn runtime_status(req: &mut Request, depot: &mut Depot, res: &mut Resp
     };
     let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
     let result = runtime.dispatch_with_auth(call, auth.as_ref()).await;
-    render_result(res, &audit, "runtime_status", None, result);
+    render_result(res, &audit, "get_runtime_status", None, result);
 }
 
 #[cfg(test)]

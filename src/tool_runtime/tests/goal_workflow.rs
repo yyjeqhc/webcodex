@@ -160,7 +160,7 @@ impl Workflow {
             &self.auth,
             WINDOW,
             &self.project,
-            "goal_plan_sync",
+            "sync_goal_plan",
             false,
             None,
             completed_at - 1,
@@ -171,7 +171,7 @@ impl Workflow {
                 "UPDATE action_events SET ids_json = ?1 WHERE server_trace_id = ?2",
                 rusqlite::params![
                     json!({"goal_id": goal_id}).to_string(),
-                    format!("goal-activity-{WINDOW}-goal_plan_sync-{}", completed_at - 1)
+                    format!("goal-activity-{WINDOW}-sync_goal_plan-{}", completed_at - 1)
                 ],
             )
             .unwrap();
@@ -888,7 +888,7 @@ async fn goal_workflow_unobserved_or_stale_card_never_wakes_even_when_attention_
         &fixture.auth,
         WINDOW,
         &fixture.project,
-        "agent_continuation_state",
+        "get_agent_continuation_state",
         false,
         None,
         now - 1,
@@ -1260,7 +1260,7 @@ async fn goal_workflow_requires_current_unambiguous_active_session_not_historica
                     &fixture.auth,
                     WINDOW,
                     &fixture.project,
-                    "goal_plan_sync",
+                    "sync_goal_plan",
                     false,
                     Some(&other.session_id),
                     if mode == "ambiguous" { T0 - 1 } else { now - 2 },
@@ -1272,7 +1272,7 @@ async fn goal_workflow_requires_current_unambiguous_active_session_not_historica
                     &fixture.auth,
                     WINDOW,
                     "agent:wrong:project",
-                    "goal_plan_sync",
+                    "sync_goal_plan",
                     false,
                     Some(&fixture.session_id),
                     now - 2,
@@ -1284,7 +1284,7 @@ async fn goal_workflow_requires_current_unambiguous_active_session_not_historica
                     &fixture.auth,
                     WINDOW,
                     &fixture.project,
-                    "goal_plan_sync",
+                    "sync_goal_plan",
                     false,
                     Some(&fixture.session_id),
                     now + 100,
@@ -1476,7 +1476,7 @@ async fn goal_workflow_same_durable_agent_is_worker_and_controller_and_stall_use
             "bootstrap_agent_conversation",
             "consume_agent_wake",
             "get_goal",
-            "session_handoff_summary",
+            "read_session_handoff_summary",
             "checkpoint_goal",
             "never repeat an uncertain effect",
             &fixture.goal_id,
@@ -2110,13 +2110,13 @@ async fn goal_workflow_malformed_observation_and_goal_plan_do_not_create_attenti
                 fixture.db.conn_for_tests().execute("UPDATE action_events SET window_started_at_ms = window_ended_at_ms + 1 WHERE window_meaningful = 1", []).unwrap();
             }
             "recorder_gap" => {
-                fixture.db.conn_for_tests().execute("UPDATE action_events SET recorder_gap_session_id = ?1 WHERE operation = 'goal_plan_sync'", [&fixture.session_id]).unwrap();
+                fixture.db.conn_for_tests().execute("UPDATE action_events SET recorder_gap_session_id = ?1 WHERE operation = 'sync_goal_plan'", [&fixture.session_id]).unwrap();
             }
             "card_time" => {
-                fixture.db.conn_for_tests().execute("UPDATE action_events SET window_started_at_ms = window_ended_at_ms + 1 WHERE operation = 'goal_plan_sync'", []).unwrap();
+                fixture.db.conn_for_tests().execute("UPDATE action_events SET window_started_at_ms = window_ended_at_ms + 1 WHERE operation = 'sync_goal_plan'", []).unwrap();
             }
             "missing_card_start" => {
-                fixture.db.conn_for_tests().execute("UPDATE action_events SET window_started_at_ms = NULL WHERE operation = 'goal_plan_sync'", []).unwrap();
+                fixture.db.conn_for_tests().execute("UPDATE action_events SET window_started_at_ms = NULL WHERE operation = 'sync_goal_plan'", []).unwrap();
             }
             "future_card" => {
                 fixture.poll(now + 1);
@@ -2150,7 +2150,7 @@ async fn goal_workflow_poll_must_name_exact_goal_and_cannot_borrow_another_cards
             .db
             .conn_for_tests()
             .execute(
-                "UPDATE action_events SET ids_json = ?1 WHERE operation = 'goal_plan_sync'",
+                "UPDATE action_events SET ids_json = ?1 WHERE operation = 'sync_goal_plan'",
                 [ids],
             )
             .unwrap();
@@ -2314,7 +2314,7 @@ async fn goal_workflow_kernel_rejects_sync_on_non_app_transports() {
             .runtime
             .call_tool_with_context(
                 ToolCallRequest {
-                    tool_name: "goal_plan_sync".into(),
+                    tool_name: "sync_goal_plan".into(),
                     arguments: json!({"goal_id": fixture.goal_id}),
                 },
                 ToolCallContext {

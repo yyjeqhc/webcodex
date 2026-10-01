@@ -2390,7 +2390,7 @@ fn coding_agent_lifecycle_event(
         logical_invocation_id: None,
         logical_invocation_role: None,
         transport: "system".to_string(),
-        tool_name: "coding_agent_start".to_string(),
+        tool_name: "start_coding_agent".to_string(),
         project: Some(project.to_string()),
         resolved_project: Some(project.to_string()),
         risk_class: "job_run".to_string(),

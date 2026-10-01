@@ -19,7 +19,7 @@ Desktop, CLI, Server, and Runner do **not** need the same Git commit or package 
 7. Custom source modifications are the operator's responsibility. Inspecting declared metadata is not code auditing, signature trust evaluation, or a filesystem sandbox.
 
 The #579 Runner observation migration keeps the management contract at `[1, 1]`.
-It changes raw `runtime_status` / `list_runners` projections and their first-party
+It changes raw `get_runtime_status` / `list_runners` projections and their first-party
 consumers, while preserving the management command fields Desktop deserializes.
 It does not require raw observation compatibility with older `/agents` clients.
 See [migration scope](agent/runner-observability.md#upgrade-status).
@@ -40,7 +40,7 @@ The shared `webcodex-core::desktop_runtime_contract::DESKTOP_RUNTIME_CONTRACT` c
 
 A Server reachable at the configured address must also report an overlapping management contract. CLI `server status` exposes the actual responding Server's contract/build, not merely its own local build. Source revision warnings are advisory, not `binary_version_mismatch` failures. Unsupported operation contracts, auth/scope failures, stale identity fences and uncertain side-effect outcomes remain fail-closed.
 
-`runtime_status`, Admin, and Runtime Console distinguish `protocol_compatibility` (`compatible`, `incompatible`, `unknown`) from `build_alignment` (`exact`, `different_version`, `different_commit`, `dirty`, `unknown`). Existing `source_alignment`, `version_matches_server` and `git_commit_matches_server` are retained as diagnostics. A connected Runner missing an optional capability is not made globally incompatible.
+`get_runtime_status`, Admin, and Runtime Console distinguish `protocol_compatibility` (`compatible`, `incompatible`, `unknown`) from `build_alignment` (`exact`, `different_version`, `different_commit`, `dirty`, `unknown`). Existing `source_alignment`, `version_matches_server` and `git_commit_matches_server` are retained as diagnostics. A connected Runner missing an optional capability is not made globally incompatible.
 
 ## Select a Runtime folder
 

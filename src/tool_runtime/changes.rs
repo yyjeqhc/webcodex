@@ -491,7 +491,7 @@ exit 0
         };
         if let Some(session) = session_id.as_deref() {
             if let Err(result) = self
-                .authorize_exact_changes_context(&project, session, "changes_file_diff", auth)
+                .authorize_exact_changes_context(&project, session, "read_changed_file_diff", auth)
                 .await
             {
                 return result;
@@ -610,7 +610,7 @@ exit 0
         auth: Option<&AuthContext>,
     ) -> ToolResult {
         let (resolved_project, _summary, caller_fingerprint) = match self
-            .authorize_exact_changes_context(&project, &session_id, "changes_file_diff", auth)
+            .authorize_exact_changes_context(&project, &session_id, "read_changed_file_diff", auth)
             .await
         {
             Ok(context) => context,

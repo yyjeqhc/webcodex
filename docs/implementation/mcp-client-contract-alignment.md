@@ -15,7 +15,7 @@ There are three independent observations in an end-to-end client investigation:
 | Codex through Apps | The Apps descriptor plus Codex's loading/Code Mode representation |
 | Agent configured with MCP | MCP discovery plus that client's schema conversion and result delivery |
 
-A `tool_manifest` is Server discovery, not Host tool registration. Prefer a
+A `read_tool_manifest` is Server discovery, not Host tool registration. Prefer a
 loaded direct callable; use Host-native discovery when that Host has deferred
 it; use the declared gateway fallback when the callable is genuinely unavailable.
 Never manufacture Host-prefixed names from a canonical name. A generic gateway

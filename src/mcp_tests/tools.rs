@@ -46,7 +46,7 @@ async fn mcp_tools_list_uses_adaptive_inventory_in_both_schema_modes() {
             .collect::<Vec<_>>();
         assert!(names.contains(&crate::model_surface::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME));
         assert!(names.contains(&"run_script"));
-        assert!(!names.contains(&"memory_search"));
+        assert!(!names.contains(&"search_memory"));
         for direct in crate::model_surface::adaptive_runtime_direct_tool_specs() {
             if direct.name == crate::plugin_gateway::PLUGIN_TOOL_NAME {
                 continue;
@@ -77,9 +77,9 @@ async fn mcp_tools_list_uses_adaptive_inventory_in_both_schema_modes() {
             .map(|tool| tool["name"].as_str().unwrap())
             .collect::<Vec<_>>();
         assert!(stateless_names.contains(&crate::model_surface::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME));
-        assert!(!stateless_names.contains(&"skill_list"));
-        assert!(!stateless_names.contains(&"skill_read_file"));
-        assert!(!stateless_names.contains(&"memory_search"));
+        assert!(!stateless_names.contains(&"list_skills"));
+        assert!(!stateless_names.contains(&"read_skill_file"));
+        assert!(!stateless_names.contains(&"search_memory"));
         assert!(!stateless_names.contains(&"read_tool_trace"));
         for tool in stateless_tools {
             let properties = tool["inputSchema"]["properties"].as_object().unwrap();
@@ -202,10 +202,10 @@ fn memory_tools_remain_canonical_extensions_without_top_level_advertising() {
     }
     let search = specs
         .iter()
-        .find(|spec| spec.name == "memory_search")
+        .find(|spec| spec.name == "search_memory")
         .unwrap();
     assert!(search.output_schema["properties"]["output"]["properties"]["memories"].is_object());
-    let set = specs.iter().find(|spec| spec.name == "memory_set").unwrap();
+    let set = specs.iter().find(|spec| spec.name == "set_memory").unwrap();
     for required in [
         "project:write",
         "memory:manage",
@@ -293,14 +293,14 @@ async fn hidden_extensions_keep_exact_manifest_and_gateway_execution() {
     )
     .await;
     let project = crate::tool_runtime::runner_project_runtime_id("hidden-extension-runner", "demo");
-    for name in ["memory_search", "skill_list", "skill_read_file"] {
+    for name in ["search_memory", "list_skills", "read_skill_file"] {
         let McpOutcome::Ok(value) = handle_mcp_request(
             &runtime,
             rpc(
                 "tools/call",
                 Some(json!(1)),
                 mcp_2026_params(json!({
-                    "name": "tool_manifest", "arguments": {"tool_name": name},
+                    "name": "read_tool_manifest", "arguments": {"tool_name": name},
                 })),
             ),
             Some(&auth),
@@ -323,13 +323,13 @@ async fn hidden_extensions_keep_exact_manifest_and_gateway_execution() {
     }
     for (name, arguments, context) in [
         (
-            "memory_set",
+            "set_memory",
             json!({"project": project, "memory_key": "discovery", "summary": "Keep gateway reachability", "bootstrap": true}),
             false,
         ),
-        ("memory_search", json!({"project": project}), true),
+        ("search_memory", json!({"project": project}), true),
         (
-            "memory_read",
+            "read_memory",
             json!({"project": project, "memory_key": "discovery"}),
             false,
         ),
@@ -349,7 +349,7 @@ async fn hidden_extensions_keep_exact_manifest_and_gateway_execution() {
         };
         let result = &value["result"]["structuredContent"];
         assert_eq!(result["success"], true, "{name}: {result}");
-        if name == "memory_search" {
+        if name == "search_memory" {
             let material = &result["output"]["context_projection"]["materials"][0];
             assert_eq!(material["key"], "memory.bootstrap");
             assert_eq!(material["status"], "available");
@@ -361,9 +361,9 @@ async fn hidden_extensions_keep_exact_manifest_and_gateway_execution() {
     // Both compatibility paths reach the same Project authority boundary;
     // gateway admission never makes an unknown Project available.
     for (name, arguments) in [
-        ("skill_list", json!({"project": "missing-project"})),
+        ("list_skills", json!({"project": "missing-project"})),
         (
-            "skill_read_file",
+            "read_skill_file",
             json!({"project": "missing-project", "skill_id": "wc_skill_AAAAAAAAAAAAAAAAAAAAAA", "path": "SKILL.md"}),
         ),
     ] {
@@ -448,12 +448,12 @@ fn skill_runtime_tools_are_stateless_protocol_extensions_and_schema_static() {
         .into_iter()
         .map(|spec| spec.name)
         .collect::<Vec<_>>();
-    assert!(generic_names.iter().any(|name| name == "skill_load"));
+    assert!(generic_names.iter().any(|name| name == "load_skill"));
     assert!(generic_names
         .iter()
         .any(|name| name == "run_skill_resource"));
-    assert!(!generic_names.iter().any(|name| name == "skill_list"));
-    assert!(!generic_names.iter().any(|name| name == "skill_read_file"));
+    assert!(!generic_names.iter().any(|name| name == "list_skills"));
+    assert!(!generic_names.iter().any(|name| name == "read_skill_file"));
 
     let render_full = || {
         let mut payload = mcp_tools_list_payload_with_features_for_auth(false, false, true, None);
@@ -466,9 +466,12 @@ fn skill_runtime_tools_are_stateless_protocol_extensions_and_schema_static() {
         .unwrap()
         .iter()
         .filter_map(|tool| tool["name"].as_str())
-        .filter(|name| name.starts_with("skill_"))
+        .filter(|name| {
+            webcodex_tool_contracts::lookup_tool_definition(name)
+                .is_some_and(|d| d.category == webcodex_tool_contracts::TOOL_CATEGORY_SKILL)
+        })
         .collect::<Vec<_>>();
-    assert_eq!(skill_names, vec!["skill_load"]);
+    assert_eq!(skill_names, vec!["load_skill"]);
 
     assert!(!before["tools"]
         .as_array()
@@ -510,7 +513,7 @@ fn skill_runtime_tools_are_stateless_protocol_extensions_and_schema_static() {
     let compatibility_specs = crate::tool_runtime::stateless_operator_extension_tool_specs();
     let skill_list = compatibility_specs
         .iter()
-        .find(|spec| spec.name == "skill_list")
+        .find(|spec| spec.name == "list_skills")
         .unwrap();
     assert_eq!(
         skill_list.input_schema["properties"]["limit"]["maximum"],
@@ -520,7 +523,7 @@ fn skill_runtime_tools_are_stateless_protocol_extensions_and_schema_static() {
         skill_list.output_schema["properties"]["output"]["properties"]["skills"]["type"],
         "array"
     );
-    for name in ["skill_list", "skill_read_file"] {
+    for name in ["list_skills", "read_skill_file"] {
         assert!(crate::mcp::tools::adaptive_runtime_gateway_target_admitted_for_test(name, true));
         assert!(!crate::mcp::tools::adaptive_runtime_gateway_target_admitted_for_test(name, false));
     }
@@ -553,7 +556,7 @@ fn skill_runtime_tools_are_stateless_protocol_extensions_and_schema_static() {
         .iter()
         .all(|tool| !matches!(
             tool["name"].as_str(),
-            Some("skill_list" | "skill_read_file")
+            Some("list_skills" | "read_skill_file")
         )));
 }
 
@@ -569,9 +572,12 @@ fn skill_management_tools_require_admin_and_remain_fixed_schema() {
         .unwrap()
         .iter()
         .filter_map(|tool| tool["name"].as_str())
-        .filter(|name| name.starts_with("skill_"))
+        .filter(|name| {
+            webcodex_tool_contracts::lookup_tool_definition(name)
+                .is_some_and(|d| d.category == webcodex_tool_contracts::TOOL_CATEGORY_SKILL)
+        })
         .collect::<Vec<_>>();
-    assert_eq!(shared_names, vec!["skill_load"]);
+    assert_eq!(shared_names, vec!["load_skill"]);
 
     let admin = crate::auth::AuthContext {
         role: Some("admin".to_string()),
@@ -585,16 +591,19 @@ fn skill_management_tools_require_admin_and_remain_fixed_schema() {
         .unwrap()
         .iter()
         .filter_map(|tool| tool["name"].as_str())
-        .filter(|name| name.starts_with("skill_"))
+        .filter(|name| {
+            webcodex_tool_contracts::lookup_tool_definition(name)
+                .is_some_and(|d| d.category == webcodex_tool_contracts::TOOL_CATEGORY_SKILL)
+        })
         .collect::<Vec<_>>();
     assert_eq!(
         names,
         vec![
-            "skill_load",
-            "skill_versions",
-            "skill_install",
-            "skill_activate",
-            "skill_remove_revision",
+            "load_skill",
+            "list_skill_versions",
+            "install_skill",
+            "activate_skill",
+            "remove_skill_revision",
         ]
     );
     assert_eq!(
@@ -603,13 +612,13 @@ fn skill_management_tools_require_admin_and_remain_fixed_schema() {
             .map(|spec| spec.name)
             .collect::<Vec<_>>(),
         vec![
-            "skill_versions",
-            "skill_install",
-            "skill_activate",
-            "skill_remove_revision",
+            "list_skill_versions",
+            "install_skill",
+            "activate_skill",
+            "remove_skill_revision",
         ]
     );
-    for name in ["skill_install", "skill_activate", "skill_remove_revision"] {
+    for name in ["install_skill", "activate_skill", "remove_skill_revision"] {
         let description = first["tools"]
             .as_array()
             .unwrap()
@@ -617,7 +626,7 @@ fn skill_management_tools_require_admin_and_remain_fixed_schema() {
             .find(|tool| tool["name"] == name)
             .and_then(|tool| tool["description"].as_str())
             .unwrap_or_else(|| panic!("missing {name} retention description"));
-        for required in ["24 hours", "7 days", "skill_versions", "not proof"] {
+        for required in ["24 hours", "7 days", "list_skill_versions", "not proof"] {
             assert!(
                 description.contains(required),
                 "{name} must document replay retention: {description}"
@@ -953,16 +962,16 @@ fn read_project_artifact_stays_gateway_only_without_changing_generic_schema() {
         .as_array()
         .unwrap()
         .iter()
-        .all(|tool| tool["name"] != "read_project_artifact"));
+        .all(|tool| tool["name"] != "read_project_artifact_chunk"));
     assert_eq!(
-        crate::model_surface::adaptive_runtime_tool_invocation_route("read_project_artifact"),
+        crate::model_surface::adaptive_runtime_tool_invocation_route("read_project_artifact_chunk"),
         ("gateway", Some("call_runtime_tool"))
     );
 
     let generic_tool = registered_tool_specs()
         .into_iter()
-        .find(|tool| tool.name == "read_project_artifact")
-        .expect("generic read_project_artifact");
+        .find(|tool| tool.name == "read_project_artifact_chunk")
+        .expect("generic read_project_artifact_chunk");
     assert!(
         generic_tool.input_schema["properties"]
             .get("as_image")
@@ -1168,7 +1177,7 @@ fn mcp_file_import_trust_distinguishes_exact_tier1_from_active_oauth_tier2() {
 #[test]
 fn ordinary_artifact_result_keeps_existing_text_and_structured_base64_shape() {
     let value = mcp_runtime_tool_result(
-        "read_project_artifact",
+        "read_project_artifact_chunk",
         false,
         ToolResult::ok(json!({
             "path": "sample.pdf",
@@ -1279,7 +1288,7 @@ async fn project_artifact_image_call_returns_native_image_for_remote_agent_proje
                     "tools/call",
                     Some(json!(77)),
                     json!({
-                        "name": "project_artifact",
+                        "name": "inspect_project_artifact",
                         "arguments": {
                             "project": project,
                             "path": path,
@@ -1389,7 +1398,7 @@ fn computer_observe_snapshot_frames_native_image_without_structured_base64() {
         "content_base64": image_base64
     }));
 
-    let value = crate::mcp::mcp_runtime_tool_result("computer_observe", false, result);
+    let value = crate::mcp::mcp_runtime_tool_result("observe_computer", false, result);
     assert_eq!(value["isError"], false);
     let content = value["content"].as_array().expect("native content");
     assert_eq!(content.len(), 2);
@@ -1421,7 +1430,7 @@ fn browser_observe_screenshot_uses_shared_native_image_framing_without_structure
         "content_base64": image_base64
     }));
 
-    let value = crate::mcp::mcp_runtime_tool_result("browser_observe", false, result);
+    let value = crate::mcp::mcp_runtime_tool_result("observe_browser", false, result);
     assert_eq!(value["isError"], false);
     let content = value["content"].as_array().expect("native content");
     assert_eq!(content.len(), 2);
@@ -1603,7 +1612,7 @@ fn mcp_tools_list_inputs_equal_canonical_except_descriptions_and_host_file_overl
                     json!(["download_url", "file_id"]);
             }
             let mut expected_description = canonical.description.clone();
-            if name == "runtime_status" {
+            if name == "get_runtime_status" {
                 assert_eq!(expected["properties"]["compact"]["default"], false);
                 expected["properties"]["compact"]["default"] = json!(true);
                 expected["properties"]["compact"]["description"] = json!("MCP defaults to sparse status. Set false for full diagnostics; summary_only=true still selects sparse.");
@@ -1696,8 +1705,8 @@ async fn mcp_compact_preserves_stateless_wrappers_app_metadata_and_exact_manifes
         "run_process",
         "work_on_project",
         "run_skill_resource",
-        "project_artifact",
-        "git_diff_hunks",
+        "inspect_project_artifact",
+        "read_git_diff_hunks",
         "import_conversation_files_to_project",
     ] {
         let McpOutcome::Ok(value) = handle_mcp_request(
@@ -1706,7 +1715,7 @@ async fn mcp_compact_preserves_stateless_wrappers_app_metadata_and_exact_manifes
                 "tools/call",
                 Some(json!(2)),
                 mcp_2026_params(json!({
-                    "name": "tool_manifest", "arguments": {"tool_name": name},
+                    "name": "read_tool_manifest", "arguments": {"tool_name": name},
                 })),
             ),
             Some(&auth),
@@ -1854,7 +1863,7 @@ async fn mcp_compact_preserves_safety_patterns_and_wrapper_bounds() {
     };
     for (name, field, pattern, min, max) in [
         (
-            "project_artifact",
+            "inspect_project_artifact",
             "expected_sha256",
             "^[0-9a-f]{64}$",
             64,
@@ -1862,21 +1871,33 @@ async fn mcp_compact_preserves_safety_patterns_and_wrapper_bounds() {
         ),
         ("run_skill_resource", "path", "^scripts/.+$", 9, 512),
         (
-            "git_review_summary",
+            "read_git_review_summary",
             "base_commit",
             "^[0-9A-Fa-f]{40}$",
             40,
             40,
         ),
         (
-            "git_review_summary",
+            "read_git_review_summary",
             "head_commit",
             "^[0-9A-Fa-f]{40}$",
             40,
             40,
         ),
-        ("git_diff_hunks", "base_commit", "^[0-9A-Fa-f]{40}$", 40, 40),
-        ("git_diff_hunks", "head_commit", "^[0-9A-Fa-f]{40}$", 40, 40),
+        (
+            "read_git_diff_hunks",
+            "base_commit",
+            "^[0-9A-Fa-f]{40}$",
+            40,
+            40,
+        ),
+        (
+            "read_git_diff_hunks",
+            "head_commit",
+            "^[0-9A-Fa-f]{40}$",
+            40,
+            40,
+        ),
     ] {
         let property = &schema(name)["properties"][field];
         assert_eq!(property["pattern"], pattern, "{name}.{field}");
@@ -2029,7 +2050,7 @@ async fn mcp_compact_stateless_wrapper_ids_still_reject_malformed_invocations() 
                         "tools/call",
                         Some(json!(1)),
                         mcp_2026_params(json!({
-                            "name": "tool_manifest",
+                            "name": "read_tool_manifest",
                             "arguments": {
                                 "tool_name": "run_process",
                                 "_wc": envelope
@@ -2073,7 +2094,7 @@ async fn mcp_compact_stateless_wrapper_ids_still_reject_malformed_invocations() 
             rpc(
                 "tools/call",
                 Some(json!(2)),
-                mcp_2026_params(json!({"name": "tool_manifest", "arguments": {
+                mcp_2026_params(json!({"name": "read_tool_manifest", "arguments": {
                     "tool_name": "run_process", "_wc": {"record": session.session_id}
                 }})),
             ),
@@ -2385,8 +2406,8 @@ fn report_discovery_costs(tools: &[Value]) {
         "wait_for_job_terminal",
         "transfer_project_artifact",
         "import_conversation_files_to_project",
-        "session_discussion_summary",
-        "session_handoff_summary",
+        "read_session_discussion_summary",
+        "read_session_handoff_summary",
         "rotate_agent_continuation_endpoint",
         "wait_for_agent_events",
     ] {
@@ -2562,10 +2583,10 @@ async fn session_tools_stay_registered_and_follow_adaptive_routes() {
     let specs = registered_tool_specs();
     let registry_names: Vec<&str> = specs.iter().map(|spec| spec.name.as_str()).collect();
     for name in [
-        "session_summary",
+        "read_session_summary",
         "update_session_context",
-        "validation_summary",
-        "session_handoff_summary",
+        "read_validation_summary",
+        "read_session_handoff_summary",
     ] {
         assert!(
             registry_names.contains(&name),
@@ -2598,12 +2619,12 @@ async fn session_tools_stay_registered_and_follow_adaptive_routes() {
         .iter()
         .map(|tool| tool["name"].as_str().unwrap())
         .collect::<Vec<_>>();
-    assert!(names.contains(&"session_discussion_summary"));
+    assert!(names.contains(&"read_session_discussion_summary"));
     for long_tail in [
-        "session_handoff_summary",
-        "session_summary",
+        "read_session_handoff_summary",
+        "read_session_summary",
         "update_session_context",
-        "validation_summary",
+        "read_validation_summary",
     ] {
         assert!(
             !names.contains(&long_tail),
@@ -2622,7 +2643,7 @@ async fn session_tools_stay_registered_and_follow_adaptive_routes() {
             .find(|tool| tool.name == name)
             .unwrap_or_else(|| panic!("missing registered tool {name}"))
     };
-    assert!(registered("session_summary")
+    assert!(registered("read_session_summary")
         .description
         .to_lowercase()
         .contains("session ledger"));
@@ -2635,15 +2656,15 @@ async fn session_tools_stay_registered_and_follow_adaptive_routes() {
     assert!(registered("update_session_context")
         .description
         .contains("success does not mean"));
-    assert!(registered("validation_summary")
+    assert!(registered("read_validation_summary")
         .description
         .to_lowercase()
         .contains("does not run cargo"));
 
-    let handoff = registered("session_handoff_summary");
+    let handoff = registered("read_session_handoff_summary");
     assert!(handoff.description.contains("exact session_id"));
 
-    let validation_summary = registered("validation_summary");
+    let validation_summary = registered("read_validation_summary");
     assert_eq!(
         validation_summary.input_schema["required"],
         json!(["project", "session_id"])
@@ -2717,7 +2738,7 @@ async fn mcp_current_window_activity_requires_adapter_window_identity() {
             "tools/call",
             Some(json!(41)),
             mcp_2026_params(adaptive_runtime_gateway_params(
-                "current_window_activity",
+                "read_current_window_activity",
                 json!({"limit": 20}),
             )),
         ),
@@ -2725,7 +2746,7 @@ async fn mcp_current_window_activity_requires_adapter_window_identity() {
     )
     .await
     else {
-        panic!("current_window_activity must be callable")
+        panic!("read_current_window_activity must be callable")
     };
     assert_eq!(
         value["result"]["structuredContent"]["output"]["reason_code"],
@@ -3290,7 +3311,7 @@ async fn mcp_show_changes_distinguishes_recording_session_id_from_query_session_
             mcp_2026_params(json!({
                 "name": "call_runtime_tool",
                 "arguments": {
-                    "tool": "show_changes",
+                    "tool": "read_workspace_changes",
                     "arguments": {
                         "project": project,
                         "session_id": &query_session.session_id,
@@ -3307,7 +3328,7 @@ async fn mcp_show_changes_distinguishes_recording_session_id_from_query_session_
             &runtime.runner_registry,
             "mcp-client",
             "inst",
-            "show_changes",
+            "read_workspace_changes",
         )
         .await;
         let stdout = crate::tool_runtime::framed_clean_show_changes_test_stdout("test head", false);
@@ -3345,7 +3366,7 @@ async fn mcp_show_changes_distinguishes_recording_session_id_from_query_session_
     assert!(tracking_summary
         .events
         .iter()
-        .any(|event| event.tool_name == "show_changes"));
+        .any(|event| event.tool_name == "read_workspace_changes"));
 }
 
 #[tokio::test]
@@ -3843,7 +3864,7 @@ async fn mcp_2026_control_sidecars_gateway_strip_and_closed_schema() {
 
     let mut payload = json!({"tools": [
         {"name": "get_goal", "inputSchema": webcodex_tool_contracts::input_schema_for_tool("get_goal"), "outputSchema": crate::tool_runtime::registry::output_schema_for_tool("get_goal")},
-        {"name": "goal_plan_sync", "inputSchema": webcodex_tool_contracts::input_schema_for_tool("goal_plan_sync")}
+        {"name": "sync_goal_plan", "inputSchema": webcodex_tool_contracts::input_schema_for_tool("sync_goal_plan")}
     ]});
     add_stateless_workflow_recorder_metadata(&mut payload);
     assert_eq!(

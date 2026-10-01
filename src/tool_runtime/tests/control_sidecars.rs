@@ -176,10 +176,10 @@ fn control_sidecars_closed_parse_strip_and_canonical_schema_parity() {
         assert!(serde_json::from_value::<ControlSidecars>(value).is_err());
     }
     for tool in [
-        "goal_plan_sync",
-        "agent_continuation_state",
+        "sync_goal_plan",
+        "get_agent_continuation_state",
         "plugin_tool",
-        "ssh_resource",
+        "manage_ssh_resource",
     ] {
         assert!(
             control_sidecar::strip_control_sidecars(&mut json!({"_control": {}}), tool, true)
@@ -470,7 +470,7 @@ async fn control_sidecars_scope_and_permission_are_independent_of_main() {
             auth: Some(&restricted),
             ..f.context()
         },
-        "runtime_status",
+        "get_runtime_status",
         json!({}),
         Some(json!({"before": {"goal_progress": f.progress()}})),
     )
@@ -897,7 +897,7 @@ async fn control_sidecars_todo_exact_fence_main_failure_stale_and_replay() {
     assert!(changed.success);
     let stale = f
         .call(
-            "session_summary",
+            "read_session_summary",
             json!({"session_id": session}),
             Some(control),
         )
@@ -919,7 +919,7 @@ async fn control_sidecars_todo_exact_fence_main_failure_stale_and_replay() {
     payload["expected_assignment_fence"] = fresh.output["assignment_fence"].clone();
     let done = f
         .call(
-            "session_summary",
+            "read_session_summary",
             json!({"session_id": session}),
             Some(json!({"after_success": {"todo_completion": payload}})),
         )

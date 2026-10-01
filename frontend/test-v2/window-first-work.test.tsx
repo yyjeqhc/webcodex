@@ -71,7 +71,7 @@ it("shows active Window work without any Workflow Session and keeps observe call
           last_project: source.id,
           source: "openai-session",
           last_seen_at_ms: observeStarted + 100,
-          last_activity_name: "runtime_status",
+          last_activity_name: "get_runtime_status",
           last_activity_status: "success",
           last_activity_meaningful: false,
           active_count: 0,
@@ -103,7 +103,7 @@ it("shows active Window work without any Workflow Session and keeps observe call
         ended_at_ms: observeStarted + 100,
         duration_ms: 100,
         method: "tools/call",
-        tool_name: "runtime_status",
+        tool_name: "get_runtime_status",
         activity_presentation: "Inspect Runtime status",
         activity_kind: "observation",
         project: worktree.id,
@@ -166,7 +166,7 @@ it("shows active Window work without any Workflow Session and keeps observe call
 
   expect(screen.queryByText("Each call is shown separately, from first to last.")).toBeNull();
   expect(screen.queryByRole("heading", { name: "Tool calls" })).toBeNull();
-  expect(screen.getAllByText("runtime_status").length).toBeGreaterThan(0);
+  expect(screen.getAllByText("get_runtime_status").length).toBeGreaterThan(0);
   expect(screen.queryByText("Inspect Runtime status")).toBeNull();
   expect(screen.queryByText("Observe")).toBeNull();
   expect(screen.queryByText("No explicit Session link")).toBeNull();
@@ -176,7 +176,7 @@ it("shows active Window work without any Workflow Session and keeps observe call
   expect(screen.getAllByTitle(absoluteTime(observeStarted)).length).toBeGreaterThan(0);
 
   const search = screen.getByRole("searchbox", { name: "Search Windows" });
-  fireEvent.change(search, { target: { value: "runtime_status" } });
+  fireEvent.change(search, { target: { value: "get_runtime_status" } });
   expect(screen.getByTestId("work-window-row-" + activeKey).closest(".window-current-selection")).toBeTruthy();
   expect(screen.getByTestId("work-window-row-" + observeKey)).toBeTruthy();
   expect(vi.mocked(client.post).mock.calls.some(([path]) => path === "window-collaboration")).toBe(false);
@@ -276,7 +276,7 @@ it("uses exact Session tags to focus contiguous Window call segments", async () 
           ended_at_ms: 1_790_000_161_000,
           duration_ms: 1000,
           method: "tools/call",
-          tool_name: "runtime_status",
+          tool_name: "get_runtime_status",
           project: worktree.id,
           status: "success",
           meaningful: false,
@@ -337,7 +337,7 @@ it("uses exact Session tags to focus contiguous Window call segments", async () 
   expect(selector.value).toBe(sessionB);
   let focusedCalls = screen.getAllByTestId("window-workflow-step");
   expect(focusedCalls).toHaveLength(2);
-  expect(focusedCalls.map((call) => call.querySelector("header strong")?.textContent)).toEqual(["apply_text_edits", "runtime_status"]);
+  expect(focusedCalls.map((call) => call.querySelector("header strong")?.textContent)).toEqual(["apply_text_edits", "get_runtime_status"]);
 
   fireEvent.change(selector, { target: { value: "" } });
   expect(screen.getAllByTestId("window-workflow-step")).toHaveLength(5);

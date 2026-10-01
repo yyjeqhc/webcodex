@@ -114,7 +114,7 @@ async fn call_code_mode_with_local_runners(
         runtime_for_task
             .call_tool_with_context(
                 ToolCallRequest {
-                    tool_name: "code_mode_exec".to_string(),
+                    tool_name: "execute_code_mode".to_string(),
                     arguments: json!({
                         "project": project,
                         "session_id": session_id_owned,
@@ -185,7 +185,7 @@ async fn e1_still_rejects_structured_validation_before_runner_dispatch() {
     let (runtime, project, session_id) = e2a_validation_runtime(client_id).await;
     let outcome = spawn_code_mode_call(
         &runtime,
-        "code_mode_exec",
+        "execute_code_mode",
         project,
         session_id,
         "await tools.cargo_check({timeout_secs: 600});".to_string(),
@@ -206,7 +206,7 @@ async fn e2a_cargo_check_handoff_preserves_same_canonical_job_and_sparse_receipt
     let (runtime, project, session_id) = e2a_validation_runtime(client_id).await;
     let task = spawn_code_mode_call(
         &runtime,
-        "code_mode_exec_effectful",
+        "execute_effectful_code_mode",
         project.clone(),
         session_id.clone(),
         r#"
@@ -334,7 +334,7 @@ async fn e2a_api_omitted_sync_wait_uses_server_owned_handoff_policy() {
     let (runtime, project, session_id) = e2a_validation_runtime(client_id).await;
     let task = spawn_code_mode_call_with_transport(
         &runtime,
-        "code_mode_exec_effectful",
+        "execute_effectful_code_mode",
         project,
         session_id,
         r#"
@@ -431,7 +431,7 @@ async fn e2a_mcp_host_code_mode_combines_return_bounds_without_shortening_execut
     );
     let task = spawn_code_mode_call(
         &runtime,
-        "code_mode_exec_effectful",
+        "execute_effectful_code_mode",
         project,
         session_id,
         "const check = await tools.cargo_check({timeout_secs: 600}); text({job_id: check.output?.job_id ?? null});".to_string(),
@@ -482,7 +482,7 @@ async fn e2a_api_legacy_sync_wait_cannot_exceed_server_owned_return_bound() {
     let (runtime, project, session_id) = e2a_validation_runtime(client_id).await;
     let task = spawn_code_mode_call_with_transport(
         &runtime,
-        "code_mode_exec_effectful",
+        "execute_effectful_code_mode",
         project,
         session_id,
         "const check = await tools.cargo_check({sync_wait_secs: 99, timeout_secs: 600}); text({job_id: check.output?.job_id ?? null});".to_string(),
@@ -530,7 +530,7 @@ async fn e2a_failed_cargo_test_is_known_result_not_outcome_unknown() {
     let (runtime, project, session_id) = e2a_validation_runtime(client_id).await;
     let task = spawn_code_mode_call(
         &runtime,
-        "code_mode_exec_effectful",
+        "execute_effectful_code_mode",
         project,
         session_id,
         r#"
@@ -584,7 +584,7 @@ async fn e2a_promise_all_validators_handoff_sequentially_then_jobs_remain_indepe
     let (runtime, project, session_id) = e2a_validation_runtime(client_id).await;
     let task = spawn_code_mode_call(
         &runtime,
-        "code_mode_exec_effectful",
+        "execute_effectful_code_mode",
         project,
         session_id,
         r#"
@@ -758,7 +758,7 @@ async fn e2a_js_error_after_job_handoff_preserves_effect_receipt_and_no_retry_cl
     let (runtime, project, session_id) = e2a_validation_runtime(client_id).await;
     let task = spawn_code_mode_call(
         &runtime,
-        "code_mode_exec_effectful",
+        "execute_effectful_code_mode",
         project,
         session_id,
         r#"
@@ -835,7 +835,7 @@ async fn e2a_cpu_timeout_after_child_dispatch_preserves_started_job_truth() {
     let (runtime, project, session_id) = e2a_validation_runtime(client_id).await;
     let task = spawn_code_mode_call(
         &runtime,
-        "code_mode_exec_effectful",
+        "execute_effectful_code_mode",
         project,
         session_id,
         r#"
@@ -933,11 +933,11 @@ async fn e2a_denies_mutation_shell_recursion_and_invalid_validator_before_busine
         ),
         (
             "recursive_e1",
-            "await tools.code_mode_exec({source: `text('nested')`});",
+            "await tools.execute_code_mode({source: `text('nested')`});",
         ),
         (
             "recursive_e2a",
-            "await tools.code_mode_exec_effectful({source: `text('nested')`});",
+            "await tools.execute_effectful_code_mode({source: `text('nested')`});",
         ),
     ] {
         let session = runtime
@@ -945,7 +945,7 @@ async fn e2a_denies_mutation_shell_recursion_and_invalid_validator_before_busine
             .start_session(Some(project.clone()), Some(format!("deny {label}")));
         let outcome = spawn_code_mode_call(
             &runtime,
-            "code_mode_exec_effectful",
+            "execute_effectful_code_mode",
             project.clone(),
             session.session_id,
             source.to_string(),
@@ -964,7 +964,7 @@ async fn e2a_denies_mutation_shell_recursion_and_invalid_validator_before_busine
         .start_session(Some(project.clone()), Some("invalid sync wait".to_string()));
     let outcome = spawn_code_mode_call(
         &runtime,
-        "code_mode_exec_effectful",
+        "execute_effectful_code_mode",
         project,
         session.session_id,
         r#"
@@ -1020,7 +1020,7 @@ async fn e2a_parent_and_child_complete_without_retired_continuity_overlays() {
         runtime_for_call
             .call_tool_with_invocation_metadata(
                 ToolCallRequest {
-                    tool_name: "code_mode_exec_effectful".to_string(),
+                    tool_name: "execute_effectful_code_mode".to_string(),
                     arguments: json!({
                         "project": project_for_call,
                         "session_id": session_for_call,
@@ -1125,7 +1125,7 @@ async fn e2a_outer_job_run_scope_denial_starts_no_validation_process() {
     let outcome = runtime
         .call_tool_with_context(
             ToolCallRequest {
-                tool_name: "code_mode_exec_effectful".to_string(),
+                tool_name: "execute_effectful_code_mode".to_string(),
                 arguments: json!({
                     "project": project,
                     "session_id": session_id,
@@ -1335,7 +1335,7 @@ async fn canonical_orchestration_host_runs_without_the_v8_frontend() {
     assert!(summary
         .events
         .iter()
-        .all(|event| event.tool_name != "code_mode_exec"));
+        .all(|event| event.tool_name != "execute_code_mode"));
 }
 
 #[tokio::test]
@@ -1447,7 +1447,7 @@ async fn code_mode_binds_exact_project_and_session_through_real_canonical_reads(
     // must bind it once and nested calls must receive the exact resolved id.
     let source = r#"
         const [status, hits] = await Promise.all([
-            tools.git_status({}),
+            tools.get_git_status({}),
             tools.search_project_texts({
                 queries: [{
                     pattern: "ToolRuntime",
@@ -1493,7 +1493,7 @@ async fn code_mode_binds_exact_project_and_session_through_real_canonical_reads(
     nested_tools.sort_unstable();
     assert_eq!(
         nested_tools,
-        ["git_status", "read_files", "search_project_texts"]
+        ["get_git_status", "read_files", "search_project_texts"]
     );
     assert_eq!(composition.nested_tool_counts.values().sum::<usize>(), 3);
     assert!(composition.nested_raw_result_bytes_total > composition.returned_bytes);
@@ -1513,7 +1513,7 @@ async fn code_mode_binds_exact_project_and_session_through_real_canonical_reads(
             "composition diagnostic leaked nested private text: {diagnostic}"
         );
     }
-    let result = outcome.result.expect("code_mode_exec ToolResult");
+    let result = outcome.result.expect("execute_code_mode ToolResult");
     assert!(result.success, "{:?}", result.error);
     assert!(result.output.get("content").is_some(), "{result:?}");
     assert!(result.output.get("stats").is_some(), "{result:?}");
@@ -1565,8 +1565,8 @@ async fn code_mode_binds_exact_project_and_session_through_real_canonical_reads(
         .summary(&session.session_id, Some(40))
         .expect("session summary");
     for tool_name in [
-        "code_mode_exec",
-        "git_status",
+        "execute_code_mode",
+        "get_git_status",
         "search_project_texts",
         "read_files",
     ] {
@@ -1590,7 +1590,7 @@ async fn code_mode_binds_exact_project_and_session_through_real_canonical_reads(
             Some(exact_project.as_str()),
             "{tool_name}"
         );
-        if tool_name != "code_mode_exec" {
+        if tool_name != "execute_code_mode" {
             let input_summary = started
                 .input_summary
                 .as_ref()
@@ -1608,8 +1608,8 @@ async fn code_mode_binds_exact_project_and_session_through_real_canonical_reads(
             event.kind == "tool_call_started"
                 && event.logical_invocation_role.as_deref() == Some("business")
                 && [
-                    "code_mode_exec",
-                    "git_status",
+                    "execute_code_mode",
+                    "get_git_status",
                     "search_project_texts",
                     "read_files",
                 ]
@@ -1627,7 +1627,7 @@ async fn code_mode_binds_exact_project_and_session_through_real_canonical_reads(
         .iter()
         .find(|event| {
             event.kind == "tool_call_started"
-                && event.tool_name == "code_mode_exec"
+                && event.tool_name == "execute_code_mode"
                 && event.logical_invocation_role.as_deref() == Some("business")
         })
         .unwrap();
@@ -1736,7 +1736,7 @@ async fn code_mode_failure_detail_is_bounded_without_persisting_source_derived_t
         .iter()
         .find(|event| {
             event.kind == "tool_call_finished"
-                && event.tool_name == "code_mode_exec"
+                && event.tool_name == "execute_code_mode"
                 && event.logical_invocation_role.as_deref() == Some("business")
         })
         .expect("business finish event");
@@ -1760,7 +1760,7 @@ async fn code_mode_does_not_admit_effectful_or_recursive_tools() {
         ),
         (
             "recursive",
-            "await tools.code_mode_exec({source: `text('nested')`});",
+            "await tools.execute_code_mode({source: `text('nested')`});",
         ),
         (
             "wait_for_job_terminal",
@@ -1771,24 +1771,24 @@ async fn code_mode_does_not_admit_effectful_or_recursive_tools() {
             "await tools.present_job_terminal_continuation({wait_id: 'wc_job_wait_q6urq6urq6urq6ur'});",
         ),
         (
-            "job_terminal_continuation_bind",
-            "await tools.job_terminal_continuation_bind({wait_id: 'wc_job_wait_q6urq6urq6urq6ur', binding_id: 'wc_host_binding_qqqqqqqqqqqqqqqqqqqqqg'});",
+            "bind_job_terminal_continuation",
+            "await tools.bind_job_terminal_continuation({wait_id: 'wc_job_wait_q6urq6urq6urq6ur', binding_id: 'wc_host_binding_qqqqqqqqqqqqqqqqqqqqqg'});",
         ),
         (
-            "job_terminal_continuation_state",
-            "await tools.job_terminal_continuation_state({wait_id: 'wc_job_wait_q6urq6urq6urq6ur', binding_id: 'wc_host_binding_qqqqqqqqqqqqqqqqqqqqqg'});",
+            "get_job_terminal_continuation_state",
+            "await tools.get_job_terminal_continuation_state({wait_id: 'wc_job_wait_q6urq6urq6urq6ur', binding_id: 'wc_host_binding_qqqqqqqqqqqqqqqqqqqqqg'});",
         ),
         (
-            "job_terminal_continuation_prepare",
-            "await tools.job_terminal_continuation_prepare({wait_id: 'wc_job_wait_q6urq6urq6urq6ur', binding_id: 'wc_host_binding_qqqqqqqqqqqqqqqqqqqqqg'});",
+            "prepare_job_terminal_continuation",
+            "await tools.prepare_job_terminal_continuation({wait_id: 'wc_job_wait_q6urq6urq6urq6ur', binding_id: 'wc_host_binding_qqqqqqqqqqqqqqqqqqqqqg'});",
         ),
         (
-            "job_terminal_continuation_finish",
-            "await tools.job_terminal_continuation_finish({wait_id: 'wc_job_wait_q6urq6urq6urq6ur', binding_id: 'wc_host_binding_qqqqqqqqqqqqqqqqqqqqqg', attempt_id: 'wc_job_delivery_ZmZmZmZmZmZmZmZm', outcome: 'dispatch_accepted'});",
+            "finish_job_terminal_continuation",
+            "await tools.finish_job_terminal_continuation({wait_id: 'wc_job_wait_q6urq6urq6urq6ur', binding_id: 'wc_host_binding_qqqqqqqqqqqqqqqqqqqqqg', attempt_id: 'wc_job_delivery_ZmZmZmZmZmZmZmZm', outcome: 'dispatch_accepted'});",
         ),
         (
-            "job_terminal_continuation_unbind",
-            "await tools.job_terminal_continuation_unbind({wait_id: 'wc_job_wait_q6urq6urq6urq6ur', binding_id: 'wc_host_binding_qqqqqqqqqqqqqqqqqqqqqg'});",
+            "unbind_job_terminal_continuation",
+            "await tools.unbind_job_terminal_continuation({wait_id: 'wc_job_wait_q6urq6urq6urq6ur', binding_id: 'wc_host_binding_qqqqqqqqqqqqqqqqqqqqqg'});",
         ),
         (
             "observe_jobs",
@@ -1818,7 +1818,7 @@ async fn code_mode_does_not_admit_effectful_or_recursive_tools() {
             .expect("session summary");
         assert!(summary.events.iter().all(|event| {
             event.tool_name != "run_shell"
-                && !(event.tool_name == "code_mode_exec"
+                && !(event.tool_name == "execute_code_mode"
                     && event
                         .input_summary
                         .as_ref()
@@ -1829,7 +1829,7 @@ async fn code_mode_does_not_admit_effectful_or_recursive_tools() {
             .events
             .iter()
             .filter(|event| {
-                event.tool_name == "code_mode_exec" && event.kind == "tool_call_started"
+                event.tool_name == "execute_code_mode" && event.kind == "tool_call_started"
             })
             .collect::<Vec<_>>();
         assert_eq!(outer_starts.len(), 2, "{label}: {outer_starts:?}");

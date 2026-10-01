@@ -239,7 +239,7 @@ class Smoke:
         check(candidate["session_id"] == session and candidate["lifecycle"] == "active",
               "discovery changed Session identity/lifecycle")
         context = candidate["session_ref"]
-        handoff = self.tool("session_handoff_summary", {"project": project, "session_id": context,
+        handoff = self.tool("read_session_handoff_summary", {"project": project, "session_id": context,
                             "include_workspace": False}, second)
         brief = json.dumps(handoff["handoff_brief"], ensure_ascii=False)
         check(DECISION in brief and PROGRESS in brief, "saved decision/progress missing after restart")
@@ -250,8 +250,8 @@ class Smoke:
         check(resumed["session_id"] == session and resumed["continuation"] == "resumed_explicitly",
               "explicit recovery created a different Session")
         self.tool("list_sessions", {"project": project}, foreign, False)
-        self.tool("session_handoff_summary", {"project": project, "session_id": session}, foreign, False)
-        self.tool("coding_agent_start", {"project": project, "provider_id": "responses",
+        self.tool("read_session_handoff_summary", {"project": project, "session_id": session}, foreign, False)
+        self.tool("start_coding_agent", {"project": project, "provider_id": "responses",
                   "idempotency_key": "restricted", "instruction": "Review", "context_session_id": context},
                   restricted, False)
         check(not self.requests, "denied calls dispatched a model request")
@@ -260,13 +260,13 @@ class Smoke:
             params = {"project": project, "provider_id": api, "idempotency_key": "review-" + api,
                       "instruction": "Review recovery independently", "context_session_id": context,
                       "timeout_secs": 30}
-            run = self.tool("coding_agent_start", params, second)
+            run = self.tool("start_coding_agent", params, second)
             deadline = time.monotonic() + 35
             # Read retained output first, even if the model finished during start.
             observation = {}
             text = ""
             while time.monotonic() < deadline:
-                observation = self.tool("coding_agent_observe", {"run_id": run["run_id"], "wait_secs": 1,
+                observation = self.tool("observe_coding_agent", {"run_id": run["run_id"], "wait_secs": 1,
                                        "after_observation_token": observation.get("observation_token")}, second)
                 text += "".join(event.get("text") or "" for event in observation["events"]
                                 if event["kind"] == "agent_message")
@@ -285,12 +285,12 @@ class Smoke:
             check("tools" not in body and (api != "responses" or body["store"] is False),
                   "text adapter unexpectedly sent tools or enabled provider storage")
             count = len(self.requests)
-            replay = self.tool("coding_agent_start", params, second)
+            replay = self.tool("start_coding_agent", params, second)
             check(replay["run_id"] == run["run_id"] and len(self.requests) == count,
                   "exact initiation retry dispatched another request")
             self.tool("post_session_message", {"session_id": session, "kind": "progress",
                       "message": "Reviewed " + api, "delivery_key": "reviewed-" + api}, second)
-            conflict = self.tool("coding_agent_start", params, second, False)
+            conflict = self.tool("start_coding_agent", params, second, False)
             check(conflict["error_kind"] == "idempotency_conflict"
                   and conflict["run_id"] == run["run_id"]
                   and conflict["execution_state"] == "not_started" and len(self.requests) == count,
@@ -299,7 +299,7 @@ class Smoke:
         self.tool("close_session", {"session_id": session}, second)
         closed = self.tool("list_sessions", {"project": project, "lifecycle": "closed"}, second)
         check(closed["total"] == 1, "closed history disappeared from discovery")
-        self.tool("session_handoff_summary", {"project": project, "session_id": context,
+        self.tool("read_session_handoff_summary", {"project": project, "session_id": context,
                   "include_workspace": False}, second)
         check(len(self.requests) == 2, "smoke sent unexpected duplicate model requests")
         print("PASS: closed history remains readable; two model requests total; all services isolated")

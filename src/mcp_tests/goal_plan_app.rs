@@ -102,7 +102,7 @@ async fn goal_plan_app_descriptor_is_sparse_app_only_resource_backed_and_adaptiv
         Some(&json!(MCP_GOAL_PLAN_UI_RESOURCE_URI))
     );
     assert!(present.pointer("/_meta/ui/visibility").is_none());
-    let state = tool(&ui["result"], "goal_plan_sync").expect("app-only goal_plan_sync");
+    let state = tool(&ui["result"], "sync_goal_plan").expect("app-only sync_goal_plan");
     assert_eq!(state.pointer("/_meta/ui/visibility"), Some(&json!(["app"])));
     assert!(state.pointer("/_meta/ui/resourceUri").is_none());
     assert!(tool(&ui["result"], "goal_plan_recheck_attention").is_none());
@@ -132,7 +132,7 @@ async fn goal_plan_app_descriptor_is_sparse_app_only_resource_backed_and_adaptiv
         .unwrap()
         .pointer("/_meta/ui/resourceUri")
         .is_none());
-    assert!(tool(&plain["result"], "goal_plan_sync").is_none());
+    assert!(tool(&plain["result"], "sync_goal_plan").is_none());
     assert!(tool(&plain["result"], "goal_plan_recheck_attention").is_none());
 
     let disabled_ui = handle_with_server_apps_enabled(
@@ -152,7 +152,7 @@ async fn goal_plan_app_descriptor_is_sparse_app_only_resource_backed_and_adaptiv
     let disabled_present = tool(&disabled_ui["result"], "present_goal_plan")
         .expect("present_goal_plan remains a normal read tool");
     assert!(disabled_present.pointer("/_meta/ui/resourceUri").is_none());
-    assert!(tool(&disabled_ui["result"], "goal_plan_sync").is_none());
+    assert!(tool(&disabled_ui["result"], "sync_goal_plan").is_none());
 
     for descriptor in ui["result"]["tools"].as_array().unwrap() {
         if descriptor["name"] == "present_goal_plan" {
@@ -228,7 +228,7 @@ async fn goal_plan_app_descriptor_is_sparse_app_only_resource_backed_and_adaptiv
         );
     }
     for required in [
-        "goal_plan_sync",
+        "sync_goal_plan",
         "completed_step_count",
         "current_step_id",
         "progress_summary",
@@ -334,7 +334,7 @@ async fn goal_plan_poll_reads_authoritative_revision_without_ui_request_identity
             "tools/call",
             Some(json!(4202)),
             mcp_2026_params(json!({
-                "name": "goal_plan_sync",
+                "name": "sync_goal_plan",
                 "arguments": {"goal_id": goal_id}
             })),
         ),
@@ -376,7 +376,7 @@ async fn goal_plan_poll_reads_authoritative_revision_without_ui_request_identity
             "tools/call",
             Some(json!(4203)),
             mcp_2026_params(json!({
-                "name": "goal_plan_sync",
+                "name": "sync_goal_plan",
                 "arguments": {"goal_id": goal_id}
             })),
         ),
@@ -409,7 +409,7 @@ async fn goal_plan_poll_reads_authoritative_revision_without_ui_request_identity
             "tools/call",
             Some(json!(4204)),
             mcp_2026_params(json!({
-                "name": "goal_plan_sync",
+                "name": "sync_goal_plan",
                 "arguments": {"goal_id": goal_id}
             })),
         ),
@@ -432,7 +432,7 @@ async fn goal_plan_poll_reads_authoritative_revision_without_ui_request_identity
             "tools/call",
             Some(json!(4205)),
             mcp_2026_params(json!({
-                "name": "goal_plan_sync",
+                "name": "sync_goal_plan",
                 "arguments": {"goal_id": goal_id}
             })),
         ),
@@ -472,7 +472,7 @@ async fn goal_plan_sync_rejects_unadvertised_invocation_envelope_and_legacy_wrap
                 "tools/call",
                 Some(json!(id)),
                 mcp_2026_ui_params(json!({
-                    "name": "goal_plan_sync",
+                    "name": "sync_goal_plan",
                     "arguments": arguments
                 })),
             ),
@@ -498,7 +498,7 @@ async fn goal_plan_sync_rejects_unadvertised_invocation_envelope_and_legacy_wrap
 fn goal_plan_sync_accepts_only_exact_selector_and_never_client_timing_or_authority() {
     let goal_id = "wc_goal_G4G4G4G4G4G4G4G4";
     let base = json!({"goal_id": goal_id});
-    assert!(crate::tool_runtime::ToolCall::from_tool_name("goal_plan_sync", base.clone()).is_ok());
+    assert!(crate::tool_runtime::ToolCall::from_tool_name("sync_goal_plan", base.clone()).is_ok());
     assert!(crate::tool_runtime::ToolCall::from_tool_name(
         "goal_plan_recheck_attention",
         base.clone()
@@ -517,12 +517,12 @@ fn goal_plan_sync_accepts_only_exact_selector_and_never_client_timing_or_authori
         let mut forged = base.clone();
         forged[field] = value;
         assert!(
-            crate::tool_runtime::ToolCall::from_tool_name("goal_plan_sync", forged).is_err(),
+            crate::tool_runtime::ToolCall::from_tool_name("sync_goal_plan", forged).is_err(),
             "{field}"
         );
     }
     assert_eq!(
-        super::super::goal_plan_observation_id(Some("goal_plan_sync"), &json!({"arguments": base})),
+        super::super::goal_plan_observation_id(Some("sync_goal_plan"), &json!({"arguments": base})),
         Some(goal_id.into())
     );
     assert!(super::super::goal_plan_observation_id(
@@ -531,7 +531,7 @@ fn goal_plan_sync_accepts_only_exact_selector_and_never_client_timing_or_authori
     )
     .is_none());
     assert!(super::super::goal_plan_observation_id(
-        Some("goal_plan_sync"),
+        Some("sync_goal_plan"),
         &json!({"arguments": {"goal_id": "not-a-goal"}})
     )
     .is_none());
@@ -547,7 +547,7 @@ async fn goal_plan_sync_is_app_only_reauthorized_and_does_not_create_attention_w
             "tools/call",
             Some(json!(4390)),
             mcp_2026_params(json!({
-                "name": "goal_plan_sync", "arguments": {"goal_id": goal_id}
+                "name": "sync_goal_plan", "arguments": {"goal_id": goal_id}
             })),
         )
     };

@@ -269,7 +269,7 @@ current-step invariant. Corruption fails closed for read/list/mutation and atten
 source validation. A Goal with incomplete steps cannot become completed. Terminal
 Goals cannot accept new checkpoints, metadata changes or correlations. Fresh
 verification/review and judgment of completion intent remain explicit model work.
-`session_handoff_summary` is for genuine missing-context/cross-turn recovery, not
+`read_session_handoff_summary` is for genuine missing-context/cross-turn recovery, not
 routine checkpoint bookkeeping.
 
 Goal tools do not gain Project execution selectors. Explicit Session association
@@ -295,7 +295,7 @@ Goal Plan deliberately advances its canonical resource URI whenever its shipped 
 or App-tool wire changes: production Hosts may retain a same-URI View across Server
 deploys, so resource identity—not an assumed refresh—is the cache/version fence.
 `present_goal_plan` is the only model-visible App-bound presentation tool.
-`goal_plan_sync` is the single App-only effectful observation/synchronization primitive.
+`sync_goal_plan` is the single App-only effectful observation/synchronization primitive.
 It accepts only `goal_id`, re-authorizes on every call, may commit one authoritative
 stall Attention/Wake under the existing fences, and returns the final post-reconciliation
 projection in the same RPC.
@@ -311,7 +311,7 @@ objective/conditions, Task bodies/results, private Project paths, correlation
 identities, Session ledger, Endpoint bindings, tokens/fences, stdout/stderr and full
 history. The presentation envelope is bounded to 40 KiB including metadata.
 
-`goal_plan_sync` is globally ModelHidden and App-only on an eligible Stateless
+`sync_goal_plan` is globally ModelHidden and App-only on an eligible Stateless
 MCP 2026 surface. Its public contract is intentionally **effectful**
 (`Mutate / WorkflowManage / DesiredState`), never disguised as a pure read; a
 kernel capability gate remains the final backstop for non-App transports. It is still
@@ -334,7 +334,7 @@ Five minutes of known quiet can warrant attention, but **stalled is not offline*
 Host scheduling, inference, user work or other connectors may explain the interval.
 
 `attention_needed` alone is not auto-resume eligibility. During the same
-`goal_plan_sync` request the Server independently rechecks all of the following:
+`sync_goal_plan` request the Server independently rechecks all of the following:
 
 - owned active Goal, exact explicit owned controller Agent, and current
   communication read/manage, runtime read, Session collaborate and Project read;
@@ -398,7 +398,7 @@ Goal Plan sync -> authoritative observation + fenced reconciliation in one RPC
  -> existing AgentContinuationController / Agent Continuation MCP App
  -> existing claim + prepare + dispatch fence -> ui/message
  -> new model turn: bootstrap exact Wake -> immediately consume exact Wake
- -> get_goal -> exact session_handoff_summary -> continue latest checkpoint
+ -> get_goal -> exact read_session_handoff_summary -> continue latest checkpoint
 ```
 
 Goal Plan never calls `ui/message`; the cards remain separate. If the Goal controller

@@ -82,7 +82,7 @@ The exact-source release-readiness workflow runs `EVAL_MODE=compare bash scripts
 Confirm:
 
 - No secrets, `.env`, credentials, token files, generated deployment env files, or Authorization headers were touched or printed.
-- `finish_coding_task` and `session_handoff_summary` compact outputs do not expose raw stdout/stderr bodies, command text, tails, excerpts, env values, tokens, or secrets.
+- `finish_coding_task` and `read_session_handoff_summary` compact outputs do not expose raw stdout/stderr bodies, command text, tails, excerpts, env values, tokens, or secrets.
 - `run_shell` is documented as a bounded shell primitive, while structured validators remain the default validation source.
 - Model-facing runtime docs keep admin, account, pairing, token-management, and Runner-token management outside MCP.
 
@@ -133,10 +133,10 @@ For the normal path, the sequence below may be driven by one `release-init` + re
 After deploying a new server, Runner, or runtime build:
 
 1. Refresh the MCP schema if runtime tool schemas changed.
-2. Run compact `runtime_status`.
+2. Run compact `get_runtime_status`.
 3. Run focused tool discovery.
 4. Run `list_projects` and pick a Runner-registered project marked appropriate for smoke when available.
-5. Run a read-only coding task: `work_on_project`, `read_files` or `search_project_texts`, `show_changes(include_diff=false)`, `workspace_hygiene_check`, and `finish_coding_task(summary_only=true)`.
+5. Run a read-only coding task: `work_on_project`, `read_files` or `search_project_texts`, `read_workspace_changes(include_diff=false)`, `check_workspace_hygiene`, and `finish_coding_task(summary_only=true)`.
 6. Run one small reversible edit task on a safe project and review the diff before accepting it.
 
 Do not run production mutations as acceptance smoke.

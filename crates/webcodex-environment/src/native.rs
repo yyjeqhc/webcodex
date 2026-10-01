@@ -257,7 +257,7 @@ impl NativeEnvironment {
                     &record.request.server_url,
                     "/api/tools/call",
                     Some(token.expose()),
-                    json!({"tool":"runner_config_check","params":{"client_id":client_id}}),
+                    json!({"tool":"check_runner_config","params":{"client_id":client_id}}),
                 )
                 .await?;
             let checked = tool_output(&checked)?;
@@ -284,7 +284,7 @@ impl NativeEnvironment {
                     "Runner configuration changed before reload",
                 ));
             }
-            let reload = self.post(&record.request.server_url, "/api/tools/call", Some(token.expose()), json!({"tool":"runner_config_reload","params":{"client_id":client_id,"expected_generation":generation}})).await?;
+            let reload = self.post(&record.request.server_url, "/api/tools/call", Some(token.expose()), json!({"tool":"reload_runner_config","params":{"client_id":client_id,"expected_generation":generation}})).await?;
             tool_output(&reload)?;
             pending.dispatched = true;
             store.write_json("add-project.json", &pending)?;

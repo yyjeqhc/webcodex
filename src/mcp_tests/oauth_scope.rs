@@ -526,7 +526,7 @@ async fn oauth2_mcp_computer_observe_snapshot_keeps_computer_read_scope() {
         &service,
         &token,
         "tools/call",
-        adaptive_gateway_params("computer_observe", arguments.clone()),
+        adaptive_gateway_params("observe_computer", arguments.clone()),
     )
     .await;
     assert_mcp_oauth_scope_rejected(
@@ -541,7 +541,7 @@ async fn oauth2_mcp_computer_observe_snapshot_keeps_computer_read_scope() {
         &service,
         &token,
         "tools/call",
-        adaptive_gateway_params("computer_observe", arguments),
+        adaptive_gateway_params("observe_computer", arguments),
     )
     .await;
     assert_ne!(status, StatusCode::FORBIDDEN, "body: {body:?}");
@@ -803,12 +803,12 @@ async fn oauth2_memory_tools_require_canonical_project_and_memory_scopes() {
         assert_eq!(status, StatusCode::OK, "{scopes}: {body:?}");
         let names = listed_tool_names(&body);
         let actual = [
-            "memory_search",
-            "memory_read",
-            "memory_set",
-            "memory_delete",
-            "memory_scope_list",
-            "memory_scope_purge",
+            "search_memory",
+            "read_memory",
+            "set_memory",
+            "delete_memory",
+            "list_memory_scopes",
+            "purge_memory_scope",
         ]
         .into_iter()
         .filter(|name| names.contains(*name))
@@ -819,25 +819,25 @@ async fn oauth2_memory_tools_require_canonical_project_and_memory_scopes() {
     for (scopes, tool, arguments, missing_scope) in [
         (
             "runtime:read project:read",
-            "memory_search",
+            "search_memory",
             json!({"project": "demo"}),
             crate::auth::SCOPE_MEMORY_READ,
         ),
         (
             "runtime:read memory:read",
-            "memory_search",
+            "search_memory",
             json!({"project": "demo"}),
             crate::auth::SCOPE_PROJECT_READ,
         ),
         (
             "runtime:read project:write",
-            "memory_set",
+            "set_memory",
             json!({"project":"demo","memory_key":"policy","summary":"summary"}),
             crate::auth::SCOPE_MEMORY_MANAGE,
         ),
         (
             "runtime:read memory:manage",
-            "memory_set",
+            "set_memory",
             json!({"project":"demo","memory_key":"policy","summary":"summary"}),
             crate::auth::SCOPE_PROJECT_WRITE,
         ),
@@ -877,9 +877,9 @@ async fn oauth2_tools_list_keeps_computer_tools_long_tail_across_outer_scopes() 
         let names = listed_tool_names(&body);
         assert!(names.contains(crate::mcp::tools::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME));
         for long_tail in [
-            "computer_observe",
-            "computer_control",
-            "computer_save_snapshot",
+            "observe_computer",
+            "control_computer",
+            "save_computer_snapshot",
         ] {
             assert!(
                 !names.contains(long_tail),
@@ -911,9 +911,9 @@ async fn oauth2_coding_agent_tools_require_independent_scope_in_catalog_and_dire
     assert_eq!(status, StatusCode::OK, "body: {body:?}");
     let names = listed_tool_names(&body);
     for name in [
-        "coding_agent_start",
-        "coding_agent_observe",
-        "coding_agent_cancel",
+        "start_coding_agent",
+        "observe_coding_agent",
+        "cancel_coding_agent",
     ] {
         assert!(!names.contains(name), "insufficient scopes leaked {name}");
     }
@@ -923,7 +923,7 @@ async fn oauth2_coding_agent_tools_require_independent_scope_in_catalog_and_dire
         &token,
         "tools/call",
         adaptive_gateway_params(
-            "coding_agent_cancel",
+            "cancel_coding_agent",
             json!({"run_id": "wc_agent_run_scopeprobe0001"}),
         ),
     )
@@ -941,9 +941,9 @@ async fn oauth2_coding_agent_tools_require_independent_scope_in_catalog_and_dire
     assert_eq!(status, StatusCode::OK, "body: {body:?}");
     let names = listed_tool_names(&body);
     for name in [
-        "coding_agent_start",
-        "coding_agent_observe",
-        "coding_agent_cancel",
+        "start_coding_agent",
+        "observe_coding_agent",
+        "cancel_coding_agent",
     ] {
         assert!(
             !names.contains(name),
@@ -955,7 +955,7 @@ async fn oauth2_coding_agent_tools_require_independent_scope_in_catalog_and_dire
         &token,
         "tools/call",
         adaptive_gateway_params(
-            "coding_agent_start",
+            "start_coding_agent",
             json!({
                 "project": "agent:missing:demo",
                 "provider_id": "codex",
@@ -978,9 +978,9 @@ async fn oauth2_coding_agent_tools_require_independent_scope_in_catalog_and_dire
     assert_eq!(status, StatusCode::OK, "body: {body:?}");
     let names = listed_tool_names(&body);
     for name in [
-        "coding_agent_start",
-        "coding_agent_observe",
-        "coding_agent_cancel",
+        "start_coding_agent",
+        "observe_coding_agent",
+        "cancel_coding_agent",
     ] {
         assert!(
             !names.contains(name),
@@ -998,7 +998,7 @@ async fn oauth2_pointer_tool_call_still_requires_display_scope_even_if_invoked_d
         &token,
         "tools/call",
         adaptive_gateway_params(
-            "computer_control",
+            "control_computer",
             json!({
                 "action": "pointer_move",
                 "client_id": "missing-runner",

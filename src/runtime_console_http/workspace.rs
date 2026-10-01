@@ -72,7 +72,7 @@ pub(super) async fn extensions(req: &mut Request, depot: &mut Depot, res: &mut R
     let skills = product_call(
         &runtime,
         &auth,
-        "skill_list",
+        "list_skills",
         json!({"project":input.project,"limit":64}),
     );
     let plugins = product_call(
@@ -161,7 +161,7 @@ pub(super) async fn project_git(req: &mut Request, depot: &mut Depot, res: &mut 
     if let Err(error) = authorize_exact_project(&runtime, &auth, &input.project).await {
         return render_error(res, error);
     }
-    match product_call(&runtime, &auth, "show_changes", json!({"project":input.project,"include_diff":false})).await {
+    match product_call(&runtime, &auth, "read_workspace_changes", json!({"project":input.project,"include_diff":false})).await {
         Ok(value) => res.render(Json(json!({
             "branch":value["branch"], "clean":value["clean"], "git_available":value["git_available"],
             "non_git_project":value["non_git_project"], "files":value["files"],

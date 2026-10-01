@@ -709,7 +709,7 @@ pub(super) fn finish_suggested_next_actions(output: &Value) -> Vec<String> {
         if output
             .pointer("/changes/show_changes/diff_review_handoff/next_call/tool")
             .and_then(Value::as_str)
-            == Some("git_diff_hunks")
+            == Some("read_git_diff_hunks")
         {
             push(
                 &mut actions,

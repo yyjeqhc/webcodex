@@ -63,7 +63,7 @@ async fn work_result_descriptor_keeps_renderers_public_and_bridge_tools_app_only
     };
     assert!(tool(&ui["result"], "present_changes").is_none());
     let present = tool(&ui["result"], "present_work_result").expect("present_work_result");
-    let diff = tool(&ui["result"], "changes_file_diff").expect("Work Result lazy diff");
+    let diff = tool(&ui["result"], "read_changed_file_diff").expect("Work Result lazy diff");
     assert_eq!(diff.pointer("/_meta/ui/visibility"), Some(&json!(["app"])));
     assert!(diff.pointer("/_meta/ui/resourceUri").is_none());
     assert_eq!(
@@ -72,10 +72,10 @@ async fn work_result_descriptor_keeps_renderers_public_and_bridge_tools_app_only
     );
     assert!(!registered_tool_specs()
         .iter()
-        .any(|spec| spec.name == "changes_file_diff"));
+        .any(|spec| spec.name == "read_changed_file_diff"));
     assert!(
         !super::super::tools::adaptive_runtime_gateway_target_admitted_for_test(
-            "changes_file_diff",
+            "read_changed_file_diff",
             true
         )
     );
@@ -102,12 +102,12 @@ async fn work_result_descriptor_keeps_renderers_public_and_bridge_tools_app_only
     assert_eq!(thread["inputSchema"]["properties"], json!({}));
     assert_eq!(thread["inputSchema"]["additionalProperties"], false);
     assert!(thread["inputSchema"].get("required").is_none());
-    let state = tool(&ui["result"], "work_result_state").expect("app-only work_result_state");
+    let state = tool(&ui["result"], "get_work_result_state").expect("app-only get_work_result_state");
     assert_eq!(state.pointer("/_meta/ui/visibility"), Some(&json!(["app"])));
     assert!(state.pointer("/_meta/ui/resourceUri").is_none());
     assert_eq!(state["inputSchema"]["required"], json!(["project"]));
-    let activity_detail = tool(&ui["result"], "work_result_activity_detail")
-        .expect("app-only work_result_activity_detail");
+    let activity_detail = tool(&ui["result"], "read_work_result_activity_detail")
+        .expect("app-only read_work_result_activity_detail");
     assert_eq!(
         activity_detail.pointer("/_meta/ui/visibility"),
         Some(&json!(["app"]))
@@ -119,9 +119,9 @@ async fn work_result_descriptor_keeps_renderers_public_and_bridge_tools_app_only
     );
     assert!(!registered_tool_specs()
         .iter()
-        .any(|spec| spec.name == "work_result_activity_detail"));
+        .any(|spec| spec.name == "read_work_result_activity_detail"));
     let send =
-        tool(&ui["result"], "work_result_send_message").expect("app-only work_result_send_message");
+        tool(&ui["result"], "send_work_result_message").expect("app-only send_work_result_message");
     assert_eq!(send.pointer("/_meta/ui/visibility"), Some(&json!(["app"])));
     assert!(send.pointer("/_meta/ui/resourceUri").is_none());
     assert_eq!(
@@ -130,10 +130,10 @@ async fn work_result_descriptor_keeps_renderers_public_and_bridge_tools_app_only
     );
     assert!(!registered_tool_specs()
         .iter()
-        .any(|spec| spec.name == "work_result_send_message"));
+        .any(|spec| spec.name == "send_work_result_message"));
     assert!(
         !super::super::tools::adaptive_runtime_gateway_target_admitted_for_test(
-            "work_result_send_message",
+            "send_work_result_message",
             true
         )
     );
@@ -216,10 +216,10 @@ async fn work_result_descriptor_keeps_renderers_public_and_bridge_tools_app_only
             .get("openai/ui")
             .is_none()
     );
-    assert!(tool(&plain["result"], "work_result_state").is_none());
+    assert!(tool(&plain["result"], "get_work_result_state").is_none());
     assert!(tool(&plain["result"], "work_result_thread_panel").is_none());
-    assert!(tool(&plain["result"], "work_result_send_message").is_none());
-    assert!(tool(&plain["result"], "changes_file_diff").is_none());
+    assert!(tool(&plain["result"], "send_work_result_message").is_none());
+    assert!(tool(&plain["result"], "read_changed_file_diff").is_none());
     assert!(tool(&plain["result"], "present_changes").is_none());
 
     let disabled = handle_with_server_apps_enabled(
@@ -236,10 +236,10 @@ async fn work_result_descriptor_keeps_renderers_public_and_bridge_tools_app_only
     let McpOutcome::Ok(disabled) = disabled else {
         panic!("Apps-disabled tools/list failed");
     };
-    assert!(tool(&disabled["result"], "work_result_state").is_none());
-    assert!(tool(&disabled["result"], "work_result_activity_detail").is_none());
-    assert!(tool(&disabled["result"], "work_result_send_message").is_none());
-    assert!(tool(&disabled["result"], "changes_file_diff").is_none());
+    assert!(tool(&disabled["result"], "get_work_result_state").is_none());
+    assert!(tool(&disabled["result"], "read_work_result_activity_detail").is_none());
+    assert!(tool(&disabled["result"], "send_work_result_message").is_none());
+    assert!(tool(&disabled["result"], "read_changed_file_diff").is_none());
     assert!(tool(&disabled["result"], "work_result_thread_panel").is_none());
     assert!(tool(&disabled["result"], "present_work_result")
         .unwrap()
@@ -253,25 +253,25 @@ async fn work_result_descriptor_keeps_renderers_public_and_bridge_tools_app_only
 
     assert!(!registered_tool_specs()
         .iter()
-        .any(|spec| spec.name == "work_result_state"));
+        .any(|spec| spec.name == "get_work_result_state"));
     assert!(!registered_tool_specs()
         .iter()
-        .any(|spec| spec.name == "work_result_activity_detail"));
+        .any(|spec| spec.name == "read_work_result_activity_detail"));
     assert!(!registered_tool_specs()
         .iter()
-        .any(|spec| spec.name == "work_result_send_message"));
+        .any(|spec| spec.name == "send_work_result_message"));
     assert!(!registered_tool_specs()
         .iter()
         .any(|spec| spec.name == "work_result_thread_panel"));
     assert!(
         !super::super::tools::adaptive_runtime_gateway_target_admitted_for_test(
-            "work_result_state",
+            "get_work_result_state",
             true
         )
     );
     assert!(
         !super::super::tools::adaptive_runtime_gateway_target_admitted_for_test(
-            "work_result_activity_detail",
+            "read_work_result_activity_detail",
             true
         )
     );
@@ -559,7 +559,7 @@ async fn work_result_resource_is_canonical_while_changes_resources_are_hidden_co
 async fn work_result_state_call_requires_app_protocol_capability() {
     let runtime = test_runtime();
     let args = json!({
-        "name": "work_result_state",
+        "name": "get_work_result_state",
         "arguments": {
             "project": "agent:missing:project",
             "session_id": format!("wc_sess_{}", "1".repeat(32))
@@ -604,7 +604,7 @@ async fn work_result_state_call_requires_app_protocol_capability() {
 async fn work_result_send_message_requires_app_protocol_capability() {
     let runtime = test_runtime();
     let args = json!({
-        "name": "work_result_send_message",
+        "name": "send_work_result_message",
         "arguments": {
             "project": "agent:missing:project",
             "session_id": format!("wc_sess_{}", "1".repeat(32)),
@@ -663,7 +663,7 @@ async fn work_result_state_discards_unadvertised_recording_session_wrapper() {
             "tools/call",
             Some(json!(5122)),
             mcp_2026_ui_params(json!({
-                "name": "work_result_state",
+                "name": "get_work_result_state",
                 "arguments": {
                     "project": project,
                     "session_id": session.session_id,
@@ -689,9 +689,9 @@ async fn work_result_state_discards_unadvertised_recording_session_wrapper() {
 #[test]
 fn work_result_html_is_bounded_live_progress_ui() {
     for required in [
-        "work_result_state",
-        "changes_file_diff",
-        "work_result_send_message",
+        "get_work_result_state",
+        "read_changed_file_diff",
+        "send_work_result_message",
         "wc_changes_snapshot_",
         "Window activity",
         "id=\"windowIdentity\"",
@@ -780,7 +780,7 @@ fn work_result_html_is_bounded_live_progress_ui() {
 async fn work_result_activity_detail_call_requires_app_protocol_capability() {
     let runtime = test_runtime();
     let args = json!({
-        "name": "work_result_activity_detail",
+        "name": "read_work_result_activity_detail",
         "arguments": {
             "project": "agent:missing:project",
             "server_trace_id": "trace-window-detail"
@@ -825,7 +825,7 @@ async fn work_result_activity_detail_call_requires_app_protocol_capability() {
 async fn changes_file_diff_call_requires_app_protocol_capability() {
     let runtime = test_runtime();
     let args = json!({
-        "name": "changes_file_diff",
+        "name": "read_changed_file_diff",
         "arguments": {
             "project": "agent:missing:project",
             "session_id": format!("wc_sess_{}", "1".repeat(32)),
@@ -884,7 +884,7 @@ async fn changes_file_diff_discards_unadvertised_recording_session_wrapper() {
             "tools/call",
             Some(json!(5222)),
             mcp_2026_ui_params(json!({
-                "name": "changes_file_diff",
+                "name": "read_changed_file_diff",
                 "arguments": {
                     "project": project,
                     "session_id": session.session_id,
@@ -936,7 +936,7 @@ async fn mcp_apps_enabled_snapshot_drives_real_request_adapter() {
     // The snapshot is OFF: no UI resource backing on the app tool.
     assert!(off_present.pointer("/_meta/ui/resourceUri").is_none());
     // App-only tools are absent when the snapshot disables MCP Apps.
-    assert!(tool(&off["result"], "work_result_state").is_none());
+    assert!(tool(&off["result"], "get_work_result_state").is_none());
 
     let on = handle_mcp_request(&runtime_on, request(), None).await;
     let McpOutcome::Ok(on) = on else {
@@ -949,7 +949,7 @@ async fn mcp_apps_enabled_snapshot_drives_real_request_adapter() {
         Some(&json!(MCP_WORK_RESULT_UI_RESOURCE_URI))
     );
     assert!(
-        tool(&on["result"], "work_result_state").is_some(),
+        tool(&on["result"], "get_work_result_state").is_some(),
         "app-only tool present when the snapshot enables MCP Apps"
     );
 }

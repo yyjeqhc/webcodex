@@ -311,7 +311,7 @@ fn persistence_restore_revalidates_bounded_context_result_summary() {
     record_result(
         &store,
         &session.session_id,
-        "show_changes",
+        "read_workspace_changes",
         true,
         json!({
             "head": "demo-head",
@@ -326,7 +326,9 @@ fn persistence_restore_revalidates_bounded_context_result_summary() {
     let live_summary = live
         .events
         .iter()
-        .find(|event| event.kind == "tool_call_finished" && event.tool_name == "show_changes")
+        .find(|event| {
+            event.kind == "tool_call_finished" && event.tool_name == "read_workspace_changes"
+        })
         .and_then(|event| event.context_result_summary.as_ref())
         .unwrap();
     assert_eq!(live_summary["counts"]["modified"], 21);
@@ -341,7 +343,9 @@ fn persistence_restore_revalidates_bounded_context_result_summary() {
     let events = persisted["sessions"][0]["events"].as_array_mut().unwrap();
     let finished = events
         .iter_mut()
-        .find(|event| event["kind"] == "tool_call_finished" && event["tool_name"] == "show_changes")
+        .find(|event| {
+            event["kind"] == "tool_call_finished" && event["tool_name"] == "read_workspace_changes"
+        })
         .unwrap();
     finished["context_result_summary"] = json!({
         "head": "demo-head",
@@ -359,7 +363,9 @@ fn persistence_restore_revalidates_bounded_context_result_summary() {
     let context = restored_summary
         .events
         .iter()
-        .find(|event| event.kind == "tool_call_finished" && event.tool_name == "show_changes")
+        .find(|event| {
+            event.kind == "tool_call_finished" && event.tool_name == "read_workspace_changes"
+        })
         .and_then(|event| event.context_result_summary.as_ref())
         .unwrap();
     assert!(context.get("arbitrary_untrusted_body").is_none());
@@ -382,7 +388,7 @@ fn retired_context_revision_fields_restore_but_are_never_reemitted() {
     record_result(
         &store,
         &session.session_id,
-        "show_changes",
+        "read_workspace_changes",
         true,
         json!({"head": "demo-head"}),
     );
@@ -416,7 +422,7 @@ fn retired_context_revision_fields_restore_but_are_never_reemitted() {
     record_result(
         &restored,
         &session.session_id,
-        "show_changes",
+        "read_workspace_changes",
         true,
         json!({"head": "after-restore"}),
     );
@@ -440,7 +446,7 @@ fn current_v2_without_retired_context_revision_restores() {
     record_result(
         &store,
         &session.session_id,
-        "show_changes",
+        "read_workspace_changes",
         true,
         json!({"head": "demo-head"}),
     );
@@ -465,7 +471,7 @@ fn unknown_current_v2_event_fields_still_fail_closed() {
     record_result(
         &store,
         &session.session_id,
-        "show_changes",
+        "read_workspace_changes",
         true,
         json!({"head": "demo-head"}),
     );

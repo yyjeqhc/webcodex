@@ -296,7 +296,7 @@ mod tests {
         }
 
         let mut tail = ToolCall::from_tool_name(
-            "job_tail",
+            "read_job_tail",
             serde_json::json!({"job_id":"job","wait_secs":100}),
         )
         .unwrap();

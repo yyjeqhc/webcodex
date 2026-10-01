@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn read_project_artifact_rejects_retired_max_bytes_alias() {
     let error = ToolCall::from_tool_name(
-        "read_project_artifact",
+        "read_project_artifact_chunk",
         json!({"project": "agent:test:demo", "path": "artifact.bin", "max_bytes": 32}),
     )
     .unwrap_err();
@@ -16,7 +16,7 @@ fn read_project_artifact_rejects_retired_max_bytes_alias() {
 fn read_project_artifact_expected_sha256_parser_requires_lowercase_64_hex() {
     let digest = "a".repeat(64);
     let call = ToolCall::from_tool_name(
-        "read_project_artifact",
+        "read_project_artifact_chunk",
         json!({
             "project": "agent:test:demo",
             "path": "artifact.bin",
@@ -41,7 +41,7 @@ fn read_project_artifact_expected_sha256_parser_requires_lowercase_64_hex() {
         format!("g{}", "a".repeat(63)),
     ] {
         let error = ToolCall::from_tool_name(
-            "read_project_artifact",
+            "read_project_artifact_chunk",
             json!({
                 "project": "agent:test:demo",
                 "path": "artifact.bin",
@@ -58,7 +58,7 @@ fn read_project_artifact_expected_sha256_parser_requires_lowercase_64_hex() {
 fn project_artifact_parses_typed_actions_and_rejects_cross_action_fields() {
     let digest = "a".repeat(64);
     let inspect = ToolCall::from_tool_name(
-        "project_artifact",
+        "inspect_project_artifact",
         json!({
             "project": "agent:test:demo",
             "path": "artifact.bin",
@@ -94,12 +94,12 @@ fn project_artifact_parses_typed_actions_and_rejects_cross_action_fields() {
         json!({"project":"agent:test:demo","path":"x.bin","action":"metadata","expected_sha256":"a".repeat(64)}),
         json!({"project":"agent:test:demo","path":"x.bin","action":"inspect","allow_missing":true}),
     ] {
-        let error = ToolCall::from_tool_name("project_artifact", arguments).unwrap_err();
+        let error = ToolCall::from_tool_name("inspect_project_artifact", arguments).unwrap_err();
         assert!(error.contains("does not accept field"), "{error}");
     }
 
     let invalid_digest = ToolCall::from_tool_name(
-        "project_artifact",
+        "inspect_project_artifact",
         json!({"project":"agent:test:demo","path":"x.bin","action":"inspect","expected_sha256":"A".repeat(64)}),
     )
     .unwrap_err();

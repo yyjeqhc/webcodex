@@ -182,7 +182,7 @@ fn recovery_schema() -> Value {
             "reason": {"type": "string", "maxLength": 256},
             "suggested_call": suggested_tool_call_schema(
                 webcodex_core::runtime_contract::GeneratedFollowUpKind::FallbackRecovery,
-                "browser_observe",
+                "observe_browser",
                 arguments,
                 "Observation-first reconciliation call. It never retries the uncertain Browser effect."
             )
@@ -206,7 +206,7 @@ fn common_fields() -> Vec<(&'static str, Value)> {
 
 pub fn output_schema_for_tool(name: &str) -> Option<Value> {
     match name {
-        "browser_observe" => {
+        "observe_browser" => {
             let mut fields = common_fields();
             fields.extend([
                 (
@@ -335,7 +335,7 @@ pub fn output_schema_for_tool(name: &str) -> Option<Value> {
             schema["properties"]["output"]["additionalProperties"] = json!(false);
             Some(schema)
         }
-        "browser_act" => {
+        "control_browser" => {
             let mut fields = common_fields();
             fields.extend([
                 ("requested_count", bounded_count(32)),

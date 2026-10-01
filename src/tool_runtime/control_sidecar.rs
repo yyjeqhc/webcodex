@@ -209,11 +209,11 @@ pub(crate) fn supports_control_sidecars(tool: &str) -> bool {
         && !matches!(
             tool,
             "plugin_tool"
-                | "ssh_resource"
-                | "browser_observe"
-                | "browser_act"
-                | "computer_observe"
-                | "computer_control"
+                | "manage_ssh_resource"
+                | "observe_browser"
+                | "control_browser"
+                | "observe_computer"
+                | "control_computer"
         )
 }
 

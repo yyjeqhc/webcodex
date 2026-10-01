@@ -21,7 +21,7 @@ impl ToolRuntime {
                 let project = match project_resolution {
                     Some(Ok(project)) => project,
                     Some(Err(error)) => return error.into_tool_result(),
-                    None => return ToolResult::err("memory_search requires a resolved Project"),
+                    None => return ToolResult::err("search_memory requires a resolved Project"),
                 };
                 self.memory_search(
                     &project,
@@ -41,7 +41,7 @@ impl ToolRuntime {
                 let project = match project_resolution {
                     Some(Ok(project)) => project,
                     Some(Err(error)) => return error.into_tool_result(),
-                    None => return ToolResult::err("memory_read requires a resolved Project"),
+                    None => return ToolResult::err("read_memory requires a resolved Project"),
                 };
                 self.memory_read(&project, memory_key, expected_revision)
             }
@@ -59,7 +59,7 @@ impl ToolRuntime {
                 let project = match project_resolution {
                     Some(Ok(project)) => project,
                     Some(Err(error)) => return error.into_tool_result(),
-                    None => return ToolResult::err("memory_set requires a resolved Project"),
+                    None => return ToolResult::err("set_memory requires a resolved Project"),
                 };
                 self.memory_set(
                     &project,
@@ -82,7 +82,7 @@ impl ToolRuntime {
                 let project = match project_resolution {
                     Some(Ok(project)) => project,
                     Some(Err(error)) => return error.into_tool_result(),
-                    None => return ToolResult::err("memory_delete requires a resolved Project"),
+                    None => return ToolResult::err("delete_memory requires a resolved Project"),
                 };
                 self.memory_delete(&project, memory_key, expected_revision)
             }

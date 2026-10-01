@@ -32,9 +32,9 @@ impl CodeModeCallableStage {
 
     pub(crate) const fn entry_tool(self) -> &'static str {
         match self {
-            Self::ReadOnly => "code_mode_exec",
-            Self::Validation => "code_mode_exec_effectful",
-            Self::GuardedEdit => "code_mode_exec_mutating",
+            Self::ReadOnly => "execute_code_mode",
+            Self::Validation => "execute_effectful_code_mode",
+            Self::GuardedEdit => "execute_mutating_code_mode",
         }
     }
 }
@@ -43,9 +43,9 @@ pub(crate) fn code_mode_callable_stage_for_entry_tool(
     tool_name: &str,
 ) -> Option<CodeModeCallableStage> {
     match tool_name {
-        "code_mode_exec" => Some(CodeModeCallableStage::ReadOnly),
-        "code_mode_exec_effectful" => Some(CodeModeCallableStage::Validation),
-        "code_mode_exec_mutating" => Some(CodeModeCallableStage::GuardedEdit),
+        "execute_code_mode" => Some(CodeModeCallableStage::ReadOnly),
+        "execute_effectful_code_mode" => Some(CodeModeCallableStage::Validation),
+        "execute_mutating_code_mode" => Some(CodeModeCallableStage::GuardedEdit),
         _ => None,
     }
 }
@@ -55,25 +55,25 @@ pub(crate) fn code_mode_callable_stage_for_entry_tool(
 pub(crate) const READ_ONLY_NESTED_TOOLS: &[&str] = &[
     "read_files",
     "search_project_texts",
-    "project_overview",
+    "read_project_overview",
     "list_project_tracked_files",
-    "git_status",
-    "git_log",
-    "git_diff_hunks",
-    "git_review_summary",
-    "show_changes",
+    "get_git_status",
+    "read_git_log",
+    "read_git_diff_hunks",
+    "read_git_review_summary",
+    "read_workspace_changes",
 ];
 
 pub(crate) const E2A_NESTED_TOOLS: &[&str] = &[
     "read_files",
     "search_project_texts",
-    "project_overview",
+    "read_project_overview",
     "list_project_tracked_files",
-    "git_status",
-    "git_log",
-    "git_diff_hunks",
-    "git_review_summary",
-    "show_changes",
+    "get_git_status",
+    "read_git_log",
+    "read_git_diff_hunks",
+    "read_git_review_summary",
+    "read_workspace_changes",
     "project_validate",
     "cargo_check",
     "cargo_test",
@@ -82,13 +82,13 @@ pub(crate) const E2A_NESTED_TOOLS: &[&str] = &[
 pub(crate) const E2C_NESTED_TOOLS: &[&str] = &[
     "read_files",
     "search_project_texts",
-    "project_overview",
+    "read_project_overview",
     "list_project_tracked_files",
-    "git_status",
-    "git_log",
-    "git_diff_hunks",
-    "git_review_summary",
-    "show_changes",
+    "get_git_status",
+    "read_git_log",
+    "read_git_diff_hunks",
+    "read_git_review_summary",
+    "read_workspace_changes",
     "edit_project_files",
     "project_validate",
     "cargo_check",
@@ -96,9 +96,9 @@ pub(crate) const E2C_NESTED_TOOLS: &[&str] = &[
 ];
 
 const RECURSIVE_CODE_MODE_TOOLS: &[&str] = &[
-    "code_mode_exec",
-    "code_mode_exec_effectful",
-    "code_mode_exec_mutating",
+    "execute_code_mode",
+    "execute_effectful_code_mode",
+    "execute_mutating_code_mode",
 ];
 
 const CONSEQUENTIAL_CHILD_HANDOFF_MAX_SECS: u64 = 5;
@@ -624,9 +624,9 @@ mod tests {
             assert!(!definition.is_write_like(), "{tool}");
             assert!(!definition.requires_permission(), "{tool}");
         }
-        assert!(READ_ONLY_NESTED_TOOLS.contains(&"git_review_summary"));
-        assert!(READ_ONLY_NESTED_TOOLS.contains(&"show_changes"));
-        assert!(!READ_ONLY_NESTED_TOOLS.contains(&"code_mode_exec"));
+        assert!(READ_ONLY_NESTED_TOOLS.contains(&"read_git_review_summary"));
+        assert!(READ_ONLY_NESTED_TOOLS.contains(&"read_workspace_changes"));
+        assert!(!READ_ONLY_NESTED_TOOLS.contains(&"execute_code_mode"));
         assert!(!READ_ONLY_NESTED_TOOLS.contains(&"run_shell"));
     }
 

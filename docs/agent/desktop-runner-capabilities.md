@@ -40,7 +40,7 @@ Desktop-managed row is shown as Active.
 ### SSH Resources
 
 The inventory always comes from the exact Desktop Runner's canonical
-`ssh_resource` gateway. It shows only name, Managed/Static source, active state,
+`manage_ssh_resource` gateway. It shows only name, Managed/Static source, active state,
 and pending-restart state. Static resources have no Remove action.
 
 **Add SSH Resource** accepts a name, a target, and optional default working
@@ -62,7 +62,7 @@ discard old observations.
 
 ## ACP discovery contract
 
-`runtime_status` (full, compact, and exact-Runner focus), `list_runners` (full and
+`get_runtime_status` (full, compact, and exact-Runner focus), `list_runners` (full and
 summary), the Desktop Runner overview, and Project startup use a dedicated safe
 summary type:
 
@@ -88,7 +88,7 @@ so normal project entry naturally exposes provider choices. Instruction content
 can still specify a preferred provider; Server does not choose one implicitly.
 
 `coding_agent_provider_unavailable` remains a not-started error. It includes the
-exact Runner's safe available providers and a mechanical `runtime_status` call
+exact Runner's safe available providers and a mechanical `get_runtime_status` call
 for re-observation. It does not search PATH, substitute a provider, or retry a
 different logical ID. Existing internal Runner/provider replacement fences remain
 unchanged.
@@ -124,7 +124,7 @@ domain; there is no hot replacement or fabricated Active result.
 The WebView has dedicated `ssh_resource_list`, `ssh_resource_register`, and
 `ssh_resource_remove` commands. It cannot choose an arbitrary runtime tool,
 endpoint, Runner, header, or credential. Native code sends the fixed canonical
-`ssh_resource` request through `/api/tools/call`, using the current connection's
+`manage_ssh_resource` request through `/api/tools/call`, using the current connection's
 private user token. The Server's normal tool kernel and SSH gateway retain final
 scope, ownership, exact-instance, and revision authorization.
 

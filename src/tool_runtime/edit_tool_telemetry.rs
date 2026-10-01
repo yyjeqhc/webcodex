@@ -495,7 +495,7 @@ mod tests {
             "run_shell",
             "list_tools",
             "save_project_artifact",
-            "git_status",
+            "get_git_status",
             "cargo_check",
         ] {
             assert_eq!(edit_tool_surface(name), None, "{name}");

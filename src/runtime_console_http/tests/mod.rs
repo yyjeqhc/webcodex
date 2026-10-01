@@ -163,7 +163,7 @@ fn record_window_event(
         project,
         workflow_link,
         at_ms,
-        "workspace_hygiene_check",
+        "check_workspace_hygiene",
         true,
     );
 }
@@ -497,7 +497,7 @@ async fn window_activity_lookup_is_runtime_management_and_current_project_author
     );
     runtime.window_activity.update(
         "trace-pre-resolution",
-        Some("workspace_hygiene_check"),
+        Some("check_workspace_hygiene"),
         None,
     );
 
@@ -530,7 +530,7 @@ async fn window_activity_lookup_is_runtime_management_and_current_project_author
     );
     runtime.window_activity.update(
         "trace-pre-resolution-diagnostic",
-        Some("goal_plan_sync"),
+        Some("sync_goal_plan"),
         None,
     );
 

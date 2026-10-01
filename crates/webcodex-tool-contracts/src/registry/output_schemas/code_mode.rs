@@ -161,7 +161,7 @@ fn failure_kind_schema() -> Value {
 
 pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
     match name {
-        "code_mode_exec" => Some(wrapped_output_schema(vec![
+        "execute_code_mode" => Some(wrapped_output_schema(vec![
             ("content", content_schema()),
             ("stats", stats_schema()),
             ("message", bounded_failure_message_schema()),
@@ -170,7 +170,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ("limit", limit_schema()),
             ("recovery", recovery_schema()),
         ])),
-        "code_mode_exec_effectful" | "code_mode_exec_mutating" => {
+        "execute_effectful_code_mode" | "execute_mutating_code_mode" => {
             Some(wrapped_output_schema(vec![
                 ("content", content_schema()),
                 ("stats", stats_schema()),

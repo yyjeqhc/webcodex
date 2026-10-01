@@ -37,16 +37,16 @@ async fn api_model_ergonomics_success_is_exact_and_queryable() {
     let mut response = TestClient::post("http://localhost/api/tools/call")
         .bearer_auth("secret")
         .add_header("x-action-session-id", "ergonomics-success", true)
-        .json(&json!({"tool": "tool_manifest", "params": {"intent": "audit"}}))
+        .json(&json!({"tool": "read_tool_manifest", "params": {"intent": "audit"}}))
         .send(&service)
         .await;
     assert_eq!(super::effective_status(&response), StatusCode::OK);
     let body: Value = response.take_json().await.unwrap();
     assert_eq!(body["success"], true);
 
-    let telemetry = single_model_ergonomics(&db, "ergonomics-success", "tool_manifest");
+    let telemetry = single_model_ergonomics(&db, "ergonomics-success", "read_tool_manifest");
     assert_eq!(telemetry["schema_version"], 13);
-    assert_eq!(telemetry["tool_name"], "tool_manifest");
+    assert_eq!(telemetry["tool_name"], "read_tool_manifest");
     assert_eq!(telemetry["tool_category"], "runtime");
     assert_eq!(telemetry["success"], true);
     assert!(telemetry["duration_ms"].as_u64().is_some());
@@ -76,7 +76,7 @@ async fn api_model_ergonomics_failure_uses_structured_kinds_without_private_text
     let mut response = TestClient::post("http://localhost/api/tools/call")
         .bearer_auth("secret")
         .add_header("x-action-session-id", "ergonomics-failure", true)
-        .json(&json!({"tool": "project_overview", "params": {"project": private_project}}))
+        .json(&json!({"tool": "read_project_overview", "params": {"project": private_project}}))
         .send(&service)
         .await;
     assert_eq!(super::effective_status(&response), StatusCode::BAD_REQUEST);
@@ -85,7 +85,7 @@ async fn api_model_ergonomics_failure_uses_structured_kinds_without_private_text
     assert_eq!(body["output"]["error_kind"], "unknown_project");
     assert_eq!(body["output"]["recovery_kind"], "fix_input");
 
-    let telemetry = single_model_ergonomics(&db, "ergonomics-failure", "project_overview");
+    let telemetry = single_model_ergonomics(&db, "ergonomics-failure", "read_project_overview");
     assert_eq!(telemetry["success"], false);
     assert_eq!(telemetry["error_kind"], "unknown_project");
     assert!(telemetry["failure_kind"].is_null());
@@ -259,7 +259,7 @@ async fn action_audit_sink_failure_never_changes_success_or_failure_tool_result(
 
     let mut success = TestClient::post("http://localhost/api/tools/call")
         .bearer_auth("secret")
-        .json(&json!({"tool": "tool_manifest", "params": {"intent": "audit"}}))
+        .json(&json!({"tool": "read_tool_manifest", "params": {"intent": "audit"}}))
         .send(&service)
         .await;
     assert_eq!(super::effective_status(&success), StatusCode::OK);
@@ -269,7 +269,7 @@ async fn action_audit_sink_failure_never_changes_success_or_failure_tool_result(
 
     let mut failure = TestClient::post("http://localhost/api/tools/call")
         .bearer_auth("secret")
-        .json(&json!({"tool": "project_overview", "params": {"project": "missing-project"}}))
+        .json(&json!({"tool": "read_project_overview", "params": {"project": "missing-project"}}))
         .send(&service)
         .await;
     assert_eq!(super::effective_status(&failure), StatusCode::BAD_REQUEST);

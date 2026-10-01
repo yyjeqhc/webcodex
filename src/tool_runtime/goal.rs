@@ -1161,7 +1161,7 @@ impl ToolRuntime {
             return ineligible();
         };
         let resolved = match self
-            .authorize_session_target(session_id, "goal_plan_sync", auth)
+            .authorize_session_target(session_id, "sync_goal_plan", auth)
             .await
         {
             Ok(Some(resolved)) => resolved,

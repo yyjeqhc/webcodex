@@ -279,7 +279,7 @@ async fn trusted_agent_smoke_full_chain_has_zero_approval_interruptions() {
     .await;
     track(&changes);
     assert!(changes.success, "{:?}", changes.error);
-    assert_no_approval_interruption(&changes, "show_changes");
+    assert_no_approval_interruption(&changes, "read_workspace_changes");
 
     // 7. Finish: one fact package usable for the final report.
     let finish = dispatch_with_local_agent(

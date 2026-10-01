@@ -262,7 +262,7 @@ async fn session_summary_returns_project_instructions_without_content() {
         &req.request_id,
         0,
         &canonical_agent_file_read_output(
-            "secret project rule that must not leak into session_summary\n",
+            "secret project rule that must not leak into read_session_summary\n",
             1,
         ),
         "",
@@ -293,7 +293,7 @@ async fn session_summary_returns_project_instructions_without_content() {
     // Summary-only: content must NOT be present on the file entry.
     assert!(
         files[0].get("content").is_none(),
-        "session_summary project_instructions file must be summary-only"
+        "read_session_summary project_instructions file must be summary-only"
     );
     assert!(files[0]["chars"].as_u64().is_some());
     assert_eq!(files[0]["truncated"], false);
@@ -305,7 +305,7 @@ async fn session_summary_returns_project_instructions_without_content() {
     let serialized = serde_json::to_string(&summary_result.output).unwrap();
     assert!(
         !serialized.contains("secret project rule"),
-        "session_summary leaked instruction content: {serialized}"
+        "read_session_summary leaked instruction content: {serialized}"
     );
 }
 

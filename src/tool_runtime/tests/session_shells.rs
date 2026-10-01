@@ -196,7 +196,7 @@ async fn persistent_shell_handoff(runtime: &ToolRuntime, session_id: &str) -> To
     runtime
         .dispatch(
             ToolCall::from_tool_name(
-                "session_handoff_summary",
+                "read_session_handoff_summary",
                 serde_json::json!({
                     "session_id": session_id,
                     "include_workspace": false,
@@ -217,7 +217,7 @@ async fn persistent_shell_result_expectation_observe_preserves_nonzero_tool_resu
 
     let exec_task = dispatch_recorded(
         runtime.clone(),
-        "session_shell_exec",
+        "execute_session_shell",
         serde_json::json!({
             "project": project,
             "session_id": session.session_id,
@@ -252,7 +252,9 @@ async fn persistent_shell_result_expectation_observe_preserves_nonzero_tool_resu
         .events
         .iter()
         .rev()
-        .find(|event| event.kind == "tool_call_finished" && event.tool_name == "session_shell_exec")
+        .find(|event| {
+            event.kind == "tool_call_finished" && event.tool_name == "execute_session_shell"
+        })
         .unwrap();
     assert_eq!(finished.result_expectation.as_deref(), Some("observe"));
     assert_eq!(
@@ -277,7 +279,7 @@ async fn persistent_shell_result_expectation_success_default_keeps_nonzero_actio
 
     let exec_task = dispatch_recorded(
         runtime.clone(),
-        "session_shell_exec",
+        "execute_session_shell",
         serde_json::json!({
             "project": project,
             "session_id": session.session_id,
@@ -309,7 +311,9 @@ async fn persistent_shell_result_expectation_success_default_keeps_nonzero_actio
         .events
         .iter()
         .rev()
-        .find(|event| event.kind == "tool_call_finished" && event.tool_name == "session_shell_exec")
+        .find(|event| {
+            event.kind == "tool_call_finished" && event.tool_name == "execute_session_shell"
+        })
         .unwrap();
     assert_eq!(finished.result_expectation, None);
     assert_eq!(
@@ -333,7 +337,7 @@ async fn persistent_shell_result_expectation_observe_keeps_shell_reset_actionabl
 
     let exec_task = dispatch_recorded(
         runtime.clone(),
-        "session_shell_exec",
+        "execute_session_shell",
         serde_json::json!({
             "project": project,
             "session_id": session.session_id,
@@ -369,7 +373,9 @@ async fn persistent_shell_result_expectation_observe_keeps_shell_reset_actionabl
         .events
         .iter()
         .rev()
-        .find(|event| event.kind == "tool_call_finished" && event.tool_name == "session_shell_exec")
+        .find(|event| {
+            event.kind == "tool_call_finished" && event.tool_name == "execute_session_shell"
+        })
         .unwrap();
     assert_eq!(finished.result_expectation.as_deref(), Some("observe"));
     assert_eq!(
@@ -451,12 +457,16 @@ async fn server_lifecycle_uses_distinct_ids_and_never_routes_through_run_shell()
     let exec_started = ledger
         .events
         .iter()
-        .find(|event| event.kind == "tool_call_started" && event.tool_name == "session_shell_exec")
+        .find(|event| {
+            event.kind == "tool_call_started" && event.tool_name == "execute_session_shell"
+        })
         .unwrap();
     let exec_finished = ledger
         .events
         .iter()
-        .find(|event| event.kind == "tool_call_finished" && event.tool_name == "session_shell_exec")
+        .find(|event| {
+            event.kind == "tool_call_finished" && event.tool_name == "execute_session_shell"
+        })
         .unwrap();
     let evidence = exec_finished.persistent_shell.as_ref().unwrap();
     assert_eq!(evidence.action, "exec");

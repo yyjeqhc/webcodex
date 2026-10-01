@@ -105,12 +105,12 @@ fn record_console_validation(
 #[test]
 fn session_tool_classification_uses_definition_policy() {
     for (tool, risk_class) in [
-        ("show_changes", "read_only"),
+        ("read_workspace_changes", "read_only"),
         ("start_session", "workflow_manage"),
         ("close_session", "session_collaborate"),
         #[cfg(feature = "workspace-checkpoints")]
-        ("workspace_checkpoint_create", "checkpoint_manage"),
-        ("coding_agent_cancel", "run_control"),
+        ("create_workspace_checkpoint", "checkpoint_manage"),
+        ("cancel_coding_agent", "run_control"),
         ("write_project_file", "project_write"),
         ("apply_unified_diff", "project_write"),
         ("run_process", "job_run"),
@@ -226,9 +226,9 @@ fn checkpoint_restore_finished_event_records_trusted_result_changed_paths() {
     let start = store.record_tool_call_started(
         Some(&session.session_id),
         SessionTransport::Api,
-        "workspace_checkpoint_restore",
+        "restore_workspace_checkpoint",
         &json!({"project": "demo", "checkpoint_id": "wc_ckpt_demo", "confirm": true}),
-        crate::tool_runtime::sessions::session_tool_contract("workspace_checkpoint_restore"),
+        crate::tool_runtime::sessions::session_tool_contract("restore_workspace_checkpoint"),
     );
     store.record_tool_call_finished(
         start,
@@ -246,7 +246,7 @@ fn checkpoint_restore_finished_event_records_trusted_result_changed_paths() {
         .events
         .iter()
         .find(|event| {
-            event.kind == "tool_call_finished" && event.tool_name == "workspace_checkpoint_restore"
+            event.kind == "tool_call_finished" && event.tool_name == "restore_workspace_checkpoint"
         })
         .unwrap();
     assert_eq!(finished.changed_paths, vec!["src/lib.rs".to_string()]);
@@ -411,14 +411,14 @@ fn lsp_observations_use_path_metadata_and_known_typed_result_locations_only() {
     let start = store.record_tool_call_started(
         Some(&session.session_id),
         SessionTransport::Api,
-        "goto_definition",
+        "find_definition",
         &json!({
             "project": "demo",
             "path": "src/caller.rs",
             "line": 4,
             "column": 9
         }),
-        crate::tool_runtime::sessions::session_tool_contract("goto_definition"),
+        crate::tool_runtime::sessions::session_tool_contract("find_definition"),
     );
     store.record_tool_call_finished(
         start,
@@ -484,7 +484,7 @@ fn exploration_input_audit_omits_queries_and_shell_commands() {
     assert!(search["queries"][0].get("pattern").is_none());
 
     let symbols = session_input_summary_for_tool(
-        "workspace_symbols",
+        "list_workspace_symbols",
         &json!({"project": "demo", "query": "RAW_SYMBOL_QUERY", "limit": 20}),
     );
     assert!(symbols.get("query").is_none());
@@ -549,7 +549,7 @@ fn exploration_input_audit_omits_queries_and_shell_commands() {
     assert!(script.get("script_summary").is_none());
 
     let persistent = session_input_summary_for_tool(
-        "session_shell_exec",
+        "execute_session_shell",
         &json!({
             "project": "demo",
             "session_id": "wc_sess_demo",
@@ -665,9 +665,9 @@ fn skill_read_body_and_catalog_descriptions_never_enter_durable_session_ledger()
     let list_start = store.record_tool_call_started(
         Some(&session.session_id),
         SessionTransport::Mcp,
-        "skill_list",
+        "list_skills",
         &json!({"project": project, "query_present": false, "limit": 20}),
-        crate::tool_runtime::sessions::session_tool_contract("skill_list"),
+        crate::tool_runtime::sessions::session_tool_contract("list_skills"),
     );
     store.record_tool_call_finished(
         list_start,
@@ -689,7 +689,7 @@ fn skill_read_body_and_catalog_descriptions_never_enter_durable_session_ledger()
     let read_start = store.record_tool_call_started(
         Some(&session.session_id),
         SessionTransport::Mcp,
-        "skill_read_file",
+        "read_skill_file",
         &json!({
             "project": project,
             "skill_id": "wc_skill_ASNFZ4mrze8BI0VniavN7w",
@@ -697,7 +697,7 @@ fn skill_read_body_and_catalog_descriptions_never_enter_durable_session_ledger()
             "start_line": 1,
             "limit": 20
         }),
-        crate::tool_runtime::sessions::session_tool_contract("skill_read_file"),
+        crate::tool_runtime::sessions::session_tool_contract("read_skill_file"),
     );
     store.record_tool_call_finished(
         read_start,
@@ -778,9 +778,9 @@ fn memory_body_summary_query_and_tags_never_enter_durable_session_ledger_or_reco
     let set_start = store.record_tool_call_started(
         Some(&session.session_id),
         SessionTransport::Mcp,
-        "memory_set",
+        "set_memory",
         &set_args,
-        crate::tool_runtime::sessions::session_tool_contract("memory_set"),
+        crate::tool_runtime::sessions::session_tool_contract("set_memory"),
     );
     store.record_tool_call_finished(
         set_start,
@@ -801,7 +801,7 @@ fn memory_body_summary_query_and_tags_never_enter_durable_session_ledger_or_reco
     );
 
     let search_args = super::super::tool_audit::session_log_arguments_for_tool_request(
-        "memory_search",
+        "search_memory",
         &json!({
             "project": project,
             "query": private_query,
@@ -814,9 +814,9 @@ fn memory_body_summary_query_and_tags_never_enter_durable_session_ledger_or_reco
     let search_start = store.record_tool_call_started(
         Some(&session.session_id),
         SessionTransport::Mcp,
-        "memory_search",
+        "search_memory",
         &search_args,
-        crate::tool_runtime::sessions::session_tool_contract("memory_search"),
+        crate::tool_runtime::sessions::session_tool_contract("search_memory"),
     );
     store.record_tool_call_finished(
         search_start,
@@ -846,13 +846,13 @@ fn memory_body_summary_query_and_tags_never_enter_durable_session_ledger_or_reco
     let read_start = store.record_tool_call_started(
         Some(&session.session_id),
         SessionTransport::Mcp,
-        "memory_read",
+        "read_memory",
         &json!({
             "project": project,
             "memory_key": "deployment-policy",
             "expected_revision": revision
         }),
-        crate::tool_runtime::sessions::session_tool_contract("memory_read"),
+        crate::tool_runtime::sessions::session_tool_contract("read_memory"),
     );
     store.record_tool_call_finished(
         read_start,
@@ -883,9 +883,9 @@ fn memory_body_summary_query_and_tags_never_enter_durable_session_ledger_or_reco
     let scope_list_start = store.record_tool_call_started(
         Some(&session.session_id),
         SessionTransport::Mcp,
-        "memory_scope_list",
+        "list_memory_scopes",
         &json!({"offset": 0, "limit": 50}),
-        crate::tool_runtime::sessions::session_tool_contract("memory_scope_list"),
+        crate::tool_runtime::sessions::session_tool_contract("list_memory_scopes"),
     );
     store.record_tool_call_finished(
         scope_list_start,
@@ -924,9 +924,9 @@ fn memory_body_summary_query_and_tags_never_enter_durable_session_ledger_or_reco
     let purge_start = store.record_tool_call_started(
         Some(&session.session_id),
         SessionTransport::Mcp,
-        "memory_scope_purge",
+        "purge_memory_scope",
         &purge_args,
-        crate::tool_runtime::sessions::session_tool_contract("memory_scope_purge"),
+        crate::tool_runtime::sessions::session_tool_contract("purge_memory_scope"),
     );
     store.record_tool_call_finished(
         purge_start,
@@ -1081,7 +1081,7 @@ fn console_overview_counts_runtime_work_attention_and_sanitizes_reported_progres
             single_search_batch_output(json!({"matches": [{"path": "src/lib.rs"}]})),
         ),
         (
-            "goto_definition",
+            "find_definition",
             json!({"project": project, "path": "src/lib.rs", "line": 1, "column": 1}),
             json!({"locations": [{"path": "src/lib.rs"}]}),
         ),
@@ -1091,7 +1091,7 @@ fn console_overview_counts_runtime_work_attention_and_sanitizes_reported_progres
             json!({"changed_paths": ["src/lib.rs"]}),
         ),
         (
-            "git_status",
+            "get_git_status",
             json!({"project": project}),
             json!({"status": "clean"}),
         ),
@@ -1492,9 +1492,9 @@ fn console_projection_is_bounded_semantic_and_progress_is_informational() {
     let running = store.record_tool_call_started(
         Some(&session.session_id),
         SessionTransport::Api,
-        "goto_definition",
+        "find_definition",
         &json!({"project": project, "path": "src/lib.rs", "line": 1, "column": 1}),
-        crate::tool_runtime::sessions::session_tool_contract("goto_definition"),
+        crate::tool_runtime::sessions::session_tool_contract("find_definition"),
     );
     assert!(running.is_some());
     store
@@ -1752,9 +1752,9 @@ fn console_list_uses_only_unfinished_call_as_now_and_keeps_job_handoff_as_last()
     let running = store.record_tool_call_started(
         Some(&session.session_id),
         SessionTransport::Api,
-        "goto_definition",
+        "find_definition",
         &json!({"project": project, "path": "src/lib.rs", "line": 1, "column": 1}),
-        crate::tool_runtime::sessions::session_tool_contract("goto_definition"),
+        crate::tool_runtime::sessions::session_tool_contract("find_definition"),
     );
     assert!(running.is_some());
     let list = store.console_list_for_project(
@@ -1770,7 +1770,7 @@ fn console_list_uses_only_unfinished_call_as_now_and_keeps_job_handoff_as_last()
     assert!(row.running_call);
     assert_eq!(
         row.current_activity.as_ref().unwrap().tool.as_deref(),
-        Some("goto_definition")
+        Some("find_definition")
     );
     assert_eq!(row.current_activity.as_ref().unwrap().state, "running");
     assert_eq!(
@@ -1947,7 +1947,7 @@ fn console_list_without_running_work_shows_last_meaningful_activity() {
             json!({"content": "omitted"}),
         ),
         (
-            "git_status",
+            "get_git_status",
             json!({"project": project}),
             json!({"status": "clean"}),
         ),
@@ -1986,7 +1986,7 @@ fn console_list_without_running_work_shows_last_meaningful_activity() {
     assert!(row.current_activity.is_none());
     assert_eq!(
         row.last_activity.as_ref().unwrap().tool.as_deref(),
-        Some("git_status")
+        Some("get_git_status")
     );
     assert_eq!(row.last_activity.as_ref().unwrap().kind, "Reviewed");
 }
@@ -2012,7 +2012,7 @@ fn console_exploration_grouping_is_ordered_bounded_and_stops_at_fact_barriers() 
             single_search_batch_output(json!({"matches": [{"path": "src/b.rs"}]})),
         ),
         (
-            "goto_definition",
+            "find_definition",
             json!({"project": project, "path": "src/c.rs", "line": 1, "column": 1}),
             json!({"locations": [{"path": "src/c.rs"}]}),
         ),
@@ -2120,7 +2120,7 @@ fn console_exploration_grouping_is_ordered_bounded_and_stops_at_fact_barriers() 
     assert_eq!(group.group_kinds, vec!["Read", "Searched", "Navigated"]);
     assert_eq!(
         group.group_tools,
-        vec!["read_files", "search_project_texts", "goto_definition"]
+        vec!["read_files", "search_project_texts", "find_definition"]
     );
     assert_eq!(group.paths, vec!["src/a.rs", "src/b.rs", "src/c.rs"]);
     assert_eq!(detail.activity[3].state, "failed");
@@ -2475,14 +2475,14 @@ fn exploration_ledger_persists_only_bounded_relative_paths_and_safe_metadata() {
     let hover = store.record_tool_call_started(
         Some(&session.session_id),
         SessionTransport::Api,
-        "hover",
+        "read_symbol_hover",
         &json!({
             "project": "demo",
             "path": "src/hover.rs",
             "line": 1,
             "column": 1
         }),
-        crate::tool_runtime::sessions::session_tool_contract("hover"),
+        crate::tool_runtime::sessions::session_tool_contract("read_symbol_hover"),
     );
     store.record_tool_call_finished(
         hover,
@@ -2502,14 +2502,14 @@ fn exploration_ledger_persists_only_bounded_relative_paths_and_safe_metadata() {
     let symbols = store.record_tool_call_started(
         Some(&session.session_id),
         SessionTransport::Api,
-        "workspace_symbols",
+        "list_workspace_symbols",
         &json!({
             "project": "demo",
             "query": "RAW_SYMBOL_QUERY",
             "query_present": true,
             "limit": 10
         }),
-        crate::tool_runtime::sessions::session_tool_contract("workspace_symbols"),
+        crate::tool_runtime::sessions::session_tool_contract("list_workspace_symbols"),
     );
     store.record_tool_call_finished(
         symbols,
@@ -2538,9 +2538,9 @@ fn exploration_ledger_persists_only_bounded_relative_paths_and_safe_metadata() {
     let diagnostics = store.record_tool_call_started(
         Some(&session.session_id),
         SessionTransport::Api,
-        "document_diagnostics",
+        "read_document_diagnostics",
         &json!({"project": "demo", "path": "src/diagnostics.rs", "limit": 10}),
-        crate::tool_runtime::sessions::session_tool_contract("document_diagnostics"),
+        crate::tool_runtime::sessions::session_tool_contract("read_document_diagnostics"),
     );
     store.record_tool_call_finished(
         diagnostics,

@@ -566,7 +566,7 @@ fn run_runner_project_overview_request_locally(req: &RunnerRequest) -> (i32, Str
         return (
             -1,
             String::new(),
-            "project_overview missing cwd".to_string(),
+            "read_project_overview missing cwd".to_string(),
         );
     };
     let requested_path = req.path.as_deref().unwrap_or(".");
@@ -613,14 +613,14 @@ pub(in crate::tool_runtime::tests) async fn complete_project_overview_agent_requ
         .content
         .as_deref()
         .and_then(|content| serde_json::from_str::<Value>(content).ok())
-        .expect("project_overview agent options");
+        .expect("read_project_overview agent options");
     let output = crate::project_overview::build_project_overview(
-        Path::new(req.cwd.as_deref().expect("project_overview cwd")),
-        req.path.as_deref().expect("project_overview path"),
+        Path::new(req.cwd.as_deref().expect("read_project_overview cwd")),
+        req.path.as_deref().expect("read_project_overview path"),
         options["max_depth"].as_u64().map(|value| value as usize),
         options["limit"].as_u64().map(|value| value as usize),
     )
-    .expect("Runner-side project_overview scan");
+    .expect("Runner-side read_project_overview scan");
     complete_patch_agent_request(
         runtime,
         client_id,

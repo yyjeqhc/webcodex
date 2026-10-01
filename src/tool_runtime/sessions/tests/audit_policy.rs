@@ -56,7 +56,7 @@ fn canonical_audit_policies_keep_private_payloads_out_of_durable_session_ledger(
         if name == "work_on_project" {
             tool_input["instruction"] = json!("Audit fixture task");
         }
-        if name == "git_status" {
+        if name == "get_git_status" {
             tool_output["stdout"] = json!(" M src/lib.rs\n");
         }
         let arguments = session_log_arguments_for_tool_request(name, &tool_input);

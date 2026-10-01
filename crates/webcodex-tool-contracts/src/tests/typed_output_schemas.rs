@@ -143,8 +143,8 @@ fn runner_config_registered_output_schema_accepts_canonical_runtime_states() {
             .validate()
             .expect("representative Runner result is valid");
         let tool = match response.action {
-            RunnerConfigAction::Check => "runner_config_check",
-            RunnerConfigAction::Reload => "runner_config_reload",
+            RunnerConfigAction::Check => "check_runner_config",
+            RunnerConfigAction::Reload => "reload_runner_config",
         };
         assert_registered_schema_accepts(
             tool,
@@ -169,7 +169,7 @@ fn runner_config_registered_output_schema_uses_canonical_closed_vocabulary() {
         vec![],
     );
     response.validate().unwrap();
-    let schema = output_schema_for_tool("runner_config_check");
+    let schema = output_schema_for_tool("check_runner_config");
     let mut instance = tool_result_instance(false, &response);
     test_support::validate_schema_instance(&instance, &schema).unwrap();
 
@@ -187,7 +187,7 @@ fn runner_config_registered_output_schema_uses_canonical_closed_vocabulary() {
 
 #[test]
 fn typed_output_envelope_keeps_sparse_failure_and_runtime_decorations_legal() {
-    let schema = output_schema_for_tool("runner_config_reload");
+    let schema = output_schema_for_tool("reload_runner_config");
     let sparse_failure = json!({
         "success": false,
         "error": "Runner config operation was not started",
@@ -217,7 +217,7 @@ fn lsp_registered_output_schemas_accept_canonical_typed_results() {
         }],
         warnings: vec![],
     };
-    assert_registered_schema_accepts("lsp_status", true, &status);
+    assert_registered_schema_accepts("get_lsp_status", true, &status);
 
     let symbols = DocumentSymbolsResult {
         project: "agent:test:demo".to_string(),
@@ -238,7 +238,7 @@ fn lsp_registered_output_schemas_accept_canonical_typed_results() {
         external_results_omitted: 0,
         invalid_results_omitted: 0,
     };
-    assert_registered_schema_accepts("document_symbols", true, &symbols);
+    assert_registered_schema_accepts("list_document_symbols", true, &symbols);
 
     let diagnostics = DocumentDiagnosticsResult {
         project: "agent:test:demo".to_string(),
@@ -262,7 +262,7 @@ fn lsp_registered_output_schemas_accept_canonical_typed_results() {
         invalid_results_omitted: 0,
         related_information_omitted: 0,
     };
-    assert_registered_schema_accepts("document_diagnostics", true, &diagnostics);
+    assert_registered_schema_accepts("read_document_diagnostics", true, &diagnostics);
 
     let hover = HoverResult {
         project: "agent:test:demo".to_string(),
@@ -276,7 +276,7 @@ fn lsp_registered_output_schemas_accept_canonical_typed_results() {
         truncated: false,
         range_omitted: false,
     };
-    assert_registered_schema_accepts("hover", true, &hover);
+    assert_registered_schema_accepts("read_symbol_hover", true, &hover);
 
     let workspace = WorkspaceSymbolsResult {
         project: "agent:test:demo".to_string(),
@@ -295,7 +295,7 @@ fn lsp_registered_output_schemas_accept_canonical_typed_results() {
         external_results_omitted: 0,
         invalid_results_omitted: 0,
     };
-    assert_registered_schema_accepts("workspace_symbols", true, &workspace);
+    assert_registered_schema_accepts("list_workspace_symbols", true, &workspace);
 
     let locations = LocationsResult {
         project: "agent:test:demo".to_string(),
@@ -312,7 +312,7 @@ fn lsp_registered_output_schemas_accept_canonical_typed_results() {
         external_results_omitted: 0,
         invalid_results_omitted: 0,
     };
-    assert_registered_schema_accepts("goto_definition", true, &locations);
+    assert_registered_schema_accepts("find_definition", true, &locations);
     assert_registered_schema_accepts("find_references", true, &locations);
 
     let call_hierarchy = CallHierarchyResult {
@@ -339,12 +339,12 @@ fn lsp_registered_output_schemas_accept_canonical_typed_results() {
         invalid_results_omitted: 0,
         call_site_ranges_omitted: 0,
     };
-    assert_registered_schema_accepts("call_hierarchy", true, &call_hierarchy);
+    assert_registered_schema_accepts("read_call_hierarchy", true, &call_hierarchy);
 }
 
 #[test]
 fn lsp_typed_fields_are_closed_while_intentional_projection_boundaries_stay_open() {
-    let diagnostics_schema = output_schema_for_tool("document_diagnostics");
+    let diagnostics_schema = output_schema_for_tool("read_document_diagnostics");
     let diagnostic =
         &diagnostics_schema["properties"]["output"]["properties"]["diagnostics"]["items"];
     assert_eq!(diagnostic["additionalProperties"], false);
@@ -368,7 +368,7 @@ fn lsp_typed_fields_are_closed_while_intentional_projection_boundaries_stay_open
     invalid["output"]["diagnostics"][0]["severity"] = json!("error");
     test_support::validate_schema_instance(&invalid, &diagnostics_schema).unwrap();
 
-    let hover_schema = output_schema_for_tool("hover");
+    let hover_schema = output_schema_for_tool("read_symbol_hover");
     let mut invalid_hover = json!({
         "success": true,
         "output": {
@@ -379,17 +379,17 @@ fn lsp_typed_fields_are_closed_while_intentional_projection_boundaries_stay_open
     invalid_hover["output"]["hover"]["kind"] = json!("plaintext");
     test_support::validate_schema_instance(&invalid_hover, &hover_schema).unwrap();
 
-    let call_schema = output_schema_for_tool("call_hierarchy");
+    let call_schema = output_schema_for_tool("read_call_hierarchy");
     let bad_depth = json!({"success":true,"output":{"depth":3}});
     assert!(test_support::validate_schema_instance(&bad_depth, &call_schema).is_err());
 
     for (tool, field) in [
-        ("lsp_status", "servers"),
-        ("document_symbols", "symbols"),
-        ("goto_definition", "locations"),
+        ("get_lsp_status", "servers"),
+        ("list_document_symbols", "symbols"),
+        ("find_definition", "locations"),
         ("find_references", "locations"),
-        ("call_hierarchy", "roots"),
-        ("call_hierarchy", "edges"),
+        ("read_call_hierarchy", "roots"),
+        ("read_call_hierarchy", "edges"),
     ] {
         let schema = output_schema_for_tool(tool);
         let item = &schema["properties"]["output"]["properties"][field]["items"];
@@ -419,16 +419,16 @@ fn apply_text_edits_success_match_ranges_require_occurrence_while_conflicts_keep
 #[test]
 fn typed_output_schemas_use_host_normalized_inline_shapes() {
     for name in [
-        "runner_config_check",
-        "runner_config_reload",
-        "lsp_status",
-        "document_symbols",
-        "document_diagnostics",
-        "hover",
-        "workspace_symbols",
-        "goto_definition",
+        "check_runner_config",
+        "reload_runner_config",
+        "get_lsp_status",
+        "list_document_symbols",
+        "read_document_diagnostics",
+        "read_symbol_hover",
+        "list_workspace_symbols",
+        "find_definition",
         "find_references",
-        "call_hierarchy",
+        "read_call_hierarchy",
     ] {
         let encoded = serde_json::to_string(&output_schema_for_tool(name)).unwrap();
         assert!(!encoded.contains("$defs"), "{name}");

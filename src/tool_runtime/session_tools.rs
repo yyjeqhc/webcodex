@@ -491,7 +491,7 @@ impl ToolRuntime {
         auth: Option<&AuthContext>,
     ) -> ToolResult {
         if let Err(result) = self
-            .authorize_session_target(&session_id, "session_summary", auth)
+            .authorize_session_target(&session_id, "read_session_summary", auth)
             .await
         {
             return result;
@@ -939,7 +939,7 @@ impl ToolRuntime {
         auth: Option<&AuthContext>,
     ) -> ToolResult {
         if let Err(result) = self
-            .authorize_session_target(&session_id, "session_discussion_summary", auth)
+            .authorize_session_target(&session_id, "read_session_discussion_summary", auth)
             .await
         {
             return result;

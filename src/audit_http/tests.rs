@@ -94,7 +94,7 @@ fn seed_attributed_event(
             session_title: None,
             endpoint: "/api/runtime/status".to_string(),
             action_name: "getRuntimeStatus".to_string(),
-            operation: Some("runtime_status".to_string()),
+            operation: Some("get_runtime_status".to_string()),
             project: Some("demo".to_string()),
             principal_kind: principal_kind.map(str::to_string),
             principal_user_id: principal_user_id.map(str::to_string),
@@ -410,7 +410,7 @@ async fn http_audit_stats_global_over_recent_sessions() {
         &db,
         "g-1",
         "/api/tools/call",
-        "git_status",
+        "get_git_status",
         "success",
         json!({}),
     );

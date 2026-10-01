@@ -144,7 +144,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     adaptive_runtime_direct(
         model_spec(
             def(
-                "runtime_status",
+                "get_runtime_status",
                 super::ToolAuditPolicy::TYPED_CANONICAL.session_input(
                     super::ToolAuditSessionInputPolicy::OmitTopLevel(&["client_id"]),
                 ),
@@ -179,7 +179,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     ),
     model_spec(
             def(
-                "current_window_activity",
+                "read_current_window_activity",
                 super::ToolAuditPolicy::TYPED_CANONICAL,
                 ModelVisible,
                 TOOL_CATEGORY_RUNTIME,
@@ -207,7 +207,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     adaptive_runtime_direct(
         model_spec(
             def(
-                "tool_manifest",
+                "read_tool_manifest",
                 super::ToolAuditPolicy::TYPED_CANONICAL,
                 ModelVisible,
                 TOOL_CATEGORY_RUNTIME,

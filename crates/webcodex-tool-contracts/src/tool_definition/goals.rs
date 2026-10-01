@@ -168,7 +168,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     ),
     require_all_scopes(
         def(
-            "goal_plan_sync",
+            "sync_goal_plan",
             super::ToolAuditPolicy::typed_fields(&[
                 super::ToolAuditResultField::pointer("goal_id", "/goal_plan/goal_id"),
                 super::ToolAuditResultField::pointer("lifecycle", "/goal_plan/lifecycle"),
@@ -269,7 +269,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 false,
                 super::ToolSessionEvidencePolicy::NONE,
             ),
-            "Checkpoint one exact owned active Goal at a recovery-worthy milestone. Atomically complete selected stable step ids, optionally select one current step, and record a bounded summary using the exact revision and idempotency key. The whole batch validates before mutation; completed steps never regress, at most one step is in_progress, and each new checkpoint increments revision once. Exact replay is read-only; changed replay conflicts. Terminal Goals are immutable. This is progress truth, not effect replay, execution authority, or a routine session_handoff_summary requirement.",
+            "Checkpoint one exact owned active Goal at a recovery-worthy milestone. Atomically complete selected stable step ids, optionally select one current step, and record a bounded summary using the exact revision and idempotency key. The whole batch validates before mutation; completed steps never regress, at most one step is in_progress, and each new checkpoint increments revision once. Exact replay is read-only; changed replay conflicts. Terminal Goals are immutable. This is progress truth, not effect replay, execution authority, or a routine read_session_handoff_summary requirement.",
         ),
         COMMUNICATION_MANAGE_SCOPES,
     ),

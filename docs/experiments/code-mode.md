@@ -9,7 +9,7 @@ performance-focused development steps, see [Code Mode performance](code-mode-per
 
 E1 tests one hypothesis: WebCodex can move bounded read-only orchestration below the model round-trip boundary while keeping every real Project operation inside the existing canonical `ToolRuntime`.
 
-One model-visible `code_mode_exec` call evaluates a bounded JavaScript program. The program may invoke several explicitly admitted read-only WebCodex tools, use ordinary JavaScript control flow, overlap independent observations with `Promise.all`, make later calls conditional on earlier results, and emit only the useful aggregate with `text(value)`.
+One model-visible `execute_code_mode` call evaluates a bounded JavaScript program. The program may invoke several explicitly admitted read-only WebCodex tools, use ordinary JavaScript control flow, overlap independent observations with `Promise.all`, make later calls conditional on earlier results, and emit only the useful aggregate with `text(value)`.
 
 E1 does **not** add a second filesystem, shell, permission system, Project resolver, Session recorder, Runner protocol, or workflow engine.
 
@@ -30,7 +30,7 @@ The root `experimental-code-mode` feature enables:
 - `webcodex-tool-contracts/experimental-code-mode`;
 - `webcodex-tool-runtime-contracts/experimental-code-mode`.
 
-Without that feature, `code_mode_exec`, `code_mode_exec_effectful`, and `code_mode_exec_mutating` are absent from the canonical `ToolDefinition`, `ToolSpec`, `ToolCall`, discovery, Adaptive Runtime, OpenAPI, and MCP surfaces. The default `webcodex-code-mode` crate contains only lightweight transport-neutral contracts and does not compile or link V8.
+Without that feature, `execute_code_mode`, `execute_effectful_code_mode`, and `execute_mutating_code_mode` are absent from the canonical `ToolDefinition`, `ToolSpec`, `ToolCall`, discovery, Adaptive Runtime, OpenAPI, and MCP surfaces. The default `webcodex-code-mode` crate contains only lightweight transport-neutral contracts and does not compile or link V8.
 
 ## Workflow guidance selection
 
@@ -52,7 +52,7 @@ Dependency direction is intentionally narrow:
 model
   |
   v
-code_mode_exec
+execute_code_mode
   |
   v
 root ToolRuntime resolves/authorizes exact Project + Workflow Session
@@ -112,7 +112,7 @@ inside the cell, not host APIs. `compactEvidence` selects relevant paths, small
 supporting excerpts and unresolved failures; it does not return raw child results:
 
 ```javascript
-const status = await tools.git_status({});
+const status = await tools.get_git_status({});
 
 const [files, hits] = await Promise.all([
   tools.read_files({
@@ -171,18 +171,18 @@ E1 admits only this explicit set:
 ```text
 read_files
 search_project_texts
-project_overview
+read_project_overview
 list_project_tracked_files
-git_status
-git_log
-git_diff_hunks
-git_review_summary
-show_changes
+get_git_status
+read_git_log
+read_git_diff_hunks
+read_git_review_summary
+read_workspace_changes
 ```
 
 Admission is not inferred from future tools. A canonical metadata regression test requires every admitted tool to remain `Observe`/read-only, non-shell-like, non-write-like, and free of mutation permission requirements.
 
-`code_mode_exec` itself is not in the nested allowlist, so recursive Code Mode is impossible.
+`execute_code_mode` itself is not in the nested allowlist, so recursive Code Mode is impossible.
 
 ## Job continuation and control boundary
 
@@ -283,7 +283,7 @@ The stats are experimental diagnostic evidence, not performance telemetry and no
 
 ## E1.5 composition observability
 
-Phase 2 dogfood adds a diagnostic-only parent/child composition view without changing execution authority. The outer canonical `code_mode_exec` invocation keeps its existing logical invocation identity. Nested calls receive only a short-lived child ordinal for tracing and still re-enter `ToolRuntime::call_tool_with_context` as independent canonical invocations. The parent relation is not a Project, Workflow Session, ClientWindow, Job, retry, idempotency, permission, OAuth, or Runner-routing identity.
+Phase 2 dogfood adds a diagnostic-only parent/child composition view without changing execution authority. The outer canonical `execute_code_mode` invocation keeps its existing logical invocation identity. Nested calls receive only a short-lived child ordinal for tracing and still re-enter `ToolRuntime::call_tool_with_context` as independent canonical invocations. The parent relation is not a Project, Workflow Session, ClientWindow, Job, retry, idempotency, permission, OAuth, or Runner-routing identity.
 
 The ordinary model-facing result remains the sparse `content` + four-field `stats` shape above. Separately, RuntimeMetrics and the outer ActionAudit row may retain this bounded composition summary:
 
@@ -302,7 +302,7 @@ nested_tool_counts
 
 `input_bytes` is the UTF-8 byte length of the bounded JavaScript program, without retaining the source body. `nested_raw_result_bytes_total` is the sum of serialized canonical child `ToolResult` sizes before JavaScript selection/projection. Together with `returned_bytes`, these fields make input/output and projection/compression pressure directly measurable without retaining nested payloads. `slot_wait_ms` measures only time waiting for the process-wide V8 execution permit, so it can be separated from the remaining Code Mode interval. Tracing RuntimeMetrics exposes the same observations, including `code_mode_input_bytes`, `code_mode_nested_raw_result_bytes_total`, and `code_mode_slot_wait_seconds`; the durable composition summary keeps the millisecond fields above. `nested_tool_counts` is limited to the explicit admitted tool set. Composition telemetry never stores JavaScript source, nested arguments, nested outputs, paths, queries, commands, credentials, raw Window identity, or arbitrary nested error text. RuntimeMetrics remains fail-open: metrics failure cannot change the `ToolResult`.
 
-Nested canonical calls deliberately use no fabricated `ClientWindow`. One host/model-visible `code_mode_exec` request therefore remains one meaningful outer Window call, while the Runtime Console can project the bounded child summary from that outer ActionAudit row. This lets operators distinguish WebCodex-owned outer service time, Code Mode internal time, and the following outside-WebCodex inter-call gap without reclassifying nested calls as host round trips.
+Nested canonical calls deliberately use no fabricated `ClientWindow`. One host/model-visible `execute_code_mode` request therefore remains one meaningful outer Window call, while the Runtime Console can project the bounded child summary from that outer ActionAudit row. This lets operators distinguish WebCodex-owned outer service time, Code Mode internal time, and the following outside-WebCodex inter-call gap without reclassifying nested calls as host round trips.
 
 The SQLite ActionAudit schema also exposes two derived read-only views for offline/dogfood analysis. `code_mode_action_traces` keeps one row for every Code Mode outer attempt, including historical rows that predate composition telemetry, and flattens the bounded composition scalars together with outer request→handoff `service_ms`, exact serialized model-facing `ToolResult` bytes, Window correlation, and Session-recovery metadata. `code_mode_nested_tool_usage` expands only the bounded `nested_tool_counts` map. They are created idempotently from canonical `action_events` schema on database open and then queried as ordinary SQLite views, rather than maintained through a second telemetry write path. Typical analysis is therefore direct SQL such as:
 
@@ -325,7 +325,7 @@ ORDER BY calls DESC;
 
 The E1 tests are intended to prove runtime capability, not real-model throughput:
 
-- one `code_mode_exec` can contain several canonical nested calls;
+- one `execute_code_mode` can contain several canonical nested calls;
 - a second nested call can depend on the first result;
 - independent Promise calls can overlap, proven with an in-flight counter/barrier rather than a wall-clock threshold;
 - CPU-bound JavaScript is hard-terminated;
@@ -362,7 +362,7 @@ Prefer real ChatGPT dogfood traces over a bespoke benchmark runner while the exi
 
 ## E2a — Effectful orchestration foundation
 
-E2a adds a separate experimental entry point, `code_mode_exec_effectful`. It does **not** upgrade or widen `code_mode_exec`; E1 remains the read-only control surface with the same `Observe / Read / PureRead / project:read` contract and the same explicit read allowlist.
+E2a adds a separate experimental entry point, `execute_effectful_code_mode`. It does **not** upgrade or widen `execute_code_mode`; E1 remains the read-only control surface with the same `Observe / Read / PureRead / project:read` contract and the same explicit read allowlist.
 
 The E2a outer tool is a conservative consequential envelope (`Execute / JobRun / Standard / NonIdempotent / job:run`) and requires an explicit business Workflow Session. That envelope is not child authority. Every nested call still re-enters canonical `ToolRuntime` with the caller's exact authentication, resolved Project, Workflow Session, scope checks, permissions, Runner capability checks, validation semantics, Job lifecycle, and Session evidence.
 
@@ -441,9 +441,9 @@ Unlike re-observable E1, consequential E2a participates in normal Session checkp
 
 ### E2b foundation — Guarded structured mutation
 
-This section records the original E2b boundary. E2c below evolves the same experimental `code_mode_exec_mutating` entry point, superseding its validation exclusion and single-scope outer envelope while retaining its canonical mutation mechanics.
+This section records the original E2b boundary. E2c below evolves the same experimental `execute_mutating_code_mode` entry point, superseding its validation exclusion and single-scope outer envelope while retaining its canonical mutation mechanics.
 
-E2b adds a third experimental entry point, `code_mode_exec_mutating`, without replacing E1 or E2a. Its outer contract is conservatively `Mutate / ProjectWrite / Standard / NonIdempotent / project:write` and requires an explicit business Workflow Session. That outer envelope grants no child authority and does not itself become edit provenance.
+E2b adds a third experimental entry point, `execute_mutating_code_mode`, without replacing E1 or E2a. Its outer contract is conservatively `Mutate / ProjectWrite / Standard / NonIdempotent / project:write` and requires an explicit business Workflow Session. That outer envelope grants no child authority and does not itself become edit provenance.
 
 E2b admits exactly the E1 read set plus one existing canonical mutation primitive:
 
@@ -451,7 +451,7 @@ E2b admits exactly the E1 read set plus one existing canonical mutation primitiv
 edit_project_files
 ```
 
-It intentionally does **not** admit `cargo_check`, `cargo_test`, `cargo_fmt`, generic process/shell tools, `observe_jobs`, `apply_patch`, `write_project_file`, delete/Git/Session/Goal/Agent mutation, gateways, Computer control, deploy/release tools, or any Code Mode entry point. Validation therefore remains outside the mutation-capable cell in this phase. A normal workflow is `code_mode_exec_mutating` followed by ordinary canonical validation after the cell returns; E2b does not attempt workspace-snapshot fencing for background validation Jobs.
+It intentionally does **not** admit `cargo_check`, `cargo_test`, `cargo_fmt`, generic process/shell tools, `observe_jobs`, `apply_patch`, `write_project_file`, delete/Git/Session/Goal/Agent mutation, gateways, Computer control, deploy/release tools, or any Code Mode entry point. Validation therefore remains outside the mutation-capable cell in this phase. A normal workflow is `execute_mutating_code_mode` followed by ordinary canonical validation after the cell returns; E2b does not attempt workspace-snapshot fencing for background validation Jobs.
 
 `edit_project_files` is canonically `Sequential`, but composition eligibility remains independent from frontend admission: E1 and E2a still cannot call it. One E2b cell may attempt a canonical mutation at most once. The budget is classified from canonical `ToolEffect::Mutate`, counts failed/pre-start attempts as attempts, and rejects a second mutation before canonical business dispatch. `edit_project_files` already supports transactional multi-file batches, so E2b does not add an in-cell mutation retry engine or a second patch protocol.
 
@@ -508,7 +508,7 @@ The launch marker travels in the **existing** structured validation Job metadata
 
 ### E2c public entry and ordering
 
-E2c evolves `code_mode_exec_mutating` rather than adding a fourth entry point. Its canonical envelope is `Mutate / ProjectWrite / Standard / NonIdempotent`, explicitly process-capable, with **RequireAll(project:write, job:run)**. Even an edit-only use of this experimental entry requires both scopes; direct `edit_project_files` remains the narrower choice. Each child separately retains its canonical OAuth, permission, Project/Runner, Session, validation and Job checks. The outer envelope does not grant or synthesize child authority and still is not Edit provenance.
+E2c evolves `execute_mutating_code_mode` rather than adding a fourth entry point. Its canonical envelope is `Mutate / ProjectWrite / Standard / NonIdempotent`, explicitly process-capable, with **RequireAll(project:write, job:run)**. Even an edit-only use of this experimental entry requires both scopes; direct `edit_project_files` remains the narrower choice. Each child separately retains its canonical OAuth, permission, Project/Runner, Session, validation and Job checks. The outer envelope does not grant or synthesize child authority and still is not Edit provenance.
 
 Admission is exactly the E1 read set plus `edit_project_files`, `cargo_check`, and `cargo_test`. At most one mutation attempt crosses the canonical boundary. Validators require a preceding successful, `known_result` canonical edit with boolean `state_changed`; failed or stale guards cannot be ignored by JavaScript to dispatch a validator. A successful no-op/dry-run (`state_changed=false`) permits validation of the unchanged mutable workspace, still with unproven source freshness. Receipt publication remains inside the sequential scheduling fence so a dependent validator cannot race it. The guarded-edit callable projection retains its existing stage key and derives the expanded tool set, input constraints, output fields, and ordering constraints from canonical ToolSpecs and the exact host policy.
 

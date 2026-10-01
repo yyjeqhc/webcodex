@@ -68,7 +68,7 @@ async fn work_result_jobs_are_exact_authorized_bounded_server_snapshots() {
     runtime
         .add_passive_job_attention(
             &mut baseline,
-            "git_status",
+            "get_git_status",
             Some(&project),
             Some(&session),
             Some(&window),
@@ -93,7 +93,7 @@ async fn work_result_jobs_are_exact_authorized_bounded_server_snapshots() {
     runtime
         .add_passive_job_attention(
             &mut attention,
-            "git_status",
+            "get_git_status",
             Some(&project),
             Some(&session),
             Some(&window),

@@ -39,7 +39,7 @@ async function ready(value = plan) {
   const view = app("mcp_goal_plan_app.html");
   await view.initialize();
   view.toolInput({ goal_id });
-  await view.reply(view.calls("goal_plan_sync")[0], toolResult({ goal_plan: value }));
+  await view.reply(view.calls("sync_goal_plan")[0], toolResult({ goal_plan: value }));
   return view;
 }
 
@@ -47,8 +47,8 @@ test("Goal Plan uses one exact effectful sync primitive and never performs a con
   const view = await ready();
   assert.equal(view.nodes.progress.textContent, "Step 3 / 5");
   assert.equal(view.nodes.steps.textContent, "✓ inspect\n✓ implement\n→ validate\n   review\n   closeout");
-  assert.equal(view.calls("goal_plan_sync").length, 1);
-  assert.deepEqual({ ...view.calls("goal_plan_sync")[0].params.arguments }, { goal_id });
+  assert.equal(view.calls("sync_goal_plan").length, 1);
+  assert.deepEqual({ ...view.calls("sync_goal_plan")[0].params.arguments }, { goal_id });
   assert.equal(view.calls("goal_plan_recheck_attention").length, 0);
   assert(!view.sent.some(message => message.method === "ui/message"));
 });
@@ -57,11 +57,11 @@ test("visible normal polling is serial and uses the 12s cadence", async () => {
   const view = await ready();
   assert.equal(view.timers.size, 1);
   await view.fireTimers(5000);
-  assert.equal(view.calls("goal_plan_sync").length, 1);
+  assert.equal(view.calls("sync_goal_plan").length, 1);
   await view.fireTimers(12000);
-  assert.equal(view.calls("goal_plan_sync").length, 2);
+  assert.equal(view.calls("sync_goal_plan").length, 2);
   assert.equal(view.timers.size, 1);
-  await view.reply(view.calls("goal_plan_sync")[1], toolResult({ goal_plan: plan }));
+  await view.reply(view.calls("sync_goal_plan")[1], toolResult({ goal_plan: plan }));
   assert.equal(view.timers.size, 1);
 });
 
@@ -72,7 +72,7 @@ test("near-attention and active Wake transitions temporarily use the 5s cadence"
   };
   const view = await ready(near);
   await view.fireTimers(5000);
-  assert.equal(view.calls("goal_plan_sync").length, 2);
+  assert.equal(view.calls("sync_goal_plan").length, 2);
   const waking = {
     ...near,
     continuity: {
@@ -83,9 +83,9 @@ test("near-attention and active Wake transitions temporarily use the 5s cadence"
       wake_created_at_unix_ms: 301100,
     },
   };
-  await view.reply(view.calls("goal_plan_sync")[1], toolResult({ goal_plan: waking }));
+  await view.reply(view.calls("sync_goal_plan")[1], toolResult({ goal_plan: waking }));
   await view.fireTimers(5000);
-  assert.equal(view.calls("goal_plan_sync").length, 3);
+  assert.equal(view.calls("sync_goal_plan").length, 3);
   assert.equal(view.calls("goal_plan_recheck_attention").length, 0);
 });
 
@@ -93,18 +93,18 @@ test("hidden cards use 60s polling, stay inside the 75s observation lease, and r
   const view = await ready();
   await view.visibility(true);
   await view.fireTimers(12000);
-  assert.equal(view.calls("goal_plan_sync").length, 1);
+  assert.equal(view.calls("sync_goal_plan").length, 1);
   await view.fireTimers(60000);
-  assert.equal(view.calls("goal_plan_sync").length, 2);
-  await view.reply(view.calls("goal_plan_sync")[1], toolResult({ goal_plan: plan }));
+  assert.equal(view.calls("sync_goal_plan").length, 2);
+  await view.reply(view.calls("sync_goal_plan")[1], toolResult({ goal_plan: plan }));
   await view.visibility(false);
-  assert.equal(view.calls("goal_plan_sync").length, 3);
+  assert.equal(view.calls("sync_goal_plan").length, 3);
 });
 
 test("terminal Goal stops polling and late visibility changes cannot restart it", async () => {
   const view = await ready();
   await view.fireTimers(12000);
-  const request = view.calls("goal_plan_sync")[1];
+  const request = view.calls("sync_goal_plan")[1];
   const terminal = {
     ...plan, lifecycle: "completed", revision: 4, terminal_at_unix_ms: 302000,
     completed_step_count: 5, current_step_id: null,
@@ -124,7 +124,7 @@ test("terminal Goal stops polling and late visibility changes cannot restart it"
   assert.equal(view.timers.size, 0);
   await view.visibility(true);
   await view.visibility(false);
-  assert.equal(view.calls("goal_plan_sync").length, 2);
+  assert.equal(view.calls("sync_goal_plan").length, 2);
   assert.equal(view.nodes.lifecycle.textContent, "Completed");
 });
 
@@ -132,7 +132,7 @@ for (const method of ["ui/resource-teardown", "pagehide", "beforeunload"]) {
   test("Goal Plan " + method + " tears down the serial scheduler and ignores late sync results", async () => {
     const view = await ready();
     await view.fireTimers(12000);
-    const request = view.calls("goal_plan_sync")[1];
+    const request = view.calls("sync_goal_plan")[1];
     await view.teardown(method);
     await view.reply(request, toolResult({ goal_plan: { ...plan, title: "late" } }));
     assert.equal(view.timers.size, 0);

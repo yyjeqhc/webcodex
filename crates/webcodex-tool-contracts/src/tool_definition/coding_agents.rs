@@ -15,7 +15,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         model_spec(
             require_all_scopes(
                 def(
-                    "coding_agent_start",
+                    "start_coding_agent",
                     super::ToolAuditPolicy::typed_fields(&[
                         super::ToolAuditResultField::value("run_id"),
                         super::ToolAuditResultField::value("project"),
@@ -54,7 +54,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     ),
     model_spec(
         def(
-            "coding_agent_observe",
+            "observe_coding_agent",
             super::ToolAuditPolicy::typed_semantic(
                 super::ToolAuditSemanticResultPolicy::CodingAgentObservation,
             ),
@@ -80,7 +80,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     permission_risk(
         model_spec(
             def(
-            "coding_agent_cancel",
+            "cancel_coding_agent",
             super::ToolAuditPolicy::typed_fields(&[
                 super::ToolAuditResultField::value("run_id"),
                 super::ToolAuditResultField::value("project"),

@@ -967,12 +967,12 @@ async fn uncertain_project_removal_is_not_dispatched_again() {
 async fn uncertain_project_addition_is_not_dispatched_again() {
     let (url, requests, server) = fixture(6, |request| match request.path.as_str() {
         "/api/runtime-console/projects" => (200, vec![], json!({"projects":[]})),
-        "/api/tools/call" if request.body["tool"] == "runner_config_check" => (
+        "/api/tools/call" if request.body["tool"] == "check_runner_config" => (
             200,
             vec![],
             json!({"success":true,"output":{"valid":true,"restart_required":false,"current_generation":7}}),
         ),
-        "/api/tools/call" if request.body["tool"] == "runner_config_reload" => {
+        "/api/tools/call" if request.body["tool"] == "reload_runner_config" => {
             (200, vec![], json!({"success":true,"output":{}}))
         }
         "/api/projects/resolve-or-register" => (503, vec![], json!({"error":"uncertain"})),

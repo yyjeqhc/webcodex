@@ -64,11 +64,11 @@ fn list_tools_schema_exposes_bounded_discovery_fields() {
 #[test]
 fn tool_manifest_schema_exposes_compact_discovery_fields() {
     let specs = registered_tool_specs();
-    let spec = spec_named(&specs, "tool_manifest");
+    let spec = spec_named(&specs, "read_tool_manifest");
     let props = spec.input_schema["properties"].as_object().unwrap();
     assert_schema_fields!(
         props,
-        "tool_manifest input schema",
+        "read_tool_manifest input schema",
         present: ["category", "intent", "include_recommended_flows", "include_risk_summary"]
     );
     let flow_description = props["include_recommended_flows"]["description"]
@@ -93,7 +93,7 @@ fn tool_manifest_schema_exposes_compact_discovery_fields() {
         .unwrap();
     assert_schema_fields!(
         output,
-        "tool_manifest output schema",
+        "read_tool_manifest output schema",
         present: [
             "schema_version", "count", "tool_count", "filtered_count", "category", "intent",
             "available_intents", "filtered", "categories_requested", "limit", "returned_count",
@@ -344,9 +344,9 @@ fn edit_recommended_flow_converges_on_one_primary_editor() {
         "review_changes",
         "finish_coding_task",
         "exact-name specialists",
-        "show_changes",
-        "git_review_summary",
-        "git_diff_hunks",
+        "read_workspace_changes",
+        "read_git_review_summary",
+        "read_git_diff_hunks",
     ] {
         assert!(
             guidance.contains(phrase),
@@ -379,7 +379,7 @@ fn execution_lifetime_flow_routes_runner_owned_and_supervisor_owned_work() {
             "run_shell",
             "run_job",
             "run_detached_process",
-            "session_shell_exec",
+            "execute_session_shell",
             "observe_jobs",
             "stop_job",
         ]
@@ -389,7 +389,7 @@ fn execution_lifetime_flow_routes_runner_owned_and_supervisor_owned_work() {
         "runner-owned sync-first",
         "run_script",
         "supervisor-owned immediate async",
-        "session_shell_exec",
+        "execute_session_shell",
         "duration alone is not a reason to detach",
     ] {
         assert!(
@@ -441,18 +441,18 @@ fn tool_categories_and_recommended_flows_are_well_formed() {
         ("run_shell", TOOL_CATEGORY_EXECUTION),
         ("run_detached_process", TOOL_CATEGORY_EXECUTION),
         ("run_job", TOOL_CATEGORY_EXECUTION),
-        ("session_shell_exec", TOOL_CATEGORY_EXECUTION),
+        ("execute_session_shell", TOOL_CATEGORY_EXECUTION),
         ("observe_jobs", TOOL_CATEGORY_JOB),
         ("stop_job", TOOL_CATEGORY_JOB),
         ("cargo_test", TOOL_CATEGORY_VALIDATION),
         ("read_files", TOOL_CATEGORY_FILE),
         ("review_changes", TOOL_CATEGORY_GIT),
-        ("show_changes", TOOL_CATEGORY_GIT),
+        ("read_workspace_changes", TOOL_CATEGORY_GIT),
         (
             "import_conversation_files_to_project",
             TOOL_CATEGORY_ARTIFACT,
         ),
-        ("skill_load", TOOL_CATEGORY_SKILL),
+        ("load_skill", TOOL_CATEGORY_SKILL),
         ("run_skill_resource", TOOL_CATEGORY_SKILL),
         ("plugin_tool", TOOL_CATEGORY_PLUGIN),
     ] {
@@ -485,16 +485,16 @@ fn tool_categories_and_recommended_flows_are_well_formed() {
     let joined_flows = flows.join("\n").to_lowercase();
     for phrase in [
         "if the user gives an exact runner client_id",
-        "runtime_status/list_projects for that runner",
-        "persistent shell: primarily reuse one shell for repeated commands on an active named ssh resource",
+        "get_runtime_status/list_projects for that runner",
+        "persistent shell: primarily reuse one shell",
         "keep remote shell state",
-        "ssh_resource list/register -> restart -> list -> bind -> open/reuse",
-        "local persistent shell is only for true same-process state",
+        "manage_ssh_resource list/register -> restart -> list -> bind -> open/reuse",
+        "local shell is only for same-process state",
         "one-shot ssh uses run_process",
         "execution selection: run_process/run_script/run_shell and structured validation are runner-owned sync-first",
         "run_job is runner-owned immediate async",
         "run_detached_process is supervisor-owned immediate async",
-        "session_shell_exec continues an existing session shell",
+        "execute_session_shell continues an existing session shell",
         "inspect: choose the simplest sufficient primitive",
         "native commands are first-class for small bounded observations",
         "search_project_texts/read_files when batching",
@@ -504,15 +504,15 @@ fn tool_categories_and_recommended_flows_are_well_formed() {
         "validate: use structured validators when their canonical diagnostics",
         "native execution is first-class when the command is outside or awkward",
         "file transfer: host -> import_conversation_files_to_project -> project",
-        "project -> project_artifact -> host/model",
+        "project -> inspect_project_artifact -> host/model",
         "project a -> transfer_project_artifact -> project b",
         "inspect for one bounded segment",
         "export for complete resourcelink delivery",
-        "copy show_changes.head.commit",
+        "copy read_workspace_changes.head.commit",
         "review: use review_changes as the primary ordinary workspace or committed review surface",
         "same-snapshot token",
         "old review tools remain specialists",        "handoff/recovery only",
-        "session_handoff_summary only for missing task context",
+        "read_session_handoff_summary only for missing task context",
         "never routine progress polling",
     ] {
         assert!(
@@ -606,13 +606,13 @@ fn discovery_and_persistent_shell_flows_route_high_value_adaptive_tools() {
         .iter()
         .find(|flow| flow.name == "discovery")
         .expect("discovery recommended flow");
-    for tool in ["runtime_status", "list_runners", "list_projects"] {
+    for tool in ["get_runtime_status", "list_runners", "list_projects"] {
         assert!(discovery.tools.contains(&tool), "discovery: {tool}");
     }
     assert!(discovery.summary.contains("exact Runner client_id"));
     assert!(discovery.summary.contains("before treating it as absent"));
     for phrase in [
-        "runtime_status(client_id=...)",
+        "get_runtime_status(client_id=...)",
         "list_projects(client_id=...)",
         "list_runners",
     ] {
@@ -628,37 +628,47 @@ fn discovery_and_persistent_shell_flows_route_high_value_adaptive_tools() {
         .iter()
         .find(|flow| flow.name == "persistent_shell")
         .expect("persistent shell recommended flow");
-    assert_eq!(persistent.tools.first().copied(), Some("ssh_resource"));
+    assert_eq!(
+        persistent.tools.first().copied(),
+        Some("manage_ssh_resource")
+    );
     assert_eq!(
         persistent.tools.get(1).copied(),
         Some("update_session_context")
     );
     assert_eq!(persistent.tools.get(2).copied(), Some("open_session_shell"));
-    assert_eq!(persistent.tools.get(3).copied(), Some("session_shell_exec"));
-    assert!(persistent.tools.contains(&"session_shell_status"));
+    assert_eq!(
+        persistent.tools.get(3).copied(),
+        Some("execute_session_shell")
+    );
+    assert!(persistent.tools.contains(&"get_session_shell_status"));
     assert!(persistent.tools.contains(&"close_session_shell"));
     assert!(persistent.tools.contains(&"run_process"));
     assert!(persistent.summary.contains("primarily reuse one shell"));
     assert!(persistent.summary.contains("active named SSH resource"));
     assert!(persistent.summary.contains("remote shell state"));
-    assert!(persistent.summary.contains("ssh_resource list/register"));
+    assert!(persistent
+        .summary
+        .contains("manage_ssh_resource list/register"));
     assert!(persistent
         .summary
         .contains("restart -> list -> bind -> open/reuse"));
     assert!(persistent
         .summary
-        .contains("Local persistent shell is only for true same-process state"));
+        .contains("Local shell is only for same-process state"));
     assert!(persistent.summary.contains("one-shot SSH uses run_process"));
     assert!(persistent
         .manifest_purpose
         .contains("SSH target does not run WebCodex Runner"));
-    assert!(persistent.manifest_purpose.contains("ssh_resource list"));
     assert!(persistent
         .manifest_purpose
-        .contains("ssh_resource register"));
+        .contains("manage_ssh_resource list"));
+    assert!(persistent
+        .manifest_purpose
+        .contains("manage_ssh_resource register"));
     for phrase in [
         "ssh-resource-primary",
-        "session_shell_exec repeatedly preserves remote cwd/env/exports/functions/umask",
+        "execute_session_shell repeatedly preserves remote cwd/env/exports/functions/umask",
         "local persistent shell remains supported only when same local-process state is required",
         "several ordinary local commands are not enough",
         "explicit one-shot/no-persistence ssh",
@@ -673,11 +683,11 @@ fn discovery_and_persistent_shell_flows_route_high_value_adaptive_tools() {
         );
     }
     for tool in [
-        "ssh_resource",
+        "manage_ssh_resource",
         "update_session_context",
         "open_session_shell",
-        "session_shell_exec",
-        "session_shell_status",
+        "execute_session_shell",
+        "get_session_shell_status",
         "close_session_shell",
         "run_process",
     ] {
@@ -812,13 +822,13 @@ fn project_overview_manifest_profiles_match_intended_workflows() {
             .iter()
             .find(|profile| profile.name == intent)
             .unwrap_or_else(|| panic!("missing {intent} intent"));
-        assert!(profile.tools.contains(&"project_overview"), "{intent}");
+        assert!(profile.tools.contains(&"read_project_overview"), "{intent}");
     }
     let release = TOOL_MANIFEST_INTENTS
         .iter()
         .find(|profile| profile.name == "release")
         .expect("release intent");
-    assert!(!release.tools.contains(&"project_overview"));
+    assert!(!release.tools.contains(&"read_project_overview"));
 }
 
 #[test]
@@ -846,12 +856,12 @@ fn coding_intent_has_independent_ordered_canonical_selection_surface() {
         "cargo_check",
         "cargo_test",
         "review_changes",
-        "workspace_hygiene_check",
+        "check_workspace_hygiene",
         "finish_coding_task",
         "run_script",
         "cargo_fmt",
         "go_test",
-        "goto_definition",
+        "find_definition",
         "find_references",
     ] {
         assert!(coding.tools.contains(&required), "missing {required}");
@@ -867,9 +877,9 @@ fn coding_intent_has_independent_ordered_canonical_selection_surface() {
         "apply_patch",
         "apply_unified_diff",
         "write_project_file",
-        "coding_agent_start",
-        "coding_agent_observe",
-        "coding_agent_cancel",
+        "start_coding_agent",
+        "observe_coding_agent",
+        "cancel_coding_agent",
         "get_session_assignment",
         "complete_session_message",
     ] {
@@ -923,7 +933,7 @@ fn canonical_categories_are_complete_unique_sorted_and_selection_scoped() {
     );
     // The helper neither discovers nor admits extensions. An adapter may supply
     // an independently admitted extension without also exposing its siblings.
-    let extension = group_tool_names_by_category(["memory_read"]);
+    let extension = group_tool_names_by_category(["read_memory"]);
     assert_eq!(extension.len(), 1);
-    assert_eq!(extension[TOOL_CATEGORY_MEMORY], ["memory_read"]);
+    assert_eq!(extension[TOOL_CATEGORY_MEMORY], ["read_memory"]);
 }

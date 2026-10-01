@@ -23,7 +23,7 @@ pub(crate) struct ListRunnersOptions {
 }
 
 /// Lightweight runtime metadata injected into `ToolRuntime` so observability
-/// tools (e.g. `runtime_status`) can report bounded auth/OAuth/public-url state
+/// tools (e.g. `get_runtime_status`) can report bounded auth/OAuth/public-url state
 /// without the runtime holding a full `Config` (which would couple it to HTTP/fs details).
 ///
 /// `configured_public_url` is `None` when `WEBCODEX_PUBLIC_URL` is unset; the
@@ -47,7 +47,7 @@ pub struct RuntimeInfo {
     pub oauth2_shared_key_bridge_enabled: bool,
     pub quic: Option<std::sync::Arc<std::sync::Mutex<crate::config::QuicRuntimeStatus>>>,
     /// Effective MCP compact-schema mode captured when this Runtime was built.
-    /// MCP request dispatch and `runtime_status` read this snapshot rather than
+    /// MCP request dispatch and `get_runtime_status` read this snapshot rather than
     /// re-reading process-global environment, so a running Runtime's protocol
     /// surface does not drift when the environment changes after startup.
     pub mcp_compact_schemas: bool,
@@ -1559,7 +1559,7 @@ fn runtime_status_runners_summary(
     Value::Object(value)
 }
 
-/// Build the sanitized policy summary JSON exposed in `runtime_status` and
+/// Build the sanitized policy summary JSON exposed in `get_runtime_status` and
 /// `list_runners`. Only the safe fields are carried: `allow_raw_shell`,
 /// `allow_cwd_anywhere`, `allowed_roots`, `max_timeout_secs`,
 /// `max_output_bytes`. The agent token, shell env values, init_script
@@ -1580,7 +1580,7 @@ fn sanitized_policy_summary(policy: Option<&crate::runner_protocol::RunnerPolicy
 }
 
 /// Build the sanitized shell-profiles summary JSON exposed in
-/// `runtime_status`, `list_runners`, and `list_projects`. Only safe metadata is
+/// `get_runtime_status`, `list_runners`, and `list_projects`. Only safe metadata is
 /// carried: default profile name, configured count, prepared-cache count, and
 /// per-profile name / has_init_script (boolean) / env_keys_count / program /
 /// args_count. NEVER includes init_script bodies, env values, tokens, or the

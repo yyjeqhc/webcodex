@@ -126,9 +126,9 @@ async fn post(
 
 fn context_call(gateway: bool) -> Value {
     let mut params = if gateway {
-        adaptive_runtime_gateway_params("tool_manifest", json!({"tool_name":"cargo_test"}))
+        adaptive_runtime_gateway_params("read_tool_manifest", json!({"tool_name":"cargo_test"}))
     } else {
-        json!({"name":"tool_manifest", "arguments":{"tool_name":"cargo_test"}})
+        json!({"name":"read_tool_manifest", "arguments":{"tool_name":"cargo_test"}})
     };
     params["arguments"]["_wc"] = json!({"context":["webcodex.workflow"]});
     params
@@ -189,7 +189,7 @@ async fn request_policy_isolated_across_concurrent_http_direct_and_gateway_calls
     let compact_status = post(
         &service,
         "tools/call",
-        json!({"name":"runtime_status", "arguments":{"compact":true}}),
+        json!({"name":"get_runtime_status", "arguments":{"compact":true}}),
         Some("direct"),
         Some("9"),
     )
@@ -202,7 +202,7 @@ async fn request_policy_isolated_across_concurrent_http_direct_and_gateway_calls
     let status = post(
         &service,
         "tools/call",
-        json!({"name":"runtime_status", "arguments":{"compact":false}}),
+        json!({"name":"get_runtime_status", "arguments":{"compact":false}}),
         Some("direct"),
         Some("9"),
     )
@@ -407,7 +407,7 @@ async fn client_contract_published_coding_primitives_and_manifest_routes_agree()
         assert!(!tools.iter().any(|tool| tool["name"] == "apply_text_edits"));
         for (name, read_only) in [
             ("read_files", true),
-            ("search_and_read", true),
+            ("search_and_read_project_texts", true),
             ("wait_for_job_readiness", true),
             ("edit_project_files", false),
             ("run_process", false),
@@ -423,7 +423,7 @@ async fn client_contract_published_coding_primitives_and_manifest_routes_agree()
             let manifest = post(
                 &service,
                 "tools/call",
-                json!({"name":"tool_manifest","arguments":{"tool_name":name}}),
+                json!({"name":"read_tool_manifest","arguments":{"tool_name":name}}),
                 None,
                 None,
             )
@@ -471,7 +471,7 @@ async fn request_policy_does_not_change_tools_apps_or_error_semantics() {
             &service,
             "tools/call",
             json!({
-                "name":"tool_manifest", "arguments":{"tool_name":"unknown_private_tool"}
+                "name":"read_tool_manifest", "arguments":{"tool_name":"unknown_private_tool"}
             }),
             Some(profile),
             None,

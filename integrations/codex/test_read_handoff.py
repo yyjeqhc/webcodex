@@ -71,7 +71,7 @@ class ReadHandoffTests(unittest.TestCase):
         self.assertEqual(result["handoff_brief"]["external_observations"]["unknown_count"], 1)
         request = call.args[0]
         self.assertEqual(json.loads(request.data), {
-            "tool": "session_handoff_state",
+            "tool": "get_session_handoff_state",
             "params": {"project": self.config["project"], "session_id": self.config["workflow_session_id"]},
         })
         self.assertEqual(request.get_header("Authorization"), "Bearer fixture")

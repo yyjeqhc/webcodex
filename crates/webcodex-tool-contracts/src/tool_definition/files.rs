@@ -11,7 +11,7 @@ use crate::metadata::{
 pub(super) const SEARCH_DEFINITIONS: &[ToolDefinition] = &[
     model_spec(
         def(
-            "project_overview",
+            "read_project_overview",
             super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_PROJECT,
@@ -108,7 +108,7 @@ pub(super) const SEARCH_DEFINITIONS: &[ToolDefinition] = &[
                 super::ToolHostOrchestrationHint::independent_parallel_read()
                     .with_native_batch_field("queries"),
             ),
-            "Batch-capable project-text search for 1..8 predetermined independent queries with bounded structured results, protected-path policy, and isolated failures. One absolute batch deadline covers queueing/retries; timeout_secs is an item ceiling capped by remaining batch budget and retries do not reset it. For broad discovery prefer files_with_matches/count or a small low-context match set. A complete zero-result query with include_globs may return zero_match_hint=include_globs_excluded_matches after one bounded path-private diagnostic; broaden only the include filter deliberately. When matched source will be read immediately, prefer search_and_read; for one small known-scope search, native rg is first-class. Queries default to regex; prefer pattern_mode=literal for exact text. Batch only independent queries and keep result-dependent follow-ups sequential. Use the returned suggested_call for whole-query continuation; truncated individual queries must be narrowed.",
+            "Batch-capable project-text search for 1..8 predetermined independent queries with bounded structured results, protected-path policy, and isolated failures. One absolute batch deadline covers queueing/retries; timeout_secs is an item ceiling capped by remaining batch budget and retries do not reset it. For broad discovery prefer files_with_matches/count or a small low-context match set. A complete zero-result query with include_globs may return zero_match_hint=include_globs_excluded_matches after one bounded path-private diagnostic; broaden only the include filter deliberately. When matched source will be read immediately, prefer search_and_read_project_texts; for one small known-scope search, native rg is first-class. Queries default to regex; prefer pattern_mode=literal for exact text. Batch only independent queries and keep result-dependent follow-ups sequential. Use the returned suggested_call for whole-query continuation; truncated individual queries must be narrowed.",
         ),
         40,
         super::ToolDirectReason::CoreWorkflow,
@@ -116,7 +116,7 @@ pub(super) const SEARCH_DEFINITIONS: &[ToolDefinition] = &[
     adaptive_runtime_direct(
         model_spec(
             def(
-                "search_and_read",
+                "search_and_read_project_texts",
                 super::ToolAuditPolicy::TYPED_CANONICAL
                     .session_input(super::ToolAuditSessionInputPolicy::SearchAndRead),
                 ModelVisible,

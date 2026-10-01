@@ -91,7 +91,7 @@ pub(crate) fn builtin_coding_workflow_projection_with_policy(
             "goal_workflow": policy.goal_selection_guidance(),
             "goal_continuation": policy.mcp_app_resume.guidance(),
             "goal_checkpoint": policy.goal_checkpoint_guidance(),
-            "handoff_recovery": "Use handoff recovery only after task-context loss/compaction/restart, explicit transfer or user-requested recovery. Never use it for routine progress/baselines; timeout alone is not Session loss. Missing exact session_id: original Window uses _wc.context=[\"workflow.resume\"]; otherwise list_sessions(project). Choose an authorized candidate, read session_handoff_summary, check basis completeness/truncation, then resume Active work with work_on_project(session_id=..., instruction=...). Checkout derives and reauthorizes its bound Project; reuse project_ref. Closed is historical only. Notes are reports; recheck stale facts. Dirty files alone do not prove external changes; recover exact Session evidence first.",
+            "handoff_recovery": "Use handoff recovery only after task-context loss/compaction/restart, explicit transfer or user-requested recovery. Never use it for routine progress/baselines; timeout alone is not Session loss. Missing exact session_id: original Window uses _wc.context=[\"workflow.resume\"]; otherwise list_sessions(project). Choose an authorized candidate, read read_session_handoff_summary, check basis completeness/truncation, then resume Active work with work_on_project(session_id=..., instruction=...). Checkout derives and reauthorizes its bound Project; reuse project_ref. Closed is historical only. Notes are reports; recheck stale facts. Dirty files alone do not prove external changes; recover exact Session evidence first.",
             "session_recording": "When work_on_project creates or resumes, prefer its returned session_ref as _wc.record on the next ordinary model-visible call for recorder provenance only; canonical wc_sess_* remains valid. business session_id may target another Session; _wc.record grants no authority. At recovery-worthy boundaries save agreed decisions and current progress/remaining work with post_session_message(kind=decision/progress) on the explicit business Session; use a stable delivery_key for uncertain same-payload retries. Host conversation/private reasoning is not automatically recorded. Before switching save context; never put credentials in notes. Keep delegated findings as explicit reports, not native validation proof.",
             "session_message_ack": "For any retained collaboration message with requires_ack=true projected in session_attention, peer_messages, or operator_messages, attach _wc.ack=[<wc_msg_*>] on the next ordinary model-visible call. Compact _wc.ack_ref remains Session-only. ACK proves model-context retention only; it never resolves messages, grants authority, or gates execution.",
             "window_reply": "After handling an operator_messages item, reply textually by attaching _wc.reply={reply_to:<wc_msg_*>,message:<text>} to the next ordinary model-visible WebCodex call in the same Window. No _wc.record or business session_id is required. If requires_ack=true, also include the same id in _wc.ack. The reply is a post-result collaboration sidecar: it never authorizes, predicts, or changes the main tool effect.",
@@ -99,8 +99,8 @@ pub(crate) fn builtin_coding_workflow_projection_with_policy(
             "control_sidecars": "_wc.control is optional and only for an established workflow: piggyback a known transition on an already-needed call; otherwise omit it or use its standalone tool. Never create a Goal/Agent just to use a sidecar. Follow the canonical control schema and load webcodex.goal_workflow for Goal transitions. One mutation per phase, independently authorized; no automatic transitions. Post failure preserves main success. session_context_update remains fail-closed pending CAS/replay support.",
             "context_sidecar": "_wc.context is an optional post-result context request; it never authorizes. jobs.attention is Project-level, not Session/control; workflow.resume is Window/principal-scoped recovery evidence only and never selects or resumes a Session. Recover project.instructions by observation call before dependent mutation.",
             "bootstrap_reuse": "For read/follow AGENTS.md, CLAUDE.md, repository instructions/project rules/local coding rules, or instruction-dependent tasks, request _wc.context=[\"project.instructions\"] on the first suitable work_on_project. instructions.status=loaded means source observed, not body included. status=available material with content_included=true and no truncation/incompleteness satisfies reading instructions; do not immediately reread via read_files. Reread unavailable/truncated/incomplete sources, changed fingerprints/revisions, possible post-bootstrap edits, or exact source/range needs. Refresh _wc.context=[\"webcodex.workflow\"] for missing/stale guidance, compaction/context recovery or an announced deployment-policy change. This refreshes guidance data, not Host schemas; reuse retained guidance and do not poll it.",
-            "bootstrap_observations": "Treat successful work_on_project.workspace as the initial branch/HEAD/status observation; avoid immediate git_status/rev-parse/branch for identical facts. Inspect changed paths, staged/unstaged detail, diffs/hunks/commit ranges or refresh after mutation, stale/unknown/unavailable state, and for fresh mutation fences. semantic_navigation supported=true/available=true allows direct navigation without lsp_status; diagnose null/probe_timeout/probe_failed/unavailable or provider issues. Reuse a complete/sufficient startup Skills/Plugins catalog; use skills.catalog, skill_list, plugin_tool list/describe for truncated/unavailable catalogs, missing task capabilities, changed revision/runtime, or explicit broader/refreshed discovery.",
-            "runner_targeting": "For exact Runner client_id, use runtime_status(client_id=...) or list_projects(client_id=...) before treating it as absent.",
+            "bootstrap_observations": "Treat successful work_on_project.workspace as the initial branch/HEAD/status observation; avoid immediate get_git_status/rev-parse/branch for identical facts. Inspect changed paths, staged/unstaged detail, diffs/hunks/commit ranges or refresh after mutation, stale/unknown/unavailable state, and for fresh mutation fences. semantic_navigation supported=true/available=true allows direct navigation without get_lsp_status; diagnose null/probe_timeout/probe_failed/unavailable or provider issues. Reuse a complete/sufficient startup Skills/Plugins catalog; use skills.catalog, list_skills, plugin_tool list/describe for truncated/unavailable catalogs, missing task capabilities, changed revision/runtime, or explicit broader/refreshed discovery.",
+            "runner_targeting": "For exact Runner client_id, use get_runtime_status(client_id=...) or list_projects(client_id=...) before treating it as absent.",
             "persistent_shell": "Local: run_process=literal argv; run_shell=shell grammar/short chains; run_script=program-like scripts; specialize for added semantics. Persistent shell only for repeated named-SSH state or local same-process state.",
             "work_result_presentation": "For substantial Project work in a stable client Window, call present_work_result(project) exactly once immediately after the first successful project-scoped WebCodex action. Do not wait for work_on_project, a Workflow Session, mutation, validation, or closeout. The mounted card refreshes the same Window ActionAudit activity as WebUI, including observe/diagnostic actions; optional linked Session collaboration and final changes may appear later. Never repeat presentation or model-poll it in the same Window. Tiny one-step/read-only lookups may skip it; finish may suggest it only as a fallback if no card was presented.",
             "normal_closeout": "Source/validation/open evidence: finish_coding_task(summary_only=true). Artifact tasks: pass outputs after task-appropriate count/content/format checks; read-only tasks without deliverables omit outputs. No established Goal means no Goal closeout. For goal_follow_up, load webcodex.goal_workflow and preserve unresolved obligations; preference changes never complete a Goal. Read/planning/artifact: finalize directly; close established Goals only after verified completion."
@@ -178,27 +178,28 @@ fn tool_strategy_guidance(profile: CodingGuidanceProfile) -> &'static [&'static 
             "Text source edits: read_files → edit_project_files with its read_revision fence; use exact edits for unique text and replace_range for deterministic whole-line rewrites. Review with review_changes when Git review is useful.",
             "Use artifact import/export or transfer_project_artifact for binary files; do not rename or transform binary payloads through text edits. Use run_script/Python for computation or non-source transforms, then independently verify generated/report outputs.",
             "Never use scripts to bypass edit_project_files revision fences, rollback, or sensitive-path policy.",
-            "Coalesce known work: read_files(items), search_project_texts(queries), search_and_read for search→source inspection, cargo_check(packages), and one edit_project_files batch. Keep result-dependent operations sequential; avoid ritual model turns.",
+            "Coalesce known work: read_files(items), search_project_texts(queries), search_and_read_project_texts for search→source inspection, cargo_check(packages), and one edit_project_files batch. Keep result-dependent operations sequential; avoid ritual model turns.",
             "Simple observation: direct primitive. Batch predetermined independent observations; adaptive follow-ups stay sequential across model calls.",
             "Known target: bounded targeted reads. Broad discovery: small files/count search then targeted reads. Avoid ritual turns.",
         ],
         CodingGuidanceProfile::HostCodeMode => &[
             "Host-native Code Mode is model guidance only. It grants no WebCodex capability/authority, changes no effects/retry/idempotency, and does not require WebCodex nested Code Mode. Host support is not verified by WebCodex; emit compact evidence.",
             "Known same-kind inputs: prefer native batches such as read_files(items), search_project_texts(queries), cargo_check(packages), or one edit_project_files batch; do not Promise.all same-kind micro-calls. Never per-Job waits, Promise.race, or automatic redispatch.",
-            "Independent cross-tool read-only observations: native batches first; then Promise.allSettled for partial evidence or Promise.all for all-or-nothing. Prefer search_and_read for search→read; keep mechanically determined dependent chains in one Host cell. Never use observe_jobs heartbeat polling.",
+            "Independent cross-tool read-only observations: native batches first; then Promise.allSettled for partial evidence or Promise.all for all-or-nothing. Prefer search_and_read_project_texts for search→read; keep mechanically determined dependent chains in one Host cell. Never use observe_jobs heartbeat polling.",
             "Run to quiescence: finish ready independent calls; follow only follow_up_kind=mechanically_followable with generated arguments unchanged after current input-schema validation. Continue ready work in the same cell. Job terminal does not imply mechanically_followable; fallback_recovery never auto-runs.",
             "Return to the model for semantic choice, ambiguous result, new user decision, authority/permission change, outcome_unknown, competing recovery, unresolved mutation intent or effect uncertainty. Child-call completion alone is not a boundary. Cell return is not turn completion.",
             "Exact stale-source reread may be mechanical. reread_required=true or direct_retry_safe=false stops effectful replay; recovery is not mutation retry authority. Keep full ToolResults in the Host cell; preserve exact pending continuations, observation_ref/read_revision, and failure/recovery fields.",
             "execution_state=pending: retain exact Job identity/continuation as fallback. Run currently-ready independent calls. Ready work exhausted: wait_for_job_readiness join barrier on the entire exact blocked set. any when one terminal Job can unlock a useful branch; all only when every blocked dependency is required.",
             "Choose wait_secs as the largest safe value from the remaining Host activation budget, up to the 45s maximum; do not prefer fixed 10/15/20s slices. Deadline: recompute ready work and the blocked set; do not mechanically repeat the same-set wait. Final validation: freeze covered source; edits invalidate evidence.",
-        ],        #[cfg(feature = "experimental-code-mode")]
+        ],
+        #[cfg(feature = "experimental-code-mode")]
         CodingGuidanceProfile::CodeMode => &[
-            "For one simple observation use a direct primitive; do not wrap it in Code Mode. If one bounded search will immediately inspect its matches, prefer direct search_and_read. Native commands and structured tools are first-class; choose the simplest sufficient primitive. Narrow broad discovery before targeted reads.",
-            "Prefer read-only code_mode_exec for multi-step related search/read observations, cross-file/module investigation, or synthesis of independent observations when it reduces outer model round trips. Three or more related observations is a soft heuristic, never a correctness rule.",
+            "For one simple observation use a direct primitive; do not wrap it in Code Mode. If one bounded search will immediately inspect its matches, prefer direct search_and_read_project_texts. Native commands and structured tools are first-class; choose the simplest sufficient primitive. Narrow broad discovery before targeted reads.",
+            "Prefer read-only execute_code_mode for multi-step related search/read observations, cross-file/module investigation, or synthesis of independent observations when it reduces outer model round trips. Three or more related observations is a soft heuristic, never a correctness rule.",
             "Keep adaptive follow-up inside one cell: search, inspect result, dependent read, inspect, further search, compact final projection. Dependent calls remain sequential inside the cell; they need not cross model turns.",
             "Plan each cell as a small dependency DAG: use Promise.all for independent observations and keep true dependencies sequential. Prefer a native batch shape (read_files items, search_project_texts queries) over same-kind calls. Use JavaScript for branching/cross-tool composition, not avoidable micro-calls.",
             "Keep raw child ToolResults inside the cell. Filter, extract, cross-reference and synthesize search results, file bodies and diff chunks before text(...). Emit only compact structured evidence needed for the next model decision; no fixed JSON shape is required.",
-            "Avoid raw-result dumping: do not batch calls then text(results). Project proactively before hitting the bounded outer-output limit. If nested signatures or result fields are not retained, exact tool_manifest on the selected Code Mode entry returns its bounded callable contract.",
+            "Avoid raw-result dumping: do not batch calls then text(results). Project proactively before hitting the bounded outer-output limit. If nested signatures or result fields are not retained, exact read_tool_manifest on the selected Code Mode entry returns its bounded callable contract.",
             "Canonical mutation is the default edit path; structured validation is the default validation path. Consider effectful Code Mode only to reduce outer round trips for multiple related validations; mutating Code Mode only when adaptive read -> one guarded edit benefits.",
             "This profile grants no capability or nested admission. All children retain canonical Project/Session authority, permission, risk, approval, effects, idempotency, validation evidence, Job continuation, retry and effect-certainty semantics.",
         ],
@@ -320,7 +321,7 @@ impl StartupSkillsCatalog {
     pub(crate) fn unavailable(reason_code: &'static str) -> Self {
         Self::unavailable_with_hint(
             reason_code,
-            "Use skills.catalog or skill_list for explicit discovery when available.",
+            "Use skills.catalog or list_skills for explicit discovery when available.",
         )
     }
 
@@ -335,7 +336,7 @@ impl StartupSkillsCatalog {
             discovery_truncated,
             entries,
             STARTUP_SKILL_CATALOG_MAX_BYTES,
-            "Use skills.catalog or skill_list for broader or refreshed discovery.",
+            "Use skills.catalog or list_skills for broader or refreshed discovery.",
         )
     }
 }
@@ -1615,7 +1616,7 @@ fn enforce_hard_size_limit(brief: &mut Value) {
     const EXTENSION_CATALOGS: &[(&str, &str)] = &[
         (
             "/extensions/skills",
-            "Use skills.catalog or skill_list for broader or refreshed discovery.",
+            "Use skills.catalog or list_skills for broader or refreshed discovery.",
         ),
         (
             "/extensions/plugins",
@@ -2076,7 +2077,7 @@ mod tests {
                     "read_count": 80,
                     "search_count": 40,
                     "navigation_count": 20,
-                    "latest_tool": "goto_definition",
+                    "latest_tool": "find_definition",
                     "complete": true,
                 },
                 "validation": {

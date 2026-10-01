@@ -10,7 +10,7 @@ fn code_mode_exec_parses_outer_authority_and_omits_source_from_audit() {
     const PRIVATE_SOURCE: &str = "const secret = 'NEVER_PERSIST_CODE_MODE_SOURCE'; text(secret);";
     let session_id = format!("wc_sess_{}", "1".repeat(32));
     let call = ToolCall::from_tool_name(
-        "code_mode_exec",
+        "execute_code_mode",
         json!({
             "project": "agent:special:demo",
             "session_id": session_id,
@@ -19,7 +19,7 @@ fn code_mode_exec_parses_outer_authority_and_omits_source_from_audit() {
         }),
     )
     .unwrap();
-    assert_eq!(call.tool_name(), "code_mode_exec");
+    assert_eq!(call.tool_name(), "execute_code_mode");
     assert_eq!(call.project(), Some("agent:special:demo"));
     assert_eq!(call.session_id(), Some(session_id.as_str()));
     let audit = call.session_log_arguments();
@@ -29,7 +29,7 @@ fn code_mode_exec_parses_outer_authority_and_omits_source_from_audit() {
     assert!(!audit.to_string().contains("NEVER_PERSIST_CODE_MODE_SOURCE"));
 
     let result_audit = crate::tool_audit::session_log_result_for_tool(
-        "code_mode_exec",
+        "execute_code_mode",
         &json!({
             "content": ["NEVER_PERSIST_CODE_MODE_CONTENT"],
             "message": "NEVER_PERSIST_CODE_MODE_ERROR_DETAIL",
@@ -61,7 +61,7 @@ fn code_mode_exec_effectful_parses_outer_authority_and_omits_source_from_audit()
         "const secret = 'NEVER_PERSIST_EFFECTFUL_CODE_MODE_SOURCE'; text(secret);";
     let session_id = format!("wc_sess_{}", "2".repeat(32));
     let call = ToolCall::from_tool_name(
-        "code_mode_exec_effectful",
+        "execute_effectful_code_mode",
         json!({
             "project": "agent:special:demo",
             "session_id": session_id,
@@ -70,7 +70,7 @@ fn code_mode_exec_effectful_parses_outer_authority_and_omits_source_from_audit()
         }),
     )
     .unwrap();
-    assert_eq!(call.tool_name(), "code_mode_exec_effectful");
+    assert_eq!(call.tool_name(), "execute_effectful_code_mode");
     assert_eq!(call.project(), Some("agent:special:demo"));
     assert_eq!(call.session_id(), Some(session_id.as_str()));
     let audit = call.session_log_arguments();
@@ -82,7 +82,7 @@ fn code_mode_exec_effectful_parses_outer_authority_and_omits_source_from_audit()
         .contains("NEVER_PERSIST_EFFECTFUL_CODE_MODE_SOURCE"));
 
     let result_audit = crate::tool_audit::session_log_result_for_tool(
-        "code_mode_exec_effectful",
+        "execute_effectful_code_mode",
         &json!({
             "failure_kind": "timeout",
             "message": "PRIVATE_EFFECTFUL_FRONTEND_DETAIL",
@@ -208,17 +208,17 @@ fn agent_continuation_bind_parses_required_view_fence_and_omits_it_from_audit() 
         "expected_controller_generation": 1,
         "binding_id": binding_id,
     });
-    let call = ToolCall::from_tool_name("agent_continuation_bind", args.clone()).unwrap();
+    let call = ToolCall::from_tool_name("bind_agent_continuation", args.clone()).unwrap();
     assert!(
         matches!(&call, ToolCall::AgentContinuationBind { binding_id: parsed, .. } if parsed == &binding_id)
     );
     let audit =
-        crate::tool_audit::session_log_arguments_for_tool_request("agent_continuation_bind", &args)
+        crate::tool_audit::session_log_arguments_for_tool_request("bind_agent_continuation", &args)
             .to_string();
     assert!(!audit.contains("binding_id"));
     assert!(!audit.contains(&binding_id));
     args.as_object_mut().unwrap().remove("binding_id");
-    assert!(ToolCall::from_tool_name("agent_continuation_bind", args).is_err());
+    assert!(ToolCall::from_tool_name("bind_agent_continuation", args).is_err());
 }
 
 #[test]
@@ -259,7 +259,7 @@ fn agent_wait_calls_parse_closed_selectors_and_keep_audit_payload_free() {
     .unwrap();
     assert!(matches!(read, ToolCall::ReadAgentWait { .. }));
     let state = ToolCall::from_tool_name(
-        "agent_wait_state",
+        "get_agent_wait_state",
         json!({"wait_id": "wc_agent_wait_ZmZmZmZmZmZmZmZm".to_string()}),
     )
     .unwrap();
@@ -332,7 +332,7 @@ fn work_on_project_parses_path_source_and_rejects_ambiguous_sources() {
 #[test]
 fn project_overview_tool_call_parses() {
     let call = ToolCall::from_tool_name(
-        "project_overview",
+        "read_project_overview",
         json!({
             "project": "agent:client:demo",
             "path": "crates/example",
@@ -359,7 +359,7 @@ fn project_overview_tool_call_parses() {
     }
 
     let audit_call = ToolCall::from_tool_name(
-        "project_overview",
+        "read_project_overview",
         json!({
             "project": "agent:client:demo",
             "path": "src",

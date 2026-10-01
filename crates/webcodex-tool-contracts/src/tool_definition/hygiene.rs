@@ -9,7 +9,7 @@ use crate::metadata::{
 
 pub(super) const DEFINITIONS: &[ToolDefinition] = &[model_spec(
         def(
-            "workspace_hygiene_check",
+            "check_workspace_hygiene",
             super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_CLEANUP,
@@ -57,7 +57,7 @@ pub(super) const CLEANUP_DEFINITIONS: &[ToolDefinition] = &[
     ),
     git_like(model_spec(
         def(
-            "git_restore_paths",
+            "restore_git_paths",
             super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_CLEANUP,

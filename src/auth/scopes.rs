@@ -561,7 +561,7 @@ mod tests {
                 OAuthToolScopePolicy::Require(SCOPE_RUNTIME_READ),
             ),
             (
-                "session_summary",
+                "read_session_summary",
                 OAuthToolScopePolicy::Require(SCOPE_RUNTIME_READ),
             ),
             (
@@ -597,11 +597,11 @@ mod tests {
                 OAuthToolScopePolicy::Require(SCOPE_SESSION_COLLABORATE),
             ),
             (
-                "session_discussion_summary",
+                "read_session_discussion_summary",
                 OAuthToolScopePolicy::Require(SCOPE_RUNTIME_READ),
             ),
             (
-                "runtime_status",
+                "get_runtime_status",
                 OAuthToolScopePolicy::Require(SCOPE_RUNTIME_READ),
             ),
             (
@@ -609,74 +609,80 @@ mod tests {
                 OAuthToolScopePolicy::Require(SCOPE_PROJECT_READ),
             ),
             (
-                "show_changes",
+                "read_workspace_changes",
                 OAuthToolScopePolicy::Require(SCOPE_PROJECT_READ),
             ),
             (
-                "document_diagnostics",
+                "read_document_diagnostics",
                 OAuthToolScopePolicy::Require(SCOPE_PROJECT_READ),
             ),
-            ("hover", OAuthToolScopePolicy::Require(SCOPE_PROJECT_READ)),
             (
-                "workspace_symbols",
+                "read_symbol_hover",
+                OAuthToolScopePolicy::Require(SCOPE_PROJECT_READ),
+            ),
+            (
+                "list_workspace_symbols",
                 OAuthToolScopePolicy::Require(SCOPE_PROJECT_READ),
             ),
             #[cfg(feature = "workspace-checkpoints")]
             (
-                "workspace_checkpoint_create",
+                "create_workspace_checkpoint",
                 OAuthToolScopePolicy::Require(SCOPE_PROJECT_READ),
             ),
             #[cfg(feature = "workspace-checkpoints")]
             (
-                "workspace_checkpoint_restore",
+                "restore_workspace_checkpoint",
                 OAuthToolScopePolicy::Require(SCOPE_PROJECT_WRITE),
             ),
-            ("git_log", OAuthToolScopePolicy::Require(SCOPE_PROJECT_READ)),
+            (
+                "read_git_log",
+                OAuthToolScopePolicy::Require(SCOPE_PROJECT_READ),
+            ),
             (
                 "write_project_file",
                 OAuthToolScopePolicy::Require(SCOPE_PROJECT_WRITE),
             ),
             (
-                "artifact_upload_begin",
+                "begin_artifact_upload",
                 OAuthToolScopePolicy::Require(SCOPE_PROJECT_WRITE),
             ),
             (
-                "artifact_upload_chunk",
+                "upload_artifact_chunk",
                 OAuthToolScopePolicy::Require(SCOPE_PROJECT_WRITE),
             ),
             (
-                "artifact_upload_finish",
+                "finish_artifact_upload",
                 OAuthToolScopePolicy::Require(SCOPE_PROJECT_WRITE),
             ),
             (
-                "artifact_upload_abort",
+                "abort_artifact_upload",
                 OAuthToolScopePolicy::Require(SCOPE_PROJECT_WRITE),
             ),
             (
-                "browser_observe",
+                "observe_browser",
                 OAuthToolScopePolicy::Require(SCOPE_BROWSER_READ),
             ),
             (
-                "browser_act",
+                "control_browser",
                 OAuthToolScopePolicy::RequireAny(&[SCOPE_BROWSER_CONTROL, SCOPE_BROWSER_LAUNCH]),
             ),
             (
-                "computer_observe",
+                "observe_computer",
                 OAuthToolScopePolicy::Require(SCOPE_COMPUTER_READ),
             ),
             (
-                "computer_control",
+                "control_computer",
                 OAuthToolScopePolicy::RequireAny(&[SCOPE_COMPUTER_CONTROL, SCOPE_COMPUTER_LAUNCH]),
             ),
             (
-                "computer_save_snapshot",
+                "save_computer_snapshot",
                 OAuthToolScopePolicy::RequireAll(&[SCOPE_PROJECT_WRITE, SCOPE_COMPUTER_READ]),
             ),
             ("run_shell", OAuthToolScopePolicy::Require(SCOPE_JOB_RUN)),
             ("stop_job", OAuthToolScopePolicy::Require(SCOPE_JOB_RUN)),
             ("cargo_test", OAuthToolScopePolicy::Require(SCOPE_JOB_RUN)),
             (
-                "coding_agent_start",
+                "start_coding_agent",
                 OAuthToolScopePolicy::RequireAll(&[SCOPE_CODING_AGENT_RUN, SCOPE_PROJECT_WRITE]),
             ),
             (
@@ -704,11 +710,11 @@ mod tests {
                 ]),
             ),
             (
-                "coding_agent_observe",
+                "observe_coding_agent",
                 OAuthToolScopePolicy::Require(SCOPE_CODING_AGENT_RUN),
             ),
             (
-                "coding_agent_cancel",
+                "cancel_coding_agent",
                 OAuthToolScopePolicy::Require(SCOPE_CODING_AGENT_RUN),
             ),
         ] {
@@ -721,7 +727,7 @@ mod tests {
         for tool in [
             "list_tools",
             "start_session",
-            "session_summary",
+            "read_session_summary",
             "update_session_context",
             "close_session",
             "post_session_message",
@@ -729,25 +735,25 @@ mod tests {
             "observe_session_messages",
             "resolve_session_message",
             "complete_session_message",
-            "session_discussion_summary",
+            "read_session_discussion_summary",
             #[cfg(feature = "workspace-checkpoints")]
-            "workspace_checkpoint_create",
+            "create_workspace_checkpoint",
             #[cfg(feature = "workspace-checkpoints")]
-            "workspace_checkpoint_restore",
-            "show_changes",
-            "document_diagnostics",
-            "hover",
-            "workspace_symbols",
+            "restore_workspace_checkpoint",
+            "read_workspace_changes",
+            "read_document_diagnostics",
+            "read_symbol_hover",
+            "list_workspace_symbols",
             "read_files",
             "write_project_file",
-            "artifact_upload_begin",
-            "artifact_upload_chunk",
-            "artifact_upload_finish",
-            "artifact_upload_abort",
+            "begin_artifact_upload",
+            "upload_artifact_chunk",
+            "finish_artifact_upload",
+            "abort_artifact_upload",
             "apply_unified_diff",
-            "computer_observe",
-            "computer_control",
-            "computer_save_snapshot",
+            "observe_computer",
+            "control_computer",
+            "save_computer_snapshot",
             "run_shell",
             "cargo_test",
         ] {
@@ -838,19 +844,19 @@ mod tests {
     #[test]
     fn memory_scope_policy_and_lightweight_credential_classes_are_explicit() {
         assert_eq!(
-            oauth_scope_policy_for_runtime_tool("memory_search"),
+            oauth_scope_policy_for_runtime_tool("search_memory"),
             OAuthToolScopePolicy::RequireAll(MEMORY_READ_SCOPES)
         );
         assert_eq!(
-            oauth_scope_policy_for_runtime_tool("memory_read"),
+            oauth_scope_policy_for_runtime_tool("read_memory"),
             OAuthToolScopePolicy::RequireAll(MEMORY_READ_SCOPES)
         );
         assert_eq!(
-            oauth_scope_policy_for_runtime_tool("memory_set"),
+            oauth_scope_policy_for_runtime_tool("set_memory"),
             OAuthToolScopePolicy::RequireAll(MEMORY_MANAGE_SCOPES)
         );
         assert_eq!(
-            oauth_scope_policy_for_runtime_tool("memory_delete"),
+            oauth_scope_policy_for_runtime_tool("delete_memory"),
             OAuthToolScopePolicy::RequireAll(MEMORY_MANAGE_SCOPES)
         );
         assert!(KNOWN_SCOPES.contains(&SCOPE_MEMORY_READ));

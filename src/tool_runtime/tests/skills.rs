@@ -164,7 +164,7 @@ async fn skill_load_is_exact_case_insensitive_and_fails_closed_on_ambiguity() {
     let (loaded, _) = call_kernel_with_local_agent(
         &runtime,
         "skill-load-project",
-        "skill_load",
+        "load_skill",
         json!({"project": project, "name": "TIME-TRACKING"}),
         true,
     )
@@ -195,7 +195,7 @@ async fn skill_load_is_exact_case_insensitive_and_fails_closed_on_ambiguity() {
     let (unicode_loaded, _) = call_kernel_with_local_agent(
         &runtime,
         "skill-load-project",
-        "skill_load",
+        "load_skill",
         json!({"project": project, "name": "MASSE"}),
         true,
     )
@@ -206,7 +206,7 @@ async fn skill_load_is_exact_case_insensitive_and_fails_closed_on_ambiguity() {
     let (substring, _) = call_kernel_with_local_agent(
         &runtime,
         "skill-load-project",
-        "skill_load",
+        "load_skill",
         json!({"project": project, "name": "time"}),
         true,
     )
@@ -224,7 +224,7 @@ async fn skill_load_is_exact_case_insensitive_and_fails_closed_on_ambiguity() {
     let (ambiguous, _) = call_kernel_with_local_agent(
         &runtime,
         "skill-load-project",
-        "skill_load",
+        "load_skill",
         json!({"project": project, "name": "time-tracking"}),
         true,
     )
@@ -239,7 +239,7 @@ async fn skill_load_is_exact_case_insensitive_and_fails_closed_on_ambiguity() {
     let (listed, _) = call_kernel_with_local_agent(
         &runtime,
         "skill-load-project",
-        "skill_list",
+        "list_skills",
         json!({"project": project, "query": "time-tracking", "limit": 10}),
         true,
     )
@@ -707,7 +707,7 @@ async fn project_and_operator_skill_catalog_union_is_fresh_conflict_safe_and_pac
     let (listed_a, _) = call_kernel_with_fake_operator_store(
         &runtime,
         client_id,
-        "skill_list",
+        "list_skills",
         json!({"project": project_a, "limit": 10}),
         operator.clone(),
     )
@@ -730,7 +730,7 @@ async fn project_and_operator_skill_catalog_union_is_fresh_conflict_safe_and_pac
     let (listed_b, _) = call_kernel_with_fake_operator_store(
         &runtime,
         client_id,
-        "skill_list",
+        "list_skills",
         json!({"project": project_b, "limit": 10}),
         operator.clone(),
     )
@@ -749,7 +749,7 @@ async fn project_and_operator_skill_catalog_union_is_fresh_conflict_safe_and_pac
     let (after_activation, _) = call_kernel_with_fake_operator_store(
         &runtime,
         client_id,
-        "skill_list",
+        "list_skills",
         json!({"project": project_a, "limit": 10}),
         operator.clone(),
     )
@@ -763,7 +763,7 @@ async fn project_and_operator_skill_catalog_union_is_fresh_conflict_safe_and_pac
     let (stale_read, _) = call_kernel_with_fake_operator_store(
         &runtime,
         client_id,
-        "skill_read_file",
+        "read_skill_file",
         json!({
             "project": project_a,
             "skill_id": operator_skill_id,
@@ -781,7 +781,7 @@ async fn project_and_operator_skill_catalog_union_is_fresh_conflict_safe_and_pac
     let (pinned_read, _) = call_kernel_with_fake_operator_store(
         &runtime,
         client_id,
-        "skill_read_file",
+        "read_skill_file",
         json!({
             "project": project_a,
             "skill_id": operator_skill_id,
@@ -858,7 +858,7 @@ async fn project_configured_and_managed_skills_share_one_conflict_safe_catalog()
     let (listed, _) = call_kernel_with_fake_operator_store(
         &runtime,
         client_id,
-        "skill_list",
+        "list_skills",
         json!({"project": project, "limit": 10}),
         sources.clone(),
     )
@@ -900,7 +900,7 @@ async fn project_configured_and_managed_skills_share_one_conflict_safe_catalog()
     let (configured_read, configured_read_kinds) = call_kernel_with_fake_operator_store(
         &runtime,
         client_id,
-        "skill_read_file",
+        "read_skill_file",
         json!({
             "project": project,
             "skill_id": configured_id,
@@ -925,7 +925,7 @@ async fn project_configured_and_managed_skills_share_one_conflict_safe_catalog()
     let (managed_read, managed_read_kinds) = call_kernel_with_fake_operator_store(
         &runtime,
         client_id,
-        "skill_read_file",
+        "read_skill_file",
         json!({
             "project": project,
             "skill_id": managed_id,
@@ -985,7 +985,7 @@ async fn configured_skill_exact_read_uses_unified_resolve_then_read() {
     let (loaded, _) = call_kernel_with_fake_operator_store(
         &runtime,
         client_id,
-        "skill_load",
+        "load_skill",
         json!({"project": project, "name": "CONFIGURED"}),
         sources.clone(),
     )
@@ -1000,7 +1000,7 @@ async fn configured_skill_exact_read_uses_unified_resolve_then_read() {
     let (read, kinds) = call_kernel_with_fake_operator_store(
         &runtime,
         client_id,
-        "skill_read_file",
+        "read_skill_file",
         json!({
             "project": project,
             "skill_id": configured_id,
@@ -1020,7 +1020,7 @@ async fn configured_skill_exact_read_uses_unified_resolve_then_read() {
     let (unsupported_package, unsupported_kinds) = call_kernel_with_fake_operator_store(
         &runtime,
         client_id,
-        "skill_read_file",
+        "read_skill_file",
         json!({
             "project": project,
             "skill_id": configured_id,
@@ -1080,7 +1080,7 @@ async fn managed_skill_exact_read_uses_unified_resolve_then_read() {
     let (read, kinds) = call_kernel_with_fake_operator_store(
         &runtime,
         client_id,
-        "skill_read_file",
+        "read_skill_file",
         json!({
             "project": project,
             "skill_id": managed_id,
@@ -1149,7 +1149,7 @@ async fn exact_skill_resolution_fails_closed_on_duplicate_target_across_sources(
     let (read, kinds) = call_kernel_with_fake_operator_store(
         &runtime,
         client_id,
-        "skill_read_file",
+        "read_skill_file",
         json!({
             "project": project,
             "skill_id": duplicate_id,
@@ -1218,7 +1218,7 @@ async fn exact_skill_resolution_fails_closed_when_applicable_source_is_unavailab
     let (listed, _) = call_kernel_with_fake_operator_store(
         &runtime,
         client_id,
-        "skill_list",
+        "list_skills",
         json!({"project": project}),
         sources.clone(),
     )
@@ -1232,7 +1232,7 @@ async fn exact_skill_resolution_fails_closed_when_applicable_source_is_unavailab
     let (read, kinds) = call_kernel_with_fake_operator_store(
         &runtime,
         client_id,
-        "skill_read_file",
+        "read_skill_file",
         json!({"project": project, "skill_id": project_skill_id}),
         sources,
     )
@@ -1290,7 +1290,7 @@ async fn configured_exact_read_pins_probe_revision_across_resource_read() {
     let (read, kinds) = call_kernel_with_fake_operator_store(
         &runtime,
         client_id,
-        "skill_read_file",
+        "read_skill_file",
         json!({
             "project": project,
             "skill_id": configured_id,
@@ -1317,7 +1317,7 @@ async fn skill_catalog_is_fresh_lightweight_deterministic_and_guarded() {
     let (empty, kinds) = call_kernel_with_local_agent(
         &runtime,
         "skill-catalog",
-        "skill_list",
+        "list_skills",
         json!({"project": project}),
         true,
     )
@@ -1369,7 +1369,7 @@ async fn skill_catalog_is_fresh_lightweight_deterministic_and_guarded() {
     let (first, _) = call_kernel_with_local_agent(
         &runtime,
         "skill-catalog",
-        "skill_list",
+        "list_skills",
         json!({"project": project, "limit": 1}),
         true,
     )
@@ -1397,7 +1397,7 @@ async fn skill_catalog_is_fresh_lightweight_deterministic_and_guarded() {
     let (full, _) = call_kernel_with_local_agent(
         &runtime,
         "skill-catalog",
-        "skill_list",
+        "list_skills",
         json!({"project": project, "limit": 10}),
         true,
     )
@@ -1417,7 +1417,7 @@ async fn skill_catalog_is_fresh_lightweight_deterministic_and_guarded() {
     let (query, _) = call_kernel_with_local_agent(
         &runtime,
         "skill-catalog",
-        "skill_list",
+        "list_skills",
         json!({"project": project, "query": "BETA catalog", "limit": 10}),
         true,
     )
@@ -1438,7 +1438,7 @@ async fn skill_catalog_is_fresh_lightweight_deterministic_and_guarded() {
     let (stale, _) = call_kernel_with_local_agent(
         &runtime,
         "skill-catalog",
-        "skill_list",
+        "list_skills",
         json!({
             "project": project,
             "offset": 1,
@@ -1454,7 +1454,7 @@ async fn skill_catalog_is_fresh_lightweight_deterministic_and_guarded() {
     let (fresh, _) = call_kernel_with_local_agent(
         &runtime,
         "skill-catalog",
-        "skill_list",
+        "list_skills",
         json!({"project": project, "limit": 10}),
         true,
     )
@@ -1476,7 +1476,7 @@ async fn skill_catalog_is_fresh_lightweight_deterministic_and_guarded() {
     let (after_delete, _) = call_kernel_with_local_agent(
         &runtime,
         "skill-catalog",
-        "skill_list",
+        "list_skills",
         json!({"project": project, "limit": 10}),
         true,
     )
@@ -1514,7 +1514,7 @@ async fn project_skill_exact_read_request_fanout_is_characterized() {
     let (listed, listed_kinds) = call_kernel_with_local_agent(
         &runtime,
         "project-skill-read-fanout",
-        "skill_list",
+        "list_skills",
         json!({"project": project}),
         true,
     )
@@ -1533,7 +1533,7 @@ async fn project_skill_exact_read_request_fanout_is_characterized() {
     let (unsupported_package, unsupported_kinds) = call_kernel_with_local_agent(
         &runtime,
         "project-skill-read-fanout",
-        "skill_read_file",
+        "read_skill_file",
         json!({
             "project": project,
             "skill_id": skill_id,
@@ -1555,7 +1555,7 @@ async fn project_skill_exact_read_request_fanout_is_characterized() {
     let (definition, definition_kinds) = call_kernel_with_local_agent(
         &runtime,
         "project-skill-read-fanout",
-        "skill_read_file",
+        "read_skill_file",
         json!({"project": project, "skill_id": skill_id}),
         true,
     )
@@ -1574,7 +1574,7 @@ async fn project_skill_exact_read_request_fanout_is_characterized() {
     let (resource, resource_kinds) = call_kernel_with_local_agent(
         &runtime,
         "project-skill-read-fanout",
-        "skill_read_file",
+        "read_skill_file",
         json!({
             "project": project,
             "skill_id": skill_id,
@@ -1635,7 +1635,7 @@ async fn skill_read_file_is_bounded_project_scoped_and_revision_guarded() {
     let (listed, _) = call_kernel_with_local_agent(
         &runtime,
         "skill-read-a",
-        "skill_list",
+        "list_skills",
         json!({"project": project_a}),
         true,
     )
@@ -1652,7 +1652,7 @@ async fn skill_read_file_is_bounded_project_scoped_and_revision_guarded() {
     let (definition, _) = call_kernel_with_local_agent(
         &runtime,
         "skill-read-a",
-        "skill_read_file",
+        "read_skill_file",
         json!({"project": project_a, "skill_id": skill_id, "limit": 2}),
         true,
     )
@@ -1666,7 +1666,7 @@ async fn skill_read_file_is_bounded_project_scoped_and_revision_guarded() {
     let (reference, _) = call_kernel_with_local_agent(
         &runtime,
         "skill-read-a",
-        "skill_read_file",
+        "read_skill_file",
         json!({
             "project": project_a,
             "skill_id": skill_id,
@@ -1688,7 +1688,7 @@ async fn skill_read_file_is_bounded_project_scoped_and_revision_guarded() {
     let (listed_again, _) = call_kernel_with_local_agent(
         &runtime,
         "skill-read-a",
-        "skill_list",
+        "list_skills",
         json!({"project": project_a}),
         true,
     )
@@ -1700,7 +1700,7 @@ async fn skill_read_file_is_bounded_project_scoped_and_revision_guarded() {
     let (resource_changed, _) = call_kernel_with_local_agent(
         &runtime,
         "skill-read-a",
-        "skill_read_file",
+        "read_skill_file",
         json!({"project": project_a, "skill_id": skill_id, "path": "references/guide.md"}),
         true,
     )
@@ -1718,7 +1718,7 @@ async fn skill_read_file_is_bounded_project_scoped_and_revision_guarded() {
     let (definition_stale, _) = call_kernel_with_local_agent(
         &runtime,
         "skill-read-a",
-        "skill_read_file",
+        "read_skill_file",
         json!({
             "project": project_a,
             "skill_id": skill_id,
@@ -1738,7 +1738,7 @@ async fn skill_read_file_is_bounded_project_scoped_and_revision_guarded() {
         let (rejected, kinds) = call_kernel_with_local_agent(
             &runtime,
             "skill-read-a",
-            "skill_read_file",
+            "read_skill_file",
             json!({"project": project_a, "skill_id": skill_id, "path": path}),
             true,
         )
@@ -1754,7 +1754,7 @@ async fn skill_read_file_is_bounded_project_scoped_and_revision_guarded() {
     let (sensitive, _) = call_kernel_with_local_agent(
         &runtime,
         "skill-read-a",
-        "skill_read_file",
+        "read_skill_file",
         json!({"project": project_a, "skill_id": skill_id, "path": ".env"}),
         true,
     )
@@ -1764,7 +1764,7 @@ async fn skill_read_file_is_bounded_project_scoped_and_revision_guarded() {
     let (binary, _) = call_kernel_with_local_agent(
         &runtime,
         "skill-read-a",
-        "skill_read_file",
+        "read_skill_file",
         json!({"project": project_a, "skill_id": skill_id, "path": "references/binary.dat"}),
         true,
     )
@@ -1779,7 +1779,7 @@ async fn skill_read_file_is_bounded_project_scoped_and_revision_guarded() {
         let (escape, _) = call_kernel_with_local_agent(
             &runtime,
             "skill-read-a",
-            "skill_read_file",
+            "read_skill_file",
             json!({"project": project_a, "skill_id": skill_id, "path": "references/escape.md"}),
             true,
         )
@@ -1790,7 +1790,7 @@ async fn skill_read_file_is_bounded_project_scoped_and_revision_guarded() {
     let (cross_project, _) = call_kernel_with_local_agent(
         &runtime,
         "skill-read-b",
-        "skill_read_file",
+        "read_skill_file",
         json!({"project": project_b, "skill_id": skill_id}),
         true,
     )
@@ -1819,7 +1819,7 @@ async fn skill_resource_read_revalidates_definition_after_resource_io() {
     let (listed, _) = call_kernel_with_local_agent(
         &runtime,
         "skill-definition-race",
-        "skill_list",
+        "list_skills",
         json!({"project": project}),
         true,
     )
@@ -1844,7 +1844,7 @@ async fn skill_resource_read_revalidates_definition_after_resource_io() {
             runtime
                 .call_tool_with_context_protocol_capability(
                     ToolCallRequest {
-                        tool_name: "skill_read_file".to_string(),
+                        tool_name: "read_skill_file".to_string(),
                         arguments: json!({
                             "project": project,
                             "skill_id": skill_id,
@@ -1925,7 +1925,7 @@ async fn skill_management_surface_and_admin_authority_are_independent() {
         ..crate::auth::AuthContext::new(crate::auth::AuthKind::Bootstrap)
     };
     let request = || ToolCallRequest {
-        tool_name: "skill_versions".to_string(),
+        tool_name: "list_skill_versions".to_string(),
         arguments: json!({"project": "agent:missing:demo", "skill_key": "demo"}),
     };
     let context = |auth| ToolCallContext {
@@ -1980,7 +1980,7 @@ async fn skill_management_surface_and_admin_authority_are_independent() {
     let private_marker = runtime
         .call_tool_with_invocation_metadata(
             ToolCallRequest {
-                tool_name: "skill_versions".to_string(),
+                tool_name: "list_skill_versions".to_string(),
                 arguments: json!({
                     "project": "agent:missing:demo",
                     "skill_key": "demo"
@@ -2004,7 +2004,7 @@ async fn skill_management_surface_and_admin_authority_are_independent() {
     ));
 
     let restricted = PermissionEvaluator::with_mode(AuthorityMode::Restricted)
-        .evaluate("skill_install", None)
+        .evaluate("install_skill", None)
         .expect("Skill store mutation is permission-bearing");
     assert!(!restricted.allows_execution());
 }
@@ -2027,7 +2027,7 @@ async fn skill_surface_sidecar_privacy_and_authority_are_fenced() {
     let protocol_denied = runtime
         .call_tool_with_invocation_metadata(
             ToolCallRequest {
-                tool_name: "skill_list".to_string(),
+                tool_name: "list_skills".to_string(),
                 arguments: json!({"project": project}),
             },
             ToolCallContext {
@@ -2164,7 +2164,7 @@ async fn skill_surface_sidecar_privacy_and_authority_are_fenced() {
     let (read, _) = call_kernel_with_local_agent(
         &runtime,
         "skill-fence",
-        "skill_read_file",
+        "read_skill_file",
         json!({
             "project": project,
             "skill_id": skill_id,
@@ -2187,24 +2187,24 @@ async fn skill_surface_sidecar_privacy_and_authority_are_fenced() {
     .unwrap();
     assert!(!ledger.contains("PRIVATE_SKILL_BODY"));
     assert!(!ledger.contains("IGNORE WEBCODEX PERMISSIONS"));
-    assert!(ledger.contains("skill_read_file"));
+    assert!(ledger.contains("read_skill_file"));
     assert!(ledger.contains("definition_revision"));
     assert!(ledger.contains("sha256"));
 
     let list_audit = super::super::tool_audit::session_log_arguments_for_tool_request(
-        "skill_list",
+        "list_skills",
         &json!({"project": project, "query": "PRIVATE QUERY", "limit": 10}),
     );
     assert_eq!(list_audit["query_present"], true);
     assert!(!list_audit.to_string().contains("PRIVATE QUERY"));
     let load_audit = super::super::tool_audit::session_log_arguments_for_tool_request(
-        "skill_load",
+        "load_skill",
         &json!({"project": project, "name": "PRIVATE SKILL NAME"}),
     );
     assert_eq!(load_audit["name_present"], true);
     assert!(!load_audit.to_string().contains("PRIVATE SKILL NAME"));
     let read_audit = super::super::tool_audit::session_log_arguments_for_tool_request(
-        "skill_read_file",
+        "read_skill_file",
         &json!({"project": project, "skill_id": skill_id, "path": "SKILL.md"}),
     );
     assert!(!read_audit.to_string().contains("PRIVATE_SKILL_BODY"));
@@ -2216,7 +2216,7 @@ async fn skill_surface_sidecar_privacy_and_authority_are_fenced() {
     let (restricted_list, _) = call_kernel_with_local_agent(
         &restricted,
         "skill-restricted",
-        "skill_list",
+        "list_skills",
         json!({"project": restricted_project}),
         true,
     )
@@ -2403,7 +2403,7 @@ async fn run_skill_resource_denies_project_content_and_requires_managed_package_
     let (loaded, _) = call_kernel_with_fake_operator_store(
         &runtime,
         client_id,
-        "skill_load",
+        "load_skill",
         json!({"project": project, "name": "local-exec"}),
         operator.clone(),
     )

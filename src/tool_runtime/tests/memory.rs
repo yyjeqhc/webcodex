@@ -909,7 +909,7 @@ async fn memory_surface_scopes_and_permission_are_independent_authority() {
         ..Default::default()
     };
     let set_request = |key: &str| ToolCallRequest {
-        tool_name: "memory_set".to_string(),
+        tool_name: "set_memory".to_string(),
         arguments: json!({
             "project": project,
             "memory_key": key,
@@ -918,7 +918,7 @@ async fn memory_surface_scopes_and_permission_are_independent_authority() {
         }),
     };
     let read_request = || ToolCallRequest {
-        tool_name: "memory_read".to_string(),
+        tool_name: "read_memory".to_string(),
         arguments: json!({"project": project, "memory_key": "authority-test"}),
     };
 
@@ -948,7 +948,7 @@ async fn memory_surface_scopes_and_permission_are_independent_authority() {
     let private_marker = runtime
         .call_tool_with_invocation_metadata(
             ToolCallRequest {
-                tool_name: "memory_set".to_string(),
+                tool_name: "set_memory".to_string(),
                 arguments: json!({
                     "project": project,
                     "memory_key": "private-marker",
@@ -989,13 +989,13 @@ async fn memory_surface_scopes_and_permission_are_independent_authority() {
         crate::auth::SCOPE_MEMORY_MANAGE,
     ]);
 
-    for tool in ["memory_search", "memory_read"] {
+    for tool in ["search_memory", "read_memory"] {
         assert!(check_runtime_tool_scope(Some(&project_read_only), tool).is_err());
         assert!(check_runtime_tool_scope(Some(&memory_read_only), tool).is_err());
         assert!(check_runtime_tool_scope(Some(&read_both), tool).is_ok());
         assert!(check_runtime_tool_scope(Some(&manage_both), tool).is_err());
     }
-    for tool in ["memory_set", "memory_delete"] {
+    for tool in ["set_memory", "delete_memory"] {
         assert!(check_runtime_tool_scope(Some(&project_write_only), tool).is_err());
         assert!(check_runtime_tool_scope(Some(&memory_manage_only), tool).is_err());
         assert!(check_runtime_tool_scope(Some(&manage_both), tool).is_ok());
@@ -1067,7 +1067,7 @@ async fn memory_surface_scopes_and_permission_are_independent_authority() {
             surface,
         )
         .await;
-    let allowed_result = allowed.result.expect("memory_set result");
+    let allowed_result = allowed.result.expect("set_memory result");
     assert!(allowed_result.success, "{}", allowed_result.output);
     assert!(
         allowed_result.output.get("permission").is_none(),
@@ -1079,7 +1079,7 @@ async fn memory_surface_scopes_and_permission_are_independent_authority() {
         .call_tool_with_protocol_capabilities(read_request(), context(Some(&read_both)), surface)
         .await
         .result
-        .expect("memory_read result");
+        .expect("read_memory result");
     assert!(read_allowed.success);
     assert!(read_allowed.output["body"]
         .as_str()
@@ -1089,7 +1089,7 @@ async fn memory_surface_scopes_and_permission_are_independent_authority() {
     let manage_with_bootstrap = runtime
         .call_tool_with_invocation_metadata(
             ToolCallRequest {
-                tool_name: "memory_set".to_string(),
+                tool_name: "set_memory".to_string(),
                 arguments: json!({
                     "project": project,
                     "memory_key": "management-without-read",
@@ -1109,7 +1109,7 @@ async fn memory_surface_scopes_and_permission_are_independent_authority() {
         )
         .await
         .result
-        .expect("memory_set result with denied bootstrap sidecar");
+        .expect("set_memory result with denied bootstrap sidecar");
     assert!(manage_with_bootstrap.success);
     let denied_bootstrap = manage_with_bootstrap.output["context_projection"]["materials"]
         .as_array()
@@ -1127,7 +1127,7 @@ async fn memory_surface_scopes_and_permission_are_independent_authority() {
     let mutation_with_bootstrap = runtime
         .call_tool_with_invocation_metadata(
             ToolCallRequest {
-                tool_name: "memory_set".to_string(),
+                tool_name: "set_memory".to_string(),
                 arguments: json!({
                     "project": project,
                     "memory_key": "post-tool-proof",
@@ -1148,7 +1148,7 @@ async fn memory_surface_scopes_and_permission_are_independent_authority() {
         )
         .await
         .result
-        .expect("memory_set sidecar result");
+        .expect("set_memory sidecar result");
     assert!(mutation_with_bootstrap.success);
     assert_eq!(
         mutation_with_bootstrap.output["context_projection"]["materials"][0]["status"],
@@ -1753,7 +1753,7 @@ async fn memory_scope_lifecycle_authority_surface_and_permission_are_independent
     let (runtime, _tmp) = runtime_with_memory();
     let admin = bootstrap_auth_context();
     let non_admin = shared_key_auth_context("memory-lifecycle-nonadmin");
-    for tool in ["memory_scope_list", "memory_scope_purge"] {
+    for tool in ["list_memory_scopes", "purge_memory_scope"] {
         assert!(matches!(
             check_runtime_tool_scope(None, tool),
             Err(ToolCallErrorStatus::InsufficientScope {
@@ -1781,7 +1781,7 @@ async fn memory_scope_lifecycle_authority_surface_and_permission_are_independent
     let hidden = runtime
         .call_tool_with_protocol_capabilities(
             ToolCallRequest {
-                tool_name: "memory_scope_list".to_string(),
+                tool_name: "list_memory_scopes".to_string(),
                 arguments: json!({}),
             },
             context(Some(&admin)),
@@ -1795,7 +1795,7 @@ async fn memory_scope_lifecycle_authority_surface_and_permission_are_independent
     let denied = runtime
         .call_tool_with_protocol_capabilities(
             ToolCallRequest {
-                tool_name: "memory_scope_list".to_string(),
+                tool_name: "list_memory_scopes".to_string(),
                 arguments: json!({}),
             },
             context(Some(&non_admin)),
@@ -1815,7 +1815,7 @@ async fn memory_scope_lifecycle_authority_surface_and_permission_are_independent
     let allowed = runtime
         .call_tool_with_protocol_capabilities(
             ToolCallRequest {
-                tool_name: "memory_scope_list".to_string(),
+                tool_name: "list_memory_scopes".to_string(),
                 arguments: json!({}),
             },
             context(Some(&admin)),
@@ -1866,7 +1866,7 @@ async fn memory_scope_lifecycle_authority_surface_and_permission_are_independent
     let outcome = restricted
         .call_tool_with_protocol_capabilities(
             ToolCallRequest {
-                tool_name: "memory_scope_purge".to_string(),
+                tool_name: "purge_memory_scope".to_string(),
                 arguments: json!({
                     "memory_scope_id": scope_id,
                     "expected_catalog_revision": catalog_revision,
@@ -1932,7 +1932,7 @@ async fn session_and_skill_observations_do_not_automatically_create_memory() {
             runtime
                 .call_tool_with_protocol_capabilities(
                     ToolCallRequest {
-                        tool_name: "skill_list".to_string(),
+                        tool_name: "list_skills".to_string(),
                         arguments: json!({"project": project_id}),
                     },
                     ToolCallContext {
@@ -1955,7 +1955,7 @@ async fn session_and_skill_observations_do_not_automatically_create_memory() {
     while !task.is_finished() {
         assert!(
             std::time::Instant::now() < deadline,
-            "skill_list fixture timed out"
+            "list_skills fixture timed out"
         );
         if let Some(request) = probe_patch_agent_request(&runtime, "memory-no-auto").await {
             let (exit_code, stdout, stderr) = run_runner_shell_request_locally(&request);
@@ -1975,7 +1975,7 @@ async fn session_and_skill_observations_do_not_automatically_create_memory() {
     let skill_outcome = task.await.unwrap();
     let skill_result = skill_outcome
         .result
-        .unwrap_or_else(|| panic!("skill_list failed: {:?}", skill_outcome.error_status));
+        .unwrap_or_else(|| panic!("list_skills failed: {:?}", skill_outcome.error_status));
     assert!(skill_result.success, "{}", skill_result.output);
     assert_eq!(skill_result.output["total_count"], 0);
     assert_eq!(

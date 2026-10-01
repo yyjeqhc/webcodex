@@ -147,7 +147,7 @@ def read_handoff(config, timeout=6, current_dir=None):
     request = urllib.request.Request(
         config["server_url"].rstrip("/") + "/api/tools/call",
         data=json.dumps({
-            "tool": "session_handoff_state",
+            "tool": "get_session_handoff_state",
             "params": {
                 "project": config["project"],
                 "session_id": config["workflow_session_id"],

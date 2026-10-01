@@ -78,7 +78,7 @@ fn git_review_failure(
     let requested_base = normalize_exact_commit_id(requested_base).ok();
     let requested_head = normalize_exact_commit_id(requested_head).ok();
     ToolResult::err_with_output(
-        format!("git_review_summary failed: {reason_code}"),
+        format!("read_git_review_summary failed: {reason_code}"),
         json!({
             "project": project,
             "scope": {
@@ -1066,7 +1066,7 @@ impl ToolRuntime {
 
         tracing::debug!(
             target: "webcodex::git_review",
-            operation = "git_review_summary",
+            operation = "read_git_review_summary",
             scope_runner_observation_count = 1u64,
             metadata_runner_observation_count = 1u64,
             symbol_runner_observation_count = symbol_observation_count,

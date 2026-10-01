@@ -54,7 +54,7 @@ WebCodex scopes.
 If ChatGPT itself reports `FORBIDDEN: This conversation does not support
 developer MCPs` (or says the current conversation disabled the developer MCP
 server), treat that as a Host/conversation admission problem until proven
-otherwise. If the Host refuses to dispatch `runtime_status`, that text is not a
+otherwise. If the Host refuses to dispatch `get_runtime_status`, that text is not a
 WebCodex tool result. Verify the Server/Runner independently before changing
 credentials or Runner configuration; see [Troubleshooting](TROUBLESHOOTING.md).
 
@@ -96,14 +96,14 @@ For a regular independent Windows Server + Runner reached through OpenAI Tunnel,
 ## Result cards
 
 On Stateless MCP 2026 requests that advertise MCP Apps HTML support, clients can display a
-small set of read-only milestone cards for `list_jobs`, `validation_summary`, and
-`git_review_summary`. The Job card shows only active or attention-requiring Jobs;
+small set of read-only milestone cards for `list_jobs`, `read_validation_summary`, and
+`read_git_review_summary`. The Job card shows only active or attention-requiring Jobs;
 routine successful terminal Jobs stay out of the foreground. Aggregate validation
 and committed-range review cards remain bounded and do not embed raw logs, diffs,
 or hunks.
 
 High-frequency calls such as `observe_jobs`, `cargo_check`, `cargo_test`, `go_test`,
-and `show_changes` intentionally keep the Host's native tool presentation instead
+and `read_workspace_changes` intentionally keep the Host's native tool presentation instead
 of creating an extra custom App card for every call. Cards do not poll, retry, or
 invoke tools; the canonical tool result remains available independently.
 `WEBCODEX_MCP_APPS_ENABLED=false` disables App metadata and resources without
@@ -185,7 +185,7 @@ advanced identity flow.
 
 ### Adaptive Runtime routing
 
-There is one model-facing MCP runtime contract: **Adaptive Runtime**. Canonical `ToolDefinition` rank decides the direct tools; ordinary model-visible long-tail tools are invoked through `call_runtime_tool`; server-owned protocol capabilities and MCP App admission may add hidden extensions for the relevant protocol request. There is no startup model-surface selector. `tool_manifest(tool_name=...)` is discovery only: it never dynamically registers a new Host tool. Its exact `route.primary` describes the preferred callable, and a normal direct tool also exposes `route.fallback` through `call_runtime_tool` for the case where that direct callable is not present; explicit MCP App presentation tools mark that fallback as blocked while Apps are enabled. Direct versus gateway routing changes presentation only and never bypasses the target tool's authentication, Project authority, permission, Runner capability, Session, or safety checks.
+There is one model-facing MCP runtime contract: **Adaptive Runtime**. Canonical `ToolDefinition` rank decides the direct tools; ordinary model-visible long-tail tools are invoked through `call_runtime_tool`; server-owned protocol capabilities and MCP App admission may add hidden extensions for the relevant protocol request. There is no startup model-surface selector. `read_tool_manifest(tool_name=...)` is discovery only: it never dynamically registers a new Host tool. Its exact `route.primary` describes the preferred callable, and a normal direct tool also exposes `route.fallback` through `call_runtime_tool` for the case where that direct callable is not present; explicit MCP App presentation tools mark that fallback as blocked while Apps are enabled. Direct versus gateway routing changes presentation only and never bypasses the target tool's authentication, Project authority, permission, Runner capability, Session, or safety checks.
 
 ### Request-local client policy
 
@@ -262,7 +262,7 @@ Configure local providers on the Runner under `[mcp]`. Access requires the expli
 
 ### Managed SSH resource onboarding
 
-The `ssh_resource` tool provides a narrow Runner-local onboarding path for
+The `manage_ssh_resource` tool provides a narrow Runner-local onboarding path for
 named SSH resources. `list` observes safe logical names and returns an opaque
 exact-Runner/revision binding; `register` and `remove` consume that binding and
 change only durable desired state. They never silently retarget a replacement
@@ -371,7 +371,7 @@ work_on_project
 → edit_project_files or other canonical edit tools
 → present_work_result once when substantial work becomes materially stateful
 → run_process / run_shell / focused validation tools as needed
-→ show_changes
+→ read_workspace_changes
 → finish_coding_task
 ```
 
@@ -409,7 +409,7 @@ for exact scope, identity, and remaining #599 work.
 
 Adaptive Runtime may expose common tools directly and long-tail tools through `call_runtime_tool`. Direct versus gateway exposure never changes schema validation, OAuth scope, Project authority, permission policy, Runner capability checks, Session fences, or effects.
 
-The removed ProjectConnector capability names (`task_start`, `files_read`, `edits_apply`, `task_finish`, and related operations) are not compatibility aliases for runtime tools. Use the current ToolRuntime names returned by `tools/list`/`tool_manifest`.
+The removed ProjectConnector capability names (`task_start`, `files_read`, `edits_apply`, `task_finish`, and related operations) are not compatibility aliases for runtime tools. Use the current ToolRuntime names returned by `tools/list`/`read_tool_manifest`.
 
 ### Long work continues as Jobs
 
@@ -427,7 +427,7 @@ bounded by the existing log retention and may report reset or unavailable histor
 No log copy, model invocation, Job execution, permission, or waiting policy is added.
 Omitting `summary_only` preserves the existing behavior.
 
-`search_and_read` reuses ordinary search-result sparsification after read planning.
+`search_and_read_project_texts` reuses ordinary search-result sparsification after read planning.
 It omits redundant phase metadata, not source text, query indexes, failure evidence,
 read revisions, or snapshot-bound continuations.
 
@@ -491,14 +491,14 @@ prose.
 
 The same ToolRuntime serves project-scoped local `share`/`run` instances and multi-project hosted Servers through one Adaptive Runtime contract. Project-scoped credentials change visibility and authority, not the model-facing runtime shape. Protocol-specific capabilities and MCP Apps may admit additional hidden presentation or resource operations without creating another runtime surface.
 
-Stateless MCP keeps Memory tools and the Skill compatibility tools `skill_list`
-and `skill_read_file` off the top-level `tools/list`, even with full OAuth scopes.
-Their exact contracts remain available through `tool_manifest(tool_name=...)`
+Stateless MCP keeps Memory tools and the Skill compatibility tools `list_skills`
+and `read_skill_file` off the top-level `tools/list`, even with full OAuth scopes.
+Their exact contracts remain available through `read_tool_manifest(tool_name=...)`
 and execute through `call_runtime_tool` with unchanged scope, Project, permission,
 and capability checks. Existing direct protocol compatibility and the
 `memory.bootstrap` context sidecar remain supported. Ordinary Skill selection
-and execution keep the direct `skill_load` and `run_skill_resource` paths.
-The optional closeout helpers `workspace_hygiene_check` and `finish_coding_task`
+and execution keep the direct `load_skill` and `run_skill_resource` paths.
+The optional closeout helpers `check_workspace_hygiene` and `finish_coding_task`
 are model-visible gateway tools; review/coding catalogs still recommend them.
 
 Stateless MCP 2026 exposes common untrusted invocation metadata only through one optional closed `_wc` envelope. Depending on the tool, the envelope may admit `record`, `ack`, `ack_ref`, `resolve`, `reply`, `context`, and `control`. These are adapter metadata only: they never become canonical ToolCall business arguments or grant authority. Legacy flat root wrappers such as `recording_session_id`, `ack_session_message_ids`, `ack_ref`, `session_message_resolution`, `window_reply`, `context_request`, and `_control` are rejected on this Stateless 2026 surface; legacy/non-stateless transports keep their existing contracts. `call_runtime_tool` carries `_wc` only on the outer gateway call; the nested target `arguments` remain canonical business arguments and reject a second `_wc`.
@@ -514,7 +514,7 @@ patterns, all bounds, required fields, enums, object/union shape, annotations, a
 MCP App/file metadata are preserved. This is discovery presentation only; runtime
 argument validation and execution authority do not change.
 
-Use `tool_manifest(tool_name=...)` for the full exact input contract and operational
+Use `read_tool_manifest(tool_name=...)` for the full exact input contract and operational
 description, or set compact schemas to `false` for full discovery schemas.
 Canonical ToolSpecs are never rewritten. Focused MCP tests compare inputs against
 canonical schemas (with the explicit host-file reference overlay) and enforce
@@ -533,7 +533,7 @@ payloads through model text:
   them as file parameters. The Control downloads the referenced bytes and
   commits them through the existing bounded artifact-write path; callers should
   not construct download URLs or manually Base64-transfer those files.
-- `project_artifact` is the preferred Project-to-model/host read surface. Use
+- `inspect_project_artifact` is the preferred Project-to-model/host read surface. Use
   `action=metadata` for existence/size/MIME/digest/image/archive facts,
   `action=inspect` for one bounded snapshot-fenced Base64 segment,
   `action=image` for native MCP image delivery, and `action=export` for complete
@@ -547,10 +547,10 @@ payloads through model text:
   are short-lived process-local presentation state, and the normal size, MIME,
   path, and authorization bounds remain in force.
 
-The lower-level `read_project_artifact_metadata` and `read_project_artifact`
+The lower-level `read_project_artifact_metadata` and `read_project_artifact_chunk`
 tools remain operator/gateway primitives. The legacy `export_project_artifact`
 compatibility tool has been removed; complete host delivery is exposed only as
-`project_artifact(action=export)`. Office artifacts such as DOCX/PPTX/XLSX and
+`inspect_project_artifact(action=export)`. Office artifacts such as DOCX/PPTX/XLSX and
 PDFs use the same underlying artifact transport and can therefore move between
 a project and a supporting ChatGPT host without a model manually carrying their
 Base64.

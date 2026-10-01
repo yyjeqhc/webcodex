@@ -245,14 +245,14 @@ async fn coding_agent_discovery_start_never_falls_back_and_returns_exact_recover
         suggested,
         &json!({
             "follow_up_kind": "fallback_recovery",
-            "tool":"runtime_status",
+            "tool":"get_runtime_status",
             "arguments":{"client_id":"mini","compact":true}
         })
     );
     webcodex_tool_contracts::test_support::validate_generated_tool_call_against_registered_input_schema(
         suggested,
     )
-    .expect("coding-agent inventory recovery must pass runtime_status registered inputSchema");
+    .expect("coding-agent inventory recovery must pass get_runtime_status registered inputSchema");
 }
 
 #[test]

@@ -6,7 +6,7 @@ use super::common::{
 
 pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
     match name {
-        "workspace_hygiene_check" => Some(wrapped_output_schema(vec![
+        "check_workspace_hygiene" => Some(wrapped_output_schema(vec![
             ("project", schema_type("string", "Project input from the request.")),
             (
                 "resolved_project",
@@ -50,7 +50,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 open_object_schema("Operator-friendly hygiene verdict: status pass/warn/fail, blocking, blocking_reasons, warning_reasons, and suggested_next_actions. The action list is empty for a clean pass and contains only actionable guidance otherwise. Does not change safety semantics."),
             ),
         ])),
-        "git_restore_paths" => Some(wrapped_output_schema(vec![
+        "restore_git_paths" => Some(wrapped_output_schema(vec![
             (
                 "restored_paths",
                 array_schema(

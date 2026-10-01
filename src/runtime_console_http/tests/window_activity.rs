@@ -15,7 +15,7 @@ async fn code_mode_composition_projects_on_one_outer_window_activity() {
             session_title: None,
             endpoint: "/mcp".to_string(),
             action_name: "toolsCall".to_string(),
-            operation: Some("code_mode_exec".to_string()),
+            operation: Some("execute_code_mode".to_string()),
             project: None,
             principal_kind: None,
             principal_user_id: None,
@@ -41,7 +41,7 @@ async fn code_mode_composition_projects_on_one_outer_window_activity() {
                     "returned_bytes": 19,
                     "nested_raw_result_bytes_total": 31,
                     "nested_tool_counts": {
-                        "git_status": 1,
+                        "get_git_status": 1,
                         "read_files": 1,
                         "search_project_texts": 1
                     },
@@ -89,7 +89,7 @@ async fn code_mode_composition_projects_on_one_outer_window_activity() {
         "nested canonical calls must not fabricate Window activity rows"
     );
     let activity = &detail.activity[0];
-    assert_eq!(activity.tool_name.as_deref(), Some("code_mode_exec"));
+    assert_eq!(activity.tool_name.as_deref(), Some("execute_code_mode"));
     assert!(activity.meaningful);
     let composition = activity
         .code_mode_composition
@@ -240,7 +240,7 @@ async fn window_summary_ignores_legacy_work_result_app_polling() {
         Some(project),
         None,
         2_000,
-        "work_result_state",
+        "get_work_result_state",
         false,
     );
 
@@ -425,7 +425,7 @@ async fn window_activity_projection_keeps_persisted_meaningful_and_projects_curr
         Some(project),
         None,
         1_000,
-        "goal_plan_sync",
+        "sync_goal_plan",
         true,
     );
 
@@ -442,7 +442,7 @@ async fn window_activity_projection_keeps_persisted_meaningful_and_projects_curr
     .await
     .unwrap();
     let activity = detail.activity.first().expect("projected activity");
-    assert_eq!(activity.tool_name.as_deref(), Some("goal_plan_sync"));
+    assert_eq!(activity.tool_name.as_deref(), Some("sync_goal_plan"));
     assert!(activity.meaningful, "persisted event-time bit must win");
     assert_eq!(activity.activity_presentation.as_deref(), Some("transport"));
     assert_eq!(activity.activity_kind, None);

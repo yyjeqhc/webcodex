@@ -423,7 +423,7 @@ async fn coding_task_semantic_navigation_does_not_wait_after_mandatory_startup()
     assert!(summary
         .events
         .iter()
-        .all(|event| event.tool_name != "lsp_status"));
+        .all(|event| event.tool_name != "get_lsp_status"));
     assert_eq!(summary.counts.failed, 0);
 }
 

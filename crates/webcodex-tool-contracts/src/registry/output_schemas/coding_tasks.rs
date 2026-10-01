@@ -23,10 +23,10 @@ use webcodex_core::runtime_contract::{
 fn finish_changes_schema() -> Value {
     json!({
         "type": "object",
-        "description": "show_changes output and hunk truncation metadata. The nested show_changes contract is formalized so structured recovery calls remain model-surface projectable; other closeout metadata stays additive.",
+        "description": "read_workspace_changes output and hunk truncation metadata. The nested read_workspace_changes contract is formalized so structured recovery calls remain model-surface projectable; other closeout metadata stays additive.",
         "properties": {
             "show_changes": super::git::show_changes_output_value_schema(),
-            "hunks_truncated": schema_type("boolean", "Whether the nested show_changes diff hunks were truncated by limits.")
+            "hunks_truncated": schema_type("boolean", "Whether the nested read_workspace_changes diff hunks were truncated by limits.")
         },
         "additionalProperties": true
     })
@@ -120,11 +120,11 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ),
             (
                 "hygiene",
-                nullable_schema("object", "workspace_hygiene_check output when requested; null otherwise."),
+                nullable_schema("object", "check_workspace_hygiene output when requested; null otherwise."),
             ),
             (
                 "handoff",
-                nullable_schema("object", "session_handoff_summary output when requested; null otherwise."),
+                nullable_schema("object", "read_session_handoff_summary output when requested; null otherwise."),
             ),
             (
                 "jobs",
@@ -1162,7 +1162,7 @@ fn semantic_navigation_schema() -> Value {
                 "uniqueItems": true,
                 "items": {
                     "type": "string",
-                    "enum": ["lsp_status", "document_symbols", "goto_definition", "find_references", "document_diagnostics", "hover", "workspace_symbols"]
+                    "enum": ["get_lsp_status", "list_document_symbols", "find_definition", "find_references", "read_document_diagnostics", "read_symbol_hover", "list_workspace_symbols"]
                 }
             },
             "preferred_flow": {
@@ -1171,7 +1171,7 @@ fn semantic_navigation_schema() -> Value {
                 "uniqueItems": true,
                 "items": {
                     "type": "string",
-                    "enum": ["document_symbols", "goto_definition", "find_references", "hover", "read_files", "search_project_texts"]
+                    "enum": ["list_document_symbols", "find_definition", "find_references", "read_symbol_hover", "read_files", "search_project_texts"]
                 }
             },
             "limitations": {

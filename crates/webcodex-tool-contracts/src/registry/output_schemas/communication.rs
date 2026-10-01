@@ -375,7 +375,7 @@ pub fn output_schema_for_tool(name: &str) -> Option<Value> {
             "agent_continuation",
             agent_continuation_projection_schema(),
         )]),
-        "agent_continuation_recover_endpoint" => wrapped_output_schema(vec![
+        "recover_agent_continuation_endpoint" => wrapped_output_schema(vec![
             ("agent_continuation", json!({
                 "anyOf": [agent_continuation_projection_schema(), {"type": "null"}],
                 "description": "Live continuation projection for the returned selector, or null when the exact one-hop successor is itself expired and requires another bounded recovery step."

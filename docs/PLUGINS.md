@@ -89,20 +89,20 @@ shell semantics; configure the native runtime executable instead.
 
 Native Plugins are Runner-owned capabilities. Provider tools never join the
 Server-global WebCodex tool namespace and are never appended to outer MCP
-`tools/list`. A Plugin may define `safe_delete`, `runtime_status`, or any other
+`tools/list`. A Plugin may define `safe_delete`, `get_runtime_status`, or any other
 valid provider-local name without colliding with WebCodex built-ins or Plugin
 tools on another Runner/provider.
 
 The stable model-facing entry is the first-class WebCodex tool `plugin_tool`.
 Its ToolSpec is static and registered in the same canonical tool metadata path
 as other WebCodex tools; its schema does not depend on Runner availability or
-Plugin inventory. `tool_manifest(tool_name="plugin_tool")` therefore describes
+Plugin inventory. `read_tool_manifest(tool_name="plugin_tool")` therefore describes
 the exact gateway contract even when no Plugin-capable Runner is online.
 `work_on_project` may additionally surface a bounded project-affine Plugin selection catalog at startup. That catalog is metadata only: it includes tools from ready committed providers whose configured `cwd` resolves to the authoritative Project root, omits providers for other directories, and never exposes provider paths, command/argv/environment, schemas, provider-instance identity, or an invocation binding. Catalogs are truncated by serialized byte size both at the Runner gateway and in the model projection; `total_count` and `catalog_revision` still describe the complete catalog. Selecting an entry still requires the canonical `plugin_tool describe -> call` path. The same project-affine metadata can be requested explicitly as `plugins.catalog` through the supported context sidecar when the caller has both `project:read` and `plugin:inspect`.
 
 The canonical `plugin_tool` parser and action-aware executor serve MCP and the
 Runtime API. There is no per-client Plugin implementation or alternate tool-name
-registry. Follow current `tool_manifest` routing and pass the normal business
+registry. Follow current `read_tool_manifest` routing and pass the normal business
 arguments to the admitted gateway:
 ```json
 {"action":"describe","runner":"my-runner","plugin":"repo-tools","tool":"safe_delete"}
@@ -227,14 +227,14 @@ Running `check` before reload never replaces the current provider set and never
 creates a binding. The successful check candidate is disposed instead of being
 reused by a later reload.
 
-`runner_config_reload` and `plugin_tool reload` share the same Plugin candidate
+`reload_runner_config` and `plugin_tool reload` share the same Plugin candidate
 admission/commit primitive. Editing `[plugins]` does not require a Runner restart:
 generic Runner config reload live-applies the Plugin candidate as part of the
 same activation, while `plugin_tool reload` provides the narrower
 `plugin:manage`-scoped operation. Plugin management authority never grants
 authority to change unrelated Runner configuration.
 
-`runner_config_check` remains a structural Runner-config check: it reads/parses
+`check_runner_config` remains a structural Runner-config check: it reads/parses
 the startup-bound `runner.toml`, validates configuration bounds, and classifies
 restart-only fields without starting disposable Plugin processes. Use
 `plugin_tool check(runner, plugin)` when you need executable resolution plus the

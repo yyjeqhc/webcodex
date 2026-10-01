@@ -177,7 +177,7 @@ async fn call_hygiene_in_window_with_local_runner_metadata(
         runtime_for_task
             .call_tool_with_invocation_metadata(
                 ToolCallRequest {
-                    tool_name: "workspace_hygiene_check".to_string(),
+                    tool_name: "check_workspace_hygiene".to_string(),
                     arguments,
                 },
                 ToolCallContext {
@@ -1244,10 +1244,10 @@ fn work_on_project_schema_and_registration() {
     }
     for hidden in [
         "workflow",
-        "runtime_status",
+        "get_runtime_status",
         "connection_state",
         "authority",
-        "tool_manifest",
+        "read_tool_manifest",
         "recommended_flow",
         "startup_verdict",
         "git",
@@ -2037,7 +2037,7 @@ async fn work_on_project_without_session_id_always_creates_fresh_session() {
         "runtime_status",
         "connection_state",
         "authority",
-        "tool_manifest",
+        "read_tool_manifest",
         "recommended_flow",
         "startup_verdict",
         "git",
@@ -2203,7 +2203,7 @@ async fn same_window_recorder_gap_is_visible_without_backfilling_session_ledger(
         &auth,
         window_id,
         &project,
-        "workspace_hygiene_check",
+        "check_workspace_hygiene",
         Some((
             &session_id,
             crate::action_audit_sessions::WorkflowSessionRelation::Recording,
@@ -2441,7 +2441,7 @@ async fn same_window_recorder_gap_is_visible_without_backfilling_session_ledger(
         &auth,
         window_id,
         &project,
-        "workspace_hygiene_check",
+        "check_workspace_hygiene",
         None,
         unrecorded.correlation.recorder_gap_session_id.as_deref(),
         3_000,
@@ -2492,7 +2492,7 @@ async fn same_window_recorder_gap_is_visible_without_backfilling_session_ledger(
         &auth,
         window_id,
         &project,
-        "workspace_hygiene_check",
+        "check_workspace_hygiene",
         Some((
             &session_id,
             crate::action_audit_sessions::WorkflowSessionRelation::Recording,
@@ -2888,7 +2888,7 @@ async fn workflow_resume_context_is_window_principal_scoped_bounded_and_non_auth
     webcodex_tool_contracts::test_support::validate_generated_tool_call_against_registered_input_schema(
         &single["suggested_call"],
     )
-    .expect("workflow resume recovery must pass session_handoff_summary registered inputSchema");
+    .expect("workflow resume recovery must pass read_session_handoff_summary registered inputSchema");
 
     let other_window = crate::client_window::ClientWindow::for_test("workflow-resume-other");
     let hidden_by_window = runtime
@@ -4610,7 +4610,7 @@ async fn work_on_project_new_task_is_lightweight_and_preserves_startup_context()
         "runtime_status",
         "connection_state",
         "authority",
-        "tool_manifest",
+        "read_tool_manifest",
         "recommended_flow",
         "startup_verdict",
         "git",

@@ -461,7 +461,7 @@ mod tests {
         let outcome = runtime
             .call_tool_with_context(
                 crate::tool_runtime::kernel::ToolCallRequest {
-                    tool_name: "session_summary".to_string(),
+                    tool_name: "read_session_summary".to_string(),
                     arguments: serde_json::json!({"session_id": business_ref}),
                 },
                 crate::tool_runtime::kernel::ToolCallContext {
@@ -487,7 +487,7 @@ mod tests {
             .iter()
             .find(|event| event.kind == "tool_call_started")
             .expect("short recorder selector should record canonical provenance");
-        assert_eq!(recorded.tool_name, "session_summary");
+        assert_eq!(recorded.tool_name, "read_session_summary");
         assert_eq!(
             recorded
                 .input_summary

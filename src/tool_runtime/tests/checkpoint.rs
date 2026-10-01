@@ -657,7 +657,7 @@ async fn checkpoint_restore_tracked_changes() {
         .sessions
         .summary(&session.session_id, Some(20))
         .unwrap();
-    let event = finished_event(&summary, "workspace_checkpoint_restore");
+    let event = finished_event(&summary, "restore_workspace_checkpoint");
     assert_eq!(event.status.as_deref(), Some("succeeded"));
     assert!(event.write_like);
     assert!(!event.read_like);
@@ -1156,7 +1156,7 @@ async fn checkpoint_session_guards() {
         .sessions
         .summary(&read_only_session, Some(20))
         .unwrap();
-    let restore_event = finished_event(&summary, "workspace_checkpoint_restore");
+    let restore_event = finished_event(&summary, "restore_workspace_checkpoint");
     assert_eq!(restore_event.status.as_deref(), Some("failed"));
     assert!(restore_event.write_like);
 }
@@ -1208,7 +1208,7 @@ async fn checkpoint_session_input_summary_does_not_leak_commands() {
         .events
         .iter()
         .find(|event| {
-            event.kind == "tool_call_started" && event.tool_name == "workspace_checkpoint_create"
+            event.kind == "tool_call_started" && event.tool_name == "create_workspace_checkpoint"
         })
         .unwrap();
     let input_summary = started.input_summary.as_ref().unwrap();

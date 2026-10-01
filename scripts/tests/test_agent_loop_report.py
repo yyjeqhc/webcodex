@@ -418,7 +418,7 @@ class AgentLoopReportTests(unittest.TestCase):
         self.insert_event("read_only", started=100, handed=120, trace_id="trace-a")
         self.insert_event(
             "noise",
-            tool="tool_manifest",
+            tool="read_tool_manifest",
             meaningful=False,
             started=130,
             handed=135,
@@ -507,7 +507,7 @@ class AgentLoopReportTests(unittest.TestCase):
     def test_host_short_chain_ignores_serial_predecessor_outside_selected_run(self) -> None:
         self.insert_event(
             "outside",
-            tool="tool_manifest",
+            tool="read_tool_manifest",
             started=50,
             handed=70,
             trace_id="trace-outside",
@@ -1001,7 +1001,7 @@ class AgentLoopReportTests(unittest.TestCase):
     def test_code_mode_canonical_count_stays_separate_from_persisted_child_count(self) -> None:
         self.insert_event(
             "code",
-            tool="code_mode_exec_mutating",
+            tool="execute_mutating_code_mode",
             composition=code_mode_composition(),
         )
         self.insert_event("validation", tool="cargo_check", started=140, handed=160)
@@ -1023,12 +1023,12 @@ class AgentLoopReportTests(unittest.TestCase):
     def test_code_mode_composition_aggregates_effect_and_projection_counters(self) -> None:
         self.insert_event(
             "guarded_edit",
-            tool="code_mode_exec_mutating",
+            tool="execute_mutating_code_mode",
             composition=code_mode_composition(input_bytes=80),
         )
         self.insert_event(
             "validation",
-            tool="code_mode_exec_effectful",
+            tool="execute_effectful_code_mode",
             started=140,
             handed=170,
             composition=code_mode_composition(
@@ -1065,7 +1065,7 @@ class AgentLoopReportTests(unittest.TestCase):
     def test_historical_code_mode_composition_without_input_bytes_stays_valid(self) -> None:
         self.insert_event(
             "historical",
-            tool="code_mode_exec",
+            tool="execute_code_mode",
             composition=code_mode_composition(),
         )
         result = self.summarize(variant="code_mode")
@@ -1080,7 +1080,7 @@ class AgentLoopReportTests(unittest.TestCase):
     def test_direct_variant_with_code_mode_call_fails_composition_closed(self) -> None:
         self.insert_event(
             "code",
-            tool="code_mode_exec",
+            tool="execute_code_mode",
             composition=code_mode_composition(
                 consequential_calls=0,
                 known_results=0,
@@ -1092,7 +1092,7 @@ class AgentLoopReportTests(unittest.TestCase):
         self.assertIsNone(result["composition"]["nested_calls"]["total"])
 
     def test_missing_code_mode_composition_fails_closed(self) -> None:
-        self.insert_event("code", tool="code_mode_exec_mutating")
+        self.insert_event("code", tool="execute_mutating_code_mode")
         result = self.summarize(variant="code_mode")
 
         self.assertFalse(result["availability"]["code_mode_composition"]["available"])
@@ -1412,7 +1412,7 @@ class AgentLoopReportTests(unittest.TestCase):
     def test_failed_child_calls_use_authoritative_composition_but_kinds_stay_unavailable(self) -> None:
         self.insert_event(
             "code",
-            tool="code_mode_exec",
+            tool="execute_code_mode",
             composition=code_mode_composition(
                 nested_successes=2,
                 nested_failures=1,
@@ -1445,7 +1445,7 @@ class AgentLoopReportTests(unittest.TestCase):
         self.insert_event(
             "code",
             session="wc_sess_code",
-            tool="code_mode_exec",
+            tool="execute_code_mode",
             composition=code_mode_composition(),
         )
         direct_annotation = self.write_annotation(
@@ -1537,7 +1537,7 @@ class AgentLoopReportTests(unittest.TestCase):
         self.insert_event(
             "code",
             session="wc_sess_code",
-            tool="code_mode_exec_mutating",
+            tool="execute_mutating_code_mode",
             composition=code_mode_composition(
                 nested_calls=1,
                 nested_successes=1,
@@ -1596,7 +1596,7 @@ class AgentLoopReportTests(unittest.TestCase):
         self.insert_event(
             "code",
             session="wc_sess_code",
-            tool="code_mode_exec",
+            tool="execute_code_mode",
             composition=code_mode_composition(),
         )
         direct = self.summarize(

@@ -14,7 +14,7 @@ impl ToolRuntime {
                 let project = match project_resolution {
                     Some(Ok(project)) => project,
                     Some(Err(error)) => return error.into_tool_result(),
-                    None => return ToolResult::err("skill_load requires a resolved Project"),
+                    None => return ToolResult::err("load_skill requires a resolved Project"),
                 };
                 self.skill_load(&project, name, auth).await
             }
@@ -29,7 +29,7 @@ impl ToolRuntime {
                 let project = match project_resolution {
                     Some(Ok(project)) => project,
                     Some(Err(error)) => return error.into_tool_result(),
-                    None => return ToolResult::err("skill_list requires a resolved Project"),
+                    None => return ToolResult::err("list_skills requires a resolved Project"),
                 };
                 self.skill_list(
                     &project,
@@ -54,7 +54,7 @@ impl ToolRuntime {
                 let project = match project_resolution {
                     Some(Ok(project)) => project,
                     Some(Err(error)) => return error.into_tool_result(),
-                    None => return ToolResult::err("skill_read_file requires a resolved Project"),
+                    None => return ToolResult::err("read_skill_file requires a resolved Project"),
                 };
                 self.skill_read_file(
                     &project,
@@ -78,7 +78,9 @@ impl ToolRuntime {
                 let project = match project_resolution {
                     Some(Ok(project)) => project,
                     Some(Err(error)) => return error.into_tool_result(),
-                    None => return ToolResult::err("skill_versions requires a resolved Project"),
+                    None => {
+                        return ToolResult::err("list_skill_versions requires a resolved Project")
+                    }
                 };
                 self.skill_versions(&project, skill_key, offset, limit, auth)
                     .await
@@ -96,7 +98,7 @@ impl ToolRuntime {
                 let project = match project_resolution {
                     Some(Ok(project)) => project,
                     Some(Err(error)) => return error.into_tool_result(),
-                    None => return ToolResult::err("skill_install requires a resolved Project"),
+                    None => return ToolResult::err("install_skill requires a resolved Project"),
                 };
                 self.skill_install(
                     &project,
@@ -121,7 +123,7 @@ impl ToolRuntime {
                 let project = match project_resolution {
                     Some(Ok(project)) => project,
                     Some(Err(error)) => return error.into_tool_result(),
-                    None => return ToolResult::err("skill_activate requires a resolved Project"),
+                    None => return ToolResult::err("activate_skill requires a resolved Project"),
                 };
                 self.skill_activate(
                     &project,
@@ -145,7 +147,7 @@ impl ToolRuntime {
                     Some(Ok(project)) => project,
                     Some(Err(error)) => return error.into_tool_result(),
                     None => {
-                        return ToolResult::err("skill_remove_revision requires a resolved Project")
+                        return ToolResult::err("remove_skill_revision requires a resolved Project")
                     }
                 };
                 self.skill_remove_revision(

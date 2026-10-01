@@ -127,7 +127,7 @@ Focused package test builds cover the implementation and schema integration:
   project identity, canonical Session assertions and formatting effect truth.
 - `cargo test --locked -p webcodex --lib execution_projection`: existing #765
   canonical-before-projection behavior and unaffected shell/lifecycle contracts.
-- `cargo test --locked -p webcodex --lib validation_summary`: Session evidence
+- `cargo test --locked -p webcodex --lib read_validation_summary`: Session evidence
   grouping/comparison and summary behavior.
 - `cargo test --locked -p webcodex-tool-contracts --lib output_schemas`: closed
   published schemas, including compact-assertion rejection on prestart/unknown.
@@ -150,7 +150,7 @@ Only the first two can be proven by a compact receipt. source_state continues to
 state that the third is unproven (or stale on rich paths).
 
 Final focused results: validation_success 7 passed; validation_handoff 43 passed;
-execution_projection 6 passed; validation_summary 14 passed; output_schemas 59
+execution_projection 6 passed; read_validation_summary 14 passed; output_schemas 59
 passed; canonical_execution_audit_projection_tests 3 passed; ToolDefinition
 metadata/descriptions (`cargo test --locked -p webcodex-tool-contracts --lib definitions`)
 23 passed. Counts overlap across filters. Final Rust formatting and whitespace

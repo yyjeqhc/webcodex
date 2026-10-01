@@ -10,7 +10,7 @@ ConPTY, shell Session, REPL service, detached process, or automatic next-turn ho
 continuation. Programs must support pipes and flush their output; TTY-only
 applications are outside this slice.
 
-`job_write_input` is a model-visible Adaptive Runtime Direct capability paired with
+`write_job_input` is a model-visible Adaptive Runtime Direct capability paired with
 `run_process(interactive=true)`, with `call_runtime_tool` retained as its gateway
 fallback. It is not another execution launcher. Output observation and waiting
 remain separate read-only operations (`observe_jobs`, `wait_for_job_readiness`);

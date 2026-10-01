@@ -555,7 +555,7 @@ fn wait_tool_contracts_are_definition_owned_and_hidden_state_stays_app_only() {
         "bounded ANY/ALL must not expand the direct model-visible AgentWait surface"
     );
     assert!(
-        specs.iter().all(|spec| spec.name != "agent_wait_state"),
+        specs.iter().all(|spec| spec.name != "get_agent_wait_state"),
         "App-only Wait polling must stay hidden from the ordinary model-visible registry"
     );
     for forbidden_alias in [

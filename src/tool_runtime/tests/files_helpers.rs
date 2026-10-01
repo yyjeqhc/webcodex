@@ -238,7 +238,7 @@ async fn read_project_artifact_emits_parser_ready_snapshot_fenced_continuation()
     let first = first_task.await.unwrap();
     assert!(first.success, "{:?}", first.error);
     let next = &first.output["suggested_call"];
-    assert_eq!(next["tool"], "read_project_artifact");
+    assert_eq!(next["tool"], "read_project_artifact_chunk");
     assert_eq!(next["arguments"]["project"], project);
     assert_eq!(next["arguments"]["path"], "data.bin");
     assert_eq!(next["arguments"]["encoding"], "base64");
@@ -250,7 +250,7 @@ async fn read_project_artifact_emits_parser_ready_snapshot_fenced_continuation()
             .expect("artifact suggested_call must be parser-ready");
     let mut projected_first = crate::tool_runtime::ToolResult::ok(first.output.clone());
     crate::model_surface::project_tool_result_suggested_calls(
-        "read_project_artifact",
+        "read_project_artifact_chunk",
         &mut projected_first,
         &|target| crate::model_surface::suggested_tool_call_route(target, false),
     );
@@ -259,7 +259,10 @@ async fn read_project_artifact_emits_parser_ready_snapshot_fenced_continuation()
         projected_next["tool"],
         crate::model_surface::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME
     );
-    assert_eq!(projected_next["arguments"]["tool"], "read_project_artifact");
+    assert_eq!(
+        projected_next["arguments"]["tool"],
+        "read_project_artifact_chunk"
+    );
     assert_eq!(projected_next["arguments"]["arguments"], next["arguments"]);
 
     let second_task = tokio::spawn({
@@ -864,7 +867,7 @@ async fn project_artifact_inspect_reuses_runner_read_and_keeps_unified_continuat
     let result = task.await.unwrap();
     assert!(result.success, "{:?}", result.error);
     let next = &result.output["suggested_call"];
-    assert_eq!(next["tool"], "project_artifact");
+    assert_eq!(next["tool"], "inspect_project_artifact");
     assert_eq!(next["arguments"]["action"], "inspect");
     assert_eq!(next["arguments"]["project"], project);
     assert_eq!(next["arguments"]["path"], "data.bin");
@@ -872,7 +875,7 @@ async fn project_artifact_inspect_reuses_runner_read_and_keeps_unified_continuat
     assert_eq!(next["arguments"]["length"], 4);
     assert_eq!(next["arguments"]["expected_sha256"], sha256);
     assert!(next["arguments"].get("encoding").is_none());
-    let parsed = ToolCall::from_tool_name("project_artifact", next["arguments"].clone())
+    let parsed = ToolCall::from_tool_name("inspect_project_artifact", next["arguments"].clone())
         .expect("unified artifact continuation must stay parser-ready");
     assert!(matches!(
         parsed,

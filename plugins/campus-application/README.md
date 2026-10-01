@@ -9,7 +9,7 @@ The Plugin is deliberately split from Browser execution:
 - the caller executes ordinary Browser actions and takes a fresh snapshot after every structural or page-step mutation.
 
 For a built-in Browser `plan_fill` result, send up to 32 same-page field actions
-through `browser_act(action="batch")`, using the opaque elements from the same
+through `control_browser(action="batch")`, using the opaque elements from the same
 snapshot. Batch preserves order and stops on stale authority, rejection or
 uncertainty; inspect its completion counts and follow observation recovery rather
 than replaying effects. Take a fresh verification snapshot after filling. Keep

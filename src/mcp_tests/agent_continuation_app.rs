@@ -2,14 +2,14 @@ use super::*;
 use std::sync::Arc;
 
 const APP_TOOLS: [&str; 8] = [
-    "agent_continuation_bind",
-    "agent_continuation_recover_endpoint",
-    "agent_continuation_state",
-    "agent_continuation_wake_acquire",
-    "agent_continuation_wake_prepare",
-    "agent_continuation_wake_finish",
-    "agent_continuation_unbind",
-    "agent_wait_state",
+    "bind_agent_continuation",
+    "recover_agent_continuation_endpoint",
+    "get_agent_continuation_state",
+    "acquire_agent_continuation_wake",
+    "prepare_agent_continuation_wake",
+    "finish_agent_continuation_wake",
+    "unbind_agent_continuation",
+    "get_agent_wait_state",
 ];
 
 fn tool<'a>(payload: &'a Value, name: &str) -> Option<&'a Value> {
@@ -290,7 +290,7 @@ async fn agent_continuation_app_surface_is_sparse_app_only_without_rendering_bin
             .any(|field| field == "app_call_id"));
     }
     assert_eq!(
-        tool(&ui["result"], "agent_continuation_bind").unwrap()["inputSchema"]["required"],
+        tool(&ui["result"], "bind_agent_continuation").unwrap()["inputSchema"]["required"],
         json!([
             "agent_id",
             "endpoint_id",
@@ -299,7 +299,7 @@ async fn agent_continuation_app_surface_is_sparse_app_only_without_rendering_bin
         ])
     );
     assert_eq!(
-        tool(&ui["result"], "agent_continuation_wake_prepare").unwrap()["inputSchema"]["required"],
+        tool(&ui["result"], "prepare_agent_continuation_wake").unwrap()["inputSchema"]["required"],
         json!([
             "agent_id",
             "endpoint_id",
@@ -463,13 +463,13 @@ async fn agent_continuation_app_surface_is_sparse_app_only_without_rendering_bin
     for required in [
         "ui/initialize",
         "ui/notifications/tool-input",
-        "agent_continuation_bind",
-        "agent_continuation_recover_endpoint",
-        "agent_continuation_state",
-        "agent_continuation_wake_acquire",
-        "agent_continuation_wake_prepare",
+        "bind_agent_continuation",
+        "recover_agent_continuation_endpoint",
+        "get_agent_continuation_state",
+        "acquire_agent_continuation_wake",
+        "prepare_agent_continuation_wake",
         "ui/message",
-        "agent_continuation_wake_finish",
+        "finish_agent_continuation_wake",
         "visibilitychange",
         "pagehide",
         "beforeunload",
@@ -581,7 +581,7 @@ async fn agent_continuation_app_surface_is_sparse_app_only_without_rendering_bin
         "server-side App call correlation must remain available while UI diagnostics are hidden"
     );
     assert!(
-        MCP_AGENT_CONTINUATION_APP_HTML.contains("agent_wait_state"),
+        MCP_AGENT_CONTINUATION_APP_HTML.contains("get_agent_wait_state"),
         "v17 Wait presentation must poll only the exact durable Wait read surface"
     );
     assert!(
@@ -632,7 +632,7 @@ async fn agent_continuation_app_uses_hashed_openai_session_as_client_window_fenc
             Some(json!(5151)),
             mcp_2026_window_params(
                 json!({
-                    "name": "agent_continuation_bind",
+                    "name": "bind_agent_continuation",
                     "arguments": {
                         "agent_id": agent,
                         "endpoint_id": endpoint,
@@ -669,7 +669,7 @@ async fn agent_continuation_app_uses_hashed_openai_session_as_client_window_fenc
             Some(json!(5152)),
             mcp_2026_window_params(
                 json!({
-                    "name": "agent_continuation_state",
+                    "name": "get_agent_continuation_state",
                     "arguments": {
                         "agent_id": agent,
                         "endpoint_id": endpoint,
@@ -704,7 +704,7 @@ async fn agent_continuation_app_uses_hashed_openai_session_as_client_window_fenc
             Some(json!(5153)),
             mcp_2026_window_params(
                 json!({
-                    "name": "agent_continuation_bind",
+                    "name": "bind_agent_continuation",
                     "arguments": {
                         "agent_id": agent,
                         "endpoint_id": endpoint,
@@ -734,7 +734,7 @@ async fn agent_continuation_app_uses_hashed_openai_session_as_client_window_fenc
             Some(json!(5154)),
             mcp_2026_window_params(
                 json!({
-                    "name": "agent_continuation_state",
+                    "name": "get_agent_continuation_state",
                     "arguments": {
                         "agent_id": agent,
                         "endpoint_id": endpoint,
@@ -767,7 +767,7 @@ async fn agent_continuation_app_uses_hashed_openai_session_as_client_window_fenc
             Some(json!(5155)),
             mcp_2026_window_params(
                 json!({
-                    "name": "agent_continuation_recover_endpoint",
+                    "name": "recover_agent_continuation_endpoint",
                     "arguments": {
                         "agent_id": agent,
                         "endpoint_id": endpoint,
@@ -1006,7 +1006,7 @@ fn expired_successor_replay_survives_published_recovery_output_schema() {
     );
 
     let published =
-        webcodex_tool_contracts::output_schema_for_tool("agent_continuation_recover_endpoint");
+        webcodex_tool_contracts::output_schema_for_tool("recover_agent_continuation_endpoint");
     let output_schema = &published["properties"]["output"];
     let host_projection =
         host_project_through_output_schema(&old_selector_replay.output, output_schema);
@@ -1105,7 +1105,7 @@ async fn agent_continuation_app_protocol_uses_standard_result_without_model_proj
             "tools/call",
             Some(json!(5202)),
             mcp_2026_params(json!({
-                "name": "agent_continuation_bind",
+                "name": "bind_agent_continuation",
                 "arguments": {
                     "agent_id": receiver,
                     "endpoint_id": receiver_endpoint,
@@ -1135,7 +1135,7 @@ async fn agent_continuation_app_protocol_uses_standard_result_without_model_proj
             "tools/call",
             Some(json!(5203)),
             mcp_2026_params(json!({
-                "name": "agent_continuation_bind",
+                "name": "bind_agent_continuation",
                 "arguments": {
                     "agent_id": receiver,
                     "endpoint_id": receiver_endpoint,
@@ -1190,7 +1190,7 @@ async fn agent_continuation_app_protocol_uses_standard_result_without_model_proj
             "tools/call",
             Some(json!(5204)),
             mcp_2026_params(json!({
-                "name": "agent_continuation_wake_acquire",
+                "name": "acquire_agent_continuation_wake",
                 "arguments": {
                     "agent_id": receiver,
                     "endpoint_id": receiver_endpoint,
@@ -1225,7 +1225,7 @@ async fn agent_continuation_app_protocol_uses_standard_result_without_model_proj
             "tools/call",
             Some(json!(5205)),
             mcp_2026_params(json!({
-                "name": "agent_continuation_wake_prepare",
+                "name": "prepare_agent_continuation_wake",
                 "arguments": {
                     "agent_id": receiver,
                     "endpoint_id": receiver_endpoint,
@@ -1295,7 +1295,7 @@ async fn agent_continuation_app_protocol_uses_standard_result_without_model_proj
         .scopes
         .retain(|scope| scope != crate::auth::SCOPE_COMMUNICATION_MANAGE);
     for name in APP_TOOLS {
-        if name == "agent_wait_state" {
+        if name == "get_agent_wait_state" {
             // Agent Wait state is a separate read-only App projection keyed by wait_id;
             // Store/runtime tests own exact Wait authority and existence-hiding coverage.
             continue;
@@ -1306,12 +1306,12 @@ async fn agent_continuation_app_protocol_uses_standard_result_without_model_proj
         });
         if matches!(
             name,
-            "agent_continuation_wake_prepare" | "agent_continuation_wake_finish"
+            "prepare_agent_continuation_wake" | "finish_agent_continuation_wake"
         ) {
             args["wake_id"] = json!(wake_id);
             args["attempt_id"] = json!(attempt_id);
         }
-        if name == "agent_continuation_wake_finish" {
+        if name == "finish_agent_continuation_wake" {
             args["outcome"] = json!("dispatch_accepted");
         }
         let request = || {
@@ -1402,7 +1402,7 @@ async fn all_agent_wait_mcp_automatic_message_is_compact_and_guides_authoritativ
             "tools/call",
             Some(json!(5302)),
             mcp_2026_params(json!({
-                "name": "agent_continuation_bind",
+                "name": "bind_agent_continuation",
                 "arguments": {
                     "agent_id": watcher,
                     "endpoint_id": watcher_endpoint,
@@ -1501,7 +1501,7 @@ async fn all_agent_wait_mcp_automatic_message_is_compact_and_guides_authoritativ
             "tools/call",
             Some(json!(5303)),
             mcp_2026_params(json!({
-                "name": "agent_continuation_wake_acquire",
+                "name": "acquire_agent_continuation_wake",
                 "arguments": {
                     "agent_id": watcher,
                     "endpoint_id": watcher_endpoint,
@@ -1533,7 +1533,7 @@ async fn all_agent_wait_mcp_automatic_message_is_compact_and_guides_authoritativ
             "tools/call",
             Some(json!(5304)),
             mcp_2026_params(json!({
-                "name": "agent_continuation_wake_prepare",
+                "name": "prepare_agent_continuation_wake",
                 "arguments": {
                     "agent_id": watcher,
                     "endpoint_id": watcher_endpoint,
@@ -1635,7 +1635,7 @@ async fn goal_scoped_agent_wait_mcp_message_names_goal_and_authoritative_rereads
             "tools/call",
             Some(json!(5402)),
             mcp_2026_params(json!({
-                "name": "agent_continuation_bind",
+                "name": "bind_agent_continuation",
                 "arguments": {
                     "agent_id": controller,
                     "endpoint_id": controller_endpoint,
@@ -1748,7 +1748,7 @@ async fn goal_scoped_agent_wait_mcp_message_names_goal_and_authoritative_rereads
             "tools/call",
             Some(json!(5403)),
             mcp_2026_params(json!({
-                "name": "agent_continuation_wake_acquire",
+                "name": "acquire_agent_continuation_wake",
                 "arguments": {
                     "agent_id": controller,
                     "endpoint_id": controller_endpoint,
@@ -1780,7 +1780,7 @@ async fn goal_scoped_agent_wait_mcp_message_names_goal_and_authoritative_rereads
             "tools/call",
             Some(json!(5404)),
             mcp_2026_params(json!({
-                "name": "agent_continuation_wake_prepare",
+                "name": "prepare_agent_continuation_wake",
                 "arguments": {
                     "agent_id": controller,
                     "endpoint_id": controller_endpoint,

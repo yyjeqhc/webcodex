@@ -129,7 +129,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     adaptive_runtime_direct(
         model_spec(
             def(
-                "project_artifact",
+                "inspect_project_artifact",
                 super::ToolAuditPolicy::TYPED_CANONICAL,
                 ModelVisible,
                 TOOL_CATEGORY_ARTIFACT,
@@ -178,7 +178,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     ),
     model_spec(
         def(
-            "read_project_artifact",
+            "read_project_artifact_chunk",
             super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_ARTIFACT,
@@ -197,11 +197,11 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             false,
             super::ToolSessionEvidencePolicy::NONE,
         ),
-        "Bounded chunk inspection API for a project artifact. Returns base64 for one small segment plus full-file sha256/MIME metadata. A truncated ranged read emits one parser-ready suggested_call that carries the observed full-file sha256 as expected_sha256, so continuation either reads the same exact content incarnation or fails closed with snapshot_changed before returning changed bytes; do not manually translate next_offset or sha256 bookkeeping. If the goal is to deliver the complete file to ChatGPT/host/user, do not loop over base64 chunks; use project_artifact(action=export) instead.",
+        "Bounded chunk inspection API for a project artifact. Returns base64 for one small segment plus full-file sha256/MIME metadata. A truncated ranged read emits one parser-ready suggested_call that carries the observed full-file sha256 as expected_sha256, so continuation either reads the same exact content incarnation or fails closed with snapshot_changed before returning changed bytes; do not manually translate next_offset or sha256 bookkeeping. If the goal is to deliver the complete file to ChatGPT/host/user, do not loop over base64 chunks; use inspect_project_artifact(action=export) instead.",
     ),
     model_spec(
         def(
-            "artifact_upload_begin",
+            "begin_artifact_upload",
             super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_ARTIFACT,
@@ -224,7 +224,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     ),
     requires_artifact_upload_path_binding(model_spec(
         def(
-            "artifact_upload_chunk",
+            "upload_artifact_chunk",
             super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_ARTIFACT,
@@ -243,12 +243,12 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             false,
             super::ToolSessionEvidencePolicy::NONE,
         ),
-        "Append one base64 chunk up to 1 MiB decoded to an active artifact upload. path is required and must exactly match artifact_upload_begin; this binds upload_id to the target path.",
+        "Append one base64 chunk up to 1 MiB decoded to an active artifact upload. path is required and must exactly match begin_artifact_upload; this binds upload_id to the target path.",
     )),
     requires_artifact_upload_path_binding(permission_risk(
         model_spec(
             def(
-            "artifact_upload_finish",
+            "finish_artifact_upload",
             super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_ARTIFACT,
@@ -267,14 +267,14 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             false,
             super::ToolSessionEvidencePolicy::NONE,
             ),
-            "Finish an active artifact upload. path is required and must exactly match artifact_upload_begin; this binds upload_id before atomic commit.",
+            "Finish an active artifact upload. path is required and must exactly match begin_artifact_upload; this binds upload_id before atomic commit.",
         ),
         PERMISSION_RISK_ARTIFACT_WRITE,
     )),
     requires_artifact_upload_path_binding(permission_risk(
         model_spec(
             def(
-            "artifact_upload_abort",
+            "abort_artifact_upload",
             super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_ARTIFACT,
@@ -293,7 +293,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             false,
             super::ToolSessionEvidencePolicy::NONE,
             ),
-            "Abort an active artifact upload. path is required and must exactly match artifact_upload_begin; this binds upload_id before cleanup and reports final_file_exists without touching the final target.",
+            "Abort an active artifact upload. path is required and must exactly match begin_artifact_upload; this binds upload_id before cleanup and reports final_file_exists without touching the final target.",
         ),
         PERMISSION_RISK_ARTIFACT_WRITE,
     )),

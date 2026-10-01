@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn computer_control_output_schema_has_closed_native_platforms() {
-    let schema = crate::tool_runtime::registry::output_schema_for_tool("computer_control");
+    let schema = crate::tool_runtime::registry::output_schema_for_tool("control_computer");
     let validate = |value: &Value| {
         crate::tool_runtime::startup_brief::validate_schema_instance_for_test(value, &schema)
     };
@@ -29,7 +29,7 @@ fn computer_control_output_schema_has_closed_native_platforms() {
                 "execution_state": "not_started",
                 "suggested_call": {
                     "follow_up_kind": "fallback_recovery",
-                    "tool": "computer_observe",
+                    "tool": "observe_computer",
                     "arguments": {"action": "applications", "client_id": "msi"}
                 }
             }),
@@ -38,7 +38,7 @@ fn computer_control_output_schema_has_closed_native_platforms() {
     .unwrap();
     validate(&stale).unwrap();
     let mut legacy_recovery_tool = stale.clone();
-    legacy_recovery_tool["output"]["recovery_tool"] = json!("computer_observe");
+    legacy_recovery_tool["output"]["recovery_tool"] = json!("observe_computer");
     assert!(validate(&legacy_recovery_tool).is_err());
     assert!(schema["properties"]["output"]["properties"]
         .get("recovery_tool")
@@ -87,8 +87,8 @@ fn computer_control_output_schema_has_closed_native_platforms() {
 
 #[test]
 fn browser_output_schemas_accept_canonical_results_and_reject_leaked_fields() {
-    let observe_schema = crate::tool_runtime::registry::output_schema_for_tool("browser_observe");
-    let act_schema = crate::tool_runtime::registry::output_schema_for_tool("browser_act");
+    let observe_schema = crate::tool_runtime::registry::output_schema_for_tool("observe_browser");
+    let act_schema = crate::tool_runtime::registry::output_schema_for_tool("control_browser");
     let validate_observe = |value: &Value| {
         crate::tool_runtime::startup_brief::validate_schema_instance_for_test(
             value,
@@ -211,7 +211,7 @@ fn browser_output_schemas_accept_canonical_results_and_reject_leaked_fields() {
                     "reason": "re-observe before acting",
                     "suggested_call": {
                         "follow_up_kind": "fallback_recovery",
-                        "tool": "browser_observe",
+                        "tool": "observe_browser",
                         "arguments": {
                             "action": "snapshot",
                             "client_id": "msi",

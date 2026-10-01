@@ -58,7 +58,7 @@ fn tool_specs_annotations_are_canonical_semantic_projections() {
             ToolIdempotency::DesiredState,
         ),
         (
-            "coding_agent_start",
+            "start_coding_agent",
             ToolEffect::Execute,
             ToolIdempotency::Keyed,
         ),
@@ -96,12 +96,12 @@ fn tool_specs_annotations_are_canonical_semantic_projections() {
         "apply_unified_diff",
         "write_project_file",
         #[cfg(feature = "workspace-checkpoints")]
-        "workspace_checkpoint_restore",
+        "restore_workspace_checkpoint",
         "save_project_artifact",
         "import_conversation_files_to_project",
         "transfer_project_artifact",
-        "artifact_upload_finish",
-        "artifact_upload_abort",
+        "finish_artifact_upload",
+        "abort_artifact_upload",
         "assign_agent_task",
         "reconcile_agent_task_coding_run",
         "heartbeat_agent_task_attempt",
@@ -111,8 +111,8 @@ fn tool_specs_annotations_are_canonical_semantic_projections() {
         "detach_agent_endpoint",
         "consume_agent_deliveries",
         "consume_agent_wake",
-        "coding_agent_cancel",
-        "computer_control",
+        "cancel_coding_agent",
+        "control_computer",
         "update_session_context",
         "close_session",
         "resolve_session_message",
@@ -130,11 +130,11 @@ fn tool_specs_annotations_are_canonical_semantic_projections() {
 
     for name in [
         #[cfg(feature = "workspace-checkpoints")]
-        "workspace_checkpoint_create",
-        "git_commit_paths",
-        "artifact_upload_begin",
-        "artifact_upload_chunk",
-        "computer_save_snapshot",
+        "create_workspace_checkpoint",
+        "commit_git_paths",
+        "begin_artifact_upload",
+        "upload_artifact_chunk",
+        "save_computer_snapshot",
         "start_agent_task_attempt",
         "create_conversation",
         "post_conversation_message",
@@ -156,17 +156,17 @@ fn tool_specs_annotations_are_canonical_semantic_projections() {
     assert_eq!(close.risk, ToolRisk::SessionCollaborate);
     assert!(!runtime_tool_requires_permission("close_session"));
 
-    let cancel = lookup_tool_metadata("coding_agent_cancel").unwrap();
+    let cancel = lookup_tool_metadata("cancel_coding_agent").unwrap();
     assert_eq!(cancel.effect, ToolEffect::Mutate);
     assert_eq!(cancel.risk, ToolRisk::RunControl);
     assert_eq!(cancel.approval, ToolApprovalPolicy::InheritFromStart);
     assert_eq!(cancel.idempotency, ToolIdempotency::DesiredState);
     assert_eq!(
-        spec_named(&specs, "coding_agent_cancel").annotations["readOnlyHint"],
+        spec_named(&specs, "cancel_coding_agent").annotations["readOnlyHint"],
         false
     );
 
-    let commit = lookup_tool_metadata("git_commit_paths").unwrap();
+    let commit = lookup_tool_metadata("commit_git_paths").unwrap();
     assert_eq!(commit.effect, ToolEffect::Mutate);
     assert_eq!(commit.risk, ToolRisk::ProjectWrite);
     assert_eq!(commit.approval, ToolApprovalPolicy::Standard);
@@ -176,10 +176,10 @@ fn tool_specs_annotations_are_canonical_semantic_projections() {
         ToolAuthorityPolicy::RequireAll(&[PROJECT_WRITE, JOB_RUN])
     );
     assert_eq!(
-        spec_named(&specs, "coding_agent_cancel").annotations["idempotentHint"],
+        spec_named(&specs, "cancel_coding_agent").annotations["idempotentHint"],
         true
     );
-    assert!(!runtime_tool_requires_permission("coding_agent_cancel"));
+    assert!(!runtime_tool_requires_permission("cancel_coding_agent"));
 
     assert_eq!(
         spec_named(&specs, "run_shell").annotations["openWorldHint"],

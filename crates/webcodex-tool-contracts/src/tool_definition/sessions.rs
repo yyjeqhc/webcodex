@@ -61,7 +61,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             Some(RUNTIME_READ), true, NoPath, false, false,
             super::ToolSessionEvidencePolicy::NONE,
         ).with_activity(super::ToolActivityPresentation::Support, super::ToolActivityInteraction::NonMeaningful),
-        "Read-only recovery discovery when the exact Session id is missing, including a new Host window or account using the same WebCodex authority. Requires an authorized exact Project and lists only that caller's creation-time Session authority group, including retained Closed history. Lifecycle filter is optional; offset defaults to 0, limit to 10 and is normalized to 1..20. Titles are redacted/bounded and output is capped at 32 KiB. Counts exclude foreign authority groups. Inventory pagination is not a frozen snapshot. Explicitly choose a returned session_id/session_ref, then read session_handoff_summary. Active work needs explicit bootstrap with the selected Session; Closed is historical only. Discovery never infers current/recent work, resumes a Session, grants authority, or restores hidden chat context.",
+        "Read-only recovery discovery when the exact Session id is missing, including a new Host window or account using the same WebCodex authority. Requires an authorized exact Project and lists only that caller's creation-time Session authority group, including retained Closed history. Lifecycle filter is optional; offset defaults to 0, limit to 10 and is normalized to 1..20. Titles are redacted/bounded and output is capped at 32 KiB. Counts exclude foreign authority groups. Inventory pagination is not a frozen snapshot. Explicitly choose a returned session_id/session_ref, then read read_session_handoff_summary. Active work needs explicit bootstrap with the selected Session; Closed is historical only. Discovery never infers current/recent work, resumes a Session, grants authority, or restores hidden chat context.",
     ), &[RUNTIME_READ, PROJECT_READ]),
 
     requires_explicit_business_session(model_spec(
@@ -202,7 +202,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         super::ToolDirectReason::Presentation,
     ),
     def(
-        "work_result_state",
+        "get_work_result_state",
         super::ToolAuditPolicy::typed_fields(&[
             super::ToolAuditResultField::pointer("project", "/work_result/project"),
             super::ToolAuditResultField::pointer("session_id", "/work_result/session_id"),
@@ -231,7 +231,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         super::ToolActivityInteraction::NonMeaningful,
     ),
     def(
-        "work_result_activity_detail",
+        "read_work_result_activity_detail",
         super::ToolAuditPolicy::typed_fields(&[
             super::ToolAuditResultField::pointer(
                 "server_trace_id",
@@ -261,7 +261,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         super::ToolActivityInteraction::NonMeaningful,
     ),
     def(
-        "work_result_send_message",
+        "send_work_result_message",
         super::ToolAuditPolicy::typed_fields(&[
             super::ToolAuditResultField::value("success"),
             super::ToolAuditResultField::value("session_id"),
@@ -292,7 +292,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         super::ToolActivityInteraction::NonMeaningful,
     ),
     def(
-        "changes_file_diff",
+        "read_changed_file_diff",
         super::ToolAuditPolicy::typed_fields(&[
             super::ToolAuditResultField::pointer("project", "/changes_file_diff/project"),
             super::ToolAuditResultField::pointer("session_id", "/changes_file_diff/session_id"),
@@ -323,7 +323,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     ),
     requires_explicit_business_session(model_spec(
         def(
-            "session_summary",
+            "read_session_summary",
             super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_SESSION,
@@ -366,7 +366,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             false,
             super::ToolSessionEvidencePolicy::NONE.lifecycle(super::ToolSessionLifecycleEffect::Mutation),
             ),
-            "Update Session defaults. Binding execution_context.resource selects an already active Runner-local named SSH resource; for a new explicit target use ssh_resource list/register and restart the Runner first, then list and bind the active name. open_session_shell uses that Session binding. Requires an authorized project matching the exact Session project; cross-project escape is not supported. Context and event commit under the store lock; the background writer persists, so success does not mean disk flush. Never falls back and never creates unknown Sessions.",
+            "Update Session defaults. Binding execution_context.resource selects an already active Runner-local named SSH resource; for a new explicit target use manage_ssh_resource list/register and restart the Runner first, then list and bind the active name. open_session_shell uses that Session binding. Requires an authorized project matching the exact Session project; cross-project escape is not supported. Context and event commit under the store lock; the background writer persists, so success does not mean disk flush. Never falls back and never creates unknown Sessions.",
         ),
         PERMISSION_RISK_WRITE,
     )),
@@ -398,7 +398,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     )),
     requires_explicit_business_session(model_spec(
         def(
-            "validation_summary",
+            "read_validation_summary",
             super::ToolAuditPolicy::TYPED_CANONICAL,
             ModelVisible,
             TOOL_CATEGORY_VALIDATION,
@@ -640,7 +640,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     adaptive_runtime_direct(
         requires_explicit_business_session(model_spec(
             def(
-                "session_discussion_summary",
+                "read_session_discussion_summary",
                 super::ToolAuditPolicy::typed_fields(&[
                     super::ToolAuditResultField::value("success"),
                     super::ToolAuditResultField::value("session_id"),
@@ -673,7 +673,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     ),
     requires_explicit_business_session(model_spec(
             def(
-                "session_handoff_summary",
+                "read_session_handoff_summary",
             super::ToolAuditPolicy::typed_fields(&[
                 super::ToolAuditResultField::value("session_id"),
                 super::ToolAuditResultField::value("project"),
@@ -710,7 +710,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         )),
     requires_explicit_business_session(
         def(
-            "session_handoff_state",
+            "get_session_handoff_state",
             super::ToolAuditPolicy::typed_fields(&[
                 super::ToolAuditResultField::value("session_id"),
                 super::ToolAuditResultField::value("project"),

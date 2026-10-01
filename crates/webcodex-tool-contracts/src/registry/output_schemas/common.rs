@@ -83,12 +83,12 @@ pub(super) fn session_lifecycle_schema(description: &str) -> Value {
 
 #[cfg(feature = "workspace-checkpoints")]
 pub(super) fn checkpoint_validation_schema(description: &str) -> Value {
-    input_property_schema_for_tool("workspace_checkpoint_create", "validation", description)
+    input_property_schema_for_tool("create_workspace_checkpoint", "validation", description)
 }
 
 #[cfg(feature = "workspace-checkpoints")]
 pub(super) fn checkpoint_labels_schema(description: &str) -> Value {
-    input_property_schema_for_tool("workspace_checkpoint_create", "labels", description)
+    input_property_schema_for_tool("create_workspace_checkpoint", "labels", description)
 }
 
 pub fn continuation_semantics_schema(
@@ -549,7 +549,7 @@ pub(super) fn session_hint_schema() -> Value {
             },
             "suggested_next_tool": {
                 "type": "string",
-                "enum": ["session_discussion_summary"],
+                "enum": ["read_session_discussion_summary"],
                 "description": "Tool to call when the model needs the bounded message details."
             }
         },
@@ -952,7 +952,7 @@ pub(super) fn external_observation_schema(description: &str) -> Value {
     })
 }
 
-/// Strict compact handoff projection shared by `session_handoff_summary` and
+/// Strict compact handoff projection shared by `read_session_handoff_summary` and
 /// `finish_coding_task`.
 pub fn handoff_brief_schema(description: &str) -> Value {
     fn nullable_with(schema: Value) -> Value {
@@ -1523,7 +1523,7 @@ fn attempt_outcome_schema() -> Value {
     })
 }
 
-/// Validation delta projection surfaced by `validation_summary` and inside
+/// Validation delta projection surfaced by `read_validation_summary` and inside
 /// `continuation_feedback`. Strict `additionalProperties: false` on all
 /// sub-objects so field drift fails loudly.
 pub fn validation_delta_schema(description: &str) -> Value {

@@ -97,7 +97,7 @@ fn tool_specs_describe_default_coding_loop_preferences() {
         "broad discovery",
         "files_with_matches/count",
         "matched source will be read immediately",
-        "search_and_read",
+        "search_and_read_project_texts",
         "small known-scope search",
         "native rg is first-class",
         "batch only independent queries",
@@ -122,7 +122,7 @@ fn tool_specs_describe_default_coding_loop_preferences() {
         );
     }
 
-    let search_and_read_desc = desc("search_and_read");
+    let search_and_read_desc = desc("search_and_read_project_texts");
     for phrase in [
         "one bounded project-text query or 1..8 predetermined independent queries",
         "query xor queries",
@@ -134,12 +134,12 @@ fn tool_specs_describe_default_coding_loop_preferences() {
     ] {
         assert!(
             search_and_read_desc.contains(phrase),
-            "search_and_read description should mention {phrase}: {search_and_read_desc}"
+            "search_and_read_project_texts description should mention {phrase}: {search_and_read_desc}"
         );
     }
     assert!(
         !search_and_read_desc.contains("run one bounded project-text search"),
-        "obsolete single-query search_and_read description returned: {search_and_read_desc}"
+        "obsolete single-query search_and_read_project_texts description returned: {search_and_read_desc}"
     );
 
     let save_artifact_desc = desc("save_project_artifact");
@@ -169,7 +169,7 @@ fn tool_specs_describe_default_coding_loop_preferences() {
             "import_conversation_files_to_project: {phrase}"
         );
     }
-    let project_artifact_desc = desc("project_artifact");
+    let project_artifact_desc = desc("inspect_project_artifact");
     let transfer_artifact_desc = desc("transfer_project_artifact");
     for phrase in [
         "source project:read",
@@ -193,10 +193,10 @@ fn tool_specs_describe_default_coding_loop_preferences() {
     ] {
         assert!(
             project_artifact_desc.contains(phrase),
-            "project_artifact: {phrase}"
+            "inspect_project_artifact: {phrase}"
         );
     }
-    let read_artifact_desc = desc("read_project_artifact");
+    let read_artifact_desc = desc("read_project_artifact_chunk");
     for phrase in [
         "bounded chunk inspection api",
         "parser-ready suggested_call",
@@ -204,14 +204,14 @@ fn tool_specs_describe_default_coding_loop_preferences() {
         "snapshot_changed",
         "do not manually translate",
         "do not loop over base64 chunks",
-        "project_artifact(action=export)",
+        "inspect_project_artifact(action=export)",
     ] {
         assert!(
             read_artifact_desc.contains(phrase),
-            "read_project_artifact: {phrase}"
+            "read_project_artifact_chunk: {phrase}"
         );
     }
-    let upload_begin_desc = desc("artifact_upload_begin");
+    let upload_begin_desc = desc("begin_artifact_upload");
     for phrase in [
         "low-level chunked binary artifact upload",
         "not the preferred path for a current chatgpt/host attachment",
@@ -219,13 +219,13 @@ fn tool_specs_describe_default_coding_loop_preferences() {
     ] {
         assert!(
             upload_begin_desc.contains(phrase),
-            "artifact_upload_begin: {phrase}"
+            "begin_artifact_upload: {phrase}"
         );
     }
 
-    let git_log_desc = desc("git_log");
+    let git_log_desc = desc("read_git_log");
     for phrase in ["next_skip", "parser-ready", "10000 skip bound"] {
-        assert!(git_log_desc.contains(phrase), "git_log: {phrase}");
+        assert!(git_log_desc.contains(phrase), "read_git_log: {phrase}");
     }
     let list_files_desc = desc("list_project_files");
     for phrase in [
@@ -254,7 +254,7 @@ fn tool_specs_describe_default_coding_loop_preferences() {
         );
     }
 
-    let show_changes_desc = desc("show_changes");
+    let show_changes_desc = desc("read_workspace_changes");
     for phrase in [
         "specialist workspace projection",
         "explicit discovery",
@@ -265,13 +265,13 @@ fn tool_specs_describe_default_coding_loop_preferences() {
     ] {
         assert!(
             show_changes_desc.contains(phrase),
-            "show_changes description should mention {phrase}: {show_changes_desc}"
+            "read_workspace_changes description should mention {phrase}: {show_changes_desc}"
         );
     }
-    let git_diff_hunks = spec_named(&specs, "git_diff_hunks");
+    let git_diff_hunks = spec_named(&specs, "read_git_diff_hunks");
     assert!(!show_changes_desc.contains("default inspect/review tool before final response"));
 
-    let git_review_summary_desc = desc("git_review_summary");
+    let git_review_summary_desc = desc("read_git_review_summary");
     for phrase in [
         "specialist exact committed-range review map",
         "explicit discovery",
@@ -280,7 +280,7 @@ fn tool_specs_describe_default_coding_loop_preferences() {
     ] {
         assert!(
             git_review_summary_desc.contains(phrase),
-            "git_review_summary description should mention {phrase}: {git_review_summary_desc}"
+            "read_git_review_summary description should mention {phrase}: {git_review_summary_desc}"
         );
     }
     let git_diff_hunks_desc = git_diff_hunks.description.to_lowercase();
@@ -295,12 +295,12 @@ fn tool_specs_describe_default_coding_loop_preferences() {
     ] {
         assert!(
             git_diff_hunks_desc.contains(phrase),
-            "git_diff_hunks description should mention {phrase}: {git_diff_hunks_desc}"
+            "read_git_diff_hunks description should mention {phrase}: {git_diff_hunks_desc}"
         );
     }
     let default_page_bytes = git_diff_hunks.input_schema["properties"]["max_page_bytes"]["default"]
         .as_u64()
-        .expect("git_diff_hunks max_page_bytes default");
+        .expect("read_git_diff_hunks max_page_bytes default");
     assert_eq!(
         default_page_bytes as usize,
         webcodex_core::runtime_contract::DEFAULT_GIT_DIFF_HUNKS_PAGE_BYTES
@@ -312,7 +312,7 @@ fn tool_specs_describe_default_coding_loop_preferences() {
     let continuation_desc = git_diff_hunks.input_schema["properties"]["continuation"]
         ["description"]
         .as_str()
-        .expect("git_diff_hunks continuation description")
+        .expect("read_git_diff_hunks continuation description")
         .to_lowercase();
     for phrase in [
         "later-record page cursor",
@@ -330,7 +330,7 @@ fn tool_specs_describe_default_coding_loop_preferences() {
     ] {
         assert!(
             continuation_desc.contains(phrase),
-            "git_diff_hunks continuation description should mention {phrase}: {continuation_desc}"
+            "read_git_diff_hunks continuation description should mention {phrase}: {continuation_desc}"
         );
     }
 
@@ -473,19 +473,19 @@ fn tool_specs_describe_default_coding_loop_preferences() {
         assert!(cargo_fmt_desc.contains(phrase), "cargo_fmt: {phrase}");
     }
 
-    let workspace_hygiene_desc = desc("workspace_hygiene_check");
+    let workspace_hygiene_desc = desc("check_workspace_hygiene");
     for phrase in ["pre-final", "workspace hygiene", "read-only"] {
         assert!(
             workspace_hygiene_desc.contains(phrase),
-            "workspace_hygiene_check description should mention {phrase}: {workspace_hygiene_desc}"
+            "check_workspace_hygiene description should mention {phrase}: {workspace_hygiene_desc}"
         );
     }
 
-    let handoff_desc = desc("session_handoff_summary");
+    let handoff_desc = desc("read_session_handoff_summary");
     for phrase in ["handoff", "missing task context", "read-only"] {
         assert!(
             handoff_desc.contains(phrase),
-            "session_handoff_summary description should mention {phrase}: {handoff_desc}"
+            "read_session_handoff_summary description should mention {phrase}: {handoff_desc}"
         );
     }
 
@@ -532,7 +532,7 @@ fn tool_specs_describe_default_coding_loop_preferences() {
         "survive runner restart/upgrade/stop/replacement",
         "never for duration alone",
         "interactive=true",
-        "job_write_input",
+        "write_job_input",
         "bytes/eof",
         "no pty",
         "structured validation evidence",
@@ -613,7 +613,7 @@ fn tool_specs_describe_default_coding_loop_preferences() {
         "update_session_context",
         "no per-shell host/resource parameter",
         "does not need webcodex runner",
-        "ssh_resource",
+        "manage_ssh_resource",
         "runner restart",
     ] {
         assert!(
@@ -626,7 +626,7 @@ fn tool_specs_describe_default_coding_loop_preferences() {
     for phrase in [
         "active runner-local named ssh resource",
         "open_session_shell",
-        "ssh_resource",
+        "manage_ssh_resource",
         "restart the runner",
     ] {
         assert!(
@@ -635,7 +635,7 @@ fn tool_specs_describe_default_coding_loop_preferences() {
         );
     }
 
-    let session_shell_exec_desc = desc("session_shell_exec");
+    let session_shell_exec_desc = desc("execute_session_shell");
     for phrase in [
         "primary route",
         "same named ssh resource",
@@ -649,11 +649,11 @@ fn tool_specs_describe_default_coding_loop_preferences() {
     ] {
         assert!(
             session_shell_exec_desc.contains(phrase),
-            "session_shell_exec description should mention {phrase}: {session_shell_exec_desc}"
+            "execute_session_shell description should mention {phrase}: {session_shell_exec_desc}"
         );
     }
 
-    let persistent_exec = spec_named(&specs, "session_shell_exec");
+    let persistent_exec = spec_named(&specs, "execute_session_shell");
     assert_eq!(
         persistent_exec.input_schema["properties"]["result_expectation"]["enum"],
         json!(["success", "failure", "observe"])
@@ -718,27 +718,27 @@ fn model_preference_upper_bounds_are_clamped_by_runtime_not_rejected_by_schema()
         ("run_detached_process", &["timeout_secs"]),
         ("run_script", &["timeout_secs"]),
         ("run_shell", &["timeout_secs"]),
-        ("session_shell_exec", &["timeout_secs"]),
+        ("execute_session_shell", &["timeout_secs"]),
         ("observe_jobs", &["tail_lines", "wait_secs"]),
         ("list_jobs", &["limit"]),
         ("cargo_fmt", &["timeout_secs"]),
         ("cargo_check", &["timeout_secs"]),
         ("cargo_test", &["timeout_secs"]),
         ("go_test", &["timeout_secs"]),
-        ("session_discussion_summary", &["limit"]),
-        ("workspace_hygiene_check", &["max_findings"]),
+        ("read_session_discussion_summary", &["limit"]),
+        ("check_workspace_hygiene", &["max_findings"]),
         ("list_projects", &["limit"]),
         ("list_session_messages", &["limit"]),
         ("observe_session_messages", &["wait_secs", "limit"]),
-        ("validation_summary", &["limit"]),
-        ("session_handoff_summary", &["limit"]),
-        ("document_symbols", &["limit"]),
-        ("document_diagnostics", &["limit"]),
-        ("workspace_symbols", &["limit"]),
-        ("goto_definition", &["limit"]),
+        ("read_validation_summary", &["limit"]),
+        ("read_session_handoff_summary", &["limit"]),
+        ("list_document_symbols", &["limit"]),
+        ("read_document_diagnostics", &["limit"]),
+        ("list_workspace_symbols", &["limit"]),
+        ("find_definition", &["limit"]),
         ("find_references", &["limit"]),
-        ("call_hierarchy", &["limit"]),
-        ("coding_agent_observe", &["wait_secs"]),
+        ("read_call_hierarchy", &["limit"]),
+        ("observe_coding_agent", &["wait_secs"]),
         ("list_agent_tasks", &["limit"]),
         ("list_agent_identities", &["limit"]),
         ("list_conversations", &["limit"]),
@@ -769,7 +769,7 @@ fn model_preference_upper_bounds_are_clamped_by_runtime_not_rejected_by_schema()
 #[test]
 fn call_hierarchy_schema_keeps_traversal_strict_and_result_budget_clamped() {
     let specs = registered_tool_specs();
-    let spec = spec_named(&specs, "call_hierarchy");
+    let spec = spec_named(&specs, "read_call_hierarchy");
     let properties = spec.input_schema["properties"].as_object().unwrap();
 
     assert_eq!(properties["depth"]["minimum"], 1);
@@ -975,11 +975,11 @@ fn session_tool_specs_describe_explicit_targeting() {
 
     let desc = |name: &str| spec_named(&specs, name).description.to_lowercase();
 
-    let summary_desc = desc("session_summary");
+    let summary_desc = desc("read_session_summary");
     for phrase in ["session ledger", "explicit session_id"] {
         assert!(
             summary_desc.contains(phrase),
-            "session_summary description should mention {phrase}: {summary_desc}"
+            "read_session_summary description should mention {phrase}: {summary_desc}"
         );
     }
 
@@ -1042,7 +1042,7 @@ fn session_tool_specs_describe_explicit_targeting() {
         );
     }
 
-    let handoff_desc = desc("session_handoff_summary");
+    let handoff_desc = desc("read_session_handoff_summary");
     for phrase in [
         "exact session_id",
         "handoff_brief",
@@ -1052,7 +1052,7 @@ fn session_tool_specs_describe_explicit_targeting() {
     ] {
         assert!(
             handoff_desc.contains(phrase),
-            "session_handoff_summary description should mention {phrase}: {handoff_desc}"
+            "read_session_handoff_summary description should mention {phrase}: {handoff_desc}"
         );
     }
 

@@ -159,7 +159,7 @@ fn computer_gateway_parser_accepts_every_closed_action_and_rejects_legacy_or_amb
         json!({"action":"read_clipboard","client_id":"mini"}),
     ];
     for arguments in observe {
-        let call = ToolCall::from_tool_name("computer_observe", arguments.clone())
+        let call = ToolCall::from_tool_name("observe_computer", arguments.clone())
             .unwrap_or_else(|error| panic!("observe {arguments} failed: {error}"));
         assert!(matches!(call, ToolCall::ComputerObserve(_)));
     }
@@ -177,7 +177,7 @@ fn computer_gateway_parser_accepts_every_closed_action_and_rejects_legacy_or_amb
         json!({"action":"write_clipboard","client_id":"mini","text":"hello"}),
     ];
     for arguments in control {
-        let call = ToolCall::from_tool_name("computer_control", arguments.clone())
+        let call = ToolCall::from_tool_name("control_computer", arguments.clone())
             .unwrap_or_else(|error| panic!("control {arguments} failed: {error}"));
         assert!(matches!(call, ToolCall::ComputerControl(_)));
     }
@@ -187,10 +187,10 @@ fn computer_gateway_parser_accepts_every_closed_action_and_rejects_legacy_or_amb
         json!({"action":"windows"}),
         json!({"action":"windows","client_id":"mini","text":"unrelated"}),
     ] {
-        assert!(ToolCall::from_tool_name("computer_observe", arguments).is_err());
+        assert!(ToolCall::from_tool_name("observe_computer", arguments).is_err());
     }
     assert!(ToolCall::from_tool_name(
-        "computer_control",
+        "control_computer",
         json!({"action":"pointer_click","client_id":"mini"})
     )
     .is_err());
@@ -328,7 +328,7 @@ fn computer_application_id_and_public_argument_shape_are_closed() {
     }
 
     let list = ToolCall::from_tool_name(
-        "computer_observe",
+        "observe_computer",
         json!({"action": "applications", "client_id": "msi", "limit": 4}),
     )
     .unwrap();
@@ -337,7 +337,7 @@ fn computer_application_id_and_public_argument_shape_are_closed() {
         ToolCall::ComputerObserve(ComputerObserveToolCall::Applications { .. })
     ));
     let launch = ToolCall::from_tool_name(
-        "computer_control",
+        "control_computer",
         json!({"action": "launch_application", "client_id": "msi", "application_id": APPLICATION_ID}),
     )
     .unwrap();
@@ -358,7 +358,7 @@ fn computer_application_id_and_public_argument_shape_are_closed() {
         args.as_object_mut()
             .unwrap()
             .insert(forbidden.to_string(), json!("forbidden"));
-        let error = ToolCall::from_tool_name("computer_control", args).unwrap_err();
+        let error = ToolCall::from_tool_name("control_computer", args).unwrap_err();
         assert!(error.contains("unknown field"), "{error}");
     }
 }
@@ -466,7 +466,7 @@ fn computer_application_launch_lifecycle_is_exact_and_never_blindly_retryable() 
     assert!(unknown.output.get("recovery_kind").is_none());
     assert_computer_suggested_call(
         &unknown,
-        "computer_observe",
+        "observe_computer",
         json!({"action": "windows", "client_id": "msi"}),
     );
     assert!(unknown.output.get("state_changed").is_none());
@@ -492,7 +492,7 @@ fn computer_application_launch_lifecycle_is_exact_and_never_blindly_retryable() 
             assert_eq!(result.output["execution_state"], "outcome_unknown");
             assert_computer_suggested_call(
                 &result,
-                "computer_observe",
+                "observe_computer",
                 json!({"action": "windows", "client_id": "msi"}),
             );
         }
@@ -511,7 +511,7 @@ fn computer_application_launch_lifecycle_is_exact_and_never_blindly_retryable() 
             assert!(result.output.get("recovery_kind").is_none());
             assert_computer_suggested_call(
                 &result,
-                "computer_observe",
+                "observe_computer",
                 json!({"action": "applications", "client_id": "msi"}),
             );
         } else {
@@ -551,7 +551,7 @@ fn computer_pointer_public_shape_and_effect_lifecycle_are_closed() {
     ] {
         assert!(computer_request_is_effect(runner_kind));
         let call = ToolCall::from_tool_name(
-            "computer_control",
+            "control_computer",
             json!({
                 "action": action,
                 "client_id": "msi",
@@ -581,7 +581,7 @@ fn computer_pointer_public_shape_and_effect_lifecycle_are_closed() {
                 .unwrap()
                 .insert(forbidden.to_string(), json!(1));
             args["action"] = json!(action);
-            assert!(ToolCall::from_tool_name("computer_control", args)
+            assert!(ToolCall::from_tool_name("control_computer", args)
                 .unwrap_err()
                 .contains("unknown field"));
         }
@@ -615,7 +615,7 @@ fn computer_pointer_public_shape_and_effect_lifecycle_are_closed() {
     assert_eq!(spent_not_started.output["state_changed"], false);
     assert_computer_suggested_call(
         &spent_not_started,
-        "computer_observe",
+        "observe_computer",
         json!({"action": "snapshot_display", "client_id": "msi", "display_id": DISPLAY_ID}),
     );
     assert!(spent_not_started
@@ -632,7 +632,7 @@ fn computer_pointer_public_shape_and_effect_lifecycle_are_closed() {
     assert_eq!(runner_unknown.output["execution_state"], "outcome_unknown");
     assert_computer_suggested_call(
         &runner_unknown,
-        "computer_observe",
+        "observe_computer",
         json!({"action": "snapshot_display", "client_id": "msi", "display_id": DISPLAY_ID}),
     );
 
@@ -642,7 +642,7 @@ fn computer_pointer_public_shape_and_effect_lifecycle_are_closed() {
     assert_eq!(unknown.output["execution_state"], "outcome_unknown");
     assert_computer_suggested_call(
         &unknown,
-        "computer_observe",
+        "observe_computer",
         json!({"action": "snapshot_display", "client_id": "msi", "display_id": DISPLAY_ID}),
     );
     assert!(unknown
@@ -787,7 +787,7 @@ fn computer_display_public_shape_and_read_only_semantics_are_closed() {
     assert!(!computer_request_is_effect("computer_list_displays"));
     assert!(!computer_request_is_effect("computer_snapshot_display"));
     let list = ToolCall::from_tool_name(
-        "computer_observe",
+        "observe_computer",
         json!({"action": "displays", "client_id": "msi", "limit": 2}),
     )
     .unwrap();
@@ -796,7 +796,7 @@ fn computer_display_public_shape_and_read_only_semantics_are_closed() {
         ToolCall::ComputerObserve(ComputerObserveToolCall::Displays { .. })
     ));
     let snapshot = ToolCall::from_tool_name(
-        "computer_observe",
+        "observe_computer",
         json!({"action": "snapshot_display", "client_id": "msi", "display_id": DISPLAY_ID, "max_width": 960}),
     )
     .unwrap();
@@ -818,7 +818,7 @@ fn computer_display_public_shape_and_read_only_semantics_are_closed() {
         args.as_object_mut()
             .unwrap()
             .insert(forbidden.to_string(), json!(1));
-        let error = ToolCall::from_tool_name("computer_observe", args).unwrap_err();
+        let error = ToolCall::from_tool_name("observe_computer", args).unwrap_err();
         assert!(error.contains("unknown field"), "{error}");
     }
 }
@@ -1621,14 +1621,14 @@ fn stale_computer_identities_expose_bounded_reobserve_targets() {
         assert!(!result.success);
         assert_eq!(result.output["error_kind"], error_kind);
         assert_eq!(result.output["recovery_kind"], "reobserve");
-        assert_eq!(result.output["reconcile_with"], "computer_observe");
+        assert_eq!(result.output["reconcile_with"], "observe_computer");
         assert!(result.output.get("suggested_call").is_none());
         assert!(result.output.get("recovery_tool").is_none());
     }
 
     let stale_element =
         computer_error_with_client("stale_element", "stale observed identity", Some("msi"));
-    assert_eq!(stale_element.output["reconcile_with"], "computer_observe");
+    assert_eq!(stale_element.output["reconcile_with"], "observe_computer");
     assert!(stale_element.output.get("suggested_call").is_none());
 
     for (error_kind, action) in [
@@ -1639,7 +1639,7 @@ fn stale_computer_identities_expose_bounded_reobserve_targets() {
         let result = computer_error_with_client(error_kind, "stale observed identity", Some("msi"));
         assert_computer_suggested_call(
             &result,
-            "computer_observe",
+            "observe_computer",
             json!({"action": action, "client_id": "msi"}),
         );
     }

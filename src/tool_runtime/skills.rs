@@ -2410,18 +2410,18 @@ fn skill_error_dynamic(
                 target.insert(
                     "suggested_call".to_string(),
                     SuggestedToolCall::fallback_recovery(
-                        "skill_versions",
+                        "list_skill_versions",
                         json!({"project": project, "skill_key": skill_key}),
                     )
                     .to_value(),
                 );
             } else {
                 target.insert("recovery_kind".to_string(), json!("reconcile"));
-                target.insert("reconcile_with".to_string(), json!("skill_versions"));
+                target.insert("reconcile_with".to_string(), json!("list_skill_versions"));
             }
         } else {
             target.insert("recovery_kind".to_string(), json!("reconcile"));
-            target.insert("reconcile_with".to_string(), json!("skill_versions"));
+            target.insert("reconcile_with".to_string(), json!("list_skill_versions"));
         }
         if outcome_unknown {
             target.insert("retry_same_idempotency_key".to_string(), json!(true));
@@ -2924,7 +2924,7 @@ mod tests {
     fn uncertain_skill_store_errors_have_same_key_reconciliation_path() {
         let assert_actionable = |result: &ToolResult| {
             let suggested = &result.output["suggested_call"];
-            assert_eq!(suggested["tool"], "skill_versions");
+            assert_eq!(suggested["tool"], "list_skill_versions");
             assert_eq!(
                 suggested["arguments"],
                 json!({"project": "agent:test:demo", "skill_key": "demo"})
@@ -2939,7 +2939,7 @@ mod tests {
             assert!(result.output.get("recovery_kind").is_none());
             let mut projected = ToolResult::err_with_output("recovery", result.output.clone());
             crate::model_surface::project_tool_result_suggested_calls(
-                "skill_install",
+                "install_skill",
                 &mut projected,
                 &|target| crate::model_surface::suggested_tool_call_route(target, true),
             );
@@ -2948,7 +2948,7 @@ mod tests {
                 carrier["tool"],
                 crate::model_surface::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME
             );
-            assert_eq!(carrier["arguments"]["tool"], "skill_versions");
+            assert_eq!(carrier["arguments"]["tool"], "list_skill_versions");
             assert_eq!(carrier["arguments"]["arguments"], suggested["arguments"]);
         };
 
@@ -3003,7 +3003,7 @@ mod tests {
         let family_only =
             skill_error_dynamic("skill_store_outcome_unknown", "agent:test:demo", None, true);
         assert_eq!(family_only.output["recovery_kind"], "reconcile");
-        assert_eq!(family_only.output["reconcile_with"], "skill_versions");
+        assert_eq!(family_only.output["reconcile_with"], "list_skill_versions");
         assert!(family_only.output.get("suggested_call").is_none());
         assert!(family_only.output.get("recovery_tool").is_none());
         assert_eq!(family_only.output["retry_same_idempotency_key"], true);

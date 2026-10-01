@@ -165,7 +165,7 @@ pub struct ToolRuntime {
     /// shrink this cap to exercise handoff without sleeping.
     pub(crate) structured_execution_sync_wait: Duration,
     /// Per-runtime secret used only to authenticate opaque committed-range
-    /// git_diff_hunks continuation state. Clones share the same key; a runtime
+    /// read_git_diff_hunks continuation state. Clones share the same key; a runtime
     /// restart intentionally invalidates old committed continuations fail-closed.
     pub(crate) git_diff_hunks_continuation_mac_key: Arc<[u8; 32]>,
     /// Authoritative permission evaluator for this runtime instance.

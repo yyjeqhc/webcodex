@@ -266,7 +266,7 @@ pub fn output_schema_for_tool(name: &str) -> Option<Value> {
         | "associate_goal_agent_task"
         | "associate_goal_workflow_session" => goal_mutation_schema(),
         "get_goal" => wrapped_output_schema(vec![("goal", goal_detail_schema())]),
-        "present_goal_plan" | "goal_plan_sync" => {
+        "present_goal_plan" | "sync_goal_plan" => {
             wrapped_output_schema(vec![("goal_plan", goal_plan_schema())])
         }
         "list_goals" => wrapped_output_schema(vec![

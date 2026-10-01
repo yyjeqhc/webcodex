@@ -1291,7 +1291,7 @@ impl ToolRuntime {
         ToolResult::ok(listing.to_json(&project, &scope, list_truncated))
     }
 
-    /// `project_overview`: deterministic, bounded project metadata routed to
+    /// `read_project_overview`: deterministic, bounded project metadata routed to
     /// the owning Runner. The server validates inputs and parses the structured
     /// response but never reads the Runner host's project path.
     pub(crate) async fn project_overview(
@@ -1352,12 +1352,12 @@ impl ToolRuntime {
                         Ok(Value::Object(output)) => Value::Object(output),
                         Ok(_) => {
                             return ToolResult::err(
-                                "Runner project_overview returned a non-object payload",
+                                "Runner read_project_overview returned a non-object payload",
                             )
                         }
                         Err(error) => {
                             return ToolResult::err(format!(
-                                "Runner project_overview returned invalid JSON: {error}"
+                                "Runner read_project_overview returned invalid JSON: {error}"
                             ))
                         }
                     };
@@ -1366,7 +1366,7 @@ impl ToolRuntime {
                     || output["scan"]["limit"] != limit
                 {
                     return ToolResult::err(
-                        "Runner project_overview response did not match the requested bounds",
+                        "Runner read_project_overview response did not match the requested bounds",
                     );
                 }
                 output["project"] = json!(project);
@@ -1376,15 +1376,15 @@ impl ToolRuntime {
                 response
                     .error
                     .or(response.stderr)
-                    .unwrap_or_else(|| "Runner project_overview failed".to_string()),
+                    .unwrap_or_else(|| "Runner read_project_overview failed".to_string()),
             ),
             Ok(Err(_)) => {
                 self.runner_registry.cancel_request(&request_id).await;
-                ToolResult::err("Runner project_overview waiter was dropped")
+                ToolResult::err("Runner read_project_overview waiter was dropped")
             }
             Err(_) => {
                 self.runner_registry.cancel_request(&request_id).await;
-                ToolResult::err("timed out waiting for Runner project_overview")
+                ToolResult::err("timed out waiting for Runner read_project_overview")
             }
         }
     }
@@ -1973,7 +1973,7 @@ mod tests {
                 "risk": u64::MAX
             },
             "highest_priority": "high",
-            "suggested_next_tool": "session_discussion_summary"
+            "suggested_next_tool": "read_session_discussion_summary"
         });
         let serialized = serde_json::to_vec(&result).unwrap();
         assert!(

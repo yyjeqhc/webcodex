@@ -22,6 +22,16 @@ Unproven validation retains its warning. When output observations are present, t
 
 ## MCP feedback and deployed contracts
 
+Default compact discovery describes `work_on_project` as a file/data/diagnostic/
+coding entry with optional Git. Its legacy projection reads rules through
+`read_files`; the stateless projection requests `project.instructions` through
+the advertised `_wc.context` wrapper. Execution entry descriptions distinguish
+argv, shell grammar and typed scripts, retain the same pending Job, and direct
+dependency waiting to `wait_for_job_readiness`. The editor description retains
+revision, preflight, stale-read and unknown-effect recovery before task-appropriate
+validation. These are selection guidance; canonical schemas and execution
+authority are unchanged.
+
 MCP failure messages omit exact duplicate stdout/stderr tail blocks while preserving their canonical output fields, diagnostics and recovery guidance. HTTP results and retained logs remain available. MCP `observe_jobs` defaults to `summary_only=true`, compacting proven successful validation logs; failures, unknown results and ordinary commands retain evidence. Explicit `summary_only=false` expands from the original observation cursor.
 
 `tool_manifest` describes the deployed canonical contract and admitted routes; it does not install Host callables. If ChatGPT has cached older direct definitions, use an admitted gateway fallback where the manifest allows it. MCP App presentation must retain its direct route. New Work Result cards use resource v14; older resource URIs remain readable.
@@ -35,8 +45,15 @@ python3 scripts/e2e_generic_agent_ws.py --bin-dir target/dogfood --profile upgra
 python3 -m unittest discover -s scripts/tests -p test_generic_agent_acceptance.py
 ```
 
-Run `--profile baseline` with binaries compiled from the recorded baseline commit and the same harness source. The harness owns disposable loopback services and directories, then stops them. It covers mixed text/PNG/PDF/binary files with a destination conflict, inconsistent CSV encodings/columns, command failure and repair, a pending Job with independent work, and guarded code edits followed by failure/repair/test/review. Upgrade-only checks exercise missing outputs and real metadata-to-finish-to-ledger-to-WorkResult retention for a 10 MiB+1 file. App-only state is read through an explicit synthetic MCP App host fixture; this is transport/contract verification, not proof that a real ChatGPT host rendered the card.
+Run `--profile baseline` with binaries compiled from the recorded baseline commit and the same harness source. The harness owns disposable loopback services and directories, then stops them. It covers mixed text/PNG/PDF/binary files with a destination conflict, inconsistent CSV encodings/columns, command failure and repair, a pending Job with independent work, guarded code edits followed by failure/repair/test/review, and stale-revision rejection/recovery that preserves an external writer's bytes. Pending dispatch/wait counts come from the captured call sequence, and terminal observation must retain the original Job identity. Upgrade-only checks exercise missing outputs and real metadata-to-finish-to-ledger-to-WorkResult retention for a 10 MiB+1 file. App-only state is read through an explicit synthetic MCP App host fixture; this is transport/contract verification, not proof that a real ChatGPT host rendered the card.
 
 The public pre-upgrade baseline is upstream commit `05d45f376d3265490de28090b9c5b0150dbacd8b`. The original local baseline merge has an identical source tree; reports keep its actual build identity separately from this reproducible reference.
 
 Reports distinguish comparable task calls/bytes/wall time from setup and extra checks, and record fixture fingerprints and independent evidence. They are deterministic tool/transport acceptance, not a ChatGPT model benchmark or a measure of model tokens, reasoning quality or future user interventions. Desktop/browser source regressions must be reported separately from real GUI tests on a capable Runner.
+
+For comparison between two current runtimes that both support outputs, use
+`--profile upgraded` for both, the same harness source and fresh identical inputs.
+The historical `baseline` profile omits output receipts and is not interchangeable
+with this current-contract comparison. General ChatGPT replay prompts are in
+`scripts/agent_loop_cases.json`; the research and local comparison are recorded in
+[General Agent experience](../experiments/general-agent-experience.md).

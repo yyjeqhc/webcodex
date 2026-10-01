@@ -1,6 +1,6 @@
 [package]
 name = "webcodex-desktop"
-version = "0.4.3"
+version = "0.4.4"
 description = "WebCodex Desktop runtime and setup control surface"
 edition = "2021"
 publish = false

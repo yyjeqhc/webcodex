@@ -60,7 +60,9 @@ export function useWindowCollaboration(client: RuntimeV2Client, windowKey: strin
   useEffect(() => {
     void refresh();
     return cancelRead;
-  }, [active, refresh, cancelRead]);  const send = async (
+  }, [active, refresh, cancelRead]);
+
+  const send = async (
     message: string,
     sessionId: string | null,
     kind: WindowCollaborationKind = "guidance",
@@ -88,7 +90,10 @@ export function useWindowCollaboration(client: RuntimeV2Client, windowKey: strin
         pending.current = null;
         setSendState("idle");
         setSendError(null);
-        await refresh();
+        // A pre-send poll can return an older snapshot. Replace it with a read
+        // after the receipt, without delaying composer completion on that read.
+        cancelRead();
+        void refresh();
         return true;
       }
       const failureKind = response?.data?.output?.failure_kind;

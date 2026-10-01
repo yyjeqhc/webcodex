@@ -90,12 +90,9 @@ Server-global WebCodex tool namespace，也不会被追加到外层 MCP `tools/l
 `tool_manifest(tool_name="plugin_tool")` 也能返回准确 gateway contract。
 `work_on_project` 还可以在 startup 中提供一个有界、Project-affine 的 Plugin selection catalog。它只包含 configured `cwd` 解析后与 authoritative Project root 一致且当前 ready/committed 的 provider tool；其他目录的 provider 不会自动进入 catalog。该 projection 不会暴露 provider path、command/argv/environment、schema、provider instance identity 或 invocation binding。Runner gateway 和模型 projection 都按序列化后的字节数截断 catalog；`total_count` 与 `catalog_revision` 仍描述完整目录。模型选择后仍必须走 canonical `plugin_tool describe -> call`。在支持 context sidecar 的 surface 上，同时具备 `project:read` 与 `plugin:inspect` 的调用者也可以显式请求 `plugins.catalog` 获取同类 Project-affine metadata。
 
-MCP 与 OpenAPI/GPT Actions 使用的 generic Tool Runtime 都复用同一个 canonical
-`plugin_tool` parser 和 action-aware gateway executor；不存在 MCP Plugin 实现和 GPT
-Plugin 实现两套逻辑。任何声明暴露 `plugin_tool` 的 canonical model surface 都可以实际
-调用它。当前 generic GPT Actions surface 上，`plugin_tool` 是 canonical direct
-operation，因此直接传它自己的 business arguments：
-
+MCP 与 Runtime API 复用同一个 canonical `plugin_tool` parser 和 action-aware
+executor，不存在独立的客户端实现或工具名称兼容表。按照当前 `tool_manifest`
+返回的调用路径，向已获准的 gateway 传入正常 business arguments：
 ```json
 {"action":"describe","runner":"my-runner","plugin":"repo-tools","tool":"safe_delete"}
 {"action":"call","binding":"wc_pbind_...","arguments":{"path":"build/old.bin"}}

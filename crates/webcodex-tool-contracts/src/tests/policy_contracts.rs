@@ -521,8 +521,6 @@ fn tool_definitions_drive_session_and_permission_policy() {
         ("complete_agent_task_attempt", PERMISSION_RISK_WRITE),
         ("update_agent_identity", PERMISSION_RISK_WRITE),
         ("rotate_agent_continuation_endpoint", PERMISSION_RISK_WRITE),
-        #[cfg(feature = "legacy-gpt-actions")]
-        ("attach_agent_endpoint", PERMISSION_RISK_WRITE),
         ("detach_agent_endpoint", PERMISSION_RISK_WRITE),
         ("consume_agent_deliveries", PERMISSION_RISK_WRITE),
         ("consume_agent_wake", PERMISSION_RISK_WRITE),

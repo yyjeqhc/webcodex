@@ -290,13 +290,9 @@ Also verify the server URL, local token files, and Runner `allowed_roots`. Missi
 
 ### `tool_manifest` discovery is too broad
 
-For GPT Actions, call the canonical `tool_manifest` operation directly and prefer
-an exact `tool_name` or a `category` / `intent` filter for compact discovery. The
-generic Actions surface no longer exposes the retired `listRuntimeTools` facade.
-
-### GPT Action still uses an old schema
-
-First confirm the deployed Server was built with `legacy-gpt-actions`; default builds do not mount `/openapi.json` or `/api/actions/*`. For an intentionally retained legacy deployment, re-import `/openapi.json`. Its operation set is a frozen compatibility snapshot plus `call_runtime_tool`; maintained Adaptive Runtime changes no longer grow it. Run the separate legacy workflow or the feature-enabled tests when changing that adapter.
+Pass an exact `tool_name`, or narrow discovery by `category` / `intent`. Use
+the current MCP schema and returned invocation route; renamed tools do not
+accept their retired names.
 
 ### MCP tool list looks stale
 
@@ -319,14 +315,14 @@ Confirm the Runner server URL, token file, service user, and `allowed_roots`.
 ### Wrong token type
 
 In the hosted quick-start, MCP and Runner use the same non-`wc_` shared key.
-In managed mode, GPT Actions, MCP, and ordinary REST/project APIs use
+In managed mode, MCP and ordinary REST/project APIs use
 `webcodex-user-token` (`wc_pat_*`), while the Runner token (`wc_agent_*`) is
 only for Runner transport — after `webcodex login` it lives inline in
 `runner.toml`, with no separate `webcodex-runner-token` file. A 403 after putting a `wc_agent_*`
 value in `--token` or `--token-file` is the expected security boundary: select
 the generated `webcodex-user-token` instead. Recent CLI commands also diagnose
 this mismatch without printing the complete token. `WEBCODEX_TOKEN` is
-bootstrap/admin-oriented and should not be copied into GPT Actions, MCP, or
+bootstrap/admin-oriented and should not be copied into MCP or
 Runner config.
 
 ### Runner service is visible in one command but missing in another
@@ -349,12 +345,7 @@ unit in the other scope.
 Initialize the disposable smoke project with git and an initial commit, or point
 the smoke at another safe Runner-backed git project.
 
-### `operation_count` exceeds 30
 
-The generated GPT Actions surface must stay below 30 operations. Long-tail
-runtime tools, including chunked artifact upload tools, remain behind
-`call_runtime_tool`; direct operations are derived from the canonical Adaptive
-Direct surface rather than a separate Actions allowlist.
 
 ### `artifact_upload_chunk` says `path` is missing
 

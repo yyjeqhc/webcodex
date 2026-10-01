@@ -5,7 +5,7 @@ use serde_json::Value;
 
 use super::tools::RECORDING_SESSION_SELECTOR_SCHEMA_PATTERN;
 
-// MCP discovery targets, independent of GPT Actions' importer limits. Keep
+// MCP discovery targets, independent of execution semantics. Keep
 // purpose, the nearest selection boundary, and essential continuation guidance.
 pub(super) const TOOL_DESCRIPTION_MAX_CHARS: usize = 420;
 pub(super) const INPUT_DESCRIPTION_MAX_CHARS: usize = 180;

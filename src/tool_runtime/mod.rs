@@ -1,4 +1,4 @@
-//! Tool Runtime — unified execution layer for MCP and GPT Actions.
+//! Tool Runtime — unified execution layer for MCP.
 //!
 //! Both protocol adapters call `ToolRuntime::dispatch()`.
 //! No HTTP framework types here — pure Rust input/output.

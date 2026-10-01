@@ -60,7 +60,7 @@ fn tool_input_schemas() -> &'static BTreeMap<String, Value> {
 
 fn derive_tool_input_schemas() -> BTreeMap<String, Value> {
     // OpenAPI3 plus inline subschemas deliberately avoids $ref/$defs and nullable
-    // unions that have historically been brittle across MCP/GPT Action hosts.
+    // unions that have historically been brittle across MCP hosts.
     // The small normalization below is global presentation cleanup only; it
     // never defines a field, requiredness rule, enum, or structural bound.
     let generator = openapi_schema_generator();

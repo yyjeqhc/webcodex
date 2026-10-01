@@ -1,7 +1,7 @@
 # Testing Strategy
 
 Tests should protect current behavior: runtime tools, session guards, project
-and file operations, Git and shell dispatch, Runner transports, MCP, OpenAPI,
+and file operations, Git and shell dispatch, Runner transports, MCP,
 and OAuth scope policy. Test count alone proves neither useful coverage nor
 unnecessary complexity. Trace a test to a current entry point, consumer, or real
 boundary; a passing test of an unused configuration parser or always-empty
@@ -18,7 +18,7 @@ waits, and the cost of each test lane.
 | Lane | Purpose | Default resources | Typical command |
 |---|---|---|---|
 | fast unit | Pure parsing, validation, helpers, local state machines, small fixtures. | No network, no global env mutation, no long sleeps. | `cargo test -p webcodex --lib tool_call` |
-| contract/schema | Keep metadata, registry, MCP `tools/list`, OpenAPI, and runtime tool names synchronized. | No external network; in-process services are preferred. | `cargo test -p webcodex --lib metadata`; `cargo test -p webcodex --lib mcp`; `cargo test -p webcodex --lib openapi` |
+| contract/schema | Keep metadata, registry, MCP `tools/list`, and runtime tool names synchronized. | No external network; in-process services are preferred. | `cargo test -p webcodex --lib metadata`; `cargo test -p webcodex --lib mcp` |
 | local integration | Exercise HTTP handlers, runtime dispatch, sessions, local agent registry, temp dirs, loopback listeners, and database fixtures. | Loopback only, isolated temp dirs, bounded waits, no shared mutable state without a lock. | `cargo test -p webcodex --lib runtime_http -- --nocapture`; `cargo test -p webcodex --lib session -- --nocapture` |
 | Runner/LSP real-process | Process-tree ownership, real shell timeout/stop, polling dispatch timing, Plugin startup, validation/Git `ManagedChild`, JobManager descendant cleanup, and native LSP child lifecycle. Runner coverage is gated by `runner-real-process-tests`, which also enables the LSP crate's `real-process-tests` feature; these tests are ignored by default execution and share the `runner_real_process_` name prefix. | Real local child processes only; no external network. Run serially because the assertions intentionally exercise OS scheduling and process teardown. | `cargo test --locked -p webcodex-runner -p webcodex-lsp --features runner-real-process-tests runner_real_process -- --ignored --test-threads=1` |
 | Process lifecycle real-process | `ManagedChild` ownership, graceful/forced termination, descendants, EOF, liveness, and reaping. Most lifecycle tests in the integration target are ignored; pure type/spawn-error smoke remains ordinary. | Real local helper processes and OS liveness probes. | `cargo test --locked -p webcodex-process --test managed_child -- --ignored --test-threads=1` |
@@ -26,7 +26,7 @@ waits, and the cost of each test lane.
 | Desktop Windows real-process | Windows Desktop stdin-EOF shutdown and bounded-command process-tree reclamation. These tests are ignored by the ordinary Desktop suite and share the `desktop_real_process_windows_` name prefix. | Real local child processes only; no external network. Run serially so PowerShell startup and process teardown do not compete with the ordinary Desktop libtest pool. | `cargo test --locked --manifest-path apps/desktop/src-tauri/Cargo.toml desktop_real_process_windows_ -- --ignored --test-threads=1` |
 | Session ledger scale/recovery | Construct actual retained Session snapshots, restore exact Active/Closed identities, measure full-ledger writes and bounded reads at 100/1,000/10,000 minimal Sessions. The small smoke and damaged-copy checks are ordinary unit tests. | Disposable temporary files; larger experiment explicitly ignored, serial, no production data or timing threshold. | `cargo test --locked -p webcodex-workflow-session --lib session_store_scale_and_recovery -- --ignored --test-threads=1 --nocapture` |
 | slow/manual ignored | Valuable coverage that is local but slow, serial, large-input, or global-state-sensitive. | Explicit operator opt-in; often `--ignored` and `--test-threads=1`. | Run the specific ignored test/filter documented by its subsystem. |
-| e2e/deployment smoke | Prove that binaries, local services, GPT Actions schema, MCP, artifact transfer, and an agent can work together. | Temporary local services and loopback ports; real deployment only when explicitly requested. | `bash scripts/e2e_zero_config_ws.sh`; `bash scripts/smoke_deployment.sh`; `bash scripts/smoke_artifact_transfer.sh` |
+| e2e/deployment smoke | Prove that binaries, local services, MCP schema, artifact transfer, and an agent can work together. | Temporary local services and loopback ports; real deployment only when explicitly requested. | `bash scripts/e2e_zero_config_ws.sh`; `bash scripts/smoke_deployment.sh`; `bash scripts/smoke_artifact_transfer.sh` |
 | reconnect continuity | Runner disconnect/reconnect layer independence, stale-not-ready observations, reconciliation-aware recovering/lost transitions, server-restart durable Session plus explicit-session continuity, meaningful-activity scoping, and version-mismatch diagnostics. | In-process fixtures, no external network. | `cargo test -p webcodex --lib reconnect` |
 | trusted smoke | Disposable git fixture full chain (start → edit → failing shell validation → fix → pass → git review → finish) asserting zero approval interruptions under `trusted_agent` authority, resolved failure evidence, dirty-worktree advisory-only, and bounded payloads; prints baseline counters. | Temp git fixture, no external network. | `cargo test -p webcodex --lib trusted_smoke` |
 | real-process reconnect harness | Boot a real server plus reconciliation-capable runner, assert layered connection observations, crash the runner (layers degrade independently; running job enters `recovering`), restart with a new runner instance (old job is fenced to terminal `lost` with `runner_instance_replaced`, no server restart), then restart the server and verify runner auto-reconnect plus durable Session lookup and continuation by the original explicit `session_id`. It also prints post-deploy smoke facts (server version/commit, authority mode, version compatibility, runner shell dialect). | Local processes and loopback ports. | `bash scripts/e2e_reconnect_ws.sh` |
@@ -146,14 +146,9 @@ The lanes above define test semantics; workflows decide when to run them.
   abnormal/infrastructure runs, stale or changed classifications, and unclassified
   new failures are merge-blocking. See [`MCP_CONFORMANCE.md`](MCP_CONFORMANCE.md)
   for baseline semantics.
-- GPT Actions are a default-off legacy compatibility surface. Ordinary PR,
-  merge-queue, main-push, and release-readiness CI do not enable
-  `legacy-gpt-actions` and therefore do not compile or test its OpenAPI/HTTP
-  adapter. `.github/workflows/legacy-gpt-actions.yml` runs the feature weekly
-  and on manual dispatch, including the frozen surface contract and the
-  feature-enabled Server tests. For local compatibility work use
-  `cargo test -p webcodex --lib --features legacy-gpt-actions`.
-- Linux Rust execution remains package-sharded: the server package `webcodex`, the
+- v0.5 removes the Action adapter and its compatibility feature/lane. Canonical
+  contract tests and HTTP negative tests verify that retired tool names and routes
+  remain unavailable; MCP and Runtime API authority/provenance tests stay active.- Linux Rust execution remains package-sharded: the server package `webcodex`, the
   Runner/LSP packages, and the remaining workspace crates run in parallel. The
   Runner/LSP shard compiles with `--features runner-real-process-tests` to prevent
   bitrot while ordinary local runs skip compiling manual real-process test bodies;

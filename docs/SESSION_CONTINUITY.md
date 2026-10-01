@@ -137,4 +137,4 @@ validation or approval evidence.
 
 The existing [ACP Run contract](agent/acp-coding-agent-run.md) owns authorization,
 durable dispatch, observation and cancellation. MCP exposes this flow through the
-canonical gateway; the GPT Actions frozen tool set is unchanged.
+canonical gateway.

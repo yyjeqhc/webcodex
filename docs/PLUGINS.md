@@ -100,12 +100,10 @@ Plugin inventory. `tool_manifest(tool_name="plugin_tool")` therefore describes
 the exact gateway contract even when no Plugin-capable Runner is online.
 `work_on_project` may additionally surface a bounded project-affine Plugin selection catalog at startup. That catalog is metadata only: it includes tools from ready committed providers whose configured `cwd` resolves to the authoritative Project root, omits providers for other directories, and never exposes provider paths, command/argv/environment, schemas, provider-instance identity, or an invocation binding. Catalogs are truncated by serialized byte size both at the Runner gateway and in the model projection; `total_count` and `catalog_revision` still describe the complete catalog. Selecting an entry still requires the canonical `plugin_tool describe -> call` path. The same project-affine metadata can be requested explicitly as `plugins.catalog` through the supported context sidecar when the caller has both `project:read` and `plugin:inspect`.
 
-The same canonical `plugin_tool` request parser and action-aware gateway executor
-serve MCP and the generic Tool Runtime used by OpenAPI/GPT Actions. A surface
-that advertises `plugin_tool` can therefore call it; MCP does not have a separate
-Plugin implementation. On the current generic GPT Actions surface, `plugin_tool`
-is a direct canonical operation, so pass its normal business arguments directly:
-
+The canonical `plugin_tool` parser and action-aware executor serve MCP and the
+Runtime API. There is no per-client Plugin implementation or alternate tool-name
+registry. Follow current `tool_manifest` routing and pass the normal business
+arguments to the admitted gateway:
 ```json
 {"action":"describe","runner":"my-runner","plugin":"repo-tools","tool":"safe_delete"}
 {"action":"call","binding":"wc_pbind_...","arguments":{"path":"build/old.bin"}}

@@ -22,8 +22,8 @@ use super::session_context::canonical_repository_key;
 use super::sessions::SessionSummary;
 use super::tool_inputs::{CodingGuidanceProfile, StartupDetail};
 
-// Reserve transport-envelope headroom so a ToolResult and the GPT Actions
-// wrapper also remain below the externally documented 32 KiB ceiling.
+// Reserve transport-envelope headroom so the rendered ToolResult stays
+// below the documented 32 KiB startup ceiling.
 pub(crate) const STANDARD_STARTUP_HARD_MAX_BYTES: usize = 30 * 1024;
 pub(crate) const STARTUP_EXTENSION_CATALOG_HARD_MAX_BYTES: usize = 6 * 1024;
 pub(crate) const STARTUP_SKILL_CATALOG_MAX_BYTES: usize = 2_900;
@@ -416,7 +416,7 @@ pub(crate) struct StartupBriefInput<'a> {
     pub(crate) runtime_status_call_failed: bool,
 }
 
-/// Build the one startup contract used by MCP, REST, and GPT Actions.
+/// Build the one startup contract used by MCP and REST.
 pub(crate) fn build_startup_brief(input: StartupBriefInput<'_>) -> Value {
     let minimal = input.detail == StartupDetail::Minimal;
     let instruction_projection = instructions_projection(

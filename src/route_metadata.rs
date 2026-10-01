@@ -2,7 +2,7 @@
 //!
 //! Handler mounting stays explicit in the owning HTTP modules. This registry owns
 //! the security- and surface-relevant metadata that previously drifted across
-//! auth, OpenAPI, console, audit, and test-only route tables.
+//! auth, console, audit, and test-only route tables.
 
 mod account;
 mod consoles;
@@ -56,11 +56,6 @@ pub(crate) enum RouteSurface {
     /// Public browser/document delivery only. This surface carries no bearer
     /// authentication or token-admission semantics.
     PublicWeb,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) enum RouteOpenApiProjection {
-    Hidden,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -132,8 +127,7 @@ pub(crate) enum RouteId {
     AdminProjectsUnregister,
     ToolsList,
     ToolsCall,
-    GptActionsInvoke,
-    ArtifactsImport,
+
     ProjectsResolveOrRegister,
     RuntimeStatus,
     RuntimeUpgradeMaintenance,
@@ -176,7 +170,7 @@ pub(crate) enum RouteId {
     AuditSession,
     AuditStats,
     Healthz,
-    OpenApiDocument,
+
     RuntimeWebRoot,
     RuntimeWebAppJs,
     RuntimeWebStylesCss,
@@ -192,7 +186,7 @@ pub(crate) struct RouteSpec {
     pub(crate) path: &'static str,
     pub(crate) scope_policy: OAuthRouteScopePolicy,
     pub(crate) surface: RouteSurface,
-    pub(crate) openapi_projection: RouteOpenApiProjection,
+
     pub(crate) audit_class: AuditClass,
     pub(crate) auth: RouteAuth,
 }
@@ -203,7 +197,7 @@ const fn route(
     path: &'static str,
     scope_policy: OAuthRouteScopePolicy,
     surface: RouteSurface,
-    openapi_projection: RouteOpenApiProjection,
+
     audit_class: AuditClass,
     auth: RouteAuth,
 ) -> RouteSpec {
@@ -213,7 +207,7 @@ const fn route(
         path,
         scope_policy,
         surface,
-        openapi_projection,
+
         audit_class,
         auth,
     }
@@ -227,8 +221,6 @@ use AuditClass::*;
 use OAuthRouteScopePolicy::*;
 #[cfg(test)]
 use RouteId::*;
-#[cfg(test)]
-use RouteOpenApiProjection::*;
 #[cfg(test)]
 use RouteSurface::*;
 
@@ -256,11 +248,6 @@ pub(crate) fn spec(id: RouteId) -> &'static RouteSpec {
     iter_routes()
         .find(|spec| spec.id == id)
         .unwrap_or_else(|| panic!("RouteId {id:?} has no canonical RouteSpec"))
-}
-
-#[cfg(all(test, feature = "legacy-gpt-actions"))]
-pub(crate) fn path(id: RouteId) -> &'static str {
-    spec(id).path
 }
 
 /// Path relative to the production `/api` parent router.
@@ -304,18 +291,7 @@ pub(crate) fn shared_root_path(first: RouteId, second: RouteId) -> &'static str 
 
 pub(crate) fn lookup(method: &str, path: &str) -> Option<&'static RouteSpec> {
     let path = normalize_path(path);
-    iter_routes().find(|spec| {
-        spec.method.matches(method)
-            && (spec.path == path
-                || (spec.id == RouteId::GptActionsInvoke && gpt_action_runtime_path_matches(&path)))
-    })
-}
-
-fn gpt_action_runtime_path_matches(path: &str) -> bool {
-    let Some(tool_name) = path.strip_prefix("/api/actions/") else {
-        return false;
-    };
-    !tool_name.is_empty() && !tool_name.contains('/')
+    iter_routes().find(|spec| spec.method.matches(method) && spec.path == path)
 }
 
 /// Exact path-only lookup for consumers whose historical contract was an
@@ -402,14 +378,13 @@ pub(crate) fn audit_class_for_runtime_tool(tool_name: &str) -> Option<AuditClass
     })
 }
 
-/// Persisted GPT Action events share one dynamic HTTP adapter, so endpoint-only
-/// classification is intentionally insufficient. Their canonical `operation`
-/// records the resolved runtime tool identity and is projected through the same
-/// ToolDefinition semantics used elsewhere. Ordinary and historical REST events
-/// keep their route-based compatibility classes unchanged.
+/// Classify mounted REST routes. Retired endpoint records remain historical
+/// evidence, not current route admission or a tool-name compatibility table.
 pub(crate) fn audit_class_for_event(endpoint: &str, operation: Option<&str>) -> Option<AuditClass> {
-    if lookup("POST", endpoint).is_some_and(|spec| spec.id == RouteId::GptActionsInvoke) {
-        return operation.and_then(audit_class_for_runtime_tool);
+    if lookup("POST", endpoint).is_some_and(|spec| spec.id == RouteId::ToolsCall) {
+        return operation
+            .and_then(audit_class_for_runtime_tool)
+            .or(Some(AuditClass::Command));
     }
     audit_class_for_path(endpoint)
 }
@@ -506,17 +481,14 @@ mod tests {
                 webcodex_core::authority::SCOPE_PROJECT_WRITE,
             )
         );
-        assert_eq!(activate.openapi_projection, RouteOpenApiProjection::Hidden);
     }
 
     #[test]
-    fn route_metadata_does_not_define_a_parallel_openapi_surface() {
-        for route_spec in iter_routes() {
-            assert_eq!(route_spec.openapi_projection, Hidden, "{:?}", route_spec.id);
-        }
-        assert_eq!(spec(GptActionsInvoke).openapi_projection, Hidden);
+    fn retired_action_routes_have_no_metadata_admission() {
+        assert!(lookup("GET", "/openapi.json").is_none());
+        assert!(lookup("POST", "/api/actions/read_files").is_none());
+        assert!(lookup("POST", "/api/artifacts/import").is_none());
     }
-
     #[test]
     fn canonical_lookup_normalizes_only_benign_request_path_variants() {
         assert_eq!(
@@ -528,10 +500,7 @@ mod tests {
         assert!(lookup("GET", "/api/runtime/status").is_none());
         assert!(lookup("POST", "/api/future/authenticated-route").is_none());
         assert!(lookup("POST", "/api/runtime/status/extra").is_none());
-        assert_eq!(
-            lookup("POST", "/api/actions/read_files").unwrap().id,
-            GptActionsInvoke
-        );
+        assert!(lookup("POST", "/api/actions/read_files").is_none());
         assert!(lookup("POST", "/api/actions/read_files/extra").is_none());
 
         // Path-only surface/audit consumers replaced exact historical
@@ -589,7 +558,8 @@ mod tests {
         let routes = iter_routes()
             .filter(|spec| spec.surface == PublicWeb)
             .collect::<Vec<_>>();
-        assert_eq!(routes.len(), 8);
+        // The obsolete schema document is no longer a public route.
+        assert_eq!(routes.len(), 7);
         for route in routes {
             assert_eq!(route.method, RouteMethod::Get, "{:?}", route.id);
             assert_eq!(
@@ -599,7 +569,6 @@ mod tests {
                 route.id
             );
             assert_eq!(route.auth, RouteAuth::Public, "{:?}", route.id);
-            assert_eq!(route.openapi_projection, Hidden, "{:?}", route.id);
             assert_eq!(route.audit_class, Other, "{:?}", route.id);
         }
         assert_eq!(
@@ -621,9 +590,6 @@ mod tests {
                 Require(SCOPE_SESSION_COLLABORATE),
                 "{id:?} must retain mutation-capable Session authority"
             );
-        }
-        for spec in iter_routes().filter(|spec| spec.surface == RuntimeConsole) {
-            assert_eq!(spec.openapi_projection, Hidden, "{:?}", spec.id);
         }
     }
 
@@ -688,8 +654,6 @@ mod tests {
         for (path, class) in [
             ("/api/tools/call", Command),
             ("/api/runtime/status", Report),
-            ("/api/artifacts/import", Artifact),
-            ("/api/actions/{tool_name}", Other),
         ] {
             assert_eq!(audit_class_for_path(path), Some(class), "{path}");
         }
@@ -713,16 +677,6 @@ mod tests {
             ("memory_set", Command),
         ] {
             assert_eq!(audit_class_for_runtime_tool(tool), Some(class), "{tool}");
-            assert_eq!(
-                audit_class_for_event("/api/actions/{tool_name}", Some(tool)),
-                Some(class),
-                "{tool} placeholder route"
-            );
-            assert_eq!(
-                audit_class_for_event(&format!("/api/actions/{tool}"), Some(tool)),
-                Some(class),
-                "{tool} concrete route"
-            );
         }
         assert_eq!(
             audit_class_for_event("/api/actions/{tool_name}", None),

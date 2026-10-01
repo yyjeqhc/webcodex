@@ -35,8 +35,7 @@ mod model_surface;
 mod model_workflow;
 pub(crate) use webcodex_store::models;
 mod oauth_http;
-#[cfg(feature = "legacy-gpt-actions")]
-mod openapi;
+
 mod pairing_http;
 mod plugin_gateway;
 mod project_entry;
@@ -82,8 +81,7 @@ pub(crate) use config::parse_env_file_line;
 pub use config::Config;
 pub use config::OAuth2Config;
 pub use db::{Database, RotateResult};
-#[cfg(feature = "legacy-gpt-actions")]
-pub(crate) use openapi::openapi_json;
+
 pub(crate) use runner_http::{
     runner_job_update, runner_offline, runner_persistent_shell_result, runner_poll,
     runner_register, runner_result, shell_file_op, shell_job, shell_job_log, shell_job_status,
@@ -390,7 +388,7 @@ explicitly allow remote shared-key auth."
     // Custom QUIC Runner transport. Default disabled;
     // only starts when WEBCODEX_QUIC_ENABLED=true. Runs a separate quinn UDP
     // listener in parallel with the HTTP server. HTTP/WebSocket/polling and
-    // the GPT Actions / Nginx path are completely unaffected. This is NOT
+    // the MCP / Nginx path are completely unaffected. This is NOT
     // HTTP/3 and Nginx does not terminate QUIC.
     if quic_cfg.enabled {
         if let Err(e) = quic_cfg.validate() {
@@ -434,13 +432,6 @@ explicitly allow remote shared-key auth."
         }
     }
 
-    #[cfg(feature = "legacy-gpt-actions")]
-    let legacy_gpt_action_router =
-        Router::with_path(route_metadata::api_path(RouteId::GptActionsInvoke))
-            .post(runtime_http::gpt_action_invoke);
-    #[cfg(not(feature = "legacy-gpt-actions"))]
-    let legacy_gpt_action_router = Router::new();
-
     let authed_api_router = Router::new()
         .hoop(AuthMiddleware)
         .push(runtime_console_http::routes())
@@ -452,11 +443,6 @@ explicitly allow remote shared-key auth."
         .push(
             Router::with_path(route_metadata::api_path(RouteId::ToolsCall))
                 .post(runtime_http::tools_call),
-        )
-        .push(legacy_gpt_action_router)
-        .push(
-            Router::with_path(route_metadata::api_path(RouteId::ArtifactsImport))
-                .post(runtime_http::import_conversation_files_to_project),
         )
         .push(
             Router::with_path(route_metadata::api_path(RouteId::ProjectsResolveOrRegister))
@@ -509,7 +495,7 @@ explicitly allow remote shared-key auth."
         )
         // Phase 2 multi-user auth: user + personal API token management.
         // REST-only admin/self-management surface; intentionally NOT
-        // exposed in /openapi.json (GPT Actions) because token creation is
+        // exposed as model tools because token creation is
         // sensitive. All behind the shared AuthMiddleware Bearer auth.
         .push(
             Router::with_path(route_metadata::api_path(RouteId::UsersCreate))
@@ -541,7 +527,7 @@ explicitly allow remote shared-key auth."
         )
         // Phase 3 agent token management: REST-only admin/self-management
         // surface for agent tokens bound to an owner + allowed_client_id.
-        // Intentionally NOT exposed in /openapi.json (GPT Actions) because
+        // Intentionally NOT exposed as model tools because
         // token creation is sensitive. All behind the shared AuthMiddleware
         // Bearer auth. Agent tokens themselves are rejected from these
         // endpoints so a leaked agent token cannot mint more tokens.
@@ -634,12 +620,6 @@ explicitly allow remote shared-key auth."
 
     let health_router = Router::with_path(route_metadata::root_path(RouteId::Healthz)).get(healthz);
 
-    #[cfg(feature = "legacy-gpt-actions")]
-    let legacy_openapi_router =
-        Router::with_path(route_metadata::root_path(RouteId::OpenApiDocument)).get(openapi_json);
-    #[cfg(not(feature = "legacy-gpt-actions"))]
-    let legacy_openapi_router = Router::new();
-
     let runtime_root = RouteId::RuntimeWebRoot;
     let runtime_console_router = Router::with_path(route_metadata::root_path(runtime_root))
         .get(console_web::runtime_html)
@@ -700,7 +680,6 @@ explicitly allow remote shared-key auth."
         .hoop(cors.into_handler())
         .push(api_router)
         .push(health_router)
-        .push(legacy_openapi_router)
         .push(runtime_console_router)
         .push(admin_router)
         // OAuth2 token, revocation, and discovery endpoints — public, no
@@ -765,7 +744,7 @@ explicitly allow remote shared-key auth."
         );
 
     // Read-only audit query API. Admin/debug surface only: NOT part of the
-    // GPT Actions OpenAPI schema. All endpoints are POST + Bearer auth.
+    // model tool registry. All endpoints are POST + Bearer auth.
     router = router.push(
         Router::new()
             .hoop(AuthMiddleware)
@@ -799,8 +778,7 @@ explicitly allow remote shared-key auth."
         "mcp_compact_schemas"
     );
     tracing::info!("Health: {}/healthz", base);
-    #[cfg(feature = "legacy-gpt-actions")]
-    tracing::info!("Legacy GPT Actions OpenAPI: {}/openapi.json", base);
+
     tracing::info!("Runtime console: {}/runtime", base);
     tracing::info!("Runtime status: {}/api/runtime/status", base);
     tracing::info!("Runner WebSocket: {}/api/agents/ws", base);

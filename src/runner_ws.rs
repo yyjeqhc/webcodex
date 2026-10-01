@@ -837,7 +837,7 @@ mod tests {
         }
 
         // Enqueue a synchronous run request via the registry (same path the
-        // GPT Actions / MCP surface uses). The pump should push it.
+        // MCP surface uses). The pump should push it.
         let (request_id, rx) = registry
             .enqueue_run(
                 ShellRunRequest {

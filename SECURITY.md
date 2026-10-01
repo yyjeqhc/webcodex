@@ -97,7 +97,7 @@ Never share or commit:
 
 Use the right credential for the right surface:
 
-- GPT Actions, MCP, and runtime API calls use a shared key for quick evaluation or a scoped user token for managed mode.
+- MCP and runtime API calls use a shared key for quick evaluation or a scoped user token for managed mode.
 - Agents use agent tokens.
 - Server bootstrap/admin credentials stay server-side.
 - Account credentials are for local token creation, not for model-facing clients.
@@ -124,7 +124,7 @@ These records are intentionally bounded and redacted. They are not a substitute 
 Use the narrowest revocation that matches the risk:
 
 - For shared-key quick-start, replace the Bearer value used by both agent and client, or disable shared-key quick-start.
-- Revoke or rotate a user token used by MCP, GPT Actions, or REST clients.
+- Revoke or rotate a user token used by MCP, or REST clients.
 - Revoke OAuth tokens when using OAuth.
 - Remove a project from the agent registry or narrow its allowed root.
 - Stop the agent when the client should no longer reach that machine.

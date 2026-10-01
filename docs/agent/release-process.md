@@ -34,7 +34,7 @@ For that development deployment:
 3. Preserve the prior working build or another concrete rollback path before
    replacing or restarting the target.
 4. Run focused post-deployment smoke appropriate to the changed Server, Runner,
-   CLI, MCP, or GPT Actions surface.
+   CLI or MCP surface.
 5. Report the exact targets changed, build identity observed, smoke result, and
    rollback path.
 

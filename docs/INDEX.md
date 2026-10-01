@@ -29,7 +29,6 @@ Start with the goal that matches what you are trying to do.
 - [MCP](MCP.md) — Bearer, query-token fallback, OAuth, private tunnel, and MCP protocol reference
 - [Authentication](AUTH_MODEL.md) — detailed credential and authority boundaries
 - [Deployment](DEPLOYMENT.md) — stable HTTPS origins, self-hosting, and production networking
-- [GPT Actions](GPT_ACTIONS.md) — optional OpenAPI-based Custom GPT integration
 
 ## I need help
 
@@ -64,5 +63,5 @@ ordinary users should not need to learn.
 - [Authority model](agent/permission-model.md)
 - [Session model](agent/session-model.md)
 - [Manual multi-window collaboration](agent/manual-window-collaboration.md)
-- [OpenAPI guidelines](agent/openapi-guidelines.md)
+- [OpenAPI guidelines](agent/runtime-api-guidelines.md)
 - [Release process](agent/release-process.md)

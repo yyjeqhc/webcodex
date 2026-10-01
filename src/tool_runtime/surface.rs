@@ -1,7 +1,7 @@
 //! Surface-shaping helpers for model-facing runtime discovery.
 //!
-//! These functions keep MCP-compatible tool specs, GPT Action compact
-//! manifests, and bounded `list_tools` filtering close together while leaving
+//! These functions keep MCP-compatible tool specs, compact manifests,
+//! and bounded `list_tools` filtering close together while leaving
 //! dispatch and authorization flow in `mod.rs`.
 
 #[cfg(feature = "experimental-code-mode")]

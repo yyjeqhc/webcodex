@@ -18,7 +18,7 @@ WebCodex 之所以有多种认证方式，是因为 Server 管理、模型/API �
 | --- | --- | --- |
 | Server bootstrap token | Server env 中的 `WEBCODEX_TOKEN` | 初始管理与紧急恢复 |
 | Pairing code | `wc_pair_...` | 一次性设备/用户接入 |
-| 个人 API 令牌（PAT） | `wc_pat_...` | managed user 的 MCP、GPT Actions 与 runtime API |
+| 个人 API 令牌（PAT） | `wc_pat_...` | managed user 的 MCP 与 runtime API |
 | Runner token | `wc_agent_...` | 仅 `webcodex-runner` 传输 |
 | Shared key | `wck_...` | hosted shared-key MCP/runtime 与对应 Runner group |
 | Project Credential | 受保护的项目私有文件 | 一个 ProjectGrant 的普通 runtime API/MCP 访问 |
@@ -62,7 +62,7 @@ Pairing code 是一次性的，不是长期 API 凭据。
 
 ## 个人 API 令牌（`wc_pat_*`）
 
-PAT 在 MCP、GPT Actions 与 runtime API 上代表一个 managed user。Server 只保存其 hash。`webcodex login` 通常会把用户 token 写到该 Server/user 本地配置目录中的 `webcodex-user-token`。
+PAT 在 MCP 与 runtime API 上代表一个 managed user。Server 只保存其 hash。`webcodex login` 通常会把用户 token 写到该 Server/user 本地配置目录中的 `webcodex-user-token`。
 
 按工作流只授予需要的最小 scopes。普通 MCP coding client 只需要与其实际读写/执行能力对应的 runtime/project 权限；account-management authority 与普通 coding client 分开。
 

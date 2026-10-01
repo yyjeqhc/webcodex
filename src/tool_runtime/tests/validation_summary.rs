@@ -128,16 +128,6 @@ fn validation_summary_registration_schema_and_metadata_are_synchronized() {
         OAuthToolScopePolicy::Require(SCOPE_PROJECT_READ)
     );
 
-    #[cfg(feature = "legacy-gpt-actions")]
-    {
-        let openapi = crate::openapi::build_openapi_spec();
-        assert!(openapi["paths"]
-            .get("/api/actions/validation_summary")
-            .is_none());
-        assert!(webcodex_tool_contracts::gpt_action_tool_supported(
-            "validation_summary"
-        ));
-    }
     assert_eq!(
         crate::model_surface::adaptive_runtime_gateway_target_route("validation_summary"),
         crate::model_surface::AdaptiveRuntimeGatewayTargetRoute::Gateway

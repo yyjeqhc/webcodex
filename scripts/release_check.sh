@@ -147,9 +147,7 @@ else
     die "schema tests"
 fi
 
-# Legacy GPT Actions are default-off and validated separately by
-# .github/workflows/legacy-gpt-actions.yml. Release readiness follows the
-# maintained default server surface and does not compile that adapter.
+# Maintained MCP and Runtime API contracts are covered by ordinary CI.
 
 # ----------------------------------------------------------------------------
 # Stage 6: focused MCP tests

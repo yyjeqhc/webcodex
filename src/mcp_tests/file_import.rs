@@ -848,7 +848,7 @@ async fn oauth_mcp_file_import_startup_env_stateless_2026_crosses_provenance_gat
                 "mime_type": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
                 "file_name": "source.pptx"
             }],
-            "host_file_import_provenance": "GptActionOpenAiHost"
+            "host_file_import_provenance": "TrustedMcpHostFile"
         }),
     )
     .expect_err("caller-controlled host provenance must fail closed at the canonical parser");

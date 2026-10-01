@@ -2,7 +2,7 @@
 //!
 //! This is a **custom QUIC stream transport** for Runner connections, NOT
 //! HTTP/3. It runs a separate `quinn` UDP listener in parallel with the HTTP
-//! server (which keeps serving GPT Actions over TCP 443 via Nginx unchanged).
+//! server (which keeps serving MCP over TCP 443 via Nginx unchanged).
 //! Nginx is not involved in QUIC.
 //!
 //! QUIC is an alternative transport for the existing Runner envelope protocol.

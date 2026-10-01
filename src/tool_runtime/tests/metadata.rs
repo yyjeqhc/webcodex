@@ -2110,23 +2110,6 @@ fn runtime_status_input_schema_exposes_compact_flags() {
         effective_config["properties"]["tool_request_trace_mode"]["enum"],
         json!(["off", "metadata", "full"])
     );
-
-    #[cfg(feature = "legacy-gpt-actions")]
-    {
-        let openapi = crate::openapi::build_openapi_spec();
-        let action = &openapi["paths"]["/api/actions/runtime_status"]["post"];
-        assert_eq!(action["operationId"], "runtime_status");
-        let action_properties = action["requestBody"]["content"]["application/json"]["schema"]
-            ["properties"]
-            .as_object()
-            .unwrap();
-        for field in ["compact", "summary_only"] {
-            assert!(
-                action_properties.contains_key(field),
-                "runtime_status Action missing {field}"
-            );
-        }
-    }
 }
 
 #[test]
@@ -3210,13 +3193,7 @@ async fn external_provider_discovery_cannot_change_public_tool_surface() {
         .iter()
         .map(|spec| spec.name.clone())
         .collect::<BTreeSet<_>>();
-    #[cfg(feature = "legacy-gpt-actions")]
-    let operation_ids_before = crate::openapi::build_openapi_spec()["paths"]
-        .as_object()
-        .unwrap()
-        .values()
-        .map(|path| path["post"]["operationId"].as_str().unwrap().to_string())
-        .collect::<BTreeSet<_>>();
+
     // Snapshot a model-visible tool's schema as the baseline that external
     // provider discovery must not perturb.
     let edit_schema_before = before
@@ -3278,21 +3255,6 @@ async fn external_provider_discovery_cannot_change_public_tool_surface() {
             .input_schema,
         edit_schema_before
     );
-    #[cfg(feature = "legacy-gpt-actions")]
-    {
-        let openapi_after = crate::openapi::build_openapi_spec();
-        let operation_ids_after = openapi_after["paths"]
-            .as_object()
-            .unwrap()
-            .values()
-            .map(|path| path["post"]["operationId"].as_str().unwrap().to_string())
-            .collect::<BTreeSet<_>>();
-        assert_eq!(operation_ids_after, operation_ids_before);
-        let serialized = serde_json::to_string(&openapi_after).unwrap();
-        for internal in ["Edit", "Read", "Bash", "Write", "FutureTool"] {
-            assert!(!serialized.contains(&format!("\"{internal}\"")));
-        }
-    }
 }
 
 #[tokio::test]

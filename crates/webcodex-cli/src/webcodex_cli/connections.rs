@@ -25,7 +25,7 @@
 //! The Runner token is stored **only** inline in `runner.toml`. `login` used to
 //! also drop a `webcodex-runner-token` file, which left two copies that could
 //! drift with nothing saying which one won. The user token keeps its own file
-//! because a different consumer reads it (GPT Actions / MCP clients), not the
+//! because a different consumer reads it (MCP clients), not the
 //! Runner.
 
 use std::path::{Component, Path, PathBuf};

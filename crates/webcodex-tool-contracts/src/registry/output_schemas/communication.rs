@@ -384,8 +384,7 @@ pub fn output_schema_for_tool(name: &str) -> Option<Value> {
             ("replayed", schema_type("boolean", "True when the exact expired-endpoint replacement was replayed.")),
             ("state_changed", schema_type("boolean", "True only when this call created the replacement Endpoint.")),
         ]),
-        #[cfg(feature = "legacy-gpt-actions")]
-        "attach_agent_endpoint" => return output_schema_for_tool("rotate_agent_continuation_endpoint"),
+
         "rotate_agent_continuation_endpoint" | "detach_agent_endpoint" => wrapped_output_schema(vec![
             ("agent_continuation_ref", agent_continuation_ref_schema()),
             ("endpoint", endpoint_schema()),

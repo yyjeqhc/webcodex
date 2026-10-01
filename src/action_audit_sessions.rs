@@ -207,7 +207,6 @@ fn sanitize_value_inner(value: &Value, drop_secrets: bool) -> Value {
                         | "stdout_tail"
                         | "stderr_tail"
                         | "diff"
-                        | "openapi_json"
                         | "text"
                         | "base64_content"
                 ) {
@@ -701,50 +700,6 @@ mod tests {
         ]);
         assert_eq!(stats.edit_count, 1);
         assert_eq!(stats.shell_count, 1);
-    }
-
-    #[test]
-    fn compute_stats_classifies_gpt_actions_by_canonical_operation() {
-        fn action_event(operation: &str) -> ActionEventView {
-            ActionEventView {
-                event_id: format!("evt-{operation}"),
-                session_id: "action-session".to_string(),
-                started_at: 0,
-                ended_at: 0,
-                duration_ms: 0,
-                endpoint: "/api/actions/{tool_name}".to_string(),
-                operation: Some(operation.to_string()),
-                action_name: "gpt_action".to_string(),
-                project: Some("demo".to_string()),
-                status: "success".to_string(),
-                http_status: Some(200),
-                error_summary: None,
-                warning_summary: None,
-                changed_files: Vec::new(),
-                ids: json!({}),
-                summary: json!({}),
-                request_bytes: None,
-                response_bytes: None,
-            }
-        }
-
-        let stats = compute_stats(&[
-            action_event("edit_project_files"),
-            action_event("run_shell"),
-            action_event("import_conversation_files_to_project"),
-            action_event("git_diff_hunks"),
-            action_event("read_files"),
-            action_event("runtime_status"),
-            action_event("cargo_test"),
-        ]);
-        assert_eq!(stats.edit_count, 1);
-        assert_eq!(stats.shell_count, 1);
-        assert_eq!(stats.artifact_count, 1);
-        assert_eq!(stats.git_count, 1);
-        assert_eq!(stats.context_count, 1);
-        assert_eq!(stats.report_count, 1);
-        assert_eq!(stats.job_count, 1);
-        assert_eq!(stats.command_count, 0);
     }
 
     #[test]

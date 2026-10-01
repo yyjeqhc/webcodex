@@ -127,9 +127,6 @@ pub(super) const SUMMARY_DEFINITIONS: &[ToolDefinition] = &[
                 )
                 .with_composition_policy(super::ToolCompositionPolicy::Parallel),
                 "Specialist workspace projection retained for explicit discovery, presentation, Session signals, and closeout internals. Ordinary code review uses review_changes. Read-only; recent Session event history is opt-in.",
-            )
-            .with_gpt_action_description(
-                "Review current worktree changes and optional bounded diff hunks for presentation, Session signals, and closeout internals. Ordinary code review uses review_changes. Read-only.",
             ),
         )),
 ];
@@ -229,9 +226,6 @@ pub(super) const DETAIL_DEFINITIONS: &[ToolDefinition] = &[
                 super::ToolHostOrchestrationHint::independent_parallel_read(),
             ),
             "Specialist exact diff paging core retained for explicit discovery and review_changes internals. Preserves source fences, bounded page/hunk continuation, path/range projection, and safe recovery. Read-only.",
-        )
-        .with_gpt_action_description(
-            "Specialist exact bounded diff paging for explicit discovery and review_changes internals. Preserve returned opaque continuation and exact source/paging inputs; never guess offsets.",
         ),
     )),
     git_like(model_spec(

@@ -6,7 +6,7 @@
 //!
 //! Design constraints:
 //! - No new database tables, Action Audit columns, session ledger fields, or
-//!   OpenAPI/MCP/schema changes.
+//!   MCP/schema changes.
 //! - Never log arguments, file paths, file contents, patches, secrets, or tokens.
 //! - Do not inspect run_shell command text, script bodies, or paths to guess whether
 //!   a programmatic transformation was an edit; privacy takes precedence over coverage.

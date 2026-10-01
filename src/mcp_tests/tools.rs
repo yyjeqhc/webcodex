@@ -967,7 +967,7 @@ fn read_project_artifact_stays_gateway_only_without_changing_generic_schema() {
         generic_tool.input_schema["properties"]
             .get("as_image")
             .is_none(),
-        "MCP image presentation must not change the generic REST/GPT Actions schema"
+        "MCP image presentation must not change the generic REST schema"
     );
 
     assert!(generic_tool.description.to_lowercase().contains("bounded"));

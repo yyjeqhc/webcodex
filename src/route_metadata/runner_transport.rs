@@ -1,8 +1,5 @@
 use super::RouteAuth::AuthMiddleware;
-use super::{
-    route, AuditClass::*, RouteId::*, RouteMethod::*, RouteOpenApiProjection::*, RouteSpec,
-    RouteSurface::*,
-};
+use super::{route, AuditClass::*, RouteId::*, RouteMethod::*, RouteSpec, RouteSurface::*};
 use webcodex_core::authority::OAuthRouteScopePolicy::*;
 
 pub(super) const ROUTES: &[RouteSpec] = &[
@@ -12,7 +9,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         "/api/shell/agent/register",
         AgentSurface,
         RunnerTransport,
-        Hidden,
         Other,
         AuthMiddleware,
     ),
@@ -22,7 +18,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         "/api/shell/agent/offline",
         AgentSurface,
         RunnerTransport,
-        Hidden,
         Other,
         AuthMiddleware,
     ),
@@ -32,7 +27,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         "/api/shell/agent/poll",
         AgentSurface,
         RunnerTransport,
-        Hidden,
         Other,
         AuthMiddleware,
     ),
@@ -42,7 +36,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         "/api/shell/agent/result",
         AgentSurface,
         RunnerTransport,
-        Hidden,
         Other,
         AuthMiddleware,
     ),
@@ -52,7 +45,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         "/api/shell/agent/persistent_shell_result",
         AgentSurface,
         RunnerTransport,
-        Hidden,
         Other,
         AuthMiddleware,
     ),
@@ -62,7 +54,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         "/api/shell/agent/job_update",
         AgentSurface,
         RunnerTransport,
-        Hidden,
         Other,
         AuthMiddleware,
     ),
@@ -72,7 +63,6 @@ pub(super) const ROUTES: &[RouteSpec] = &[
         "/api/agents/ws",
         AgentSurface,
         RunnerTransport,
-        Hidden,
         Other,
         AuthMiddleware,
     ),

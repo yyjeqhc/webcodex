@@ -27,7 +27,6 @@ pub(crate) const MAX_IMPORT_FILE_BYTES: usize = MAX_PROJECT_ARTIFACT_UPLOAD_BYTE
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ConversationImportDownloadPolicy {
-    GptActionOpenAiHost,
     AuthenticatedMcpOpenAiHostFile,
     TrustedMcpHostFile,
 }
@@ -377,11 +376,6 @@ async fn prepare_download_request(
     policy: ConversationImportDownloadPolicy,
 ) -> Result<(reqwest::Client, reqwest::Url), String> {
     match policy {
-        ConversationImportDownloadPolicy::GptActionOpenAiHost => {
-            let url = validate_openai_download_url(download_link)?;
-            let client = build_download_client(None)?;
-            Ok((client, request_url_for_download(url)))
-        }
         ConversationImportDownloadPolicy::AuthenticatedMcpOpenAiHostFile => {
             validate_openai_download_url(download_link)?;
             let target = validate_trusted_mcp_download_url(download_link).await?;
@@ -858,9 +852,7 @@ impl ToolRuntime {
             (SessionTransport::Mcp, HostFileImportProvenance::AuthenticatedMcpOpenAiHostFile) => {
                 ConversationImportDownloadPolicy::AuthenticatedMcpOpenAiHostFile
             }
-            (SessionTransport::Api, HostFileImportProvenance::GptActionOpenAiHost) => {
-                ConversationImportDownloadPolicy::GptActionOpenAiHost
-            }
+
             (SessionTransport::Mcp, _) => {
                 return ToolResult::err(
                     "import_conversation_files_to_project requires trusted MCP host-file provenance",
@@ -868,7 +860,7 @@ impl ToolRuntime {
             }
             (SessionTransport::Api, _) => {
                 return ToolResult::err(
-                    "import_conversation_files_to_project requires trusted GPT Action/OpenAI host file provenance",
+                    "import_conversation_files_to_project is available only through trusted MCP host-file integration",
                 );
             }
         };

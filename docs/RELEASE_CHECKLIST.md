@@ -31,7 +31,7 @@ For focused diagnosis outside the final workflow, the underlying commands remain
 
 ## 2. Focused Runtime Tests
 
-During implementation/review, run focused lanes when touching runtime metadata, schemas, OpenAPI, MCP, session, handoff, validation, or coding-task behavior. Exact-source CI owns the full Linux package suites plus deterministic metadata/schema/OpenAPI/MCP and release-tooling evidence; a release-branch push owns the additional scarce-native/E2E/eval/disposable-image evidence. The final release-readiness dispatch binds those successful exact-source attempts instead of repeating them. Re-run an individual lane only to diagnose a failure or when a review explicitly requires separate evidence.
+During implementation/review, run focused lanes when touching runtime metadata, schemas, MCP, session, handoff, validation, or coding-task behavior. Exact-source CI owns the full Linux package suites plus deterministic metadata/schema/MCP and release-tooling evidence; a release-branch push owns the additional scarce-native/E2E/eval/disposable-image evidence. The final release-readiness dispatch binds those successful exact-source attempts instead of repeating them. Re-run an individual lane only to diagnose a failure or when a review explicitly requires separate evidence.
 
 ## 3. Product Documentation Check
 
@@ -39,9 +39,9 @@ Confirm the user-facing docs tell one story:
 
 - README states the product position in the first screen and clearly separates full daily use from temporary `share`.
 - Full Setup has one recommended regular Server + Runner path for ordinary daily use; Quick Trial stays focused on temporary single-project `share`.
-- Concepts explains server, Runner, Runner-registered projects, runtime project ids, ToolRuntime, MCP, GPT Actions, session, handoff, validation, review/hygiene, and `run_shell` as a bounded shell primitive for real shell semantics or short related command chains.
+- Concepts explains server, Runner, Runner-registered projects, runtime project ids, ToolRuntime, MCP, session, handoff, validation, review/hygiene, and `run_shell` as a bounded shell primitive for real shell semantics or short related command chains.
 - Architecture starts with client/server/Runner/codebase, security-boundary, and runtime-module diagrams before Rust module notes.
-- MCP and GPT Actions both say they call the same WebCodex ToolRuntime.
+- MCP both say they call the same WebCodex ToolRuntime.
 - Security explains what the model can and cannot do, project access, Runner trust boundary, shell/job risk, token handling, session/audit evidence, and revocation.
 - The release PR / GitHub Release notes read like external release notes and include highlights, compatibility or breaking changes, known limitations, upgrade notes, and validation. Do not restore per-version release-note files as a second documentation source.
 - Roadmap stays short and does not promise a full IDE replacement, autonomous ops, arbitrary computer use, or universal client compatibility.
@@ -84,7 +84,7 @@ Confirm:
 - No secrets, `.env`, credentials, token files, generated deployment env files, or Authorization headers were touched or printed.
 - `finish_coding_task` and `session_handoff_summary` compact outputs do not expose raw stdout/stderr bodies, command text, tails, excerpts, env values, tokens, or secrets.
 - `run_shell` is documented as a bounded shell primitive, while structured validators remain the default validation source.
-- Model-facing runtime docs keep admin, account, pairing, token-management, and Runner-token management outside MCP and GPT Actions.
+- Model-facing runtime docs keep admin, account, pairing, token-management, and Runner-token management outside MCP.
 
 ## 8. Packaging And Artifact Checks
 
@@ -132,7 +132,7 @@ For the normal path, the sequence below may be driven by one `release-init` + re
 
 After deploying a new server, Runner, or runtime build:
 
-1. Refresh the GPT Action or MCP schema if runtime tool schemas changed.
+1. Refresh the MCP schema if runtime tool schemas changed.
 2. Run compact `runtime_status`.
 3. Run focused tool discovery.
 4. Run `list_projects` and pick a Runner-registered project marked appropriate for smoke when available.

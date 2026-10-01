@@ -239,11 +239,6 @@ impl ToolRuntime {
                 self.dispatch_agent_work_authorized(call, auth).await
             }
 
-            #[cfg(feature = "legacy-gpt-actions")]
-            call @ ToolCall::AttachAgentEndpoint { .. } => {
-                self.dispatch_agents_authorized(call, auth, window).await
-            }
-
             call @ (ToolCall::CreateAgentIdentity { .. }
             | ToolCall::ListAgentIdentities { .. }
             | ToolCall::UpdateAgentIdentity { .. }

@@ -53,7 +53,7 @@ the `transport` setting in `runner.toml`:
 | WebSocket | `websocket` | Stable fallback for simple deployments without UDP. |
 | Polling | `polling` | Last-resort fallback for constrained networks. |
 
-The Runner authenticates with its Runner token (compatibility prefix `wc_agent_*`) or, in hosted shared-key mode, the matching shared key. This credential is for Runner transport only; it is not an MCP, REST, or GPT Actions credential.
+The Runner authenticates with its Runner token (compatibility prefix `wc_agent_*`) or, in hosted shared-key mode, the matching shared key. This credential is for Runner transport only; it is not an MCP or REST credential.
 
 WebSocket and polling authenticate the first-party Runner with
 `Authorization: Bearer <token>`; query-string Runner credentials are not

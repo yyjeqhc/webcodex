@@ -1,5 +1,8 @@
 # Tool surface taxonomy and Direct audit (2026-09-28)
 
+> Historical snapshot: names and exposure below describe the recorded baseline,
+> not the v0.5 catalog. v0.5 removes the Action adapter and replaces tool names.
+
 ## Scope and evidence
 
 Workspace: special `/root/git/webcodex-review`, baseline

@@ -6,7 +6,6 @@ edition.workspace = true
 
 [features]
 default = []
-legacy-gpt-actions = []
 experimental-code-mode = []
 root-test-support = []
 workspace-checkpoints = []

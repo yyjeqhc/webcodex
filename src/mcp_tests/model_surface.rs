@@ -321,7 +321,6 @@ async fn inactive_continuation_presentations_are_unavailable_not_gateway_tools()
     }
 }
 
-#[cfg(not(feature = "legacy-gpt-actions"))]
 #[tokio::test]
 async fn retired_endpoint_name_is_absent_from_adaptive_exact_discovery() {
     let runtime = test_runtime();

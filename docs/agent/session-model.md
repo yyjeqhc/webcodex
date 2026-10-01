@@ -51,7 +51,7 @@ Peer delivery is ambient on model-facing ToolResults. Ordinary messages are pers
 
 ### Purpose
 
-Bounded **coding-task continuity and evidence** for MCP, GPT Actions, and
+Bounded **coding-task continuity and evidence** for MCP and
 runtime tools. It records what happened in a task so review, validation,
 handoff, and finish can reason about the same unit of work.
 
@@ -216,7 +216,7 @@ fences, completion keys, message-observation tokens, and their durable revision
 keep their existing semantics. A handoff neither ACKs nor resolves a message and
 grants no authority.
 
-Stateless MCP 2026 tools also accept an explicit bounded `_wc.context` envelope sidecar request. It is independent of collaboration ACKs and handoff recovery and is removed before concrete `ToolCall` parsing. A static canonical material registry authorizes every requested material before its provider is read: `webcodex.workflow` is public; `project.instructions` requires the resolved Project plus `project:read`; `jobs.attention` requires the exact resolved Project plus canonical `runtime:read` and reuses the authorized active-Job summary (at most eight recent Jobs) without selecting a business Session; `skills.catalog` additionally requires the admitted Skill runtime protocol capability; `plugins.catalog` requires the resolved Project plus both `project:read` and `plugin:inspect`; and `memory.bootstrap` requires the admitted Memory protocol capability plus both `project:read` and `memory:read`. Scope or material-capability denial is nonfatal to the main ToolResult and returns a bounded unavailable material without provider content. Unknown material keys are nonfatal and remain open-ended at the MCP schema layer. Sidecar material is projected only after the main tool effect or observation has completed, never grants authority, never retroactively makes requested guidance a precondition of that effect, never records caller-read state, and never infers a Project or model-memory state from a Workflow Session, connection, credential, `Mcp-Session-Id`, or hidden window identity. A model that has lost Project rules or durable Memory guidance must recover `project.instructions` and/or `memory.bootstrap` on an observation call, use `memory_read` when detailed Memory content is needed, reason over that context, and only then issue a later mutation that must obey it. Legacy MCP and generic REST/GPT Actions/OpenAPI do not expose this sidecar request contract.
+Stateless MCP 2026 tools also accept an explicit bounded `_wc.context` envelope sidecar request. It is independent of collaboration ACKs and handoff recovery and is removed before concrete `ToolCall` parsing. A static canonical material registry authorizes every requested material before its provider is read: `webcodex.workflow` is public; `project.instructions` requires the resolved Project plus `project:read`; `jobs.attention` requires the exact resolved Project plus canonical `runtime:read` and reuses the authorized active-Job summary (at most eight recent Jobs) without selecting a business Session; `skills.catalog` additionally requires the admitted Skill runtime protocol capability; `plugins.catalog` requires the resolved Project plus both `project:read` and `plugin:inspect`; and `memory.bootstrap` requires the admitted Memory protocol capability plus both `project:read` and `memory:read`. Scope or material-capability denial is nonfatal to the main ToolResult and returns a bounded unavailable material without provider content. Unknown material keys are nonfatal and remain open-ended at the MCP schema layer. Sidecar material is projected only after the main tool effect or observation has completed, never grants authority, never retroactively makes requested guidance a precondition of that effect, never records caller-read state, and never infers a Project or model-memory state from a Workflow Session, connection, credential, `Mcp-Session-Id`, or hidden window identity. A model that has lost Project rules or durable Memory guidance must recover `project.instructions` and/or `memory.bootstrap` on an observation call, use `memory_read` when detailed Memory content is needed, reason over that context, and only then issue a later mutation that must obey it. Legacy MCP and generic REST do not expose this sidecar request contract.
 
 Project Memory is a separate durable knowledge plane from Workflow Session continuity. `memory_search`/`memory_read` require both `project:read` and `memory:read`; `memory_set`/`memory_delete` require both `project:write` and `memory:manage`, with mutations still passing the independent permission evaluator. Direct shared-key runtime credentials explicitly carry both Memory scopes, while Open Anonymous, ProjectCredential, Project Share, and legacy/default OAuth client scope sets do not gain them from project scopes. A Memory `memory_key` is logical semantic identity, `memory_id` identifies the current incarnation, the internal `definition_hash` identifies canonical model-relevant content, and model-facing `revision` is a generation-bound state ETag/CAS identity; delete and identical recreate therefore produce a different `memory_id` and `revision`. Session events never create or consolidate Memory automatically. `ack_session_message_ids` and Session `ack_ref` are limited to ACK-required collaboration messages and never acknowledge Memory. Memory reads/searches may leave bounded metadata-only consequences in Session history, but Memory bodies, summaries, search results, and `memory.bootstrap` projections are not copied into durable Session recovery. Re-registering the same runtime Project id to a different authoritative registered root resolves to a distinct internal Memory scope rather than inheriting the old root's Memory.
 
@@ -1106,10 +1106,10 @@ renamed without an explicit compatibility migration:
   row-closed without reinterpreting it as `normal`.
 - Error kinds such as `unknown_session_id` and `session_retention_expired`
 
-### OpenAPI / MCP / runtime tool surface
+### MCP and Runtime API tool surface
 
-- GPT Action OpenAPI operation ids and schemas that mention workflow
-  `session_id` / `recording_session_id`
+- Canonical tool schemas and Runtime API recorder metadata distinguish
+  business `session_id` from `recording_session_id`
 - MCP tool input schemas for session tools
 - Runtime tool names (`start_session`, `work_on_project`,
   `session_summary`, …); retired wire names are not part of this external surface
@@ -1135,7 +1135,7 @@ Renaming tables, routes, or serialized field names does.
 
 - [`AGENTS.md`](../../AGENTS.md) — executable Session invariants
 - [`architecture-decisions.md`](architecture-decisions.md) — dual-model summary
-- [`openapi-guidelines.md`](openapi-guidelines.md) — `session_id` vs
-  `recording_session_id` on GPT Actions
+- [`runtime-api-guidelines.md`](runtime-api-guidelines.md) — `session_id` vs
+  `recording_session_id` on Runtime HTTP
 - [`../ARCHITECTURE.md`](../ARCHITECTURE.md) — module map and Workflow Session
   overview

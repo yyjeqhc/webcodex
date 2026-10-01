@@ -495,9 +495,9 @@ Ordinary ChatGPT tool names acquire no compatibility promise from a past schema.
 After a deliberate rename, the refreshed Host schema is the current contract.
 Update ToolDefinition, ToolCall, schemas, discovery, generated follow-ups, tests
 and documentation atomically. Do not retain duplicate model-visible tool names
-just because an earlier schema exposed them. A real frozen legacy adapter may
-need a narrowly scoped exception under section 10; ergonomic parameter spelling
-normalization is a different concern, described in section 2.
+just because an earlier schema exposed them. v0.5 has no legacy tool-name adapter;
+ergonomic parameter spelling normalization is a different concern, described in
+section 2.
 
 Keep these four concerns independent:
 
@@ -609,22 +609,16 @@ Historical persisted evidence should remain truthful about the past, but current
 ToolDefinitions and model projections should not carry obsolete tool API baggage
 solely to preserve old model behavior.
 
-### Sole endpoint-name legacy exception
+### Tool names are not persisted operation keys
 
-`attach_agent_endpoint` is absent from the default canonical ToolDefinition,
-ToolCall parser, exact discovery and normal catalog. Use
-`rotate_agent_continuation_endpoint`. The frozen `legacy-gpt-actions` adapter
-still names the old operation, so enabling that existing feature retains its
-old definition/parser/schema/dispatch as one explicit exception. This is not
-complete adapter-local isolation: legacy-enabled builds also retain that
-long-tail model entry. Moving its exact discovery and request adaptation wholly
-into the retiring adapter would expand this change; remove the exception with
-GPT Actions rather than adding more historical model names.
+`attach_agent_endpoint` has no ToolDefinition, ToolCall parser, exact discovery,
+schema or dispatch entry. Use `rotate_agent_continuation_endpoint`. No feature
+restores the retired name. v0.5 removes the Action adapter and its last tool-name
+exception rather than introducing a compatibility registry.
 
 The Store operation key named `attach_agent_endpoint` is a separate persisted
-idempotency domain and deliberately remains unchanged. No durable endpoint
-state, replay key, authorization or controller fencing is migrated here.
-
+idempotency domain and remains unchanged. Tool naming does not migrate durable
+endpoint state, replay keys, authorization or controller fencing.
 ## 11. Measure friction before pruning tools
 
 Low usage alone does not prove a tool lacks value. A tool may be avoided because

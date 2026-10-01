@@ -189,10 +189,8 @@ Admission is not inferred from future tools. A canonical metadata regression tes
 All three stages exclude `observe_jobs`, `list_jobs`, `wait_for_job_terminal`,
 `stop_job`, `present_job_terminal_continuation`, and other Job Host carriers from
 nested admission and from their Typed Surface callable contracts. All three
-entrypoints remain direct in ordinary MCP/Adaptive and definition-owned
-GatewayOnly in GPT Actions, keeping the existing Actions operation budget;
-this presentation policy changes no nested authority. Making
-`stop_job` directly callable in ordinary MCP/Adaptive does not change that
+entrypoints retain their canonical MCP descriptors; presentation policy changes
+no nested authority. Making`stop_job` directly callable in ordinary MCP/Adaptive does not change that
 allowlist. Query and mutation must not share a conditional-effect sidecar.
 
 An admitted E2a validation may return `execution_state=pending` for the same durable execution. Its exact continuation is a fallback, not a command to poll. Keep independent read/search/review work in the same turn; ordinary **outer** model-facing calls with the exact Window/Project/Session may later carry sparse terminal `job_attention`. Nested children still have no Window and therefore receive no passive Job sidecar, so effect receipts, mutation fences, and validation-source semantics remain the only nested authority. `context_request=["jobs.attention"]` remains a separate bounded Project-level fallback. When terminal is the hard dependency and no independent work remains, use the ordinary continuation / `wait_for_job_terminal` path. Detailed `observe_jobs` and explicit `stop_job(confirm=true)` remain ordinary canonical calls, never nested Job controls. No Host automatic-resume capability is required for the normal pending path.

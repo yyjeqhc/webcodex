@@ -1265,7 +1265,7 @@ fn from_tool_name_rejects_retired_inspection_tools_and_parses_retained_git_tools
 }
 
 #[test]
-fn continuation_endpoint_rotation_only_retains_legacy_name_with_legacy_feature() {
+fn continuation_endpoint_rotation_rejects_retired_name() {
     let args = json!({
         "agent_id": "wc_dagent_qqqqqqqqqqqqqqqq".to_string(),
         "host": "ChatGPT",
@@ -1281,13 +1281,6 @@ fn continuation_endpoint_rotation_only_retains_legacy_name_with_legacy_feature()
         ToolCall::RotateAgentContinuationEndpoint { .. }
     ));
 
-    #[cfg(feature = "legacy-gpt-actions")]
-    {
-        let legacy = ToolCall::from_tool_name("attach_agent_endpoint", args).unwrap();
-        assert_eq!(legacy.tool_name(), "attach_agent_endpoint");
-        assert!(matches!(legacy, ToolCall::AttachAgentEndpoint { .. }));
-    }
-    #[cfg(not(feature = "legacy-gpt-actions"))]
     {
         assert!(ToolCall::from_tool_name("attach_agent_endpoint", args.clone()).is_err());
         assert!(serde_json::from_value::<ToolCall>(

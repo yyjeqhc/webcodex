@@ -158,58 +158,10 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                     "Create or rotate the server-local continuation Endpoint for an owned durable Agent. The result's agent_continuation_ref pins that exact Endpoint generation for present_agent_continuation; it is not a credential and will not follow a later rotation. This is the canonical Endpoint step for first-time durable continuation setup; later calls replace the Endpoint with a new monotonic controller generation and make older generations stale. Use present_agent_continuation only when its dedicated descriptor is advertised; do not repeat discovery for an unavailable Host carrier. This tool does not establish a Host binding or production auto-resume readiness. Exact idempotency replay returns the same Endpoint.",
                 ),
                 PERMISSION_RISK_WRITE,
-            )
-            .with_gpt_action_unsupported(),
+            ),
         COMMUNICATION_MANAGE_SCOPES,
     ),
-    // Sole frozen GPT Actions name exception. Default Adaptive builds do not
-    // register or parse this historical spelling.
-    #[cfg(feature = "legacy-gpt-actions")]
-    require_all_scopes(
-        permission_risk(
-            model_spec(
-            def(
-                "attach_agent_endpoint",
-                super::ToolAuditPolicy::typed_fields(&[
-                    super::ToolAuditResultField::pointer("endpoint_id", "/endpoint/endpoint_id"),
-                    super::ToolAuditResultField::pointer("agent_id", "/endpoint/agent_id"),
-                    super::ToolAuditResultField::pointer_non_null("detached", "/endpoint/detached_at_unix_ms"),
-                    super::ToolAuditResultField::value("created"),
-                    super::ToolAuditResultField::value("replayed"),
-                    super::ToolAuditResultField::value("state_changed"),
-                    super::ToolAuditResultField::value("error_kind"),
-                ])
-                .context(super::ToolAuditContextPolicy::Fields(&[
-                    super::ToolAuditResultField::pointer("endpoint_id", "/endpoint/endpoint_id"),
-                    super::ToolAuditResultField::pointer("agent_id", "/endpoint/agent_id"),
-                    super::ToolAuditResultField::value("created"),
-                    super::ToolAuditResultField::value("replayed"),
-                    super::ToolAuditResultField::value("state_changed"),
-                    super::ToolAuditResultField::value("error_kind"),
-                ])),
-                ModelVisible,
-                TOOL_CATEGORY_COMMUNICATION,
-                None,
-                TOOL_PROVIDER_CONTROL,
-                super::ToolSemanticContract {
-                    effect: super::ToolEffect::Mutate,
-                    risk: CommunicationManage,
-                    approval: super::ToolApprovalPolicy::Standard,
-                    idempotency: super::ToolIdempotency::Keyed,
-                },
-                Some(COMMUNICATION_MANAGE),
-                false,
-                NoPath,
-                true,
-                false,
-                super::ToolSessionEvidencePolicy::NONE,
-            ),
-            "Frozen legacy GPT Actions name for rotate_agent_continuation_endpoint. Rotates only the server-local continuation Endpoint record for an owned durable Agent, assigns a new monotonic controller generation, and makes older generations stale. The result's agent_continuation_ref pins that exact generation and is not a credential. It does not connect to, configure, or control ChatGPT or any external Host. Public rotation is not wake-capable until a separately authorized process-local Host binding is established. Exact idempotency replay returns the same Endpoint.",
-            ),
-            PERMISSION_RISK_WRITE,
-        ),
-        COMMUNICATION_MANAGE_SCOPES,
-    ),
+
     require_all_scopes(
         model_spec(
                 def(
@@ -242,8 +194,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                     super::ToolSessionEvidencePolicy::NONE,
                 ),
                 "Present one explicit durable Agent/Endpoint generation as a sparse MCP App continuation controller card. Pass either agent_continuation_ref from rotate_agent_continuation_endpoint or list_agent_identities, or the exact agent_id, endpoint_id, and expected_controller_generation. The ref only names that pinned tuple; it is not a credential, and this read still rechecks owner, lifecycle, and generation. New durable Agent window setup is create_agent_identity -> rotate_agent_continuation_endpoint -> present_agent_continuation; after presentation, yield/end the current model turn promptly so the MCP App can establish and maintain the Host binding. Presentation success is not production auto-resume readiness: verify list_agent_identities.production_auto_resume_available afterward. Presentation is read-only and never itself establishes Host binding or execution authority.",
-            )
-            .with_gpt_action_unsupported(),
+            ),
         COMMUNICATION_READ_SCOPES,
     ),
     require_all_scopes(

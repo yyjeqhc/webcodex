@@ -113,7 +113,6 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 ),
                 "Execute one supported scripts/*.py or scripts/*.sh resource from a trusted Runner-configured or managed Skill without retransmitting source. Configured Skills are live resources: expected_definition_revision fences selection; resource bytes are read at execution and package-relative helpers remain live; skill_sha256 identifies the executed main script. Managed Skills additionally require expected_package_revision and use an immutable package. Runner preserves Skill identity for __file__, sibling imports, and $0-relative helpers while keeping the requested Project cwd; project-content Skills are rejected. If execution_state=pending, keep the exact continuation and continue independent work; later same-scope results may surface terminal attention. Observe only for details/recovery.",
             )
-            .with_gpt_action_description("Execute a trusted Runner Skill script. Configured Skills are live; require expected_definition_revision. Managed Skills additionally require expected_package_revision. If pending, keep continuation and continue independent work; observe only for details/recovery.")
             .with_execution(super::ToolExecutionContract::new(
                 super::ToolExecutionForm::NativeArgv,
                 super::ToolExecutionLifetime::Runner,

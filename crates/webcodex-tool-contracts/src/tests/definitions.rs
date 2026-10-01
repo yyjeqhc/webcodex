@@ -616,14 +616,7 @@ fn stop_job_preserves_one_canonical_effect() {
         1
     );
     assert_eq!(definition.adaptive_runtime_direct_rank(), None);
-    #[cfg(feature = "legacy-gpt-actions")]
-    {
-        assert_eq!(
-            definition.gpt_action_exposure(),
-            ToolGptActionExposure::GatewayOnly
-        );
-        assert!(definition.supports_gpt_actions());
-    }
+
     assert_eq!(definition.metadata.effect, ToolEffect::Mutate);
     assert_eq!(definition.metadata.risk, ToolRisk::JobRun);
     assert_eq!(definition.metadata.approval, ToolApprovalPolicy::Standard);
@@ -635,10 +628,7 @@ fn stop_job_preserves_one_canonical_effect() {
         definition.metadata.authority,
         ToolAuthorityPolicy::Require(JOB_RUN)
     );
-    #[cfg(feature = "legacy-gpt-actions")]
-    assert!(!gpt_action_direct_tool_definitions()
-        .iter()
-        .any(|item| item.name == "stop_job"));
+
     assert!(lookup_tool_definition("cancel_job").is_none());
     assert!(lookup_tool_definition("manage_jobs").is_none());
     let schema = input_schema_for_tool("stop_job");
@@ -714,51 +704,18 @@ fn agent_continuation_setup_descriptions_are_self_guiding_without_direct_expansi
             .adaptive_runtime_direct_rank(),
         None
     );
-    #[cfg(feature = "legacy-gpt-actions")]
-    assert_eq!(
-        lookup_tool_definition("attach_agent_endpoint")
-            .unwrap()
-            .adaptive_runtime_direct_rank(),
-        None,
-        "frozen legacy exception must not become a second Direct entry"
-    );
 }
 
 #[test]
-fn endpoint_name_alias_exists_only_for_the_frozen_legacy_feature() {
-    let legacy_enabled = cfg!(feature = "legacy-gpt-actions");
-    assert_eq!(
-        lookup_tool_definition("attach_agent_endpoint").is_some(),
-        legacy_enabled
-    );
-    assert_eq!(
-        known_tool_names().any(|name| name == "attach_agent_endpoint"),
-        legacy_enabled
-    );
-    assert_eq!(
-        registered_tool_specs()
-            .iter()
-            .any(|spec| spec.name == "attach_agent_endpoint"),
-        legacy_enabled
-    );
-    assert_eq!(
-        gpt_action_tool_supported("attach_agent_endpoint"),
-        legacy_enabled
-    );
+fn retired_endpoint_name_is_absent_from_every_tool_surface() {
+    assert!(lookup_tool_definition("attach_agent_endpoint").is_none());
+    assert!(!known_tool_names().any(|name| name == "attach_agent_endpoint"));
+    assert!(!registered_tool_specs()
+        .iter()
+        .any(|spec| spec.name == "attach_agent_endpoint"));
     let canonical = lookup_tool_definition("rotate_agent_continuation_endpoint").unwrap();
     assert!(canonical.visibility.is_model_visible());
     assert_eq!(canonical.adaptive_runtime_direct, None);
-    #[cfg(feature = "legacy-gpt-actions")]
-    {
-        let legacy = lookup_tool_definition("attach_agent_endpoint").unwrap();
-        assert_eq!(legacy.category, canonical.category);
-        assert_eq!(legacy.metadata.effect, canonical.metadata.effect);
-        assert_eq!(legacy.metadata.risk, canonical.metadata.risk);
-        assert_eq!(legacy.metadata.authority, canonical.metadata.authority);
-        assert_eq!(legacy.metadata.idempotency, canonical.metadata.idempotency);
-        assert_eq!(legacy.policy, canonical.policy);
-        assert_eq!(legacy.adaptive_runtime_direct, None);
-    }
 }
 
 #[test]
@@ -967,8 +924,6 @@ fn adaptive_runtime_direct_declarations_are_visible_ranked_and_unique() {
         "session_shell_exec",
         "session_shell_status",
         "close_session_shell",
-        #[cfg(feature = "legacy-gpt-actions")]
-        "attach_agent_endpoint",
         "save_project_artifact",
         "read_project_artifact",
         "artifact_upload_begin",
@@ -1046,82 +1001,6 @@ fn adaptive_runtime_direct_declarations_are_visible_ranked_and_unique() {
         .contains("Ordinary review uses review_changes"));
 }
 
-#[cfg(feature = "legacy-gpt-actions")]
-#[test]
-fn legacy_gpt_action_surface_is_frozen() {
-    let direct = gpt_action_direct_tool_definitions();
-    assert_eq!(
-        direct
-            .iter()
-            .map(|definition| definition.name)
-            .collect::<Vec<_>>(),
-        LEGACY_GPT_ACTION_DIRECT_TOOL_NAMES
-    );
-
-    for name in LEGACY_GPT_ACTION_SUPPORTED_TOOL_NAMES {
-        let definition = lookup_tool_definition(name)
-            .unwrap_or_else(|| panic!("frozen GPT Action tool {name} disappeared"));
-        assert!(
-            definition.gpt_action_exposure() != ToolGptActionExposure::Unsupported,
-            "frozen GPT Action tool {name} became unsupported"
-        );
-        assert!(gpt_action_tool_supported(name), "{name}");
-    }
-
-    for specialist in EXACT_MANIFEST_SPECIALIST_TOOL_NAMES {
-        assert!(
-            gpt_action_tool_supported(specialist),
-            "{specialist} must remain legacy GPT-Action gateway-callable"
-        );
-    }
-
-    for definition in &direct {
-        let model_spec = definition
-            .model_spec
-            .expect("legacy direct GPT Action must remain model-visible");
-        let action_description = definition
-            .gpt_action_description()
-            .expect("GPT Action description projection");
-        assert!(
-            action_description.chars().count() <= GPT_ACTION_DESCRIPTION_MAX_CHARS,
-            "{} GPT Action description exceeds {} characters",
-            definition.name,
-            GPT_ACTION_DESCRIPTION_MAX_CHARS
-        );
-        if model_spec.description.chars().count() > GPT_ACTION_DESCRIPTION_MAX_CHARS {
-            assert!(
-                model_spec.gpt_action_description.is_some(),
-                "{} needs an explicit short GPT Action presentation description",
-                definition.name
-            );
-        }
-    }
-
-    for name in [
-        "present_goal_plan",
-        "present_agent_continuation",
-        "present_work_result",
-        "rotate_agent_continuation_endpoint",
-    ] {
-        assert!(
-            !gpt_action_tool_supported(name),
-            "{name} depends on MCP-only presentation/resource semantics"
-        );
-    }
-
-    #[cfg(feature = "experimental-code-mode")]
-    for name in [
-        "code_mode_exec",
-        "code_mode_exec_effectful",
-        "code_mode_exec_mutating",
-    ] {
-        assert!(
-            !gpt_action_tool_supported(name),
-            "{name} must not enter the frozen legacy GPT Action snapshot"
-        );
-    }
-}
-
 #[test]
 fn turn_economy_descriptors_stay_converged_and_bounded() {
     let specs = registered_tool_specs();
@@ -1139,14 +1018,7 @@ fn turn_economy_descriptors_stay_converged_and_bounded() {
             !spec.description.contains("Use observe_jobs later"),
             "{name}"
         );
-        #[cfg(feature = "legacy-gpt-actions")]
-        {
-            let action = lookup_tool_definition(name)
-                .unwrap()
-                .gpt_action_description()
-                .expect("execution action description");
-            assert!(!action.contains("Use observe_jobs later"), "{name}");
-        }
+
         assert!(
             spec.description.contains("sparse terminal Job attention"),
             "{name}"
@@ -1249,17 +1121,6 @@ fn turn_economy_descriptors_stay_converged_and_bounded() {
             spec.description.chars().count() <= MODEL_TOOL_DESCRIPTION_MAX_CHARS,
             "{name} canonical description budget"
         );
-        #[cfg(feature = "legacy-gpt-actions")]
-        {
-            let action = lookup_tool_definition(name)
-                .unwrap()
-                .gpt_action_description()
-                .expect("model-facing action description");
-            assert!(
-                action.chars().count() <= GPT_ACTION_DESCRIPTION_MAX_CHARS,
-                "{name} GPT Action description budget"
-            );
-        }
     }
 }
 
@@ -1424,23 +1285,6 @@ fn run_skill_resource_contract_distinguishes_live_configured_and_managed_fences(
             "run_skill_resource ToolDefinition must describe {phrase:?}: {model_description}"
         );
     }
-    #[cfg(feature = "legacy-gpt-actions")]
-    {
-        let action_description = definition
-            .gpt_action_description()
-            .expect("run_skill_resource GPT Action description")
-            .to_ascii_lowercase();
-        for phrase in [
-            "configured skills are live",
-            "expected_definition_revision",
-            "managed skills additionally require expected_package_revision",
-        ] {
-            assert!(
-                action_description.contains(phrase),
-                "run_skill_resource GPT Action description must describe {phrase:?}: {action_description}"
-            );
-        }
-    }
 }
 
 #[cfg(feature = "experimental-code-mode")]
@@ -1489,7 +1333,7 @@ fn code_mode_discovery_ranks_inspection_before_specialized_effects_without_chang
 }
 
 #[test]
-fn readiness_tool_is_sequential_outer_only_and_does_not_expand_legacy() {
+fn readiness_tool_is_sequential_outer_only() {
     let name = "wait_for_job_readiness";
     let definition = lookup_tool_definition(name).unwrap();
     assert_eq!(definition.composition, ToolCompositionPolicy::Denied);
@@ -1502,8 +1346,6 @@ fn readiness_tool_is_sequential_outer_only_and_does_not_expand_legacy() {
         Some("job_ids")
     );
     assert!(is_adaptive_runtime_direct_tool(name));
-    assert!(!crate::tool_policy::LEGACY_GPT_ACTION_DIRECT_TOOL_NAMES.contains(&name));
-    assert!(!crate::tool_policy::LEGACY_GPT_ACTION_SUPPORTED_TOOL_NAMES.contains(&name));
     assert!(!runtime_tool_supports_passive_job_attention(name));
     let specs = registered_tool_specs();
     let spec = spec_named(&specs, name);
@@ -1613,12 +1455,5 @@ fn project_build_is_gateway_visible_but_not_adaptive_direct() {
     assert_eq!(
         definition.audit_policy().execution,
         ToolAuditExecutionPolicy::DIRECT_ARGV_TEXT
-    );
-    #[cfg(feature = "legacy-gpt-actions")]
-    assert!(
-        !gpt_action_direct_tool_definitions()
-            .iter()
-            .any(|definition| definition.name == "project_build"),
-        "project_build must remain gateway-only on the legacy GPT Actions surface"
     );
 }

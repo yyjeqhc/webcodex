@@ -33,7 +33,7 @@ pub(super) use preflight::decorate_structured_execution_prestart_denial;
 use preflight::{canonical_execution_project_binding, CanonicalProjectOutput};
 
 impl ToolRuntime {
-    /// Main dispatch — call from MCP handler or GPT Actions handler.
+    /// Main dispatch — call from MCP or Runtime HTTP handlers.
     ///
     /// This no-auth convenience defaults the caller context to `None`, which
     /// means Runner-backed tools are rejected (no owner can be proven). HTTP

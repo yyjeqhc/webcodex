@@ -684,7 +684,7 @@ pub struct OpenAiHostFileRef {
 pub enum HostFileImportProvenance {
     #[default]
     Untrusted,
-    GptActionOpenAiHost,
+
     /// Authenticated MCP OAuth client that may import only from OpenAI file hosts.
     AuthenticatedMcpOpenAiHostFile,
     /// Explicitly allowlisted MCP client that may import from arbitrary public HTTPS.
@@ -3856,28 +3856,6 @@ pub enum ToolCall {
         idempotency_key: String,
     },
 
-    /// Frozen GPT Actions spelling only; absent from the default canonical parser.
-    /// This exception retires with the legacy adapter, not with a schema refresh.
-    #[cfg(feature = "legacy-gpt-actions")]
-    AttachAgentEndpoint {
-        /// Canonical durable Agent id owned by the current communication principal.
-        #[schemars(regex(pattern = "^wc_dagent_[A-Za-z0-9_-]{16}$"))]
-        agent_id: String,
-        /// Server-local continuation adapter label, for example ChatGPT. This is recorded metadata only: it
-        /// does not initiate, configure, or authorize an external connection.
-        #[schemars(length(min = 1, max = 64))]
-        host: String,
-        /// Optional opaque host-local attachment label copied into server-local Endpoint metadata. It is
-        /// not durable Agent identity, remote-host authority, or a connection selector.
-        #[schemars(length(max = 128))]
-        #[serde(default)]
-        client_attachment_id: Option<String>,
-        /// Caller-generated operation key. Exact replay under the same communication principal returns the
-        /// original durable resource; reuse with changed input is rejected.
-        #[schemars(length(min = 1, max = 128))]
-        idempotency_key: String,
-    },
-
     /// Present one exact Agent/Endpoint continuation controller card. Never infers a target.
     /// Pass agent_continuation_ref, or the explicit tuple. Do not pass both.
     PresentAgentContinuation {
@@ -4887,7 +4865,7 @@ pub enum ToolCall {
     /// base64 for the requested chunk plus full-file sha256 and MIME metadata.
     /// MCP callers may request one complete, size-limited PNG/JPEG/WebP for
     /// native image content framing; that transport-only option is deliberately
-    /// not part of the generic REST/GPT Actions schema.
+    /// not part of the generic REST schema.
     ReadProjectArtifact {
         /// Runner-registered project id.
         project: String,
@@ -6030,8 +6008,7 @@ impl ToolCall {
             Self::ListAgentIdentities { .. } => "list_agent_identities",
             Self::UpdateAgentIdentity { .. } => "update_agent_identity",
             Self::RotateAgentContinuationEndpoint { .. } => "rotate_agent_continuation_endpoint",
-            #[cfg(feature = "legacy-gpt-actions")]
-            Self::AttachAgentEndpoint { .. } => "attach_agent_endpoint",
+
             Self::PresentAgentContinuation { .. } => "present_agent_continuation",
             Self::AgentContinuationBind { .. } => "agent_continuation_bind",
             Self::AgentContinuationRecoverEndpoint { .. } => "agent_continuation_recover_endpoint",

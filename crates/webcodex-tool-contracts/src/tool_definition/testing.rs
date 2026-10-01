@@ -68,7 +68,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                     .with_native_batch_field("packages"),
             ),
             "Structured cargo check (default --all-targets) for common supported validation with parsed diagnostics, validation identity, and same execution Job handoff. Use package for one workspace package or packages for a known set; packages runs one Cargo invocation with repeated -p after deterministic sort/dedup. If pending, keep its continuation and continue independent work; same-scope results may surface terminal attention. Observe only for logs/details/recovery; do not poll. Development validation can overlap independent work, but edits to covered source make it stale. For final evidence freeze covered source; if it changes, rerun the appropriate check. Server timing policy controls same-execution Job handoff grace and never changes timeout or retry semantics. Complete synchronous success omits zero counts and empty parser bookkeeping; positive warnings and diagnostics remain. source_state never certifies current workspace source.",
-        ).with_gpt_action_description("Run cargo check; packages=[...] checks a known set in one process. If pending, keep continuation and continue independent work; later same-scope results may carry terminal validation. Do not poll; observe only for details/recovery. Covered-source edits stale the run; freeze source or rerun.")
+        )
         .with_execution(super::ToolExecutionContract::new(
             super::ToolExecutionForm::StructuredValidation,
             super::ToolExecutionLifetime::Runner,
@@ -104,7 +104,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             .with_composition_policy(super::ToolCompositionPolicy::Sequential)
             .with_host_orchestration_hint(super::ToolHostOrchestrationHint::sequential()),
             "Structured cargo test for common supported validation with bounded output, executed-test evidence, min_tests/require_tests, validation identity, and same execution Job handoff. lib=true selects Cargo --lib; filter is one Rust substring, not flags such as --exact or --nocapture. Exit 0 alone is not test proof: default requires positive counts; require_tests=false accepts zero only without min_tests; require_tests=true/min_tests enforce a proven minimum. no_run=true is compile-only. Sparse synchronous proof retains tests_run_count and explicit minimum_tests, require_tests=false for accepted zero, or no_run=true for compile-only. Rich success may lack test proof. source_state never certifies current workspace source. If pending, keep its continuation and continue independent work; same-scope results may surface terminal attention. Observe only for logs/details/recovery; do not poll. Edits to covered source stale evidence. For final evidence freeze covered source; if it changes, rerun the appropriate test.",
-        ).with_gpt_action_description("Run cargo tests with bounded executed-test evidence. If pending, keep continuation and continue independent work; later same-scope results may carry terminal validation. Do not poll; observe only for details/recovery. Covered-source edits stale the run; freeze source for final evidence or rerun.")
+        )
         .with_execution(super::ToolExecutionContract::new(
             super::ToolExecutionForm::StructuredValidation,
             super::ToolExecutionLifetime::Runner,

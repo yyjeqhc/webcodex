@@ -14,7 +14,7 @@ The npm/runtime archive, Docker, and platform-specific procedures below are reta
 
 - `webcodex` — the unified CLI for project workflows, Server/Runner lifecycle,
   enrollment, and operations.
-- `webcodex-server` — the Server process exposing REST, MCP, and Runner endpoints; the legacy GPT Actions OpenAPI adapter is available only in feature-enabled builds.
+- `webcodex-server` — the Server process exposing REST, MCP, and Runner endpoints.
 - `webcodex-runner` — the long-lived worker on the machine that owns the
   repositories.
 
@@ -113,7 +113,7 @@ minimum production path:
    `webcodex login <server-url> --code <code>` on the machine that owns the
    repositories.
 5. Install the `webcodex-runner` service on that repository machine.
-6. Run `webcodex ops status --strict`; only then add the MCP connector. If an existing Custom GPT still requires the legacy Actions adapter, use a `legacy-gpt-actions` build and import its schema separately.
+6. Run `webcodex ops status --strict`; only then add the MCP connector.
 
 ### Server setup
 
@@ -215,7 +215,7 @@ The exact trace file layout, correlation ids, model-facing forensic reader, queu
 
 ### Public HTTPS
 
-Hosted MCP clients and GPT Actions require a public HTTPS URL. Set
+Hosted MCP clients require a public HTTPS URL. Set
 `WEBCODEX_PUBLIC_URL` in the Server env file and put a reverse proxy in front
 of `127.0.0.1:8080`. Nginx is supported; a named Cloudflare Tunnel is also a
 valid front door. The same hostname must carry ordinary HTTPS requests and
@@ -499,25 +499,13 @@ dynamic client registration, OIDC, and the device-code flow are not
 implemented. Keep `offline_access` enabled when a host offers it — it is a
 protocol-level refresh-token scope and grants no extra WebCodex permission.
 
-## GPT Actions and MCP
+## MCP integration
 
-- **MCP:** remains the maintained ChatGPT integration.
-- **GPT Actions:** retained only for existing Custom GPT deployments. Default
-  binaries do not mount `/openapi.json` or `/api/actions/*`; build with
-  `legacy-gpt-actions` only when that compatibility surface is still required.
-  Its direct and gateway tool sets are frozen and no longer grow with Adaptive
-  Runtime, Host, Plugin, or Code Mode development.
+Connect a maintained MCP client to `/mcp` with a user API token or OAuth.
+MCP and generic Runtime HTTP share the same ToolRuntime authority path. v0.5
+has no Action adapter, OpenAPI import document or compatibility feature.
 
-If an older generic Action deployment is intentionally retained, rebuild with
-`legacy-gpt-actions` and re-import `/openapi.json` to pick up the frozen
-canonical operation names.
-
-When enabled, GPT Actions still enters the same ToolRuntime authority path and
-does not introduce separate scope, Project-authority, permission,
-Runner-capability, or retry policy. Project-scoped `share`/`run` deployments
-expose this compatibility surface only when the binary includes the feature.
-
-See [GPT Actions](GPT_ACTIONS.md), [MCP](MCP.md), and [AI Onboarding](AI_ONBOARDING.md).
+See [MCP](MCP.md) and [AI Onboarding](AI_ONBOARDING.md).
 
 If ChatGPT reports a conversation-level developer-MCP `FORBIDDEN` error, do not
 treat it as proof that the deployed Server or Runner is down. Verify the

@@ -36,7 +36,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 "mcp_compact_schemas",
                 schema_type(
                     "boolean",
-                    "Whether MCP tools/list omits outputSchema while retaining tool names, descriptions, inputSchema, and annotations. This is MCP discovery schema compaction, not runtime_status compact=true response shaping or GPT Action response compaction.",
+                    "Whether MCP tools/list omits outputSchema while retaining tool names, descriptions, inputSchema, and annotations. This is MCP discovery schema compaction, not runtime_status compact=true response shaping.",
                 ),
             ),
             (

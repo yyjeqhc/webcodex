@@ -284,22 +284,6 @@ impl ToolVisibility {
 #[derive(Debug, Clone, Copy)]
 pub struct ToolModelSpecDeclaration {
     pub description: &'static str,
-    /// Optional GPT Actions presentation copy. Canonical/MCP descriptions stay
-    /// unchanged; this exists only when the Action importer's 300-character
-    /// operation-description ceiling needs a deliberately shorter rendering.
-    pub gpt_action_description: Option<&'static str>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ToolGptActionExposure {
-    /// Follow the canonical Adaptive Runtime surface automatically.
-    Inherit,
-    /// Remain available through the GPT Actions gateway but do not consume a
-    /// dedicated OpenAPI operation. Used only for concrete surface-budget needs.
-    GatewayOnly,
-    /// This tool depends on MCP-only protocol semantics and must not be exposed
-    /// directly or through the GPT Actions gateway.
-    Unsupported,
 }
 
 /// Declarative privacy contract for the bounded Tool Audit / Session-ledger
@@ -1024,10 +1008,7 @@ pub struct ToolDefinition {
     /// no admission: ordinary model-visible tools use the gateway, while hidden
     /// tools and operator extensions retain their independent admission rules.
     pub adaptive_runtime_direct: Option<ToolAdaptiveDirectPolicy>,
-    /// Eligibility/exclusion metadata for the frozen GPT Actions adapter.
-    /// Its admitted names and Direct/Gateway placement come from legacy
-    /// snapshots, not from Adaptive rank or reason.
-    pub gpt_action_exposure: ToolGptActionExposure,
+
     pub operator_extension_family: Option<ToolOperatorExtensionFamily>,
     /// Optional canonical selection semantics for ordinary execution tools.
     pub execution: Option<ToolExecutionContract>,
@@ -1071,30 +1052,6 @@ impl ToolDefinition {
 
     pub const fn with_host_orchestration_hint(mut self, hint: ToolHostOrchestrationHint) -> Self {
         self.host_orchestration = hint;
-        self
-    }
-
-    /// Override only GPT Actions presentation text. This never changes the
-    /// canonical ToolSpec schema, semantic contract, authority, or MCP copy.
-    pub const fn with_gpt_action_description(mut self, description: &'static str) -> Self {
-        if let Some(mut model_spec) = self.model_spec {
-            model_spec.gpt_action_description = Some(description);
-            self.model_spec = Some(model_spec);
-        }
-        self
-    }
-
-    /// Keep a canonical model-visible tool GPT-Action-compatible while routing
-    /// it through call_runtime_tool instead of a dedicated direct operation.
-    pub const fn with_gpt_action_gateway_only(mut self) -> Self {
-        self.gpt_action_exposure = ToolGptActionExposure::GatewayOnly;
-        self
-    }
-
-    /// Mark a canonical model-visible tool as incompatible with GPT Actions
-    /// transport while leaving canonical runtime admission unchanged.
-    pub const fn with_gpt_action_unsupported(mut self) -> Self {
-        self.gpt_action_exposure = ToolGptActionExposure::Unsupported;
         self
     }
 
@@ -1216,7 +1173,7 @@ const fn def(
         audit,
         model_spec: None,
         adaptive_runtime_direct: None,
-        gpt_action_exposure: ToolGptActionExposure::Inherit,
+
         operator_extension_family: None,
         execution: None,
         composition: ToolCompositionPolicy::Denied,
@@ -1242,10 +1199,7 @@ const fn def(
 
 const fn model_spec(definition: ToolDefinition, description: &'static str) -> ToolDefinition {
     ToolDefinition {
-        model_spec: Some(ToolModelSpecDeclaration {
-            description,
-            gpt_action_description: None,
-        }),
+        model_spec: Some(ToolModelSpecDeclaration { description }),
         ..definition
     }
 }
@@ -1406,5 +1360,5 @@ const TOOL_DEFINITION_HEAD: &[ToolDefinition] = &[model_spec(
         ToolActivityPresentation::Support,
         ToolActivityInteraction::NonMeaningful,
     ),
-    "List runtime tools. Full output includes schemas and may be large; use summary_only with category, features, or limit for bounded GPT Action discovery.",
+    "List runtime tools. Full output includes schemas and may be large; use summary_only with category, features, or limit for bounded runtime discovery.",
 )];

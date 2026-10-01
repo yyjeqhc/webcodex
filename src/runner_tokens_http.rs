@@ -1,26 +1,5 @@
-//! Phase 3 agent token management endpoints.
-//!
-//! These are REST-only admin/self-management surfaces for agent tokens —
-//! tokens bound to an owner username and an `allowed_client_id`, usable only
-//! on Runner transport endpoints (`/api/shell/agent/*`, `/api/agents/ws`). They
-//! are intentionally **not** exposed in `/openapi.json` (GPT Actions) because
-//! token creation is sensitive and should be driven by an admin CLI/HTTP
-//! client, not a GPT. Their canonical `RouteSpec` entries are `Hidden`, and
-//! OpenAPI tests derive the exclusion invariant from that metadata. All endpoints
-//! sit behind the shared `AuthMiddleware` (Bearer auth) and resolve the caller's
-//! [`AuthContext`] to enforce the admin/bootstrap-or-self boundary. Personal
-//! API tokens must also carry explicit `account:manage` authority.
-//!
-//! Security properties:
-//! - Agent token plaintext is returned **only once** at creation time.
-//! - Only the SHA-256 hash (`key_hash`) is persisted.
-//! - `key_hash` and plaintext tokens never appear in list/revoke responses.
-//! - Agent tokens may only carry `agent:*` scopes.
-//! - Agent tokens are rejected from these management endpoints (only bootstrap
-//!   and user tokens may manage agent tokens), so a leaked agent token cannot
-//!   mint more agent tokens.
-//! - Agent tokens may not call the Phase 2 personal API token management
-//!   endpoints either.
+//! Runner enrollment-token management. These operational routes are not model
+//! tools and retain their account/bootstrap authorization requirements.
 
 use crate::auth::AuthContext;
 #[cfg(test)]

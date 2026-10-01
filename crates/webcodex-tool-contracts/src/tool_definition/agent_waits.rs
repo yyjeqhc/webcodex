@@ -46,7 +46,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                     super::ToolSessionEvidencePolicy::NONE,
                     ),
                     "Create one caller-owned durable one-shot AgentWait over 1..8 exact agent_task_terminal selectors with closed mode any|all and optional exact goal_id correlation context. Mode defaults to any. Under any, the first match triggers and later matches follow the existing one-shot coalescing rules. Under all, partial matches remain durable without creating a Wake; only the final required source match triggers one Wake. Generic Waits may snapshot already-terminal sources and never affect Goal attention. A goal_id-scoped Wait instead requires an active same-owner Goal whose explicit controller equals the target Agent, requires every exact source Task to be explicitly correlated to that Goal, and fails closed if any selected source is already terminal; while active it owns terminal attention for only those exact Goal/Task sources. The Endpoint is presentation only, not durable Wait ownership. Exact keyed replay returns the same Wait.",
-                ).with_gpt_action_description("Create one bounded one-shot AgentWait over exact AgentTask terminal selectors. mode=any (default) triggers on the first match; mode=all triggers only after every registered source matches. Exact idempotency replay returns the same Wait."),
+                ),
                 PERMISSION_RISK_WRITE,
             ),
         COMMUNICATION_MANAGE_SCOPES,

@@ -1,4 +1,10 @@
-use super::super::import_http::set_import_test_download_base_url;
+//! Streaming import regressions use a test-only trusted-host fixture, not a
+//! retired public import adapter. Real MCP provenance is covered in mcp_tests.
+use crate::tool_runtime::conversation_import::{
+    set_import_test_download_base_url, set_import_test_resolved_ips,
+};
+#[path = "import_fixture.rs"]
+mod fixture;
 use crate::tool_runtime::files::{
     MAX_PROJECT_ARTIFACT_UPLOAD_BYTES, MAX_PROJECT_ARTIFACT_UPLOAD_CHUNK_BYTES,
 };
@@ -54,6 +60,7 @@ struct ImportDownloadBaseUrlGuard;
 impl ImportDownloadBaseUrlGuard {
     fn set(base_url: String) -> Self {
         set_import_test_download_base_url(Some(base_url));
+        set_import_test_resolved_ips(Some(vec!["93.184.216.34".parse().unwrap()]));
         Self
     }
 }
@@ -61,6 +68,7 @@ impl ImportDownloadBaseUrlGuard {
 impl Drop for ImportDownloadBaseUrlGuard {
     fn drop(&mut self) {
         set_import_test_download_base_url(None);
+        set_import_test_resolved_ips(None);
     }
 }
 
@@ -128,7 +136,7 @@ async fn import_test_service_with_local_runtime() -> Service {
     let (_tmp, db) = super::test_db();
     let tmp_proj = tempfile::tempdir().unwrap();
     let runtime = Arc::new(super::runtime_with_local_project(tmp_proj.path(), "demo"));
-    Service::new(super::build_projects_router(config, db, runtime))
+    Service::new(fixture::router(config, db, runtime))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -391,7 +399,7 @@ async fn import_http_accepts_office_mime_and_extension_policy() {
 
     for (path, mime, mismatched_path) in cases {
         let service = import_test_service_with_local_runtime().await;
-        let mut accepted = TestClient::post("http://localhost/api/artifacts/import")
+        let mut accepted = TestClient::post("http://localhost/test-host-file-import")
             .bearer_auth("secret")
             .json(&import_body("https://example.com/file", mime, path))
             .send(&service)
@@ -406,7 +414,7 @@ async fn import_http_accepts_office_mime_and_extension_policy() {
             "matching Office MIME/path should pass import MIME policy: {body:?}"
         );
 
-        let mut octet = TestClient::post("http://localhost/api/artifacts/import")
+        let mut octet = TestClient::post("http://localhost/test-host-file-import")
             .bearer_auth("secret")
             .json(&import_body(
                 "https://example.com/file",
@@ -422,7 +430,7 @@ async fn import_http_accepts_office_mime_and_extension_policy() {
         let body: Value = octet.take_json().await.unwrap();
         assert!(body["error"].as_str().unwrap().contains("OpenAI file host"));
 
-        let mut mismatched = TestClient::post("http://localhost/api/artifacts/import")
+        let mut mismatched = TestClient::post("http://localhost/test-host-file-import")
             .bearer_auth("secret")
             .json(&import_body(
                 "https://files.oaiusercontent.com/file",
@@ -441,15 +449,16 @@ async fn import_http_accepts_office_mime_and_extension_policy() {
 
     for path in ["payload.dat", "payload.artifact", "payload.customblob"] {
         let service = import_test_service_with_local_runtime().await;
-        let mut accepted_by_mime_policy = TestClient::post("http://localhost/api/artifacts/import")
-            .bearer_auth("secret")
-            .json(&import_body(
-                "https://example.com/file",
-                "application/octet-stream",
-                path,
-            ))
-            .send(&service)
-            .await;
+        let mut accepted_by_mime_policy =
+            TestClient::post("http://localhost/test-host-file-import")
+                .bearer_auth("secret")
+                .json(&import_body(
+                    "https://example.com/file",
+                    "application/octet-stream",
+                    path,
+                ))
+                .send(&service)
+                .await;
         assert_eq!(
             super::effective_status(&accepted_by_mime_policy),
             salvo::http::StatusCode::BAD_REQUEST
@@ -614,7 +623,7 @@ async fn runtime_conversation_import_rejects_untrusted_api_transport() {
     assert!(result
         .error
         .as_deref()
-        .is_some_and(|error| error.contains("trusted GPT Action/OpenAI host file provenance")));
+        .is_some_and(|error| error.contains("trusted MCP host-file integration")));
 }
 
 #[tokio::test]
@@ -626,7 +635,7 @@ async fn import_http_existing_mime_policy_still_passes_before_host_validation() 
         ("notes.txt", "text/plain"),
     ] {
         let service = import_test_service_with_local_runtime().await;
-        let mut resp = TestClient::post("http://localhost/api/artifacts/import")
+        let mut resp = TestClient::post("http://localhost/test-host-file-import")
             .bearer_auth("secret")
             .json(&import_body("https://example.com/file", mime, path))
             .send(&service)
@@ -643,7 +652,7 @@ async fn import_http_existing_mime_policy_still_passes_before_host_validation() 
     }
 
     let service = import_test_service_with_local_runtime().await;
-    let mut unknown_mime = TestClient::post("http://localhost/api/artifacts/import")
+    let mut unknown_mime = TestClient::post("http://localhost/test-host-file-import")
         .bearer_auth("secret")
         .json(&import_body(
             "https://example.com/file",
@@ -695,11 +704,11 @@ async fn import_http_existing_png_pdf_zip_text_formats_still_import() {
     .await;
     let config = super::test_config(Some("secret"));
     let (_db_tmp, db) = super::test_db();
-    let service = Service::new(super::build_projects_router(config, db, runtime));
+    let service = Service::new(fixture::router(config, db, runtime));
 
     for (path, mime, expected_bytes) in cases {
         let agent = tokio::spawn(complete_import_artifact_uploads(registry.clone(), 1));
-        let mut resp = TestClient::post("http://localhost/api/artifacts/import")
+        let mut resp = TestClient::post("http://localhost/test-host-file-import")
             .bearer_auth("secret")
             .json(&json!({
                 "project":"agent:importer:demo",
@@ -759,10 +768,10 @@ async fn import_http_streams_download_in_bounded_upload_chunks() {
     .await;
     let config = super::test_config(Some("secret"));
     let (_db_tmp, db) = super::test_db();
-    let service = Service::new(super::build_projects_router(config, db, runtime));
+    let service = Service::new(fixture::router(config, db, runtime));
     let agent = tokio::spawn(complete_import_artifact_uploads(registry, 1));
 
-    let mut resp = TestClient::post("http://localhost/api/artifacts/import")
+    let mut resp = TestClient::post("http://localhost/test-host-file-import")
         .bearer_auth("secret")
         .json(&json!({
             "project":"agent:importer:demo",
@@ -817,10 +826,10 @@ async fn import_http_batch_failure_reports_prior_success_and_preserves_unicode_n
     .await;
     let config = super::test_config(Some("secret"));
     let (_db_tmp, db) = super::test_db();
-    let service = Service::new(super::build_projects_router(config, db, runtime));
+    let service = Service::new(fixture::router(config, db, runtime));
     let agent = tokio::spawn(complete_import_artifact_uploads(registry, 1));
 
-    let mut resp = TestClient::post("http://localhost/api/artifacts/import")
+    let mut resp = TestClient::post("http://localhost/test-host-file-import")
         .bearer_auth("secret")
         .json(&json!({
             "project":"agent:importer:demo",
@@ -902,9 +911,9 @@ async fn import_http_preserves_overwrite_false_protection() {
     .await;
     let config = super::test_config(Some("secret"));
     let (_db_tmp, db) = super::test_db();
-    let service = Service::new(super::build_projects_router(config, db, runtime));
+    let service = Service::new(fixture::router(config, db, runtime));
     let agent = tokio::spawn(complete_import_artifact_uploads(registry, 1));
-    let mut resp = TestClient::post("http://localhost/api/artifacts/import")
+    let mut resp = TestClient::post("http://localhost/test-host-file-import")
         .bearer_auth("secret")
         .json(&json!({
             "project":"agent:importer:demo",
@@ -939,7 +948,7 @@ async fn import_http_preserves_overwrite_false_protection() {
 #[tokio::test]
 async fn import_http_rejects_http_download_link() {
     let service = import_test_service_with_local_runtime().await;
-    let mut resp = TestClient::post("http://localhost/api/artifacts/import")
+    let mut resp = TestClient::post("http://localhost/test-host-file-import")
         .bearer_auth("secret")
         .json(&import_body(
             "http://files.oaiusercontent.com/a.png",
@@ -959,7 +968,7 @@ async fn import_http_rejects_http_download_link() {
 #[tokio::test]
 async fn import_http_rejects_non_openai_file_host() {
     let service = import_test_service_with_local_runtime().await;
-    let mut resp = TestClient::post("http://localhost/api/artifacts/import")
+    let mut resp = TestClient::post("http://localhost/test-host-file-import")
         .bearer_auth("secret")
         .json(&import_body(
             "https://example.com/a.png",

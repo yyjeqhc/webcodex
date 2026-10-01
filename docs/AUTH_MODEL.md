@@ -18,7 +18,7 @@ Do not copy the Server bootstrap token to a client, and do not use a Runner toke
 | --- | --- | --- |
 | Server bootstrap token | `WEBCODEX_TOKEN` in the Server env | Initial administration and emergency recovery |
 | Pairing code | `wc_pair_...` | One-time device/user enrollment |
-| Personal API token (PAT) | `wc_pat_...` | MCP, GPT Actions, and runtime API access for a managed user |
+| Personal API token (PAT) | `wc_pat_...` | MCP and runtime API access for a managed user |
 | Runner token | `wc_agent_...` | `webcodex-runner` transport only |
 | Shared key | `wck_...` | Hosted shared-key MCP/runtime access and the matching Runner group |
 | Project Credential | protected project-private file | One ProjectGrant's ordinary runtime API/MCP access |
@@ -66,7 +66,7 @@ The pairing code is temporary; it is not a long-lived API credential.
 
 ## Personal API token (`wc_pat_*`)
 
-A PAT represents a managed user on MCP, GPT Actions, and the runtime API. The Server stores only its hash. `webcodex login` normally writes the user's token to `webcodex-user-token` under that Server/user's local configuration directory.
+A PAT represents a managed user on MCP and the runtime API. The Server stores only its hash. `webcodex login` normally writes the user's token to `webcodex-user-token` under that Server/user's local configuration directory.
 
 Use the smallest scopes needed for the workflow. A PAT used by an MCP coding client normally needs runtime/project scopes appropriate to the actions that client will perform. Account-management authority is separate and should not be added to ordinary coding clients.
 

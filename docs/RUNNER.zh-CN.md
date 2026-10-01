@@ -47,7 +47,7 @@ Runner 主动向外连接 Server，使用四种传输之一，由 `runner.toml` 
 | WebSocket | `websocket` | 无 UDP 场景的稳定 fallback。 |
 | Polling | `polling` | 受限网络的最后手段。 |
 
-Runner 使用 Runner token（兼容前缀 `wc_agent_*`）认证；hosted shared-key 模式则使用对应 shared key。这个 credential 只用于 Runner transport，不用于 MCP、REST 或 GPT Actions。
+Runner 使用 Runner token（兼容前缀 `wc_agent_*`）认证；hosted shared-key 模式则使用对应 shared key。这个 credential 只用于 Runner transport，不用于 MCP 或 REST。
 
 WebSocket 与 polling 都使用 `Authorization: Bearer <token>` 认证 first-party
 Runner；Runner query-string credential 不再接受。QUIC 把凭据限制在

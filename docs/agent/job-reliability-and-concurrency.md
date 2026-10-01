@@ -167,11 +167,9 @@ summary independently of this cursor.
 
 Query may piggyback; control may not. `stop_job` is the explicit canonical
 Mutate/JobRun/Standard/DesiredState primitive, with `confirm=true`, `job:run`,
-and unchanged Project/Session ownership checks. MCP/Adaptive expose it directly;
-GPT Actions uses the same definition through `call_runtime_tool` under its
-GatewayOnly policy. There is no cancel alias, mixed observe/mutate manager, or
-control sidecar. Direct exposure does not admit any Job lifecycle/control or
-Host carrier tool into nested Code Mode E1/E2a/E2b.
+and unchanged Project/Session ownership checks. Use its currently advertised MCP
+invocation route. There is no cancel alias, mixed observe/mutate manager, or
+control sidecar. Direct exposure does not admit any Job lifecycle/control orHost carrier tool into nested Code Mode E1/E2a/E2b.
 
 A Server can preserve authoritative identity in its ToolResult, but cannot prove
 that a remote Host/tool wrapper retained or delivered that result. Diagnose that

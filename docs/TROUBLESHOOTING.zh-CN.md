@@ -262,13 +262,8 @@ sudo webcodex runner logs --scope system --lines 100
 
 ### `tool_manifest` discovery 范围过大
 
-GPT Actions 应直接调用 canonical `tool_manifest` operation，并优先传 exact
-`tool_name`，或使用 `category` / `intent` filter 来保持 discovery 紧凑。generic
-Actions surface 已不再暴露退休的 `listRuntimeTools` facade。
-
-### GPT Action 仍在使用旧 schema
-
-先确认部署的 Server 是使用 `legacy-gpt-actions` 构建的；默认构建不会挂载 `/openapi.json` 或 `/api/actions/*`。对于明确保留的 legacy 部署，重新导入 `/openapi.json`。它的 operation set 是冻结兼容快照加 `call_runtime_tool`，正常维护的 Adaptive Runtime 变化不会再扩张该 surface。修改这层 adapter 时运行独立 legacy workflow 或 feature-enabled tests。
+传入 exact `tool_name`，或用 `category` / `intent` 缩小范围。以当前
+MCP schema 和返回的调用路径为准；工具改名后不再接受旧名称。
 
 ### MCP tool list 看起来是旧的
 
@@ -291,14 +286,14 @@ webcodex runner logs --scope user --lines 100
 ### Token type 错误
 
 Hosted quick-start 中，MCP 与 Runner 使用同一个非 `wc_` shared key。Managed
-mode 中，GPT Actions、MCP 和普通 REST/project API 使用
+mode 中，MCP 和普通 REST/project API 使用
 `webcodex-user-token`（`wc_pat_*`）；Runner 令牌（`wc_agent_*`）只给
 Runner transport 使用——`webcodex login` 之后它内联在 `runner.toml` 中，
 没有单独的 `webcodex-runner-token` 文件。把 `wc_agent_*` 放入
 `--token` 或 `--token-file` 后得到 403，正是预期安全边界；应改用生成的
 `webcodex-user-token`。新版 CLI 也会在不打印完整 token 的前提下诊断这个错误。
 `WEBCODEX_TOKEN` 面向 bootstrap/admin，
-不应复制到 GPT Actions、MCP 或 Runner config。
+不应复制到 MCP 或 Runner config。
 
 ### 一条命令能看到 Runner service，另一条却看不到
 
@@ -319,9 +314,7 @@ system scope 调用 system manager，并使用 `/etc/systemd/system`。
 smoke project 初始化 git 并创建初始 commit，或把 smoke 指向另一个安全的
 Runner-backed git project。
 
-### `operation_count` 超过 30
 
-只有启用 `legacy-gpt-actions` 的兼容构建才受这项限制。direct operations 来自冻结快照，long-tail entries 通过 `call_runtime_tool`；不要通过普通 Adaptive Runtime 调整来迁就这个 legacy budget。若冻结 surface 本身触及上限，应在 legacy adapter 内做明确兼容性调整，并由独立 legacy CI 验证。
 
 ### `artifact_upload_chunk` 报 `path` 缺失
 

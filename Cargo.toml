@@ -36,10 +36,6 @@ edition.workspace = true
 
 [features]
 default = []
-legacy-gpt-actions = [
-    "webcodex-tool-contracts/legacy-gpt-actions",
-    "webcodex-tool-runtime-contracts/legacy-gpt-actions",
-]
 experimental-code-mode = [
     "dep:webcodex-code-mode",
     "webcodex-code-mode/v8-runtime",
@@ -74,7 +70,7 @@ webcodex-workspace = { path = "crates/webcodex-workspace" }
 # client and compression helpers. Tests opt in separately below.
 salvo = { version = "0.93", default-features = false, features = [
     "cookie", "fix-http1-request-uri", "server", "server-handle", "http1", "http2",
-    "aws-lc-rs", "matched-path", "oapi", "cors", "affix-state", "websocket", "timeout",
+    "aws-lc-rs", "matched-path", "cors", "affix-state", "websocket", "timeout",
 ] }
 tokio = { version = "1", features = ["full"] }
 tokio-tungstenite = { version = "0.29", features = ["connect", "rustls-tls-webpki-roots"] }

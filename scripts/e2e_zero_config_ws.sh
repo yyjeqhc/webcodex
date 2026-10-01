@@ -6,7 +6,7 @@ set -euo pipefail
 #
 # Starts a real `webcodex` server and a `webcodex-runner` connected over
 # the selected agent transport, defaulting to WebSocket, then exercises the
-# full GPT Actions + MCP surface via curl to prove the runtime is wired
+# Runtime API + MCP surface via curl to prove the runtime is wired
 # end-to-end on a single host.
 #
 # What this proves:
@@ -17,7 +17,7 @@ set -euo pipefail
 #   - Canonical run_job starts an async job on the agent and Job observation
 #     round-trip.
 #   - MCP initialize / tools/list / call_runtime_tool(list_projects) work.
-#   - default builds keep the retired GPT Actions OpenAPI route disabled and
+#   - all builds reject retired Action/OpenAPI routes and
 #     omits legacy/admin paths.
 #
 # What this does NOT do:
@@ -487,10 +487,10 @@ else
 fi
 
 # ----------------------------------------------------------------------------
-# 5. GPT Actions surface smoke
+# 5. Runtime API surface smoke
 # ----------------------------------------------------------------------------
 
-log "---- GPT Actions surface ----"
+log "---- Runtime API surface ----"
 
 # getRuntimeStatus
 body="$(api_post /api/runtime/status '{}')"
@@ -867,19 +867,21 @@ for retired_patch_tool in apply_patch_checked validate_patch; do
 done
 
 # ----------------------------------------------------------------------------
-# 7. Default-off legacy GPT Actions surface
+# 7. Permanently retired Action routes
 # ----------------------------------------------------------------------------
 
-log "---- legacy GPT Actions default-off route ----"
-
-openapi_status="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 \
-    "http://127.0.0.1:${PORT}/openapi.json" 2>/dev/null || true)"
-if [ "$openapi_status" = "404" ]; then
-    pass "default build does not mount /openapi.json"
-else
-    fail "default build unexpectedly exposes /openapi.json (status=$openapi_status)"
-fi
-
+log "---- retired Action route rejection ----"
+for route in /openapi.json /api/actions/read_files /api/artifacts/import; do
+    method=POST
+    [ "$route" != /openapi.json ] || method=GET
+    status="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 -X "$method" \
+        "http://127.0.0.1:${PORT}${route}" 2>/dev/null || true)"
+    if [ "$status" = "404" ]; then
+        pass "retired route is absent: $route"
+    else
+        fail "retired route unexpectedly responds: $route (status=$status)"
+    fi
+done
 # ----------------------------------------------------------------------------
 # 7b. MCP App console (Phase B) — public static entry + protected data API
 # ----------------------------------------------------------------------------

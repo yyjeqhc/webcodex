@@ -162,7 +162,7 @@ pub(crate) fn run_server_init(opts: ServerInitOptions) -> Result<String, String>
         }
         next_steps.push(foreground_command.clone());
         next_steps.push(status_command.clone());
-        next_steps.push("configure HTTPS/public URL separately if using GPT Actions".to_string());
+        next_steps.push("configure HTTPS/public URL separately for remote MCP clients".to_string());
         let shared_key_enabled = super::env::server_init_direct_shared_key_enabled(&opts);
         let summary = json!({
             "env_file": opts.env_file.to_string_lossy(),

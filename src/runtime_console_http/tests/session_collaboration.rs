@@ -260,13 +260,6 @@ async fn human_join_reuses_formal_session_authority_and_ack_validation() {
         .unwrap_err(),
         RuntimeConsoleError::Invalid
     );
-    #[cfg(feature = "legacy-gpt-actions")]
-    {
-        let openapi = crate::openapi::build_openapi_spec();
-        assert!(openapi["paths"]
-            .get("/api/runtime-console/workflow-session-post-message")
-            .is_none());
-    }
 }
 
 #[tokio::test]
@@ -593,21 +586,6 @@ async fn browser_message_mutation_json_and_uncertain_errors_are_distinct() {
     let body = response.take_string().await.unwrap();
     assert!(body.contains("Outcome may have happened"));
     assert!(body.contains("refresh retained messages before retrying"));
-
-    #[cfg(feature = "legacy-gpt-actions")]
-    {
-        let openapi = crate::openapi::build_openapi_spec();
-        for id in [
-            crate::route_metadata::RouteId::RuntimeConsoleWorkflowSessionWithdrawMessage,
-            crate::route_metadata::RouteId::RuntimeConsoleWorkflowSessionReplaceMessage,
-        ] {
-            let path = crate::route_metadata::path(id);
-            assert!(
-                openapi["paths"].get(path).is_none(),
-                "{path} leaked into OpenAPI"
-            );
-        }
-    }
 }
 
 #[tokio::test]

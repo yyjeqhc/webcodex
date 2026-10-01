@@ -6,7 +6,6 @@ edition.workspace = true
 
 [features]
 default = []
-legacy-gpt-actions = ["webcodex-tool-contracts/legacy-gpt-actions"]
 experimental-code-mode = ["webcodex-tool-contracts/experimental-code-mode"]
 workspace-checkpoints = ["webcodex-tool-contracts/workspace-checkpoints"]
 

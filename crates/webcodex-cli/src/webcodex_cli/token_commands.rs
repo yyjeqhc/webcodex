@@ -94,7 +94,7 @@ pub(crate) async fn run_token_create_local(
         ));
     }
     Ok(format!(
-        "API token created locally and registered with server.\n\nToken:\n{}\n\nUse this as Bearer token in GPT Action or MCP.\nThis token will not be shown again.\n",
+        "API token created locally and registered with server.\n\nToken:\n{}\n\nUse this as Bearer token in MCP.\nThis token will not be shown again.\n",
         token
     ))
 }

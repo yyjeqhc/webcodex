@@ -1,21 +1,5 @@
-//! Phase 2 multi-user auth: user + personal API token management endpoints.
-//!
-//! These are REST-only admin/self-management surfaces. They are intentionally
-//! **not** exposed in `/openapi.json` (GPT Actions) because token creation is
-//! sensitive and should be driven by an admin CLI/HTTP client, not a GPT. Their
-//! canonical `RouteSpec` entries are `Hidden`, and OpenAPI tests derive the
-//! exclusion invariant from that metadata. All endpoints sit behind `AuthMiddleware`
-//! (Bearer auth) and resolve the caller's [`AuthContext`] to enforce the
-//! admin/bootstrap-or-self boundary. Personal API tokens must also carry the
-//! explicit `account:manage` scope before those handler-level checks run.
-//!
-//! Security properties:
-//! - Plaintext tokens are returned **only once** at creation time.
-//! - Only the SHA-256 hash (`token_hash`) is persisted.
-//! - `token_hash` and plaintext tokens never appear in list/status responses.
-//! - `token_prefix` is returned for display so users can identify tokens.
-//! - Unauthorized responses are JSON with a generic `error` message that does
-//!   not leak whether a token prefix or username exists.
+//! User and personal-token management. These authenticated operational routes
+//! are not model tools; account and bootstrap authority remain mandatory.
 
 use crate::auth::AuthContext;
 #[cfg(test)]

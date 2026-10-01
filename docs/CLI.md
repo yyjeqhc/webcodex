@@ -271,13 +271,13 @@ quick answer.
 
 | Credential | Prefix | Created by | Used for | Do not use for |
 | --- | --- | --- | --- | --- |
-| Server bootstrap token | (env `WEBCODEX_TOKEN`) | `webcodex server init` | server/admin setup, user creation, pairing | GPT Actions, MCP, Runner, daily use |
+| Server bootstrap token | (env `WEBCODEX_TOKEN`) | `webcodex server init` | server/admin setup, user creation, pairing | MCP, Runner, daily use |
 | Shared key | `wck_...` | `webcodex connect` (generated once) | hosted shared-key MCP + Runner | production IAM |
 | Project Credential | (private file) | `webcodex setup` | one ProjectGrant's ordinary runtime API/MCP access | other ProjectGrants, admin, Runner transport |
-| Account credential | `wc_acct_...` | `webcodex users create --issue-credential` | local token creation | GPT Actions, MCP, Runner |
-| Personal API token (PAT) | `wc_pat_...` | `webcodex tokens create-local` | GPT Actions, MCP, REST API | Runner connectivity |
-| Runner token | `wc_agent_...` | `webcodex runner-tokens create-local` | `webcodex-runner` transport only | MCP, REST, GPT Actions |
-| OAuth access token | `wc_oat_...` | OAuth2 authorization flow | GPT Actions / MCP when OAuth is enabled | — |
+| Account credential | `wc_acct_...` | `webcodex users create --issue-credential` | local token creation | MCP, Runner |
+| Personal API token (PAT) | `wc_pat_...` | `webcodex tokens create-local` | MCP, REST API | Runner connectivity |
+| Runner token | `wc_agent_...` | `webcodex runner-tokens create-local` | `webcodex-runner` transport only | MCP, REST |
+| OAuth access token | `wc_oat_...` | OAuth2 authorization flow | MCP when OAuth is enabled | — |
 
 ### Practical credential rules
 

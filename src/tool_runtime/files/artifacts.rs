@@ -18,7 +18,7 @@ pub(crate) struct ProjectArtifactExportSnapshot {
 }
 
 /// Default returned segment size for `read_project_artifact`. This tool returns
-/// base64 content in the JSON response, so keep chunks small for GPT Actions.
+/// base64 content in the JSON response, so keep chunks bounded for model-facing responses.
 pub(crate) const DEFAULT_READ_PROJECT_ARTIFACT_LENGTH: usize = 32 * 1024; // 32 KiB
 
 /// Maximum returned segment size for `read_project_artifact`.

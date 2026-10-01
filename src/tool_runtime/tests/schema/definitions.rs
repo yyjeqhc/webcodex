@@ -12,10 +12,6 @@ fn retired_delete_files_alias_stays_absent() {
     assert!(!registered_tool_specs()
         .iter()
         .any(|spec| spec.name == "delete_files"));
-    #[cfg(feature = "legacy-gpt-actions")]
-    assert!(crate::openapi::build_openapi_spec()["paths"]
-        .get("/api/projects/delete_files")
-        .is_none());
 }
 
 #[test]

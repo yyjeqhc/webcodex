@@ -71,7 +71,7 @@ impl SuggestedToolCall {
 #[derive(Debug, Serialize)]
 pub struct ToolResult {
     pub success: bool,
-    /// Main payload - always a JSON object so both MCP and GPT Actions
+    /// Main payload - always a JSON object so both MCP
     /// can forward it verbatim.
     pub output: Value,
     /// Optional human-readable error when success == false.

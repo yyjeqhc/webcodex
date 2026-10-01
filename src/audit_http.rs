@@ -1,10 +1,5 @@
-//! Read-only audit query API.
-//!
-//! Three thin POST handlers mounted under `/api/audit/*` behind
-//! `AuthMiddleware`. They wrap the existing action-session query functions in
-//! `db.rs` and the decode/stats helpers in `action_audit_sessions.rs`. They perform
-//! no write operations and are intentionally **not** part of the GPT Actions
-//! OpenAPI schema (`/openapi.json`).
+//! Read-only ActionAudit history and statistics under existing authenticated
+//! operational access. Audit history never grants tool execution authority.
 
 #[path = "audit_http/responses.rs"]
 mod responses;

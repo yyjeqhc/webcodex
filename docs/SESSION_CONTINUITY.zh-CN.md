@@ -60,4 +60,4 @@ MCP 客户端需要已有的 `coding_agent:run` 和 `project:write` 授权才能
 
 适配器将明确提供的文本发送到运营者选择的接口，流式返回有界模型文本，只有正常完整响应才算成功。它不访问文件、不修改代码、不执行模型工具，也不保存模型对话。凭据必须有权使用配置的 API；账号登录本身不代表这项资格。审阅结果后，如果希望它在下一次账号或模型切换后保留，应显式将有用发现保存为 Session 决策或进度。委派模型的结论不能代替原生验证或批准证据。
 
-现有 [ACP Run 契约](agent/acp-coding-agent-run.md) 负责授权、持久化调度、观察和取消。MCP 通过 canonical gateway 提供此流程；GPT Actions 的冻结工具集合保持不变。
+现有 [ACP Run 契约](agent/acp-coding-agent-run.md) 负责授权、持久化调度、观察和取消。MCP 通过 canonical gateway 提供此流程。

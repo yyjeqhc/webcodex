@@ -160,8 +160,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                     super::ToolSessionEvidencePolicy::NONE,
                 ),
                 "Present one exact caller-owned durable Goal as a sparse read-only Goal Plan MCP App card, including only the optional durable controller Agent identity and never its Endpoint/window bindings. Requires explicit goal_id and never infers Goal or controller identity from Project, Workflow Session, Conversation, credential, ClientWindow, or recent activity. Presentation creates no work, grants no execution authority, and does not modify Goal lifecycle.",
-            )
-            .with_gpt_action_unsupported(),
+            ),
             17,
             super::ToolDirectReason::Presentation,
         ),

@@ -1,10 +1,5 @@
-//! REST-only pairing/enrollment endpoints.
-//!
-//! `POST /api/pairing/create` is an admin/bootstrap endpoint that creates a
-//! short-lived one-time pairing code. `POST /api/pairing/enroll` is intentionally
-//! not behind Bearer auth; the pairing code is the temporary credential and is
-//! consumed exactly once. These endpoints are not included in GPT Actions
-//! OpenAPI and are not exposed as MCP tools.
+//! Single-use pairing-code lifecycle for Runner enrollment. Operational
+//! authorization is independent of MCP tool discovery.
 
 mod runner_capabilities;
 pub(crate) use runner_capabilities::{grant_runner_capabilities, runner_capability_authorization};
@@ -458,8 +453,7 @@ pub(crate) async fn pairing_enroll(req: &mut Request, depot: &mut Depot, res: &m
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(feature = "legacy-gpt-actions")]
-    use crate::openapi::build_openapi_spec;
+
     use crate::Database;
     use salvo::prelude::affix_state;
     use salvo::test::{ResponseExt, TestClient};
@@ -801,14 +795,5 @@ mod tests {
             resolve_pairing_agent_token_name(None, "alice-laptop").unwrap(),
             Some("alice-laptop agent".to_string())
         );
-    }
-
-    #[cfg(feature = "legacy-gpt-actions")]
-    #[test]
-    fn pairing_endpoints_are_absent_from_openapi() {
-        let spec = build_openapi_spec();
-        let paths = spec["paths"].as_object().unwrap();
-        assert!(!paths.contains_key("/api/pairing/create"));
-        assert!(!paths.contains_key("/api/pairing/enroll"));
     }
 }

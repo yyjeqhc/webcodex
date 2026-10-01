@@ -255,13 +255,13 @@ WebCodex 把 bootstrap 管理、账号接入、runtime API 访问与 Runner 连�
 
 | 凭据 | 前缀 | 由谁创建 | 用途 | 不要用于 |
 | --- | --- | --- | --- | --- |
-| Server bootstrap token | （env `WEBCODEX_TOKEN`） | `webcodex server init` | server/admin 设置、建用户、pairing | GPT Actions、MCP、Runner、日常使用 |
+| Server bootstrap token | （env `WEBCODEX_TOKEN`） | `webcodex server init` | server/admin 设置、建用户、pairing | MCP、Runner、日常使用 |
 | 共享 key | `wck_...` | `webcodex connect`（一次性生成） | hosted shared-key 的 MCP + Runner | 生产 IAM |
 | Project Credential | （私有文件） | `webcodex setup` | 一个 ProjectGrant 的普通 runtime API/MCP 访问 | 其它 ProjectGrant、admin、Runner transport |
-| Account credential | `wc_acct_...` | `webcodex users create --issue-credential` | 本地创建令牌 | GPT Actions、MCP、Runner |
-| 个人 API 令牌（PAT） | `wc_pat_...` | `webcodex tokens create-local` | GPT Actions、MCP、REST API | Runner 连接 |
-| Runner 令牌 | `wc_agent_...` | `webcodex runner-tokens create-local` | 仅 `webcodex-runner` 传输 | MCP、REST、GPT Actions |
-| OAuth 访问令牌 | `wc_oat_...` | OAuth2 授权流程 | 启用 OAuth 时的 GPT Actions / MCP | — |
+| Account credential | `wc_acct_...` | `webcodex users create --issue-credential` | 本地创建令牌 | MCP、Runner |
+| 个人 API 令牌（PAT） | `wc_pat_...` | `webcodex tokens create-local` | MCP、REST API | Runner 连接 |
+| Runner 令牌 | `wc_agent_...` | `webcodex runner-tokens create-local` | 仅 `webcodex-runner` 传输 | MCP、REST |
+| OAuth 访问令牌 | `wc_oat_...` | OAuth2 授权流程 | 启用 OAuth 时的 MCP | — |
 
 ### 实际使用规则
 

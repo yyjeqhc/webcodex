@@ -1,7 +1,7 @@
 //! Project instructions auto-load.
 //!
 //! When a session is started for a project, WebCodex best-effort loads
-//! project-local instruction files (e.g. `AGENTS.md`) so GPT Action / MCP /
+//! project-local instruction files (e.g. `AGENTS.md`) so MCP /
 //! Codex / GLM callers see project-local development rules at session start.
 //!
 //! These files are project-local guidance only; they never override system,

@@ -30,7 +30,7 @@ async fn oauth_client_create_returns_client_secret_once() {
 
     let mut resp = authorized_post_json(
         "http://localhost/api/oauth/clients/create",
-        create_client_json("ChatGPT Action", &["https://example.com/callback"], None),
+        create_client_json("MCP client", &["https://example.com/callback"], None),
         &token,
     )
     .send(&service)

@@ -87,22 +87,6 @@ pub(crate) fn adaptive_runtime_gateway_target_route(
     }
 }
 
-/// Frozen GPT Actions routing. This legacy adapter no longer inherits Adaptive
-/// Runtime additions or rank changes.
-#[cfg(feature = "legacy-gpt-actions")]
-pub(crate) fn gpt_action_gateway_target_route(target: &str) -> AdaptiveRuntimeGatewayTargetRoute {
-    if target == ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME {
-        return AdaptiveRuntimeGatewayTargetRoute::Recursive;
-    }
-    if !webcodex_tool_contracts::gpt_action_tool_supported(target) {
-        return AdaptiveRuntimeGatewayTargetRoute::Unknown;
-    }
-    if webcodex_tool_contracts::gpt_action_tool_is_direct(target) {
-        AdaptiveRuntimeGatewayTargetRoute::Direct
-    } else {
-        AdaptiveRuntimeGatewayTargetRoute::Gateway
-    }
-}
 /// Presentation route for one canonical SuggestedToolCall target. This is not
 /// authority: adapters resolve the route from their already-admitted model
 /// surface and the canonical target still runs through ordinary ToolRuntime
@@ -583,33 +567,6 @@ mod tests {
                 AdaptiveRuntimeGatewayTargetRoute::Direct
             );
         }
-    }
-
-    #[cfg(feature = "legacy-gpt-actions")]
-    #[test]
-    fn job_stop_uses_gateway_on_adaptive_and_actions() {
-        assert_eq!(
-            adaptive_runtime_gateway_target_route("stop_job"),
-            AdaptiveRuntimeGatewayTargetRoute::Gateway
-        );
-        assert_eq!(
-            gpt_action_gateway_target_route("stop_job"),
-            AdaptiveRuntimeGatewayTargetRoute::Gateway
-        );
-        for definition in webcodex_tool_contracts::model_visible_tool_definitions() {
-            if definition.gpt_action_exposure()
-                == webcodex_tool_contracts::ToolGptActionExposure::GatewayOnly
-            {
-                assert_eq!(
-                    gpt_action_gateway_target_route(definition.name),
-                    AdaptiveRuntimeGatewayTargetRoute::Gateway
-                );
-            }
-        }
-        assert_eq!(
-            gpt_action_gateway_target_route("cancel_job"),
-            AdaptiveRuntimeGatewayTargetRoute::Unknown
-        );
     }
 
     #[test]

@@ -33,4 +33,4 @@ pub use tool_catalog::*;
 pub use tool_definition::*;
 pub use tool_inputs::*;
 pub use tool_policy::*;
-pub use tool_spec::{ToolSpec, GPT_ACTION_DESCRIPTION_MAX_CHARS, MODEL_TOOL_DESCRIPTION_MAX_CHARS};
+pub use tool_spec::{ToolSpec, MODEL_TOOL_DESCRIPTION_MAX_CHARS};

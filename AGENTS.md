@@ -66,7 +66,7 @@ For release, recovery, or deployment work, follow [`docs/agent/release-process.m
 
 ## 6. Load relevant domain rules
 
-- Public runtime and API surfaces: [`docs/agent/openapi-guidelines.md`](docs/agent/openapi-guidelines.md).
+- Public runtime and API surfaces: [`docs/agent/runtime-api-guidelines.md`](docs/agent/runtime-api-guidelines.md).
 - Model-facing tool contract style and friction policy: [`docs/agent/tool-contract-guidelines.md`](docs/agent/tool-contract-guidelines.md).
 - Workflow Sessions and request identity: [`docs/agent/session-model.md`](docs/agent/session-model.md).
 - Manual multi-window collaboration: [`docs/agent/manual-window-collaboration.md`](docs/agent/manual-window-collaboration.md).

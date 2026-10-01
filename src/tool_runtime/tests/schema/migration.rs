@@ -217,22 +217,6 @@ fn assert_model_facing_surfaces_do_not_list_name(name: &str) {
         "{name} must not appear in MCP tools/list names"
     );
 
-    #[cfg(feature = "legacy-gpt-actions")]
-    {
-        let openapi = crate::openapi::build_openapi_spec();
-        let action_ids = openapi["paths"]
-            .as_object()
-            .unwrap()
-            .values()
-            .flat_map(|methods| methods.as_object().unwrap().values())
-            .filter_map(|operation| operation["operationId"].as_str())
-            .collect::<BTreeSet<_>>();
-        assert!(
-            !action_ids.contains(name),
-            "{name} must not appear as a direct GPT Action operation"
-        );
-    }
-
     let runtime = test_runtime();
     let manifest = runtime.compact_tool_manifest_payload();
     assert!(

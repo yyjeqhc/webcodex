@@ -13,13 +13,13 @@ For a short definition of the terms, see the terminology sections in
 
 ```mermaid
 flowchart LR
-  C[AI client] -->|MCP or GPT Actions| S[WebCodex Server]
+  C[AI client] -->|MCP| S[WebCodex Server]
   S -->|authenticated Runner connection| R[webcodex-runner]
   R --> P[Registered Project]
   R --> G[Git / Tests / Shell / Jobs]
 ```
 
-The online client calls WebCodex over MCP or GPT Actions. The Server
+The online client calls WebCodex over MCP. The Server
 authenticates the caller, applies policy, and routes runtime tool calls to a
 connected Runner. The Runner owns the local project boundary and performs the
 file, Git, validation, shell, and Job work on the machine that has the code.
@@ -33,7 +33,6 @@ project id `agent:<client_id>:<project_id>`.
 WebCodex exposes the same Server/Runner runtime through several user-facing adapters:
 
 - **MCP** — the recommended model-facing integration for ChatGPT, Claude, and other MCP clients.
-- **GPT Actions** — the OpenAPI integration for Custom GPTs that do not use MCP directly.
 - **REST** — the Server HTTP runtime API.
 - **CLI** — operator/developer setup, lifecycle, and diagnostics.
 - **Console** — the Server-hosted operator browser surface.
@@ -147,7 +146,7 @@ Durable Store aggregates use closed typed Rust lifecycle/state contracts for bus
 ## Module map
 
 ```text
-MCP / OpenAPI / Runtime HTTP --> ToolRuntime --+--> Project resolution --> Runner bridge
+MCP / Runtime HTTP --> ToolRuntime --+--> Project resolution --> Runner bridge
                                                |      |--> File/Edit/Git/Validation/Job tools
                                                |      +--> Workflow Session / Handoff / Hygiene
                                                +--> Durable Agent / Conversation / Delivery / Wake
@@ -155,14 +154,12 @@ MCP / OpenAPI / Runtime HTTP --> ToolRuntime --+--> Project resolution --> Runne
 Runtime Console -----------------------> canonical Server HTTP/kernel paths above
 ```
 
-- `route_metadata` — canonical HTTP route identity plus security/surface metadata.
-  Legacy REST routes and the one dynamic GPT Action adapter remain ordinary HTTP routes; generic GPT Action operation identity is no longer stored here.
-- `runtime_http` — REST runtime routes plus the shared `/api/actions/{tool_name}`
-  adapter. The Action adapter performs transport decoding/admission only and then
-  enters the same ToolRuntime kernel as the canonical runtime path.
-- `mcp` — the primary model-facing adapter. It always presents the canonical Adaptive Runtime: ToolDefinition-ranked direct tools, `call_runtime_tool` for the model-visible long tail, and protocol/App-admitted extensions.
-- `openapi` — the generic GPT Actions compatibility projector. It derives direct
-  operations from the canonical Adaptive Runtime direct rank, removes only explicit protocol-incompatible `ToolDefinition` exceptions, and adds `call_runtime_tool` for the supported long tail.
+- `route_metadata` — canonical HTTP route identity and security/surface metadata;
+  it contains only maintained endpoints, not a parallel model tool registry.
+- `runtime_http` — authenticated operational routes and `/api/tools/call`, entering
+  the same ToolRuntime kernel as MCP.
+- `mcp` — the model-facing adapter: ToolDefinition-ranked Direct descriptors,
+  `call_runtime_tool` for admitted tools, and independently admitted App extensions.
 - `tool_runtime` — protocol-independent tool parsing, dispatch, project
   resolution, registry metadata, sessions, handoff, hygiene, files, Git,
   patches, validation, shell, Jobs, artifacts, and checkpoints.

@@ -13,7 +13,7 @@
 ## 组件
 
 - `webcodex` —— 统一 CLI：项目工作流、Server/Runner 生命周期、接入与运维。
-- `webcodex-server` —— Server 进程：暴露 REST、MCP 与 Runner endpoint；legacy GPT Actions OpenAPI 只在 feature-enabled build 中提供。
+- `webcodex-server` —— Server 进程：暴露 REST、MCP 与 Runner endpoint。
 - `webcodex-runner` —— 运行在持有仓库机器上的长驻 worker。
 
 执行配置属于实际工作的 Runner。旧 Server 的 `CODEX_*` 设置不再用于选择编码代理的可执行文件、审批模式、超时或参数白名单；编码代理应通过 Runner 的 `[acp]` / `[[acp.agents]]` 配置，参见 [ACP 编码代理指南](agent/acp-coding-agent-run.md)。Server 需要可写的数据目录，不需要单独的旧 `uploads` 目录。
@@ -96,7 +96,7 @@ shared-key 自动化场景优先使用 `--key-file <path>`，不要与 `--key` �
 4. 在 server 上创建短期 pairing code，并在持有仓库的机器上运行
    `webcodex login <server-url> --code <code>`。
 5. 在该仓库机器上安装 `webcodex-runner` 服务。
-6. 运行 `webcodex ops status --strict`；之后再添加 MCP connector。只有已有 Custom GPT 仍依赖 legacy Actions adapter 时，才使用 `legacy-gpt-actions` build 并单独导入 schema。
+6. 运行 `webcodex ops status --strict`；之后再添加 MCP connector。
 
 ### Server 设置
 
@@ -190,7 +190,7 @@ WEBCODEX_TOOL_REQUEST_TRACE_MAX_TOTAL_BYTES=2147483648
 
 ### 公网 HTTPS
 
-Hosted MCP 客户端与 GPT Actions 需要公网 HTTPS URL。在 Server env 文件中设置
+Hosted MCP 客户端 需要公网 HTTPS URL。在 Server env 文件中设置
 `WEBCODEX_PUBLIC_URL`，并在 `127.0.0.1:8080` 前面配置反向代理。支持 Nginx；
 named Cloudflare Tunnel 也是有效入口。同一 hostname 必须承载普通 HTTPS 请求
 与 `/api/agents/ws`（Cloudflare 支持 WebSocket upgrade）。WebCodex CLI 不会自动
@@ -437,17 +437,13 @@ ChatGPT MCP host-file import 采用两级 trust。正常 active authenticated OA
 device-code 流程未实现。宿主提供 `offline_access` 时保持勾选——它是协议级
 refresh-token scope，不授予额外 WebCodex 权限。
 
-## GPT Actions 与 MCP
+## MCP 接入
 
-- **MCP：** 用 user API token（`wc_pat_*`）连接 `https://your-domain.example/mcp`；启用 OAuth 时使用 OAuth 流程。MCP 是正常维护的 ChatGPT 接入方式。
-- **GPT Actions：** 仅为已有 Custom GPT 保留。默认 binary 不挂载 `/openapi.json` 或 `/api/actions/*`；只有使用 `legacy-gpt-actions` 构建时才可导入 `https://your-domain.example/openapi.json`。其 direct/gateway surface 是冻结兼容快照，不再随着 Adaptive Runtime、Host、Plugin 或 Code Mode 新工具变化。
+用 user API token（`wc_pat_*`）连接 `/mcp`；启用 OAuth 时使用 OAuth 流程。
+MCP 与通用 REST 仍进入同一个 ToolRuntime 授权路径。v0.5 不再提供 Action
+适配器、OpenAPI 导入文档或兼容 feature。
 
-如果是从旧 generic Action facade 升级，并且仍明确保留这项 legacy feature，请重新导入 `/openapi.json` 获取冻结后的 canonical operation names。
-
-MCP 与启用后的 GPT Actions 最终仍进入同一个 ToolRuntime authority path；legacy adapter 不建立第二套 scope、Project authority、permission、Runner capability 或 retry policy。Project-scoped `share` / `run` 只有在 binary 本身启用 `legacy-gpt-actions` 时才额外暴露该兼容 surface。
-
-详见 [GPT Actions](GPT_ACTIONS.zh-CN.md)、[MCP](MCP.zh-CN.md) 与
-[AI 接入指南](AI_ONBOARDING.zh-CN.md)。
+详见 [MCP](MCP.zh-CN.md) 与 [AI 接入指南](AI_ONBOARDING.zh-CN.md)。
 
 如果 ChatGPT 返回 conversation-level developer-MCP `FORBIDDEN`，不要直接把它当作
 Server 或 Runner 已离线的证据。先使用下面的 operator checks 独立验证部署，再按照

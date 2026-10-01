@@ -695,7 +695,7 @@ pub(crate) fn render_login_result(
             },
             "registered_projects": registered_projects,
             "credential_usage": {
-                "webcodex-user-token": "GPT Actions, MCP, and REST/project APIs",
+                "webcodex-user-token": "MCP and REST/project APIs",
                 "runner_config_token": "Runner transport only",
             },
             "foreground_available": true,

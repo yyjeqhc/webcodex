@@ -269,22 +269,6 @@ fn apply_text_edits_occurrence_and_recovery_schemas_are_model_visible() {
     )
     .unwrap_or_else(|error| panic!("compact conflict evidence must match output schema: {error}"));
 
-    #[cfg(feature = "legacy-gpt-actions")]
-    {
-        let openapi = crate::openapi::build_openapi_spec();
-        let action = &openapi["paths"]["/api/actions/edit_project_files"]["post"];
-        assert_eq!(action["operationId"], "edit_project_files");
-        let action_change_variants = action["requestBody"]["content"]["application/json"]["schema"]
-            ["properties"]["changes"]["items"]["oneOf"]
-            .as_array()
-            .expect("Action apply_text_edits change wire union");
-        let action_canonical = action_change_variants
-            .iter()
-            .find(|variant| variant["properties"].get("kind").is_some())
-            .expect("Action canonical apply-file-change wire variant");
-        let action_edit = &action_canonical["properties"]["edits"]["items"];
-        assert_eq!(action_edit["oneOf"].as_array().unwrap().len(), 5);
-    }
     assert!(spec.description.contains("expected_read_revision"));
     assert!(spec.description.contains("preflight transactionally"));
     assert!(spec.description.contains("replace_range"));

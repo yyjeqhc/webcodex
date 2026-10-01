@@ -554,25 +554,6 @@ fn coding_workflow_semantic_navigation_output_schema_is_explicit_and_surface_cou
         .iter()
         .any(|entry| entry["type"] == "null"));
 
-    #[cfg(feature = "legacy-gpt-actions")]
-    {
-        let openapi = crate::openapi::build_openapi_spec();
-        let operation_count: usize = openapi["paths"]
-            .as_object()
-            .unwrap()
-            .values()
-            .map(|methods| methods.as_object().unwrap().len())
-            .sum();
-        assert_eq!(
-            operation_count,
-            webcodex_tool_contracts::gpt_action_direct_tool_definitions().len() + 1,
-            "legacy GPT Actions must expose the frozen direct snapshot plus call_runtime_tool"
-        );
-        assert!(
-            operation_count < 30,
-            "GPT Actions operation budget exceeded"
-        );
-    }
     assert!(!known_tool_names().any(|name| name == "semantic_navigation"));
     assert!(crate::runner_protocol::RUNNER_CAPABILITY_NAMES
         .contains(&RUNNER_CAPABILITY_LSP_READ_ONLY_NAVIGATION));

@@ -294,7 +294,7 @@ fn startup_extensions_schema() -> Value {
 fn startup_brief_schema(detail: &str) -> Value {
     json!({
         "type": "object",
-        "description": "Deterministic, bounded model-facing coding startup brief shared by MCP, REST, and GPT Actions.",
+        "description": "Deterministic, bounded model-facing coding startup brief shared by MCP and REST.",
         "properties": {
             "detail": {"type": "string", "const": detail},
             "session": startup_session_schema(),

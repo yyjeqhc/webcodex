@@ -771,15 +771,15 @@ mod tests {
     }
 
     #[test]
-    fn connection_listing_fails_closed_when_both_registry_layouts_exist() {
+    fn connection_listing_ignores_retired_registry_layout() {
         let temp = tempfile::TempDir::new().unwrap();
         let paths = seed(temp.path(), "https://api.example.com", "alice");
-        std::fs::create_dir_all(paths.dir.join("project-registry")).unwrap();
         std::fs::create_dir_all(paths.dir.join("projects.d")).unwrap();
 
-        assert!(list_connections(temp.path()).is_empty());
+        let connections = list_connections(temp.path());
+        assert_eq!(connections.len(), 1);
+        assert_eq!(connections[0].server_url, "https://api.example.com");
     }
-
     #[test]
     fn lookup_matches_canonical_url_not_the_lossy_slug() {
         let temp = tempfile::TempDir::new().unwrap();

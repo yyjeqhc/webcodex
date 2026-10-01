@@ -611,34 +611,6 @@ mod tests {
         assert_eq!(explicit.project.id, "different-id");
     }
 
-    #[test]
-    fn resolve_registration_accepts_a_single_legacy_registry_layout() {
-        let tmp = canonical_test_tempdir();
-        let config = tmp.path().join("config");
-        let state = tmp.path().join("state");
-        let project = tmp.path().join("repo");
-        std::fs::create_dir_all(&project).unwrap();
-        std::fs::create_dir_all(config.join("clients")).unwrap();
-        std::fs::create_dir_all(&state).unwrap();
-        let (profile_dir, _) = write_profile(&config, &state, "one", &project, "repo");
-        std::fs::rename(
-            profile_dir.join("project-registry"),
-            profile_dir.join("projects.d"),
-        )
-        .unwrap();
-
-        let resolved = resolve_registration(
-            &config,
-            &state,
-            &project.canonicalize().unwrap(),
-            Some("one"),
-        )
-        .unwrap();
-        assert_eq!(resolved.project.id, "repo");
-        assert_eq!(resolved.profile_dir, profile_dir);
-        assert!(profile_dir.join("projects.d/repo.toml").is_file());
-    }
-
     #[cfg(unix)]
     #[test]
     fn project_registration_symlink_fails_closed() {
@@ -718,7 +690,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn offline_disconnect_accepts_legacy_only_agent_toml() {
+    async fn offline_disconnect_does_not_discover_retired_agent_toml() {
         let tmp = canonical_test_tempdir();
         let config = tmp.path().join("config");
         let state = tmp.path().join("state");
@@ -726,8 +698,38 @@ mod tests {
         std::fs::create_dir_all(&project).unwrap();
         std::fs::create_dir_all(config.join("clients")).unwrap();
         std::fs::create_dir_all(&state).unwrap();
-        let (profile_dir, _) = write_profile(&config, &state, "legacy", &project, "repo");
+        let (profile_dir, _) = write_profile(&config, &state, "retired", &project, "repo");
         std::fs::rename(
+            profile_dir.join("runner.toml"),
+            profile_dir.join("agent.toml"),
+        )
+        .unwrap();
+
+        let error = run_disconnect(DisconnectOptions {
+            project,
+            profile: Some("retired".to_string()),
+            config_base: Some(config),
+            state_base: Some(state),
+            server_http: ServerHttpOptions::default(),
+        })
+        .await
+        .unwrap_err();
+        assert!(error.contains("has no Runner config"), "{error}");
+        assert!(profile_dir.join("agent.toml").is_file());
+        assert!(profile_dir.join("project-registry/repo.toml").is_file());
+    }
+
+    #[tokio::test]
+    async fn offline_disconnect_ignores_retired_agent_toml_next_to_canonical() {
+        let tmp = canonical_test_tempdir();
+        let config = tmp.path().join("config");
+        let state = tmp.path().join("state");
+        let project = tmp.path().join("repo");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::create_dir_all(config.join("clients")).unwrap();
+        std::fs::create_dir_all(&state).unwrap();
+        let (profile_dir, _) = write_profile(&config, &state, "canonical", &project, "repo");
+        std::fs::copy(
             profile_dir.join("runner.toml"),
             profile_dir.join("agent.toml"),
         )
@@ -735,7 +737,7 @@ mod tests {
 
         let result = run_disconnect(DisconnectOptions {
             project,
-            profile: Some("legacy".to_string()),
+            profile: Some("canonical".to_string()),
             config_base: Some(config),
             state_base: Some(state),
             server_http: ServerHttpOptions::default(),
@@ -745,42 +747,8 @@ mod tests {
         assert_eq!(result.outcome, "local_unregistered");
         assert_eq!(result.runner_action, "not_running");
         assert!(profile_dir.join("agent.toml").is_file());
-        assert!(!profile_dir.join("runner.toml").exists());
         assert!(!profile_dir.join("project-registry/repo.toml").exists());
     }
-
-    #[tokio::test]
-    async fn offline_disconnect_rejects_dual_runner_config_names() {
-        let tmp = canonical_test_tempdir();
-        let config = tmp.path().join("config");
-        let state = tmp.path().join("state");
-        let project = tmp.path().join("repo");
-        std::fs::create_dir_all(&project).unwrap();
-        std::fs::create_dir_all(config.join("clients")).unwrap();
-        std::fs::create_dir_all(&state).unwrap();
-        let (profile_dir, _) = write_profile(&config, &state, "dual", &project, "repo");
-        std::fs::copy(
-            profile_dir.join("runner.toml"),
-            profile_dir.join("agent.toml"),
-        )
-        .unwrap();
-
-        let error = run_disconnect(DisconnectOptions {
-            project,
-            profile: Some("dual".to_string()),
-            config_base: Some(config),
-            state_base: Some(state),
-            server_http: ServerHttpOptions::default(),
-        })
-        .await
-        .unwrap_err();
-        assert!(error.contains("runner.toml"));
-        assert!(error.contains("agent.toml"));
-        assert!(error.contains("legacy"), "{error}");
-        assert!(error.contains("remove or archive"), "{error}");
-        assert!(profile_dir.join("project-registry/repo.toml").is_file());
-    }
-
     #[tokio::test]
     async fn offline_oauth_unregister_does_not_require_managed_login() {
         let tmp = canonical_test_tempdir();

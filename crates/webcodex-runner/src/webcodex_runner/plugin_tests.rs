@@ -198,7 +198,6 @@ fn runner_config(
         hostname: None,
         host_context: None,
         project_registry_dir: Some(project_registry_dir.to_path_buf()),
-        legacy_projects_dir: None,
         poll_interval_ms: 1000,
         capabilities: None,
         max_concurrent_jobs: None,

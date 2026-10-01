@@ -806,7 +806,7 @@ mod tests {
     }
 
     #[test]
-    fn omitted_key_is_generated_once_then_recovered_from_matching_legacy_registry_layout() {
+    fn omitted_key_is_generated_once_then_recovered_from_matching_canonical_registry() {
         let tmp = tempfile::tempdir().unwrap();
         let project = tmp.path().join("project");
         std::fs::create_dir(&project).unwrap();
@@ -838,9 +838,7 @@ mod tests {
         assert!(first.generated);
         let profile = derived_profile("https://example.test", &first.value);
         let profile_dir = config_base.join("clients").join(&profile);
-        // A sole physical projects.d/ registry remains supported even though
-        // the agent.toml filename and projects_dir config field are retired.
-        std::fs::create_dir_all(profile_dir.join("projects.d")).unwrap();
+        std::fs::create_dir_all(profile_dir.join("project-registry")).unwrap();
         std::fs::write(
             profile_dir.join("runner.toml"),
             format!(
@@ -850,7 +848,7 @@ mod tests {
         )
         .unwrap();
         std::fs::write(
-            profile_dir.join("projects.d/project.toml"),
+            profile_dir.join("project-registry/project.toml"),
             format!("id = \"project\"\npath = {:?}\n", project.to_string_lossy()),
         )
         .unwrap();
@@ -869,13 +867,10 @@ mod tests {
         assert!(!disclosed.generated);
 
         std::fs::write(profile_dir.join("agent.toml"), "retired = true\n").unwrap();
-        let error =
-            resolve_key(&options, &config_base, "https://example.test", &project).unwrap_err();
-        assert!(
-            error.contains("both runner.toml and legacy agent.toml"),
-            "{error}"
-        );
-        assert!(error.contains("remove or archive agent.toml"), "{error}");
+        let still_canonical =
+            resolve_key(&options, &config_base, "https://example.test", &project).unwrap();
+        assert!(!still_canonical.generated);
+        assert_eq!(still_canonical.value, first.value);
     }
 
     #[cfg(unix)]

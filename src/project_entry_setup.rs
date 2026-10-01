@@ -34,7 +34,6 @@ pub(super) struct ProjectPaths {
     pub(super) project_credential: PathBuf,
     pub(super) agent_token: PathBuf,
     pub(super) runner_config: PathBuf,
-    pub(super) legacy_agent_config: PathBuf,
 }
 
 impl ProjectPaths {
@@ -53,29 +52,14 @@ impl ProjectPaths {
             project_credential: credentials.join("project-credential"),
             agent_token: credentials.join("agent-token"),
             runner_config: runner_state_dir.join(webcodex_runner_config::paths::RUNNER_CONFIG_FILE),
-            legacy_agent_config: runner_state_dir
-                .join(webcodex_runner_config::paths::LEGACY_AGENT_CONFIG_FILE),
             credentials,
             state,
         })
     }
 
     pub(super) fn resolved_runner_config(&self) -> Result<PathBuf, ProductError> {
-        let dir = self
-            .runner_config
-            .parent()
-            .ok_or_else(|| invalid_registration("Runner config path has no parent directory"))?;
-        webcodex_runner_config::paths::resolve_runner_config_path(dir).map_err(|message| {
-            ProductError::new(
-                "project_registration_invalid",
-                message,
-                Some(
-                    "Keep exactly one Runner config in the project state directory; prefer runner.toml for new state.",
-                ),
-            )
-        })
+        Ok(self.runner_config.clone())
     }
-
     fn create(&self) -> Result<(), ProductError> {
         for path in [
             &self.state,
@@ -546,14 +530,12 @@ fn local_project_state(options: &ProjectCommandOptions) -> LocalProjectState {
 
 fn contains_setup_state(paths: &ProjectPaths) -> bool {
     paths.runner_config.exists()
-        || paths.legacy_agent_config.exists()
         || paths.project_credential.exists()
         || paths.agent_token.exists()
         || paths.bootstrap_key.exists()
         || paths.project_registry.exists()
         || paths.data.exists()
 }
-
 fn invalid_registration(message: &str) -> ProductError {
     ProductError::new(
         "project_registration_invalid",
@@ -599,19 +581,16 @@ pub(super) fn validate_existing_runner(
         return Ok(());
     }
     let value: toml::Value = read_toml(&runner_config)?;
+    if value.get("projects_dir").is_some() {
+        return Err(ProductError::new(
+            "project_registration_invalid",
+            "existing Runner configuration uses retired field 'projects_dir'",
+            Some("Rename it to 'project_registry_dir' before using this state with WebCodex 0.5."),
+        ));
+    }
     let canonical_registry = value
         .get("project_registry_dir")
         .and_then(toml::Value::as_str);
-    let legacy_registry = value.get("projects_dir").and_then(toml::Value::as_str);
-    if value.get("project_registry_dir").is_some() && value.get("projects_dir").is_some() {
-        return Err(ProductError::new(
-            "project_registration_invalid",
-            "existing Runner configuration sets both 'project_registry_dir' and legacy 'projects_dir'",
-            Some(
-                "Keep exactly one Runner project registry setting; prefer 'project_registry_dir' for migrated state.",
-            ),
-        ));
-    }
     let expected = [
         ("server_url", config.server_url()),
         ("client_id", config.executor_client_id.clone()),
@@ -627,9 +606,8 @@ pub(super) fn validate_existing_runner(
             ));
         }
     }
-    let current_registry = canonical_registry.or(legacy_registry);
     let expected_registry = paths.project_registry.to_string_lossy();
-    if current_registry != Some(expected_registry.as_ref()) {
+    if canonical_registry != Some(expected_registry.as_ref()) {
         return Err(ProductError::new(
             "project_registration_invalid",
             "existing Runner configuration conflicts in field 'project_registry_dir'",

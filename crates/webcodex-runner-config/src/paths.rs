@@ -25,16 +25,10 @@
 
 use std::path::{Path, PathBuf};
 
-/// Canonical Runner configuration filename for WebCodex 0.4 and later.
+/// Canonical Runner configuration filename.
 pub const RUNNER_CONFIG_FILE: &str = "runner.toml";
-/// Legacy pre-0.4 Runner configuration filename accepted through WebCodex 0.4.x.
-pub const LEGACY_AGENT_CONFIG_FILE: &str = "agent.toml";
-/// Compatibility window for persisted legacy Runner startup configuration.
-pub const LEGACY_RUNNER_CONFIG_REMOVAL_VERSION: &str = "0.5.0";
-/// Canonical directory name for newly created Runner project registries.
+/// Canonical directory name for Runner project registries.
 pub const PROJECT_REGISTRY_DIR_NAME: &str = "project-registry";
-/// Legacy Runner project-registry directory name accepted for compatibility.
-pub const LEGACY_PROJECTS_DIR_NAME: &str = "projects.d";
 
 fn path_entry_exists(path: &Path) -> Result<bool, String> {
     match std::fs::symlink_metadata(path) {
@@ -44,59 +38,21 @@ fn path_entry_exists(path: &Path) -> Result<bool, String> {
     }
 }
 
-/// Resolve an existing Runner config within one authoritative config directory.
-///
-/// `runner.toml` is canonical. A legacy-only `agent.toml` remains readable
-/// through WebCodex 0.4.x so upgrading the binary cannot strand an existing
-/// Runner at the next restart. Directories containing both names still fail
-/// closed so an operator cannot accidentally edit a shadowed configuration.
+/// Return the canonical Runner config when it exists in this directory.
 pub fn existing_runner_config_path(dir: &Path) -> Result<Option<PathBuf>, String> {
     let runner = dir.join(RUNNER_CONFIG_FILE);
-    let legacy = dir.join(LEGACY_AGENT_CONFIG_FILE);
-    let runner_exists = path_entry_exists(&runner)?;
-    let legacy_exists = path_entry_exists(&legacy)?;
-    match (runner_exists, legacy_exists) {
-        (true, true) => Err(format!(
-            "both {} and legacy {} exist in {}; remove or archive {} before continuing with the canonical Runner config",
-            RUNNER_CONFIG_FILE,
-            LEGACY_AGENT_CONFIG_FILE,
-            dir.display(),
-            LEGACY_AGENT_CONFIG_FILE,
-        )),
-        (true, false) => Ok(Some(runner)),
-        (false, true) => Ok(Some(legacy)),
-        (false, false) => Ok(None),
-    }
+    Ok(path_entry_exists(&runner)?.then_some(runner))
 }
 
-/// Resolve the Runner config path for one authoritative config directory.
-/// Existing legacy-only directories keep using `agent.toml` during the 0.4.x
-/// compatibility window; a new directory gets the canonical `runner.toml` target.
+/// Resolve the canonical Runner config path for one authoritative directory.
 pub fn resolve_runner_config_path(dir: &Path) -> Result<PathBuf, String> {
-    Ok(existing_runner_config_path(dir)?.unwrap_or_else(|| dir.join(RUNNER_CONFIG_FILE)))
+    Ok(dir.join(RUNNER_CONFIG_FILE))
 }
 
-/// Select the Runner project registry beneath `base` without merging layouts.
-///
-/// Compatibility contract:
-/// - only `project-registry/` exists: use it;
-/// - only legacy `projects.d/` exists: keep using it;
-/// - neither exists: select `project-registry/` for new installs;
-/// - both exist: fail closed so records are never silently merged or shadowed.
+/// Select the canonical Runner project registry beneath `base`.
 pub fn select_project_registry_dir(base: &Path) -> Result<PathBuf, String> {
-    let current = base.join(PROJECT_REGISTRY_DIR_NAME);
-    let legacy = base.join(LEGACY_PROJECTS_DIR_NAME);
-    match (path_entry_exists(&current)?, path_entry_exists(&legacy)?) {
-        (true, true) => Err(format!(
-            "both Runner project registry directories exist: {} and {}; consolidate project registration records into one directory and remove the other before continuing",
-            current.display(),
-            legacy.display()
-        )),
-        (true, false) | (false, false) => Ok(current),
-        (false, true) => Ok(legacy),
-    }
+    Ok(base.join(PROJECT_REGISTRY_DIR_NAME))
 }
-
 /// Per-user home directory.
 ///
 /// - Windows: `USERPROFILE` (set by the OS at logon; `HOME` is ignored).
@@ -572,81 +528,32 @@ mod tests {
     }
 
     #[test]
-    fn runner_config_path_keeps_legacy_only_compatibility() {
-        let dir = test_temp_dir("compat");
+    fn runner_config_path_uses_only_canonical_name() {
+        let dir = test_temp_dir("canonical-config");
+        std::fs::write(dir.join("agent.toml"), "retired").unwrap();
+
         assert_eq!(
             resolve_runner_config_path(&dir).unwrap(),
             dir.join(RUNNER_CONFIG_FILE)
         );
+        assert_eq!(existing_runner_config_path(&dir).unwrap(), None);
 
-        std::fs::write(dir.join(LEGACY_AGENT_CONFIG_FILE), "legacy").unwrap();
-        assert_eq!(
-            resolve_runner_config_path(&dir).unwrap(),
-            dir.join(LEGACY_AGENT_CONFIG_FILE)
-        );
-
-        std::fs::remove_file(dir.join(LEGACY_AGENT_CONFIG_FILE)).unwrap();
-        std::fs::write(dir.join(RUNNER_CONFIG_FILE), "current").unwrap();
-        assert_eq!(
-            resolve_runner_config_path(&dir).unwrap(),
-            dir.join(RUNNER_CONFIG_FILE)
-        );
+        let current = dir.join(RUNNER_CONFIG_FILE);
+        std::fs::write(&current, "current").unwrap();
+        assert_eq!(existing_runner_config_path(&dir).unwrap(), Some(current));
         std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
-    fn runner_config_path_fails_closed_when_retired_and_canonical_names_both_exist() {
-        let dir = test_temp_dir("dual");
-        std::fs::write(dir.join(RUNNER_CONFIG_FILE), "current").unwrap();
-        std::fs::write(dir.join(LEGACY_AGENT_CONFIG_FILE), "legacy").unwrap();
-        let error = resolve_runner_config_path(&dir).unwrap_err();
-        assert!(error.contains(RUNNER_CONFIG_FILE));
-        assert!(error.contains(LEGACY_AGENT_CONFIG_FILE));
-        assert!(error.contains("legacy"));
-        assert!(error.contains("remove or archive"));
-        std::fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn project_registry_selection_prefers_new_layout_for_new_installs() {
-        let temp = test_temp_dir("new-layout");
+    fn project_registry_selection_uses_only_canonical_layout() {
+        let temp = test_temp_dir("canonical-registry");
+        std::fs::create_dir(temp.join("projects.d")).unwrap();
         assert_eq!(
             select_project_registry_dir(&temp).unwrap(),
             temp.join(PROJECT_REGISTRY_DIR_NAME)
         );
         std::fs::remove_dir_all(temp).unwrap();
     }
-
-    #[test]
-    fn project_registry_selection_preserves_single_existing_layout() {
-        let temp = test_temp_dir("current-layout");
-        let current = temp.join(PROJECT_REGISTRY_DIR_NAME);
-        std::fs::create_dir(&current).unwrap();
-        assert_eq!(select_project_registry_dir(&temp).unwrap(), current);
-        std::fs::remove_dir_all(temp).unwrap();
-
-        let temp = test_temp_dir("legacy-layout");
-        let legacy = temp.join(LEGACY_PROJECTS_DIR_NAME);
-        std::fs::create_dir(&legacy).unwrap();
-        assert_eq!(select_project_registry_dir(&temp).unwrap(), legacy);
-        std::fs::remove_dir_all(temp).unwrap();
-    }
-
-    #[test]
-    fn project_registry_selection_fails_closed_when_both_layouts_exist() {
-        let temp = test_temp_dir("ambiguous-layout");
-        let current = temp.join(PROJECT_REGISTRY_DIR_NAME);
-        let legacy = temp.join(LEGACY_PROJECTS_DIR_NAME);
-        std::fs::create_dir(&current).unwrap();
-        std::fs::create_dir(&legacy).unwrap();
-        let error = select_project_registry_dir(&temp).unwrap_err();
-        assert!(error.contains("both Runner project registry directories exist"));
-        assert!(error.contains(&current.display().to_string()));
-        assert!(error.contains(&legacy.display().to_string()));
-        assert!(error.contains("consolidate project registration records"));
-        std::fs::remove_dir_all(temp).unwrap();
-    }
-
     /// RAII restore for environment variables: restores the previous value
     /// (or removes the variable) on drop, even if the test panics.
     struct EnvVarRestore {

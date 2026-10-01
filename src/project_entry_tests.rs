@@ -351,42 +351,25 @@ fn fresh_setup_is_minimal_idempotent_and_does_not_expose_internal_ids() {
 }
 
 #[test]
-fn setup_preserves_a_single_legacy_project_registry_layout() {
-    let (_temp, root, state) = repo("legacy-registry");
-    let legacy = state.join("agent/projects.d");
-    fs::create_dir_all(&legacy).unwrap();
+fn setup_uses_canonical_registry_even_when_retired_layout_exists() {
+    let (_temp, root, state) = repo("retired-registry");
+    let retired = state.join("agent/projects.d");
+    fs::create_dir_all(&retired).unwrap();
     let options = options(root, state.clone());
 
     setup(&options).unwrap();
 
-    assert!(legacy.is_dir());
-    assert!(!state.join("agent/project-registry").exists());
+    let canonical = state.join("agent/project-registry");
+    assert!(retired.is_dir());
+    assert!(canonical.is_dir());
     let runner = fs::read_to_string(state.join("agent/runner.toml")).unwrap();
     let runner_toml: toml::Value = toml::from_str(&runner).unwrap();
     assert_eq!(
         runner_toml["project_registry_dir"].as_str(),
-        Some(legacy.canonicalize().unwrap().to_string_lossy().as_ref())
+        Some(canonical.canonicalize().unwrap().to_string_lossy().as_ref())
     );
-    assert_eq!(fs::read_dir(legacy).unwrap().count(), 1);
+    assert_eq!(fs::read_dir(canonical).unwrap().count(), 1);
 }
-
-#[test]
-fn setup_fails_closed_when_both_project_registry_layouts_exist() {
-    let (_temp, root, state) = repo("ambiguous-registry");
-    fs::create_dir_all(state.join("agent/project-registry")).unwrap();
-    fs::create_dir_all(state.join("agent/projects.d")).unwrap();
-
-    let error = setup(&options(root, state)).unwrap_err();
-    assert_eq!(error.code, "project_registration_invalid");
-    assert!(
-        error
-            .message
-            .contains("both Runner project registry directories exist"),
-        "{}",
-        error.message
-    );
-}
-
 #[test]
 fn setup_repairs_only_missing_components_and_preserves_existing_config() {
     let (_temp, root, state) = repo("repair");
@@ -409,100 +392,41 @@ fn setup_repairs_only_missing_components_and_preserves_existing_config() {
 }
 
 #[test]
-fn setup_accepts_legacy_agent_toml_without_rewriting_it() {
-    let (_temp, root, state) = repo("legacy-runner-config");
+fn setup_does_not_discover_retired_agent_toml() {
+    let (_temp, root, state) = repo("retired-runner-config");
     let options = options(root, state.clone());
     setup(&options).unwrap();
     let runner_config = state.join("agent/runner.toml");
-    let legacy_config = state.join("agent/agent.toml");
-    let original = fs::read(&runner_config).unwrap();
-    fs::rename(&runner_config, &legacy_config).unwrap();
+    let retired_config = state.join("agent/agent.toml");
+    let retired = fs::read(&runner_config).unwrap();
+    fs::rename(&runner_config, &retired_config).unwrap();
 
     let report = setup(&options).unwrap();
-    assert_eq!(report.status, "already_configured");
-    assert!(report.changed.is_empty());
-    assert_eq!(fs::read(&legacy_config).unwrap(), original);
-    assert!(!runner_config.exists());
+    assert_eq!(report.status, "configured");
+    assert_eq!(report.changed, ["Runner"]);
+    assert!(runner_config.is_file());
+    assert_eq!(fs::read(&retired_config).unwrap(), retired);
 }
-
 #[test]
-fn setup_rejects_dual_runner_config_names_without_guessing() {
-    let (_temp, root, state) = repo("dual-runner-config");
-    let options = options(root, state.clone());
-    setup(&options).unwrap();
-    let runner_config = state.join("agent/runner.toml");
-    let legacy_config = state.join("agent/agent.toml");
-    fs::copy(&runner_config, &legacy_config).unwrap();
-
-    let error = setup(&options).unwrap_err();
-    assert_eq!(error.code, "project_registration_invalid");
-    assert!(error.message.contains("runner.toml"));
-    assert!(error.message.contains("agent.toml"));
-    assert!(error.message.contains("legacy"));
-    assert!(error.message.contains("remove or archive"));
-}
-
-#[test]
-fn setup_accepts_legacy_projects_dir_without_rewriting_config() {
-    let (_temp, root, state) = repo("legacy-projects-dir");
+fn setup_rejects_retired_projects_dir_without_rewriting_config() {
+    let (_temp, root, state) = repo("retired-projects-dir");
     let options = options(root, state.clone());
     setup(&options).unwrap();
     let runner_config = state.join("agent/runner.toml");
     let canonical = fs::read_to_string(&runner_config).unwrap();
-    let legacy = canonical.replace("project_registry_dir", "projects_dir");
+    let retired = canonical.replace("project_registry_dir", "projects_dir");
     assert_ne!(
-        legacy, canonical,
+        retired, canonical,
         "fixture must contain project_registry_dir"
     );
-    fs::write(&runner_config, &legacy).unwrap();
-
-    let report = setup(&options).unwrap();
-    assert_eq!(report.status, "already_configured");
-    assert!(report.changed.is_empty());
-    assert_eq!(fs::read_to_string(&runner_config).unwrap(), legacy);
-}
-
-#[test]
-fn setup_accepts_legacy_filename_and_registry_field_together_without_rewriting() {
-    let (_temp, root, state) = repo("legacy-runner-state");
-    let options = options(root, state.clone());
-    setup(&options).unwrap();
-    let runner_config = state.join("agent/runner.toml");
-    let legacy_config = state.join("agent/agent.toml");
-    let canonical = fs::read_to_string(&runner_config).unwrap();
-    let legacy = canonical.replace("project_registry_dir", "projects_dir");
-    fs::write(&runner_config, &legacy).unwrap();
-    fs::rename(&runner_config, &legacy_config).unwrap();
-
-    let report = setup(&options).unwrap();
-    assert_eq!(report.status, "already_configured");
-    assert!(report.changed.is_empty());
-    assert_eq!(fs::read_to_string(&legacy_config).unwrap(), legacy);
-    assert!(!runner_config.exists());
-}
-
-#[test]
-fn setup_rejects_both_runner_registry_fields_without_rewriting_config() {
-    let (_temp, root, state) = repo("dual-runner-registry-fields");
-    let options = options(root, state.clone());
-    setup(&options).unwrap();
-    let runner_config = state.join("agent/runner.toml");
-    let canonical = fs::read_to_string(&runner_config).unwrap();
-    let registry_line = canonical
-        .lines()
-        .find(|line| line.starts_with("project_registry_dir = "))
-        .expect("generated Runner config must contain project_registry_dir");
-    let legacy_line = registry_line.replacen("project_registry_dir", "projects_dir", 1);
-    let dual = canonical.replacen(registry_line, &format!("{registry_line}\n{legacy_line}"), 1);
-    fs::write(&runner_config, &dual).unwrap();
+    fs::write(&runner_config, &retired).unwrap();
 
     let error = setup(&options).unwrap_err();
     assert_eq!(error.code, "project_registration_invalid");
-    assert!(error.message.contains("project_registry_dir"));
     assert!(error.message.contains("projects_dir"));
-    assert_eq!(fs::read_to_string(&runner_config).unwrap(), dual);
+    assert!(error.message.contains("retired"));
+    assert_eq!(fs::read_to_string(&runner_config).unwrap(), retired);
 }
-
 #[test]
 fn setup_conflict_and_project_root_collision_fail_closed() {
     let (temp, root, state) = repo("first");

@@ -122,7 +122,7 @@ fn runner_init_rejects_retired_projects_dir_alias() {
 
 #[cfg(unix)]
 #[test]
-fn user_scope_runner_config_accepts_legacy_only_agent_toml_and_rejects_dual_names() {
+fn user_scope_runner_config_uses_only_runner_toml() {
     let _guard = env_test_guard();
     let tmp = tempfile::tempdir().unwrap();
     let tmp_path = tmp.path().to_str().unwrap();
@@ -132,25 +132,18 @@ fn user_scope_runner_config_accepts_legacy_only_agent_toml_and_rejects_dual_name
     let config_dir = tmp.path().join("webcodex");
     std::fs::create_dir_all(&config_dir).unwrap();
 
+    std::fs::write(config_dir.join("agent.toml"), "retired = true\n").unwrap();
     assert_eq!(
         runner_config_for_scope(ServiceScope::User, None).unwrap(),
         config_dir.join("runner.toml")
     );
-    std::fs::write(config_dir.join("agent.toml"), "legacy = true\n").unwrap();
-    assert_eq!(
-        runner_config_for_scope(ServiceScope::User, None).unwrap(),
-        config_dir.join("agent.toml")
-    );
 
     std::fs::write(config_dir.join("runner.toml"), "current = true\n").unwrap();
-    let error = runner_config_for_scope(ServiceScope::User, None).unwrap_err();
-    assert!(
-        error.contains("both runner.toml and legacy agent.toml"),
-        "{error}"
+    assert_eq!(
+        runner_config_for_scope(ServiceScope::User, None).unwrap(),
+        config_dir.join("runner.toml")
     );
-    assert!(error.contains("remove or archive agent.toml"), "{error}");
 }
-
 #[test]
 fn runner_init_rejects_retired_projects_dir_even_with_canonical_flag() {
     let error = parse_cli_runner_init(&args(&[
@@ -173,7 +166,7 @@ fn runner_init_rejects_retired_projects_dir_even_with_canonical_flag() {
 }
 
 #[test]
-fn runner_init_explicit_output_without_profile_preserves_legacy_project_registry_dir() {
+fn runner_init_explicit_output_without_profile_uses_default_project_registry_dir() {
     let opts = parse_cli_runner_init(&args(&[
         "--server-url",
         "https://example.test",

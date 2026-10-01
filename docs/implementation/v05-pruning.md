@@ -66,6 +66,24 @@ compatibility: ignoring an old `require_approval` configuration could silently
 activate the trusted default. Diagnostics tell the operator to unset the old
 variable; stored permissions and hard Project/scope/path guards are not migrated.
 
+## Retired 0.4 Runner startup compatibility
+
+The 0.5 boundary also removes the narrow pre-0.4 Runner startup migration
+surface. Automatic/default/profile config discovery now selects only
+`runner.toml`; `WEBCODEX_AGENT_CONFIG` no longer participates in default-path
+selection; `project_registry_dir` is the only accepted registry config field;
+and default registry placement is always `project-registry/`. A historical
+`agent.toml` or `projects.d/` artifact is not used for discovery or precedence.
+
+The retired `projects_dir` field is still detected only to reject it before
+runtime use. Silently ignoring it would allow an old config to start against a
+different default registry, so this is a fail-closed retirement guard rather
+than compatibility or normalization. Explicit `--config PATH` remains exact
+and can use any caller-chosen filename. Historical config and registry names
+remain on sensitive-path/package exclusion lists so stale credentials and
+registration records are not accidentally exposed.
+
+
 ## CI: eliminate a repeated Server build, retain actual consumers
 
 The `contract` job replaces three filtered root-crate test invocations with

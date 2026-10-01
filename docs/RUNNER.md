@@ -37,10 +37,9 @@ shell state.
 
 Some compatibility-facing values still use the historical word `agent`, including the `wc_agent_*` Runner-token prefix and `agent:<client_id>:<project_id>` runtime Project address. They do not refer to WebCodex's separate Durable Agent domain, and ordinary users do not need the process-level lease identifiers behind Runner recovery.
 
-### Runner config filename migration
+### Runner configuration names
 
-`runner.toml` is the canonical config filename. During the WebCodex 0.4.x migration window, automatic/default/profile discovery still accepts a legacy-only `agent.toml`, and `WEBCODEX_AGENT_CONFIG` remains a deprecated fallback when `WEBCODEX_RUNNER_CONFIG` is unset. Likewise, a legacy-only `projects_dir` config field is normalized to `project_registry_dir` at load time. These compatibility inputs emit migration warnings and are planned for removal in WebCodex 0.5.0. Ambiguous dual state remains fail-closed: `runner.toml` plus `agent.toml`, both config-path environment variables, or both registry fields must be resolved by the operator. New/generated configurations always use `runner.toml`, `project_registry_dir`, and `WEBCODEX_RUNNER_CONFIG`.
-
+WebCodex 0.5 uses only the canonical Runner startup names: automatic/default/profile discovery targets `runner.toml`, the default-path environment override is `WEBCODEX_RUNNER_CONFIG`, the registry field is `project_registry_dir`, and the default registry directory is `project-registry/`. The 0.4.x compatibility inputs `agent.toml`, `WEBCODEX_AGENT_CONFIG`, `projects_dir`, and automatic `projects.d/` discovery are no longer startup inputs. A retired `projects_dir` field is rejected rather than silently ignored so an old configuration cannot appear to start against a different registry. Explicit `--config PATH` remains an exact caller-selected path; its filename is not reinterpreted.
 ## Connecting to the Server
 
 The Runner connects out to the Server using one of four transports, selected by
@@ -95,15 +94,7 @@ allow_patch = true
 `id` and `path` are the important fields; `kind` is optional descriptive metadata.
 The registry directory is storage for Project records, not a workspace root.
 
-New configurations use `project-registry/` and `project_registry_dir`. An
-existing installation whose only physical registry directory is `projects.d/`
-continues to use that directory in place. During 0.4.x, a legacy-only
-`projects_dir` config field is also accepted with a deprecation warning and is
-normalized to `project_registry_dir`; the old `--projects-dir` CLI flag remains
-retired. If both physical registry directories or both config fields exist,
-WebCodex fails closed instead of merging or guessing precedence. Use
-`--project-registry-dir` for explicit CLI selection.
-
+New configurations and default discovery use only `project-registry/` and `project_registry_dir`. WebCodex 0.5 does not automatically select a historical `projects.d/` directory, and the retired `projects_dir` config field is rejected with migration guidance. Move or explicitly recreate required registration records under the canonical registry before upgrading. The old `--projects-dir` CLI flag remains retired; use `--project-registry-dir` for explicit CLI selection.
 Runtime Project ids take the canonical shape `agent:<client_id>:<project_id>`, for example `agent:workstation:my-repo`. That canonical identity remains the authorization, persistence, audit, Runner-routing, diagnostic, API and CLI address. Model-facing bootstrap/discovery may additionally return a short Server-issued `project_ref` such as `~p1`. Models should normally reuse that selector on later Project-scoped tool calls instead of copying the canonical id. The mapping is durable and scoped to the authenticated caller, is pinned to the canonical id plus Runner-reported Project root identity, and grants no authority: every use re-runs current Project visibility/authorization. It never depends on Workflow Session, ClientWindow, MCP session, transport connection, recent activity or hidden Host state, and a stale ref is never silently rebound to another Project.
 
 ### Allowed roots

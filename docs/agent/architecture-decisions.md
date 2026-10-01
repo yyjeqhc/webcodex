@@ -430,34 +430,27 @@ the explicit `WEBCODEX_MCP_TEXT_JSON_COMPAT=true` compatibility projection to
 mirror that same canonical JSON into standard text content without changing the
 source of truth.
 
-The product concept and public lifecycle namespace are **Runner**. The local
-primary config filename is `runner.toml`, and all newly generated 0.4.x
-configuration uses that name. Persisted pre-0.4 startup state has a deliberately
-narrow compatibility window through the 0.4.x line: automatic/default/profile
-discovery still accepts a legacy-only `agent.toml`, while a directory containing
-both names fails closed so a stale legacy file cannot silently look authoritative.
-A directory containing neither creates/targets `runner.toml`. Explicit
-`--config PATH` remains exact and does not reinterpret the chosen filename.
-Explicit `--profile` similarly selects its authoritative profile directory
-before environment defaults are considered. `WEBCODEX_RUNNER_CONFIG` is the
-canonical default-path env override; legacy-only `WEBCODEX_AGENT_CONFIG` remains
-a deprecated fallback during 0.4.x, while setting both env names is ambiguous and
-fails closed. These persisted startup aliases are scheduled for removal at the
-0.5.0 compatibility boundary rather than a 0.4.x patch/minor restart.
+The product concept and public lifecycle namespace are **Runner**. The canonical
+local config filename is `runner.toml`. Through the 0.4.x line, persisted
+pre-0.4 startup state had a deliberately narrow migration window for
+`agent.toml`, `WEBCODEX_AGENT_CONFIG`, `projects_dir`, and a sole physical
+`projects.d/` registry. That compatibility ended at the 0.5 boundary.
 
-Runner-owned project registries use `project_registry_dir` and
-`project-registry/` for new state. During 0.4.x, a legacy-only persisted
-`projects_dir` field is normalized into the canonical runtime
-`project_registry_dir`; configuring both fields remains an error. The old
-`--projects-dir` CLI spelling stays retired because interactive CLI aliases are
-not required for cold-start compatibility. The physical legacy `projects.d/`
-directory remains readable in place when it is the sole default registry layout,
-so upgrading does not require an implicit data move. If both default directory
-names exist WebCodex fails closed; it does not merge, copy, rename, or choose
-between two registries implicitly. The registry remains a directory of
-Runner-owned project registration records, not a second workspace or project-root
-abstraction.
+From 0.5 onward, automatic/default/profile discovery targets only `runner.toml`;
+`WEBCODEX_RUNNER_CONFIG` is the only default-path environment override; Runner
+configuration uses only `project_registry_dir`; and default registry placement is
+only `project-registry/`. A retired `projects_dir` field is rejected before
+runtime use instead of being ignored or normalized, preventing an old config from
+silently retargeting to a different registry. A historical `agent.toml` or
+`projects.d/` artifact does not participate in discovery or precedence. Explicit
+`--config PATH` remains exact and may use any caller-chosen filename; this is not
+legacy filename discovery. Historical config/registry paths remain classified as
+sensitive so stale credentials or registration records are not accidentally
+searched, edited, packaged, or committed.
 
+The old `--projects-dir` CLI spelling stays retired. The registry remains a
+directory of Runner-owned project registration records, not a second workspace or
+project-root abstraction.
 Project registration provenance is also normalized before the `v0.4.0` floor.
 The generic project-record `kind` field remains open project metadata, while the
 optional `registration_source` field describes how the record entered the

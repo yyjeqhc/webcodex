@@ -23,7 +23,7 @@ from urllib.request import Request
 from e2e_job_input_ws import InteractiveSmoke, SCOPES
 from e2e_session_continuity_ws import ROOT, check
 
-BASELINE = "bf3a3cf81fbacdc4b8515ba86523bd6f8f458f43"
+BASELINE = "05d45f376d3265490de28090b9c5b0150dbacd8b"
 UPSTREAM = "05d45f37"
 SENTINEL = "GENERIC_ACCEPTANCE_UNIQUE_SENTINEL_9d06"
 

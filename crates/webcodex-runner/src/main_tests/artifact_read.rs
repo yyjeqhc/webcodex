@@ -179,24 +179,54 @@ fn file_read_project_artifact_metadata_counts_zip_without_extracting() {
     let zip_path = tmp.path().join("sample.zip");
     std::fs::write(&zip_path, fake_zip_eocd_with_entries(2)).unwrap();
 
+    for max_bytes in [1024, 256 * 1024 * 1024] {
+        let out = line_edit_json(handle_file_request(
+            &policy,
+            &json_file_op_request(
+                tmp.path(),
+                "file_read_project_artifact_metadata",
+                "sample.zip",
+                serde_json::json!({"path": "sample.zip", "max_bytes": max_bytes}),
+            ),
+        ));
+
+        assert_eq!(out["mime_type"], "application/zip");
+        assert_eq!(out["archive_entries_count"], 2);
+        assert!(
+            out["modified_at"].as_u64().unwrap() > 0,
+            "modified_at should be unix timestamp seconds"
+        );
+    }
+    assert!(!tmp.path().join("a.txt").exists());
+    assert!(!tmp.path().join("b.txt").exists());
+}
+
+#[test]
+fn file_read_project_artifact_metadata_keeps_small_image_dimensions_with_export_bound() {
+    let tmp = tempfile::tempdir().unwrap();
+    let policy = project_policy(tmp.path());
+    let png = base64::Engine::decode(
+        &base64::engine::general_purpose::STANDARD,
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a1ioAAAAASUVORK5CYII=",
+    )
+    .unwrap();
+    std::fs::write(tmp.path().join("tiny.png"), &png).unwrap();
+
     let out = line_edit_json(handle_file_request(
         &policy,
         &json_file_op_request(
             tmp.path(),
             "file_read_project_artifact_metadata",
-            "sample.zip",
-            serde_json::json!({"path": "sample.zip", "max_bytes": 1024}),
+            "tiny.png",
+            serde_json::json!({"path": "tiny.png", "max_bytes": 256 * 1024 * 1024}),
         ),
     ));
-
-    assert_eq!(out["mime_type"], "application/zip");
-    assert_eq!(out["archive_entries_count"], 2);
-    assert!(
-        out["modified_at"].as_u64().unwrap() > 0,
-        "modified_at should be unix timestamp seconds"
-    );
-    assert!(!tmp.path().join("a.txt").exists());
-    assert!(!tmp.path().join("b.txt").exists());
+    assert!(out.get("error").is_none(), "{out}");
+    assert_eq!(out["mime_type"], "image/png");
+    assert_eq!(out["width"], 1);
+    assert_eq!(out["height"], 1);
+    assert_eq!(out["bytes"], png.len());
+    assert_eq!(out["sha256"].as_str().unwrap().len(), 64);
 }
 
 #[test]
@@ -831,6 +861,18 @@ fn file_read_project_artifact_metadata_streams_above_whole_payload_limit() {
         ),
     ));
     assert!(invalid_max["error"].as_str().unwrap().contains("maximum"));
+
+    file.set_len((export_max + 1) as u64).unwrap();
+    let oversized = line_edit_json(handle_file_request(
+        &policy,
+        &json_file_op_request(
+            tmp.path(),
+            "file_read_project_artifact_metadata",
+            path,
+            serde_json::json!({"path": path, "max_bytes": export_max}),
+        ),
+    ));
+    assert!(oversized["error"].as_str().unwrap().contains("too large"));
 }
 
 #[cfg(unix)]

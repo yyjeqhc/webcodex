@@ -146,7 +146,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             false,
             super::ToolSessionEvidencePolicy::NONE,
         ),
-        "Read project artifact metadata up to 256 MiB with bounded streaming SHA hashing; no file contents are returned. Images may include dimensions and zip archives are counted but never extracted. Set allow_missing=true to make a missing artifact a successful exists=false negative assertion.",
+        "Read artifact size/SHA/MIME up to 256 MiB; no contents are returned. Files up to 10 MiB also retain image dimensions and ZIP entry counts when recognized; larger files use bounded streaming hashing. ZIPs are never extracted. allow_missing=true returns exists=false for an absent file.",
     ),
     model_spec(
         def(

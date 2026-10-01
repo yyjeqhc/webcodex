@@ -6102,7 +6102,8 @@ impl ToolCall {
             | Self::WorkspaceCheckpointShow { session_id, .. }
             | Self::WorkspaceCheckpointRestore { session_id, .. }
             | Self::WorkspaceCheckpointDelete { session_id, .. } => session_id.as_deref(),
-            Self::SessionHandoffSummary { session_id, .. } => Some(session_id.as_str()),
+            Self::SessionHandoffSummary { session_id, .. }
+            | Self::FinishCodingTask { session_id, .. } => Some(session_id.as_str()),
             // Window-card presentation/refresh never becomes generic Session recorder
             // evidence. An optional Session selector is association evidence only.
             Self::PresentWorkResult { .. }

@@ -41,6 +41,15 @@ class GenericAcceptanceTests(unittest.TestCase):
             self.assertNotIn("never-record-this-token", json.dumps(call))
             request = smoke.opener.open.call_args.args[0]
             self.assertEqual(call["request_bytes"], len(request.data))
+            self.assertEqual(json.loads(request.data)["params"]["_meta"]["io.modelcontextprotocol/clientCapabilities"], {})
+            smoke.app_fixture = True
+            smoke.post("/mcp", body, "never-record-this-token")
+            app_request = smoke.opener.open.call_args.args[0]
+            meta = json.loads(app_request.data)["params"]["_meta"]
+            self.assertEqual(meta["io.modelcontextprotocol/clientCapabilities"]["extensions"]["io.modelcontextprotocol/ui"]["mimeTypes"], ["text/html;profile=mcp-app"])
+            self.assertEqual(meta["openai/session"], "generic-acceptance-app-fixture-window")
+            self.assertEqual(smoke.calls[-1]["client_role"], "independent_mcp_app_fixture")
+
 
     def test_png_and_pdf_fixtures_have_valid_structural_checksums_and_offsets(self):
         fixtures = binary_fixtures()
@@ -74,29 +83,40 @@ class GenericAcceptanceTests(unittest.TestCase):
             args = argparse.Namespace(bin_dir=root, server=None, runner=None)
             smoke = GenericSmoke(args, root)
             smoke.project_dir, smoke.project, smoke.owner = root, "fixture", "unused"
-            receipt = {}
+            receipts, sessions, finish_args = {}, [], []
             def finish(name, args, **kwargs):
-                data = (root / "big.bin").read_bytes()
-                receipt.update(items=[{"path": "big.bin", "status": "verified",
+                finish_args.append(args)
+                if "outputs" not in args:
+                    receipts.pop(args["session_id"], None)
+                    return {}
+                path = args["outputs"][0]
+                data = (root / path).read_bytes()
+                receipt = {"items": [{"path": path, "status": "verified",
                     "file_bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()}],
-                    verified_count=1, missing_count=0, unavailable_count=0, observed_at=123)
-                return {"task_outputs": receipt.copy()}
+                    "verified_count": 1, "missing_count": 0, "unavailable_count": 0, "observed_at": 123}
+                receipts[args["session_id"]] = receipt
+                return {"task_outputs": receipt}
             smoke.call = finish
             def api(path, body, token):
-                if body["tool"] == "work_on_project":
-                    return {"success": True, "output": {"session_id": "wc_sess_fixture"}}
-                return {"success": True, "output": {"work_result": {"task_outputs": receipt.copy()}}}
+                self.assertEqual(body["tool"], "work_on_project")
+                session = "wc_sess_fixture" + str(len(sessions))
+                sessions.append(session)
+                return {"success": True, "output": {"session_id": session}}
             smoke.post = api
+            smoke.app_state = lambda project, session: {"work_result": {"task_outputs": receipts.get(session)}}
             evidence = smoke.large_output()
             self.assertEqual(evidence["file_bytes"], 10 * 1024 * 1024 + 1)
             self.assertTrue(evidence["work_result_retained"])
+            self.assertTrue(evidence["foreign_recorder_preserved_own_receipt"])
+            self.assertTrue(evidence["latest_business_omission_clears_receipt"])
             self.assertEqual(evidence["canonical_api_calls_outside_mcp_metrics"], 2)
-            def changed_receipt(path, body, token):
-                reply = api(path, body, token)
-                if body["tool"] == "work_result_state":
-                    reply["output"]["work_result"]["task_outputs"] = {"observed_at": 456}
-                return reply
-            smoke.post = changed_receipt
+            self.assertNotIn("_wc", finish_args[0])
+            self.assertEqual(finish_args[2]["session_id"], sessions[0])
+            self.assertEqual(finish_args[2]["_wc"], {"record": sessions[1]})
+            self.assertNotIn("outputs", finish_args[3])
+            self.assertNotIn(sessions[0], receipts)
+            self.assertEqual(receipts[sessions[1]]["items"][0]["path"], "recorder-owned.txt")
+            smoke.app_state = lambda project, session: {"work_result": {"task_outputs": {"observed_at": 456}}}
             with self.assertRaisesRegex(AssertionError, "exact observed output receipt"):
                 smoke.large_output()
 

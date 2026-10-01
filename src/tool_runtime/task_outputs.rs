@@ -140,7 +140,29 @@ pub(crate) fn retained_task_outputs(
     // The latest finish invalidates an earlier manifest even if it omitted outputs.
     // These are explicitly time-stamped observations, not current filesystem truth.
     let event = summary.events.iter().rev().find(|event| {
-        event.tool_name == "finish_coding_task" && event.kind == "tool_call_finished"
+        event.tool_name == "finish_coding_task"
+            && event.kind == "tool_call_finished"
+            && event.session_id == summary.session_id
+            && match event.logical_invocation_role.as_deref() {
+                Some("business") => true,
+                Some(_) => false,
+                // Direct/internal dispatch has no kernel correlation role.
+                // Its explicit target is retained on the matching start event.
+                None => {
+                    event.call_id.is_some()
+                        && summary.events.iter().any(|start| {
+                            start.kind == "tool_call_started"
+                                && start.tool_name == event.tool_name
+                                && start.call_id == event.call_id
+                                && start
+                                    .input_summary
+                                    .as_ref()
+                                    .and_then(|input| input.get("session_id"))
+                                    .and_then(Value::as_str)
+                                    == Some(summary.session_id.as_str())
+                        })
+                }
+            }
     })?;
     let value = event.context_result_summary.as_ref()?.get("task_outputs")?;
     let snapshot: TaskOutputs = serde_json::from_value(value.clone()).ok()?;

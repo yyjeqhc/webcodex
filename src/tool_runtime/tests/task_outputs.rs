@@ -142,3 +142,40 @@ fn task_outputs_ledger_preserves_sixteen_long_paths_and_latest_finish_invalidate
             .is_none()
     );
 }
+
+#[test]
+fn task_outputs_do_not_attribute_another_business_session_to_its_recorder() {
+    let runtime = test_runtime();
+    let project = "agent:fixture:files";
+    let business = runtime.sessions.start_session(Some(project.into()), None);
+    let recorder = runtime.sessions.start_session(Some(project.into()), None);
+    let outputs = TaskOutputs {
+        items: vec![observed("result.csv")],
+        verified_count: 1,
+        missing_count: 0,
+        unavailable_count: 0,
+        observed_at: 1,
+    };
+    let start = runtime.sessions.record_tool_call_started_with_options(
+        Some(&recorder.session_id),
+        SessionTransport::Api,
+        "finish_coding_task",
+        &json!({"project":project,"session_id":business.session_id}),
+        Some(project.into()),
+        crate::tool_runtime::sessions::session_tool_contract("finish_coding_task"),
+    );
+    runtime.sessions.record_tool_call_finished(
+        start,
+        true,
+        &json!({"task_outputs": outputs}),
+        None,
+        None,
+    );
+    assert!(retained_task_outputs(
+        &runtime
+            .sessions
+            .summary(&recorder.session_id, None)
+            .unwrap()
+    )
+    .is_none());
+}

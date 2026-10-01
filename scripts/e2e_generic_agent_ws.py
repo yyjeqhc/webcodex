@@ -71,6 +71,7 @@ class GenericSmoke(InteractiveSmoke):
         self.args = args
         self.calls, self.scenarios, self.extra_checks = [], [], []
         self.scenario = "setup"
+        self.app_fixture = False
         self.binaries = {"webcodex-server": args.server, "webcodex-runner": args.runner}
 
     def launch(self, binary, args, env):
@@ -91,6 +92,12 @@ class GenericSmoke(InteractiveSmoke):
         params = body.setdefault("params", {})
         params["_meta"] = {"io.modelcontextprotocol/protocolVersion": "2026-07-28",
                            "io.modelcontextprotocol/clientCapabilities": {}}
+        if self.app_fixture:
+            params["_meta"].update({
+                "io.modelcontextprotocol/clientCapabilities": {"extensions": {
+                    "io.modelcontextprotocol/ui": {"mimeTypes": ["text/html;profile=mcp-app"]}}},
+                "io.modelcontextprotocol/clientInfo": {"name": "generic-acceptance-app-fixture", "version": "1"},
+                "openai/session": "generic-acceptance-app-fixture-window"})
         payload = json.dumps(body).encode()
         headers = {"Authorization": "Bearer " + token, "Content-Type": "application/json",
                    "Accept": "application/json, text/event-stream", "MCP-Protocol-Version": "2026-07-28",
@@ -112,6 +119,7 @@ class GenericSmoke(InteractiveSmoke):
                 "request_bytes": len(payload), "response_bytes": len(raw),
                 "wall_seconds": round(time.monotonic() - started, 6),
                 "success": result.get("structuredContent", {}).get("success"),
+                "client_role": "independent_mcp_app_fixture" if self.app_fixture else "model_tool_fixture",
                 "content_types": [c.get("type") for c in result.get("content", [])],
                 "response_sha256": hashlib.sha256(raw).hexdigest(),
                 "sentinel_occurrences": raw.count(SENTINEL.encode())})
@@ -283,17 +291,34 @@ class GenericSmoke(InteractiveSmoke):
               "missing output failed to block task outcome")
         return {"task_outcome": outcome, "task_outputs": receipt}
 
+    def app_state(self, project, session):
+        """Independent MCP App host fixture, never the model gateway path."""
+        self.app_fixture = True
+        try:
+            self.rpc_id += 1
+            listed = self.post("/mcp", {"jsonrpc": "2.0", "id": self.rpc_id,
+                "method": "tools/list", "params": {}}, self.owner)
+            state = next((tool for tool in listed.get("result", {}).get("tools", [])
+                          if tool.get("name") == "work_result_state"), {})
+            check(state.get("_meta", {}).get("ui", {}).get("visibility") == ["app"],
+                  "independent UI-capable client did not discover App-only WorkResult")
+            return self.call("work_result_state", {"project": project, "session_id": session}, direct=True)
+        finally:
+            self.app_fixture = False
+
     def large_output(self):
         path = self.project_dir / "big.bin"
         path.write_bytes(b"x" * (10 * 1024 * 1024 + 1))
         expected_sha, expected_size = sha(path), path.stat().st_size
-        # Canonical API creates an exact Session and refreshes the WorkResult.
-        # This avoids pretending a model request is an MCP App/Window refresh.
-        started = self.post("/api/tools/call", {"tool": "work_on_project", "params": {
-            "project": self.project, "instruction": "Verify large output metadata and retained WorkResult"}}, self.owner)
-        check(started.get("success") is True, "large-output API Session bootstrap failed")
-        session = started.get("output", {}).get("session_id")
-        check(isinstance(session, str) and session.startswith("wc_sess_"), "API bootstrap omitted exact Session identity")
+        # Bootstrap exact Sessions independently; no implicit Session/Window affinity.
+        def bootstrap(instruction):
+            started = self.post("/api/tools/call", {"tool": "work_on_project", "params": {
+                "project": self.project, "instruction": instruction}}, self.owner)
+            check(started.get("success") is True, "large-output API Session bootstrap failed")
+            identity = started.get("output", {}).get("session_id")
+            check(isinstance(identity, str) and identity.startswith("wc_sess_"), "API bootstrap omitted exact Session identity")
+            return identity
+        session = bootstrap("Verify large output metadata and retained WorkResult")
         output = self.call("finish_coding_task", {"project": self.project,
             "session_id": session, "summary_only": True, "outputs": ["big.bin"]}, direct=False)
         receipt = output.get("task_outputs", {})
@@ -305,15 +330,51 @@ class GenericSmoke(InteractiveSmoke):
         check(item.get("path") == "big.bin" and item.get("status") == "verified"
               and item.get("file_bytes") == expected_size and item.get("sha256") == expected_sha,
               "large-output metadata disagrees with independent SHA/size")
-        refreshed = self.post("/api/tools/call", {"tool": "work_result_state", "params": {
-            "project": self.project, "session_id": session}}, self.owner)
-        check(refreshed.get("success") is True, "canonical API WorkResult refresh failed")
-        retained = refreshed.get("output", {}).get("work_result", {}).get("task_outputs")
-        check(retained == receipt, "WorkResult did not retain the exact observed output receipt")
+        refreshed = self.app_state(self.project, session)
+        retained = refreshed.get("work_result", {}).get("task_outputs")
+        check(retained == receipt, f"WorkResult did not retain the exact observed output receipt: expected={receipt!r}; retained={retained!r}; output_keys={list(refreshed)}")
+        # W already owns a different valid receipt. Recording C in W must neither
+        # attribute C's output to W nor invalidate W's earlier business finish.
+        recorder = bootstrap("Verify recorder/business Session isolation")
+        check(recorder != session, "API bootstrap reused a Session unexpectedly")
+        own_path = self.project_dir / "recorder-owned.txt"
+        own_path.write_bytes(b"recorder-owned-result\n")
+        own_finish = self.call("finish_coding_task", {"project": self.project,
+            "session_id": recorder, "summary_only": True, "outputs": ["recorder-owned.txt"]}, direct=False)
+        own_receipt = own_finish.get("task_outputs", {})
+        own_items = own_receipt.get("items", [])
+        check(own_receipt.get("verified_count") == 1 and len(own_items) == 1
+              and own_items[0].get("path") == "recorder-owned.txt"
+              and own_items[0].get("sha256") == sha(own_path)
+              and own_items[0].get("file_bytes") == own_path.stat().st_size,
+              "recorder's independent receipt was not verified")
+        check(self.app_state(self.project, recorder).get("work_result", {}).get("task_outputs") == own_receipt,
+              "recorder's own business finish was not retained")
+        foreign_finish = self.call("finish_coding_task", {"project": self.project,
+            "session_id": session, "summary_only": True, "outputs": ["big.bin"],
+            "_wc": {"record": recorder}}, direct=False)
+        foreign_receipt = foreign_finish.get("task_outputs", {})
+        check(foreign_receipt.get("items") == receipt.get("items"), "foreign recorder changed verified metadata")
+        check(self.app_state(self.project, session).get("work_result", {}).get("task_outputs") == foreign_receipt,
+              "business Session lost its receipt with an external recorder")
+        check(self.app_state(self.project, recorder).get("work_result", {}).get("task_outputs") == own_receipt,
+              "foreign business finish replaced or invalidated recorder's own receipt")
+        # A latest finish in C that omits outputs intentionally clears C's receipt.
+        self.call("finish_coding_task", {"project": self.project,
+            "session_id": session, "summary_only": True}, direct=False)
+        check(self.app_state(self.project, session).get("work_result", {}).get("task_outputs") is None,
+              "latest business finish without outputs reused an old receipt")
+        check(self.app_state(self.project, recorder).get("work_result", {}).get("task_outputs") == own_receipt,
+              "business omission changed the unrelated recorder receipt")
         return {"path": "big.bin", "file_bytes": expected_size, "sha256": expected_sha,
                 "task_outputs": receipt, "work_result_retained": True,
-                "work_result_transport": "canonical HTTP API; MCP App/Window not simulated",
+                "normal_finish_requires_extra_recorder": False,
+                "foreign_recorder_preserved_own_receipt": True,
+                "foreign_finish_retained_in_business_session": True,
+                "latest_business_omission_clears_receipt": True,
+                "work_result_transport": "independent UI-capable stateless MCP App fixture with explicit synthetic host Window; real Host rendering unmeasured",
                 "canonical_api_calls_outside_mcp_metrics": 2}
+
 
 
 def main():

@@ -1703,6 +1703,7 @@ fn from_tool_name_parses_finish_coding_task_workspace_projection_flag() {
     )
     .unwrap();
 
+    assert_eq!(call.session_id(), Some("wc_sess_demo"));
     match call {
         ToolCall::FinishCodingTask {
             outputs,

@@ -84,7 +84,7 @@ def stage(args: argparse.Namespace) -> dict:
 
     runtime_dir = output_dir / "resources" / "webcodex-runtime"
     runtime_dir.mkdir(parents=True)
-    short_source = args.source_sha[:12].lower()
+    source_identity = args.source_sha.lower()
     resources: dict[str, str] = {}
     files: dict[str, dict[str, object]] = {}
     try:
@@ -101,7 +101,7 @@ def stage(args: argparse.Namespace) -> dict:
 
             actual_version = run_line([str(source), "--version"])
             expected_version = (
-                f"{name} {args.version} (commit {short_source}, dirty=false, built_at={args.built_at})"
+                f"{name} {args.version} (commit {source_identity}, dirty=false, built_at={args.built_at})"
             )
             if actual_version != expected_version:
                 raise StageError(

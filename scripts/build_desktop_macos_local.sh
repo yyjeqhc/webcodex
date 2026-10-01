@@ -56,6 +56,8 @@ SHORT_SOURCE="$(git rev-parse --short=12 HEAD)"
 VERSION="$(node -p "require('./npm/webcodex/package.json').version")"
 BUILT_AT="$(git show -s --format=%ct HEAD)"
 export WEBCODEX_BUILT_AT="$BUILT_AT"
+export WEBCODEX_GIT_COMMIT="$SOURCE_SHA"
+export WEBCODEX_GIT_DIRTY=false
 
 case "$(uname -m)" in
     arm64)

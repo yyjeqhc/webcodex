@@ -193,6 +193,8 @@ jobs:
       WEBCODEX_BUILT_AT: ${{ needs.prepare.outputs.built_at }}
       WEBCODEX_RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
       BUILD_KIND: ${{ needs.prepare.outputs.build_kind }}
+      WEBCODEX_GIT_COMMIT: ${{ needs.prepare.outputs.source_sha }}
+      WEBCODEX_GIT_DIRTY: 'false'
       ARCHIVE_STEM: ${{ needs.prepare.outputs.archive_stem }}
       WEBCODEX_RELEASE_PLATFORM: ${{ matrix.platform }}
       MANYLINUX_IMAGE: ${{ matrix.image }}
@@ -234,6 +236,8 @@ jobs:
             -e SOURCE_SHA \
             -e WEBCODEX_BUILT_AT \
             -e WEBCODEX_RELEASE_VERSION \
+            -e WEBCODEX_GIT_COMMIT \
+            -e WEBCODEX_GIT_DIRTY \
             -e BUILD_KIND \
             -e ARCHIVE_STEM \
             -e WEBCODEX_RELEASE_PLATFORM \
@@ -271,11 +275,10 @@ jobs:
 
               cargo build --locked --release -p webcodex -p webcodex-cli -p webcodex-runner
 
-              short_commit="$(git rev-parse --short=12 HEAD)"
               for name in webcodex webcodex-server webcodex-runner; do
                 binary="target/release/$name"
                 output="$($binary --version)"
-                expected="$name $VERSION (commit $short_commit, dirty=false, built_at=$WEBCODEX_BUILT_AT)"
+                expected="$name $VERSION (commit $SOURCE_SHA, dirty=false, built_at=$WEBCODEX_BUILT_AT)"
                 if [ "$output" != "$expected" ]; then
                   echo "Unexpected $name release identity: $output" >&2
                   echo "Expected: $expected" >&2
@@ -367,6 +370,8 @@ jobs:
       WEBCODEX_BUILT_AT: ${{ needs.prepare.outputs.built_at }}
       WEBCODEX_RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
       BUILD_KIND: ${{ needs.prepare.outputs.build_kind }}
+      WEBCODEX_GIT_COMMIT: ${{ needs.prepare.outputs.source_sha }}
+      WEBCODEX_GIT_DIRTY: 'false'
       ARCHIVE_STEM: ${{ needs.prepare.outputs.archive_stem }}
       WEBCODEX_RELEASE_PLATFORM: ${{ matrix.platform }}
       EXPECTED_HOST_ARCH: ${{ matrix.host_arch }}
@@ -417,11 +422,10 @@ jobs:
 
           rustc --version --verbose
           cargo build --locked --release -p webcodex -p webcodex-cli -p webcodex-runner
-          short_commit="$(git rev-parse --short=12 HEAD)"
           for name in webcodex webcodex-server webcodex-runner; do
             binary="target/release/$name"
             output="$($binary --version)"
-            expected="$name $VERSION (commit $short_commit, dirty=false, built_at=$WEBCODEX_BUILT_AT)"
+            expected="$name $VERSION (commit $SOURCE_SHA, dirty=false, built_at=$WEBCODEX_BUILT_AT)"
             if [ "$output" != "$expected" ]; then
               echo "Unexpected $name release identity: $output" >&2
               exit 1
@@ -575,6 +579,8 @@ jobs:
       ARCHIVE_STEM: ${{ needs.prepare.outputs.archive_stem }}
       WEBCODEX_RELEASE_PLATFORM: ${{ matrix.platform }}
       RUST_TARGET: ${{ matrix.rust_target }}
+      WEBCODEX_GIT_COMMIT: ${{ needs.prepare.outputs.source_sha }}
+      WEBCODEX_GIT_DIRTY: 'false'
       INPUT_TAG: ${{ inputs.tag }}
       EXPECTED_PROCESSOR_ARCHITECTURE: ${{ matrix.processor_architecture }}
       EXPECTED_PE_MACHINE: ${{ matrix.pe_machine }}
@@ -618,7 +624,6 @@ jobs:
           cargo build --locked --release --target $env:RUST_TARGET -p webcodex -p webcodex-cli -p webcodex-runner
           if ($LASTEXITCODE -ne 0) { throw "cargo build failed with exit code $LASTEXITCODE" }
 
-          $shortCommit = (git rev-parse --short=12 HEAD).Trim()
           $binDir = Join-Path "target" (Join-Path $env:RUST_TARGET "release")
           $expectedMachine = [Convert]::ToUInt16($env:EXPECTED_PE_MACHINE, 16)
           foreach ($name in @("webcodex", "webcodex-server", "webcodex-runner")) {
@@ -629,7 +634,7 @@ jobs:
               throw "$name --version failed with exit code $exitCode"
             }
             $output = $outputLines[0].TrimEnd()
-            $expected = "$name $env:VERSION (commit $shortCommit, dirty=false, built_at=$env:WEBCODEX_BUILT_AT)"
+            $expected = "$name $env:VERSION (commit $env:SOURCE_SHA, dirty=false, built_at=$env:WEBCODEX_BUILT_AT)"
             if ($output -ne $expected) {
               throw "Unexpected $name release identity: $output (expected $expected)"
             }
@@ -910,6 +915,8 @@ jobs:
       PLATFORM: ${{ matrix.platform }}
       BUILD_KIND: ${{ needs.prepare.outputs.build_kind }}
       INPUT_TAG: ${{ inputs.tag }}
+      WEBCODEX_GIT_COMMIT: ${{ needs.prepare.outputs.source_sha }}
+      WEBCODEX_GIT_DIRTY: 'false'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -924,6 +931,12 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.12'
+      - name: Fence exact clean source before generated inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ "$(git rev-parse HEAD)" = "$SOURCE_SHA" ]
+          [ -z "$(git status --porcelain --untracked-files=all)" ]
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: ${{ needs.prepare.outputs.archive_stem }}-${{ matrix.platform }}
@@ -936,6 +949,7 @@ jobs:
           docker run --rm \
             -v "$GITHUB_WORKSPACE:/work" -w /work \
             -e VERSION -e SOURCE_SHA -e WEBCODEX_BUILT_AT -e WEBCODEX_RELEASE_VERSION \
+            -e WEBCODEX_GIT_COMMIT -e WEBCODEX_GIT_DIRTY \
             -e ARCHIVE_STEM -e PLATFORM -e GITHUB_RUN_ID -e GITHUB_WORKFLOW_REF -e GITHUB_SHA \
             ubuntu:22.04 bash -lc '
               set -euo pipefail
@@ -953,7 +967,6 @@ jobs:
               if [ "$PLATFORM" = linux-arm64 ]; then expected=aarch64; fi
               [ "$(uname -m)" = "$expected" ] || { echo "Ubuntu 22.04 container is not native for $PLATFORM" >&2; exit 1; }
               [ "$(git rev-parse HEAD)" = "$SOURCE_SHA" ]
-              [ -z "$(git status --porcelain --untracked-files=all)" ]
               mkdir -p native-input/artifacts/bin dist
               archive="runtime-input/$ARCHIVE_STEM-$PLATFORM.tar.gz"
               tar -xzf "$archive" -C native-input/artifacts/bin
@@ -1006,7 +1019,6 @@ jobs:
           actual="$(uname -m)"
           [ "$actual" = "$expected" ] || { echo "Expected native $expected host; got $actual" >&2; exit 1; }
           [ "$(git rev-parse HEAD)" = "$SOURCE_SHA" ]
-          [ -z "$(git status --porcelain --untracked-files=all)" ]
           mkdir -p native-input/artifacts/bin
           archive="runtime-input/$ARCHIVE_STEM-$PLATFORM.tar.gz"
           tar -xzf "$archive" -C native-input/artifacts/bin

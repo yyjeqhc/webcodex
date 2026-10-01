@@ -425,6 +425,10 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("target\\desktop-local-dist", windows)
         self.assertIn("[switch]$AllowDirty", windows)
         self.assertIn("-GitDirty $GitDirty", windows)
+        self.assertIn("$env:WEBCODEX_GIT_COMMIT = $SourceSha.ToLowerInvariant()", windows)
+        self.assertIn('$env:WEBCODEX_GIT_DIRTY = if ($GitDirty) { "true" } else { "false" }', windows)
+        self.assertIn('export WEBCODEX_GIT_COMMIT="$SOURCE_SHA"', macos)
+        self.assertIn("export WEBCODEX_GIT_DIRTY=false", macos)
         self.assertIn('"dirty-$ShortSource"', windows)
         for helper in (windows_stage, windows_smoke):
             self.assertIn("[bool]$GitDirty = $false", helper)

@@ -694,6 +694,46 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertNotIn('$installer = Join-Path "dist" $env:DESKTOP_INSTALLER_NAME', workflow)
         self.assertNotIn('-Installer (Join-Path "dist" $env:DESKTOP_INSTALLER_NAME)', workflow)
 
+    def test_release_build_pins_full_source_identity_and_fences_generated_inputs(self) -> None:
+        workflow = Path(".github/workflows/release-build.yml").read_text(encoding="utf-8")
+        windows_stage = Path("scripts/prepare_desktop_bundle.ps1").read_text(encoding="utf-8")
+        windows_smoke = Path("scripts/desktop_install_windows_smoke.ps1").read_text(encoding="utf-8")
+        mac_stage = Path("scripts/prepare_desktop_bundle_macos.py").read_text(encoding="utf-8")
+        mac_smoke = Path("scripts/desktop_install_macos_smoke.sh").read_text(encoding="utf-8")
+
+        self.assertGreaterEqual(
+            workflow.count("WEBCODEX_GIT_COMMIT: ${{ needs.prepare.outputs.source_sha }}"), 4
+        )
+        self.assertGreaterEqual(workflow.count("WEBCODEX_GIT_DIRTY: 'false'"), 4)
+        self.assertGreaterEqual(workflow.count("-e WEBCODEX_GIT_COMMIT"), 2)
+        self.assertNotIn("$shortCommit", workflow)
+        self.assertNotIn('short_commit="$(git rev-parse --short=12 HEAD)"', workflow)
+        self.assertIn(
+            'expected="$name $VERSION (commit $SOURCE_SHA, dirty=false, built_at=$WEBCODEX_BUILT_AT)"',
+            workflow,
+        )
+        self.assertIn(
+            '$expected = "$name $env:VERSION (commit $env:SOURCE_SHA, dirty=false, built_at=$env:WEBCODEX_BUILT_AT)"',
+            workflow,
+        )
+
+        unified = workflow.index("  unified-native:")
+        fence = workflow.index("Fence exact clean source before generated inputs", unified)
+        download = workflow.index("path: runtime-input", unified)
+        self.assertLess(fence, download)
+        windows = workflow.index("  windows:")
+        self.assertGreater(fence, windows)
+        self.assertNotIn('[ -z "$(git status --porcelain --untracked-files=all)" ]\n              mkdir -p native-input', workflow)
+
+        self.assertIn("$sourceIdentity = $SourceSha.ToLowerInvariant()", windows_stage)
+        self.assertIn("commit $sourceIdentity", windows_stage)
+        self.assertIn("$sourceIdentity = $SourceSha.ToLowerInvariant()", windows_smoke)
+        self.assertIn("commit $sourceIdentity", windows_smoke)
+        self.assertIn("source_identity = args.source_sha.lower()", mac_stage)
+        self.assertIn("commit {source_identity}", mac_stage)
+        self.assertIn('source_identity="$(printf \'%s\' "$source_sha"', mac_smoke)
+        self.assertIn("commit $source_identity", mac_smoke)
+
     def test_server_image_publication_is_separate_and_multi_arch(self) -> None:
         candidate = Path(".github/workflows/release-build.yml").read_text(encoding="utf-8")
         image = Path(".github/workflows/release-image.yml").read_text(encoding="utf-8")

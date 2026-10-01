@@ -38,7 +38,7 @@ if (Test-Path -LiteralPath $OutputDir) {
 
 $runtimeDir = Join-Path $OutputDir "resources\webcodex-runtime"
 New-Item -ItemType Directory -Force -Path $runtimeDir | Out-Null
-$shortSource = $SourceSha.Substring(0, 12).ToLowerInvariant()
+$sourceIdentity = $SourceSha.ToLowerInvariant()
 $dirtyText = if ($GitDirty) { "true" } else { "false" }
 $binaryNames = @("webcodex", "webcodex-server", "webcodex-runner")
 $resourceMap = [ordered]@{}
@@ -66,7 +66,7 @@ try {
             throw "$name.exe --version failed while staging Desktop resources (exit code $exitCode)"
         }
         $line = $line[0].TrimEnd()
-        $expected = "$name $Version (commit $shortSource, dirty=$dirtyText, built_at=$BuiltAt)"
+        $expected = "$name $Version (commit $sourceIdentity, dirty=$dirtyText, built_at=$BuiltAt)"
         if ($line -ne $expected) {
             throw "unexpected $name.exe identity: '$line' (expected '$expected')"
         }

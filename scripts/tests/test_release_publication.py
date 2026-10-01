@@ -660,6 +660,11 @@ class WorkflowContractTests(unittest.TestCase):
     def test_release_build_stages_desktop_candidates_in_workspace_dist(self) -> None:
         workflow = Path(".github/workflows/release-build.yml").read_text(encoding="utf-8")
 
+        self.assertIn('Get-Content -LiteralPath "apps/desktop/src-tauri/tauri.conf.json" -Raw | ConvertFrom-Json', workflow)
+        self.assertIn('$tauriConfig.mainBinaryName', workflow)
+        self.assertIn('(\"release\\{0}.exe\" -f $tauriConfig.mainBinaryName)', workflow)
+        self.assertNotIn('"release\\webcodex-desktop.exe"', workflow)
+
         self.assertIn('desktop_dist="$GITHUB_WORKSPACE/dist"', workflow)
         self.assertIn('desktop="$desktop_dist/${{ steps.desktop_bundle.outputs.desktop_name }}"', workflow)
         self.assertIn('printf \'%s  %s\\n\' "$digest" "$(basename "$desktop")" > "$desktop.sha256"', workflow)

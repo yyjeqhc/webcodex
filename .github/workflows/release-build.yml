@@ -751,7 +751,9 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $binDir = Join-Path "target" (Join-Path $env:RUST_TARGET "release")
-          $desktopExe = Join-Path $env:DESKTOP_TAURI_TARGET "release\webcodex-desktop.exe"
+          $tauriConfig = Get-Content -LiteralPath "apps/desktop/src-tauri/tauri.conf.json" -Raw | ConvertFrom-Json
+          if (-not $tauriConfig.mainBinaryName) { throw "Tauri mainBinaryName is missing" }
+          $desktopExe = Join-Path $env:DESKTOP_TAURI_TARGET ("release\{0}.exe" -f $tauriConfig.mainBinaryName)
           if (-not (Test-Path -LiteralPath $desktopExe -PathType Leaf)) {
             throw "Native Desktop executable missing: $desktopExe"
           }

@@ -160,6 +160,66 @@ native wire producer/consumer tests rather than making old model names accepted
 to satisfy stale fixtures. Per-tool exact naming tests and category-driven
 membership checks protect future changes from depending on noun-first prefixes.
 
-Final executed results are recorded at closeout; this document does not claim
-that local native tests prove every deployed client's schema cache has refreshed.
-No production deployment or release is performed by this migration.
+## Executed verification
+
+Implementation source is frozen at `3768ce23ceed46215df0db0f2b2a3700c6093394`
+(tree `a50db3b235a4c26265c51e7e9aaeea05a14dc916`). The subsequent evidence
+update changes this document only.
+
+The complete 181-definition comparison covers feature-gated and hidden tools:
+85 identities change, 96 remain, and all 26 definition-owned Direct policies
+retain their rank/reason. Metadata differs only in the canonical `name` field;
+category, visibility, scope/permission, effect and execution policies are equal.
+Structural schema comparison preserves property keys, required fields, bounds,
+risk vocabulary and closedness. Differences are 249 exact tool-name targets and
+195 projections of the shared ACK instruction's renamed recovery target.
+These are descriptor counts, not claims about Host token savings or latency.
+
+| Local verification | Result |
+|---|---:|
+| Default Server library | 3,155 passed; 3 existing ignored |
+| Tool contracts, all features | 278 passed |
+| CLI, Environment, Store, Runtime-contract and Workflow Session libraries | 1,066 passed; 3 existing ignored |
+| Computer native-request/receipt focused selection | 42 passed, included in Server total |
+| Workspace-checkpoints feature, actual checkpoint selection | 24 passed |
+| Linux Desktop library, final complete rerun | 270 passed; 4 existing ignored |
+| Shipped MCP App JavaScript tests | 328 passed |
+| Frontend | 157 tests passed; typecheck and both production bundles built |
+| Codex integration Python suite | 57 tests, 3 skipped |
+| General Python tooling suite | 380 tests, 1 skipped |
+| Workspace all-targets compilation | Passed |
+| Formatting, shell/Python syntax, 21-package boundaries, Markdown links | Passed |
+
+The first checkpoint filter (`workspace_checkpoint`) matched zero test names and
+is not execution evidence. It was corrected to `checkpoint` with a required-test
+assertion, yielding the 24 executed tests above. Development failures from stale
+fixtures and accidental native-vocabulary substitutions were fixed at the owning
+producer/consumer boundary, not by accepting old model names or weakening checks.
+
+One same-source Desktop full run failed the existing owned-user-service tracing
+fixture at `assert!(f.store.lock().is_ok())` (269 passed, 1 failed). That tracing
+module was unchanged. Its targeted run and then the original full-suite command
+passed without changing code, timeouts, or parallelism. Retain the initial failure
+as evidence of an intermittent fixture result; its cause is not established and
+this change does not claim to fix it. Existing diagnostic/dead-code warnings were
+not hidden by adjusting compiler settings.
+
+Clean dogfood Server and Runner binaries both report `3768ce23ceed, dirty=false`.
+Two disposable real MCP/WebSocket smoke scripts passed:
+
+- `e2e_job_input_ws.py`: new Direct input and exact gateway replay, short Project
+  and Session references, batch read/edit and revision rejection, compound search,
+  native PNG delivery, keyed input/EOF, cancellation/timeout, Server-only recovery,
+  and Runner replacement. Old names are absent/rejected; the three retired HTTP
+  routes return 404. No production process or configuration is involved.
+- `e2e_session_continuity_ws.py`: saved notes survive a temporary Server restart,
+  exact authorized Session recovery works, both model API modes run through the
+  renamed ACP tools, and same-key replay/context-change fences remain intact.
+  Exactly two requests reached a loopback fake model endpoint; no paid API ran.
+
+No native Windows/macOS run, full Runner execution suite, actual V8-backed
+experimental Code Mode execution, packaged release, or live Host schema refresh
+is claimed. Feature-gated Code Mode tool contracts are covered by the all-features
+contract tests; default workspace compilation does not prove its optional V8
+runtime. The source's package versions remain unchanged; this is not a v0.5 tag.
+No push, PR, production deployment or release is performed by this migration.

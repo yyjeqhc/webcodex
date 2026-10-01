@@ -11,10 +11,68 @@ import unittest
 from unittest.mock import Mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from e2e_generic_agent_ws import GenericSmoke, SENTINEL, binary_fixtures, totals
+from e2e_generic_agent_ws import GenericSmoke, SENTINEL, EXTERNAL_SENTINEL, binary_fixtures, totals
+import agent_loop_report as report
 
 
 class GenericAcceptanceTests(unittest.TestCase):
+    def test_stale_edit_checks_disk_bytes_before_reread_and_after_recovery(self):
+        for profile in ("baseline", "upgraded"):
+            for corruption in (None, "rejected", "recovered"):
+                with self.subTest(profile=profile, corruption=corruption), tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    args = argparse.Namespace(bin_dir=root, server=None, runner=None, profile=profile)
+                    smoke = GenericSmoke(args, root)
+                    smoke.project_dir, smoke.project_ref, smoke.session_ref = root, "fixture", "session"
+                    trace = []
+                    def call(name, args, **kwargs):
+                        path = root / "stale.txt"
+                        if name == "read_files":
+                            revision = hashlib.sha256(path.read_bytes()).hexdigest()
+                            trace.append(("read", revision))
+                            return {"items": [{"output": {"read_revision": revision}}]}
+                        change = args["changes"][0]
+                        trace.append(("edit", change["expected_read_revision"], kwargs["success"] if "success" in kwargs else True))
+                        if kwargs.get("success") is False:
+                            self.assertIn(EXTERNAL_SENTINEL.encode(), path.read_bytes())
+                            if corruption == "rejected":
+                                path.write_bytes(b"clobbered despite false success\n")
+                            return {"error_kind": "stale_file_revision", "state_changed": False}
+                        path.write_bytes(path.read_bytes().replace(b"task value: before", b"task value: after"))
+                        if corruption == "recovered":
+                            path.write_bytes(b"task value: after\n")
+                        return {}
+                    smoke.call = call
+                    if corruption:
+                        with self.assertRaisesRegex(AssertionError, "external writer bytes"):
+                            smoke.stale_edit()
+                    else:
+                        evidence = smoke.stale_edit()
+                        self.assertEqual([step[0] for step in trace], ["read", "edit", "read", "edit"])
+                        self.assertEqual(trace[0][1], trace[1][1])
+                        self.assertEqual(trace[2][1], trace[3][1])
+                        self.assertNotEqual(trace[0][1], trace[2][1])
+                        self.assertTrue(evidence["rejected_bytes_unchanged"])
+                        self.assertTrue(evidence["external_change_preserved"])
+                        self.assertEqual(evidence["final_sha256"], hashlib.sha256((root / "stale.txt").read_bytes()).hexdigest())
+
+    def test_generic_cases_load_through_existing_reporter(self):
+        manifest = report.load_case_manifest(report.DEFAULT_CASE_MANIFEST)
+        expected = {"generic_mixed_files_conflict", "generic_encoded_csv", "generic_failure_repair",
+                    "generic_pending_independent_join", "generic_stale_read_revision", "generic_missing_output"}
+        cases = {case["id"]: case for case in manifest["cases"] if case["id"].startswith("generic_")}
+        self.assertEqual(set(cases), expected)
+        for case_id, case in cases.items():
+            with self.subTest(case=case_id):
+                for variant, surface in (("direct", "direct"), ("host_code_mode", "host_code_mode"),
+                                         ("code_mode", case["code_mode_surface"])):
+                    metadata = report._benchmark_metadata(case_manifest=None, case_id=case_id,
+                        variant=variant, surface=surface, base_revision="a" * 40)
+                    self.assertEqual(metadata["case_fingerprint"], report._case_fingerprint(case))
+                    self.assertTrue(metadata["validation_required"])
+                self.assertIn("fixture", case["correctness"])
+                self.assertIn("independent", case["validation"]["expectation"].lower())
+
     def test_measurement_counts_exact_transport_bytes_and_duplicate_content(self):
         # Preserve deliberate whitespace and non-ASCII bytes: reserialization must
         # not undercount the actual MCP envelope or conceal duplicate log tails.
@@ -134,18 +192,42 @@ class GenericAcceptanceTests(unittest.TestCase):
             smoke = GenericSmoke(args, root)
             smoke.project_dir = root
             trace = []
-            smoke.start_pipe = lambda *args: trace.append("start") or "original-job"
+            def start(*args):
+                trace.append("start")
+                smoke.calls.append({"tool": "run_process"})
+                return "original-job"
+            smoke.start_pipe = start
             def independent(script):
                 trace.append("independent")
-                (root / "independent.txt").write_text("done")
+                smoke.calls.append({"tool": "run_script"})
+                (root / "independent.txt").write_text("independent work completed")
             smoke.script = independent
-            smoke.write = lambda job, *args, **kwargs: trace.append(("release", job))
-            smoke.terminal = lambda job: trace.append(("join-observe", job)) or {"exit_code": 0}
+            def write(job, *args, **kwargs):
+                trace.append(("release", job))
+                smoke.calls.append({"tool": "job_write_input"})
+            smoke.write = write
+            def terminal(job):
+                trace.append(("join-observe", job))
+                smoke.calls.extend([{"tool": "wait_for_job_readiness"}, {"tool": "observe_jobs"}])
+                return {"job_id": job, "exit_code": 0}
+            smoke.terminal = terminal
             evidence = smoke.pending()
             self.assertEqual(trace, ["start", "independent", ("release", "original-job"),
                                      ("join-observe", "original-job")])
             self.assertEqual(evidence["readiness_joins"], 1)
             self.assertEqual(evidence["redispatches"], 0)
+            def wrong_job(job):
+                terminal(job)
+                return {"job_id": "replacement-job", "exit_code": 0}
+            smoke.terminal = wrong_job
+            with self.assertRaisesRegex(AssertionError, "original Job"):
+                smoke.pending()
+            def repeated_wait(job):
+                smoke.calls.append({"tool": "wait_for_job_readiness"})
+                return terminal(job)
+            smoke.terminal = repeated_wait
+            with self.assertRaisesRegex(AssertionError, "call order or dispatch/wait count"):
+                smoke.pending()
 
 
 if __name__ == "__main__":

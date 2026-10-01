@@ -1163,9 +1163,9 @@ class AgentLoopReportTests(unittest.TestCase):
         serialized_once = report._stable_json(manifest)
         serialized_twice = report._stable_json(json.loads(serialized_once))
         self.assertEqual(serialized_once, serialized_twice)
-        self.assertEqual(len(manifest["cases"]), 10)
+        self.assertEqual(len(manifest["cases"]), 16)
         typed_cases = [case for case in manifest["cases"] if "code_mode_surface" in case]
-        self.assertEqual(len(typed_cases), 10)
+        self.assertEqual(len(typed_cases), 16)
         self.assertEqual(
             {case["code_mode_surface"] for case in typed_cases},
             {"read_only", "validation", "guarded_edit"},

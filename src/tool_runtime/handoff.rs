@@ -34,6 +34,8 @@ use webcodex_tool_contracts::{
 pub(crate) use webcodex_workflow_session::closeout_work_projection;
 
 pub(super) const DEFAULT_HANDOFF_LIMIT: usize = 20;
+pub(super) const UNPROVEN_SOURCE_REVIEW_ACTION: &str =
+    "review source_state and external workspace stability; rerunning validation alone cannot prove current source";
 const MAX_HANDOFF_LIMIT: usize = 100;
 const HANDOFF_CLOSEOUT_SESSION_EVENT_LIMIT: usize = 200;
 const MAX_RECENT_FAILED_TOOLS: usize = 10;
@@ -1236,10 +1238,7 @@ fn compact_workflow_outcomes(
         }
         Some("unproven") => {
             push_unique(&mut warning_reasons, "validation_inconclusive");
-            push_unique_action(
-                &mut actions,
-                "review source_state and external workspace stability; rerunning validation alone cannot prove current source",
-            );
+            push_unique_action(&mut actions, UNPROVEN_SOURCE_REVIEW_ACTION);
         }
         Some("inconclusive") => {
             push_unique(&mut warning_reasons, "validation_inconclusive");

@@ -575,20 +575,37 @@ pub(super) fn finish_decision_output(output: &Value) -> Value {
         decision["goal_follow_up"] = follow_up.clone();
     }
     apply_compact_workflow_outcomes(&mut decision, true, Some(hygiene_checked));
-    if let Some(outputs) = output
+    let task_outputs = output
         .get("task_outputs")
         .and_then(|value| {
             serde_json::from_value::<webcodex_core::task_outputs::TaskOutputs>(value.clone()).ok()
         })
-        .filter(|outputs| outputs.valid())
-    {
+        .filter(|outputs| outputs.valid());
+    if let Some(outputs) = task_outputs.as_ref() {
         super::super::task_outputs::attach_task_outputs(&mut decision, &outputs);
     }
     let verdict = decision
         .get("verdict")
         .cloned()
         .unwrap_or_else(|| json!({}));
-    decision["suggested_next_actions"] = json!(merged_suggested_next_actions(&decision, &verdict));
+    let mut actions = merged_suggested_next_actions(&decision, &verdict);
+    if task_outputs
+        .as_ref()
+        .is_some_and(|outputs| !outputs.items.is_empty())
+        && decision
+            .pointer("/validation/current_evidence/status")
+            .and_then(Value::as_str)
+            == Some("unproven")
+    {
+        // Adapt guidance without upgrading the source/validation proof. Artifact
+        // observations establish identity, not task semantics or stable inputs.
+        for action in &mut actions {
+            if action == super::super::handoff::UNPROVEN_SOURCE_REVIEW_ACTION {
+                *action = "Check task assertions and input/output stability; metadata confirms file identity, not content/counts. Report any limits alongside verified results. Rerunning alone does not establish stability.".into();
+            }
+        }
+    }
+    decision["suggested_next_actions"] = json!(actions);
     decision
         .as_object_mut()
         .expect("finish decision output is an object")

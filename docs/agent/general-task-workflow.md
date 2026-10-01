@@ -18,6 +18,8 @@ For each declared path, the Server calls the existing canonical artifact metadat
 
 The closed `task_outputs` receipt contains observed metadata and its Unix timestamp. The latest finish receipt is retained in the explicitly selected business Session ledger for Work Result, without requiring a separate recorder parameter. A different recorder Session cannot inherit or invalidate these outputs. A later finish of the same business Session without valid outputs invalidates the earlier receipt. Card refresh does not rehash these files or imply they are still unchanged. Verified rows expose an explicit chat export request that asks the caller to check the saved SHA again before exporting. Failed rows have no export action.
 
+Unproven validation retains its warning. When output observations are present, the closeout action asks for task-specific assertions and input/output stability checks; it does not promote file metadata into proof of content or counts. Shared card activity labels describe reading and editing files, including ordinary directory work.
+
 ## MCP feedback and deployed contracts
 
 MCP failure messages omit exact duplicate stdout/stderr tail blocks while preserving their canonical output fields, diagnostics and recovery guidance. HTTP results and retained logs remain available. MCP `observe_jobs` defaults to `summary_only=true`, compacting proven successful validation logs; failures, unknown results and ordinary commands retain evidence. Explicit `summary_only=false` expands from the original observation cursor.

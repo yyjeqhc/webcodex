@@ -345,10 +345,10 @@ impl ToolRuntime {
                     "activity": detail.activity.iter().map(|item| {
                         json!({
                             "label": match item.kind.as_str() {
-                                "Read" => "Read project files",
+                                "Read" => "Read files",
                                 "Searched" => "Searched the project",
                                 "Navigated" | "Explored" => "Explored the project",
-                                "Edited" => "Edited code",
+                                "Edited" => "Edited files",
                                 "Tested" => "Ran checks",
                                 "Reviewed" => "Reviewed changes",
                                 "Ran" => "Ran a command",
@@ -822,9 +822,9 @@ fn semantic_activity_label(tool: &str, current: bool) -> &'static str {
     {
         Some("read") => {
             if current {
-                "Reading project files"
+                "Reading files"
             } else {
-                "Read project files"
+                "Read files"
             }
         }
         Some("search") => {
@@ -843,9 +843,9 @@ fn semantic_activity_label(tool: &str, current: bool) -> &'static str {
         }
         Some("edit") => {
             if current {
-                "Editing code"
+                "Editing files"
             } else {
-                "Edited code"
+                "Edited files"
             }
         }
         Some("run") => {

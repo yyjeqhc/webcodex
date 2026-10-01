@@ -43,7 +43,7 @@ const nextState = {
     ...baseState.activity,
     active: true,
     current: { label: "Running checks", kind: "test", started_at_ms: 1789812010000 },
-    last: { label: "Edited code", kind: "edit", at_ms: 1789812009000 },
+    last: { label: "Edited files", kind: "edit", at_ms: 1789812009000 },
     last_meaningful_activity_at_ms: 1789812009000,
   },
   window_activity: {
@@ -54,7 +54,7 @@ const nextState = {
     events_observed: 3,
     last_activity_at_ms: 1789812010000,
     events: [
-      { label: "Edited code", kind: "edit", status: "success", meaningful: true, started_at_ms: 1789812008000, ended_at_ms: 1789812009000, duration_ms: 1000 },
+      { label: "Edited files", kind: "edit", status: "success", meaningful: true, started_at_ms: 1789812008000, ended_at_ms: 1789812009000, duration_ms: 1000 },
       ...baseState.window_activity.events,
     ],
   },
@@ -237,14 +237,14 @@ test("recent inactive work keeps the lightweight last-active state before the id
     state_version: `wr2_${"c".repeat(64)}`,
     activity: {
       ...baseState.activity,
-      last: { label: "Edited code", kind: "edit", at_ms: 1_999_999_990_000 },
+      last: { label: "Edited files", kind: "edit", at_ms: 1_999_999_990_000 },
       last_meaningful_activity_at_ms: 1_999_999_990_000,
     },
   };
   const view = app("mcp_work_result_app.html");
   view.toolResult({ work_result: quietState });
   await view.initialize();
-  assert.equal(view.nodes.activityStatus.textContent, "Edited code");
+  assert.equal(view.nodes.activityStatus.textContent, "Edited files");
   assert.equal(view.nodes.activityAge.textContent, "Last active 10s ago");
   assert.equal(view.nodes.badge.textContent, "Waiting");
 });

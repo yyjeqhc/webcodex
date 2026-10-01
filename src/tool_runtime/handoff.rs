@@ -1,4 +1,4 @@
-//! `read_session_handoff_summary` — read-only structured handoff for degraded or
+//! `read_session_handoff` — read-only structured handoff for degraded or
 //! contaminated execution context recovery (GPT long-task window routed to a
 //! degraded/contaminated context, context pollution, or continuing in a fresh
 //! window), multi-agent, and multi-window scenarios.
@@ -157,7 +157,7 @@ impl ToolRuntime {
         let include_validation = include_validation.unwrap_or(true);
 
         let authorized_target = match self
-            .authorize_session_target(&session_id, "read_session_handoff_summary", auth)
+            .authorize_session_target(&session_id, "read_session_handoff", auth)
             .await
         {
             Ok(resolved) => resolved,
@@ -183,7 +183,7 @@ impl ToolRuntime {
                 if session_project != requested.resolved_id {
                     return session_project_mismatch_result(
                         &session_id,
-                        "read_session_handoff_summary",
+                        "read_session_handoff",
                         &SessionProjectMismatch {
                             session_project: session_project.to_string(),
                             request_project: requested.resolved_id,

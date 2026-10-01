@@ -1371,7 +1371,7 @@ fn tool_call_project_accessor_covers_project_tool_specs() {
     // when provided, so the kernel can report it and authorize the workspace
     // git inspection path.
     let handoff = ToolCall::from_tool_name(
-        "read_session_handoff_summary",
+        "read_session_handoff",
         json!({"session_id": "wc_sess_x", "project": "agent:oe:private-drop"}),
     )
     .unwrap();

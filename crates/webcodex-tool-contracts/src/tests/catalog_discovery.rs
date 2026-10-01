@@ -448,10 +448,7 @@ fn tool_categories_and_recommended_flows_are_well_formed() {
         ("read_files", TOOL_CATEGORY_FILE),
         ("review_changes", TOOL_CATEGORY_GIT),
         ("read_workspace_changes", TOOL_CATEGORY_GIT),
-        (
-            "import_conversation_files_to_project",
-            TOOL_CATEGORY_ARTIFACT,
-        ),
+        ("import_host_files", TOOL_CATEGORY_ARTIFACT),
         ("load_skill", TOOL_CATEGORY_SKILL),
         ("run_skill_resource", TOOL_CATEGORY_SKILL),
         ("plugin_tool", TOOL_CATEGORY_PLUGIN),
@@ -503,7 +500,7 @@ fn tool_categories_and_recommended_flows_are_well_formed() {
         "specialists require exact-name discovery",
         "validate: use structured validators when their canonical diagnostics",
         "native execution is first-class when the command is outside or awkward",
-        "file transfer: host -> import_conversation_files_to_project -> project",
+        "file transfer: host -> import_host_files -> project",
         "project -> inspect_project_artifact -> host/model",
         "project a -> transfer_project_artifact -> project b",
         "inspect for one bounded segment",
@@ -512,7 +509,7 @@ fn tool_categories_and_recommended_flows_are_well_formed() {
         "review: use review_changes as the primary ordinary workspace or committed review surface",
         "same-snapshot token",
         "old review tools remain specialists",        "handoff/recovery only",
-        "read_session_handoff_summary only for missing task context",
+        "read_session_handoff only for missing task context",
         "never routine progress polling",
     ] {
         assert!(

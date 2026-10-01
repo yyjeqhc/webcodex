@@ -33,7 +33,7 @@
   "current_window_activity": "read_current_window_activity",
   "tool_manifest": "read_tool_manifest",
   "project_overview": "read_project_overview",
-  "search_and_read": "search_and_read_project_texts",
+  "search_and_read": "search_file_context",
   "git_review_summary": "read_git_review_summary",
   "show_changes": "read_workspace_changes",
   "git_commit_paths": "commit_git_paths",
@@ -74,7 +74,7 @@
   "session_summary": "read_session_summary",
   "validation_summary": "read_validation_summary",
   "session_discussion_summary": "read_session_discussion_summary",
-  "session_handoff_summary": "read_session_handoff_summary",
+  "session_handoff_summary": "read_session_handoff",
   "session_handoff_state": "get_session_handoff_state",
   "skill_load": "load_skill",
   "skill_list": "list_skills",
@@ -83,5 +83,6 @@
   "skill_install": "install_skill",
   "skill_activate": "activate_skill",
   "skill_remove_revision": "remove_skill_revision",
-  "ssh_resource": "manage_ssh_resource"
+  "ssh_resource": "manage_ssh_resource",
+  "import_conversation_files_to_project": "import_host_files"
 }

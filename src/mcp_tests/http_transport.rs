@@ -1582,7 +1582,7 @@ async fn http_mcp_2026_explicit_handoff_without_context_ack_body() {
         &service,
         "secret",
         229,
-        "read_session_handoff_summary",
+        "read_session_handoff",
         json!({"session_id": session_id}),
         None,
     )
@@ -1606,7 +1606,7 @@ async fn http_mcp_2026_explicit_handoff_without_context_ack_body() {
         &service,
         "secret",
         230,
-        "read_session_handoff_summary",
+        "read_session_handoff",
         json!({"session_id": session_id, "diagnostic": true}),
         None,
     )

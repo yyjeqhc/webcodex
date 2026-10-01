@@ -124,7 +124,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
             ),
             (
                 "handoff",
-                nullable_schema("object", "read_session_handoff_summary output when requested; null otherwise."),
+                nullable_schema("object", "read_session_handoff output when requested; null otherwise."),
             ),
             (
                 "jobs",

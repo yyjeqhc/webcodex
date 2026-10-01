@@ -97,7 +97,7 @@ fn tool_specs_describe_default_coding_loop_preferences() {
         "broad discovery",
         "files_with_matches/count",
         "matched source will be read immediately",
-        "search_and_read_project_texts",
+        "search_file_context",
         "small known-scope search",
         "native rg is first-class",
         "batch only independent queries",
@@ -122,7 +122,7 @@ fn tool_specs_describe_default_coding_loop_preferences() {
         );
     }
 
-    let search_and_read_desc = desc("search_and_read_project_texts");
+    let search_and_read_desc = desc("search_file_context");
     for phrase in [
         "one bounded project-text query or 1..8 predetermined independent queries",
         "query xor queries",
@@ -134,26 +134,26 @@ fn tool_specs_describe_default_coding_loop_preferences() {
     ] {
         assert!(
             search_and_read_desc.contains(phrase),
-            "search_and_read_project_texts description should mention {phrase}: {search_and_read_desc}"
+            "search_file_context description should mention {phrase}: {search_and_read_desc}"
         );
     }
     assert!(
         !search_and_read_desc.contains("run one bounded project-text search"),
-        "obsolete single-query search_and_read_project_texts description returned: {search_and_read_desc}"
+        "obsolete single-query search_file_context description returned: {search_and_read_desc}"
     );
 
     let save_artifact_desc = desc("save_project_artifact");
     for phrase in [
         "already holds the bounded binary/base64 content",
         "do not read a current chatgpt/host attachment",
-        "import_conversation_files_to_project",
+        "import_host_files",
     ] {
         assert!(
             save_artifact_desc.contains(phrase),
             "save_project_artifact: {phrase}"
         );
     }
-    let import_artifact_desc = desc("import_conversation_files_to_project");
+    let import_artifact_desc = desc("import_host_files");
     for phrase in [
         "preferred host-native attachment-to-project transfer path",
         "do not base64-transfer files",
@@ -166,7 +166,7 @@ fn tool_specs_describe_default_coding_loop_preferences() {
     ] {
         assert!(
             import_artifact_desc.contains(phrase),
-            "import_conversation_files_to_project: {phrase}"
+            "import_host_files: {phrase}"
         );
     }
     let project_artifact_desc = desc("inspect_project_artifact");
@@ -189,7 +189,7 @@ fn tool_specs_describe_default_coding_loop_preferences() {
         "image=mcp image",
         "export=mcp resourcelink",
         "not repeated inspect calls",
-        "import_conversation_files_to_project",
+        "import_host_files",
     ] {
         assert!(
             project_artifact_desc.contains(phrase),
@@ -215,7 +215,7 @@ fn tool_specs_describe_default_coding_loop_preferences() {
     for phrase in [
         "low-level chunked binary artifact upload",
         "not the preferred path for a current chatgpt/host attachment",
-        "import_conversation_files_to_project",
+        "import_host_files",
     ] {
         assert!(
             upload_begin_desc.contains(phrase),
@@ -481,11 +481,11 @@ fn tool_specs_describe_default_coding_loop_preferences() {
         );
     }
 
-    let handoff_desc = desc("read_session_handoff_summary");
+    let handoff_desc = desc("read_session_handoff");
     for phrase in ["handoff", "missing task context", "read-only"] {
         assert!(
             handoff_desc.contains(phrase),
-            "read_session_handoff_summary description should mention {phrase}: {handoff_desc}"
+            "read_session_handoff description should mention {phrase}: {handoff_desc}"
         );
     }
 
@@ -731,7 +731,7 @@ fn model_preference_upper_bounds_are_clamped_by_runtime_not_rejected_by_schema()
         ("list_session_messages", &["limit"]),
         ("observe_session_messages", &["wait_secs", "limit"]),
         ("read_validation_summary", &["limit"]),
-        ("read_session_handoff_summary", &["limit"]),
+        ("read_session_handoff", &["limit"]),
         ("list_document_symbols", &["limit"]),
         ("read_document_diagnostics", &["limit"]),
         ("list_workspace_symbols", &["limit"]),
@@ -1042,7 +1042,7 @@ fn session_tool_specs_describe_explicit_targeting() {
         );
     }
 
-    let handoff_desc = desc("read_session_handoff_summary");
+    let handoff_desc = desc("read_session_handoff");
     for phrase in [
         "exact session_id",
         "handoff_brief",
@@ -1052,7 +1052,7 @@ fn session_tool_specs_describe_explicit_targeting() {
     ] {
         assert!(
             handoff_desc.contains(phrase),
-            "read_session_handoff_summary description should mention {phrase}: {handoff_desc}"
+            "read_session_handoff description should mention {phrase}: {handoff_desc}"
         );
     }
 

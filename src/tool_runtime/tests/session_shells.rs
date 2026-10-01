@@ -196,7 +196,7 @@ async fn persistent_shell_handoff(runtime: &ToolRuntime, session_id: &str) -> To
     runtime
         .dispatch(
             ToolCall::from_tool_name(
-                "read_session_handoff_summary",
+                "read_session_handoff",
                 serde_json::json!({
                     "session_id": session_id,
                     "include_workspace": false,

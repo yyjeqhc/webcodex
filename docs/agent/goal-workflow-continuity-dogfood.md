@@ -32,7 +32,7 @@ projection is not evidence that the Session has no active Goal. This normal re-e
 path prevents a new model turn from creating a duplicate Goal merely because it lost
 the earlier Goal identity.
 
-Explicit `read_session_handoff_summary` recovery follows the same identity boundary but may
+Explicit `read_session_handoff` recovery follows the same identity boundary but may
 return a richer bounded sibling `goal_context` for an already-correlated active Goal:
 Goal identity/lifecycle/revision, objective, current plan and checkpoint context. Zero
 active correlations omit it; multiple active correlations remain `selection_required`
@@ -57,7 +57,7 @@ Goal Plan presentation and Wake creation are never part of `prepare_goal_workflo
 success. The Agent may remain another Coordinator's Worker/Task assignee at the same
 time. Do not infer identity from Window co-location or create a second Goal-only Agent.
 
-The Goal Plan resource is solely `ui://webcodex/goal-plan/v6`, wire version 3. It
+The Goal Plan resource is solely `ui://webcodex/goal-plan/v7`, wire version 3. It
 renders step counts, current step, bounded milestones, last checkpoint, activity,
 and a bounded read-only continuity projection. Continuity keeps production Host
 carrier readiness and the exact current Goal-stall Wake lifecycle separate from
@@ -142,7 +142,7 @@ independent inactivity epoch requires newer meaningful work after the earlier
 attention, not a metadata revision or imported older Session history.
 
 The resumed turn must bootstrap/consume that exact Wake, re-read Goal/plan, recover
-the exact correlated Session with `read_session_handoff_summary`, and use current
+the exact correlated Session with `read_session_handoff`, and use current
 Job/Project truth only as needed. Continue from the latest checkpoint/current step.
 A disappeared turn does not establish failure: never replay an uncertain previous
 effect merely because it disappeared. Stalled is not offline, heartbeat is not

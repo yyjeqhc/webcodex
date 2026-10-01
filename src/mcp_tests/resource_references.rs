@@ -34,7 +34,7 @@ async fn resource_reads_match_canonical_tool_and_work_without_apps_in_both_eras(
         } else {
             json!({})
         };
-        let read=super::work_result_app::handle_with_server_apps_enabled(&runtime,serde_json::from_value(json!({"jsonrpc":"2.0","id":1,"method":"resources/read","params":{"uri":uri,"_meta":meta}})).unwrap(),None,false).await;
+        let read=handle_with_app_policy(&runtime,serde_json::from_value(json!({"jsonrpc":"2.0","id":1,"method":"resources/read","params":{"uri":uri,"_meta":meta}})).unwrap(),None,false).await;
         let read = match read {
             McpOutcome::Ok(v) => v,
             other => panic!("{other:?}"),
@@ -44,7 +44,7 @@ async fn resource_reads_match_canonical_tool_and_work_without_apps_in_both_eras(
                 .unwrap(),
             canonical.output
         );
-        let tool=super::work_result_app::handle_with_server_apps_enabled(&runtime,serde_json::from_value(json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"read_webcodex_resource","arguments":{"uri":uri},"_meta":meta}})).unwrap(),None,false).await;
+        let tool=handle_with_app_policy(&runtime,serde_json::from_value(json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"read_webcodex_resource","arguments":{"uri":uri},"_meta":meta}})).unwrap(),None,false).await;
         let tool = match tool {
             McpOutcome::Ok(v) => v,
             other => panic!("{other:?}"),

@@ -269,7 +269,7 @@ current-step invariant. Corruption fails closed for read/list/mutation and atten
 source validation. A Goal with incomplete steps cannot become completed. Terminal
 Goals cannot accept new checkpoints, metadata changes or correlations. Fresh
 verification/review and judgment of completion intent remain explicit model work.
-`read_session_handoff_summary` is for genuine missing-context/cross-turn recovery, not
+`read_session_handoff` is for genuine missing-context/cross-turn recovery, not
 routine checkpoint bookkeeping.
 
 Goal tools do not gain Project execution selectors. Explicit Session association
@@ -398,7 +398,7 @@ Goal Plan sync -> authoritative observation + fenced reconciliation in one RPC
  -> existing AgentContinuationController / Agent Continuation MCP App
  -> existing claim + prepare + dispatch fence -> ui/message
  -> new model turn: bootstrap exact Wake -> immediately consume exact Wake
- -> get_goal -> exact read_session_handoff_summary -> continue latest checkpoint
+ -> get_goal -> exact read_session_handoff -> continue latest checkpoint
 ```
 
 Goal Plan never calls `ui/message`; the cards remain separate. If the Goal controller

@@ -34,7 +34,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             false,
             super::ToolSessionEvidencePolicy::NONE,
             ),
-            "Write a bounded binary project artifact when the caller already holds the bounded binary/base64 content. Do not read a current ChatGPT/host attachment and base64-encode it through the model; use import_conversation_files_to_project for host-native attachment import. Suitable for generated images, PDFs, ZIP archives, and DOCX/PPTX/XLSX Office artifacts already present as bounded caller data; not for UTF-8 source edits.",
+            "Write a bounded binary project artifact when the caller already holds the bounded binary/base64 content. Do not read a current ChatGPT/host attachment and base64-encode it through the model; use import_host_files for host-native attachment import. Suitable for generated images, PDFs, ZIP archives, and DOCX/PPTX/XLSX Office artifacts already present as bounded caller data; not for UTF-8 source edits.",
         ),
         PERMISSION_RISK_ARTIFACT_WRITE,
     ),
@@ -42,7 +42,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         permission_risk(
             model_spec(
                 def(
-                    "import_conversation_files_to_project",
+                    "import_host_files",
                     super::ToolAuditPolicy::TYPED_CANONICAL,
                     ModelVisible,
                     TOOL_CATEGORY_ARTIFACT,
@@ -148,7 +148,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
                 false,
                 super::ToolSessionEvidencePolicy::NONE,
             ),
-            "Project artifact read: metadata=facts; inspect=fenced segment; image=MCP image; export=MCP ResourceLink. Use export for whole files, not repeated inspect calls; use import_conversation_files_to_project for host-to-Project attachments.",
+            "Project artifact read: metadata=facts; inspect=fenced segment; image=MCP image; export=MCP ResourceLink. Use export for whole files, not repeated inspect calls; use import_host_files for host-to-Project attachments.",
         ),
         56,
         super::ToolDirectReason::CoreWorkflow,
@@ -220,7 +220,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             false,
             super::ToolSessionEvidencePolicy::NONE,
         ),
-        "Begin a bounded low-level chunked binary artifact upload up to 256 MiB. Creates a project-local temporary upload session; finish commits atomically to the target path. This is not the preferred path for a current ChatGPT/host attachment; use import_conversation_files_to_project for host-native import. MIME is presentation metadata: unknown regular artifacts may use application/octet-stream; Project authorization, sensitive-path checks, root containment, symlink protection, fencing, and byte/SHA validation remain the safety boundary.",
+        "Begin a bounded low-level chunked binary artifact upload up to 256 MiB. Creates a project-local temporary upload session; finish commits atomically to the target path. This is not the preferred path for a current ChatGPT/host attachment; use import_host_files for host-native import. MIME is presentation metadata: unknown regular artifacts may use application/octet-stream; Project authorization, sensitive-path checks, root containment, symlink protection, fencing, and byte/SHA validation remain the safety boundary.",
     ),
     requires_artifact_upload_path_binding(model_spec(
         def(

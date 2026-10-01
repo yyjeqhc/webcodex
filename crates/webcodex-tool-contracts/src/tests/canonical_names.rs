@@ -212,3 +212,37 @@ fn retired_v04_tool_names_are_not_admitted_or_reused_for_other_operations() {
     assert!(input.effect_annotations().idempotent_hint);
     assert_eq!(input.metadata().idempotency, crate::ToolIdempotency::Keyed);
 }
+
+#[test]
+fn frequent_names_stay_readable_without_old_aliases_or_scope_changes() {
+    for (name, old) in [
+        ("import_host_files", "import_conversation_files_to_project"),
+        ("search_file_context", "search_and_read_project_texts"),
+        ("read_session_handoff", "read_session_handoff_summary"),
+    ] {
+        let current = lookup_tool_definition(name).expect(name);
+        assert!(name.len() <= 24);
+        assert_eq!(current.name, name);
+        assert!(
+            lookup_tool_definition(old).is_none(),
+            "retired spelling: {old}"
+        );
+        assert!(ToolCall::from_tool_name(old, serde_json::json!({})).is_err());
+    }
+    let import = lookup_tool_definition("import_host_files").unwrap();
+    assert!(import.adaptive_runtime_direct.is_some());
+    assert!(import.metadata().requires_project);
+    assert!(!import.effect_annotations().read_only_hint);
+    assert!(
+        lookup_tool_definition("search_file_context")
+            .unwrap()
+            .effect_annotations()
+            .read_only_hint
+    );
+    assert!(
+        lookup_tool_definition("read_session_handoff")
+            .unwrap()
+            .effect_annotations()
+            .read_only_hint
+    );
+}

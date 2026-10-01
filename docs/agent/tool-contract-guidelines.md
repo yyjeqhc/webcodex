@@ -318,7 +318,7 @@ secondary to the tool result.
 This is a presentation/projection rule, not permission to weaken the underlying
 protocol. In particular:
 
-- missing task context is recovered explicitly with `read_session_handoff_summary`;
+- missing task context is recovered explicitly with `read_session_handoff`;
 - collaboration ACKs require request-scoped retained-message proof;
 - a ClientWindow must not select a Workflow Session;
 - support metadata must not become execution authority.
@@ -474,6 +474,15 @@ verbs consistently:
 | `present_*` | Host-visible presentation/App integration whose descriptor carries presentation semantics. |
 | `create_*`, `update_*`, `assign_*`, `complete_*`, `stop_*` | Explicit lifecycle/effect verbs; keep target identity in the object name. |
 
+Prefer two or three meaningful words for high-frequency primitives. Project and
+Session parameters already carry exact scope; do not repeat the full source,
+destination, representation and result shape in one name. This is a readability
+preference, not a new rejection ceiling or an abbreviation mandate:
+`import_host_files`, `search_file_context` and `read_session_handoff` retain the
+selection distinction without an API-path-like name. Low-frequency names may
+stay longer when dropping Agent/Task/Endpoint/Wake would conflate real identities.
+Keep descriptions responsible for limits and recovery, never tool-name suffixes.
+
 Use plural objects when one ordinary call is natively batch-shaped
 (`read_files`, `observe_jobs`, `search_project_texts`); use singular names
 for exact-resource operations unless an established domain term says otherwise.
@@ -558,7 +567,7 @@ App protocol remain intact. A cached presentation descriptor follows existing
 admission rules; no old-schema compatibility bypass is added.
 
 `present_work_result` and `present_goal_plan` remain Direct with Presentation
-reason. `import_conversation_files_to_project` remains Direct with HostIntegration
+reason. `import_host_files` remains Direct with HostIntegration
 reason. No current Direct definition needs Continuation reason. Restore that
 policy explicitly (and presentation visibility), then refresh Host schema if
 fresh-turn support returns; do not couple registration to

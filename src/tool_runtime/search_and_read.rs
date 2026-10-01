@@ -246,7 +246,7 @@ impl ToolRuntime {
         let max_reads = max_reads.unwrap_or(DEFAULT_MAX_READS).clamp(1, MAX_READS);
 
         if queries.is_empty() || queries.len() > 8 {
-            return ToolResult::err("search_and_read_project_texts requires 1..8 queries");
+            return ToolResult::err("search_file_context requires 1..8 queries");
         }
         for query in &mut queries {
             query.result_mode = Some(SearchResultMode::Matches);
@@ -273,7 +273,7 @@ impl ToolRuntime {
         let search_outputs = sanitize_batch_search_and_collect_successes(&mut batch_search_output);
         if search_outputs.is_empty() {
             return ToolResult::err_with_output(
-                "search_and_read_project_texts could not obtain a successful search result",
+                "search_file_context could not obtain a successful search result",
                 json!({"project": resolved.resolved_id, "search": batch_search_output, "state_changed": false}),
             );
         }
@@ -345,7 +345,7 @@ mod tests {
     #[test]
     fn tool_call_schema_parses_search_and_read_and_rejects_unknown_fields() {
         let parsed = crate::tool_runtime::ToolCall::from_tool_name(
-            "search_and_read_project_texts",
+            "search_file_context",
             json!({
                 "project": "demo",
                 "query": {"pattern": "needle", "pattern_mode": "literal"},
@@ -368,7 +368,7 @@ mod tests {
             } if project == "demo"
         ));
         assert!(crate::tool_runtime::ToolCall::from_tool_name(
-            "search_and_read_project_texts",
+            "search_file_context",
             json!({
                 "project": "demo",
                 "query": {"pattern": "needle"},
@@ -500,7 +500,7 @@ mod tests {
     #[test]
     fn multi_query_schema_and_fair_global_budget() {
         let parsed = crate::tool_runtime::ToolCall::from_tool_name(
-            "search_and_read_project_texts",
+            "search_file_context",
             json!({"project":"demo","queries":[{"pattern":"one"},{"pattern":"two"}]}),
         )
         .unwrap();

@@ -1135,7 +1135,7 @@ async fn tool_manifest_intent_coding_returns_ranked_compact_tools() {
     for direct in [
         "work_on_project",
         "search_project_texts",
-        "search_and_read_project_texts",
+        "search_file_context",
         "read_files",
         "edit_project_files",
         "run_process",
@@ -1304,7 +1304,7 @@ async fn audit_and_exploration_intents_exclude_shell_and_jobs() {
                 "read_git_log",
                 "review_changes",
                 "check_workspace_hygiene",
-                "read_session_handoff_summary",
+                "read_session_handoff",
                 "finish_coding_task",
                 "read_tool_manifest",
             ] {
@@ -2068,7 +2068,7 @@ async fn exact_tool_manifest_projects_bounded_host_orchestration_from_tool_defin
             }),
         ),
         (
-            "search_and_read_project_texts",
+            "search_file_context",
             json!({
                 "guidance_only": true,
                 "concurrency": "independent_parallel_read",
@@ -2136,7 +2136,7 @@ async fn exact_tool_manifest_projects_bounded_host_orchestration_from_tool_defin
     for tool_name in [
         "read_files",
         "search_project_texts",
-        "search_and_read_project_texts",
+        "search_file_context",
         "cargo_check",
         "edit_project_files",
     ] {
@@ -2373,7 +2373,7 @@ async fn tool_manifest_routing_metadata_uses_canonical_adaptive_routes() {
     for (tool_name, availability, gateway_tool) in [
         ("run_process", "direct", None),
         ("run_shell", "direct", None),
-        ("import_conversation_files_to_project", "direct", None),
+        ("import_host_files", "direct", None),
         ("inspect_project_artifact", "direct", None),
         ("read_session_discussion_summary", "direct", None),
         ("list_jobs", "gateway", Some("call_runtime_tool")),

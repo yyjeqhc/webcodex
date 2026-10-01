@@ -30,7 +30,7 @@ Depending on the token, scopes, client surface, session state, and agent policy,
 - Apply structured line edits or checked patches.
 - Run structured validation helpers such as Cargo format, check, and test.
 - Request bounded shell commands or async jobs when the deployment exposes them.
-- Produce `read_workspace_changes`, `check_workspace_hygiene`, `finish_coding_task`, and `read_session_handoff_summary` evidence for review.
+- Produce `read_workspace_changes`, `check_workspace_hygiene`, `finish_coding_task`, and `read_session_handoff` evidence for review.
 
 ## What The Online Model Cannot Do
 

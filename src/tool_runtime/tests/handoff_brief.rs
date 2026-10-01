@@ -192,7 +192,7 @@ fn assert_all_objects_strict(schema: &Value, path: &str) {
 fn handoff_brief_schema_is_shared_strict_and_absent_from_startup() {
     let specs = registered_tool_specs();
     let finish = spec_named(&specs, "finish_coding_task");
-    let handoff = spec_named(&specs, "read_session_handoff_summary");
+    let handoff = spec_named(&specs, "read_session_handoff");
     let work = spec_named(&specs, "work_on_project");
     let finish_schema =
         &finish.output_schema["properties"]["output"]["properties"]["handoff_brief"];
@@ -515,7 +515,7 @@ async fn public_handoff_dispatch_records_only_standard_telemetry_and_preserves_g
     );
     assert!(new_events
         .iter()
-        .all(|event| event.tool_name == "read_session_handoff_summary"));
+        .all(|event| event.tool_name == "read_session_handoff"));
     assert!(new_events.iter().all(|event| {
         event.read_like
             && !event.write_like

@@ -197,7 +197,7 @@ fn direct_strategy_prefers_structured_edits_and_coalesces_known_work() {
         "Never use scripts to bypass edit_project_files revision fences",
         "read_files(items)",
         "search_project_texts(queries)",
-        "search_and_read_project_texts",
+        "search_file_context",
         "cargo_check(packages)",
         "one edit_project_files batch",
         "result-dependent operations sequential",
@@ -269,7 +269,7 @@ fn host_code_mode_strategy_is_bounded_guidance_only() {
         "Promise.allSettled",
         "partial evidence",
         "Promise.all for all-or-nothing",
-        "search_and_read_project_texts",
+        "search_file_context",
         "one Host cell",
         "Child-call completion alone is not a boundary",
         "mechanically determined",
@@ -383,7 +383,7 @@ fn code_mode_strategy_changes_only_guidance_and_teaches_compact_composition() {
     let strategy = strategy_text(&composed);
     for phrase in [
         "simple observation use a direct primitive",
-        "prefer direct search_and_read_project_texts",
+        "prefer direct search_file_context",
         "multi-step related search/read observations",
         "read-only execute_code_mode",
         "soft heuristic",

@@ -3257,7 +3257,7 @@ fn wake_envelope(
             terminal_task_state.as_str(),
         ),
             AgentAttentionSource::GoalWorkflowStalled { workflow_session_id, .. } => format!(
-                "WebCodex Goal workflow stall continuation.\nagent_id={}\nendpoint_id={}\ncontroller_generation={}\nwake_id={}\nconsume_token={}\ngoal_id={}\nsession_id={}\n\nBootstrap this exact Wake with bootstrap_agent_conversation; immediately consume_agent_wake. Then get_goal(goal_id) and read_session_handoff_summary(session_id) for the exact correlated Workflow Session. Continue the latest checkpoint/current step using current authorized Job/Project state as needed. A vanished turn does not prove failure: never repeat an uncertain effect. Checkpoint with checkpoint_goal as work progresses; fresh verification/review precedes explicit update_goal completion. Stop if terminal or its controller changed.\n",
+                "WebCodex Goal workflow stall continuation.\nagent_id={}\nendpoint_id={}\ncontroller_generation={}\nwake_id={}\nconsume_token={}\ngoal_id={}\nsession_id={}\n\nBootstrap this exact Wake with bootstrap_agent_conversation; immediately consume_agent_wake. Then get_goal(goal_id) and read_session_handoff(session_id) for the exact correlated Workflow Session. Continue the latest checkpoint/current step using current authorized Job/Project state as needed. A vanished turn does not prove failure: never repeat an uncertain effect. Checkpoint with checkpoint_goal as work progresses; fresh verification/review precedes explicit update_goal completion. Stop if terminal or its controller changed.\n",
                 wake.target_agent_id, endpoint_id, controller_generation, wake.wake_id,
                 consume_token, event.goal_id, workflow_session_id,
             ),

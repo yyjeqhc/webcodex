@@ -142,7 +142,7 @@ durable Wake truth does not claim model resumption; readiness remains carrier-on
 accepted dispatch is not resume, delivery-unknown cannot be blindly resent, and
 only exact consume proves execution of a new turn. The compact stall message
 requires bootstrap and immediate exact consume, `get_goal`, exact correlated
-`read_session_handoff_summary`, then continued work from the latest checkpoint/current
+`read_session_handoff`, then continued work from the latest checkpoint/current
 step using current authorized Job/Project truth. Recovery is a **fresh reasoning
 opportunity**, not retry of the preceding uncertain tool effect.
 

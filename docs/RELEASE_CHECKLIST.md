@@ -82,7 +82,7 @@ The exact-source release-readiness workflow runs `EVAL_MODE=compare bash scripts
 Confirm:
 
 - No secrets, `.env`, credentials, token files, generated deployment env files, or Authorization headers were touched or printed.
-- `finish_coding_task` and `read_session_handoff_summary` compact outputs do not expose raw stdout/stderr bodies, command text, tails, excerpts, env values, tokens, or secrets.
+- `finish_coding_task` and `read_session_handoff` compact outputs do not expose raw stdout/stderr bodies, command text, tails, excerpts, env values, tokens, or secrets.
 - `run_shell` is documented as a bounded shell primitive, while structured validators remain the default validation source.
 - Model-facing runtime docs keep admin, account, pairing, token-management, and Runner-token management outside MCP.
 

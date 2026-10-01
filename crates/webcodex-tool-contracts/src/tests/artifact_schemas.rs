@@ -287,7 +287,5 @@ fn project_artifact_is_compact_typed_project_read_facade() {
         ])
     );
     assert!(spec.description.contains("not repeated inspect"));
-    assert!(spec
-        .description
-        .contains("import_conversation_files_to_project"));
+    assert!(spec.description.contains("import_host_files"));
 }

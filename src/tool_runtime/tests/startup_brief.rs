@@ -119,7 +119,7 @@ fn assert_builtin_workflow(output: &Value) {
     let recovery = workflow["model_protocol"]["handoff_recovery"]
         .as_str()
         .unwrap();
-    assert!(recovery.contains("read_session_handoff_summary"));
+    assert!(recovery.contains("read_session_handoff"));
     assert!(recovery.contains("exact session_id"));
     assert!(recovery.contains("basis completeness"));
     assert!(recovery.contains("only after task-context loss/compaction/restart"));

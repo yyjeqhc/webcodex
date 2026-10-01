@@ -1,4 +1,4 @@
-use super::work_result_app::handle_with_server_apps_enabled;
+use handle_with_app_policy;
 use super::*;
 use std::sync::Arc;
 
@@ -80,7 +80,7 @@ async fn native_mentions_preserve_goal_owner_and_independent_domain_scopes() {
         serde_json::from_value(json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":mcp_2026_ui_params(json!({"name":"search_mentions","arguments":{"query":query}}))})).unwrap()
     };
     let McpOutcome::Ok(result) =
-        handle_with_server_apps_enabled(&runtime, call("%_"), Some(&owner), true).await
+        handle_with_app_policy(&runtime, call("%_"), Some(&owner), true).await
     else {
         panic!("mentions failed")
     };
@@ -97,24 +97,24 @@ async fn native_mentions_preserve_goal_owner_and_independent_domain_scopes() {
     let mut other = mcp_export_api_auth("other-key", "other");
     other.scopes = owner.scopes.clone();
     let McpOutcome::Ok(foreign) =
-        handle_with_server_apps_enabled(&runtime, call(""), Some(&other), true).await
+        handle_with_app_policy(&runtime, call(""), Some(&other), true).await
     else {
         panic!("foreign mentions failed")
     };
     assert_eq!(foreign["result"]["structuredContent"]["items"], json!([]));
     assert!(!foreign.to_string().contains("Native reference"));
     assert!(matches!(
-        handle_with_server_apps_enabled(&runtime, call(""), Some(&owner), false).await,
+        handle_with_app_policy(&runtime, call(""), Some(&owner), false).await,
         McpOutcome::BadRequest(_)
     ));
     let legacy=serde_json::from_value(json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"search_mentions","arguments":{"query":""}}})).unwrap();
     assert!(matches!(
-        handle_with_server_apps_enabled(&runtime, legacy, Some(&owner), true).await,
+        handle_with_app_policy(&runtime, legacy, Some(&owner), true).await,
         McpOutcome::BadRequest(_)
     ));
     let bad=serde_json::from_value(json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":mcp_2026_ui_params(json!({"name":"search_mentions","arguments":{"query":"","project":"hidden-target"}}))})).unwrap();
     assert!(matches!(
-        handle_with_server_apps_enabled(&runtime, bad, Some(&owner), true).await,
+        handle_with_app_policy(&runtime, bad, Some(&owner), true).await,
         McpOutcome::BadRequest(_)
     ));
 }

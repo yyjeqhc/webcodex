@@ -1,4 +1,4 @@
-use super::work_result_app::handle_with_server_apps_enabled;
+use handle_with_app_policy;
 use super::*;
 fn stateless_ui_meta() -> Value {
     json!({
@@ -12,7 +12,7 @@ async fn workbench_app_descriptor_accepts_empty_input_and_preserves_existing_car
     let runtime = ToolRuntime::new_for_tests();
     for enabled in [false, true] {
         let request=serde_json::from_value(json!({"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"_meta":stateless_ui_meta()}})).unwrap();
-        let outcome = handle_with_server_apps_enabled(&runtime, request, None, enabled).await;
+        let outcome = handle_with_app_policy(&runtime, request, None, enabled).await;
         let McpOutcome::Ok(value) = outcome else {
             panic!("tools list failed")
         };
@@ -47,7 +47,7 @@ async fn workbench_app_descriptor_accepts_empty_input_and_preserves_existing_car
             .iter()
             .any(|tool| tool["name"] == "read_webcodex_resource"));
     }
-    let outcome=handle_with_server_apps_enabled(&runtime,serde_json::from_value(json!({"jsonrpc":"2.0","id":2,"method":"resources/read","params":{"uri":super::super::resources::MCP_WORKBENCH_UI_RESOURCE_URI,"_meta":stateless_ui_meta()}})).unwrap(),None,true).await;
+    let outcome=handle_with_app_policy(&runtime,serde_json::from_value(json!({"jsonrpc":"2.0","id":2,"method":"resources/read","params":{"uri":super::super::resources::MCP_WORKBENCH_UI_RESOURCE_URI,"_meta":stateless_ui_meta()}})).unwrap(),None,true).await;
     let McpOutcome::Ok(value) = outcome else {
         panic!("workbench resource failed")
     };
@@ -90,7 +90,7 @@ async fn workbench_view_reads_receive_canonical_text_fallback() {
     let runtime = ToolRuntime::new_for_tests();
     let request=serde_json::from_value(json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"open_webcodex_workbench","arguments":{},"_meta":stateless_ui_meta()}})).unwrap();
     let McpOutcome::Ok(value) =
-        handle_with_server_apps_enabled(&runtime, request, None, true).await
+        handle_with_app_policy(&runtime, request, None, true).await
     else {
         panic!("launcher failed")
     };
@@ -115,7 +115,7 @@ async fn workbench_refresh_cannot_record_in_an_unadvertised_session() {
         json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":params}),
     )
     .unwrap();
-    let outcome = handle_with_server_apps_enabled(&runtime, request, None, true).await;
+    let outcome = handle_with_app_policy(&runtime, request, None, true).await;
     assert!(matches!(
         outcome,
         McpOutcome::Ok(_) | McpOutcome::BadRequest(_)

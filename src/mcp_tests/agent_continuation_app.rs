@@ -111,7 +111,7 @@ fn continuation_runtime() -> (tempfile::TempDir, Arc<crate::db::Database>, ToolR
     (temp, db, runtime)
 }
 
-async fn handle_with_server_apps_enabled(
+async fn handle_with_app_policy(
     runtime: &ToolRuntime,
     request: JsonRpcRequest,
     auth: Option<&crate::auth::AuthContext>,
@@ -236,11 +236,11 @@ fn post_message(
 async fn agent_continuation_app_surface_is_sparse_app_only_without_rendering_bindings() {
     assert_eq!(
         MCP_AGENT_CONTINUATION_UI_RESOURCE_URI,
-        "ui://webcodex/agent-continuation/v17"
+        "ui://webcodex/agent-continuation/v18"
     );
     let (_temp, _db, adaptive) = continuation_runtime();
     let auth = continuation_auth("continuation-surface");
-    let ui = handle_with_server_apps_enabled(
+    let ui = handle_with_app_policy(
         &adaptive,
         rpc(
             "tools/list",
@@ -310,7 +310,7 @@ async fn agent_continuation_app_surface_is_sparse_app_only_without_rendering_bin
         ])
     );
 
-    let plain = handle_with_server_apps_enabled(
+    let plain = handle_with_app_policy(
         &adaptive,
         rpc("tools/list", Some(json!(5102)), mcp_2026_params(json!({}))),
         Some(&auth),
@@ -326,7 +326,7 @@ async fn agent_continuation_app_surface_is_sparse_app_only_without_rendering_bin
         assert!(tool(&plain["result"], name).is_none());
     }
 
-    let disabled = handle_with_server_apps_enabled(
+    let disabled = handle_with_app_policy(
         &adaptive,
         rpc(
             "tools/list",
@@ -346,7 +346,7 @@ async fn agent_continuation_app_surface_is_sparse_app_only_without_rendering_bin
         assert!(tool(&disabled["result"], name).is_none());
     }
 
-    let legacy = handle_with_server_apps_enabled(
+    let legacy = handle_with_app_policy(
         &adaptive,
         rpc("tools/list", Some(json!(5104)), json!({})),
         Some(&auth),
@@ -367,7 +367,7 @@ async fn agent_continuation_app_surface_is_sparse_app_only_without_rendering_bin
         );
     }
 
-    let resources = handle_with_server_apps_enabled(
+    let resources = handle_with_app_policy(
         &adaptive,
         rpc(
             "resources/list",
@@ -388,51 +388,8 @@ async fn agent_continuation_app_surface_is_sparse_app_only_without_rendering_bin
         .find(|resource| resource["uri"] == MCP_AGENT_CONTINUATION_UI_RESOURCE_URI)
         .expect("Agent Continuation resource");
     assert_eq!(resource["mimeType"], MCP_UI_RESOURCE_MIME_TYPE);
-    assert!(!resources["result"]["resources"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|resource| matches!(
-            resource["uri"].as_str(),
-            Some(
-                "ui://webcodex/agent-continuation/v1"
-                    | "ui://webcodex/agent-continuation/v2"
-                    | "ui://webcodex/agent-continuation/v3"
-                    | "ui://webcodex/agent-continuation/v4"
-                    | "ui://webcodex/agent-continuation/v5"
-                    | "ui://webcodex/agent-continuation/v6"
-                    | "ui://webcodex/agent-continuation/v7"
-                    | "ui://webcodex/agent-continuation/v8"
-                    | "ui://webcodex/agent-continuation/v9"
-                    | "ui://webcodex/agent-continuation/v10"
-                    | "ui://webcodex/agent-continuation/v11"
-                    | "ui://webcodex/agent-continuation/v12"
-                    | "ui://webcodex/agent-continuation/v13"
-                    | "ui://webcodex/agent-continuation/v14"
-                    | "ui://webcodex/agent-continuation/v15"
-                    | "ui://webcodex/agent-continuation/v16"
-            )
-        )));
-    for uri in [
-        MCP_AGENT_CONTINUATION_UI_RESOURCE_URI,
-        "ui://webcodex/agent-continuation/v1",
-        "ui://webcodex/agent-continuation/v2",
-        "ui://webcodex/agent-continuation/v3",
-        "ui://webcodex/agent-continuation/v4",
-        "ui://webcodex/agent-continuation/v5",
-        "ui://webcodex/agent-continuation/v6",
-        "ui://webcodex/agent-continuation/v7",
-        "ui://webcodex/agent-continuation/v8",
-        "ui://webcodex/agent-continuation/v9",
-        "ui://webcodex/agent-continuation/v10",
-        "ui://webcodex/agent-continuation/v11",
-        "ui://webcodex/agent-continuation/v12",
-        "ui://webcodex/agent-continuation/v13",
-        "ui://webcodex/agent-continuation/v14",
-        "ui://webcodex/agent-continuation/v15",
-        "ui://webcodex/agent-continuation/v16",
-    ] {
-        let read = handle_with_server_apps_enabled(
+    for uri in [MCP_AGENT_CONTINUATION_UI_RESOURCE_URI] {
+        let read = handle_with_app_policy(
             &adaptive,
             rpc(
                 "resources/read",
@@ -625,7 +582,7 @@ async fn agent_continuation_app_uses_hashed_openai_session_as_client_window_fenc
     let (endpoint, generation) = attach(&runtime, &owner, &agent, "continuation-window-endpoint");
     let raw_session = "production-openai-session-window-a";
     let binding_id = "wc_host_binding_d3d3d3d3d3d3d3d3d3d3dw".to_string();
-    let bind = handle_with_server_apps_enabled(
+    let bind = handle_with_app_policy(
         &runtime,
         rpc(
             "tools/call",
@@ -662,7 +619,7 @@ async fn agent_continuation_app_uses_hashed_openai_session_as_client_window_fenc
     );
     assert_eq!(persisted.len(), 64);
 
-    let wrong_window = handle_with_server_apps_enabled(
+    let wrong_window = handle_with_app_policy(
         &runtime,
         rpc(
             "tools/call",
@@ -697,7 +654,7 @@ async fn agent_continuation_app_uses_hashed_openai_session_as_client_window_fenc
     );
 
     let foreign_binding = "wc_host_binding_iIiIiIiIiIiIiIiIiIiIiA".to_string();
-    let foreign_bind = handle_with_server_apps_enabled(
+    let foreign_bind = handle_with_app_policy(
         &runtime,
         rpc(
             "tools/call",
@@ -727,7 +684,7 @@ async fn agent_continuation_app_uses_hashed_openai_session_as_client_window_fenc
         false
     );
 
-    let owner_state = handle_with_server_apps_enabled(
+    let owner_state = handle_with_app_policy(
         &runtime,
         rpc(
             "tools/call",
@@ -760,7 +717,7 @@ async fn agent_continuation_app_uses_hashed_openai_session_as_client_window_fenc
             [&endpoint],
         )
         .unwrap();
-    let recovered = handle_with_server_apps_enabled(
+    let recovered = handle_with_app_policy(
         &runtime,
         rpc(
             "tools/call",
@@ -1099,7 +1056,7 @@ async fn agent_continuation_app_protocol_uses_standard_result_without_model_proj
     assert!(!present_text.contains("PRIVATE Agent description"));
     assert!(!present_text.contains("PRIVATE-specialty-label"));
 
-    let foreign_bind = handle_with_server_apps_enabled(
+    let foreign_bind = handle_with_app_policy(
         &runtime,
         rpc(
             "tools/call",
@@ -1129,7 +1086,7 @@ async fn agent_continuation_app_protocol_uses_standard_result_without_model_proj
         .get("webcodex/agentContinuation")
         .is_none());
 
-    let bind = handle_with_server_apps_enabled(
+    let bind = handle_with_app_policy(
         &runtime,
         rpc(
             "tools/call",
@@ -1184,7 +1141,7 @@ async fn agent_continuation_app_protocol_uses_standard_result_without_model_proj
         private_body,
         "continuation-private-message",
     );
-    let acquire = handle_with_server_apps_enabled(
+    let acquire = handle_with_app_policy(
         &runtime,
         rpc(
             "tools/call",
@@ -1219,7 +1176,7 @@ async fn agent_continuation_app_protocol_uses_standard_result_without_model_proj
     assert!(!acquire_text.contains("consume_token"));
     assert!(!acquire_text.contains(private_body));
 
-    let prepare = handle_with_server_apps_enabled(
+    let prepare = handle_with_app_policy(
         &runtime,
         rpc(
             "tools/call",
@@ -1322,7 +1279,7 @@ async fn agent_continuation_app_protocol_uses_standard_result_without_model_proj
             )
         };
         let denied =
-            handle_with_server_apps_enabled(&runtime, request(), Some(&foreign), true).await;
+            handle_with_app_policy(&runtime, request(), Some(&foreign), true).await;
         let McpOutcome::Ok(denied) = denied else {
             panic!("foreign {name} must fail as a business result")
         };
@@ -1331,7 +1288,7 @@ async fn agent_continuation_app_protocol_uses_standard_result_without_model_proj
         assert!(!denied_text.contains("consume_token"));
         assert!(!denied_text.contains(&binding_id));
         let unscoped =
-            handle_with_server_apps_enabled(&runtime, request(), Some(&read_only_owner), true)
+            handle_with_app_policy(&runtime, request(), Some(&read_only_owner), true)
                 .await;
         assert!(
             matches!(unscoped, McpOutcome::Forbidden { .. }),
@@ -1396,7 +1353,7 @@ async fn all_agent_wait_mcp_automatic_message_is_compact_and_guides_authoritativ
     );
     assert!(present.success, "retained ALL Wait projection: {present:?}");
 
-    let bind = handle_with_server_apps_enabled(
+    let bind = handle_with_app_policy(
         &runtime,
         rpc(
             "tools/call",
@@ -1495,7 +1452,7 @@ async fn all_agent_wait_mcp_automatic_message_is_compact_and_guides_authoritativ
         .unwrap()
         .to_string();
 
-    let acquire = handle_with_server_apps_enabled(
+    let acquire = handle_with_app_policy(
         &runtime,
         rpc(
             "tools/call",
@@ -1527,7 +1484,7 @@ async fn all_agent_wait_mcp_automatic_message_is_compact_and_guides_authoritativ
         .unwrap()
         .to_string();
 
-    let prepare = handle_with_server_apps_enabled(
+    let prepare = handle_with_app_policy(
         &runtime,
         rpc(
             "tools/call",
@@ -1629,7 +1586,7 @@ async fn goal_scoped_agent_wait_mcp_message_names_goal_and_authoritative_rereads
         "retained Goal-scoped Wait projection: {present:?}"
     );
 
-    let bind = handle_with_server_apps_enabled(
+    let bind = handle_with_app_policy(
         &runtime,
         rpc(
             "tools/call",
@@ -1742,7 +1699,7 @@ async fn goal_scoped_agent_wait_mcp_message_names_goal_and_authoritative_rereads
         .unwrap()
         .to_string();
 
-    let acquire = handle_with_server_apps_enabled(
+    let acquire = handle_with_app_policy(
         &runtime,
         rpc(
             "tools/call",
@@ -1774,7 +1731,7 @@ async fn goal_scoped_agent_wait_mcp_message_names_goal_and_authoritative_rereads
         .unwrap()
         .to_string();
 
-    let prepare = handle_with_server_apps_enabled(
+    let prepare = handle_with_app_policy(
         &runtime,
         rpc(
             "tools/call",

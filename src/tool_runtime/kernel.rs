@@ -1331,7 +1331,7 @@ fn collaboration_session_tool(tool_name: &str) -> bool {
             | "resolve_session_message"
             | "complete_session_message"
             | "read_session_discussion_summary"
-            | "read_session_handoff_summary"
+            | "read_session_handoff"
     )
 }
 

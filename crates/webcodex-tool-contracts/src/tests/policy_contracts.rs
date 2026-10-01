@@ -455,7 +455,7 @@ fn tool_definitions_drive_session_and_permission_policy() {
             "resolve_session_message",
             "complete_session_message",
             "read_session_discussion_summary",
-            "read_session_handoff_summary",
+            "read_session_handoff",
             "get_session_handoff_state",
             #[cfg(feature = "experimental-code-mode")]
             "execute_code_mode",
@@ -500,10 +500,7 @@ fn tool_definitions_drive_session_and_permission_policy() {
         ("close_session_shell", PERMISSION_RISK_JOB),
         ("delete_project_files", PERMISSION_RISK_DESTRUCTIVE),
         ("save_project_artifact", PERMISSION_RISK_ARTIFACT_WRITE),
-        (
-            "import_conversation_files_to_project",
-            PERMISSION_RISK_ARTIFACT_WRITE,
-        ),
+        ("import_host_files", PERMISSION_RISK_ARTIFACT_WRITE),
         ("transfer_project_artifact", PERMISSION_RISK_ARTIFACT_WRITE),
         ("accept_artifact_handoff", PERMISSION_RISK_ARTIFACT_WRITE),
         ("finish_artifact_upload", PERMISSION_RISK_ARTIFACT_WRITE),

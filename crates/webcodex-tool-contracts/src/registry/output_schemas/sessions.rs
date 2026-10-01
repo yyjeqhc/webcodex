@@ -667,7 +667,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 ),
             ),
         ])),
-        "read_session_handoff_summary" | "get_session_handoff_state" => Some(wrapped_output_schema(vec![
+        "read_session_handoff" | "get_session_handoff_state" => Some(wrapped_output_schema(vec![
             (
                 "diagnostic",
                 schema_type("boolean", "True only when detailed evidence was explicitly requested."),

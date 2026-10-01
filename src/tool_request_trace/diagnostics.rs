@@ -14,7 +14,7 @@ pub(super) fn selected(tool: &str) -> bool {
         "work_on_project"
             | "read_files"
             | "search_project_texts"
-            | "search_and_read_project_texts"
+            | "search_file_context"
             | "run_process"
             | "write_job_input"
             | "run_shell"

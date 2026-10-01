@@ -4020,7 +4020,7 @@ async fn session_handoff_summary_only_with_agent_limit(
         runtime,
         client_id,
         &task,
-        "read_session_handoff_summary summary_only",
+        "read_session_handoff summary_only",
     )
     .await;
     task.await.unwrap()

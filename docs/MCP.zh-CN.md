@@ -389,7 +389,7 @@ workspace／依赖策略仍是 #599 后续工作；现有 cargo_*、go_test 与�
 
 当当前 MCP protocol/host admission 允许 artifact capability 时，WebCodex 支持双向的 host-native 文件传输，不需要把完整二进制经由模型文本搬运：
 
-- `import_conversation_files_to_project` 通过 ChatGPT host 的
+- `import_host_files` 通过 ChatGPT host 的
   `openai/fileParams` 导入 1..10 个文件。它既适用于用户选择的当前会话附件，也
   适用于 host 能绑定为 file parameter 的本轮新生成文件。Control 端负责下载原始
   bytes，并通过现有有界 artifact write 路径提交；调用方不应自行构造下载 URL，

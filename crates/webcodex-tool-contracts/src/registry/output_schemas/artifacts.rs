@@ -139,7 +139,7 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 nullable_schema("string", "Caller-provided MIME type, when provided."),
             ),
         ])),
-        "import_conversation_files_to_project" => Some(wrapped_output_schema(vec![
+        "import_host_files" => Some(wrapped_output_schema(vec![
             (
                 "count",
                 schema_type("integer", "Number of conversation attachments imported."),

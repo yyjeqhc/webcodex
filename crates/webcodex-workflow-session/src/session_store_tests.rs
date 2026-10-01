@@ -47,7 +47,7 @@ fn session_tool_contract(tool_name: &str) -> SessionToolContract {
 #[test]
 fn compound_search_observation_uses_nested_successful_matches() {
     let paths = crate::events::observed_paths_for_successful_result(
-        "search_and_read_project_texts",
+        "search_file_context",
         Vec::new(),
         &json!({
             "search": {"matches": [
@@ -60,7 +60,7 @@ fn compound_search_observation_uses_nested_successful_matches() {
     );
     assert_eq!(paths, vec!["src/lib.rs"]);
     let empty = crate::events::observed_paths_for_successful_result(
-        "search_and_read_project_texts",
+        "search_file_context",
         Vec::new(),
         &json!({"search": {"matches": []}, "reads": []}),
     );

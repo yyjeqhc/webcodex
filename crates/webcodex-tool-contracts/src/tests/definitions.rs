@@ -278,7 +278,7 @@ fn tool_definitions_are_activity_semantics_ssot() {
         ("observe_jobs", Transport, Meaningful, NoKind),
         ("wait_for_job_readiness", Transport, Meaningful, NoKind),
         ("list_jobs", Support, Meaningful, NoKind),
-        ("read_session_handoff_summary", Support, Meaningful, NoKind),
+        ("read_session_handoff", Support, Meaningful, NoKind),
         ("get_session_handoff_state", Support, NonMeaningful, NoKind),
         ("work_on_project", Support, Meaningful, NoKind),
         ("read_validation_summary", Support, Meaningful, NoKind),
@@ -460,7 +460,7 @@ fn host_orchestration_hints_are_static_guidance_independent_from_nested_composit
             false,
         ),
         (
-            "search_and_read_project_texts",
+            "search_file_context",
             Denied,
             IndependentParallelRead,
             Some("queries"),
@@ -793,10 +793,7 @@ fn adaptive_direct_reason_is_independent_of_domain_and_authority() {
     for (name, reason) in [
         ("read_files", ToolDirectReason::CoreWorkflow),
         ("inspect_project_artifact", ToolDirectReason::CoreWorkflow),
-        (
-            "import_conversation_files_to_project",
-            ToolDirectReason::HostIntegration,
-        ),
+        ("import_host_files", ToolDirectReason::HostIntegration),
         ("present_work_result", ToolDirectReason::Presentation),
         ("present_goal_plan", ToolDirectReason::Presentation),
     ] {
@@ -811,7 +808,7 @@ fn adaptive_direct_reason_is_independent_of_domain_and_authority() {
         lookup_tool_definition("inspect_project_artifact")
             .unwrap()
             .category,
-        lookup_tool_definition("import_conversation_files_to_project")
+        lookup_tool_definition("import_host_files")
             .unwrap()
             .category
     );
@@ -904,7 +901,7 @@ fn adaptive_runtime_direct_declarations_are_visible_ranked_and_unique() {
     );
 
     for (name, expected_rank) in [
-        ("import_conversation_files_to_project", 55),
+        ("import_host_files", 55),
         ("inspect_project_artifact", 56),
         ("write_job_input", 71),
         ("run_script", 74),
@@ -924,7 +921,7 @@ fn adaptive_runtime_direct_declarations_are_visible_ranked_and_unique() {
 
     for name in [
         "read_workspace_changes",
-        "read_session_handoff_summary",
+        "read_session_handoff",
         "rotate_agent_continuation_endpoint",
         "run_skill_resource",
         "list_jobs",

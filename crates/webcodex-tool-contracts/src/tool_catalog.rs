@@ -182,10 +182,10 @@ pub const TOOL_RECOMMENDED_FLOWS: &[ToolRecommendedFlow] = &[
     },
     ToolRecommendedFlow {
         name: "file_transfer",
-        summary: "File transfer: Host -> import_conversation_files_to_project -> Project; Project -> inspect_project_artifact -> Host/model; Project A -> transfer_project_artifact -> Project B. inspect for one bounded segment, image for MCP image delivery, export for complete ResourceLink delivery.",
-        manifest_purpose: "Keep directions explicit: import_conversation_files_to_project is the Host-to-Project write boundary. transfer_project_artifact is the direct Project-to-Project path and streams the exact source bytes/SHA snapshot through Control without Host attachments or model-facing base64. inspect_project_artifact is the preferred Project-to-model/host read facade: metadata observes artifact facts, inspect reads one bounded snapshot-fenced segment, image uses supported native MCP image delivery, and export uses an authenticated ResourceLink for complete transfer. Do not loop inspect chunks to transfer a whole file. save_project_artifact/artifact_upload_* remain low-level caller-held binary write primitives.",
+        summary: "File transfer: Host -> import_host_files -> Project; Project -> inspect_project_artifact -> Host/model; Project A -> transfer_project_artifact -> Project B. inspect for one bounded segment, image for MCP image delivery, export for complete ResourceLink delivery.",
+        manifest_purpose: "Keep directions explicit: import_host_files is the Host-to-Project write boundary. transfer_project_artifact is the direct Project-to-Project path and streams the exact source bytes/SHA snapshot through Control without Host attachments or model-facing base64. inspect_project_artifact is the preferred Project-to-model/host read facade: metadata observes artifact facts, inspect reads one bounded snapshot-fenced segment, image uses supported native MCP image delivery, and export uses an authenticated ResourceLink for complete transfer. Do not loop inspect chunks to transfer a whole file. save_project_artifact/artifact_upload_* remain low-level caller-held binary write primitives.",
         tools: &[
-            "import_conversation_files_to_project",
+            "import_host_files",
             "transfer_project_artifact",
             "inspect_project_artifact",
             "save_project_artifact",
@@ -261,13 +261,13 @@ pub const TOOL_RECOMMENDED_FLOWS: &[ToolRecommendedFlow] = &[
     },
     ToolRecommendedFlow {
         name: "handoff",
-        summary: "Handoff/recovery only: list_sessions(project) -> choose exact Session. read_session_summary reads ledger; read_session_handoff_summary only for missing task context or transfer, never routine progress polling. Save decisions/progress. get_session_assignment -> complete_session_message with fence.",
-        manifest_purpose: "Recover missing Session identity with caller-authorized list_sessions(project), explicitly choose a returned identity, then read read_session_handoff_summary; discovery never resumes work. Save explicit decisions/progress with post_session_message. Coordinate independent Workflow Sessions through atomic assignment snapshots, required assignment-fenced completions, and explicit generic message-state delta observation without sharing execution history, authority, subscriptions, or automatic wake-up.",
+        summary: "Handoff/recovery only: list_sessions(project) -> choose exact Session. read_session_summary reads ledger; read_session_handoff only for missing task context or transfer, never routine progress polling. Save decisions/progress. get_session_assignment -> complete_session_message with fence.",
+        manifest_purpose: "Recover missing Session identity with caller-authorized list_sessions(project), explicitly choose a returned identity, then read read_session_handoff; discovery never resumes work. Save explicit decisions/progress with post_session_message. Coordinate independent Workflow Sessions through atomic assignment snapshots, required assignment-fenced completions, and explicit generic message-state delta observation without sharing execution history, authority, subscriptions, or automatic wake-up.",
         tools: &[
             "list_sessions",
             "read_session_summary",
             "post_session_message",
-            "read_session_handoff_summary",
+            "read_session_handoff",
             "list_session_messages",
             "get_session_assignment",
             "observe_session_messages",
@@ -286,7 +286,7 @@ pub const TOOL_RECOMMENDED_FLOWS: &[ToolRecommendedFlow] = &[
 pub const CODING_INTENT_TOOL_NAMES: &[&str] = &[
     "work_on_project",
     "read_project_overview",
-    "search_and_read_project_texts",
+    "search_file_context",
     "search_project_texts",
     "read_files",
     "inspect_project_artifact",
@@ -353,7 +353,7 @@ pub const TOOL_MANIFEST_INTENTS: &[ToolManifestIntent] = &[
             "review_changes",
             "check_workspace_hygiene",
             "finish_coding_task",
-            "read_session_handoff_summary",
+            "read_session_handoff",
             "read_validation_summary",
             "read_tool_manifest",
         ],
@@ -380,7 +380,7 @@ pub const TOOL_MANIFEST_INTENTS: &[ToolManifestIntent] = &[
         name: "file_transfer",
         purpose: "Move files across Host/Project and Project/Project boundaries without routing complete binary payloads through model text.",
         tools: &[
-            "import_conversation_files_to_project",
+            "import_host_files",
             "transfer_project_artifact",
             "inspect_project_artifact",
             "save_project_artifact",

@@ -407,7 +407,7 @@ async fn client_contract_published_coding_primitives_and_manifest_routes_agree()
         assert!(!tools.iter().any(|tool| tool["name"] == "apply_text_edits"));
         for (name, read_only) in [
             ("read_files", true),
-            ("search_and_read_project_texts", true),
+            ("search_file_context", true),
             ("wait_for_job_readiness", true),
             ("edit_project_files", false),
             ("run_process", false),

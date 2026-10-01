@@ -234,7 +234,7 @@ export function workItemFromProjectSession(
 export function intentForActivity(activity: Pick<SessionActivity, "kind" | "tool">): ProgressIntent {
   const kind = (activity.kind || "").toLowerCase();
   const tool = (activity.tool || "").toLowerCase();
-  const explorationTool = tool === "rg" || tool === "read_files" || tool === "search_and_read_project_texts" || tool === "search_project_texts" || tool === "find" || tool.startsWith("list_");
+  const explorationTool = tool === "rg" || tool === "read_files" || tool === "search_file_context" || tool === "search_project_texts" || tool === "find" || tool.startsWith("list_");
   if (/explor|read|search|inspect/.test(kind) || explorationTool) return "explored";
   if (/edit|write|patch|mutat/.test(kind) || /apply|edit|write|create|delete|rename/.test(tool)) return "edited";
   if (/valid|test|check|build|format/.test(kind) || /test|check|build|fmt|clippy/.test(tool)) return "tested";

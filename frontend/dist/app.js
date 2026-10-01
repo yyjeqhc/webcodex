@@ -28178,7 +28178,7 @@ function t9(e) {
   };
 }
 function nv(e) {
-  const n = (e.kind || "").toLowerCase(), a = (e.tool || "").toLowerCase(), r = a === "rg" || a === "read_files" || a === "search_and_read_project_texts" || a === "search_project_texts" || a === "find" || a.startsWith("list_");
+  const n = (e.kind || "").toLowerCase(), a = (e.tool || "").toLowerCase(), r = a === "rg" || a === "read_files" || a === "search_file_context" || a === "search_project_texts" || a === "find" || a.startsWith("list_");
   return /explor|read|search|inspect/.test(n) || r ? "explored" : /edit|write|patch|mutat/.test(n) || /apply|edit|write|create|delete|rename/.test(a) ? "edited" : /valid|test|check|build|format/.test(n) || /test|check|build|fmt|clippy/.test(a) ? "tested" : /review|diff/.test(n) || /review|diff|read_workspace_changes|git_status/.test(a) ? "reviewed" : /delegat|agent_task|handoff/.test(n) || /delegate|agent_task/.test(a) ? "delegated" : /wait|block/.test(n) || /wait_for|observe_jobs/.test(a) ? "waiting" : /run|shell|process|job|exec/.test(n) || /run_|cargo|shell|process/.test(a) ? "ran" : "activity";
 }
 var Sj = {

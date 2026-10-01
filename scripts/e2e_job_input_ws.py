@@ -168,7 +168,7 @@ class InteractiveSmoke(Smoke):
         self.call("edit_project_files",{"project":self.project_ref,"changes":[{"kind":"edit","path":"one.txt",
             "expected_read_revision":revisions[0],"edits":[{"kind":"replace_exact","old_text":"after","new_text":"stale"}]}]},direct=True,success=False)
         check((self.project_dir/"one.txt").read_text()=="after one\n","stale edit wrote data")
-        self.call("search_and_read_project_texts",{"project":self.project_ref,"query":{"pattern":"after","path":"one.txt","pattern_mode":"literal"}},direct=True)
+        self.call("search_file_context",{"project":self.project_ref,"query":{"pattern":"after","path":"one.txt","pattern_mode":"literal"}},direct=True)
         # A generated 1x1 PNG is only a local binary fixture, never transferred as
         # model-authored Base64. Verify MCP image delivery bytes in the client.
         def chunk(kind,data):return struct.pack(">I",len(data))+kind+data+struct.pack(">I",zlib.crc32(kind+data)&0xffffffff)

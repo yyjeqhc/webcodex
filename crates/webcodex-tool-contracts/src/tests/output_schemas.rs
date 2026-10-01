@@ -931,7 +931,7 @@ fn tracked_listing_schema_separates_source_incomplete_from_safe_page_truncation(
 #[test]
 fn continuation_feedback_output_schemas_are_synchronized() {
     let specs = registered_tool_specs();
-    for name in ["finish_coding_task", "read_session_handoff_summary"] {
+    for name in ["finish_coding_task", "read_session_handoff"] {
         let spec = spec_named(&specs, name);
         let properties = &spec.output_schema["properties"]["output"]["properties"];
         assert!(
@@ -3068,48 +3068,48 @@ fn finish_coding_task_output_schema_describes_ledger_validation_summary() {
 #[test]
 fn session_handoff_summary_schema_exposes_ledger_validation_summary() {
     let specs = registered_tool_specs();
-    let spec = spec_named(&specs, "read_session_handoff_summary");
+    let spec = spec_named(&specs, "read_session_handoff");
     let input_props = spec.input_schema["properties"].as_object().unwrap();
     assert!(
         input_props.contains_key("include_validation"),
-        "read_session_handoff_summary input schema should include include_validation"
+        "read_session_handoff input schema should include include_validation"
     );
     assert!(
         input_props.contains_key("diagnostic"),
-        "read_session_handoff_summary input schema should include diagnostic"
+        "read_session_handoff input schema should include diagnostic"
     );
 
-    let schema = output_schema_for_tool("read_session_handoff_summary");
+    let schema = output_schema_for_tool("read_session_handoff");
     let output_props = schema["properties"]["output"]["properties"]
         .as_object()
         .unwrap();
     assert!(
         output_props.contains_key("validation"),
-        "read_session_handoff_summary output schema should include validation"
+        "read_session_handoff output schema should include validation"
     );
     assert!(
         output_props.contains_key("review_evidence"),
-        "read_session_handoff_summary output schema should include review_evidence"
+        "read_session_handoff output schema should include review_evidence"
     );
     assert!(
         output_props.contains_key("permissions"),
-        "read_session_handoff_summary output schema should include permissions"
+        "read_session_handoff output schema should include permissions"
     );
     assert!(
         output_props.contains_key("tool_failures"),
-        "read_session_handoff_summary output schema should include classified tool failures"
+        "read_session_handoff output schema should include classified tool failures"
     );
     assert!(
         output_props.contains_key("expected_failed_tool_calls"),
-        "read_session_handoff_summary output schema should include expected failed tool calls"
+        "read_session_handoff output schema should include expected failed tool calls"
     );
     assert!(
         output_props.contains_key("unexpected_failed_tool_calls"),
-        "read_session_handoff_summary output schema should include unexpected failed tool calls"
+        "read_session_handoff output schema should include unexpected failed tool calls"
     );
     assert!(
         output_props.contains_key("expectation_mismatches"),
-        "read_session_handoff_summary output schema should include expectation mismatches"
+        "read_session_handoff output schema should include expectation mismatches"
     );
     for field in [
         "task_outcome",
@@ -3119,7 +3119,7 @@ fn session_handoff_summary_schema_exposes_ledger_validation_summary() {
     ] {
         assert!(
             output_props.contains_key(field),
-            "read_session_handoff_summary output schema should include {field}"
+            "read_session_handoff output schema should include {field}"
         );
     }
     assert_outcome_model_schema_fields(output_props);

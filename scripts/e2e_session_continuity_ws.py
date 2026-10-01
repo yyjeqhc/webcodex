@@ -239,7 +239,7 @@ class Smoke:
         check(candidate["session_id"] == session and candidate["lifecycle"] == "active",
               "discovery changed Session identity/lifecycle")
         context = candidate["session_ref"]
-        handoff = self.tool("read_session_handoff_summary", {"project": project, "session_id": context,
+        handoff = self.tool("read_session_handoff", {"project": project, "session_id": context,
                             "include_workspace": False}, second)
         brief = json.dumps(handoff["handoff_brief"], ensure_ascii=False)
         check(DECISION in brief and PROGRESS in brief, "saved decision/progress missing after restart")
@@ -250,7 +250,7 @@ class Smoke:
         check(resumed["session_id"] == session and resumed["continuation"] == "resumed_explicitly",
               "explicit recovery created a different Session")
         self.tool("list_sessions", {"project": project}, foreign, False)
-        self.tool("read_session_handoff_summary", {"project": project, "session_id": session}, foreign, False)
+        self.tool("read_session_handoff", {"project": project, "session_id": session}, foreign, False)
         self.tool("start_coding_agent", {"project": project, "provider_id": "responses",
                   "idempotency_key": "restricted", "instruction": "Review", "context_session_id": context},
                   restricted, False)
@@ -299,7 +299,7 @@ class Smoke:
         self.tool("close_session", {"session_id": session}, second)
         closed = self.tool("list_sessions", {"project": project, "lifecycle": "closed"}, second)
         check(closed["total"] == 1, "closed history disappeared from discovery")
-        self.tool("read_session_handoff_summary", {"project": project, "session_id": context,
+        self.tool("read_session_handoff", {"project": project, "session_id": context,
                   "include_workspace": False}, second)
         check(len(self.requests) == 2, "smoke sent unexpected duplicate model requests")
         print("PASS: closed history remains readable; two model requests total; all services isolated")

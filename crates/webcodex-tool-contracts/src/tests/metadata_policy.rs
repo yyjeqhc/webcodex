@@ -98,7 +98,7 @@ fn tool_specs_annotations_are_canonical_semantic_projections() {
         #[cfg(feature = "workspace-checkpoints")]
         "restore_workspace_checkpoint",
         "save_project_artifact",
-        "import_conversation_files_to_project",
+        "import_host_files",
         "transfer_project_artifact",
         "finish_artifact_upload",
         "abort_artifact_upload",

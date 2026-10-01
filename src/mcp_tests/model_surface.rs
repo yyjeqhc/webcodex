@@ -148,7 +148,7 @@ async fn adaptive_tools_list_exposes_ranked_direct_tools_and_gateway() {
         "work_on_project",
         "read_files",
         "search_project_texts",
-        "search_and_read_project_texts",
+        "search_file_context",
         "edit_project_files",
         "run_process",
         "write_job_input",
@@ -216,7 +216,7 @@ async fn specialist_tools_remain_discoverable_with_canonical_gateway_contracts()
     let listed = crate::mcp::tools::mcp_tools_list_payload_with_compact(false);
     for name in [
         "read_workspace_changes",
-        "read_session_handoff_summary",
+        "read_session_handoff",
         "rotate_agent_continuation_endpoint",
         "run_skill_resource",
         "wait_for_agent_events",

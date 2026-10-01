@@ -989,7 +989,7 @@ fn mcp_tools_list_exposes_host_file_params_for_conversation_import() {
         .as_array()
         .unwrap()
         .iter()
-        .find(|tool| tool["name"] == "import_conversation_files_to_project")
+        .find(|tool| tool["name"] == "import_host_files")
         .expect("MCP conversation import tool");
 
     assert_eq!(
@@ -1020,7 +1020,7 @@ fn mcp_file_params_keep_raw_object_shape_and_reject_model_mask_strings() {
     // MCP request reaches WebCodex. WebCodex intentionally accepts only that
     // post-host-rewrite object form; it never interprets model-facing strings.
     let _string_error = crate::tool_runtime::ToolCall::from_tool_name(
-        "import_conversation_files_to_project",
+        "import_host_files",
         json!({
             "project": "agent:test:demo",
             "openaiFileIdRefs": ["file-model-selection"]
@@ -1029,7 +1029,7 @@ fn mcp_file_params_keep_raw_object_shape_and_reject_model_mask_strings() {
     .expect_err("model-facing string[] must not deserialize at the server");
 
     let call = crate::tool_runtime::ToolCall::from_tool_name(
-        "import_conversation_files_to_project",
+        "import_host_files",
         json!({
             "project": "agent:test:demo",
             "openaiFileIdRefs": [{
@@ -1607,7 +1607,7 @@ fn mcp_tools_list_inputs_equal_canonical_except_descriptions_and_host_file_overl
             let mut expected = canonical.input_schema.clone();
             // MCP owns Host-file requiredness and model-specific omission defaults;
             // neither overlay mutates the canonical schema.
-            if name == "import_conversation_files_to_project" {
+            if name == "import_host_files" {
                 expected["properties"]["openaiFileIdRefs"]["items"]["required"] =
                     json!(["download_url", "file_id"]);
             }
@@ -1707,7 +1707,7 @@ async fn mcp_compact_preserves_stateless_wrappers_app_metadata_and_exact_manifes
         "run_skill_resource",
         "inspect_project_artifact",
         "read_git_diff_hunks",
-        "import_conversation_files_to_project",
+        "import_host_files",
     ] {
         let McpOutcome::Ok(value) = handle_mcp_request(
             &runtime,
@@ -2405,9 +2405,9 @@ fn report_discovery_costs(tools: &[Value]) {
         "run_detached_process",
         "wait_for_job_terminal",
         "transfer_project_artifact",
-        "import_conversation_files_to_project",
+        "import_host_files",
         "read_session_discussion_summary",
-        "read_session_handoff_summary",
+        "read_session_handoff",
         "rotate_agent_continuation_endpoint",
         "wait_for_agent_events",
     ] {
@@ -2586,7 +2586,7 @@ async fn session_tools_stay_registered_and_follow_adaptive_routes() {
         "read_session_summary",
         "update_session_context",
         "read_validation_summary",
-        "read_session_handoff_summary",
+        "read_session_handoff",
     ] {
         assert!(
             registry_names.contains(&name),
@@ -2621,7 +2621,7 @@ async fn session_tools_stay_registered_and_follow_adaptive_routes() {
         .collect::<Vec<_>>();
     assert!(names.contains(&"read_session_discussion_summary"));
     for long_tail in [
-        "read_session_handoff_summary",
+        "read_session_handoff",
         "read_session_summary",
         "update_session_context",
         "read_validation_summary",
@@ -2661,7 +2661,7 @@ async fn session_tools_stay_registered_and_follow_adaptive_routes() {
         .to_lowercase()
         .contains("does not run cargo"));
 
-    let handoff = registered("read_session_handoff_summary");
+    let handoff = registered("read_session_handoff");
     assert!(handoff.description.contains("exact session_id"));
 
     let validation_summary = registered("read_validation_summary");

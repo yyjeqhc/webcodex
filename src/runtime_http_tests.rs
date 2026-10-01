@@ -1082,7 +1082,7 @@ fn extract_tool_call_keeps_recording_session_id_out_of_explicit_params() {
 #[test]
 fn extract_tool_call_accepts_explicit_session_handoff_params() {
     let body = json!({
-        "tool": "read_session_handoff_summary",
+        "tool": "read_session_handoff",
         "params": {
             "project": "agent:special:test-mcp",
             "session_id": "wc_sess_test",
@@ -1095,7 +1095,7 @@ fn extract_tool_call_accepts_explicit_session_handoff_params() {
     });
     let (tool, params) = extract_tool_call(&body).unwrap();
 
-    assert_eq!(tool, "read_session_handoff_summary");
+    assert_eq!(tool, "read_session_handoff");
     assert_eq!(
         params,
         json!({

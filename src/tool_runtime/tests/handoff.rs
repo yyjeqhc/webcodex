@@ -1,4 +1,4 @@
-//! Tests for `read_session_handoff_summary` — read-only structured handoff tool.
+//! Tests for `read_session_handoff` — read-only structured handoff tool.
 
 use super::super::*;
 use super::support::*;
@@ -60,22 +60,17 @@ fn closeout_projection_classifies_workspace_conflicts_as_hard_blockers() {
 
 #[tokio::test]
 async fn session_handoff_summary_is_known_and_in_specs() {
-    assert!(is_known_tool_name("read_session_handoff_summary"));
+    assert!(is_known_tool_name("read_session_handoff"));
     let specs = registered_tool_specs();
     assert!(
-        specs
-            .iter()
-            .any(|s| s.name == "read_session_handoff_summary"),
-        "read_session_handoff_summary must appear in tool_specs"
+        specs.iter().any(|s| s.name == "read_session_handoff"),
+        "read_session_handoff must appear in tool_specs"
     );
     assert!(
         specs.iter().all(|spec| is_known_tool_name(&spec.name)),
         "tool_specs must remain a subset of known parser names"
     );
-    assert!(
-        crate::tool_runtime::metadata::lookup_tool_metadata("read_session_handoff_summary")
-            .is_some()
-    );
+    assert!(crate::tool_runtime::metadata::lookup_tool_metadata("read_session_handoff").is_some());
     // tool_manifest session category must include the new tool.
     let runtime = test_runtime();
     let manifest = runtime
@@ -92,10 +87,8 @@ async fn session_handoff_summary_is_known_and_in_specs() {
         .as_array()
         .expect("manifest tools array");
     assert!(
-        tools
-            .iter()
-            .any(|t| t["name"] == "read_session_handoff_summary"),
-        "session category must include read_session_handoff_summary: {:?}",
+        tools.iter().any(|t| t["name"] == "read_session_handoff"),
+        "session category must include read_session_handoff: {:?}",
         tools
     );
 }
@@ -1918,7 +1911,7 @@ async fn session_handoff_defaults_to_bounded_recovery_brief() {
     let result = runtime
         .dispatch(
             ToolCall::from_tool_name(
-                "read_session_handoff_summary",
+                "read_session_handoff",
                 json!({"session_id": session.session_id}),
             )
             .unwrap(),
@@ -3494,8 +3487,8 @@ fn session_handoff_summary_metadata_and_mcp_consistency() {
     // readOnlyHint must be true.
     let spec = registered_tool_specs()
         .into_iter()
-        .find(|s| s.name == "read_session_handoff_summary")
-        .expect("read_session_handoff_summary spec");
+        .find(|s| s.name == "read_session_handoff")
+        .expect("read_session_handoff spec");
     assert_eq!(spec.annotations["readOnlyHint"], true);
     assert_eq!(spec.annotations["destructiveHint"], false);
     assert_eq!(spec.annotations["openWorldHint"], false);
@@ -3504,30 +3497,30 @@ fn session_handoff_summary_metadata_and_mcp_consistency() {
         .expect("handoff input properties");
     assert!(
         input_props.contains_key("include_validation"),
-        "read_session_handoff_summary input schema should expose include_validation"
+        "read_session_handoff input schema should expose include_validation"
     );
     assert!(
         input_props.contains_key("diagnostic"),
-        "read_session_handoff_summary input schema should expose diagnostic"
+        "read_session_handoff input schema should expose diagnostic"
     );
     let output_props = spec.output_schema["properties"]["output"]["properties"]
         .as_object()
         .expect("handoff output properties");
     assert!(
         output_props.contains_key("validation"),
-        "read_session_handoff_summary output schema should expose validation"
+        "read_session_handoff output schema should expose validation"
     );
     assert!(
         output_props.contains_key("permissions"),
-        "read_session_handoff_summary output schema should expose permissions"
+        "read_session_handoff output schema should expose permissions"
     );
     assert!(
         output_props.contains_key("tool_failures"),
-        "read_session_handoff_summary output schema should expose tool_failures"
+        "read_session_handoff output schema should expose tool_failures"
     );
     assert!(
         output_props.contains_key("verdict"),
-        "read_session_handoff_summary output schema should expose verdict"
+        "read_session_handoff output schema should expose verdict"
     );
     let description = spec.description.to_lowercase();
     for phrase in [
@@ -3538,14 +3531,13 @@ fn session_handoff_summary_metadata_and_mcp_consistency() {
     ] {
         assert!(
             description.contains(phrase),
-            "read_session_handoff_summary description should mention {phrase}: {description}"
+            "read_session_handoff description should mention {phrase}: {description}"
         );
     }
 
     // Metadata: read-only, runtime:read scope.
-    let metadata =
-        crate::tool_runtime::metadata::lookup_tool_metadata("read_session_handoff_summary")
-            .expect("metadata");
+    let metadata = crate::tool_runtime::metadata::lookup_tool_metadata("read_session_handoff")
+        .expect("metadata");
     assert_eq!(
         metadata.effect,
         crate::tool_runtime::metadata::ToolEffect::Observe
@@ -3843,7 +3835,7 @@ async fn handoff_summary(runtime: &ToolRuntime, session_id: &str) -> ToolResult 
     runtime
         .dispatch(
             ToolCall::from_tool_name(
-                "read_session_handoff_summary",
+                "read_session_handoff",
                 json!({
                     "session_id": session_id,
                     "include_workspace": false,
@@ -3860,7 +3852,7 @@ async fn handoff_diagnostic(runtime: &ToolRuntime, session_id: &str) -> ToolResu
     runtime
         .dispatch(
             ToolCall::from_tool_name(
-                "read_session_handoff_summary",
+                "read_session_handoff",
                 json!({
                     "session_id": session_id,
                     "include_workspace": false,
@@ -3873,7 +3865,7 @@ async fn handoff_diagnostic(runtime: &ToolRuntime, session_id: &str) -> ToolResu
         .await
 }
 
-/// Dispatch `read_session_handoff_summary` through the agent path, completing any
+/// Dispatch `read_session_handoff` through the agent path, completing any
 /// agent shell requests (from the internal `read_workspace_changes` call) locally.
 async fn dispatch_handoff_with_agent(
     runtime: &ToolRuntime,
@@ -4409,7 +4401,7 @@ async fn handoff_marks_basis_incomplete_when_session_changes_during_workspace_re
                 runtime
                     .dispatch(
                         ToolCall::from_tool_name(
-                            "read_session_handoff_summary",
+                            "read_session_handoff",
                             json!({"session_id": sid}),
                         )
                         .unwrap(),

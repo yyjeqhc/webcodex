@@ -528,7 +528,7 @@ async fn runtime_conversation_import_host_ref_saves_pptx_through_artifact_path_b
         Duration::from_secs(5),
         runtime.call_tool_with_context(
             ToolCallRequest {
-                tool_name: "import_conversation_files_to_project".to_string(),
+                tool_name: "import_host_files".to_string(),
                 arguments,
             },
             ToolCallContext {
@@ -605,7 +605,7 @@ async fn runtime_conversation_import_rejects_untrusted_api_transport() {
         project_grant_id: None,
     };
     let call = ToolCall::from_tool_name(
-        "import_conversation_files_to_project",
+        "import_host_files",
         json!({
             "project": "agent:importer:demo",
             "openaiFileIdRefs": [{

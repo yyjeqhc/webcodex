@@ -87,7 +87,7 @@ Host behavior is called out separately.
 | `run_detached_process` | 72 | 3,105 | No | No; Runner-independent lifetime | Advanced execution setup | Yes, including scopes/key/capabilities | Only detached setup | Gateway |
 | `wait_for_job_terminal` | 79 | 1,850 | No | Bounded terminal fallback | Yes, terminal outcome blocks work | Yes | Discovery would delay blocking fallback | Keep direct |
 | `transfer_project_artifact` | 57 | 1,929 | No | Cross-Project artifact transfer | No | Yes; both Project authorities | Only explicit cross-Project transfer | Gateway |
-| `import_conversation_files_to_project` | 55 | 2,435 | No App; Host file-reference schema matters | Attachment import | No | Runtime yes; generic descriptor does not offer native file population | May impair Host-native import | Keep direct |
+| `import_host_files` | 55 | 2,435 | No App; Host file-reference schema matters | Attachment import | No | Runtime yes; generic descriptor does not offer native file population | May impair Host-native import | Keep direct |
 | `session_discussion_summary` | 15 | 1,601 | No | Explicit collaboration inspection | Existing session_hint direct-only target | Runtime yes; current hint is not a parser-ready gateway call | Would make existing hint need discovery | Keep direct |
 | `session_handoff_summary` | 16 | 2,502 | No | Explicit context recovery | Yes, lost context | Yes | Expensive extra turn during recovery | Keep direct |
 | `rotate_agent_continuation_endpoint` | 19 | 2,316 | No | Durable Agent continuation setup | Exact generation setup/recovery | Yes | Extra setup step before direct presentation | Keep direct conservatively |

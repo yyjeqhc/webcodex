@@ -84,12 +84,12 @@ impl ToolRuntime {
                     (None, Some(queries)) if !queries.is_empty() && queries.len() <= 8 => queries,
                     (Some(_), Some(_)) => {
                         return ToolResult::err(
-                            "search_and_read_project_texts accepts query or queries, not both",
+                            "search_file_context accepts query or queries, not both",
                         )
                     }
                     _ => {
                         return ToolResult::err(
-                            "search_and_read_project_texts requires query or 1..8 queries",
+                            "search_file_context requires query or 1..8 queries",
                         )
                     }
                 };

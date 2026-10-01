@@ -1329,7 +1329,7 @@ fn mcp_tool_spec_json(mut spec: ToolSpec, compact: bool, app_enabled: bool) -> V
             );
         }
     }
-    if tool_name == "import_conversation_files_to_project" {
+    if tool_name == "import_host_files" {
         if let Some(required) =
             value.pointer_mut("/inputSchema/properties/openaiFileIdRefs/items/required")
         {
@@ -1693,7 +1693,7 @@ pub(super) fn host_file_import_trust_for_call(
     config: Option<&crate::Config>,
     db: Option<&crate::Database>,
 ) -> HostFileImportTrust {
-    if tool_name != Some("import_conversation_files_to_project") {
+    if tool_name != Some("import_host_files") {
         return HostFileImportTrust::Untrusted;
     }
     let decision = match config {

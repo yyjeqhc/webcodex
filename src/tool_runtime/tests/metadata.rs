@@ -2114,9 +2114,8 @@ fn runtime_status_input_schema_exposes_compact_flags() {
 
 #[test]
 fn session_handoff_validation_exposure_keeps_read_only_metadata() {
-    let metadata =
-        crate::tool_runtime::metadata::lookup_tool_metadata("read_session_handoff_summary")
-            .expect("read_session_handoff_summary metadata");
+    let metadata = crate::tool_runtime::metadata::lookup_tool_metadata("read_session_handoff")
+        .expect("read_session_handoff metadata");
     assert_eq!(
         metadata.effect,
         crate::tool_runtime::metadata::ToolEffect::Observe
@@ -2377,7 +2376,7 @@ async fn tool_manifest_recommends_default_remote_coding_loop() {
         "search_project_text",
         "search_project_texts",
         "read_files",
-        "import_conversation_files_to_project",
+        "import_host_files",
         "inspect_project_artifact",
         "read_workspace_changes",
         "edit_project_files",
@@ -2386,7 +2385,7 @@ async fn tool_manifest_recommends_default_remote_coding_loop() {
         "read_git_diff_hunks",
         "check_workspace_hygiene",
         "read_session_summary",
-        "read_session_handoff_summary",
+        "read_session_handoff",
     ] {
         assert!(
             serialized.contains(tool),

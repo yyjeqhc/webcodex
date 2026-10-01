@@ -965,28 +965,28 @@ complete_case_session() {
         assert_success "check_workspace_hygiene succeeds" "$LAST_BODY"
 
         params="$(params_session_handoff "$session_id")"
-        call_tool "read_session_handoff_summary" "$params"
-        assert_success "read_session_handoff_summary succeeds" "$LAST_BODY"
-        assert_handoff_available "read_session_handoff_summary returns handoff" "$LAST_BODY" "output"
+        call_tool "read_session_handoff" "$params"
+        assert_success "read_session_handoff succeeds" "$LAST_BODY"
+        assert_handoff_available "read_session_handoff returns handoff" "$LAST_BODY" "output"
         capture_validation_metrics "$LAST_BODY" "output.validation"
 
         if [ "$case_name" = "small_structured_line_edit" ]; then
             assert_validation_available \
-                "read_session_handoff_summary validation summary is available" \
+                "read_session_handoff validation summary is available" \
                 "$LAST_BODY" \
                 "output.validation"
         elif [ "$case_name" = "failed_call_recovery" ]; then
             assert_validation_unavailable \
-                "read_session_handoff_summary validation summary is unavailable without validation events" \
+                "read_session_handoff validation summary is unavailable without validation events" \
                 "$LAST_BODY" \
                 "output.validation"
             assert_handoff_failed_tool_metadata \
-                "read_session_handoff_summary includes failed tool metadata" \
+                "read_session_handoff includes failed tool metadata" \
                 "$LAST_BODY" \
                 "output"
         else
             assert_validation_unavailable \
-                "read_session_handoff_summary validation summary is unavailable without validation events" \
+                "read_session_handoff validation summary is unavailable without validation events" \
                 "$LAST_BODY" \
                 "output.validation"
         fi

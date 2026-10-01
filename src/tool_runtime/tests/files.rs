@@ -979,7 +979,7 @@ fn conversation_import_session_log_arguments_do_not_store_host_file_refs() {
     });
 
     let raw_summary = super::super::tool_audit::session_log_arguments_for_tool_request(
-        "import_conversation_files_to_project",
+        "import_host_files",
         &arguments,
     );
     assert_eq!(raw_summary["project"], "agent:test:demo");
@@ -990,7 +990,7 @@ fn conversation_import_session_log_arguments_do_not_store_host_file_refs() {
     assert!(!raw_json.contains(file_id));
     assert!(!raw_json.contains("private-name.pptx"));
 
-    let call = ToolCall::from_tool_name("import_conversation_files_to_project", arguments).unwrap();
+    let call = ToolCall::from_tool_name("import_host_files", arguments).unwrap();
     let typed_summary = call.session_log_arguments();
     assert_eq!(typed_summary["project"], "agent:test:demo");
     assert_eq!(typed_summary["file_count"], 1);
@@ -1058,7 +1058,7 @@ async fn conversation_import_durable_session_events_do_not_store_host_file_refs(
     let outcome = runtime
         .call_tool_with_context(
             ToolCallRequest {
-                tool_name: "import_conversation_files_to_project".to_string(),
+                tool_name: "import_host_files".to_string(),
                 arguments: serde_json::json!({
                     "project": project,
                     "openaiFileIdRefs": [{

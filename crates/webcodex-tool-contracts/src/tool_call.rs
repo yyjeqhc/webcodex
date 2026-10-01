@@ -1610,7 +1610,7 @@ pub enum ToolCall {
         /// Include check_workspace_hygiene output. Defaults to true.
         #[serde(default)]
         include_hygiene: Option<bool>,
-        /// Include read_session_handoff_summary output. Defaults to true.
+        /// Include read_session_handoff output. Defaults to true.
         #[serde(default)]
         include_handoff: Option<bool>,
         /// Include deterministic validation-like session ledger event summary when available. Defaults to
@@ -1980,7 +1980,7 @@ pub enum ToolCall {
     /// optional workspace, checkpoint, and ledger-derived validation metadata.
     /// Read-only; never calls an LLM or generates natural-language summaries.
     /// Model/API exposure is derived from the canonical ToolDefinition surface.
-    #[serde(rename = "read_session_handoff_summary")]
+    #[serde(rename = "read_session_handoff")]
     SessionHandoffSummary {
         /// Required explicit wc_sess_* business Session id to summarize.
         session_id: String,
@@ -4646,7 +4646,7 @@ pub enum ToolCall {
 
     /// Search for text and immediately read bounded source ranges around the
     /// returned matches in one model-visible round trip.
-    #[serde(rename = "search_and_read_project_texts")]
+    #[serde(rename = "search_file_context")]
     SearchAndRead {
         /// Runner-registered project id.
         project: String,
@@ -4812,6 +4812,7 @@ pub enum ToolCall {
 
     /// Import host-provided ChatGPT conversation attachments without routing
     /// temporary OpenAI download URLs or raw attachment bytes to the model or Runner.
+    #[serde(rename = "import_host_files")]
     ImportConversationFilesToProject {
         /// Runner-registered project id.
         project: String,
@@ -6008,7 +6009,7 @@ impl ToolCall {
             Self::ResolveSessionMessage { .. } => "resolve_session_message",
             Self::CompleteSessionMessage { .. } => "complete_session_message",
             Self::SessionDiscussionSummary { .. } => "read_session_discussion_summary",
-            Self::SessionHandoffSummary { .. } => "read_session_handoff_summary",
+            Self::SessionHandoffSummary { .. } => "read_session_handoff",
             Self::SessionHandoffState { .. } => "get_session_handoff_state",
             #[cfg(feature = "workspace-checkpoints")]
             Self::WorkspaceCheckpointCreate { .. } => "create_workspace_checkpoint",
@@ -6136,7 +6137,7 @@ impl ToolCall {
             Self::ListProjectTrackedFiles { .. } => "list_project_tracked_files",
             Self::ProjectOverview { .. } => "read_project_overview",
             Self::SearchProjectTexts { .. } => "search_project_texts",
-            Self::SearchAndRead { .. } => "search_and_read_project_texts",
+            Self::SearchAndRead { .. } => "search_file_context",
             Self::ShowChanges { .. } => "read_workspace_changes",
             Self::WorkspaceHygieneCheck { .. } => "check_workspace_hygiene",
             Self::ListJobs { .. } => "list_jobs",
@@ -6144,7 +6145,7 @@ impl ToolCall {
             Self::JobTail { .. } => "read_job_tail",
             Self::WriteProjectFile { .. } => "write_project_file",
             Self::SaveProjectArtifact { .. } => "save_project_artifact",
-            Self::ImportConversationFilesToProject { .. } => "import_conversation_files_to_project",
+            Self::ImportConversationFilesToProject { .. } => "import_host_files",
             Self::TransferProjectArtifact { .. } => "transfer_project_artifact",
             Self::AcceptArtifactHandoff { .. } => "accept_artifact_handoff",
             Self::ProjectArtifact { .. } => "inspect_project_artifact",            Self::ReadProjectArtifactMetadata { .. } => "read_project_artifact_metadata",

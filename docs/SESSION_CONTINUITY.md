@@ -49,7 +49,7 @@ The recovery sequence is:
 2. Select one exact `session_id` or returned `session_ref`. Ordering is only for
    display; a title, newest row or the word “continue” does not resolve an
    ambiguous task choice.
-3. Read `read_session_handoff_summary(session_id)`; an explicit matching `project` is optional. The compact
+3. Read `read_session_handoff(session_id)`; an explicit matching `project` is optional. The compact
    `handoff_brief.task.decisions` and `recent_progress` include the newest
    recorded notes, their status, supersession, and coverage/truncation. The
    default brief stays below 8 KiB. Use the diagnostic handoff or authorized

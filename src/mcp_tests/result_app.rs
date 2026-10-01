@@ -67,31 +67,6 @@ fn projected_result(tool_name: &str, success: bool, output: Value) -> Value {
     framed
 }
 
-async fn handle_with_server_apps_enabled(
-    runtime: &ToolRuntime,
-    request: JsonRpcRequest,
-    auth: Option<&crate::auth::AuthContext>,
-    server_mcp_apps_enabled: bool,
-) -> McpOutcome {
-    let protocol_era = super::super::inferred_protocol_era(&request);
-    super::super::handle_mcp_request_with_lifecycle(
-        runtime,
-        request,
-        auth,
-        protocol_era,
-        super::super::HostFileImportTrust::Untrusted,
-        None,
-        None,
-        None,
-        crate::model_surface::effective_mcp_compact_schemas(
-            crate::config::mcp_compact_schemas_override(),
-        ),
-        server_mcp_apps_enabled,
-        None,
-    )
-    .await
-}
-
 #[test]
 fn result_tool_app_metadata_is_capability_scoped_compact_safe_and_merge_safe() {
     for compact in [false, true] {
@@ -171,23 +146,11 @@ fn result_tool_app_metadata_is_capability_scoped_compact_safe_and_merge_safe() {
 async fn result_app_descriptor_and_resource_exposure_require_ui_operator_capability() {
     const PUBLIC_URL: &str = "https://self-host.example";
     let runtime = test_runtime_with_public_url(PUBLIC_URL);
-    assert_eq!(MCP_RESULT_UI_RESOURCE_URI, "ui://webcodex/changes/v2");
+    assert_eq!(MCP_RESULT_UI_RESOURCE_URI, "ui://webcodex/changes/v4");
     assert_eq!(
         MCP_WORK_RESULT_UI_RESOURCE_URI,
         "ui://webcodex/work-result/v15"
     );
-    assert!(MCP_WORK_RESULT_UI_RESOURCE_LEGACY_URIS.contains(&"ui://webcodex/work-result/v9"));
-    assert!(MCP_WORK_RESULT_UI_RESOURCE_LEGACY_URIS.contains(&"ui://webcodex/work-result/v10"));
-    assert!(MCP_WORK_RESULT_UI_RESOURCE_LEGACY_URIS.contains(&"ui://webcodex/work-result/v11"));
-    assert!(MCP_RESULT_UI_RESOURCE_LEGACY_URIS.contains(&"ui://webcodex/changes/v1"));
-    assert!(MCP_RESULT_UI_RESOURCE_LEGACY_URIS.contains(&"ui://webcodex/result/v1"));
-    assert!(MCP_RESULT_UI_RESOURCE_LEGACY_URIS.contains(&"ui://webcodex/result/v2"));
-    assert!(MCP_RESULT_UI_RESOURCE_LEGACY_URIS.contains(&"ui://webcodex/result/v3"));
-    assert!(MCP_WORK_RESULT_UI_RESOURCE_LEGACY_URIS.contains(&"ui://webcodex/work-result/v1"));
-    assert!(MCP_WORK_RESULT_UI_RESOURCE_LEGACY_URIS.contains(&"ui://webcodex/work-result/v2"));
-    assert!(MCP_WORK_RESULT_UI_RESOURCE_LEGACY_URIS.contains(&"ui://webcodex/work-result/v4"));
-    assert!(MCP_WORK_RESULT_UI_RESOURCE_LEGACY_URIS.contains(&"ui://webcodex/work-result/v5"));
-    assert!(MCP_WORK_RESULT_UI_RESOURCE_LEGACY_URIS.contains(&"ui://webcodex/work-result/v6"));
     assert!(mcp_result_app_resource_meta(None)["ui"]
         .get("domain")
         .is_none());
@@ -311,27 +274,6 @@ async fn result_app_descriptor_and_resource_exposure_require_ui_operator_capabil
         read["result"]["contents"][0]["_meta"]["ui"]["domain"],
         PUBLIC_URL
     );
-    for legacy_uri in MCP_RESULT_UI_RESOURCE_LEGACY_URIS {
-        let legacy = handle_mcp_request(
-            &runtime,
-            rpc(
-                "resources/read",
-                Some(json!(32041)),
-                mcp_2026_params(json!({"uri": legacy_uri})),
-            ),
-            None,
-        )
-        .await;
-        let McpOutcome::Ok(legacy) = legacy else {
-            panic!("legacy Result App resource must remain readable: {legacy_uri}");
-        };
-        assert_eq!(legacy["result"]["contents"][0]["uri"], *legacy_uri);
-        assert_eq!(legacy["result"]["contents"][0]["text"], MCP_RESULT_APP_HTML);
-        assert_eq!(
-            legacy["result"]["contents"][0]["_meta"]["ui"]["domain"],
-            PUBLIC_URL
-        );
-    }
 
     let no_ui_resources = handle_mcp_request(
         &runtime,
@@ -386,7 +328,7 @@ async fn result_app_descriptor_and_resource_exposure_require_ui_operator_capabil
 async fn server_mcp_apps_setting_disables_only_app_presentation() {
     let runtime = test_runtime();
 
-    let enabled = handle_with_server_apps_enabled(
+    let enabled = handle_with_app_policy(
         &runtime,
         rpc(
             "tools/list",
@@ -408,7 +350,7 @@ async fn server_mcp_apps_setting_disables_only_app_presentation() {
         MCP_WORK_RESULT_UI_RESOURCE_URI
     );
 
-    let discover = handle_with_server_apps_enabled(
+    let discover = handle_with_app_policy(
         &runtime,
         rpc(
             "server/discover",
@@ -426,7 +368,7 @@ async fn server_mcp_apps_setting_disables_only_app_presentation() {
     assert_eq!(capabilities["resources"]["listChanged"], false);
     assert!(capabilities["extensions"].get(MCP_UI_EXTENSION).is_none());
 
-    let tools = handle_with_server_apps_enabled(
+    let tools = handle_with_app_policy(
         &runtime,
         rpc(
             "tools/list",
@@ -446,7 +388,7 @@ async fn server_mcp_apps_setting_disables_only_app_presentation() {
             .is_none());
     }
 
-    let resources = handle_with_server_apps_enabled(
+    let resources = handle_with_app_policy(
         &runtime,
         rpc(
             "resources/list",
@@ -464,7 +406,7 @@ async fn server_mcp_apps_setting_disables_only_app_presentation() {
         .as_array()
         .is_some_and(Vec::is_empty));
 
-    let read = handle_with_server_apps_enabled(
+    let read = handle_with_app_policy(
         &runtime,
         rpc(
             "resources/read",
@@ -485,7 +427,7 @@ async fn server_mcp_apps_setting_disables_only_app_presentation() {
         other => panic!("disabled static App resource must fail closed: {other:?}"),
     }
 
-    let computer_read = handle_with_server_apps_enabled(
+    let computer_read = handle_with_app_policy(
         &runtime,
         rpc(
             "resources/read",
@@ -506,7 +448,7 @@ async fn server_mcp_apps_setting_disables_only_app_presentation() {
         other => panic!("disabled Computer App resource must fail closed: {other:?}"),
     }
 
-    let call = handle_with_server_apps_enabled(
+    let call = handle_with_app_policy(
         &runtime,
         rpc(
             "tools/call",
@@ -1998,7 +1940,7 @@ async fn mcp_show_changes_result(
     } else {
         mcp_2026_params(params)
     };
-    let call = handle_with_server_apps_enabled(
+    let call = handle_with_app_policy(
         runtime,
         rpc("tools/call", Some(json!(id)), params),
         Some(auth),
@@ -2275,7 +2217,7 @@ async fn mcp_validation_run_and_summary_use_real_canonical_contracts() {
         1
     );
 
-    let disabled = handle_with_server_apps_enabled(
+    let disabled = handle_with_app_policy(
         &runtime,
         rpc(
             "tools/call",

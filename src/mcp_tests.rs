@@ -447,3 +447,32 @@ mod workbench_app;
 
 #[path = "mcp_tests/resource_mentions.rs"]
 mod resource_mentions;
+
+#[path = "mcp_tests/retired_app_resources.rs"]
+mod retired_app_resources;
+
+// Stateless App policy fixture. Window-aware carrier tests keep their own explicit identity.
+async fn handle_with_app_policy(
+    runtime: &ToolRuntime,
+    request: JsonRpcRequest,
+    auth: Option<&crate::auth::AuthContext>,
+    enabled: bool,
+) -> McpOutcome {
+    let protocol_era = super::inferred_protocol_era(&request);
+    super::handle_mcp_request_with_lifecycle(
+        runtime,
+        request,
+        auth,
+        protocol_era,
+        super::HostFileImportTrust::Untrusted,
+        None,
+        None,
+        None,
+        crate::model_surface::effective_mcp_compact_schemas(
+            crate::config::mcp_compact_schemas_override(),
+        ),
+        enabled,
+        None,
+    )
+    .await
+}

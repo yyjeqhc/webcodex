@@ -427,7 +427,7 @@ bounded by the existing log retention and may report reset or unavailable histor
 No log copy, model invocation, Job execution, permission, or waiting policy is added.
 Omitting `summary_only` preserves the existing behavior.
 
-`search_and_read_project_texts` reuses ordinary search-result sparsification after read planning.
+`search_file_context` reuses ordinary search-result sparsification after read planning.
 It omits redundant phase metadata, not source text, query indexes, failure evidence,
 read revisions, or snapshot-bound continuations.
 
@@ -527,7 +527,7 @@ When the connected MCP protocol/host admits the artifact capabilities, WebCodex 
 host-native file transfer in both directions without routing complete binary
 payloads through model text:
 
-- `import_conversation_files_to_project` imports 1..10 files supplied by the
+- `import_host_files` imports 1..10 files supplied by the
   ChatGPT host through `openai/fileParams`. This applies to user-selected
   conversation attachments and to newly generated files when the host binds
   them as file parameters. The Control downloads the referenced bytes and

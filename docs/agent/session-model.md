@@ -62,7 +62,7 @@ handoff, and finish can reason about the same unit of work.
 - Checkpoint-related task continuity
 - Session-local message board
 - Validation evidence and closeout summaries
-- Handoff / finish tooling (`read_session_handoff_summary`, `finish_coding_task`, …)
+- Handoff / finish tooling (`read_session_handoff`, `finish_coding_task`, …)
 
 Workflow Session lifecycle is independent from the durable `wc_goal_*` Goal domain. A Session may be explicitly correlated to a Goal, but that correlation grants no Session/Project authority and does not make the Session the Goal's lifecycle owner. In particular, `finish_coding_task` does not transition a Goal to `completed`; any Goal transition is a separate explicit Goal-domain mutation.
 
@@ -177,7 +177,7 @@ it is not a model-context token or cursor.
 
 Normal continuous work has no context-revision ACK input, automatic recovery
 delta, or handoff suggestion on unrelated tool results. When task context is
-missing, the model explicitly calls `read_session_handoff_summary` with the exact
+missing, the model explicitly calls `read_session_handoff` with the exact
 `session_id`. No identity, Project, window, transport, or recent-call state can
 select a Session implicitly. The authorized business Session supplies its Project
 when `project` is omitted; an explicit Project still passes the normal equality
@@ -501,7 +501,7 @@ The MCP adapter creates an immutable runtime view; it never stores this preferen
 in the Session or changes shared execution ownership. Non-MCP/internal omission
 falls back to `direct`. Available explicit values are `direct`, `host_code_mode` for
 Host-supplied native orchestration in every build, or `code_mode` for WebCodex nested
-orchestration only in Experimental Code Mode builds. Host-native guidance favors canonical batches and `search_and_read_project_texts`,
+orchestration only in Experimental Code Mode builds. Host-native guidance favors canonical batches and `search_file_context`,
 allows independent cross-tool observations and dependent branching within one
 Host cell, keeps raw ToolResults in that cell, and warns against Job polling and
 stale validation after covered source changes. It does not assert that WebCodex
@@ -573,7 +573,7 @@ guard failures) apply only to Workflow Sessions.
 ### Continuation feedback (`continuation_feedback`)
 
 `continuation_feedback` is a **deterministic, read-only projection** surfaced
-by `finish_coding_task`, `read_session_handoff_summary`, and (as `validation_delta`)
+by `finish_coding_task`, `read_session_handoff`, and (as `validation_delta`)
 `read_validation_summary`. The internal coding-startup implementation also consumes
 this projection while building canonical `work_on_project` startup state. It is derived only from existing
 persistent state — the Workflow Session ledger, validation evidence, bounded
@@ -623,7 +623,7 @@ a `finish_coding_task` verdict.
   continuation feedback returns at most 100 with the real total and
   truncation state. This is a hint for model judgment only: startup never
   reads, searches, or navigates those paths automatically.
-- **Handoff is independent of the display limit:** `read_session_handoff_summary`
+- **Handoff is independent of the display limit:** `read_session_handoff`
   builds its display list from the caller-supplied `limit`, but
   `continuation_feedback` reads an independent bounded evidence snapshot (the
   maximum retained event window), so a small display limit cannot shrink the
@@ -680,7 +680,7 @@ adapter has no durable source sequence, so list results explicitly report incomp
 coverage and must not be interpreted as complete capture or source execution order.
 See [`../../integrations/codex/README.md`](../../integrations/codex/README.md) for
 the optional adapter, capacity/recovery contract and unverified Host boundaries.
-The authorized `read_session_handoff_summary` handoff brief now includes a bounded
+The authorized `read_session_handoff` handoff brief now includes a bounded
 `external_observations` section, separate from native progress and validation.
 It shows the last five retained reports in server timestamp and identity order,
 with exact adapter/event IDs, tool,
@@ -716,7 +716,7 @@ boundaries. These retained reports supplement native tool/validation evidence.
 They do not capture unsent Host conversation or private model reasoning. See the
 [continuity guide](../SESSION_CONTINUITY.md) for the user and operator flow.
 
-`read_session_handoff_summary` and `finish_coding_task` return the same version-1
+`read_session_handoff` and `finish_coding_task` return the same version-1
 `handoff_brief`, built by one shared pure projection. It is the compact,
 model-friendly view for a new window, a new Agent, or a human receiver;
 `continuation_feedback` remains the more detailed evidence available from the
@@ -732,11 +732,11 @@ guidance, append a ledger event, or call an LLM; and stores no new Session
 data. `work_on_project` intentionally does not return `handoff_brief`, so the
 standard startup core's worst-case size does not grow.
 
-A direct internal `read_session_handoff_summary(...)` call does not add business
+A direct internal `read_session_handoff(...)` call does not add business
 events beyond those snapshots. Calls through MCP, REST, or runtime dispatch
 remain subject to the uniform recorder and normally append exactly
 `tool_call_started` and `tool_call_finished`. This telemetry is not guidance
-consumption or a handoff-builder mutation, and `read_session_handoff_summary` must
+consumption or a handoff-builder mutation, and `read_session_handoff` must
 not receive a recorder bypass.
 
 The projection has these stable bounds and semantics:
@@ -794,7 +794,7 @@ characters while retaining lifecycle/mode, progress and validation status,
 attention counts, basis, and deterministic/LLM flags.
 
 A new window can start a new Session normally and then explicitly read the old
-Session with `read_session_handoff_summary(session_id=...)`. Explicit
+Session with `read_session_handoff(session_id=...)`. Explicit
 `resume_session_id` remains available when the caller truly intends to resume
 the same active Session and continues to obey the existing identity,
 lifecycle, project, guard, and binding rules.

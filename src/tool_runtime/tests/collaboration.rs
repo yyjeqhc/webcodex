@@ -844,7 +844,7 @@ async fn collaboration_two_sessions_keep_execution_history_and_explicit_provenan
 
     let handoff = call_with_recorder(
         &runtime,
-        "read_session_handoff_summary",
+        "read_session_handoff",
         json!({
             "session_id": coordinator.session_id,
             "include_workspace": false,
@@ -995,7 +995,7 @@ async fn collaboration_two_sessions_keep_execution_history_and_explicit_provenan
 
     let worker_tools = tool_names(&runtime, &worker.session_id);
     for expected in [
-        "read_session_handoff_summary",
+        "read_session_handoff",
         "list_session_messages",
         "complete_session_message",
     ] {
@@ -1010,7 +1010,7 @@ async fn collaboration_two_sessions_keep_execution_history_and_explicit_provenan
         .any(|tool| tool == "post_session_message"));
     assert!(!coordinator_tools
         .iter()
-        .any(|tool| tool == "read_session_handoff_summary"));
+        .any(|tool| tool == "read_session_handoff"));
     assert!(!coordinator_tools
         .iter()
         .any(|tool| tool == "complete_session_message"));
@@ -1740,7 +1740,7 @@ async fn project_scoped_session_authority_rejects_recycled_project_identity() {
             json!({"session_id": session_id}),
         ),
         (
-            "read_session_handoff_summary",
+            "read_session_handoff",
             json!({
                 "session_id": session_id,
                 "include_workspace": false,
@@ -1894,7 +1894,7 @@ async fn projectless_session_owner_authority_blocks_known_ids_from_foreign_princ
             json!({"session_id": session_id}),
         ),
         (
-            "read_session_handoff_summary",
+            "read_session_handoff",
             json!({
                 "session_id": session_id,
                 "include_workspace": false,

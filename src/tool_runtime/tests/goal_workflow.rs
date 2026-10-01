@@ -1476,7 +1476,7 @@ async fn goal_workflow_same_durable_agent_is_worker_and_controller_and_stall_use
             "bootstrap_agent_conversation",
             "consume_agent_wake",
             "get_goal",
-            "read_session_handoff_summary",
+            "read_session_handoff",
             "checkpoint_goal",
             "never repeat an uncertain effect",
             &fixture.goal_id,

@@ -660,7 +660,7 @@ mod tests {
         for (tool, class) in [
             ("edit_project_files", Edit),
             ("run_shell", Shell),
-            ("import_conversation_files_to_project", Artifact),
+            ("import_host_files", Artifact),
             ("read_git_diff_hunks", Git),
             ("read_files", Context),
             ("get_runtime_status", Report),

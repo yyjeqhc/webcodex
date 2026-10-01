@@ -306,7 +306,7 @@ mod tests {
     #[test]
     fn search_and_read_session_audit_redacts_single_and_batched_patterns() {
         let single = session_input_summary_for_tool(
-            "search_and_read_project_texts",
+            "search_file_context",
             &json!({
                 "project": "demo",
                 "query": {"pattern": "PRIVATE_SINGLE_PATTERN", "path": "src/lib.rs"},
@@ -319,7 +319,7 @@ mod tests {
         assert!(!single.to_string().contains("PRIVATE_SINGLE_PATTERN"));
 
         let batched = session_input_summary_for_tool(
-            "search_and_read_project_texts",
+            "search_file_context",
             &json!({
                 "project": "demo",
                 "queries": [

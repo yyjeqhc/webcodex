@@ -756,7 +756,7 @@ async fn adaptive_gateway_file_import_preserves_target_aware_host_trust_impl() {
         mcp_2026_params(json!({
             "name": crate::mcp::tools::ADAPTIVE_RUNTIME_GATEWAY_TOOL_NAME,
             "arguments": {
-                "tool": "import_conversation_files_to_project",
+                "tool": "import_host_files",
                 "arguments": {
                     "project": "agent:importer:demo",
                     "openaiFileIdRefs": []
@@ -839,7 +839,7 @@ async fn oauth_mcp_file_import_startup_env_stateless_2026_crosses_provenance_gat
     let agent = tokio::spawn(complete_mcp_import_save(registry, pptx.clone()));
     let temporary_url = "https://download.example/temporary-secret-token/stateless-import.pptx";
     let forged_provenance_error = crate::tool_runtime::ToolCall::from_tool_name(
-        "import_conversation_files_to_project",
+        "import_host_files",
         json!({
             "project": "agent:importer:demo",
             "openaiFileIdRefs": [{
@@ -861,7 +861,7 @@ async fn oauth_mcp_file_import_startup_env_stateless_2026_crosses_provenance_gat
         &token,
         "tools/call",
         mcp_2026_params(json!({
-            "name": "import_conversation_files_to_project",
+            "name": "import_host_files",
             "arguments": {
                 "project": "agent:importer:demo",
                 "openaiFileIdRefs": [{
@@ -943,7 +943,7 @@ async fn loopback_api_token_mcp_file_import_saves_pptx_when_explicitly_enabled_i
         &token,
         "tools/call",
         json!({
-            "name": "import_conversation_files_to_project",
+            "name": "import_host_files",
             "arguments": {
                 "project": "agent:importer:demo",
                 "openaiFileIdRefs": [{
@@ -1022,7 +1022,7 @@ async fn loopback_bootstrap_mcp_file_import_saves_pptx_when_explicitly_enabled_i
         "secret",
         "tools/call",
         json!({
-            "name": "import_conversation_files_to_project",
+            "name": "import_host_files",
             "arguments": {
                 "project": "agent:importer:demo",
                 "openaiFileIdRefs": [{
@@ -1112,7 +1112,7 @@ async fn oauth_mcp_file_import_unallowlisted_active_client_saves_openai_host_fil
         &token,
         "tools/call",
         json!({
-            "name": "import_conversation_files_to_project",
+            "name": "import_host_files",
             "arguments": {
                 "project": "agent:importer:demo",
                 "openaiFileIdRefs": [{
@@ -1198,7 +1198,7 @@ async fn oauth_mcp_file_import_trusted_client_saves_pptx_impl() {
         &token,
         "tools/call",
         json!({
-            "name": "import_conversation_files_to_project",
+            "name": "import_host_files",
             "arguments": {
                 "project": "agent:importer:demo",
                 "openaiFileIdRefs": [{
@@ -1271,7 +1271,7 @@ async fn oauth_mcp_file_import_trusted_download_guards_remain_bounded_impl() {
     ));
     let temporary_url = "https://download.example/DO-NOT-LOG/trusted-guard.pptx";
     let params = json!({
-        "name": "import_conversation_files_to_project",
+        "name": "import_host_files",
         "arguments": {
             "project": "agent:importer:demo",
             "openaiFileIdRefs": [{
@@ -1357,7 +1357,7 @@ async fn mcp_file_import_unallowlisted_oauth_rejects_non_openai_host_before_dns_
     ));
     let temporary_url = "https://download.example/SHOULD-NOT-BE-RESOLVED/file.pptx";
     let params = json!({
-        "name": "import_conversation_files_to_project",
+        "name": "import_host_files",
         "arguments": {
             "project": "agent:importer:demo",
             "openaiFileIdRefs": [{

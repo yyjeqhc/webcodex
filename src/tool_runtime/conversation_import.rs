@@ -855,12 +855,12 @@ impl ToolRuntime {
 
             (SessionTransport::Mcp, _) => {
                 return ToolResult::err(
-                    "import_conversation_files_to_project requires trusted MCP host-file provenance",
+                    "import_host_files requires trusted MCP host-file provenance",
                 );
             }
             (SessionTransport::Api, _) => {
                 return ToolResult::err(
-                    "import_conversation_files_to_project is available only through trusted MCP host-file integration",
+                    "import_host_files is available only through trusted MCP host-file integration",
                 );
             }
         };

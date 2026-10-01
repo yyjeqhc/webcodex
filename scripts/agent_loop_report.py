@@ -959,7 +959,7 @@ _JOB_SCHEDULING_INDEPENDENT_TOOLS = frozenset(
     {
         "read_files",
         "search_project_texts",
-        "search_and_read_project_texts",
+        "search_file_context",
         "review_changes",
         "read_workspace_changes",
         "read_git_log",

@@ -322,7 +322,7 @@ impl ToolRuntime {
         instruction: &str,
         auth: Option<&AuthContext>,
     ) -> Result<String, ToolResult> {
-        if super::kernel::check_runtime_tool_scope(auth, "read_session_handoff_summary").is_err() {
+        if super::kernel::check_runtime_tool_scope(auth, "read_session_handoff").is_err() {
             return Err(coding_agent_error(
                 "insufficient_scope",
                 "Context recovery requires runtime:read",

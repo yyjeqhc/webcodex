@@ -2888,7 +2888,7 @@ async fn workflow_resume_context_is_window_principal_scoped_bounded_and_non_auth
     webcodex_tool_contracts::test_support::validate_generated_tool_call_against_registered_input_schema(
         &single["suggested_call"],
     )
-    .expect("workflow resume recovery must pass read_session_handoff_summary registered inputSchema");
+    .expect("workflow resume recovery must pass read_session_handoff registered inputSchema");
 
     let other_window = crate::client_window::ClientWindow::for_test("workflow-resume-other");
     let hidden_by_window = runtime

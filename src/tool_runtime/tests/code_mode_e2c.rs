@@ -686,7 +686,7 @@ async fn e2c_job_handoff_has_exact_continuation_and_later_write_invalidates_term
     assert_eq!(after["current_evidence"]["status"], "stale", "{after}");
     let handoff = canonical_call(
         &runtime,
-        "read_session_handoff_summary",
+        "read_session_handoff",
         json!({
             "session_id": session,
             "project": project,

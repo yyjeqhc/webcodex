@@ -156,11 +156,15 @@ async fn a_present_file_is_not_startup_evidence() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join(file_name("webcodex"));
     std::fs::write(&path, "not an executable image").unwrap();
+
+    // Unix rejects the file at the execute-permission preflight. Windows has
+    // no Unix execute bit, so it reaches process creation and rejects the
+    // invalid executable image there. Neither path is startup evidence.
     #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
-    }
+    let expected_error = "binary_not_executable";
+    #[cfg(windows)]
+    let expected_error = "webcodex_command_start_failed";
+
     let (view, resolved) = probe(
         RuntimeSource::Custom {
             directory: dir.path().into(),
@@ -178,15 +182,18 @@ async fn a_present_file_is_not_startup_evidence() {
     assert_eq!(view.binaries[0].startup_check, BinaryStartupCheck::Failed);
     assert_eq!(
         view.binaries[0].error_code.as_deref(),
-        Some("webcodex_command_start_failed")
+        Some(expected_error)
     );
+    #[cfg(unix)]
+    assert!(view.binaries[0].diagnostics.is_none());
+    #[cfg(windows)]
     assert!(view.binaries[0]
         .diagnostics
         .as_ref()
-        .unwrap()
-        .io_kind
+        .and_then(|diagnostics| diagnostics.io_kind.as_ref())
         .is_some());
     assert_eq!(view.binaries[1].present, Some(false));
+
     let failure = ResolvedBinaries::resolve_source_until(
         &RuntimeSource::Custom {
             directory: dir.path().into(),
@@ -197,11 +204,10 @@ async fn a_present_file_is_not_startup_evidence() {
     )
     .await
     .unwrap_err();
-    assert_eq!(failure.code, "webcodex_command_start_failed");
+    assert_eq!(failure.code, expected_error);
     assert_eq!(failure.details.as_ref().unwrap()["phase"], "runtime_probe");
     assert_eq!(failure.details.as_ref().unwrap()["executable"], "webcodex");
 }
-
 #[cfg(unix)]
 #[tokio::test]
 async fn execution_permission_does_not_prove_successful_startup() {

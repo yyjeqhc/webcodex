@@ -2858,13 +2858,7 @@ mod tests {
     #[test]
     fn final_decision_is_durable_before_gate_can_be_released() {
         let directory = crate::test_tempdir().unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700))
-                .unwrap();
-        }
-        let store = EnvironmentStore::open(directory.path().to_path_buf()).unwrap();
+        let store = EnvironmentStore::open(directory.path().join("environment")).unwrap();
         let mut journal = fixture(store.root(), Phase::Verifying);
         persist_final_decision(&store, &mut journal, Phase::Committed).unwrap();
         let recovered: UpgradeJournal = store.read_json("upgrade.json").unwrap().unwrap();
@@ -2881,13 +2875,7 @@ mod tests {
     #[tokio::test]
     async fn recovered_final_decisions_never_restore_old_data() {
         let directory = crate::test_tempdir().unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700))
-                .unwrap();
-        }
-        let store = EnvironmentStore::open(directory.path().to_path_buf()).unwrap();
+        let store = EnvironmentStore::open(directory.path().join("environment")).unwrap();
         let mut journal = fixture(store.root(), Phase::Verifying);
         persist_final_decision(&store, &mut journal, Phase::Committed).unwrap();
         let backend = NativeEnvironment::new().unwrap();
@@ -2903,13 +2891,7 @@ mod tests {
     #[test]
     fn privileged_restore_rejects_wrong_operation_and_request_owner_before_effects() {
         let directory = crate::test_tempdir().unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700))
-                .unwrap();
-        }
-        let store = EnvironmentStore::open(directory.path().to_path_buf()).unwrap();
+        let store = EnvironmentStore::open(directory.path().join("environment")).unwrap();
         let journal = fixture(store.root(), Phase::Restoring);
         save(&store, &journal).unwrap();
         assert_eq!(
@@ -2958,13 +2940,7 @@ mod tests {
     #[test]
     fn unfinished_upgrade_blocks_other_store_mutations_after_recovery() {
         let directory = crate::test_tempdir().unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700))
-                .unwrap();
-        }
-        let store = EnvironmentStore::open(directory.path().to_path_buf()).unwrap();
+        let store = EnvironmentStore::open(directory.path().join("environment")).unwrap();
         let _lock = store.lock().unwrap();
         for phase in [
             Phase::Prepared,

@@ -12,6 +12,11 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
+        #[cfg(target_os = "macos")]
+        let temp = tempfile::Builder::new()
+            .tempdir_in(std::env::temp_dir().canonicalize().unwrap())
+            .unwrap();
+        #[cfg(not(target_os = "macos"))]
         let temp = tempfile::tempdir().unwrap();
         let store = EnvironmentStore::open(temp.path().join("environment")).unwrap();
         let record = EnvironmentRecord {

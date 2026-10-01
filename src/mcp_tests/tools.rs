@@ -1596,7 +1596,7 @@ fn mcp_tools_list_inputs_equal_canonical_except_descriptions_and_host_file_overl
             let name = tool["name"].as_str().unwrap();
             let canonical = &specs[name];
             let mut expected = canonical.input_schema.clone();
-            // MCP owns Host-file requiredness and runtime_status omission defaults;
+            // MCP owns Host-file requiredness and model-specific omission defaults;
             // neither overlay mutates the canonical schema.
             if name == "import_conversation_files_to_project" {
                 expected["properties"]["openaiFileIdRefs"]["items"]["required"] =
@@ -1610,6 +1610,13 @@ fn mcp_tools_list_inputs_equal_canonical_except_descriptions_and_host_file_overl
                 expected_description.push_str(
                     " MCP defaults to sparse status; compact=false opts into full diagnostics.",
                 );
+            }
+            if name == "observe_jobs" {
+                assert_eq!(expected["properties"]["summary_only"]["default"], false);
+                expected["properties"]["summary_only"]["default"] = json!(true);
+                expected["properties"]["summary_only"]["description"] = json!("MCP defaults to compact proven-success validation logs. Set false to expand retained logs from the original cursor. Failures, unknown results and ordinary commands keep full evidence.");
+                expected_description
+                    .push_str(" MCP defaults summary_only=true; set false for full retained logs.");
             }
             let mut actual = tool["inputSchema"].clone();
             if compact {

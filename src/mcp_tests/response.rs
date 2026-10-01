@@ -121,3 +121,111 @@ fn text_json_compat_mirrors_runtime_structured_content() {
         serde_json::to_string(&runtime["structuredContent"]).unwrap()
     );
 }
+
+#[test]
+fn mcp_execution_failure_logs_have_one_default_copy_and_preserve_recovery() {
+    let stdout = "EXECUTION_STDOUT_SENTINEL\n".repeat(80);
+    let stderr = "EXECUTION_STDERR_SENTINEL\n".repeat(80);
+    for timed_out in [false, true] {
+        let prefix = if timed_out {
+            "Command timed out after 60s.\nCommand definitely started, but WebCodex cannot prove its side effects ended with the timeout.\nOutput tails before timeout:\n"
+        } else {
+            "Command exited with status 1.\nNo files were modified by WebCodex itself; command side effects, if any, are from the invoked command.\n"
+        };
+        let guidance = if timed_out {
+            "Retry guidance: do not blindly retry. First inspect the actual Job, process, service, and target state."
+        } else {
+            "Retry guidance: inspect stderr/stdout above, then fix the reported issue or use a narrower tool."
+        };
+        let error = format!("{prefix}stdout_tail:\n{stdout}\nstderr_tail:\n{stderr}\n{guidance}");
+        let output = json!({
+            "execution_state": if timed_out {"timed_out"} else {"completed"},
+            "command_started": true, "command_ok": false,
+            "exit_code": if timed_out {json!(null)} else {json!(1)},
+            "failure_kind": if timed_out {"timeout"} else {"command_exit_nonzero"},
+            "tool_failure": false, "stdout_tail": stdout, "stderr_tail": stderr,
+            "stdout_truncated": true, "stderr_truncated": false,
+            "continuation": {"tool":"observe_jobs", "arguments":{"items":[{"job_id":"original-job"}]}}
+        });
+        let original = json!({"success":false, "output":output, "error":error});
+        for presentation in [
+            McpToolResultPresentation::Standard,
+            McpToolResultPresentation::OpenAiStructuredFailureCompat,
+        ] {
+            let rendered = mcp_runtime_tool_result_fallback_with_compat(
+                ToolResult::err_with_output(&error, output.clone()),
+                false,
+                presentation,
+            );
+            assert_eq!(rendered["structuredContent"]["success"], false);
+            assert_eq!(rendered["structuredContent"]["output"], output);
+            let compact_error = rendered["structuredContent"]["error"].as_str().unwrap();
+            assert!(compact_error.starts_with(prefix));
+            assert!(compact_error.contains("Retry guidance:"));
+            assert!(!compact_error.contains("SENTINEL"));
+            assert!(!rendered["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("SENTINEL"));
+            assert_eq!(
+                rendered["isError"],
+                presentation == McpToolResultPresentation::Standard
+            );
+            let bytes = serde_json::to_vec(&rendered).unwrap();
+            // Even the full MCP envelope is smaller than the old structured result alone.
+            assert!(bytes.len() < serde_json::to_vec(&original).unwrap().len());
+            assert_eq!(
+                String::from_utf8(bytes)
+                    .unwrap()
+                    .matches("EXECUTION_STDOUT_SENTINEL")
+                    .count(),
+                80
+            );
+            if timed_out {
+                assert!(compact_error.contains("cannot prove its side effects ended"));
+                assert!(compact_error.contains("do not blindly retry"));
+            } else {
+                assert!(compact_error.contains("command side effects"));
+                assert!(compact_error.contains("inspect the output logs"));
+            }
+        }
+        let compat = mcp_runtime_tool_result_fallback_with_compat(
+            ToolResult::err_with_output(error, output),
+            true,
+            McpToolResultPresentation::Standard,
+        );
+        assert_eq!(
+            compat["content"][0]["text"],
+            serde_json::to_string(&compat["structuredContent"]).unwrap()
+        );
+    }
+}
+
+#[test]
+fn mcp_execution_log_projection_preserves_faults_unknown_and_unmatched_prose() {
+    let error = "Original fault.\nstdout_tail:\noutput\nstderr_tail:\ndiagnostic\nDo not retry.";
+    for (success, kind, tool_failure, stdout) in [
+        (false, "tool_fault", true, "output"),
+        (false, "timeout", true, "output"),
+        (false, "outcome_unknown", false, "output"),
+        (false, "command_exit_nonzero", false, "different output"),
+        (true, "command_exit_nonzero", false, "output"),
+    ] {
+        let result = ToolResult {
+            success,
+            error: Some(error.to_string()),
+            output: json!({
+                "failure_kind":kind, "tool_failure":tool_failure,
+                "stdout_tail":stdout, "stderr_tail":"diagnostic",
+                "recovery_kind":"reobserve", "execution_state":"outcome_unknown"
+            }),
+        };
+        let expected = serde_json::to_value(&result).unwrap();
+        let rendered = mcp_runtime_tool_result_fallback_with_compat(
+            result,
+            false,
+            McpToolResultPresentation::Standard,
+        );
+        assert_eq!(rendered["structuredContent"], expected);
+    }
+}

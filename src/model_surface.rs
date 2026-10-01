@@ -381,7 +381,38 @@ where
 
     for keyword in ["anyOf", "oneOf", "allOf"] {
         if let Some(branches) = schema.get(keyword).and_then(Value::as_array) {
+            let has_matching_required_shape = keyword != "allOf"
+                && branches.iter().any(|branch| {
+                    branch
+                        .get("required")
+                        .and_then(Value::as_array)
+                        .is_some_and(|required| {
+                            !required.is_empty()
+                                && required
+                                    .iter()
+                                    .filter_map(Value::as_str)
+                                    .all(|key| value.get(key).is_some())
+                        })
+                });
             for branch in branches {
+                // Alternative object representations may declare different calls at
+                // the same path. Do not let an inapplicable representation erase an
+                // edge before its matching representation can project it. This is
+                // structural selection only; target/posture checks below remain
+                // fail closed, and conjunctive schemas still all apply.
+                if has_matching_required_shape
+                    && branch
+                        .get("required")
+                        .and_then(Value::as_array)
+                        .is_some_and(|required| {
+                            required
+                                .iter()
+                                .filter_map(Value::as_str)
+                                .any(|key| value.get(key).is_none())
+                        })
+                {
+                    continue;
+                }
                 if project_suggested_tool_calls_in_value_node(
                     value, branch, route_for, path, visited,
                 ) {

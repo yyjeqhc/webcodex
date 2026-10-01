@@ -1,5 +1,9 @@
 # v0.5 tool surface: retire Actions, standardize canonical names
 
+> Initial implementation/acceptance at `082dddd2`. The subsequent
+> [v0.5 pruning pass](v05-pruning.md) shortens three names, retires App URI
+> aliases and authority-setting migration, and defines the current follow-up.
+
 This is a breaking model/API contract change, not a published release. Existing
 package versions and the separate v0.4.4 release branch are not changed here.
 There is no production old-name map, alias registry, redirect, downgrade mode or

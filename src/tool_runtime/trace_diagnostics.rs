@@ -4,7 +4,9 @@
 use super::{ToolCall, ToolResult, ToolRuntime};
 use crate::auth::{AuthContext, SCOPE_ADMIN};
 use crate::tool_request_trace::TraceReadError;
-use serde_json::{json, Value};
+use serde_json::json;
+#[cfg(test)]
+use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use webcodex_tool_contracts::ToolTraceQuery;
 

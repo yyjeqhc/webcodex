@@ -620,7 +620,7 @@ impl AppState {
             .await
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, target_os = "macos"))]
     async fn run_test_one_shot_operation(
         &self,
         executable: PathBuf,

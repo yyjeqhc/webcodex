@@ -46,12 +46,8 @@ pub struct ServerStatusOutput {
     pub server_pid: Option<u32>,
     pub probe_url: String,
     #[serde(default)]
-    pub revision_check: Option<String>,
-    #[serde(default)]
     pub desktop_runtime_contract:
         Option<webcodex_core::desktop_runtime_contract::DesktopRuntimeContract>,
-    #[serde(default)]
-    pub protocol_compatibility: Option<String>,
     #[serde(default)]
     pub server_build: Option<serde_json::Value>,
 }

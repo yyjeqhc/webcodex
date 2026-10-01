@@ -68,32 +68,6 @@ pub struct ResolvedBinaries {
 }
 
 impl ResolvedBinaries {
-    pub async fn resolve(
-        bundled_runtime_dir: Option<&Path>,
-        cancellation: &CancellationContext,
-    ) -> DesktopResult<Self> {
-        Self::resolve_until(
-            bundled_runtime_dir,
-            cancellation,
-            Deadline::after(CLI_TIMEOUT),
-        )
-        .await
-    }
-
-    pub async fn resolve_until(
-        bundled_runtime_dir: Option<&Path>,
-        cancellation: &CancellationContext,
-        deadline: Deadline,
-    ) -> DesktopResult<Self> {
-        Self::resolve_source_until(
-            &crate::runtime_selection::RuntimeSource::Bundled,
-            bundled_runtime_dir,
-            cancellation,
-            deadline,
-        )
-        .await
-    }
-
     pub async fn resolve_source_until(
         source: &crate::runtime_selection::RuntimeSource,
         bundled_runtime_dir: Option<&Path>,
@@ -895,7 +869,7 @@ fn timeout_error() -> DesktopError {
     )
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "macos"))]
 pub(crate) async fn run_test_bounded(
     executable: &Path,
     args: &[String],
@@ -939,14 +913,6 @@ fn read_bounded<R: Read>(mut reader: R) -> Vec<u8> {
         }
     }
     output
-}
-
-fn executable_name(name: &str) -> String {
-    if cfg!(windows) {
-        format!("{name}.exe")
-    } else {
-        name.to_string()
-    }
 }
 
 #[cfg(test)]

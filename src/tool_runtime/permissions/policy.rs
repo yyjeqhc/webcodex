@@ -23,9 +23,7 @@ pub(crate) enum AuthoritySource {
     Default,
     /// Explicit `WEBCODEX_AUTHORITY_MODE`.
     Env,
-    /// An unambiguous legacy operator configuration was migrated.
-    LegacyEnv,
-    /// Unknown or conflicting legacy configuration remains invalid.
+    /// A retired operator setting was detected; it cannot select a mode.
     LegacyEnvRejected,
 }
 
@@ -34,7 +32,6 @@ impl AuthoritySource {
         match self {
             Self::Default => "default",
             Self::Env => concat!("env:", "WEBCODEX_AUTHORITY_MODE"),
-            Self::LegacyEnv => "migrated_env:WEBCODEX_PERMISSION_MODE",
             Self::LegacyEnvRejected => concat!("rejected_legacy_env:", "WEBCODEX_PERMISSION_MODE"),
         }
     }
@@ -60,7 +57,8 @@ impl EffectiveAuthorityConfig {
     ///
     /// Unset or empty `WEBCODEX_AUTHORITY_MODE` → [`AuthorityMode::TrustedAgent`]
     /// with source `default`. Unknown non-empty value → invalid (fail closed).
-    /// Unambiguous legacy values migrate; unknown or conflicting values fail closed.
+    /// A set retired variable (even empty) fails closed. Silently ignoring it
+    /// could convert an old approval requirement into the trusted default.
     pub(crate) fn from_env() -> Self {
         let read = |name, source| match std::env::var(name) {
             Ok(value) => Ok(Some(value)),
@@ -85,34 +83,14 @@ impl EffectiveAuthorityConfig {
     }
 
     fn from_values(current: Option<&str>, legacy: Option<&str>) -> Self {
-        let Some(legacy) = legacy.filter(|value| !value.trim().is_empty()) else {
-            return Self::from_raw(current);
-        };
-        let mode = match AuthorityMode::parse(legacy.trim()) {
-            Ok(mode) => mode,
-            Err(_) => {
-                return Self::InvalidMode {
-                    value: "unknown legacy permission mode".to_string(),
-                    source: AuthoritySource::LegacyEnvRejected,
-                }
-            }
-        };
-        if current.is_some_and(|value| !value.trim().is_empty()) {
-            let config = Self::from_raw(current);
-            return match config {
-                Self::Active { mode: selected, .. } if selected != mode => Self::InvalidMode {
-                    value: "conflicting authority and legacy permission modes".to_string(),
-                    source: AuthoritySource::LegacyEnvRejected,
-                },
-                other => other,
+        if legacy.is_some() {
+            return Self::InvalidMode {
+                value: "retired WEBCODEX_PERMISSION_MODE; unset it and configure WEBCODEX_AUTHORITY_MODE".to_string(),
+                source: AuthoritySource::LegacyEnvRejected,
             };
         }
-        Self::Active {
-            mode,
-            source: AuthoritySource::LegacyEnv,
-        }
+        Self::from_raw(current)
     }
-
     /// Resolve from an optional raw mode string (tests and explicit config).
     pub(crate) fn from_raw(raw: Option<&str>) -> Self {
         let source = match raw {
@@ -282,33 +260,40 @@ mod tests {
     }
 
     #[test]
-    fn unambiguous_legacy_configuration_migrates() {
-        for (legacy, expected) in [
-            ("dev_auto_approve", "trusted_agent"),
-            ("require_approval", "restricted"),
+    fn retired_permission_configuration_never_selects_an_authority_mode() {
+        for current in [
+            None,
+            Some("trusted_agent"),
+            Some("restricted"),
+            Some("invalid"),
         ] {
-            let config = EffectiveAuthorityConfig::from_values(None, Some(legacy));
-            assert_eq!(config.mode_name(), expected);
-            assert_eq!(config.source(), AuthoritySource::LegacyEnv);
-            assert_eq!(
-                EffectiveAuthorityConfig::from_raw(Some(legacy)).mode_name(),
-                expected
-            );
-            assert_eq!(
-                EffectiveAuthorityConfig::from_values(Some(expected), Some(legacy)).mode_name(),
-                expected
-            );
+            for retired in [
+                "",
+                " ",
+                "trusted_agent",
+                "restricted",
+                "dev_auto_approve",
+                "require_approval",
+                "audit_only",
+                "unknown",
+            ] {
+                let config = EffectiveAuthorityConfig::from_values(current, Some(retired));
+                assert_eq!(config.mode_name(), "invalid");
+                assert_eq!(config.source(), AuthoritySource::LegacyEnvRejected);
+                assert!(!config.auto_authorize());
+            }
         }
-        for (current, legacy) in [
-            (None, "audit_only"),
-            (Some("trusted_agent"), "require_approval"),
-            (Some("invalid"), "dev_auto_approve"),
-        ] {
+        for alias in ["dev_auto_approve", "require_approval", "audit_only"] {
+            assert!(AuthorityMode::parse(alias).is_err());
             assert_eq!(
-                EffectiveAuthorityConfig::from_values(current, Some(legacy)).mode_name(),
+                EffectiveAuthorityConfig::from_raw(Some(alias)).mode_name(),
                 "invalid"
             );
         }
+        assert_eq!(
+            EffectiveAuthorityConfig::from_values(Some("restricted"), None).mode_name(),
+            "restricted"
+        );
     }
 
     #[test]

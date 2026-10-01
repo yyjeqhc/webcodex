@@ -19,7 +19,7 @@ pub(crate) fn tool_requires_permission(tool_name: &str) -> bool {
 /// Coarse risk label for summaries and future gates (e.g. `write`, `shell`).
 ///
 /// Independent of permission outcome: high risk still auto-approves under
-/// `dev_auto_approve` after hard safety.
+/// `trusted_agent` after hard safety.
 pub(crate) fn classify_tool_risk(tool_name: &str) -> &'static str {
     runtime_tool_permission_risk(tool_name)
 }

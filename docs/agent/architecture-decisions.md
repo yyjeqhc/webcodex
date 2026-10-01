@@ -235,7 +235,7 @@ See also [`TESTING.md`](../TESTING.md).
   re-run Cargo/shell or replace `finish_coding_task`. Handoff and finish reuse
   this projection instead of building independent validation truth.
 - `continuation_feedback` (surfaced by `finish_coding_task` and
-  `read_session_handoff_summary`; its `validation_delta` part
+  `read_session_handoff`; its `validation_delta` part
   also by `read_validation_summary`) is a deterministic, read-only projection of
   the prior attempt over existing ledger/evidence/Job/message-board state. It
   is never an LLM summary, never a new verdict, never a second attempt state
@@ -281,7 +281,7 @@ canonical authority mode.
 | Default (unset/empty) | `trusted_agent`; source reported as `default` |
 | `trusted_agent` | Consequential runtime tools auto-execute after hard safety with no approval interruptions; external release actions remain user-task-scoped; every permission-bearing call records an auditable ledger decision (`policy=trusted_agent`, `status=auto_approved`, `reason=trusted_agent_authority`) |
 | `restricted` | Consequential runtime tools deny (`restricted_requires_human_authorization`); there is no separate Connector approval loop |
-| Legacy env set | Unambiguous legacy values migrate: `dev_auto_approve` → `trusted_agent`, `require_approval` → `restricted`; legacy-only configuration reports `migrated_env:WEBCODEX_PERMISSION_MODE`. Unknown or conflicting legacy/current values remain invalid and fail closed with source `rejected_legacy_env:WEBCODEX_PERMISSION_MODE` |
+| Retired env set | v0.5 rejects any set `WEBCODEX_PERMISSION_MODE`, even empty, with source `rejected_legacy_env:WEBCODEX_PERMISSION_MODE`. There is no automatic migration or value alias. Unset the variable and choose a canonical authority mode. |
 | Shared surfaces | Both modes share the same tool implementations, schemas, session model, evidence, and audit records |
 | Projection | `get_runtime_status` and internal full startup diagnostics report one canonical `authority` object; the sparse external `work_on_project` projection omits it. The old `permissions` profile object is deleted |
 

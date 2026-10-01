@@ -36,7 +36,7 @@ WEBCODEX_AUTHORITY_MODE = trusted_agent | restricted
 | Unset / empty / whitespace | **`trusted_agent`** (self-hosted single-operator product default), source reported as `default` |
 | Explicit known value | `trusted_agent` or `restricted`, source `env:WEBCODEX_AUTHORITY_MODE` |
 | Unknown non-empty value | Invalid configuration → consequential tools **fail closed** with reason `invalid_authority_mode:{value}` |
-| Legacy values | `dev_auto_approve` aliases `trusted_agent`; `require_approval` aliases `restricted`, in either environment variable. Legacy-only configuration reports `migrated_env:WEBCODEX_PERMISSION_MODE`. Both variables may agree; conflicting values and unknown legacy values (including `audit_only`) remain invalid. |
+| Retired configuration | v0.5 does not migrate `WEBCODEX_PERMISSION_MODE` or accept `dev_auto_approve` / `require_approval`. Any set retired variable, including empty, is invalid. Unset it and explicitly select `WEBCODEX_AUTHORITY_MODE=trusted_agent` or `restricted`; the rejection guard never falls back to automatic authorization. |
 
 The resolved mode and source are projected on `get_runtime_status` and on internal
 full startup diagnostics as the `authority` object. The canonical external
@@ -61,7 +61,7 @@ its sparse model-facing projection:
 The former `permissions` profile object
 (`policy` / `auto_approve` / `release_recommended_policy`) no longer exists on
 those payloads. The per-session permission decision **summary** (counters) in
-`finish_coding_task` / `read_session_handoff_summary` is unchanged except that it
+`finish_coding_task` / `read_session_handoff` is unchanged except that it
 carries the new policy names.
 
 ---

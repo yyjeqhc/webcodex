@@ -463,8 +463,9 @@ Server 或 Runner 已离线的证据。先使用下面的 operator checks 独立
 | `restricted` | 有后果的 runtime 工具由 permission policy 拒绝；不存在独立 Connector command approval queue。 |
 
 `trusted_agent` 永不放松硬安全边界（项目根、只读会话、路径策略、凭据脱敏、
-job 取消语义）。`WEBCODEX_PERMISSION_MODE` 支持明确映射：`dev_auto_approve` → `trusted_agent`，
-`require_approval` → `restricted`；未知值及新旧配置冲突仍拒绝。
+job 取消语义）。v0.5 只接受上表的 canonical 值；`dev_auto_approve`、`require_approval`
+不再作为别名。必须彻底取消设置旧的 `WEBCODEX_PERMISSION_MODE`（空值也不行）；
+发现旧变量时明确拒绝，不能静默回落到 `trusted_agent`。
 
 ### 运维检查
 

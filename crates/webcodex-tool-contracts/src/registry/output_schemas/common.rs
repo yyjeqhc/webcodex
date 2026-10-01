@@ -342,7 +342,7 @@ pub fn authority_profile_schema(description: &str) -> Value {
             },
             "source": {
                 "type": "string",
-                "description": "Where the resolved mode came from (default, env:WEBCODEX_AUTHORITY_MODE, migrated_env:WEBCODEX_PERMISSION_MODE, rejected_legacy_env:WEBCODEX_PERMISSION_MODE)."
+                "description": "Where the resolved mode came from (default, env:WEBCODEX_AUTHORITY_MODE, rejected_legacy_env:WEBCODEX_PERMISSION_MODE)."
             },
             "project_write": {
                 "type": "boolean",
@@ -952,7 +952,7 @@ pub(super) fn external_observation_schema(description: &str) -> Value {
     })
 }
 
-/// Strict compact handoff projection shared by `read_session_handoff_summary` and
+/// Strict compact handoff projection shared by `read_session_handoff` and
 /// `finish_coding_task`.
 pub fn handoff_brief_schema(description: &str) -> Value {
     fn nullable_with(schema: Value) -> Value {

@@ -383,6 +383,7 @@ impl ToolRuntime {
         action: webcodex_core::project_validation::ProjectValidationAction,
         adapter_hint: Option<webcodex_core::project_validation::ProjectValidationAdapter>,
         scope: Option<webcodex_core::project_validation::ProjectValidationScope>,
+        dependency_policy: Option<webcodex_core::project_validation::ProjectDependencyPolicy>,
         test: Option<webcodex_core::project_validation::ProjectValidationTestOptions>,
         timeout_secs: Option<u64>,
         ssh_resource: Option<&str>,
@@ -422,6 +423,7 @@ impl ToolRuntime {
             action,
             adapter: adapter_hint.unwrap_or_default(),
             scope,
+            dependency_policy,
             test,
         };
         if let Err(e) = request.validate() {

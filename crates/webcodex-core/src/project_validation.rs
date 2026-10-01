@@ -3,7 +3,9 @@ use crate::project_operation::ProjectOperationScopeError;
 use serde::{Deserialize, Serialize};
 
 /// Portable project-operation scope retained under the project_validate API name.
-pub use crate::project_operation::ProjectOperationScope as ProjectValidationScope;
+pub use crate::project_operation::{
+    ProjectDependencyMode, ProjectDependencyPolicy, ProjectOperationScope as ProjectValidationScope,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -65,6 +67,8 @@ pub struct ProjectValidationRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scope: Option<ProjectValidationScope>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dependency_policy: Option<ProjectDependencyPolicy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub test: Option<ProjectValidationTestOptions>,
 }
 impl ProjectValidationRequest {
@@ -104,6 +108,9 @@ impl ProjectValidationRequest {
                     "invalid project validation package scope".to_string()
                 }
             })?;
+        }
+        if self.dependency_policy.is_some() && self.action == ProjectValidationAction::FormatCheck {
+            return Err("dependency_policy requires project_validate action=check or test".into());
         }
         if let Some(test) = &self.test {
             if self.action != ProjectValidationAction::Test {

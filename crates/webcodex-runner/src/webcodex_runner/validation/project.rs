@@ -7,7 +7,7 @@ use webcodex_core::validation_identity::{
 };
 use webcodex_validation::{
     detect_validation_recipe, project_validation_operation,
-    resolve_validation_recipe_with_packages, RecipeId, SemanticCheck,
+    resolve_validation_recipe_with_project_policy, RecipeId, SemanticCheck,
 };
 
 pub(crate) fn plan(
@@ -51,10 +51,11 @@ pub(crate) fn plan(
         .as_ref()
         .and_then(|test| test.filter.as_deref());
     let operation = project_validation_operation(backend.as_str(), action, packages)
+        .and_then(|operation| operation.with_dependency_policy(request.dependency_policy))
         .and_then(|operation| operation.with_test_filter(filter))
         .map_err(|code| unavailable(code, Some(backend.as_str())))?;
     let adapter = operation.adapter();
-    let resolved = resolve_validation_recipe_with_packages(
+    let resolved = resolve_validation_recipe_with_project_policy(
         &root,
         request.cwd.as_deref(),
         hint,
@@ -64,6 +65,7 @@ pub(crate) fn plan(
             .scope
             .as_ref()
             .map(|scope| scope.packages.as_slice()),
+        request.dependency_policy,
     )
     .map_err(|e| unavailable(e.code, Some(backend.as_str())))?;
     let identity = operation

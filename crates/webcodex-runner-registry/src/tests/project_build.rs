@@ -11,6 +11,7 @@ fn build_request() -> ProjectBuildRequest {
         cwd: None,
         adapter: ProjectBuildAdapter::Rust,
         scope: None,
+        dependency_policy: None,
     }
 }
 
@@ -36,6 +37,7 @@ fn go_build_request() -> ProjectBuildRequest {
         cwd: None,
         adapter: ProjectBuildAdapter::Go,
         scope: None,
+        dependency_policy: None,
     }
 }
 

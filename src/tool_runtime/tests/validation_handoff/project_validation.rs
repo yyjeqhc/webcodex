@@ -101,6 +101,7 @@ fn call_with_scope(
         action,
         adapter: None,
         scope: packages.map(|packages| ProjectValidationScope { packages }),
+        dependency_policy: None,
         test: None,
         timeout_secs: Some(60),
     }

@@ -245,12 +245,14 @@ pub fn structured_validation_target_identity(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StructuredValidationExecutionContext {
     GoProjectSingleModuleV1,
+    ProjectDependencyLockedV1,
 }
 
 impl StructuredValidationExecutionContext {
     const fn as_str(self) -> &'static str {
         match self {
             Self::GoProjectSingleModuleV1 => "go_project_single_module_v1",
+            Self::ProjectDependencyLockedV1 => "project_dependency_locked_v1",
         }
     }
 }
@@ -436,6 +438,21 @@ mod tests {
         .unwrap();
         assert_eq!(contextual, "target:44a5798459663307bb9b3ea8");
         assert_ne!(contextual, base);
+        let dependency_locked = contextualize_structured_validation_target_identity(
+            &base,
+            StructuredValidationExecutionContext::ProjectDependencyLockedV1,
+        )
+        .unwrap();
+        assert_ne!(dependency_locked, base);
+        assert_ne!(dependency_locked, contextual);
+        assert_eq!(
+            dependency_locked,
+            contextualize_structured_validation_target_identity(
+                &base,
+                StructuredValidationExecutionContext::ProjectDependencyLockedV1,
+            )
+            .unwrap()
+        );
         assert!(contextualize_structured_validation_target_identity(
             "target:short",
             StructuredValidationExecutionContext::GoProjectSingleModuleV1,

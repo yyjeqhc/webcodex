@@ -356,6 +356,8 @@ mod plugin_gateway;
 mod polling;
 #[path = "tests/project_build.rs"]
 mod project_build;
+#[path = "tests/project_dependency_policy.rs"]
+mod project_dependency_policy;
 #[path = "tests/project_file_read.rs"]
 mod project_file_read;
 #[path = "tests/project_inventory.rs"]

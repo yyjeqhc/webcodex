@@ -9,6 +9,7 @@ fn project_validation_protocol_is_closed_declarative_and_roundtrips() {
         action: ProjectValidationAction::Check,
         adapter: ProjectValidationAdapter::Auto,
         scope: None,
+        dependency_policy: None,
         test: None,
     };
     let wire = RunnerRequest::from_operation(
@@ -201,6 +202,7 @@ fn project_validation_package_scope_roundtrips_and_is_bounded() {
         scope: Some(ProjectValidationScope {
             packages: vec!["package-a".into(), "package-b".into()],
         }),
+        dependency_policy: None,
         test: None,
     };
     assert!(input.validate().is_ok());
@@ -218,4 +220,23 @@ fn project_validation_package_scope_roundtrips_and_is_bounded() {
         invalid.scope = Some(ProjectValidationScope { packages });
         assert!(invalid.validate().is_err());
     }
+}
+
+#[test]
+fn project_validation_locked_policy_rejects_format_check_without_silent_ignore() {
+    let request = ProjectValidationRequest {
+        project_id: "demo".into(),
+        cwd: None,
+        action: ProjectValidationAction::FormatCheck,
+        adapter: ProjectValidationAdapter::Rust,
+        scope: None,
+        dependency_policy: Some(ProjectDependencyPolicy {
+            mode: ProjectDependencyMode::Locked,
+        }),
+        test: None,
+    };
+    assert_eq!(
+        request.validate().unwrap_err(),
+        "dependency_policy requires project_validate action=check or test"
+    );
 }

@@ -5,7 +5,9 @@ use crate::runner_protocol::{normalize_cargo_packages, normalize_go_packages, Sh
 use serde::{Deserialize, Serialize};
 
 /// Portable project-operation scope retained under the project_build API name.
-pub use crate::project_operation::ProjectOperationScope as ProjectBuildScope;
+pub use crate::project_operation::{
+    ProjectDependencyMode, ProjectDependencyPolicy, ProjectOperationScope as ProjectBuildScope,
+};
 use sha2::{Digest, Sha256};
 
 pub const PROJECT_BUILD_PROVENANCE_MAX_BYTES: usize = 8 * 1024;
@@ -30,6 +32,8 @@ pub struct ProjectBuildRequest {
     pub adapter: ProjectBuildAdapter,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scope: Option<ProjectBuildScope>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dependency_policy: Option<ProjectDependencyPolicy>,
 }
 
 impl ProjectBuildRequest {
@@ -137,6 +141,12 @@ pub fn canonical_project_build_process(
         "rust" => {
             let packages = normalize_cargo_packages(None, packages)?;
             let mut args = vec!["build".to_string()];
+            if request
+                .dependency_policy
+                .is_some_and(|policy| policy.mode == ProjectDependencyMode::Locked)
+            {
+                args.push("--locked".to_string());
+            }
             if let Some(packages) = packages {
                 for package in packages {
                     args.push("-p".to_string());
@@ -151,6 +161,12 @@ pub fn canonical_project_build_process(
         "go" => {
             let packages = normalize_go_packages(packages)?;
             let mut args = vec!["build".to_string()];
+            if request
+                .dependency_policy
+                .is_some_and(|policy| policy.mode == ProjectDependencyMode::Locked)
+            {
+                args.push("-mod=readonly".to_string());
+            }
             args.extend(packages);
             Ok(ShellProcessArgv {
                 executable: "go".to_string(),

@@ -11,6 +11,7 @@ fn build_request(scope: ProjectBuildScope) -> ProjectBuildRequest {
         cwd: None,
         adapter: ProjectBuildAdapter::Auto,
         scope: Some(scope),
+        dependency_policy: None,
     }
 }
 
@@ -21,6 +22,7 @@ fn validation_request(scope: ProjectValidationScope) -> ProjectValidationRequest
         action: ProjectValidationAction::Check,
         adapter: ProjectValidationAdapter::Auto,
         scope: Some(scope),
+        dependency_policy: None,
         test: None,
     }
 }

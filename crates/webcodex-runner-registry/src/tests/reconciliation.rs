@@ -192,6 +192,7 @@ fn go_project_validation_start_metadata() -> ShellJobStartMetadata {
                     action: ProjectValidationAction::Check,
                     adapter: ProjectValidationAdapter::Go,
                     scope: None,
+                    dependency_policy: None,
                     test: None,
                 },
                 backend: "go".into(),
@@ -683,7 +684,7 @@ async fn project_test_options_are_fenced_again_at_job_admission() {
         validation.tool = "project_validate".into();
         validation.project_validation = Some(ProjectValidationProvenance {
             request:ProjectValidationRequest {project_id:"demo".into(),cwd:None,action:ProjectValidationAction::Test,
-                adapter:ProjectValidationAdapter::Rust,scope:None,
+                adapter:ProjectValidationAdapter::Rust,scope:None,dependency_policy:None,
                 test:Some(ProjectValidationTestOptions {filter:Some("focused".into()),min_tests:Some(3),require_tests:None})},
             backend:"rust".into(),recipe_root:".".into(),root_digest:"a".repeat(64),manifest_digest:"b".repeat(64),invocation_digest:"c".repeat(64),
         });

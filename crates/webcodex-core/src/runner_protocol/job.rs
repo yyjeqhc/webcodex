@@ -273,14 +273,16 @@ impl ShellJobValidationStep {
 
 /// Canonical `cargo check` argv: `check` followed by zero or more distinct
 /// read-only flags (`--all-targets`, `--all-features`,
-/// `--no-default-features`) and `--features <value>` / `-p <value>` pairs.
+/// `--no-default-features`, `--locked`) and `--features <value>` /
+/// `-p <value>` pairs.
 fn is_canonical_cargo_check_args(args: &[&str]) -> bool {
     args.first() == Some(&"check") && is_canonical_cargo_flags(&args[1..], false, true)
 }
 
 /// Canonical `cargo test` argv: the `test` subcommand, an optional libtest
 /// filter (never a Cargo option), then zero or more distinct read-only flags
-/// and `--features <value>` / repeated `-p <value>` pairs, optionally including
+/// (including `--locked`) and `--features <value>` / repeated `-p <value>`
+/// pairs, optionally including
 /// the Cargo test-only `--lib` and `--no-run` selectors.
 ///
 /// The flat argv boundary has inherent information loss: `["test",
@@ -457,7 +459,15 @@ fn is_canonical_go_vet_args(args: &[&str]) -> bool {
     if args.len() < 2 || args[0] != "vet" {
         return false;
     }
-    let packages = args[1..]
+    let package_start = if args.get(1) == Some(&"-mod=readonly") {
+        2
+    } else {
+        1
+    };
+    if args.len() <= package_start {
+        return false;
+    }
+    let packages = args[package_start..]
         .iter()
         .map(|value| (*value).to_string())
         .collect::<Vec<_>>();
@@ -471,17 +481,20 @@ fn is_canonical_go_test_json_args(args: &[&str]) -> bool {
     if args.len() < 3 || args[0] != "test" || args[1] != "-json" {
         return false;
     }
-    let package_start = if args.get(2) == Some(&"-run") {
-        let Some(filter) = args.get(3) else {
+    let mut index = 2;
+    if args.get(index) == Some(&"-mod=readonly") {
+        index += 1;
+    }
+    if args.get(index) == Some(&"-run") {
+        let Some(filter) = args.get(index + 1) else {
             return false;
         };
         if !matches!(normalize_go_test_filter(filter), Ok(Some(value)) if value == *filter) {
             return false;
         }
-        4
-    } else {
-        2
-    };
+        index += 2;
+    }
+    let package_start = index;
     let packages = args[package_start..]
         .iter()
         .map(|value| (*value).to_string())
@@ -510,7 +523,7 @@ fn is_canonical_cargo_flags(
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         let key = match *arg {
-            "--all-targets" | "--all-features" | "--no-default-features" => *arg,
+            "--all-targets" | "--all-features" | "--no-default-features" | "--locked" => *arg,
             "--lib" | "--no-run" if cargo_test => *arg,
             "--features" => {
                 if !seen.insert(*arg) {

@@ -57,6 +57,11 @@ impl ValidationAdapter for GoTestValidationAdapter {
             ValidationPlanArg::Literal("test"),
             ValidationPlanArg::Literal("-json"),
         ];
+        if options.dependency_mode
+            == Some(webcodex_core::project_validation::ProjectDependencyMode::Locked)
+        {
+            args.push(ValidationPlanArg::Literal("-mod=readonly"));
+        }
         if let Some(filter) = options
             .filter
             .as_deref()
@@ -156,6 +161,11 @@ impl ValidationAdapter for GoVetValidationAdapter {
         let packages = normalize_go_test_packages(options.go_packages.as_deref())
             .map_err(|reason| format!("packages {reason}"))?;
         let mut args = vec![ValidationPlanArg::Literal("vet")];
+        if options.dependency_mode
+            == Some(webcodex_core::project_validation::ProjectDependencyMode::Locked)
+        {
+            args.push(ValidationPlanArg::Literal("-mod=readonly"));
+        }
         if explicit_packages {
             args.extend(packages.into_iter().map(ValidationPlanArg::Value));
         } else {

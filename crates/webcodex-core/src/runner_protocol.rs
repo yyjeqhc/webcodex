@@ -535,6 +535,13 @@ runner_capabilities! {
         #[serde(default, skip_serializing_if = "is_false")]
         pub project_build_v1: bool = false;
     }
+    /// Additive portable dependency policy for project build/validation gateways.
+    /// Missing on older Runners is false; policy-bearing plans must fail closed.
+    ProjectDependencyPolicy => RUNNER_CAPABILITY_PROJECT_DEPENDENCY_POLICY("project_dependency_policy_v1"),
+    v2_baseline = false {
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub project_dependency_policy_v1: bool = false;
+    }
     /// Go project lifecycle gateways execute in Runner-owned single-module mode.
     /// The Runner forces GO111MODULE=on and GOWORK=off after shell/profile environment
     /// preparation so ambient module/workspace mode cannot change the planned graph.
@@ -2748,6 +2755,7 @@ mod envelope_tests {
                 structured_go_test_json: true,
                 project_validation_v1: false,
                 project_build_v1: false,
+                project_dependency_policy_v1: false,
                 project_go_single_module_v1: false,
                 project_validation_package_scope_v1: false,
                 project_validation_test_options_v1: false,
@@ -4422,6 +4430,14 @@ mod filter_canonical_tests {
         assert!(step(&["test", "-json", "./pkg"]).is_canonical());
         assert!(step(&["test", "-json", ".", "./pkg", "./internal/..."]).is_canonical());
         assert!(step(&["test", "-json", "-run", "TestOne", "./..."]).is_canonical());
+        assert!(step(&["test", "-json", "-mod=readonly", "./..."]).is_canonical());
+        assert!(
+            step(&["test", "-json", "-mod=readonly", "-run", "TestOne", "./...",]).is_canonical()
+        );
+        assert!(!step(&["test", "-json", "-mod=mod", "./..."]).is_canonical());
+        assert!(
+            !step(&["test", "-json", "-mod=readonly", "-mod=readonly", "./...",]).is_canonical()
+        );
         assert!(!step(&["test", "-v", "./..."]).is_canonical());
         assert!(!step(&["run", "./..."]).is_canonical());
     }
@@ -4560,10 +4576,20 @@ mod filter_canonical_tests {
 
         let go_vet = validation_step("check", "go", &["vet", "./cmd/...", "./internal"]);
         assert!(go_vet.is_canonical());
+        let locked_cargo_test = validation_step(
+            "test",
+            "cargo",
+            &["test", "--locked", "-p", "package-a", "-p", "package-b"],
+        );
+        assert!(locked_cargo_test.is_canonical());
+        let readonly_go_vet =
+            validation_step("check", "go", &["vet", "-mod=readonly", "./internal"]);
+        assert!(readonly_go_vet.is_canonical());
 
         for rejected in [
             validation_step("check", "go", &["vet", "not-relative"]),
             validation_step("check", "go", &["vet", "./internal", "--flag"]),
+            validation_step("check", "go", &["vet", "-mod=mod", "./internal"]),
             validation_step(
                 "test",
                 "cargo",
@@ -4585,6 +4611,8 @@ mod filter_canonical_tests {
         let accepted = [
             vec!["check"],
             vec!["check", "--all-targets"],
+            vec!["check", "--locked"],
+            vec!["check", "--locked", "-p", "my-crate"],
             vec!["check", "--all-features"],
             vec!["check", "--no-default-features"],
             vec!["check", "--all-targets", "--all-features"],
@@ -4622,7 +4650,8 @@ mod filter_canonical_tests {
             vec!["check", "-p", "tab\tvalue"],
             vec!["check", "-p", "same-crate", "-p", "same-crate"],
             vec!["check", "--manifest-path", "/tmp/Cargo.toml"],
-            vec!["check", "--locked"],
+            vec!["check", "--locked", "--locked"],
+            vec!["check", "--locked=true"],
             vec!["check", "--", "--all-targets"],
         ];
         let over_long_value = "a".repeat(CARGO_VALUE_MAX_BYTES + 1);
@@ -4657,6 +4686,8 @@ mod filter_canonical_tests {
             vec!["test"],
             vec!["test", "focused"],
             vec!["test", "--all-targets"],
+            vec!["test", "--locked"],
+            vec!["test", "focused", "--locked"],
             vec!["test", "--lib"],
             vec!["test", "--lib", "--all-targets", "--no-run"],
             vec!["test", "--no-run"],
@@ -4684,6 +4715,8 @@ mod filter_canonical_tests {
             vec!["test", "--features", "nul\0byte"],
             vec!["test", "--features", "col\tumn"],
             vec!["test", "--manifest-path", "/tmp/Cargo.toml"],
+            vec!["test", "--locked", "--locked"],
+            vec!["test", "--locked=true"],
             vec!["test", "--", "--all-targets"],
         ];
         for args in rejected {

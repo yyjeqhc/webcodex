@@ -138,6 +138,26 @@ pub fn resolve_validation_recipe_with_packages(
     test_filter: Option<&str>,
     package_scope: Option<&[String]>,
 ) -> Result<ResolvedValidationRecipe, RecipeError> {
+    resolve_validation_recipe_with_project_policy(
+        execution_root,
+        cwd,
+        explicit_recipe,
+        checks,
+        test_filter,
+        package_scope,
+        None,
+    )
+}
+
+pub fn resolve_validation_recipe_with_project_policy(
+    execution_root: &Path,
+    cwd: Option<&str>,
+    explicit_recipe: Option<RecipeId>,
+    checks: &[SemanticCheck],
+    test_filter: Option<&str>,
+    package_scope: Option<&[String]>,
+    dependency_policy: Option<webcodex_core::project_validation::ProjectDependencyPolicy>,
+) -> Result<ResolvedValidationRecipe, RecipeError> {
     let resolved_root = resolve_project_recipe_root(execution_root, cwd, explicit_recipe)
         .map_err(map_project_recipe_error)?;
     let root = &resolved_root.execution_root;
@@ -168,8 +188,13 @@ pub fn resolve_validation_recipe_with_packages(
             read_project_recipe_file(root, &marker_path).map_err(map_project_recipe_error)?;
         let (steps, provenance_files) = match recipe {
             RecipeId::Rust | RecipeId::Go => {
-                let steps =
-                    canonical_adapter_steps(recipe, checks, test_filter.as_deref(), package_scope)?;
+                let steps = canonical_adapter_steps(
+                    recipe,
+                    checks,
+                    test_filter.as_deref(),
+                    package_scope,
+                    dependency_policy,
+                )?;
                 let provenance_files = project_recipe_provenance_files(&resolved_root)
                     .map_err(map_project_recipe_error)?
                     .expect("canonical project validation adapters are Rust/Go");
@@ -227,6 +252,7 @@ fn canonical_adapter_steps(
     checks: &[SemanticCheck],
     test_filter: Option<&str>,
     package_scope: Option<&[String]>,
+    dependency_policy: Option<webcodex_core::project_validation::ProjectDependencyPolicy>,
 ) -> Result<Vec<ShellJobValidationStep>, RecipeError> {
     let mut steps = Vec::with_capacity(checks.len());
     for check in checks {
@@ -243,6 +269,8 @@ fn canonical_adapter_steps(
             }
         })?;
         let operation = operation
+            .with_dependency_policy(dependency_policy)
+            .map_err(RecipeError::new)?
             .with_test_filter(
                 (*check == SemanticCheck::Test)
                     .then_some(test_filter)

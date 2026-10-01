@@ -30,9 +30,46 @@ fn request(action: ProjectValidationAction) -> ProjectValidationRequest {
         action,
         adapter: ProjectValidationAdapter::Auto,
         scope: None,
+        dependency_policy: None,
         test: None,
     }
 }
+
+#[test]
+fn project_validation_runner_plans_locked_dependency_policy_for_rust_and_go() {
+    for (marker, adapter, expected) in [
+        (
+            "Cargo.toml",
+            ProjectValidationAdapter::Rust,
+            vec!["check", "--locked", "--all-targets"],
+        ),
+        (
+            "go.mod",
+            ProjectValidationAdapter::Go,
+            vec!["vet", "-mod=readonly", "./..."],
+        ),
+    ] {
+        let (_tmp, _root, registry, policy) = fixture(marker);
+        let mut locked = request(ProjectValidationAction::Check);
+        locked.adapter = adapter;
+        locked.dependency_policy = Some(ProjectDependencyPolicy {
+            mode: ProjectDependencyMode::Locked,
+        });
+        let (plan, _) = project::plan(&policy, &registry, &locked).unwrap();
+        assert_eq!(plan.provenance.request, locked);
+        assert_eq!(plan.step.args, expected);
+
+        let mut default = locked.clone();
+        default.dependency_policy = None;
+        let (default_plan, _) = project::plan(&policy, &registry, &default).unwrap();
+        assert_ne!(plan.validation_target_id, default_plan.validation_target_id);
+        assert_ne!(
+            plan.provenance.invocation_digest,
+            default_plan.provenance.invocation_digest
+        );
+    }
+}
+
 #[test]
 fn project_validation_runner_resolves_all_production_actions() {
     use sha2::Digest;

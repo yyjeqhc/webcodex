@@ -34,6 +34,7 @@ fn call() -> ToolCall {
         cwd: None,
         adapter: Some(ProjectBuildAdapter::Rust),
         scope: None,
+        dependency_policy: None,
         timeout_secs: Some(60),
     }
 }

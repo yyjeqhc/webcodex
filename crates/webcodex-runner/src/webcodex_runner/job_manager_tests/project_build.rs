@@ -59,6 +59,7 @@ edition = "2021"
             cwd: member_cwd.then(|| "member".into()),
             adapter: ProjectBuildAdapter::Auto,
             scope: None,
+            dependency_policy: None,
         };
         let (plan, cwd) =
             crate::webcodex_runner::project_build::plan(&policy, &registry, &request).unwrap();
@@ -199,6 +200,7 @@ fn go_project_build_overrides_ambient_gowork_at_spawn() {
         cwd: None,
         adapter: ProjectBuildAdapter::Go,
         scope: None,
+        dependency_policy: None,
     };
     let (plan, cwd) =
         crate::webcodex_runner::project_build::plan(&policy, &registry, &request).unwrap();

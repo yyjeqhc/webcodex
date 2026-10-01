@@ -390,6 +390,39 @@ fn project_validate_package_scope_schema_is_closed_and_bounded() {
 }
 
 #[test]
+fn project_dependency_policy_schema_is_closed_and_locked_only() {
+    for (tool, mut base) in [
+        ("project_build", serde_json::json!({"project":"demo"})),
+        (
+            "project_validate",
+            serde_json::json!({"project":"demo","action":"check"}),
+        ),
+    ] {
+        let schema = input_schema_for_tool(tool);
+        base["dependency_policy"] = serde_json::json!({"mode":"locked"});
+        assert!(
+            test_support::validate_schema_instance(&base, &schema).is_ok(),
+            "{tool}: {base}"
+        );
+        assert!(ToolCall::from_tool_name(tool, base.clone()).is_ok());
+
+        for policy in [
+            serde_json::json!({}),
+            serde_json::json!({"mode":"update"}),
+            serde_json::json!({"mode":"locked","offline":false}),
+        ] {
+            let mut invalid = base.clone();
+            invalid["dependency_policy"] = policy;
+            assert!(
+                test_support::validate_schema_instance(&invalid, &schema).is_err(),
+                "{tool}: {invalid}"
+            );
+            assert!(ToolCall::from_tool_name(tool, invalid).is_err());
+        }
+    }
+}
+
+#[test]
 fn execution_timeout_schemas_keep_runtime_bounds_and_hide_sync_wait_tuning() {
     let specs = registered_tool_specs();
     for (name, default) in [

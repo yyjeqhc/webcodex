@@ -64,6 +64,7 @@ edition = "2021"
             action: ProjectValidationAction::Check,
             adapter: ProjectValidationAdapter::Auto,
             scope: None,
+            dependency_policy: None,
             test: None,
         };
         let (plan, cwd) =
@@ -240,6 +241,7 @@ fn go_project_validation_overrides_ambient_gowork_but_direct_go_test_does_not() 
                 action: ProjectValidationAction::Check,
                 adapter: ProjectValidationAdapter::Go,
                 scope: None,
+                dependency_policy: None,
                 test: None,
             };
             let (plan, cwd) =

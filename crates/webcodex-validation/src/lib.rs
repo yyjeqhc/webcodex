@@ -37,7 +37,8 @@ pub use evidence::{
 };
 pub use recipe::{
     detect_validation_recipe, resolve_validation_recipe, resolve_validation_recipe_with_packages,
-    RecipeError, RecipeId, ResolvedValidationRecipe, SemanticCheck,
+    resolve_validation_recipe_with_project_policy, RecipeError, RecipeId, ResolvedValidationRecipe,
+    SemanticCheck,
 };
 pub use webcodex_core::cargo_test_count::{
     parse_cargo_test_run_metadata, CargoTestRunMetadata, CargoTestRunMetadataAccumulator,

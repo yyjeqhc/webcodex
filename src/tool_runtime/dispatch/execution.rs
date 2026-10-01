@@ -70,6 +70,7 @@ impl ToolRuntime {
                 cwd,
                 adapter,
                 scope,
+                dependency_policy,
                 timeout_secs,
             } => {
                 self.project_build(
@@ -78,6 +79,7 @@ impl ToolRuntime {
                     cwd,
                     adapter,
                     scope,
+                    dependency_policy,
                     timeout_secs,
                     structured_handoff_max_secs,
                     ssh_resource.as_deref(),

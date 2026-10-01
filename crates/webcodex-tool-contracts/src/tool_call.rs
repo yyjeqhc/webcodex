@@ -2883,6 +2883,10 @@ pub enum ToolCall {
         /// Optional bounded Cargo package selectors or project-relative Go package patterns.
         #[serde(default)]
         scope: Option<webcodex_core::project_build::ProjectBuildScope>,
+        /// Optional portable dependency-resolution policy. locked forbids adapters from
+        /// repairing dependency selection state; it does not imply offline execution.
+        #[serde(default)]
+        dependency_policy: Option<webcodex_core::project_build::ProjectDependencyPolicy>,
         /// Total build execution budget, default 1800 seconds, clamped to 7 days.
         /// Host handoff timing never extends this budget or starts a second build.
         #[serde(default)]
@@ -2909,6 +2913,10 @@ pub enum ToolCall {
         /// scope is not supported.
         #[serde(default)]
         scope: Option<webcodex_core::project_validation::ProjectValidationScope>,
+        /// Optional portable dependency-resolution policy. locked forbids adapters from
+        /// repairing dependency selection state; it does not imply offline execution.
+        #[serde(default)]
+        dependency_policy: Option<webcodex_core::project_validation::ProjectDependencyPolicy>,
         /// Test-only selector and count postconditions. Rust uses a libtest substring;
         /// Go uses native -run regexp. Omission preserves unfiltered positive-test proof.
         #[serde(default)]

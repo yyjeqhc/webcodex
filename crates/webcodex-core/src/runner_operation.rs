@@ -2695,6 +2695,7 @@ mod tests {
             cwd: None,
             adapter: crate::project_build::ProjectBuildAdapter::Rust,
             scope: None,
+            dependency_policy: None,
         };
         let build_process =
             crate::project_build::canonical_project_build_process("rust", &build_request).unwrap();

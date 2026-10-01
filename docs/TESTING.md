@@ -176,13 +176,14 @@ The lanes above define test semantics; workflows decide when to run them.
   as explicit local evidence. The local-`sshd` SSH integration fixture remains
   Linux-only and manual because it depends on Linux daemon account/auth configuration.
 - Exact-source release acceptance is a separate trust boundary from ordinary CI.
-  Release readiness first binds the exact source to a successful `main`-push CI run;
-  main pushes force the complete deterministic native classification. Readiness then
-  runs its release-specific E2E/eval and disposable Server-image checks. Manual
-  real-process evidence remains separate and must never be inferred from a passing CI
-  run. Follow [`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md) and
+  Every selected source first needs successful exact-source push CI. A `release/v*`
+  push additionally precomputes scarce-native, E2E/eval, and disposable Server-image
+  evidence in `release-readiness.yml`; the later operator dispatch binds and revalidates
+  those immutable run attempts rather than rebuilding them. A `main`-source release
+  keeps the slower dispatch-time evidence fallback, so ordinary main pushes stay cheap.
+  Manual real-process evidence remains separate and must never be inferred from a passing
+  CI run. Follow [`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md) and
   `.github/workflows/release-readiness.yml`.
-
 ## Default Test Principles
 
 - No external network by default. Tests that need HTTP should use in-process

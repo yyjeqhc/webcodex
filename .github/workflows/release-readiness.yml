@@ -1,8 +1,11 @@
 name: Release readiness
 
-run-name: Release readiness ${{ inputs.request_id }} ${{ inputs.source_sha }}
+run-name: Release readiness ${{ inputs.request_id || 'source-evidence' }} ${{ inputs.source_sha || github.sha }}
 
 on:
+  push:
+    branches:
+      - 'release/v*'
   workflow_dispatch:
     inputs:
       source_ref:
@@ -25,13 +28,23 @@ on:
         description: Exact successful source-branch push CI run attempt bound by the release operator
         required: true
         type: string
+      evidence_run_id:
+        description: Exact successful release-source evidence push run id; required for release/v* sources
+        required: false
+        default: ''
+        type: string
+      evidence_run_attempt:
+        description: Exact successful release-source evidence push run attempt; required for release/v* sources
+        required: false
+        default: ''
+        type: string
 
-# This workflow is a pre-tag, non-publication gate. The exact source's common
-# development correctness comes from its already-successful source-branch push CI run.
-# Readiness revalidates that immutable run attempt, invokes the expensive native
-# architectures through extended-native, then executes release-specific E2E/eval
-# and disposable Server-image validation. Formal release-profile candidates are
-# still built exactly once after tagging by release-build.
+# This workflow has two pre-tag, non-publication modes. A release/v* push
+# precomputes expensive exact-SHA native/E2E/eval/Server-image evidence in parallel
+# with ordinary source CI. Later operator dispatch revalidates that successful push
+# evidence plus the exact source CI instead of rebuilding it. A main-source dispatch
+# retains the slower in-run evidence fallback so ordinary main pushes stay cheap.
+# Formal release-profile candidates are still built exactly once after tagging.
 permissions:
   contents: read
   actions: read
@@ -48,24 +61,45 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Fence exact source ref and successful source CI attempt
+      - name: Fence exact source and immutable evidence
         shell: bash
         env:
-          INPUT_SOURCE_REF: ${{ inputs.source_ref }}
-          INPUT_SOURCE_SHA: ${{ inputs.source_sha }}
-          INPUT_REQUEST_ID: ${{ inputs.request_id }}
+          INPUT_SOURCE_REF: ${{ inputs.source_ref || github.ref_name }}
+          INPUT_SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
+          INPUT_REQUEST_ID: ${{ inputs.request_id || format('push-{0}', github.run_id) }}
           INPUT_CI_RUN_ID: ${{ inputs.ci_run_id }}
           INPUT_CI_RUN_ATTEMPT: ${{ inputs.ci_run_attempt }}
+          INPUT_EVIDENCE_RUN_ID: ${{ inputs.evidence_run_id }}
+          INPUT_EVIDENCE_RUN_ATTEMPT: ${{ inputs.evidence_run_attempt }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           [[ "$INPUT_SOURCE_REF" == main || "$INPUT_SOURCE_REF" =~ ^release/v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]
           test "$GITHUB_REF" = "refs/heads/$INPUT_SOURCE_REF"
           [[ "$INPUT_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$GITHUB_SHA" = "$INPUT_SOURCE_SHA"
+          if [ "$GITHUB_EVENT_NAME" = push ]; then
+            [[ "$INPUT_SOURCE_REF" =~ ^release/v ]]
+            [[ "$INPUT_REQUEST_ID" =~ ^push-[1-9][0-9]*$ ]]
+            {
+              echo "### Release-source evidence precompute"
+              echo "- source ref: \`$INPUT_SOURCE_REF\`"
+              echo "- source: \`$INPUT_SOURCE_SHA\`"
+              echo "- expensive evidence runs in this exact push workflow; no tag or publication occurs"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          test "$GITHUB_EVENT_NAME" = workflow_dispatch
           [[ "$INPUT_REQUEST_ID" =~ ^rr_[0-9a-f]{24}$ ]]
           [[ "$INPUT_CI_RUN_ID" =~ ^[1-9][0-9]*$ ]]
           [[ "$INPUT_CI_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
-          test "$GITHUB_SHA" = "$INPUT_SOURCE_SHA"
+          if [[ "$INPUT_SOURCE_REF" =~ ^release/ ]]; then
+            [[ "$INPUT_EVIDENCE_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+            [[ "$INPUT_EVIDENCE_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
+          else
+            test -z "$INPUT_EVIDENCE_RUN_ID"
+            test -z "$INPUT_EVIDENCE_RUN_ATTEMPT"
+          fi
           python3 - <<'PY'
           import json
           import os
@@ -74,81 +108,100 @@ jobs:
           repo = os.environ["GITHUB_REPOSITORY"]
           source = os.environ["INPUT_SOURCE_SHA"]
           source_ref = os.environ["INPUT_SOURCE_REF"]
-          run_id = int(os.environ["INPUT_CI_RUN_ID"])
-          attempt = int(os.environ["INPUT_CI_RUN_ATTEMPT"])
-          request = urllib.request.Request(
-              f"https://api.github.com/repos/{repo}/actions/runs/{run_id}/attempts/{attempt}",
-              headers={
-                  "Accept": "application/vnd.github+json",
-                  "Authorization": f"Bearer {os.environ['GH_TOKEN']}",
-                  "User-Agent": "webcodex-release-readiness",
-                  "X-GitHub-Api-Version": "2022-11-28",
-              },
-          )
-          with urllib.request.urlopen(request, timeout=30) as response:
-              payload = json.load(response)
-          expected = {
-              "path": ".github/workflows/ci.yml",
-              "event": "push",
-              "head_branch": source_ref,
-              "head_sha": source,
-              "status": "completed",
-              "conclusion": "success",
-              "run_attempt": attempt,
+          headers = {
+              "Accept": "application/vnd.github+json",
+              "Authorization": f"Bearer {os.environ['GH_TOKEN']}",
+              "User-Agent": "webcodex-release-readiness",
+              "X-GitHub-Api-Version": "2022-11-28",
           }
-          mismatches = {
-              key: {"expected": value, "actual": payload.get(key)}
-              for key, value in expected.items()
-              if payload.get(key) != value
-          }
-          if payload.get("id") != run_id:
-              mismatches["id"] = {"expected": run_id, "actual": payload.get("id")}
-          head_repository = payload.get("head_repository")
-          if not isinstance(head_repository, dict) or head_repository.get("full_name") != repo:
-              mismatches["head_repository.full_name"] = {
-                  "expected": repo,
-                  "actual": head_repository.get("full_name") if isinstance(head_repository, dict) else None,
+
+          def verify(label, run_id, attempt, path):
+              request = urllib.request.Request(
+                  f"https://api.github.com/repos/{repo}/actions/runs/{run_id}/attempts/{attempt}",
+                  headers=headers,
+              )
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  payload = json.load(response)
+              expected = {
+                  "path": path,
+                  "event": "push",
+                  "head_branch": source_ref,
+                  "head_sha": source,
+                  "status": "completed",
+                  "conclusion": "success",
+                  "run_attempt": attempt,
               }
-          if mismatches:
-              raise SystemExit(f"exact-source CI proof mismatch: {json.dumps(mismatches, sort_keys=True)}")
-          print(f"verified exact-source CI run {run_id} attempt {attempt} for {source_ref}@{source}")
+              mismatches = {
+                  key: {"expected": value, "actual": payload.get(key)}
+                  for key, value in expected.items()
+                  if payload.get(key) != value
+              }
+              if payload.get("id") != run_id:
+                  mismatches["id"] = {"expected": run_id, "actual": payload.get("id")}
+              head_repository = payload.get("head_repository")
+              if not isinstance(head_repository, dict) or head_repository.get("full_name") != repo:
+                  mismatches["head_repository.full_name"] = {
+                      "expected": repo,
+                      "actual": head_repository.get("full_name") if isinstance(head_repository, dict) else None,
+                  }
+              if mismatches:
+                  raise SystemExit(f"exact-source {label} proof mismatch: {json.dumps(mismatches, sort_keys=True)}")
+
+          ci_run_id = int(os.environ["INPUT_CI_RUN_ID"])
+          ci_attempt = int(os.environ["INPUT_CI_RUN_ATTEMPT"])
+          verify("CI", ci_run_id, ci_attempt, ".github/workflows/ci.yml")
+          evidence_run_id = os.environ["INPUT_EVIDENCE_RUN_ID"]
+          evidence_attempt = os.environ["INPUT_EVIDENCE_RUN_ATTEMPT"]
+          if source_ref.startswith("release/"):
+              verify(
+                  "release evidence",
+                  int(evidence_run_id),
+                  int(evidence_attempt),
+                  ".github/workflows/release-readiness.yml",
+              )
+          print(f"verified exact-source evidence for {source_ref}@{source}")
           PY
           {
-            echo "### Exact-source CI proof"
+            echo "### Exact-source readiness proof"
             echo "- source ref: \`$INPUT_SOURCE_REF\`"
             echo "- source: \`$INPUT_SOURCE_SHA\`"
             echo "- CI run: \`$INPUT_CI_RUN_ID\` attempt \`$INPUT_CI_RUN_ATTEMPT\`"
+            if [[ "$INPUT_SOURCE_REF" =~ ^release/ ]]; then
+              echo "- release evidence run: \`$INPUT_EVIDENCE_RUN_ID\` attempt \`$INPUT_EVIDENCE_RUN_ATTEMPT\`"
+            else
+              echo "- release evidence: in-run fallback follows this proof"
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
   extended-native:
     needs: ci-proof
+    if: github.event_name == 'push' || inputs.source_ref == 'main'
     uses: ./.github/workflows/extended-native.yml
     with:
-      source_sha: ${{ inputs.source_sha }}
+      source_sha: ${{ inputs.source_sha || github.sha }}
 
   e2e:
     needs: ci-proof
+    if: github.event_name == 'push' || inputs.source_ref == 'main'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
       - name: Fence exact reviewed release source
         shell: bash
         env:
-          INPUT_SOURCE_REF: ${{ inputs.source_ref }}
-          INPUT_SOURCE_SHA: ${{ inputs.source_sha }}
-          INPUT_REQUEST_ID: ${{ inputs.request_id }}
+          INPUT_SOURCE_REF: ${{ inputs.source_ref || github.ref_name }}
+          INPUT_SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
         run: |
           set -euo pipefail
           test "$GITHUB_REF" = "refs/heads/$INPUT_SOURCE_REF"
           [[ "$INPUT_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
-          [[ "$INPUT_REQUEST_ID" =~ ^rr_[0-9a-f]{24}$ ]]
           test "$GITHUB_SHA" = "$INPUT_SOURCE_SHA"
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 1
           persist-credentials: false
-          ref: ${{ inputs.source_sha }}
+          ref: ${{ inputs.source_sha || github.sha }}
 
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
 
@@ -165,7 +218,7 @@ jobs:
 
       - name: Build E2E runtime fixtures
         run: |
-          test "$(git rev-parse HEAD)" = "${{ inputs.source_sha }}"
+          test "$(git rev-parse HEAD)" = "${{ inputs.source_sha || github.sha }}"
           test -z "$(git status --porcelain --untracked-files=all)"
           cargo build --locked -p webcodex --bin webcodex-server
           cargo build --locked -p webcodex-runner --bin webcodex-runner
@@ -192,27 +245,26 @@ jobs:
 
   eval:
     needs: ci-proof
+    if: github.event_name == 'push' || inputs.source_ref == 'main'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - name: Fence exact reviewed release source
         shell: bash
         env:
-          INPUT_SOURCE_REF: ${{ inputs.source_ref }}
-          INPUT_SOURCE_SHA: ${{ inputs.source_sha }}
-          INPUT_REQUEST_ID: ${{ inputs.request_id }}
+          INPUT_SOURCE_REF: ${{ inputs.source_ref || github.ref_name }}
+          INPUT_SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
         run: |
           set -euo pipefail
           test "$GITHUB_REF" = "refs/heads/$INPUT_SOURCE_REF"
           [[ "$INPUT_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
-          [[ "$INPUT_REQUEST_ID" =~ ^rr_[0-9a-f]{24}$ ]]
           test "$GITHUB_SHA" = "$INPUT_SOURCE_SHA"
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 1
           persist-credentials: false
-          ref: ${{ inputs.source_sha }}
+          ref: ${{ inputs.source_sha || github.sha }}
 
       - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
 
@@ -229,7 +281,7 @@ jobs:
 
       - name: Build eval runtime fixtures
         run: |
-          test "$(git rev-parse HEAD)" = "${{ inputs.source_sha }}"
+          test "$(git rev-parse HEAD)" = "${{ inputs.source_sha || github.sha }}"
           test -z "$(git status --porcelain --untracked-files=all)"
           cargo build --locked -p webcodex --bin webcodex-server
           cargo build --locked -p webcodex-runner --bin webcodex-runner
@@ -250,6 +302,7 @@ jobs:
 
   server-image:
     needs: [ci-proof, e2e, eval]
+    if: github.event_name == 'push' || inputs.source_ref == 'main'
     strategy:
       fail-fast: false
       matrix:
@@ -268,25 +321,20 @@ jobs:
       - name: Fence exact reviewed release source
         shell: bash
         env:
-          INPUT_SOURCE_REF: ${{ inputs.source_ref }}
-          INPUT_SOURCE_SHA: ${{ inputs.source_sha }}
-          INPUT_REQUEST_ID: ${{ inputs.request_id }}
+          INPUT_SOURCE_REF: ${{ inputs.source_ref || github.ref_name }}
+          INPUT_SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
         run: |
           set -euo pipefail
           if [ "$GITHUB_REF" != "refs/heads/$INPUT_SOURCE_REF" ]; then
-            echo "Release readiness must be dispatched from the selected source branch." >&2
+            echo "Release readiness must use the selected exact source branch." >&2
             exit 1
           fi
           if [[ ! "$INPUT_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
             echo "source_sha must be exactly 40 lowercase hexadecimal characters." >&2
             exit 1
           fi
-          if [[ ! "$INPUT_REQUEST_ID" =~ ^rr_[0-9a-f]{24}$ ]]; then
-            echo "request_id must match rr_<24 lowercase hex>." >&2
-            exit 1
-          fi
           if [ "$GITHUB_SHA" != "$INPUT_SOURCE_SHA" ]; then
-            echo "release source moved before readiness dispatch: ref=$INPUT_SOURCE_REF requested=$INPUT_SOURCE_SHA run=$GITHUB_SHA" >&2
+            echo "release source moved before evidence execution: ref=$INPUT_SOURCE_REF requested=$INPUT_SOURCE_SHA run=$GITHUB_SHA" >&2
             exit 1
           fi
 
@@ -294,13 +342,13 @@ jobs:
         with:
           fetch-depth: 1
           persist-credentials: false
-          ref: ${{ inputs.source_sha }}
+          ref: ${{ inputs.source_sha || github.sha }}
 
       - name: Build and verify disposable native Server image
         shell: bash
         env:
-          INPUT_SOURCE_SHA: ${{ inputs.source_sha }}
-          INPUT_REQUEST_ID: ${{ inputs.request_id }}
+          INPUT_SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
+          EVIDENCE_ID: ${{ inputs.request_id || format('push-{0}', github.run_id) }}
           EXPECTED_ARCH: ${{ matrix.architecture }}
           EXPECTED_PLATFORM: ${{ matrix.platform }}
           IMAGE_SLUG: ${{ matrix.slug }}
@@ -316,7 +364,7 @@ jobs:
           version="$(python3 -c 'import json; print(json.load(open("npm/webcodex/package.json", encoding="utf-8"))["version"])')"
           built_at="$(git show -s --format=%ct HEAD)"
           short_commit="${INPUT_SOURCE_SHA:0:12}"
-          image="webcodex-server-readiness:${INPUT_REQUEST_ID#rr_}-$IMAGE_SLUG"
+          image="webcodex-server-readiness:${EVIDENCE_ID#rr_}-$IMAGE_SLUG"
           name="webcodex-server-readiness-${GITHUB_RUN_ID}-$IMAGE_SLUG"
           cleanup() {
             docker rm -f "$name" >/dev/null 2>&1 || true
@@ -410,25 +458,58 @@ jobs:
 
   summary:
     needs: [ci-proof, extended-native, e2e, eval, server-image]
+    if: always()
     runs-on: ubuntu-latest
     steps:
-      - name: Record readiness summary
+      - name: Require and record readiness evidence
         shell: bash
         env:
-          INPUT_SOURCE_REF: ${{ inputs.source_ref }}
-          INPUT_SOURCE_SHA: ${{ inputs.source_sha }}
-          INPUT_REQUEST_ID: ${{ inputs.request_id }}
+          INPUT_SOURCE_REF: ${{ inputs.source_ref || github.ref_name }}
+          INPUT_SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
+          INPUT_REQUEST_ID: ${{ inputs.request_id || format('push-{0}', github.run_id) }}
           INPUT_CI_RUN_ID: ${{ inputs.ci_run_id }}
           INPUT_CI_RUN_ATTEMPT: ${{ inputs.ci_run_attempt }}
+          INPUT_EVIDENCE_RUN_ID: ${{ inputs.evidence_run_id }}
+          INPUT_EVIDENCE_RUN_ATTEMPT: ${{ inputs.evidence_run_attempt }}
+          CI_PROOF_RESULT: ${{ needs.ci-proof.result }}
+          EXTENDED_NATIVE_RESULT: ${{ needs.extended-native.result }}
+          E2E_RESULT: ${{ needs.e2e.result }}
+          EVAL_RESULT: ${{ needs.eval.result }}
+          SERVER_IMAGE_RESULT: ${{ needs.server-image.result }}
         run: |
+          set -euo pipefail
+          test "$CI_PROOF_RESULT" = success
+          if [ "$GITHUB_EVENT_NAME" = push ] || [ "$INPUT_SOURCE_REF" = main ]; then
+            for result in "$EXTENDED_NATIVE_RESULT" "$E2E_RESULT" "$EVAL_RESULT" "$SERVER_IMAGE_RESULT"; do
+              test "$result" = success
+            done
+          else
+            for result in "$EXTENDED_NATIVE_RESULT" "$E2E_RESULT" "$EVAL_RESULT" "$SERVER_IMAGE_RESULT"; do
+              test "$result" = skipped
+            done
+          fi
           {
-            echo "### Release readiness passed"
-            echo "- source ref: \`$INPUT_SOURCE_REF\`"
-            echo "- source: \`$INPUT_SOURCE_SHA\`"
-            echo "- request: \`$INPUT_REQUEST_ID\`"
-            echo "- exact-source CI: run \`$INPUT_CI_RUN_ID\` attempt \`$INPUT_CI_RUN_ATTEMPT\` proved the common daily CI contract"
-            echo "- extended native: Linux ARM64, macOS Intel Desktop, and Windows ARM64 Desktop validation passed"
-            echo "- release-specific gates: WebSocket/polling E2E and coding-loop compare eval passed"
-            echo "- disposable Server images: linux/amd64 and linux/arm64 build, runtime, health, and digest-pinned bootstrap generation passed"
+            if [ "$GITHUB_EVENT_NAME" = push ]; then
+              echo "### Release-source evidence passed"
+              echo "- source ref: \`$INPUT_SOURCE_REF\`"
+              echo "- source: \`$INPUT_SOURCE_SHA\`"
+              echo "- extended native, E2E/eval, and disposable Server-image evidence passed"
+              echo "- publication side effects: none"
+            elif [ "$INPUT_SOURCE_REF" = main ]; then
+              echo "### Release readiness passed"
+              echo "- source ref: \`$INPUT_SOURCE_REF\`"
+              echo "- source: \`$INPUT_SOURCE_SHA\`"
+              echo "- request: \`$INPUT_REQUEST_ID\`"
+              echo "- exact-source CI: run \`$INPUT_CI_RUN_ID\` attempt \`$INPUT_CI_RUN_ATTEMPT\`"
+              echo "- main-source fallback: extended native, E2E/eval, and disposable Server-image evidence passed in this run"
+            else
+              echo "### Release readiness passed"
+              echo "- source ref: \`$INPUT_SOURCE_REF\`"
+              echo "- source: \`$INPUT_SOURCE_SHA\`"
+              echo "- request: \`$INPUT_REQUEST_ID\`"
+              echo "- exact-source CI: run \`$INPUT_CI_RUN_ID\` attempt \`$INPUT_CI_RUN_ATTEMPT\`"
+              echo "- exact-source release evidence: run \`$INPUT_EVIDENCE_RUN_ID\` attempt \`$INPUT_EVIDENCE_RUN_ATTEMPT\`"
+              echo "- expensive evidence was precomputed by the exact release-branch push and was not rebuilt"
+            fi
             echo "- native release-profile candidates produced: no (authoritative release-build owns them after immutable tagging)"
           } >> "$GITHUB_STEP_SUMMARY"

@@ -253,7 +253,7 @@ impl ToolRuntime {
         .await
     }
 
-    async fn list_projects_with_options_cap(
+    pub(super) async fn list_projects_with_options_cap(
         &self,
         auth: Option<&AuthContext>,
         options: ListProjectsOptions,

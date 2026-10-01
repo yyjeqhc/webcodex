@@ -316,6 +316,8 @@ mod structured_failure;
 mod tools;
 #[path = "mcp_tests/work_result_app.rs"]
 mod work_result_app;
+#[path = "mcp_tests/resource_references.rs"]
+mod resource_references;
 
 // =========================================================================
 // HTTP integration tests — exercise the real Salvo router + AuthMiddleware.

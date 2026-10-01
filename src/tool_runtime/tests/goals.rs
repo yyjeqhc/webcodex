@@ -970,6 +970,7 @@ async fn prepare_goal_workflow_reauthorizes_session_project_controller_and_stays
         .list_goals(
             &communication_principal(Some(&owner)).unwrap(),
             None,
+            None,
             0,
             100,
         )
@@ -986,6 +987,7 @@ async fn prepare_goal_workflow_reauthorizes_session_project_controller_and_stays
     assert_eq!(
         db.list_goals(
             &communication_principal(Some(&owner)).unwrap(),
+            None,
             None,
             0,
             100,
@@ -1019,6 +1021,7 @@ async fn prepare_goal_workflow_reauthorizes_session_project_controller_and_stays
     assert_eq!(
         db.list_goals(
             &communication_principal(Some(&owner)).unwrap(),
+            None,
             None,
             0,
             100,

@@ -109,7 +109,8 @@ pub(super) fn legacy_initialize_payload(params: &Value) -> Value {
         "capabilities": {
             "tools": {
                 "listChanged": false
-            }
+            },
+            "resources": {"subscribe": false,"listChanged": false}
         },
         "serverInfo": {
             "name": "webcodex",

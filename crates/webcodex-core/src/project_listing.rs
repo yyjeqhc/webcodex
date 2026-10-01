@@ -207,6 +207,17 @@ pub fn build_listing(
     limit: usize,
     offset: usize,
 ) -> Listing {
+    build_listing_with_query(paths, scope, globs, None, depth, limit, offset)
+}
+
+/// Literal path filtering precedes pagination. Query mode keeps exact file identities,
+/// including paths deeper than the presentation rollup ceiling.
+#[allow(clippy::too_many_arguments)]
+pub fn build_listing_with_query(
+    paths: &[String], scope: &str, globs: &[String], query: Option<&str>,
+    depth: Option<usize>, limit: usize, offset: usize,
+) -> Listing {
+    let depth = if query.is_some() { Some(usize::MAX) } else { depth };
     let limit = limit.max(1);
     let mut matched: Vec<&str> = paths
         .iter()
@@ -220,6 +231,7 @@ pub fn build_listing(
         .filter(|path| {
             globs.is_empty() || globs.iter().any(|glob| glob_matches(glob, path.as_str()))
         })
+        .filter(|path| query.is_none_or(|q| path.contains(q)))
         .map(String::as_str)
         .collect();
     matched.sort_unstable();
@@ -359,6 +371,22 @@ mod tests {
 
     fn paths(entries: &[&str]) -> Vec<String> {
         entries.iter().map(|entry| (*entry).to_string()).collect()
+    }
+
+    #[test]
+    fn literal_query_filters_before_paging_without_rollup() {
+        let files=vec!["aaa.txt".into(),"src/%_中文.rs".into(),"src/long/deep/nested/path/with/more/than/sixteen/parts/a/b/c/d/e/f/g/h/中文.rs".into(),"zz.txt".into()];
+        let first=build_listing_with_query(&files,"",&[],Some("中文"),None,1,0);
+        assert_eq!(first.total_files,2);
+        assert_eq!(first.entries[0].kind,EntryKind::File);
+        assert_eq!(first.next_offset,Some(1));
+        let last=build_listing_with_query(&files,"",&[],Some("中文"),None,1,1);
+        assert_eq!(last.entries[0].kind,EntryKind::File);
+        assert_eq!(last.next_offset,None);
+        let literal=build_listing_with_query(&files,"",&[],Some("%_"),None,10,0);
+        assert_eq!(literal.total_files,1);
+        assert_eq!(literal.entries[0].path,"src/%_中文.rs");
+        assert_eq!(build_listing_with_query(&files,"",&[],Some("*.rs"),None,10,0).total_files,0);
     }
 
     #[test]

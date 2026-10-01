@@ -122,6 +122,9 @@ pub trait ToolCallAuditProjection {
 impl ToolCallAuditProjection for ToolCall {
     fn session_log_arguments(&self) -> Value {
         match self {
+            Self::SearchWebcodexResources { kind, offset, limit, .. } => serde_json::json!({"kind":kind,"offset":offset,"limit":limit}),
+            Self::ReadWebcodexResource { .. } => serde_json::json!({"resource_read":true}),
+
             #[cfg(feature = "experimental-code-mode")]
             Self::CodeModeExec {
                 project,
@@ -757,6 +760,7 @@ impl ToolCallAuditProjection for ToolCall {
                 )
             }
             Self::ListGoals {
+                query: _,
                 lifecycle,
                 offset,
                 limit,

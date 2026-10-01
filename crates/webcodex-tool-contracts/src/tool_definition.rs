@@ -28,6 +28,7 @@ mod lsp;
 mod memory;
 mod patches;
 mod plugins;
+mod resource_references;
 mod runner_config;
 mod sessions;
 mod skills;
@@ -1362,6 +1363,7 @@ const TOOL_DEFINITION_GROUPS: &[&[ToolDefinition]] = &[
     computer::DEFINITIONS,
     diagnostics::DEFINITIONS,
     discovery::DEFINITIONS,
+    resource_references::DEFINITIONS,
     runner_config::DEFINITIONS,
     ssh_resources::DEFINITIONS,
     plugins::DEFINITIONS,

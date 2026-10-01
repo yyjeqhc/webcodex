@@ -22,6 +22,10 @@ impl ToolRuntime {
         bootstrap_context: &mut Option<crate::tool_runtime::coding_task::BootstrapContext>,
     ) -> ToolResult {
         match call {
+            ToolCall::SearchWebcodexResources { kind, query, project, session_id, offset, limit } =>
+                self.search_webcodex_resources(kind, query, project, session_id, offset, limit, auth).await,
+            ToolCall::ReadWebcodexResource { uri } => self.read_webcodex_resource(&uri, auth).await,
+
             call @ (ToolCall::ListTools { .. }
             | ToolCall::ListRunners { .. }
             | ToolCall::RuntimeStatus { .. }

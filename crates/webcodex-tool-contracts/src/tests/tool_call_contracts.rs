@@ -1423,7 +1423,7 @@ fn tool_call_session_id_accessor_covers_session_tool_specs() {
                 // foreign or missing filter value into an existence oracle.
                 None
             }
-            "present_work_result" => {
+            "present_work_result" | "search_webcodex_resources" => {
                 // Work Result is Window-first. Its optional session_id is
                 // compatibility/context evidence only and must not re-enter the
                 // generic business-Session lookup or recorder projection.

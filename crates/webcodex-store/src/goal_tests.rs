@@ -46,6 +46,73 @@ fn input(key: &str) -> NewGoal {
 }
 
 #[test]
+fn goal_query_filters_owned_title_and_objective_before_pagination() {
+    let temp = tempfile::tempdir().unwrap();
+    let db = Database::open(&temp.path().join("goal-query.db")).unwrap();
+    let owner = principal('a');
+    let other = principal('b');
+    let mut first = input("query-first");
+    first.title = "Release 100%_安全".to_string();
+    first.objective = "Check exact literal matching".to_string();
+    let first = db.create_goal_at(&owner, first, T0).unwrap();
+    let mut second = input("query-second");
+    second.title = "Other title".to_string();
+    second.objective = "RELEASE the reviewed build".to_string();
+    let second = db.create_goal_at(&owner, second, T0 + 1).unwrap();
+    let mut hidden = input("query-hidden");
+    hidden.title = "Release 100%_安全 hidden".to_string();
+    db.create_goal_at(&other, hidden, T0 + 2).unwrap();
+
+    let page = db.list_goals(&owner, None, Some(" release "), 0, 1).unwrap();
+    assert_eq!(page.total_count, 2);
+    assert_eq!(page.goals[0].goal_id, second.goal.summary.goal_id);
+    assert_eq!(page.next_offset, Some(1));
+    let page = db.list_goals(&owner, None, Some("release"), 1, 1).unwrap();
+    assert_eq!(page.total_count, 2);
+    assert_eq!(page.goals[0].goal_id, first.goal.summary.goal_id);
+    assert_eq!(page.next_offset, None);
+    for query in ["%", "_", "%_安全", "安全"] {
+        let page = db.list_goals(&owner, None, Some(query), 0, 10).unwrap();
+        assert_eq!(page.total_count, 1, "query {query}");
+        assert_eq!(page.goals[0].goal_id, first.goal.summary.goal_id);
+    }
+    assert_eq!(db.list_goals(&owner, None, Some("不存在"), 0, 10).unwrap().total_count, 0);
+    assert_eq!(db.list_goals(&owner, None, Some("   "), 0, 10).unwrap().total_count, 2);
+
+    db.update_goal_at(
+        &owner,
+        &first.goal.summary.goal_id,
+        1,
+        GoalPatch {
+            title: None,
+            objective: None,
+            controller_agent_id: None,
+            lifecycle: Some(GoalLifecycle::Completed),
+            terminal_reason: Some("Done".to_string()),
+        },
+        "query-complete",
+        T0 + 3,
+    ).unwrap();
+    let page = db.list_goals(&owner, Some(GoalLifecycle::Active), Some("release"), 0, 10).unwrap();
+    assert_eq!(page.total_count, 1);
+    assert_eq!(page.goals[0].goal_id, second.goal.summary.goal_id);
+    let page = db.list_goals(&owner, Some(GoalLifecycle::Completed), Some("release"), 0, 10).unwrap();
+    assert_eq!(page.total_count, 1);
+    assert_eq!(page.goals[0].goal_id, first.goal.summary.goal_id);
+}
+
+#[test]
+fn goal_query_rejects_oversized_and_nul_inputs() {
+    let temp = tempfile::tempdir().unwrap();
+    let db = Database::open(&temp.path().join("goal-query-bounds.db")).unwrap();
+    let owner = principal('a');
+    for query in ["界".repeat(201), "bad\0query".to_string()] {
+        assert_eq!(db.list_goals(&owner, None, Some(&query), 0, 10).unwrap_err().code(), "invalid_goal_list_query");
+    }
+    assert!(db.list_goals(&owner, None, Some(&"界".repeat(200)), 0, 10).is_ok());
+}
+
+#[test]
 fn create_read_list_update_and_terminal_replay_are_durable_and_revisioned() {
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("goals.db");
@@ -158,7 +225,7 @@ fn create_read_list_update_and_terminal_replay_are_durable_and_revisioned() {
         assert_eq!(terminal_replay.goal.summary.revision, 3);
 
         let page = db
-            .list_goals(&owner, Some(GoalLifecycle::Completed), 0, 10)
+            .list_goals(&owner, Some(GoalLifecycle::Completed), None, 0, 10)
             .unwrap();
         assert_eq!(page.total_count, 1);
         assert_eq!(page.goals[0].goal_id, created.goal.summary.goal_id);
@@ -474,12 +541,12 @@ fn prepare_goal_workflow_is_atomic_revision_one_owned_controller_and_keyed() {
         "goal_idempotency_conflict"
     );
 
-    let before_failures = db.list_goals(&owner, None, 0, 100).unwrap().total_count;
+    let before_failures = db.list_goals(&owner, None, None, 0, 100).unwrap().total_count;
     assert!(db
         .prepare_goal_workflow_at(&owner, "not-a-session", input("invalid-session"), T0 + 4)
         .is_err());
     assert_eq!(
-        db.list_goals(&owner, None, 0, 100).unwrap().total_count,
+        db.list_goals(&owner, None, None, 0, 100).unwrap().total_count,
         before_failures
     );
 
@@ -497,7 +564,7 @@ fn prepare_goal_workflow_is_atomic_revision_one_owned_controller_and_keyed() {
     assert_eq!(missing_error.code(), foreign_error.code());
     assert_eq!(missing_error.message(), foreign_error.message());
     assert_eq!(
-        db.list_goals(&owner, None, 0, 100).unwrap().total_count,
+        db.list_goals(&owner, None, None, 0, 100).unwrap().total_count,
         before_failures
     );
 
@@ -525,7 +592,7 @@ fn prepare_goal_workflow_is_atomic_revision_one_owned_controller_and_keyed() {
             .unwrap();
     }
     assert_eq!(
-        db.list_goals(&owner, None, 0, 100).unwrap().total_count,
+        db.list_goals(&owner, None, None, 0, 100).unwrap().total_count,
         before_failures
     );
 
@@ -564,7 +631,7 @@ fn prepare_goal_workflow_is_atomic_revision_one_owned_controller_and_keyed() {
         assert_eq!(orphan_count, 0);
     }
     assert_eq!(
-        db.list_goals(&owner, None, 0, 100).unwrap().total_count,
+        db.list_goals(&owner, None, None, 0, 100).unwrap().total_count,
         before_failures
     );
 
@@ -694,14 +761,14 @@ fn bounds_and_unknown_persisted_lifecycle_fail_closed() {
         "invalid_goal_objective"
     );
     assert_eq!(
-        db.list_goals(&owner, None, 0, MAX_GOAL_LIST_LIMIT + 1)
+        db.list_goals(&owner, None, None, 0, MAX_GOAL_LIST_LIMIT + 1)
             .unwrap_err()
             .code(),
         "invalid_goal_list_limit"
     );
     #[cfg(target_pointer_width = "64")]
     assert_eq!(
-        db.list_goals(&owner, None, (i64::MAX as usize) + 1, 1)
+        db.list_goals(&owner, None, None, (i64::MAX as usize) + 1, 1)
             .unwrap_err()
             .code(),
         "invalid_goal_list_offset"

@@ -1591,7 +1591,7 @@ pub(super) fn resource_read_bypasses_runtime_read(params: &Value) -> bool {
     params
         .get("uri")
         .and_then(Value::as_str)
-        .is_some_and(|uri| is_artifact_export_resource_uri(uri) || is_snapshot_resource_uri(uri))
+        .is_some_and(|uri| is_artifact_export_resource_uri(uri) || is_snapshot_resource_uri(uri) || uri.starts_with(crate::tool_runtime::resource_references::RESOURCE_PREFIX))
 }
 
 pub(super) fn handle_list(
@@ -1626,6 +1626,13 @@ pub(super) async fn handle_read(
     let Some(uri) = params.get("uri").and_then(Value::as_str) else {
         return McpOutcome::BadRequest(rpc_error(id, -32602, "Invalid params: uri is required"));
     };
+    if uri.starts_with(crate::tool_runtime::resource_references::RESOURCE_PREFIX) {
+        let result=runtime.read_webcodex_resource(uri,auth).await;
+        if !result.success {return resource_not_found(id,uri);}
+        return McpOutcome::Ok(rpc_result(id,mcp_stateless_result(json!({"contents":[{
+            "uri":uri,"mimeType":"application/json","text":serde_json::to_string(&result.output).expect("resource output serializes")
+        }]}),true)));
+    }
     if is_artifact_export_resource_uri(uri) {
         let response_id = id.clone().unwrap_or(Value::Null);
         let plan = match mcp_artifact_export_stream_plan(runtime, uri, auth).await {

@@ -21,7 +21,7 @@ async fn run_windows_tracked_listing(
         let runtime = runtime.clone();
         async move {
             runtime
-                .list_project_tracked_files(project, path, None, None, Some(100), Some(0))
+                .list_project_tracked_files(project, path, None, None, None, Some(100), Some(0))
                 .await
         }
     });
@@ -130,7 +130,7 @@ async fn tracked_listing_failure_keeps_bounded_multiline_stderr() {
         let runtime = runtime.clone();
         async move {
             runtime
-                .list_project_tracked_files(project, None, None, None, Some(100), Some(0))
+                .list_project_tracked_files(project, None, None, None, None, Some(100), Some(0))
                 .await
         }
     });
@@ -190,7 +190,7 @@ async fn run_mocked_tracked_listing(
         let runtime = runtime.clone();
         async move {
             runtime
-                .list_project_tracked_files(project, None, None, depth, Some(limit), Some(offset))
+                .list_project_tracked_files(project, None, None, None, depth, Some(limit), Some(offset))
                 .await
         }
     });

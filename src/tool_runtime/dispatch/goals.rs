@@ -93,12 +93,14 @@ impl ToolRuntime {
             }
 
             ToolCall::ListGoals {
+                query,
                 lifecycle,
                 offset,
                 limit,
             } => self.list_goals(
                 auth,
                 lifecycle.map(|value| value.as_str().to_string()),
+                query,
                 offset,
                 limit,
             ),

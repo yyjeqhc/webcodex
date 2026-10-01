@@ -7,7 +7,7 @@ fn tool<'a>(payload: &'a Value, name: &str) -> Option<&'a Value> {
         .find(|tool| tool["name"] == name)
 }
 
-async fn handle_with_server_apps_enabled(
+pub(super) async fn handle_with_server_apps_enabled(
     runtime: &ToolRuntime,
     request: JsonRpcRequest,
     auth: Option<&crate::auth::AuthContext>,

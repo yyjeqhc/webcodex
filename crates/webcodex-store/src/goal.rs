@@ -578,10 +578,14 @@ impl Database {
         Ok((goals, truncated))
     }
 
+    /// List owned Goals with optional lifecycle and literal title/objective search.
+    /// Blank queries are unfiltered; nonblank queries allow at most 200 characters
+    /// without NUL. Matching ignores ASCII case and preserves other Unicode text.
     pub fn list_goals(
         &self,
         principal: &CommunicationPrincipal,
         lifecycle: Option<GoalLifecycle>,
+        query: Option<&str>,
         offset: usize,
         limit: usize,
     ) -> Result<GoalPage, GoalStoreError> {
@@ -598,71 +602,42 @@ impl Database {
                 "offset exceeds the durable Goal store range",
             )
         })?;
+        let query = query.map(str::trim).filter(|query| !query.is_empty());
+        if query.is_some_and(|query| query.chars().count() > 200 || query.contains('\0')) {
+            return Err(GoalStoreError::new(
+                "invalid_goal_list_query",
+                "query must contain at most 200 characters without NUL",
+            ));
+        }
         let conn = self.lock_connection(crate::StoreDomain::Goal);
-        let (total_count, goal_ids) = match lifecycle {
-            Some(lifecycle) => {
-                let total_count = conn
-                    .query_row(
-                        "SELECT COUNT(*) FROM wc_goals
-                         WHERE owner_principal_kind = ?1 AND owner_principal_digest = ?2
-                           AND lifecycle = ?3",
-                        params![principal.kind, principal.digest, lifecycle.as_str()],
-                        |row| row.get::<_, i64>(0),
-                    )
-                    .map_err(goal_store_error)?;
-                let mut statement = conn
-                    .prepare(
-                        "SELECT goal_id FROM wc_goals
-                         WHERE owner_principal_kind = ?1 AND owner_principal_digest = ?2
-                           AND lifecycle = ?3
-                         ORDER BY updated_at_unix_ms DESC, goal_id
-                         LIMIT ?4 OFFSET ?5",
-                    )
-                    .map_err(goal_store_error)?;
-                let ids = statement
-                    .query_map(
-                        params![
-                            principal.kind,
-                            principal.digest,
-                            lifecycle.as_str(),
-                            limit as i64,
-                            offset_i64,
-                        ],
-                        |row| row.get::<_, String>(0),
-                    )
-                    .map_err(goal_store_error)?
-                    .collect::<Result<Vec<_>, _>>()
-                    .map_err(goal_store_error)?;
-                (total_count, ids)
-            }
-            None => {
-                let total_count = conn
-                    .query_row(
-                        "SELECT COUNT(*) FROM wc_goals
-                         WHERE owner_principal_kind = ?1 AND owner_principal_digest = ?2",
-                        params![principal.kind, principal.digest],
-                        |row| row.get::<_, i64>(0),
-                    )
-                    .map_err(goal_store_error)?;
-                let mut statement = conn
-                    .prepare(
-                        "SELECT goal_id FROM wc_goals
-                         WHERE owner_principal_kind = ?1 AND owner_principal_digest = ?2
-                         ORDER BY updated_at_unix_ms DESC, goal_id
-                         LIMIT ?3 OFFSET ?4",
-                    )
-                    .map_err(goal_store_error)?;
-                let ids = statement
-                    .query_map(
-                        params![principal.kind, principal.digest, limit as i64, offset_i64,],
-                        |row| row.get::<_, String>(0),
-                    )
-                    .map_err(goal_store_error)?
-                    .collect::<Result<Vec<_>, _>>()
-                    .map_err(goal_store_error)?;
-                (total_count, ids)
-            }
-        };
+        // instr treats wildcard-looking characters literally. SQLite lower handles
+        // ASCII case folding; other Unicode characters retain exact substring semantics.
+        let filter = "owner_principal_kind = ?1 AND owner_principal_digest = ?2
+                      AND (?3 IS NULL OR lifecycle = ?3)
+                      AND (?4 IS NULL OR instr(lower(title), lower(?4)) > 0
+                           OR instr(lower(objective), lower(?4)) > 0)";
+        let lifecycle = lifecycle.map(|lifecycle| lifecycle.as_str());
+        let total_count = conn
+            .query_row(
+                &format!("SELECT COUNT(*) FROM wc_goals WHERE {filter}"),
+                params![principal.kind, principal.digest, lifecycle, query],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(goal_store_error)?;
+        let mut statement = conn
+            .prepare(&format!(
+                "SELECT goal_id FROM wc_goals WHERE {filter}
+                 ORDER BY updated_at_unix_ms DESC, goal_id LIMIT ?5 OFFSET ?6"
+            ))
+            .map_err(goal_store_error)?;
+        let goal_ids = statement
+            .query_map(
+                params![principal.kind, principal.digest, lifecycle, query, limit as i64, offset_i64],
+                |row| row.get::<_, String>(0),
+            )
+            .map_err(goal_store_error)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(goal_store_error)?;
         let goals = goal_ids
             .iter()
             .map(|goal_id| load_owned_goal(&conn, principal, goal_id).map(|goal| goal.summary))

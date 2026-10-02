@@ -1,5 +1,7 @@
 use super::*;
 use std::fs::OpenOptions;
+#[cfg(windows)]
+use std::os::windows::fs::OpenOptionsExt;
 use std::sync::{Mutex, OnceLock};
 
 static TEST_ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();

@@ -193,6 +193,8 @@ jobs:
       WEBCODEX_BUILT_AT: ${{ needs.prepare.outputs.built_at }}
       WEBCODEX_RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
       BUILD_KIND: ${{ needs.prepare.outputs.build_kind }}
+      WEBCODEX_GIT_COMMIT: ${{ needs.prepare.outputs.source_sha }}
+      WEBCODEX_GIT_DIRTY: 'false'
       ARCHIVE_STEM: ${{ needs.prepare.outputs.archive_stem }}
       WEBCODEX_RELEASE_PLATFORM: ${{ matrix.platform }}
       MANYLINUX_IMAGE: ${{ matrix.image }}
@@ -234,6 +236,8 @@ jobs:
             -e SOURCE_SHA \
             -e WEBCODEX_BUILT_AT \
             -e WEBCODEX_RELEASE_VERSION \
+            -e WEBCODEX_GIT_COMMIT \
+            -e WEBCODEX_GIT_DIRTY \
             -e BUILD_KIND \
             -e ARCHIVE_STEM \
             -e WEBCODEX_RELEASE_PLATFORM \
@@ -271,11 +275,10 @@ jobs:
 
               cargo build --locked --release -p webcodex -p webcodex-cli -p webcodex-runner
 
-              short_commit="$(git rev-parse --short=12 HEAD)"
               for name in webcodex webcodex-server webcodex-runner; do
                 binary="target/release/$name"
                 output="$($binary --version)"
-                expected="$name $VERSION (commit $short_commit, dirty=false, built_at=$WEBCODEX_BUILT_AT)"
+                expected="$name $VERSION (commit $SOURCE_SHA, dirty=false, built_at=$WEBCODEX_BUILT_AT)"
                 if [ "$output" != "$expected" ]; then
                   echo "Unexpected $name release identity: $output" >&2
                   echo "Expected: $expected" >&2
@@ -367,6 +370,8 @@ jobs:
       WEBCODEX_BUILT_AT: ${{ needs.prepare.outputs.built_at }}
       WEBCODEX_RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
       BUILD_KIND: ${{ needs.prepare.outputs.build_kind }}
+      WEBCODEX_GIT_COMMIT: ${{ needs.prepare.outputs.source_sha }}
+      WEBCODEX_GIT_DIRTY: 'false'
       ARCHIVE_STEM: ${{ needs.prepare.outputs.archive_stem }}
       WEBCODEX_RELEASE_PLATFORM: ${{ matrix.platform }}
       EXPECTED_HOST_ARCH: ${{ matrix.host_arch }}
@@ -391,15 +396,6 @@ jobs:
           cache-dependency-path: |
             frontend/package-lock.json
             apps/desktop/package-lock.json
-
-      - name: Configure Developer ID release signing
-        if: needs.prepare.outputs.build_kind == 'release'
-        shell: bash
-        env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-        run: bash scripts/macos_ci_developer_id_setup.sh
 
       - name: Build and verify native macOS candidate
         shell: bash
@@ -426,11 +422,10 @@ jobs:
 
           rustc --version --verbose
           cargo build --locked --release -p webcodex -p webcodex-cli -p webcodex-runner
-          short_commit="$(git rev-parse --short=12 HEAD)"
           for name in webcodex webcodex-server webcodex-runner; do
             binary="target/release/$name"
             output="$($binary --version)"
-            expected="$name $VERSION (commit $short_commit, dirty=false, built_at=$WEBCODEX_BUILT_AT)"
+            expected="$name $VERSION (commit $SOURCE_SHA, dirty=false, built_at=$WEBCODEX_BUILT_AT)"
             if [ "$output" != "$expected" ]; then
               echo "Unexpected $name release identity: $output" >&2
               exit 1
@@ -443,11 +438,11 @@ jobs:
           done
 
           mkdir -p dist
-          runner_signing_identity="-"
-          if [ "$BUILD_KIND" = release ]; then
-            runner_signing_identity="$APPLE_SIGNING_IDENTITY"
-          fi
-          bash scripts/macos_sign_runner.sh target/release/webcodex-runner "$runner_signing_identity"
+          # Public macOS artifacts currently use the same ad-hoc signing
+          # contract as the long-running Desktop dogfood path. Developer ID /
+          # notarization is not a release prerequisite until credentials are
+          # intentionally introduced in a separately reviewed migration.
+          bash scripts/macos_sign_runner.sh target/release/webcodex-runner "-"
 
           scripts/package_release_artifact.sh dist
           canonical_archive="dist/webcodex-v$VERSION-$WEBCODEX_RELEASE_PLATFORM.tar.gz"
@@ -476,7 +471,6 @@ jobs:
           stage="$RUNNER_TEMP/webcodex-desktop-$WEBCODEX_RELEASE_PLATFORM-bundle"
           signing_mode=adhoc
           if [ "$BUILD_KIND" = release ]; then
-            signing_mode=developer-id
             desktop_name="webcodex-desktop-v$VERSION-$WEBCODEX_RELEASE_PLATFORM.dmg"
           else
             desktop_name="webcodex-desktop-$INPUT_TAG-${SOURCE_SHA:0:12}-v$VERSION-$WEBCODEX_RELEASE_PLATFORM.dmg"
@@ -496,26 +490,17 @@ jobs:
             echo "desktop_name=$desktop_name"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Build signed native macOS Desktop DMG
+      - name: Build native macOS Desktop DMG
         if: matrix.platform == 'darwin-arm64' || needs.prepare.outputs.desktop_darwin_x64_supplemental != 'true'
         id: desktop_dmg
         working-directory: apps/desktop
         shell: bash
         env:
           CI: "true"
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
-          if [ "$BUILD_KIND" = release ]; then
-            for name in APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
-              [ -n "${!name:-}" ] || { echo "$name is required for a formal macOS release" >&2; exit 1; }
-            done
-          else
-            unset APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID
-            export APPLE_SIGNING_IDENTITY="-"
-          fi
+          unset APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID
+          export APPLE_SIGNING_IDENTITY="-"
 
           export CARGO_TARGET_DIR="$RUNNER_TEMP/webcodex-desktop-$WEBCODEX_RELEASE_PLATFORM-tauri"
           npm exec tauri -- build \
@@ -594,6 +579,8 @@ jobs:
       ARCHIVE_STEM: ${{ needs.prepare.outputs.archive_stem }}
       WEBCODEX_RELEASE_PLATFORM: ${{ matrix.platform }}
       RUST_TARGET: ${{ matrix.rust_target }}
+      WEBCODEX_GIT_COMMIT: ${{ needs.prepare.outputs.source_sha }}
+      WEBCODEX_GIT_DIRTY: 'false'
       INPUT_TAG: ${{ inputs.tag }}
       EXPECTED_PROCESSOR_ARCHITECTURE: ${{ matrix.processor_architecture }}
       EXPECTED_PE_MACHINE: ${{ matrix.pe_machine }}
@@ -637,7 +624,6 @@ jobs:
           cargo build --locked --release --target $env:RUST_TARGET -p webcodex -p webcodex-cli -p webcodex-runner
           if ($LASTEXITCODE -ne 0) { throw "cargo build failed with exit code $LASTEXITCODE" }
 
-          $shortCommit = (git rev-parse --short=12 HEAD).Trim()
           $binDir = Join-Path "target" (Join-Path $env:RUST_TARGET "release")
           $expectedMachine = [Convert]::ToUInt16($env:EXPECTED_PE_MACHINE, 16)
           foreach ($name in @("webcodex", "webcodex-server", "webcodex-runner")) {
@@ -648,7 +634,7 @@ jobs:
               throw "$name --version failed with exit code $exitCode"
             }
             $output = $outputLines[0].TrimEnd()
-            $expected = "$name $env:VERSION (commit $shortCommit, dirty=false, built_at=$env:WEBCODEX_BUILT_AT)"
+            $expected = "$name $env:VERSION (commit $env:SOURCE_SHA, dirty=false, built_at=$env:WEBCODEX_BUILT_AT)"
             if ($output -ne $expected) {
               throw "Unexpected $name release identity: $output (expected $expected)"
             }
@@ -770,7 +756,9 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $binDir = Join-Path "target" (Join-Path $env:RUST_TARGET "release")
-          $desktopExe = Join-Path $env:DESKTOP_TAURI_TARGET "release\webcodex-desktop.exe"
+          $tauriConfig = Get-Content -LiteralPath "apps/desktop/src-tauri/tauri.conf.json" -Raw | ConvertFrom-Json
+          if (-not $tauriConfig.mainBinaryName) { throw "Tauri mainBinaryName is missing" }
+          $desktopExe = Join-Path $env:DESKTOP_TAURI_TARGET ("release\{0}.exe" -f $tauriConfig.mainBinaryName)
           if (-not (Test-Path -LiteralPath $desktopExe -PathType Leaf)) {
             throw "Native Desktop executable missing: $desktopExe"
           }
@@ -927,6 +915,8 @@ jobs:
       PLATFORM: ${{ matrix.platform }}
       BUILD_KIND: ${{ needs.prepare.outputs.build_kind }}
       INPUT_TAG: ${{ inputs.tag }}
+      WEBCODEX_GIT_COMMIT: ${{ needs.prepare.outputs.source_sha }}
+      WEBCODEX_GIT_DIRTY: 'false'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -941,18 +931,16 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.12'
+      - name: Fence exact clean source before generated inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ "$(git rev-parse HEAD)" = "$SOURCE_SHA" ]
+          [ -z "$(git status --porcelain --untracked-files=all)" ]
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: ${{ needs.prepare.outputs.archive_stem }}-${{ matrix.platform }}
           path: runtime-input
-      - name: Configure Developer ID signing for macOS unified installer
-        if: matrix.os == 'macos' && needs.prepare.outputs.build_kind == 'release'
-        shell: bash
-        env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-        run: bash scripts/macos_ci_developer_id_setup.sh
       - name: Build and package Linux installer in Ubuntu 22.04 native container
         if: matrix.os == 'linux'
         shell: bash
@@ -961,6 +949,7 @@ jobs:
           docker run --rm \
             -v "$GITHUB_WORKSPACE:/work" -w /work \
             -e VERSION -e SOURCE_SHA -e WEBCODEX_BUILT_AT -e WEBCODEX_RELEASE_VERSION \
+            -e WEBCODEX_GIT_COMMIT -e WEBCODEX_GIT_DIRTY \
             -e ARCHIVE_STEM -e PLATFORM -e GITHUB_RUN_ID -e GITHUB_WORKFLOW_REF -e GITHUB_SHA \
             ubuntu:22.04 bash -lc '
               set -euo pipefail
@@ -978,7 +967,6 @@ jobs:
               if [ "$PLATFORM" = linux-arm64 ]; then expected=aarch64; fi
               [ "$(uname -m)" = "$expected" ] || { echo "Ubuntu 22.04 container is not native for $PLATFORM" >&2; exit 1; }
               [ "$(git rev-parse HEAD)" = "$SOURCE_SHA" ]
-              [ -z "$(git status --porcelain --untracked-files=all)" ]
               mkdir -p native-input/artifacts/bin dist
               archive="runtime-input/$ARCHIVE_STEM-$PLATFORM.tar.gz"
               tar -xzf "$archive" -C native-input/artifacts/bin
@@ -1031,7 +1019,6 @@ jobs:
           actual="$(uname -m)"
           [ "$actual" = "$expected" ] || { echo "Expected native $expected host; got $actual" >&2; exit 1; }
           [ "$(git rev-parse HEAD)" = "$SOURCE_SHA" ]
-          [ -z "$(git status --porcelain --untracked-files=all)" ]
           mkdir -p native-input/artifacts/bin
           archive="runtime-input/$ARCHIVE_STEM-$PLATFORM.tar.gz"
           tar -xzf "$archive" -C native-input/artifacts/bin
@@ -1057,23 +1044,12 @@ jobs:
       - name: Collect and package macOS installer
         if: matrix.os == 'macos'
         shell: bash
-        env:
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
           export CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target"
           signing_mode=adhoc
-          if [ "$BUILD_KIND" = release ]; then
-            signing_mode=developer-id
-            for name in APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
-              [ -n "${!name:-}" ] || { echo "$name is required for a formal macOS release" >&2; exit 1; }
-            done
-          else
-            unset APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID
-            export APPLE_SIGNING_IDENTITY="-"
-          fi
+          unset APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID
+          export APPLE_SIGNING_IDENTITY="-"
           stage="$RUNNER_TEMP/unified-macos-stage"
           python3 scripts/prepare_desktop_bundle_macos.py \
             --bin-dir native-input/artifacts/bin --version "$VERSION" --source-sha "$SOURCE_SHA" \
@@ -1093,10 +1069,6 @@ jobs:
           }
           app="${apps[0]}"
           bash scripts/verify_macos_desktop_identity.sh "$app" "$signing_mode"
-          if [ "$signing_mode" = developer-id ]; then
-            spctl --assess --type execute --verbose=2 "$app"
-            xcrun stapler validate "$app"
-          fi
           rm native-input/artifacts/bin/webcodex-desktop
           cp "$app/Contents/MacOS/WebCodex" native-input/artifacts/bin/webcodex-desktop
           mkdir -p native-input/artifacts/desktop
@@ -1295,8 +1267,8 @@ jobs:
           build_kind = os.environ["BUILD_KIND"]
           if build_kind not in {"release", "verification"}:
               raise SystemExit("unknown macOS Desktop build kind")
-          expected_signing = "developer-id" if build_kind == "release" else "adhoc"
-          expected_notarized = build_kind == "release"
+          expected_signing = "adhoc"
+          expected_notarized = False
           pairs = [("darwin-arm64", os.environ["DESKTOP_DARWIN_ARM64_FILENAME"])]
           if os.environ["DESKTOP_DARWIN_X64_SUPPLEMENTAL"] != "true":
               pairs.insert(0, ("darwin-x64", os.environ["DESKTOP_DARWIN_X64_FILENAME"]))

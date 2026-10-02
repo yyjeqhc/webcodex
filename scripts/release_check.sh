@@ -41,19 +41,18 @@ fi
 #  10. static: no python runtime helper regressions
 #  11. static: no sensitive files tracked or staged by git#
 # Final pre-tag acceptance is orchestrated by .github/workflows/release-readiness.yml.
-# The release operator first binds one successful exact-source source-branch CI run;
-# that CI already owns the deterministic release/static contract, complete Linux
-# Rust coverage and path-aware frontend, macOS Apple-Silicon, Windows x64,
-# Desktop, and amd64 Server-image checks. Readiness revalidates that exact CI
-# run attempt, then runs:
+# The release operator binds one successful exact-source source-branch CI run. For
+# release/v* sources, the branch push simultaneously starts release-readiness in
+# source-evidence mode, which precomputes:
 #   - extended native Linux ARM64, macOS Intel/Desktop, and Windows ARM64/Desktop checks
 #   - WebSocket + polling zero-config E2E
 #   - EVAL_MODE=compare bash scripts/eval_coding_loop.sh with prebuilt debug fixtures
 #   - disposable linux/amd64 + linux/arm64 Server-image/runtime/bootstrap validation
-# Six-platform release-profile/ABI/package candidates plus the Windows x64/ARM64 and
-# primary macOS Apple-Silicon Desktop artifacts are built exactly once after immutable
-# tagging by release-build.yml; macOS Intel Desktop is a post-publication supplement.
-#
+# The later operator dispatch revalidates the exact CI + evidence run attempts instead
+# of repeating them. A main-source dispatch keeps the slow evidence fallback so normal
+# main pushes do not consume rare native runners. Six-platform release-profile/package
+# candidates plus primary Desktop artifacts are still built only after immutable
+# tagging by release-build.yml; macOS Intel Desktop is a post-publication supplement.#
 # Usage:
 #   bash scripts/release_check.sh
 #
@@ -211,6 +210,9 @@ if bash scripts/test_python_tooling.sh \
     && ! grep -Fq 'windows-11-arm' .github/workflows/ci.yml \
     && grep -Fq -- "      - 'release/**'" .github/workflows/ci.yml \
     && grep -Fq 'source_ref:' .github/workflows/release-readiness.yml \
+    && grep -Fq 'evidence_run_id:' .github/workflows/release-readiness.yml \
+    && grep -Fq "      - 'release/v*'" .github/workflows/release-readiness.yml \
+    && grep -Fq "github.event_name == 'push' || inputs.source_ref == 'main'" .github/workflows/release-readiness.yml \
     && grep -Fq 'refs/heads/$INPUT_SOURCE_REF' .github/workflows/release-readiness.yml \
     && grep -Fq 'refs/tags/$tag' .github/workflows/release-build.yml \
     && grep -Fq 'desktop_artifacts' .github/workflows/release-build.yml \

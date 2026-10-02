@@ -32,6 +32,11 @@ def _state() -> dict:
         "ci_run_url": "https://github.com/yyjeqhc/webcodex/actions/runs/777",
         "ci_run_head_sha": SOURCE,
         "ci_run_conclusion": "success",
+        "evidence_run_id": 888,
+        "evidence_run_attempt": 3,
+        "evidence_run_url": "https://github.com/yyjeqhc/webcodex/actions/runs/888",
+        "evidence_run_head_sha": SOURCE,
+        "evidence_run_conclusion": "success",
         "run_id": None,
         "run_head_sha": None,
         "source_matches": None,
@@ -68,6 +73,27 @@ def _ci_run(
         "id": run_id,
         "run_attempt": attempt,
         "path": readiness.CI_WORKFLOW_PATH,
+        "event": "push",
+        "head_branch": source_ref,
+        "head_sha": source,
+        "html_url": f"https://github.com/yyjeqhc/webcodex/actions/runs/{run_id}",
+        "status": "completed",
+        "conclusion": conclusion,
+    }
+
+
+def _evidence_run(
+    run_id: int = 888,
+    *,
+    attempt: int = 3,
+    source: str = SOURCE,
+    source_ref: str = SOURCE_REF,
+    conclusion: str = "success",
+) -> dict:
+    return {
+        "id": run_id,
+        "run_attempt": attempt,
+        "path": readiness.READINESS_WORKFLOW_PATH,
         "event": "push",
         "head_branch": source_ref,
         "head_sha": source,
@@ -128,6 +154,33 @@ class SourceCiProofTests(unittest.TestCase):
             )
 
 
+class SourceEvidenceProofTests(unittest.TestCase):
+    def test_selects_exact_successful_release_source_evidence(self) -> None:
+        selected = readiness.select_successful_source_evidence_run(
+            {"workflow_runs": [_evidence_run()]}, SOURCE, SOURCE_REF
+        )
+        self.assertEqual(selected["id"], 888)
+        self.assertEqual(selected["run_attempt"], 3)
+
+    def test_source_evidence_fails_closed_on_failure_wrong_source_ref_or_duplicate(self) -> None:
+        with self.assertRaises(readiness.ReadinessError):
+            readiness.select_successful_source_evidence_run(
+                {"workflow_runs": [_evidence_run(conclusion="failure")]}, SOURCE, SOURCE_REF
+            )
+        with self.assertRaises(readiness.ReadinessError):
+            readiness.select_successful_source_evidence_run(
+                {"workflow_runs": [_evidence_run(source="c" * 40)]}, SOURCE, SOURCE_REF
+            )
+        with self.assertRaises(readiness.ReadinessError):
+            readiness.select_successful_source_evidence_run(
+                {"workflow_runs": [_evidence_run(source_ref="main")]}, SOURCE, SOURCE_REF
+            )
+        with self.assertRaises(readiness.ReadinessError):
+            readiness.select_successful_source_evidence_run(
+                {"workflow_runs": [_evidence_run(1), _evidence_run(2)]}, SOURCE, SOURCE_REF
+            )
+
+
 class SnapshotFenceTests(unittest.TestCase):
     def test_bound_run_id_cannot_change(self) -> None:
         state = _state()
@@ -156,6 +209,8 @@ class ReadinessStateTests(unittest.TestCase):
             self.assertEqual(loaded["request_id"], REQUEST)
             self.assertEqual(loaded["ci_run_id"], 777)
             self.assertEqual(loaded["ci_run_attempt"], 2)
+            self.assertEqual(loaded["evidence_run_id"], 888)
+            self.assertEqual(loaded["evidence_run_attempt"], 3)
             state_path.unlink()
             target = root / "target.json"
             target.write_text("{}\n", encoding="utf-8")
@@ -175,6 +230,11 @@ class ReadinessStateTests(unittest.TestCase):
                 "ci_run_url",
                 "ci_run_head_sha",
                 "ci_run_conclusion",
+                "evidence_run_id",
+                "evidence_run_attempt",
+                "evidence_run_url",
+                "evidence_run_head_sha",
+                "evidence_run_conclusion",
             ):
                 state.pop(field)
             path = Path(temp) / "legacy.json"
@@ -188,7 +248,49 @@ class ReadinessStateTests(unittest.TestCase):
             state = _state()
             state["schema_version"] = readiness.CI_PROOF_STATE_SCHEMA_VERSION
             state.pop("source_ref")
+            for field in (
+                "evidence_run_id",
+                "evidence_run_attempt",
+                "evidence_run_url",
+                "evidence_run_head_sha",
+                "evidence_run_conclusion",
+            ):
+                state.pop(field)
             path = Path(temp) / "v2.json"
+            readiness._write_state(path, state)
+            loaded = readiness._load_state(path)
+            self.assertEqual(readiness._state_source_ref(loaded), "main")
+
+    def test_source_ref_v3_state_remains_readable_without_precomputed_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            state = _state()
+            state["schema_version"] = readiness.SOURCE_REF_STATE_SCHEMA_VERSION
+            for field in (
+                "evidence_run_id",
+                "evidence_run_attempt",
+                "evidence_run_url",
+                "evidence_run_head_sha",
+                "evidence_run_conclusion",
+            ):
+                state.pop(field)
+            path = Path(temp) / "v3.json"
+            readiness._write_state(path, state)
+            loaded = readiness._load_state(path)
+            self.assertEqual(loaded["source_ref"], SOURCE_REF)
+
+    def test_main_v4_state_requires_no_release_branch_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            state = _state()
+            state["source_ref"] = "main"
+            for field in (
+                "evidence_run_id",
+                "evidence_run_attempt",
+                "evidence_run_url",
+                "evidence_run_head_sha",
+                "evidence_run_conclusion",
+            ):
+                state[field] = None
+            path = Path(temp) / "main.json"
             readiness._write_state(path, state)
             loaded = readiness._load_state(path)
             self.assertEqual(readiness._state_source_ref(loaded), "main")
@@ -256,16 +358,20 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("actions: read", workflow)
         self.assertIn("ci_run_id:", workflow)
         self.assertIn("ci_run_attempt:", workflow)
+        self.assertIn("evidence_run_id:", workflow)
+        self.assertIn("evidence_run_attempt:", workflow)
         self.assertIn("source_ref:", workflow)
+        self.assertIn("  push:\n    branches:\n      - 'release/v*'", workflow)
         self.assertIn("      - 'release/**'", Path(".github/workflows/ci.yml").read_text(encoding="utf-8"))
         self.assertIn("/actions/runs/{run_id}/attempts/{attempt}", workflow)
-        self.assertIn('"path": ".github/workflows/ci.yml"', workflow)
+        self.assertIn('verify("CI", ci_run_id, ci_attempt, ".github/workflows/ci.yml")', workflow)
+        self.assertIn('".github/workflows/release-readiness.yml"', workflow)
         self.assertIn('"event": "push"', workflow)
         self.assertIn('"head_branch": source_ref', workflow)
         self.assertIn('test "$GITHUB_REF" = "refs/heads/$INPUT_SOURCE_REF"', workflow)
         self.assertIn('"conclusion": "success"', workflow)
-        self.assertIn("extended-native:\n    needs: ci-proof\n    uses: ./.github/workflows/extended-native.yml", workflow)
-        self.assertIn("source_sha: ${{ inputs.source_sha }}", workflow)
+        self.assertIn("extended-native:\n    needs: ci-proof\n    if: github.event_name == 'push' || inputs.source_ref == 'main'\n    uses: ./.github/workflows/extended-native.yml", workflow)
+        self.assertIn("source_sha: ${{ inputs.source_sha || github.sha }}", workflow)
         self.assertIn("workflow_call:", extended)
         self.assertIn("workflow_dispatch:", extended)
         for runner in ("ubuntu-24.04-arm", "macos-15-intel", "windows-11-arm"):
@@ -274,6 +380,12 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("-Platform win32-arm64", extended)
         self.assertIn("--bundles dmg", extended)
         self.assertIn("--bundles nsis", extended)
+        self.assertIn('export WEBCODEX_GIT_COMMIT="$source_sha"', extended)
+        self.assertIn("export WEBCODEX_GIT_DIRTY=false", extended)
+        self.assertIn('expected="$name $version (commit $source_sha, dirty=false, built_at=$built_at)"', extended)
+        self.assertIn("$env:WEBCODEX_GIT_COMMIT = $source", extended)
+        self.assertIn('$env:WEBCODEX_GIT_DIRTY = "false"', extended)
+        self.assertIn('$expected = "$name $version (commit $source, dirty=false, built_at=$builtAt)"', extended)
         self.assertNotIn("actions/upload-artifact", extended)
         self.assertNotIn("cargo build --locked --release", workflow)
         self.assertNotIn("cargo build --locked --release", extended)
@@ -286,6 +398,8 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("eval:\n    needs: ci-proof", workflow)
         self.assertIn("server-image:\n    needs: [ci-proof, e2e, eval]", workflow)
         self.assertIn("summary:\n    needs: [ci-proof, extended-native, e2e, eval, server-image]", workflow)
+        self.assertIn("summary:\n    needs: [ci-proof, extended-native, e2e, eval, server-image]\n    if: always()", workflow)
+        self.assertIn("expensive evidence was precomputed by the exact release-branch push and was not rebuilt", workflow)
         self.assertNotIn("actions/upload-artifact", workflow)
         self.assertNotIn("docker/login-action", workflow)
         self.assertNotIn("packages: write", workflow)
@@ -317,6 +431,10 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("target\\desktop-local-dist", windows)
         self.assertIn("[switch]$AllowDirty", windows)
         self.assertIn("-GitDirty $GitDirty", windows)
+        self.assertIn("$env:WEBCODEX_GIT_COMMIT = $SourceSha.ToLowerInvariant()", windows)
+        self.assertIn('$env:WEBCODEX_GIT_DIRTY = if ($GitDirty) { "true" } else { "false" }', windows)
+        self.assertIn('export WEBCODEX_GIT_COMMIT="$SOURCE_SHA"', macos)
+        self.assertIn("export WEBCODEX_GIT_DIRTY=false", macos)
         self.assertIn('"dirty-$ShortSource"', windows)
         for helper in (windows_stage, windows_smoke):
             self.assertIn("[bool]$GitDirty = $false", helper)

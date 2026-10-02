@@ -157,9 +157,17 @@ fn capacity_stale_provider_and_replay_are_fenced_before_duplicate_prompt() {
         )
         .error
         .is_none());
-    wait_for_snapshot(&manager, first_run, |snapshot| {
-        snapshot.state == CodingAgentRunState::Running
-    });
+    let first_snapshot = wait_for_snapshot_until(
+        &manager,
+        first_run,
+        Instant::now() + Duration::from_secs(15),
+        |snapshot| snapshot.state == CodingAgentRunState::Running || snapshot.state.terminal(),
+    );
+    assert_eq!(
+        first_snapshot.state,
+        CodingAgentRunState::Running,
+        "first capacity Run terminated before reaching Running: {first_snapshot:?}"
+    );
     let second = manager.handle(
         start_request(
             &manager,

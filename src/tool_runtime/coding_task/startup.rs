@@ -3,7 +3,7 @@
 use super::observations::repository_overview_not_requested;
 use super::project::{
     attach_permission, attach_project_resolution, invalid_project_source, resolve_project_source,
-    CodingProjectSource, ManagedWorktreeRequest,
+    ManagedWorktreeRequest,
 };
 use super::projection::{
     append_workspace_warnings, owning_runner_available, project_coding_agent_providers,
@@ -73,10 +73,6 @@ impl ToolRuntime {
         bootstrap_context: &mut Option<BootstrapContext>,
     ) -> ToolResult {
         let detail = startup.detail;
-        let project_source = match resolve_project_source(project, client_id, path) {
-            Ok(source) => source,
-            Err(result) => return result,
-        };
         let resume_requested = resume_session_id.is_some();
         let execution_context = match execution_context
             .map(sessions::SessionExecutionContext::validated)
@@ -123,6 +119,25 @@ impl ToolRuntime {
                 Err(result) => return result,
             },
             None => None,
+        };
+        // Only an explicitly authorized checkout resume may supply its bound
+        // Project. Never infer from a recorder/Window or use a Session as the
+        // source of a new managed worktree. Partial path inputs remain errors.
+        let project = if project.trim().is_empty()
+            && client_id.is_none()
+            && path.is_none()
+            && managed_worktree.is_none()
+        {
+            resume_session_project
+                .as_ref()
+                .map(|resolved| resolved.resolved_id.clone())
+                .unwrap_or(project)
+        } else {
+            project
+        };
+        let project_source = match resolve_project_source(project, client_id, path) {
+            Ok(source) => source,
+            Err(result) => return result,
         };
         if let (Some(worktree), Some(session_project)) =
             (managed_worktree.as_mut(), resume_session_project.as_ref())
@@ -249,6 +264,24 @@ impl ToolRuntime {
                                 .to_string(),
                             request_project: resolved.resolved_id.clone(),
                         },
+                    ),
+                    &project_resolution,
+                );
+            }
+        }
+        // Reject already-closed exact resumes before startup observations. The
+        // Store repeats lifecycle/authority checks when recording the resume,
+        // so closing during observation cannot revive the Session either.
+        if let Some(session_id) = resume_session_id.as_deref() {
+            if self.sessions.lifecycle_state(session_id) == Some(sessions::SessionLifecycle::Closed)
+            {
+                return attach_project_resolution(
+                    coding_session_start_error(
+                        sessions::CodingSessionError::ResumeSessionNotActive {
+                            session_id: session_id.to_string(),
+                            lifecycle: sessions::SessionLifecycle::Closed,
+                        },
+                        mode,
                     ),
                     &project_resolution,
                 );
@@ -681,7 +714,8 @@ impl ToolRuntime {
     /// This validates the public inputs, maps them onto the shared coding
     /// workflow engine, and projects a compact startup result. With `session_id` present, it
     /// exactly resumes that one Workflow Session after project/lifecycle/access/
-    /// capability checks; without it, it always creates a fresh Session.
+    /// capability checks. Checkout resume may omit the Project source and use
+    /// that Session's binding; without session_id it always creates a fresh Session.
     pub(crate) async fn work_on_project(
         &self,
         project: String,
@@ -700,10 +734,7 @@ impl ToolRuntime {
         correlation: &mut ToolCallCorrelation,
         bootstrap_context: &mut Option<BootstrapContext>,
     ) -> ToolResult {
-        let project_source = match resolve_project_source(project, client_id, path) {
-            Ok(source) => source,
-            Err(result) => return result,
-        };
+        let project = project.trim().to_string();
         let mode = mode.as_deref().unwrap_or("checkout");
         if !matches!(mode, "checkout" | "worktree") {
             return invalid_project_source(
@@ -731,12 +762,6 @@ impl ToolRuntime {
             operation_id: uuid::Uuid::new_v4().to_string(),
             resume_project_id: None,
         });
-        let (project, client_id, path) = match project_source {
-            CodingProjectSource::Existing { project } => (project, None, None),
-            CodingProjectSource::RunnerPath { client_id, path } => {
-                (String::new(), Some(client_id), Some(path))
-            }
-        };
         let instruction = instruction.trim().to_string();
         if instruction.is_empty()
             || instruction.chars().count() > sessions::MAX_CODING_INSTRUCTION_CHARS

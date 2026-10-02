@@ -105,6 +105,33 @@ an existing npm version closes this exception permanently for that version. Fail
 historical workflow runs remain as audit evidence after a reclaim and are not
 deleted or rewritten.
 
+### Failed pre-publication build source-fix recovery
+
+A failed authoritative `release-build` may expose a release-only build, packaging,
+installer, provenance, or workflow-contract defect that pre-tag readiness does not
+exercise. After that happens, the same version may take a bounded recovery path
+without repeating readiness **only** when all of these conditions hold:
+
+- at least one earlier readiness run for this release version/source line completed
+  successfully before the failed authoritative build;
+- the failed build is terminal and the diagnosed fix is confined to release/CI,
+  packaging, installer, provenance, tests, or documentation surfaces rather than a
+  product/runtime behavior change;
+- the repaired exact `release/v<VERSION>` source passes its ordinary exact-source
+  push CI and focused regression validation for the failed build contract;
+- no GitHub Release exists for the tag, the npm version is absent, and no
+  authoritative `release-build` for the version has succeeded;
+- the human requester explicitly authorizes reclaiming and recreating the version
+  tag at the repaired exact source.
+
+In this recovery path, cancel or ignore any automatically started release-source
+readiness evidence run. Use the guarded `reclaim-tag` operation, create a new
+annotated tag only after the explicit tag authorization, then use a fresh durable
+`build-start` / `build-status` state for the repaired tag. Do not resume a high-level
+plan whose readiness/build state is bound to the superseded source, and do not
+reuse artifacts from any earlier build attempt. A product/runtime source change
+falls back to the normal readiness path.
+
 ## 3. Operator checklist pointer
 
 Before tagging or publishing, follow sections in

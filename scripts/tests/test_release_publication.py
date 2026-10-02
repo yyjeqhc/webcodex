@@ -657,6 +657,21 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn('expected_signing = "adhoc"', primary)
         self.assertIn("expected_notarized = False", primary)
 
+    def test_supplemental_macos_intel_tracks_release_identity_generation(self) -> None:
+        supplemental = Path(".github/workflows/release-desktop-darwin-x64.yml").read_text(encoding="utf-8")
+
+        self.assertIn('expected_commit="$SOURCE_SHA"', supplemental)
+        self.assertIn('core < (0, 4, 4)', supplemental)
+        self.assertIn('expected_commit="$SOURCE_SHORT"', supplemental)
+        self.assertIn(
+            'expected_version="$name $VERSION (commit $expected_commit, dirty=false, built_at=$WEBCODEX_BUILT_AT)"',
+            supplemental,
+        )
+        self.assertNotIn(
+            'expected_version="$name $VERSION (commit $SOURCE_SHORT, dirty=false, built_at=$WEBCODEX_BUILT_AT)"',
+            supplemental,
+        )
+
     def test_release_build_stages_desktop_candidates_in_workspace_dist(self) -> None:
         workflow = Path(".github/workflows/release-build.yml").read_text(encoding="utf-8")
 

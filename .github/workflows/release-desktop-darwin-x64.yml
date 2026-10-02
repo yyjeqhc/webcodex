@@ -207,9 +207,22 @@ jobs:
                   target.chmod(0o755)
           PY
 
+          expected_commit="$SOURCE_SHA"
+          legacy_short_identity="$(python3 - "$VERSION" <<'PY'
+          import sys
+
+          core = tuple(int(part) for part in sys.argv[1].split("+", 1)[0].split("-", 1)[0].split("."))
+          print("true" if core < (0, 4, 4) else "false")
+          PY
+          )"
+          if [ "$legacy_short_identity" = true ]; then
+            # v0.4.3 release archives predate the full-SHA release identity
+            # contract. Keep guarded backfill support for those immutable bytes.
+            expected_commit="$SOURCE_SHORT"
+          fi
           for name in webcodex webcodex-server webcodex-runner; do
             binary="$runtime_dir/$name"
-            expected_version="$name $VERSION (commit $SOURCE_SHORT, dirty=false, built_at=$WEBCODEX_BUILT_AT)"
+            expected_version="$name $VERSION (commit $expected_commit, dirty=false, built_at=$WEBCODEX_BUILT_AT)"
             test "$("$binary" --version)" = "$expected_version"
             file "$binary" | grep -Fq x86_64
           done

@@ -1,0 +1,62 @@
+/* Runtime overview: readable summaries before machine-level diagnostics. */
+.runtime-page {
+  --runtime-body-size: 15px;
+  --runtime-caption-size: 13px;
+  font-size: var(--runtime-body-size);
+  line-height: 1.5;
+}
+.runtime-page .page-heading-context { max-width: 60ch; color: var(--muted); font-size: var(--runtime-body-size); }
+.runtime-page .runtime-sync-status { margin: 12px auto 24px; max-width: 1680px; font-size: var(--runtime-caption-size); }
+.runtime-page .runtime-tabs button,
+.runtime-page .text-button { font-size: 14px; }
+.runtime-page .quiet-pill { display: inline-flex; }
+.runtime-page .quiet-pill,
+.runtime-page .status-pill { font-size: var(--runtime-caption-size); }
+.runtime-page .section-heading h2 { font-size: 19px; }
+.runtime-page .section-heading p,
+.runtime-page .runtime-section > p,
+.runtime-page .runtime-diagnostics > p { color: var(--muted); font-size: var(--runtime-body-size); }
+.runtime-page .runtime-metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.runtime-page .runtime-metrics > div { align-content: start; gap: 10px; padding: 20px; min-width: 0; }
+.runtime-page .runtime-metrics > div:first-child { padding-left: 0; }
+.runtime-page .runtime-metrics span { font-size: var(--runtime-body-size); }
+.runtime-page .runtime-metrics strong { font-size: 34px; line-height: 1.15; }
+.runtime-page .runtime-metrics small,
+.runtime-page .runtime-metrics .runtime-metric-detail { font-size: var(--runtime-caption-size); line-height: 1.5; }
+.runtime-page .runtime-metric-detail { flex-wrap: wrap; font-weight: 400; }
+.runtime-page .runtime-row { grid-template-columns: 34px minmax(0, 1fr) minmax(180px, auto) auto; padding: 18px 0; gap: 16px; }
+.runtime-page .runner-icon { align-self: start; }
+.runtime-page .runtime-row-primary { gap: 8px; }
+.runtime-page .runtime-row-primary .copy-identity { justify-self: start; font-size: var(--runtime-body-size); }
+.runtime-page .runtime-row small,
+.runtime-page .runtime-row-meta { font-size: var(--runtime-caption-size); }
+.runtime-page .runtime-row-jobs { display: grid; gap: 6px; white-space: normal; padding: 0; }
+.runtime-page .runtime-row-compat { font-size: var(--runtime-caption-size); }
+.runtime-server-version { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 16px 0; color: var(--muted); }
+.runtime-server-version code { color: var(--text); overflow-wrap: anywhere; }
+.runtime-config-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; align-items: start; }
+.runtime-config-group { min-width: 0; border: 1px solid var(--line); border-radius: 14px; padding: 20px; background: var(--surface); }
+.runtime-config-group h3 { margin: 0; font-size: 17px; font-weight: 600; }
+.runtime-config-group > p { margin: 6px 0 20px; color: var(--muted); font-size: var(--runtime-caption-size); }
+.runtime-config-group dl { margin: 0; }
+.runtime-config-group dl > div { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, auto); align-items: baseline; gap: 12px; padding: 12px 0; border-top: 1px solid var(--line); }
+.runtime-config-group dt { color: var(--muted); }
+.runtime-config-group dd { margin: 0; text-align: end; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.runtime-page .runtime-diagnostics > summary { font-size: 17px; }
+.runtime-page .runtime-diagnostic-row { font-size: var(--runtime-caption-size); }
+.runtime-page .runtime-row-build { white-space: normal; overflow-wrap: anywhere; }
+@media (max-width: 1100px) {
+  .runtime-page .runtime-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .runtime-page .runtime-metrics > div:nth-child(odd) { padding-left: 0; border-left: 0; }
+  .runtime-page .runtime-metrics > div:nth-child(n + 3) { border-top: 1px solid var(--line); }
+  .runtime-page .runtime-row { grid-template-areas: "icon primary compat" "icon jobs jobs"; grid-template-columns: 28px minmax(0, 1fr) auto; gap: 10px; }
+  .runtime-config-grid { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 600px) {
+  .runtime-page .runtime-metrics > div { padding: 16px 12px; }
+  .runtime-page .runtime-metrics > div:nth-child(even) { border-left: 1px solid var(--line); }
+  .runtime-page .runtime-metrics strong { font-size: 30px; }
+  .runtime-page .runtime-row { grid-template-areas: "icon primary" "icon compat" "icon jobs"; grid-template-columns: 24px minmax(0, 1fr); }
+  .runtime-page .runtime-row-compat { justify-self: start; }
+  .runtime-config-group { padding: 16px; }
+}

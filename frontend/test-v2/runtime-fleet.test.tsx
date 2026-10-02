@@ -43,4 +43,34 @@ describe("Server-authorized Runner fleet", () => {
     expect(screen.queryByText("No authorized Runners yet")).toBeNull();
     expect(screen.getAllByText("Runtime overview unavailable").length).toBeGreaterThan(0);
   });
+
+  it("shows reported queue and capacity while preserving incomplete inventories", () => {
+    const runner = runtimeOverview().runners[0];
+    const overview = runtimeOverview({
+      detail_level: "primary",
+      projects_available: false,
+      visible_projects: 0,
+      runners: [{ ...runner, jobs_queued: 3, job_concurrency_limit: 4, projects_scan_partial: true }],
+    });
+    const { rerender } = render(<RuntimeView {...base} overview={overview} overviewAvailability="available" onOpenWork={vi.fn()} />);
+    expect(screen.getByText("Session summary is loading…")).toBeTruthy();
+    expect(screen.queryByText("0 running Sessions")).toBeNull();
+    expect(screen.getByText("Project inventory unavailable")).toBeTruthy();
+    expect(screen.getByText("Projects").parentElement?.querySelector("strong")?.textContent).toBe("—");
+    expect(screen.getByText(/3 Queued jobs/)).toBeTruthy();
+    expect(screen.getByText(/Concurrency limit: 4/).textContent).toContain("Partial inventory");
+    expect(screen.getByRole("button", { name: "Copy Runner" })).toBeTruthy();
+    rerender(<RuntimeView {...base} overview={{ ...overview, detail_level: "full", projects_available: true, projects_truncated: true, visible_projects: 7 }} overviewAvailability="available" onOpenWork={vi.fn()} />);
+    expect(screen.queryByText("Session summary is loading…")).toBeNull();
+    expect(screen.getByText("0 running Sessions")).toBeTruthy();
+    expect(screen.getByText("Projects").parentElement?.querySelector("strong")?.textContent).toBe("7");
+    expect(screen.getByText("Partial inventory")).toBeTruthy();
+  });
+
+  it("does not show an endless loading message after an initial failure", () => {
+    render(<RuntimeView {...base} overview={null} overviewAvailability="error" onOpenWork={vi.fn()} />);
+    expect(screen.getByText("Not synced yet")).toBeTruthy();
+    expect(screen.queryByText("Loading…")).toBeNull();
+  });
+
 });

@@ -100,6 +100,42 @@ def valid_policy_and_metadata() -> tuple[boundary.BoundaryPolicy, dict]:
     return policy, metadata
 
 
+class RunnerEntryBoundaryTests(unittest.TestCase):
+    def check_source(self, source: str, name: str = "transport.rs") -> list[str]:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "crates/webcodex-runner/src/webcodex_runner" / name
+            path.parent.mkdir(parents=True)
+            path.write_text(source, encoding="utf-8")
+            return boundary.check_runner_entry_dependencies(root)
+
+    def test_implementation_and_external_imports_are_allowed(self) -> None:
+        self.assertEqual(self.check_source(
+            "use crate::webcodex_runner::execution_io::spawn_reader;\n"
+            "use webcodex_core::runner_protocol::RunnerRequest;\n"
+            "#[cfg(test)] use crate::tests::test_env_lock;\n"
+            "// Never depend on crate::spawn_reader again.\n"
+        ), [])
+
+    def test_binary_entry_function_and_alias_are_rejected(self) -> None:
+        for source in (
+            "use crate::spawn_reader;\n",
+            "use crate::{spawn_reader, OutputChunk};\n",
+            "use crate::runner_protocol::RunnerRequest;\n",
+            "fn start() { crate::process_started_at(); }\n",
+        ):
+            with self.subTest(source=source):
+                self.assertEqual(len(self.check_source(source)), 1)
+
+    def test_dedicated_test_modules_are_not_production_dependencies(self) -> None:
+        self.assertEqual(self.check_source("use crate::fixture;\n", "transport_tests.rs"), [])
+        self.assertEqual(self.check_source("use crate::fixture;\n", "transport_tests/http.rs"), [])
+
+    def test_repository_without_runner_is_valid_fixture(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            self.assertEqual(boundary.check_runner_entry_dependencies(Path(directory)), [])
+
+
 class MetadataBoundaryTests(unittest.TestCase):
     def test_valid_complete_workspace_passes(self) -> None:
         policy, metadata = valid_policy_and_metadata()

@@ -522,11 +522,46 @@ def check_parent_source_paths(root: Path) -> list[str]:
     return violations
 
 
+def check_runner_entry_dependencies(root: Path) -> list[str]:
+    """Keep Runner implementation imports below the binary entry point.
+
+    Production modules may name their implementation tree and cfg(test) fixtures,
+    but must import external crates directly rather than through main.rs aliases.
+    This is a source convention check, not a replacement for Rust compilation.
+    """
+    source_root = root / "crates/webcodex-runner/src/webcodex_runner"
+    forbidden_root = re.compile(r"\bcrate\s*::\s*(?!webcodex_runner\b|tests\b)([A-Za-z_]\w*|\{|\*)")
+    violations: list[str] = []
+    for path in sorted(source_root.rglob("*.rs")):
+        if path.stem.endswith("tests") or any(
+            part.endswith("tests") for part in path.relative_to(source_root).parts[:-1]
+        ):
+            continue
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeError) as error:
+            violations.append(f"could not inspect Runner source {path}: {error}")
+            continue
+        for line_number, line in enumerate(lines, start=1):
+            # Documentation may describe the forbidden edge without creating it.
+            code = line.split("//", 1)[0]
+            if forbidden_root.search(code):
+                violations.append(
+                    f"{path.relative_to(root).as_posix()}:{line_number}: "
+                    "Runner implementation depends on binary entry; import the owning module"
+                )
+    return violations
+
+
 def evaluate(
     root: Path, metadata: dict[str, Any], policy: BoundaryPolicy
 ) -> list[str]:
     root = root.resolve()
-    return check_metadata(metadata, policy) + check_parent_source_paths(root)
+    return (
+        check_metadata(metadata, policy)
+        + check_parent_source_paths(root)
+        + check_runner_entry_dependencies(root)
+    )
 
 
 def parse_args() -> argparse.Namespace:
@@ -577,6 +612,7 @@ def main() -> int:
         "to declared dev/test ownership"
     )
     print("[workspace-boundary][ok] no cross-parent #[path] source sharing")
+    print("[workspace-boundary][ok] Runner implementation imports do not depend on binary entry")
     return 0
 
 

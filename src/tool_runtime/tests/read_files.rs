@@ -21,6 +21,62 @@ async fn scoped_read(
 }
 
 #[tokio::test]
+async fn read_files_snapshot_service_does_not_retain_unrelated_runtime_state() {
+    let root = tempfile::tempdir().unwrap();
+    let runtime = ToolRuntime::new_for_tests();
+    let client = "read-service-lifetime";
+    register_runner_project_at_path(&runtime, client, "demo", root.path()).await;
+    let resolved = runtime.resolve_project_input("demo").await.unwrap();
+    let registry = runtime.runner_registry.clone();
+    let runner = registry.get_runner_view(client).await.unwrap();
+    let runner_project_id = crate::tool_runtime::runner_local_project_id(&resolved.resolved_id)
+        .unwrap()
+        .to_string();
+    let reader = super::super::files::ProjectFileReader::new(registry.clone());
+    let cache = runtime.read_cache.clone();
+    let unrelated_state = std::sync::Arc::downgrade(&runtime.read_revisions);
+    let read = super::super::read_cache::READ_SCOPE.scope(
+        super::super::read_cache::ReadScope::new(None, Some("service-session")),
+        cache.read_project_snapshot(
+            &reader,
+            &resolved,
+            &runner_project_id,
+            &runner.runner_instance_id,
+            "a.rs".into(),
+            Some(1),
+            Some(2),
+            None,
+            tokio::time::Instant::now() + Duration::from_secs(30),
+        ),
+    );
+    tokio::pin!(read);
+    assert!(futures_util::poll!(&mut read).is_pending());
+    let request = next_read_request(&runtime, client).await;
+    // Physical work needs the cache and Runner, not Session/validation/read-
+    // revision state or any other capability owned by the composing runtime.
+    drop(runtime);
+    assert!(unrelated_state.upgrade().is_none());
+    registry
+        .complete(RunnerResultRequest {
+            client_id: client.to_string(),
+            runner_instance_id: runner.runner_instance_id.clone(),
+            request_id: request.request_id,
+            exit_code: Some(0),
+            stdout: Some(canonical_agent_file_read_range("one\ntwo\nthree\n", 1, 2)),
+            stderr: Some(String::new()),
+            stdout_truncated: false,
+            stderr_truncated: false,
+            duration_ms: Some(1),
+            error: None,
+        })
+        .await
+        .unwrap();
+    let result = read.await;
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["text"], "one\ntwo");
+}
+
+#[tokio::test]
 async fn read_files_canonical_session_cache_keeps_each_invocation_recorded() {
     let root = tempfile::tempdir().unwrap();
     let runtime = ToolRuntime::new_for_tests();

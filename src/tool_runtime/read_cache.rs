@@ -5,9 +5,10 @@
 //! that an external writer has not changed the file. This saves range transfer,
 //! not the Runner's full-file scan. No Session means no retained content cache.
 
+use super::files::ProjectFileReader;
 use super::project_resolution::ResolvedProject;
 use super::read_revisions::ReadRevisionTarget;
-use super::{ToolResult, ToolRuntime};
+use super::ToolResult;
 use crate::auth::AuthContext;
 use futures_util::future::{BoxFuture, Shared, WeakShared};
 use futures_util::FutureExt;
@@ -213,9 +214,10 @@ impl ReadCache {
     }
 }
 
-impl ToolRuntime {
+impl ReadCache {
     pub(crate) async fn read_project_snapshot(
-        &self,
+        self: &Arc<Self>,
+        reader: &ProjectFileReader,
         resolved: &ResolvedProject,
         runner_project_id: &str,
         runner_instance_id: &str,
@@ -226,7 +228,7 @@ impl ToolRuntime {
         deadline: Instant,
     ) -> ToolResult {
         let Ok(scope) = READ_SCOPE.try_with(Clone::clone) else {
-            return self
+            return reader
                 .read_one_resolved_project_file(
                     &resolved.config,
                     runner_project_id,
@@ -262,7 +264,8 @@ impl ToolRuntime {
         // Keep physical work bounded while allowing the starter caller to time
         // out without immediately tearing down work still safe for another waiter.
         let physical_deadline = deadline + PHYSICAL_READ_GRACE;
-        let runtime = self.clone();
+        let cache = self.clone();
+        let reader = reader.clone();
         let project = resolved.config.clone();
         let runner_project_id = runner_project_id.to_owned();
         let work_key = key.clone();
@@ -270,7 +273,7 @@ impl ToolRuntime {
             let key = work_key;
             let target = &key.snapshot.target;
             let read = |start, limit| {
-                runtime.read_one_resolved_project_file(
+                reader.read_one_resolved_project_file(
                     &project,
                     &runner_project_id,
                     &target.runner_instance_id,
@@ -281,7 +284,7 @@ impl ToolRuntime {
                     physical_deadline,
                 )
             };
-            if let Some(cached) = runtime.read_cache.snapshot(&key) {
+            if let Some(cached) = cache.snapshot(&key) {
                 // Pick a line inside the requested range, so the probe cannot
                 // fail just because an unrelated first line is oversized.
                 let probe = read(key.start, 1).await;
@@ -291,31 +294,27 @@ impl ToolRuntime {
                         .as_deref()
                         .is_some_and(|expected| probe.output["sha256"].as_str() != Some(expected))
                 {
-                    runtime.read_cache.invalidate(&key.snapshot);
+                    cache.invalidate(&key.snapshot);
                     return super::read_files::stale_read_revision_failure(&target.path);
                 }
                 if probe.success && probe.output["sha256"] == cached["sha256"] {
                     return ToolResult::ok(cached);
                 }
-                runtime.read_cache.invalidate(&key.snapshot);
+                cache.invalidate(&key.snapshot);
                 if !probe.success && probe.output["reason_code"] != "range_too_large" {
                     return probe;
                 }
             }
             let result = read(key.start, key.limit).await;
             if result.success {
-                runtime
-                    .read_cache
-                    .remember(key.snapshot, result.output.clone());
+                cache.remember(key.snapshot, result.output.clone());
             } else {
-                runtime.read_cache.invalidate(&key.snapshot);
+                cache.invalidate(&key.snapshot);
             }
             result
         }
         .boxed();
-        let flight = self
-            .read_cache
-            .flight(key, deadline, physical_deadline, work);
+        let flight = self.flight(key, deadline, physical_deadline, work);
         match tokio::time::timeout_at(deadline, flight).await {
             Ok(result) => ToolResult {
                 success: result.success,

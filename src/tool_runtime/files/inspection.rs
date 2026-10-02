@@ -1,5 +1,18 @@
 use super::*;
 
+/// Physical file-read capability. It owns only the Runner transport needed for
+/// target-fenced reads, response validation and cancellation, not runtime state.
+#[derive(Clone)]
+pub(crate) struct ProjectFileReader {
+    runner_registry: std::sync::Arc<crate::runner_http::RunnerRegistry>,
+}
+
+impl ProjectFileReader {
+    pub(crate) fn new(runner_registry: std::sync::Arc<crate::runner_http::RunnerRegistry>) -> Self {
+        Self { runner_registry }
+    }
+}
+
 /// Dropping the last singleflight waiter must also remove its queued request.
 /// Other waiters retain the shared future, so one caller timing out cannot
 /// cancel their physical read. This guard also covers ordinary read cancellation.
@@ -686,19 +699,22 @@ impl ToolRuntime {
         else {
             return read_file_failure(ReadFileReason::RunnerUnavailable, Some(&path));
         };
-        self.read_one_validated_project_file(
-            &resolved.config,
-            runner_project_id,
-            &runner.runner_instance_id,
-            path,
-            start_line,
-            limit,
-            with_line_numbers,
-            None,
-        )
-        .await
+        ProjectFileReader::new(self.runner_registry.clone())
+            .read_one_validated_project_file(
+                &resolved.config,
+                runner_project_id,
+                &runner.runner_instance_id,
+                path,
+                start_line,
+                limit,
+                with_line_numbers,
+                None,
+            )
+            .await
     }
+}
 
+impl ProjectFileReader {
     pub(crate) async fn read_one_resolved_project_file(
         &self,
         project: &ProjectConfig,
@@ -821,7 +837,9 @@ impl ToolRuntime {
             }
         }
     }
+}
 
+impl ToolRuntime {
     // -------------------------------------------------------------------------
     // Project instructions auto-load (best-effort, session-start guidance)
     // -------------------------------------------------------------------------

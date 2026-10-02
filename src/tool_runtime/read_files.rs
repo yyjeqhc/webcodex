@@ -813,6 +813,35 @@ pub(crate) fn enforce_final_model_facing_hard_cap(
 }
 
 impl ToolRuntime {
+    /// Compose the read service without exposing unrelated runtime capabilities
+    /// to its shared physical work. Authorization remains in the caller path.
+    pub(crate) async fn read_project_snapshot(
+        &self,
+        resolved: &ResolvedProject,
+        runner_project_id: &str,
+        runner_instance_id: &str,
+        path: String,
+        start_line: Option<usize>,
+        limit: Option<usize>,
+        expected_sha256: Option<&str>,
+        deadline: Instant,
+    ) -> ToolResult {
+        let reader = super::files::ProjectFileReader::new(self.runner_registry.clone());
+        self.read_cache
+            .read_project_snapshot(
+                &reader,
+                resolved,
+                runner_project_id,
+                runner_instance_id,
+                path,
+                start_line,
+                limit,
+                expected_sha256,
+                deadline,
+            )
+            .await
+    }
+
     pub(crate) async fn read_files(
         &self,
         project: String,

@@ -95,7 +95,8 @@ export function ProjectsView({ client, language, runners, onOpenSession, onOpenW
     () => selectedFamily?.workspaces.find((project) => project.id === selectedProjectId) || selectedFamily?.primary,
     [selectedFamily, selectedProjectId],
   );
-  const windows = useWindowWorkspace(client, Boolean(selectedFamily), onUnauthorized, { refreshMs: 5_000, loadDetail: false });
+  const windowProjects = useMemo(() => selectedFamily?.workspaces.map(project => project.id), [selectedFamily]);
+  const windows = useWindowWorkspace(client, Boolean(selectedFamily), onUnauthorized, { refreshMs: 5_000, loadDetail: false, projects: windowProjects });
   const sessionsState = useProjectSessions(client, Boolean(selectedProject), selectedProject?.id || "", onUnauthorized);
 
   const windowsByProject = useMemo(() => {
@@ -235,7 +236,7 @@ export function ProjectsView({ client, language, runners, onOpenSession, onOpenW
                   </div>
                   <div className="project-card-body project-family-card-body">
                     <div><Folder size={14} /><span>{family.workspaces.length} {t("workspaces")}</span></div>
-                    <div><Monitor size={14} /><span>{windowsAvailable ? `${activeWindows} ${t("active")}` : "—"}</span></div>
+                    <div><Monitor size={14} /><span>{selected && windowsAvailable ? `${activeWindows} ${t("active")}` : "—"}</span></div>
                   </div>
                 </button>
               );
@@ -285,7 +286,7 @@ export function ProjectsView({ client, language, runners, onOpenSession, onOpenW
                 })}
                 {windows.availability === "loading" && <div className="empty-inline">{t("Loading Window activity…")}</div>}
                 {windows.availability === "stale" && <div className="inventory-note" role="status">{t("Window activity refresh failed; showing previous observations.")}</div>}
-                {windows.truncated && <div className="inventory-note">{t("Window inventory is bounded; not all observed Windows are loaded.")}</div>}
+                {windows.truncated && <button type="button" className="text-button" disabled={windows.loadingMore} onClick={windows.loadMore}>{t("Load more")} · {familyWindows.length} / {windows.total}</button>}
                 {(windows.availability === "error" || windows.availability === "denied") && <div className="empty-inline" role="status">{t("Window activity unavailable")}</div>}
                 {windows.availability === "available" && !familyWindows.length && <div className="empty-inline">{t("No Window activity observed for this project.")}</div>}
               </div>

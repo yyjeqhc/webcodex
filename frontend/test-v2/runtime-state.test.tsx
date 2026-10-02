@@ -102,112 +102,73 @@ it("does not display the previous Window while the newly selected detail is pend
   await waitFor(() => expect(result.current.detail?.client_window_key).toBe(second));
 });
 
-it("lets slow Window polls finish and discovers new Windows independently of slow detail", async () => {
+it("keeps history single-flight while liveness discovers new Windows independently of slow detail", async () => {
   vi.useFakeTimers();
   try {
-    const first = "a".repeat(64);
-    const second = "b".repeat(64);
-    const row = (client_window_key: string) => ({ client_window_key, source: "openai-session", last_seen_at_ms: 1, active_count: 0, linked_session_count: 0, recorder_gap_count: 0 });
-    const list = (keys: string[]) => ({ ok: true, status: 200, data: { windows: keys.map(row), total: keys.length } });
-    let resolveList!: (value: ResponseShape) => void;
-    let resolveDetail!: (value: ResponseShape) => void;
+    const first = "a".repeat(64), second = "b".repeat(64);
+    const row = (key: string, active = 0) => ({ client_window_key: key, source: "openai-session", last_seen_at_ms: 1, active_count: active, linked_session_count: 0, recorder_gap_count: 0 });
+    const list = (keys: string[]) => ({ ok: true, status: 200, data: { windows: keys.map(key => row(key)), total: keys.length } });
+    let resolveList!: (value: ResponseShape) => void, resolveDetail!: (value: ResponseShape) => void;
     const pendingList = new Promise<ResponseShape>(resolve => { resolveList = resolve; });
     const pendingDetail = new Promise<ResponseShape>(resolve => { resolveDetail = resolve; });
-    const signals: AbortSignal[] = [];
-    let lists = 0;
-    let details = 0;
-    const client = { post: vi.fn(async (path: string, _payload: unknown, signal: AbortSignal) => {
-      signals.push(signal);
-      if (path === "windows") return ++lists === 1 ? pendingList : list([first, second]);
-      details++;
-      return pendingDetail;
+    let inventorySignal: AbortSignal | undefined, detailSignal: AbortSignal | undefined;
+    let lists = 0, lives = 0, details = 0, initialDone = false;
+    const client = { post: vi.fn(async (path: string, payload: { projection?: string }, signal: AbortSignal) => {
+      if (path === "windows" && payload.projection === "liveness") {
+        lives++;
+        return { ok: true, status: 200, data: { windows: initialDone ? [row(second, 1)] : [], total: initialDone ? 1 : 0 } };
+      }
+      if (path === "windows") { inventorySignal = signal; return ++lists === 1 ? pendingList : list([first, second]); }
+      details++; detailSignal = signal; return pendingDetail;
     }) } as unknown as RuntimeV2Client;
     const unauthorized = vi.fn();
     const { result, unmount } = renderHook(() => useWindowWorkspace(client, true, unauthorized));
     await act(async () => { await vi.advanceTimersByTimeAsync(9_000); });
-    expect(lists).toBe(1);
-    expect(signals[0].aborted).toBe(false);
-    await act(async () => resolveList(list([first])));
-    expect(result.current.windows).toHaveLength(1);
-    expect(details).toBe(1);
+    expect(lists).toBe(1); expect(lives).toBe(3); expect(inventorySignal?.aborted).toBe(false);
+    await act(async () => { initialDone = true; resolveList(list([first])); });
+    expect(result.current.windows).toHaveLength(1); expect(details).toBe(1);
     await act(async () => { await vi.advanceTimersByTimeAsync(9_000); });
-    expect(result.current.windows).toHaveLength(2);
-    expect(result.current.selectedKey).toBe(first);
-    expect(details).toBe(1);
-    expect(signals[1].aborted).toBe(false);
-    await act(async () => resolveDetail({ ok: true, status: 200, data: { client_window_key: first, linked_sessions: [], activity: [], active_requests: [] } }));
+    expect(lists).toBe(1); expect(lives).toBe(6);
+    expect(result.current.windows).toHaveLength(2); expect(result.current.selectedKey).toBe(first);
+    expect(details).toBe(1); expect(detailSignal?.aborted).toBe(false);
+    await act(async () => resolveDetail({ ok: true, status: 200, data: windowDetail({ client_window_key: first }) }));
     expect(result.current.detail?.client_window_key).toBe(first);
-    const beforeFocus = lists;
-    await act(async () => window.dispatchEvent(new Event("focus")));
-    expect(lists).toBe(beforeFocus + 1);
-    unmount();
-    expect(vi.getTimerCount()).toBe(0);
-  } finally {
-    vi.useRealTimers();
-  }
+    await act(async () => {
+      window.dispatchEvent(new Event("focus")); document.dispatchEvent(new Event("visibilitychange"));
+      await vi.advanceTimersByTimeAsync(150);
+    });
+    expect(lists).toBe(2); expect(lives).toBe(7);
+    unmount(); expect(vi.getTimerCount()).toBe(0);
+  } finally { vi.useRealTimers(); }
 });
 
-
-it("keeps Window inventory fresh in the background and refreshes immediately on foreground return", async () => {
+it("pauses hidden Windows and coalesces visibility/focus before resuming liveness", async () => {
+  vi.useFakeTimers();
   let visibility: DocumentVisibilityState = "hidden";
-  const visibilitySpy = vi.spyOn(document, "visibilityState", "get").mockImplementation(() => visibility);
-  const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+  const spy = vi.spyOn(document, "visibilityState", "get").mockImplementation(() => visibility);
   try {
-    const key = "c".repeat(64);
-    let lists = 0;
-    const client = {
-      post: vi.fn(async (path: string) => {
-        if (path !== "windows") throw new Error("unexpected path " + path);
-        lists += 1;
-        return {
-          ok: true,
-          status: 200,
-          data: {
-            windows: [{
-              client_window_key: key,
-              source: "openai-session",
-              last_seen_at_ms: lists,
-              active_count: 0,
-              linked_session_count: 0,
-              recorder_gap_count: 0,
-            }],
-            returned: 1,
-            total: 1,
-            truncated: false,
-            visibility: { scope: "principal" },
-          },
-        };
-      }),
-    } as unknown as RuntimeV2Client;
-
+    let inventories = 0, liveness = 0;
+    const client = { post: vi.fn(async (_path: string, body: { projection?: string }) => {
+      if (body.projection === "liveness") liveness++; else inventories++;
+      return { ok: true, status: 200, data: { windows: [], total: 0, returned: 0, truncated: false, visibility: { scope: "principal" } } };
+    }) } as unknown as RuntimeV2Client;
     const unauthorized = vi.fn();
-    const { unmount } = renderHook(() =>
-      useWindowWorkspace(client, true, unauthorized, {
-        loadDetail: false,
-        refreshMs: 20,
-        backgroundRefreshMs: 80,
-      }),
-    );
-
-    await waitFor(() => expect(lists).toBeGreaterThanOrEqual(1));
-    const initial = lists;
-    await sleep(35);
-    expect(lists).toBe(initial);
-
-    await waitFor(() => expect(lists).toBeGreaterThan(initial), { timeout: 500 });
-    const beforeForeground = lists;
-    visibility = "visible";
-    act(() => document.dispatchEvent(new Event("visibilitychange")));
-    await waitFor(() => expect(lists).toBeGreaterThan(beforeForeground), { timeout: 500 });
-
-    const afterForeground = lists;
-    await waitFor(() => expect(lists).toBeGreaterThan(afterForeground), { timeout: 500 });
-    unmount();
-  } finally {
-    visibilitySpy.mockRestore();
-  }
+    const { unmount } = renderHook(() => useWindowWorkspace(client, true, unauthorized, { loadDetail: false }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+    expect(inventories).toBe(0); expect(liveness).toBe(0);
+    await act(async () => {
+      visibility = "visible"; document.dispatchEvent(new Event("visibilitychange"));
+      window.dispatchEvent(new Event("focus")); window.dispatchEvent(new Event("online"));
+      await vi.advanceTimersByTimeAsync(150);
+    });
+    expect(inventories).toBe(1); expect(liveness).toBe(1);
+    await act(async () => { await vi.advanceTimersByTimeAsync(9_000); });
+    expect(inventories).toBe(1); expect(liveness).toBe(4);
+    await act(async () => { visibility = "hidden"; document.dispatchEvent(new Event("visibilitychange")); await vi.advanceTimersByTimeAsync(60_000); });
+    expect(inventories).toBe(1); expect(liveness).toBe(4);
+    unmount(); expect(vi.getTimerCount()).toBe(0);
+  } finally { spy.mockRestore(); vi.useRealTimers(); }
 });
-
 it("does not cancel a slow active Session refresh on the next five-second tick", async () => {
   vi.useFakeTimers();
   try {

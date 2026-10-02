@@ -347,6 +347,7 @@ export type WindowDetail = {
 };
 
 export type WindowsResponse = {
+  next_offset?: number;
   windows: WindowSummary[];
   returned: number;
   total: number;

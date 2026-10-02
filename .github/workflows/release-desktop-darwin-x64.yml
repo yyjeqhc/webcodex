@@ -152,15 +152,6 @@ jobs:
             frontend/package-lock.json
             apps/desktop/package-lock.json
 
-      - name: Configure Developer ID release signing
-        if: needs.resolve.outputs.version != '0.4.3'
-        shell: bash
-        env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-        run: bash scripts/macos_ci_developer_id_setup.sh
-
       - name: Download and verify immutable darwin-x64 runtime
         shell: bash
         env:
@@ -222,9 +213,9 @@ jobs:
             test "$("$binary" --version)" = "$expected_version"
             file "$binary" | grep -Fq x86_64
           done
-          if [ "$VERSION" != "0.4.3" ]; then
-            bash scripts/macos_sign_runner.sh "$runtime_dir/webcodex-runner" "$APPLE_SIGNING_IDENTITY"
-          fi
+          # The current public macOS distribution contract is ad-hoc signed.
+          # The immutable runtime archive is already produced under that contract,
+          # so do not introduce a separate Developer ID re-signing requirement here.
           echo "RUNTIME_DIR=$runtime_dir" >> "$GITHUB_ENV"
 
       - name: Install Desktop dependencies
@@ -238,10 +229,7 @@ jobs:
         run: |
           set -euo pipefail
           stage="$RUNNER_TEMP/webcodex-desktop-$PLATFORM-bundle"
-          signing_mode=developer-id
-          if [ "$VERSION" = "0.4.3" ]; then
-            signing_mode=adhoc
-          fi
+          signing_mode=adhoc
           python3 scripts/prepare_desktop_bundle_macos.py \
             --bin-dir "$RUNTIME_DIR" \
             --version "$VERSION" \
@@ -256,25 +244,16 @@ jobs:
             echo "signing_mode=$signing_mode"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Build signed macOS Intel Desktop DMG
+      - name: Build macOS Intel Desktop DMG
         id: desktop_dmg
         working-directory: apps/desktop
         shell: bash
         env:
           CI: "true"
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
-          if [ "${{ steps.desktop_bundle.outputs.signing_mode }}" = developer-id ]; then
-            for name in APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
-              [ -n "${!name:-}" ] || { echo "$name is required for macOS release signing" >&2; exit 1; }
-            done
-          else
-            unset APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID
-            export APPLE_SIGNING_IDENTITY="-"
-          fi
+          unset APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID
+          export APPLE_SIGNING_IDENTITY="-"
           export CARGO_TARGET_DIR="$RUNNER_TEMP/webcodex-desktop-$PLATFORM-tauri"
           npm exec tauri -- build \
             --bundles dmg \
@@ -353,19 +332,18 @@ jobs:
                 exit 1
               fi
             else
-              # Developer ID timestamps/notarization make a rebuilt DMG intentionally
-              # non-byte-reproducible. Recover a partial upload from the immutable DMG
-              # itself instead of comparing it with this run's newly signed candidate.
+              # Treat an already-published DMG as immutable authority. Recover
+              # a partial sidecar upload from those exact bytes instead of replacing
+              # the existing artifact with a newly built candidate.
               cp "$compare_dir/$checksum_name.expected" "$compare_dir/$checksum_name"
               gh release upload "$TAG" "$compare_dir/$checksum_name" --repo "$GITHUB_REPOSITORY"
             fi
           elif [ "$checksum_count" -eq 1 ]; then
-            echo "Found orphan $checksum_name without $dmg_name; a notarized DMG cannot be reconstructed byte-for-byte. Reconcile manually instead of replacing the immutable checksum." >&2
+            echo "Found orphan $checksum_name without $dmg_name; reconcile manually instead of replacing the immutable checksum." >&2
             exit 1
           else
-            # Upload the non-reproducible signed/notarized DMG first. If the second
-            # upload is interrupted, a rerun can derive the missing sidecar from the
-            # already-immutable DMG bytes.
+            # Upload the DMG first. If the sidecar upload is interrupted, a
+            # rerun can derive the missing checksum from the already-immutable DMG.
             gh release upload "$TAG" "$dmg" --repo "$GITHUB_REPOSITORY"
             gh release upload "$TAG" "$checksum" --repo "$GITHUB_REPOSITORY"
           fi

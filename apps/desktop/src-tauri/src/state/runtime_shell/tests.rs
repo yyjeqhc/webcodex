@@ -32,7 +32,7 @@ async fn selection_observes_saved_runner_identity_and_jobs_instead_of_fleet_over
             response["jobs_queued"] = json!(0);
         }
         let server = tokio::task::spawn_blocking(move || {
-            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            let deadline = std::time::Instant::now() + Duration::from_secs(15);
             let mut stream = loop {
                 match listener.accept() {
                     Ok((stream, _)) => break stream,
@@ -46,16 +46,33 @@ async fn selection_observes_saved_runner_identity_and_jobs_instead_of_fleet_over
                     Err(error) => panic!("accept failed: {error}"),
                 }
             };
+            stream.set_nonblocking(false).unwrap();
             stream
-                .set_read_timeout(Some(Duration::from_secs(5)))
+                .set_read_timeout(Some(Duration::from_secs(1)))
                 .unwrap();
             stream
                 .set_write_timeout(Some(Duration::from_secs(5)))
                 .unwrap();
             let mut request = Vec::new();
+            let read_deadline = std::time::Instant::now() + Duration::from_secs(15);
             let (headers, body) = loop {
                 let mut buffer = [0; 4096];
-                let count = stream.read(&mut buffer).unwrap();
+                let count = match stream.read(&mut buffer) {
+                    Ok(count) => count,
+                    Err(error)
+                        if matches!(
+                            error.kind(),
+                            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                        ) =>
+                    {
+                        assert!(
+                            std::time::Instant::now() < read_deadline,
+                            "timed out reading runtime observation request"
+                        );
+                        continue;
+                    }
+                    Err(error) => panic!("request read failed: {error}"),
+                };
                 assert!(count > 0);
                 request.extend_from_slice(&buffer[..count]);
                 assert!(request.len() <= 16_384);

@@ -498,6 +498,9 @@ impl ToolRuntime {
             if let Some(session_ref) = session_ref {
                 candidate["session_ref"] = json!(session_ref);
             }
+            if let Some(project_ref) = self.project_reference_for_resolved(&resolved, auth) {
+                candidate["project_ref"] = json!(project_ref);
+            }
             candidates.push(candidate);
         }
 

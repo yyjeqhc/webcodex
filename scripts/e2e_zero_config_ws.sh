@@ -634,9 +634,9 @@ mcp_tool_present() {
 
 adaptive_present=1
 for tname in work_on_project runtime_status tool_manifest \
-    search_project_texts read_files apply_text_edits run_process run_script run_shell observe_jobs list_jobs \
-    cargo_check cargo_test git_review_summary git_diff_hunks \
-    show_changes call_runtime_tool; do
+    search_project_texts search_and_read read_files edit_project_files run_process job_write_input \
+    run_script run_shell cargo_check cargo_test review_changes observe_jobs wait_for_job_readiness \
+    present_work_result present_goal_plan skill_load call_runtime_tool; do
     if ! mcp_tool_present "$tname"; then
         adaptive_present=0
         fail "MCP tools/list missing Adaptive direct tool $tname"
@@ -705,10 +705,8 @@ body="$(api_post /mcp "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\
 sc="$(json_get "$body" result.structuredContent)"
 if [ "$(json_get "$sc" success)" = "True" ] \
     && [ "$(json_get "$sc" output.items.0.index)" = "0" ] \
-    && [ "$(json_get "$sc" output.items.0.success)" = "True" ] \
     && [ "$(json_get "$sc" output.items.0.output.matches.0.path)" = "README.md" ] \
     && [ "$(json_get "$sc" output.items.1.index)" = "1" ] \
-    && [ "$(json_get "$sc" output.items.1.success)" = "True" ] \
     && [ "$(json_get "$sc" output.items.1.output.result_mode)" = "files_with_matches" ] \
     && [ "$(json_get "$sc" output.items.1.output.files.0.path)" = "src.rs" ]; then
     pass "MCP tools/call(search_project_texts) returns ordered sparse/default and explicit-mode results"
@@ -796,18 +794,17 @@ else
     fail "observe_jobs tail skipped: no JOB_ID available"
 fi
 
-# list_project_files is long-tail; list_jobs is direct Adaptive core.
+# Low-frequency inventory tools stay behind call_runtime_tool rather than
+# consuming direct Adaptive surface slots.
 phase_a_present=1
-if mcp_tool_present "list_project_files"; then
-    phase_a_present=0
-    fail "MCP tools/list must keep list_project_files behind call_runtime_tool"
-fi
-if ! mcp_tool_present "list_jobs"; then
-    phase_a_present=0
-    fail "MCP tools/list missing direct Adaptive tool list_jobs"
-fi
+for tname in list_project_files list_jobs; do
+    if mcp_tool_present "$tname"; then
+        phase_a_present=0
+        fail "MCP tools/list must keep $tname behind call_runtime_tool"
+    fi
+done
 if [ "$phase_a_present" = "1" ]; then
-    pass "Adaptive Runtime keeps low-frequency file listing behind the gateway"
+    pass "Adaptive Runtime keeps low-frequency inventory tools behind the gateway"
 fi
 
 # ----------------------------------------------------------------------------
@@ -1434,7 +1431,7 @@ fi
 body="$(runtime_tool_call "run_shell" "{\"project\":\"$RUNTIME_PROJECT_ID\",\"command\":\"git rm -f RESTORE_PROBE.txt >/dev/null 2>&1 && git commit -m cleanup-probe >/dev/null 2>&1\"}")" || true
 
 # ----------------------------------------------------------------------------
-# 7e. Phase 4: structured edit tools (apply_text_edits / write_project_file)
+# 7e. Phase 4: structured edit tools (edit_project_files / write_project_file)
 #     via callRuntimeTool, against probe files only
 # ----------------------------------------------------------------------------
 
@@ -1461,7 +1458,7 @@ else
     fail "callRuntimeTool(write_project_file) did not create probe (success=$wpf_success created=$wpf_created body=${body:0:300})"
 fi
 # read_files confirms the probe content and returns the model-facing mutation
-# fence used by apply_text_edits.
+# fence used by edit_project_files.
 body="$(api_post /api/tools/call "{\"tool\":\"read_files\",\"params\":{\"project\":\"$RUNTIME_PROJECT_ID\",\"items\":[{\"path\":\"EDIT_PROBE.txt\"}]}}")"
 edit_probe_revision="$(json_get "$body" output.items.0.output.read_revision)"
 if echo "$(json_get "$body" output.items.0.output.text)" | grep -q "hello world" && \
@@ -1471,12 +1468,12 @@ else
     fail "read_files did not return probe content/read_revision (revision=$edit_probe_revision body: ${body:0:200})"
 fi
 
-# apply_text_edits via callRuntimeTool — replace_exact "world" -> "rust" on
+# edit_project_files via callRuntimeTool — replace_exact "world" -> "rust" on
 # EDIT_PROBE.txt, guarded by the read_revision returned above.
 ate_body="$(python3 -c '
 import json, sys
 print(json.dumps({
-    "tool": "apply_text_edits",
+    "tool": "edit_project_files",
     "params": {
         "project": sys.argv[1],
         "changes": [{
@@ -1492,9 +1489,9 @@ body="$(api_post /api/tools/call "$ate_body")"
 ate_success="$(json_get "$body" success)"
 ate_changed="$(json_get "$body" output.changed)"
 if [ "$ate_success" = "True" ] && [ "$ate_changed" = "True" ]; then
-    pass "callRuntimeTool(apply_text_edits) edits EDIT_PROBE.txt"
+    pass "callRuntimeTool(edit_project_files) edits EDIT_PROBE.txt"
 else
-    fail "callRuntimeTool(apply_text_edits) did not edit probe (success=$ate_success changed=$ate_changed body=${body:0:300})"
+    fail "callRuntimeTool(edit_project_files) did not edit probe (success=$ate_success changed=$ate_changed body=${body:0:300})"
 fi
 
 # read_files confirms the edited content and establishes the new current revision.
@@ -1502,7 +1499,7 @@ body="$(api_post /api/tools/call "{\"tool\":\"read_files\",\"params\":{\"project
 edit_probe_current_revision="$(json_get "$body" output.items.0.output.read_revision)"
 if echo "$(json_get "$body" output.items.0.output.text)" | grep -q "hello rust" && \
    [[ "$edit_probe_current_revision" =~ ^[0-9]+$ ]]; then
-    pass "read_files confirms apply_text_edits edit and returns a fresh read_revision"
+    pass "read_files confirms edit_project_files edit and returns a fresh read_revision"
 else
     fail "read_files did not confirm edit/current revision (got: ${body:0:200})"
 fi
@@ -1512,7 +1509,7 @@ fi
 ate_miss="$(python3 -c '
 import json, sys
 print(json.dumps({
-    "tool": "apply_text_edits",
+    "tool": "edit_project_files",
     "params": {
         "project": sys.argv[1],
         "changes": [{
@@ -1531,15 +1528,15 @@ if [ "$(json_get "$body" success)" = "False" ] && \
    [ "$(json_get "$body" output.state_changed)" = "False" ] && \
    [ "$(json_get "$body" output.recovery.tool)" = "read_files" ] && \
    [ "$(json_get "$body" output.recovery.arguments.items.0.path)" = "EDIT_PROBE.txt" ]; then
-    pass "apply_text_edits(stale read_revision) fails closed with read_files recovery"
+    pass "edit_project_files(stale read_revision) fails closed with read_files recovery"
 else
-    fail "apply_text_edits(stale read_revision) contract mismatch (error_kind=$ate_error_kind body: ${body:0:300})"
+    fail "edit_project_files(stale read_revision) contract mismatch (error_kind=$ate_error_kind body: ${body:0:300})"
 fi
 body="$(api_post /api/tools/call "{\"tool\":\"read_files\",\"params\":{\"project\":\"$RUNTIME_PROJECT_ID\",\"items\":[{\"path\":\"EDIT_PROBE.txt\"}]}}")"
 if echo "$(json_get "$body" output.items.0.output.text)" | grep -q "hello rust"; then
-    pass "apply_text_edits(stale read_revision) left file unchanged"
+    pass "edit_project_files(stale read_revision) left file unchanged"
 else
-    fail "apply_text_edits(stale read_revision) modified the file (got: ${body:0:200})"
+    fail "edit_project_files(stale read_revision) modified the file (got: ${body:0:200})"
 fi
 
 # Canonical runtime delete removes the probe so the worktree returns to clean.
@@ -1707,7 +1704,7 @@ fi
 #   2. callRuntimeTool(read_files) — read a tracked file (README.md)
 #   3. callRuntimeTool(search_project_texts) — locate the target substring
 #   4. callRuntimeTool(show_changes) — confirm initial clean state
-#   5. callRuntimeTool           — run apply_text_edits for a reversible text edit
+#   5. callRuntimeTool           — run edit_project_files for a reversible text edit
 #   6. callRuntimeTool(show_changes) — confirm the diff is visible
 #   7. run_shell                 — lightweight check (grep)
 #   8. git_restore_paths         — restore the modified tracked file
@@ -1766,12 +1763,12 @@ else
     fail "loop: worktree not clean before loop (clean=$loop_pre_clean got: ${body:0:200})"
 fi
 
-# Step 5: callRuntimeTool(apply_text_edits) — small reversible edit on
+# Step 5: callRuntimeTool(edit_project_files) — small reversible edit on
 # README.md, guarded by the read_revision returned by Step 2 for this fixture.
 loop_replace_body="$(python3 -c '
 import json, sys
 print(json.dumps({
-    "tool": "apply_text_edits",
+    "tool": "edit_project_files",
     "params": {
         "project": sys.argv[1],
         "changes": [{
@@ -1789,9 +1786,9 @@ print(json.dumps({
 ' "$RUNTIME_PROJECT_ID" "$loop_readme_revision" "$LOOP_MARKER_OLD" "$LOOP_MARKER_NEW")"
 body="$(api_post /api/tools/call "$loop_replace_body")"
 if [ "$(json_get "$body" success)" = "True" ] && [ "$(json_get "$body" output.changed)" = "True" ]; then
-    pass "loop: callRuntimeTool(apply_text_edits) edited README.md"
+    pass "loop: callRuntimeTool(edit_project_files) edited README.md"
 else
-    fail "loop: callRuntimeTool(apply_text_edits) did not edit README.md (body: ${body:0:300})"
+    fail "loop: callRuntimeTool(edit_project_files) did not edit README.md (body: ${body:0:300})"
 fi
 
 # Step 6: show_changes — confirm the diff is now visible.

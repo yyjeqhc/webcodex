@@ -64,6 +64,14 @@ When a registered Project already exists and isolated work is needed, use `work_
 
 When `work_on_project`, `start_session`, `session_summary`, or an explicit handoff returns `session_ref`, prefer that short selector for later explicit Session selection. Business `session_id` and wrapper `recording_session_id` remain separate contracts, but either may explicitly carry the already-issued ref: Runtime canonicalizes it to the pinned `wc_sess_*` before the role-specific authorization and lifecycle/guard logic runs. The canonical identity remains valid and authoritative. The ref is principal-scoped convenience only; omission never infers a recorder and no sticky recorder context is created.
 
+### Switch back to an exact workspace context
+
+For an already selected Active Session, `work_on_project(session_id="~s12", instruction="Continue the review")` is sufficient. Omit `project`, `client_id`, and `path`; the default `checkout` mode authorizes that exact Session, derives its bound Project, reauthorizes current Project access, and resumes the same Session. The result supplies `project_ref` for ordinary Project tools. Supplying an explicit Project is still supported and must match; `_wc.record` remains independent recorder provenance and never supplies the target.
+
+Fresh work still needs `project` or `client_id + path`. `mode="worktree"` always needs an explicit source and does not accept a Session as that source. Closed, missing, inaccessible or unscoped Sessions do not trigger a fresh fallback. No current Project/Session is remembered implicitly in a Window.
+
+When the Session selector was lost in the original Window, request `_wc.context=["workflow.resume"]` and explicitly choose a candidate. Authorized candidates retain canonical identity and also expose `session_ref` and, when the current root fingerprint/reference store is available, `project_ref`. This is discovery, not automatic resume; read the exact handoff when task context was lost. Across windows use `list_sessions(project)` when needed.
+
 ## Tool strategy guidance
 
 For account/window switches, save agreed decisions and current progress with

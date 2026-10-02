@@ -93,6 +93,8 @@ try {
     & npm ci --prefix apps/desktop
     if ($LASTEXITCODE -ne 0) { Fail "Desktop npm ci failed" }
 
+    $env:WEBCODEX_GIT_COMMIT = $SourceSha.ToLowerInvariant()
+    $env:WEBCODEX_GIT_DIRTY = if ($GitDirty) { "true" } else { "false" }
     & cargo build --locked --profile dogfood -p webcodex -p webcodex-cli -p webcodex-runner
     if ($LASTEXITCODE -ne 0) { Fail "WebCodex dogfood runtime build failed" }
 

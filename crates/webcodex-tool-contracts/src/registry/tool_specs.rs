@@ -545,6 +545,8 @@ mod tests {
         assert!(work_on_project.contains("mode=worktree"));
         assert!(work_on_project.contains("exact Git base"));
         assert!(work_on_project.contains("Project authority"));
+        assert!(work_on_project.contains("session_id alone"));
+        assert!(work_on_project.contains("An explicit Project must match"));
         let status = &find("runtime_status").description;
         for hint in [
             "Job concurrency",

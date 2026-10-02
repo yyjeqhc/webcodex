@@ -201,7 +201,7 @@ try {
         throw "installed bundled runtime directory is missing: $runtimeDir"
     }
 
-    $shortSource = $SourceSha.Substring(0, 12).ToLowerInvariant()
+    $sourceIdentity = $SourceSha.ToLowerInvariant()
     $dirtyText = if ($GitDirty) { "true" } else { "false" }
     foreach ($name in @("webcodex", "webcodex-server", "webcodex-runner")) {
         $binary = Join-Path $runtimeDir "$name.exe"
@@ -209,7 +209,7 @@ try {
             throw "installed bundled binary is missing: $binary"
         }
         $line = Get-VersionLine $binary $name
-        $expected = "$name $Version (commit $shortSource, dirty=$dirtyText, built_at=$BuiltAt)"
+        $expected = "$name $Version (commit $sourceIdentity, dirty=$dirtyText, built_at=$BuiltAt)"
         if ($line -ne $expected) {
             throw "unexpected installed $name.exe identity: '$line' (expected '$expected')"
         }

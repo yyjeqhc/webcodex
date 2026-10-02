@@ -122,15 +122,16 @@ jobs:
         run: |
           set -euo pipefail
           source_sha="$(git rev-parse HEAD)"
-          short_source="$(git rev-parse --short=12 HEAD)"
           version="$(node -p "require('./npm/webcodex/package.json').version")"
           built_at="$(git show -s --format=%ct HEAD)"
           export WEBCODEX_BUILT_AT="$built_at"
+          export WEBCODEX_GIT_COMMIT="$source_sha"
+          export WEBCODEX_GIT_DIRTY=false
           cargo build --locked --profile dogfood -p webcodex -p webcodex-cli -p webcodex-runner
           for name in webcodex webcodex-server webcodex-runner; do
             binary="target/dogfood/$name"
             actual="$($binary --version)"
-            expected="$name $version (commit $short_source, dirty=false, built_at=$built_at)"
+            expected="$name $version (commit $source_sha, dirty=false, built_at=$built_at)"
             test "$actual" = "$expected"
             test "$(/usr/bin/lipo -archs "$binary")" = x86_64
           done
@@ -249,10 +250,11 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           $source = (git rev-parse HEAD).Trim()
-          $short = (git rev-parse --short=12 HEAD).Trim()
           $version = (node -e "console.log(require('./npm/webcodex/package.json').version)").Trim()
           $builtAt = [Int64]((git show -s --format=%ct HEAD).Trim())
           $env:WEBCODEX_BUILT_AT = "$builtAt"
+          $env:WEBCODEX_GIT_COMMIT = $source
+          $env:WEBCODEX_GIT_DIRTY = "false"
           cargo build --locked --profile dogfood -p webcodex -p webcodex-cli -p webcodex-runner
           if ($LASTEXITCODE -ne 0) { throw "Windows ARM64 runtime build failed" }
           foreach ($name in @("webcodex", "webcodex-server", "webcodex-runner")) {
@@ -261,7 +263,7 @@ jobs:
             $exitCode = $LASTEXITCODE
             if ($exitCode -ne 0 -or $output.Count -eq 0 -or -not $output[0]) { throw "$name --version failed" }
             $actual = $output[0].TrimEnd()
-            $expected = "$name $version (commit $short, dirty=false, built_at=$builtAt)"
+            $expected = "$name $version (commit $source, dirty=false, built_at=$builtAt)"
             if ($actual -ne $expected) { throw "Unexpected $name identity: $actual" }
             $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path $binary))
             if ($bytes.Length -lt 64) { throw "$binary is too small to be a PE image" }

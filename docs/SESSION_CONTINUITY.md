@@ -49,18 +49,25 @@ The recovery sequence is:
 2. Select one exact `session_id` or returned `session_ref`. Ordering is only for
    display; a title, newest row or the word “continue” does not resolve an
    ambiguous task choice.
-3. Read `session_handoff_summary(session_id, project)`. The compact
+3. Read `session_handoff_summary(session_id)`; an explicit matching `project` is optional. The compact
    `handoff_brief.task.decisions` and `recent_progress` include the newest
    recorded notes, their status, supersession, and coverage/truncation. The
    default brief stays below 8 KiB. Use the diagnostic handoff or authorized
    `list_session_messages` for additional retained todos, risks or note detail.
    Recheck current Git/files and any stale test claims before acting.
 4. For an Active Session, explicitly resume with
-   `work_on_project(project, session_id, instruction, ...)`, requesting
+   `work_on_project(session_id, instruction, ...)` in default `checkout` mode. The
+   authorized Session supplies its bound Project; an explicit Project must still match.
+   Reuse the returned `project_ref` for ordinary Project tools, requesting
    `_wc.context=["project.instructions", "webcodex.workflow"]` when this
    model context needs them. A Closed Session can be read for recovery but cannot
    be reopened; start fresh work and explicitly carry forward the selected
    context instead.
+
+When the original Window is available, `_wc.context=["workflow.resume"]` can discover
+its authorized candidates with `session_ref` and an optional current `project_ref`.
+It does not select a candidate, resume work, or establish implicit recorder state.
+Fresh work and `mode="worktree"` still require an explicit Project source.
 
 Discovery and handoff are reads. They neither select a task automatically nor
 create, resume or close one. Omitting `work_on_project.session_id` starts fresh

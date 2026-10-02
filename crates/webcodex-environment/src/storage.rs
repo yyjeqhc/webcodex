@@ -27,6 +27,15 @@ pub struct EnvironmentLock {
     _file: File,
 }
 
+impl Drop for EnvironmentLock {
+    fn drop(&mut self) {
+        // Do not rely only on close-on-drop for the setup fence. Explicitly
+        // release the advisory lock so reacquisition has the same semantics on
+        // every supported filesystem/OS before the descriptor is closed.
+        let _ = fs2::FileExt::unlock(&self._file);
+    }
+}
+
 impl EnvironmentStore {
     pub fn open(root: PathBuf) -> SetupResultValue<Self> {
         if !root.is_absolute() {

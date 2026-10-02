@@ -136,6 +136,8 @@ impl DerefMut for ReceiptRegistryGuard<'_> {
 }
 impl Drop for ReceiptRegistryGuard<'_> {
     fn drop(&mut self) {
+        // Publish only touched Job lifecycle changes; reads never scan terminal history.
+        self.jobs_by_id.reconcile_active();
         let ids = std::mem::take(&mut *self.state.candidates.lock().unwrap());
         let terminal_ids =
             std::mem::take(&mut *self.state.terminal_event_candidates.lock().unwrap());
@@ -390,7 +392,7 @@ impl RunnerRegistry {
                 crate::jobs::replace_log_from_snapshot(&mut job.stdout, &receipt.snapshot.stdout);
                 crate::jobs::replace_log_from_snapshot(&mut job.stderr, &receipt.snapshot.stderr);
                 // Only a terminal record; no mapping, waiter, queue, intent or lease.
-                inner.jobs_by_id.entry(job.job_id.clone()).or_insert(job);
+                inner.jobs_by_id.insert_if_absent(job);
             }
         }
         registry

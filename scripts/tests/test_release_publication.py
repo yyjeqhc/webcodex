@@ -683,6 +683,12 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn('if os.environ["INCLUDE_UNIFIED_INSTALLERS"] == "true":', workflow)
         self.assertIn('if installer_artifacts:', workflow)
 
+        ci = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+        self.assertLess(
+            ci.index("Test deterministic release contract and tooling"),
+            ci.index("Check complete workspace production/test targets"),
+        )
+
     def test_download_page_skips_core_only_releases_without_hiding_malformed_installer_manifests(self) -> None:
         workflow = Path(".github/workflows/download-page.yml").read_text(encoding="utf-8")
         self.assertIn("Resolve optional installer manifest", workflow)

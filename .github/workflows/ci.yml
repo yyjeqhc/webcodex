@@ -332,11 +332,13 @@ jobs:
         run: python3 -m unittest discover -s integrations/codex -p 'test_*.py' -v
       - name: Test configured model API ACP adapter
         run: python3 -m unittest discover -s integrations/model_gateway/tests -p 'test_*.py' -v
+      # Keep the cheap deterministic release gate ahead of the optional full
+      # workspace check so workflow/script drift is reported before a long Cargo pass.
+      - name: Test deterministic release contract and tooling
+        run: bash scripts/release_check.sh --static-only
       - name: Check complete workspace production/test targets
         if: github.event_name == 'pull_request' && (github.event.pull_request.user.login != github.repository_owner || contains(github.event.pull_request.labels.*.name, 'run-ci'))
         run: cargo check --locked --workspace --all-targets
-      - name: Test deterministic release contract and tooling
-        run: bash scripts/release_check.sh --static-only
 
   test:
     needs: [contract, changes, test-linux-rust, test-linux-tooling]

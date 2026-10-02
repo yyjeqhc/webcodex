@@ -6,14 +6,22 @@ fail() {
   exit 1
 }
 
-if [ "$#" -ne 2 ]; then
-  echo "usage: $0 <webcodex-runner> <code-signing-identity|->" >&2
+if [ "$#" -lt 2 ] || [ "$#" -gt 3 ]; then
+  echo "usage: $0 <webcodex-runner> <code-signing-identity|-> [adhoc|self-signed|developer-id]" >&2
   exit 2
 fi
 [ "$(uname -s)" = Darwin ] || fail "this helper is macOS-only"
 
 runner="$1"
 identity="$2"
+mode="${3:-developer-id}"
+if [ "$identity" = "-" ] && [ "$#" -eq 2 ]; then mode=adhoc; fi
+case "$mode:$identity" in
+  adhoc:-) ;;
+  self-signed:-|developer-id:-) fail "stable signing requires an identity" ;;
+  self-signed:*|developer-id:*) ;;
+  *) fail "invalid signing mode/identity" ;;
+esac
 [ -f "$runner" ] && [ ! -L "$runner" ] && [ -x "$runner" ] || {
   fail "Runner signing input is not an executable regular file: $runner"
 }
@@ -46,7 +54,9 @@ for key in NSScreenCaptureUsageDescription NSAccessibilityUsageDescription; do
   [ -n "$value" ] || fail "Runner embedded Info.plist is missing $key"
 done
 
-if [ "$identity" = "-" ]; then
+if [ "$mode" = self-signed ]; then
+  bash "$(dirname "$0")/macos_sign_self_signed.sh" "$runner" dev.webcodex.runner "$identity"
+elif [ "$identity" = "-" ]; then
   codesign --force --sign - --identifier dev.webcodex.runner "$runner"
 else
   codesign --force --options runtime --timestamp --sign "$identity" --identifier dev.webcodex.runner "$runner"
@@ -59,7 +69,7 @@ printf '%s\n' "$details" | grep -Fxq 'Identifier=dev.webcodex.runner' || {
 }
 requirement="$(codesign -d -r- "$runner" 2>&1)"
 
-if [ "$identity" != "-" ]; then
+if [ "$mode" = developer-id ]; then
   case "$requirement" in
     *'identifier "dev.webcodex.runner"'*) ;;
     *) fail "formal Runner designated requirement lost its stable identifier" ;;

@@ -7,7 +7,7 @@ fail() {
 }
 
 if [ "$#" -ne 2 ]; then
-  echo "usage: $0 <WebCodex Desktop.app> <adhoc|developer-id>" >&2
+  echo "usage: $0 <WebCodex Desktop.app> <adhoc|self-signed|developer-id>" >&2
   exit 2
 fi
 [ "$(uname -s)" = Darwin ] || fail "this helper is macOS-only"
@@ -15,7 +15,7 @@ fi
 app="$1"
 signing_mode="$2"
 case "$signing_mode" in
-  adhoc|developer-id) ;;
+  adhoc|self-signed|developer-id) ;;
   *) fail "invalid signing mode: $signing_mode" ;;
 esac
 
@@ -63,7 +63,34 @@ runner_requirement="$(codesign -d -r- "$runner" 2>&1)"
 
 codesign --verify --deep --strict --verbose=2 "$app"
 
+app_details="$(codesign -d --verbose=4 "$app" 2>&1)"
+printf '%s\n' "$app_details" | grep -Fxq 'Identifier=dev.webcodex.desktop' || fail "Desktop identifier mismatch"
+app_requirement="$(codesign -d -r- "$app" 2>&1)"
+if [ "$signing_mode" = self-signed ]; then
+  hash="${WEBCODEX_MACOS_CERTIFICATE_SHA1:?self-signed verification requires the persistent certificate SHA1}"
+  [[ "$hash" != *[!A-Fa-f0-9]* ]] && [ "${#hash}" -eq 40 ] || fail "invalid certificate SHA1"
+  for kind in runner app; do
+    if [ "$kind" = runner ]; then
+      code="$runner"; identifier=dev.webcodex.runner; requirement="$runner_requirement"
+    else
+      code="$app"; identifier=dev.webcodex.desktop; requirement="$app_requirement"
+    fi
+    expected="anchor H\"$hash\" and identifier \"$identifier\""
+    codesign --verify --strict -R="$expected" "$code"
+    lower="$(printf '%s' "$requirement" | tr '[:upper:]' '[:lower:]')"
+    hash_lower="$(printf '%s' "$hash" | tr A-F a-f)"
+    case "$lower" in *cdhash*) fail "self-signed requirement is cdhash-bound" ;; esac
+    case "$lower" in
+      *"certificate root = h\"$hash_lower\""*|*"anchor h\"$hash_lower\""*) ;;
+      *) fail "self-signed requirement does not pin the persistent certificate" ;;
+    esac
+    case "$requirement" in *"identifier \"$identifier\""*) ;; *) fail "missing stable identifier requirement" ;; esac
+  done
+fi
 if [ "$signing_mode" = developer-id ]; then
+  case "$app_requirement" in *cdhash*) fail "Desktop requirement is cdhash-bound" ;; esac
+  case "$app_requirement" in *'identifier "dev.webcodex.desktop"'*) ;; *) fail "Desktop requirement lost identifier" ;; esac
+  case "$app_requirement" in *"anchor apple generic"*) ;; *) fail "Desktop requirement is not Apple-anchored" ;; esac
   case "$runner_requirement" in
     *'identifier "dev.webcodex.runner"'*) ;;
     *) fail "Developer ID Runner designated requirement lost its stable identifier" ;;

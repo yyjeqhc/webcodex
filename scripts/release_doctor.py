@@ -162,12 +162,13 @@ def _workflow_contract(root: Path) -> str:
             ("-Installer $env:DESKTOP_INSTALLER_PATH", build),
             ("dist/webcodex-desktop-*.dmg", build),
             ("dist/webcodex-desktop-*-${{ matrix.platform }}-setup.exe", build),
-            ('bash scripts/macos_sign_runner.sh target/release/webcodex-runner "-"', build),
+            ('bash scripts/macos_sign_runner.sh target/release/webcodex-runner "$APPLE_SIGNING_IDENTITY" "$WEBCODEX_MACOS_SIGNING_MODE"', build),
             ("verify_macos_desktop_identity.sh", build),
-            ("signing_mode=adhoc", build),
-            ('export APPLE_SIGNING_IDENTITY="-"', build),
-            ('expected_signing = "adhoc"', build),
-            ("expected_notarized = False", build),
+            ("macos_finalize_desktop.sh", build),
+            ("macos_ci_signing_setup.sh", build),
+            ("macos_finalize_dmg.sh", build),
+            ("public release requires persistent signing identity", build),
+            ('expected_notarized = expected_signing == "developer-id"', build),
             ("  preflight:", build),
             ("Fail fast on deterministic release contracts", build),
             ("bash scripts/release_check.sh --static-only", build),
@@ -188,8 +189,8 @@ def _workflow_contract(root: Path) -> str:
             ("gh release upload", intel_desktop),
             ("desktop_install_macos_smoke.sh", intel_desktop),
             ("desktop_install_macos_smoke.sh", intel_desktop),
-            ("signing_mode=adhoc", intel_desktop),
-            ('export APPLE_SIGNING_IDENTITY="-"', intel_desktop),
+            ("macos_ci_signing_setup.sh", intel_desktop),
+            ("macos_finalize_dmg.sh", intel_desktop),
             ("Treat an already-published DMG as immutable authority", intel_desktop),
             ("--build-info-json", intel_desktop),
             ("source_sha.startswith(commit)", intel_desktop),
@@ -225,16 +226,14 @@ def _workflow_contract(root: Path) -> str:
         "ci.yml": ci,
         "extended-native.yml": extended,
         "release-readiness.yml": readiness_workflow,
-        "release-build.yml": build,
-        "release-desktop-darwin-x64.yml": intel_desktop,
     }
     leaked_apple_secrets = [name for name, body in apple_secret_surfaces.items() if "secrets.APPLE_" in body]
     if leaked_apple_secrets:
         raise DoctorError(
-            "current ad-hoc macOS release contract unexpectedly depends on Apple release-signing credentials: "
+            "disposable CI unexpectedly depends on Apple release-signing credentials: "
             + ", ".join(leaked_apple_secrets)
         )
-    return "main/release-branch CI, precomputed release-source evidence, ad-hoc macOS release signing, and tag-bound authoritative build contracts are consistent"
+    return "main/release-branch CI, precomputed release-source evidence, persistent macOS release signing, and tag-bound authoritative build contracts are consistent"
 
 
 def _compile_verifiers(root: Path) -> str:

@@ -679,22 +679,20 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertNotIn('rustc -vV | grep -Fxq "host:', workflow)
         self.assertNotIn('file "$binary" | grep -Fq "$EXPECTED_FILE_ARCH"', workflow)
 
-    def test_current_macos_release_contract_is_adhoc_and_secret_free(self) -> None:
-        primary = Path(".github/workflows/release-build.yml").read_text(encoding="utf-8")
-        supplemental = Path(".github/workflows/release-desktop-darwin-x64.yml").read_text(encoding="utf-8")
-
-        for workflow in (primary, supplemental):
-            self.assertNotIn("secrets.APPLE_CERTIFICATE", workflow)
-            self.assertNotIn("secrets.APPLE_CERTIFICATE_PASSWORD", workflow)
-            self.assertNotIn("secrets.APPLE_ID", workflow)
-            self.assertNotIn("secrets.APPLE_PASSWORD", workflow)
-            self.assertNotIn("secrets.APPLE_TEAM_ID", workflow)
-            self.assertNotIn("signing_mode=developer-id", workflow)
-
-        self.assertIn('export APPLE_SIGNING_IDENTITY="-"', primary)
-        self.assertIn('export APPLE_SIGNING_IDENTITY="-"', supplemental)
-        self.assertIn('expected_signing = "adhoc"', primary)
-        self.assertIn("expected_notarized = False", primary)
+    def test_public_macos_release_requires_persistent_signing_and_finalization(self) -> None:
+        for path in ("release-build.yml", "release-desktop-darwin-x64.yml"):
+            workflow = Path(".github/workflows", path).read_text()
+            self.assertIn("macos_ci_signing_setup.sh", workflow)
+            self.assertIn("vars.MACOS_SIGNING_MODE || 'self-signed'", workflow)
+            self.assertIn("vars.MACOS_CERTIFICATE_SHA1", workflow)
+            self.assertIn("secrets.MACOS_SIGNING_P12", workflow)
+            self.assertIn("macos_finalize_dmg.sh", workflow)
+            self.assertIn("security delete-keychain", workflow)
+            self.assertIn("if: always()", workflow)
+            self.assertNotIn('export APPLE_SIGNING_IDENTITY="-"', workflow)
+        primary = Path(".github/workflows/release-build.yml").read_text()
+        self.assertIn("macos_finalize_desktop.sh", primary)
+        self.assertIn("public release requires persistent signing identity", primary)
 
     def test_supplemental_macos_intel_uses_machine_build_identity(self) -> None:
         supplemental = Path(".github/workflows/release-desktop-darwin-x64.yml").read_text(encoding="utf-8")

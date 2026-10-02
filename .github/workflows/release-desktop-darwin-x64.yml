@@ -124,6 +124,8 @@ jobs:
     permissions:
       contents: write
     env:
+      BUILD_KIND: release
+      WEBCODEX_MACOS_CERTIFICATE_SHA1: ${{ vars.MACOS_CERTIFICATE_SHA1 }}
       TAG: ${{ needs.resolve.outputs.tag }}
       VERSION: ${{ needs.resolve.outputs.version }}
       SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
@@ -239,10 +241,22 @@ jobs:
           if len(commits) != 1:
               raise SystemExit("immutable runtime binaries disagree on commit identity")
           PY
-          # The current public macOS distribution contract is ad-hoc signed.
-          # The immutable runtime archive is already produced under that contract,
-          # so do not introduce a separate Developer ID re-signing requirement here.
+          # Preserve immutable runtime provenance here; the final Desktop bundle
+          # is re-signed below with the configured persistent release identity.
           echo "RUNTIME_DIR=$runtime_dir" >> "$GITHUB_ENV"
+
+      - name: Configure persistent macOS signing
+        shell: bash
+        env:
+          WEBCODEX_MACOS_SIGNING_MODE: ${{ vars.MACOS_SIGNING_MODE || 'self-signed' }}
+          WEBCODEX_MACOS_CERTIFICATE_SHA1: ${{ vars.MACOS_CERTIFICATE_SHA1 }}
+          APPLE_CERTIFICATE: ${{ secrets.MACOS_SIGNING_P12 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_SIGNING_P12_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ vars.MACOS_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+        run: bash scripts/macos_ci_signing_setup.sh
 
       - name: Install Desktop dependencies
         run: |
@@ -255,7 +269,7 @@ jobs:
         run: |
           set -euo pipefail
           stage="$RUNNER_TEMP/webcodex-desktop-$PLATFORM-bundle"
-          signing_mode=adhoc
+          signing_mode="$WEBCODEX_MACOS_SIGNING_MODE"
           python3 scripts/prepare_desktop_bundle_macos.py \
             --bin-dir "$RUNTIME_DIR" \
             --version "$VERSION" \
@@ -276,12 +290,19 @@ jobs:
         shell: bash
         env:
           CI: "true"
+          WEBCODEX_MACOS_CERTIFICATE_SHA1: ${{ vars.MACOS_CERTIFICATE_SHA1 }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
-          unset APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID
-          export APPLE_SIGNING_IDENTITY="-"
+          if [ "$WEBCODEX_MACOS_SIGNING_MODE" != developer-id ]; then
+            unset APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID
+          fi
           export CARGO_TARGET_DIR="$RUNNER_TEMP/webcodex-desktop-$PLATFORM-tauri"
-          npm exec tauri -- build \
+          tauri_identity="$APPLE_SIGNING_IDENTITY"
+          if [ "$WEBCODEX_MACOS_SIGNING_MODE" = self-signed ]; then tauri_identity=-; fi
+          env -u APPLE_ID -u APPLE_PASSWORD -u APPLE_TEAM_ID APPLE_SIGNING_IDENTITY="$tauri_identity" npm exec tauri -- build \
             --bundles dmg \
             --config "${{ steps.desktop_bundle.outputs.config }}" \
             --ci -- --locked
@@ -293,6 +314,7 @@ jobs:
             exit 1
           fi
           desktop="$RUNNER_TEMP/webcodex-desktop-v$VERSION-$PLATFORM.dmg"
+          bash ../../scripts/macos_finalize_dmg.sh "${candidates[0]}" "$WEBCODEX_MACOS_SIGNING_MODE" "$APPLE_SIGNING_IDENTITY"
           cp "${candidates[0]}" "$desktop"
           digest="$(shasum -a 256 "$desktop" | awk '{print $1}')"
           printf '%s  %s\n' "$digest" "$(basename "$desktop")" > "$desktop.sha256"
@@ -314,6 +336,14 @@ jobs:
             --stage-metadata "${{ steps.desktop_bundle.outputs.metadata }}" \
             --signing-mode "${{ steps.desktop_bundle.outputs.signing_mode }}" \
             --evidence "$RUNNER_TEMP/webcodex-desktop-v$VERSION-$PLATFORM.dmg.evidence.json"
+
+      - name: Clean ephemeral signing material
+        if: always()
+        shell: bash
+        run: |
+          if [ -n "${WEBCODEX_SIGNING_KEYCHAIN:-}" ]; then
+            security delete-keychain "$WEBCODEX_SIGNING_KEYCHAIN"
+          fi
 
       - name: Reconcile immutable supplemental Release assets
         shell: bash

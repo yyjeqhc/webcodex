@@ -44,7 +44,7 @@ class MacosReleaseEvidenceTests(unittest.TestCase):
             self.write_evidence(platform, {
                 "schema_version": 1,
                 "platform": platform,
-                "signing_mode": "adhoc",
+                "signing_mode": "self-signed",
                 "notarized": False,
                 "dmg_sha256": hashlib.sha256(data).hexdigest(),
                 "runtime": {binary: {"runtime_input_sha256": "a" * 64, "bundled_signed_sha256": "b" * 64}
@@ -68,20 +68,37 @@ class MacosReleaseEvidenceTests(unittest.TestCase):
                                 stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10)
         self.assertEqual(result.returncode == 0, expected_success, result.stderr)
 
-    def test_formal_release_accepts_adhoc_without_notarization(self) -> None:
+    def test_formal_release_accepts_self_signed_without_notarization(self) -> None:
         self.verify(True)
 
     def test_verification_build_accepts_the_same_adhoc_evidence(self) -> None:
         self.env["BUILD_KIND"] = "verification"
+        for platform in ("darwin-arm64", "darwin-x64"):
+            self.update(platform, signing_mode="adhoc")
         self.verify(True)
 
     def test_formal_release_rejects_unexpected_developer_id_evidence(self) -> None:
         self.update(signing_mode="developer-id", notarized=True)
         self.verify(False)
 
-    def test_formal_release_rejects_claimed_notarization_under_adhoc_contract(self) -> None:
+    def test_formal_release_rejects_silent_adhoc_fallback(self) -> None:
+        self.update(signing_mode="adhoc")
+        self.verify(False)
+        self.env["MACOS_SIGNING_MODE"] = "adhoc"
+        self.verify(False)
+
+    def test_explicit_developer_id_requires_notarization(self) -> None:
+        self.env["MACOS_SIGNING_MODE"] = "developer-id"
+        for platform in ("darwin-arm64", "darwin-x64"):
+            self.update(platform, signing_mode="developer-id", notarized=True)
+        self.verify(True)
+        self.update(notarized=False)
+        self.verify(False)
+
+    def test_self_signed_cannot_claim_notarization(self) -> None:
         self.update(notarized=True)
         self.verify(False)
+
     def test_bad_dmg_digest_is_rejected(self) -> None:
         self.update(dmg_sha256="0" * 64)
         self.verify(False)

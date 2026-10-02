@@ -204,6 +204,10 @@ def _release_tooling(path: str) -> bool:
             "verify_public_release.py",
             "macos_sign_local_runner.sh",
             "macos_ci_developer_id_setup.sh",
+            "macos_ci_signing_setup.sh",
+            "macos_sign_self_signed.sh",
+            "macos_finalize_desktop.sh",
+            "macos_finalize_dmg.sh",
             "macos_sign_runner.sh",
             "verify_macos_desktop_identity.sh",
         }

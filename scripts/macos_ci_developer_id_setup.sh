@@ -4,7 +4,7 @@ set -euo pipefail
 umask 077
 
 fail() {
-  printf 'macOS Developer ID setup failed: %s\n' "$*" >&2
+  printf 'macOS signing setup failed: %s\n' "$*" >&2
   exit 1
 }
 
@@ -15,9 +15,19 @@ fail() {
 : "${APPLE_CERTIFICATE_PASSWORD:?APPLE_CERTIFICATE_PASSWORD is required}"
 : "${APPLE_SIGNING_IDENTITY:?APPLE_SIGNING_IDENTITY is required}"
 
-case "$APPLE_SIGNING_IDENTITY" in
-  "Developer ID Application:"*) ;;
-  *) fail "APPLE_SIGNING_IDENTITY must name a Developer ID Application identity" ;;
+case "$APPLE_SIGNING_IDENTITY" in *$'\n'*|*$'\r'*|"-") fail "invalid identity name" ;; esac
+mode="${WEBCODEX_MACOS_SIGNING_MODE:-developer-id}"
+case "$mode" in
+  developer-id)
+    case "$APPLE_SIGNING_IDENTITY" in
+      "Developer ID Application:"*) ;;
+      *) fail "APPLE_SIGNING_IDENTITY must name a Developer ID Application identity" ;;
+    esac ;;
+  self-signed)
+    : "${WEBCODEX_MACOS_CERTIFICATE_SHA1:?persistent certificate SHA1 is required}"
+    [[ "$WEBCODEX_MACOS_CERTIFICATE_SHA1" != *[!A-Fa-f0-9]* ]] && [ "${#WEBCODEX_MACOS_CERTIFICATE_SHA1}" -eq 40 ] || fail "invalid certificate SHA1"
+    ;;
+  *) fail "CI import requires self-signed or developer-id" ;;
 esac
 
 keychain="$RUNNER_TEMP/webcodex-developer-id.keychain-db"
@@ -60,12 +70,21 @@ security set-key-partition-list \
 security list-keychains -d user -s "$keychain"
 security default-keychain -d user -s "$keychain"
 
+# Explicit self-signed requirements trust the pinned certificate, not the host
+# trust store. Enumerate matching identities without requiring Apple/root trust.
+valid_only=(-v)
+if [ "$mode" = self-signed ]; then valid_only=(); fi
 matches="$(
-  security find-identity -v -p codesigning "$keychain" |
-    grep -F "\"$APPLE_SIGNING_IDENTITY\"" || true
+  security find-identity "${valid_only[@]}" -p codesigning "$keychain" |
+    grep -F "\"$APPLE_SIGNING_IDENTITY\"" | awk '!seen[$2]++' || true
 )"
 count="$(printf '%s\n' "$matches" | awk 'NF { n += 1 } END { print n + 0 }')"
-[ "$count" -eq 1 ] || fail "expected exactly one configured Developer ID Application identity, found $count"
+[ "$count" -eq 1 ] || fail "expected exactly one configured signing identity, found $count"
+
+hash="$(printf '%s\n' "$matches" | awk 'NF {print $2}')"
+if [ "$mode" = self-signed ]; then
+  [ "$(printf '%s' "$hash" | tr A-F a-f)" = "$(printf '%s' "$WEBCODEX_MACOS_CERTIFICATE_SHA1" | tr A-F a-f)" ] || fail "imported certificate differs from persistent identity pin"
+fi
 
 {
   printf 'APPLE_SIGNING_IDENTITY=%s\n' "$APPLE_SIGNING_IDENTITY"
@@ -73,4 +92,4 @@ count="$(printf '%s\n' "$matches" | awk 'NF { n += 1 } END { print n + 0 }')"
 } >> "$GITHUB_ENV"
 
 setup_complete=1
-printf 'Configured one Developer ID Application signing identity in an ephemeral keychain.\n'
+printf 'Configured one persistent signing identity in an ephemeral keychain.\n'

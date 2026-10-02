@@ -21,7 +21,7 @@ class ReleaseDoctorTests(unittest.TestCase):
         self.assertIn("supplemental Desktop darwin-x64", detail)
         workflow = doctor._workflow_contract(Path.cwd())
         self.assertIn("authoritative build", workflow)
-        self.assertIn("ad-hoc macOS release signing", workflow)
+        self.assertIn("persistent macOS release signing", workflow)
 
     def test_version_contract_rejects_desktop_mismatch(self) -> None:
         versions = {

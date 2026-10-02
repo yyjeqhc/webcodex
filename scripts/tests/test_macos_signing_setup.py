@@ -85,6 +85,54 @@ class MacosSigningSetupTests(unittest.TestCase):
                        "fixture-certificate-private"):
             self.assertNotIn(secret, result.stdout + result.stderr)
 
+    def test_persistent_self_signed_import_and_pin(self) -> None:
+        self.env.update(WEBCODEX_MACOS_SIGNING_MODE="self-signed",
+                        WEBCODEX_MACOS_CERTIFICATE_SHA1="b" * 40,
+                        APPLE_SIGNING_IDENTITY="WebCodex Fixture")
+        self.run_setup(True)
+        self.assertFalse(self.certificate.exists())
+
+    def test_recreated_certificate_is_rejected_and_cleaned(self) -> None:
+        self.env.update(WEBCODEX_MACOS_SIGNING_MODE="self-signed",
+                        WEBCODEX_MACOS_CERTIFICATE_SHA1="c" * 40,
+                        APPLE_SIGNING_IDENTITY="WebCodex Fixture")
+        self.run_setup(False)
+        self.assertFalse(self.certificate.exists())
+        self.assertFalse(self.keychain.exists())
+
+    def test_public_mode_selection_fails_closed(self) -> None:
+        for kind, mode, expected in (("release", "adhoc", False),
+                                     ("verification", "adhoc", True),
+                                     ("release", "self-signed", True),
+                                     ("release", "developer-id", False)):
+            with self.subTest(kind=kind, mode=mode):
+                env = dict(self.env, BUILD_KIND=kind, WEBCODEX_MACOS_SIGNING_MODE=mode,
+                           WEBCODEX_MACOS_CERTIFICATE_SHA1="b" * 40)
+                for name in ("APPLE_ID", "APPLE_PASSWORD", "APPLE_TEAM_ID"):
+                    env.pop(name, None)
+                result = subprocess.run(["bash", str(ROOT / "scripts/macos_ci_signing_setup.sh")],
+                                        env=env, stdin=subprocess.DEVNULL, capture_output=True, timeout=10)
+                self.assertEqual(result.returncode == 0, expected, result.stderr)
+                self.keychain.unlink(missing_ok=True)
+
+    def test_public_default_never_generates_or_falls_back_without_material(self) -> None:
+        env = dict(self.env, BUILD_KIND="release")
+        env.pop("WEBCODEX_MACOS_SIGNING_MODE", None)
+        env.pop("APPLE_CERTIFICATE", None)
+        result = subprocess.run(["bash", str(ROOT / "scripts/macos_ci_signing_setup.sh")],
+                                env=env, stdin=subprocess.DEVNULL, capture_output=True, timeout=10)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.calls(), [])
+        self.assertFalse((self.root / "github-env").exists())
+
+    def test_explicit_configured_developer_id_remains_available(self) -> None:
+        env = dict(self.env, BUILD_KIND="release", WEBCODEX_MACOS_SIGNING_MODE="developer-id",
+                   APPLE_ID="fixture@example.invalid", APPLE_PASSWORD="fixture", APPLE_TEAM_ID="FIXTURE")
+        result = subprocess.run(["bash", str(ROOT / "scripts/macos_ci_signing_setup.sh")],
+                                env=env, stdin=subprocess.DEVNULL, capture_output=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("WEBCODEX_MACOS_SIGNING_MODE=developer-id", (self.root / "github-env").read_text())
+
     def calls(self) -> list[dict]:
         path = self.root / "calls.jsonl"
         return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []

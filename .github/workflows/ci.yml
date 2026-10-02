@@ -224,7 +224,7 @@ jobs:
           bash scripts/test_inventory.sh
       - name: Check macOS signing setup and release evidence contracts
         # Fake signing commands and synthetic artifacts only; no Apple credentials.
-        run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest scripts.tests.test_macos_signing_setup scripts.tests.test_macos_release_evidence
+        run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest scripts.tests.test_macos_signing_setup scripts.tests.test_macos_self_signed scripts.tests.test_macos_release_evidence
       - name: Check canonical contracts including optional tool surfaces
         # Root MCP/HTTP integration tests already run in the mandatory server
         # shard. Do not compile the full Server a second time for three filters.

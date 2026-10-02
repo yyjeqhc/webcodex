@@ -671,6 +671,7 @@ jobs:
       - name: Run Windows unified upgrade transactions including native v0.4.3 fixture
         run: |
           cargo test --locked -p webcodex-environment --lib upgrade::
+          cargo test --locked -p webcodex-environment --lib service::windows::
       - name: Test Windows unified installer routing and Desktop build freshness
         run: python -m unittest scripts.tests.test_prepare_windows_unified_installer scripts.tests.test_desktop_runtime_manifest scripts.tests.test_desktop_frontend_build
       - name: Test optional Codex observation adapter on Windows

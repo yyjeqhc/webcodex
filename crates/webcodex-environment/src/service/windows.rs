@@ -634,6 +634,29 @@ fn account_sid(name: &str) -> Result<String, ServiceError> {
     Ok(value)
 }
 
+fn local_computer_name() -> Result<String, ServiceError> {
+    use windows_sys::Win32::System::SystemInformation::{ComputerNameNetBIOS, GetComputerNameExW};
+    let mut buffer = [0u16; 256];
+    let mut size = buffer.len() as u32;
+    if unsafe { GetComputerNameExW(ComputerNameNetBIOS, buffer.as_mut_ptr(), &mut size) } == 0 {
+        return Err(error(
+            ServiceErrorCode::MissingPrerequisite,
+            "GetComputerNameEx",
+        ));
+    }
+    Ok(String::from_utf16_lossy(&buffer[..size as usize]))
+}
+
+fn scm_local_account<'a>(expected: &'a str, observed: &str, computer: &str) -> Option<&'a str> {
+    let user = observed.strip_prefix(r".\")?;
+    let (host, expected_user) = expected.split_once('\\')?;
+    (!user.is_empty()
+        && !user.contains('\\')
+        && host.eq_ignore_ascii_case(computer)
+        && user.eq_ignore_ascii_case(expected_user))
+    .then_some(expected)
+}
+
 fn configuration_owned_by_spec(
     spec: &ServiceSpec,
     binary: &str,
@@ -641,16 +664,28 @@ fn configuration_owned_by_spec(
     description: &str,
 ) -> Result<bool, ServiceError> {
     let expected_account = account_name(spec)?;
-    let mut owned = binary == command_line(spec)?
-        && account.eq_ignore_ascii_case(expected_account)
-        && description == ownership_marker(spec);
-    if let ServiceAccount::SystemUser {
-        expected_identity, ..
-    } = &spec.account
-    {
-        owned &= account_sid(&account)?.eq_ignore_ascii_case(expected_identity);
+    if binary != command_line(spec)? || description != ownership_marker(spec) {
+        return Ok(false);
     }
-    Ok(owned)
+    match &spec.account {
+        ServiceAccount::SystemUser {
+            expected_identity, ..
+        } => {
+            // SCM spells local accounts as .\user. Resolve only the local
+            // principal bound by this spec, never a guessed bare/domain user.
+            let resolved = if account.starts_with(r".\") {
+                let computer = local_computer_name()?;
+                let Some(name) = scm_local_account(expected_account, account, &computer) else {
+                    return Ok(false);
+                };
+                name
+            } else {
+                account
+            };
+            Ok(account_sid(resolved)?.eq_ignore_ascii_case(expected_identity))
+        }
+        ServiceAccount::WindowsVirtual { .. } => Ok(account.eq_ignore_ascii_case(expected_account)),
+    }
 }
 
 pub(super) fn inspect(spec: &ServiceSpec) -> Result<ServiceStatus, ServiceError> {
@@ -983,6 +1018,10 @@ pub(super) fn update_credential(
     }
     inspect(spec)
 }
+
+#[cfg(test)]
+#[path = "windows/tests.rs"]
+mod ownership_tests;
 
 #[cfg(test)]
 mod tests {

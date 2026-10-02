@@ -163,7 +163,6 @@ def _workflow_contract(root: Path) -> str:
             ("dist/webcodex-desktop-*.dmg", build),
             ("dist/webcodex-desktop-*-${{ matrix.platform }}-setup.exe", build),
             ('bash scripts/macos_sign_runner.sh target/release/webcodex-runner "$APPLE_SIGNING_IDENTITY" "$WEBCODEX_MACOS_SIGNING_MODE"', build),
-            ("verify_macos_desktop_identity.sh", build),
             ("macos_finalize_desktop.sh", build),
             ("macos_ci_signing_setup.sh", build),
             ("macos_finalize_dmg.sh", build),

@@ -315,7 +315,9 @@ installation rather than disturbing a daily-use installation.
 
 ## Build a macOS DMG locally
 
-The local development DMG remains ad-hoc signed and is not notarized. Formal macOS release workflows use Developer ID Application signing and notarization so the packaged Runner has a stable TCC code identity.
+macOS signing has three explicit modes: `self-signed` is the current persistent fallback for public releases and long-lived dogfood; `developer-id` uses Developer ID Application plus notarization/stapling when Apple credentials are available; `adhoc` is only for disposable CI/local verification and promises no TCC upgrade continuity. Keep the same self-signed certificate **and private key** across builds and upgrades. Recreating a certificate with the same name changes identity. Both Desktop (`dev.webcodex.desktop`) and bundled Runner (`dev.webcodex.runner`) use certificate-anchored designated requirements without binary cdhash. Final app/DMG verification runs after Tauri nested signing. This does not preserve grants from historical ad-hoc builds automatically: users may need to reauthorize the new persistent identity once. Self-signed distribution is not Apple notarized; use **System Settings → Privacy & Security → Open Anyway** if Gatekeeper requires it, without disabling Gatekeeper globally.
+
+The manual ad-hoc recipe below is disposable verification only. For long-lived builds use the default self-signed local helper below. See [release signing configuration](RELEASE_CHECKLIST.md).
 
 For the normal local path, the repository already provides a complete helper:
 
@@ -323,7 +325,7 @@ For the normal local path, the repository already provides a complete helper:
 bash scripts/build_desktop_macos_local.sh
 ```
 
-It requires a clean worktree, installs both shared frontend and Desktop npm dependencies, builds the dogfood runtime, stages it, creates the native ad-hoc signed DMG, runs the macOS smoke validation, and writes the final file under `target/desktop-local-dist/`. The steps below are the equivalent manual flow for understanding or diagnosing a build.
+It requires a clean worktree, installs both shared frontend and Desktop npm dependencies, builds the dogfood runtime, stages it, creates the native self-signed DMG with the existing persistent certificate, runs the macOS smoke validation, and writes the final file under `target/desktop-local-dist/`. The steps below are a disposable ad-hoc manual flow for diagnosing a build.
 
 ### 1. Use a clean committed source state
 

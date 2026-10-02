@@ -70,7 +70,7 @@ WebCodex 可以在已注册的项目范围内读取和修改文件、执行命�
 - **Windows：**按主机架构选择 x64 或 ARM64 installer；Windows ARM64 Desktop 从 v0.4.2+ release build path 开始提供。
 - **macOS：**按 Mac 架构选择 Intel 或 Apple Silicon DMG。
 
-已发布的 v0.4.3 macOS 构建使用 ad-hoc 签名且没有 notarization，因此 Gatekeeper 可能要求在**系统设置 → 隐私与安全 → 仍要打开**中确认。macOS TCC 签名修复之后，正式 release pipeline 要求 Developer ID Application 签名和 notarization；本地源码/dogfood 构建仍可使用 ad-hoc 签名。不要全局关闭 Gatekeeper。
+macOS 签名明确分为三种模式：`self-signed` 是当前 public release 和长期 dogfood 的持久 fallback；Apple 凭据可用时可显式选择 `developer-id`，使用 Developer ID Application 并完成 notarization/stapling；`adhoc` 仅用于一次性 CI/本地验证，不承诺 TCC 升级连续性。必须跨 build/upgrade 长期保留**同一张 self-signed certificate 及其 private key**；同名重建证书也会改变身份。Desktop（`dev.webcodex.desktop`）和 bundled Runner（`dev.webcodex.runner`）都使用不含 binary cdhash 的证书锚定 designated requirement，并在 Tauri nested signing 后验证最终 app/DMG。历史 ad-hoc 授权不会因此自动迁移，首次改用持久身份时可能需要重新授权。Self-signed 不等同于 Apple notarization；如 Gatekeeper 要求，请使用**系统设置 → 隐私与安全 → 仍要打开**，不要全局关闭 Gatekeeper。
 
 安装完成后启动 WebCodex Desktop。
 

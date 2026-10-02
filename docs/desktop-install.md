@@ -82,7 +82,7 @@ Download the matching Desktop artifact from the [GitHub Releases](https://github
 - **Windows:** use the installer matching your architecture, x64 or ARM64. Windows ARM64 Desktop is part of the v0.4.2+ release build path.
 - **macOS:** use the DMG matching your Mac architecture, Intel or Apple Silicon.
 
-Published v0.4.3 macOS builds are ad-hoc signed and are not notarized, so Gatekeeper may require **System Settings → Privacy & Security → Open Anyway**. The formal release pipeline after the macOS TCC signing fix requires Developer ID Application signing and notarization; local source/dogfood builds may still be ad-hoc signed. Do not disable Gatekeeper globally.
+macOS signing has three explicit modes: `self-signed` is the current persistent fallback for public releases and long-lived dogfood; `developer-id` uses Developer ID Application plus notarization/stapling when Apple credentials are available; `adhoc` is only for disposable CI/local verification and promises no TCC upgrade continuity. Keep the same self-signed certificate **and private key** across builds and upgrades. Recreating a certificate with the same name changes identity. Both Desktop (`dev.webcodex.desktop`) and bundled Runner (`dev.webcodex.runner`) use certificate-anchored designated requirements without binary cdhash. Final app/DMG verification runs after Tauri nested signing. This does not preserve grants from historical ad-hoc builds automatically: users may need to reauthorize the new persistent identity once. Self-signed distribution is not Apple notarized; use **System Settings → Privacy & Security → Open Anyway** if Gatekeeper requires it, without disabling Gatekeeper globally.
 
 Launch WebCodex Desktop after installation.
 

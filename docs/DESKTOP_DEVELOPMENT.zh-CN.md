@@ -299,7 +299,9 @@ smoke 会真正走 native installer，并验证包内 runtime identity。Windows
 
 ## 在 macOS 本地构建 DMG
 
-本地开发 DMG 仍使用 ad-hoc signing，不做 notarization。正式 macOS release workflow 使用 Developer ID Application 签名和 notarization，使包内 Runner 获得稳定的 TCC code identity。
+macOS 签名明确分为三种模式：`self-signed` 是当前 public release 和长期 dogfood 的持久 fallback；Apple 凭据可用时可显式选择 `developer-id`，使用 Developer ID Application 并完成 notarization/stapling；`adhoc` 仅用于一次性 CI/本地验证，不承诺 TCC 升级连续性。必须跨 build/upgrade 长期保留**同一张 self-signed certificate 及其 private key**；同名重建证书也会改变身份。Desktop（`dev.webcodex.desktop`）和 bundled Runner（`dev.webcodex.runner`）都使用不含 binary cdhash 的证书锚定 designated requirement，并在 Tauri nested signing 后验证最终 app/DMG。历史 ad-hoc 授权不会因此自动迁移，首次改用持久身份时可能需要重新授权。Self-signed 不等同于 Apple notarization；如 Gatekeeper 要求，请使用**系统设置 → 隐私与安全 → 仍要打开**，不要全局关闭 Gatekeeper。
+
+下方手动 ad-hoc 流程仅用于一次性验证。长期构建请使用下方默认 self-signed 的本地 helper。签名配置参见 [发布清单](RELEASE_CHECKLIST.md)。
 
 普通本地打包优先使用仓库已经提供的一条完整 helper：
 
@@ -307,7 +309,7 @@ smoke 会真正走 native installer，并验证包内 runtime identity。Windows
 bash scripts/build_desktop_macos_local.sh
 ```
 
-它要求 clean worktree，会自动安装共享 frontend 与 Desktop 两套 npm dependency、构建 dogfood runtime、完成 staging、生成 native ad-hoc signed DMG、运行 macOS smoke，并把最终文件放到 `target/desktop-local-dist/`。下面继续保留等价手工流程，方便理解或排查某一个阶段。
+它要求 clean worktree，会自动安装共享 frontend 与 Desktop 两套 npm dependency、构建 dogfood runtime、完成 staging、复用现有持久证书生成 native self-signed DMG、运行 macOS smoke，并把最终文件放到 `target/desktop-local-dist/`。下面保留一次性 ad-hoc 手工流程，方便排查某一个阶段。
 
 ### 1. 使用干净、已提交的源码
 

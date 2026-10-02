@@ -25,6 +25,8 @@ impl Database {
         let now = chrono::Utc::now().timestamp();
         db.purge_stale_auth_rows(now)?;
         db.prune_job_receipts(now)?;
+        // All schema/backfill/startup writes complete on the sole writer first.
+        db.open_history_reader()?;
         Ok(db)
     }
 

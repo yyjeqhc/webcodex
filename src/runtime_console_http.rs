@@ -31,6 +31,7 @@ mod communication;
 mod goals;
 mod job_projection;
 mod overview_primary;
+mod store_read;
 mod trace;
 mod window_inventory;
 mod window_queries;
@@ -1648,9 +1649,7 @@ async fn workflow_session_detail_with_windows(
     let (workspace_activity_available, workspace_last_activity) =
         workspace_activity_for_auth(runtime, auth, &project_row)?;
     let (jobs, jobs_truncated) = session_jobs_for_auth(runtime, auth, project, session_id).await?;
-    let links = db
-        .list_session_linked_windows(session_id, principal_ref, 32)
-        .map_err(|_| RuntimeConsoleError::Internal)?;
+    let links = store_read::linked_windows(db, session_id, principal_ref, 32).await?;
     let mut visibility_cache = HashMap::new();
     let mut linked_windows = Vec::with_capacity(links.len());
     for link in &links {
@@ -1694,19 +1693,14 @@ async fn workflow_session_detail_with_windows(
     let mut gap_activity = Vec::new();
     let mut window_activity_source_truncated = false;
     for link in &links {
-        #[cfg(feature = "experimental-code-mode")]
-        let events = db.list_window_activity_events_with_code_mode_composition(
+        let events = store_read::events(
+            db,
             &link.client_window_key,
             principal_ref,
             MAX_WINDOW_ACTIVITY_LIMIT,
-        );
-        #[cfg(not(feature = "experimental-code-mode"))]
-        let events = db.list_window_activity_events(
-            &link.client_window_key,
-            principal_ref,
-            MAX_WINDOW_ACTIVITY_LIMIT,
-        );
-        let events = events.map_err(|_| RuntimeConsoleError::Internal)?;
+            cfg!(feature = "experimental-code-mode"),
+        )
+        .await?;
         if events.len() == MAX_WINDOW_ACTIVITY_LIMIT {
             // The durable Window event scan is itself bounded. Hitting the cap
             // means older same-Project activity may exist even when the filtered

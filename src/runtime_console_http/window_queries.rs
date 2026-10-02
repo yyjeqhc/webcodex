@@ -154,8 +154,8 @@ pub(super) async fn visible_window_summary_for_auth_bounded(
         .ok_or(RuntimeConsoleError::Internal)?;
     // Summary fields do not consume Code Mode composition or audit summary JSON.
     // Keep full composition hydration on the selected Window detail path only.
-    let events = db.list_window_activity_events(window_key, principal, activity_scan_limit);
-    let events = events.map_err(|_| RuntimeConsoleError::Internal)?;
+    let events =
+        super::store_read::events(db, window_key, principal, activity_scan_limit, false).await?;
     let caller_principal = if principal.is_none() && !auth.is_admin_caller() {
         crate::tool_runtime::runtime_observation_principal(Some(auth)).ok()
     } else {
@@ -233,9 +233,9 @@ pub(super) async fn visible_window_summary_for_auth_bounded(
     // remains part of its many-to-many history.
     let mut linked_session_count = 0usize;
     if include_relation_count {
-        let relation_rows = db
-            .list_window_workflow_sessions(window_key, principal, MAX_WINDOW_SESSION_LIMIT)
-            .map_err(|_| RuntimeConsoleError::Internal)?;
+        let relation_rows =
+            super::store_read::relations(db, window_key, principal, MAX_WINDOW_SESSION_LIMIT)
+                .await?;
         for link in relation_rows {
             if project_filter.is_some_and(|project| link.project.as_deref() != Some(project)) {
                 continue;
@@ -480,8 +480,8 @@ pub(super) async fn window_for_auth(
     let principal = window_principal_filter(auth)?;
     let principal_ref = window_principal_ref(&principal);
     let durable_first_seen_at_ms = if auth.is_admin_caller() {
-        db.get_window_activity_summary(&input.client_window_key, principal_ref)
-            .map_err(|_| RuntimeConsoleError::Internal)?
+        super::store_read::summary(db, &input.client_window_key, principal_ref)
+            .await?
             .map(|summary| summary.first_seen_at_ms)
     } else {
         None
@@ -584,19 +584,14 @@ pub(super) async fn window_for_auth(
     } else {
         MAX_WINDOW_ACTIVITY_LIMIT
     };
-    #[cfg(feature = "experimental-code-mode")]
-    let raw_activity = db.list_window_activity_events_with_code_mode_composition(
+    let raw_activity = super::store_read::events(
+        db,
         &input.client_window_key,
         principal_ref,
         activity_scan_limit,
-    );
-    #[cfg(not(feature = "experimental-code-mode"))]
-    let raw_activity = db.list_window_activity_events(
-        &input.client_window_key,
-        principal_ref,
-        activity_scan_limit,
-    );
-    let raw_activity = raw_activity.map_err(|_| RuntimeConsoleError::Internal)?;
+        cfg!(feature = "experimental-code-mode"),
+    )
+    .await?;
     let raw_activity_at_cap = raw_activity.len() == activity_scan_limit;
     let mut activity_visible = Vec::with_capacity(raw_activity.len());
     for event in &raw_activity {
@@ -645,13 +640,13 @@ pub(super) async fn window_for_auth(
         } else {
             MAX_WINDOW_SESSION_LIMIT
         };
-        let raw_sessions = db
-            .list_window_workflow_sessions(
-                &input.client_window_key,
-                principal_ref,
-                session_scan_limit,
-            )
-            .map_err(|_| RuntimeConsoleError::Internal)?;
+        let raw_sessions = super::store_read::relations(
+            db,
+            &input.client_window_key,
+            principal_ref,
+            session_scan_limit,
+        )
+        .await?;
         let raw_sessions_at_cap = raw_sessions.len() == session_scan_limit;
         let mut linked_sessions = Vec::new();
         for link in raw_sessions {

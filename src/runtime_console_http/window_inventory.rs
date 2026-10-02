@@ -249,13 +249,16 @@ pub(super) async fn inventory_for_auth(
         .as_ref()
         .ok_or(RuntimeConsoleError::Internal)?;
     let principal = window_principal_filter(auth)?;
-    let principal_ref = window_principal_ref(&principal);
     let caller = crate::tool_runtime::runtime_observation_principal(Some(auth)).ok();
     let anchors = match projects {
         Some(projects) => projects.to_vec(),
-        None => db
-            .window_inventory_project_anchors(principal_ref)
-            .map_err(|_| RuntimeConsoleError::Internal)?,
+        None => {
+            let principal = principal.clone();
+            super::store_read::run(db, move |db| {
+                db.window_inventory_project_anchors(window_principal_ref(&principal))
+            })
+            .await?
+        }
     };
     let allowed: Vec<String> = if let Some(ids) = projects {
         ids.to_vec()
@@ -271,22 +274,39 @@ pub(super) async fn inventory_for_auth(
         Vec::new()
     };
     let live = live_for_auth(runtime, auth, projects, key).await?;
-    let page = db
-        .read_window_inventory(WindowInventoryQuery {
-            principal: principal_ref,
+    let owned_principal = principal.clone();
+    let owned_projects = projects.map(<[String]>::to_vec);
+    let owned_key = key.map(str::to_string);
+    let query = query.to_string();
+    let management = principal.is_none() && !auth.is_admin_caller();
+    let query_allowed = allowed.clone();
+    let page = super::store_read::run(db, move |db| {
+        db.read_window_inventory(WindowInventoryQuery {
+            principal: window_principal_ref(&owned_principal),
             caller: window_principal_ref(&caller),
-            management: principal.is_none() && !auth.is_admin_caller(),
-            visible_projects: &allowed,
-            projects,
-            window_key: key,
-            query,
+            management,
+            visible_projects: &query_allowed,
+            projects: owned_projects.as_deref(),
+            window_key: owned_key.as_deref(),
+            query: &query,
             live: &live,
             offset,
             limit: limit
                 .unwrap_or(DEFAULT_WINDOW_LIMIT)
                 .clamp(1, MAX_WINDOW_LIMIT),
         })
-        .map_err(|_| RuntimeConsoleError::Internal)?;
+    })
+    .await?;
+    // A queued/offloaded read cannot publish a snapshot whose Project access
+    // was revoked while it waited. This recheck is never a cached authority.
+    let access = crate::runner_http::runner_access_from_auth(Some(auth));
+    let still_visible = runtime
+        .runner_registry
+        .visible_project_ids_for_auth_snapshot(access.as_ref(), &allowed)
+        .await;
+    if allowed.iter().any(|id| !still_visible.contains(id)) {
+        return Err(RuntimeConsoleError::NotFound);
+    }
     let returned = page.rows.len();
     Ok(RuntimeConsoleWindows {
         next_offset: (offset.saturating_add(returned) < page.total)

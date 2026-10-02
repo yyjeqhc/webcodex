@@ -38,7 +38,7 @@ impl Database {
         principal: Option<(&str, &str)>,
         limit: usize,
     ) -> anyhow::Result<Vec<WindowActivitySummaryRecord>> {
-        let conn = self.lock_connection(crate::StoreDomain::WindowActivity);
+        let conn = self.lock_history_connection(crate::StoreDomain::WindowActivity);
         let (principal_sql, kind, id) = principal_predicate(principal);
         let sql = format!(
             "SELECT e.client_window_key,
@@ -84,7 +84,7 @@ impl Database {
         &self,
         principal: Option<(&str, &str)>,
     ) -> anyhow::Result<usize> {
-        let conn = self.lock_connection(crate::StoreDomain::WindowActivity);
+        let conn = self.lock_history_connection(crate::StoreDomain::WindowActivity);
         let count = match principal {
             Some((kind, id)) => conn.query_row(
                 "SELECT COUNT(DISTINCT client_window_key)
@@ -113,7 +113,7 @@ impl Database {
         window_key: &str,
         principal: Option<(&str, &str)>,
     ) -> anyhow::Result<Option<WindowActivitySummaryRecord>> {
-        let conn = self.lock_connection(crate::StoreDomain::WindowActivity);
+        let conn = self.lock_history_connection(crate::StoreDomain::WindowActivity);
         let row = match principal {
             Some((kind, id)) => conn
                 .query_row(
@@ -166,7 +166,7 @@ impl Database {
         #[cfg(any(test, feature = "root-test-support"))]
         self.window_history_reads
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let conn = self.lock_connection(crate::StoreDomain::WindowActivity);
+        let conn = self.lock_history_connection(crate::StoreDomain::WindowActivity);
         let (principal_sql, kind, id) = principal_predicate(principal);
         let sql = format!(
             "SELECT e.event_id, e.client_window_key, e.client_window_source,
@@ -307,7 +307,7 @@ impl Database {
         #[cfg(any(test, feature = "root-test-support"))]
         self.window_history_reads
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let conn = self.lock_connection(crate::StoreDomain::WindowActivity);
+        let conn = self.lock_history_connection(crate::StoreDomain::WindowActivity);
         let (kind, id) = principal
             .map(|(kind, id)| (Some(kind), Some(id)))
             .unwrap_or((None, None));
@@ -365,7 +365,7 @@ impl Database {
         #[cfg(any(test, feature = "root-test-support"))]
         self.window_history_reads
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let conn = self.lock_connection(crate::StoreDomain::WindowActivity);
+        let conn = self.lock_history_connection(crate::StoreDomain::WindowActivity);
         let (principal_sql, kind, id) = principal_predicate(principal);
         let sql = format!(
             "SELECT e.event_id, e.client_window_key, e.client_window_source,
@@ -446,7 +446,7 @@ impl Database {
         #[cfg(any(test, feature = "root-test-support"))]
         self.window_history_reads
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let conn = self.lock_connection(crate::StoreDomain::WindowActivity);
+        let conn = self.lock_history_connection(crate::StoreDomain::WindowActivity);
         let (principal_sql, kind, id) = principal_predicate(principal);
         let sql = format!(
             "SELECT l.workflow_session_id, MAX(l.project), MIN(l.linked_at_ms),
@@ -480,7 +480,7 @@ impl Database {
         principal: Option<(&str, &str)>,
         limit: usize,
     ) -> anyhow::Result<Vec<WindowSessionLinkSummaryRecord>> {
-        let conn = self.lock_connection(crate::StoreDomain::WindowActivity);
+        let conn = self.lock_history_connection(crate::StoreDomain::WindowActivity);
         let limit = bounded_limit(limit, MAX_WINDOW_LINK_LIMIT);
         match principal {
             Some((kind, id)) => {
@@ -777,6 +777,7 @@ fn collect_session_window_rows(
 mod tests {
     mod inventory;
     mod queries;
+    mod read_lane;
 
     use super::*;
     use crate::models::{ActionEventRecord, ActionEventWorkflowLinkRecord, ActionSessionRecord};

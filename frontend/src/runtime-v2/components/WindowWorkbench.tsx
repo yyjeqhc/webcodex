@@ -200,7 +200,7 @@ export function WindowWorkbench({
     : currentProjectName;
   const currentMachine = currentProject?.client_id;
   const currentDirectory = displayProjectPath(currentProject?.path);
-  const currentProjectAddress = currentProject?.id;
+  const currentProjectAddress = currentProjectId;
   const hasSelectedWindow = Boolean(selectedSummary || detail);
   const visibleActiveCount = detail?.active_count ?? selectedSummary?.active_count ?? 0;
   const visibleActivityCount = (detail?.activity_returned || 0) + visibleActiveCount;
@@ -347,47 +347,6 @@ export function WindowWorkbench({
                   )}
                 </div>
                 <h2>{currentWorkspaceName || currentActivity || t("Window")}</h2>
-                <div className="window-header-facts">
-                  <span className="window-header-fact" title={windows.selectedKey} data-testid="current-window-identity">
-                    <Monitor size={14} /><small>{t("Window")}</small>
-                    <CopyIdentity key={windows.selectedKey} value={windows.selectedKey} label={t("Window")} language={language} />
-                  </span>
-                  {currentMachine && (
-                    <span className="window-header-fact" title={currentMachine}>
-                      <Server size={14} />
-                      <small>{t("Machine")}</small>
-                      <strong>{currentMachine}</strong>
-                    </span>
-                  )}
-                  {currentDirectory && (
-                    <span className="window-header-fact" title={currentDirectory}>
-                      <FolderOpen size={14} />
-                      <small>{t("Directory")}</small>
-                      <strong>{currentDirectory}</strong>
-                    </span>
-                  )}
-                  {currentProjectAddress && (
-                    <span className="window-header-fact" title={currentProjectAddress}>
-                      <Box size={14} />
-                      <small>{t("Project address")}</small>
-                      <strong>{currentProjectAddress}</strong>
-                    </span>
-                  )}
-                  {firstObservedAt && (
-                    <span className="window-header-fact" title={absoluteTime(firstObservedAt)}>
-                      <Clock3 size={14} />
-                      <small>{t("First active")}</small>
-                      <strong>{absoluteTime(firstObservedAt)}</strong>
-                    </span>
-                  )}
-                  {currentActivity && (
-                    <span className="window-header-fact window-header-activity">
-                      <CircleDot size={12} />
-                      <small>{t("Latest activity")}</small>
-                      <strong>{currentActivity}{lastObservedAt ? " · " + clockTime(lastObservedAt) : ""}</strong>
-                    </span>
-                  )}
-                </div>
               </div>
               <span className={"quiet-pill " + (isActive ? "running" : "")}>
                 <CircleDot size={11} />
@@ -395,6 +354,50 @@ export function WindowWorkbench({
                   ? visibleActiveCount + " " + t("active")
                   : t("Idle") + " · " + relativeTime(lastObservedAt)}
               </span>
+              <div className="window-header-facts">
+                <span className="window-header-fact" title={windows.selectedKey} data-testid="current-window-identity">
+                  <Monitor size={14} /><small>{t("Window")}</small>
+                  <CopyIdentity key={windows.selectedKey} value={windows.selectedKey} label={t("Window")} language={language} />
+                </span>
+                {currentMachine && (
+                  <span className="window-header-fact" title={currentMachine}>
+                    <Server size={14} />
+                    <small>{t("Machine")}</small>
+                    <CopyIdentity key={currentMachine} value={currentMachine} label={t("Machine")} language={language} />
+                  </span>
+                )}
+                {currentDirectory && (
+                  <span className="window-header-fact" title={currentDirectory}>
+                    <FolderOpen size={14} />
+                    <small>{t("Directory")}</small>
+                    <CopyIdentity key={currentDirectory} value={currentDirectory} label={t("Directory")} language={language} />
+                  </span>
+                )}
+                {currentProjectAddress && (
+                  <span className="window-header-fact" title={currentProjectAddress}>
+                    <Box size={14} />
+                    <small>{t("Project address")}</small>
+                    <CopyIdentity key={currentProjectAddress} value={currentProjectAddress} label={t("Project address")} language={language} />
+                  </span>
+                )}
+              </div>
+              <div className="window-header-timeline">
+                {firstObservedAt && (
+                  <span className="window-header-event" title={absoluteTime(firstObservedAt)}>
+                    <Clock3 size={14} />
+                    <small>{t("First active")}</small>
+                    <time>{absoluteTime(firstObservedAt)}</time>
+                  </span>
+                )}
+                {currentActivity && (
+                  <span className="window-header-event">
+                    <CircleDot size={12} />
+                    <small>{t("Latest activity")}</small>
+                    <strong>{currentActivity}</strong>
+                    {lastObservedAt && <time title={absoluteTime(lastObservedAt)}>{clockTime(lastObservedAt)}</time>}
+                  </span>
+                )}
+              </div>
             </header>
 
             <div className="session-view-tabs window-center-tabs" role="tablist" aria-label={t("Window views")}>

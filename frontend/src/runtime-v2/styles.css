@@ -423,9 +423,10 @@ code, kbd { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospac
 }
 
 /* Exact identities remain readable/selectable on narrow screens. */
-.copy-identity { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px; min-width: 0; max-width: 100%; }
-.copy-identity code { overflow-wrap: anywhere; white-space: normal; user-select: text; }
+.copy-identity { display: inline-grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 4px 6px; min-width: 0; max-width: 100%; }
+.copy-identity code { min-width: 0; align-self: center; overflow-wrap: anywhere; white-space: normal; user-select: text; }
 .copy-identity button { flex-shrink: 0; display: inline-flex; padding: 5px; color: var(--muted); background: transparent; border: 1px solid var(--line); border-radius: 6px; cursor: pointer; }
-.copy-identity small { color: var(--muted); }
-.window-header-fact:has(.copy-identity) { white-space: normal; border-radius: 12px; }
+.copy-identity small { grid-column: 1 / -1; color: var(--muted); }
+.copy-identity button:hover { color: var(--accent); background: var(--surface-soft); }
+.copy-identity button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .runtime-sync-status { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; color: var(--muted); margin: 12px 0; }

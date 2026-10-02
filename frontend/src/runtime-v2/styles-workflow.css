@@ -56,47 +56,41 @@
 
 .window-work-main { grid-template-rows: auto 42px minmax(0, 1fr); }
 .window-center-tabs { flex: 0 0 auto; }
+.window-work-header { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 12px 16px; }
+.window-work-header h2 { white-space: normal; overflow-wrap: anywhere; }
+.window-work-header > .quiet-pill { margin-top: 4px; }
 .window-header-facts {
-  display: flex;
-  gap: 7px;
-  align-items: center;
-  flex-wrap: wrap;
-  margin-top: 7px;
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 24px;
 }
 .window-header-fact {
   min-width: 0;
-  display: inline-grid;
-  grid-template-columns: 16px auto minmax(0, auto);
-  gap: 5px;
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  gap: 4px 6px;
   align-items: center;
-  max-width: min(420px, 100%);
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  padding: 4px 8px;
-  background: var(--surface-soft);
-  color: var(--muted);
-  font-size: 11.5px;
+  align-content: start;
 }
 .window-header-fact > svg { color: var(--quiet); }
-.window-header-fact small {
-  color: var(--quiet);
-  font-size: 11px;
-  font-weight: 600;
-  white-space: nowrap;
+.window-header-fact > small { color: var(--quiet); font-size: 11px; font-weight: 600; }
+.window-header-fact > .copy-identity { grid-column: 2; width: 100%; }
+.window-header-timeline {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
 }
-.window-header-fact strong {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--text);
-  font-size: 11.5px;
-  font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.window-header-activity {
-  border-color: transparent;
-  background: transparent;
-  padding-left: 4px;
+.window-header-event { min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; color: var(--muted); font-size: 11px; }
+.window-header-event > svg { flex-shrink: 0; }
+.window-header-event small { font-size: inherit; color: var(--quiet); }
+.window-header-event strong { overflow-wrap: anywhere; font-weight: 500; }
+.window-header-event time { font-variant-numeric: tabular-nums; }
+@media (max-width: 1100px) {
+  .window-header-facts { grid-template-columns: minmax(0, 1fr); }
 }
 .window-call-card.session-linked { cursor: pointer; }
 .window-call-card.session-linked:hover { background: var(--surface-soft); }

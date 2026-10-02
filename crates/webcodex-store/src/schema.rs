@@ -414,6 +414,7 @@ impl Database {
         // the current columns above; existing databases receive the same shape
         // through this additive, idempotent migration.
         Self::ensure_action_event_window_schema(&mut conn)?;
+        crate::window_inventory::ensure_schema(&mut conn)?;
         Self::ensure_action_event_observability_views(&mut conn)?;
 
         // Durable Agent identity and Conversation state are an independent

@@ -117,6 +117,145 @@ async fn window_management_view_survives_oauth_access_token_rotation() {
 }
 
 #[tokio::test]
+async fn window_liveness_is_history_free_and_project_scope_precedes_pagination() {
+    let (_tmp, db, runtime) = test_runtime_with_window_db();
+    let auth = test_bootstrap_auth();
+    register_project(
+        &runtime,
+        "live-inventory",
+        "repo",
+        "/tmp/live-inventory",
+        Some(&auth),
+    )
+    .await;
+    let project_id = "agent:live-inventory:repo";
+    let target = crate::client_window::ClientWindow::for_test("inventory-live");
+    let principal = crate::tool_runtime::runtime_observation_principal(Some(&auth)).unwrap();
+    let guard = runtime.window_activity.start(
+        &target,
+        "inventory-trace",
+        "tools/call",
+        Some((&principal.0, &principal.1)),
+    );
+    runtime
+        .window_activity
+        .update("inventory-trace", Some("read_files"), Some(project_id));
+    let before = db.window_read_counts_for_test();
+    let live = super::super::window_inventory::query_for_auth(
+        &runtime,
+        &auth,
+        WindowsInput {
+            projection: WindowInventoryProjection::Liveness,
+            projects: Some(vec![project_id.into()]),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(live.total, 1);
+    assert_eq!(live.windows[0].active_count, 1);
+    assert_eq!(
+        db.window_read_counts_for_test(),
+        before,
+        "liveness must not read SQLite inventory or history"
+    );
+    drop(guard);
+    let idle = super::super::window_inventory::query_for_auth(
+        &runtime,
+        &auth,
+        WindowsInput {
+            projection: WindowInventoryProjection::Liveness,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(idle.total, 0);
+    for index in 0..3 {
+        record_window_event(
+            &db,
+            &auth,
+            &format!("{index:064x}"),
+            Some(project_id),
+            None,
+            index,
+        );
+    }
+    let page = super::super::window_inventory::query_for_auth(
+        &runtime,
+        &auth,
+        WindowsInput {
+            projects: Some(vec![project_id.into()]),
+            limit: Some(1),
+            offset: 1,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(page.total, 3);
+    assert_eq!(page.next_offset, Some(2));
+    assert_eq!(page.windows[0].client_window_key, format!("{:064x}", 1));
+    let exact = super::super::window_inventory::query_for_auth(
+        &runtime,
+        &auth,
+        WindowsInput {
+            client_window_key: Some(format!("{:064x}", 0)),
+            limit: Some(1),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(exact.total, 1);
+    assert!(super::super::window_inventory::query_for_auth(
+        &runtime,
+        &auth,
+        WindowsInput {
+            projects: Some(vec![]),
+            ..Default::default()
+        }
+    )
+    .await
+    .is_err());
+}
+
+#[tokio::test]
+async fn window_inventory_reads_two_projections_and_zero_per_window_histories() {
+    let (_tmp, db, runtime) = test_runtime_with_window_db();
+    let auth = test_bootstrap_auth();
+    register_project(&runtime, "inventory", "repo", "/tmp/inventory", Some(&auth)).await;
+    for index in 0..25 {
+        record_window_event(
+            &db,
+            &auth,
+            &format!("{index:064x}"),
+            Some("agent:inventory:repo"),
+            None,
+            index,
+        );
+    }
+    let before = db.window_read_counts_for_test();
+    let page = windows_for_auth(&runtime, &auth, Some(10), None)
+        .await
+        .unwrap();
+    let after = db.window_read_counts_for_test();
+    assert_eq!(page.returned, 10);
+    assert_eq!(page.total, 25);
+    assert!(page.truncated);
+    assert_eq!(
+        after.0 - before.0,
+        0,
+        "inventory must not hydrate per-Window history"
+    );
+    assert_eq!(
+        after.1 - before.1,
+        2,
+        "one anchor projection plus one inventory statement"
+    );
+}
+
+#[tokio::test]
 async fn revoked_project_event_cannot_be_bridged_by_window_gap_projection() {
     let (_tmp, db, runtime) = test_runtime_with_window_db();
     let auth_a = crate::auth::shared_key_context("timing-visible-a");

@@ -153,8 +153,12 @@ impl Database {
     }
 
     pub fn insert_action_event(&self, event: &ActionEventRecord) -> anyhow::Result<()> {
-        let conn = self.lock_connection(crate::StoreDomain::Audit);
-        insert_action_event_on_conn(&conn, event)?;
+        let mut conn = self.lock_connection(crate::StoreDomain::Audit);
+        let tx = conn.transaction()?;
+        crate::window_inventory::repair_dirty(&tx)?;
+        insert_action_event_on_conn(&tx, event)?;
+        crate::window_inventory::index_appended_event(&tx, &event.event_id)?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -196,6 +200,7 @@ impl Database {
     ) -> anyhow::Result<()> {
         let mut conn = self.lock_connection(crate::StoreDomain::Audit);
         let tx = conn.transaction()?;
+        crate::window_inventory::repair_dirty(&tx)?;
         insert_action_event_on_conn(&tx, event)?;
         for link in workflow_links {
             tx.execute(
@@ -211,6 +216,7 @@ impl Database {
                 ],
             )?;
         }
+        crate::window_inventory::index_appended_event(&tx, &event.event_id)?;
         tx.execute(
             "UPDATE action_sessions
              SET updated_at = ?2,

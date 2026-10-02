@@ -58,7 +58,7 @@ Choose **Use this Runtime** only after reviewing the preview. **Use bundled Runt
 
 ### Switching, Jobs, and rollback
 
-The switch rechecks the exact candidate, current connection/project identity, selection revision and executable hashes. It warns about running Jobs; an unknown count also requires explicit interruption confirmation. Only Desktop-owned relevant processes may be stopped. A user-managed Server/Runner is never killed or adopted merely because it listens at the expected address.
+The switch rechecks the exact candidate, current connection/project identity, selection revision and executable hashes. It observes the saved Runner's running and queued Jobs; an unknown count also requires explicit interruption confirmation. Readiness verifies that same Runner's connection and build identity. Only Desktop-owned relevant processes may be stopped. A user-managed Server/Runner is never killed or adopted merely because it listens at the expected address.
 
 Desktop stops its owned Runner and, for a local setup, its owned Server, starts the selected binaries with the existing identity, waits for bounded readiness, verifies responding/executed identities, and only then commits the new source. It does not re-pair, generate new credentials, change ports, reactivate/register projects, or rewrite connection/Tunnel configuration as a shortcut.
 

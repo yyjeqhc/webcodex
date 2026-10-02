@@ -1345,6 +1345,10 @@ fn tool_call_project_accessor_covers_project_tool_specs() {
                 // already_unregistered outcome remains representable.
                 None
             }
+            "accept_artifact_handoff" => args
+                .get("destination_project")
+                .and_then(Value::as_str)
+                .map(str::to_string),
             _ => args
                 .get("project")
                 .and_then(Value::as_str)
@@ -1703,8 +1707,10 @@ fn from_tool_name_parses_finish_coding_task_workspace_projection_flag() {
     )
     .unwrap();
 
+    assert_eq!(call.session_id(), Some("wc_sess_demo"));
     match call {
         ToolCall::FinishCodingTask {
+            outputs,
             project,
             session_id,
             summary_only,
@@ -1714,6 +1720,7 @@ fn from_tool_name_parses_finish_coding_task_workspace_projection_flag() {
             include_handoff,
             include_validation_summary,
         } => {
+            assert!(outputs.is_empty());
             assert_eq!(project, "agent:client:demo");
             assert_eq!(session_id, "wc_sess_demo");
             assert!(summary_only);

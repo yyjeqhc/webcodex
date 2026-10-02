@@ -200,8 +200,8 @@ fn assert_builtin_workflow(output: &Value) {
         "Recovery/compaction/exact Session resume is continuation",
         "reuse still-current Git/read/validation/Job facts",
         "continue independent work",
-        "Ordinary implementation is default",
-        "map cross-layer changes end to end",
+        "For inspection, files/data/artifacts, diagnostics, or coding",
+        "Coding maps cross-layer changes end to end",
         "compiler/schema/exhaustiveness failures",
         "Validation failure is evidence, not queue cleanliness",
         "Reuse assertion_name",
@@ -272,7 +272,7 @@ fn assert_builtin_workflow(output: &Value) {
     assert!(closeout_guidance.contains("Read/planning/artifact"));
     assert!(closeout_guidance.contains("finalize directly"));
     assert!(closeout_guidance.contains("goal_follow_up"));
-    assert!(closeout_guidance.contains("never completes a Goal"));
+    assert!(closeout_guidance.contains("never complete a Goal"));
     let goal_workflow = workflow["model_protocol"]["goal_workflow"]
         .as_str()
         .unwrap();

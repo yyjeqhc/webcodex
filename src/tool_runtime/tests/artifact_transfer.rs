@@ -3,10 +3,15 @@
 use super::super::sessions::SessionTransport;
 use super::support::*;
 use crate::auth::{AuthContext, AuthKind};
+use crate::db::{
+    ArtifactHandoffGrant, ArtifactHandoffPrincipal, ArtifactHandoffSourceSnapshot,
+    NewArtifactHandoffGrant,
+};
 use crate::runner_protocol::RunnerCapabilities;
 use base64::{engine::general_purpose, Engine as _};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+use std::sync::Arc;
 
 fn sha256_hex(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
@@ -41,6 +46,91 @@ fn transfer_auth(username: &str) -> AuthContext {
     }
 }
 
+fn runtime_with_handoff_db(
+    client_id: &str,
+) -> (
+    tempfile::TempDir,
+    Arc<crate::db::Database>,
+    super::super::ToolRuntime,
+) {
+    let temp = tempfile::tempdir().unwrap();
+    let db = Arc::new(
+        crate::db::Database::open(&temp.path().join("artifact-handoff-transfer.db")).unwrap(),
+    );
+    let runtime = runtime_with_agent_project(client_id).with_communication_database(db.clone());
+    (temp, db, runtime)
+}
+
+fn handoff_principal(auth: &AuthContext) -> ArtifactHandoffPrincipal {
+    ArtifactHandoffPrincipal::try_from(
+        super::super::communication::communication_principal(Some(auth)).unwrap(),
+    )
+    .unwrap()
+}
+
+fn create_handoff_grant(
+    db: &crate::db::Database,
+    source_auth: &AuthContext,
+    destination_auth: &AuthContext,
+    source_client: &str,
+    destination_client: &str,
+    source_path: &str,
+    bytes: &[u8],
+    mime_type: &str,
+    one_shot: bool,
+) -> ArtifactHandoffGrant {
+    let name = source_path.rsplit('/').next().unwrap();
+    db.create_artifact_handoff_grant(
+        &handoff_principal(source_auth),
+        NewArtifactHandoffGrant {
+            source_project: agent_test_project_id(source_client),
+            source_snapshot: ArtifactHandoffSourceSnapshot {
+                path: source_path.to_string(),
+                bytes: bytes.len() as u64,
+                sha256: sha256_hex(bytes),
+                mime_type: mime_type.to_string(),
+                name: name.to_string(),
+            },
+            destination_principal: handoff_principal(destination_auth),
+            destination_project: agent_test_project_id(destination_client),
+            operation: crate::db::ArtifactHandoffOperation::Read,
+            one_shot,
+            ttl_ms: Some(60_000),
+        },
+        chrono::Utc::now().timestamp_millis(),
+    )
+    .unwrap()
+}
+
+fn spawn_accept(
+    runtime: &super::super::ToolRuntime,
+    grant: &ArtifactHandoffGrant,
+    destination_path: &str,
+    overwrite: bool,
+    idempotency_key: &str,
+    auth: &AuthContext,
+) -> tokio::task::JoinHandle<crate::tool_runtime::ToolResult> {
+    let runtime = runtime.clone();
+    let grant_id = grant.grant_id.clone();
+    let destination_project = grant.destination_project.clone();
+    let destination_path = destination_path.to_string();
+    let idempotency_key = idempotency_key.to_string();
+    let auth = auth.clone();
+    tokio::spawn(async move {
+        runtime
+            .accept_artifact_handoff(
+                grant_id,
+                destination_project,
+                destination_path,
+                Some(overwrite),
+                idempotency_key,
+                Some(&auth),
+                SessionTransport::Api,
+            )
+            .await
+    })
+}
+
 async fn complete_source_metadata(
     runtime: &super::super::ToolRuntime,
     client_id: &str,
@@ -56,6 +146,36 @@ async fn complete_source_metadata(
         payload["max_bytes"],
         super::super::MAX_PROJECT_ARTIFACT_EXPORT_BYTES
     );
+    complete_patch_agent_request(
+        runtime,
+        client_id,
+        &request.request_id,
+        0,
+        &json!({
+            "path": path,
+            "exists": true,
+            "missing": false,
+            "bytes": bytes.len(),
+            "sha256": sha256_hex(bytes),
+            "mime_type": mime_type,
+        })
+        .to_string(),
+        "",
+    )
+    .await;
+}
+
+async fn complete_destination_metadata(
+    runtime: &super::super::ToolRuntime,
+    client_id: &str,
+    path: &str,
+    bytes: &[u8],
+    mime_type: &str,
+) {
+    let request = wait_for_patch_agent_request(runtime, client_id).await;
+    assert_eq!(request.kind, "file_read_project_artifact_metadata");
+    let payload: Value = serde_json::from_str(request.content.as_deref().unwrap()).unwrap();
+    assert_eq!(payload["path"], path);
     complete_patch_agent_request(
         runtime,
         client_id,
@@ -851,5 +971,786 @@ async fn transfer_project_artifact_independently_authorizes_source_and_destinati
         probe_agent_request_for_instance(&runtime, "auth-source-bob", "inst")
             .await
             .is_none()
+    );
+}
+
+#[tokio::test]
+async fn accept_artifact_handoff_imports_one_exact_snapshot_with_bounded_provenance() {
+    let (_temp, db, runtime) = runtime_with_handoff_db("handoff-happy");
+    register_agent(
+        &runtime,
+        "handoff-source",
+        Some("alice"),
+        transfer_caps(true, false),
+    )
+    .await;
+    register_agent(
+        &runtime,
+        "handoff-destination",
+        Some("bob"),
+        transfer_caps(false, true),
+    )
+    .await;
+    let alice = transfer_auth("alice");
+    let bob = transfer_auth("bob");
+    let source_path = "paper/README.md";
+    let destination_path = "artifacts/README.md";
+    let bytes = b"handoff payload\n".to_vec();
+    let grant = create_handoff_grant(
+        &db,
+        &alice,
+        &bob,
+        "handoff-source",
+        "handoff-destination",
+        source_path,
+        &bytes,
+        "text/markdown",
+        true,
+    );
+    let upload_id = "wc_upload_handoff_happy";
+
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let grant_id = grant.grant_id.clone();
+        let destination_project = grant.destination_project.clone();
+        let bob = bob.clone();
+        async move {
+            runtime
+                .accept_artifact_handoff(
+                    grant_id,
+                    destination_project,
+                    destination_path.to_string(),
+                    Some(false),
+                    "accept-happy".to_string(),
+                    Some(&bob),
+                    SessionTransport::Api,
+                )
+                .await
+        }
+    });
+
+    complete_source_metadata(
+        &runtime,
+        "handoff-source",
+        source_path,
+        &bytes,
+        Some("text/markdown"),
+    )
+    .await;
+    complete_destination_begin(
+        &runtime,
+        "handoff-destination",
+        destination_path,
+        &bytes,
+        "text/markdown",
+        false,
+        upload_id,
+    )
+    .await;
+    complete_one_transfer_chunk(
+        &runtime,
+        "handoff-source",
+        "handoff-destination",
+        source_path,
+        destination_path,
+        &bytes,
+        0,
+        upload_id,
+    )
+    .await;
+    complete_destination_finish(
+        &runtime,
+        "handoff-destination",
+        destination_path,
+        &bytes,
+        "text/markdown",
+        upload_id,
+    )
+    .await;
+
+    let result = task.await.unwrap();
+    assert!(result.success, "{result:?}");
+    assert_eq!(result.output["grant_id"], grant.grant_id);
+    assert_eq!(result.output["replayed"], false);
+    assert_eq!(
+        result.output["destination_project"],
+        grant.destination_project
+    );
+    assert_eq!(result.output["destination_path"], destination_path);
+    assert_eq!(result.output["bytes"], bytes.len());
+    assert_eq!(result.output["sha256"], sha256_hex(&bytes));
+    assert_eq!(
+        result.output["provenance"]["source_project"],
+        grant.source_project
+    );
+    assert_eq!(result.output["provenance"]["source_path"], source_path);
+    assert_eq!(result.output["provenance"]["source_name"], "README.md");
+
+    let replay = runtime
+        .accept_artifact_handoff(
+            grant.grant_id.clone(),
+            grant.destination_project.clone(),
+            destination_path.to_string(),
+            Some(false),
+            "accept-happy".to_string(),
+            Some(&bob),
+            SessionTransport::Api,
+        )
+        .await;
+    assert!(replay.success, "{replay:?}");
+    assert_eq!(
+        replay.output["acceptance_id"],
+        result.output["acceptance_id"]
+    );
+    assert_eq!(replay.output["replayed"], true);
+
+    let consumed = runtime
+        .accept_artifact_handoff(
+            grant.grant_id.clone(),
+            grant.destination_project.clone(),
+            destination_path.to_string(),
+            Some(false),
+            "accept-new-key".to_string(),
+            Some(&bob),
+            SessionTransport::Api,
+        )
+        .await;
+    assert!(!consumed.success, "{consumed:?}");
+    assert_eq!(
+        consumed.output["error_kind"],
+        "artifact_handoff_unavailable"
+    );
+
+    let conflicting = runtime
+        .accept_artifact_handoff(
+            grant.grant_id.clone(),
+            grant.destination_project.clone(),
+            "artifacts/other.md".to_string(),
+            Some(false),
+            "accept-happy".to_string(),
+            Some(&bob),
+            SessionTransport::Api,
+        )
+        .await;
+    assert!(!conflicting.success, "{conflicting:?}");
+    assert_eq!(
+        conflicting.output["error_kind"],
+        "artifact_handoff_idempotency_conflict"
+    );
+
+    let foreign_read = runtime
+        .read_project_artifact_export_metadata_internal(
+            &grant.source_project,
+            source_path,
+            Some(&bob),
+        )
+        .await;
+    assert!(!foreign_read.success, "{foreign_read:?}");
+    assert!(
+        probe_agent_request_for_instance(&runtime, "handoff-source", "inst")
+            .await
+            .is_none(),
+        "provenance must not trigger an ambient source read"
+    );
+}
+
+#[tokio::test]
+async fn accept_artifact_handoff_fails_stale_before_destination_write() {
+    let (_temp, db, runtime) = runtime_with_handoff_db("handoff-stale");
+    register_agent(
+        &runtime,
+        "stale-source",
+        Some("alice"),
+        transfer_caps(true, false),
+    )
+    .await;
+    register_agent(
+        &runtime,
+        "stale-destination",
+        Some("bob"),
+        transfer_caps(false, true),
+    )
+    .await;
+    let alice = transfer_auth("alice");
+    let bob = transfer_auth("bob");
+    let expected = b"expected bytes".to_vec();
+    let changed = b"changed bytes".to_vec();
+    let grant = create_handoff_grant(
+        &db,
+        &alice,
+        &bob,
+        "stale-source",
+        "stale-destination",
+        "paper/result.bin",
+        &expected,
+        "application/octet-stream",
+        true,
+    );
+
+    let task = spawn_accept(
+        &runtime,
+        &grant,
+        "artifacts/result.bin",
+        false,
+        "accept-stale",
+        &bob,
+    );
+    complete_source_metadata(
+        &runtime,
+        "stale-source",
+        "paper/result.bin",
+        &changed,
+        Some("application/octet-stream"),
+    )
+    .await;
+    let result = task.await.unwrap();
+    assert!(!result.success, "{result:?}");
+    assert_eq!(result.output["error_kind"], "artifact_handoff_source_stale");
+    assert!(
+        probe_agent_request_for_instance(&runtime, "stale-destination", "inst")
+            .await
+            .is_none(),
+        "stale source must fail before destination upload"
+    );
+}
+
+#[tokio::test]
+async fn accept_artifact_handoff_rejects_wrong_principal_project_and_revoked_grant() {
+    let (_temp, db, runtime) = runtime_with_handoff_db("handoff-denied");
+    register_agent(
+        &runtime,
+        "denied-source",
+        Some("alice"),
+        transfer_caps(true, false),
+    )
+    .await;
+    register_agent(
+        &runtime,
+        "denied-destination-bob",
+        Some("bob"),
+        transfer_caps(false, true),
+    )
+    .await;
+    register_agent(
+        &runtime,
+        "denied-destination-alice",
+        Some("alice"),
+        transfer_caps(false, true),
+    )
+    .await;
+    register_agent(
+        &runtime,
+        "denied-destination-other",
+        Some("bob"),
+        transfer_caps(false, true),
+    )
+    .await;
+    let alice = transfer_auth("alice");
+    let bob = transfer_auth("bob");
+    let bytes = b"denied payload".to_vec();
+    let grant = create_handoff_grant(
+        &db,
+        &alice,
+        &bob,
+        "denied-source",
+        "denied-destination-bob",
+        "paper/secret.bin",
+        &bytes,
+        "application/octet-stream",
+        true,
+    );
+
+    let wrong_principal = runtime
+        .accept_artifact_handoff(
+            grant.grant_id.clone(),
+            agent_test_project_id("denied-destination-alice"),
+            "artifacts/secret.bin".to_string(),
+            Some(false),
+            "accept-wrong-principal".to_string(),
+            Some(&alice),
+            SessionTransport::Api,
+        )
+        .await;
+    assert!(!wrong_principal.success, "{wrong_principal:?}");
+    assert_eq!(
+        wrong_principal.output["error_kind"],
+        "artifact_handoff_unavailable"
+    );
+
+    let wrong_project = runtime
+        .accept_artifact_handoff(
+            grant.grant_id.clone(),
+            agent_test_project_id("denied-destination-other"),
+            "artifacts/secret.bin".to_string(),
+            Some(false),
+            "accept-wrong-project".to_string(),
+            Some(&bob),
+            SessionTransport::Api,
+        )
+        .await;
+    assert!(!wrong_project.success, "{wrong_project:?}");
+    assert_eq!(
+        wrong_project.output["error_kind"],
+        "artifact_handoff_unavailable"
+    );
+
+    db.revoke_artifact_handoff_grant(
+        &handoff_principal(&alice),
+        &grant.source_project,
+        &grant.grant_id,
+        chrono::Utc::now().timestamp_millis(),
+    )
+    .unwrap();
+    let revoked = runtime
+        .accept_artifact_handoff(
+            grant.grant_id.clone(),
+            grant.destination_project.clone(),
+            "artifacts/secret.bin".to_string(),
+            Some(false),
+            "accept-revoked".to_string(),
+            Some(&bob),
+            SessionTransport::Api,
+        )
+        .await;
+    assert!(!revoked.success, "{revoked:?}");
+    assert_eq!(revoked.output["error_kind"], "artifact_handoff_unavailable");
+    assert!(
+        probe_agent_request_for_instance(&runtime, "denied-source", "inst")
+            .await
+            .is_none(),
+        "denied accepts must not read the source"
+    );
+}
+
+#[tokio::test]
+async fn accept_artifact_handoff_definite_begin_failure_does_not_reconcile_preexisting_match() {
+    let (_temp, db, runtime) = runtime_with_handoff_db("handoff-existing");
+    register_agent(
+        &runtime,
+        "existing-source",
+        Some("alice"),
+        transfer_caps(true, false),
+    )
+    .await;
+    register_agent(
+        &runtime,
+        "existing-destination",
+        Some("bob"),
+        transfer_caps(false, true),
+    )
+    .await;
+    let alice = transfer_auth("alice");
+    let bob = transfer_auth("bob");
+    let bytes = b"already present payload".to_vec();
+    let grant = create_handoff_grant(
+        &db,
+        &alice,
+        &bob,
+        "existing-source",
+        "existing-destination",
+        "paper/existing.bin",
+        &bytes,
+        "application/octet-stream",
+        true,
+    );
+    let destination_path = "artifacts/existing.bin";
+
+    for attempt in 0..2 {
+        let task = spawn_accept(
+            &runtime,
+            &grant,
+            destination_path,
+            false,
+            "accept-existing",
+            &bob,
+        );
+        complete_source_metadata(
+            &runtime,
+            "existing-source",
+            "paper/existing.bin",
+            &bytes,
+            Some("application/octet-stream"),
+        )
+        .await;
+        let request = wait_for_patch_agent_request(&runtime, "existing-destination").await;
+        assert_eq!(
+            request.kind, "file_artifact_upload_begin",
+            "attempt {attempt} must retry overwrite=false admission instead of treating a pre-existing matching file as this handoff's committed outcome"
+        );
+        complete_patch_agent_request(
+            &runtime,
+            "existing-destination",
+            &request.request_id,
+            0,
+            r#"{"path":"artifacts/existing.bin","error":"file exists and overwrite is false","failure_kind":"policy_rejected"}"#,
+            "",
+        )
+        .await;
+        let result = task.await.unwrap();
+        assert!(!result.success, "{result:?}");
+        assert_eq!(
+            result.output["error_kind"],
+            "artifact_handoff_transfer_failed"
+        );
+        assert_eq!(result.output["outcome_unknown"], false);
+    }
+}
+
+#[tokio::test]
+async fn accept_artifact_handoff_definite_finish_failure_does_not_enable_reconciliation() {
+    let (_temp, db, runtime) = runtime_with_handoff_db("handoff-finish-failed");
+    register_agent(
+        &runtime,
+        "finish-source",
+        Some("alice"),
+        transfer_caps(true, false),
+    )
+    .await;
+    register_agent(
+        &runtime,
+        "finish-destination",
+        Some("bob"),
+        transfer_caps(false, true),
+    )
+    .await;
+    let alice = transfer_auth("alice");
+    let bob = transfer_auth("bob");
+    let bytes = b"definite finish failure payload".to_vec();
+    let grant = create_handoff_grant(
+        &db,
+        &alice,
+        &bob,
+        "finish-source",
+        "finish-destination",
+        "paper/finish.bin",
+        &bytes,
+        "application/octet-stream",
+        true,
+    );
+    let destination_path = "artifacts/finish.bin";
+    let upload_id = "wc_upload_handoff_finish_failed";
+
+    let first = spawn_accept(
+        &runtime,
+        &grant,
+        destination_path,
+        true,
+        "accept-finish-failed",
+        &bob,
+    );
+    complete_source_metadata(
+        &runtime,
+        "finish-source",
+        "paper/finish.bin",
+        &bytes,
+        Some("application/octet-stream"),
+    )
+    .await;
+    complete_destination_begin(
+        &runtime,
+        "finish-destination",
+        destination_path,
+        &bytes,
+        "application/octet-stream",
+        true,
+        upload_id,
+    )
+    .await;
+    complete_one_transfer_chunk(
+        &runtime,
+        "finish-source",
+        "finish-destination",
+        "paper/finish.bin",
+        destination_path,
+        &bytes,
+        0,
+        upload_id,
+    )
+    .await;
+    let finish = wait_for_patch_agent_request(&runtime, "finish-destination").await;
+    assert_eq!(finish.kind, "file_artifact_upload_finish");
+    complete_patch_agent_request(
+        &runtime,
+        "finish-destination",
+        &finish.request_id,
+        0,
+        &format!(
+            r#"{{"path":"{destination_path}","upload_id":"{upload_id}","committed":false,"error":"finish rejected","failure_kind":"policy_rejected"}}"#
+        ),
+        "",
+    )
+    .await;
+    complete_destination_abort(&runtime, "finish-destination", destination_path, upload_id).await;
+    let failed = first.await.unwrap();
+    assert!(!failed.success, "{failed:?}");
+    assert_eq!(
+        failed.output["error_kind"],
+        "artifact_handoff_transfer_failed"
+    );
+    assert_eq!(failed.output["outcome_unknown"], false);
+
+    let retry = spawn_accept(
+        &runtime,
+        &grant,
+        destination_path,
+        true,
+        "accept-finish-failed",
+        &bob,
+    );
+    complete_source_metadata(
+        &runtime,
+        "finish-source",
+        "paper/finish.bin",
+        &bytes,
+        Some("application/octet-stream"),
+    )
+    .await;
+    let next = wait_for_patch_agent_request(&runtime, "finish-destination").await;
+    assert_eq!(
+        next.kind, "file_artifact_upload_begin",
+        "definite finish failure must retry transfer rather than reconcile arbitrary destination bytes"
+    );
+    complete_patch_agent_request(
+        &runtime,
+        "finish-destination",
+        &next.request_id,
+        0,
+        r#"{"path":"artifacts/finish.bin","error":"retry stopped","failure_kind":"policy_rejected"}"#,
+        "",
+    )
+    .await;
+    let retry_result = retry.await.unwrap();
+    assert!(!retry_result.success, "{retry_result:?}");
+    assert_eq!(retry_result.output["outcome_unknown"], false);
+}
+
+#[tokio::test]
+async fn accept_artifact_handoff_reconciles_unknown_finish_without_second_import() {
+    let (_temp, db, runtime) = runtime_with_handoff_db("handoff-unknown");
+    register_agent(
+        &runtime,
+        "unknown-source",
+        Some("alice"),
+        transfer_caps(true, false),
+    )
+    .await;
+    register_agent(
+        &runtime,
+        "unknown-destination",
+        Some("bob"),
+        transfer_caps(false, true),
+    )
+    .await;
+    let alice = transfer_auth("alice");
+    let bob = transfer_auth("bob");
+    let bytes = b"unknown outcome payload".to_vec();
+    let grant = create_handoff_grant(
+        &db,
+        &alice,
+        &bob,
+        "unknown-source",
+        "unknown-destination",
+        "paper/unknown.bin",
+        &bytes,
+        "application/octet-stream",
+        true,
+    );
+    let upload_id = "wc_upload_handoff_unknown";
+
+    let first = spawn_accept(
+        &runtime,
+        &grant,
+        "artifacts/unknown.bin",
+        false,
+        "accept-unknown",
+        &bob,
+    );
+    complete_source_metadata(
+        &runtime,
+        "unknown-source",
+        "paper/unknown.bin",
+        &bytes,
+        Some("application/octet-stream"),
+    )
+    .await;
+    complete_destination_begin(
+        &runtime,
+        "unknown-destination",
+        "artifacts/unknown.bin",
+        &bytes,
+        "application/octet-stream",
+        false,
+        upload_id,
+    )
+    .await;
+    complete_one_transfer_chunk(
+        &runtime,
+        "unknown-source",
+        "unknown-destination",
+        "paper/unknown.bin",
+        "artifacts/unknown.bin",
+        &bytes,
+        0,
+        upload_id,
+    )
+    .await;
+    let finish = wait_for_patch_agent_request(&runtime, "unknown-destination").await;
+    assert_eq!(finish.kind, "file_artifact_upload_finish");
+    complete_patch_agent_request(
+        &runtime,
+        "unknown-destination",
+        &finish.request_id,
+        0,
+        "{}",
+        "",
+    )
+    .await;
+    let unknown = first.await.unwrap();
+    assert!(!unknown.success, "{unknown:?}");
+    assert_eq!(
+        unknown.output["error_kind"],
+        "artifact_handoff_outcome_unknown"
+    );
+    assert_eq!(unknown.output["outcome_unknown"], true);
+
+    let retry = spawn_accept(
+        &runtime,
+        &grant,
+        "artifacts/unknown.bin",
+        false,
+        "accept-unknown",
+        &bob,
+    );
+    complete_source_metadata(
+        &runtime,
+        "unknown-source",
+        "paper/unknown.bin",
+        &bytes,
+        Some("application/octet-stream"),
+    )
+    .await;
+    complete_destination_metadata(
+        &runtime,
+        "unknown-destination",
+        "artifacts/unknown.bin",
+        &bytes,
+        "application/octet-stream",
+    )
+    .await;
+    let recovered = retry.await.unwrap();
+    assert!(recovered.success, "{recovered:?}");
+    assert_eq!(recovered.output["replayed"], true);
+    assert_eq!(
+        recovered.output["acceptance_id"],
+        unknown.output["acceptance_id"]
+    );
+    assert!(
+        probe_agent_request_for_instance(&runtime, "unknown-destination", "inst")
+            .await
+            .is_none(),
+        "matching destination reconciliation must not start another upload"
+    );
+}
+
+#[tokio::test]
+async fn accept_artifact_handoff_replays_completed_result_after_restart() {
+    let (_temp, db, first_runtime) = runtime_with_handoff_db("handoff-restart-first");
+    register_agent(
+        &first_runtime,
+        "restart-source",
+        Some("alice"),
+        transfer_caps(true, false),
+    )
+    .await;
+    register_agent(
+        &first_runtime,
+        "restart-destination",
+        Some("bob"),
+        transfer_caps(false, true),
+    )
+    .await;
+    let alice = transfer_auth("alice");
+    let bob = transfer_auth("bob");
+    let bytes = b"restart payload".to_vec();
+    let grant = create_handoff_grant(
+        &db,
+        &alice,
+        &bob,
+        "restart-source",
+        "restart-destination",
+        "paper/restart.bin",
+        &bytes,
+        "application/octet-stream",
+        true,
+    );
+    let destination_path = "artifacts/restart.bin";
+    let request = crate::db::ArtifactHandoffImportRequest {
+        grant_id: grant.grant_id.clone(),
+        destination_project: grant.destination_project.clone(),
+        destination_path: destination_path.to_string(),
+        overwrite: false,
+    };
+    let claim = db
+        .begin_artifact_handoff_import(
+            &handoff_principal(&bob),
+            &request,
+            "accept-restart",
+            chrono::Utc::now().timestamp_millis(),
+        )
+        .unwrap();
+    db.mark_artifact_handoff_acceptance_destination_reconcile_allowed(
+        &handoff_principal(&bob),
+        &grant.destination_project,
+        &grant.grant_id,
+        &claim.acceptance.acceptance_id,
+        chrono::Utc::now().timestamp_millis(),
+    )
+    .unwrap();
+    db.complete_artifact_handoff_acceptance(
+        &handoff_principal(&bob),
+        &grant.destination_project,
+        &grant.grant_id,
+        &claim.acceptance.acceptance_id,
+        crate::db::ArtifactHandoffAcceptanceOutcome {
+            destination_path: destination_path.to_string(),
+            destination_bytes: bytes.len() as u64,
+            destination_sha256: sha256_hex(&bytes),
+        },
+        chrono::Utc::now().timestamp_millis(),
+    )
+    .unwrap();
+    drop(first_runtime);
+
+    let restarted = runtime_with_agent_project("handoff-restart-second")
+        .with_communication_database(db.clone());
+    register_agent(
+        &restarted,
+        "restart-destination",
+        Some("bob"),
+        transfer_caps(false, true),
+    )
+    .await;
+    let replay = restarted
+        .accept_artifact_handoff(
+            grant.grant_id.clone(),
+            grant.destination_project.clone(),
+            destination_path.to_string(),
+            Some(false),
+            "accept-restart".to_string(),
+            Some(&bob),
+            SessionTransport::Api,
+        )
+        .await;
+    assert!(replay.success, "{replay:?}");
+    assert_eq!(replay.output["replayed"], true);
+    assert_eq!(
+        replay.output["acceptance_id"],
+        claim.acceptance.acceptance_id
+    );
+    assert!(
+        probe_agent_request_for_instance(&restarted, "restart-destination", "inst")
+            .await
+            .is_none(),
+        "completed replay must not touch either Runner"
     );
 }

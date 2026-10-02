@@ -79,11 +79,43 @@ fn mcp_tool_text_content(structured: &Value, concise: String, text_json_compat: 
     }
 }
 
+/// Keep command logs in the canonical output only. Match the complete known
+/// tail block, not arbitrary error prose, so tool faults and recovery guidance
+/// retain their original meaning. HTTP/API and retained runtime results are untouched.
+fn project_execution_failure_logs(result: &mut ToolResult) {
+    if result.success || result.output["tool_failure"] != false {
+        return;
+    }
+    if !matches!(
+        result.output["failure_kind"].as_str(),
+        Some("command_exit_nonzero" | "timeout")
+    ) {
+        return;
+    }
+    let (Some(stdout), Some(stderr), Some(error)) = (
+        result.output["stdout_tail"].as_str(),
+        result.output["stderr_tail"].as_str(),
+        result.error.as_mut(),
+    ) else {
+        return;
+    };
+    let repeated = format!("stdout_tail:\n{stdout}\nstderr_tail:\n{stderr}\n");
+    if let Some(start) = error.find(&repeated) {
+        error.replace_range(
+            start..start + repeated.len(),
+            "Logs: see output.stdout_tail and output.stderr_tail.\n",
+        );
+        // The canonical nonzero template points at the removed log block.
+        *error = error.replace("inspect stderr/stdout above", "inspect the output logs");
+    }
+}
+
 pub(super) fn mcp_runtime_tool_result_fallback_with_compat(
-    result: ToolResult,
+    mut result: ToolResult,
     text_json_compat: bool,
     presentation: McpToolResultPresentation,
 ) -> Value {
+    project_execution_failure_logs(&mut result);
     // `structuredContent` is the canonical machine-readable result. Repeating
     // that full JSON object in `content.text` doubles model context, so the
     // compatibility copy is explicit opt-in rather than the default.

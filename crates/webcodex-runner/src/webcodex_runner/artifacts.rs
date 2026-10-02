@@ -572,25 +572,28 @@ fn handle_read_project_artifact_metadata(
             start,
         );
     }
-    if max_bytes > DEFAULT_MAX_ARTIFACT_BYTES {
-        let initial_bytes = match std::fs::metadata(resolved)
-            .ok()
-            .and_then(|metadata| usize::try_from(metadata.len()).ok())
-        {
-            Some(bytes) => bytes,
-            None => {
-                return line_edit_stdout(
-                    metadata_error(Some(path), "artifact size does not fit this platform"),
-                    start,
-                )
-            }
-        };
-        if initial_bytes > max_bytes {
+    let initial_bytes = match std::fs::metadata(resolved)
+        .ok()
+        .and_then(|metadata| usize::try_from(metadata.len()).ok())
+    {
+        Some(bytes) => bytes,
+        None => {
             return line_edit_stdout(
-                metadata_error(Some(path), "artifact too large to inspect"),
+                metadata_error(Some(path), "artifact size does not fit this platform"),
                 start,
-            );
+            )
         }
+    };
+    if initial_bytes > max_bytes {
+        return line_edit_stdout(
+            metadata_error(Some(path), "artifact too large to inspect"),
+            start,
+        );
+    }
+    // Select streaming from the observed file size, not the caller's ceiling.
+    // Small files retain cheap image dimensions and ZIP counts; their buffered
+    // read stays capped even if the file grows after this observation.
+    if initial_bytes > DEFAULT_MAX_ARTIFACT_BYTES {
         let (bytes, sha256) = match verify_upload_file(resolved, max_bytes) {
             Ok(verification) => verification,
             Err(e) => return line_edit_stdout(metadata_error(Some(path), e), start),
@@ -640,7 +643,7 @@ fn handle_read_project_artifact_metadata(
         }
         return line_edit_stdout(out, start);
     }
-    let data = match read_limited(resolved, max_bytes) {
+    let data = match read_limited(resolved, max_bytes.min(DEFAULT_MAX_ARTIFACT_BYTES)) {
         Ok(data) => data,
         Err(e) => return line_edit_stdout(metadata_error(Some(path), e), start),
     };

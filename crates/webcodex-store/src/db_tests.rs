@@ -105,6 +105,7 @@ fn store_connection_domains_and_metric_names_are_closed_and_stable() {
             "agent_task",
             "agent_wait",
             "agent_wake",
+            "artifact_handoff",
             "audit",
             "communication",
             "core",

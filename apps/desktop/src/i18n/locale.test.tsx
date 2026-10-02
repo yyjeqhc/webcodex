@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { invoke, isTauri } from "@tauri-apps/api/core";
 import { useProduct } from "./product";
 import { useConnectionsTools } from "./connections-tools";
 import { useInstructionsText } from "./instructions";
@@ -12,6 +13,19 @@ import {
   LocaleProvider,
   useLocale,
 } from "./locale";
+
+vi.mock("@tauri-apps/api/core", () => ({
+  isTauri: vi.fn(() => false),
+  invoke: vi.fn(() => Promise.resolve()),
+}));
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  vi.mocked(isTauri).mockReturnValue(false);
+  vi.mocked(invoke).mockResolvedValue(undefined);
+});
+
+afterEach(() => vi.restoreAllMocks());
 
 function LocaleProbe() {
   const { locale, setLocale, t } = useLocale();
@@ -30,6 +44,42 @@ function LocaleProbe() {
 }
 
 describe("LocaleProvider", () => {
+  it.each(LANGUAGES)("syncs restored $value to the native tray and syncs subsequent changes", async ({ value }) => {
+    vi.mocked(isTauri).mockReturnValue(true);
+    window.localStorage.setItem(LOCALE_STORAGE_KEY, value);
+    render(<LocaleProvider><LocaleProbe /></LocaleProvider>);
+    await waitFor(() => expect(invoke).toHaveBeenLastCalledWith("set_desktop_locale", { locale: value }));
+    const next = value === "en-US" ? "zh-CN" : "en-US";
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: next } });
+    await waitFor(() => expect(invoke).toHaveBeenLastCalledWith("set_desktop_locale", { locale: next }));
+  });
+
+  it("does not invoke native commands in a browser preview", () => {
+    render(<LocaleProvider><LocaleProbe /></LocaleProvider>);
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "en-US" } });
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it("syncs the native tray even when WebView preference storage is unavailable", async () => {
+    vi.mocked(isTauri).mockReturnValue(true);
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("unavailable"); });
+    render(<LocaleProvider><LocaleProbe /></LocaleProvider>);
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "fr-FR" } });
+    await waitFor(() => expect(invoke).toHaveBeenLastCalledWith("set_desktop_locale", { locale: "fr-FR" }));
+    expect(document.documentElement.lang).toBe("fr-FR");
+  });
+
+  it("keeps language switching usable if native synchronization fails", async () => {
+    vi.mocked(isTauri).mockReturnValue(true);
+    vi.mocked(invoke).mockRejectedValue(new Error("unavailable"));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    render(<LocaleProvider><LocaleProbe /></LocaleProvider>);
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "ja-JP" } });
+    await waitFor(() => expect(warn).toHaveBeenCalled());
+    expect(document.documentElement.lang).toBe("ja-JP");
+    expect(window.localStorage.getItem(LOCALE_STORAGE_KEY)).toBe("ja-JP");
+  });
+
   it("uses the dedicated Traditional Chinese catalogs throughout Desktop", () => {
     function TextProbe() {
       const { t } = useLocale(); const p = useProduct(); const c = useConnectionsTools();

@@ -108,6 +108,7 @@ any authority mode:
 | Project boundary / allowed roots | Model requests cannot extend roots. Explicit local operator project selection can persist the exact canonical root; path/namespace/escape checks remain. |
 | Explicitly read-only sessions deny writes and shell/jobs | Session guard **before** mutation |
 | Unknown explicit `session_id` → `unknown_session_id` | Session resolution |
+| Owning principal of a retention-expired Closed Session → `session_retention_expired` with `RecoveryKind::NoAction`; any other principal receives `unknown_session_id` | Session resolution |
 | Path and sensitive-path policy | File tools + `policy_rejected` / hard-deny detection |
 | Concurrent-overwrite guards (stale SHA / guarded edits) | Transactional edit tools |
 | Credential redaction | Logging / evidence rules |

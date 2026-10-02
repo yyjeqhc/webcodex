@@ -15,6 +15,7 @@ use super::shell::{
     configured_explicit_shell_command, configured_prepared_shell_job_command,
     configured_shell_job_command, configured_validation_job_command, cwd_allowed,
     prepare_detached_process_launch, resolve_prepared_shell_profile,
+    run_process_with_profiles_and_execution_state_with_internal_env_and_start_hook,
     run_process_with_profiles_and_execution_state_with_start_hook,
     run_script_with_profiles_and_execution_state_with_start_hook, PreparedShellProfileCache,
 };
@@ -52,6 +53,8 @@ use crate::{
 };
 #[cfg(test)]
 use webcodex_core::runner_operation::{self, RunnerOperation};
+
+const GO_PROJECT_SINGLE_MODULE_ENV: [(&str, &str); 2] = [("GO111MODULE", "on"), ("GOWORK", "off")];
 
 const JOB_UPDATE_INTERVAL_MS: u64 = 250;
 /// Runner-owned liveness cadence for active Jobs. The cadence is independent

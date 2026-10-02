@@ -5,6 +5,8 @@ import frFR from "./messages/fr-FR.json";
 import zhCN from "./messages/zh-CN.json";
 import zhTW from "./messages/zh-TW.json";
 import enUS from "./messages/en-US.json";
+import { isTauri } from "@tauri-apps/api/core";
+import { desktopApi } from "../lib/desktop-api";
 import {
   createContext,
   useContext,
@@ -68,6 +70,11 @@ export function LocaleProvider({ children }: { children: ReactNode }) {
       window.localStorage.setItem(LOCALE_STORAGE_KEY, locale);
     } catch {
       // UI preference persistence is best-effort only.
+    }
+    if (isTauri()) {
+      void desktopApi.setDesktopLocale(locale).catch((error: unknown) => {
+        console.warn("Could not sync the Desktop tray language", error);
+      });
     }
   }, [locale]);
 

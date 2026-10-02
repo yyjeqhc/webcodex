@@ -57,6 +57,7 @@ fn capability_classification_keeps_environment_dependent_features_registration_r
         RunnerFeature::Git,
         RunnerFeature::StructuredCargoTestExecutionPolicy,
         RunnerFeature::StructuredCargoTestLib,
+        RunnerFeature::ProjectGoSingleModule,
         RunnerFeature::StructuredScriptJavascript,
         RunnerFeature::StructuredScriptTypescript,
         RunnerFeature::ApplyTextEditLineScope,

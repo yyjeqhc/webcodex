@@ -179,6 +179,69 @@ pub(super) fn output_schema_for_tool(name: &str) -> Option<Value> {
                 schema_type("string", "Canonical artifact presentation MIME type."),
             ),
         ])),
+        "accept_artifact_handoff" => Some(wrapped_output_schema(vec![
+            (
+                "acceptance_id",
+                schema_type("string", "Durable logical acceptance/import id."),
+            ),
+            (
+                "grant_id",
+                schema_type("string", "Exact accepted artifact handoff grant id."),
+            ),
+            (
+                "replayed",
+                schema_type(
+                    "boolean",
+                    "True when the original logical result was replayed.",
+                ),
+            ),
+            (
+                "destination_project",
+                schema_type("string", "Canonical destination Runtime Project id."),
+            ),
+            (
+                "destination_path",
+                schema_type("string", "Project-relative destination artifact path."),
+            ),
+            (
+                "bytes",
+                schema_type("integer", "Imported artifact size in bytes."),
+            ),
+            (
+                "sha256",
+                schema_type("string", "SHA-256 of the exact imported snapshot."),
+            ),
+            (
+                "mime_type",
+                schema_type("string", "Canonical artifact presentation MIME type."),
+            ),
+            (
+                "provenance",
+                json!({
+                    "type": "object",
+                    "description": "Bounded grant/source snapshot metadata. It is informational and grants no access to the source Project.",
+                    "additionalProperties": false,
+                    "properties": {
+                        "grant_id": {"type": "string"},
+                        "source_project": {"type": "string"},
+                        "source_path": {"type": "string"},
+                        "source_bytes": {"type": "integer"},
+                        "source_sha256": {"type": "string"},
+                        "source_mime_type": {"type": "string"},
+                        "source_name": {"type": "string"}
+                    },
+                    "required": [
+                        "grant_id",
+                        "source_project",
+                        "source_path",
+                        "source_bytes",
+                        "source_sha256",
+                        "source_mime_type",
+                        "source_name"
+                    ]
+                }),
+            ),
+        ])),
         "read_project_artifact_metadata" => Some(wrapped_output_schema(vec![
             (
                 "path",

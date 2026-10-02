@@ -197,6 +197,11 @@ fn cargo_check_plan(options: ValidationCommandOptions) -> Result<ReadOnlyValidat
     )
     .map_err(|reason| format!("packages {reason}"))?;
     let mut args = vec![ValidationPlanArg::Literal("check")];
+    if options.dependency_mode
+        == Some(webcodex_core::project_validation::ProjectDependencyMode::Locked)
+    {
+        args.push(ValidationPlanArg::Literal("--locked"));
+    }
     if options.all_targets.unwrap_or(true) {
         args.push(ValidationPlanArg::Literal("--all-targets"));
     }
@@ -228,6 +233,11 @@ fn cargo_test_plan(options: ValidationCommandOptions) -> Result<ReadOnlyValidati
     let mut args = vec![ValidationPlanArg::Literal("test")];
     if let Some(filter) = filter {
         args.push(ValidationPlanArg::Value(filter));
+    }
+    if options.dependency_mode
+        == Some(webcodex_core::project_validation::ProjectDependencyMode::Locked)
+    {
+        args.push(ValidationPlanArg::Literal("--locked"));
     }
     if options.lib.unwrap_or(false) {
         args.push(ValidationPlanArg::Literal("--lib"));

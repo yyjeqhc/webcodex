@@ -16,6 +16,7 @@ mod agent_attention;
 mod agent_task;
 mod agent_wait;
 mod agent_wake;
+mod artifact_handoff;
 mod audit;
 mod trace_query;
 pub use trace_query::{ToolTraceCallRecord, ToolTraceQueryFilter};
@@ -78,6 +79,15 @@ pub use self::agent_wake::{
     AgentWakeAttemptState, AgentWakeBootstrapSummary, AgentWakeClaim, AgentWakeConsumeResult,
     AgentWakeEnvelope, AgentWakeExplicitActivation, AgentWakePrepared, AgentWakeRecord,
     AgentWakeState, AGENT_WAKE_CONSUME_TOKEN_PREFIX, AGENT_WAKE_ID_PREFIX,
+};
+pub use self::artifact_handoff::{
+    ArtifactHandoffAcceptance, ArtifactHandoffAcceptanceClaim, ArtifactHandoffAcceptanceOutcome,
+    ArtifactHandoffAcceptanceState, ArtifactHandoffGrant, ArtifactHandoffGrantState,
+    ArtifactHandoffImportRequest, ArtifactHandoffOperation, ArtifactHandoffPrincipal,
+    ArtifactHandoffSourceSnapshot, ArtifactHandoffStoreError, NewArtifactHandoffGrant,
+    ARTIFACT_HANDOFF_ACCEPTANCE_ID_PREFIX, ARTIFACT_HANDOFF_GRANT_ID_PREFIX,
+    DEFAULT_ARTIFACT_HANDOFF_TTL_MS, MAX_ARTIFACT_HANDOFF_IDEMPOTENCY_KEY_CHARS,
+    MAX_ARTIFACT_HANDOFF_TTL_MS,
 };
 pub use self::communication::{
     AgentEndpointLifecycle, AgentEndpointMutation, AgentEndpointRecord, AgentIdentityMutation,
@@ -189,6 +199,8 @@ mod agent_wait_tests;
 mod agent_wake_recovery_tests;
 #[cfg(test)]
 mod agent_wake_tests;
+#[cfg(test)]
+mod artifact_handoff_tests;
 #[cfg(test)]
 mod communication_tests;
 #[cfg(test)]

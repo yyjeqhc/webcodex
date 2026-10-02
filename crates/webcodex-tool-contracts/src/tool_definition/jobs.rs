@@ -50,7 +50,7 @@ pub(super) const EXECUTION_DEFINITIONS: &[ToolDefinition] = &[
             false,
             super::ToolSessionEvidencePolicy::NONE,
         ),
-        "Preferred portable project build gateway. Runner resolves the nearest unambiguous Rust/Go recipe and executes canonical cargo build or go build argv. Optional scope.packages narrows Cargo with repeated -p selectors or Go with bounded project-relative patterns. Long builds remain the same durable Job; pending never authorizes retry.",
+        "Preferred portable project build gateway. Runner resolves the nearest unambiguous Rust/Go recipe and executes canonical cargo build or go build argv. Go project builds run in Runner-owned single-module mode (GO111MODULE=on, GOWORK=off), so ambient module/workspace mode cannot change the planned graph. Optional scope.packages narrows Cargo with repeated -p selectors or Go with bounded project-relative patterns. dependency_policy.mode=locked forbids adapters from repairing dependency selection state (Cargo --locked; Go -mod=readonly); it does not imply offline execution. Long builds remain the same durable Job; pending never authorizes retry.",
     )
     .with_execution(super::ToolExecutionContract::new(
         super::ToolExecutionForm::ProjectBuild,

@@ -1596,7 +1596,7 @@ fn mcp_tools_list_inputs_equal_canonical_except_descriptions_and_host_file_overl
             let name = tool["name"].as_str().unwrap();
             let canonical = &specs[name];
             let mut expected = canonical.input_schema.clone();
-            // MCP owns Host-file requiredness and runtime_status omission defaults;
+            // MCP owns Host-file requiredness and model-specific omission defaults;
             // neither overlay mutates the canonical schema.
             if name == "import_conversation_files_to_project" {
                 expected["properties"]["openaiFileIdRefs"]["items"]["required"] =
@@ -1610,6 +1610,13 @@ fn mcp_tools_list_inputs_equal_canonical_except_descriptions_and_host_file_overl
                 expected_description.push_str(
                     " MCP defaults to sparse status; compact=false opts into full diagnostics.",
                 );
+            }
+            if name == "observe_jobs" {
+                assert_eq!(expected["properties"]["summary_only"]["default"], false);
+                expected["properties"]["summary_only"]["default"] = json!(true);
+                expected["properties"]["summary_only"]["description"] = json!("MCP defaults to compact proven-success validation logs. Set false to expand retained logs from the original cursor. Failures, unknown results and ordinary commands keep full evidence.");
+                expected_description
+                    .push_str(" MCP defaults summary_only=true; set false for full retained logs.");
             }
             let mut actual = tool["inputSchema"].clone();
             if compact {
@@ -3902,9 +3909,99 @@ async fn compact_bootstrap_guidance_matches_advertised_context_capability() {
             modern
         );
         let description = tool["description"].as_str().unwrap();
+        assert!(description.contains("file, data, diagnostic or coding work"));
+        assert!(description.contains("Git optional"));
+        assert!(description.contains("session_id"));
+        assert!(description.contains("stale/incomplete"));
         assert_eq!(description.contains("_wc.context"), modern);
         if !modern {
             assert!(description.contains("read_files"));
+        }
+    }
+}
+
+#[tokio::test]
+async fn mcp_compact_general_workflow_preserves_recovery_and_business_schemas() {
+    use crate::mcp::discovery::TOOL_DESCRIPTION_MAX_CHARS;
+    let full_runtime = test_runtime_with_mcp_settings(false, false);
+    let compact_runtime = test_runtime_with_mcp_settings(true, false);
+    for modern in [false, true] {
+        let params = if modern {
+            mcp_2026_params(json!({}))
+        } else {
+            json!({})
+        };
+        let mut lists = Vec::new();
+        for runtime in [&full_runtime, &compact_runtime] {
+            let McpOutcome::Ok(body) = handle_mcp_request(
+                runtime,
+                rpc("tools/list", Some(json!(8002)), params.clone()),
+                None,
+            )
+            .await
+            else {
+                panic!("tools/list modern={modern}");
+            };
+            lists.push(body["result"]["tools"].as_array().unwrap().clone());
+        }
+        for name in [
+            "work_on_project",
+            "edit_project_files",
+            "run_process",
+            "run_shell",
+            "run_script",
+        ] {
+            let full = lists[0].iter().find(|tool| tool["name"] == name).unwrap();
+            let compact = lists[1].iter().find(|tool| tool["name"] == name).unwrap();
+            let description = compact["description"].as_str().unwrap();
+            assert!(description.chars().count() <= TOOL_DESCRIPTION_MAX_CHARS);
+            assert_eq!(compact["annotations"], full["annotations"], "{name}");
+            let mut schemas = [full["inputSchema"].clone(), compact["inputSchema"].clone()];
+            for schema in &mut schemas {
+                // Existing protocol-wrapper compaction is independent of business
+                // fields, revision fences, language choices and resource limits.
+                schema["properties"].as_object_mut().unwrap().remove("_wc");
+                strip_description_text(schema);
+            }
+            assert_eq!(schemas[0], schemas[1], "{name} modern={modern}");
+            if name.starts_with("run_") {
+                for phrase in [
+                    "literal argv",
+                    "shell grammar",
+                    "same Job",
+                    "continuation",
+                    "never redispatch",
+                    "independent work",
+                    "when blocked",
+                    "wait_for_job_readiness",
+                    "observe_jobs",
+                    "failures",
+                    "outcome_unknown requires observation.",
+                ] {
+                    assert!(description.contains(phrase), "{name}: missing {phrase}");
+                }
+                assert!(description.ends_with("outcome_unknown requires observation."));
+            }
+            if name == "edit_project_files" {
+                for phrase in [
+                    "one change per file",
+                    "expected_read_revision",
+                    "fail closed on ambiguity",
+                    "1-based inclusive",
+                    "from that snapshot",
+                    "preflight transactionally",
+                    "Runner rechecks source",
+                    "read_files recovery",
+                    "outcome_unknown: observe before another write",
+                    "task-appropriate validation.",
+                ] {
+                    assert!(
+                        description.contains(phrase),
+                        "missing {phrase}: {description}"
+                    );
+                }
+                assert!(description.ends_with("task-appropriate validation."));
+            }
         }
     }
 }

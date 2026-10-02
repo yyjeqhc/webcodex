@@ -1,7 +1,13 @@
 //! Declarative project build planning and admission provenance. No model argv.
 
+use crate::project_operation::ProjectOperationScopeError;
 use crate::runner_protocol::{normalize_cargo_packages, normalize_go_packages, ShellProcessArgv};
 use serde::{Deserialize, Serialize};
+
+/// Portable project-operation scope retained under the project_build API name.
+pub use crate::project_operation::{
+    ProjectDependencyMode, ProjectDependencyPolicy, ProjectOperationScope as ProjectBuildScope,
+};
 use sha2::{Digest, Sha256};
 
 pub const PROJECT_BUILD_PROVENANCE_MAX_BYTES: usize = 8 * 1024;
@@ -17,30 +23,6 @@ pub enum ProjectBuildAdapter {
     Go,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ProjectBuildScope {
-    /// Portable bounded package scope. Rust maps values to repeated Cargo -p
-    /// selectors; Go maps values to project-relative package patterns.
-    #[schemars(length(min = 1, max = 8))]
-    #[schemars(inner(length(min = 1, max = 256)))]
-    pub packages: Vec<String>,
-}
-
-impl ProjectBuildScope {
-    fn validate(&self) -> Result<(), String> {
-        if self.packages.is_empty() || self.packages.len() > 8 {
-            return Err("project build packages must contain between 1 and 8 items".into());
-        }
-        if self.packages.iter().any(|package| {
-            package.is_empty() || package.len() > 256 || package.chars().any(char::is_control)
-        }) {
-            return Err("invalid project build package scope".into());
-        }
-        Ok(())
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectBuildRequest {
@@ -50,6 +32,8 @@ pub struct ProjectBuildRequest {
     pub adapter: ProjectBuildAdapter,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scope: Option<ProjectBuildScope>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dependency_policy: Option<ProjectDependencyPolicy>,
 }
 
 impl ProjectBuildRequest {
@@ -62,7 +46,14 @@ impl ProjectBuildRequest {
         }
         validate_relative(self.cwd.as_deref().unwrap_or("."))?;
         if let Some(scope) = &self.scope {
-            scope.validate()?;
+            scope.validate().map_err(|error| match error {
+                ProjectOperationScopeError::PackageCount => {
+                    "project build packages must contain between 1 and 8 items".to_string()
+                }
+                ProjectOperationScopeError::InvalidPackage => {
+                    "invalid project build package scope".to_string()
+                }
+            })?;
         }
         Ok(())
     }
@@ -150,6 +141,12 @@ pub fn canonical_project_build_process(
         "rust" => {
             let packages = normalize_cargo_packages(None, packages)?;
             let mut args = vec!["build".to_string()];
+            if request
+                .dependency_policy
+                .is_some_and(|policy| policy.mode == ProjectDependencyMode::Locked)
+            {
+                args.push("--locked".to_string());
+            }
             if let Some(packages) = packages {
                 for package in packages {
                     args.push("-p".to_string());
@@ -164,6 +161,12 @@ pub fn canonical_project_build_process(
         "go" => {
             let packages = normalize_go_packages(packages)?;
             let mut args = vec!["build".to_string()];
+            if request
+                .dependency_policy
+                .is_some_and(|policy| policy.mode == ProjectDependencyMode::Locked)
+            {
+                args.push("-mod=readonly".to_string());
+            }
             args.extend(packages);
             Ok(ShellProcessArgv {
                 executable: "go".to_string(),

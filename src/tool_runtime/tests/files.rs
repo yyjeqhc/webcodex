@@ -375,6 +375,7 @@ async fn write_project_file_with_session_id_records_changed_path_without_content
             runtime
                 .dispatch_with_auth(
                     ToolCall::FinishCodingTask {
+                        outputs: Vec::new(),
                         project,
                         session_id,
                         summary_only: false,
@@ -1126,6 +1127,11 @@ async fn read_project_artifact_metadata_allow_missing_does_not_count_as_failed()
     });
 
     let req = wait_for_patch_agent_request(&runtime, "artifact-missing-session").await;
+    let payload: serde_json::Value = serde_json::from_str(req.content.as_deref().unwrap()).unwrap();
+    assert_eq!(
+        payload["max_bytes"],
+        super::super::files::MAX_PROJECT_ARTIFACT_EXPORT_BYTES
+    );
     complete_patch_agent_request(
         &runtime,
         "artifact-missing-session",

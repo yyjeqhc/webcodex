@@ -1707,6 +1707,19 @@ impl ToolCallAuditProjection for ToolCall {
                 "destination_path": destination_path,
                 "overwrite": overwrite,
             }),
+            Self::AcceptArtifactHandoff {
+                grant_id,
+                destination_project,
+                destination_path,
+                overwrite,
+                idempotency_key,
+            } => serde_json::json!({
+                "grant_id": grant_id,
+                "destination_project": destination_project,
+                "destination_path": destination_path,
+                "overwrite": overwrite,
+                "idempotency_key_present": !idempotency_key.is_empty(),
+            }),
             Self::ProjectArtifact {
                 project,
                 path,
@@ -2090,6 +2103,7 @@ impl ToolCallAuditProjection for ToolCall {
             Self::FinishCodingTask {
                 project,
                 session_id,
+                outputs,
                 summary_only,
                 include_diff,
                 include_workspace,
@@ -2099,6 +2113,7 @@ impl ToolCallAuditProjection for ToolCall {
             } => serde_json::json!({
                 "project": project,
                 "session_id": session_id,
+                "outputs": outputs,
                 "summary_only": summary_only,
                 "include_diff": include_diff,
                 "include_workspace": include_workspace,

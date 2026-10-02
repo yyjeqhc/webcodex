@@ -858,6 +858,9 @@ fn coding_session_start_error(
         sessions::CodingSessionError::UnknownResumeSession { session_id } => {
             unknown_session_result(&session_id)
         }
+        sessions::CodingSessionError::ResumeRetentionExpired { session_id } => {
+            session_retention_expired_result(&session_id)
+        }
         sessions::CodingSessionError::ResumeSessionNotActive {
             session_id,
             lifecycle,

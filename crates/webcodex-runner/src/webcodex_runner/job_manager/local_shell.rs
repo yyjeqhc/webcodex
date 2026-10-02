@@ -49,6 +49,12 @@ impl JobManager {
             ),
             _ => unreachable!("shell Job starter received non shell/validation operation"),
         };
+        let project_go_single_module = validation
+            && context
+                .validation
+                .as_ref()
+                .and_then(|metadata| metadata.project_validation.as_ref())
+                .is_some_and(|provenance| provenance.backend == "go");
         if validation {
             // A project validation can wait in the local queue after its
             // admission fence. Recheck the retained project plan after that
@@ -177,6 +183,9 @@ impl JobManager {
                         .iter()
                         .map(|(key, value)| (key.as_str(), value.as_str())),
                 );
+                if project_go_single_module {
+                    command.envs(GO_PROJECT_SINGLE_MODULE_ENV);
+                }
             }
             // Raw Shell Jobs and every validation step have no stdin payload.
             // Never inherit the Runner's parent-liveness pipe: it stays open

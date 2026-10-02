@@ -420,6 +420,10 @@ impl Database {
         // communication domain. Workflow Session and project Memory ledgers
         // remain separate authoritative stores.
         Self::ensure_communication_schema(&mut conn)?;
+
+        // Artifact handoff grants bind one exact frozen source snapshot to one
+        // destination principal/project without creating another artifact store.
+        Self::ensure_artifact_handoff_schema(&mut conn)?;
         // AgentTask and AgentTaskAttempt are an independent durable work-ownership
         // domain. They reference durable Agents/Conversations for correlation only
         // and deliberately do not bind any execution backend in A3.

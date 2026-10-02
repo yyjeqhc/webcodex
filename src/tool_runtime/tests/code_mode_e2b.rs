@@ -1163,6 +1163,7 @@ async fn e2b_nested_edit_drives_real_final_changes_baseline_to_full_final_worksp
             runtime
                 .dispatch_with_auth(
                     ToolCall::FinishCodingTask {
+                        outputs: Vec::new(),
                         project,
                         session_id,
                         summary_only: true,

@@ -102,7 +102,11 @@ impl ToolRuntime {
             Err(error) => return error.into_tool_result(),
         };
         let Some(summary) = self.sessions.summary(&session_id, Some(0)) else {
-            return super::session_context::unknown_session_result(&session_id);
+            return super::session_context::absent_workflow_session_result(
+                &self.sessions,
+                &session_id,
+                auth,
+            );
         };
         if project != resolved.resolved_id || summary.project.as_deref() != Some(project.as_str()) {
             return ToolResult::err_with_output(

@@ -1,3 +1,4 @@
+use crate::desktop_locale::{DesktopLocale, DesktopLocaleState};
 use crate::desktop_shell::{self, NavigationTarget};
 use crate::models::{
     DesktopOperationPhase, DesktopStateSnapshot, Experience, RunnerReadiness, ServerReadiness,
@@ -52,6 +53,7 @@ enum ConnectionAction {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct TrayProjection {
+    locale: DesktopLocale,
     runtime_status: RuntimeStatus,
     connection_status: ConnectionStatus,
     runtime_action: Option<RuntimeAction>,
@@ -70,7 +72,11 @@ pub struct TrayPresentationCache {
 }
 
 impl TrayProjection {
-    fn from_snapshot(snapshot: &DesktopStateSnapshot, launch_at_login: Option<bool>) -> Self {
+    fn from_snapshot(
+        snapshot: &DesktopStateSnapshot,
+        launch_at_login: Option<bool>,
+        locale: DesktopLocale,
+    ) -> Self {
         let local_full = snapshot.topology.as_ref().is_some_and(|topology| {
             topology.experience == Experience::Full
                 && matches!(&topology.server, ServerTopology::Local)
@@ -127,6 +133,7 @@ impl TrayProjection {
                     operation.cancellable && operation.phase == DesktopOperationPhase::Running
                 });
         Self {
+            locale,
             runtime_status,
             connection_status,
             runtime_action,
@@ -148,7 +155,11 @@ pub fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .clone_from(&launch_at_login);
-    let projection = TrayProjection::from_snapshot(&snapshot, launch_at_login);
+    let projection = TrayProjection::from_snapshot(
+        &snapshot,
+        launch_at_login,
+        app.state::<DesktopLocaleState>().get(),
+    );
     let menu = build_menu(app, &projection)?;
     let mut builder = TrayIconBuilder::with_id(TRAY_ID)
         .menu(&menu)
@@ -195,7 +206,11 @@ pub fn refresh_from_snapshot(app: &AppHandle, snapshot: &DesktopStateSnapshot) {
         .launch_at_login
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let projection = TrayProjection::from_snapshot(snapshot, launch_at_login);
+    let projection = TrayProjection::from_snapshot(
+        snapshot,
+        launch_at_login,
+        app.state::<DesktopLocaleState>().get(),
+    );
     {
         let cached = cache
             .projection
@@ -236,13 +251,14 @@ fn observe_launch_at_login(app: &AppHandle) {
 }
 
 fn build_menu(app: &AppHandle, projection: &TrayProjection) -> tauri::Result<Menu<tauri::Wry>> {
+    let locale = projection.locale;
     let menu = Menu::new(app)?;
     let runtime = MenuItem::new(
         app,
         match projection.runtime_status {
-            RuntimeStatus::Ready => "Runtime: Ready",
-            RuntimeStatus::Stopped => "Runtime: Stopped",
-            RuntimeStatus::NeedsAttention => "Runtime: Needs attention",
+            RuntimeStatus::Ready => locale.text("tray.runtimeReady"),
+            RuntimeStatus::Stopped => locale.text("tray.runtimeStopped"),
+            RuntimeStatus::NeedsAttention => locale.text("tray.runtimeNeedsAttention"),
         },
         false,
         None::<&str>,
@@ -250,19 +266,31 @@ fn build_menu(app: &AppHandle, projection: &TrayProjection) -> tauri::Result<Men
     let connection = MenuItem::new(
         app,
         match projection.connection_status {
-            ConnectionStatus::Ready => "Connection: Verified",
-            ConnectionStatus::ObservedUse => "ChatGPT: Project use observed",
-            ConnectionStatus::WaitingForChatGpt => "Tunnel: Ready; waiting for ChatGPT",
-            ConnectionStatus::NotConnected => "ChatGPT: Project use not observed",
-            ConnectionStatus::NeedsAttention => "Connection: Needs attention",
+            ConnectionStatus::Ready => locale.text("tray.connectionVerified"),
+            ConnectionStatus::ObservedUse => locale.text("tray.projectUseObserved"),
+            ConnectionStatus::WaitingForChatGpt => locale.text("tray.waitingForChatGpt"),
+            ConnectionStatus::NotConnected => locale.text("tray.projectUseNotObserved"),
+            ConnectionStatus::NeedsAttention => locale.text("tray.connectionNeedsAttention"),
         },
         false,
         None::<&str>,
     )?;
     let status_separator = PredefinedMenuItem::separator(app)?;
-    let open = MenuItem::with_id(app, OPEN_ID, "Open WebCodex", true, None::<&str>)?;
-    let activity = MenuItem::with_id(app, ACTIVITY_ID, "Activity…", true, None::<&str>)?;
-    let settings = MenuItem::with_id(app, SETTINGS_ID, "Settings…", true, None::<&str>)?;
+    let open = MenuItem::with_id(app, OPEN_ID, locale.text("tray.open"), true, None::<&str>)?;
+    let activity = MenuItem::with_id(
+        app,
+        ACTIVITY_ID,
+        locale.text("tray.activity"),
+        true,
+        None::<&str>,
+    )?;
+    let settings = MenuItem::with_id(
+        app,
+        SETTINGS_ID,
+        locale.text("tray.settings"),
+        true,
+        None::<&str>,
+    )?;
     menu.append_items(&[
         &runtime,
         &connection,
@@ -275,8 +303,8 @@ fn build_menu(app: &AppHandle, projection: &TrayProjection) -> tauri::Result<Men
     let mut has_context_action = false;
     if let Some(action) = projection.runtime_action {
         let (id, text) = match action {
-            RuntimeAction::Resume => (RESUME_RUNTIME_ID, "Resume local runtime"),
-            RuntimeAction::Stop => (STOP_RUNTIME_ID, "Stop local runtime"),
+            RuntimeAction::Resume => (RESUME_RUNTIME_ID, locale.text("tray.resumeRuntime")),
+            RuntimeAction::Stop => (STOP_RUNTIME_ID, locale.text("tray.stopRuntime")),
         };
         let item = MenuItem::with_id(app, id, text, !projection.operation_busy, None::<&str>)?;
         if !has_context_action {
@@ -287,7 +315,7 @@ fn build_menu(app: &AppHandle, projection: &TrayProjection) -> tauri::Result<Men
     }
     if let Some(action) = projection.connection_action {
         let (id, text) = match action {
-            ConnectionAction::Manage => (CONNECT_ID, "Connections…"),
+            ConnectionAction::Manage => (CONNECT_ID, locale.text("tray.connections")),
         };
         let item = MenuItem::with_id(app, id, text, !projection.operation_busy, None::<&str>)?;
         if !has_context_action {
@@ -300,7 +328,7 @@ fn build_menu(app: &AppHandle, projection: &TrayProjection) -> tauri::Result<Men
         let item = MenuItem::with_id(
             app,
             STOP_QUICK_SHARE_ID,
-            "Stop Quick Share",
+            locale.text("tray.stopQuickShare"),
             !projection.operation_busy,
             None::<&str>,
         )?;
@@ -314,7 +342,7 @@ fn build_menu(app: &AppHandle, projection: &TrayProjection) -> tauri::Result<Men
         let item = MenuItem::with_id(
             app,
             format!("{CANCEL_OPERATION_PREFIX}{operation_id}"),
-            "Cancel current operation",
+            locale.text("tray.cancelOperation"),
             projection.cancel_operation_enabled,
             None::<&str>,
         )?;
@@ -328,13 +356,13 @@ fn build_menu(app: &AppHandle, projection: &TrayProjection) -> tauri::Result<Men
     let launch_at_login = CheckMenuItem::with_id(
         app,
         LAUNCH_AT_LOGIN_ID,
-        "Launch at Login",
+        locale.text("tray.launchAtLogin"),
         projection.launch_at_login.is_some(),
         projection.launch_at_login.unwrap_or(false),
         None::<&str>,
     )?;
     let quit_separator = PredefinedMenuItem::separator(app)?;
-    let quit = MenuItem::with_id(app, QUIT_ID, "Quit WebCodex", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, QUIT_ID, locale.text("tray.quit"), true, None::<&str>)?;
     menu.append_items(&[
         &preferences_separator,
         &launch_at_login,
@@ -444,11 +472,24 @@ mod tests {
     }
 
     #[test]
+    fn changing_language_invalidates_the_tray_cache_without_changing_runtime_actions() {
+        let snapshot = local_snapshot();
+        let chinese = TrayProjection::from_snapshot(&snapshot, Some(false), DesktopLocale::ZhCn);
+        let english = TrayProjection::from_snapshot(&snapshot, Some(false), DesktopLocale::EnUs);
+        assert_ne!(chinese, english);
+        assert_eq!(chinese.runtime_action, english.runtime_action);
+        assert_eq!(chinese.connection_status, english.connection_status);
+        assert_eq!(chinese.locale.text("tray.open"), "打开 WebCodex");
+        assert_eq!(english.locale.text("tray.open"), "Open WebCodex");
+    }
+
+    #[test]
     fn stopped_runtime_projects_resume_action() {
         let mut snapshot = local_snapshot();
         snapshot.readiness.server = ServerReadiness::Stopped;
         snapshot.readiness.runner = RunnerReadiness::Stopped;
-        let projection = TrayProjection::from_snapshot(&snapshot, Some(false));
+        let projection =
+            TrayProjection::from_snapshot(&snapshot, Some(false), DesktopLocale::default());
         assert_eq!(projection.runtime_status, RuntimeStatus::Stopped);
         assert_eq!(projection.runtime_action, Some(RuntimeAction::Resume));
     }
@@ -459,7 +500,8 @@ mod tests {
         snapshot.readiness.server = ServerReadiness::Ready;
         snapshot.readiness.runner = RunnerReadiness::Ready;
         snapshot.readiness.runtime_ready = true;
-        let projection = TrayProjection::from_snapshot(&snapshot, Some(false));
+        let projection =
+            TrayProjection::from_snapshot(&snapshot, Some(false), DesktopLocale::default());
         assert_eq!(projection.runtime_status, RuntimeStatus::Ready);
         assert_eq!(projection.runtime_action, Some(RuntimeAction::Stop));
         assert_eq!(projection.connection_status, ConnectionStatus::NotConnected);
@@ -476,7 +518,8 @@ mod tests {
             observed: true,
             last_meaningful_activity_at_ms: Some(1234),
         });
-        let projection = TrayProjection::from_snapshot(&snapshot, Some(false));
+        let projection =
+            TrayProjection::from_snapshot(&snapshot, Some(false), DesktopLocale::default());
         assert_eq!(projection.connection_status, ConnectionStatus::ObservedUse);
         assert_eq!(
             projection.connection_action,
@@ -496,7 +539,8 @@ mod tests {
             observed: true,
             last_meaningful_activity_at_ms: Some(1234),
         });
-        let projection = TrayProjection::from_snapshot(&snapshot, Some(false));
+        let projection =
+            TrayProjection::from_snapshot(&snapshot, Some(false), DesktopLocale::default());
         assert_eq!(projection.connection_status, ConnectionStatus::ObservedUse);
         assert_eq!(projection.connection_action, Some(ConnectionAction::Manage));
     }
@@ -508,7 +552,8 @@ mod tests {
         snapshot.readiness.runner = RunnerReadiness::Ready;
         snapshot.readiness.runtime_ready = true;
         snapshot.openai_tunnel_configured = false;
-        let projection = TrayProjection::from_snapshot(&snapshot, Some(false));
+        let projection =
+            TrayProjection::from_snapshot(&snapshot, Some(false), DesktopLocale::default());
         assert_eq!(projection.connection_status, ConnectionStatus::NotConnected);
         assert_eq!(projection.connection_action, Some(ConnectionAction::Manage));
     }
@@ -518,7 +563,8 @@ mod tests {
         let mut snapshot = local_snapshot();
         snapshot.readiness.server = ServerReadiness::Ready;
         snapshot.readiness.runner = RunnerReadiness::Connecting;
-        let projection = TrayProjection::from_snapshot(&snapshot, Some(false));
+        let projection =
+            TrayProjection::from_snapshot(&snapshot, Some(false), DesktopLocale::default());
         assert_eq!(projection.runtime_status, RuntimeStatus::NeedsAttention);
     }
 
@@ -527,7 +573,8 @@ mod tests {
         let mut snapshot = local_snapshot();
         snapshot.connections.running = 2;
         snapshot.readiness.ready_for_chatgpt = false;
-        let projection = TrayProjection::from_snapshot(&snapshot, Some(false));
+        let projection =
+            TrayProjection::from_snapshot(&snapshot, Some(false), DesktopLocale::default());
         assert_eq!(
             projection.connection_status,
             ConnectionStatus::WaitingForChatGpt
@@ -553,7 +600,8 @@ mod tests {
             started_at_ms: 1,
             cancellable: true,
         });
-        let projection = TrayProjection::from_snapshot(&snapshot, Some(false));
+        let projection =
+            TrayProjection::from_snapshot(&snapshot, Some(false), DesktopLocale::default());
         assert!(projection.stop_quick_share);
         assert_eq!(
             projection.cancel_operation_id.as_deref(),
@@ -573,13 +621,14 @@ mod tests {
             started_at_ms: 1,
             cancellable: true,
         });
-        let first = TrayProjection::from_snapshot(&snapshot, Some(false));
+        let first = TrayProjection::from_snapshot(&snapshot, Some(false), DesktopLocale::default());
         let menu_id = format!(
             "{CANCEL_OPERATION_PREFIX}{}",
             first.cancel_operation_id.as_ref().unwrap()
         );
         snapshot.current_operation.as_mut().unwrap().id = "operation-b".into();
-        let second = TrayProjection::from_snapshot(&snapshot, Some(false));
+        let second =
+            TrayProjection::from_snapshot(&snapshot, Some(false), DesktopLocale::default());
         assert_ne!(
             first, second,
             "a new operation must invalidate the menu cache"
@@ -596,15 +645,18 @@ mod tests {
     fn autostart_projection_tracks_authoritative_os_observation() {
         let snapshot = local_snapshot();
         assert_eq!(
-            TrayProjection::from_snapshot(&snapshot, Some(false)).launch_at_login,
+            TrayProjection::from_snapshot(&snapshot, Some(false), DesktopLocale::default())
+                .launch_at_login,
             Some(false)
         );
         assert_eq!(
-            TrayProjection::from_snapshot(&snapshot, Some(true)).launch_at_login,
+            TrayProjection::from_snapshot(&snapshot, Some(true), DesktopLocale::default())
+                .launch_at_login,
             Some(true)
         );
         assert_eq!(
-            TrayProjection::from_snapshot(&snapshot, None).launch_at_login,
+            TrayProjection::from_snapshot(&snapshot, None, DesktopLocale::default())
+                .launch_at_login,
             None
         );
     }

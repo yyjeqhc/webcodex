@@ -344,6 +344,9 @@ pub enum ToolAuditContextPolicy {
     Fields(&'static [ToolAuditResultField]),
     /// Preserve the historical bounded porcelain-derived working-tree summary.
     WorkingTreeStatus,
+    /// Closed observed task-output metadata; preserves full bounded paths and
+    /// hashes without retaining arbitrary result bodies or log text.
+    TaskOutputs,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -141,9 +141,7 @@ export function useWindowWorkspace(
   const [truncated, setTruncated] = useState(false);
   const [scope, setScope] = useState<"global" | "principal">("principal");
   const [selectedKey, setSelectedKey] = useState(options.initialWindowKey || "");
-  const explicitSelection = useRef(Boolean(options.initialWindowKey));
   const select = useCallback((key: string) => {
-    explicitSelection.current = Boolean(key);
     setSelectedKey(key);
   }, []);
   const [detail, setDetail] = useState<WindowDetail | null>(null);
@@ -202,10 +200,9 @@ export function useWindowWorkspace(
       setTruncated(Boolean(response.data.truncated));
       setScope(response.data.visibility?.scope === "global" ? "global" : "principal");
       setAvailability("available");
-      setSelectedKey((current) =>
-        current && (explicitSelection.current || rows.some((row) => row.client_window_key === current))
-          ? current
-          : String(rows[0]?.client_window_key || ""));
+      // Inventory is bounded and may omit a Window as its Runner/Project changes.
+      // Once selected, keep that exact communication target until the user selects another.
+      setSelectedKey((current) => current || String(rows[0]?.client_window_key || ""));
     });
     return () => {
       controller.abort();
@@ -240,7 +237,6 @@ export function useWindowWorkspace(
         setDetail(null);
         setDetailAvailability("denied");
         setWindows((current) => current.filter((row) => row.client_window_key !== key));
-        if (!explicitSelection.current) setSelectedKey("");
         return;
       }
       if (!response.ok || !response.data || response.data.client_window_key !== key) {
@@ -298,7 +294,6 @@ export function useWindowWorkspace(
         setDetail(null);
         setDetailAvailability("denied");
         setWindows((current) => current.filter((row) => row.client_window_key !== selectedKey));
-        if (!explicitSelection.current) setSelectedKey("");
         return;
       }
       if (!response.ok || !response.data || response.data.client_window_key !== selectedKey) {

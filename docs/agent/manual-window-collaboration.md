@@ -40,6 +40,12 @@ internally they mean retained, projected into model-visible context, and later A
 evidence observed. They are not transport/read receipts or proof that work was
 accepted or executed.
 
+The WebUI keeps its selected Window when a bounded inventory omits it or an exact
+Window detail becomes unavailable; only user selection changes the communication
+target. Authority failures still clear unavailable data. A successful send receipt
+releases the composer immediately and replaces any pre-send transcript read, so a
+slow refresh cannot delay draft completion or postpone the new read until polling.
+
 The WebUI follows new messages while the reader is near the end of the thread.
 Reading earlier messages keeps the scroll position and offers **View new messages**.
 Ctrl/Command + Enter does not submit while an input method is composing. The card

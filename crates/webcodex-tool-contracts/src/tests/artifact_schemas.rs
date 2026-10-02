@@ -119,6 +119,97 @@ fn transfer_project_artifact_has_two_project_contract_and_no_payload_field() {
 }
 
 #[test]
+fn accept_artifact_handoff_requires_destination_write_without_source_authority() {
+    let definition = lookup_tool_definition("accept_artifact_handoff")
+        .expect("accept_artifact_handoff definition");
+    assert_eq!(definition.metadata.effect, ToolEffect::Mutate);
+    assert_eq!(definition.metadata.risk, ToolRisk::ProjectWrite);
+    assert_eq!(definition.metadata.approval, ToolApprovalPolicy::Standard);
+    assert_eq!(
+        definition.metadata.authority,
+        ToolAuthorityPolicy::RequireAll(&[PROJECT_WRITE])
+    );
+    assert!(definition.requires_permission());
+    assert!(definition.metadata.requires_project);
+
+    let specs = registered_tool_specs();
+    let spec = spec_named(&specs, "accept_artifact_handoff");
+    let props = spec.input_schema["properties"].as_object().unwrap();
+    assert_eq!(spec.input_schema["additionalProperties"], false);
+    assert_eq!(
+        spec.input_schema["required"],
+        json!([
+            "grant_id",
+            "destination_project",
+            "destination_path",
+            "idempotency_key"
+        ])
+    );
+    for field in [
+        "grant_id",
+        "destination_project",
+        "destination_path",
+        "overwrite",
+        "idempotency_key",
+    ] {
+        assert!(props.contains_key(field), "{field}");
+    }
+    for forbidden in [
+        "source_project",
+        "source_path",
+        "source_sha256",
+        "content_base64",
+        "download_url",
+        "upload_id",
+    ] {
+        assert!(!props.contains_key(forbidden), "{forbidden}");
+    }
+
+    let output = spec.output_schema["properties"]["output"]["properties"]
+        .as_object()
+        .unwrap();
+    for field in [
+        "acceptance_id",
+        "grant_id",
+        "replayed",
+        "destination_project",
+        "destination_path",
+        "bytes",
+        "sha256",
+        "mime_type",
+        "provenance",
+    ] {
+        assert!(output.contains_key(field), "{field}");
+    }
+    let provenance = output["provenance"]["properties"].as_object().unwrap();
+    for field in [
+        "grant_id",
+        "source_project",
+        "source_path",
+        "source_bytes",
+        "source_sha256",
+        "source_mime_type",
+        "source_name",
+    ] {
+        assert!(provenance.contains_key(field), "{field}");
+    }
+
+    let call = ToolCall::from_tool_name(
+        "accept_artifact_handoff",
+        json!({
+            "grant_id": "wc_handoff_mZmZmZmZmZmZmZmZ",
+            "destination_project": "agent:destination:project",
+            "destination_path": "artifacts/imported.bin",
+            "overwrite": false,
+            "idempotency_key": "accept-1"
+        }),
+    )
+    .expect("accept_artifact_handoff parses");
+    assert_eq!(call.tool_name(), "accept_artifact_handoff");
+    assert_eq!(call.project(), Some("agent:destination:project"));
+}
+
+#[test]
 fn project_artifact_is_compact_typed_project_read_facade() {
     let definition =
         lookup_tool_definition("project_artifact").expect("project_artifact definition");

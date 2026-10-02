@@ -1,10 +1,11 @@
-import { fireEvent, render as testingRender, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render as testingRender, screen, waitFor, within } from "@testing-library/react";
 import type { ReactElement } from "react";
 import { expect, it, vi } from "vitest";
 import type { RuntimeV2Client } from "../src/runtime-v2/api/client.js";
 import { absoluteTime } from "../src/runtime-v2/model/format.js";
 import type { ProjectRow } from "../src/runtime-v2/model/types.js";
 import { ProjectsView } from "../src/runtime-v2/views/ProjectsView.js";
+import { WindowWorkbench } from "../src/runtime-v2/components/WindowWorkbench.js";
 import { WorkView } from "../src/runtime-v2/views/WorkView.js";
 import { UiProvider } from "../src/ui/UiProvider.js";
 import { runtimeOverview, windowDetail } from "./fixtures.js";
@@ -612,4 +613,50 @@ it("groups a managed worktree under one human Project and exposes Window activit
   expect(activity.textContent).toContain("webcodex-activity-fix");
   fireEvent.click(activity);
   expect(openWindow).toHaveBeenCalledWith(key);
+});
+
+it("keeps collaboration history and draft on the same Window across Runner changes and inventory gaps", async () => {
+  const [source] = projectFamily();
+  const next = { ...source, id: "agent:other:demo", client_id: "other", name: "Other project", path: "/other/demo" };
+  const key = "e".repeat(64);
+  let moved = false;
+  const client = fakeClient((path, payload) => {
+    const project = moved ? next : source;
+    if (path === "windows") return ok({ windows: [{
+      client_window_key: moved ? "f".repeat(64) : key,
+      last_project: project.id,
+      source: "openai-session", last_seen_at_ms: 1000, active_count: 0,
+    }], total: 2, truncated: moved });
+    if (path === "window") return ok(windowDetail({
+      client_window_key: payload.client_window_key,
+      last_seen_at_ms: moved ? 2000 : 1000,
+      active_requests: [],
+      activity: [{ started_at_ms: moved ? 2000 : 1000, ended_at_ms: moved ? 2001 : 1001,
+        duration_ms: 1, method: "tools/call", tool_name: "read_files", project: project.id,
+        status: "success", meaningful: true, workflow_sessions: [],
+      }],
+    }));
+    if (path === "window-collaboration") return ok({ available: true, can_send: true, truncated: false, messages: [{
+      message_id: "wc_msg_retained", source: "operator", direction: "inbound", message: "Retained instruction",
+      created_at_ms: 900, kind: "guidance", priority: "normal", requires_ack: true,
+      first_projected_at_ms: null, first_ack_observed_at_ms: null,
+    }] });
+    throw new Error("unexpected path " + path);
+  });
+  render(<WindowWorkbench client={client} projects={[source, next]} language="en" surface="windows" onSurfaceChange={vi.fn()} onUnauthorized={vi.fn()} />);
+  await screen.findByRole("heading", { name: "WebCodex" });
+  fireEvent.click(screen.getByRole("tab", { name: "Collaboration" }));
+  await screen.findByText("Retained instruction");
+  const composer = screen.getByRole("textbox", { name: "Message this Window" });
+  fireEvent.change(composer, { target: { value: "Draft for this Window" } });
+  moved = true;
+  await act(async () => { window.dispatchEvent(new Event("focus")); });
+  await screen.findByRole("heading", { name: "Other project" });
+  expect(screen.getByRole("tab", { name: "Collaboration" }).getAttribute("aria-selected")).toBe("true");
+  expect(screen.getByText("Retained instruction")).toBeTruthy();
+  expect(screen.getByRole("textbox", { name: "Message this Window" })).toBe(composer);
+  expect((composer as HTMLTextAreaElement).value).toBe("Draft for this Window");
+  expect(screen.getByTestId("work-window-row-" + key).closest(".window-current-selection")).toBeTruthy();
+  expect(vi.mocked(client.post).mock.calls.filter(([path]) => path === "window-collaboration")
+    .every(([, payload]) => (payload as any).client_window_key === key)).toBe(true);
 });

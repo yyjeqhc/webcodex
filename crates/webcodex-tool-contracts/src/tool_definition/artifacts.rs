@@ -97,6 +97,35 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         ).with_gpt_action_description("Transfer one Project artifact directly through Control. Requires project:read on source and project:write on destination; both are independently authorized. Streams exact bytes/SHA without Host attachments or model base64. overwrite defaults to false."),
         PERMISSION_RISK_ARTIFACT_WRITE,
     ),
+    permission_risk(
+        model_spec(
+            require_all_scopes(
+                def(
+                    "accept_artifact_handoff",
+                    super::ToolAuditPolicy::TYPED_CANONICAL,
+                    ModelVisible,
+                    TOOL_CATEGORY_ARTIFACT,
+                    None,
+                    TOOL_PROVIDER_CONTROL,
+                    super::ToolSemanticContract {
+                        effect: super::ToolEffect::Mutate,
+                        risk: ProjectWrite,
+                        approval: super::ToolApprovalPolicy::Standard,
+                        idempotency: super::ToolIdempotency::Keyed,
+                    },
+                    None,
+                    true,
+                    Artifact,
+                    false,
+                    false,
+                    super::ToolSessionEvidencePolicy::NONE,
+                ),
+                &[PROJECT_WRITE],
+            ),
+            "Accept one exact artifact handoff grant as its bound destination principal and import the frozen source snapshot into the destination Project. Requires only destination project:write; the grant authorizes the exact source read. Control revalidates destination authority and grant state, re-reads the source snapshot through the existing snapshot-fenced Runner export path, fails stale on changed bytes, and streams bounded internal chunks into the existing destination artifact upload protocol. Same idempotency_key + complete request replays the original result; conflicting or one-shot replay fails closed.",
+        ).with_gpt_action_description("Accept an exact artifact handoff grant into the bound destination Project. Requires destination project:write only. Reuses snapshot-fenced Control↔Runner transfer, fails stale, and reconciles keyed retries."),
+        PERMISSION_RISK_ARTIFACT_WRITE,
+    ),
     adaptive_runtime_direct(
         model_spec(
             def(
@@ -146,7 +175,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             false,
             super::ToolSessionEvidencePolicy::NONE,
         ),
-        "Read bounded metadata for a binary artifact; images include dimensions and zip archives are counted but never extracted. Set allow_missing=true to make a missing artifact a successful exists=false negative assertion.",
+        "Read artifact size/SHA/MIME up to 256 MiB; no contents are returned. Files up to 10 MiB also retain image dimensions and ZIP entry counts when recognized; larger files use bounded streaming hashing. ZIPs are never extracted. allow_missing=true returns exists=false for an absent file.",
     ),
     model_spec(
         def(

@@ -21,7 +21,7 @@ use webcodex_workflow_session::{
 };
 
 use super::session_context::{
-    session_project_mismatch_result, unknown_session_result, SessionProjectMismatch,
+    absent_workflow_session_result, session_project_mismatch_result, SessionProjectMismatch,
 };
 use super::{ToolResult, ToolRuntime};
 use crate::auth::AuthContext;
@@ -63,7 +63,7 @@ impl ToolRuntime {
             .sessions
             .summary(&session_id, Some(PUBLIC_VALIDATION_SESSION_EVENT_LIMIT))
         else {
-            return unknown_session_result(&session_id);
+            return absent_workflow_session_result(&self.sessions, &session_id, auth);
         };
         if summary.project.as_deref() != Some(resolved.resolved_id.as_str()) {
             let mismatch = SessionProjectMismatch {

@@ -5,6 +5,7 @@ mod connection_id;
 mod connections;
 mod deadline;
 mod desktop_data_dir;
+mod desktop_locale;
 mod desktop_shell;
 mod diagnostics;
 mod error;
@@ -58,6 +59,9 @@ pub fn run() {
                 }
             );
             let resource_dir = app.path().resource_dir()?;
+            app.manage(desktop_locale::DesktopLocaleState::load(
+                &data_dir.effective,
+            ));
             app.manage(AppState::new_resolved(data_dir, resource_dir)?);
             app.manage(desktop_shell::DesktopShellState::default());
             app.manage(tray::TrayPresentationCache::default());
@@ -72,6 +76,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_desktop_state,
+            commands::set_desktop_locale,
             commands::get_runtime_settings,
             commands::get_desktop_build_info,
             commands::check_for_updates,

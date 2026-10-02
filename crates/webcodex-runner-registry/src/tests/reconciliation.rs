@@ -163,6 +163,61 @@ fn cargo_validation_start_metadata(
     }
 }
 
+
+
+fn go_project_validation_start_metadata() -> ShellJobStartMetadata {
+    use webcodex_core::project_validation::{
+        ProjectValidationAction, ProjectValidationAdapter, ProjectValidationProvenance,
+        ProjectValidationRequest,
+    };
+
+    let step = ShellJobValidationStep {
+        name: "check".to_string(),
+        program: "go".to_string(),
+        args: vec!["vet".to_string(), "./...".to_string()],
+        env: Vec::new(),
+    };
+    ShellJobStartMetadata {
+        project_id: Some(RUNTIME_PROJECT_ID.to_string()),
+        session_id: Some(SESSION_ID.to_string()),
+        project_cwd: Some("/srv/demo".to_string()),
+        purpose: Some("validation".to_string()),
+        shell: Some("direct_argv".to_string()),
+        validation_steps: vec![step.clone()],
+        validation: Some(ShellJobValidationMetadata {
+            project_validation: Some(ProjectValidationProvenance {
+                request: ProjectValidationRequest {
+                    project_id: "demo".into(),
+                    cwd: None,
+                    action: ProjectValidationAction::Check,
+                    adapter: ProjectValidationAdapter::Go,
+                    scope: None,
+                    dependency_policy: None,
+                    test: None,
+                },
+                backend: "go".into(),
+                recipe_root: ".".into(),
+                root_digest: "a".repeat(64),
+                manifest_digest: "b".repeat(64),
+                invocation_digest: "c".repeat(64),
+            }),
+            source_fence: None,
+            tool: "project_validate".to_string(),
+            kind: "check".to_string(),
+            steps: vec![step],
+            effective_timeout_secs: 600,
+            sync_wait_secs: 1,
+            adapter: "go_vet".to_string(),
+            validation_target_id: Some("target:2123456789abcdef01234567".to_string()),
+            minimum_tests: None,
+            require_tests: None,
+            no_run: None,
+        }),
+        visibility: ShellJobVisibility::Public,
+        ..Default::default()
+    }
+}
+
 fn cargo_lib_validation_start_metadata() -> ShellJobStartMetadata {
     let mut metadata = cargo_validation_start_metadata(None, None, None);
     for step in &mut metadata.validation_steps {
@@ -584,6 +639,37 @@ async fn old_count_capable_runner_accepts_cargo_validation_without_explicit_exec
     assert_eq!(request.kind, "start_validation_job");
 }
 
+
+
+#[tokio::test]
+async fn go_project_validation_is_fenced_again_at_job_admission() {
+    for supported in [false, true] {
+        let registry = RunnerRegistry::default();
+        let mut registration = register_request(INSTANCE_A, empty_inventory());
+        registration.capabilities.project_validation_v1 = true;
+        registration.capabilities.project_go_single_module_v1 = supported;
+        registry.register(registration).await.unwrap();
+
+        let metadata = go_project_validation_start_metadata();
+        assert!(metadata.validation.as_ref().unwrap().is_valid());
+        let result = registry
+            .start_job_with_metadata(
+                start_request("validation"),
+                "tester".to_string(),
+                metadata,
+            )
+            .await;
+
+        if supported {
+            assert!(result.is_ok(), "{result:?}");
+        } else {
+            let error = result.unwrap_err();
+            assert!(error.contains("project_go_single_module_v1"), "{error}");
+            assert!(registry.list_jobs(Some(10)).await.is_empty());
+        }
+    }
+}
+
 #[tokio::test]
 async fn project_test_options_are_fenced_again_at_job_admission() {
     use webcodex_core::project_validation::*;
@@ -598,7 +684,7 @@ async fn project_test_options_are_fenced_again_at_job_admission() {
         validation.tool = "project_validate".into();
         validation.project_validation = Some(ProjectValidationProvenance {
             request:ProjectValidationRequest {project_id:"demo".into(),cwd:None,action:ProjectValidationAction::Test,
-                adapter:ProjectValidationAdapter::Rust,scope:None,
+                adapter:ProjectValidationAdapter::Rust,scope:None,dependency_policy:None,
                 test:Some(ProjectValidationTestOptions {filter:Some("focused".into()),min_tests:Some(3),require_tests:None})},
             backend:"rust".into(),recipe_root:".".into(),root_digest:"a".repeat(64),manifest_digest:"b".repeat(64),invocation_digest:"c".repeat(64),
         });

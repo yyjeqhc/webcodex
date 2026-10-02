@@ -20,6 +20,7 @@ impl ToolRuntime {
                 action,
                 adapter,
                 scope,
+                dependency_policy,
                 test,
                 timeout_secs,
             } => {
@@ -30,6 +31,7 @@ impl ToolRuntime {
                     action,
                     adapter,
                     scope,
+                    dependency_policy,
                     test,
                     timeout_secs,
                     ssh_resource,

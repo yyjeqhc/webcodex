@@ -10,6 +10,7 @@ fn request() -> ProjectBuildRequest {
         cwd: Some("src".into()),
         adapter: ProjectBuildAdapter::Auto,
         scope: None,
+        dependency_policy: None,
     }
 }
 
@@ -94,6 +95,7 @@ fn start_build_wire_roundtrip_preserves_typed_process_and_provenance() {
         cwd: None,
         adapter: ProjectBuildAdapter::Rust,
         scope: None,
+        dependency_policy: None,
     };
     let process = canonical_project_build_process("rust", &request).unwrap();
     let provenance = ProjectBuildProvenance {
@@ -184,4 +186,48 @@ fn start_build_wire_roundtrip_preserves_typed_process_and_provenance() {
         .decode_operation()
         .unwrap_err()
         .contains("recovery metadata does not match typed operation"));
+}
+
+#[test]
+fn project_build_locked_dependency_policy_maps_to_native_readonly_flags() {
+    let locked = ProjectDependencyPolicy {
+        mode: ProjectDependencyMode::Locked,
+    };
+    for (backend, expected) in [
+        ("rust", vec!["build", "--locked"]),
+        ("go", vec!["build", "-mod=readonly", "./..."]),
+    ] {
+        let request = ProjectBuildRequest {
+            project_id: "demo".into(),
+            cwd: None,
+            adapter: ProjectBuildAdapter::Auto,
+            scope: None,
+            dependency_policy: Some(locked),
+        };
+        let process = canonical_project_build_process(backend, &request).unwrap();
+        assert_eq!(process.args, expected);
+    }
+}
+
+#[test]
+fn project_build_default_dependency_policy_preserves_historical_argv() {
+    let request = ProjectBuildRequest {
+        project_id: "demo".into(),
+        cwd: None,
+        adapter: ProjectBuildAdapter::Auto,
+        scope: None,
+        dependency_policy: None,
+    };
+    assert_eq!(
+        canonical_project_build_process("rust", &request)
+            .unwrap()
+            .args,
+        vec!["build"]
+    );
+    assert_eq!(
+        canonical_project_build_process("go", &request)
+            .unwrap()
+            .args,
+        vec!["build", "./..."]
+    );
 }

@@ -11,6 +11,7 @@ mod events;
 mod handoff_brief;
 #[cfg(test)]
 mod handoff_brief_tests;
+mod incarnation;
 mod messages;
 mod model;
 mod persistence;
@@ -30,6 +31,8 @@ mod session_context_tests;
 mod session_lifecycle_tests;
 #[cfg(test)]
 mod session_store_tests;
+#[cfg(test)]
+mod session_tombstone_tests;
 
 pub use closeout::closeout_work_projection;
 pub use console::{
@@ -57,6 +60,7 @@ pub use handoff_brief::{
     HANDOFF_CHANGED_PATHS_MAX_ITEMS, HANDOFF_INSTRUCTION_MAX_CHARS, HANDOFF_NEXT_ACTIONS_MAX_ITEMS,
     HANDOFF_OPEN_FAILURES_MAX_ITEMS, HANDOFF_RECENT_FILES_MAX_ITEMS,
 };
+pub use incarnation::workflow_session_incarnation_fingerprint;
 pub use model::{
     CodingSessionError, CodingSessionRequest, CompleteSessionMessageInput,
     ListSessionMessagesFilter, PostSessionMessageInput, ReplaceSessionMessageInput,
@@ -66,8 +70,8 @@ pub use model::{
     SessionLifecycle, SessionLifecycleDenial, SessionMessage, SessionMessageDelivery,
     SessionMessageDeliveryOutcome, SessionMessageDeliveryReplay, SessionMessageError,
     SessionMessageKind, SessionMessageObservationError, SessionMessagePriority,
-    SessionMessageStatus, SessionSummary, SessionTransport, ToolCallExpectation,
-    ToolCallRecorderMetadata, ToolCallSessionMessageResolution, ToolCallStart,
+    SessionMessageStatus, SessionRetentionTombstone, SessionSummary, SessionTransport,
+    ToolCallExpectation, ToolCallRecorderMetadata, ToolCallSessionMessageResolution, ToolCallStart,
     DEFAULT_MAX_EVENTS_PER_SESSION, DEFAULT_MAX_RETAINED_CLOSED_SESSIONS, DEFAULT_MAX_SESSIONS,
     MAX_CODING_INSTRUCTION_CHARS, MAX_MESSAGE_CHARS, MAX_MESSAGE_COMPLETION_KEY_CHARS,
     MAX_MESSAGE_DELIVERY_KEY_CHARS, MAX_MESSAGE_LIST_LIMIT, MAX_MESSAGE_RESOLUTION_CHARS,

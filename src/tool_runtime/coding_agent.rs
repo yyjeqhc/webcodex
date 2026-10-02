@@ -1,4 +1,5 @@
-use super::{RecoveryKind, SuggestedToolCall, ToolResult, ToolRuntime};
+use super::session_context::session_retention_expired_result;
+use super::{RecoveryKind, SessionSelectorError, SuggestedToolCall, ToolResult, ToolRuntime};
 use crate::auth::{AuthContext, AuthKind};
 use crate::json_digest::update_sha256_with_json;
 use crate::runner_http::RunnerFeature;
@@ -330,17 +331,22 @@ impl ToolRuntime {
                 None,
             ));
         }
-        let session_id = self
-            .canonicalize_explicit_session_selector(context_session_id, auth)
-            .map_err(|_| {
-                coding_agent_error(
+        let session_id = match self.canonicalize_explicit_session_selector(context_session_id, auth)
+        {
+            Ok(session_id) => session_id,
+            Err(SessionSelectorError::RetentionExpired { session_id }) => {
+                return Err(session_retention_expired_result(&session_id));
+            }
+            Err(SessionSelectorError::UnknownRef(_)) => {
+                return Err(coding_agent_error(
                     "unknown_session_ref",
                     "The explicit context Session selector is unavailable",
                     "not_started",
                     RecoveryKind::FixInput,
                     None,
-                )
-            })?;
+                ));
+            }
+        };
         // Recovery must leave room for the existing bounded Run start response.
         // File contents/current Git are deliberately not fetched here; the
         // brief reports this gap rather than treating stale context as truth.

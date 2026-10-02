@@ -39,6 +39,7 @@ impl ToolRuntime {
         cwd: Option<String>,
         adapter: Option<ProjectBuildAdapter>,
         scope: Option<ProjectBuildScope>,
+        dependency_policy: Option<webcodex_core::project_build::ProjectDependencyPolicy>,
         timeout_secs: Option<u64>,
         handoff_max_secs: Option<u64>,
         ssh_resource: Option<&str>,
@@ -103,6 +104,7 @@ impl ToolRuntime {
             cwd,
             adapter: adapter.unwrap_or_default(),
             scope,
+            dependency_policy,
         };
         if let Err(error) = request.validate() {
             return process_tool_failure_result(

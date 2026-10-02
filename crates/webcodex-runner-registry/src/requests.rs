@@ -2563,6 +2563,7 @@ impl RunnerRegistry {
         access: Option<&crate::RunnerAccess>,
     ) -> Result<(String, oneshot::Receiver<ShellRunResponse>), String> {
         payload.validate()?;
+        let requires_dependency_policy = payload.dependency_policy.is_some();
         let request_id = next_request_id();
         let (tx, rx) = oneshot::channel();
         let request = encode_runner_operation(
@@ -2578,6 +2579,16 @@ impl RunnerRegistry {
         if !runner.runner_features.supports(RunnerFeature::ProjectBuild) {
             return Err(
                 "capability_unavailable: upgrade target Runner for project_build_v1".into(),
+            );
+        }
+        if requires_dependency_policy
+            && !runner
+                .runner_features
+                .supports(RunnerFeature::ProjectDependencyPolicy)
+        {
+            return Err(
+                "capability_unavailable: upgrade target Runner for project_dependency_policy_v1"
+                    .into(),
             );
         }
         enqueue_pending_request_locked(
@@ -2603,6 +2614,7 @@ impl RunnerRegistry {
     ) -> Result<(String, oneshot::Receiver<ShellRunResponse>), String> {
         payload.validate()?;
         let requires_package_scope = payload.scope.is_some();
+        let requires_dependency_policy = payload.dependency_policy.is_some();
         let requires_test_options = payload.test.is_some();
         let request_id = next_request_id();
         let (tx, rx) = oneshot::channel();
@@ -2622,6 +2634,16 @@ impl RunnerRegistry {
         {
             return Err(
                 "capability_unavailable: upgrade target Runner for project_validation_v1".into(),
+            );
+        }
+        if requires_dependency_policy
+            && !runner
+                .runner_features
+                .supports(RunnerFeature::ProjectDependencyPolicy)
+        {
+            return Err(
+                "capability_unavailable: upgrade target Runner for project_dependency_policy_v1"
+                    .into(),
             );
         }
         if requires_test_options

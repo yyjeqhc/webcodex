@@ -1,5 +1,11 @@
 //! Declarative project validation planning and admission fence. No model argv.
+use crate::project_operation::ProjectOperationScopeError;
 use serde::{Deserialize, Serialize};
+
+/// Portable project-operation scope retained under the project_validate API name.
+pub use crate::project_operation::{
+    ProjectDependencyMode, ProjectDependencyPolicy, ProjectOperationScope as ProjectValidationScope,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -26,29 +32,6 @@ pub enum ProjectValidationAdapter {
     Auto,
     Rust,
     Go,
-}
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ProjectValidationScope {
-    /// Portable bounded package scope. Rust adapters interpret values as Cargo
-    /// package names; Go adapters interpret them as project-relative package patterns.
-    #[schemars(length(min = 1, max = 8))]
-    #[schemars(inner(length(min = 1, max = 256)))]
-    pub packages: Vec<String>,
-}
-
-impl ProjectValidationScope {
-    fn validate(&self) -> Result<(), String> {
-        if self.packages.is_empty() || self.packages.len() > 8 {
-            return Err("project validation packages must contain between 1 and 8 items".into());
-        }
-        if self.packages.iter().any(|package| {
-            package.is_empty() || package.len() > 256 || package.chars().any(char::is_control)
-        }) {
-            return Err("invalid project validation package scope".into());
-        }
-        Ok(())
-    }
 }
 
 /// Test-only selection and evidence policy. Filtering changes the execution
@@ -84,6 +67,8 @@ pub struct ProjectValidationRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scope: Option<ProjectValidationScope>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dependency_policy: Option<ProjectDependencyPolicy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub test: Option<ProjectValidationTestOptions>,
 }
 impl ProjectValidationRequest {
@@ -115,7 +100,17 @@ impl ProjectValidationRequest {
         }
         validate_relative(self.cwd.as_deref().unwrap_or("."))?;
         if let Some(scope) = &self.scope {
-            scope.validate()?;
+            scope.validate().map_err(|error| match error {
+                ProjectOperationScopeError::PackageCount => {
+                    "project validation packages must contain between 1 and 8 items".to_string()
+                }
+                ProjectOperationScopeError::InvalidPackage => {
+                    "invalid project validation package scope".to_string()
+                }
+            })?;
+        }
+        if self.dependency_policy.is_some() && self.action == ProjectValidationAction::FormatCheck {
+            return Err("dependency_policy requires project_validate action=check or test".into());
         }
         if let Some(test) = &self.test {
             if self.action != ProjectValidationAction::Test {

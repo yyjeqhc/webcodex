@@ -66,6 +66,62 @@ fn finish_summary_keeps_non_git_cleanliness_not_applicable() {
     );
 }
 
+#[test]
+fn output_guidance_preserves_unproven_validation_and_rejects_invalid_receipts() {
+    let mut canonical = json!({
+        "workspace": {"clean": null, "git_available": false, "counts": {}},
+        "jobs": {}, "review_evidence": {}, "tool_failures": {},
+        "final_warnings": [], "suggested_next_actions": [],
+        "validation": {
+            "status": "passed", "latest_status": "passed",
+            "successes": 1, "failures": 0,
+            "current_evidence": {
+                "status": "unproven", "reason": "validation_source_unproven",
+                "events_total": 1, "successes": 0, "failures": 0,
+                "unresolved_failure_count": 0, "evidence_gap_event_count": 0
+            }
+        }
+    });
+    let original = finish_decision_output(&canonical);
+    assert_eq!(original["task_outcome"]["status"], "warn");
+    assert!(original["suggested_next_actions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(
+            |action| action.as_str() == Some(super::super::handoff::UNPROVEN_SOURCE_REVIEW_ACTION)
+        ));
+    canonical["task_outputs"] = json!({
+        "items": [{"path": "report.csv", "status": "verified", "file_bytes": 42,
+            "sha256": "a".repeat(64), "mime_type": "text/csv"}],
+        "verified_count": 1, "missing_count": 0, "unavailable_count": 0, "observed_at": 1
+    });
+    let adapted = finish_decision_output(&canonical);
+    assert_eq!(adapted["task_outcome"], original["task_outcome"]);
+    assert_eq!(adapted["validation"], original["validation"]);
+    let actions = adapted["suggested_next_actions"].as_array().unwrap();
+    assert_eq!(
+        actions.len(),
+        original["suggested_next_actions"].as_array().unwrap().len()
+    );
+    assert!(actions
+        .iter()
+        .any(|action| action
+            .as_str()
+            .is_some_and(|text| text.contains("input/output stability")
+                && text.contains("not content/counts"))));
+    assert!(!actions.iter().any(
+        |action| action.as_str() == Some(super::super::handoff::UNPROVEN_SOURCE_REVIEW_ACTION)
+    ));
+    canonical["task_outputs"]["verified_count"] = json!(2);
+    let invalid = finish_decision_output(&canonical);
+    assert_eq!(
+        invalid["suggested_next_actions"],
+        original["suggested_next_actions"]
+    );
+    assert_eq!(invalid["task_outcome"], original["task_outcome"]);
+}
+
 fn resolved_agent(client_id: &str) -> ResolvedProject {
     ResolvedProject {
         input: "demo".to_string(),

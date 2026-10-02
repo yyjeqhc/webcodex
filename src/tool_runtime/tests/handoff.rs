@@ -3823,6 +3823,7 @@ async fn finish_coding_task_summary_only_no_hygiene(
         runtime_for_task
             .dispatch_with_auth(
                 ToolCall::FinishCodingTask {
+                    outputs: Vec::new(),
                     project,
                     session_id,
                     summary_only: true,

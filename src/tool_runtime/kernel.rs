@@ -123,6 +123,31 @@ pub(crate) struct ToolCallOutcome {
     pub(crate) correlation: super::window_activity::ToolCallCorrelation,
 }
 
+fn session_selector_failure(error: super::SessionSelectorError) -> ToolCallOutcome {
+    match error {
+        super::SessionSelectorError::UnknownRef(message) => ToolCallOutcome {
+            success: false,
+            result: None,
+            error_status: Some(ToolCallErrorStatus::InvalidArguments { message }),
+            project: None,
+            model_ergonomics: None,
+            canonical_audit_output: None,
+            correlation: Default::default(),
+        },
+        super::SessionSelectorError::RetentionExpired { session_id } => ToolCallOutcome {
+            success: false,
+            result: Some(session_context::session_retention_expired_result(
+                &session_id,
+            )),
+            error_status: None,
+            project: None,
+            model_ergonomics: None,
+            canonical_audit_output: None,
+            correlation: Default::default(),
+        },
+    }
+}
+
 pub(crate) fn check_runtime_tool_scope(
     auth: Option<&AuthContext>,
     tool_name: &str,
@@ -643,17 +668,7 @@ impl ToolRuntime {
         let canonical_recording_session_id = match context.session_id {
             Some(raw) => match self.canonicalize_explicit_session_selector(raw, context.auth) {
                 Ok(canonical) => Some(canonical),
-                Err(message) => {
-                    return ToolCallOutcome {
-                        success: false,
-                        result: None,
-                        error_status: Some(ToolCallErrorStatus::InvalidArguments { message }),
-                        project: None,
-                        model_ergonomics: None,
-                        canonical_audit_output: None,
-                        correlation: Default::default(),
-                    };
-                }
+                Err(error) => return session_selector_failure(error),
             },
             None => None,
         };
@@ -773,18 +788,10 @@ impl ToolRuntime {
                 correlation: Default::default(),
             };
         }
-        if let Err(message) =
+        if let Err(error) =
             self.canonicalize_session_reference_argument(&mut concrete_arguments, context.auth)
         {
-            return ToolCallOutcome {
-                success: false,
-                result: None,
-                error_status: Some(ToolCallErrorStatus::InvalidArguments { message }),
-                project: None,
-                model_ergonomics: None,
-                canonical_audit_output: None,
-                correlation: Default::default(),
-            };
+            return session_selector_failure(error);
         }
 
         let outer_ack_observation = context.session_id.map(|recorder_session_id| {
@@ -1019,6 +1026,8 @@ impl ToolRuntime {
                 current_request_acknowledged,
             ) {
                 let mut result = session_context::session_message_error_result(
+                    &self.sessions,
+                    context.auth,
                     session_id,
                     Some(&message_resolution.message_id),
                     error,

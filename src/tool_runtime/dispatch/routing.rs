@@ -281,6 +281,7 @@ impl ToolRuntime {
             | ToolCall::WriteProjectFile { .. }
             | ToolCall::SaveProjectArtifact { .. }
             | ToolCall::TransferProjectArtifact { .. }
+            | ToolCall::AcceptArtifactHandoff { .. }
             | ToolCall::ProjectArtifact { .. }
             | ToolCall::ReadProjectArtifactMetadata { .. }
             | ToolCall::ReadProjectArtifact { .. }

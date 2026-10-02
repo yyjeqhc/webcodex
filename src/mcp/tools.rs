@@ -1075,21 +1075,62 @@ fn project_mcp_runtime_status_input_schema(input_schema: &mut Value) {
     );
 }
 
-fn project_mcp_runtime_status_manifest_defaults(result: &mut ToolResult) {
-    if !result.success || result.output["name"].as_str() != Some("runtime_status") {
+fn project_mcp_model_default_input_schema(tool_name: &str, input_schema: &mut Value) {
+    match tool_name {
+        "runtime_status" => project_mcp_runtime_status_input_schema(input_schema),
+        "observe_jobs" => {
+            if let Some(summary) = input_schema
+                .pointer_mut("/properties/summary_only")
+                .and_then(Value::as_object_mut)
+            {
+                summary.insert("default".to_string(), json!(true));
+                summary.insert("description".to_string(), json!("MCP defaults to compact proven-success validation logs. Set false to expand retained logs from the original cursor. Failures, unknown results and ordinary commands keep full evidence."));
+            }
+        }
+        _ => {}
+    }
+}
+
+fn project_mcp_model_manifest_defaults(result: &mut ToolResult) {
+    if !result.success {
         return;
     }
+    let tool_name = result.output["name"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
     if let Some(input_schema) = result.output.get_mut("input_schema") {
-        project_mcp_runtime_status_input_schema(input_schema);
+        project_mcp_model_default_input_schema(&tool_name, input_schema);
+    }
+}
+
+/// MCP-only omission defaults, after direct/gateway admission resolves the same
+/// canonical tool identity. Explicit values and canonical HTTP defaults survive.
+pub(super) fn project_mcp_model_argument_defaults(tool_name: &str, arguments: &mut Value) {
+    let field = match tool_name {
+        "runtime_status" => "compact",
+        "observe_jobs" => "summary_only",
+        _ => return,
+    };
+    if arguments.is_null() {
+        *arguments = json!({});
+    }
+    if let Some(arguments) = arguments.as_object_mut() {
+        arguments.entry(field).or_insert(json!(true));
     }
 }
 
 fn mcp_tool_spec_json(mut spec: ToolSpec, compact: bool, app_enabled: bool) -> Value {
     let tool_name = spec.name.clone();
+    project_mcp_model_default_input_schema(&tool_name, &mut spec.input_schema);
     if tool_name == "runtime_status" {
-        project_mcp_runtime_status_input_schema(&mut spec.input_schema);
         spec.description
             .push_str(" MCP defaults to sparse status; compact=false opts into full diagnostics.");
+    }
+
+    if tool_name == "observe_jobs" {
+        spec.description
+            .push_str(" MCP defaults summary_only=true; set false for full retained logs.");
     }
 
     if matches!(tool_name.as_str(), "computer_observe" | "browser_observe") {
@@ -1604,8 +1645,12 @@ fn canonicalize_recording_session_id(
     raw: Option<String>,
     auth: Option<&crate::auth::AuthContext>,
 ) -> Result<Option<String>, String> {
-    raw.map(|raw| runtime.canonicalize_explicit_session_selector(&raw, auth))
-        .transpose()
+    raw.map(|raw| {
+        runtime
+            .canonicalize_explicit_session_selector(&raw, auth)
+            .map_err(|err| err.to_string())
+    })
+    .transpose()
 }
 
 pub(super) fn strip_stateless_ack_session_message_ids(
@@ -2567,16 +2612,8 @@ pub(super) async fn handle_call(
     // tool identity. A few MCP-only validations still happen before the
     // shared ToolRuntime kernel; preserve those failed attempts in generic
     // telemetry without creating a second record for normal kernel calls.
-    // MCP model calls default to sparse status, including the generic gateway.
     // Preserve omission versus explicit false before canonical bool parsing.
-    if params.name == "runtime_status" {
-        if params.arguments.is_null() {
-            params.arguments = json!({});
-        }
-        if let Some(arguments) = params.arguments.as_object_mut() {
-            arguments.entry("compact").or_insert(json!(true));
-        }
-    }
+    project_mcp_model_argument_defaults(&params.name, &mut params.arguments);
     let invocation_facts = crate::tool_runtime::model_ergonomics_telemetry::invocation::InvocationFacts::from_arguments(&raw_mcp_arguments);
     let mut pre_kernel_model_ergonomics =
         ModelErgonomicsTimer::start_with_arguments(&params.name, &params.arguments);
@@ -2745,7 +2782,7 @@ pub(super) async fn handle_call(
     };
     debug_assert_eq!(outcome.success, result.success);
     if params.name == "tool_manifest" {
-        project_mcp_runtime_status_manifest_defaults(&mut result);
+        project_mcp_model_manifest_defaults(&mut result);
     }
     project_job_terminal_resume_suggested_call(
         app_enabled

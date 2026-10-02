@@ -1308,6 +1308,91 @@ fn same_validation_identity_success_resolves_failure_without_deleting_history() 
 }
 
 #[test]
+fn ambient_go_test_success_does_not_resolve_single_module_gateway_failure() {
+    use webcodex_core::validation_identity::{
+        contextualize_structured_validation_target_identity, StructuredValidationExecutionContext,
+    };
+
+    let store = SessionStore::default();
+    let project = "agent:eval:demo";
+    let session = store.start_session(Some(project.to_string()), None);
+    let direct_target = structured_validation_target_identity(
+        ToolValidationIdentityKind::GoTest,
+        &json!({"cwd": ".", "packages": ["./..."]}),
+    )
+    .unwrap();
+    let gateway_target = contextualize_structured_validation_target_identity(
+        &direct_target,
+        StructuredValidationExecutionContext::GoProjectSingleModuleV1,
+    )
+    .unwrap();
+    assert_ne!(gateway_target, direct_target);
+
+    let job_id = "job_go_project_single_module_failure";
+    assert!(store.record_validation_job_terminal(
+        &session.session_id,
+        job_id,
+        &[job_id],
+        "project_validate",
+        session_tool_contract("project_validate"),
+        Some(project.to_string()),
+        &gateway_target,
+        None,
+        "failed",
+        Some(1),
+        Some(false),
+        Some(100),
+        Some(110),
+        Some(10_000),
+        Some(json!({
+            "action": "test",
+            "adapter": "go_test",
+            "backend": "go",
+            "validation_tool": "go_test"
+        })),
+    ));
+    let failed =
+        validation_summary_for_session(&store.summary(&session.session_id, Some(50)).unwrap());
+    assert_eq!(failed["unresolved_failures"]["count"], 1);
+    assert_eq!(failed["latest_failure"]["identity"], gateway_target);
+
+    record_finished_tool(
+        &store,
+        &session.session_id,
+        "go_test",
+        json!({"project": project, "cwd": ".", "packages": ["./..."]}),
+        true,
+        json!({
+            "exit_code": 0,
+            "execution_state": "completed",
+            "stdout_tail": r#"{"Action":"start","Package":"example.test/demo"}
+{"Action":"pass","Package":"example.test/demo","Test":"TestPass"}
+{"Action":"pass","Package":"example.test/demo"}
+"#,
+            "stderr_tail": "",
+            "stdout_truncated": false,
+            "stderr_truncated": false,
+            "tests_detected": true,
+            "tests_run_count": 1,
+            "tests_passed": 1,
+            "tests_failed": 0,
+            "zero_tests_run": false
+        }),
+    );
+
+    let validation =
+        validation_summary_for_session(&store.summary(&session.session_id, Some(50)).unwrap());
+    assert_eq!(validation["historical_failures"]["count"], 1);
+    assert_eq!(validation["resolved_failures"]["count"], 0);
+    assert_eq!(validation["unresolved_failures"]["count"], 1);
+    assert_eq!(
+        validation["unresolved_failures"]["events"][0]["identity"],
+        gateway_target
+    );
+    assert_eq!(validation["latest_success"]["identity"], direct_target);
+}
+
+#[test]
 fn generic_cargo_test_zero_tests_is_inconclusive_without_failing_execution() {
     let store = SessionStore::default();
     let session = store.start_session(Some("agent:eval:demo".to_string()), None);

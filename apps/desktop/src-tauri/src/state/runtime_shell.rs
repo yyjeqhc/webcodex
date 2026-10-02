@@ -5,28 +5,62 @@ use crate::runtime_selection::{
 use crate::webcodex::cli::ResolvedBinaries;
 use webcodex_core::desktop_runtime_contract::{ProtocolCompatibility, DESKTOP_RUNTIME_CONTRACT};
 
+#[cfg(test)]
+mod tests;
+
+async fn observe_runtime_runner(config: &StoredDesktopConfig) -> DesktopResult<Value> {
+    // Fleet overview reports Server identity and aggregate jobs. Selection must
+    // observe the exact saved Runner for both interruption and build checks.
+    let mut runtime = config
+        .runtime
+        .clone()
+        .ok_or_else(|| runtime_selection::error("runtime_identity_unavailable"))?;
+    runtime.runner_client_id = Some(
+        stored_runner_client_id(config)
+            .ok_or_else(|| runtime_selection::error("runtime_identity_unavailable"))?,
+    );
+    crate::workspace::query(
+        &runtime,
+        crate::workspace::WorkspaceRequest::RunnerDetails {},
+    )
+    .await
+}
+
+fn verify_selected_runner(
+    runner: &Value,
+    client_id: &str,
+    expected: &webcodex_core::desktop_runtime_contract::MachineBuildInfo,
+) -> DesktopResult<()> {
+    if runner.get("connected").and_then(Value::as_bool) != Some(true)
+        || runner.get("client_id").and_then(Value::as_str) != Some(client_id)
+        || runner.get("version").and_then(Value::as_str) != Some(expected.version.as_str())
+        || runner.get("build_git_commit").and_then(Value::as_str) != expected.git_commit.as_deref()
+        || runner.get("build_git_dirty").and_then(Value::as_bool) != expected.git_dirty
+    {
+        return Err(runtime_selection::error("selected_runtime_not_active"));
+    }
+    Ok(())
+}
+
 impl AppState {
     pub async fn runtime_settings(&self) -> DesktopResult<RuntimeSettings> {
-        let (mut settings, runtime, identity) = {
+        let (mut settings, config, identity) = {
             let slot = self.core.lock().await;
             let core = slot
                 .as_ref()
                 .ok_or_else(|| runtime_selection::error("desktop_operation_busy"))?;
             (
                 core.runtime_settings_snapshot().await,
-                core.config.runtime.clone(),
+                core.config.clone(),
                 runner_identity_from_config(&core.config),
             )
         };
-        if let Some(runtime) = runtime {
-            settings.active_jobs = crate::workspace::query(
-                &runtime,
-                crate::workspace::WorkspaceRequest::RunnerDetails {},
-            )
-            .await
-            .ok()
-            .filter(|v| v.get("connected").and_then(Value::as_bool) == Some(true))
-            .and_then(|v| observed_active_jobs(&v));
+        if config.runtime.is_some() {
+            settings.active_jobs = observe_runtime_runner(&config)
+                .await
+                .ok()
+                .filter(|v| v.get("connected").and_then(Value::as_bool) == Some(true))
+                .and_then(|v| observed_active_jobs(&v));
         } else {
             settings.active_jobs = Some(0);
         }
@@ -340,15 +374,12 @@ impl DesktopCore {
         if self.config.runtime.is_some() && identity.is_none() {
             return Err(runtime_selection::error("runtime_identity_unavailable"));
         }
-        if let Some(runtime) = self.config.runtime.as_ref() {
+        if self.config.runtime.is_some() {
             let own_runner = self
                 .process_snapshot(ProcessKey::LocalRunner)
                 .await
                 .is_some();
-            let observed =
-                crate::workspace::query(runtime, crate::workspace::WorkspaceRequest::Overview {})
-                    .await
-                    .ok();
+            let observed = observe_runtime_runner(&self.config).await.ok();
             if !own_runner
                 && observed
                     .as_ref()
@@ -548,9 +579,7 @@ impl DesktopCore {
                 return Err(runtime_selection::error("selected_runtime_not_active"));
             }
         }
-        let runner =
-            crate::workspace::query(&runtime, crate::workspace::WorkspaceRequest::Overview {})
-                .await?;
+        let runner = observe_runtime_runner(&self.config).await?;
         let runner_client_id = stored_runner_client_id(&self.config)
             .ok_or_else(|| runtime_selection::error("runtime_identity_unavailable"))?;
         let expected = self
@@ -560,14 +589,7 @@ impl DesktopCore {
             .iter()
             .find(|b| b.binary == "webcodex-runner")
             .ok_or_else(|| runtime_selection::error("build_info_unverifiable"))?;
-        if runner.get("client_id").and_then(Value::as_str) != Some(runner_client_id.as_str())
-            || runner.get("version").and_then(Value::as_str) != Some(expected.version.as_str())
-            || runner.get("build_git_commit").and_then(Value::as_str)
-                != expected.git_commit.as_deref()
-            || runner.get("build_git_dirty").and_then(Value::as_bool) != expected.git_dirty
-        {
-            return Err(runtime_selection::error("selected_runtime_not_active"));
-        }
+        verify_selected_runner(&runner, &runner_client_id, expected)?;
         self.refresh_runtime_status(cancellation).await?;
         Ok(())
     }
@@ -638,30 +660,5 @@ impl runtime_selection::lifecycle::SwitchDriver for RuntimeSwitchExecution<'_> {
                 .await?;
         }
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn a_connection_change_invalidates_a_pending_candidate_without_a_binary_revision_change() {
-        let initial = StoredDesktopConfig::default();
-        let mut changed = initial.clone();
-        changed.topology = Some(RuntimeTopology {
-            experience: Experience::Full,
-            server: ServerTopology::Local,
-            runner: RunnerTopology::Local,
-            exposure: Exposure::None,
-            enrollment: Enrollment::ManagedPairing,
-        });
-        assert_ne!(selection_context(&initial), selection_context(&changed));
-    }
-    #[test]
-    fn an_update_check_does_not_invalidate_runtime_selection_authority() {
-        let initial = StoredDesktopConfig::default();
-        let mut changed = initial.clone();
-        changed.update_cache.last_check_at_ms = Some(42);
-        assert_eq!(selection_context(&initial), selection_context(&changed));
     }
 }

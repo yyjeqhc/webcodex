@@ -552,7 +552,7 @@ impl ToolRuntime {
         let client_id = proj.client_id.clone();
         let payload = json!({
             "path": path.clone(),
-            "max_bytes": MAX_PROJECT_ARTIFACT_BYTES,
+            "max_bytes": MAX_PROJECT_ARTIFACT_EXPORT_BYTES,
             "allow_missing": allow_missing.unwrap_or(false),
         });
         let obj = match self

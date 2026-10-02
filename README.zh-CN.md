@@ -148,6 +148,10 @@ agent 辅助阅读、修改和验证仓库。
 Bug 报告需要提供哪些信息、自助修复流程、验证要求与 PR 说明见
 [CONTRIBUTING.zh-CN.md](CONTRIBUTING.zh-CN.md)。
 
+## 支持 WebCodex
+
+WebCodex 以开放方式持续开发。如果你希望支持长期维护、测试、发布基础设施或跨平台工作，可参阅[赞助与项目支持](docs/SPONSORSHIP.zh-CN.md)。我们更倾向透明、面向项目的支持和基础设施合作，并让这些内容与正常产品使用保持分离。
+
 ## 致谢
 
 感谢 [LINUX DO](https://linux.do/) 社区提供友好的技术交流与开源分享环境。

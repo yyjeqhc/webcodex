@@ -43,7 +43,7 @@ const nextState = {
     ...baseState.activity,
     active: true,
     current: { label: "Running checks", kind: "test", started_at_ms: 1789812010000 },
-    last: { label: "Edited code", kind: "edit", at_ms: 1789812009000 },
+    last: { label: "Edited files", kind: "edit", at_ms: 1789812009000 },
     last_meaningful_activity_at_ms: 1789812009000,
   },
   window_activity: {
@@ -54,7 +54,7 @@ const nextState = {
     events_observed: 3,
     last_activity_at_ms: 1789812010000,
     events: [
-      { label: "Edited code", kind: "edit", status: "success", meaningful: true, started_at_ms: 1789812008000, ended_at_ms: 1789812009000, duration_ms: 1000 },
+      { label: "Edited files", kind: "edit", status: "success", meaningful: true, started_at_ms: 1789812008000, ended_at_ms: 1789812009000, duration_ms: 1000 },
       ...baseState.window_activity.events,
     ],
   },
@@ -67,6 +67,98 @@ function contentOnly(result) {
 function privateOnly(result) {
   return { _meta: { "webcodex/workResult": result.structuredContent } };
 }
+
+const outputState = {
+  ...baseState,
+  workspace: { ...baseState.workspace, git_available: false },
+  task_outputs: {
+    items: [{ path: "results/report.csv", status: "verified", file_bytes: 42,
+      mime_type: "text/csv", sha256: "d".repeat(64) },
+    { path: "results/missing.pdf", status: "missing" },
+    { path: "results/unavailable.png", status: "unavailable" }],
+    verified_count: 1, missing_count: 1, unavailable_count: 1, observed_at: 1789812000,
+  },
+};
+
+test("non-Git task outputs show independently observed files and partial failures", async () => {
+  const view = app("mcp_work_result_app.html");
+  view.toolResult({ work_result: outputState });
+  await view.initialize();
+  assert.equal(view.nodes.taskOutputsSection.hidden, false);
+  assert.equal(view.nodes.workspaceChangesSection.hidden, true);
+  assert.equal(view.nodes.taskOutputsList.children.length, 3);
+  assert.match(view.nodes.taskOutputsSummary.textContent, /1 observed.*1 missing.*1 unavailable/);
+  assert.match(view.nodes.taskOutputsObserved.textContent, /files may change after this observation/);
+  const rows = view.nodes.taskOutputsList.children;
+  assert.equal(rows[0].children[0].textContent, "results/report.csv");
+  assert.equal(rows[0].children[2].children[1].textContent, "SHA-256 · " + "d".repeat(64));
+  assert.equal(rows[1].children.length, 2);
+  assert.equal(rows[2].children.length, 2);
+  assert.equal(view.sent.filter(r => r.method === "ui/message").length, 0);
+});
+
+test("explicit output export request preserves Project path and observed SHA", async () => {
+  const view = app("mcp_work_result_app.html");
+  view.toolResult({ work_result: outputState });
+  await view.initialize();
+  const button = view.nodes.taskOutputsList.children[0].children[3];
+  const pending = button.onclick();
+  const request = view.sent.find(r => r.method === "ui/message");
+  assert.equal(button.disabled, true);
+  assert.equal(request.params.role, "user");
+  const text = request.params.content[0].text;
+  assert.ok(text.includes(project));
+  assert.ok(text.includes('"results/report.csv"'));
+  assert.ok(text.includes("d".repeat(64)));
+  assert.match(text, /First check.*if it changed/);
+  assert.equal(view.calls("project_artifact").length, 0);
+  await view.reply(request, {});
+  await pending;
+  assert.equal(button.disabled, false);
+  assert.equal(view.nodes.taskOutputsAction.textContent, "File requested in chat.");
+});
+
+test("malformed or unlinked output evidence cannot populate the task card", async () => {
+  for (const mutate of [
+    s => { delete s.session_id; },
+    s => { s.task_outputs.verified_count = 2; },
+    s => { s.task_outputs.items[0].sha256 = "invalid"; },
+    s => { s.task_outputs.items[0].path = "../report.csv"; },
+    s => { s.task_outputs.items[0].path = "汉".repeat(171); },
+    s => { s.task_outputs.items[1].sha256 = "d".repeat(64); },
+  ]) {
+    const state = structuredClone(outputState);
+    mutate(state);
+    const view = app("mcp_work_result_app.html");
+    view.toolInput(input);
+    view.toolResult({ work_result: state });
+    await view.initialize();
+    assert.equal(view.nodes.taskOutputsList?.children.length || 0, 0);
+    assert.equal(view.sent.filter(r => r.method === "ui/message").length, 0);
+  }
+});
+
+test("output request failure remains retryable and teardown ignores a late reply", async () => {
+  const view = app("mcp_work_result_app.html");
+  view.toolResult({ work_result: outputState });
+  await view.initialize();
+  const button = view.nodes.taskOutputsList.children[0].children[3];
+  const failed = button.onclick();
+  await view.reject(view.sent.find(r => r.method === "ui/message"));
+  await failed;
+  assert.equal(button.disabled, false);
+  assert.match(view.nodes.taskOutputsAction.textContent, /Try again/);
+  const pending = button.onclick();
+  await button.onclick();
+  const requests = view.sent.filter(r => r.method === "ui/message");
+  assert.equal(requests.length, 2);
+  const previous = view.nodes.taskOutputsAction.textContent;
+  await view.teardown();
+  await view.reply(requests[1], {});
+  await pending;
+  assert.equal(view.nodes.taskOutputsAction.textContent, previous);
+  assert.equal(button.disabled, true);
+});
 
 test("initial private Work Result fallback renders when Host omits structuredContent", async () => {
   const view = app("mcp_work_result_app.html");
@@ -145,14 +237,14 @@ test("recent inactive work keeps the lightweight last-active state before the id
     state_version: `wr2_${"c".repeat(64)}`,
     activity: {
       ...baseState.activity,
-      last: { label: "Edited code", kind: "edit", at_ms: 1_999_999_990_000 },
+      last: { label: "Edited files", kind: "edit", at_ms: 1_999_999_990_000 },
       last_meaningful_activity_at_ms: 1_999_999_990_000,
     },
   };
   const view = app("mcp_work_result_app.html");
   view.toolResult({ work_result: quietState });
   await view.initialize();
-  assert.equal(view.nodes.activityStatus.textContent, "Edited code");
+  assert.equal(view.nodes.activityStatus.textContent, "Edited files");
   assert.equal(view.nodes.activityAge.textContent, "Last active 10s ago");
   assert.equal(view.nodes.badge.textContent, "Waiting");
 });

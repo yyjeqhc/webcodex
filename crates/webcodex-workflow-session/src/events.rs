@@ -479,6 +479,8 @@ pub(super) fn classify_error_message(message: &str) -> String {
     let lower = message.to_ascii_lowercase();
     let kind = if lower.contains("session_project_mismatch") {
         "session_project_mismatch"
+    } else if lower.contains("session_retention_expired") {
+        "session_retention_expired"
     } else if lower.contains("unknown_session_id") {
         "unknown_session_id"
     } else if lower.contains("confirmation_required")
@@ -1556,5 +1558,39 @@ fn copy_project_validation_evidence(summary: &mut Value, output: &Value) {
         {
             summary[field] = json!(value);
         }
+    }
+}
+
+#[cfg(test)]
+mod retention_error_kind_tests {
+    use super::{actual_failure_kind_for_tool_result, classify_error_message};
+    use serde_json::json;
+
+    #[test]
+    fn retention_expired_stays_a_distinct_error_kind() {
+        let message = "session_retention_expired: wc_sess_x existed, but its Closed-session historical retention expired";
+        assert_eq!(classify_error_message(message), "session_retention_expired");
+        assert_eq!(
+            classify_error_message("unknown_session_id: wc_sess_x"),
+            "unknown_session_id"
+        );
+        assert_eq!(
+            actual_failure_kind_for_tool_result(&json!({}), Some(message), Some("runtime_error"))
+                .as_deref(),
+            Some("session_retention_expired")
+        );
+        assert_eq!(
+            actual_failure_kind_for_tool_result(
+                &json!({
+                    "error_kind": "session_retention_expired",
+                    "session_id": "wc_sess_x",
+                    "state_changed": false,
+                }),
+                Some(message),
+                None,
+            )
+            .as_deref(),
+            Some("session_retention_expired")
+        );
     }
 }

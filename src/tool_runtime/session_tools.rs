@@ -1,8 +1,8 @@
 //! Runtime handlers for explicit Workflow Session tool calls.
 
 use super::session_context::{
-    session_authority_denied_result, session_lifecycle_denied_result, session_message_error_result,
-    session_project_mismatch_result, unknown_session_result,
+    absent_workflow_session_result, session_authority_denied_result,
+    session_lifecycle_denied_result, session_message_error_result, session_project_mismatch_result,
     workflow_session_authority_fingerprint, SessionProjectMismatch,
 };
 use super::tool_inputs::SessionMode;
@@ -417,7 +417,7 @@ impl ToolRuntime {
             Err(err) => return err.into_tool_result(),
         };
         let Some(summary) = self.sessions.summary(&session_id, None) else {
-            return unknown_session_result(&session_id);
+            return absent_workflow_session_result(&self.sessions, &session_id, auth);
         };
         if summary.project.as_deref() != Some(resolved.resolved_id.as_str()) {
             let mismatch = SessionProjectMismatch {
@@ -458,7 +458,7 @@ impl ToolRuntime {
                 "updated_at": outcome.summary.updated_at,
             })),
             Err(sessions::SessionExecutionContextUpdateError::UnknownSession) => {
-                unknown_session_result(&session_id)
+                absent_workflow_session_result(&self.sessions, &session_id, auth)
             }
             Err(sessions::SessionExecutionContextUpdateError::SessionNotActive { lifecycle }) => {
                 session_lifecycle_denied_result(
@@ -506,7 +506,7 @@ impl ToolRuntime {
                 }
                 ToolResult::ok(output)
             }
-            None => unknown_session_result(&session_id),
+            None => absent_workflow_session_result(&self.sessions, &session_id, auth),
         }
     }
 
@@ -536,7 +536,9 @@ impl ToolRuntime {
                     "updated_at": outcome.summary.updated_at,
                 }))
             }
-            Err(sessions::SessionCloseError::UnknownSession) => unknown_session_result(&session_id),
+            Err(sessions::SessionCloseError::UnknownSession) => {
+                absent_workflow_session_result(&self.sessions, &session_id, auth)
+            }
         }
     }
 
@@ -549,7 +551,11 @@ impl ToolRuntime {
         let Some((project, owner_authority_fingerprint)) =
             self.sessions.session_target_authority(session_id)
         else {
-            return Err(unknown_session_result(session_id));
+            return Err(absent_workflow_session_result(
+                &self.sessions,
+                session_id,
+                auth,
+            ));
         };
         if let Some(project) = project {
             // Project authorization and immutable creation-time Session authority
@@ -698,7 +704,7 @@ impl ToolRuntime {
                 "replayed": outcome.replayed,
                 "state_changed": outcome.state_changed,
             })),
-            Err(err) => session_message_error_result(&session_id, None, err),
+            Err(err) => session_message_error_result(&self.sessions, auth, &session_id, None, err),
         }
     }
 
@@ -733,7 +739,7 @@ impl ToolRuntime {
                 "session_id": session_id,
                 "messages": messages,
             })),
-            Err(err) => session_message_error_result(&session_id, None, err),
+            Err(err) => session_message_error_result(&self.sessions, auth, &session_id, None, err),
         }
     }
 
@@ -758,7 +764,13 @@ impl ToolRuntime {
                 "direct_replies": snapshot.direct_replies,
                 "assignment_fence": snapshot.assignment_fence,
             })),
-            Err(err) => session_message_error_result(&session_id, Some(&message_id), err),
+            Err(err) => session_message_error_result(
+                &self.sessions,
+                auth,
+                &session_id,
+                Some(&message_id),
+                err,
+            ),
         }
     }
 
@@ -817,7 +829,9 @@ impl ToolRuntime {
                 "history_lost": observation.history_lost,
                 "has_more": observation.has_more,
             })),
-            Err(err) => session_message_observation_error_result(&session_id, err),
+            Err(err) => {
+                session_message_observation_error_result(&self.sessions, auth, &session_id, err)
+            }
         }
     }
 
@@ -844,7 +858,13 @@ impl ToolRuntime {
                 "message_id": message.message_id,
                 "message": message,
             })),
-            Err(err) => session_message_error_result(&session_id, Some(&message_id), err),
+            Err(err) => session_message_error_result(
+                &self.sessions,
+                auth,
+                &session_id,
+                Some(&message_id),
+                err,
+            ),
         }
     }
 
@@ -868,7 +888,15 @@ impl ToolRuntime {
         }
         let completion_id = match Self::completion_key_fingerprint(completion_key) {
             Ok(completion_id) => completion_id,
-            Err(err) => return session_message_error_result(&session_id, Some(&message_id), err),
+            Err(err) => {
+                return session_message_error_result(
+                    &self.sessions,
+                    auth,
+                    &session_id,
+                    Some(&message_id),
+                    err,
+                )
+            }
         };
         let author_session_id =
             self.trusted_collaboration_author_session(trusted_recording_session_id);
@@ -894,7 +922,13 @@ impl ToolRuntime {
                 "todo": outcome.todo,
                 "answer": outcome.answer,
             })),
-            Err(err) => session_message_error_result(&session_id, Some(&message_id), err),
+            Err(err) => session_message_error_result(
+                &self.sessions,
+                auth,
+                &session_id,
+                Some(&message_id),
+                err,
+            ),
         }
     }
 
@@ -925,7 +959,7 @@ impl ToolRuntime {
                 "recent_progress": summary.recent_progress,
                 "recent_decisions": summary.recent_decisions,
             })),
-            Err(err) => session_message_error_result(&session_id, None, err),
+            Err(err) => session_message_error_result(&self.sessions, auth, &session_id, None, err),
         }
     }
 }
@@ -964,12 +998,14 @@ fn invalid_session_message_observation_request(session_id: &str, message: &str) 
 }
 
 fn session_message_observation_error_result(
+    sessions: &sessions::SessionStore,
+    auth: Option<&AuthContext>,
     session_id: &str,
     error: sessions::SessionMessageObservationError,
 ) -> ToolResult {
     match error {
         sessions::SessionMessageObservationError::UnknownSession => {
-            unknown_session_result(session_id)
+            absent_workflow_session_result(sessions, session_id, auth)
         }
         sessions::SessionMessageObservationError::MalformedToken
         | sessions::SessionMessageObservationError::OversizedToken

@@ -64,6 +64,7 @@ edition = "2021"
             action: ProjectValidationAction::Check,
             adapter: ProjectValidationAdapter::Auto,
             scope: None,
+            dependency_policy: None,
             test: None,
         };
         let (plan, cwd) =
@@ -184,5 +185,165 @@ edition = "2021"
         );
         assert!(!reserved, "rejected validation retained the execution slot");
         assert!(lock_unpoison(&manager.queued).is_empty());
+    }
+}
+
+#[test]
+fn go_project_validation_overrides_ambient_gowork_but_direct_go_test_does_not() {
+    for project_gateway in [true, false] {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("project");
+        let registry = root.join("registry");
+        let executable_temp = crate::tests::executable_tempdir();
+        let bin = executable_temp.path().to_path_buf();
+        std::fs::create_dir_all(&registry).unwrap();
+        std::fs::write(root.join("go.mod"), "module example.test/demo\ngo 1.22\n").unwrap();
+        std::fs::write(
+            registry.join("demo.toml"),
+            format!(
+                "id = 'demo'\nname = 'Demo'\npath = {}\nallow_patch = true\n",
+                serde_json::to_string(root.to_str().unwrap()).unwrap(),
+            ),
+        )
+        .unwrap();
+
+        let helper = structured_process_helper();
+        let fake_go = bin.join(format!("go{}", std::env::consts::EXE_SUFFIX));
+        std::fs::copy(&helper.path, &fake_go).unwrap();
+        let capture = root.join(if project_gateway {
+            "project-validate-gowork.txt"
+        } else {
+            "direct-go-test-gowork.txt"
+        });
+        let ambient = root.join("ambient.work").to_string_lossy().into_owned();
+        let mut shell = ShellConfig::default();
+        shell.path_prepend.push(bin);
+        shell.env.insert("GOWORK".into(), ambient.clone());
+        shell.env.insert("GO111MODULE".into(), "off".into());
+        shell.env.insert(
+            "WEBCODEX_TEST_CAPTURE_GO_MODULE_ENV".into(),
+            capture.to_string_lossy().into_owned(),
+        );
+        if !project_gateway {
+            shell
+                .env
+                .insert("WEBCODEX_TEST_GO_JSON_PASS".into(), "1".into());
+        }
+
+        let policy = RunnerPolicy {
+            allowed_roots: vec![root.clone()],
+            ..Default::default()
+        };
+        let (step, metadata, cwd) = if project_gateway {
+            let request = ProjectValidationRequest {
+                project_id: "demo".into(),
+                cwd: None,
+                action: ProjectValidationAction::Check,
+                adapter: ProjectValidationAdapter::Go,
+                scope: None,
+                dependency_policy: None,
+                test: None,
+            };
+            let (plan, cwd) =
+                crate::webcodex_runner::validation::project::plan(&policy, &registry, &request)
+                    .unwrap();
+            let metadata = ShellJobValidationMetadata {
+                project_validation: Some(plan.provenance.clone()),
+                source_fence: None,
+                tool: "project_validate".into(),
+                kind: "check".into(),
+                steps: vec![plan.step.clone()],
+                effective_timeout_secs: 60,
+                sync_wait_secs: 10,
+                adapter: plan.adapter,
+                validation_target_id: Some(plan.validation_target_id),
+                minimum_tests: None,
+                require_tests: None,
+                no_run: None,
+            };
+            (plan.step, metadata, cwd)
+        } else {
+            let step = ShellJobValidationStep {
+                name: "test".into(),
+                program: "go".into(),
+                args: vec!["test".into(), "-json".into(), "./...".into()],
+                env: Vec::new(),
+            };
+            let metadata = ShellJobValidationMetadata {
+                project_validation: None,
+                source_fence: None,
+                tool: "go_test".into(),
+                kind: "test".into(),
+                steps: vec![step.clone()],
+                effective_timeout_secs: 60,
+                sync_wait_secs: 10,
+                adapter: "go_test".into(),
+                validation_target_id: Some("target:3123456789abcdef01234567".into()),
+                minimum_tests: None,
+                require_tests: None,
+                no_run: None,
+            };
+            (step, metadata, root.clone())
+        };
+        assert!(metadata.is_valid());
+
+        let context = ShellJobContext {
+            runtime_project_id: Some("agent:validation-agent:demo".into()),
+            validation: Some(metadata),
+            workflow_session_id: None,
+            ssh_resource: None,
+            project_cwd: Some(".".into()),
+            cwd: Some(cwd.to_string_lossy().into_owned()),
+            purpose: Some("validation".into()),
+            shell: None,
+            command_preview: "go validation".into(),
+            validation_steps: vec![step.name.clone()],
+            structured_execution: None,
+        };
+        let job_id = if project_gateway {
+            "go-single-module-validation"
+        } else {
+            "direct-go-test"
+        };
+        let operation = RunnerJobOperation::StartValidation(RunnerJobValidationOperation {
+            job_id: job_id.into(),
+            cwd: Some(cwd.to_string_lossy().into_owned()),
+            steps: vec![step],
+            timeout_secs: 60,
+            context,
+        });
+        let wire = RunnerRequest::from_operation(
+            RunnerInvocationMetadata {
+                request_id: format!("{job_id}-request"),
+                client_id: "validation-agent".into(),
+                requested_by: "test".into(),
+                created_at: chrono::Utc::now().timestamp(),
+            },
+            RunnerOperation::Job(operation),
+        )
+        .unwrap();
+
+        let manager = JobManager::new(1);
+        let (sink, _rx) = structured_test_sink("validation-agent", "validation-instance");
+        manager.enqueue(
+            sink,
+            PendingJobStart::from_wire(1, policy, shell, SshConfig::default(), registry, wire),
+        );
+        assert!(manager.wait_for_workers(Instant::now() + Duration::from_secs(15)));
+        let snapshot = lock_unpoison(&manager.jobs)
+            .get(job_id)
+            .unwrap()
+            .snapshot
+            .clone();
+        manager.stop_all();
+
+        assert_eq!(snapshot.status, "completed", "{snapshot:?}");
+        let observed = std::fs::read_to_string(capture).unwrap();
+        let expected = if project_gateway {
+            "GOWORK=off\nGO111MODULE=on\nARGV=vet\t./...\n".to_string()
+        } else {
+            format!("GOWORK={ambient}\nGO111MODULE=off\nARGV=test\t-json\t./...\n")
+        };
+        assert_eq!(observed, expected);
     }
 }

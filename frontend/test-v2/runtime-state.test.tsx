@@ -293,6 +293,32 @@ it("lets slow project and Session inventories finish across polling ticks", asyn
   } finally { vi.useRealTimers(); }
 });
 
+it.each(["omitted", "unavailable"])("does not retarget the default Window when it is %s during refresh", async (mode) => {
+  const first = "a".repeat(64);
+  const second = "b".repeat(64);
+  let changed = false;
+  const client = { post: vi.fn(async (path, payload) => {
+    if (path === "windows") return { ok: true, status: 200, data: {
+      windows: (changed ? [second] : [first, second]).map(client_window_key => ({ client_window_key })), total: 2, truncated: changed,
+    } };
+    if (changed && mode === "unavailable") return { ok: false, status: 404, data: null };
+    return { ok: true, status: 200, data: windowDetail({ client_window_key: payload.client_window_key }) };
+  }) } as unknown as RuntimeV2Client;
+  const unauthorized = vi.fn();
+  const { result } = renderHook(() => useWindowWorkspace(client, true, unauthorized));
+  await waitFor(() => expect(result.current.detail?.detail_level).toBe("full"));
+  expect(result.current.selectedKey).toBe(first);
+  changed = true;
+  await act(async () => { result.current.refresh(); });
+  expect(result.current.windows.map(row => row.client_window_key)).toEqual([second]);
+  expect(result.current.selectedKey).toBe(first);
+  if (mode === "unavailable") {
+    expect(result.current.detail).toBeNull();
+    expect(result.current.detailAvailability).toBe("denied");
+  } else expect(result.current.detail?.client_window_key).toBe(first);
+  expect(vi.mocked(client.post).mock.calls.filter(([path]) => path === "window").every(([, payload]) => (payload as any).client_window_key === first)).toBe(true);
+});
+
 it("does not retarget an explicit Window when its detail is unavailable or inventory omits it", async () => {
   const key = "b".repeat(64);
   const client = { post: vi.fn(async (path) => path === "windows"

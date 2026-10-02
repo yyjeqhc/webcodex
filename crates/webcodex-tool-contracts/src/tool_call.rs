@@ -1568,6 +1568,14 @@ pub enum ToolCall {
         /// Required explicit wc_sess_* business Session id for the current coding task, obtained from its
         /// compatible Session bootstrap.
         session_id: String,
+        /// Optional 1..16 regular output files (up to 256 MiB each) to observe independently through the Runner.
+        /// Paths are project-relative, unique, at most 512 UTF-8 bytes, and must not be sensitive.
+        /// Observations retain size/SHA/MIME, not content. Missing/unavailable outputs block closeout;
+        /// existing files do not prove task-specific counts, content or format correctness.
+        #[schemars(length(max = 16))]
+        #[schemars(inner(length(min = 1, max = 512)))]
+        #[serde(default)]
+        outputs: Vec<String>,
         /// When true, return the minimal decision-complete closeout only: workspace cleanliness/conflicts,
         /// hygiene state, bounded Job counts, final validation state/counts, tool-failure actionability
         /// counts, canonical task_outcome, evidence_integrity, warnings, and suggested_next_actions. Omits
@@ -2883,6 +2891,10 @@ pub enum ToolCall {
         /// Optional bounded Cargo package selectors or project-relative Go package patterns.
         #[serde(default)]
         scope: Option<webcodex_core::project_build::ProjectBuildScope>,
+        /// Optional portable dependency-resolution policy. locked forbids adapters from
+        /// repairing dependency selection state; it does not imply offline execution.
+        #[serde(default)]
+        dependency_policy: Option<webcodex_core::project_build::ProjectDependencyPolicy>,
         /// Total build execution budget, default 1800 seconds, clamped to 7 days.
         /// Host handoff timing never extends this budget or starts a second build.
         #[serde(default)]
@@ -2909,6 +2921,10 @@ pub enum ToolCall {
         /// scope is not supported.
         #[serde(default)]
         scope: Option<webcodex_core::project_validation::ProjectValidationScope>,
+        /// Optional portable dependency-resolution policy. locked forbids adapters from
+        /// repairing dependency selection state; it does not imply offline execution.
+        #[serde(default)]
+        dependency_policy: Option<webcodex_core::project_validation::ProjectDependencyPolicy>,
         /// Test-only selector and count postconditions. Rust uses a libtest substring;
         /// Go uses native -run regexp. Omission preserves unfiltered positive-test proof.
         #[serde(default)]
@@ -4747,6 +4763,26 @@ pub enum ToolCall {
         overwrite: Option<bool>,
     },
 
+    /// Accept one exact `ArtifactHandoffGrant` as the destination principal and
+    /// import its frozen source snapshot through the existing Control↔Runner
+    /// artifact transfer path.
+    AcceptArtifactHandoff {
+        /// Opaque durable grant id created by the source authority.
+        #[schemars(length(min = 1, max = 128))]
+        grant_id: String,
+        /// Exact or resolvable destination Runtime Project.
+        destination_project: String,
+        /// Project-relative destination artifact path.
+        #[schemars(length(min = 1, max = 4096))]
+        destination_path: String,
+        /// Allow replacing an existing destination artifact (default false).
+        #[serde(default)]
+        overwrite: Option<bool>,
+        /// Stable caller-selected key for the complete logical import request.
+        #[schemars(length(min = 1, max = 128))]
+        idempotency_key: String,
+    },
+
     /// Preferred unified read-side facade for Project artifacts. Physical
     /// dispatch remains action-specific: Runner-backed metadata/inspection and
     /// MCP presentation/authority for native images and complete export.
@@ -4777,8 +4813,8 @@ pub enum ToolCall {
         expected_sha256: Option<String>,
     },
 
-    /// Read bounded metadata for a binary project artifact. Zip files are
-    /// counted but never extracted.
+    /// Read metadata for a project artifact up to 256 MiB using bounded streaming hashing.
+    /// Zip files are counted but never extracted.
     ReadProjectArtifactMetadata {
         /// Runner-registered project id.
         project: String,
@@ -5972,6 +6008,7 @@ impl ToolCall {
             Self::SaveProjectArtifact { .. } => "save_project_artifact",
             Self::ImportConversationFilesToProject { .. } => "import_conversation_files_to_project",
             Self::TransferProjectArtifact { .. } => "transfer_project_artifact",
+            Self::AcceptArtifactHandoff { .. } => "accept_artifact_handoff",
             Self::ProjectArtifact { .. } => "project_artifact",
             Self::ReadProjectArtifactMetadata { .. } => "read_project_artifact_metadata",
             Self::ReadProjectArtifact { .. } => "read_project_artifact",
@@ -6086,7 +6123,8 @@ impl ToolCall {
             | Self::WorkspaceCheckpointShow { session_id, .. }
             | Self::WorkspaceCheckpointRestore { session_id, .. }
             | Self::WorkspaceCheckpointDelete { session_id, .. } => session_id.as_deref(),
-            Self::SessionHandoffSummary { session_id, .. } => Some(session_id.as_str()),
+            Self::SessionHandoffSummary { session_id, .. }
+            | Self::FinishCodingTask { session_id, .. } => Some(session_id.as_str()),
             // Window-card presentation/refresh never becomes generic Session recorder
             // evidence. An optional Session selector is association evidence only.
             Self::PresentWorkResult { .. }
@@ -6167,6 +6205,10 @@ impl ToolCall {
             Self::CodeModeExec { project, .. }
             | Self::CodeModeExecEffectful { project, .. }
             | Self::CodeModeExecMutating { project, .. } => Some(project.as_str()),
+            Self::AcceptArtifactHandoff {
+                destination_project,
+                ..
+            } => Some(destination_project.as_str()),
             Self::RunProcess { project, .. }
             | Self::RunDetachedProcess { project, .. }
             | Self::CodingAgentStart { project, .. }

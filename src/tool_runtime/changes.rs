@@ -8,7 +8,7 @@ use crate::auth::AuthContext;
 
 use super::helpers::validate_project_relative_path;
 use super::session_context::{
-    session_project_mismatch_result, unknown_session_result,
+    absent_workflow_session_result, session_project_mismatch_result,
     workflow_session_authority_fingerprint, SessionProjectMismatch,
 };
 use super::{ToolResult, ToolRuntime};
@@ -686,7 +686,11 @@ exit 0
             .sessions
             .summary(session_id, Some(CHANGES_SESSION_SUMMARY_LIMIT))
         else {
-            return Err(unknown_session_result(session_id));
+            return Err(absent_workflow_session_result(
+                &self.sessions,
+                session_id,
+                auth,
+            ));
         };
         if summary.project.as_deref() != Some(resolved.resolved_id.as_str()) {
             return Err(session_project_mismatch_result(

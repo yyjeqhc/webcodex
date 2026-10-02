@@ -11,6 +11,7 @@ fn build_request() -> ProjectBuildRequest {
         cwd: None,
         adapter: ProjectBuildAdapter::Rust,
         scope: None,
+        dependency_policy: None,
     }
 }
 
@@ -24,6 +25,32 @@ fn build_plan() -> ProjectBuildPlan {
             recipe_root: ".".into(),
             root_digest: "1".repeat(64),
             manifest_digest: "2".repeat(64),
+            invocation_digest: project_build_invocation_digest(&process),
+        },
+        process,
+    }
+}
+
+fn go_build_request() -> ProjectBuildRequest {
+    ProjectBuildRequest {
+        project_id: "demo".into(),
+        cwd: None,
+        adapter: ProjectBuildAdapter::Go,
+        scope: None,
+        dependency_policy: None,
+    }
+}
+
+fn go_build_plan() -> ProjectBuildPlan {
+    let request = go_build_request();
+    let process = canonical_project_build_process("go", &request).unwrap();
+    ProjectBuildPlan {
+        provenance: ProjectBuildProvenance {
+            request,
+            backend: "go".into(),
+            recipe_root: ".".into(),
+            root_digest: "3".repeat(64),
+            manifest_digest: "4".repeat(64),
             invocation_digest: project_build_invocation_digest(&process),
         },
         process,
@@ -146,4 +173,54 @@ async fn project_build_job_handoff_emits_typed_start_build() {
         build.context.runtime_project_id.as_deref(),
         Some("agent:build-runner:demo")
     );
+}
+
+#[tokio::test]
+async fn go_project_build_job_handoff_requires_single_module_capability() {
+    for supported in [false, true] {
+        let registry = RunnerRegistry::default();
+        let mut registration = registration(true);
+        registration.capabilities.project_go_single_module_v1 = supported;
+        registry.register(registration).await.unwrap();
+
+        let plan = go_build_plan();
+        let result = registry
+            .start_job_with_metadata_for_access(
+                ShellJobOpRequest {
+                    login: false,
+                    op: "start".into(),
+                    client_id: Some("build-runner".into()),
+                    cwd: Some("/tmp/demo".into()),
+                    command: Some(String::new()),
+                    timeout_secs: Some(60),
+                    job_id: None,
+                    since_stdout_line: None,
+                    since_stderr_line: None,
+                    tail_lines: None,
+                    limit: None,
+                    codex: None,
+                },
+                "test".into(),
+                ShellJobStartMetadata {
+                    project_id: Some("agent:build-runner:demo".into()),
+                    project_cwd: Some(".".into()),
+                    purpose: Some("build".into()),
+                    shell: Some("direct_argv".into()),
+                    visibility: ShellJobVisibility::Public,
+                    structured_execution: Some(StructuredJobExecution::ProjectBuild(plan)),
+                    ..Default::default()
+                },
+                None,
+                None,
+            )
+            .await;
+
+        if supported {
+            assert!(result.is_ok(), "{result:?}");
+        } else {
+            let error = result.unwrap_err();
+            assert!(error.contains("project_go_single_module_v1"), "{error}");
+            assert!(registry.list_jobs(Some(10)).await.is_empty());
+        }
+    }
 }

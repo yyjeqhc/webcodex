@@ -4,6 +4,7 @@ use crate::runner_protocol::{RunnerResultPayload, RunnerResultRequest};
 use crate::tool_runtime::session_context::workflow_session_authority_fingerprint;
 use crate::tool_runtime::sessions::{
     PostSessionMessageInput, SessionCreateOptions, SessionMessageKind, SessionMessagePriority,
+    SessionStore,
 };
 use crate::tool_runtime::{SessionMode, ToolCall, ToolRuntime};
 use std::sync::Arc;
@@ -285,4 +286,100 @@ async fn coding_agent_context_is_frozen_in_dispatched_intent_and_changed_retry_c
             .await
             .is_none()
     );
+}
+
+#[tokio::test]
+async fn coding_agent_context_expired_selectors_stop_before_dispatch() {
+    let root = tempfile::tempdir().unwrap();
+    let mut runtime = ToolRuntime::new_for_tests().with_project_reference_database(Arc::new(
+        crate::Database::open(&root.path().join("refs.db")).unwrap(),
+    ));
+    runtime.sessions = SessionStore::new_in_memory_with_limits(8, 1, 64);
+    let project = register_runner_project_at_path_with_coding_agents(
+        &runtime,
+        "retention-context",
+        "demo",
+        root.path(),
+        Some(vec![CodingAgentProvider {
+            provider_id: "review".into(),
+            provider_instance_id: "review-instance".into(),
+            name: "Review model".into(),
+        }]),
+    )
+    .await;
+    let auth = bootstrap_auth_context();
+    let expired = seed(&runtime, Some(&project), &auth);
+    let session_ref = runtime
+        .session_reference_for_id(&expired, Some(&auth))
+        .expect("live session issues a ref");
+    runtime.sessions.close_session(&expired).unwrap();
+    let retained = seed(&runtime, Some(&project), &auth);
+    runtime.sessions.close_session(&retained).unwrap();
+    assert!(runtime
+        .sessions
+        .retention_tombstone_for_test(&expired)
+        .is_some());
+    let runs_before = runtime.sessions.status().active_sessions;
+
+    for (key, selector) in [
+        ("expired-canonical", expired.as_str()),
+        ("expired-ref", session_ref.as_str()),
+    ] {
+        let started = runtime
+            .dispatch_with_auth(
+                ToolCall::CodingAgentStart {
+                    project: project.clone(),
+                    provider_id: "review".into(),
+                    idempotency_key: key.into(),
+                    instruction: "Review accessibility".into(),
+                    context_session_id: Some(selector.to_string()),
+                    config: None,
+                    timeout_secs: Some(60),
+                    recording_session_id: None,
+                },
+                Some(&auth),
+            )
+            .await;
+        assert!(!started.success, "{key}: {:?}", started.error);
+        assert_eq!(started.output["error_kind"], "session_retention_expired");
+        assert_eq!(started.output["recovery_kind"], "none");
+        assert_eq!(started.output["state_changed"], false);
+        assert_eq!(started.output["session_id"], expired);
+        assert_eq!(started.output["execution_state"], "not_started");
+        let encoded = started.output.to_string();
+        assert!(!encoded.contains("Keep the existing database schema"));
+        assert!(!encoded.contains("fingerprint"));
+        assert!(!encoded.contains("expiry_ordinal"));
+        assert!(
+            probe_agent_request_for_instance(&runtime, "retention-context", "inst")
+                .await
+                .is_none(),
+            "{key} must not dispatch a CodingAgentRun"
+        );
+    }
+    assert_eq!(runtime.sessions.status().active_sessions, runs_before);
+    assert!(!runtime.sessions.contains_session(&expired));
+
+    let foreign = shared_key_auth_context("different-owner");
+    let foreign_canonical = runtime
+        .coding_agent_context_instruction(&project, &expired, "Review", Some(&foreign))
+        .await
+        .unwrap_err();
+    assert_eq!(foreign_canonical.output["error_kind"], "unknown_session_id");
+    let foreign_ref = runtime
+        .coding_agent_context_instruction(&project, &session_ref, "Review", Some(&foreign))
+        .await
+        .unwrap_err();
+    assert_eq!(foreign_ref.output["error_kind"], "unknown_session_ref");
+    let missing_ref = runtime
+        .coding_agent_context_instruction(&project, "~s99999", "Review", Some(&auth))
+        .await
+        .unwrap_err();
+    assert_eq!(missing_ref.output["error_kind"], "unknown_session_ref");
+    for error in [&foreign_canonical, &foreign_ref, &missing_ref] {
+        let encoded = error.output.to_string();
+        assert!(!encoded.contains("session_retention_expired"));
+        assert!(!encoded.contains("Keep the existing database schema"));
+        assert!(!encoded.contains("fingerprint"));
+    }
 }

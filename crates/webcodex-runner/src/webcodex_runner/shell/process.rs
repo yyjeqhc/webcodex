@@ -108,6 +108,42 @@ pub(crate) fn run_process_with_profiles_and_execution_state_with_start_hook(
     stop_requested: Option<&AtomicBool>,
     on_started: Option<&dyn Fn()>,
 ) -> ShellCommandResult {
+    run_process_with_profiles_and_execution_state_with_internal_env_and_start_hook(
+        generation,
+        policy,
+        shell,
+        project_registry_dir,
+        cache,
+        cwd,
+        executable,
+        args,
+        stdin,
+        timeout_secs,
+        stop_requested,
+        &[],
+        on_started,
+    )
+}
+
+/// Apply Runner-owned semantic environment overrides after shell/profile
+/// preparation and before native spawn. These values are internal invariants,
+/// never caller/model-provided environment input.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn run_process_with_profiles_and_execution_state_with_internal_env_and_start_hook(
+    generation: u64,
+    policy: &RunnerPolicy,
+    shell: &ShellConfig,
+    project_registry_dir: &Path,
+    cache: &PreparedShellProfileCache,
+    cwd: Option<&str>,
+    executable: &str,
+    args: &[String],
+    stdin: Option<&str>,
+    timeout_secs: u64,
+    stop_requested: Option<&AtomicBool>,
+    env_overrides: &[(&str, &str)],
+    on_started: Option<&dyn Fn()>,
+) -> ShellCommandResult {
     // Structured execution intentionally receives the same policy treatment
     // as run_shell. Absence of shell syntax is not a permission bypass.
     if !policy.allow_raw_shell {
@@ -153,7 +189,7 @@ pub(crate) fn run_process_with_profiles_and_execution_state_with_start_hook(
             })
         }
     };
-    let cmd = match configured_process_command(
+    let mut cmd = match configured_process_command(
         shell,
         profile.as_deref(),
         executable,
@@ -171,6 +207,9 @@ pub(crate) fn run_process_with_profiles_and_execution_state_with_start_hook(
             })
         }
     };
+    for (key, value) in env_overrides {
+        cmd.env(key, value);
+    }
     execute_configured_command(
         policy,
         cmd,

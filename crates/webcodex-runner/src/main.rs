@@ -1539,6 +1539,10 @@ fn runner_register_capabilities(cfg: &RunnerConfig) -> RunnerCapabilities {
     capabilities.set(RunnerCapabilityId::StructuredGoTestJson, true);
     capabilities.set(RunnerCapabilityId::ProjectValidation, true);
     capabilities.set(RunnerCapabilityId::ProjectBuild, true);
+    capabilities.set(RunnerCapabilityId::ProjectDependencyPolicy, true);
+    // Go project gateways pin GO111MODULE=on and GOWORK=off after prepared shell/profile env is
+    // applied. Keep this independent for mixed Server/Runner rolling upgrades.
+    capabilities.set(RunnerCapabilityId::ProjectGoSingleModule, true);
     // Portable package scope is additive to project_validation_v1 so mixed
     // Server/Runner deployments fail closed before sending the expanded request.
     capabilities.set(RunnerCapabilityId::ProjectValidationPackageScope, true);

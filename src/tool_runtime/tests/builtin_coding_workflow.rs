@@ -106,8 +106,8 @@ fn builtin_coding_workflow_defaults_cover_unnamed_tasks_without_granting_authori
         "user answer/Job/validation/result",
         "continue independent work",
         "wait only on real dependencies",
-        "Ordinary implementation is default",
-        "map cross-layer changes end to end",
+        "For inspection, files/data/artifacts, diagnostics, or coding",
+        "Coding maps cross-layer changes end to end",
         "compiler/schema/exhaustiveness failures",
         "avoid speculative redesign",
         "Validation failure is evidence, not queue cleanliness",
@@ -189,10 +189,12 @@ fn direct_strategy_prefers_structured_edits_and_coalesces_known_work() {
     let strategy = strategy_text(&workflow);
     for phrase in [
         "read_files → edit_project_files",
-        "expected_read_revision",
+        "read_revision fence",
         "replace_range",
-        "run_script/Python for computation",
-        "never use it to bypass edit_project_files revision fences",
+        "list_project_files/read_files",
+        "binary files",
+        "independently verify generated/report outputs",
+        "Never use scripts to bypass edit_project_files revision fences",
         "read_files(items)",
         "search_project_texts(queries)",
         "search_and_read",
@@ -214,6 +216,36 @@ fn direct_strategy_prefers_structured_edits_and_coalesces_known_work() {
     let text = workflow.to_string().to_lowercase();
     for absent in ["code_mode", "code mode", "promise.all", "text(results)"] {
         assert!(!text.contains(absent), "{absent}");
+    }
+}
+
+#[test]
+fn shared_workflow_guides_general_project_tasks_and_optional_artifact_delivery() {
+    let workflow = builtin_coding_workflow_projection(Default::default());
+    let guidance = workflow["guidance"].to_string();
+    for phrase in [
+        "files/data/artifacts, diagnostics, or coding",
+        "task-fit validation",
+        "Git/Cargo/commit only when needed",
+    ] {
+        assert!(
+            guidance.contains(phrase),
+            "missing general workflow guidance: {phrase}"
+        );
+    }
+    let closeout = workflow["model_protocol"]["normal_closeout"]
+        .as_str()
+        .expect("closeout guidance");
+    for phrase in [
+        "Artifact tasks",
+        "pass outputs",
+        "count/content/format checks",
+        "read-only tasks without deliverables omit outputs",
+    ] {
+        assert!(
+            closeout.contains(phrase),
+            "missing artifact guidance: {phrase}"
+        );
     }
 }
 

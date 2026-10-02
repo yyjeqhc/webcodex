@@ -82,6 +82,7 @@ fn semantic_read_only_operations_preserve_legacy_leaf_plans_and_identity_profile
                     features: Some("feature-a,feature-b".to_string()),
                     package: None,
                     packages: Some(vec!["package-a".to_string(), "package-b".to_string()]),
+                    dependency_mode: None,
                 },
             )),
             "cargo_check",
@@ -106,6 +107,7 @@ fn semantic_read_only_operations_preserve_legacy_leaf_plans_and_identity_profile
                     package: Some("webcodex".to_string()),
                     packages: None,
                     no_run: Some(true),
+                    dependency_mode: None,
                 },
             )),
             "cargo_test",
@@ -128,6 +130,7 @@ fn semantic_read_only_operations_preserve_legacy_leaf_plans_and_identity_profile
                     "./internal/control".to_string(),
                     "./internal/node".to_string(),
                 ]),
+                dependency_mode: None,
             })),
             "go_test",
             ValidationCommandOptions {
@@ -251,6 +254,7 @@ fn go_check_semantic_operation_uses_canonical_vet_adapter() {
     let operation =
         ReadOnlyValidationOperation::Go(GoReadOnlyValidationOperation::Check(GoCheckOptions {
             packages: Some(vec!["./internal/control".to_string()]),
+            dependency_mode: None,
         }));
     assert_eq!(operation.compatibility_profile().tool_identity, "go_vet");
     assert_eq!(operation.adapter().tool_identity(), "go_vet");
@@ -261,6 +265,81 @@ fn go_check_semantic_operation_uses_canonical_vet_adapter() {
             .compatibility_command,
         "go vet './internal/control'"
     );
+}
+
+#[test]
+fn locked_project_dependency_policy_maps_to_native_validation_argv_and_identity() {
+    use webcodex_core::project_validation::{ProjectDependencyMode, ProjectDependencyPolicy};
+
+    let policy = Some(ProjectDependencyPolicy {
+        mode: ProjectDependencyMode::Locked,
+    });
+    let cases = [
+        (
+            "rust",
+            SemanticCheck::Check,
+            vec!["check", "--locked", "--all-targets"],
+        ),
+        ("rust", SemanticCheck::Test, vec!["test", "--locked"]),
+        (
+            "go",
+            SemanticCheck::Check,
+            vec!["vet", "-mod=readonly", "./..."],
+        ),
+        (
+            "go",
+            SemanticCheck::Test,
+            vec!["test", "-json", "-mod=readonly", "./..."],
+        ),
+    ];
+
+    for (backend, action, expected) in cases {
+        let default = project_validation_operation(backend, action, None).unwrap();
+        let default_identity = default.validation_target_id(Some(".")).unwrap();
+        let locked = project_validation_operation(backend, action, None)
+            .unwrap()
+            .with_dependency_policy(policy)
+            .unwrap();
+        let plan = locked.build_readonly_plan().unwrap();
+        assert_eq!(plan.structured_step.args, expected, "{backend} {action:?}");
+        assert_ne!(
+            locked.validation_target_id(Some(".")).unwrap(),
+            default_identity,
+            "{backend} {action:?}"
+        );
+    }
+
+    let format = project_validation_operation("rust", SemanticCheck::Format, None).unwrap();
+    assert_eq!(
+        format.with_dependency_policy(policy).unwrap_err(),
+        "dependency_policy_unsupported"
+    );
+}
+
+#[test]
+fn default_dependency_policy_preserves_historical_validation_argv_and_identity() {
+    for (backend, action, expected) in [
+        ("rust", SemanticCheck::Check, vec!["check", "--all-targets"]),
+        ("rust", SemanticCheck::Test, vec!["test"]),
+        ("go", SemanticCheck::Check, vec!["vet", "./..."]),
+        ("go", SemanticCheck::Test, vec!["test", "-json", "./..."]),
+    ] {
+        let operation = project_validation_operation(backend, action, None).unwrap();
+        assert_eq!(
+            operation
+                .build_readonly_plan()
+                .unwrap()
+                .structured_step
+                .args,
+            expected
+        );
+        assert_eq!(
+            operation.validation_target_id(Some(".")),
+            project_validation_operation(backend, action, None)
+                .unwrap()
+                .validation_target_id(Some("."))
+        );
+    }
 }
 
 #[test]

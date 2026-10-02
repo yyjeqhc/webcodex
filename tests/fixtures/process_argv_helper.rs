@@ -152,6 +152,26 @@ fn append_start_marker(marker: &str, nonce: &str) {
 }
 
 fn main() {
+    if let Ok(path) = std::env::var("WEBCODEX_TEST_CAPTURE_GO_MODULE_ENV") {
+        let gowork = std::env::var("GOWORK").unwrap_or_else(|_| "<unset>".to_string());
+        let go111module =
+            std::env::var("GO111MODULE").unwrap_or_else(|_| "<unset>".to_string());
+        let argv = std::env::args().skip(1).collect::<Vec<_>>().join("\t");
+        std::fs::write(
+            path,
+            format!("GOWORK={gowork}\nGO111MODULE={go111module}\nARGV={argv}\n"),
+        )
+        .unwrap();
+        if std::env::var("WEBCODEX_TEST_GO_JSON_PASS").as_deref() == Ok("1") {
+            println!(r#"{{"Action":"start","Package":"example.test/demo"}}"#);
+            println!(
+                r#"{{"Action":"pass","Package":"example.test/demo","Test":"TestPass"}}"#
+            );
+            println!(r#"{{"Action":"pass","Package":"example.test/demo"}}"#);
+        }
+        return;
+    }
+
     let mut args = std::env::args().skip(1);
     match args.next().as_deref() {
         Some("argv") => {

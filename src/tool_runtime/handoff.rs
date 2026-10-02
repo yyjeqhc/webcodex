@@ -34,6 +34,8 @@ use webcodex_tool_contracts::{
 pub(crate) use webcodex_workflow_session::closeout_work_projection;
 
 pub(super) const DEFAULT_HANDOFF_LIMIT: usize = 20;
+pub(super) const UNPROVEN_SOURCE_REVIEW_ACTION: &str =
+    "review source_state and external workspace stability; rerunning validation alone cannot prove current source";
 const MAX_HANDOFF_LIMIT: usize = 100;
 const HANDOFF_CLOSEOUT_SESSION_EVENT_LIMIT: usize = 200;
 const MAX_RECENT_FAILED_TOOLS: usize = 10;
@@ -215,7 +217,13 @@ impl ToolRuntime {
         // --- session basic info + display-bounded events ---
         let summary = match self.sessions.summary(&session_id, Some(limit)) {
             Some(summary) => summary,
-            None => return super::unknown_session_result(&session_id),
+            None => {
+                return super::session_context::absent_workflow_session_result(
+                    &self.sessions,
+                    &session_id,
+                    auth,
+                );
+            }
         };
         // Canonical closeout evidence must not depend on the caller's display
         // limit. Reuse one fixed bounded Session snapshot for validation,
@@ -1230,10 +1238,7 @@ fn compact_workflow_outcomes(
         }
         Some("unproven") => {
             push_unique(&mut warning_reasons, "validation_inconclusive");
-            push_unique_action(
-                &mut actions,
-                "review source_state and external workspace stability; rerunning validation alone cannot prove current source",
-            );
+            push_unique_action(&mut actions, UNPROVEN_SOURCE_REVIEW_ACTION);
         }
         Some("inconclusive") => {
             push_unique(&mut warning_reasons, "validation_inconclusive");

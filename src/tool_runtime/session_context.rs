@@ -26,6 +26,38 @@ pub(crate) fn unknown_session_result(session_id: &str) -> ToolResult {
     .with_recovery(RecoveryKind::FixInput)
 }
 
+pub(crate) fn session_retention_expired_result(session_id: &str) -> ToolResult {
+    ToolResult::err_with_output(
+        format!(
+            "session_retention_expired: {session_id} existed, but its Closed-session historical retention expired"
+        ),
+        json!({
+            "error_kind": "session_retention_expired",
+            "session_id": session_id,
+            "state_changed": false,
+        }),
+    )
+    .with_recovery(RecoveryKind::NoAction)
+}
+
+/// Missing live row. An owner-matched retention tombstone is expired history.
+/// Any other caller receives the same unknown result as an id that was never present.
+pub(crate) fn absent_workflow_session_result(
+    sessions: &sessions::SessionStore,
+    session_id: &str,
+    auth: Option<&AuthContext>,
+) -> ToolResult {
+    if let Ok(owner) = workflow_session_authority_fingerprint(auth) {
+        if sessions
+            .owned_retention_incarnation(session_id, &owner)
+            .is_some()
+        {
+            return session_retention_expired_result(session_id);
+        }
+    }
+    unknown_session_result(session_id)
+}
+
 pub(crate) fn session_authority_denied_result(session_id: &str, tool_name: &str) -> ToolResult {
     ToolResult::err_with_output(
         "session_authority_denied",
@@ -119,12 +151,16 @@ pub(crate) fn session_lifecycle_denied_result(
 }
 
 pub(crate) fn session_message_error_result(
+    sessions: &sessions::SessionStore,
+    auth: Option<&AuthContext>,
     session_id: &str,
     message_id: Option<&str>,
     error: sessions::SessionMessageError,
 ) -> ToolResult {
     match error {
-        sessions::SessionMessageError::UnknownSession => unknown_session_result(session_id),
+        sessions::SessionMessageError::UnknownSession => {
+            absent_workflow_session_result(sessions, session_id, auth)
+        }
         sessions::SessionMessageError::UnknownMessage => ToolResult::err_with_output(
             match message_id {
                 Some(message_id) => format!("unknown_message_id: {}", message_id),
@@ -319,7 +355,10 @@ pub(crate) fn session_message_error_result(
 #[cfg(test)]
 #[test]
 fn completion_persistence_uncertain_exposes_exact_retry_same_recovery() {
+    let store = sessions::SessionStore::new(1, 1);
     let result = session_message_error_result(
+        &store,
+        None,
         "wc_sess_test",
         Some("wc_msg_test"),
         sessions::SessionMessageError::PersistenceUncertain,
@@ -579,16 +618,12 @@ pub(crate) fn workflow_session_incarnation_fingerprint(
     project: Option<&str>,
     owner_authority_fingerprint: &str,
 ) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(b"webcodex.workflow-session-incarnation.v1\0");
-    hasher.update(session_id.as_bytes());
-    hasher.update(b"\0");
-    hasher.update(created_at.to_string().as_bytes());
-    hasher.update(b"\0");
-    hasher.update(project.unwrap_or_default().as_bytes());
-    hasher.update(b"\0");
-    hasher.update(owner_authority_fingerprint.as_bytes());
-    format!("{:x}", hasher.finalize())
+    sessions::workflow_session_incarnation_fingerprint(
+        session_id,
+        created_at,
+        project,
+        owner_authority_fingerprint,
+    )
 }
 
 pub(crate) fn project_reference_principal_fingerprint(

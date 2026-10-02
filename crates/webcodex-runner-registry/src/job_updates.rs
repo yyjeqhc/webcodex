@@ -833,6 +833,22 @@ impl RunnerRegistry {
             structured_execution.as_ref(),
             Some(StructuredJobExecution::ProjectBuild(_))
         );
+        let project_dependency_policy_request = matches!(
+            structured_execution.as_ref(),
+            Some(StructuredJobExecution::ProjectBuild(plan))
+                if plan.provenance.request.dependency_policy.is_some()
+        ) || validation
+            .as_ref()
+            .and_then(|metadata| metadata.project_validation.as_ref())
+            .is_some_and(|provenance| provenance.request.dependency_policy.is_some());
+        let project_go_single_module_request = matches!(
+            structured_execution.as_ref(),
+            Some(StructuredJobExecution::ProjectBuild(plan))
+                if plan.provenance.backend == "go"
+        ) || validation
+            .as_ref()
+            .and_then(|metadata| metadata.project_validation.as_ref())
+            .is_some_and(|provenance| provenance.backend == "go");
         if explicit_shell.is_some()
             && (structured_execution.is_some()
                 || !validation_steps.is_empty()
@@ -1245,6 +1261,26 @@ impl RunnerRegistry {
         if project_build_request && !runner.runner_features.supports(RunnerFeature::ProjectBuild) {
             return Err(
                 "capability_unavailable: upgrade target Runner for project_build_v1".to_string(),
+            );
+        }
+        if project_dependency_policy_request
+            && !runner
+                .runner_features
+                .supports(RunnerFeature::ProjectDependencyPolicy)
+        {
+            return Err(
+                "capability_unavailable: upgrade target Runner for project_dependency_policy_v1"
+                    .to_string(),
+            );
+        }
+        if project_go_single_module_request
+            && !runner
+                .runner_features
+                .supports(RunnerFeature::ProjectGoSingleModule)
+        {
+            return Err(
+                "capability_unavailable: upgrade target Runner for project_go_single_module_v1"
+                    .to_string(),
             );
         }
         if javascript_script_request

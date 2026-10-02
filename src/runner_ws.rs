@@ -419,6 +419,8 @@ mod tests {
                         structured_go_test_json: true,
                         project_validation_v1: false,
                         project_build_v1: false,
+                        project_dependency_policy_v1: false,
+                        project_go_single_module_v1: false,
                         project_validation_package_scope_v1: false,
                         project_validation_test_options_v1: false,
                         structured_go_test_tool: true,

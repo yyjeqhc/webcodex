@@ -157,6 +157,7 @@ use output::{read_bounded_pipe_tail, BoundedPipeTail};
 use preparation::{run_prepare_command, stderr_tail};
 pub(crate) use process::{
     prepare_detached_process_launch, run_process_with_profiles_and_execution_state,
+    run_process_with_profiles_and_execution_state_with_internal_env_and_start_hook,
     run_process_with_profiles_and_execution_state_with_start_hook,
 };
 use process_tree::{

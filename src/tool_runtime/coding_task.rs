@@ -32,7 +32,9 @@ use super::project_instructions::{ProjectInstructionFile, ProjectInstructionsSna
 use super::project_resolution::ResolvedProject;
 use super::runtime_info::compact_runtime_status;
 use super::session_context::{
-    session_project_mismatch_result, workflow_session_authority_fingerprint, SessionProjectMismatch,
+    absent_workflow_session_result, session_project_mismatch_result,
+    session_retention_expired_result, workflow_session_authority_fingerprint,
+    SessionProjectMismatch,
 };
 use super::sessions::tool_failure_summary_from_events;
 use super::sessions::{self, SessionTransport, TOOL_CALL_RECORDING_SESSION_ID_FIELD};

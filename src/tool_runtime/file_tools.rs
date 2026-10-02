@@ -156,6 +156,24 @@ impl ToolRuntime {
                 )
                 .await
             }
+            ToolCall::AcceptArtifactHandoff {
+                grant_id,
+                destination_project,
+                destination_path,
+                overwrite,
+                idempotency_key,
+            } => {
+                self.accept_artifact_handoff(
+                    grant_id,
+                    destination_project,
+                    destination_path,
+                    overwrite,
+                    idempotency_key,
+                    auth,
+                    transport,
+                )
+                .await
+            }
             ToolCall::ProjectArtifact {
                 project,
                 path,

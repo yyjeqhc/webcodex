@@ -16,11 +16,11 @@ use super::events::{
     sanitize_tool_execution_state, session_input_summary_for_tool,
 };
 use super::model::{
-    ColdSessionRecord, PersistedSessionLedger, PersistedSessionRecord, SessionEvent, SessionGuards,
-    SessionLifecycle, SessionMessage, SessionRecord, StoredSession,
-    DEFAULT_MAX_MESSAGES_PER_SESSION, EVENT_ID_PREFIX, MAX_CODING_INSTRUCTION_CHARS,
-    MAX_INPUT_ARRAY_ITEMS, MAX_MATERIALIZED_VALIDATION_JOB_IDS, MAX_MESSAGE_CHARS,
-    MAX_MESSAGE_RESOLUTION_CHARS, SESSION_LEDGER_VERSION,
+    ColdSessionRecord, PersistedRetentionTombstoneRow, PersistedSessionLedger,
+    PersistedSessionRecord, SessionEvent, SessionGuards, SessionMessage, SessionRecord,
+    SessionRetentionTombstone, StoredSession, DEFAULT_MAX_MESSAGES_PER_SESSION, EVENT_ID_PREFIX,
+    MAX_CODING_INSTRUCTION_CHARS, MAX_INPUT_ARRAY_ITEMS, MAX_MATERIALIZED_VALIDATION_JOB_IDS,
+    MAX_MESSAGE_CHARS, MAX_MESSAGE_RESOLUTION_CHARS, SESSION_LEDGER_VERSION,
 };
 use super::query::{is_valid_completion_id, validate_message_tags};
 use super::util::{
@@ -496,8 +496,10 @@ pub fn materialize_cold_session(
 pub struct RestoredSessionLedger {
     pub sessions: HashMap<String, StoredSession>,
     pub lru: VecDeque<String>,
-    pub restored_sessions: usize,
-    pub capacity_evictions: u64,
+    pub tombstones: BTreeMap<u64, SessionRetentionTombstone>,
+    pub tombstone_ids: HashMap<String, u64>,
+    pub next_expiry_ordinal: u64,
+    pub expiry_ordinal_exhausted: bool,
     pub last_persist_error: Option<String>,
 }
 
@@ -506,16 +508,89 @@ impl RestoredSessionLedger {
         Self {
             sessions: HashMap::new(),
             lru: VecDeque::new(),
-            restored_sessions: 0,
-            capacity_evictions: 0,
+            tombstones: BTreeMap::new(),
+            tombstone_ids: HashMap::new(),
+            next_expiry_ordinal: 1,
+            expiry_ordinal_exhausted: false,
             last_persist_error,
         }
     }
 }
 
+enum LoadedV2Row {
+    Session(SessionRecord),
+    Tombstone(SessionRetentionTombstone),
+}
+
+fn parse_retention_tombstone_row(value: &Value) -> Option<SessionRetentionTombstone> {
+    let row = serde_json::from_value::<PersistedRetentionTombstoneRow>(value.clone()).ok()?;
+    let tombstone = row.retention_tombstone;
+    if !is_valid_session_id(&tombstone.session_id)
+        || !is_lower_hex_sha256(&tombstone.owner_authority_fingerprint)
+        || !is_lower_hex_sha256(&tombstone.incarnation_fingerprint)
+    {
+        return None;
+    }
+    Some(tombstone)
+}
+
+/// Accept valid tombstones in file order.
+///
+/// Duplicate ordinals keep the first row. Duplicate canonical ids keep the
+/// greater ordinal, and an equal ordinal keeps the first row. A live Session
+/// id drops its tombstone. `next_expiry_ordinal` is strictly above every valid
+/// restored ordinal, including ordinals discarded by those rules. `u64::MAX`
+/// marks allocation exhausted here without renumbering, so restore does not
+/// rewrite the ledger. The next allocation compacts retained ordinals instead
+/// of wrapping.
+fn accept_restored_tombstones(
+    rows: Vec<SessionRetentionTombstone>,
+    live_ids: &HashSet<String>,
+) -> (
+    BTreeMap<u64, SessionRetentionTombstone>,
+    HashMap<String, u64>,
+    u64,
+    bool,
+) {
+    let mut greatest: Option<u64> = None;
+    let mut tombstones = BTreeMap::new();
+    let mut tombstone_ids = HashMap::new();
+    for tombstone in rows {
+        greatest = Some(greatest.map_or(tombstone.expiry_ordinal, |current| {
+            current.max(tombstone.expiry_ordinal)
+        }));
+        if live_ids.contains(&tombstone.session_id) {
+            continue;
+        }
+        if tombstones.contains_key(&tombstone.expiry_ordinal) {
+            continue;
+        }
+        if let Some(existing) = tombstone_ids.get(&tombstone.session_id).copied() {
+            if tombstone.expiry_ordinal <= existing {
+                continue;
+            }
+            tombstones.remove(&existing);
+        }
+        tombstone_ids.insert(tombstone.session_id.clone(), tombstone.expiry_ordinal);
+        tombstones.insert(tombstone.expiry_ordinal, tombstone);
+    }
+    let (next_expiry_ordinal, expiry_ordinal_exhausted) = match greatest {
+        None => (1, false),
+        Some(max) => match max.checked_add(1) {
+            Some(next) => (next, false),
+            None => (u64::MAX, true),
+        },
+    };
+    (
+        tombstones,
+        tombstone_ids,
+        next_expiry_ordinal,
+        expiry_ordinal_exhausted,
+    )
+}
+
 pub fn load_persisted_ledger(
     path: &PathBuf,
-    historical_session_retention_limit: usize,
     max_events_per_session: usize,
 ) -> RestoredSessionLedger {
     let content = match fs::read_to_string(path) {
@@ -539,7 +614,7 @@ pub fn load_persisted_ledger(
             return RestoredSessionLedger::empty(Some(error));
         }
     };
-    let restored_records: Result<Vec<SessionRecord>, String> = match version {
+    let restored_rows: Result<Vec<LoadedV2Row>, String> = match version {
         SESSION_LEDGER_VERSION => serde_json::from_str::<LoadedSessionLedgerV2>(&content)
             .map_err(|err| format!("invalid v2 session ledger: {err}"))
             .map(|ledger| {
@@ -548,6 +623,20 @@ pub fn load_persisted_ledger(
                     .sessions
                     .into_iter()
                     .filter_map(|value| {
+                        // Classify tombstone rows before the Session event-shape
+                        // check. A tombstone has no `events` field, and that check
+                        // would otherwise drop it as a malformed Session row.
+                        if value.get("retention_tombstone").is_some() {
+                            return match parse_retention_tombstone_row(&value) {
+                                Some(tombstone) => Some(LoadedV2Row::Tombstone(tombstone)),
+                                None => {
+                                    tracing::warn!(
+                                        "discarding malformed v2 retention tombstone row"
+                                    );
+                                    None
+                                }
+                            };
+                        }
                         if !v2_record_has_canonical_logical_invocation_shape(&value) {
                             tracing::warn!(
                                 "discarding malformed v2 Session row: event correlation shape is partial"
@@ -561,20 +650,36 @@ pub fn load_persisted_ledger(
                                 return None;
                             }
                         };
-                        record.into_record(max_events_per_session)
+                        record
+                            .into_record(max_events_per_session)
+                            .map(LoadedV2Row::Session)
                     })
                     .collect()
             }),
         other => Err(format!("unsupported session ledger version {other}")),
     };
-    let restored_records = match restored_records {
-        Ok(records) => records,
+    let restored_rows = match restored_rows {
+        Ok(rows) => rows,
         Err(err) => {
             let error = bound_summary_string(&format!("restore_failed: {err}"));
             tracing::warn!("session ledger restore failed: {}", error);
             return RestoredSessionLedger::empty(Some(error));
         }
     };
+    let mut tombstone_rows = Vec::new();
+    let mut restored_records = Vec::new();
+    for row in restored_rows {
+        match row {
+            LoadedV2Row::Session(record) => restored_records.push(record),
+            LoadedV2Row::Tombstone(tombstone) => tombstone_rows.push(tombstone),
+        }
+    }
+    let live_ids = restored_records
+        .iter()
+        .map(|record| record.session_id.clone())
+        .collect::<HashSet<_>>();
+    let (tombstones, tombstone_ids, next_expiry_ordinal, expiry_ordinal_exhausted) =
+        accept_restored_tombstones(tombstone_rows, &live_ids);
     let mut records: Vec<StoredSession> = restored_records
         .into_iter()
         .map(|record| {
@@ -593,21 +698,6 @@ pub fn load_persisted_ledger(
         .collect();
     records.sort_by_key(StoredSession::updated_at);
 
-    let closed_count = records
-        .iter()
-        .filter(|record| record.lifecycle() == SessionLifecycle::Closed)
-        .count();
-    let closed_to_prune = closed_count.saturating_sub(historical_session_retention_limit);
-    let mut pruned_closed = 0usize;
-    records.retain(|record| {
-        if pruned_closed < closed_to_prune && record.lifecycle() == SessionLifecycle::Closed {
-            pruned_closed += 1;
-            false
-        } else {
-            true
-        }
-    });
-
     let mut sessions = HashMap::new();
     let mut lru = VecDeque::new();
     for record in records {
@@ -615,18 +705,18 @@ pub fn load_persisted_ledger(
         lru.push_back(session_id.clone());
         sessions.insert(session_id, record);
     }
-    let restored_sessions = sessions.len();
-
     RestoredSessionLedger {
         sessions,
         lru,
-        restored_sessions,
-        capacity_evictions: pruned_closed as u64,
+        tombstones,
+        tombstone_ids,
+        next_expiry_ordinal,
+        expiry_ordinal_exhausted,
         last_persist_error: None,
     }
 }
 
-fn is_lower_hex_sha256(value: &str) -> bool {
+pub(super) fn is_lower_hex_sha256(value: &str) -> bool {
     value.len() == 64
         && value
             .as_bytes()
@@ -854,4 +944,24 @@ pub fn sanitize_persisted_message(
         .resolution
         .map(|resolution| bound_chars(resolution.trim(), MAX_MESSAGE_RESOLUTION_CHARS));
     Some(message)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tombstone_row_is_not_a_session_record() {
+        let row = serde_json::json!({
+            "retention_tombstone": {
+                "session_id": "wc_sess_0123456789abcdef0123456789abcdef",
+                "owner_authority_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "incarnation_fingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "expiry_ordinal": 1
+            }
+        });
+        assert!(row.get("events").is_none());
+        assert!(!v2_record_has_canonical_logical_invocation_shape(&row));
+        assert!(serde_json::from_value::<PersistedSessionRecord>(row).is_err());
+    }
 }

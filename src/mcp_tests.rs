@@ -278,6 +278,8 @@ mod artifact_export;
 mod computer_app;
 #[path = "mcp_tests/conformance.rs"]
 mod conformance;
+#[path = "mcp_tests/execution_feedback.rs"]
+mod execution_feedback;
 #[path = "mcp_tests/file_import.rs"]
 mod file_import;
 #[path = "mcp_tests/goal_plan_app.rs"]

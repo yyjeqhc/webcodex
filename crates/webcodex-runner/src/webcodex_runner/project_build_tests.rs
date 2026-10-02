@@ -34,6 +34,41 @@ fn request() -> ProjectBuildRequest {
         cwd: None,
         adapter: ProjectBuildAdapter::Auto,
         scope: None,
+        dependency_policy: None,
+    }
+}
+
+#[test]
+fn project_build_runner_plans_locked_dependency_policy_for_rust_and_go() {
+    for (marker, adapter, expected) in [
+        (
+            "Cargo.toml",
+            ProjectBuildAdapter::Rust,
+            vec!["build", "--locked"],
+        ),
+        (
+            "go.mod",
+            ProjectBuildAdapter::Go,
+            vec!["build", "-mod=readonly", "./..."],
+        ),
+    ] {
+        let (_tmp, _root, registry, policy) = fixture(marker);
+        let request = ProjectBuildRequest {
+            project_id: "demo".into(),
+            cwd: None,
+            adapter,
+            scope: None,
+            dependency_policy: Some(ProjectDependencyPolicy {
+                mode: ProjectDependencyMode::Locked,
+            }),
+        };
+        let (plan, _) = project_build::plan(&policy, &registry, &request).unwrap();
+        assert_eq!(plan.provenance.request, request);
+        assert_eq!(plan.process.args, expected);
+        assert_eq!(
+            plan.provenance.invocation_digest,
+            project_build_invocation_digest(&plan.process)
+        );
     }
 }
 

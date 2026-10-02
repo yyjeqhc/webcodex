@@ -8,7 +8,7 @@ use crate::json_digest::update_sha256_with_json;
 
 use super::handoff::review_evidence_summary_for_session;
 use super::session_context::{
-    session_project_mismatch_result, unknown_session_result, SessionProjectMismatch,
+    absent_workflow_session_result, session_project_mismatch_result, SessionProjectMismatch,
 };
 use super::validation_events::{
     current_validation_evidence_for_session, validation_summary_from_events,
@@ -234,7 +234,11 @@ impl ToolRuntime {
             .sessions
             .summary(session_id, Some(WORK_RESULT_SESSION_EVENT_LIMIT))
         else {
-            return Err(unknown_session_result(session_id));
+            return Err(absent_workflow_session_result(
+                &self.sessions,
+                session_id,
+                auth,
+            ));
         };
         if summary.project.as_deref() != Some(resolved_project.as_str()) {
             let mismatch = SessionProjectMismatch {
@@ -329,6 +333,9 @@ impl ToolRuntime {
             );
             projection["session"] = work_result_session(summary);
             projection["session_id"] = json!(summary.session_id);
+            if let Some(outputs) = super::task_outputs::retained_task_outputs(summary) {
+                projection["task_outputs"] = outputs;
+            }
             if let Some(detail) = self.workflow_session_console_detail(
                 &resolved_project,
                 &summary.session_id,
@@ -338,10 +345,10 @@ impl ToolRuntime {
                     "activity": detail.activity.iter().map(|item| {
                         json!({
                             "label": match item.kind.as_str() {
-                                "Read" => "Read project files",
+                                "Read" => "Read files",
                                 "Searched" => "Searched the project",
                                 "Navigated" | "Explored" => "Explored the project",
-                                "Edited" => "Edited code",
+                                "Edited" => "Edited files",
                                 "Tested" => "Ran checks",
                                 "Reviewed" => "Reviewed changes",
                                 "Ran" => "Ran a command",
@@ -815,9 +822,9 @@ fn semantic_activity_label(tool: &str, current: bool) -> &'static str {
     {
         Some("read") => {
             if current {
-                "Reading project files"
+                "Reading files"
             } else {
-                "Read project files"
+                "Read files"
             }
         }
         Some("search") => {
@@ -836,9 +843,9 @@ fn semantic_activity_label(tool: &str, current: bool) -> &'static str {
         }
         Some("edit") => {
             if current {
-                "Editing code"
+                "Editing files"
             } else {
-                "Edited code"
+                "Edited files"
             }
         }
         Some("run") => {

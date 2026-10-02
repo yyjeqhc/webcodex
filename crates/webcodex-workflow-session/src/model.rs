@@ -406,6 +406,12 @@ pub enum CodingSessionError {
     UnknownResumeSession {
         session_id: String,
     },
+    /// The caller selected an exact canonical Session whose Closed history was
+    /// removed by `historical_session_retention_limit` and whose tombstone is
+    /// still retained for this owner. This must not create a replacement Session.
+    ResumeRetentionExpired {
+        session_id: String,
+    },
     ResumeSessionNotActive {
         session_id: String,
         lifecycle: SessionLifecycle,
@@ -457,8 +463,11 @@ pub struct SessionStoreStatus {
     /// toward this limit.
     pub historical_session_retention_limit: usize,
     /// Process-local count of Closed historical records dropped by the explicit retention policy,
-    /// including restore-time pruning.
+    /// including restore-time pruning. Dropping a retention tombstone does not increment this.
     pub capacity_evictions: u64,
+    /// Closed Sessions removed by historical retention whose exact identity is still
+    /// distinguishable for the owning principal. Tombstones are not retained Sessions.
+    pub retention_tombstones: usize,
     pub max_events_per_session: usize,
     pub max_messages_per_session: usize,
     pub last_persist_error: Option<String>,
@@ -470,10 +479,30 @@ pub struct PersistedSessionLedger {
     pub sessions: Vec<PersistedSessionSnapshot>,
 }
 
+/// Compact proof that one exact Closed Workflow Session was removed because
+/// `historical_session_retention_limit` was exceeded. This is not a Session body.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SessionRetentionTombstone {
+    pub session_id: String,
+    pub owner_authority_fingerprint: String,
+    pub incarnation_fingerprint: String,
+    pub expiry_ordinal: u64,
+}
+
+/// Row-local v2 ledger object. Older v2 readers lack `events` on this row and
+/// drop it without rejecting neighboring Session rows.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PersistedRetentionTombstoneRow {
+    pub retention_tombstone: SessionRetentionTombstone,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum PersistedSessionSnapshot {
     Hot(PersistedSessionRecord),
+    Tombstone(PersistedRetentionTombstoneRow),
     Cold(Arc<RawValue>),
 }
 
@@ -483,7 +512,7 @@ impl PersistedSessionSnapshot {
     pub fn hot(&self) -> Option<&PersistedSessionRecord> {
         match self {
             Self::Hot(record) => Some(record),
-            Self::Cold(_) => None,
+            Self::Tombstone(_) | Self::Cold(_) => None,
         }
     }
 }

@@ -8,6 +8,29 @@ use webcodex_core::model_reference::{
     format_model_reference, parse_model_reference, ModelReferenceKind,
 };
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum SessionSelectorError {
+    UnknownRef(String),
+    RetentionExpired { session_id: String },
+}
+
+impl std::fmt::Display for SessionSelectorError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::UnknownRef(message) => f.write_str(message),
+            Self::RetentionExpired { session_id } => {
+                write!(f, "session_retention_expired: {session_id}")
+            }
+        }
+    }
+}
+
+fn unknown_session_ref(raw: &str) -> SessionSelectorError {
+    SessionSelectorError::UnknownRef(format!(
+        "unknown_session_ref: {raw}; reuse a currently issued session_ref or the canonical wc_sess_* id"
+    ))
+}
+
 impl ToolRuntime {
     pub(crate) fn session_reference_for_id(
         &self,
@@ -47,18 +70,18 @@ impl ToolRuntime {
         &self,
         raw: &str,
         auth: Option<&AuthContext>,
-    ) -> Option<Result<String, ()>> {
+    ) -> Option<Result<String, SessionSelectorError>> {
         let ref_index = match parse_model_reference(raw, ModelReferenceKind::Session)? {
             Ok(ref_index) => ref_index,
-            Err(()) => return Some(Err(())),
+            Err(()) => return Some(Err(unknown_session_ref(raw))),
         };
         let db = match self.project_reference_db.as_ref() {
             Some(db) => db,
-            None => return Some(Err(())),
+            None => return Some(Err(unknown_session_ref(raw))),
         };
         let principal_key = match workflow_session_authority_fingerprint(auth) {
             Ok(principal_key) => principal_key,
-            Err(_) => return Some(Err(())),
+            Err(_) => return Some(Err(unknown_session_ref(raw))),
         };
         let record = match db
             .lookup_model_reference(&principal_key, ModelReferenceKind::Session, ref_index)
@@ -66,19 +89,31 @@ impl ToolRuntime {
             .flatten()
         {
             Some(record) => record,
-            None => return Some(Err(())),
+            None => return Some(Err(unknown_session_ref(raw))),
         };
         let (project, owner_authority_fingerprint) =
             match self.sessions.session_target_authority(&record.canonical_id) {
                 Some(target) => target,
-                None => return Some(Err(())),
+                None => {
+                    if let Some(incarnation) = self
+                        .sessions
+                        .owned_retention_incarnation(&record.canonical_id, &principal_key)
+                    {
+                        if incarnation == record.incarnation_fingerprint {
+                            return Some(Err(SessionSelectorError::RetentionExpired {
+                                session_id: record.canonical_id,
+                            }));
+                        }
+                    }
+                    return Some(Err(unknown_session_ref(raw)));
+                }
             };
         if owner_authority_fingerprint != principal_key {
-            return Some(Err(()));
+            return Some(Err(unknown_session_ref(raw)));
         }
         let summary = match self.sessions.summary(&record.canonical_id, Some(1)) {
             Some(summary) => summary,
-            None => return Some(Err(())),
+            None => return Some(Err(unknown_session_ref(raw))),
         };
         let current_incarnation = workflow_session_incarnation_fingerprint(
             &record.canonical_id,
@@ -87,7 +122,7 @@ impl ToolRuntime {
             &owner_authority_fingerprint,
         );
         if current_incarnation != record.incarnation_fingerprint {
-            return Some(Err(()));
+            return Some(Err(unknown_session_ref(raw)));
         }
         Some(Ok(record.canonical_id))
     }
@@ -96,15 +131,11 @@ impl ToolRuntime {
         &self,
         raw: &str,
         auth: Option<&AuthContext>,
-    ) -> Result<String, String> {
+    ) -> Result<String, SessionSelectorError> {
         let Some(resolved) = self.resolve_session_reference(raw, auth) else {
             return Ok(raw.to_string());
         };
-        resolved.map_err(|_| {
-            format!(
-                "unknown_session_ref: {raw}; reuse a currently issued session_ref or the canonical wc_sess_* id"
-            )
-        })
+        resolved
     }
 
     /// Canonicalize only the concrete business Session selector. Wrapper
@@ -113,14 +144,18 @@ impl ToolRuntime {
         &self,
         arguments: &mut Value,
         auth: Option<&AuthContext>,
-    ) -> Result<(), String> {
+    ) -> Result<(), SessionSelectorError> {
         let Some(object) = arguments.as_object_mut() else {
             return Ok(());
         };
-        let Some(raw) = object.get("session_id").and_then(Value::as_str) else {
+        let Some(raw) = object
+            .get("session_id")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+        else {
             return Ok(());
         };
-        let canonical = self.canonicalize_explicit_session_selector(raw, auth)?;
+        let canonical = self.canonicalize_explicit_session_selector(&raw, auth)?;
         if canonical != raw {
             object.insert("session_id".to_string(), Value::String(canonical));
         }
@@ -151,6 +186,7 @@ mod tests {
         assert!(runtime
             .canonicalize_session_reference_argument(&mut malformed, None)
             .unwrap_err()
+            .to_string()
             .contains("unknown_session_ref"));
     }
 
@@ -334,7 +370,7 @@ mod tests {
         let error = runtime
             .canonicalize_session_reference_argument(&mut arguments, Some(&bob))
             .unwrap_err();
-        assert!(error.contains("unknown_session_ref"));
+        assert!(error.to_string().contains("unknown_session_ref"));
         assert_eq!(arguments["session_id"], session_ref);
     }
 
@@ -499,6 +535,7 @@ mod tests {
             assert!(runtime
                 .canonicalize_explicit_session_selector(&session_ref, Some(&bob))
                 .unwrap_err()
+                .to_string()
                 .contains("unknown_session_ref"));
             session_ref
         };
@@ -508,6 +545,7 @@ mod tests {
         assert!(restarted
             .canonicalize_explicit_session_selector(&session_ref, Some(&alice))
             .unwrap_err()
+            .to_string()
             .contains("unknown_session_ref"));
     }
 

@@ -628,7 +628,7 @@ async fn work_result_window_card_needs_no_session_and_uses_all_window_activity()
         "activity_detail_unavailable"
     );
     assert_eq!(work["activity"]["last_activity_at_ms"], 3_010);
-    assert_eq!(work["activity"]["last"]["label"], "Read project files");
+    assert_eq!(work["activity"]["last"]["label"], "Read files");
 }
 
 #[tokio::test]

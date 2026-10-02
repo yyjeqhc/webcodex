@@ -2,9 +2,12 @@
 use super::*;
 use sha2::{Digest, Sha256};
 use webcodex_core::project_validation::*;
+use webcodex_core::validation_identity::{
+    contextualize_structured_validation_target_identity, StructuredValidationExecutionContext,
+};
 use webcodex_validation::{
     detect_validation_recipe, project_validation_operation,
-    resolve_validation_recipe_with_packages, RecipeId, SemanticCheck,
+    resolve_validation_recipe_with_project_policy, RecipeId, SemanticCheck,
 };
 
 pub(crate) fn plan(
@@ -48,10 +51,11 @@ pub(crate) fn plan(
         .as_ref()
         .and_then(|test| test.filter.as_deref());
     let operation = project_validation_operation(backend.as_str(), action, packages)
+        .and_then(|operation| operation.with_dependency_policy(request.dependency_policy))
         .and_then(|operation| operation.with_test_filter(filter))
         .map_err(|code| unavailable(code, Some(backend.as_str())))?;
     let adapter = operation.adapter();
-    let resolved = resolve_validation_recipe_with_packages(
+    let resolved = resolve_validation_recipe_with_project_policy(
         &root,
         request.cwd.as_deref(),
         hint,
@@ -61,11 +65,21 @@ pub(crate) fn plan(
             .scope
             .as_ref()
             .map(|scope| scope.packages.as_slice()),
+        request.dependency_policy,
     )
     .map_err(|e| unavailable(e.code, Some(backend.as_str())))?;
     let identity = operation
         .validation_target_id(Some(&resolved.recipe_root_relative))
         .ok_or_else(|| unavailable("validation_scope_invalid", Some(backend.as_str())))?;
+    let identity = if backend == RecipeId::Go {
+        contextualize_structured_validation_target_identity(
+            &identity,
+            StructuredValidationExecutionContext::GoProjectSingleModuleV1,
+        )
+        .ok_or_else(|| unavailable("validation_scope_invalid", Some(backend.as_str())))?
+    } else {
+        identity
+    };
     debug_assert_eq!(
         operation
             .build_readonly_plan()

@@ -505,6 +505,7 @@ fn tool_definitions_drive_session_and_permission_policy() {
             PERMISSION_RISK_ARTIFACT_WRITE,
         ),
         ("transfer_project_artifact", PERMISSION_RISK_ARTIFACT_WRITE),
+        ("accept_artifact_handoff", PERMISSION_RISK_ARTIFACT_WRITE),
         ("artifact_upload_finish", PERMISSION_RISK_ARTIFACT_WRITE),
         ("artifact_upload_abort", PERMISSION_RISK_ARTIFACT_WRITE),
         ("computer_save_snapshot", PERMISSION_RISK_ARTIFACT_WRITE),

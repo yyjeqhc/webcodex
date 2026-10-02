@@ -71,7 +71,12 @@ impl JobManager {
             };
             let result = match &operation {
                 RunnerJobOperation::StartBuild(request) => {
-                    run_process_with_profiles_and_execution_state_with_start_hook(
+                    let env_overrides = if request.provenance.backend == "go" {
+                        &GO_PROJECT_SINGLE_MODULE_ENV[..]
+                    } else {
+                        &[]
+                    };
+                    run_process_with_profiles_and_execution_state_with_internal_env_and_start_hook(
                         generation,
                         &policy,
                         &shell,
@@ -83,6 +88,7 @@ impl JobManager {
                         None,
                         request.timeout_secs,
                         Some(stop_requested.as_ref()),
+                        env_overrides,
                         Some(&on_started),
                     )
                 }

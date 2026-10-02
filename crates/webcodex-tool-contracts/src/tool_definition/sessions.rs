@@ -144,7 +144,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
     requires_explicit_business_session(model_spec(
         def(
             "finish_coding_task",
-            super::ToolAuditPolicy::TYPED_CANONICAL,
+            super::ToolAuditPolicy::TYPED_CANONICAL
+                .context(super::ToolAuditContextPolicy::TaskOutputs),
             ModelVisible,
             "workflow",
             Some(GitOrShell),
@@ -163,7 +164,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
             super::ToolSessionEvidencePolicy::NONE,
         )
         .with_activity_kind(super::ToolActivityKind::Review),
-        "Return an optional deterministic evidence snapshot for model review, including workspace, validation, jobs, and recorded tool events. The result is advisory: it does not decide task completion, replace direct diff or test review, or generate the user-facing final report.",
+        "Review task closeout evidence for code or ordinary file work. Optional outputs name up to 16 project-relative files; the Runner independently observes size/SHA/MIME, and missing or unavailable files block closeout. Presence does not prove content, counts or format: verify these for the task. Git and tests remain relevant to code work. This advisory snapshot supports model judgment; it does not decide task completion or generate the user-facing final report.",
     )),
     adaptive_runtime_direct(
         model_spec(

@@ -147,6 +147,9 @@ pub use self::window_activity::{MAX_WINDOW_ACTIVITY_LIMIT, MAX_WINDOW_LINK_LIMIT
 
 pub struct Database {
     conn: Mutex<Connection>,
+    // Exactly one additional, read-only WAL connection for potentially long history.
+    // Fast authority/reference/receipt reads stay on the canonical writer lane.
+    history_reader: std::sync::OnceLock<Mutex<Connection>>,
     #[cfg(any(test, feature = "root-test-support"))]
     window_history_reads: std::sync::atomic::AtomicUsize,
     #[cfg(any(test, feature = "root-test-support"))]
@@ -159,6 +162,7 @@ impl Database {
     fn from_connection(conn: Connection, state_path: PathBuf) -> Self {
         Self {
             conn: Mutex::new(conn),
+            history_reader: std::sync::OnceLock::new(),
             #[cfg(any(test, feature = "root-test-support"))]
             window_history_reads: std::sync::atomic::AtomicUsize::new(0),
             #[cfg(any(test, feature = "root-test-support"))]
@@ -170,6 +174,27 @@ impl Database {
 
     pub(crate) fn lock_connection(&self, domain: StoreDomain) -> StoreConnectionGuard<'_> {
         observed_lock_connection(&self.conn, self.connection_observer.as_ref(), domain)
+    }
+
+    pub(crate) fn open_history_reader(&self) -> anyhow::Result<()> {
+        let connection = Connection::open_with_flags(
+            &self.state_path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )?;
+        connection.execute_batch("PRAGMA query_only=ON; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000; PRAGMA cache_size=-2048;")?;
+        self.history_reader
+            .set(Mutex::new(connection))
+            .map_err(|_| anyhow::anyhow!("history reader already initialized"))
+    }
+
+    pub(crate) fn lock_history_connection(&self, domain: StoreDomain) -> StoreConnectionGuard<'_> {
+        observed_lock_connection(
+            self.history_reader
+                .get()
+                .expect("history reader initialized before Database::open returns"),
+            self.connection_observer.as_ref(),
+            domain,
+        )
     }
 
     pub(crate) fn state_path(&self) -> &Path {

@@ -72,24 +72,40 @@ pub(crate) fn ensure_schema(conn: &mut Connection) -> anyhow::Result<()> {
 
 /// Caller owns the write/read transaction. No nested lock or independent commit.
 pub(crate) fn repair_dirty(conn: &Connection) -> anyhow::Result<()> {
+    repair_selected(conn, None)
+}
+
+pub(crate) fn repair_dirty_for_event(
+    conn: &Connection,
+    window: Option<&str>,
+) -> anyhow::Result<()> {
+    // An unrelated historical repair must not join the critical append transaction.
+    if let Some(window) = window {
+        repair_selected(conn, Some(window))?;
+    }
+    Ok(())
+}
+
+fn repair_selected(conn: &Connection, window: Option<&str>) -> anyhow::Result<()> {
     let dirty: bool = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM window_inventory_dirty)",
-        [],
+        "SELECT EXISTS(SELECT 1 FROM window_inventory_dirty WHERE ?1 IS NULL OR window_key=?1)",
+        [window],
         |r| r.get(0),
     )?;
     if !dirty {
         return Ok(());
     }
-    conn.execute_batch("DELETE FROM window_inventory_cells WHERE window_key IN (SELECT window_key FROM window_inventory_dirty);
-        DELETE FROM window_inventory_links WHERE window_key IN (SELECT window_key FROM window_inventory_dirty);")?;
-    let predicate = "e.client_window_key IN (SELECT window_key FROM window_inventory_dirty)";
-    conn.execute(&CELLS.replace("__SELECTION__", predicate), [])?;
-    conn.execute(&LINKS.replace("__SELECTION__", predicate), [])?;
-    conn.execute("DELETE FROM window_inventory_dirty", [])?;
+    conn.execute("DELETE FROM window_inventory_cells WHERE window_key IN (SELECT window_key FROM window_inventory_dirty WHERE ?1 IS NULL OR window_key=?1)", [window])?;
+    conn.execute("DELETE FROM window_inventory_links WHERE window_key IN (SELECT window_key FROM window_inventory_dirty WHERE ?1 IS NULL OR window_key=?1)", [window])?;
+    let predicate = "e.client_window_key IN (SELECT window_key FROM window_inventory_dirty WHERE ?1 IS NULL OR window_key=?1)";
+    conn.execute(&CELLS.replace("__SELECTION__", predicate), [window])?;
+    conn.execute(&LINKS.replace("__SELECTION__", predicate), [window])?;
+    conn.execute(
+        "DELETE FROM window_inventory_dirty WHERE ?1 IS NULL OR window_key=?1",
+        [window],
+    )?;
     Ok(())
 }
-
-/// Append only, after canonical event and all its links were inserted in this
 /// transaction. The caller repairs any earlier dirty history BEFORE inserting.
 pub(crate) fn index_appended_event(conn: &Connection, event_id: &str) -> anyhow::Result<()> {
     conn.execute(
@@ -105,6 +121,37 @@ pub(crate) fn index_appended_event(conn: &Connection, event_id: &str) -> anyhow:
 }
 
 impl Database {
+    /// A clean derived projection and its dirty check share one read snapshot.
+    /// Never upgrade a reader lock to a writer: release it, repair on the single
+    /// writer, then start a new snapshot. Concurrent invalidation is bounded and
+    /// fails unavailable rather than returning stale evidence.
+    fn with_window_inventory_read<T>(
+        &self,
+        mut read: impl FnMut(&Connection) -> anyhow::Result<T>,
+    ) -> anyhow::Result<T> {
+        for _ in 0..3 {
+            {
+                let mut reader = self.lock_history_connection(crate::StoreDomain::WindowActivity);
+                let snapshot = reader.transaction()?;
+                let dirty: bool = snapshot.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM window_inventory_dirty)",
+                    [],
+                    |r| r.get(0),
+                )?;
+                if !dirty {
+                    let result = read(&snapshot)?;
+                    snapshot.commit()?;
+                    return Ok(result);
+                }
+            }
+            let mut writer = self.lock_connection(crate::StoreDomain::WindowActivity);
+            let transaction = writer.transaction()?;
+            repair_dirty(&transaction)?;
+            transaction.commit()?;
+        }
+        anyhow::bail!("window inventory changed during bounded repair")
+    }
+
     /// All distinct authority anchors, not event bodies. Never model-visible.
     /// No candidate limit can hide an older authorized Window behind denied rows.
     pub fn window_inventory_project_anchors(
@@ -114,9 +161,7 @@ impl Database {
         #[cfg(any(test, feature = "root-test-support"))]
         self.window_inventory_reads
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let mut conn = self.lock_connection(crate::StoreDomain::WindowActivity);
-        let tx = conn.transaction()?;
-        repair_dirty(&tx)?;
+        self.with_window_inventory_read(|tx| {
         let (kind, id) = principal.map_or((None, None), |(k, i)| (Some(k), Some(i)));
         let rows = {
             let mut stmt = tx.prepare_cached("WITH cells AS (SELECT project, anchors FROM window_inventory_cells WHERE ?1 IS NULL OR (principal_kind=?1 AND principal_id=?2))
@@ -128,8 +173,8 @@ impl Database {
                 .collect::<Result<Vec<String>, _>>()?;
             rows
         };
-        tx.commit()?;
         Ok(rows)
+        })
     }
 
     /// One set-oriented inventory statement in the steady state, independent of
@@ -143,9 +188,7 @@ impl Database {
         #[cfg(any(test, feature = "root-test-support"))]
         self.window_inventory_reads
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let mut conn = self.lock_connection(crate::StoreDomain::WindowActivity);
-        let tx = conn.transaction()?;
-        repair_dirty(&tx)?;
+        self.with_window_inventory_read(|tx| {
         let allowed = serde_json::to_string(query.visible_projects)?;
         let projects = query.projects.map(serde_json::to_string).transpose()?;
         let live = serde_json::to_string(query.live)?;
@@ -194,7 +237,7 @@ impl Database {
                 .query_row(&count_sql, params, |r| r.get::<_, i64>(0))?
                 .max(0) as usize;
         }
-        tx.commit()?;
         Ok(page)
+        })
     }
 }

@@ -203,6 +203,96 @@ fn runtime_home_runner_fleet_joins_health_build_jobs_projects_and_sessions() {
 }
 
 #[tokio::test]
+async fn navigation_overview_does_not_project_projects_or_scan_job_history() {
+    let runtime = test_runtime();
+    let auth = crate::auth::shared_key_context("aggregate-home");
+    let foreign = crate::auth::shared_key_context("foreign-aggregate");
+    register_project(&runtime, "own", "repo", "/private/own", Some(&auth)).await;
+    register_project(
+        &runtime,
+        "foreign",
+        "repo",
+        "/private/foreign",
+        Some(&foreign),
+    )
+    .await;
+    for _ in 0..20 {
+        start_authorized_session(&runtime, "agent:own:repo", &auth);
+    }
+    let before_jobs = runtime
+        .runner_registry
+        .full_job_history_scan_count_for_test();
+    let before_projects = runtime.runner_registry.project_job_scan_count_for_test();
+    let result = super::super::overview_primary::primary_for_auth(&runtime, &auth)
+        .await
+        .unwrap();
+    assert_eq!(result.visible_projects, 1);
+    assert_eq!(result.visible_project_families, 1);
+    assert!(!result.projects_included);
+    assert!(result.projects.is_empty());
+    assert_eq!(result.runners.len(), 1);
+    assert_eq!(result.runners[0].client_id, "own");
+    assert_eq!(result.workflow_sessions.projects_scanned, 0);
+    assert!(result.workflow_sessions.truncated);
+    assert!(result.recent_sessions.sessions.is_empty());
+    assert_eq!(
+        runtime
+            .runner_registry
+            .full_job_history_scan_count_for_test(),
+        before_jobs
+    );
+    assert_eq!(
+        runtime.runner_registry.project_job_scan_count_for_test(),
+        before_projects
+    );
+    let encoded = serde_json::to_string(&result).unwrap();
+    assert!(!encoded.contains("/private/"));
+    assert!(!encoded.contains("foreign"));
+    eprintln!("PRIMARY_OVERVIEW project_rows=0 project_job_scans=0 full_job_scans=0 workflow_projects_scanned=0");
+    // Legacy include_sessions=false still includes its explicitly requested rows.
+    let legacy = overview_for_auth_detail(&runtime, &auth, false)
+        .await
+        .unwrap();
+    assert!(legacy.projects_included);
+    assert_eq!(legacy.projects.len(), 1);
+    assert!(
+        runtime
+            .runner_registry
+            .full_job_history_scan_count_for_test()
+            > before_jobs
+    );
+}
+
+#[test]
+fn navigation_family_count_uses_explicit_lineage_like_project_view() {
+    let row = |id: &str, source: Option<&str>| RuntimeConsoleProject {
+        id: format!("agent:r:{id}"),
+        client_id: "r".into(),
+        project_ref: None,
+        name: None,
+        path: None,
+        registration_source: None,
+        lineage: source.map(
+            |source| RuntimeConsoleProjectLineage::ManagedWorktreeSource {
+                source_project_id: source.into(),
+                base_sha: "a".repeat(40),
+            },
+        ),
+        connected: true,
+        runner_status: None,
+        sessions: None,
+    };
+    assert_eq!(
+        super::super::overview_primary::family_count(&[
+            row("repo", None),
+            row("wt", Some("repo")),
+            row("other", None)
+        ]),
+        2
+    );
+}
+
+#[tokio::test]
 async fn runtime_home_primary_skips_session_hydration_but_keeps_visibility_and_partial_truth() {
     let runtime = test_runtime();
     let auth = crate::auth::shared_key_context("primary-home");

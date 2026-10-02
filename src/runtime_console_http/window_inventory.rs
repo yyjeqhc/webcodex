@@ -6,13 +6,34 @@ use super::window_queries::{
     window_summary_internal_tool,
 };
 use super::{
-    authorize_exact_project, require_runtime_read, valid_window_key, AuthContext,
+    require_project_read, require_runtime_read, valid_project_id, valid_window_key, AuthContext,
     RuntimeConsoleError, RuntimeConsoleWindowSummary, RuntimeConsoleWindowVisibility,
     RuntimeConsoleWindowVisibilityScope, RuntimeConsoleWindows, ToolRuntime,
     WindowInventoryProjection, WindowsInput, DEFAULT_WINDOW_LIMIT, MAX_WINDOW_LIMIT,
 };
 use std::collections::HashMap;
 use webcodex_store::{WindowInventoryQuery, WindowInventoryRow};
+
+async fn authorize_selection(
+    runtime: &ToolRuntime,
+    auth: &AuthContext,
+    ids: &[String],
+) -> Result<(), RuntimeConsoleError> {
+    if ids.iter().any(|id| !valid_project_id(id)) {
+        return Err(RuntimeConsoleError::Invalid);
+    }
+    require_project_read(auth)?;
+    let access = crate::runner_http::runner_access_from_auth(Some(auth));
+    let visible = runtime
+        .runner_registry
+        .visible_project_ids_for_auth_snapshot(access.as_ref(), ids)
+        .await;
+    if ids.iter().all(|id| visible.contains(id)) {
+        Ok(())
+    } else {
+        Err(RuntimeConsoleError::NotFound)
+    }
+}
 
 pub(super) async fn query_for_auth(
     runtime: &ToolRuntime,
@@ -24,7 +45,7 @@ pub(super) async fn query_for_auth(
         || input
             .projects
             .as_ref()
-            .is_some_and(|ids| ids.is_empty() || ids.len() > 128)
+            .is_some_and(|ids| ids.is_empty() || ids.len() > 2_000)
         || input
             .client_window_key
             .as_deref()
@@ -41,9 +62,6 @@ pub(super) async fn query_for_auth(
     if let Some(ids) = &mut selected {
         ids.sort();
         ids.dedup();
-        for id in ids {
-            authorize_exact_project(runtime, auth, id).await?;
-        }
     }
     if input.projection == WindowInventoryProjection::Inventory {
         return inventory_for_auth(
@@ -56,6 +74,9 @@ pub(super) async fn query_for_auth(
             &input.query,
         )
         .await;
+    }
+    if let Some(ids) = selected.as_deref() {
+        authorize_selection(runtime, auth, ids).await?;
     }
     // This path performs NO SQLite access, even with a large historical database.
     let mut live = live_for_auth(
@@ -221,9 +242,7 @@ pub(super) async fn inventory_for_auth(
 ) -> Result<RuntimeConsoleWindows, RuntimeConsoleError> {
     require_runtime_read(auth)?;
     if let Some(projects) = projects {
-        for project in projects {
-            authorize_exact_project(runtime, auth, project).await?;
-        }
+        authorize_selection(runtime, auth, projects).await?;
     }
     let db = runtime
         .window_activity_db
@@ -238,12 +257,19 @@ pub(super) async fn inventory_for_auth(
             .window_inventory_project_anchors(principal_ref)
             .map_err(|_| RuntimeConsoleError::Internal)?,
     };
-    let mut allowed = Vec::new();
-    for project in anchors {
-        if runtime.exact_project_visible_to_auth(auth, &project).await {
-            allowed.push(project);
-        }
-    }
+    let allowed: Vec<String> = if let Some(ids) = projects {
+        ids.to_vec()
+    } else if super::project_read_available(auth) {
+        let access = crate::runner_http::runner_access_from_auth(Some(auth));
+        runtime
+            .runner_registry
+            .visible_project_ids_for_auth_snapshot(access.as_ref(), &anchors)
+            .await
+            .into_iter()
+            .collect()
+    } else {
+        Vec::new()
+    };
     let live = live_for_auth(runtime, auth, projects, key).await?;
     let page = db
         .read_window_inventory(WindowInventoryQuery {

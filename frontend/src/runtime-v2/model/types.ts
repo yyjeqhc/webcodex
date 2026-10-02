@@ -233,6 +233,8 @@ export type RuntimeOverview = {
   active_jobs: number;
   active_windows: number;
   projects_available: boolean;
+  projects_included?: boolean;
+  visible_project_families?: number;
   visible_projects: number;
   projects_truncated: boolean;
   workflow_sessions: {

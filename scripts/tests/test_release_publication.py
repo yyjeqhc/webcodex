@@ -734,6 +734,16 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn('source_identity="$(printf \'%s\' "$source_sha"', mac_smoke)
         self.assertIn("commit $source_identity", mac_smoke)
 
+        ci = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+        self.assertIn('export WEBCODEX_GIT_COMMIT="$source_sha"', ci)
+        self.assertIn('export WEBCODEX_GIT_DIRTY=false', ci)
+        self.assertIn('expected="$name $version (commit $source_sha, dirty=false, built_at=$built_at)"', ci)
+        self.assertIn('$env:WEBCODEX_GIT_COMMIT = $source', ci)
+        self.assertIn('$env:WEBCODEX_GIT_DIRTY = "false"', ci)
+        self.assertIn('$expected = "$name $version (commit $source, dirty=false, built_at=$builtAt)"', ci)
+        self.assertNotIn('expected="$name $version (commit $short_source, dirty=false, built_at=$built_at)"', ci)
+        self.assertNotIn('$expected = "$name $version (commit $short, dirty=false, built_at=$builtAt)"', ci)
+
     def test_server_image_publication_is_separate_and_multi_arch(self) -> None:
         candidate = Path(".github/workflows/release-build.yml").read_text(encoding="utf-8")
         image = Path(".github/workflows/release-image.yml").read_text(encoding="utf-8")

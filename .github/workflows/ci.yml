@@ -534,11 +534,13 @@ jobs:
           version="$(node -p "require('./npm/webcodex/package.json').version")"
           built_at="$(git show -s --format=%ct HEAD)"
           export WEBCODEX_BUILT_AT="$built_at"
+          export WEBCODEX_GIT_COMMIT="$source_sha"
+          export WEBCODEX_GIT_DIRTY=false
           cargo build --locked --profile dogfood -p webcodex -p webcodex-cli -p webcodex-runner
           for name in webcodex webcodex-server webcodex-runner; do
             binary="target/dogfood/$name"
             actual="$($binary --version)"
-            expected="$name $version (commit $short_source, dirty=false, built_at=$built_at)"
+            expected="$name $version (commit $source_sha, dirty=false, built_at=$built_at)"
             test "$actual" = "$expected"
             test "$(/usr/bin/lipo -archs "$binary")" = "$EXPECTED_FILE_ARCH"
           done
@@ -767,6 +769,8 @@ jobs:
           $version = (node -e "console.log(require('./npm/webcodex/package.json').version)").Trim()
           $builtAt = [Int64]((git show -s --format=%ct HEAD).Trim())
           $env:WEBCODEX_BUILT_AT = "$builtAt"
+          $env:WEBCODEX_GIT_COMMIT = $source
+          $env:WEBCODEX_GIT_DIRTY = "false"
           cargo build --locked --profile dogfood -p webcodex -p webcodex-cli -p webcodex-runner
           if ($LASTEXITCODE -ne 0) { throw "WebCodex runtime build failed" }
           foreach ($name in @("webcodex", "webcodex-server", "webcodex-runner")) {
@@ -777,7 +781,7 @@ jobs:
               throw "$name --version failed with exit code $exitCode"
             }
             $actual = $output[0].TrimEnd()
-            $expected = "$name $version (commit $short, dirty=false, built_at=$builtAt)"
+            $expected = "$name $version (commit $source, dirty=false, built_at=$builtAt)"
             if ($actual -ne $expected) { throw "Unexpected $name identity: $actual" }
           }
           "source=$source" >> $env:GITHUB_OUTPUT

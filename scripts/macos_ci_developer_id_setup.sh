@@ -72,10 +72,15 @@ security default-keychain -d user -s "$keychain"
 
 # Explicit self-signed requirements trust the pinned certificate, not the host
 # trust store. Enumerate matching identities without requiring Apple/root trust.
-valid_only=(-v)
-if [ "$mode" = self-signed ]; then valid_only=(); fi
+# macOS still ships Bash 3.2, where expanding an empty array under `set -u`
+# raises "unbound variable", so keep the two command forms explicit.
+if [ "$mode" = self-signed ]; then
+  identities="$(security find-identity -p codesigning "$keychain")"
+else
+  identities="$(security find-identity -v -p codesigning "$keychain")"
+fi
 matches="$(
-  security find-identity "${valid_only[@]}" -p codesigning "$keychain" |
+  printf '%s\n' "$identities" |
     grep -F "\"$APPLE_SIGNING_IDENTITY\"" | awk '!seen[$2]++' || true
 )"
 count="$(printf '%s\n' "$matches" | awk 'NF { n += 1 } END { print n + 0 }')"

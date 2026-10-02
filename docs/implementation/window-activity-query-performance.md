@@ -1,5 +1,12 @@
 # Window activity query performance
 
+> This note records the September 29 / #791 history-query optimization. The
+> subsequent [Work / Projects read-path scalability work](webui-runtime-read-paths-performance.md)
+> removes the inventory's per-Window history scans, separates live polling,
+> and adds an authority-free derived summary. The historical measurements and
+> detail-query guarantees below remain applicable; the inventory limitation is
+> no longer the current read path.
+
 The WebUI already loads a selected Window's recent activity before its full
 history. That does not remove work on the preceding Window inventory request:
 its authorized summaries can scan up to 2,000 events for each candidate Window.

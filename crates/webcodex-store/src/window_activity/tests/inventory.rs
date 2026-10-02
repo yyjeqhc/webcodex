@@ -225,6 +225,40 @@ fn window_activity_inventory_read_plan_never_opens_event_history() {
 }
 
 #[test]
+#[ignore = "manual cold migration benchmark; no wall-clock assertion"]
+fn window_inventory_migration_benchmark() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("migration.db");
+    let db = Database::open(&path).unwrap();
+    seed_session(&db);
+    {
+        let conn = db.conn_for_tests();
+        conn.execute_batch("WITH RECURSIVE w(n) AS (SELECT 0 UNION ALL SELECT n+1 FROM w WHERE n+1<2000), h(n) AS (SELECT 0 UNION ALL SELECT n+1 FROM h WHERE n+1<200)
+            INSERT INTO action_events(event_id,session_id,started_at,ended_at,duration_ms,endpoint,action_name,operation,project,status,changed_files_json,ids_json,summary_json,client_window_key,client_window_source,principal_correlation_kind,principal_correlation_id,window_started_at_ms,window_ended_at_ms,window_meaningful)
+            SELECT printf('e-%d-%d',w.n,h.n),'audit-session',0,1,1,'/mcp','toolsCall','read_files','a','success','[]','{}','{}',printf('w%06d',w.n),'openai-session','username','alice',h.n,h.n+1,1 FROM w CROSS JOIN h;
+            DROP TABLE window_inventory_cells; DROP TABLE window_inventory_links; DROP TABLE window_inventory_dirty; DROP TABLE window_inventory_meta;").unwrap();
+    }
+    drop(db);
+    let start = std::time::Instant::now();
+    let db = Database::open(&path).unwrap();
+    let cold = start.elapsed();
+    assert_eq!(inventory(&db, &["a"], None, true, None, 0, 50).total, 2000);
+    drop(db);
+    let start = std::time::Instant::now();
+    let db = Database::open(&path).unwrap();
+    let warm = start.elapsed();
+    assert_eq!(inventory(&db, &["a"], None, true, None, 0, 50).total, 2000);
+    assert_eq!(
+        db.conn_for_tests()
+            .query_row("SELECT COUNT(*) FROM window_inventory_dirty", [], |r| r
+                .get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+    eprintln!("WINDOW_MIGRATION windows=2000 retained_events=400000 cold_open_ms={:.3} warm_open_ms={:.3}",cold.as_secs_f64()*1000.,warm.as_secs_f64()*1000.);
+}
+
+#[test]
 #[ignore = "manual inventory scalability benchmark; no wall-clock assertion"]
 fn window_inventory_query_benchmark() {
     // Fixture population and repair are outside both measured paths. Bulk SQL

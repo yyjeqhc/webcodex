@@ -23,7 +23,7 @@ use crate::tool_runtime::{ToolCall, ToolRuntime};
 use salvo::prelude::*;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use webcodex_core::runner_job_lifecycle::RunnerJobLifecycle;
 
@@ -31,6 +31,7 @@ mod communication;
 mod goals;
 mod job_projection;
 mod trace;
+mod window_inventory;
 mod window_queries;
 use window_queries::*;
 mod window_collaboration;
@@ -249,13 +250,31 @@ struct RunnerInput {
     project_limit: Option<usize>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct WindowsInput {
     #[serde(default)]
     limit: Option<usize>,
     #[serde(default)]
     project: Option<String>,
+    #[serde(default)]
+    projects: Option<Vec<String>>,
+    #[serde(default)]
+    projection: WindowInventoryProjection,
+    #[serde(default)]
+    offset: usize,
+    #[serde(default)]
+    client_window_key: Option<String>,
+    #[serde(default)]
+    query: String,
+}
+
+#[derive(Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum WindowInventoryProjection {
+    #[default]
+    Inventory,
+    Liveness,
 }
 
 #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -372,6 +391,8 @@ pub(crate) struct RuntimeConsoleWindowVisibility {
 
 #[derive(Debug, Serialize)]
 struct RuntimeConsoleWindows {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    next_offset: Option<usize>,
     windows: Vec<RuntimeConsoleWindowSummary>,
     returned: usize,
     total: usize,
@@ -2287,7 +2308,7 @@ async fn windows(req: &mut Request, depot: &mut Depot, res: &mut Response) {
         Ok(input) => input,
         Err(_) => return render_error(res, RuntimeConsoleError::Invalid),
     };
-    match windows_for_auth(&runtime, &auth, input.limit, input.project.as_deref()).await {
+    match window_inventory::query_for_auth(&runtime, &auth, input).await {
         Ok(output) => res.render(Json(output)),
         Err(error) => render_error(res, error),
     }

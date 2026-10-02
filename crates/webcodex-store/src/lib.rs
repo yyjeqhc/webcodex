@@ -53,6 +53,8 @@ mod project_reference;
 mod schema;
 mod server_instance;
 mod window_activity;
+mod window_inventory;
+pub use window_inventory::{WindowInventoryPage, WindowInventoryQuery, WindowInventoryRow};
 
 pub use self::admin_project_lifecycle::{AdminProjectAudit, AdminProjectIdempotencyRecord};
 pub use self::agent_continuation_reference::AgentContinuationReferenceRecord;
@@ -148,6 +150,10 @@ pub use self::window_activity::{MAX_WINDOW_ACTIVITY_LIMIT, MAX_WINDOW_LINK_LIMIT
 
 pub struct Database {
     conn: Mutex<Connection>,
+    #[cfg(any(test, feature = "root-test-support"))]
+    window_history_reads: std::sync::atomic::AtomicUsize,
+    #[cfg(any(test, feature = "root-test-support"))]
+    window_inventory_reads: std::sync::atomic::AtomicUsize,
     connection_observer: Arc<dyn StoreConnectionObserver>,
     state_path: PathBuf,
 }
@@ -156,6 +162,10 @@ impl Database {
     fn from_connection(conn: Connection, state_path: PathBuf) -> Self {
         Self {
             conn: Mutex::new(conn),
+            #[cfg(any(test, feature = "root-test-support"))]
+            window_history_reads: std::sync::atomic::AtomicUsize::new(0),
+            #[cfg(any(test, feature = "root-test-support"))]
+            window_inventory_reads: std::sync::atomic::AtomicUsize::new(0),
             connection_observer: Arc::new(TracingStoreConnectionObserver),
             state_path,
         }
@@ -183,6 +193,14 @@ pub enum PairingConsumeResult {
 impl Database {
     /// Test-only access to the underlying connection so tests can assert on
     /// raw storage (e.g. that a plaintext token is never stored as `key_hash`).
+    pub fn window_read_counts_for_test(&self) -> (usize, usize) {
+        use std::sync::atomic::Ordering::Relaxed;
+        (
+            self.window_history_reads.load(Relaxed),
+            self.window_inventory_reads.load(Relaxed),
+        )
+    }
+
     pub fn conn_for_tests(&self) -> std::sync::MutexGuard<'_, Connection> {
         self.conn.lock().unwrap()
     }

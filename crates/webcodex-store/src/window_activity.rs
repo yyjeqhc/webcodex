@@ -163,6 +163,9 @@ impl Database {
         principal: Option<(&str, &str)>,
         limit: usize,
     ) -> anyhow::Result<Vec<WindowActivityEventRecord>> {
+        #[cfg(any(test, feature = "root-test-support"))]
+        self.window_history_reads
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let conn = self.lock_connection(crate::StoreDomain::WindowActivity);
         let (principal_sql, kind, id) = principal_predicate(principal);
         let sql = format!(
@@ -301,6 +304,9 @@ impl Database {
         principal: Option<(&str, &str)>,
         limit: usize,
     ) -> anyhow::Result<Vec<WindowActivityEventRecord>> {
+        #[cfg(any(test, feature = "root-test-support"))]
+        self.window_history_reads
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let conn = self.lock_connection(crate::StoreDomain::WindowActivity);
         let (kind, id) = principal
             .map(|(kind, id)| (Some(kind), Some(id)))
@@ -356,6 +362,9 @@ impl Database {
         principal: Option<(&str, &str)>,
         limit: usize,
     ) -> anyhow::Result<Vec<WindowActivityEventRecord>> {
+        #[cfg(any(test, feature = "root-test-support"))]
+        self.window_history_reads
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let conn = self.lock_connection(crate::StoreDomain::WindowActivity);
         let (principal_sql, kind, id) = principal_predicate(principal);
         let sql = format!(
@@ -434,6 +443,9 @@ impl Database {
         principal: Option<(&str, &str)>,
         limit: usize,
     ) -> anyhow::Result<Vec<WindowWorkflowSessionSummaryRecord>> {
+        #[cfg(any(test, feature = "root-test-support"))]
+        self.window_history_reads
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let conn = self.lock_connection(crate::StoreDomain::WindowActivity);
         let (principal_sql, kind, id) = principal_predicate(principal);
         let sql = format!(
@@ -763,6 +775,7 @@ fn collect_session_window_rows(
 
 #[cfg(test)]
 mod tests {
+    mod inventory;
     mod queries;
 
     use super::*;

@@ -176,4 +176,3 @@ fn same_project(left: &str, right: &str) -> bool {
         left == right
     }
 }
-

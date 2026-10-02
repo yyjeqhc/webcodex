@@ -1389,4 +1389,3 @@ pub enum GitReviewScopeInput {
         head_commit: String,
     },
 }
-

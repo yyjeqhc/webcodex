@@ -222,4 +222,3 @@ fn identity_from_config(config: &StoredDesktopConfig) -> Option<ProjectRuntimeId
         },
     })
 }
-

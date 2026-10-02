@@ -4199,4 +4199,3 @@ index 1111111..2222222 100644
     assert!(truncated);
     assert_eq!(files[0]["hunks"][0]["truncated"], true);
 }
-

@@ -462,4 +462,3 @@ fn reserve_loopback_address() -> DesktopResult<String> {
     })?;
     Ok(address.to_string())
 }
-

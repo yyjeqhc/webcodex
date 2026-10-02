@@ -1706,4 +1706,3 @@ async fn show_changes_accepts_unique_short_id() {
     assert!(result.success, "{:?}", result.error);
     assert_eq!(result.output["project"], "other-repo");
 }
-

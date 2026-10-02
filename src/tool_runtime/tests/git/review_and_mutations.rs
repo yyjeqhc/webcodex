@@ -655,4 +655,3 @@ async fn git_restore_replacement_after_dispatch_reports_outcome_unknown_without_
         "uncertain mutation must not be retried: {retry:?}"
     );
 }
-

@@ -605,4 +605,3 @@ fn can_refresh_legacy_runner(snapshot: Option<crate::process::ProcessSnapshot>) 
             )
     })
 }
-

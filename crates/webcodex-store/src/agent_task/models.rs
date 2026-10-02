@@ -549,4 +549,3 @@ impl StoredTask {
         }
     }
 }
-

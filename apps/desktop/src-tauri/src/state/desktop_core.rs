@@ -1899,4 +1899,3 @@ impl DesktopCore {
         Ok(())
     }
 }
-

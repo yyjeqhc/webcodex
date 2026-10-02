@@ -45,7 +45,7 @@ type ProjectFamily = {
   workspaces: ProjectRow[];
 };
 
-function buildProjectFamilies(projects: ProjectRow[]): ProjectFamily[] {
+function buildProjectFamilies(projects: ProjectRow[], projectIndex: ReadonlyMap<string, ProjectRow>): ProjectFamily[] {
   const grouped = new Map<string, ProjectRow[]>();
   for (const project of projects) {
     const id = projectFamilyId(project);
@@ -55,10 +55,10 @@ function buildProjectFamilies(projects: ProjectRow[]): ProjectFamily[] {
   }
   return [...grouped.entries()]
     .map(([id, workspaces]) => {
-      const primary = workspaces.find((project) => project.id === id) || workspaces.find((project) => !project.lineage) || workspaces[0];
+      const primary = projectIndex.get(id) || workspaces[0];
       return {
         id,
-        name: projectFamilyName(primary, projects),
+        name: projectFamilyName(primary, projectIndex),
         clientId: primary.client_id,
         primary,
         workspaces: workspaces.slice().sort((left, right) =>
@@ -86,29 +86,30 @@ export function ProjectsView({ client, language, runners, onOpenSession, onOpenW
   const addRequest = useRef<AbortController | null>(null);
   const detailsSection = useRef<HTMLElement | null>(null);
 
-  const families = useMemo(() => buildProjectFamilies(projectsState.projects), [projectsState.projects]);
-  const selectedFamily = useMemo(
-    () => families.find((family) => family.id === selectedFamilyId) || families[0],
-    [families, selectedFamilyId],
-  );
-  const selectedProject = useMemo(
-    () => selectedFamily?.workspaces.find((project) => project.id === selectedProjectId) || selectedFamily?.primary,
-    [selectedFamily, selectedProjectId],
-  );
+  const projectIndex = useMemo(() => new Map(projectsState.projects.map(project => [project.id, project])), [projectsState.projects]);
+  const families = useMemo(() => buildProjectFamilies(projectsState.projects, projectIndex), [projectsState.projects, projectIndex]);
+  const familyIndex = useMemo(() => new Map(families.map(family => [family.id, family])), [families]);
+  const selectedFamily = familyIndex.get(selectedFamilyId) || families[0];
+  const workspaceIndex = useMemo(() => new Map(selectedFamily?.workspaces.map(project => [project.id, project]) || []), [selectedFamily]);
+  const selectedProject = workspaceIndex.get(selectedProjectId) || selectedFamily?.primary;
   const windowProjects = useMemo(() => selectedFamily?.workspaces.map(project => project.id), [selectedFamily]);
   const windows = useWindowWorkspace(client, Boolean(selectedFamily), onUnauthorized, { refreshMs: 5_000, loadDetail: false, projects: windowProjects });
   const sessionsState = useProjectSessions(client, Boolean(selectedProject), selectedProject?.id || "", onUnauthorized);
 
-  const windowsByProject = useMemo(() => {
-    const grouped = new Map<string, WindowSummary[]>();
-    for (const window of windows.windows) {
-      if (!window.last_project) continue;
-      const rows = grouped.get(window.last_project) || [];
-      rows.push(window);
-      grouped.set(window.last_project, rows);
+  const windowIndex = useMemo(() => new Map(windows.windows.map(window => [window.client_window_key, window])), [windows.windows]);
+  // Membership depends on exact Window/Project identities, not active counters.
+  // Preserve the grouping while liveness changes unrelated presentation fields.
+  const affinity = JSON.stringify(windows.windows.map(window => [window.client_window_key, window.last_project]));
+  const windowIdsByProject = useMemo(() => {
+    const grouped = new Map<string, string[]>();
+    for (const [key, project] of JSON.parse(affinity) as Array<[string, string | null]>) {
+      if (!project) continue;
+      const rows = grouped.get(project) || []; rows.push(key); grouped.set(project, rows);
     }
     return grouped;
-  }, [windows.windows]);
+  }, [affinity]);
+  const windowsByProject = useMemo(() => new Map([...windowIdsByProject].map(([project, ids]) =>
+    [project, ids.map(id => windowIndex.get(id)!).filter(Boolean)])), [windowIdsByProject, windowIndex]);
   const windowsAvailable = windows.availability === "available" || windows.availability === "stale";
 
   const familyWindows = useMemo(() => {
@@ -270,7 +271,7 @@ export function ProjectsView({ client, language, runners, onOpenSession, onOpenW
               </div>
               <div className="project-window-list">
                 {familyWindows.map((window) => {
-                  const workspace = selectedFamily.workspaces.find((project) => project.id === window.last_project);
+                  const workspace = workspaceIndex.get(window.last_project || "");
                   return (
                     <button className="project-window-row ui-entity-row" type="button" key={window.client_window_key} onClick={() => onOpenWindow(window.client_window_key)}>
                       <span className={"work-state-dot " + (window.active_count ? "running" : "recent")} />

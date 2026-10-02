@@ -43,8 +43,8 @@ export function projectVariantLabel(project: PresentableProject): string {
   return leaf || project.name?.trim() || "Managed worktree";
 }
 
-export function projectFamilyName(project: PresentableProject, projects: PresentableProject[]): string {
+export function projectFamilyName(project: PresentableProject, projects: PresentableProject[] | ReadonlyMap<string, PresentableProject>): string {
   const sourceId = sourceProjectRuntimeId(project);
-  const source = sourceId ? projects.find((row) => row.id === sourceId) : project;
+  const source = sourceId ? (Array.isArray(projects) ? projects.find((row) => row.id === sourceId) : projects.get(sourceId)) : project;
   return projectPresentationName(source || project);
 }

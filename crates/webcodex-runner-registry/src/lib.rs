@@ -7,6 +7,7 @@
 mod access;
 mod access_control;
 mod capabilities;
+mod job_index;
 mod job_input;
 mod job_status;
 mod job_updates;

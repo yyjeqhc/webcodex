@@ -553,7 +553,7 @@ pub(super) struct RunnerRegistryInner {
     pub(super) coding_agent_waiters: HashMap<String, oneshot::Sender<CodingAgentResponse>>,
     pub(super) coding_agent_fences: HashMap<String, CodingAgentDispatchFence>,
     pub(super) queues_by_runner: HashMap<String, VecDeque<String>>,
-    pub(super) jobs_by_id: HashMap<String, ShellJobRecord>,
+    pub(super) jobs_by_id: crate::job_index::JobRecords,
     pub(super) request_to_job: HashMap<String, String>,
     /// Bounded stale-instance tombstones prevent a replaced runner process
     /// from reclaiming the same runner lease after the replacement later

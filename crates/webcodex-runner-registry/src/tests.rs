@@ -340,6 +340,8 @@ mod instance_lease;
 mod internal_posix;
 #[path = "tests/job_handoff.rs"]
 mod job_handoff;
+#[path = "tests/job_index.rs"]
+mod job_index;
 #[path = "tests/job_lifecycle.rs"]
 mod job_lifecycle;
 #[path = "tests/job_log_wait.rs"]

@@ -2160,10 +2160,10 @@ impl RunnerRegistry {
         jobs
     }
 
-    /// Count caller-visible active Jobs for the requested exact Projects in one
-    /// registry snapshot. Refresh lifecycle once, then aggregate once: O(P + J),
-    /// with output bounded by requested Projects, not the complete Job inventory.
-    /// Private, projectless, terminal and unauthorized Jobs never contribute.
+    /// Count caller-visible active Jobs for exact Projects in O(P + A), where A
+    /// is current active Jobs, independent of retained terminal history. Only
+    /// authorized matching candidates are refreshed. Canonical records, not the
+    /// derived active index, decide lifecycle, Project identity and visibility.
     pub async fn count_active_jobs_for_projects(
         &self,
         auth: Option<&crate::RunnerAccess>,
@@ -2179,17 +2179,59 @@ impl RunnerRegistry {
         let mut inner = self.inner.lock().await;
         #[cfg(any(test, feature = "root-test-support"))]
         self.project_job_scan_count.fetch_add(1, Ordering::Relaxed);
-        let job_ids = inner.jobs_by_id.keys().cloned().collect::<Vec<_>>();
+        let job_ids = inner.jobs_by_id.active_ids();
         for job_id in job_ids {
+            let eligible = inner.jobs_by_id.get(&job_id).is_some_and(|job| {
+                job.visibility == ShellJobVisibility::Public
+                    && job
+                        .project_id
+                        .as_ref()
+                        .is_some_and(|id| counts.contains_key(id))
+                    && shell_job_visible_to_auth(auth, &inner, job)
+            });
+            if !eligible {
+                continue;
+            }
+            #[cfg(any(test, feature = "root-test-support"))]
+            self.project_job_candidate_refresh_count
+                .fetch_add(1, Ordering::Relaxed);
             refresh_job_status_locked(&mut inner, &job_id);
+            if let Some(job) = inner
+                .jobs_by_id
+                .get(&job_id)
+                .filter(|job| job.lifecycle.is_active())
+            {
+                if let Some(count) = job.project_id.as_ref().and_then(|id| counts.get_mut(id)) {
+                    *count += 1;
+                }
+            }
         }
-        for job in inner.jobs_by_id.values().filter(|job| {
-            job.visibility == ShellJobVisibility::Public
-                && job.lifecycle.is_active()
-                && shell_job_visible_to_auth(auth, &inner, job)
-        }) {
-            if let Some(count) = job.project_id.as_deref().and_then(|id| counts.get_mut(id)) {
-                *count += 1;
+        counts
+    }
+
+    /// Lightweight operator aggregate. No historical record/stream projection,
+    /// sorting, or lifecycle refresh of terminal Jobs is performed.
+    pub async fn active_job_counts_by_runner_for_auth(
+        &self,
+        auth: Option<&crate::RunnerAccess>,
+    ) -> HashMap<String, usize> {
+        let mut inner = self.inner.lock().await;
+        let ids = inner.jobs_by_id.active_ids();
+        let mut counts = HashMap::new();
+        for id in ids {
+            if !inner.jobs_by_id.get(&id).is_some_and(|job| {
+                job.visibility == ShellJobVisibility::Public
+                    && shell_job_visible_to_auth(auth, &inner, job)
+            }) {
+                continue;
+            }
+            refresh_job_status_locked(&mut inner, &id);
+            if let Some(job) = inner
+                .jobs_by_id
+                .get(&id)
+                .filter(|job| job.lifecycle.is_active())
+            {
+                *counts.entry(job.client_id.clone()).or_insert(0) += 1;
             }
         }
         counts
@@ -2216,17 +2258,24 @@ impl RunnerRegistry {
         runtime_project_id: &str,
     ) -> Result<usize, String> {
         let mut inner = self.inner.lock().await;
-        let job_ids = inner.jobs_by_id.keys().cloned().collect::<Vec<_>>();
+        let job_ids = inner.jobs_by_id.active_ids();
+        let mut active = 0;
         for job_id in job_ids {
+            let eligible = inner.jobs_by_id.get(&job_id).is_some_and(|job| {
+                job.project_id.as_deref() == Some(runtime_project_id)
+                    && shell_job_visible_to_auth(auth, &inner, job)
+            });
+            if !eligible {
+                continue;
+            }
             refresh_job_status_locked(&mut inner, &job_id);
+            active += usize::from(
+                inner
+                    .jobs_by_id
+                    .get(&job_id)
+                    .is_some_and(|job| job.lifecycle.is_active()),
+            );
         }
-        let active = inner
-            .jobs_by_id
-            .values()
-            .filter(|job| shell_job_visible_to_auth(auth, &inner, job))
-            .filter(|job| job.project_id.as_deref() == Some(runtime_project_id))
-            .filter(|job| job.lifecycle.is_active())
-            .count();
         if active == 0 {
             *inner
                 .unregistering_projects

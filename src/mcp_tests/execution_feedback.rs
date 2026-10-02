@@ -67,9 +67,9 @@ async fn mcp_observation_summary_default_is_published_by_direct_and_gateway_mani
     for gateway in [false, true] {
         let arguments = json!({"tool_name":"observe_jobs"});
         let params = if gateway {
-            adaptive_runtime_gateway_params("tool_manifest", arguments)
+            adaptive_runtime_gateway_params("read_tool_manifest", arguments)
         } else {
-            json!({"name":"tool_manifest","arguments":arguments})
+            json!({"name":"read_tool_manifest","arguments":arguments})
         };
         let McpOutcome::Ok(body) = handle_mcp_request(
             &runtime,

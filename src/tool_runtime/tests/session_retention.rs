@@ -115,7 +115,7 @@ async fn call_summary(
     runtime
         .call_tool_with_context(
             ToolCallRequest {
-                tool_name: "session_summary".to_string(),
+                tool_name: "read_session_summary".to_string(),
                 arguments: json!({ "session_id": session_id }),
             },
             context(auth, recording_session_id),
@@ -243,7 +243,7 @@ async fn owner_canonical_id_is_retention_expired_and_records_that_kind() {
     let finished = summary
         .events
         .iter()
-        .find(|event| event.kind == "tool_call_finished" && event.tool_name == "session_summary")
+        .find(|event| event.kind == "tool_call_finished" && event.tool_name == "read_session_summary")
         .expect("live recorder keeps the failed lookup");
     assert_eq!(
         finished.error_kind.as_deref(),

@@ -272,57 +272,110 @@ impl BackendFactory for ChromiumFactory {
     }
 }
 
+#[cfg(any(test, target_os = "windows"))]
+const WINDOWS_CHROMIUM_EXECUTABLES: &[&str] = &["msedge.exe", "chrome.exe"];
+#[cfg(any(test, target_os = "windows"))]
+const WINDOWS_BRAVE_EXECUTABLE: &str = "brave.exe";
+
+#[cfg(any(test, target_os = "macos"))]
+const MACOS_CHROMIUM_RELATIVE_PATHS: &[&str] = &[
+    "Google Chrome.app/Contents/MacOS/Google Chrome",
+    "Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+    "Brave Browser.app/Contents/MacOS/Brave Browser",
+];
+
+#[cfg(any(test, all(unix, not(target_os = "macos"))))]
+const LINUX_CHROMIUM_EXECUTABLES: &[&str] = &[
+    "google-chrome",
+    "google-chrome-stable",
+    "chromium",
+    "chromium-browser",
+    "brave-browser",
+    "brave",
+];
+
 pub fn discover_chromium_executable() -> Option<PathBuf> {
     #[cfg(target_os = "windows")]
     {
-        let mut candidates = Vec::new();
-        for variable in ["PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA"] {
-            if let Some(base) = std::env::var_os(variable) {
-                let base = PathBuf::from(base);
-                candidates.push(base.join("Microsoft/Edge/Application/msedge.exe"));
-                candidates.push(base.join("Google/Chrome/Application/chrome.exe"));
-            }
-        }
-        for candidate in candidates {
-            if candidate.is_file() {
-                return Some(candidate);
-            }
-        }
-        for executable in ["msedge.exe", "chrome.exe"] {
-            if let Some(path) = find_in_path(executable) {
-                return Some(path);
-            }
+        let bases = ["PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA"]
+            .into_iter()
+            .filter_map(std::env::var_os)
+            .map(PathBuf::from)
+            .collect::<Vec<_>>();
+        let candidates = windows_browser_candidates(&bases, std::env::var_os("PATH").as_deref());
+        if let Some(path) = first_existing(candidates) {
+            return Some(path);
         }
     }
 
     #[cfg(target_os = "macos")]
     {
-        for candidate in [
-            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-            "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
-        ] {
-            let path = PathBuf::from(candidate);
-            if path.is_file() {
-                return Some(path);
-            }
+        let candidates = macos_browser_candidates(Path::new("/Applications"));
+        if let Some(path) = first_existing(candidates) {
+            return Some(path);
         }
     }
 
     #[cfg(all(unix, not(target_os = "macos")))]
     {
-        for executable in [
-            "google-chrome",
-            "google-chrome-stable",
-            "chromium",
-            "chromium-browser",
-        ] {
-            if let Some(path) = find_in_path(executable) {
-                return Some(path);
-            }
+        let candidates = browser_candidates_in_path(
+            LINUX_CHROMIUM_EXECUTABLES,
+            std::env::var_os("PATH").as_deref(),
+        );
+        if let Some(path) = first_existing(candidates) {
+            return Some(path);
         }
     }
 
     None
+}
+
+#[cfg(any(test, target_os = "windows"))]
+fn windows_browser_candidates(bases: &[PathBuf], paths: Option<&std::ffi::OsStr>) -> Vec<PathBuf> {
+    let mut candidates = Vec::with_capacity(bases.len() * 3 + 4);
+    for base in bases {
+        candidates.push(base.join("Microsoft/Edge/Application/msedge.exe"));
+        candidates.push(base.join("Google/Chrome/Application/chrome.exe"));
+    }
+    candidates.extend(browser_candidates_in_path(
+        WINDOWS_CHROMIUM_EXECUTABLES,
+        paths,
+    ));
+    for base in bases {
+        candidates.push(base.join("BraveSoftware/Brave-Browser/Application/brave.exe"));
+    }
+    candidates.extend(browser_candidates_in_path(
+        &[WINDOWS_BRAVE_EXECUTABLE],
+        paths,
+    ));
+    candidates
+}
+
+#[cfg(any(test, target_os = "macos"))]
+fn macos_browser_candidates(root: &Path) -> Vec<PathBuf> {
+    MACOS_CHROMIUM_RELATIVE_PATHS
+        .iter()
+        .map(|relative| root.join(relative))
+        .collect()
+}
+
+#[cfg(any(test, target_os = "windows", all(unix, not(target_os = "macos"))))]
+fn browser_candidates_in_path(
+    executables: &[&str],
+    paths: Option<&std::ffi::OsStr>,
+) -> Vec<PathBuf> {
+    let Some(paths) = paths else {
+        return Vec::new();
+    };
+    let paths = std::env::split_paths(paths).collect::<Vec<_>>();
+    executables
+        .iter()
+        .flat_map(|executable| paths.iter().map(move |path| path.join(executable)))
+        .collect()
+}
+
+fn first_existing(candidates: impl IntoIterator<Item = PathBuf>) -> Option<PathBuf> {
+    candidates.into_iter().find(|candidate| candidate.is_file())
 }
 
 fn parse_devtools_active_port(contents: &str) -> Option<(u16, String)> {
@@ -333,13 +386,6 @@ fn parse_devtools_active_port(contents: &str) -> Option<(u16, String)> {
         return None;
     }
     Some((port, path.to_string()))
-}
-
-fn find_in_path(executable: &str) -> Option<PathBuf> {
-    let paths = std::env::var_os("PATH")?;
-    std::env::split_paths(&paths)
-        .map(|path| path.join(executable))
-        .find(|path| path.is_file())
 }
 
 fn cleanup_failed_launch(child: &mut ManagedChild) {
@@ -2850,6 +2896,111 @@ Connection: close
             }
         });
         (address.port(), handle)
+    }
+
+    #[test]
+    fn brave_installations_are_discovered_from_standard_relative_paths() {
+        let fixture = tempfile::tempdir().unwrap();
+
+        let windows_base = fixture.path().join("windows");
+        let windows_brave = windows_base.join("BraveSoftware/Brave-Browser/Application/brave.exe");
+        std::fs::create_dir_all(windows_brave.parent().unwrap()).unwrap();
+        std::fs::write(&windows_brave, b"").unwrap();
+        assert_eq!(
+            first_existing(windows_browser_candidates(&[windows_base], None)),
+            Some(windows_brave)
+        );
+
+        let windows_bin = fixture.path().join("windows-bin");
+        let windows_path_brave = windows_bin.join(WINDOWS_BRAVE_EXECUTABLE);
+        std::fs::create_dir_all(&windows_bin).unwrap();
+        std::fs::write(&windows_path_brave, b"").unwrap();
+        let windows_path = std::env::join_paths([windows_bin.as_os_str()]).unwrap();
+        assert_eq!(
+            first_existing(windows_browser_candidates(
+                &[],
+                Some(windows_path.as_os_str()),
+            )),
+            Some(windows_path_brave)
+        );
+
+        let macos_root = fixture.path().join("Applications");
+        let macos_brave = macos_root.join("Brave Browser.app/Contents/MacOS/Brave Browser");
+        std::fs::create_dir_all(macos_brave.parent().unwrap()).unwrap();
+        std::fs::write(&macos_brave, b"").unwrap();
+        assert_eq!(
+            first_existing(macos_browser_candidates(&macos_root)),
+            Some(macos_brave)
+        );
+
+        let linux_bin = fixture.path().join("linux-bin");
+        let linux_brave = linux_bin.join("brave-browser");
+        std::fs::create_dir_all(&linux_bin).unwrap();
+        std::fs::write(&linux_brave, b"").unwrap();
+        let linux_path = std::env::join_paths([linux_bin.as_os_str()]).unwrap();
+        assert_eq!(
+            first_existing(browser_candidates_in_path(
+                LINUX_CHROMIUM_EXECUTABLES,
+                Some(linux_path.as_os_str()),
+            )),
+            Some(linux_brave)
+        );
+    }
+
+    #[test]
+    fn brave_is_appended_to_existing_discovery_order() {
+        let first = PathBuf::from("first");
+        let second = PathBuf::from("second");
+        let first_path = PathBuf::from("first-bin");
+        let second_path = PathBuf::from("second-bin");
+        let joined =
+            std::env::join_paths([first_path.as_os_str(), second_path.as_os_str()]).unwrap();
+        let windows =
+            windows_browser_candidates(&[first.clone(), second.clone()], Some(joined.as_os_str()));
+        assert_eq!(
+            windows,
+            vec![
+                first.join("Microsoft/Edge/Application/msedge.exe"),
+                first.join("Google/Chrome/Application/chrome.exe"),
+                second.join("Microsoft/Edge/Application/msedge.exe"),
+                second.join("Google/Chrome/Application/chrome.exe"),
+                first_path.join("msedge.exe"),
+                second_path.join("msedge.exe"),
+                first_path.join("chrome.exe"),
+                second_path.join("chrome.exe"),
+                first.join("BraveSoftware/Brave-Browser/Application/brave.exe"),
+                second.join("BraveSoftware/Brave-Browser/Application/brave.exe"),
+                first_path.join("brave.exe"),
+                second_path.join("brave.exe"),
+            ]
+        );
+
+        let macos_root = Path::new("/Applications");
+        let macos = macos_browser_candidates(macos_root);
+        assert_eq!(
+            macos,
+            vec![
+                macos_root.join("Google Chrome.app/Contents/MacOS/Google Chrome"),
+                macos_root.join("Microsoft Edge.app/Contents/MacOS/Microsoft Edge"),
+                macos_root.join("Brave Browser.app/Contents/MacOS/Brave Browser"),
+            ]
+        );
+
+        let linux =
+            browser_candidates_in_path(LINUX_CHROMIUM_EXECUTABLES, Some(joined.as_os_str()));
+        assert_eq!(
+            &linux[..4],
+            &[
+                first_path.join("google-chrome"),
+                second_path.join("google-chrome"),
+                first_path.join("google-chrome-stable"),
+                second_path.join("google-chrome-stable"),
+            ]
+        );
+        assert_eq!(linux[8], first_path.join("brave-browser"));
+        assert_eq!(linux[9], second_path.join("brave-browser"));
+        assert_eq!(linux[10], first_path.join("brave"));
+        assert_eq!(linux[11], second_path.join("brave"));
     }
 
     #[test]

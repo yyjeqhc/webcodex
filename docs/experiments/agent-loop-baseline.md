@@ -179,7 +179,8 @@ expectation.
 The profiler includes a deterministic case fingerprint so changed case definitions
 cannot silently compare as the same pair.
 
-The corpus contains ten cases:
+The corpus contains sixteen cases: ten coding/inspection cases and six general
+file/command cases. The coding/inspection cases are:
 
 - `readonly_review`: read-only status/read/search/diff inspection.
 - `focused_edit_validation`: one focused edit, diff review, and successful
@@ -203,9 +204,31 @@ The corpus contains ten cases:
 - `compact_projection`: larger child read evidence distilled into exactly three
   concise final facts.
 
-The fixture-oriented cases reuse the disposable Rust project recipe already owned
-by `eval_coding_loop.sh`; this protocol does not create a second runtime harness.
+The general cases are:
+
+- `generic_mixed_files_conflict`: copy mixed files, preserve inputs and a
+  destination conflict, and independently verify bytes/hashes and file counts.
+- `generic_encoded_csv`: reconcile encodings/columns and independently verify
+  the actual CSV rows, statistics and output receipts.
+- `generic_failure_repair`: inspect an intentional nonzero exit and repair it;
+  expected business failures are not contract-repair turns.
+- `generic_pending_independent_join`: do independent work before one readiness
+  join, then observe the original interactive Job without redispatch.
+- `generic_stale_read_revision`: reject a stale edit, reread, and preserve an
+  external writer's exact bytes through successful recovery.
+- `generic_missing_output`: verify that a declared missing output blocks closeout;
+  this expected negative case requires the output-receipt contract.
+
+The coding fixture cases reuse the disposable Rust project recipe already owned
+by `eval_coding_loop.sh`; general cases reuse the fixture recipes in
+`e2e_generic_agent_ws.py`. This protocol does not create a second runtime harness.
 Read-only WebCodex-repository cases must leave the workspace clean.
+The generic manifest entries specify preparation and independent checks. Real
+stale-edit replay requires an operator write after the model's first read; do not
+silently substitute a model-issued write. The scripted driver is deterministic
+runtime acceptance, not a real ChatGPT sample. See
+[General Agent experience](general-agent-experience.md) for the implementation,
+replay protocol and observed acceptance results.
 
 The corpus records an expected `code_mode_surface` for every current case:
 read-only cases use `read_only`, the long validation/Job case uses `validation`,

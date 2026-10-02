@@ -33,10 +33,10 @@ pub(super) async fn handle_with_server_apps_enabled(
 }
 
 #[tokio::test]
-async fn work_result_descriptor_is_explicit_sparse_app_only_and_resource_backed() {
+async fn work_result_descriptor_keeps_renderers_public_and_bridge_tools_app_only() {
     assert_eq!(
         MCP_WORK_RESULT_UI_RESOURCE_URI,
-        "ui://webcodex/work-result/v14"
+        "ui://webcodex/work-result/v15"
     );
     assert!(MCP_WORK_RESULT_UI_RESOURCE_LEGACY_URIS.contains(&"ui://webcodex/work-result/v9"));
     assert!(MCP_WORK_RESULT_UI_RESOURCE_LEGACY_URIS.contains(&"ui://webcodex/work-result/v10"));
@@ -83,8 +83,25 @@ async fn work_result_descriptor_is_explicit_sparse_app_only_and_resource_backed(
         present.pointer("/_meta/ui/resourceUri"),
         Some(&json!(MCP_WORK_RESULT_UI_RESOURCE_URI))
     );
+    assert!(present["_meta"].get("openai/ui").is_none());
     assert!(present.pointer("/_meta/ui/visibility").is_none());
     assert_eq!(present["inputSchema"]["required"], json!(["project"]));
+    let thread =
+        tool(&ui["result"], "work_result_thread_panel").expect("Work Result thread entrypoint");
+    assert_eq!(thread["title"], "WebCodex review");
+    assert!(thread.pointer("/_meta/ui/visibility").is_none());
+    assert_eq!(
+        thread.pointer("/_meta/ui/resourceUri"),
+        Some(&json!(MCP_WORK_RESULT_UI_RESOURCE_URI))
+    );
+    assert_eq!(
+        thread["_meta"]["openai/ui"]["entrypoints"],
+        json!([{"type": "thread"}])
+    );
+    assert_eq!(thread["inputSchema"]["type"], "object");
+    assert_eq!(thread["inputSchema"]["properties"], json!({}));
+    assert_eq!(thread["inputSchema"]["additionalProperties"], false);
+    assert!(thread["inputSchema"].get("required").is_none());
     let state = tool(&ui["result"], "work_result_state").expect("app-only work_result_state");
     assert_eq!(state.pointer("/_meta/ui/visibility"), Some(&json!(["app"])));
     assert!(state.pointer("/_meta/ui/resourceUri").is_none());
@@ -137,16 +154,39 @@ async fn work_result_descriptor_is_explicit_sparse_app_only_and_resource_backed(
         panic!("expected UI-capable full tools/list");
     };
     for descriptor in full_ui["result"]["tools"].as_array().unwrap() {
-        if descriptor["name"] == "present_work_result" {
-            continue;
+        let name = descriptor["name"].as_str().unwrap_or_default();
+        if descriptor.pointer("/_meta/ui/visibility") == Some(&json!(["app"])) {
+            assert!(
+                descriptor.pointer("/_meta/ui/resourceUri").is_none(),
+                "ChatGPT rejects private rendering tools during refresh: {name}"
+            );
         }
-        assert_ne!(
-            descriptor
-                .pointer("/_meta/ui/resourceUri")
-                .and_then(Value::as_str),
-            Some(MCP_WORK_RESULT_UI_RESOURCE_URI),
-            "only present_work_result may create a Work Result card"
-        );
+        if !matches!(name, "present_work_result" | "work_result_thread_panel") {
+            assert_ne!(
+                descriptor
+                    .pointer("/_meta/ui/resourceUri")
+                    .and_then(Value::as_str),
+                Some(MCP_WORK_RESULT_UI_RESOURCE_URI),
+                "only Work Result presentation surfaces may bind the Work Result resource"
+            );
+        }
+        if name == "open_webcodex_workbench" {
+            assert_eq!(
+                descriptor.pointer("/_meta/ui/resourceUri"),
+                Some(&json!(
+                    super::super::resources::MCP_WORKBENCH_UI_RESOURCE_URI
+                ))
+            );
+            assert_eq!(
+                descriptor.pointer("/_meta/openai~1ui/entrypoints"),
+                Some(&json!([{"type":"global"},{"type":"thread"}]))
+            );
+        } else if name != "work_result_thread_panel" {
+            assert!(
+                descriptor["_meta"].get("openai/ui").is_none(),
+                "only the explicit Work Result and Workbench launchers may advertise OpenAI entrypoints"
+            );
+        }
     }
     assert_eq!(
         tool(&full_ui["result"], "present_goal_plan")
@@ -171,7 +211,13 @@ async fn work_result_descriptor_is_explicit_sparse_app_only_and_resource_backed(
         .unwrap()
         .pointer("/_meta/ui/resourceUri")
         .is_none());
+    assert!(
+        tool(&plain["result"], "present_work_result").unwrap()["_meta"]
+            .get("openai/ui")
+            .is_none()
+    );
     assert!(tool(&plain["result"], "work_result_state").is_none());
+    assert!(tool(&plain["result"], "work_result_thread_panel").is_none());
     assert!(tool(&plain["result"], "work_result_send_message").is_none());
     assert!(tool(&plain["result"], "changes_file_diff").is_none());
     assert!(tool(&plain["result"], "present_changes").is_none());
@@ -194,10 +240,16 @@ async fn work_result_descriptor_is_explicit_sparse_app_only_and_resource_backed(
     assert!(tool(&disabled["result"], "work_result_activity_detail").is_none());
     assert!(tool(&disabled["result"], "work_result_send_message").is_none());
     assert!(tool(&disabled["result"], "changes_file_diff").is_none());
+    assert!(tool(&disabled["result"], "work_result_thread_panel").is_none());
     assert!(tool(&disabled["result"], "present_work_result")
         .unwrap()
         .pointer("/_meta/ui/resourceUri")
         .is_none());
+    assert!(
+        tool(&disabled["result"], "present_work_result").unwrap()["_meta"]
+            .get("openai/ui")
+            .is_none()
+    );
 
     assert!(!registered_tool_specs()
         .iter()
@@ -208,6 +260,9 @@ async fn work_result_descriptor_is_explicit_sparse_app_only_and_resource_backed(
     assert!(!registered_tool_specs()
         .iter()
         .any(|spec| spec.name == "work_result_send_message"));
+    assert!(!registered_tool_specs()
+        .iter()
+        .any(|spec| spec.name == "work_result_thread_panel"));
     assert!(
         !super::super::tools::adaptive_runtime_gateway_target_admitted_for_test(
             "work_result_state",
@@ -218,6 +273,164 @@ async fn work_result_descriptor_is_explicit_sparse_app_only_and_resource_backed(
         !super::super::tools::adaptive_runtime_gateway_target_admitted_for_test(
             "work_result_activity_detail",
             true
+        )
+    );
+}
+
+#[test]
+fn work_result_thread_binding_is_exact_window_and_principal_scoped() {
+    let temp = tempfile::tempdir().unwrap();
+    let db = std::sync::Arc::new(
+        crate::Database::open(&temp.path().join("work-result-thread-binding.db")).unwrap(),
+    );
+    let runtime =
+        crate::tool_runtime::ToolRuntime::new_for_tests().with_window_activity_database(db.clone());
+    let owner = crate::auth::shared_key_context("thread-owner");
+    let other = crate::auth::shared_key_context("thread-other");
+    let window = crate::client_window::ClientWindow::for_test("thread-window");
+    let other_window = crate::client_window::ClientWindow::for_test("thread-other-window");
+
+    for (auth, window) in [(Some(&owner), None), (None, Some(&window))] {
+        assert!(
+            super::super::tools::work_result_thread_binding_for_test(&runtime, auth, window)
+                .is_err()
+        );
+    }
+
+    let record = |auth: &crate::auth::AuthContext,
+                  window: &crate::client_window::ClientWindow,
+                  operation: &str,
+                  project: &str,
+                  status: &str,
+                  business_session_id: Option<&str>,
+                  at_ms: i64| {
+        let (principal_kind, principal_id) =
+            crate::tool_runtime::runtime_observation_principal(Some(auth)).unwrap();
+        crate::action_audit_sessions::record_action_event(
+            &db,
+            crate::action_audit_sessions::ActionAuditEventInput {
+                explicit_session_id: None,
+                session_title: None,
+                endpoint: "/mcp".into(),
+                action_name: "toolsCall".into(),
+                operation: Some(operation.into()),
+                project: Some(project.into()),
+                principal_kind: None,
+                principal_user_id: None,
+                oauth_client_id: None,
+                status: status.into(),
+                http_status: Some(if status == "success" { 200 } else { 400 }),
+                started_at: at_ms / 1000,
+                ended_at: at_ms / 1000,
+                duration_ms: 1,
+                error_summary: None,
+                warning_summary: None,
+                changed_files: vec![],
+                ids: business_session_id
+                    .map(|session_id| json!({"business_session_id": session_id}))
+                    .unwrap_or_else(|| json!({})),
+                summary: json!({}),
+                request_bytes: None,
+                response_bytes: None,
+                client_window_key: Some(window.key().into()),
+                client_window_source: Some(window.source().into()),
+                server_trace_id: Some(format!("thread-trace-{at_ms}")),
+                principal_correlation_kind: Some(principal_kind),
+                principal_correlation_id: Some(principal_id),
+                window_started_at_ms: Some(at_ms),
+                window_ended_at_ms: Some(at_ms + 1),
+                request_observed_at_ms: Some(at_ms),
+                response_handed_at_ms: Some(at_ms + 1),
+                window_transition_kind: Some("serial".into()),
+                response_streaming: Some(false),
+                window_continuity_eligible: Some(true),
+                window_meaningful: true,
+                recorder_gap_session_id: None,
+                workflow_links: vec![],
+            },
+        );
+    };
+
+    record(
+        &owner,
+        &window,
+        "present_work_result",
+        "agent:r:expected",
+        "success",
+        Some("wc_sess_1111111111111111"),
+        2_000,
+    );
+    record(
+        &owner,
+        &window,
+        "present_work_result",
+        "agent:r:failed",
+        "tool_error",
+        Some("wc_sess_2222222222222222"),
+        3_000,
+    );
+    record(
+        &owner,
+        &window,
+        "read_files",
+        "agent:r:noise",
+        "success",
+        Some("wc_sess_3333333333333333"),
+        4_000,
+    );
+    record(
+        &other,
+        &window,
+        "present_work_result",
+        "agent:r:other-principal",
+        "success",
+        Some("wc_sess_4444444444444444"),
+        5_000,
+    );
+    record(
+        &owner,
+        &other_window,
+        "present_work_result",
+        "agent:r:other-window",
+        "success",
+        Some("wc_sess_5555555555555555"),
+        6_000,
+    );
+
+    assert_eq!(
+        super::super::tools::work_result_thread_binding_for_test(
+            &runtime,
+            Some(&owner),
+            Some(&window),
+        )
+        .unwrap(),
+        (
+            "agent:r:expected".to_string(),
+            Some("wc_sess_1111111111111111".to_string())
+        )
+    );
+    assert_eq!(
+        super::super::tools::work_result_thread_binding_for_test(
+            &runtime,
+            Some(&other),
+            Some(&window),
+        )
+        .unwrap(),
+        (
+            "agent:r:other-principal".to_string(),
+            Some("wc_sess_4444444444444444".to_string())
+        )
+    );
+    assert_eq!(
+        super::super::tools::work_result_thread_binding_for_test(
+            &runtime,
+            Some(&owner),
+            Some(&other_window),
+        )
+        .unwrap(),
+        (
+            "agent:r:other-window".to_string(),
+            Some("wc_sess_5555555555555555".to_string())
         )
     );
 }
@@ -497,6 +710,7 @@ fn work_result_html_is_bounded_live_progress_ui() {
         "Acknowledged",
         "Included in tool result",
         "ui/notifications/tool-input",
+        "Object.keys(args).length === 0",
         "ui/notifications/tool-result",
         "id=\"refresh\"",
         "Refreshing…",

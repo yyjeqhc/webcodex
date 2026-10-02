@@ -5,7 +5,7 @@ import { connectionFixture, connectionSnapshot } from "./test/connections-fixtur
 import { LocaleProvider } from "./i18n/locale";
 
 const workspace = vi.hoisted(() => ({ invoke: vi.fn() }));
-vi.mock("@tauri-apps/api/core", () => ({ invoke: workspace.invoke }));
+vi.mock("@tauri-apps/api/core", () => ({ invoke: workspace.invoke, isTauri: () => false }));
 
 const api = vi.hoisted(() => ({
   getState: vi.fn(),

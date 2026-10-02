@@ -11,7 +11,7 @@ import { RunnerFileAccess } from "./settings/RunnerFileAccess";
 import { TunnelConfigDiagnostics } from "./connection/TunnelConfigDiagnostics";
 
 const native = vi.hoisted(() => ({ invoke: vi.fn() }));
-vi.mock("@tauri-apps/api/core", () => ({ invoke: native.invoke }));
+vi.mock("@tauri-apps/api/core", () => ({ invoke: native.invoke, isTauri: () => false }));
 
 const api = vi.hoisted(() => ({ managedInstructionsRead: vi.fn(), managedInstructionsSave: vi.fn(), managedInstructionsEnable: vi.fn(), runnerCapabilityAuthorization: vi.fn(), authorizeRunnerCapabilities: vi.fn(), sshResources: vi.fn(), runnerSettings: vi.fn(), updateRunnerSettings: vi.fn(), updateRunnerAllowedRoots: vi.fn(), restartOwnedRunner: vi.fn(), addRunnerPlugin: vi.fn(), computerPermissions: vi.fn(), requestComputerPermission: vi.fn(), updateTunnelConfig: vi.fn(), getState: vi.fn() }));
 const dialog = vi.hoisted(() => ({ open: vi.fn() }));

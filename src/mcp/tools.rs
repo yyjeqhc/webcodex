@@ -29,6 +29,8 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 pub(super) const WORK_RESULT_APP_RESULT_META_KEY: &str = "webcodex/workResult";
+pub(super) const WORK_RESULT_THREAD_CONTEXT_META_KEY: &str = "webcodex/workResultThread";
+const WORK_RESULT_THREAD_ENTRYPOINT_TOOL_NAME: &str = "work_result_thread_panel";
 
 fn filter_specs_for_oauth(mut specs: Vec<ToolSpec>, auth: Option<&AuthContext>) -> Vec<ToolSpec> {
     let oauth_scope_projection = auth.is_some_and(AuthContext::is_oauth_token);
@@ -45,6 +47,24 @@ fn filter_specs_for_oauth(mut specs: Vec<ToolSpec>, auth: Option<&AuthContext>) 
         })
     });
     specs
+}
+
+fn work_result_thread_entrypoint_tool_spec() -> ToolSpec {
+    let state = crate::tool_runtime::work_result_app_tool_specs()
+        .into_iter()
+        .find(|spec| spec.name == "work_result_state")
+        .expect("Work Result state App tool must exist");
+    ToolSpec {
+        name: WORK_RESULT_THREAD_ENTRYPOINT_TOOL_NAME.to_string(),
+        description: "User-opened conversation thread panel for the Work Result already presented in this exact Host Window. The Host invokes this entrypoint with an empty object; WebCodex resolves only a prior successful present_work_result binding from the same authenticated Window and then reuses the normal work_result_state authorization and projection path.".to_string(),
+        input_schema: json!({
+            "type": "object",
+            "properties": {},
+            "additionalProperties": false
+        }),
+        output_schema: state.output_schema,
+        annotations: state.annotations,
+    }
 }
 
 // Discovery projection only. Canonical operator-extension specs still own
@@ -332,6 +352,18 @@ pub(super) fn mcp_tools_list_payload_with_features_for_auth(
                 }
             }
         }
+        if check_runtime_tool_scope(auth, "work_result_state").is_ok() {
+            let mut thread_entrypoint =
+                mcp_tool_spec_json(work_result_thread_entrypoint_tool_spec(), compact, false);
+            // A user-opened launcher renders a View, so it must remain public.
+            // ChatGPT rejects private/App-only tools with rendering resources.
+            attach_app_metadata(
+                &mut thread_entrypoint,
+                resources::MCP_WORK_RESULT_UI_RESOURCE_URI,
+            );
+            attach_openai_thread_entrypoint(&mut thread_entrypoint);
+            tools.push(thread_entrypoint);
+        }
         let mut app_specs = filter_specs_for_oauth(
             crate::tool_runtime::goal_plan_app_tool_specs()
                 .into_iter()
@@ -348,22 +380,10 @@ pub(super) fn mcp_tools_list_payload_with_features_for_auth(
                 is_job_terminal_continuation_app_tool_name(&spec.name);
             let mut value = mcp_tool_spec_json(spec, compact, false);
             attach_app_visibility(&mut value);
-            if agent_continuation_tool {
-                // Keep the app-only tools associated with the same continuation
-                // resource for compatibility with Hosts that use that hint. The
-                // association is not authority; visibility remains app-only and
-                // every call is re-authorized by the normal communication kernel.
-                attach_app_metadata(
-                    &mut value,
-                    resources::MCP_AGENT_CONTINUATION_UI_RESOURCE_URI,
-                );
-                attach_agent_continuation_app_diagnostic_schema(&mut value);
-            }
-            if job_terminal_continuation_tool {
-                attach_app_metadata(
-                    &mut value,
-                    resources::MCP_JOB_TERMINAL_CONTINUATION_UI_RESOURCE_URI,
-                );
+            if agent_continuation_tool || job_terminal_continuation_tool {
+                // Bridge helpers return data to an existing View; they never
+                // render another widget. Private rendering tools are rejected
+                // by ChatGPT during discovery/refresh.
                 attach_agent_continuation_app_diagnostic_schema(&mut value);
             }
             value
@@ -735,8 +755,9 @@ pub(super) fn add_stateless_workflow_recorder_metadata(payload: &mut Value) {
         let tool_name = tool_name_owned.as_deref();
         if matches!(
             tool_name,
-            Some("goal_plan_sync" | "work_result_state" | "changes_file_diff")
-        ) || tool_name.is_some_and(is_host_continuation_app_tool_name)
+            Some("goal_plan_sync" | "work_result_state" | "changes_file_diff" | "search_mentions")
+        ) || tool_name == Some(WORK_RESULT_THREAD_ENTRYPOINT_TOOL_NAME)
+            || tool_name.is_some_and(is_host_continuation_app_tool_name)
         {
             continue;
         }
@@ -803,6 +824,86 @@ pub(super) fn attach_app_metadata(value: &mut Value, resource_uri: &str) {
         "resourceUri".to_string(),
         Value::String(resource_uri.to_string()),
     );
+}
+
+fn attach_openai_thread_entrypoint(value: &mut Value) {
+    let Some(object) = value.as_object_mut() else {
+        return;
+    };
+    object.insert(
+        "title".to_string(),
+        Value::String("WebCodex review".to_string()),
+    );
+    let Some(meta) = tool_meta_object(value) else {
+        return;
+    };
+    meta.insert(
+        "openai/ui".to_string(),
+        json!({
+            "entrypoints": [
+                {"type": "thread"}
+            ]
+        }),
+    );
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct WorkResultThreadBinding {
+    project: String,
+    session_id: Option<String>,
+}
+
+fn work_result_thread_binding(
+    runtime: &ToolRuntime,
+    auth: Option<&AuthContext>,
+    window: Option<&crate::client_window::ClientWindow>,
+) -> Result<WorkResultThreadBinding, String> {
+    let window = window.ok_or_else(|| {
+        "Work Result thread panel requires a stable Host Window identity".to_string()
+    })?;
+    let auth = auth
+        .filter(|auth| !auth.is_open_anonymous())
+        .ok_or_else(|| {
+            "Work Result thread panel requires a stable authenticated principal".to_string()
+        })?;
+    let (principal_kind, principal_id) =
+        crate::tool_runtime::runtime_observation_principal(Some(auth)).map_err(|_| {
+            "Work Result thread panel principal identity is unavailable".to_string()
+        })?;
+    let db = runtime
+        .window_activity_db
+        .as_ref()
+        .ok_or_else(|| "Work Result thread panel activity store is unavailable".to_string())?;
+    let event = db
+        .latest_successful_window_action(
+            window.key(),
+            (principal_kind.as_str(), principal_id.as_str()),
+            "present_work_result",
+        )
+        .map_err(|_| "Work Result thread panel activity lookup failed".to_string())?;
+    event
+        .into_iter()
+        .find_map(|event| {
+            event.project.map(|project| WorkResultThreadBinding {
+                project,
+                // This comes from the exact selected present_work_result event's
+                // canonical ActionAudit correlation. Never substitute Window
+                // affinity from another action or Session.
+                session_id: event.business_session_id,
+            })
+        })
+        .ok_or_else(|| {
+            "No presented Work Result is bound to this conversation Window yet".to_string()
+        })
+}
+
+#[cfg(test)]
+pub(super) fn work_result_thread_binding_for_test(
+    runtime: &ToolRuntime,
+    auth: Option<&AuthContext>,
+    window: Option<&crate::client_window::ClientWindow>,
+) -> Result<(String, Option<String>), String> {
+    work_result_thread_binding(runtime, auth, window)
+        .map(|binding| (binding.project, binding.session_id))
 }
 
 fn attach_app_visibility(value: &mut Value) {
@@ -1943,8 +2044,9 @@ pub(super) struct McpInvocationEnvelope {
 fn mcp_invocation_envelope_supported_fields(tool: &str) -> Vec<&'static str> {
     if matches!(
         tool,
-        "goal_plan_sync" | "work_result_state" | "changes_file_diff"
-    ) || is_host_continuation_app_tool_name(tool)
+        "goal_plan_sync" | "work_result_state" | "changes_file_diff" | "search_mentions"
+    ) || tool == WORK_RESULT_THREAD_ENTRYPOINT_TOOL_NAME
+        || is_host_continuation_app_tool_name(tool)
     {
         return Vec::new();
     }
@@ -2703,6 +2805,42 @@ pub(super) async fn handle_call(
     let agent_continuation_app_admitted = server_mcp_apps_enabled && stateless_2026;
     let job_terminal_continuation_app_admitted = server_mcp_apps_enabled && stateless_2026;
     let app_only_goal_plan_sync = goal_plan_app_admitted && params.name == "goal_plan_sync";
+    let work_result_thread_panel =
+        work_result_app_admitted && params.name == WORK_RESULT_THREAD_ENTRYPOINT_TOOL_NAME;
+    let mut work_result_thread_context = None;
+    if work_result_thread_panel {
+        let empty_arguments = params
+            .arguments
+            .as_object()
+            .is_some_and(serde_json::Map::is_empty);
+        if !empty_arguments {
+            if let Some(lc) = lifecycle.as_deref() {
+                lc.dispatch_failed("invalid_arguments");
+                lc.dispatch_finished(false, Some(false), "invalid_arguments");
+            }
+            return McpOutcome::BadRequest(rpc_error(
+                id,
+                -32602,
+                "Work Result thread panel entrypoint accepts only an empty argument object",
+            ));
+        }
+        let binding = match work_result_thread_binding(runtime, auth, window) {
+            Ok(binding) => binding,
+            Err(message) => {
+                if let Some(lc) = lifecycle.as_deref() {
+                    lc.dispatch_failed("invalid_context");
+                    lc.dispatch_finished(false, Some(false), "invalid_context");
+                }
+                return McpOutcome::BadRequest(rpc_error(id, -32602, message));
+            }
+        };
+        work_result_thread_context = Some(json!({"session_id": binding.session_id.clone()}));
+        params.name = "work_result_state".to_string();
+        params.arguments = match binding.session_id {
+            Some(session_id) => json!({"project": binding.project, "session_id": session_id}),
+            None => json!({"project": binding.project}),
+        };
+    }
     let app_only_work_result_state = work_result_app_admitted && params.name == "work_result_state";
     let app_only_work_result_activity_detail =
         work_result_app_admitted && params.name == "work_result_activity_detail";
@@ -2976,7 +3114,7 @@ pub(super) async fn handle_call(
         }
     };
     if workbench_view_call
-        || app_only_work_result_state
+        || (app_only_work_result_state && !work_result_thread_panel)
         || app_only_work_result_activity_detail
         || app_only_work_result_send_message
         || app_only_changes_file_diff
@@ -2991,11 +3129,16 @@ pub(super) async fn handle_call(
         // results retain the compact text fallback.
         attach_app_tool_content_fallback(&mut result);
     }
-    if app_enabled && params.name == "present_work_result" {
+    if app_enabled && (params.name == "present_work_result" || work_result_thread_panel) {
         // Initial model-originated presentation keeps normal model content compact.
         // The private MCP App result channel lets the mounted View recover the exact
         // bounded Work Result when a Host omits structuredContent from tool-result.
         attach_work_result_app_private_result(&mut result);
+        if let Some(context) = work_result_thread_context {
+            // Only the exact explicit presentation selection becomes refresh
+            // context. A Session merely linked to Window activity is not authority.
+            result["_meta"][WORK_RESULT_THREAD_CONTEXT_META_KEY] = context;
+        }
     }
     if app_only_agent_continuation {
         log_agent_continuation_app_result(

@@ -2413,8 +2413,8 @@ async fn mcp_tools_list_stateless_serialized_size_budget() {
     admin.scopes.push(crate::auth::SCOPE_ADMIN.to_string());
     // Final Stateless bytes include the optional _wc envelope and gateways,
     // not the RPC envelope. Two durable waits use Gateway and two inactive
-    // continuation presentations are hidden. All 18 App-only protocol tools
-    // remain present with Apps on; they are not ordinary model-tool savings.
+    // continuation presentations are hidden. Apps add 18 App-only protocol tools
+    // plus the public Work Result thread entrypoint; they are not ordinary model-tool savings.
     for (label, auth, max_tools, max_bytes) in [
         ("anonymous", None, 26, 65_000),
         ("scoped", Some(&scoped), 27, 67_000),
@@ -2465,8 +2465,9 @@ async fn mcp_tools_list_stateless_serialized_size_budget() {
                 // Window activity-detail adapters alongside the existing Goal
                 // Plan/continuation/read helpers.
                 // Three readonly resource/launcher descriptors add at most 3 KiB.
-                // The Workbench adds Session discovery and native mentions to the 18 existing App tools.
-                let count_budget = max_tools + if app_enabled { 20 } else { 0 } + feature_tools;
+                // Apps include 18 bridge helpers, the public Work Result thread entrypoint,
+                // and Workbench Session discovery/native mentions.
+                let count_budget = max_tools + if app_enabled { 21 } else { 0 } + feature_tools;
                 let byte_budget =
                     max_bytes + if app_enabled { 22_000 } else { 0 } + feature_tools * 4096;
                 if feature_tools == 0 {
@@ -3911,9 +3912,99 @@ async fn compact_bootstrap_guidance_matches_advertised_context_capability() {
             modern
         );
         let description = tool["description"].as_str().unwrap();
+        assert!(description.contains("file, data, diagnostic or coding work"));
+        assert!(description.contains("Git optional"));
+        assert!(description.contains("session_id"));
+        assert!(description.contains("stale/incomplete"));
         assert_eq!(description.contains("_wc.context"), modern);
         if !modern {
             assert!(description.contains("read_files"));
+        }
+    }
+}
+
+#[tokio::test]
+async fn mcp_compact_general_workflow_preserves_recovery_and_business_schemas() {
+    use crate::mcp::discovery::TOOL_DESCRIPTION_MAX_CHARS;
+    let full_runtime = test_runtime_with_mcp_settings(false, false);
+    let compact_runtime = test_runtime_with_mcp_settings(true, false);
+    for modern in [false, true] {
+        let params = if modern {
+            mcp_2026_params(json!({}))
+        } else {
+            json!({})
+        };
+        let mut lists = Vec::new();
+        for runtime in [&full_runtime, &compact_runtime] {
+            let McpOutcome::Ok(body) = handle_mcp_request(
+                runtime,
+                rpc("tools/list", Some(json!(8002)), params.clone()),
+                None,
+            )
+            .await
+            else {
+                panic!("tools/list modern={modern}");
+            };
+            lists.push(body["result"]["tools"].as_array().unwrap().clone());
+        }
+        for name in [
+            "work_on_project",
+            "edit_project_files",
+            "run_process",
+            "run_shell",
+            "run_script",
+        ] {
+            let full = lists[0].iter().find(|tool| tool["name"] == name).unwrap();
+            let compact = lists[1].iter().find(|tool| tool["name"] == name).unwrap();
+            let description = compact["description"].as_str().unwrap();
+            assert!(description.chars().count() <= TOOL_DESCRIPTION_MAX_CHARS);
+            assert_eq!(compact["annotations"], full["annotations"], "{name}");
+            let mut schemas = [full["inputSchema"].clone(), compact["inputSchema"].clone()];
+            for schema in &mut schemas {
+                // Existing protocol-wrapper compaction is independent of business
+                // fields, revision fences, language choices and resource limits.
+                schema["properties"].as_object_mut().unwrap().remove("_wc");
+                strip_description_text(schema);
+            }
+            assert_eq!(schemas[0], schemas[1], "{name} modern={modern}");
+            if name.starts_with("run_") {
+                for phrase in [
+                    "literal argv",
+                    "shell grammar",
+                    "same Job",
+                    "continuation",
+                    "never redispatch",
+                    "independent work",
+                    "when blocked",
+                    "wait_for_job_readiness",
+                    "observe_jobs",
+                    "failures",
+                    "outcome_unknown requires observation.",
+                ] {
+                    assert!(description.contains(phrase), "{name}: missing {phrase}");
+                }
+                assert!(description.ends_with("outcome_unknown requires observation."));
+            }
+            if name == "edit_project_files" {
+                for phrase in [
+                    "one change per file",
+                    "expected_read_revision",
+                    "fail closed on ambiguity",
+                    "1-based inclusive",
+                    "from that snapshot",
+                    "preflight transactionally",
+                    "Runner rechecks source",
+                    "read_files recovery",
+                    "outcome_unknown: observe before another write",
+                    "task-appropriate validation.",
+                ] {
+                    assert!(
+                        description.contains(phrase),
+                        "missing {phrase}: {description}"
+                    );
+                }
+                assert!(description.ends_with("task-appropriate validation."));
+            }
         }
     }
 }

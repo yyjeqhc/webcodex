@@ -112,6 +112,7 @@ fn work_result_app_internal_tool(tool_name: Option<&str>) -> bool {
                 | "read_webcodex_resource"
                 | "list_sessions"
                 | "present_work_result"
+                | "work_result_thread_panel"
                 | "work_result_state"
                 | "work_result_activity_detail"
                 | "work_result_send_message"
@@ -730,11 +731,14 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
     // represented as executed actions.
     let audit = if request.method == "tools/call" && request.id.is_some() {
         let audit = ActionAudit::start(req, depot, "/mcp", "toolsCall");
-        let audit = if window_activity_visible {
-            audit.with_window(window.identity.as_ref(), Some(&server_trace_id))
-        } else {
-            audit
-        };
+        // Presentation stays out of live activity, but its durable Window binding
+        // is required when the Host later opens the empty-argument thread panel.
+        let audit =
+            if window_activity_visible || tool_name.as_deref() == Some("present_work_result") {
+                audit.with_window(window.identity.as_ref(), Some(&server_trace_id))
+            } else {
+                audit
+            };
         Some((
             audit,
             tool_name.clone().unwrap_or_else(|| "unknown".to_string()),

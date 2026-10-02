@@ -120,6 +120,32 @@ The bounded workspace snapshot can include changes from other work; partial file
 lists and missing line counts are labelled. A clean workspace is not task success.
 Linked Session check/review evidence appears when available.
 
+Hosts supporting conversation thread panels can open the public rendering
+`work_result_thread_panel` entrypoint with an empty argument object. It resolves
+the latest successful `present_work_result` in the same authenticated Host Window,
+including that presentation's explicit business Session when supplied. Other
+actions and failed presentations cannot retarget the panel. Presentation records
+this durable binding without starting live Window activity; the thread entrypoint
+and App refresh calls also stay outside live Window activity. The model still
+calls `present_work_result` once near the first successful Project action.
+
+The thread panel opens Review first: Changed files and lazy diffs, Session checks,
+then sealed Final Changes. Activity and Collaboration remain secondary tabs;
+Project, Window and Session identifiers are folded under Diagnostics. The inline
+card retains its Activity-first layout. Opening Review does not eagerly load diffs.
+
+An open panel retains its exact Project and explicit Session selection on refresh.
+Window-linked Session evidence never becomes refresh authority. Reopen the panel
+to select a newer successful presentation; missing Window identity or binding
+fails closed. Current authorization and snapshot fences still apply on every read.
+Full-file/Markdown previews and line/selection-to-chat interactions are deferred.
+
+Rendering entrypoints retain the default model/App visibility. App-only bridge
+helpers return data without `ui.resourceUri`: ChatGPT rejects private tools that
+declare a rendering resource when refreshing the connected App. After updating
+the Server's tool descriptors, refresh tools for the existing App in ChatGPT's
+plugin settings before testing the new entrypoint.
+
 After closeout, Results also shows the sealed final task changes with on-demand
 per-file diffs. Those diffs keep their original snapshot identity even if the live
 workspace changes. Refresh uses the existing App-only observation path; opening
@@ -127,11 +153,12 @@ Results adds no tool calls. Automatic refresh pauses while the App document is
 hidden and uses a bounded visible cadence so background cards do not continuously
 exercise the Host tool bridge. Discuss these changes opens the existing composer
 without sending a message. Window activity calls are compact, collapsed by default,
-and fetch their sanitized trace/timing details only when expanded. The card header
-shows the canonical hashed Window key used by the Window activity ledger, making
+and fetch their sanitized trace/timing details only when expanded. The inline card
+shows the canonical hashed Window key used by the Window activity ledger; the
+thread panel puts the same identity under Diagnostics, making
 support traces attributable without exposing the Host's raw Window identifier.
-New cards use `ui://webcodex/work-result/v12` so Hosts with cached older templates
-load the progressive file-list and lazy-detail contract; v11 remains readable for
+New cards use `ui://webcodex/work-result/v15` so Hosts with cached older templates
+load the current thread-panel and lazy-detail contract; v14 remains readable for
 previously mounted cards.
 
 ## Existing Server

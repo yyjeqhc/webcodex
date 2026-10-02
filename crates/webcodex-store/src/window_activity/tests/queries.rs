@@ -1,6 +1,61 @@
 use super::*;
 
 #[test]
+fn latest_successful_window_action_filters_before_the_activity_limit() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db = Database::open(&tmp.path().join("presentation.db")).unwrap();
+    seed_session(&db);
+    let mut presented = event("presented", "w", "alice", "p", 1);
+    presented.operation = Some("present_work_result".into());
+    append(&db, presented, &[]);
+    for index in 0..=MAX_WINDOW_ACTIVITY_LIMIT {
+        append(
+            &db,
+            event(
+                &format!("noise-{index}"),
+                "w",
+                "alice",
+                "p",
+                index as i64 + 2,
+            ),
+            &[],
+        );
+    }
+    for (id, window, principal, status) in [
+        ("failed", "w", "alice", "tool_error"),
+        ("other-principal", "w", "bob", "success"),
+        ("other-window", "other", "alice", "success"),
+    ] {
+        let mut item = event(id, window, principal, "q", 10_000);
+        item.operation = Some("present_work_result".into());
+        item.status = status.into();
+        append(&db, item, &[]);
+    }
+    assert_eq!(
+        db.latest_successful_window_action("w", ("username", "alice"), "present_work_result")
+            .unwrap()
+            .unwrap()
+            .event_id,
+        "presented"
+    );
+    assert!(db
+        .latest_successful_window_action("missing", ("username", "alice"), "present_work_result")
+        .unwrap()
+        .is_none());
+    let mut newest = event("newest", "w", "alice", "new-project", 20_000);
+    newest.operation = Some("present_work_result".into());
+    append(&db, newest, &[]);
+    assert_eq!(
+        db.latest_successful_window_action("w", ("username", "alice"), "present_work_result")
+            .unwrap()
+            .unwrap()
+            .project
+            .as_deref(),
+        Some("new-project")
+    );
+}
+
+#[test]
 fn window_event_links_remain_exact_ordered_and_page_bounded() {
     let tmp = tempfile::tempdir().unwrap();
     let db = Database::open(&tmp.path().join("links.db")).unwrap();

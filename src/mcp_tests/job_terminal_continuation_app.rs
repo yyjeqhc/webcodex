@@ -156,10 +156,7 @@ async fn job_terminal_continuation_app_surface_is_explicit_sparse_and_app_only()
             descriptor.pointer("/_meta/ui/visibility"),
             Some(&json!(["app"]))
         );
-        assert_eq!(
-            descriptor.pointer("/_meta/ui/resourceUri"),
-            Some(&json!(MCP_JOB_TERMINAL_CONTINUATION_UI_RESOURCE_URI))
-        );
+        assert!(descriptor.pointer("/_meta/ui/resourceUri").is_none());
         assert_eq!(
             descriptor.pointer("/inputSchema/properties/app_call_id/pattern"),
             Some(&json!("^wc_app_call_[0-9a-f]{16}_[1-9][0-9]{0,5}$"))

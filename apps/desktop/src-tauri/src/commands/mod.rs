@@ -5,7 +5,25 @@ use crate::models::{DesktopStateSnapshot, ProjectSelection, TunnelProxyMode};
 use crate::state::AppState;
 use crate::tray;
 use serde::Deserialize;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
+
+#[tauri::command]
+pub fn set_desktop_locale(
+    app: AppHandle,
+    state: State<'_, crate::desktop_locale::DesktopLocaleState>,
+    locale: crate::desktop_locale::DesktopLocale,
+) -> DesktopResult<()> {
+    let result = state.set(locale);
+    let snapshot = app.state::<AppState>().get_state();
+    tray::refresh_from_snapshot(&app, &snapshot);
+    result.map_err(|_| {
+        DesktopError::new(
+            "desktop_locale_save_failed",
+            "The Desktop language preference could not be saved for background startup",
+            "Check that the Desktop data directory is writable.",
+        )
+    })
+}
 
 #[tauri::command]
 pub async fn authorize_runner_capabilities(

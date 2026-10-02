@@ -119,6 +119,32 @@ credential。独立/network-accessible Server 仍默认关闭，不应使用它�
 
 如果在 Windows 上使用普通独立 Server + Runner 并通过 OpenAI Tunnel 接入，或排查“本地 `/readyz` 正常但 ChatGPT Connector 创建失败”的情况，见 [Windows + OpenAI Secure MCP Tunnel 深入实操](WINDOWS_OPENAI_TUNNEL.zh-CN.md)。它是深入配置/排障文档，不是普通用户第一次必须阅读的教程。
 
+## 对话侧边栏中的 Work Result
+
+`present_work_result` 在首次成功的 Project 操作后展示一次当前 Window 的工作结果。
+支持对话侧边栏的 Host 可以用空参数对象调用公开的界面展示
+`work_result_thread_panel` 入口。入口只恢复同一认证主体、同一 Host Window 中最近一次
+成功展示的 Project，以及该次展示显式传入的业务 Session。其他操作或失败的展示不能
+重新指定侧边栏目标。
+
+侧边栏默认打开 Review，依次展示 Changed files / 按需 Diff、Session 检查结果和
+sealed Final Changes。Activity / Collaboration 保留在次级页签；Project / Window /
+Session 标识收进默认折叠的 Diagnostics。inline card 继续采用 Activity 优先的布局，
+打开 Review 不会提前加载所有 Diff。
+
+已打开的侧边栏在刷新时保留原 Project 和显式 Session 选择；Window 关联的 Session
+证据不会成为刷新授权依据。重新打开才选择更新的成功展示记录。缺少稳定 Window
+或展示绑定时拒绝打开，每次读取仍校验当前授权和快照边界。完整文件 / Markdown
+预览、行或选区回传对话留待后续版本。
+
+展示调用会保存这条窗口绑定，但不会启动 live Window activity；侧边栏入口和 App
+刷新调用也不会启动 live Window activity。当前界面资源是
+`ui://webcodex/work-result/v15`，此前挂载的 v14 等资源仍可读取。
+
+界面展示入口保留默认的 model/App 可见性；App-only 桥接工具只返回数据，不声明
+`ui.resourceUri`。ChatGPT 刷新工具时会拒绝声明界面资源的私有工具。更新 Server
+的工具描述后，应先在 ChatGPT 插件设置中刷新已有 App 的工具，再验证新入口。
+
 ## 已有 Server
 
 对于已经明确配置为 shared-key client 接入的 hosted Server，使用 operator 提供的 credential

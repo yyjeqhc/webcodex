@@ -221,11 +221,13 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
 .background-results > summary { padding: 8px 0; cursor: pointer; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
 .background-results > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .section p { margin: 0; }
+.thread-review .workspace-files { max-height: min(600px, 55vh); }
+.thread-review .diff { max-height: min(640px, 65vh); }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; scroll-behavior: auto !important; } }
 </style>
 </head>
 <body>
-<main class="card" aria-live="polite">
+<main id="workResultCard" class="card" aria-live="polite">
   <header class="app-header">
     <div class="brand">
       <span class="brand-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="6" cy="6" r="3"></circle><circle cx="18" cy="6" r="3"></circle><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="18" r="3"></circle><path d="M8.6 7.5 15.4 16.5M15.4 7.5 8.6 16.5"></path></svg></span>
@@ -233,8 +235,8 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     </div>
     <div class="actions"><button id="refresh" class="refresh" type="button" disabled>Refresh</button><span id="badge" class="badge">Loading</span></div>
   </header>
-  <div class="task-context"><span id="projectIdentity" class="diagnostic-identity"></span><span id="windowIdentity" class="diagnostic-identity"></span><span id="sessionIdentity" class="diagnostic-identity"></span><span id="windowSource"></span></div>
-  <nav class="card-tabs" role="tablist" aria-label="Window views">
+  <div id="taskContext" class="task-context"><span id="projectIdentity" class="diagnostic-identity"></span><span id="windowIdentity" class="diagnostic-identity"></span><span id="sessionIdentity" class="diagnostic-identity"></span><span id="windowSource"></span></div>
+  <nav id="viewTabs" class="card-tabs" role="tablist" aria-label="Window views">
     <button id="tabActivity" type="button" role="tab" aria-selected="true" aria-controls="panelActivity">Activity</button>
     <button id="tabResults" type="button" role="tab" aria-selected="false" aria-controls="panelResults" tabindex="-1">Results</button>
     <button id="tabCollaboration" type="button" role="tab" aria-selected="false" aria-controls="panelCollaboration" tabindex="-1">Collaboration</button>
@@ -273,6 +275,7 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
       </section>
       <section id="finalChanges" class="section" hidden>
         <div class="section-head"><h2>Final changes</h2><span id="frozenStats" class="stats-inline"></span></div>
+        <p id="finalChangesDescription" class="secondary" hidden>Final task changes captured at completion. Later edits appear in Changed files.</p>
         <div id="frozenSummary" class="primary"></div>
         <div id="frozenFiles"></div>
         <button id="frozenMore" class="refresh" type="button" hidden></button>
@@ -281,9 +284,9 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
         <div id="frozenFooter" class="secondary"></div>
       </section>
       <section id="workspaceChangesSection" class="section">
-        <div class="section-head"><h2>Workspace changes</h2><span id="workspaceStats" class="stats-inline"></span></div>
+        <div class="section-head"><h2 id="workspaceHeading">Workspace changes</h2><span id="workspaceStats" class="stats-inline"></span></div>
         <div id="workspaceStatus" class="primary">Waiting for files…</div>
-        <p class="secondary">Current uncommitted changes in this Project, including other work. Final task changes are shown separately above.</p>
+        <p class="secondary">Current uncommitted changes in this Project, including other work. Final task changes are shown separately.</p>
         <div id="workspaceFiles" class="workspace-files" role="list" aria-label="Changed files"></div>
         <button id="workspaceMore" class="refresh" type="button" hidden>Show more files</button>
         <button id="workspaceLess" class="refresh" type="button" hidden>Show fewer files</button>
@@ -310,6 +313,10 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
         <div id="composerState" class="secondary"></div>
       </section>
     </div>
+    <details id="diagnostics" class="details" hidden>
+      <summary>Diagnostics</summary>
+      <div id="diagnosticContent"></div>
+    </details>
   </div>
   <footer class="app-footer"><span class="live-dot" aria-hidden="true"></span><div id="status" class="status">Connecting…</div></footer>
 </main>
@@ -318,6 +325,7 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
   "use strict";
   const APP_PROTOCOL = "2026-01-26";
   const WORK_RESULT_META_KEY = "webcodex/workResult";
+  const THREAD_CONTEXT_META_KEY = "webcodex/workResultThread";
   const SESSION_ID = /^wc_sess_([A-Za-z0-9_-]{16}|[0-9a-f]{32})$/;
   const STATE_VERSION = /^wr2_[0-9a-f]{64}$/;
   const MESSAGE_ID = /^wc_msg_[A-Za-z0-9_-]+$/;
@@ -351,6 +359,8 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
   let lastStateVersion = null;
   let hostInitialized = false;
   let explicitSession = null;
+  let threadInput = false;
+  let threadSession;
   let refreshInFlight = false;
   let unchangedRefreshes = 0;
   let refreshFailures = 0;
@@ -594,6 +604,7 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     if (!value || typeof value !== "object" || Array.isArray(value) || value.version !== 2) return null;
     if (!validProject(value.project) || typeof value.state_version !== "string" || !STATE_VERSION.test(value.state_version)) return null;
     if (value.session_id !== undefined && !validSession(value.session_id)) return null;
+    if (threadSession != null && value.session_id !== threadSession) return null;
     if (!validWindowIdentity(value.window) || !validWorkspace(value.workspace) || !validActivity(value.activity) || !validWindowActivity(value.window_activity) || !validCollaboration(value.collaboration)) return null;
     if (!validJobs(value.jobs, value.session_id)) return null;
     if (value.task_outputs !== undefined && (!validSession(value.session_id) || !validTaskOutputs(value.task_outputs))) return null;
@@ -1339,6 +1350,18 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     }
   }
   const panes = ["Activity", "Results", "Collaboration"];
+  function enableThreadReview() {
+    el("workResultCard").className = "card thread-review";
+    el("workspaceHeading").textContent = "Changed files";
+    el("tabResults").textContent = "Review";
+    panes.splice(0, panes.length, "Results", "Activity", "Collaboration");
+    el("viewTabs").append(el("tabResults"), el("tabActivity"), el("tabCollaboration"));
+    el("panelResults").append(el("workspaceChangesSection"), el("resultChecks"), el("finalChanges"), el("taskOutputsSection"), el("discussResults"));
+    el("diagnosticContent").append(el("taskContext"));
+    el("diagnostics").hidden = false;
+    el("finalChangesDescription").hidden = false;
+    selectPane("Results");
+  }
   function selectPane(name, focus = false) {
     if (!panes.includes(name)) return;
     selectedPane = name;
@@ -1426,7 +1449,7 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     el("sessionIdentity").textContent = state.session_id ? "Session · " + state.session_id : "Session · not linked yet";
     el("windowSource").textContent = state.window ? "Source · " + state.window.source : "";
     const hasFinalChanges = snapshot !== null || state.final_changes !== undefined;
-    el("taskTitle").textContent = state.session?.title || "WebCodex activity";
+    el("taskTitle").textContent = state.session?.title || (threadSession !== undefined ? "WebCodex review" : "WebCodex activity");
     renderWindowCurrentActivity(state.activity);
     renderWindowActivity(state.window_activity);
     renderJobs(state.jobs);
@@ -1638,8 +1661,17 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
 
   function acceptToolInput(params) {
     const args = params && params.arguments;
+    // ChatGPT thread entrypoints are invoked with an empty object. In that case
+    // identity arrives from the entrypoint ToolResult after WebCodex resolves the
+    // Work Result previously presented in this exact Host Window.
+    if (args && typeof args === "object" && !Array.isArray(args) && Object.keys(args).length === 0) {
+      threadInput = true;
+      if (lastRenderedState && threadSession === undefined) failClosed("Thread binding unavailable");
+      return;
+    }
     if (args?.session_id !== undefined) {
       if (!validSession(args.session_id) || (explicitSession && explicitSession !== args.session_id)
+        || (threadSession !== undefined && threadSession !== args.session_id)
         || (lastRenderedState?.jobs?.available && lastRenderedState.session_id !== args.session_id)) {
         failClosed("Conflicting Workflow Session"); return;
       }
@@ -1664,6 +1696,22 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     if (structured.success === false || !state || !acceptIdentity(target(state.project))) {
       if (!tornDown) failClosed("Task state unavailable");
       return;
+    }
+    const context = callToolResultOf(result)?._meta?.[THREAD_CONTEXT_META_KEY];
+    if (context !== undefined) {
+      const session = context?.session_id;
+      if (!context || Array.isArray(context) || Object.keys(context).length !== 1
+        || !(session === null || validSession(session))
+        || (session !== null && state.session_id !== session)
+        || (explicitSession && explicitSession !== session)
+        || (threadSession !== undefined && threadSession !== session)) {
+        failClosed("Conflicting thread binding"); return;
+      }
+      if (threadSession === undefined) enableThreadReview();
+      threadSession = session;
+      explicitSession = session;
+    } else if (threadInput || threadSession !== undefined) {
+      failClosed("Thread binding unavailable"); return;
     }
     initialResultTransportMissing = false;
     const hadFrozen = snapshot !== null;

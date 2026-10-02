@@ -26,6 +26,7 @@ from e2e_session_continuity_ws import ROOT, check
 BASELINE = "05d45f376d3265490de28090b9c5b0150dbacd8b"
 UPSTREAM = "05d45f37"
 SENTINEL = "GENERIC_ACCEPTANCE_UNIQUE_SENTINEL_9d06"
+EXTERNAL_SENTINEL = "EXTERNAL_WRITER_SENTINEL_c741"
 
 
 def sha(path):
@@ -68,6 +69,10 @@ def totals(calls):
 class GenericSmoke(InteractiveSmoke):
     def __init__(self, args, root):
         super().__init__(args.bin_dir.resolve(), root)
+        self.env.update({"LANG": "C.UTF-8", "LC_ALL": "C.UTF-8", "TZ": "UTC",
+                         "PYTHONHASHSEED": "0", "PYTHONNOUSERSITE": "1"})
+        for key in ("PYTHONPATH", "PYTHONHOME"):
+            self.env.pop(key, None)
         self.args = args
         self.calls, self.scenarios, self.extra_checks = [], [], []
         self.scenario = "setup"
@@ -141,7 +146,8 @@ class GenericSmoke(InteractiveSmoke):
             (registry / f"{name}.toml").write_text(f'id = "{name}"\npath = {json.dumps(str(directory))}\n')
         (self.code_dir / "calc.py").write_text("def add(a, b):\n    return a - b\n")
         child_env = self.env | {"GIT_AUTHOR_NAME": "Fixture", "GIT_AUTHOR_EMAIL": "fixture@example.invalid",
-            "GIT_COMMITTER_NAME": "Fixture", "GIT_COMMITTER_EMAIL": "fixture@example.invalid"}
+            "GIT_COMMITTER_NAME": "Fixture", "GIT_COMMITTER_EMAIL": "fixture@example.invalid",
+            "GIT_AUTHOR_DATE": "2026-01-01T00:00:00Z", "GIT_COMMITTER_DATE": "2026-01-01T00:00:00Z"}
         for argv in [["git", "init", "-q", "-b", "main"], ["git", "add", "calc.py"], ["git", "commit", "-qm", "fixture"]]:
             subprocess.run(argv, cwd=self.code_dir, env=child_env, stdin=subprocess.DEVNULL,
                            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, check=True)
@@ -213,8 +219,9 @@ class GenericSmoke(InteractiveSmoke):
         inputs = {p: sha(self.project_dir / p) for p in ["a.csv", "b.csv"]}
         self.script("import csv,json\nrows=[]\nfor file,encoding,n,v in [('a.csv','utf-8','name','value'),('b.csv','utf-16','姓名','数量')]:\n with open(file,encoding=encoding,newline='') as f:\n  rows.extend({'name':r[n],'value':int(r[v])} for r in csv.DictReader(f))\nwith open('merged.csv','w',encoding='utf-8',newline='') as f:\n w=csv.DictWriter(f,fieldnames=['name','value'],lineterminator='\\n');w.writeheader();w.writerows(rows)\nwith open('report.json','w',encoding='utf-8') as f: json.dump({'count':len(rows),'total':sum(r['value'] for r in rows)},f)\n")
         expected = "name,value\nAlice,2\nBob,3\n陈,5\n丁,7\n".encode()
-        check((self.project_dir / "merged.csv").read_bytes() == expected, "independent CSV bytes")
-        rows = list(csv.DictReader(io.StringIO(expected.decode())))
+        actual = (self.project_dir / "merged.csv").read_bytes()
+        check(actual == expected, "independent CSV bytes")
+        rows = list(csv.DictReader(io.StringIO(actual.decode("utf-8"))))
         check(len(rows) == 4 and sum(int(r["value"]) for r in rows) == 17, "independent counts")
         check(json.loads((self.project_dir / "report.json").read_text()) == {"count": 4, "total": 17}, "report counts")
         check(inputs == {p: sha(self.project_dir / p) for p in inputs}, "CSV inputs changed")
@@ -246,13 +253,20 @@ class GenericSmoke(InteractiveSmoke):
                 "sentinel_occurrences_per_response": [c["sentinel_occurrences"] for c in calls]}
 
     def pending(self):
+        offset = len(self.calls)
         job = self.start_pipe("import sys; sys.stdin.read(); print('controlled-job-complete',flush=True)", 30)
         self.script("from pathlib import Path\nPath('independent.txt').write_text('independent work completed')\n")
         self.write(job, "release", close=True)
         item = self.terminal(job)  # Exactly one readiness join, then observe the SAME Job.
+        check(item.get("job_id") == job, "terminal observation replaced the original Job")
         check(item.get("exit_code") == 0, "controlled Job failed")
-        check((self.project_dir / "independent.txt").is_file(), "independent action absent")
-        return {"job_id": job, "redispatches": 0, "readiness_joins": 1,
+        check((self.project_dir / "independent.txt").read_bytes() == b"independent work completed",
+              "independent action bytes disagree")
+        tools = [call["tool"] for call in self.calls[offset:]]
+        check(tools == ["run_process", "run_script", "job_write_input", "wait_for_job_readiness", "observe_jobs"],
+              "pending scenario call order or dispatch/wait count changed")
+        return {"job_id": job, "redispatches": tools.count("run_process") - 1,
+                "readiness_joins": tools.count("wait_for_job_readiness"),
                 "order": ["pending", "independent action", "release input", "readiness join", "observe same Job"]}
 
     def coding(self):
@@ -275,7 +289,39 @@ class GenericSmoke(InteractiveSmoke):
         finally:
             self.project_ref, self.session_ref = saved
 
+    def stale_edit(self):
+        path = self.project_dir / "stale.txt"
+        initial = b"task value: before\n"
+        path.write_bytes(initial)
+        read_args = {"project": self.project_ref, "items": [{"path": "stale.txt"}]}
+        before = self.call("read_files", read_args, direct=True)
+        revision = before["items"][0]["output"]["read_revision"]
+        # Fixture-side write bypasses all tool caches: model/tool success alone
+        # cannot prove preservation of a concurrent external writer's change.
+        external = initial + (EXTERNAL_SENTINEL + "\n").encode()
+        path.write_bytes(external)
+        changes = [{"kind": "edit", "path": "stale.txt", "expected_read_revision": revision,
+            "edits": [{"kind": "replace_exact", "old_text": "task value: before",
+                       "new_text": "task value: after"}]}]
+        edit_args = {"project": self.project_ref, "_wc": {"record": self.session_ref}, "changes": changes}
+        rejected = self.call("edit_project_files", edit_args, direct=True, success=False)
+        check(rejected.get("error_kind") == "stale_file_revision", "stale edit rejection kind")
+        check(rejected.get("state_changed") is False, "stale edit claimed a mutation")
+        check(path.read_bytes() == external, "stale edit changed external writer bytes")
+        fresh = self.call("read_files", read_args, direct=True)
+        fresh_revision = fresh["items"][0]["output"]["read_revision"]
+        check(fresh_revision != revision, "fresh read retained stale revision")
+        changes[0]["expected_read_revision"] = fresh_revision
+        self.call("edit_project_files", edit_args, direct=True)
+        expected = external.replace(b"task value: before", b"task value: after")
+        check(path.read_bytes() == expected, "fresh edit lost external writer bytes or task change")
+        return {"initial_sha256": hashlib.sha256(initial).hexdigest(),
+                "external_sha256": hashlib.sha256(external).hexdigest(), "final_sha256": sha(path),
+                "rejected_error_kind": rejected["error_kind"], "rejected_bytes_unchanged": True,
+                "external_change_preserved": True, "fresh_read_before_successful_edit": True}
+
     def missing_output(self):
+        check(not (self.project_dir / "missing-result.csv").exists(), "negative fixture unexpectedly exists")
         started = self.call("work_on_project", {"project": self.project, "instruction": "Verify missing-output closeout blocking"}, direct=True)
         output = self.call("finish_coding_task", {"project": started["project_ref"],
             "session_id": started["session_ref"], "summary_only": True,
@@ -394,10 +440,10 @@ def main():
         "source_version": args.source_version, "baseline_reference": BASELINE, "upstream_reference": UPSTREAM,
         "binary_sha256": {name: sha(getattr(args, name)) for name in ["server", "runner"]},
         "fixture_script_sha256": sha(Path(__file__)),
-        "expected_negative_cases": ["exit 7 command", "broken add validation"],
-        "comparison_caveat": "upgraded requests finish outputs; baseline omits unsupported field; report this task-contract difference",
+        "expected_negative_cases": ["exit 7 command", "broken add validation", "stale read_revision edit"],
+        "comparison_caveat": "Use upgraded for both current versions to compare identical output assertions. The baseline profile and baseline_reference identify the historical pre-output contract; do not pool different profiles. source_version identifies the actual build.",
         "measurement": "Actual JSON-RPC MCP response body bytes, including all content blocks and structuredContent; no credential/header capture",
-        "unmeasured": {"desktop_browser": "not advertised by target cami; existing regressions only",
+        "unmeasured": {"desktop_browser": "Outside this loopback file/command acceptance; real Desktop/browser/ChatGPT Host behavior unmeasured",
                        "existing_regressions_not_run": ["scripts/tests/test_desktop_runtime_manifest.py",
                            "crates/webcodex-core/src/desktop_runtime_contract/tests.rs",
                            "crates/webcodex-browser/src/supervisor/tests/batch.rs",
@@ -409,7 +455,7 @@ def main():
             smoke.prepare()
             for name, operation in [("mixed_files_conflict", smoke.files), ("encoded_csv", smoke.data),
                     ("failure_repair_log_pressure", smoke.failure_logs), ("pending_independent_join", smoke.pending),
-                    ("code_repair_review", smoke.coding)]:
+                    ("code_repair_review", smoke.coding), ("stale_read_revision", smoke.stale_edit)]:
                 smoke.case(name, operation)
             if args.profile == "upgraded":
                 smoke.case("extra_missing_output", smoke.missing_output, extra=True)

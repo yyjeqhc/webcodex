@@ -132,6 +132,11 @@ pub struct WindowActivityEventRecord {
     pub async_job_id: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub observed_job_ids: Vec<String>,
+    /// Exact business Workflow Session captured for this action, when one was
+    /// selected by the canonical tool call. Internal correlation only; never
+    /// project it through Runtime Console payloads.
+    #[serde(skip)]
+    pub business_session_id: Option<String>,
     pub recorder_gap_session_id: Option<String>,
     pub workflow_links: Vec<WindowWorkflowLinkRecord>,
     /// Bounded Code Mode composition object extracted from sanitized ActionAudit

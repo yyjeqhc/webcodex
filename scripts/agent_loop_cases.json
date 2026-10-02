@@ -3,7 +3,9 @@
   "fixture_reference": {
     "name": "coding-loop-eval-v1",
     "source": "scripts/eval_coding_loop.sh",
-    "description": "Reuse the disposable Rust project recipe already owned by eval_coding_loop.sh; do not create a second runtime eval harness."
+    "description": "Reuse the disposable Rust project recipe already owned by eval_coding_loop.sh; do not create a second runtime eval harness.",
+    "generic_source": "scripts/e2e_generic_agent_ws.py",
+    "generic_description": "Reuse only the deterministic fixture recipes for fresh disposable ordinary-directory Projects. The scripted MCP driver is runtime acceptance, not a real ChatGPT sample. Prepare and fingerprint identical inputs before each real Direct/Host Code Mode/Code Mode run; record the exact harness Git base and independent correctness evidence with the existing reporter and bounded annotation. Case-specific external writes and pipe release are fixture coordination, not a model runtime or new report schema. Use only admitted tools; keep Job tools outside nested Code Mode."
   },
   "protocol": {
     "same_case_requires_same_base_revision": true,
@@ -248,6 +250,169 @@
       "validation": {
         "required": false,
         "expectation": "No code validation is required; final workspace must remain unchanged."
+      }
+    },
+    {
+      "id": "generic_mixed_files_conflict",
+      "title": "Organize mixed files and preserve destination conflict",
+      "target": "generic_agent_disposable_fixture",
+      "prompt": "In the prepared ordinary-directory Project, organize input/note.txt, pixel.png, document.pdf and bytes.bin into sorted/. Preserve all sources and the existing sorted/note.txt; copy the incoming note to sorted/note-2.txt. Use artifact transfer for binaries. Check final paths, file counts, binary signatures and SHA-256 equality with the inputs; report the observed conflict policy and outputs. Do not overwrite the conflict.",
+      "code_mode_surface": "validation",
+      "correctness": {
+        "fixture": {
+          "source": "GenericSmoke.files and binary_fixtures",
+          "initial_paths": [
+            "input/note.txt",
+            "input/pixel.png",
+            "input/document.pdf",
+            "input/bytes.bin",
+            "sorted/note.txt"
+          ],
+          "text": "input/note.txt = original note followed by LF; sorted/note.txt = keep conflict followed by LF; deterministic binaries from binary_fixtures()",
+          "environment": "Disposable loopback Runner Project; fixed GenericSmoke locale/timezone/Python environment; record source hashes before the timed run."
+        },
+        "required_assertions": [
+          "4 unchanged source files",
+          "5 destination files",
+          "sorted/note.txt unchanged",
+          "note-2.txt and three binary copies match original SHA-256",
+          "valid PNG 1x1, PDF structure and 1024 binary bytes"
+        ]
+      },
+      "validation": {
+        "required": true,
+        "expectation": "Independent fixture-side enumeration and SHA-256 checks of every original/copy and preserved conflict; independently parse PNG/PDF structures. Neither script stdout nor metadata alone passes this case."
+      }
+    },
+    {
+      "id": "generic_encoded_csv",
+      "title": "Merge CSV encodings and reconcile statistics",
+      "target": "generic_agent_disposable_fixture",
+      "prompt": "Merge a.csv (UTF-8 columns name,value) and b.csv (UTF-16 columns 姓名,数量) into UTF-8 merged.csv with columns name,value and LF lines; retain input order and integer values. Write report.json containing count and total. Preserve both inputs. Verify actual CSV bytes/rows and recompute statistics, then finish with these two output paths when the deployed contract supports outputs. Record whether output receipts are supported; do not claim a baseline has them.",
+      "code_mode_surface": "validation",
+      "correctness": {
+        "fixture": {
+          "source": "GenericSmoke.data",
+          "a.csv": "name,value\nAlice,2\nBob,3\n",
+          "b.csv": "姓名,数量\n陈,5\n丁,7\n encoded UTF-16 with BOM",
+          "environment": "Same fixed fixture environment and input hashes in each variant; baseline finish omits unsupported outputs; upgraded declares merged.csv/report.json. Record this contract difference; do not pool different profiles."
+        },
+        "required_assertions": [
+          "both input SHA-256 unchanged",
+          "merged.csv exact name,value\nAlice,2\nBob,3\n陈,5\n丁,7\n bytes in UTF-8",
+          "4 records and sum 17",
+          "report.json equals count 4/total 17",
+          "upgraded finish receipt verifies both actual files"
+        ]
+      },
+      "validation": {
+        "required": true,
+        "expectation": "Independent fixture-side byte comparison, CSV parse and arithmetic plus input SHA-256 checks; receipt hashes must agree with independent disk hashes if requested."
+      }
+    },
+    {
+      "id": "generic_failure_repair",
+      "title": "Inspect a nonzero command and repair it",
+      "target": "generic_agent_disposable_fixture",
+      "prompt": "In this disposable Project run the prepared pressure command: print pressure-0 through pressure-2499, print GENERIC_ACCEPTANCE_UNIQUE_SENTINEL_9d06, print expected failure to stderr, and exit 7. Inspect the observed exit code and diagnostic. Repair only the intentional failure by removing the stderr/exit lines, rerun once, and confirm exit 0 and the sentinel. Report both outcomes; never count the expected failure as a contract repair turn.",
+      "code_mode_surface": "validation",
+      "correctness": {
+        "fixture": {
+          "source": "GenericSmoke.failure_logs",
+          "command": "Python script with exactly the sequence described in the prompt",
+          "environment": "Fixed Python/locale/timezone; no real secrets or external endpoints; use existing structured command or run_script tools."
+        },
+        "required_assertions": [
+          "initial command exit 7 observed",
+          "stderr expected failure observed",
+          "repair exit 0 observed",
+          "unique stdout sentinel retained in actual MCP response",
+          "no credentials/headers in saved evidence"
+        ]
+      },
+      "validation": {
+        "required": true,
+        "expectation": "Independent inspection of exit statuses and retained logs from the same executions; count sentinel occurrences in actual bounded MCP envelopes without recording credential headers."
+      }
+    },
+    {
+      "id": "generic_pending_independent_join",
+      "title": "Pending Job with independent work and one join",
+      "target": "generic_agent_disposable_fixture",
+      "prompt": "Start exactly one interactive Python process that reads stdin to EOF and then prints controlled-job-complete. It must return a pending Job; retain its identity/continuation. While it waits, write independent.txt with independent work completed. Close stdin on the original Job through job_write_input, then perform one bounded wait_for_job_readiness join and observe that same Job to terminal exit 0. Do not redispatch, immediately poll while independent work remains, or repeat waits. If there is no genuine pending handoff, mark the case unsatisfied.",
+      "code_mode_surface": "validation",
+      "correctness": {
+        "fixture": {
+          "source": "GenericSmoke.pending, InteractiveSmoke.start_pipe/write/terminal",
+          "process": "import sys; sys.stdin.read(); print('controlled-job-complete',flush=True)",
+          "initial_paths": [],
+          "environment": "Disposable Runner; interactive pipe only, no PTY; 30-second child timeout and one 30-second readiness wait. EOF is the deterministic release, not timing sleeps."
+        },
+        "required_assertions": [
+          "one process dispatch",
+          "real pending identity retained",
+          "independent file exists before releasing input",
+          "one readiness join",
+          "terminal observation matches original Job",
+          "exit 0 and controlled-job-complete observed"
+        ]
+      },
+      "validation": {
+        "required": true,
+        "expectation": "Independent fixture-side check of independent.txt bytes and tool/audit order, one dispatch, one wait and identical Job identity through release/observation; script claims alone cannot establish order."
+      }
+    },
+    {
+      "id": "generic_stale_read_revision",
+      "title": "Reject stale edit and preserve external writer change",
+      "target": "generic_agent_disposable_fixture",
+      "prompt": "Read stale.txt and retain read_revision. After that first read, the fixture operator directly appends EXTERNAL_WRITER_SENTINEL_c741 followed by LF to the file and confirms the write before you proceed. Attempt exactly one edit_project_files replacement task value: before to task value: after using the original expected_read_revision; it must fail as stale_file_revision without any byte change. Independently verify those unchanged bytes, perform a fresh read_files call, reconsider the current content, and retry the intended replacement using the new revision. Verify the final file contains the task change and the exact external sentinel line. Do not manufacture the external write through a model tool, omit the revision fence or replay the stale write. If fixture coordination did not happen, mark this case unsatisfied.",
+      "code_mode_surface": "guarded_edit",
+      "correctness": {
+        "fixture": {
+          "source": "GenericSmoke.stale_edit",
+          "initial_bytes": "task value: before\n",
+          "external_append": "EXTERNAL_WRITER_SENTINEL_c741\n",
+          "coordination": "Fixture operator waits for first read, directly writes appended bytes outside tool caches, captures SHA-256, signals completion before stale edit, and checks disk immediately after rejection and recovery. The deterministic acceptance driver owns this write itself; real ChatGPT replay needs the same operator boundary.",
+          "environment": "Same disposable Project, content and source fingerprint for all variants; supported in baseline and upgraded."
+        },
+        "required_assertions": [
+          "old revision edit returns success=false/error_kind stale_file_revision/state_changed=false",
+          "rejected edit leaves exact external bytes unchanged",
+          "fresh read returns a different revision before next edit",
+          "final bytes task value: after\nEXTERNAL_WRITER_SENTINEL_c741\n",
+          "external sentinel preserved exactly once"
+        ]
+      },
+      "validation": {
+        "required": true,
+        "expectation": "Independent fixture-side exact byte/SHA-256 checks before external write, after rejection and after recovery; verify call order and revisions separately from tool success flags."
+      }
+    },
+    {
+      "id": "generic_missing_output",
+      "title": "Missing declared output blocks closeout",
+      "target": "generic_agent_disposable_fixture",
+      "prompt": "In the disposable Project, independently confirm missing-result.csv does not exist. Finish the task while declaring outputs=[missing-result.csv]. Inspect task_outputs and task_outcome: the file must remain unverified and the task must remain blocked/fail. Report this expected negative result as a successfully exercised closeout guard, not a successful user deliverable. Do not create the file or silently omit the declared output. If the deployed contract does not support outputs, mark this upgrade-only case unsupported rather than fabricating a receipt.",
+      "code_mode_surface": "validation",
+      "correctness": {
+        "fixture": {
+          "source": "GenericSmoke.missing_output",
+          "initial_paths": [],
+          "absent_path": "missing-result.csv",
+          "environment": "Upgrade profile only; fresh task Session in disposable ordinary-directory Project; use existing canonical finish tool and admitted gateway when needed."
+        },
+        "required_assertions": [
+          "missing-result.csv absent before and after",
+          "task_outputs missing_count 1/verified_count 0",
+          "blocking_reasons includes task_outputs_unverified",
+          "task_outcome status fail and blocking true",
+          "absence not represented as verified output"
+        ]
+      },
+      "validation": {
+        "required": true,
+        "expectation": "Independent fixture-side filesystem absence check and structured receipt/outcome inspection; baseline is unsupported, not a pass or comparable upgrade sample."
       }
     }
   ]

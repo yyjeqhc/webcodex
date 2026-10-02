@@ -5,9 +5,10 @@ use std::sync::Arc;
 #[tokio::test]
 async fn workbench_native_metadata_and_mentions_match_extension_contract() {
     for app in [false, true] {
-        let listed = super::super::tools::mcp_tools_list_payload_with_features_for_auth(
+        let mut listed = super::super::tools::mcp_tools_list_payload_with_features_for_auth(
             false, app, true, None,
         );
+        super::super::tools::add_stateless_workflow_recorder_metadata(&mut listed);
         let tools = listed["tools"].as_array().unwrap();
         let launcher = tools
             .iter()
@@ -34,6 +35,10 @@ async fn workbench_native_metadata_and_mentions_match_extension_contract() {
                 Some(&json!(["app"]))
             );
             assert_eq!(mentions["inputSchema"]["required"], json!(["query"]));
+            assert_eq!(
+                mentions["inputSchema"]["properties"],
+                json!({"query":{"type":"string","maxLength":200}})
+            );
             assert_eq!(mentions["outputSchema"]["required"], json!(["items"]));
             assert_eq!(mentions["annotations"]["readOnlyHint"], true);
             assert!(!mentions["inputSchema"]["properties"]

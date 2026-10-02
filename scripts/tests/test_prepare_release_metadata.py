@@ -79,6 +79,18 @@ class PrepareReleaseMetadataInstallerTests(unittest.TestCase):
         self.assertEqual(len(manifest["installers"]), 8)
         self.assertEqual(len(manifest["artifacts"]), 6)
 
+    def test_generates_core_metadata_without_unified_installers(self):
+        for platform in metadata.PLATFORMS:
+            (self.artifacts / metadata.source_manifest_filename("0.3.0", platform)).unlink()
+        result = self.prepare()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        manifest = json.loads((self.output / "manifest.json").read_text())
+        self.assertNotIn("installers", manifest)
+        self.assertEqual(len(manifest["artifacts"]), 6)
+        sums = (self.output / "SHA256SUMS").read_text()
+        self.assertNotIn("webcodex-unified-", sums)
+        self.assertNotIn("webcodex-source-", sums)
+
     def test_rejects_partial_unified_installer_set(self):
         path = self.artifacts / metadata.installer_filename("0.3.0", next(iter(metadata.INSTALLER_TARGETS)))
         path.write_bytes(b"!<arch>\nfixture")

@@ -101,6 +101,8 @@ def _workflow_contract(root: Path) -> str:
     readiness_workflow = (root / ".github/workflows/release-readiness.yml").read_text(encoding="utf-8")
     build = (root / ".github/workflows/release-build.yml").read_text(encoding="utf-8")
     intel_desktop = (root / ".github/workflows/release-desktop-darwin-x64.yml").read_text(encoding="utf-8")
+    release_image = (root / ".github/workflows/release-image.yml").read_text(encoding="utf-8")
+    download_page = (root / ".github/workflows/download-page.yml").read_text(encoding="utf-8")
     required = {
         "ci.yml": (
             ("apps/desktop/package-lock.json", ci),
@@ -165,7 +167,17 @@ def _workflow_contract(root: Path) -> str:
             ("signing_mode=adhoc", build),
             ('export APPLE_SIGNING_IDENTITY="-"', build),
             ('expected_signing = "adhoc"', build),
-            ("expected_notarized = False", build),        ),
+            ("expected_notarized = False", build),
+            ("  preflight:", build),
+            ("Fail fast on deterministic release contracts", build),
+            ("bash scripts/release_check.sh --static-only", build),
+            ("include_unified_installers:", build),
+            ("if: inputs.include_unified_installers", build),
+            ("!inputs.include_unified_installers || needs.unified-native.result == 'success'", build),
+            ("export CARGO_TARGET_DIR=/work/target", build),
+            ('export CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target"', build),
+            ('desktop="$CARGO_TARGET_DIR/release/webcodex-desktop"', build),
+        ),
         "release-desktop-darwin-x64.yml": (
             ("types: [published]", intel_desktop),
             ("workflow_dispatch:", intel_desktop),
@@ -178,7 +190,21 @@ def _workflow_contract(root: Path) -> str:
             ("desktop_install_macos_smoke.sh", intel_desktop),
             ("signing_mode=adhoc", intel_desktop),
             ('export APPLE_SIGNING_IDENTITY="-"', intel_desktop),
-            ("Treat an already-published DMG as immutable authority", intel_desktop),        ),
+            ("Treat an already-published DMG as immutable authority", intel_desktop),
+            ("--build-info-json", intel_desktop),
+            ("source_sha.startswith(commit)", intel_desktop),
+            ("immutable runtime binaries disagree on commit identity", intel_desktop),
+        ),
+        "release-image.yml": (
+            ("WEBCODEX_GIT_COMMIT=${{ needs.resolve.outputs.source_short }}", release_image),
+            ("--build-info-json", release_image),
+            ("source_sha.startswith(commit)", release_image),
+        ),
+        "download-page.yml": (
+            ("Resolve optional installer manifest", download_page),
+            ('echo "has_installers=false" >> "$GITHUB_OUTPUT"', download_page),
+            ("if: steps.manifest.outputs.has_installers == 'true'", download_page),
+        ),
     }
     missing = []
     for filename, tokens in required.items():

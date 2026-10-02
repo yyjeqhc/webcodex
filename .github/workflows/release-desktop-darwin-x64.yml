@@ -114,7 +114,6 @@ jobs:
             echo "tag=$tag"
             echo "version=$version"
             echo "source_sha=$source_sha"
-            echo "source_short=${source_sha:0:12}"
             echo "built_at=$built_at"
           } >> "$GITHUB_OUTPUT"
 
@@ -128,7 +127,6 @@ jobs:
       TAG: ${{ needs.resolve.outputs.tag }}
       VERSION: ${{ needs.resolve.outputs.version }}
       SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
-      SOURCE_SHORT: ${{ needs.resolve.outputs.source_short }}
       WEBCODEX_BUILT_AT: ${{ needs.resolve.outputs.built_at }}
       PLATFORM: darwin-x64
     steps:
@@ -207,25 +205,40 @@ jobs:
                   target.chmod(0o755)
           PY
 
-          expected_commit="$SOURCE_SHA"
-          legacy_short_identity="$(python3 - "$VERSION" <<'PY'
-          import sys
-
-          core = tuple(int(part) for part in sys.argv[1].split("+", 1)[0].split("-", 1)[0].split("."))
-          print("true" if core < (0, 4, 4) else "false")
-          PY
-          )"
-          if [ "$legacy_short_identity" = true ]; then
-            # v0.4.3 release archives predate the full-SHA release identity
-            # contract. Keep guarded backfill support for those immutable bytes.
-            expected_commit="$SOURCE_SHORT"
-          fi
+          build_info_dir="$RUNNER_TEMP/webcodex-$PLATFORM-build-info"
+          mkdir -p "$build_info_dir"
           for name in webcodex webcodex-server webcodex-runner; do
             binary="$runtime_dir/$name"
-            expected_version="$name $VERSION (commit $expected_commit, dirty=false, built_at=$WEBCODEX_BUILT_AT)"
-            test "$("$binary" --version)" = "$expected_version"
+            "$binary" --build-info-json > "$build_info_dir/$name.json"
             file "$binary" | grep -Fq x86_64
           done
+          python3 - "$build_info_dir" "$VERSION" "$SOURCE_SHA" "$WEBCODEX_BUILT_AT" <<'PY'
+          import json
+          import re
+          import sys
+          from pathlib import Path
+
+          root = Path(sys.argv[1])
+          version, source_sha, built_at = sys.argv[2:]
+          names = ("webcodex", "webcodex-server", "webcodex-runner")
+          commits = set()
+          for name in names:
+              info = json.loads((root / f"{name}.json").read_text(encoding="utf-8"))
+              if info.get("schema_version") != 1 or info.get("binary") != name:
+                  raise SystemExit(f"unexpected build-info schema: {name}")
+              if info.get("version") != version or info.get("git_dirty") is not False or info.get("built_at") != built_at:
+                  raise SystemExit(f"immutable runtime identity mismatch: {name}")
+              if info.get("target") != "x86_64-apple-darwin" or info.get("architecture") != "x86_64":
+                  raise SystemExit(f"immutable runtime target mismatch: {name}")
+              commit = info.get("git_commit")
+              if not isinstance(commit, str) or not re.fullmatch(r"[0-9a-f]{12,40}", commit):
+                  raise SystemExit(f"immutable runtime commit identity is malformed: {name}")
+              if not source_sha.startswith(commit):
+                  raise SystemExit(f"immutable runtime commit does not identify release source: {name}")
+              commits.add(commit)
+          if len(commits) != 1:
+              raise SystemExit("immutable runtime binaries disagree on commit identity")
+          PY
           # The current public macOS distribution contract is ad-hoc signed.
           # The immutable runtime archive is already produced under that contract,
           # so do not introduce a separate Developer ID re-signing requirement here.

@@ -217,7 +217,7 @@ jobs:
           DIGEST: ${{ steps.build.outputs.digest }}
           EXPECTED_ARCH: ${{ matrix.architecture }}
           VERSION: ${{ needs.resolve.outputs.version }}
-          SOURCE_SHORT: ${{ needs.resolve.outputs.source_short }}
+          SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
           BUILT_AT: ${{ needs.resolve.outputs.built_at }}
         run: |
           set -euo pipefail
@@ -237,11 +237,29 @@ jobs:
             test ! -e /usr/local/bin/webcodex-runner
           '
 
-          expected_server="webcodex-server $VERSION (commit $SOURCE_SHORT, dirty=false, built_at=$BUILT_AT)"
-          expected_cli="webcodex $VERSION (commit $SOURCE_SHORT, dirty=false, built_at=$BUILT_AT)"
-          test "$(docker run --rm "$ref" --version)" = "$expected_server"
-          test "$(docker run --rm --entrypoint /usr/local/bin/webcodex "$ref" --version)" = "$expected_cli"
+          server_info="$RUNNER_TEMP/webcodex-server-build-info.json"
+          cli_info="$RUNNER_TEMP/webcodex-cli-build-info.json"
+          docker run --rm "$ref" --build-info-json > "$server_info"
+          docker run --rm --entrypoint /usr/local/bin/webcodex "$ref" --build-info-json > "$cli_info"
+          python3 - "$server_info" "$cli_info" "$VERSION" "$SOURCE_SHA" "$BUILT_AT" <<'PY'
+          import json
+          import sys
 
+          server_path, cli_path, version, source_sha, built_at = sys.argv[1:]
+          for path, binary in ((server_path, "webcodex-server"), (cli_path, "webcodex")):
+              info = json.load(open(path, encoding="utf-8"))
+              if info.get("schema_version") != 1 or info.get("binary") != binary:
+                  raise SystemExit(f"unexpected image build-info schema: {binary}")
+              commit = info.get("git_commit")
+              if (
+                  info.get("version") != version
+                  or not isinstance(commit, str)
+                  or not source_sha.startswith(commit)
+                  or info.get("git_dirty") is not False
+                  or info.get("built_at") != built_at
+              ):
+                  raise SystemExit(f"image build identity mismatch: {binary}")
+          PY
           name="webcodex-image-smoke-${GITHUB_RUN_ID}-${{ matrix.slug }}"
           cleanup() { docker rm -f "$name" >/dev/null 2>&1 || true; }
           trap cleanup EXIT

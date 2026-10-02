@@ -657,20 +657,39 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn('expected_signing = "adhoc"', primary)
         self.assertIn("expected_notarized = False", primary)
 
-    def test_supplemental_macos_intel_tracks_release_identity_generation(self) -> None:
+    def test_supplemental_macos_intel_uses_machine_build_identity(self) -> None:
         supplemental = Path(".github/workflows/release-desktop-darwin-x64.yml").read_text(encoding="utf-8")
 
-        self.assertIn('expected_commit="$SOURCE_SHA"', supplemental)
-        self.assertIn('core < (0, 4, 4)', supplemental)
-        self.assertIn('expected_commit="$SOURCE_SHORT"', supplemental)
-        self.assertIn(
-            'expected_version="$name $VERSION (commit $expected_commit, dirty=false, built_at=$WEBCODEX_BUILT_AT)"',
-            supplemental,
-        )
-        self.assertNotIn(
-            'expected_version="$name $VERSION (commit $SOURCE_SHORT, dirty=false, built_at=$WEBCODEX_BUILT_AT)"',
-            supplemental,
-        )
+        self.assertIn("--build-info-json", supplemental)
+        self.assertIn("source_sha.startswith(commit)", supplemental)
+        self.assertIn("immutable runtime binaries disagree on commit identity", supplemental)
+        self.assertNotIn("SOURCE_SHORT:", supplemental)
+        self.assertNotIn("expected_version=", supplemental)
+
+    def test_release_build_fails_fast_and_keeps_unified_installers_optional(self) -> None:
+        workflow = Path(".github/workflows/release-build.yml").read_text(encoding="utf-8")
+        preflight = workflow.index("  preflight:")
+        prepare = workflow.index("  prepare:")
+        self.assertLess(preflight, prepare)
+        self.assertIn("Fail fast on deterministic release contracts", workflow)
+        self.assertIn("bash scripts/release_check.sh --static-only", workflow)
+        self.assertIn("include_unified_installers:", workflow)
+        self.assertIn("default: false", workflow)
+        self.assertGreaterEqual(workflow.count("if: inputs.include_unified_installers"), 6)
+        self.assertIn("!inputs.include_unified_installers || needs.unified-native.result == 'success'", workflow)
+        self.assertIn("export CARGO_TARGET_DIR=/work/target", workflow)
+        self.assertGreaterEqual(workflow.count('desktop="$CARGO_TARGET_DIR/release/webcodex-desktop"'), 2)
+        self.assertIn('export CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target"', workflow)
+        self.assertIn('if os.environ["INCLUDE_UNIFIED_INSTALLERS"] == "true":', workflow)
+        self.assertIn('if installer_artifacts:', workflow)
+
+    def test_download_page_skips_core_only_releases_without_hiding_malformed_installer_manifests(self) -> None:
+        workflow = Path(".github/workflows/download-page.yml").read_text(encoding="utf-8")
+        self.assertIn("Resolve optional installer manifest", workflow)
+        self.assertIn('echo "has_installers=false" >> "$GITHUB_OUTPUT"', workflow)
+        self.assertIn('print("true" if "installers" in manifest else "false")', workflow)
+        self.assertGreaterEqual(workflow.count("if: steps.manifest.outputs.has_installers == 'true'"), 2)
+        self.assertIn("python3 scripts/build_download_page.py", workflow)
 
     def test_release_build_stages_desktop_candidates_in_workspace_dist(self) -> None:
         workflow = Path(".github/workflows/release-build.yml").read_text(encoding="utf-8")
@@ -781,6 +800,12 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("Existing immutable GitHub Release deployment record reconciled without regeneration.", image)
         self.assertIn("Require anonymous GHCR availability", image)
         self.assertIn('gh release download "$TAG" --repo "$GITHUB_REPOSITORY"', image)
+
+        self.assertIn("WEBCODEX_GIT_COMMIT=${{ needs.resolve.outputs.source_short }}", image)
+        self.assertIn("--build-info-json", image)
+        self.assertIn("source_sha.startswith(commit)", image)
+        self.assertNotIn("expected_server=", image)
+        self.assertNotIn("expected_cli=", image)
 
     def test_compose_defaults_to_published_image_with_explicit_source_override(self) -> None:
         compose = Path("compose.yaml").read_text(encoding="utf-8")

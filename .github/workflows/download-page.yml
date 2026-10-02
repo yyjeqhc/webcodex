@@ -21,7 +21,8 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
-      - name: Download release manifest
+      - name: Resolve optional installer manifest
+        id: manifest
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
@@ -29,14 +30,45 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/release"
+          release_json="$RUNNER_TEMP/release.json"
+          gh api "repos/$GH_REPOSITORY/releases/tags/$RELEASE_TAG" > "$release_json"
+          manifest_count="$(python3 - "$release_json" <<'PY'
+          import json
+          import sys
+          release = json.load(open(sys.argv[1], encoding="utf-8"))
+          print(sum(1 for asset in release.get("assets", []) if asset.get("name") == "manifest.json"))
+          PY
+          )"
+          if [ "$manifest_count" -gt 1 ]; then
+            echo "Release contains duplicate manifest.json assets." >&2
+            exit 1
+          fi
+          if [ "$manifest_count" = 0 ]; then
+            echo "has_installers=false" >> "$GITHUB_OUTPUT"
+            echo "Core release has no unified installer manifest; download-page generation is not applicable." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           gh release download "$RELEASE_TAG" --repo "$GH_REPOSITORY" --pattern manifest.json --dir "$RUNNER_TEMP/release"
           test -s "$RUNNER_TEMP/release/manifest.json"
+          has_installers="$(python3 - "$RUNNER_TEMP/release/manifest.json" <<'PY'
+          import json
+          import sys
+          manifest = json.load(open(sys.argv[1], encoding="utf-8"))
+          print("true" if "installers" in manifest else "false")
+          PY
+          )"
+          echo "has_installers=$has_installers" >> "$GITHUB_OUTPUT"
+          if [ "$has_installers" = false ]; then
+            echo "Release manifest contains only core Runtime artifacts; installer download-page generation is not applicable." >> "$GITHUB_STEP_SUMMARY"
+          fi
       - name: Build static download page
+        if: steps.manifest.outputs.has_installers == 'true'
         run: >-
           python3 scripts/build_download_page.py
           --manifest "$RUNNER_TEMP/release/manifest.json"
           --output-dir "$RUNNER_TEMP/download-page"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: steps.manifest.outputs.has_installers == 'true'
         with:
           name: download-page-${{ github.event.release.tag_name || inputs.tag }}
           path: ${{ runner.temp }}/download-page/

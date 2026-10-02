@@ -14,6 +14,11 @@ on:
         required: false
         default: manual
         type: string
+      include_unified_installers:
+        description: Build optional unified distro installers in addition to the core release
+        required: false
+        default: false
+        type: boolean
 
 # This workflow only produces candidate bytes and one same-run assembled bundle.
 # It has no release, package, deployment, or repository-write permission. A
@@ -29,7 +34,31 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+          ref: refs/tags/${{ inputs.tag }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - name: Fail fast on deterministic release contracts
+        shell: bash
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "refs/tags/$INPUT_TAG"
+          test "$(git rev-parse HEAD)" = "$(git rev-list -n 1 "$INPUT_TAG")"
+          bash scripts/release_check.sh --static-only
+
   prepare:
+    needs: preflight
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
@@ -747,11 +776,13 @@ jobs:
             -Platform $env:WEBCODEX_RELEASE_PLATFORM
 
       - name: Install Python for Windows unified installer provenance
+        if: inputs.include_unified_installers
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.12'
 
       - name: Collect native Windows unified installer inputs
+        if: inputs.include_unified_installers
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -798,6 +829,7 @@ jobs:
           "UNIFIED_INSTALLER_PATH=$(Join-Path $env:GITHUB_WORKSPACE (Join-Path 'dist' $installerName))" >> $env:GITHUB_ENV
 
       - name: Install NSIS compiler for the outer bootstrap
+        if: inputs.include_unified_installers
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -811,6 +843,7 @@ jobs:
           Split-Path -Parent $makensis | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
       - name: Build native Tauri payload and outer Windows bootstrap
+        if: inputs.include_unified_installers
         working-directory: apps/desktop
         shell: pwsh
         run: |
@@ -845,6 +878,7 @@ jobs:
           )
 
       - name: Upload Windows unified installer and provenance
+        if: inputs.include_unified_installers
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ${{ needs.prepare.outputs.archive_stem }}-unified-${{ matrix.platform }}
@@ -884,6 +918,7 @@ jobs:
 
   unified-native:
     needs: [prepare, linux, macos]
+    if: inputs.include_unified_installers
     strategy:
       fail-fast: false
       matrix:
@@ -979,8 +1014,9 @@ jobs:
               npm run build --prefix apps/desktop
               export WEBCODEX_RELEASE_PLATFORM="$PLATFORM"
               export WEBCODEX_RELEASE_VERSION="$VERSION"
+              export CARGO_TARGET_DIR=/work/target
               cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml --locked --release --features tauri/custom-protocol
-              desktop=target/release/webcodex-desktop
+              desktop="$CARGO_TARGET_DIR/release/webcodex-desktop"
               test -x "$desktop"
               install -m 0755 "$desktop" native-input/artifacts/bin/webcodex-desktop
               python3 scripts/verify_linux_elf_baseline.py --architecture "$expected" \
@@ -1037,8 +1073,12 @@ jobs:
           export WEBCODEX_RELEASE_PLATFORM="$PLATFORM"
           export WEBCODEX_RELEASE_VERSION="$VERSION"
           export WEBCODEX_BUILT_AT
+          # apps/desktop/src-tauri is its own Cargo workspace. Pin its target
+          # directory so the later packaging path is deterministic and cheap
+          # contract tests can verify the same location before scarce runners run.
+          export CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target"
           cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml --locked --release --features tauri/custom-protocol
-          desktop="target/release/webcodex-desktop"
+          desktop="$CARGO_TARGET_DIR/release/webcodex-desktop"
           test -x "$desktop"
           install -m 0755 "$desktop" native-input/artifacts/bin/webcodex-desktop
       - name: Collect and package macOS installer
@@ -1108,6 +1148,13 @@ jobs:
 
   assemble:
     needs: [prepare, linux, macos, windows, unified-native]
+    if: >-
+      always() &&
+      needs.prepare.result == 'success' &&
+      needs.linux.result == 'success' &&
+      needs.macos.result == 'success' &&
+      needs.windows.result == 'success' &&
+      (!inputs.include_unified_installers || needs.unified-native.result == 'success')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -1118,6 +1165,7 @@ jobs:
       ARCHIVE_STEM: ${{ needs.prepare.outputs.archive_stem }}
       INPUT_TAG: ${{ inputs.tag }}
       DESKTOP_DARWIN_X64_SUPPLEMENTAL: ${{ needs.prepare.outputs.desktop_darwin_x64_supplemental }}
+      INCLUDE_UNIFIED_INSTALLERS: ${{ inputs.include_unified_installers }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -1168,40 +1216,6 @@ jobs:
             "$ARCHIVE_STEM-win32-x64.tar.gz.sha256"
             "$ARCHIVE_STEM-win32-arm64.tar.gz"
             "$ARCHIVE_STEM-win32-arm64.tar.gz.sha256"
-            "webcodex-unified-v$VERSION-linux-x64.deb"
-            "webcodex-unified-v$VERSION-linux-x64.deb.sha256"
-            "webcodex-unified-v$VERSION-linux-x64.rpm"
-            "webcodex-unified-v$VERSION-linux-x64.rpm.sha256"
-            "webcodex-source-v$VERSION-linux-x64.json"
-            "webcodex-source-v$VERSION-linux-x64.json.sha256"
-            "webcodex-unified-v$VERSION-linux-arm64.deb"
-            "webcodex-unified-v$VERSION-linux-arm64.deb.sha256"
-            "webcodex-unified-v$VERSION-linux-arm64.rpm"
-            "webcodex-unified-v$VERSION-linux-arm64.rpm.sha256"
-            "webcodex-source-v$VERSION-linux-arm64.json"
-            "webcodex-source-v$VERSION-linux-arm64.json.sha256"
-            "webcodex-unified-v$VERSION-darwin-x64.pkg"
-            "webcodex-unified-v$VERSION-darwin-x64.pkg.sha256"
-            "webcodex-source-v$VERSION-darwin-x64.json"
-            "webcodex-source-v$VERSION-darwin-x64.json.sha256"
-            "webcodex-unified-v$VERSION-darwin-arm64.pkg"
-            "webcodex-unified-v$VERSION-darwin-arm64.pkg.sha256"
-            "webcodex-source-v$VERSION-darwin-arm64.json"
-            "webcodex-source-v$VERSION-darwin-arm64.json.sha256"
-            "webcodex-unified-v$VERSION-win32-x64.exe"
-            "webcodex-unified-v$VERSION-win32-x64.exe.sha256"
-            "webcodex-unified-v$VERSION-win32-x64.exe.provenance.json"
-            "webcodex-unified-v$VERSION-win32-x64.source-manifest.json"
-            "webcodex-unified-v$VERSION-win32-x64.candidate-SHA256SUMS"
-            "webcodex-source-v$VERSION-win32-x64.json"
-            "webcodex-source-v$VERSION-win32-x64.json.sha256"
-            "webcodex-unified-v$VERSION-win32-arm64.exe"
-            "webcodex-unified-v$VERSION-win32-arm64.exe.sha256"
-            "webcodex-unified-v$VERSION-win32-arm64.exe.provenance.json"
-            "webcodex-unified-v$VERSION-win32-arm64.source-manifest.json"
-            "webcodex-unified-v$VERSION-win32-arm64.candidate-SHA256SUMS"
-            "webcodex-source-v$VERSION-win32-arm64.json"
-            "webcodex-source-v$VERSION-win32-arm64.json.sha256"
             "$desktop_darwin_arm64"
             "$desktop_darwin_arm64.sha256"
             "$desktop_darwin_arm64.evidence.json"
@@ -1215,6 +1229,44 @@ jobs:
               "$desktop_darwin_x64"
               "$desktop_darwin_x64.sha256"
               "$desktop_darwin_x64.evidence.json"
+            )
+          fi
+          if [ "$INCLUDE_UNIFIED_INSTALLERS" = true ]; then
+            expected+=(
+              "webcodex-unified-v$VERSION-linux-x64.deb"
+              "webcodex-unified-v$VERSION-linux-x64.deb.sha256"
+              "webcodex-unified-v$VERSION-linux-x64.rpm"
+              "webcodex-unified-v$VERSION-linux-x64.rpm.sha256"
+              "webcodex-source-v$VERSION-linux-x64.json"
+              "webcodex-source-v$VERSION-linux-x64.json.sha256"
+              "webcodex-unified-v$VERSION-linux-arm64.deb"
+              "webcodex-unified-v$VERSION-linux-arm64.deb.sha256"
+              "webcodex-unified-v$VERSION-linux-arm64.rpm"
+              "webcodex-unified-v$VERSION-linux-arm64.rpm.sha256"
+              "webcodex-source-v$VERSION-linux-arm64.json"
+              "webcodex-source-v$VERSION-linux-arm64.json.sha256"
+              "webcodex-unified-v$VERSION-darwin-x64.pkg"
+              "webcodex-unified-v$VERSION-darwin-x64.pkg.sha256"
+              "webcodex-source-v$VERSION-darwin-x64.json"
+              "webcodex-source-v$VERSION-darwin-x64.json.sha256"
+              "webcodex-unified-v$VERSION-darwin-arm64.pkg"
+              "webcodex-unified-v$VERSION-darwin-arm64.pkg.sha256"
+              "webcodex-source-v$VERSION-darwin-arm64.json"
+              "webcodex-source-v$VERSION-darwin-arm64.json.sha256"
+              "webcodex-unified-v$VERSION-win32-x64.exe"
+              "webcodex-unified-v$VERSION-win32-x64.exe.sha256"
+              "webcodex-unified-v$VERSION-win32-x64.exe.provenance.json"
+              "webcodex-unified-v$VERSION-win32-x64.source-manifest.json"
+              "webcodex-unified-v$VERSION-win32-x64.candidate-SHA256SUMS"
+              "webcodex-source-v$VERSION-win32-x64.json"
+              "webcodex-source-v$VERSION-win32-x64.json.sha256"
+              "webcodex-unified-v$VERSION-win32-arm64.exe"
+              "webcodex-unified-v$VERSION-win32-arm64.exe.sha256"
+              "webcodex-unified-v$VERSION-win32-arm64.exe.provenance.json"
+              "webcodex-unified-v$VERSION-win32-arm64.source-manifest.json"
+              "webcodex-unified-v$VERSION-win32-arm64.candidate-SHA256SUMS"
+              "webcodex-source-v$VERSION-win32-arm64.json"
+              "webcodex-source-v$VERSION-win32-arm64.json.sha256"
             )
           fi
           mapfile -t expected_sorted < <(printf '%s\n' "${expected[@]}" | sort)
@@ -1240,22 +1292,25 @@ jobs:
           for desktop_filename in "${desktop_filenames[@]}"; do
             (cd candidate-input && sha256sum -c "$desktop_filename.sha256")
           done
-          for platform in "${platforms[@]}"; do
-            (cd candidate-input && sha256sum -c "webcodex-source-v$VERSION-$platform.json.sha256")
-          done
-          installers=(
-            "webcodex-unified-v$VERSION-linux-x64.deb"
-            "webcodex-unified-v$VERSION-linux-x64.rpm"
-            "webcodex-unified-v$VERSION-linux-arm64.deb"
-            "webcodex-unified-v$VERSION-linux-arm64.rpm"
-            "webcodex-unified-v$VERSION-darwin-x64.pkg"
-            "webcodex-unified-v$VERSION-darwin-arm64.pkg"
-            "webcodex-unified-v$VERSION-win32-x64.exe"
-            "webcodex-unified-v$VERSION-win32-arm64.exe"
-          )
-          for installer in "${installers[@]}"; do
-            (cd candidate-input && sha256sum -c "$installer.sha256")
-          done
+          installers=()
+          if [ "$INCLUDE_UNIFIED_INSTALLERS" = true ]; then
+            for platform in "${platforms[@]}"; do
+              (cd candidate-input && sha256sum -c "webcodex-source-v$VERSION-$platform.json.sha256")
+            done
+            installers=(
+              "webcodex-unified-v$VERSION-linux-x64.deb"
+              "webcodex-unified-v$VERSION-linux-x64.rpm"
+              "webcodex-unified-v$VERSION-linux-arm64.deb"
+              "webcodex-unified-v$VERSION-linux-arm64.rpm"
+              "webcodex-unified-v$VERSION-darwin-x64.pkg"
+              "webcodex-unified-v$VERSION-darwin-arm64.pkg"
+              "webcodex-unified-v$VERSION-win32-x64.exe"
+              "webcodex-unified-v$VERSION-win32-arm64.exe"
+            )
+            for installer in "${installers[@]}"; do
+              (cd candidate-input && sha256sum -c "$installer.sha256")
+            done
+          fi
           python3 - <<'PY'
           import hashlib
           import json
@@ -1307,9 +1362,11 @@ jobs:
           for installer in "${installers[@]}"; do
             cp "candidate-input/$installer" release-bundle/
           done
-          for platform in "${platforms[@]}"; do
-            cp "candidate-input/webcodex-source-v$VERSION-$platform.json" release-bundle/
-          done
+          if [ "$INCLUDE_UNIFIED_INSTALLERS" = true ]; then
+            for platform in "${platforms[@]}"; do
+              cp "candidate-input/webcodex-source-v$VERSION-$platform.json" release-bundle/
+            done
+          fi
           cp candidate-input/linux-x64-elf.txt candidate-input/linux-arm64-elf.txt release-bundle/
 
           if [ "$BUILD_KIND" = release ]; then
@@ -1326,20 +1383,22 @@ jobs:
               for platform in "${platforms[@]}"; do
                 cat "candidate-input/$ARCHIVE_STEM-$platform.tar.gz.sha256"
               done
-              for filename in \
-                "webcodex-unified-v$VERSION-linux-x64.deb" \
-                "webcodex-unified-v$VERSION-linux-x64.rpm" \
-                "webcodex-unified-v$VERSION-linux-arm64.deb" \
-                "webcodex-unified-v$VERSION-linux-arm64.rpm" \
-                "webcodex-unified-v$VERSION-darwin-x64.pkg" \
-                "webcodex-unified-v$VERSION-darwin-arm64.pkg" \
-                "webcodex-unified-v$VERSION-win32-x64.exe" \
-                "webcodex-unified-v$VERSION-win32-arm64.exe"; do
-                cat "candidate-input/$filename.sha256"
-              done
-              for platform in "${platforms[@]}"; do
-                cat "candidate-input/webcodex-source-v$VERSION-$platform.json.sha256"
-              done
+              if [ "$INCLUDE_UNIFIED_INSTALLERS" = true ]; then
+                for filename in \
+                  "webcodex-unified-v$VERSION-linux-x64.deb" \
+                  "webcodex-unified-v$VERSION-linux-x64.rpm" \
+                  "webcodex-unified-v$VERSION-linux-arm64.deb" \
+                  "webcodex-unified-v$VERSION-linux-arm64.rpm" \
+                  "webcodex-unified-v$VERSION-darwin-x64.pkg" \
+                  "webcodex-unified-v$VERSION-darwin-arm64.pkg" \
+                  "webcodex-unified-v$VERSION-win32-x64.exe" \
+                  "webcodex-unified-v$VERSION-win32-arm64.exe"; do
+                  cat "candidate-input/$filename.sha256"
+                done
+                for platform in "${platforms[@]}"; do
+                  cat "candidate-input/webcodex-source-v$VERSION-$platform.json.sha256"
+                done
+              fi
               if [ "$DESKTOP_DARWIN_X64_SUPPLEMENTAL" != true ]; then
                 cat "candidate-input/$desktop_darwin_x64.sha256"
               fi
@@ -1377,47 +1436,48 @@ jobs:
                   "filename": filename,
                   "sha256": hashlib.sha256((source / filename).read_bytes()).hexdigest(),
               }
-          installer_targets = {
-              "linux-x64-deb": ("linux-x64", "deb"),
-              "linux-x64-rpm": ("linux-x64", "rpm"),
-              "linux-arm64-deb": ("linux-arm64", "deb"),
-              "linux-arm64-rpm": ("linux-arm64", "rpm"),
-              "darwin-x64-pkg": ("darwin-x64", "pkg"),
-              "darwin-arm64-pkg": ("darwin-arm64", "pkg"),
-              "win32-x64-exe": ("win32-x64", "exe"),
-              "win32-arm64-exe": ("win32-arm64", "exe"),
-          }
           installer_artifacts = {}
-          for target, (platform, suffix) in installer_targets.items():
-              filename = f"webcodex-unified-v{os.environ['VERSION']}-{platform}.{suffix}"
-              installer_record = {
-                  "filename": filename,
-                  "sha256": hashlib.sha256((source / filename).read_bytes()).hexdigest(),
-                  "source_manifest_filename": f"webcodex-source-v{os.environ['VERSION']}-{platform}.json",
-                  "source_manifest_sha256": hashlib.sha256((source / f"webcodex-source-v{os.environ['VERSION']}-{platform}.json").read_bytes()).hexdigest(),
+          if os.environ["INCLUDE_UNIFIED_INSTALLERS"] == "true":
+              installer_targets = {
+                  "linux-x64-deb": ("linux-x64", "deb"),
+                  "linux-x64-rpm": ("linux-x64", "rpm"),
+                  "linux-arm64-deb": ("linux-arm64", "deb"),
+                  "linux-arm64-rpm": ("linux-arm64", "rpm"),
+                  "darwin-x64-pkg": ("darwin-x64", "pkg"),
+                  "darwin-arm64-pkg": ("darwin-arm64", "pkg"),
+                  "win32-x64-exe": ("win32-x64", "exe"),
+                  "win32-arm64-exe": ("win32-arm64", "exe"),
               }
-              if platform.startswith("win32-"):
-                  evidence_path = source / f"{filename}.provenance.json"
-                  evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
-                  if set(evidence) != {"schema_version", "platform", "version", "source_sha", "workflow_run_id", "workflow_ref", "candidate_manifest_sha256", "inner_installer_sha256", "installer_sha256"}:
-                      raise SystemExit(f"unexpected Windows bootstrap provenance schema: {platform}")
-                  if (evidence["schema_version"], evidence["platform"], evidence["version"], evidence["source_sha"], evidence["workflow_run_id"], evidence["workflow_ref"]) != (1, platform, os.environ["VERSION"], os.environ["SOURCE_SHA"], int(os.environ["GITHUB_RUN_ID"]), os.environ["GITHUB_WORKFLOW_REF"]):
-                      raise SystemExit(f"Windows bootstrap provenance identity mismatch: {platform}")
-                  candidate_manifest = source / f"webcodex-unified-v{os.environ['VERSION']}-{platform}.source-manifest.json"
-                  candidate_sums = source / f"webcodex-unified-v{os.environ['VERSION']}-{platform}.candidate-SHA256SUMS"
-                  candidate = json.loads(candidate_manifest.read_text(encoding="utf-8"))
-                  if hashlib.sha256(candidate_manifest.read_bytes()).hexdigest() != evidence["candidate_manifest_sha256"]:
-                      raise SystemExit(f"Windows source-manifest hash mismatch: {platform}")
-                  if (candidate.get("source_sha"), candidate.get("source_workflow_run_id"), candidate.get("source_workflow_ref"), candidate.get("platform")) != (os.environ["SOURCE_SHA"], int(os.environ["GITHUB_RUN_ID"]), os.environ["GITHUB_WORKFLOW_REF"], platform):
-                      raise SystemExit(f"Windows native candidate source identity mismatch: {platform}")
-                  sums = dict(line.split("  ", 1)[::-1] for line in candidate_sums.read_text(encoding="ascii").splitlines())
-                  if sums.get("source-manifest.json") != evidence["candidate_manifest_sha256"]:
-                      raise SystemExit(f"Windows candidate SHA256SUMS does not bind its manifest: {platform}")
-                  if evidence["installer_sha256"] != installer_record["sha256"] or not re.fullmatch(r"[0-9a-f]{64}", evidence["inner_installer_sha256"]):
-                      raise SystemExit(f"Windows bootstrap inner/outer digest mismatch: {platform}")
-                  installer_record["inner_sha256"] = evidence["inner_installer_sha256"]
-                  installer_record["candidate_manifest_sha256"] = evidence["candidate_manifest_sha256"]
-              installer_artifacts[target] = installer_record
+              for target, (platform, suffix) in installer_targets.items():
+                  filename = f"webcodex-unified-v{os.environ['VERSION']}-{platform}.{suffix}"
+                  installer_record = {
+                      "filename": filename,
+                      "sha256": hashlib.sha256((source / filename).read_bytes()).hexdigest(),
+                      "source_manifest_filename": f"webcodex-source-v{os.environ['VERSION']}-{platform}.json",
+                      "source_manifest_sha256": hashlib.sha256((source / f"webcodex-source-v{os.environ['VERSION']}-{platform}.json").read_bytes()).hexdigest(),
+                  }
+                  if platform.startswith("win32-"):
+                      evidence_path = source / f"{filename}.provenance.json"
+                      evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+                      if set(evidence) != {"schema_version", "platform", "version", "source_sha", "workflow_run_id", "workflow_ref", "candidate_manifest_sha256", "inner_installer_sha256", "installer_sha256"}:
+                          raise SystemExit(f"unexpected Windows bootstrap provenance schema: {platform}")
+                      if (evidence["schema_version"], evidence["platform"], evidence["version"], evidence["source_sha"], evidence["workflow_run_id"], evidence["workflow_ref"]) != (1, platform, os.environ["VERSION"], os.environ["SOURCE_SHA"], int(os.environ["GITHUB_RUN_ID"]), os.environ["GITHUB_WORKFLOW_REF"]):
+                          raise SystemExit(f"Windows bootstrap provenance identity mismatch: {platform}")
+                      candidate_manifest = source / f"webcodex-unified-v{os.environ['VERSION']}-{platform}.source-manifest.json"
+                      candidate_sums = source / f"webcodex-unified-v{os.environ['VERSION']}-{platform}.candidate-SHA256SUMS"
+                      candidate = json.loads(candidate_manifest.read_text(encoding="utf-8"))
+                      if hashlib.sha256(candidate_manifest.read_bytes()).hexdigest() != evidence["candidate_manifest_sha256"]:
+                          raise SystemExit(f"Windows source-manifest hash mismatch: {platform}")
+                      if (candidate.get("source_sha"), candidate.get("source_workflow_run_id"), candidate.get("source_workflow_ref"), candidate.get("platform")) != (os.environ["SOURCE_SHA"], int(os.environ["GITHUB_RUN_ID"]), os.environ["GITHUB_WORKFLOW_REF"], platform):
+                          raise SystemExit(f"Windows native candidate source identity mismatch: {platform}")
+                      sums = dict(line.split("  ", 1)[::-1] for line in candidate_sums.read_text(encoding="ascii").splitlines())
+                      if sums.get("source-manifest.json") != evidence["candidate_manifest_sha256"]:
+                          raise SystemExit(f"Windows candidate SHA256SUMS does not bind its manifest: {platform}")
+                      if evidence["installer_sha256"] != installer_record["sha256"] or not re.fullmatch(r"[0-9a-f]{64}", evidence["inner_installer_sha256"]):
+                          raise SystemExit(f"Windows bootstrap inner/outer digest mismatch: {platform}")
+                      installer_record["inner_sha256"] = evidence["inner_installer_sha256"]
+                      installer_record["candidate_manifest_sha256"] = evidence["candidate_manifest_sha256"]
+                  installer_artifacts[target] = installer_record
           payload = {
               "tag": os.environ["INPUT_TAG"],
               "version": os.environ["VERSION"],
@@ -1428,8 +1488,9 @@ jobs:
               "archive_stem": stem,
               "artifacts": artifacts,
               "desktop_artifacts": desktop_artifacts,
-              "installer_artifacts": installer_artifacts,
           }
+          if installer_artifacts:
+              payload["installer_artifacts"] = installer_artifacts
           runtime_manifest = Path("release-bundle/webcodex-release-manifest.json")
           if os.environ["BUILD_KIND"] == "release":
               payload["runtime_manifest"] = {

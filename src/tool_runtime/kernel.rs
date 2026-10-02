@@ -1102,7 +1102,13 @@ impl ToolRuntime {
         // Preserve the concrete business Session for final presentation and
         // bounded ActionAudit evidence. The generic recorder remains independent
         // provenance and Window affinity never becomes execution or Session authority.
-        let business_session_id = call.session_id().map(str::to_string);
+        let business_session_id = match &call {
+            // Presentation has an explicit business selector, but deliberately
+            // has no generic Session recorder/lifecycle target.
+            ToolCall::PresentWorkResult { session_id, .. } => session_id.as_deref(),
+            _ => call.session_id(),
+        }
+        .map(str::to_string);
         // Permission is evaluated once inside dispatch (pre-exec gate). Kernel
         // only reuses the attached decision for the outer recording session —
         // never re-evaluate (no second request id / inconsistent outcome).

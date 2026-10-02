@@ -129,9 +129,10 @@ fn mcp_job_audit_correlation_keeps_only_stable_job_identity() {
 }
 
 #[test]
-fn work_result_app_internal_tools_do_not_become_window_activity() {
+fn work_result_app_internal_tools_do_not_start_live_window_activity() {
     for tool in [
         "present_work_result",
+        "work_result_thread_panel",
         "work_result_state",
         "work_result_activity_detail",
         "work_result_send_message",

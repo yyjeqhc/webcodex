@@ -136,6 +136,14 @@ fn result_tool_app_metadata_is_capability_scoped_compact_safe_and_merge_safe() {
             tool(&enabled, "present_work_result")["_meta"]["ui"]["resourceUri"],
             MCP_WORK_RESULT_UI_RESOURCE_URI
         );
+        assert!(tool(&enabled, "present_work_result")["_meta"]
+            .get("openai/ui")
+            .is_none());
+        assert!(!enabled["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|tool| tool["name"] == "work_result_thread_panel"));
 
         let disabled = mcp_tools_list_payload_with_compact_and_app(compact, false);
         for name in RESULT_APP_TOOLS {
@@ -166,7 +174,7 @@ async fn result_app_descriptor_and_resource_exposure_require_ui_operator_capabil
     assert_eq!(MCP_RESULT_UI_RESOURCE_URI, "ui://webcodex/changes/v2");
     assert_eq!(
         MCP_WORK_RESULT_UI_RESOURCE_URI,
-        "ui://webcodex/work-result/v14"
+        "ui://webcodex/work-result/v15"
     );
     assert!(MCP_WORK_RESULT_UI_RESOURCE_LEGACY_URIS.contains(&"ui://webcodex/work-result/v9"));
     assert!(MCP_WORK_RESULT_UI_RESOURCE_LEGACY_URIS.contains(&"ui://webcodex/work-result/v10"));
@@ -201,8 +209,23 @@ async fn result_app_descriptor_and_resource_exposure_require_ui_operator_capabil
         MCP_WORK_RESULT_UI_RESOURCE_URI
     );
     assert!(tool(&ui_tools["result"], "present_work_result")["_meta"]
+        .get("openai/ui")
+        .is_none());
+    assert!(tool(&ui_tools["result"], "present_work_result")["_meta"]
         .get("ui/resourceUri")
         .is_none());
+    let thread_panel = tool(&ui_tools["result"], "work_result_thread_panel");
+    assert_eq!(thread_panel["title"], "WebCodex review");
+    assert_eq!(
+        thread_panel["_meta"]["ui"]["resourceUri"],
+        MCP_WORK_RESULT_UI_RESOURCE_URI
+    );
+    assert!(thread_panel["_meta"]["ui"].get("visibility").is_none());
+    assert_eq!(
+        thread_panel["_meta"]["openai/ui"]["entrypoints"],
+        json!([{"type": "thread"}])
+    );
+    assert_eq!(thread_panel["inputSchema"]["properties"], json!({}));
     for descriptor in ui_tools["result"]["tools"].as_array().unwrap() {
         assert_ne!(
             descriptor

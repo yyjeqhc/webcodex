@@ -233,7 +233,7 @@ fn post_message(
 }
 
 #[tokio::test]
-async fn agent_continuation_app_surface_is_sparse_app_only_and_resource_backed() {
+async fn agent_continuation_app_surface_is_sparse_app_only_without_rendering_bindings() {
     assert_eq!(
         MCP_AGENT_CONTINUATION_UI_RESOURCE_URI,
         "ui://webcodex/agent-continuation/v17"
@@ -267,19 +267,17 @@ async fn agent_continuation_app_surface_is_sparse_app_only_and_resource_backed()
         })
         .map(|tool| tool["name"].as_str().unwrap())
         .collect();
-    assert_eq!(bound_tools.len(), APP_TOOLS.len());
+    assert!(bound_tools.is_empty());
     for name in APP_TOOLS {
         let descriptor = tool(&ui["result"], name).unwrap_or_else(|| panic!("missing {name}"));
         assert_eq!(
             descriptor.pointer("/_meta/ui/visibility"),
             Some(&json!(["app"]))
         );
-        assert_eq!(
-            descriptor.pointer("/_meta/ui/resourceUri"),
-            Some(&json!(MCP_AGENT_CONTINUATION_UI_RESOURCE_URI)),
-            "{name} must be associated with the continuation View for Host bridge calls"
+        assert!(
+            descriptor.pointer("/_meta/ui/resourceUri").is_none(),
+            "{name} is a bridge helper, not a rendering entrypoint"
         );
-        assert!(bound_tools.contains(&name));
         assert_eq!(
             descriptor.pointer("/inputSchema/properties/app_call_id/pattern"),
             Some(&json!("^wc_app_call_[0-9a-f]{16}_[1-9][0-9]{0,5}$")),

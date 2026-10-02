@@ -2413,8 +2413,8 @@ async fn mcp_tools_list_stateless_serialized_size_budget() {
     admin.scopes.push(crate::auth::SCOPE_ADMIN.to_string());
     // Final Stateless bytes include the optional _wc envelope and gateways,
     // not the RPC envelope. Two durable waits use Gateway and two inactive
-    // continuation presentations are hidden. All 18 App-only protocol tools
-    // remain present with Apps on; they are not ordinary model-tool savings.
+    // continuation presentations are hidden. Apps add 18 App-only protocol tools
+    // plus the public Work Result thread entrypoint; they are not ordinary model-tool savings.
     for (label, auth, max_tools, max_bytes) in [
         ("anonymous", None, 23, 62_000),
         ("scoped", Some(&scoped), 24, 64_000),
@@ -2464,7 +2464,7 @@ async fn mcp_tools_list_stateless_serialized_size_budget() {
                 // Work Result v3 adds bounded App-only collaboration and lazy
                 // Window activity-detail adapters alongside the existing Goal
                 // Plan/continuation/read helpers.
-                let count_budget = max_tools + if app_enabled { 18 } else { 0 } + feature_tools;
+                let count_budget = max_tools + if app_enabled { 19 } else { 0 } + feature_tools;
                 let byte_budget =
                     max_bytes + if app_enabled { 20_000 } else { 0 } + feature_tools * 4096;
                 if feature_tools == 0 {

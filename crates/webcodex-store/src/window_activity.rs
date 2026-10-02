@@ -198,6 +198,45 @@ impl Database {
         collect_window_event_rows(&conn, &mut rows, None)
     }
 
+    /// Latest successful action in the exact principal's Window. Filter before
+    /// limiting so unrelated activity cannot hide the selected presentation.
+    /// The caller still owns current Project and Session authorization.
+    pub fn latest_successful_window_action(
+        &self,
+        window_key: &str,
+        principal: (&str, &str),
+        operation: &str,
+    ) -> anyhow::Result<Option<WindowActivityEventRecord>> {
+        let conn = self.lock_connection(crate::StoreDomain::WindowActivity);
+        let mut stmt = conn.prepare(
+            "SELECT e.event_id, e.client_window_key, e.client_window_source,
+                    e.server_trace_id, e.window_started_at_ms, e.window_ended_at_ms,
+                    e.duration_ms, e.action_name, e.operation, e.project, e.status,
+                    e.window_meaningful, e.recorder_gap_session_id,
+                    e.principal_correlation_kind, e.principal_correlation_id,
+                    e.request_observed_at_ms, e.response_handed_at_ms,
+                    e.window_transition_kind, e.response_streaming,
+                    e.window_continuity_eligible, e.http_status, e.ids_json
+             FROM action_events e
+             WHERE e.client_window_key = ?1
+               AND e.principal_correlation_kind = ?2
+               AND e.principal_correlation_id = ?3
+               AND e.operation = ?4 AND e.status = 'success'
+               AND e.project IS NOT NULL
+               AND e.window_started_at_ms IS NOT NULL
+               AND e.window_ended_at_ms IS NOT NULL
+             ORDER BY COALESCE(e.request_observed_at_ms, e.window_started_at_ms) DESC, e.event_id DESC
+             LIMIT 1",
+        )?;
+        Ok(collect_window_events(
+            &conn,
+            &mut stmt,
+            params![window_key, principal.0, principal.1, operation],
+            None,
+        )?
+        .pop())
+    }
+
     /// Exact bounded lookup used by App-only lazy Window detail reads.
     /// The caller still owns principal and Project visibility authorization.
     pub fn get_window_activity_event_by_trace(
@@ -539,12 +578,25 @@ fn collect_window_events<P: rusqlite::Params>(
     collect_window_event_rows(conn, &mut rows, code_mode_summary_column)
 }
 
-fn window_job_correlation_from_ids_json(ids_json: Option<String>) -> (Option<String>, Vec<String>) {
+fn safe_workflow_session_id(value: &str) -> bool {
+    let Some(suffix) = value.strip_prefix("wc_sess_") else {
+        return false;
+    };
+    (suffix.len() == 16
+        && suffix
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-')))
+        || (suffix.len() == 32 && suffix.bytes().all(|byte| byte.is_ascii_hexdigit()))
+}
+
+fn window_correlation_from_ids_json(
+    ids_json: Option<String>,
+) -> (Option<String>, Vec<String>, Option<String>) {
     let Some(value) = ids_json
         .as_deref()
         .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
     else {
-        return (None, Vec::new());
+        return (None, Vec::new(), None);
     };
     let async_job_id = value
         .get("async_job_id")
@@ -570,7 +622,13 @@ fn window_job_correlation_from_ids_json(ids_json: Option<String>) -> (Option<Str
             }
         }
     }
-    (async_job_id, observed_job_ids)
+    let business_session_id = value
+        .get("business_session_id")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|session_id| safe_workflow_session_id(session_id))
+        .map(str::to_string);
+    (async_job_id, observed_job_ids, business_session_id)
 }
 
 fn collect_window_event_rows(
@@ -581,7 +639,8 @@ fn collect_window_event_rows(
     let mut out = Vec::new();
     while let Some(row) = rows.next()? {
         let event_id: String = row.get(0)?;
-        let (async_job_id, observed_job_ids) = window_job_correlation_from_ids_json(row.get(21)?);
+        let (async_job_id, observed_job_ids, business_session_id) =
+            window_correlation_from_ids_json(row.get(21)?);
         out.push(WindowActivityEventRecord {
             event_id: event_id.clone(),
             client_window_key: row.get(1)?,
@@ -597,6 +656,7 @@ fn collect_window_event_rows(
             meaningful: row.get(11)?,
             async_job_id,
             observed_job_ids,
+            business_session_id,
             recorder_gap_session_id: row.get(12)?,
             workflow_links: Vec::new(),
             principal_correlation_kind: row.get(13)?,
@@ -799,6 +859,7 @@ mod tests {
                 "../unsafe",
                 "wc_job_observed_456"
             ],
+            "business_session_id": "wc_sess_6666666666666666",
             "observation_token": "must-not-project"
         })
         .to_string();
@@ -816,6 +877,12 @@ mod tests {
             rows[0].observed_job_ids,
             vec!["wc_job_observed_456".to_string()]
         );
+        assert_eq!(
+            rows[0].business_session_id.as_deref(),
+            Some("wc_sess_6666666666666666")
+        );
+        let projected = serde_json::to_value(&rows[0]).unwrap();
+        assert!(projected.get("business_session_id").is_none());
     }
 
     #[test]

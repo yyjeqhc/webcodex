@@ -402,52 +402,18 @@ impl AppState {
         if result.is_ok() && cancellation.is_cancelled() {
             result = Err(cancelled_error());
         }
-        if result.is_err()
-            && matches!(
-                operation.kind,
-                DesktopOperationKind::EnvironmentMigration | DesktopOperationKind::DesktopUpdate
-            )
-        {
-            // Core's durable migration coordinator owns both restoration and
-            // the unknown-result state. Generic supervisor cleanup could kill
-            // a successfully restored original generation.
-            core.terminalize_failed_start(
-                result
-                    .as_ref()
-                    .err()
-                    .is_some_and(|e| e.code == "desktop_operation_cancelled"),
-            );
-            core.publish_snapshot();
-        } else if result.is_err() {
-            let cancelled = result
-                .as_ref()
-                .err()
-                .is_some_and(|error| error.code == "desktop_operation_cancelled");
-            let cleanup = self.cleanup_new_owned_processes(&baseline).await;
-            core.reconcile_after_operation_failure(operation.kind, &baseline, cleanup, cancelled);
-            core.terminalize_failed_start(cancelled);
+        let completion = operation_completion::OperationCompletion::new(
+            operation.kind, result.as_ref().err(),
+        );
+        let cleanup = if completion.requires_process_cleanup() {
+            Some(self.cleanup_new_owned_processes(&baseline).await)
+        } else {
+            None
+        };
+        if completion.apply_failure(&mut core.snapshot, &baseline.snapshot, cleanup) {
             core.publish_snapshot();
         }
-        if matches!(
-            operation.kind,
-            DesktopOperationKind::LocalSetup
-                | DesktopOperationKind::RemoteSetup
-                | DesktopOperationKind::RuntimeResume
-                | DesktopOperationKind::RunnerRestart
-                | DesktopOperationKind::RuntimeSwitch
-                | DesktopOperationKind::EnvironmentMigration
-                | DesktopOperationKind::EnvironmentService
-        ) {
-            if let Err(error) = &result {
-                core.snapshot.runtime_error =
-                    (error.code != "desktop_operation_cancelled").then(|| error.clone());
-            } else if !matches!(operation.kind, DesktopOperationKind::RuntimeSwitch)
-                || !core.runtime_last_switch.as_ref().is_some_and(|switch| {
-                    matches!(switch.outcome.as_str(), "rolled_back" | "recovery_required")
-                })
-            {
-                core.snapshot.runtime_error = None;
-            }
+        if completion.apply_runtime_error(&mut core.snapshot, core.runtime_last_switch.as_ref()) {
             core.publish_snapshot();
         }
         {

@@ -4,6 +4,7 @@ mod diagnostics;
 mod environment;
 mod managed_instructions;
 mod mcp_providers;
+mod operation_completion;
 #[cfg(test)]
 mod projectless_tests;
 #[cfg(test)]

@@ -616,9 +616,10 @@ mod tests {
             ProjectReadiness::Configured,
         );
 
-        core.reconcile_after_operation_failure(
+        operation_completion::reconcile_after_operation_failure(
+            &mut core.snapshot,
             DesktopOperationKind::RuntimeResume,
-            &baseline,
+            &baseline.snapshot,
             ProcessCleanup {
                 local_server: true,
                 local_runner: true,

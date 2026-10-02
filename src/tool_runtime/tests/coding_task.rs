@@ -136,7 +136,8 @@ fn coding_task_tools_are_registered_in_metadata() {
     for phrase in [
         "mode=worktree",
         "exact Git base",
-        "isolated worktree",
+        "managed Project/ref",
+        "fresh Session",
         "Project authority",
     ] {
         assert!(

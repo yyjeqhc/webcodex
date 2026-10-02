@@ -50,7 +50,25 @@ export function useWindowInventory(client: RuntimeV2Client, enabled: boolean, on
     // Explicit load-more fetches one new page. Periodic refresh revalidates only
     // the prefix the user has actually opened, not a fixed 2,000-row inventory.
     const limit = append ? WINDOW_PAGE_SIZE : Math.max(WINDOW_PAGE_SIZE, snapshot.current.history.length);
-    void fetchWindows(client, { ...selection, offset, limit: Math.min(2_000, limit) }, controller.signal).then(response => {
+    const readPrefix = async () => {
+      let response = await fetchWindows(client, { ...selection, offset, limit: Math.min(2_000, limit) }, controller.signal);
+      if (append || limit <= 2_000 || !response?.ok || !response.data) return response;
+      let rows = response.data.windows || [];
+      let cursor = response.data.next_offset ?? (response.data.truncated && rows.length ? rows.length : undefined);
+      // Refresh only pages the user opened, including a prefix exceeding one
+      // server response. Never silently discard loaded pages at the 2,000 cap.
+      while (rows.length < limit && cursor !== undefined && !controller.signal.aborted) {
+        const page = await fetchWindows(client, { ...selection, offset: cursor, limit: Math.min(2_000, limit - rows.length) }, controller.signal);
+        if (!page?.ok || !page.data) return page;
+        const addition = page.data.windows || [];
+        const nextCursor: number | undefined = page.data.next_offset ?? (page.data.truncated && addition.length ? cursor + addition.length : undefined);
+        if (!addition.length || (nextCursor !== undefined && nextCursor <= cursor)) break;
+        rows = [...rows, ...addition]; cursor = nextCursor;
+        response = { ...page, data: { ...page.data, windows: rows, returned: rows.length, next_offset: cursor } };
+      }
+      return response;
+    };
+    void readPrefix().then(response => {
       if (controller.signal.aborted || inventoryRequest.current !== controller) return;
       inventoryRequest.current = null; setLoadingMore(false);
       if (!response) { failed(); return; }

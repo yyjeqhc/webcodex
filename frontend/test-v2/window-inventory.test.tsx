@@ -5,6 +5,30 @@ import type { RuntimeV2Client } from "../src/runtime-v2/api/client.js";
 
 const row = (id: number, active = 0) => ({ client_window_key: id.toString(16).padStart(64,"0"), source:"openai-session", last_seen_at_ms:id+1, first_seen_at_ms:1, active_count:active, linked_session_count:3, recorder_gap_count:1 });
 
+it("refreshes an explicitly opened prefix beyond one server page without dropping older rows", async () => {
+  vi.useFakeTimers();
+  try {
+    const calls: Array<{offset:number;limit:number}> = [];
+    const client = { post: vi.fn(async (_path:string, body:{offset:number;limit:number})=>{
+      calls.push(body);
+      const length=Math.min(body.limit,2100-body.offset);
+      const next=body.offset+length;
+      return {ok:true,status:200,data:{windows:Array.from({length},(_,i)=>row(body.offset+i)),total:2100,truncated:next<2100,...(next<2100?{next_offset:next}:{})}};
+    }) } as unknown as RuntimeV2Client;
+    const unauthorized=vi.fn();
+    const {result,unmount}=renderHook(()=>useWindowInventory(client,true,unauthorized));
+    await act(async()=>{});
+    for(let page=0;page<40;page++) await act(async()=>result.current.loadMore());
+    expect(result.current.windows).toHaveLength(2050);
+    const before=calls.length;
+    await act(async()=>result.current.refresh());
+    expect(calls.slice(before)).toMatchObject([{offset:0,limit:2000},{offset:2000,limit:50}]);
+    expect(result.current.windows).toHaveLength(2050);
+    expect(result.current.windows.at(-1)?.client_window_key).toBe(row(2049).client_window_key);
+    unmount();
+  } finally {vi.useRealTimers();}
+});
+
 describe("bounded Window inventory request contract", () => {
   it.each([3_000, 5_000])("keeps historical rows stable across %ims liveness and scopes every page", async refreshMs => {
     vi.useFakeTimers();

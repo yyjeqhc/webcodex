@@ -142,7 +142,7 @@ impl ToolRuntime {
         };
         let session = match session {
             Some(raw) => {
-                if super::kernel::check_runtime_tool_scope(auth, "session_summary").is_err() {
+                if super::kernel::check_runtime_tool_scope(auth, "read_session_summary").is_err() {
                     return error("resource_access_denied");
                 }
                 let id = match self.canonicalize_explicit_session_selector(&raw, auth) {
@@ -150,7 +150,7 @@ impl ToolRuntime {
                     Err(_) => return error("resource_unavailable"),
                 };
                 if self
-                    .authorize_session_target(&id, "session_summary", auth)
+                    .authorize_session_target(&id, "read_session_summary", auth)
                     .await
                     .is_err()
                 {
@@ -395,7 +395,9 @@ impl ToolRuntime {
                     let Some(session) = session_id else {
                         return error("resource_session_required");
                     };
-                    if super::kernel::check_runtime_tool_scope(auth, "session_summary").is_err() {
+                    if super::kernel::check_runtime_tool_scope(auth, "read_session_summary")
+                        .is_err()
+                    {
                         return error("resource_access_denied");
                     }
                     let session = match self.canonicalize_explicit_session_selector(&session, auth)
@@ -404,7 +406,7 @@ impl ToolRuntime {
                         Err(_) => return error("resource_unavailable"),
                     };
                     if self
-                        .authorize_session_target(&session, "session_summary", auth)
+                        .authorize_session_target(&session, "read_session_summary", auth)
                         .await
                         .is_err()
                     {

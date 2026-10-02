@@ -139,7 +139,7 @@ Session 标识收进默认折叠的 Diagnostics。inline card 继续采用 Activ
 
 展示调用会保存这条窗口绑定，但不会启动 live Window activity；侧边栏入口和 App
 刷新调用也不会启动 live Window activity。当前界面资源是
-`ui://webcodex/work-result/v15`，此前挂载的 v14 等资源仍可读取。
+`ui://webcodex/work-result/v16`，旧版资源 URI 不再提供模板，避免缓存界面调用已退役的工具名。
 
 界面展示入口保留默认的 model/App 可见性；App-only 桥接工具只返回数据，不声明
 `ui.resourceUri`。ChatGPT 刷新工具时会拒绝声明界面资源的私有工具。更新 Server

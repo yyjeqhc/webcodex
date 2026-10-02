@@ -41,9 +41,9 @@ pub(super) const MCP_COMPUTER_UI_RESOURCE_URI: &str = "ui://webcodex/computer/v1
 // resource for every card so resource reuse/cache is not an unobserved variable.
 pub(super) const MCP_COMPUTER_UI_RESOURCE_TTL_MS: u64 = 0;
 pub(super) const MCP_RESULT_UI_RESOURCE_URI: &str = "ui://webcodex/changes/v4";
-pub(super) const MCP_WORKBENCH_UI_RESOURCE_URI: &str = "ui://webcodex/workbench/v1";
+pub(super) const MCP_WORKBENCH_UI_RESOURCE_URI: &str = "ui://webcodex/workbench/v2";
 const MCP_WORKBENCH_APP_HTML: &str = include_str!("../mcp_workbench_app.html");
-pub(super) const MCP_WORK_RESULT_UI_RESOURCE_URI: &str = "ui://webcodex/work-result/v15";
+pub(super) const MCP_WORK_RESULT_UI_RESOURCE_URI: &str = "ui://webcodex/work-result/v16";
 // v0.5 uses one current template identity per App. Retired URIs are not aliases.
 // Goal Plan intentionally serves only one current resource identity. Hosts may
 // retain a live/cached View by URI across Server deploys, so any shipped App

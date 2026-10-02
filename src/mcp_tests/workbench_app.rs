@@ -1,4 +1,3 @@
-use handle_with_app_policy;
 use super::*;
 fn stateless_ui_meta() -> Value {
     json!({
@@ -89,9 +88,7 @@ async fn empty_workbench_keeps_goal_access_when_project_domain_is_unavailable() 
 async fn workbench_view_reads_receive_canonical_text_fallback() {
     let runtime = ToolRuntime::new_for_tests();
     let request=serde_json::from_value(json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"open_webcodex_workbench","arguments":{},"_meta":stateless_ui_meta()}})).unwrap();
-    let McpOutcome::Ok(value) =
-        handle_with_app_policy(&runtime, request, None, true).await
-    else {
+    let McpOutcome::Ok(value) = handle_with_app_policy(&runtime, request, None, true).await else {
         panic!("launcher failed")
     };
     let fallback: Value =

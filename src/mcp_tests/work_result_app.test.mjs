@@ -81,7 +81,7 @@ for (const resultFirst of [false, true]) test(`thread initialization preserves t
   if (resultFirst) view.toolInput({});
   await view.initialize();
   view.nodes.refresh.onclick();
-  const call = view.calls("work_result_state")[0];
+  const call = view.calls("get_work_result_state")[0];
   assert.deepEqual(JSON.parse(JSON.stringify(call.params.arguments)), input);
   await view.reply(call, toolResult({ work_result: nextState }));
   assert.equal(view.nodes.sessionIdentity.textContent, "Session · " + session_id);
@@ -93,7 +93,7 @@ test("thread initialization never promotes a Window-linked Session into refresh 
   view.notification("ui/notifications/tool-result", threadResult(baseState));
   await view.initialize();
   view.nodes.refresh.onclick();
-  assert.deepEqual(JSON.parse(JSON.stringify(view.calls("work_result_state")[0].params.arguments)), { project });
+  assert.deepEqual(JSON.parse(JSON.stringify(view.calls("get_work_result_state")[0].params.arguments)), { project });
 });
 
 for (const context of [undefined, {}, { session_id: "invalid" }, { session_id: `wc_sess_${"2".repeat(32)}` }]) {
@@ -105,7 +105,7 @@ for (const context of [undefined, {}, { session_id: "invalid" }, { session_id: `
     view.notification("ui/notifications/tool-result", result);
     await view.initialize();
     assert.equal(view.nodes.badge.textContent, "Unavailable");
-    assert.equal(view.calls("work_result_state").length, 0);
+    assert.equal(view.calls("get_work_result_state").length, 0);
   });
 }
 
@@ -142,7 +142,7 @@ test("thread refresh and repeated initialization preserve the user's pane and dr
   view.nodes.tabCollaboration.onclick();
   view.nodes.messageInput.value = "Review this change";
   view.nodes.refresh.onclick();
-  await view.reply(view.calls("work_result_state")[0], toolResult({ work_result: nextState }));
+  await view.reply(view.calls("get_work_result_state")[0], toolResult({ work_result: nextState }));
   view.notification("ui/notifications/tool-result", initial);
   assert.equal(view.nodes.panelCollaboration.hidden, false);
   assert.equal(view.nodes.messageInput.value, "Review this change");
@@ -157,7 +157,7 @@ test("thread binding also initializes from the private Work Result fallback", as
   await view.initialize();
   view.nodes.refresh.onclick();
   assert.equal(view.nodes.panelResults.hidden, false);
-  assert.equal(view.calls("work_result_state")[0].params.arguments.session_id, session_id);
+  assert.equal(view.calls("get_work_result_state")[0].params.arguments.session_id, session_id);
 });
 
 const outputState = {
@@ -203,7 +203,7 @@ test("explicit output export request preserves Project path and observed SHA", a
   assert.ok(text.includes('"results/report.csv"'));
   assert.ok(text.includes("d".repeat(64)));
   assert.match(text, /First check.*if it changed/);
-  assert.equal(view.calls("project_artifact").length, 0);
+  assert.equal(view.calls("inspect_project_artifact").length, 0);
   await view.reply(request, {});
   await pending;
   assert.equal(button.disabled, false);

@@ -1278,8 +1278,7 @@ async fn agent_continuation_app_protocol_uses_standard_result_without_model_proj
                 mcp_2026_params(json!({"name": name, "arguments": args})),
             )
         };
-        let denied =
-            handle_with_app_policy(&runtime, request(), Some(&foreign), true).await;
+        let denied = handle_with_app_policy(&runtime, request(), Some(&foreign), true).await;
         let McpOutcome::Ok(denied) = denied else {
             panic!("foreign {name} must fail as a business result")
         };
@@ -1288,8 +1287,7 @@ async fn agent_continuation_app_protocol_uses_standard_result_without_model_proj
         assert!(!denied_text.contains("consume_token"));
         assert!(!denied_text.contains(&binding_id));
         let unscoped =
-            handle_with_app_policy(&runtime, request(), Some(&read_only_owner), true)
-                .await;
+            handle_with_app_policy(&runtime, request(), Some(&read_only_owner), true).await;
         assert!(
             matches!(unscoped, McpOutcome::Forbidden { .. }),
             "{name} requires communication:manage even with the exact fence"

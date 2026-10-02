@@ -11,7 +11,7 @@ fn tool<'a>(payload: &'a Value, name: &str) -> Option<&'a Value> {
 async fn work_result_descriptor_keeps_renderers_public_and_bridge_tools_app_only() {
     assert_eq!(
         MCP_WORK_RESULT_UI_RESOURCE_URI,
-        "ui://webcodex/work-result/v15"
+        "ui://webcodex/work-result/v16"
     );
     let runtime = test_runtime();
 
@@ -70,7 +70,8 @@ async fn work_result_descriptor_keeps_renderers_public_and_bridge_tools_app_only
     assert_eq!(thread["inputSchema"]["properties"], json!({}));
     assert_eq!(thread["inputSchema"]["additionalProperties"], false);
     assert!(thread["inputSchema"].get("required").is_none());
-    let state = tool(&ui["result"], "get_work_result_state").expect("app-only get_work_result_state");
+    let state =
+        tool(&ui["result"], "get_work_result_state").expect("app-only get_work_result_state");
     assert_eq!(state.pointer("/_meta/ui/visibility"), Some(&json!(["app"])));
     assert!(state.pointer("/_meta/ui/resourceUri").is_none());
     assert_eq!(state["inputSchema"]["required"], json!(["project"]));

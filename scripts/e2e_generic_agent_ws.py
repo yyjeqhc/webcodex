@@ -263,7 +263,7 @@ class GenericSmoke(InteractiveSmoke):
         check((self.project_dir / "independent.txt").read_bytes() == b"independent work completed",
               "independent action bytes disagree")
         tools = [call["tool"] for call in self.calls[offset:]]
-        check(tools == ["run_process", "run_script", "job_write_input", "wait_for_job_readiness", "observe_jobs"],
+        check(tools == ["run_process", "run_script", "write_job_input", "wait_for_job_readiness", "observe_jobs"],
               "pending scenario call order or dispatch/wait count changed")
         return {"job_id": job, "redispatches": tools.count("run_process") - 1,
                 "readiness_joins": tools.count("wait_for_job_readiness"),
@@ -345,10 +345,10 @@ class GenericSmoke(InteractiveSmoke):
             listed = self.post("/mcp", {"jsonrpc": "2.0", "id": self.rpc_id,
                 "method": "tools/list", "params": {}}, self.owner)
             state = next((tool for tool in listed.get("result", {}).get("tools", [])
-                          if tool.get("name") == "work_result_state"), {})
+                          if tool.get("name") == "get_work_result_state"), {})
             check(state.get("_meta", {}).get("ui", {}).get("visibility") == ["app"],
                   "independent UI-capable client did not discover App-only WorkResult")
-            return self.call("work_result_state", {"project": project, "session_id": session}, direct=True)
+            return self.call("get_work_result_state", {"project": project, "session_id": session}, direct=True)
         finally:
             self.app_fixture = False
 

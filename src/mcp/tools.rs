@@ -52,7 +52,7 @@ fn filter_specs_for_oauth(mut specs: Vec<ToolSpec>, auth: Option<&AuthContext>) 
 fn work_result_thread_entrypoint_tool_spec() -> ToolSpec {
     let state = crate::tool_runtime::work_result_app_tool_specs()
         .into_iter()
-        .find(|spec| spec.name == "work_result_state")
+        .find(|spec| spec.name == "get_work_result_state")
         .expect("Work Result state App tool must exist");
     ToolSpec {
         name: WORK_RESULT_THREAD_ENTRYPOINT_TOOL_NAME.to_string(),
@@ -352,7 +352,7 @@ pub(super) fn mcp_tools_list_payload_with_features_for_auth(
                 }
             }
         }
-        if check_runtime_tool_scope(auth, "work_result_state").is_ok() {
+        if check_runtime_tool_scope(auth, "get_work_result_state").is_ok() {
             let mut thread_entrypoint =
                 mcp_tool_spec_json(work_result_thread_entrypoint_tool_spec(), compact, false);
             // A user-opened launcher renders a View, so it must remain public.
@@ -755,7 +755,12 @@ pub(super) fn add_stateless_workflow_recorder_metadata(payload: &mut Value) {
         let tool_name = tool_name_owned.as_deref();
         if matches!(
             tool_name,
-            Some("sync_goal_plan" | "get_work_result_state" | "read_changed_file_diff" | "search_mentions")
+            Some(
+                "sync_goal_plan"
+                    | "get_work_result_state"
+                    | "read_changed_file_diff"
+                    | "search_mentions"
+            )
         ) || tool_name == Some(WORK_RESULT_THREAD_ENTRYPOINT_TOOL_NAME)
             || tool_name.is_some_and(is_host_continuation_app_tool_name)
         {
@@ -2841,7 +2846,8 @@ pub(super) async fn handle_call(
             None => json!({"project": binding.project}),
         };
     }
-    let app_only_work_result_state = work_result_app_admitted && params.name == "get_work_result_state";
+    let app_only_work_result_state =
+        work_result_app_admitted && params.name == "get_work_result_state";
     let app_only_work_result_activity_detail =
         work_result_app_admitted && params.name == "read_work_result_activity_detail";
     let app_only_work_result_send_message =

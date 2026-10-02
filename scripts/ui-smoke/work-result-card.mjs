@@ -50,7 +50,7 @@ try {
             ...(thread ? { _meta: { 'webcodex/workResultThread': { session_id: state.session_id } } } : {}),
           } }, '*');
         } else if (request.method === 'tools/call') {
-          if (request.params.name === 'work_result_state') {
+          if (request.params.name === 'get_work_result_state') {
             const args = request.params.arguments;
             window.reads.push(args);
             const snapshot_id = 'wc_changes_snapshot_' + '3'.repeat(32);
@@ -63,7 +63,7 @@ try {
             };
             reply({ structuredContent: { success: true, output: args.files ? { work_result_files: files } : { work_result: window.fixtureState } } });
           }
-          if (request.params.name === 'changes_file_diff') {
+          if (request.params.name === 'read_changed_file_diff') {
             window.frozenReads.push(request.params.arguments);
             const diff = '@@ -1 +1 @@\n-old\n+final';
             const bytes = new TextEncoder().encode(diff).length;
@@ -72,7 +72,7 @@ try {
               diff, truncated: false, bytes_total: bytes, bytes_returned: bytes, lines_total: 3, lines_returned: 3,
             } } } });
           }
-          if (request.params.name === 'work_result_send_message') {
+          if (request.params.name === 'send_work_result_message') {
             window.writes.push(request.params.arguments);
             reply(window.writes.length === 1 ? {} : { structuredContent: { success: true, output: { message_id: 'wc_msg_receipt' } } });
           }

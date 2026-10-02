@@ -186,7 +186,7 @@
     if (busyOverview || !project || document.hidden) return;
     const generation = scope, local = ++overviewGeneration; busyOverview = true;
     try {
-      const output = await tool("work_result_state", {project,...(session ? {session_id:session} : {})});
+      const output = await tool("get_work_result_state", {project,...(session ? {session_id:session} : {})});
       if (disposed || generation !== scope || local !== overviewGeneration || area !== "Overview") return;
       const state = output.work_result;
       if (!object(state) || ![project,projectLink()?._meta?.project].filter(Boolean).includes(state.project) || session && state.session_id !== session) throw new Error("Work Result selection mismatch");

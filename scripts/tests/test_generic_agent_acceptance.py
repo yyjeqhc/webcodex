@@ -204,7 +204,7 @@ class GenericAcceptanceTests(unittest.TestCase):
             smoke.script = independent
             def write(job, *args, **kwargs):
                 trace.append(("release", job))
-                smoke.calls.append({"tool": "job_write_input"})
+                smoke.calls.append({"tool": "write_job_input"})
             smoke.write = write
             def terminal(job):
                 trace.append(("join-observe", job))

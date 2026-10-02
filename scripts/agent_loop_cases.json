@@ -339,7 +339,7 @@
       "id": "generic_pending_independent_join",
       "title": "Pending Job with independent work and one join",
       "target": "generic_agent_disposable_fixture",
-      "prompt": "Start exactly one interactive Python process that reads stdin to EOF and then prints controlled-job-complete. It must return a pending Job; retain its identity/continuation. While it waits, write independent.txt with independent work completed. Close stdin on the original Job through job_write_input, then perform one bounded wait_for_job_readiness join and observe that same Job to terminal exit 0. Do not redispatch, immediately poll while independent work remains, or repeat waits. If there is no genuine pending handoff, mark the case unsatisfied.",
+      "prompt": "Start exactly one interactive Python process that reads stdin to EOF and then prints controlled-job-complete. It must return a pending Job; retain its identity/continuation. While it waits, write independent.txt with independent work completed. Close stdin on the original Job through write_job_input, then perform one bounded wait_for_job_readiness join and observe that same Job to terminal exit 0. Do not redispatch, immediately poll while independent work remains, or repeat waits. If there is no genuine pending handoff, mark the case unsatisfied.",
       "code_mode_surface": "validation",
       "correctness": {
         "fixture": {

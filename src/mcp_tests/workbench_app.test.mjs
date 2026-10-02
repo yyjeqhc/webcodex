@@ -45,7 +45,7 @@ for (const order of ["input-result-init","result-init-input","init-input-result"
   assert.equal(view.nodes.projectSelect.value,"");
   assert.equal(view.nodes.projectSelect.children.length,2);
   assert.equal(view.nodes.selectionState.textContent,"Choose a Project to begin.");
-  assert.equal(view.calls("work_result_state").length,0);
+  assert.equal(view.calls("get_work_result_state").length,0);
   assert.equal(view.calls("list_sessions").length,0);
   assert.equal(readRequests(view).length,0);
   assert.equal(refs(view).length,0);
@@ -59,7 +59,7 @@ test("empty launch recovers missing structuredContent with bounded JSON text",as
   assert.equal(view.nodes.projectSelect.children[1].textContent,"Demo Project");
   assert.equal(view.nodes.projectSelect.value,"");
   await selectProject(view);
-  await view.reply(view.calls("work_result_state")[0],contentOnly({work_result:baseState}));
+  await view.reply(view.calls("get_work_result_state")[0],contentOnly({work_result:baseState}));
   assert.equal(view.nodes.overview.children.length,4);
 });
 
@@ -80,7 +80,7 @@ test("explicit launch scope works in either notification order and reads only ov
     await initialize(view);
     assert.equal(view.nodes.projectSelect.value,project);
     assert.equal(view.nodes.sessionSelect.value,session_id);
-    assert.deepEqual({...view.calls("work_result_state")[0].params.arguments},{project,session_id});
+    assert.deepEqual({...view.calls("get_work_result_state")[0].params.arguments},{project,session_id});
     assert.equal(readRequests(view).length,0);
     assert.equal(search(view,"file").length,0);
   }
@@ -93,7 +93,7 @@ test("named launch maps canonical Project IDs to a visible option when discovery
   await initialize(view);
   assert.equal(view.nodes.projectSelect.value,project);
   assert.ok(view.nodes.projectSelect.children.some(option=>option.value===view.nodes.projectSelect.value));
-  assert.equal(view.calls("work_result_state")[0].params.arguments.project,project);
+  assert.equal(view.calls("get_work_result_state")[0].params.arguments.project,project);
 });
 
 test("Session list never chooses a candidate and artifacts require explicit Session",async()=>{
@@ -111,7 +111,7 @@ test("Project switch immediately clears rows, preview and Session, fencing late 
   const view=await launch();await files(view);
   rowActions(view)[0].onclick();await flush();
   const oldRead=readRequests(view)[0];
-  const oldOverview=view.calls("work_result_state")[0];
+  const oldOverview=view.calls("get_work_result_state")[0];
   await selectProject(view,secondProject);
   assert.equal(view.nodes.rows.children.length,0);
   assert.equal(view.nodes.preview.hidden,true);
@@ -293,13 +293,13 @@ test("host brand never implies adapter support and forged messages cannot alter 
 
 test("overview refresh pauses while hidden, resumes on visibility, and teardown cancels pending work",async()=>{
   const view=await launch({resourceLink:{}});await selectProject(view);
-  await view.reply(view.calls("work_result_state")[0],toolResult({work_result:baseState}));
+  await view.reply(view.calls("get_work_result_state")[0],toolResult({work_result:baseState}));
   await view.reply(view.calls("list_sessions")[0],toolResult({sessions:[]}));
   assert.equal(view.timers.size,1);
   await view.visibility(true);assert.equal(view.timers.size,0);
-  await view.fireTimers(10000);assert.equal(view.calls("work_result_state").length,1);
-  await view.visibility(false);assert.equal(view.calls("work_result_state").length,2);
-  const pending=view.calls("work_result_state")[1];
+  await view.fireTimers(10000);assert.equal(view.calls("get_work_result_state").length,1);
+  await view.visibility(false);assert.equal(view.calls("get_work_result_state").length,2);
+  const pending=view.calls("get_work_result_state")[1];
   const old=view.nodes.overview.children;
   await view.teardown();assert.equal(view.timers.size,0);
   await view.reply(pending,toolResult({work_result:{...baseState,workspace:{...baseState.workspace,clean:true}}}));
@@ -311,7 +311,7 @@ test("overview refresh pauses while hidden, resumes on visibility, and teardown 
 for(const failure of ["error","timeout"]) test(`initial handshake ${failure} blocks tools and reports failure`,async()=>{
   const view=app("mcp_workbench_app.html");view.toolInput({project});
   await view.initialize(failure);
-  assert.equal(view.calls("work_result_state").length,0);
+  assert.equal(view.calls("get_work_result_state").length,0);
   assert.match(view.nodes.status.textContent,/Unavailable/);
   assert.equal(view.nodes.projectSelect.disabled,true);
 });
@@ -356,7 +356,7 @@ test("Project refs retain canonical identity after chooser search changes",async
   await initialize(view);await selectProject(view,ref);
   view.nodes.projectQuery.value="other";view.nodes.projectSearchForm.onsubmit({preventDefault(){}});await flush();
   await view.reply(search(view,"project")[0],toolResult(page([])));
-  await view.reply(view.calls("work_result_state")[0],toolResult({work_result:baseState}));
+  await view.reply(view.calls("get_work_result_state")[0],toolResult({work_result:baseState}));
   assert.equal(view.nodes.overview.children.length,4);
   assert.equal(view.nodes.projectReference.hidden,false);
 });
@@ -364,7 +364,7 @@ test("Project refs retain canonical identity after chooser search changes",async
 test("malformed overview without an authoritative Project cannot be rendered",async()=>{
   const view=await launch();await selectProject(view,secondProject);
   const {project:_,...state}=baseState;
-  await view.reply(view.calls("work_result_state")[0],toolResult({work_result:state}));
+  await view.reply(view.calls("get_work_result_state")[0],toolResult({work_result:state}));
   assert.equal(view.nodes.overview.children.length,0);
   assert.match(view.nodes.status.textContent,/selection mismatch/);
 });
@@ -408,7 +408,7 @@ test("empty result before a named input does not swallow the explicit launcher s
   const view=app("mcp_workbench_app.html");await initialize(view);
   view.toolResult({});view.toolInput({project});await flush();
   assert.equal(view.nodes.projectSelect.value,project);
-  assert.equal(view.calls("work_result_state").length,1);
+  assert.equal(view.calls("get_work_result_state").length,1);
 });
 
 test("Your Goals remains browsable and referenceable when Project discovery is unavailable",async()=>{
@@ -418,7 +418,7 @@ test("Your Goals remains browsable and referenceable when Project discovery is u
   assert.match(view.nodes.selectionState.textContent,/Project discovery unavailable.*Goals/);
   assert.match(view.nodes.status.textContent,/Project discovery unavailable/);
   assert.equal(view.nodes.projectSelect.value,"");
-  assert.equal(view.calls("work_result_state").length,0);
+  assert.equal(view.calls("get_work_result_state").length,0);
   view.nodes.tabGoals.onclick();await flush();
   assert.equal(view.nodes.browser.hidden,false);
   assert.match(view.nodes.selectionState.textContent,/Your Goals/);
@@ -445,17 +445,17 @@ test("no-Project Goals can refresh and resume after visibility changes",async()=
   await view.visibility(true);await view.visibility(false);
   assert.equal(search(view,"goal").length,3);
   assert.equal(view.calls("list_sessions").length,0);
-  assert.equal(view.calls("work_result_state").length,0);
+  assert.equal(view.calls("get_work_result_state").length,0);
 });
 
 test("overview uses canonical active_requests/events activity and leaves unknown workspace state unavailable",async()=>{
   const view=await launch();await selectProject(view);
   const activeActivity={available:true,active:true,truncated:false,active_requests:[{label:"Reading current files",started_at_ms:100}],events:[{label:"Finished earlier check",ended_at_ms:90}]};
-  await view.reply(view.calls("work_result_state")[0],toolResult({work_result:{...baseState,workspace:{git_available:true},activity:activeActivity}}));
+  await view.reply(view.calls("get_work_result_state")[0],toolResult({work_result:{...baseState,workspace:{git_available:true},activity:activeActivity}}));
   assert.equal(view.nodes.overview.children[0].children[1].textContent,"Unavailable");
   assert.equal(view.nodes.overview.children[2].children[1].textContent,"Reading current files");
   view.nodes.refresh.onclick();await flush();
-  await view.reply(view.calls("work_result_state").at(-1),toolResult({work_result:{...baseState,activity:{available:true,active:false,truncated:true,active_requests:[],events:[{label:"Newest review",ended_at_ms:300},{label:"Older edit",ended_at_ms:200}]}}}));
+  await view.reply(view.calls("get_work_result_state").at(-1),toolResult({work_result:{...baseState,activity:{available:true,active:false,truncated:true,active_requests:[],events:[{label:"Newest review",ended_at_ms:300},{label:"Older edit",ended_at_ms:200}]}}}));
   assert.equal(view.nodes.overview.children[2].children[1].textContent,"Newest review");
 });
 

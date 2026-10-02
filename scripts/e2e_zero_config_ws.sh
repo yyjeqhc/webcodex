@@ -634,8 +634,8 @@ mcp_tool_present() {
 
 adaptive_present=1
 for tname in work_on_project get_runtime_status read_tool_manifest \
-    search_project_texts search_and_read read_files edit_project_files run_process write_job_input \
-    run_script run_shell cargo_check cargo_test read_git_review_summary observe_jobs wait_for_job_readiness \
+    search_project_texts search_file_context read_files edit_project_files run_process write_job_input \
+    run_script run_shell cargo_check cargo_test review_changes observe_jobs wait_for_job_readiness \
     present_work_result present_goal_plan load_skill call_runtime_tool; do
     if ! mcp_tool_present "$tname"; then
         adaptive_present=0

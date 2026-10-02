@@ -36,7 +36,7 @@ continuation. Project acquisition is capped at 2,000 entries; narrow the query
 when incomplete. Bodies and pages have byte budgets. Text reads retain the
 canonical file-read version and partial-read flags; `truncated=true` also covers
 remaining lines and output-budget clipping. Binary reads return current metadata;
-use the existing `project_artifact` image/export operations for image presentation
+use the existing `inspect_project_artifact` image/export operations for image presentation
 or download, with their ordinary policy and version fences. The Workbench does not
 save files into the Host.
 
@@ -74,7 +74,7 @@ scope requirement. Discovery still retains the existing discovery scope checks.
 
 ## App and OpenAI adapter
 
-`ui://webcodex/workbench/v1` is a separate App from the existing Project-bound
+`ui://webcodex/workbench/v2` is a separate App from the existing Project-bound
 Work Result card. With `{}`, the Workbench presents a Project chooser even when
 only one Project is visible. Named launch selectors are authorized and returned
 canonically. Overview reuses Work Result; files and outputs require explicit

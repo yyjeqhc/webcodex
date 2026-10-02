@@ -1484,7 +1484,9 @@ pub enum ToolCall {
     WorkOnProject {
         /// Existing Runtime Project selector. Prefer a Server-issued project_ref from prior bootstrap or
         /// discovery; canonical agent:<client_id>:<project_id>, client_id:project_id, and existing human
-        /// convenience forms remain accepted. Use project + instruction; do not combine with client_id/path.
+        /// convenience forms remain accepted. Required for fresh work unless client_id + path is supplied.
+        /// May be omitted for exact checkout resume with session_id; the authorized Session supplies its
+        /// bound Project, which is reauthorized. An explicit Project must still match. Do not combine with client_id/path.
         #[schemars(length(min = 1))]
         #[serde(default)]
         project: String,
@@ -1501,7 +1503,8 @@ pub enum ToolCall {
         path: Option<String>,
         #[schemars(extend("default" = "checkout"))]
         #[schemars(with = "Option<WorkOnProjectMode>")]
-        /// Optional bootstrap mode. Omitted or checkout preserves existing behavior exactly. With an
+        /// Optional bootstrap mode. Omitted or checkout permits exact session-only resume. worktree always
+        /// requires an explicit source Project or client_id + path; a Session never supplies that source. With an
         /// existing registered Project, worktree is the canonical model-facing path: the Server reauthorizes
         /// that Project and derives the authoritative Runner/source checkout before asking the Runner to create
         /// an isolated managed detached worktree. client_id + path remains a compatibility/bootstrap form and
@@ -1543,8 +1546,9 @@ pub enum ToolCall {
         #[serde(default = "default_true")]
         include_extension_catalog: bool,
         /// Optional explicit Workflow Session to continue exactly: canonical wc_sess_* or server-issued
-        /// principal-scoped session_ref (~sN). It must be active and accessible and
-        /// remains bound to its exact Project. Creating a managed worktree from an existing source Project is
+        /// principal-scoped session_ref (~sN). In checkout mode, session_id + instruction is sufficient:
+        /// the active accessible Session supplies its exact bound Project, with current Project authorization.
+        /// An explicit Project must match; refs grant no authority. Creating a managed worktree from an existing source Project is
         /// a fresh-Session transition: omit session_id, then continue using the returned managed Project/ref
         /// and its Session. A source Session is never retargeted to the new Project. The legacy client_id +
         /// path worktree form may re-observe an already registered managed Project on exact resume. Failure
@@ -5503,8 +5507,25 @@ fn validate_coding_project_source_shape(tool_name: &str, arguments: &Value) -> R
             "invalid arguments for tool '{tool_name}': missing path required with client_id"
         ));
     }
+    // A Session is an exact continuation selector, not a worktree source or
+    // permission to infer a current Project. The runtime authorizes its binding.
+    if arguments
+        .get("session_id")
+        .and_then(Value::as_str)
+        .is_some_and(|session_id| !session_id.trim().is_empty())
+        && arguments
+            .get("mode")
+            .and_then(Value::as_str)
+            .unwrap_or("checkout")
+            == "checkout"
+        && !arguments
+            .get("base_ref")
+            .is_some_and(|value| !value.is_null())
+    {
+        return Ok(());
+    }
     Err(format!(
-        "invalid arguments for tool '{tool_name}': missing project source; expected project or client_id + path"
+        "invalid arguments for tool '{tool_name}': missing project source; expected project or client_id + path, or session_id for exact checkout resume"
     ))
 }
 

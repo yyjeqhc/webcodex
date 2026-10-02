@@ -1,9 +1,11 @@
 //! Focused tests for the canonical `work_on_project` coding entry point.
 //!
-//! `work_on_project` validates one of two project sources plus the task inputs,
+//! `work_on_project` validates an explicit project source or exact checkout Session plus the task inputs,
 //! invokes the shared coding workflow engine, and projects a compact startup
 //! result. It never binds a current window, never guesses a recent Session, and
 //! never falls back to a credential-wide Session.
+
+mod session_resume;
 
 use super::reconnect::dispatch_coding_call_in_window;
 use super::support::*;
@@ -2776,6 +2778,21 @@ async fn workflow_resume_context_is_window_principal_scoped_bounded_and_non_auth
         .with_project_reference_database(window_db.clone());
     let project =
         register_runner_project_at_path(&runtime, "workflow-resume", "demo", root.path()).await;
+    let mut summary = named_registered_project(
+        "workflow-resume",
+        "demo",
+        "demo",
+        &root.path().to_string_lossy(),
+        2,
+    );
+    summary.root_fingerprint = Some(format!("wc_projroot_{}", "a".repeat(64)));
+    crate::test_support::apply_project_inventory_snapshot(
+        &runtime.runner_registry,
+        "workflow-resume",
+        "inst",
+        vec![summary],
+    )
+    .await;
     let auth = auth_context(None, true);
     let owner_authority = crate::tool_runtime::workflow_session_authority_fingerprint(Some(&auth))
         .expect("test auth has stable Workflow Session authority");
@@ -2835,6 +2852,27 @@ async fn workflow_resume_context_is_window_principal_scoped_bounded_and_non_auth
         .unwrap();
     assert_eq!(single["count"], 1);
     assert_eq!(single["candidates"][0]["session_id"], first.session_id);
+    let project_ref = single["candidates"][0]["project_ref"]
+        .as_str()
+        .expect("authorized Project with a root fingerprint should expose its short selector");
+    assert!(project_ref.starts_with("~p"));
+    assert_eq!(
+        runtime
+            .resolve_project_input_for_auth(project_ref, Some(&auth))
+            .await
+            .unwrap()
+            .resolved_id,
+        project
+    );
+    assert_eq!(single["selection"], "caller_must_choose_exact_session");
+    let mut without_refs = runtime.clone();
+    without_refs.project_reference_db = None;
+    let canonical_only = without_refs
+        .workflow_resume_context_projection_for_test(Some(&window), Some(&auth))
+        .await
+        .unwrap();
+    assert_eq!(canonical_only["candidates"][0]["project"], project);
+    assert!(canonical_only["candidates"][0].get("project_ref").is_none());
     let first_ref = single["candidates"][0]["session_ref"]
         .as_str()
         .expect("authorized discovery candidate should expose a short Session selector");
@@ -4095,7 +4133,7 @@ async fn work_on_project_continues_exact_session_and_appends_instruction() {
     let continued = dispatch_coding_call_in_window(
         &runtime,
         "wop-continue",
-        work_on_project_call(&project, "follow-up instruction", Some(&session_id)),
+        work_on_project_call("", "follow-up instruction", Some(&session_id)),
         Some(&auth),
         "wop-continue-window",
     )

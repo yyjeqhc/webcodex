@@ -2189,6 +2189,9 @@ impl RunnerRegistry {
         &self,
         auth: Option<&crate::RunnerAccess>,
     ) -> Vec<ShellJobRecord> {
+        #[cfg(any(test, feature = "root-test-support"))]
+        self.full_job_history_scan_count
+            .fetch_add(1, Ordering::Relaxed);
         let mut inner = self.inner.lock().await;
         let job_ids = inner.jobs_by_id.keys().cloned().collect::<Vec<_>>();
         for job_id in job_ids {
@@ -2260,9 +2263,20 @@ impl RunnerRegistry {
         &self,
         auth: Option<&crate::RunnerAccess>,
     ) -> HashMap<String, usize> {
+        self.active_job_summary_by_runner_for_auth(auth)
+            .await
+            .into_iter()
+            .map(|(id, counts)| (id, counts.active))
+            .collect()
+    }
+
+    pub async fn active_job_summary_by_runner_for_auth(
+        &self,
+        auth: Option<&crate::RunnerAccess>,
+    ) -> HashMap<String, crate::ActiveJobAggregate> {
         let mut inner = self.inner.lock().await;
         let ids = inner.jobs_by_id.active_ids();
-        let mut counts = HashMap::new();
+        let mut counts: HashMap<String, crate::ActiveJobAggregate> = HashMap::new();
         for id in ids {
             if !inner.jobs_by_id.get(&id).is_some_and(|job| {
                 job.visibility == ShellJobVisibility::Public
@@ -2276,7 +2290,16 @@ impl RunnerRegistry {
                 .get(&id)
                 .filter(|job| job.lifecycle.is_active())
             {
-                *counts.entry(job.client_id.clone()).or_insert(0) += 1;
+                let count = counts.entry(job.client_id.clone()).or_default();
+                count.active += 1;
+                count.running += usize::from(matches!(
+                    job.lifecycle,
+                    JobLifecycleState::Running | JobLifecycleState::StartedLegacy
+                ));
+                count.queued += usize::from(matches!(
+                    job.lifecycle,
+                    JobLifecycleState::Queued | JobLifecycleState::RunnerQueued
+                ));
             }
         }
         counts

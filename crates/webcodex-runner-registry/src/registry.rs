@@ -90,6 +90,8 @@ pub struct RunnerRegistry {
     #[cfg(any(test, feature = "root-test-support"))]
     pub(crate) project_job_candidate_refresh_count: Arc<std::sync::atomic::AtomicUsize>,
     #[cfg(any(test, feature = "root-test-support"))]
+    pub(crate) full_job_history_scan_count: Arc<std::sync::atomic::AtomicUsize>,
+    #[cfg(any(test, feature = "root-test-support"))]
     pub(crate) filtered_job_refresh_count: Arc<std::sync::atomic::AtomicUsize>,
 }
 
@@ -114,6 +116,8 @@ impl RunnerRegistry {
             project_job_scan_count: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             #[cfg(any(test, feature = "root-test-support"))]
             project_job_candidate_refresh_count: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            #[cfg(any(test, feature = "root-test-support"))]
+            full_job_history_scan_count: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             #[cfg(any(test, feature = "root-test-support"))]
             filtered_job_refresh_count: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         }
@@ -169,6 +173,12 @@ impl RunnerRegistry {
     #[cfg(any(test, feature = "root-test-support"))]
     pub fn project_job_candidate_refresh_count_for_test(&self) -> usize {
         self.project_job_candidate_refresh_count
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    #[cfg(any(test, feature = "root-test-support"))]
+    pub fn full_job_history_scan_count_for_test(&self) -> usize {
+        self.full_job_history_scan_count
             .load(std::sync::atomic::Ordering::Relaxed)
     }
 

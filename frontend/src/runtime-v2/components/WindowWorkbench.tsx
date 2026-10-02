@@ -330,7 +330,7 @@ export function WindowWorkbench({
           {windows.availability === "stale" && <div className="inventory-note">{t("Window activity refresh failed; showing previous observations.")}</div>}
           {(windows.availability === "error" || windows.availability === "denied") && <div className="empty-inline">{t("Window activity unavailable")}</div>}
           {windows.availability === "available" && !filtered.length && <div className="empty-panel"><Monitor size={18} /><strong>{t("No matching Windows")}</strong></div>}
-          {windows.truncated && <div className="inventory-note">{t("Window inventory is bounded; not all observed Windows are loaded.")}</div>}
+          {windows.truncated && <div className="inventory-note">{t("Window inventory is bounded; not all observed Windows are loaded.")} <button type="button" className="text-button" disabled={windows.loadingMore} onClick={windows.loadMore}>{t("Load more")} · {windows.windows.length} / {windows.total}</button></div>}
         </div>
       </aside>
 

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { fetchWindowDetail, fetchWindowPrimaryDetail, fetchWindows } from "../api/windows.js";
+import { fetchWindowDetail, fetchWindowPrimaryDetail } from "../api/windows.js";
+import { useWindowInventory } from "./useWindowInventory.js";
+import { useVisibleRefresh } from "./useVisibleRefresh.js";
 import type { RuntimeV2Client } from "../api/client.js";
 import type { Availability, WindowActivity, WindowDetail, WindowSummary } from "../model/types.js";
 
@@ -108,6 +110,9 @@ export type WindowWorkspaceState = {
   detailAvailability: Availability;
   detailHydrating: boolean;
   windows: WindowSummary[];
+  historicalWindows: WindowSummary[];
+  loadMore: () => void;
+  loadingMore: boolean;
   total: number;
   truncated: boolean;
   scope: "global" | "principal";
@@ -127,27 +132,22 @@ export function useWindowWorkspace(
     fullDetailRefreshMs?: number;
     loadDetail?: boolean;
     initialWindowKey?: string;
+    projects?: string[];
   } = {},
 ): WindowWorkspaceState {
   const refreshMs = options.refreshMs ?? 3_000;
-  const backgroundRefreshMs = options.backgroundRefreshMs ?? 15_000;
+  const inventory = useWindowInventory(client, enabled, onUnauthorized, { refreshMs, projects: options.projects });
+  const { availability, windows, total, truncated, scope, removeWindow } = inventory;
   const fullDetailRefreshMs = options.fullDetailRefreshMs ?? DEFAULT_FULL_DETAIL_REFRESH_MS;
   const loadDetail = options.loadDetail ?? true;
-  const [availability, setAvailability] = useState<Availability>("idle");
   const [detailAvailability, setDetailAvailability] = useState<Availability>("idle");
   const [detailHydrating, setDetailHydrating] = useState(false);
-  const [windows, setWindows] = useState<WindowSummary[]>([]);
-  const [total, setTotal] = useState(0);
-  const [truncated, setTruncated] = useState(false);
-  const [scope, setScope] = useState<"global" | "principal">("principal");
   const [selectedKey, setSelectedKey] = useState(options.initialWindowKey || "");
   const select = useCallback((key: string) => {
     setSelectedKey(key);
   }, []);
   const [detail, setDetail] = useState<WindowDetail | null>(null);
-  const [listRevision, setListRevision] = useState(0);
   const [detailRevision, setDetailRevision] = useState(0);
-  const listRequest = useRef<AbortController | null>(null);
   const detailRequest = useRef<AbortController | null>(null);
   const fullDetailRequest = useRef<{ key: string; controller: AbortController } | null>(null);
   const fullDetailLoadedKey = useRef("");
@@ -156,59 +156,22 @@ export function useWindowWorkspace(
   const fullDetailNeedsCatchup = useRef(false);
 
   const refresh = useCallback(() => {
-    // Poll list + lightweight primary detail independently. Full history has a
-    // much slower cadence and never blocks current activity from refreshing.
-    if (!listRequest.current) setListRevision((value) => value + 1);
-    if (!detailRequest.current) setDetailRevision((value) => value + 1);
-  }, []);
+    inventory.refresh();
+    if (!detailRequest.current) setDetailRevision(value => value + 1);
+  }, [inventory.refresh]);
 
   useEffect(() => {
-    listRequest.current?.abort();
-    listRequest.current = null;
-    if (!enabled) {
-      setAvailability("idle");
-      return;
+    setSelectedKey(current => current || String(windows[0]?.client_window_key || ""));
+  }, [windows]);
+
+  useEffect(() => {
+    if (availability === "denied") {
+      detailRequest.current?.abort(); detailRequest.current = null;
+      fullDetailRequest.current?.controller.abort(); fullDetailRequest.current = null;
+      setDetailHydrating(false);
+      setSelectedKey(""); setDetail(null); setDetailAvailability("denied");
     }
-    const controller = new AbortController();
-    listRequest.current = controller;
-    setAvailability((value) => (value === "idle" ? "loading" : value));
-    void fetchWindows(client, undefined, controller.signal).then((response) => {
-      if (listRequest.current !== controller || controller.signal.aborted || !response) return;
-      listRequest.current = null;
-      if (response.status === 401) {
-        onUnauthorized();
-        return;
-      }
-      if (response.status === 403) {
-        setWindows([]);
-        setTotal(0);
-        setTruncated(false);
-        setDetail(null);
-        setSelectedKey("");
-        setAvailability("denied");
-        setDetailAvailability("denied");
-        return;
-      }
-      if (!response.ok || !response.data) {
-        setAvailability((current) =>
-          current === "available" || current === "stale" ? "stale" : "error");
-        return;
-      }
-      const rows = response.data.windows || [];
-      setWindows(rows);
-      setTotal(Math.max(response.data.total || 0, rows.length));
-      setTruncated(Boolean(response.data.truncated));
-      setScope(response.data.visibility?.scope === "global" ? "global" : "principal");
-      setAvailability("available");
-      // Inventory is bounded and may omit a Window as its Runner/Project changes.
-      // Once selected, keep that exact communication target until the user selects another.
-      setSelectedKey((current) => current || String(rows[0]?.client_window_key || ""));
-    });
-    return () => {
-      controller.abort();
-      if (listRequest.current === controller) listRequest.current = null;
-    };
-  }, [client, enabled, onUnauthorized, listRevision]);
+  }, [availability]);
 
   const hydrateFullDetail = useCallback((key: string) => {
     if (!enabled || !loadDetail || !key || fullDetailRequest.current) return;
@@ -236,7 +199,7 @@ export function useWindowWorkspace(
       if (response.status === 404) {
         setDetail(null);
         setDetailAvailability("denied");
-        setWindows((current) => current.filter((row) => row.client_window_key !== key));
+        removeWindow(key);
         return;
       }
       if (!response.ok || !response.data || response.data.client_window_key !== key) {
@@ -249,7 +212,7 @@ export function useWindowWorkspace(
       setDetail((current) => mergeFullWindowDetail(current, response.data!));
       setDetailAvailability("available");
     });
-  }, [client, enabled, loadDetail, onUnauthorized]);
+  }, [client, enabled, loadDetail, onUnauthorized, removeWindow]);
 
   useEffect(() => {
     fullDetailRequest.current?.controller.abort();
@@ -293,7 +256,7 @@ export function useWindowWorkspace(
         setDetailHydrating(false);
         setDetail(null);
         setDetailAvailability("denied");
-        setWindows((current) => current.filter((row) => row.client_window_key !== selectedKey));
+        removeWindow(selectedKey);
         return;
       }
       if (!response.ok || !response.data || response.data.client_window_key !== selectedKey) {
@@ -326,47 +289,31 @@ export function useWindowWorkspace(
     hydrateFullDetail,
     loadDetail,
     onUnauthorized,
+    removeWindow,
     selectedKey,
   ]);
 
-  useEffect(() => {
-    return () => {
-      fullDetailRequest.current?.controller.abort();
-      fullDetailRequest.current = null;
-    };
+  const refreshDetail = useCallback(() => {
+    if (!detailRequest.current) setDetailRevision(value => value + 1);
   }, []);
-
-  useEffect(() => {
-    if (!enabled) return;
-    let timer: number | undefined;
-    const schedule = () => {
-      if (timer !== undefined) window.clearTimeout(timer);
-      const delay = document.visibilityState === "hidden" ? backgroundRefreshMs : refreshMs;
-      timer = window.setTimeout(() => {
-        refresh();
-        schedule();
-      }, delay);
-    };
-    const refreshNow = () => {
-      refresh();
-      schedule();
-    };
-    const onVisibilityChange = () => refreshNow();
-    refreshNow();
-    document.addEventListener("visibilitychange", onVisibilityChange);
-    window.addEventListener("focus", refreshNow);
-    return () => {
-      if (timer !== undefined) window.clearTimeout(timer);
-      document.removeEventListener("visibilitychange", onVisibilityChange);
-      window.removeEventListener("focus", refreshNow);
-    };
-  }, [backgroundRefreshMs, enabled, refresh, refreshMs]);
+  const pauseDetail = useCallback(() => {
+    detailRequest.current?.abort(); detailRequest.current = null;
+    fullDetailRequest.current?.controller.abort(); fullDetailRequest.current = null;
+    setDetailHydrating(false);
+  }, []);
+  useVisibleRefresh(enabled && loadDetail, refreshDetail, refreshMs, pauseDetail);
+  useEffect(() => () => {
+    fullDetailRequest.current?.controller.abort(); fullDetailRequest.current = null;
+  }, []);
 
   return {
     availability,
     detailAvailability,
     detailHydrating,
     windows,
+    historicalWindows: inventory.historicalWindows,
+    loadMore: inventory.loadMore,
+    loadingMore: inventory.loadingMore,
     total,
     truncated,
     scope,

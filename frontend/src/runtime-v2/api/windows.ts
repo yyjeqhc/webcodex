@@ -3,16 +3,16 @@ import type { RuntimeV2Client } from "./client.js";
 
 export const PRIMARY_WINDOW_ACTIVITY_LIMIT = 80;
 
-export function fetchWindows(
-  client: RuntimeV2Client,
-  project?: string,
-  signal?: AbortSignal,
-) {
-  return client.post<WindowsResponse>(
-    "windows",
-    { limit: 2_000, ...(project ? { project } : {}) },
-    signal,
-  );
+export const WINDOW_PAGE_SIZE = 50;
+export type WindowSelection = { projects?: string[]; query?: string; client_window_key?: string };
+
+export function fetchWindows(client: RuntimeV2Client, selection: WindowSelection & { offset?: number; limit?: number } = {}, signal?: AbortSignal) {
+  return client.post<WindowsResponse>("windows", { projection: "inventory", limit: WINDOW_PAGE_SIZE, ...selection }, signal);
+}
+
+export function fetchWindowLiveness(client: RuntimeV2Client, selection: WindowSelection = {}, signal?: AbortSignal) {
+  // The server bounds its in-flight registry independently of retained history.
+  return client.post<WindowsResponse>("windows", { projection: "liveness", ...selection }, signal);
 }
 
 export function fetchWindowPrimaryDetail(

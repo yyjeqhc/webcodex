@@ -7,11 +7,11 @@ use super::agent_attention::{
     AGENT_ATTENTION_EVENT_KIND_GOAL_WORKFLOW_STALLED,
 };
 use super::agent_wake::AgentWakeState;
-use super::communication::{
+use super::goal::{load_owned_goal, GoalCorrelationKind, GoalLifecycle};
+use super::store_primitives::{
     allocate_identity, store_error, validate_communication_principal, CommunicationPrincipal,
     CommunicationStoreError,
 };
-use super::goal::{load_owned_goal, GoalCorrelationKind, GoalLifecycle};
 use super::Database;
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use serde::Serialize;

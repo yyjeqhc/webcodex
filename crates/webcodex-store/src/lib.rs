@@ -25,6 +25,7 @@ mod connection_observation;
 mod external_observations;
 #[cfg(test)]
 mod external_observations_tests;
+mod store_primitives;
 pub use external_observations::{
     ExternalObservation, ExternalObservationError, MAX_EXTERNAL_OBSERVATIONS_PER_SESSION,
 };
@@ -91,14 +92,13 @@ pub use self::artifact_handoff::{
 };
 pub use self::communication::{
     AgentEndpointLifecycle, AgentEndpointMutation, AgentEndpointRecord, AgentIdentityMutation,
-    AgentIdentityPage, AgentInboxItem, AgentInboxPage, AgentProfilePatch, CommunicationPrincipal,
-    CommunicationStoreError, ConversationAccess, ConversationDetailRecord, ConversationLifecycle,
-    ConversationMessageMutation, ConversationMessageRecord, ConversationMutation, ConversationPage,
+    AgentIdentityPage, AgentInboxItem, AgentInboxPage, AgentProfilePatch, ConversationAccess,
+    ConversationDetailRecord, ConversationLifecycle, ConversationMessageMutation,
+    ConversationMessageRecord, ConversationMutation, ConversationPage,
     ConversationParticipantRecord, ConversationSummaryRecord, DeliveryConsumeResult,
     DurableAgentIdentity, McpAppEndpointRecovery, MessageAuthorRecord, MessageDeliveryRecord,
     MessageDeliveryState, NewAgentEndpoint, NewAgentIdentity, NewConversation,
-    NewConversationMessage, COMMUNICATION_PRINCIPAL_DIGEST_PREFIX, MAX_COMMUNICATION_LIST_LIMIT,
-    MAX_DURABLE_AGENTS,
+    NewConversationMessage, MAX_COMMUNICATION_LIST_LIMIT, MAX_DURABLE_AGENTS,
 };
 pub(crate) use self::connection_observation::StoreDomain;
 pub use self::goal::{
@@ -141,6 +141,9 @@ pub use self::peer_collaboration::{
 };
 pub use self::project_reference::{ProjectReferenceRecord, ProjectReferenceStoreError};
 pub use self::server_instance::ServerInstanceGuard;
+pub use self::store_primitives::{
+    CommunicationPrincipal, CommunicationStoreError, COMMUNICATION_PRINCIPAL_DIGEST_PREFIX,
+};
 pub use self::window_activity::{MAX_WINDOW_ACTIVITY_LIMIT, MAX_WINDOW_LINK_LIMIT};
 
 pub struct Database {

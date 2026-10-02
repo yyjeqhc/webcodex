@@ -1,8 +1,8 @@
 use super::agent_wake::{AgentWakeAttemptState, AgentWakeState};
 use super::communication::{
-    CommunicationPrincipal, NewAgentEndpoint, NewAgentIdentity, NewConversation,
-    NewConversationMessage,
+    NewAgentEndpoint, NewAgentIdentity, NewConversation, NewConversationMessage,
 };
+use super::store_primitives::CommunicationPrincipal;
 use super::Database;
 use crate::server_instance::ServerInstanceGuard;
 use rusqlite::params;

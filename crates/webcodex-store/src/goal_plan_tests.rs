@@ -1,6 +1,6 @@
-use super::communication::{CommunicationPrincipal, COMMUNICATION_PRINCIPAL_DIGEST_PREFIX};
 use super::goal::{GoalLifecycle, GoalPatch, NewGoal};
 use super::goal_plan::*;
+use super::store_primitives::{CommunicationPrincipal, COMMUNICATION_PRINCIPAL_DIGEST_PREFIX};
 use super::Database;
 use rusqlite::params;
 

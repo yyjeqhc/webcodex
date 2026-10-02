@@ -1,9 +1,10 @@
 use super::agent_task::{
     AGENT_TASK_ATTEMPT_FENCE_PREFIX, AGENT_TASK_ATTEMPT_ID_PREFIX, AGENT_TASK_ID_PREFIX,
 };
-use super::communication::{
+use super::communication::DURABLE_AGENT_ID_PREFIX;
+use super::store_primitives::{
     validate_communication_principal, validate_id, validate_proof, CommunicationPrincipal,
-    CommunicationStoreError, DURABLE_AGENT_ID_PREFIX,
+    CommunicationStoreError,
 };
 use super::{Database, StoreDomain};
 use rusqlite::{params, OptionalExtension, TransactionBehavior};

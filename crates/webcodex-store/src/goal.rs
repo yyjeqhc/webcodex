@@ -1,9 +1,10 @@
 use super::agent_task::AGENT_TASK_ID_PREFIX;
-use super::communication::{
-    allocate_identity, digest_json, digest_text, now_unix_ms, validate_communication_principal,
-    validate_id, CommunicationPrincipal, CommunicationStoreError, DURABLE_AGENT_ID_PREFIX,
-};
+use super::communication::DURABLE_AGENT_ID_PREFIX;
 use super::goal_plan::{GoalCheckpoint, GoalPlan, NewGoalStep, MAX_GOAL_PLAN_BYTES};
+use super::store_primitives::{
+    allocate_identity, digest_json, digest_text, now_unix_ms, validate_communication_principal,
+    validate_id, CommunicationPrincipal, CommunicationStoreError,
+};
 use super::Database;
 use rusqlite::{
     params, types::Type, Connection, OptionalExtension, Transaction, TransactionBehavior,
@@ -1150,7 +1151,7 @@ fn validate_goal_principal(principal: &CommunicationPrincipal) -> Result<(), Goa
 }
 
 fn map_communication_validation_error(
-    error: super::communication::CommunicationStoreError,
+    error: super::store_primitives::CommunicationStoreError,
 ) -> GoalStoreError {
     GoalStoreError::new(error.code(), error.message())
 }

@@ -1,12 +1,12 @@
 use super::agent_task::{AgentTaskState, AGENT_TASK_ID_PREFIX};
 use super::agent_wake::{AgentWakeState, AGENT_WAKE_ID_PREFIX};
-use super::communication::{
-    allocate_identity, digest_json, digest_text, lookup_idempotent_resource, now_unix_ms,
-    record_idempotent_resource, require_agent_owner, require_current_endpoint, store_error,
-    validate_communication_principal, validate_id, validate_idempotency_key,
-    CommunicationPrincipal, CommunicationStoreError,
-};
+use super::communication::{require_agent_owner, require_current_endpoint};
 use super::goal::GOAL_ID_PREFIX;
+use super::store_primitives::{
+    allocate_identity, digest_json, digest_text, lookup_idempotent_resource, now_unix_ms,
+    record_idempotent_resource, store_error, validate_communication_principal, validate_id,
+    validate_idempotency_key, CommunicationPrincipal, CommunicationStoreError,
+};
 use super::Database;
 use rusqlite::{
     params, types::Type, Connection, OptionalExtension, Transaction, TransactionBehavior,

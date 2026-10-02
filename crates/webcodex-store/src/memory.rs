@@ -1142,7 +1142,7 @@ impl Database {
             now,
             project_count == 0,
         )?;
-        let memory_id = super::communication::allocate_identity(
+        let memory_id = super::store_primitives::allocate_identity(
             &tx,
             MEMORY_ID_PREFIX,
             "SELECT EXISTS(SELECT 1 FROM project_memories WHERE memory_id = ?1)",

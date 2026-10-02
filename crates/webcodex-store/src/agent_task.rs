@@ -5,11 +5,14 @@ use super::agent_wake::{
     WAKE_TRIGGER_AGENT_TASK_ATTEMPT,
 };
 use super::communication::{
-    allocate_identity, authorize_conversation_access, digest_json, digest_text,
-    lookup_idempotent_resource, new_proof, now_unix_ms, record_idempotent_resource, store_error,
-    validate_communication_principal, validate_id, validate_idempotency_key, validate_proof,
-    CommunicationPrincipal, CommunicationStoreError, ConversationAccess, CONVERSATION_ID_PREFIX,
+    authorize_conversation_access, ConversationAccess, CONVERSATION_ID_PREFIX,
     CONVERSATION_MESSAGE_ID_PREFIX, DURABLE_AGENT_ID_PREFIX,
+};
+use super::store_primitives::{
+    allocate_identity, digest_json, digest_text, lookup_idempotent_resource, new_proof,
+    now_unix_ms, record_idempotent_resource, store_error, validate_communication_principal,
+    validate_id, validate_idempotency_key, validate_proof, CommunicationPrincipal,
+    CommunicationStoreError,
 };
 use super::Database;
 use rusqlite::{
@@ -42,3 +45,10 @@ const OP_COMPLETE_AGENT_TASK_ATTEMPT: &str = "complete_agent_task_attempt";
 include!("agent_task/models.rs");
 include!("agent_task/operations.rs");
 include!("agent_task/invariants.rs");
+
+mod completion;
+mod endpoint_loss;
+pub(super) use endpoint_loss::{
+    clear_endpoint_execution_bindings_for_endpoint_loss_in_transaction,
+    fence_agent_task_controllers_for_endpoint_loss,
+};

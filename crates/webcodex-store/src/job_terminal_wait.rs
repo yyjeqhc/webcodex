@@ -1,4 +1,4 @@
-use super::communication::digest_json;
+use super::store_primitives::digest_json;
 use super::Database;
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use serde::{Deserialize, Serialize};

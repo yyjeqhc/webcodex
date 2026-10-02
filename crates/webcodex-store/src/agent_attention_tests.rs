@@ -3,11 +3,9 @@ use super::agent_attention::{
 };
 use super::agent_task::{AgentTaskState, NewAgentTask};
 use super::agent_wake::{AgentWakeState, AGENT_WAKE_ID_PREFIX, WAKE_TRIGGER_ATTENTION_EVENT};
-use super::communication::{
-    CommunicationPrincipal, NewAgentEndpoint, NewAgentIdentity,
-    COMMUNICATION_PRINCIPAL_DIGEST_PREFIX,
-};
+use super::communication::{NewAgentEndpoint, NewAgentIdentity};
 use super::goal::{GoalCorrelationKind, GoalLifecycle, GoalPatch, NewGoal, MAX_GOAL_CORRELATIONS};
+use super::store_primitives::{CommunicationPrincipal, COMMUNICATION_PRINCIPAL_DIGEST_PREFIX};
 use super::Database;
 use rusqlite::params;
 

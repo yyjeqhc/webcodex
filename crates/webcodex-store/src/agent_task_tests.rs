@@ -5,10 +5,10 @@ use super::agent_wait::{
 };
 use super::agent_wake::{AgentWakeState, AGENT_WAKE_CONSUME_TOKEN_PREFIX};
 use super::communication::{
-    CommunicationPrincipal, NewAgentEndpoint, NewAgentIdentity, NewConversation,
-    NewConversationMessage, COMMUNICATION_PRINCIPAL_DIGEST_PREFIX,
+    NewAgentEndpoint, NewAgentIdentity, NewConversation, NewConversationMessage,
 };
 use super::goal::{GoalCorrelationKind, GoalLifecycle, NewGoal};
+use super::store_primitives::{CommunicationPrincipal, COMMUNICATION_PRINCIPAL_DIGEST_PREFIX};
 use super::Database;
 use crate::server_instance::ServerInstanceGuard;
 use rusqlite::params;

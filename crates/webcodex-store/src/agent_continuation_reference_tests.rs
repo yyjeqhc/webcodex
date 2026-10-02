@@ -1,4 +1,4 @@
-use super::communication::CommunicationPrincipal;
+use super::store_primitives::CommunicationPrincipal;
 use super::Database;
 
 fn principal_with_kind(kind: &str, hex: char) -> CommunicationPrincipal {

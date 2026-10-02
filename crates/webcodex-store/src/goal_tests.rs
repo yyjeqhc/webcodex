@@ -1,8 +1,6 @@
-use super::communication::{
-    CommunicationPrincipal, NewAgentIdentity, COMMUNICATION_PRINCIPAL_DIGEST_PREFIX,
-    DURABLE_AGENT_ID_PREFIX,
-};
+use super::communication::{NewAgentIdentity, DURABLE_AGENT_ID_PREFIX};
 use super::goal::*;
+use super::store_primitives::{CommunicationPrincipal, COMMUNICATION_PRINCIPAL_DIGEST_PREFIX};
 use super::Database;
 
 const T0: i64 = 10_000;

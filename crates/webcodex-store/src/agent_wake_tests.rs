@@ -1,9 +1,9 @@
 use super::agent_task::NewAgentTask;
 use super::agent_wake::{AgentWakeAttemptState, AgentWakeState};
 use super::communication::{
-    CommunicationPrincipal, ConversationAccess, NewAgentEndpoint, NewAgentIdentity,
-    NewConversation, NewConversationMessage,
+    ConversationAccess, NewAgentEndpoint, NewAgentIdentity, NewConversation, NewConversationMessage,
 };
+use super::store_primitives::CommunicationPrincipal;
 use super::Database;
 use rusqlite::params;
 

@@ -1227,7 +1227,6 @@ impl Database {
     ) -> Result<AgentTaskAttemptCompletionMutation, CommunicationStoreError> {
         let task_id = authority.task_id;
         let attempt_id = authority.attempt_id;
-        let assignee_agent_id = authority.assignee_agent_id;
         if !outcome.terminal() {
             return Err(CommunicationStoreError::new(
                 "invalid_agent_task_completion_outcome",
@@ -1286,56 +1285,9 @@ impl Database {
             });
         }
 
-        let _attempt = require_current_attempt(&transaction, &task, authority, now)?;
-        let attempt_state = match outcome {
-            AgentTaskState::Succeeded => AgentTaskAttemptState::Succeeded,
-            AgentTaskState::Failed => AgentTaskAttemptState::Failed,
-            AgentTaskState::Ready | AgentTaskState::Active => {
-                unreachable!("validated terminal outcome")
-            }
-        };
-        transaction
-            .execute(
-                "UPDATE wc_agent_task_attempts
-                 SET state = ?2, terminal_at_unix_ms = ?3,
-                     terminal_result = ?4, terminal_reason = ?5
-                 WHERE attempt_id = ?1",
-                params![
-                    attempt_id,
-                    attempt_state.as_str(),
-                    now,
-                    terminal_result,
-                    terminal_reason,
-                ],
-            )
-            .map_err(store_error)?;
-        transaction
-            .execute(
-                "UPDATE wc_agent_tasks
-                 SET state = ?2, terminal_attempt_id = ?3, terminal_at_unix_ms = ?4,
-                     updated_at_unix_ms = MAX(updated_at_unix_ms, ?4)
-                 WHERE task_id = ?1",
-                params![task_id, outcome.as_str(), attempt_id, now],
-            )
-            .map_err(store_error)?;
-        retire_pre_dispatch_endpoint_execution_for_attempt(&transaction, attempt_id, now)?;
-        let (attention_event_count, attention_target_agent_ids) =
-            create_agent_task_terminal_attention_in_transaction(
-                &transaction,
-                principal,
-                task_id,
-                attempt_id,
-                assignee_agent_id,
-                outcome,
-                now,
-            )?;
-        let wait_matches = record_agent_task_terminal_wait_matches_in_transaction(
-            &transaction,
-            principal,
-            task_id,
-            attempt_id,
-            outcome,
-            now,
+        let effects = completion::complete_attempt_in_transaction(
+            &transaction, principal, &task, authority, outcome,
+            terminal_result.as_deref(), terminal_reason.as_deref(), now,
         )?;
         record_idempotent_resource(
             &transaction,
@@ -1360,9 +1312,9 @@ impl Database {
             attempt: attempt.record(now),
             replayed: false,
             state_changed: true,
-            attention_event_count,
-            attention_target_agent_ids,
-            wait_target_agent_ids: wait_matches.schedule_agent_ids,
+            attention_event_count: effects.attention_event_count,
+            attention_target_agent_ids: effects.attention_target_agent_ids,
+            wait_target_agent_ids: effects.wait_target_agent_ids,
         })
     }
 

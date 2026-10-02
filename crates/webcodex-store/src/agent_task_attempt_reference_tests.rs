@@ -1,7 +1,6 @@
 use super::agent_task::{NewAgentTask, DEFAULT_AGENT_TASK_ATTEMPT_LEASE_MS};
-use super::communication::{
-    CommunicationPrincipal, NewAgentIdentity, COMMUNICATION_PRINCIPAL_DIGEST_PREFIX,
-};
+use super::communication::NewAgentIdentity;
+use super::store_primitives::{CommunicationPrincipal, COMMUNICATION_PRINCIPAL_DIGEST_PREFIX};
 use super::Database;
 
 const T0: i64 = 1_000_000;

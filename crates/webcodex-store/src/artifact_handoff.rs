@@ -5,7 +5,7 @@
 //! destination authority, mandatory expiry, and idempotency identity that the
 //! existing snapshot-fenced transfer path can consume later.
 
-use super::communication::{
+use super::store_primitives::{
     digest_json, digest_text, validate_communication_principal, CommunicationPrincipal,
 };
 use super::Database;

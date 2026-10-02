@@ -1,4 +1,5 @@
 use super::communication::*;
+use super::store_primitives::*;
 use super::Database;
 use std::sync::{Arc, Barrier};
 

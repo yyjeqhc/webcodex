@@ -1,10 +1,10 @@
 use super::agent_task::AgentTaskState;
 use super::agent_wait::goal_scoped_wait_owns_terminal_attention_in_transaction;
 use super::agent_wake::{AGENT_WAKE_ID_PREFIX, WAKE_TRIGGER_ATTENTION_EVENT};
-use super::communication::{
+use super::goal::MAX_GOAL_CORRELATIONS;
+use super::store_primitives::{
     allocate_identity, store_error, CommunicationPrincipal, CommunicationStoreError,
 };
-use super::goal::MAX_GOAL_CORRELATIONS;
 use super::Database;
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 

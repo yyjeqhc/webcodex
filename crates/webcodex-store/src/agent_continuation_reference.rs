@@ -1,6 +1,6 @@
-use super::communication::{
+use super::communication::{AGENT_ENDPOINT_ID_PREFIX, DURABLE_AGENT_ID_PREFIX};
+use super::store_primitives::{
     validate_communication_principal, validate_id, CommunicationPrincipal, CommunicationStoreError,
-    AGENT_ENDPOINT_ID_PREFIX, DURABLE_AGENT_ID_PREFIX,
 };
 use super::{Database, StoreDomain};
 use rusqlite::{params, OptionalExtension, TransactionBehavior};

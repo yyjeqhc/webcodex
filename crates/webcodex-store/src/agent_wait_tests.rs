@@ -1,11 +1,9 @@
-use super::agent_task::{AgentTaskAttemptStartMutation, NewAgentTask};
+use super::agent_task::{AgentTaskAttemptStartMutation, AgentTaskState, NewAgentTask};
 use super::agent_wait::*;
 use super::agent_wake::AgentWakeState;
-use super::communication::{
-    CommunicationPrincipal, NewAgentEndpoint, NewAgentIdentity,
-    COMMUNICATION_PRINCIPAL_DIGEST_PREFIX,
-};
+use super::communication::{NewAgentEndpoint, NewAgentIdentity};
 use super::goal::{GoalLifecycle, GoalPatch, NewGoal};
+use super::store_primitives::{CommunicationPrincipal, COMMUNICATION_PRINCIPAL_DIGEST_PREFIX};
 use super::Database;
 
 fn principal(hex: char) -> CommunicationPrincipal {
@@ -1041,6 +1039,93 @@ fn all_wait_records_partial_matches_without_wake_and_triggers_once_on_final_matc
 }
 
 #[test]
+fn wait_write_failure_rolls_back_task_attention_and_completion_replay_together() {
+    let temp = tempfile::tempdir().unwrap();
+    let db = Database::open(&temp.path().join("completion-atomic.db")).unwrap();
+    let owner = principal('a');
+    let worker = agent(&db, &owner, "atomic-worker");
+    let watcher = agent(&db, &owner, "atomic-watcher");
+    let endpoint = endpoint(&db, &owner, &watcher, "atomic-view");
+    let task_id = task(&db, &owner, &worker, "atomic");
+    let started = start(&db, &owner, &task_id, &worker, "atomic");
+    let goal_id = goal(&db, &owner, Some(&watcher), "atomic");
+    correlate_goal_task(&db, &owner, &goal_id, &task_id, "atomic");
+    let wait = db
+        .create_agent_wait(
+            &owner,
+            wait_input(
+                &watcher,
+                &endpoint,
+                std::slice::from_ref(&task_id),
+                "atomic-wait",
+            ),
+        )
+        .unwrap()
+        .agent_wait;
+    db.conn_for_tests()
+        .execute_batch(
+            "CREATE TRIGGER fail_completion_wait BEFORE INSERT ON wc_agent_wait_matches
+         BEGIN SELECT RAISE(ABORT, 'forced Wait match failure'); END;",
+        )
+        .unwrap();
+    let finish = || {
+        db.complete_agent_task_attempt(
+            &owner,
+            &task_id,
+            &started.attempt.attempt_id,
+            &worker,
+            &started.attempt_fence,
+            started.attempt.attempt_controller_generation,
+            AgentTaskState::Succeeded,
+            Some("result"),
+            None,
+            "atomic-completion",
+        )
+    };
+    assert!(finish().is_err());
+    let states: (String, String) = db
+        .conn_for_tests()
+        .query_row(
+            "SELECT t.state, a.state FROM wc_agent_tasks t
+         JOIN wc_agent_task_attempts a ON a.task_id = t.task_id
+         WHERE t.task_id = ?1 AND a.attempt_id = ?2",
+            rusqlite::params![task_id, started.attempt.attempt_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(states, ("active".into(), "active".into()));
+    assert_eq!(attention_event_count(&db, &goal_id, &task_id), 0);
+    assert_eq!(attention_wake_count(&db, &goal_id, &task_id), 0);
+    let unchanged_wait = db.read_agent_wait(&owner, &wait.wait_id).unwrap();
+    assert_eq!(unchanged_wait.state, AgentWaitState::Waiting);
+    assert_eq!(unchanged_wait.match_count, 0);
+    db.conn_for_tests()
+        .execute_batch("DROP TRIGGER fail_completion_wait;")
+        .unwrap();
+    let retry = finish().unwrap();
+    assert!(
+        !retry.replayed,
+        "failed transaction must not retain its replay receipt"
+    );
+    assert_eq!(retry.attention_event_count, 1);
+    assert_eq!(retry.wait_target_agent_ids, vec![watcher]);
+    assert_eq!(attention_event_count(&db, &goal_id, &task_id), 1);
+    assert_eq!(
+        db.read_agent_wait(&owner, &wait.wait_id)
+            .unwrap()
+            .match_count,
+        1
+    );
+    assert!(finish().unwrap().replayed);
+    assert_eq!(
+        db.read_agent_wait(&owner, &wait.wait_id)
+            .unwrap()
+            .match_count,
+        1
+    );
+}
+
+#[test]
 fn all_wait_registration_snapshots_mixed_and_complete_terminal_sets_atomically() {
     let temp = tempfile::tempdir().unwrap();
     let db = Database::open(&temp.path().join("wait-all-registration.db")).unwrap();
@@ -1134,7 +1219,7 @@ fn any_request_hash_stays_v1_compatible_and_same_key_all_conflicts() {
     assert!(replay.replayed);
     assert_eq!(replay.agent_wait.wait_id, created.agent_wait.wait_id);
 
-    let expected_v1_hash = super::communication::digest_json(
+    let expected_v1_hash = super::store_primitives::digest_json(
         "webcodex.agent-wait.request.v1",
         &serde_json::json!({
             "agent_id": input.target_agent_id,

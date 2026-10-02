@@ -87,6 +87,8 @@ export interface PluginToolDefinition {
   readonly inputSchema: ObjectSchemaShape;
   readonly outputSchema?: ObjectSchemaShape;
   readonly annotations?: JsonObject;
+  /** Require an explicitly authorized, launch-cwd-matched WebCodex Project binding. Not a sandbox. */
+  readonly projectBound?: boolean;
 }
 
 export interface TextContent {
@@ -136,6 +138,8 @@ export interface DefineToolOptions<
   readonly inputSchema: TInput;
   readonly outputSchema?: TOutput;
   readonly annotations?: JsonObject;
+  /** Require an explicitly authorized, launch-cwd-matched WebCodex Project binding. Not a sandbox. */
+  readonly projectBound?: boolean;
   readonly execute: (
     args: InferSchema<TInput>,
   ) => MaybePromise<ToolResult<NoInfer<OutputValue<TOutput>>>>;
@@ -179,10 +183,12 @@ function cloneDefinition(
     inputSchema: ObjectSchemaShape;
     outputSchema?: ObjectSchemaShape;
     annotations?: JsonObject;
+    projectBound?: boolean;
   } = {
     name: options.name,
     inputSchema: cloneAndFreezeJson(options.inputSchema as unknown as JsonValue) as unknown as ObjectSchemaShape,
   };
+  if (options.projectBound === true) definition.projectBound = true;
   if (options.title !== undefined) definition.title = options.title;
   if (options.description !== undefined) definition.description = options.description;
   if (options.outputSchema !== undefined) {

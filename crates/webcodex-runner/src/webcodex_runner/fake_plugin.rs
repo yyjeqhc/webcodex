@@ -242,6 +242,9 @@ fn main() -> io::Result<()> {
                 } else {
                     ""
                 };
+                let project_binding = if scenario.starts_with("project_bound") {
+                    r#","projectBound":true"#
+                } else { "" };
                 let annotations = match scenario {
                     "project_repo_context" => r#","annotations":{"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false}"#,
                     "project_safe_delete" => r#","annotations":{"readOnlyHint":false,"destructiveHint":true,"idempotentHint":false,"openWorldHint":true}"#,
@@ -277,7 +280,7 @@ fn main() -> io::Result<()> {
                 send(
                     &mut writer,
                     &format!(
-                        r#"{{"jsonrpc":"2.0","id":{id},"result":{{"tools":[{{"name":"{tool_name}"{tool_title},"description":"Native plugin echo","inputSchema":{{"type":"object","description":"{startup_padding}","properties":{{"value":{{"type":"{value_type}"}}}}}}{output_schema}{annotations}}}]}}}}"#
+                        r#"{{"jsonrpc":"2.0","id":{id},"result":{{"tools":[{{"name":"{tool_name}"{tool_title}{project_binding},"description":"Native plugin echo","inputSchema":{{"type":"object","description":"{startup_padding}","properties":{{"value":{{"type":"{value_type}"}}}}}}{output_schema}{annotations}}}]}}}}"#
                     ),
                 )?;
                 if matches!(
@@ -309,6 +312,13 @@ fn main() -> io::Result<()> {
                     "timeout" => thread::sleep(Duration::from_secs(3)),
                     "split_timeout" => {
                         thread::sleep(Duration::from_millis(750));
+                        send_result(&mut writer, id, calls)?;
+                    }
+                    "project_bound_hold" => {
+                        let release = marker.expect("hold fixture marker").with_extension("release");
+                        while !release.exists() {
+                            thread::sleep(Duration::from_millis(10));
+                        }
                         send_result(&mut writer, id, calls)?;
                     }
                     "slow" => {

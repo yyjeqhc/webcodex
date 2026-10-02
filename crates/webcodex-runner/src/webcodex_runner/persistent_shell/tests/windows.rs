@@ -258,6 +258,7 @@ fn windows_launch_uses_configured_powershell_profile_and_rejects_payload_modes()
         ..ShellConfig::default()
     };
     let project = RunnerProjectShellContext {
+        allow_patch: true,
         id: "demo".to_string(),
         path: cwd.to_string_lossy().to_string(),
         shell_profile: Some("modern".to_string()),
@@ -292,6 +293,7 @@ fn windows_launch_uses_configured_powershell_profile_and_rejects_payload_modes()
         explicit.client_id.as_str(),
         explicit.persistent_shell.as_ref().unwrap(),
         &RunnerProjectShellContext {
+            allow_patch: true,
             id: "demo".to_string(),
             path: cwd.to_string_lossy().to_string(),
             shell_profile: None,
@@ -305,6 +307,7 @@ fn windows_launch_uses_configured_powershell_profile_and_rejects_payload_modes()
     let mut invalid_shell = ShellConfig::default();
     invalid_shell.args = vec!["-NoProfile".to_string()];
     let default_project = RunnerProjectShellContext {
+        allow_patch: true,
         id: "demo".to_string(),
         path: cwd.to_string_lossy().to_string(),
         shell_profile: None,

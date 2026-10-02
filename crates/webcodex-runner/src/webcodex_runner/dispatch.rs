@@ -420,7 +420,9 @@ pub(crate) fn dispatch_request_with_outcome(
                         .plugins()
                         .handle_project_catalog(&project_id, project_registry_dir)
                 }
-                operation => runtime.plugins().handle(operation),
+                operation => runtime
+                    .plugins()
+                    .handle_with_project_registry(operation, project_registry_dir),
             };
             sink.submit_plugin_gateway_result(request_id, response)
                 .map(|_| true)

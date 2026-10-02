@@ -162,6 +162,7 @@ fn load_runner_project_shell_contexts_from_dir(dir: &Path) -> Vec<RunnerProjectS
         projects.push(RunnerProjectShellContext {
             id: project.id,
             path: project.path,
+            allow_patch: project.allow_patch,
             shell_profile: project.shell_profile,
         });
     }

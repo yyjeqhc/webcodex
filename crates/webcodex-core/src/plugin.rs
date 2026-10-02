@@ -57,7 +57,18 @@ pub enum PluginGatewayRequest {
         name: String,
         arguments: Value,
         expected_schema: PluginSchemaObservation,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        project_target: Option<PluginProjectTarget>,
     },
+}
+
+/// Server-authorized exact Project observation. The Runner rechecks its local
+/// registry and the provider's launch cwd before dispatch; this is not a sandbox.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PluginProjectTarget {
+    pub project_id: String,
+    pub root_fingerprint: String,
 }
 
 impl PluginGatewayRequest {
@@ -92,6 +103,13 @@ pub enum PluginDispatchState {
 #[serde(deny_unknown_fields)]
 pub struct PluginTool {
     pub name: String,
+    /// Authority requirement, deliberately not an advisory annotation.
+    #[serde(
+        default,
+        rename = "projectBound",
+        skip_serializing_if = "std::ops::Not::not"
+    )]
+    pub project_bound: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -111,6 +129,12 @@ pub struct PluginTool {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PluginSchemaObservation {
+    #[serde(
+        default,
+        rename = "projectBound",
+        skip_serializing_if = "std::ops::Not::not"
+    )]
+    pub project_bound: bool,
     #[serde(rename = "inputSchema")]
     pub input_schema: Value,
     #[serde(
@@ -126,6 +150,7 @@ pub struct PluginSchemaObservation {
 impl PluginTool {
     pub fn schema_observation(&self) -> PluginSchemaObservation {
         PluginSchemaObservation {
+            project_bound: self.project_bound,
             input_schema: self.input_schema.clone(),
             output_schema: self.output_schema.clone(),
             annotations: self.annotations.clone(),
@@ -471,8 +496,18 @@ pub fn validate_request(request: &PluginGatewayRequest) -> Result<(), String> {
             name,
             arguments,
             expected_schema,
-            ..
+            project_target,
         } => {
+            if let Some(target) = project_target {
+                for value in [&target.project_id, &target.root_fingerprint] {
+                    if value.trim().is_empty()
+                        || value.len() > 512
+                        || value.chars().any(char::is_control)
+                    {
+                        return Err("invalid Plugin Project target".to_string());
+                    }
+                }
+            }
             validate_provider_id(provider_id)?;
             validate_provider_instance_id(provider_instance_id)?;
             validate_tool_name(name)?;
@@ -1500,6 +1535,7 @@ mod tests {
 
     fn tool() -> PluginTool {
         PluginTool {
+            project_bound: false,
             name: "echo".to_string(),
             title: None,
             description: Some("Echo input".to_string()),
@@ -1507,6 +1543,45 @@ mod tests {
             output_schema: None,
             annotations: None,
         }
+    }
+
+    #[test]
+    fn project_bound_is_authority_metadata_and_part_of_the_schema_fence() {
+        let ordinary = tool();
+        let mut bound = ordinary.clone();
+        bound.project_bound = true;
+        assert_ne!(ordinary.schema_observation(), bound.schema_observation());
+        assert_eq!(serde_json::to_value(&bound).unwrap()["projectBound"], true);
+        assert!(serde_json::to_value(&ordinary)
+            .unwrap()
+            .get("projectBound")
+            .is_none());
+        let decoded: PluginTool =
+            serde_json::from_value(serde_json::to_value(&bound).unwrap()).unwrap();
+        assert!(decoded.project_bound);
+    }
+
+    #[test]
+    fn exact_project_target_is_bounded_and_does_not_accept_caller_metadata() {
+        for (project_id, root_fingerprint) in
+            [("", "root"), ("project", ""), ("bad\nproject", "root")]
+        {
+            let request = PluginGatewayRequest::ToolsCall {
+                project_target: Some(PluginProjectTarget {
+                    project_id: project_id.into(),
+                    root_fingerprint: root_fingerprint.into(),
+                }),
+                provider_id: "repo-tools".into(),
+                provider_instance_id: "instance_1".into(),
+                name: "echo".into(),
+                arguments: json!({}),
+                expected_schema: tool().schema_observation(),
+            };
+            assert!(validate_request(&request).is_err());
+        }
+        assert!(serde_json::from_value::<PluginProjectTarget>(json!({
+            "project_id":"project", "root_fingerprint":"root", "_meta":{"openai/session":"not-authority"}
+        })).is_err());
     }
 
     #[test]
@@ -1518,6 +1593,7 @@ mod tests {
     #[test]
     fn request_requires_object_arguments_and_bounded_schema() {
         let request = PluginGatewayRequest::ToolsCall {
+            project_target: None,
             provider_id: "repo-tools".to_string(),
             provider_instance_id: "instance_1".to_string(),
             name: "echo".to_string(),

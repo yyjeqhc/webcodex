@@ -7,9 +7,9 @@ import {
   defineTool,
   errorResult,
   schema,
+  servePlugin,
   textResult,
 } from "../dist/index.js";
-import { servePlugin } from "../dist/runtime.js";
 
 function deferred() {
   let resolve;
@@ -49,6 +49,17 @@ async function serveLines(plugin, lines) {
     stderr: error.read(),
   };
 }
+
+test("projectBound is frozen authority metadata on the native catalog, not an annotation", async () => {
+  const options = { name: "bound", projectBound: true, inputSchema: schema.object({}), execute: () => textResult("ok") };
+  const bound = defineTool(options);
+  options.projectBound = false;
+  const ordinary = defineTool({ name: "ordinary", inputSchema: schema.object({}), execute: () => textResult("ok") });
+  const listed = await serveLines(definePlugin({ tools: [bound, ordinary] }), [JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }) + "\n"]);
+  assert.equal(listed.responses[0].result.tools[0].projectBound, true);
+  assert.equal("projectBound" in listed.responses[0].result.tools[1], false);
+  assert.equal("annotations" in listed.responses[0].result.tools[0], false);
+});
 
 test("tools/call supports synchronous and asynchronous handlers", async () => {
   const sync = defineTool({

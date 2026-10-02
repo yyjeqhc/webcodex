@@ -55,14 +55,31 @@ pub struct PluginToolCall {
     #[schemars(regex(pattern = "^wc_pbind_[A-Za-z0-9_-]{21}[AQgw]$"))]
     #[serde(default)]
     pub binding: Option<String>,
+    /// Exact Project required by projectBound on describe; calls recheck write authority and root, not a sandbox.
+    #[schemars(length(min = 1, max = 512))]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
     /// Plugin tool arguments matching the schema observed by describe; encoded payload is bounded to
     /// 65536 bytes.
     #[serde(default)]
     pub arguments: Option<Value>,
 }
 
+#[cfg(test)]
+#[path = "plugin_project_tests.rs"]
+mod plugin_project_tests;
+
 impl PluginToolCall {
     fn validate(&self) -> Result<(), String> {
+        if let Some(project) = self.project.as_deref() {
+            if self.action != PluginToolAction::Describe
+                || project.trim().is_empty()
+                || project.len() > 512
+                || project.chars().any(char::is_control)
+            {
+                return Err("project must be an exact bounded Project on action=describe".to_string());
+            }
+        }
         let valid_runner = |runner: &str| {
             !runner.trim().is_empty()
                 && runner.len() <= 128

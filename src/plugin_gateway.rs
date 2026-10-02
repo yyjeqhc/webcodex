@@ -24,6 +24,9 @@ use std::time::Duration;
 use webcodex_tool_contracts::PluginToolAction;
 
 pub(crate) const PLUGIN_TOOL_NAME: &str = "plugin_tool";
+mod project_binding;
+use project_binding::{invocation_project, resolve_bound_project, BoundPluginProject};
+
 const MAX_PLUGIN_BINDINGS: usize = 512;
 const GATEWAY_WAIT_TIMEOUT: Duration = Duration::from_secs(125);
 pub(crate) const MAX_PLUGIN_CATALOG_CONTEXT_BYTES: usize = 8 * 1024;
@@ -36,6 +39,7 @@ struct PluginBinding {
     provider_instance_id: String,
     tool_name: String,
     schema: PluginSchemaObservation,
+    project: Option<BoundPluginProject>,
 }
 
 #[derive(Default)]
@@ -271,6 +275,20 @@ async fn audit_request_with_identity(
     if runner.runner_instance_id != binding.runner_instance_id {
         return audit;
     }
+    if let Some(project) = &binding.project {
+        if !resolve_bound_project(
+            runtime,
+            &project.canonical_id,
+            &binding.client_id,
+            crate::auth::SCOPE_PROJECT_WRITE,
+            auth,
+        )
+        .await
+        .is_ok_and(|current| &current == project)
+        {
+            return audit;
+        }
+    }
     audit_arguments_with_resolved_binding(audit, &binding)
 }
 
@@ -279,6 +297,9 @@ fn audit_arguments_with_resolved_binding(mut audit: Value, binding: &PluginBindi
     audit["plugin"] = Value::String(binding.provider_id.clone());
     audit["tool"] = Value::String(binding.tool_name.clone());
     audit["binding_resolved"] = Value::Bool(true);
+    if let Some(project) = &binding.project {
+        audit["project"] = Value::String(project.canonical_id.clone());
+    }
     audit
 }
 
@@ -286,6 +307,7 @@ fn audit_arguments_with_resolved_binding(mut audit: Value, binding: &PluginBindi
 pub(crate) struct PluginInvocationResult {
     operation: PluginOperation,
     result: Result<GatewaySuccess, GatewayError>,
+    delegation: Option<Value>,
 }
 
 impl PluginInvocationResult {
@@ -321,11 +343,18 @@ impl PluginInvocationResult {
     }
 
     pub(crate) fn to_mcp_result(&self) -> Value {
-        render_gateway_result(self.result.clone())
+        let mut value = render_gateway_result(self.result.clone());
+        if let (Some(target), Some(content)) = (
+            &self.delegation,
+            value.get_mut("content").and_then(Value::as_array_mut),
+        ) {
+            content.insert(0, json!({"type":"text", "text":format!("Trusted WebCodex delegation target: {target}. Project binding is routing, not a native-tool sandbox.")}));
+        }
+        value
     }
 
     pub(crate) fn to_tool_result(&self) -> ToolResult {
-        match &self.result {
+        let mut rendered = match &self.result {
             Ok(GatewaySuccess::Metadata(value)) => ToolResult::ok(value.clone()),
             Ok(GatewaySuccess::ToolResult(result)) => {
                 let mut output = serde_json::to_value(result).unwrap_or_else(|_| json!({}));
@@ -348,7 +377,12 @@ impl PluginInvocationResult {
                 }
             }
             Err(error) => gateway_error_tool_result(error),
+        };
+        if let Some(target) = &self.delegation {
+            rendered.output["delegation"] = target.clone();
+            rendered.output["project"] = target["project"].clone();
         }
+        rendered
     }
 }
 
@@ -364,19 +398,38 @@ pub(crate) async fn invoke(
     let operation = PluginOperation::from(request.action);
     let policy = operation.policy();
     let audit = audit_request_with_identity(runtime, &request, auth).await;
+    let target = invocation_project(runtime, &request, auth).await;
+    let target_project = target
+        .as_ref()
+        .ok()
+        .and_then(Option::as_ref)
+        .map(|project| project.canonical_id.as_str());
+    let delegation = target_project.and_then(|project| {
+        let binding = request.binding.as_deref().and_then(|id| runtime.plugin_gateway.binding(id))?;
+        Some(json!({"runner":binding.client_id,"runner_instance":binding.runner_instance_id,
+            "provider":binding.provider_id,"provider_instance":binding.provider_instance_id,"project":project}))
+    });
     let permit = runtime
-        .govern_specialized_invocation(
+        .govern_specialized_invocation_on_project(
             PLUGIN_TOOL_NAME,
             policy,
             transport,
             recording_session_id,
             auth,
             &audit,
+            target_project,
         )
         .await?;
 
-    let result = execute_business(runtime, operation, request, auth).await;
-    let invocation = PluginInvocationResult { operation, result };
+    let result = match target {
+        Ok(_) => execute_business(runtime, operation, request, auth).await,
+        Err(error) => Err(error),
+    };
+    let invocation = PluginInvocationResult {
+        operation,
+        result,
+        delegation,
+    };
     runtime.finish_specialized_invocation(
         permit,
         invocation.success(),
@@ -575,6 +628,26 @@ async fn describe(
                 "the requested tool is not present on the current effective Plugin provider",
             )
         })?;
+    let project = match args.project.as_deref() {
+        Some(project) => Some(
+            resolve_bound_project(
+                runtime,
+                project,
+                &runner.client_id,
+                crate::auth::SCOPE_PROJECT_READ,
+                auth,
+            )
+            .await?,
+        ),
+        None if tool.project_bound => {
+            return Err(GatewayError::local(
+                "plugin_project_required",
+                "This Plugin tool requires project on describe; cwd binding is not a sandbox",
+            ))
+        }
+        None => None,
+    };
+    let project_id = project.as_ref().map(|project| project.canonical_id.clone());
     let binding = runtime.plugin_gateway.remember(PluginBinding {
         client_id: runner.client_id.clone(),
         runner_instance_id: runner.runner_instance_id.clone(),
@@ -582,14 +655,19 @@ async fn describe(
         provider_instance_id: provider.provider_instance_id.clone(),
         tool_name: tool.name.clone(),
         schema: tool.schema_observation(),
+        project,
     });
-    Ok(json!({
+    let mut result = json!({
         "runner": runner.client_id,
         "plugin": provider.provider_id,
         "pluginName": provider.name,
         "tool": tool,
         "binding": binding
-    }))
+    });
+    if let Some(project) = project_id {
+        result["project"] = Value::String(project);
+    }
+    Ok(result)
 }
 
 async fn observe_effective_provider_tools(
@@ -656,7 +734,11 @@ async fn call_plugin(
     args: PluginToolCall,
     auth: Option<&AuthContext>,
 ) -> Result<PluginToolResult, GatewayError> {
-    if args.runner.is_some() || args.plugin.is_some() || args.tool.is_some() {
+    if args.runner.is_some()
+        || args.plugin.is_some()
+        || args.tool.is_some()
+        || args.project.is_some()
+    {
         return Err(GatewayError::local(
             "invalid_arguments",
             "action=call accepts only binding and arguments",
@@ -695,6 +777,27 @@ async fn call_plugin(
         .recovery("Re-describe this Plugin tool. WebCodex did not retarget or replay the call."));
     }
 
+    let project_target = if let Some(project) = &observed.project {
+        let current = resolve_bound_project(
+            runtime,
+            &project.canonical_id,
+            &observed.client_id,
+            crate::auth::SCOPE_PROJECT_WRITE,
+            auth,
+        )
+        .await?;
+        if &current != project {
+            runtime.plugin_gateway.forget(&binding_id);
+            return Err(GatewayError::local(
+                "plugin_project_changed",
+                "The described Project root changed; re-describe without replaying effects",
+            ));
+        }
+        Some(current.target)
+    } else {
+        None
+    };
+
     // Deliberately do not re-list/re-resolve the provider here. The exact
     // provider instance, tool name, and schema from this binding are the only
     // legal dispatch target.
@@ -707,6 +810,7 @@ async fn call_plugin(
             name: observed.tool_name.clone(),
             arguments,
             expected_schema: observed.schema,
+            project_target,
         },
         auth,
     )
@@ -1241,12 +1345,44 @@ mod tests {
             provider_id: provider.to_string(),
             provider_instance_id: format!("{provider}-instance"),
             tool_name: tool.to_string(),
+            project: None,
             schema: PluginSchemaObservation {
+                project_bound: false,
                 input_schema: json!({"type":"object"}),
                 output_schema: None,
                 annotations: None,
             },
         }
+    }
+
+    #[test]
+    fn project_delegation_preserves_native_schema_and_separates_trusted_target() {
+        let native =
+            json!({"project":"untrusted-native-text", "native_dispatch_state":"outcome_unknown"});
+        let result: PluginToolResult = serde_json::from_value(json!({
+            "content":[{"type":"text","text":"Native tool timed out"}], "structuredContent":native, "isError":true
+        })).unwrap();
+        let invocation = PluginInvocationResult {
+            operation: PluginOperation::Call,
+            result: Ok(GatewaySuccess::ToolResult(result)),
+            delegation: Some(
+                json!({"project":"agent:runner:authorized", "provider":"pi", "provider_instance":"exact-instance"}),
+            ),
+        };
+        let mcp = invocation.to_mcp_result();
+        assert_eq!(mcp["structuredContent"], native);
+        assert!(mcp["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("agent:runner:authorized"));
+        let generic = invocation.to_tool_result();
+        assert_eq!(generic.output["project"], "agent:runner:authorized");
+        assert_eq!(generic.output["structuredContent"], native);
+        assert_eq!(
+            generic.output["delegation"]["provider_instance"],
+            "exact-instance"
+        );
+        assert!(!generic.success);
     }
 
     #[test]

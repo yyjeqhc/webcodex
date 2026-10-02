@@ -135,6 +135,8 @@ pub(crate) struct RunnerProjectCache {
 pub(crate) struct RunnerProjectShellContext {
     pub(crate) id: String,
     pub(crate) path: String,
+    /// Current registry write authority; avoids Git/status probes on tool admission.
+    pub(crate) allow_patch: bool,
     pub(crate) shell_profile: Option<String>,
 }
 

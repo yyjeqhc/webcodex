@@ -143,6 +143,8 @@ impl PluginEnvironmentSnapshot {
 
 struct ProviderEntry {
     config: PluginProviderConfig,
+    // Frozen launch target. A changed cwd symlink must not retarget an existing process.
+    launch_root: Option<PathBuf>,
     instance_id: String,
     timeout: Duration,
     failed: AtomicBool,
@@ -490,7 +492,24 @@ impl PluginManager {
         bounded_project_catalog(catalog_revision, entries)
     }
 
+    #[cfg(test)]
     pub(crate) fn handle(&self, request: PluginGatewayRequest) -> PluginGatewayResponse {
+        self.handle_in_registry(request, None)
+    }
+
+    pub(crate) fn handle_with_project_registry(
+        &self,
+        request: PluginGatewayRequest,
+        project_registry_dir: &Path,
+    ) -> PluginGatewayResponse {
+        self.handle_in_registry(request, Some(project_registry_dir))
+    }
+
+    fn handle_in_registry(
+        &self,
+        request: PluginGatewayRequest,
+        project_registry_dir: Option<&Path>,
+    ) -> PluginGatewayResponse {
         if let Err(error) = validate_request(&request) {
             tracing::warn!(error = %error, "rejected invalid Plugin gateway request");
             return gateway_error(
@@ -542,12 +561,19 @@ impl PluginManager {
                 name,
                 arguments,
                 expected_schema,
+                project_target,
             } => {
                 let Some(provider) = self.resolve_provider(&provider_id, &provider_instance_id)
                 else {
                     return stale_provider();
                 };
-                match provider.call_tool(&name, arguments, &expected_schema) {
+                match provider.call_tool(
+                    &name,
+                    arguments,
+                    &expected_schema,
+                    project_target.as_ref(),
+                    project_registry_dir,
+                ) {
                     Ok(result) => {
                         PluginGatewayResponse::success(PluginGatewayResponsePayload::ToolResult {
                             result,
@@ -1013,6 +1039,8 @@ impl ProviderEntry {
         name: &str,
         arguments: Value,
         expected_schema: &PluginSchemaObservation,
+        project_target: Option<&webcodex_core::plugin::PluginProjectTarget>,
+        project_registry_dir: Option<&Path>,
     ) -> Result<PluginToolResult, ProviderFailure> {
         let catalog = self.frozen_catalog()?;
         let Some(tool) = catalog.tool(name) else {
@@ -1038,6 +1066,17 @@ impl ProviderEntry {
         })?;
         let output_schema = tool.output_schema.clone();
         self.with_connection(move |connection, timeout| {
+            // Check while holding the provider's dispatch lock. Busy calls are
+            // rejected, never queued with a potentially stale Project observation.
+            if (tool.project_bound || project_target.is_some())
+                && !self.matches_project_target(project_target, project_registry_dir)
+            {
+                return Err(ProviderFailure {
+                    dispatch_state: PluginDispatchState::NotStarted,
+                    code: "plugin_project_mismatch",
+                    fatal: false,
+                });
+            }
             let result = connection.tools_call(name, arguments, timeout)?;
             if let Some(output_schema) = output_schema.as_ref() {
                 let structured = result.structured_content.as_ref().ok_or_else(|| {
@@ -1049,6 +1088,32 @@ impl ProviderEntry {
             }
             Ok(result)
         })
+    }
+
+    fn matches_project_target(
+        &self,
+        target: Option<&webcodex_core::plugin::PluginProjectTarget>,
+        registry: Option<&Path>,
+    ) -> bool {
+        let (Some(target), Some(registry), Some(launch_root)) =
+            (target, registry, self.launch_root.as_deref())
+        else {
+            return false;
+        };
+        let Some(project) =
+            super::projects::find_project_shell_context_by_id(registry, &target.project_id)
+        else {
+            return false;
+        };
+        if !project.allow_patch {
+            return false;
+        }
+        let Ok(root) = Path::new(&project.path).canonicalize() else {
+            return false;
+        };
+        root.is_dir()
+            && webcodex_runner_config::paths::paths_equal(&root, launch_root)
+            && super::projects::project_root_fingerprint(&root) == target.root_fingerprint
     }
 
     fn shutdown(&self) {
@@ -1164,8 +1229,13 @@ fn prepare_provider(
     Option<ProviderPreparationFailure>,
 ) {
     let process = Arc::new(ProviderProcess::new());
+    let launch_root = config
+        .cwd
+        .as_deref()
+        .and_then(|cwd| Path::new(cwd).canonicalize().ok());
     let entry = Arc::new(ProviderEntry {
         config: config.clone(),
+        launch_root: launch_root.clone(),
         instance_id: uuid::Uuid::new_v4().simple().to_string(),
         timeout: config
             .timeout_secs
@@ -1177,10 +1247,8 @@ fn prepare_provider(
         catalog: OnceLock::new(),
         session: Mutex::new(None),
     });
-    let cwd = config
-        .cwd
-        .as_deref()
-        .map(PathBuf::from)
+    let cwd = launch_root
+        .or_else(|| config.cwd.as_deref().map(PathBuf::from))
         .or_else(|| std::env::current_dir().ok())
         .unwrap_or_else(|| PathBuf::from("."));
     let environment = match PreparedExecutionEnvironment::prepare(

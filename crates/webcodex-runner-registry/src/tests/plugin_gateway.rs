@@ -10,6 +10,7 @@ use webcodex_core::plugin::{
 
 fn plugin_tool() -> PluginTool {
     PluginTool {
+        project_bound: false,
         name: "echo".to_string(),
         title: None,
         description: Some("Echo a value".to_string()),
@@ -515,6 +516,7 @@ async fn provider_identity_is_runner_owned_and_forwarded_exactly() {
     register_plugin_runner(&registry).await;
     let alice = auth_context(Some("alice"), false);
     let schema = PluginSchemaObservation {
+        project_bound: false,
         input_schema: plugin_tool().input_schema,
         output_schema: None,
         annotations: None,
@@ -524,6 +526,7 @@ async fn provider_identity_is_runner_owned_and_forwarded_exactly() {
             "plugin-runner",
             "runner-instance",
             PluginGatewayRequest::ToolsCall {
+                project_target: None,
                 provider_id: "repo-tools".to_string(),
                 provider_instance_id: "dynamic-provider-instance".to_string(),
                 name: "echo".to_string(),
@@ -546,6 +549,7 @@ async fn provider_identity_is_runner_owned_and_forwarded_exactly() {
     assert!(matches!(
         request.plugin_gateway,
         Some(PluginGatewayRequest::ToolsCall {
+            project_target: None,
             ref provider_instance_id,
             ..
         }) if provider_instance_id == "dynamic-provider-instance"

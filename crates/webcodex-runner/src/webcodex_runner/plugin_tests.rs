@@ -12,6 +12,9 @@ use webcodex_core::plugin::{
     PLUGIN_MAX_MESSAGE_BYTES, PLUGIN_MAX_RESULT_BYTES,
 };
 
+#[path = "plugin_project_tests.rs"]
+mod project_binding;
+
 static FAKE_PLUGIN: OnceLock<Mutex<Weak<FakeBinary>>> = OnceLock::new();
 
 struct FakeBinary {
@@ -113,6 +116,7 @@ impl Fixture {
 
     fn call_with_arguments(&self, arguments: Value) -> PluginGatewayResponse {
         self.manager.handle(PluginGatewayRequest::ToolsCall {
+            project_target: None,
             provider_id: self.provider.provider_id.clone(),
             provider_instance_id: self.provider.provider_instance_id.clone(),
             name: "echo".to_string(),
@@ -651,6 +655,7 @@ fn runner_real_process_plugin_shutdown_terminates_process_tree_while_effectful_s
     let (sender, receiver) = mpsc::channel();
     let request = std::thread::spawn(move || {
         let response = manager.handle(PluginGatewayRequest::ToolsCall {
+            project_target: None,
             provider_id: provider.provider_id.clone(),
             provider_instance_id: provider.provider_instance_id.clone(),
             name: "echo".to_string(),
@@ -796,6 +801,7 @@ fn provider_busy_is_not_started() {
     let schema = fixture.schema.clone().unwrap();
     let first = std::thread::spawn(move || {
         manager.handle(PluginGatewayRequest::ToolsCall {
+            project_target: None,
             provider_id: provider.provider_id.clone(),
             provider_instance_id: provider.provider_instance_id.clone(),
             name: "echo".to_string(),
@@ -1123,6 +1129,7 @@ fn concurrent_reload_is_busy_while_existing_calls_continue_and_later_reload_wins
     };
     assert_eq!(providers[0].provider_instance_id, dynamic_v1);
     let call_while_reloading = manager.handle(PluginGatewayRequest::ToolsCall {
+        project_target: None,
         provider_id: "fake".to_string(),
         provider_instance_id: dynamic_v1.clone(),
         name: "echo".to_string(),

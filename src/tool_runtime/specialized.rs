@@ -438,6 +438,31 @@ impl ToolRuntime {
         auth: Option<&AuthContext>,
         identity: &Value,
     ) -> Result<SpecializedInvocationPermit, SpecializedGovernanceDenial> {
+        self.govern_specialized_invocation_on_project(
+            external_tool_name,
+            policy,
+            transport,
+            recording_session_id,
+            auth,
+            identity,
+            None,
+        )
+        .await
+    }
+
+    /// An already-authorized business target selects Project permission policy.
+    /// A recording Session remains provenance/guard context, never target authority.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn govern_specialized_invocation_on_project(
+        &self,
+        external_tool_name: &str,
+        policy: SpecializedOperationPolicy,
+        transport: SessionTransport,
+        recording_session_id: Option<&str>,
+        auth: Option<&AuthContext>,
+        identity: &Value,
+        target_project: Option<&str>,
+    ) -> Result<SpecializedInvocationPermit, SpecializedGovernanceDenial> {
         if let Some(required_scope) = policy.authority.first_missing(auth) {
             return Err(SpecializedGovernanceDenial::Scope {
                 required_scope,
@@ -466,6 +491,9 @@ impl ToolRuntime {
             }
         }
 
+        let business_project = target_project
+            .map(str::to_string)
+            .or_else(|| resolved_session_project.clone());
         let contract = policy.session_contract();
         let recorder_metadata = ToolCallRecorderMetadata {
             recording_session_id: recording_session_id.map(str::to_string),
@@ -478,7 +506,7 @@ impl ToolRuntime {
             transport,
             external_tool_name,
             &bounded_ledger_arguments(policy, identity),
-            resolved_session_project.clone(),
+            business_project.clone(),
             recorder_metadata,
             contract,
         );
@@ -518,7 +546,7 @@ impl ToolRuntime {
         let permission = if policy.effect.consequential() {
             let decision = self.permission_evaluator.evaluate_resolved_required(
                 external_tool_name,
-                resolved_session_project.as_deref(),
+                business_project.as_deref(),
                 policy.risk,
             );
             if let Some(start) = session_start.as_mut() {
@@ -828,6 +856,34 @@ mod tests {
         assert_eq!(counter.load(Ordering::SeqCst), 1);
         assert_eq!(result.output["failure_kind"], "permission_denied");
         assert_eq!(result.output["dispatch_certainty"], "not_started");
+    }
+
+    #[tokio::test]
+    async fn specialized_explicit_business_project_selects_permission_target_without_a_recorder() {
+        let runtime = ToolRuntime::new_for_tests()
+            .with_permission_evaluator(PermissionEvaluator::with_mode(AuthorityMode::TrustedAgent));
+        let auth = auth("alice", &[SCOPE_PLUGIN_INVOKE]);
+        let permit = runtime
+            .govern_specialized_invocation_on_project(
+                "plugin_tool",
+                SpecializedOperationPolicy::local_execution(
+                    SpecializedSource::Plugin,
+                    "call",
+                    SCOPE_PLUGIN_INVOKE,
+                ),
+                SessionTransport::Mcp,
+                None,
+                Some(&auth),
+                &json!({"project":"untrusted-observation"}),
+                Some("agent:runner:authorized-target"),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            permit.permission.as_ref().unwrap().project.as_deref(),
+            Some("agent:runner:authorized-target")
+        );
+        runtime.finish_specialized_invocation(permit, true, "completed", None);
     }
 
     #[tokio::test]

@@ -614,7 +614,7 @@ async fn older_server_viewer_works_but_runner_transition_requires_user_identity(
     // this synthetic transition record so the test reaches the older-Server
     // identity contract without changing the already-configured viewer state.
     let mut transition = result.environment;
-    transition.request.project = Some(temp.path().to_path_buf());
+    transition.request.project = Some(temp.path().canonicalize().unwrap());
     transition.request.account.identity = "fixture-user-id".into();
     let secrets = SetupSecrets {
         pairing_code: Some(Secret::new("wc_pair_unused".into())),

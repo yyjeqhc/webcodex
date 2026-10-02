@@ -35,7 +35,7 @@ describe("progressive inventory boundaries", () => {
     await waitFor(() => expect(result.current.availability).toBe("available"));
     act(() => result.current.refresh());
     await waitFor(() => expect(post).toHaveBeenCalledTimes(2));
-    for (const call of (post.mock.calls as unknown[][])) expect(call[1]).toEqual({ include_sessions: false });
+    for (const call of (post.mock.calls as unknown[][])) expect(call[1]).toEqual({ include_sessions: false, include_projects: false });
     unmount();
   });
 

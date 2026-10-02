@@ -37,6 +37,7 @@ import {
   persistAccentPreference,
 } from "../ui/accent.js";
 import { locateSession } from "./api/sessions.js";
+import { useProjects } from "./state/useProjects.js";
 import { projectFamilyId } from "../ui/projectPresentation.js";
 import { RuntimeV2Client } from "./api/client.js";
 import { SessionWindowNavigation } from "./components/SessionWindowNavigation.js";
@@ -128,9 +129,14 @@ export function App() {
   const overviewState = useRuntimeOverview(client, Boolean(token), handleUnauthorized,
     view === "runtime" || (view === "work" && workSurface === "session"));
   const overview = overviewState.data;
+  // Work needs labels/lineage, not a new Project projection on every nav tick.
+  // Projects owns its own inventory; Runtime/Session hydrate through full overview.
+  const workCatalog = useProjects(client, Boolean(token) && view === "work" && workSurface !== "session" && overview?.projects_included === false,
+    handleUnauthorized, { initialLimit: 2_000, refreshMs: 60_000 });
+  const workProjects = overview?.projects_included === false ? workCatalog.projects : overview?.projects || [];
   const visibleProjectFamilyCount = useMemo(
-    () => new Set((overview?.projects || []).map(projectFamilyId)).size,
-    [overview?.projects],
+    () => overview?.visible_project_families ?? new Set((overview?.projects || []).map(projectFamilyId)).size,
+    [overview?.visible_project_families, overview?.projects],
   );
 
   const workItems = useMemo(() => {
@@ -349,7 +355,7 @@ export function App() {
             client={client}
             items={workItems}
             selected={selected}
-            projects={overview?.projects || []}
+            projects={workProjects}
             language={language}
             inventoryIncomplete={Boolean(overview?.recent_sessions.truncated || overview?.recent_sessions.scan_truncated)}
             hydratingSessions={overviewState.refreshing && overview?.detail_level === "primary"}

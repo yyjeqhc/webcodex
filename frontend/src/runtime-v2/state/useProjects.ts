@@ -11,7 +11,9 @@ export type ProjectsState = {
   refresh: () => void; loadMore: () => void; showLess: () => void; canShowLess: boolean; refreshing: boolean;
 };
 
-export function useProjects(client: RuntimeV2Client, enabled: boolean, onUnauthorized: () => void): ProjectsState {
+export function useProjects(client: RuntimeV2Client, enabled: boolean, onUnauthorized: () => void,
+  options: { initialLimit?: number; refreshMs?: number } = {}): ProjectsState {
+  const initialLimit = Math.max(PROJECT_PAGE_SIZE, Math.min(2_000, options.initialLimit ?? PROJECT_PAGE_SIZE));
   const [availability, setAvailability] = useState<Availability>("idle");
   const [projects, setProjects] = useState<ProjectRow[]>([]);
   const [total, setTotal] = useState(0);
@@ -19,14 +21,14 @@ export function useProjects(client: RuntimeV2Client, enabled: boolean, onUnautho
   const [query, setQuery] = useState("");
   const [runner, setRunner] = useState("");
   const [revision, setRevision] = useState(0);
-  const [page, setPage] = useState({ key: "", limit: PROJECT_PAGE_SIZE });
+  const [page, setPage] = useState({ key: "", limit: initialLimit });
   const [refreshing, setRefreshing] = useState(false);
   const listRequest = useRef<AbortController | null>(null);
   const selection = useRef({ client, key: "" });
   const refresh = useCallback(() => { if (!listRequest.current) setRevision(value => value + 1); }, []);
   const stableQuery = useDebouncedValue(query, 220);
-  const key = JSON.stringify([runner, stableQuery]);
-  const limit = page.key === key ? page.limit : PROJECT_PAGE_SIZE;
+  const key = JSON.stringify([runner, stableQuery, initialLimit]);
+  const limit = page.key === key ? page.limit : initialLimit;
 
   useEffect(() => {
     if (selection.current.client !== client || selection.current.key !== key) {
@@ -52,7 +54,7 @@ export function useProjects(client: RuntimeV2Client, enabled: boolean, onUnautho
         setProjects([]); setTotal(0); setTruncated(false); setAvailability("denied"); return;
       }
       if (!response.ok || !response.data) { failed(); return; }
-      setProjects(response.data.projects || []);
+      setProjects(current => JSON.stringify(current) === JSON.stringify(response.data!.projects || []) ? current : response.data!.projects || []);
       setTotal(Math.max(response.data.total || 0, response.data.projects?.length || 0));
       setTruncated(Boolean(response.data.truncated)); setAvailability("available");
     }).catch(() => {
@@ -62,7 +64,7 @@ export function useProjects(client: RuntimeV2Client, enabled: boolean, onUnautho
     return () => { controller.abort(); if (listRequest.current === controller) listRequest.current = null; };
   }, [client, enabled, onUnauthorized, revision, runner, stableQuery, limit, key]);
 
-  useVisibleRefresh(enabled, refresh, 30_000);
+  useVisibleRefresh(enabled, refresh, options.refreshMs ?? 30_000);
   return {
     availability, projects, total, truncated, query, runner, setQuery, setRunner, refresh, refreshing,
     loadMore: () => { if (!listRequest.current) setPage({ key, limit: Math.min(2_000, limit + PROJECT_PAGE_SIZE) }); },

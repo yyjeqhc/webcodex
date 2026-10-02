@@ -1199,6 +1199,14 @@ fn connection_layers(
 /// Mixed-version diagnostics: a connected runner is not automatically
 /// capability-compatible. Reports facts about which side to upgrade without
 /// exposing paths or environment.
+impl ToolRuntime {
+    /// Reuse build/protocol truth without dispatching full runtime diagnostics
+    /// or materializing Project/Job histories for the Console navigation bar.
+    pub(crate) fn console_runner_alignment(&self, clients: &[RunnerView]) -> Value {
+        version_compatibility(clients)
+    }
+}
+
 fn version_compatibility(clients: &[RunnerView]) -> Value {
     let build = crate::build_info::runtime_build_info();
     version_compatibility_against(

@@ -1,0 +1,17 @@
+{
+  "name": "@yyjeqhc/webcodex-agent-environment",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Project-bound native agent tool environment Plugin; Pi-first P0, without an LLM delegation loop.",
+  "type": "module",
+  "engines": { "node": ">=22.19.0" },
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "test:pi": "node --test test/pi.integration.mjs"
+  },
+  "dependencies": {
+    "@earendil-works/pi-ai": "1.0.0",
+    "@earendil-works/pi-coding-agent": "1.0.0",
+    "@yyjeqhc/webcodex-plugin-sdk": "file:../../npm/plugin-sdk"
+  }
+}

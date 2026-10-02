@@ -130,6 +130,9 @@ class PathRiskFixtureTests(unittest.TestCase):
             "plugins/agent-browser/src/plugin.ts",
             "plugins/agent-browser/tests/core.test.mjs",
             "plugins/agent-browser/package-lock.json",
+            "plugins/agent-environment/src/pi.mjs",
+            "plugins/agent-environment/test/pi.integration.mjs",
+            "plugins/agent-environment/package-lock.json",
         ):
             with self.subTest(path=path):
                 result = classify(path)

@@ -159,6 +159,7 @@ jobs:
             plugins/repo-context/package-lock.json
             plugins/campus-application/package-lock.json
             plugins/agent-browser/package-lock.json
+            plugins/agent-environment/package-lock.json
       - name: Install frontend dependencies
         if: needs.changes.outputs.needs_frontend == 'true' || needs.changes.outputs.needs_desktop_frontend == 'true'
         run: npm ci --prefix frontend
@@ -186,6 +187,7 @@ jobs:
           npm ci --prefix plugins/repo-context
           npm ci --prefix plugins/campus-application
           npm ci --prefix plugins/agent-browser
+          npm ci --prefix plugins/agent-environment
       - name: Check Plugin SDK contracts and first-party dogfood
         if: needs.changes.outputs.needs_plugin_sdk == 'true'
         run: |
@@ -203,6 +205,8 @@ jobs:
           npm --prefix plugins/campus-application test
           npm --prefix plugins/agent-browser run typecheck
           npm --prefix plugins/agent-browser test
+          npm --prefix plugins/agent-environment test
+          npm --prefix plugins/agent-environment run test:pi
       - name: Verify workspace boundaries
         run: |
           bash scripts/workspace_boundary_check.sh --self-test

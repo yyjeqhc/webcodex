@@ -375,8 +375,8 @@ const APPLY_TEXT_EDITS_MAX_FILE_BYTES: usize = 2 * 1024 * 1024; // 2 MiB
 // shared verbatim with the host write path via `apply_edits_shared`; use the
 // neutral shared type names directly rather than preserving Runner-local aliases.
 #[cfg(test)]
-use crate::apply_edits_shared::ApplyTextLineScope;
-use crate::apply_edits_shared::{
+use webcodex_core::apply_edits_shared::ApplyTextLineScope;
+use webcodex_core::apply_edits_shared::{
     canonicalize_apply_text_line_endings, detect_apply_text_line_ending,
     is_lowercase_hex_sha256 as is_hex_sha256, is_sensitive_edit_path,
     resolve_apply_text_bulk_matches, resolve_apply_text_match, restore_apply_text_line_endings,
@@ -388,7 +388,7 @@ use crate::apply_edits_shared::{
     MAX_APPLY_TEXT_EXPECTED_MATCH_COUNT, MAX_APPLY_TEXT_MATCH_RANGES_PER_EDIT,
     MAX_APPLY_TEXT_MATCH_RANGES_TOTAL,
 };
-use crate::apply_patch_shared::{
+use webcodex_core::apply_patch_shared::{
     derive_codex_patch_update_with_matching_mode, parse_codex_patch, ApplyPatchMatchingMode,
     CodexPatchChunkMatch, CodexPatchError, CodexPatchHunk, CodexPatchMatchDiagnostic,
 };
@@ -424,8 +424,8 @@ enum EditPlanConflict {
     MatchCount {
         expected: usize,
         actual: usize,
-        line_scope: Option<crate::apply_edits_shared::ApplyTextLineScope>,
-        candidate_ranges: Vec<crate::apply_edits_shared::ApplyTextMatchCandidate>,
+        line_scope: Option<webcodex_core::apply_edits_shared::ApplyTextLineScope>,
+        candidate_ranges: Vec<webcodex_core::apply_edits_shared::ApplyTextMatchCandidate>,
         candidates_truncated: bool,
     },
     Overlap {

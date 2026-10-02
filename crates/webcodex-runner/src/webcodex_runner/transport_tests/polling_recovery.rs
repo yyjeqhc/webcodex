@@ -343,7 +343,7 @@ fn polling_oversized_response_is_terminal_without_loading_the_body() {
     let server = start_scripted_runner_server(vec![
         ScriptStep::Register,
         ScriptStep::PollOversized {
-            declared_len: crate::RUNNER_HTTP_RESPONSE_BODY_MAX_BYTES + 1,
+            declared_len: crate::webcodex_runner::transport::http_client::RUNNER_HTTP_RESPONSE_BODY_MAX_BYTES + 1,
         },
     ]);
     let error = run_polling_runner_against_scripted_server(&server, false)
@@ -1138,7 +1138,7 @@ fn dropped_result_log_line_is_bounded_and_redacted() {
 
 async fn read_register(
     ws: &mut tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
-) -> crate::runner_protocol::RunnerRegisterRequest {
+) -> webcodex_core::runner_protocol::RunnerRegisterRequest {
     let msg = ws
         .next()
         .await

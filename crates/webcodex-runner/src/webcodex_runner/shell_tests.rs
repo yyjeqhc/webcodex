@@ -1,6 +1,6 @@
 use super::*;
-use crate::runner_protocol::ShellCommandExecutionState;
 use std::sync::{Arc, OnceLock};
+use webcodex_core::runner_protocol::ShellCommandExecutionState;
 
 #[cfg(windows)]
 #[test]
@@ -877,7 +877,7 @@ fn structured_process_preserves_large_literal_argv_without_shell_parsing() {
     assert!(args.iter().map(String::len).sum::<usize>() > 8_000);
     assert!(
         args.iter().map(String::len).sum::<usize>()
-            < crate::runner_protocol::PROCESS_ARGV_MAX_BYTES
+            < webcodex_core::runner_protocol::PROCESS_ARGV_MAX_BYTES
     );
 
     let result = run_direct_process(cwd.path(), &helper, &args, None, 10);

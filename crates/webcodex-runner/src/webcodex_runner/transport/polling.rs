@@ -83,7 +83,7 @@ pub(super) enum PollFailureDirective {
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn handle_poll_failure(
-    error: crate::PollError,
+    error: super::poll_dispatch::PollError,
     cfg: &RunnerConfig,
     runtime: &RunnerRuntimeState,
     shutdown: &AtomicBool,

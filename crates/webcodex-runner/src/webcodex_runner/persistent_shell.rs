@@ -12,14 +12,14 @@ use super::shell::shell_quote;
 use super::shell::shell_quote_powershell;
 use super::shell::{base_shell_env, cwd_allowed};
 use super::ssh::SshConnectionPool;
-#[cfg(test)]
-use crate::runner_protocol::RunnerRequest;
-use crate::runner_protocol::{
-    PersistentShellRequest, PersistentShellResult, RAW_SHELL_COMMAND_MAX_BYTES,
-};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use webcodex_core::runner_operation::RunnerPersistentShellOperation;
+#[cfg(test)]
+use webcodex_core::runner_protocol::RunnerRequest;
+use webcodex_core::runner_protocol::{
+    PersistentShellRequest, PersistentShellResult, RAW_SHELL_COMMAND_MAX_BYTES,
+};
 #[cfg(any(unix, windows))]
 use webcodex_persistent_shell::canonical_dialect;
 use webcodex_persistent_shell::{

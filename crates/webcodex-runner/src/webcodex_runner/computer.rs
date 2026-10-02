@@ -1,9 +1,4 @@
 use super::{err_cmd, ok_cmd, CommandResult};
-use crate::artifact_policy::MAX_MCP_IMAGE_BYTES;
-#[cfg(test)]
-use crate::runner_protocol::shell_computer_request_payload_max_bytes;
-#[cfg(test)]
-use crate::runner_protocol::RunnerRequest;
 use serde_json::Value;
 use std::sync::OnceLock;
 use std::time::Instant;
@@ -12,9 +7,14 @@ use webcodex_computer::{
     DEFAULT_ACCESSIBILITY_DEPTH, DEFAULT_ACCESSIBILITY_NODES, MAX_APPLICATIONS, MAX_DISPLAYS,
     MAX_WINDOWS,
 };
+use webcodex_core::artifact_policy::MAX_MCP_IMAGE_BYTES;
 #[cfg(test)]
 use webcodex_core::runner_operation::RunnerOperation;
 use webcodex_core::runner_operation::{RunnerComputerOperation, RunnerComputerOperationKind};
+#[cfg(test)]
+use webcodex_core::runner_protocol::shell_computer_request_payload_max_bytes;
+#[cfg(test)]
+use webcodex_core::runner_protocol::RunnerRequest;
 
 fn computer_runtime() -> &'static ComputerRuntime {
     static COMPUTER: OnceLock<ComputerRuntime> = OnceLock::new();

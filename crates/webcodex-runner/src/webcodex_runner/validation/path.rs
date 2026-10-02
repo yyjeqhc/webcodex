@@ -1,7 +1,7 @@
 //! Project-relative path validation and absolute-path relativization.
 
-use crate::validation_bridge::MAX_PATH_CHARS;
 use std::path::{Component, Path, PathBuf};
+use webcodex_core::validation_bridge::MAX_PATH_CHARS;
 
 /// Relativize an absolute (or absolute-looking) diagnostic path to the project
 /// root. Returns `None` when the path is outside the project or cannot be
@@ -51,7 +51,7 @@ pub(crate) fn resolve_under_project(
     project_root: &Path,
     relative: &str,
 ) -> Result<PathBuf, String> {
-    crate::validation_bridge::validate_project_relative_path(relative)?;
+    webcodex_core::validation_bridge::validate_project_relative_path(relative)?;
     let root = std::fs::canonicalize(project_root)
         .map_err(|_| "project root is not accessible".to_string())?;
     if !root.is_dir() {

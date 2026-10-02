@@ -9,6 +9,12 @@ use super::detached_job::{
     handoff_detached_job, snapshot_from_detached_record, DetachedHandoffOutcome, DetachedJobStore,
     DetachedLaunchSpec, DetachedStartRequest,
 };
+use super::execution_io::{
+    cleanup_managed_tree, drain_and_join_reader_threads_until, finish_cargo_test_count_evidence,
+    managed_tree_running, observe_cargo_test_count_chunks, reap_managed_direct_child,
+    request_terminate_managed_tree, spawn_reader, terminate_managed_tree, validation_failed_step,
+    validation_module_available, wait_failure_error, wait_managed_tree_exit, OutputChunk,
+};
 use super::output_text::OutputTextSource;
 use super::runner_skills::run_skill_resource_with_profiles_and_execution_state;
 use super::shell::{
@@ -31,6 +37,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Condvar, Mutex, Weak};
 use std::time::{Duration, Instant};
 use webcodex_core::runner_job_lifecycle::RunnerJobLifecycle;
+#[cfg(test)]
+use webcodex_core::runner_operation::{self, RunnerOperation};
 use webcodex_core::runner_operation::{RunnerInvocationMetadata, RunnerJobOperation};
 use webcodex_core::runner_protocol::{
     self, RunnerJobUpdateRequest, RunnerRequest, ShellCommandExecutionState, ShellJobActivity,
@@ -43,16 +51,6 @@ use webcodex_core::runner_protocol::{
 };
 use webcodex_core::workflow_session_contract::ExecutionShell;
 use webcodex_process::ManagedChild;
-// Existing process-I/O / execution helpers deliberately remain at their current
-// owner. Extracting those independent facilities is outside this refactor.
-use crate::{
-    cleanup_managed_tree, drain_and_join_reader_threads_until, finish_cargo_test_count_evidence,
-    managed_tree_running, observe_cargo_test_count_chunks, reap_managed_direct_child,
-    request_terminate_managed_tree, spawn_reader, terminate_managed_tree, validation_failed_step,
-    validation_module_available, wait_failure_error, wait_managed_tree_exit, OutputChunk,
-};
-#[cfg(test)]
-use webcodex_core::runner_operation::{self, RunnerOperation};
 
 const GO_PROJECT_SINGLE_MODULE_ENV: [(&str, &str); 2] = [("GO111MODULE", "on"), ("GOWORK", "off")];
 

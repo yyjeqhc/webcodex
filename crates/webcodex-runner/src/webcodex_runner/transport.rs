@@ -18,30 +18,33 @@ use super::shutdown::{
     JOB_DRAIN_BUDGET, LSP_SHUTDOWN_BUDGET, PROVIDER_SHUTDOWN_BUDGET,
 };
 use super::PersistentShellManager;
-use crate::runner_config::{
-    TRANSPORT_AUTO, TRANSPORT_POLLING, TRANSPORT_QUIC, TRANSPORT_WEBSOCKET,
-};
-use crate::runner_protocol::{
+use webcodex_browser::BrowserSupervisor;
+use webcodex_core::runner_protocol::{
     read_quic_frame, write_quic_frame, write_quic_register_frame, QuicFrameError,
     QuicRegisterFrame, RunnerEnvelope, RunnerOfflineRequest, RunnerProjectSummary,
     ShellJobInventory, ShellProjectInventoryStatus,
 };
 #[cfg(test)]
-use crate::runner_protocol::{
+use webcodex_core::runner_protocol::{
     PROJECT_INVENTORY_PAGE_MAX_SERIALIZED_BYTES, PROJECT_INVENTORY_PAGE_MAX_SUMMARIES,
 };
-use webcodex_browser::BrowserSupervisor;
+use webcodex_runner_config::{
+    TRANSPORT_AUTO, TRANSPORT_POLLING, TRANSPORT_QUIC, TRANSPORT_WEBSOCKET,
+};
 
+pub(crate) mod http_client;
+pub(crate) mod poll_dispatch;
 mod project_inventory;
+pub(crate) mod registration;
 mod result_submission;
 mod websocket_connect;
 
-use crate::{
-    build_register_request_with_provider_status, dispatch_request_with_outcome, handle_one_poll,
-    register, PollingDispatchSupervisor, PollingRecoveryAction, RegisterRecoveryAction,
-};
+use super::dispatch::dispatch_request_with_outcome;
 #[cfg(test)]
-use crate::{CommandResult, RunnerHttpError, RunnerHttpErrorKind};
+use super::output::CommandResult;
+#[cfg(test)]
+use http_client::{RunnerHttpError, RunnerHttpErrorKind};
+use poll_dispatch::{handle_one_poll, PollingDispatchSupervisor, PollingRecoveryAction};
 #[cfg(test)]
 use project_inventory::{
     handle_project_inventory_status, ProjectInventoryStatusAction,
@@ -52,6 +55,7 @@ use project_inventory::{
     try_queue_project_inventory_page, PollingProjectRefresh, ProjectInventorySync,
     StreamingProjectInventoryCoordinator,
 };
+use registration::{build_register_request_with_provider_status, register, RegisterRecoveryAction};
 use reqwest::blocking::Client;
 #[cfg(test)]
 use result_submission::{

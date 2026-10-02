@@ -1,5 +1,5 @@
-use crate::runner_protocol::ShellCommandExecutionState;
 use std::time::Instant;
+use webcodex_core::runner_protocol::ShellCommandExecutionState;
 
 #[derive(Debug)]
 pub(crate) struct CommandResult {

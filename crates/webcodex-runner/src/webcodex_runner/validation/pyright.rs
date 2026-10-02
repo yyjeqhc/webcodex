@@ -6,15 +6,15 @@
 use super::execute::{resolve_executable, run_bounded};
 use super::path::relativize_path;
 use super::{base_response, registry};
-use crate::validation_bridge::{
-    bound_error_message, failure_kinds, sanitize_bridge_text, BridgeDiagnostic, BridgeDiagnostics,
-    ValidationBridgeRequest, ValidationBridgeResponse, MAX_BRIDGE_DIAGNOSTICS,
-    MAX_DIAGNOSTIC_MESSAGE_CHARS, MAX_RULE_CHARS, MAX_VALIDATION_STDOUT_BYTES,
-};
 use serde_json::Value;
 use std::cmp::Ordering;
 use std::path::Path;
 use std::sync::atomic::AtomicBool;
+use webcodex_core::validation_bridge::{
+    bound_error_message, failure_kinds, sanitize_bridge_text, BridgeDiagnostic, BridgeDiagnostics,
+    ValidationBridgeRequest, ValidationBridgeResponse, MAX_BRIDGE_DIAGNOSTICS,
+    MAX_DIAGNOSTIC_MESSAGE_CHARS, MAX_RULE_CHARS, MAX_VALIDATION_STDOUT_BYTES,
+};
 
 const ADAPTER_ID: &str = "pyright";
 

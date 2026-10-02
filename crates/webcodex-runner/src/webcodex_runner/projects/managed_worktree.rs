@@ -20,7 +20,7 @@ use super::registration::{
     ProjectTomlWriteError,
 };
 use super::{project_registry_write_lock, structured_project_error_cmd, RunnerProjectFile};
-use crate::{ok_cmd, CommandResult};
+use crate::webcodex_runner::output::{ok_cmd, CommandResult};
 
 const MANAGED_WORKTREE_GIT_TIMEOUT: Duration = Duration::from_secs(20);
 const MANAGED_WORKTREE_NAMESPACE: &str = ".webcodex-worktrees";

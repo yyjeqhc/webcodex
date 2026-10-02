@@ -1,14 +1,14 @@
 use super::config::RunnerPolicy;
 use super::output::CommandResult;
 use super::shell::cwd_allowed;
-use crate::project_overview::build_project_overview;
-use crate::runner_config::DEFAULT_MAX_OUTPUT_BYTES;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 use webcodex_core::runner_operation::{RunnerFileOperation, RunnerFilePayload};
+use webcodex_runner_config::DEFAULT_MAX_OUTPUT_BYTES;
 use webcodex_workspace::file_read_range::{self, ReadFileReason};
+use webcodex_workspace::project_overview::build_project_overview;
 
 pub(crate) fn sha256_hex_bytes(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
@@ -111,7 +111,7 @@ fn validate_delete_project_file_path(path: &str) -> bool {
         return false;
     }
     let raw = Path::new(path);
-    if raw.is_absolute() || crate::apply_edits_shared::is_sensitive_edit_path(path) {
+    if raw.is_absolute() || webcodex_core::apply_edits_shared::is_sensitive_edit_path(path) {
         return false;
     }
     raw.components()

@@ -1,4 +1,70 @@
-use super::*;
+#[cfg(windows)]
+use super::parse_service_runner_args;
+use super::{parse_runner_args, RunnerCliAction};
+use reqwest::blocking::Client;
+#[cfg(test)]
+use std::collections::HashMap;
+use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use crate::webcodex_runner;
+use webcodex_runner::job_manager::JobManager;
+#[cfg(test)]
+use webcodex_runner::{cwd_allowed, PreparedShellProfileCache};
+
+use runner_operation::RunnerFileOperation;
+#[cfg(test)]
+use webcodex_core::{runner_operation, runner_protocol};
+
+use runner_protocol::{
+    RunnerCapabilities, RunnerCapabilityId, RunnerPollResponse, RunnerRequest,
+    ShellProjectInventoryStatus, RUNNER_PROTOCOL_GENERATION_V2,
+};
+#[cfg(test)]
+use runner_protocol::{RunnerJobUpdateRequest, ShellCommandExecutionState};
+
+#[cfg(test)]
+use runner_protocol::{RunnerEnvelope, RUNNER_PROTOCOL_GENERATION_V2_BASELINE_CAPABILITY_NAMES};
+#[cfg(test)]
+use std::collections::BTreeMap;
+#[cfg(test)]
+use std::net::SocketAddr;
+#[cfg(test)]
+use webcodex_runner::dispatch_request;
+#[cfg(test)]
+use webcodex_runner::QuicClientConfig;
+#[cfg(test)]
+use webcodex_runner::{
+    auto_transport_plan, build_ws_request, default_quic_alpn, default_quic_connect_timeout_secs,
+    default_quic_keepalive_interval_secs, default_websocket_connect_timeout_secs,
+    effective_transport, load_runner_project_summaries_from_dir, non_empty_token,
+    parse_runner_project_toml, quic_client_bind_addr_for, resolve_quic_config,
+    resolve_quic_server_addrs, run_shell, runner_project_summary, server_url_to_ws,
+    sha256_hex_bytes, validate_project_path_policy, websocket_session, RunnerRuntimeState,
+    ShellProfileConfig, CLIENT_PROFILE_ERROR, DEFAULT_MAX_CONCURRENT_JOBS, WS_OUTGOING_CAPACITY,
+};
+use webcodex_runner::{
+    client_profile_runner_config, load_config, max_concurrent_jobs, project_registry_dir,
+    resolve_requested_path, CommandResult, HttpSendConfig, ReloadableRunnerConfig, RunnerConfig,
+    RunnerPolicy, RunnerProjectCache, RunnerSink, ShellConfig, SubmitResultError,
+};
+#[cfg(test)]
+use webcodex_runner_config::{
+    TRANSPORT_AUTO, TRANSPORT_POLLING, TRANSPORT_QUIC, TRANSPORT_WEBSOCKET,
+};
+
+#[cfg(test)]
+use webcodex_runner::SshConfig;
+use webcodex_runner::SshConnectionPool;
+
+use crate::webcodex_runner::file_dispatch::*;
+use crate::webcodex_runner::transport::http_client::*;
+use crate::webcodex_runner::transport::poll_dispatch::*;
+use crate::webcodex_runner::transport::registration::*;
+
 use crate::webcodex_runner::config::validate_shell_config;
 use crate::webcodex_runner::job_manager::job_manager_tests::{shell_job_request, ws_sink};
 use crate::webcodex_runner::projects::{project_root_fingerprint, RunnerProjectFile};
@@ -1849,7 +1915,6 @@ fn canonical_registered_client_json(instance_id: &str, transport: &str) -> serde
 
 #[test]
 fn empty_tokens_http_register_omits_authorization_header() {
-    use std::io::{Read, Write};
     use std::net::TcpListener;
 
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();

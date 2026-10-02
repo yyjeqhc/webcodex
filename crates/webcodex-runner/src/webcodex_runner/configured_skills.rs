@@ -348,7 +348,7 @@ fn load_live_skill(
     let package_root = package_path
         .canonicalize()
         .map_err(|_| "invalid_skill_package")?;
-    if !crate::runner_config::paths::path_is_within(&package_root, canonical_root) {
+    if !webcodex_runner_config::paths::path_is_within(&package_root, canonical_root) {
         return Err("invalid_skill_package");
     }
     stats.definitions_attempted = stats.definitions_attempted.saturating_add(1);
@@ -578,8 +578,8 @@ fn resolve_regular_package_file(
         }
     }
     let target = current.canonicalize().map_err(|_| invalid_code)?;
-    if !crate::runner_config::paths::path_is_within(&target, package_root)
-        || !crate::runner_config::paths::path_is_within(&target, canonical_root)
+    if !webcodex_runner_config::paths::path_is_within(&target, package_root)
+        || !webcodex_runner_config::paths::path_is_within(&target, canonical_root)
     {
         return Err(invalid_code);
     }

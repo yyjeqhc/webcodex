@@ -1477,7 +1477,7 @@ fn file_apply_text_edits_old_server_payload_keeps_legacy_conflict_shape() {
 fn file_apply_text_edits_new_payload_is_legacy_deserializable_and_fail_closed() {
     #[derive(serde::Deserialize)]
     struct LegacyEdit {
-        kind: crate::apply_edits_shared::ApplyTextEditKind,
+        kind: webcodex_core::apply_edits_shared::ApplyTextEditKind,
         #[serde(default)]
         old_text: Option<String>,
         #[serde(default)]
@@ -1487,7 +1487,7 @@ fn file_apply_text_edits_new_payload_is_legacy_deserializable_and_fail_closed() 
     }
     #[derive(serde::Deserialize)]
     struct LegacyChange {
-        kind: crate::apply_edits_shared::ApplyFileChangeKind,
+        kind: webcodex_core::apply_edits_shared::ApplyFileChangeKind,
         path: String,
         #[serde(default)]
         to_path: Option<String>,
@@ -1515,7 +1515,7 @@ fn file_apply_text_edits_new_payload_is_legacy_deserializable_and_fail_closed() 
     let change = &legacy.changes[0];
     assert_eq!(
         change.kind,
-        crate::apply_edits_shared::ApplyFileChangeKind::Edit
+        webcodex_core::apply_edits_shared::ApplyFileChangeKind::Edit
     );
     assert_eq!(change.path, "target.txt");
     assert_eq!(
@@ -1527,7 +1527,7 @@ fn file_apply_text_edits_new_payload_is_legacy_deserializable_and_fail_closed() 
     let edit = &change.edits[0];
     assert_eq!(
         edit.kind,
-        crate::apply_edits_shared::ApplyTextEditKind::ReplaceExact
+        webcodex_core::apply_edits_shared::ApplyTextEditKind::ReplaceExact
     );
     assert_eq!(edit.new_text.as_deref(), Some("x"));
     assert!(edit.anchor_text.is_none());

@@ -4,23 +4,23 @@ use super::managed_ssh::ManagedSshResourceStore;
 use super::mcp_gateway::McpGatewayManager;
 use super::plugin::PluginManager;
 use super::shutdown::lock_unpoison;
-use crate::runner_config::{
-    effective_allowed_roots, DEFAULT_MAX_OUTPUT_BYTES, DEFAULT_MAX_TIMEOUT_SECS,
-    DEFAULT_POLL_INTERVAL_MS, MAX_POLL_INTERVAL_MS, TRANSPORT_AUTO, TRANSPORT_POLLING,
-    TRANSPORT_QUIC, TRANSPORT_WEBSOCKET,
-};
-use crate::runner_protocol::{
-    RunnerCapabilities, RunnerConfigAction, RunnerConfigErrorCode, RunnerConfigErrorField,
-    RunnerConfigErrorReason, RunnerConfigExecutionState, RunnerConfigOperationResponse,
-    RunnerConfigReloadStatus, RunnerHostContext, RUNNER_JOB_CONCURRENCY_MAX,
-    RUNNER_JOB_CONCURRENCY_MIN,
-};
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock, Weak};
 use webcodex_core::coding_agent::CodingAgentConfigValue;
+use webcodex_core::runner_protocol::{
+    RunnerCapabilities, RunnerConfigAction, RunnerConfigErrorCode, RunnerConfigErrorField,
+    RunnerConfigErrorReason, RunnerConfigExecutionState, RunnerConfigOperationResponse,
+    RunnerConfigReloadStatus, RunnerHostContext, RUNNER_JOB_CONCURRENCY_MAX,
+    RUNNER_JOB_CONCURRENCY_MIN,
+};
+use webcodex_runner_config::{
+    effective_allowed_roots, DEFAULT_MAX_OUTPUT_BYTES, DEFAULT_MAX_TIMEOUT_SECS,
+    DEFAULT_POLL_INTERVAL_MS, MAX_POLL_INTERVAL_MS, TRANSPORT_AUTO, TRANSPORT_POLLING,
+    TRANSPORT_QUIC, TRANSPORT_WEBSOCKET,
+};
 
 const DEFAULT_SYSTEM_CONFIG_DIR: &str = "/etc/webcodex";
 pub(crate) const CLIENT_PROFILE_ERROR: &str =
@@ -335,7 +335,7 @@ pub(crate) struct QuicClientConfig {
 pub(crate) const MAX_QUIC_KEEPALIVE_INTERVAL_SECS: u64 = 25;
 
 pub(crate) fn default_quic_alpn() -> String {
-    crate::runner_protocol::RUNNER_QUIC_ALPN_V1.to_string()
+    webcodex_core::runner_protocol::RUNNER_QUIC_ALPN_V1.to_string()
 }
 pub(crate) fn default_quic_connect_timeout_secs() -> u64 {
     10
@@ -1615,7 +1615,7 @@ pub(crate) fn load_config(path: &Path) -> Result<RunnerConfig, String> {
 
 pub(crate) fn configured_skill_root_identity(root: &Path) -> String {
     let lexical = root.components().collect::<PathBuf>();
-    crate::runner_config::paths::normalize_path_identity(&lexical)
+    webcodex_runner_config::paths::normalize_path_identity(&lexical)
 }
 
 fn validate_instructions_config(config: &InstructionsConfig) -> Result<(), String> {
@@ -1637,7 +1637,7 @@ fn validate_instructions_config(config: &InstructionsConfig) -> Result<(), Strin
             ));
         }
         if !path.is_absolute()
-            || crate::runner_config::paths::project_path_has_parent_traversal(path)
+            || webcodex_runner_config::paths::project_path_has_parent_traversal(path)
         {
             return Err(
                 "instructions.files entries must be absolute paths without parent traversal"
@@ -1645,8 +1645,8 @@ fn validate_instructions_config(config: &InstructionsConfig) -> Result<(), Strin
             );
         }
         #[cfg(windows)]
-        if crate::runner_config::paths::windows_project_path_kind(path)
-            == Some(crate::runner_config::paths::WindowsProjectPathKind::UnsupportedNamespace)
+        if webcodex_runner_config::paths::windows_project_path_kind(path)
+            == Some(webcodex_runner_config::paths::WindowsProjectPathKind::UnsupportedNamespace)
         {
             return Err(
                 "instructions.files contains an unsupported Windows path namespace".to_string(),
@@ -1733,15 +1733,15 @@ fn validate_skills_config(config: &SkillsConfig) -> Result<(), String> {
             ));
         }
         if !root.is_absolute()
-            || crate::runner_config::paths::project_path_has_parent_traversal(root)
+            || webcodex_runner_config::paths::project_path_has_parent_traversal(root)
         {
             return Err(
                 "skills.roots entries must be absolute paths without parent traversal".to_string(),
             );
         }
         #[cfg(windows)]
-        if crate::runner_config::paths::windows_project_path_kind(root)
-            == Some(crate::runner_config::paths::WindowsProjectPathKind::UnsupportedNamespace)
+        if webcodex_runner_config::paths::windows_project_path_kind(root)
+            == Some(webcodex_runner_config::paths::WindowsProjectPathKind::UnsupportedNamespace)
         {
             return Err("skills.roots contains an unsupported Windows path namespace".to_string());
         }
@@ -1931,10 +1931,10 @@ fn validate_mcp_gateway_env_name(value: &str) -> Result<(), ()> {
 }
 
 fn validate_mcp_gateway_config(config: &McpGatewayConfig) -> Result<(), String> {
-    use crate::mcp_gateway::{
+    use std::collections::HashSet;
+    use webcodex_core::mcp_gateway::{
         validate_provider_id, validate_provider_name, MCP_GATEWAY_MAX_PROVIDERS,
     };
-    use std::collections::HashSet;
 
     if !(1..=120).contains(&config.request_timeout_secs) {
         return Err("mcp.request_timeout_secs must be between 1 and 120".to_string());
@@ -2416,7 +2416,7 @@ pub(crate) fn hostname() -> Option<String> {
 
 fn default_project_registry_dir() -> Result<PathBuf, String> {
     let base = default_client_base_dir()?;
-    crate::runner_config::paths::select_project_registry_dir(&base)
+    webcodex_runner_config::paths::select_project_registry_dir(&base)
 }
 
 pub(crate) fn project_registry_dir(cfg: &RunnerConfig) -> Result<PathBuf, String> {

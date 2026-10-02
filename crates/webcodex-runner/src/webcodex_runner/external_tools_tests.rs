@@ -1,10 +1,10 @@
 use super::*;
-use crate::runner_protocol::RunnerRequest;
 use std::env;
 use std::fs;
 use std::process::Command;
 use std::sync::{Arc, OnceLock, Weak};
 use tempfile::TempDir;
+use webcodex_core::runner_protocol::RunnerRequest;
 
 /// Routing tests that operate inside the fixture root and are not about the
 /// filesystem boundary. `RunnerPolicy::default()` is fail-closed, so these opt

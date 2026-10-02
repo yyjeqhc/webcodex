@@ -87,12 +87,12 @@ pub(crate) fn run_runner(
         .to_string();
     #[cfg(windows)]
     let exit_diagnostics = {
-        let build = crate::runner_build_info();
+        let build = super::registration::runner_build_info();
         match RunnerExitDiagnostics::start(
             &cfg.client_id,
             &cfg.server_url,
             &transport,
-            crate::process_started_at(),
+            super::registration::process_started_at(),
             build.version.as_deref(),
             build.git_commit.as_deref(),
             build.git_dirty,

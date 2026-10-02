@@ -8,16 +8,16 @@ use super::super::config::RunnerPolicy;
 use super::super::output::CommandResult;
 use super::super::projects::load_runner_project_summaries_from_dir;
 use super::super::shell::cwd_allowed;
-#[cfg(test)]
-use crate::lsp_bridge::AGENT_LSP_REQUEST_KIND;
-use crate::lsp_bridge::{
-    bound_error_message, error_codes, RunnerLspPayload, RunnerLspResultEnvelope,
-};
-#[cfg(test)]
-use crate::runner_protocol::RunnerRequest;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
+#[cfg(test)]
+use webcodex_core::lsp_bridge::AGENT_LSP_REQUEST_KIND;
+use webcodex_core::lsp_bridge::{
+    bound_error_message, error_codes, RunnerLspPayload, RunnerLspResultEnvelope,
+};
+#[cfg(test)]
+use webcodex_core::runner_protocol::RunnerRequest;
 use webcodex_lsp::{execute_lsp_operation, LspSupervisor};
 
 #[cfg(test)]

@@ -1,8 +1,8 @@
 use super::super::config::SshResourceConfig;
 use super::super::ssh::SshConnectionPool;
 use super::*;
-use crate::runner_protocol::RunnerRequest;
 use std::collections::BTreeMap;
+use webcodex_core::runner_protocol::RunnerRequest;
 
 fn request(action: &str, shell_id: &str, command: Option<&str>) -> RunnerRequest {
     RunnerRequest {

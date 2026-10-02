@@ -1,9 +1,5 @@
 use super::files::sha256_hex_bytes;
 use super::output::{line_edit_stdout, CommandResult};
-use crate::apply_edits_shared::is_lowercase_hex_sha256 as is_hex_sha256;
-use crate::artifact_policy::MAX_MCP_IMAGE_BYTES;
-#[cfg(test)]
-use crate::runner_protocol::RunnerRequest;
 use base64::{engine::general_purpose, Engine as _};
 use serde_json::{json, Value};
 use std::io::Write;
@@ -12,9 +8,13 @@ use std::sync::{Mutex, OnceLock};
 #[cfg(test)]
 use std::time::{Duration, SystemTime};
 use std::time::{Instant, UNIX_EPOCH};
+use webcodex_core::apply_edits_shared::is_lowercase_hex_sha256 as is_hex_sha256;
+use webcodex_core::artifact_policy::MAX_MCP_IMAGE_BYTES;
 #[cfg(test)]
 use webcodex_core::runner_operation::RunnerOperation;
 use webcodex_core::runner_operation::{RunnerFileOperation, RunnerFilePayload};
+#[cfg(test)]
+use webcodex_core::runner_protocol::RunnerRequest;
 
 mod inspection;
 mod upload;
@@ -1820,19 +1820,19 @@ mod tests {
     #[test]
     fn common_extensions_use_shared_export_mime_policy() {
         assert_eq!(
-            crate::artifact_policy::preferred_mime_for_path("artifacts/audio.mp3"),
+            webcodex_core::artifact_policy::preferred_mime_for_path("artifacts/audio.mp3"),
             Some("audio/mpeg")
         );
         assert_eq!(
-            crate::artifact_policy::preferred_mime_for_path("artifacts/video.mp4"),
+            webcodex_core::artifact_policy::preferred_mime_for_path("artifacts/video.mp4"),
             Some("video/mp4")
         );
         assert_eq!(
-            crate::artifact_policy::preferred_mime_for_path("README.md"),
+            webcodex_core::artifact_policy::preferred_mime_for_path("README.md"),
             Some("text/markdown")
         );
         assert_eq!(
-            crate::artifact_policy::preferred_mime_for_path("data.customblob"),
+            webcodex_core::artifact_policy::preferred_mime_for_path("data.customblob"),
             None
         );
     }

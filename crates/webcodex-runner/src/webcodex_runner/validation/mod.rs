@@ -21,13 +21,13 @@ use super::config::RunnerPolicy;
 use super::output::CommandResult;
 use super::projects::load_runner_project_summaries_from_dir;
 use super::shell::cwd_allowed;
-use crate::validation_bridge::{
-    failure_kinds, validate_bridge_request, ValidationBridgeRequest, ValidationBridgeResponse,
-    ValidationBridgeResultEnvelope, VALIDATION_BRIDGE_PROTOCOL_VERSION,
-};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::time::Instant;
+use webcodex_core::validation_bridge::{
+    failure_kinds, validate_bridge_request, ValidationBridgeRequest, ValidationBridgeResponse,
+    ValidationBridgeResultEnvelope, VALIDATION_BRIDGE_PROTOCOL_VERSION,
+};
 
 pub(crate) fn handle_validation_request(
     policy: &RunnerPolicy,

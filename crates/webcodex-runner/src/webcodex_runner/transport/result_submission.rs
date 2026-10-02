@@ -4,15 +4,16 @@ use std::time::{Duration, Instant};
 
 use reqwest::blocking::Client;
 
-use crate::runner_protocol::{
+use super::http_client::{RunnerHttpError, RunnerHttpErrorKind};
+use crate::webcodex_runner::config::{HotRunnerConfig, ReloadableRunnerConfig};
+use crate::webcodex_runner::dispatch::runner_tool_trace_enabled;
+use crate::webcodex_runner::output::CommandResult;
+use crate::webcodex_runner::ShellCommandResult;
+use webcodex_core::runner_protocol::{
     RunnerEnvelope, RunnerJobUpdateRequest, RunnerJobUpdateResponse,
     RunnerPersistentShellResultRequest, RunnerPersistentShellResultResponse, RunnerResultPayload,
     RunnerResultRequest, RunnerResultResponse,
 };
-use crate::webcodex_runner::config::{HotRunnerConfig, ReloadableRunnerConfig};
-use crate::webcodex_runner::dispatch::runner_tool_trace_enabled;
-use crate::webcodex_runner::ShellCommandResult;
-use crate::{CommandResult, RunnerHttpError, RunnerHttpErrorKind};
 
 use super::{
     concise_log_error, observe_runner_request_duration, observe_runner_stream_outgoing_channel,
@@ -265,9 +266,9 @@ impl RunnerSink {
 
     fn transport_name(&self) -> &'static str {
         match self {
-            RunnerSink::Http(_) => crate::runner_config::TRANSPORT_POLLING,
-            RunnerSink::WebSocket { .. } => crate::runner_config::TRANSPORT_WEBSOCKET,
-            RunnerSink::Quic { .. } => crate::runner_config::TRANSPORT_QUIC,
+            RunnerSink::Http(_) => webcodex_runner_config::TRANSPORT_POLLING,
+            RunnerSink::WebSocket { .. } => webcodex_runner_config::TRANSPORT_WEBSOCKET,
+            RunnerSink::Quic { .. } => webcodex_runner_config::TRANSPORT_QUIC,
         }
     }
 
@@ -325,7 +326,7 @@ impl RunnerSink {
     pub(crate) fn submit_mcp_gateway_result(
         &self,
         request_id: String,
-        response: crate::mcp_gateway::McpGatewayResponse,
+        response: webcodex_core::mcp_gateway::McpGatewayResponse,
     ) -> Result<ResultSubmission, SubmitResultError> {
         self.submit_result_payload(RunnerResultPayload {
             result: RunnerResultRequest {
@@ -533,7 +534,7 @@ impl RunnerSink {
     pub(crate) fn submit_persistent_shell_result(
         &self,
         request_id: String,
-        result: crate::runner_protocol::PersistentShellResult,
+        result: webcodex_core::runner_protocol::PersistentShellResult,
     ) -> Result<ResultSubmission, SubmitResultError> {
         let body = RunnerPersistentShellResultRequest {
             client_id: self.client_id().to_string(),
@@ -819,5 +820,7 @@ where
     T: serde::Serialize + ?Sized,
     R: serde::de::DeserializeOwned,
 {
-    crate::post_json_with_auth(client, server_url, token, path, body)
+    crate::webcodex_runner::transport::http_client::post_json_with_auth(
+        client, server_url, token, path, body,
+    )
 }

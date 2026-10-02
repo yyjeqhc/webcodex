@@ -1,11 +1,11 @@
-use crate::artifact_policy::{
-    ooxml_extension_for_mime, preferred_mime_for_path, DOCX_MIME, PPTX_MIME, XLSX_MIME,
-};
 use flate2::read::DeflateDecoder;
 use sha2::{Digest, Sha256};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
+use webcodex_core::artifact_policy::{
+    ooxml_extension_for_mime, preferred_mime_for_path, DOCX_MIME, PPTX_MIME, XLSX_MIME,
+};
 use xml::reader::{EventReader, XmlEvent};
 
 pub(super) const ARTIFACT_STREAM_BUFFER_BYTES: usize = 64 * 1024;

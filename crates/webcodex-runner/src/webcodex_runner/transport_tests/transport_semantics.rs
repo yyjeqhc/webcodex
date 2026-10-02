@@ -365,7 +365,7 @@ fn polling_502_html_is_transient_and_sanitized() {
         reqwest::StatusCode::BAD_GATEWAY,
         nginx_html,
     );
-    let poll_error = crate::PollError::from_http(error, "oe");
+    let poll_error = crate::webcodex_runner::transport::poll_dispatch::PollError::from_http(error, "oe");
     assert_eq!(
         poll_error.recovery_action(),
         PollingRecoveryAction::RetryPoll
@@ -395,7 +395,7 @@ fn polling_503_and_504_are_transient_server_unavailable() {
         ),
     ] {
         let error = RunnerHttpError::status("/api/shell/agent/poll", status, "proxy unavailable");
-        let poll_error = crate::PollError::from_http(error, "oe");
+        let poll_error = crate::webcodex_runner::transport::poll_dispatch::PollError::from_http(error, "oe");
         assert_eq!(
             poll_error.recovery_action(),
             PollingRecoveryAction::RetryPoll

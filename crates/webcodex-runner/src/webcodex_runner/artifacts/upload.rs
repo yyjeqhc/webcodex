@@ -17,8 +17,8 @@ use super::{
     parse_json_payload, parse_optional_clean_string, parse_optional_usize_field,
     parse_required_clean_string, parse_usize_field, project_root, validate_artifact_runner_path,
 };
-use crate::apply_edits_shared::is_lowercase_hex_sha256 as is_hex_sha256;
-use crate::artifact_policy::ooxml_extension_for_mime;
+use webcodex_core::apply_edits_shared::is_lowercase_hex_sha256 as is_hex_sha256;
+use webcodex_core::artifact_policy::ooxml_extension_for_mime;
 
 pub(super) const MAX_ARTIFACT_UPLOAD_BYTES: usize = 256 * 1024 * 1024;
 pub(super) const MAX_ARTIFACT_UPLOAD_CHUNK_BYTES: usize = 1024 * 1024;

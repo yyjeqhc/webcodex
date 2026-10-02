@@ -1,12 +1,12 @@
 use super::*;
-use crate::validation_bridge::{
+use std::fs;
+use std::path::PathBuf;
+use webcodex_core::validation_bridge::{
     failure_kinds, value_contains_absolute_path_leak, ValidationBridgeRequest,
     MAX_BRIDGE_DIAGNOSTICS, MAX_VALIDATION_STDERR_CAPTURE_BYTES,
     MAX_VALIDATION_STDERR_SUMMARY_CHARS, MAX_VALIDATION_STDOUT_BYTES,
     VALIDATION_BRIDGE_PROTOCOL_VERSION,
 };
-use std::fs;
-use std::path::PathBuf;
 
 fn typecheck_request(project_id: &str) -> ValidationBridgeRequest {
     ValidationBridgeRequest {

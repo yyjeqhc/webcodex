@@ -9,12 +9,6 @@ use super::shell::cwd_allowed;
 use super::shutdown::{lock_unpoison, SHUTDOWN_POLL_INTERVAL};
 use super::validation::resolve_under_project;
 use super::RunnerPolicy;
-#[cfg(test)]
-use crate::runner_protocol::RunnerRequest;
-use crate::runner_protocol::{
-    ClaudeCodeProviderStatus, ProviderCallSummary, ToolProvidersStatus,
-    EXTERNAL_SEARCH_REQUEST_PREFIX,
-};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 #[cfg(windows)]
@@ -28,6 +22,12 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 use webcodex_core::runner_operation::RunnerShellOperation;
+#[cfg(test)]
+use webcodex_core::runner_protocol::RunnerRequest;
+use webcodex_core::runner_protocol::{
+    ClaudeCodeProviderStatus, ProviderCallSummary, ToolProvidersStatus,
+    EXTERNAL_SEARCH_REQUEST_PREFIX,
+};
 
 use webcodex_process::{GracefulTermination, ManagedChild};
 

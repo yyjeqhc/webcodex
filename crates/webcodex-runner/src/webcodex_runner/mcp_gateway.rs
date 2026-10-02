@@ -10,13 +10,6 @@ use super::config::{McpGatewayConfig, McpGatewayProviderConfig, MCP_GATEWAY_MAX_
 #[cfg(windows)]
 use super::shell::env_keys_equal;
 use super::shell::is_sensitive_env_key;
-use crate::mcp_gateway::{
-    validate_json_value, validate_request, validate_tool_result, validate_tools, McpGatewayContent,
-    McpGatewayDispatchState, McpGatewayProvider, McpGatewayProviderState, McpGatewayRequest,
-    McpGatewayResponse, McpGatewayResponsePayload, McpGatewayTool, McpGatewayToolResult,
-    MCP_GATEWAY_MAX_MESSAGE_BYTES, MCP_GATEWAY_MAX_PROVIDER_MESSAGE_BYTES,
-    MCP_GATEWAY_MAX_RESULT_BYTES,
-};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -24,6 +17,13 @@ use std::process::{ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{mpsc, Arc, Mutex, RwLock, TryLockError};
 use std::time::{Duration, Instant};
+use webcodex_core::mcp_gateway::{
+    validate_json_value, validate_request, validate_tool_result, validate_tools, McpGatewayContent,
+    McpGatewayDispatchState, McpGatewayProvider, McpGatewayProviderState, McpGatewayRequest,
+    McpGatewayResponse, McpGatewayResponsePayload, McpGatewayTool, McpGatewayToolResult,
+    MCP_GATEWAY_MAX_MESSAGE_BYTES, MCP_GATEWAY_MAX_PROVIDER_MESSAGE_BYTES,
+    MCP_GATEWAY_MAX_RESULT_BYTES,
+};
 use webcodex_process::ManagedChild;
 
 const MCP_PROTOCOL_VERSION: &str = "2025-06-18";

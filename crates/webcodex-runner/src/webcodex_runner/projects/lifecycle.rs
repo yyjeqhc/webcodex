@@ -11,6 +11,7 @@ use super::catalog::{
     effective_registration_source, parse_runner_project_toml, project_lineage, project_revision,
     project_root_fingerprint, run_git_bounded, EXPLICIT_REGISTRATION_SOURCE,
 };
+use super::created_paths::{write_created_file, CreatedProjectPaths};
 use super::registration::{
     build_project_toml, sync_dir, sync_parent_dir, sync_project_parent_after_rename,
     unique_registry_temp, validate_model_network_project_ingress_authority,
@@ -21,7 +22,7 @@ use super::registration::{
 use super::{
     project_error_cmd, project_registry_write_lock, structured_project_error_cmd, RunnerProjectFile,
 };
-use crate::{err_cmd, ok_cmd, write_created_file, CommandResult, CreatedProjectPaths};
+use crate::webcodex_runner::output::{err_cmd, ok_cmd, CommandResult};
 
 #[derive(Debug)]
 enum ProjectUnregisterError {

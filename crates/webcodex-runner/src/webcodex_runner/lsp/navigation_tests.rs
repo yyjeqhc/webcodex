@@ -1,12 +1,5 @@
 use super::adapter::{handle_lsp_request, is_lsp_request_kind};
 use super::navigation_test_support::{fake_server_path, wait_until};
-use crate::lsp_bridge::{
-    parse_runner_lsp_result_envelope, CallHierarchyDirection, RunnerLspPayload, RunnerLspRequest,
-    AGENT_LSP_REQUEST_KIND, MAX_CALL_HIERARCHY_CALL_ENTRIES_INSPECTED_PER_RPC,
-    MAX_CALL_HIERARCHY_PREPARE_ITEMS_INSPECTED,
-    MAX_CALL_HIERARCHY_RAW_CALL_SITE_RANGES_INSPECTED_PER_ENTRY,
-};
-use crate::runner_protocol::{RunnerCapabilities, RunnerRequest};
 use crate::webcodex_runner::config::RunnerPolicy;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -15,6 +8,13 @@ use std::path::{Path, PathBuf};
 #[cfg(windows)]
 use std::process::Command;
 use std::time::{Duration, Instant};
+use webcodex_core::lsp_bridge::{
+    parse_runner_lsp_result_envelope, CallHierarchyDirection, RunnerLspPayload, RunnerLspRequest,
+    AGENT_LSP_REQUEST_KIND, MAX_CALL_HIERARCHY_CALL_ENTRIES_INSPECTED_PER_RPC,
+    MAX_CALL_HIERARCHY_PREPARE_ITEMS_INSPECTED,
+    MAX_CALL_HIERARCHY_RAW_CALL_SITE_RANGES_INSPECTED_PER_ENTRY,
+};
+use webcodex_core::runner_protocol::{RunnerCapabilities, RunnerRequest};
 use webcodex_lsp::{
     LspCommand, LspServerKind, LspSupervisor, LspSupervisorConfig, MAX_LSP_DOCUMENT_BYTES,
 };

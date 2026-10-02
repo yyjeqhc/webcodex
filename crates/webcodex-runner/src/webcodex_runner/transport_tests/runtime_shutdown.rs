@@ -695,7 +695,7 @@ fn polling_persistent_shell_request(
     request.kind = "persistent_shell".to_string();
     request.command = command.clone().unwrap_or_default();
     request.timeout_secs = 30;
-    request.persistent_shell = Some(crate::runner_protocol::PersistentShellRequest {
+    request.persistent_shell = Some(webcodex_core::runner_protocol::PersistentShellRequest {
         action: action.to_string(),
         shell_id: shell_id.to_string(),
         workflow_session_id: "wc_sess_lkaw44QDG0J6FfyY".to_string(),

@@ -1,9 +1,5 @@
 //! Bounded process execution for validation adapters.
 
-use crate::validation_bridge::{
-    sanitize_bridge_text, MAX_VALIDATION_STDERR_CAPTURE_BYTES, MAX_VALIDATION_STDERR_SUMMARY_CHARS,
-    MAX_VALIDATION_STDOUT_BYTES,
-};
 use crate::webcodex_runner::output_text::{normalize_output_text, OutputTextSource};
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -12,6 +8,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
+use webcodex_core::validation_bridge::{
+    sanitize_bridge_text, MAX_VALIDATION_STDERR_CAPTURE_BYTES, MAX_VALIDATION_STDERR_SUMMARY_CHARS,
+    MAX_VALIDATION_STDOUT_BYTES,
+};
 use webcodex_process::{GracefulTermination, ManagedChild};
 
 #[derive(Debug)]

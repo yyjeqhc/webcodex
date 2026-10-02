@@ -776,6 +776,7 @@ fn collect_session_window_rows(
 #[cfg(test)]
 mod tests {
     mod inventory;
+    mod peer_query;
     mod queries;
     mod read_lane;
 

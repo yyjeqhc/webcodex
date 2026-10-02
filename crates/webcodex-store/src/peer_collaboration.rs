@@ -3,6 +3,8 @@ use rusqlite::{params, OptionalExtension};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
+pub(crate) const RECENT_PEERS_SQL: &str = include_str!("peer_recent.sql");
+
 pub const MAX_PEER_MESSAGE_LIMIT: usize = 8;
 pub const MAX_PEER_DISCOVERY_LIMIT: usize = 8;
 const MAX_RETAINED_PEER_MESSAGES_PER_PRINCIPAL: usize = 512;
@@ -398,30 +400,7 @@ impl Database {
         let tx = conn.transaction()?;
         let limit = limit.clamp(1, MAX_PEER_DISCOVERY_LIMIT) as i64;
         let peers = {
-            let mut stmt = tx.prepare(
-                "SELECT e.client_window_key,
-                        MAX(e.client_window_source),
-                        MAX(e.window_ended_at_ms)
-                 FROM action_events e
-                 WHERE e.client_window_key IS NOT NULL
-                   AND e.client_window_key <> ?1
-                   AND e.principal_correlation_kind = ?2
-                   AND e.principal_correlation_id = ?3
-                   AND e.project = ?4
-                   AND e.window_meaningful = 1
-                   AND e.window_ended_at_ms >= ?5
-                   AND NOT EXISTS (
-                       SELECT 1 FROM window_peer_discoveries d
-                       WHERE d.principal_kind = ?2
-                         AND d.principal_id = ?3
-                         AND d.observer_window_key = ?1
-                         AND d.peer_window_key = e.client_window_key
-                         AND d.project = ?4
-                   )
-                 GROUP BY e.client_window_key
-                 ORDER BY MAX(e.window_ended_at_ms) DESC, e.client_window_key ASC
-                 LIMIT ?6",
-            )?;
+            let mut stmt = tx.prepare_cached(RECENT_PEERS_SQL)?;
             let mut rows = stmt.query(params![
                 observer_window_key,
                 principal_kind,
@@ -441,6 +420,11 @@ impl Database {
             }
             peers
         };
+        // No discovery/cursor/prune write on the common empty observation.
+        if peers.is_empty() {
+            tx.commit()?;
+            return Ok(Vec::new());
+        }
         let mut inserted_peers = Vec::new();
         for mut peer in peers {
             let inserted = tx.execute(

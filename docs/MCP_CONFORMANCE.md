@@ -61,6 +61,20 @@ not expose such a tool, that result is a coverage gap until a test-only adapter 
 provided; it must not be relabeled as a product protocol failure merely to make a
 summary green.
 
+The resource workbench enables `resources/list` and `resources/read` on the
+`2025-11-25` surface as well. Its reviewed capability snapshot now includes
+`resources: {listChanged: false, subscribe: false}`, and the passing
+`resources-list` check has no expected-failure classification. The pinned
+referee's reading scenarios require `test://static-text`, `test://static-binary`,
+and `test://template/123/data`, which this product fixture does not serve. Their
+exact resource-not-found results remain classified as `missing_harness_fixture`,
+matching the `2026-07-28` coverage policy; they do not certify successful resource
+reads. The legacy fingerprints were reviewed against
+[PR #832's conformance job](https://github.com/yyjeqhc/webcodex/actions/runs/36957330302/job/110684282842)
+and reproduced with the same pinned referee. Subscriptions remain unimplemented
+and explicitly advertised as `subscribe: false`. Focused MCP/resource tests cover
+actual WebCodex resource reads, current content, and authorization.
+
 Authenticated runtime behavior, including project-scoped ProjectGrant access, remains covered by focused synthetic-credential integration tests. The upstream server CLI does not provide a generic
 way to inject WebCodex authorization headers, so an authentication-blocked
 scenario is inconclusive rather than a pass.

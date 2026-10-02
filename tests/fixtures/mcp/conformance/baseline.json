@@ -68,20 +68,11 @@
           "evidence_sha256": "500284cbe8b04997354d450cc6004d54c245c404c89baa1d45e8f657bda7ff6b"
         },
         {
-          "scenario": "resources-list",
-          "check_id": "resources-list",
-          "classification": "optional_capability_not_implemented",
-          "reason": "This protocol capability is optional and is not advertised/implemented by the current WebCodex MCP surface.",
-          "evidence": "MCP server capability model plus first GitHub Actions conformance baseline raw report",
-          "expected_status": "FAILURE",
-          "evidence_sha256": "940374420a5847d2786704f3964d1f6a9b6f93d45d5caca7c867109789721091"
-        },
-        {
           "scenario": "resources-subscribe",
           "check_id": "resources-subscribe",
           "classification": "optional_capability_not_implemented",
-          "reason": "This protocol capability is optional and is not advertised/implemented by the current WebCodex MCP surface.",
-          "evidence": "MCP server capability model plus first GitHub Actions conformance baseline raw report",
+          "reason": "Resource subscriptions are optional and remain unimplemented; the current resources capability explicitly advertises subscribe=false.",
+          "evidence": "MCP 2025-11-25 resource subscriptions capability; reproduced PR #832 CI run 36957330302 capability probe and raw checks",
           "expected_status": "FAILURE",
           "evidence_sha256": "6fa45e84678894951bba5b600f36e0eeb6fa9f4760bc4e54aa7aa4fd03caa465"
         },
@@ -89,8 +80,8 @@
           "scenario": "resources-unsubscribe",
           "check_id": "resources-unsubscribe",
           "classification": "optional_capability_not_implemented",
-          "reason": "This protocol capability is optional and is not advertised/implemented by the current WebCodex MCP surface.",
-          "evidence": "MCP server capability model plus first GitHub Actions conformance baseline raw report",
+          "reason": "Resource subscriptions are optional and remain unimplemented; the current resources capability explicitly advertises subscribe=false.",
+          "evidence": "MCP 2025-11-25 resource subscriptions capability; reproduced PR #832 CI run 36957330302 capability probe and raw checks",
           "expected_status": "FAILURE",
           "evidence_sha256": "6fa45e84678894951bba5b600f36e0eeb6fa9f4760bc4e54aa7aa4fd03caa465"
         },
@@ -124,29 +115,29 @@
         {
           "scenario": "resources-read-binary",
           "check_id": "resources-read-binary",
-          "classification": "optional_capability_not_implemented",
-          "reason": "The legacy 2025-11-25 WebCodex surface does not advertise/implement the resources capability exercised by this scenario.",
-          "evidence": "MCP 2025-11-25 resources capability is optional; first GitHub Actions conformance baseline raw report",
+          "classification": "missing_harness_fixture",
+          "reason": "The upstream scenario requires the reference resource test://static-binary, which the product endpoint does not expose. WebCodex now advertises and implements resources/list and resources/read; this check does not exercise a WebCodex resource.",
+          "evidence": "Pinned referee 7169291ec0b68eb370fddcd9947313ab0d5e4156 src/scenarios/server/resources.ts plus reproduced PR #832 CI run 36957330302 raw checks; docs/MCP_CONFORMANCE.md",
           "expected_status": "FAILURE",
-          "evidence_sha256": "5ec605e03cf3cb3c48dae40d35358da3caffebcba8576ed4050cc206d0a12327"
+          "evidence_sha256": "b1301805f65ab9bc4253a5ada85323274398d0d31478489a131870ead30d6a47"
         },
         {
           "scenario": "resources-read-text",
           "check_id": "resources-read-text",
-          "classification": "optional_capability_not_implemented",
-          "reason": "The legacy 2025-11-25 WebCodex surface does not advertise/implement the resources capability exercised by this scenario.",
-          "evidence": "MCP 2025-11-25 resources capability is optional; first GitHub Actions conformance baseline raw report",
+          "classification": "missing_harness_fixture",
+          "reason": "The upstream scenario requires the reference resource test://static-text, which the product endpoint does not expose. WebCodex now advertises and implements resources/list and resources/read; this check does not exercise a WebCodex resource.",
+          "evidence": "Pinned referee 7169291ec0b68eb370fddcd9947313ab0d5e4156 src/scenarios/server/resources.ts plus reproduced PR #832 CI run 36957330302 raw checks; docs/MCP_CONFORMANCE.md",
           "expected_status": "FAILURE",
-          "evidence_sha256": "5ec605e03cf3cb3c48dae40d35358da3caffebcba8576ed4050cc206d0a12327"
+          "evidence_sha256": "8329b8913aef8e3be215c1e5623e7f1234c984edb7042d0a156cea732ab7a3af"
         },
         {
           "scenario": "resources-templates-read",
           "check_id": "resources-templates-read",
-          "classification": "optional_capability_not_implemented",
-          "reason": "The legacy 2025-11-25 WebCodex surface does not advertise/implement the resources capability exercised by this scenario.",
-          "evidence": "MCP 2025-11-25 resources capability is optional; first GitHub Actions conformance baseline raw report",
+          "classification": "missing_harness_fixture",
+          "reason": "The upstream scenario requires the reference resource test://template/123/data, which the product endpoint does not expose. WebCodex now advertises and implements resources/list and resources/read; this check does not exercise a WebCodex resource.",
+          "evidence": "Pinned referee 7169291ec0b68eb370fddcd9947313ab0d5e4156 src/scenarios/server/resources.ts plus reproduced PR #832 CI run 36957330302 raw checks; docs/MCP_CONFORMANCE.md",
           "expected_status": "FAILURE",
-          "evidence_sha256": "5ec605e03cf3cb3c48dae40d35358da3caffebcba8576ed4050cc206d0a12327"
+          "evidence_sha256": "59abb4eaf84d35920879c6d387ef6eb0651f0f44a8a233b765fbbc70f1ba5cd4"
         },
         {
           "scenario": "tools-call-audio",
@@ -231,6 +222,10 @@
         }
       ],
       "expected_server_capabilities": {
+        "resources": {
+          "listChanged": false,
+          "subscribe": false
+        },
         "tools": {
           "listChanged": false
         }

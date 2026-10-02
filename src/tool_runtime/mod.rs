@@ -20,6 +20,8 @@ mod orchestration_host;
 mod validation;
 #[cfg(feature = "experimental-code-mode")]
 pub(crate) use code_mode::is_admitted_nested_tool as code_mode_nested_tool_is_admitted;
+mod closeout_facts;
+mod closeout_projection;
 mod coding_agent;
 mod coding_task;
 mod coding_task_tools;

@@ -68,9 +68,16 @@ pub(crate) fn task_output_observation(path: String, result: &ToolResult) -> Task
     item
 }
 
+pub(crate) const UNVERIFIED_TASK_OUTPUTS_ACTION: &str =
+    "Inspect missing/unavailable task outputs, correct the task, verify its content/counts, then finish again with the exact output paths.";
+
+pub(crate) fn task_outputs_block_closeout(outputs: &TaskOutputs) -> bool {
+    outputs.missing_count > 0 || outputs.unavailable_count > 0
+}
+
 pub(crate) fn attach_task_outputs(output: &mut Value, outputs: &TaskOutputs) {
     output["task_outputs"] = json!(outputs);
-    if outputs.missing_count + outputs.unavailable_count > 0 {
+    if task_outputs_block_closeout(outputs) {
         let outcome = &mut output["task_outcome"];
         outcome["status"] = json!("fail");
         outcome["blocking"] = json!(true);
@@ -86,7 +93,7 @@ pub(crate) fn attach_task_outputs(output: &mut Value, outputs: &TaskOutputs) {
             blockers.push(json!("task_outputs_unverified"));
         }
         if let Some(actions) = output["suggested_next_actions"].as_array_mut() {
-            actions.push(json!("Inspect missing/unavailable task outputs, correct the task, verify its content/counts, then finish again with the exact output paths."));
+            actions.push(json!(UNVERIFIED_TASK_OUTPUTS_ACTION));
         }
     }
 }

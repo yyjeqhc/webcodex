@@ -983,27 +983,6 @@ fn push_unique_action(actions: &mut Vec<String>, action: &str) {
     }
 }
 
-pub(super) fn merged_suggested_next_actions(output: &Value, verdict: &Value) -> Vec<String> {
-    let mut actions = string_array(output.get("suggested_next_actions"));
-    for action in string_array(verdict.get("suggested_next_actions")) {
-        push_unique_action(&mut actions, &action);
-    }
-    actions
-}
-
-fn string_array(value: Option<&Value>) -> Vec<String> {
-    value
-        .and_then(Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(Value::as_str)
-                .map(str::to_string)
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
 pub(super) fn changed_files_count_from_counts(counts: &Value) -> u64 {
     [
         "modified",

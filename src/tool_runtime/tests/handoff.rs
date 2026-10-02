@@ -4,9 +4,9 @@ use super::super::*;
 use super::support::*;
 use crate::auth::AuthContext;
 use crate::runner_protocol::RunnerCapabilities;
-use crate::tool_runtime::handoff::{
-    apply_compact_workflow_outcomes, VALIDATION_IDENTITY_REUSE_ACTION,
-};
+use crate::tool_runtime::closeout_facts::{Observation, WorkspaceFacts};
+use crate::tool_runtime::closeout_projection::{closeout_facts, install_closeout_decision};
+use crate::tool_runtime::handoff::VALIDATION_IDENTITY_REUSE_ACTION;
 use crate::tool_runtime::kernel::{ToolCallContext, ToolCallRequest, ToolTransport};
 use crate::tool_runtime::sessions::SessionTransport;
 use crate::tool_runtime::validation_events::validation_summary_for_session;
@@ -39,7 +39,19 @@ fn closeout_projection_classifies_workspace_conflicts_as_hard_blockers() {
         "suggested_next_actions": []
     });
 
-    apply_compact_workflow_outcomes(&mut output, true, None);
+    let facts = closeout_facts(
+        Observation::Observed(WorkspaceFacts {
+            clean: Some(false),
+            conflicts: Some(1),
+            non_git: false,
+        }),
+        None,
+        &output["jobs"],
+        &output["validation"],
+        &output["tool_failures"],
+        &output["review_evidence"],
+    );
+    install_closeout_decision(&mut output, &facts, &[]);
 
     assert!(output["hard_blockers"]
         .as_array()

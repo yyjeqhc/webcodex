@@ -1,10 +1,14 @@
 //! Workflow closeout observations, decisions, and bounded finish projection.
 
 use super::projection::{
-    append_workspace_warnings, merged_suggested_next_actions, resolved_project_payload,
-    workspace_payload_from_show_changes,
+    append_workspace_warnings, resolved_project_payload, workspace_payload_from_show_changes,
 };
 use super::*;
+use crate::tool_runtime::closeout_facts::{CloseoutFacts, Observation, ValidationStatus};
+use crate::tool_runtime::closeout_projection::{
+    closeout_facts, hygiene_observation, install_closeout_decision, workspace_observation,
+};
+use webcodex_core::task_outputs::TaskOutputs;
 
 impl ToolRuntime {
     #[allow(clippy::too_many_arguments)]
@@ -180,13 +184,14 @@ impl ToolRuntime {
             }));
         }
         let workspace = workspace_payload_from_show_changes(&changes_result.output);
+        let observed_workspace = workspace_observation(&workspace, true, changes_result.success);
         append_workspace_warnings(&workspace, &mut final_warnings);
         let permissions = permission_summary_from_events(
             &session_summary.events,
             crate::tool_runtime::permissions::DEFAULT_PERMISSION_RECENT_LIMIT,
         );
 
-        let hygiene = if include_hygiene {
+        let (hygiene, observed_hygiene) = if include_hygiene {
             let hygiene_call = ToolCall::WorkspaceHygieneCheck {
                 project: resolved.resolved_id.clone(),
                 max_findings: None,
@@ -222,9 +227,10 @@ impl ToolRuntime {
                     "message": result.error,
                 }));
             }
-            result.output
+            let observed = hygiene_observation(&result.output, true, result.success);
+            (result.output, observed)
         } else {
-            Value::Null
+            (Value::Null, Observation::NotChecked)
         };
         append_hygiene_warnings(&hygiene, &mut final_warnings);
 
@@ -339,11 +345,10 @@ impl ToolRuntime {
                 discussion: &discussion,
                 continuation: "continued",
                 suggest_exploration_continuity: false,
-                workspace_conflicts: workspace
-                    .pointer("/counts/conflicted")
-                    .and_then(Value::as_u64)
-                    .unwrap_or(0)
-                    > 0,
+                workspace_conflicts: observed_workspace
+                    .observed()
+                    .and_then(|workspace| workspace.conflicts)
+                    .is_some_and(|count| count > 0),
                 hooks: continuation_projection_hooks(),
                 current_validation: continuation_validation_snapshot(
                     &continuation_current_validation,
@@ -374,6 +379,23 @@ impl ToolRuntime {
                 &session_id,
                 projection_closeout_session_summary.project.as_deref(),
             );
+
+        // Capture policy inputs before constructing any full/compact result.
+        let facts = closeout_facts(
+            observed_workspace,
+            Some(observed_hygiene),
+            &jobs,
+            &reconciliation.validation,
+            &reconciliation.tool_failures,
+            &review_evidence,
+        );
+        let review_continuation_available = changes_result
+            .output
+            .pointer("/diff_review_handoff/next_call/tool")
+            .and_then(Value::as_str)
+            == Some("read_git_diff_hunks");
+        let initial_actions = finish_suggested_next_actions(&facts, review_continuation_available);
+        let presentation_needed = work_result_presentation.is_some();
 
         let mut output = json!({
             "project": project,
@@ -408,7 +430,7 @@ impl ToolRuntime {
         if let Some(outputs) = task_outputs.as_ref() {
             output["task_outputs"] = json!(outputs);
         }
-        output["suggested_next_actions"] = json!(finish_suggested_next_actions(&output));
+        output["suggested_next_actions"] = json!(initial_actions);
         output["handoff_brief"] = build_handoff_brief(HandoffBriefInput {
             session_summary: &projection_closeout_session_summary,
             discussion: guidance_available.then_some(&discussion),
@@ -427,13 +449,9 @@ impl ToolRuntime {
         if let Some(follow_up) = self.active_goal_context_for_session(auth, &session_id) {
             output["goal_follow_up"] = follow_up;
         }
-        let mut decision = finish_decision_output(&output);
-        if decision
-            .pointer("/task_outcome/blocking")
-            .and_then(Value::as_bool)
-            == Some(false)
-            && output.get("presentation").is_some()
-        {
+        let mut decision =
+            finish_decision_output(&facts, &output, &initial_actions, task_outputs.as_ref());
+        if !decision.blocking && presentation_needed {
             if let Err(result) = self
                 .seal_work_result_changes_for_closeout(
                     &resolved.resolved_id,
@@ -452,12 +470,18 @@ impl ToolRuntime {
                         "kind": "work_result_seal_failed",
                         "message": message,
                     }));
-                decision = finish_decision_output(&output);
+                decision = finish_decision_output(
+                    &facts,
+                    &output,
+                    &initial_actions,
+                    task_outputs.as_ref(),
+                );
             }
         }
         if summary_only {
-            return ToolResult::ok(compact_finish_output(&decision));
+            return ToolResult::ok(compact_finish_output(&decision.output));
         }
+        let decision = decision.output;
         for field in [
             "facts",
             "hard_blockers",
@@ -527,78 +551,61 @@ fn closeout_workspace_observation_from_review_snapshot(snapshot: &GitReviewSnaps
     })
 }
 
-pub(super) fn finish_decision_output(output: &Value) -> Value {
-    let hygiene_checked = output
-        .get("hygiene")
-        .is_some_and(|hygiene| !hygiene.is_null());
-    let workspace_clean = output
-        .get("workspace")
-        .and_then(|workspace| workspace.get("clean"))
-        .cloned()
-        .unwrap_or(Value::Null);
-    let workspace_conflicts = output
-        .pointer("/workspace/counts/conflicted")
-        .and_then(Value::as_u64)
-        .unwrap_or(0);
-    let hygiene_clean = output
-        .get("hygiene")
-        .and_then(|hygiene| hygiene.get("clean"))
-        .and_then(Value::as_bool)
-        .unwrap_or(true);
-    let hygiene_secret_like_paths = output
-        .pointer("/hygiene/counts/secret_like_paths")
-        .and_then(Value::as_u64)
-        .unwrap_or(0);
-    let hygiene_truncated = output
-        .pointer("/hygiene/truncated")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
+pub(super) struct FinishDecisionOutput {
+    pub(super) output: Value,
+    pub(super) blocking: bool,
+}
+
+/// Serialize a previously captured policy view. Presentation is not a policy input.
+pub(super) fn finish_decision_output(
+    facts: &CloseoutFacts,
+    presentation: &Value,
+    initial_actions: &[String],
+    task_outputs: Option<&TaskOutputs>,
+) -> FinishDecisionOutput {
+    let hygiene = facts.hygiene_observed();
     let mut decision = json!({
-        "workspace_clean": workspace_clean,
-        "workspace_conflicts": workspace_conflicts,
-        "hygiene_clean": hygiene_clean,
-        "hygiene_secret_like_paths": hygiene_secret_like_paths,
-        "hygiene_truncated": hygiene_truncated,
-        "jobs": compact_jobs(output.get("jobs").unwrap_or(&Value::Null)),
-        "tool_failures": compact_tool_failures(output.get("tool_failures").unwrap_or(&Value::Null)),
-        "validation": compact_validation(output.get("validation").unwrap_or(&Value::Null)),
-        "review_evidence": compact_review_evidence(output.get("review_evidence").unwrap_or(&Value::Null)),
-        "work_performed": output.get("work_performed").cloned().unwrap_or_else(|| json!([])),
-        "changed_paths": output.get("changed_paths").cloned().unwrap_or_else(|| json!([])),
-        "warnings": output.get("final_warnings").cloned().unwrap_or_else(|| json!([])),
-        "suggested_next_actions": output.get("suggested_next_actions").cloned().unwrap_or_else(|| json!([])),
+        "workspace_clean": facts.workspace_clean(),
+        "workspace_conflicts": facts.workspace_conflicts().unwrap_or(0),
+        "hygiene_clean": hygiene.and_then(|h| h.clean).unwrap_or(true),
+        "hygiene_secret_like_paths": hygiene.map(|h| h.secret_like_paths).unwrap_or(0),
+        "hygiene_truncated": hygiene.is_some_and(|h| h.truncated),
+        "jobs": compact_jobs(presentation.get("jobs").unwrap_or(&Value::Null)),
+        "tool_failures": compact_tool_failures(presentation.get("tool_failures").unwrap_or(&Value::Null)),
+        "validation": compact_validation(presentation.get("validation").unwrap_or(&Value::Null)),
+        "review_evidence": compact_review_evidence(presentation.get("review_evidence").unwrap_or(&Value::Null)),
+        "work_performed": presentation.get("work_performed").cloned().unwrap_or_else(|| json!([])),
+        "changed_paths": presentation.get("changed_paths").cloned().unwrap_or_else(|| json!([])),
+        "warnings": presentation.get("final_warnings").cloned().unwrap_or_else(|| json!([])),
+        "suggested_next_actions": initial_actions,
     });
-    if let Some(presentation) = output.get("presentation") {
+    if let Some(presentation) = presentation.get("presentation") {
         decision["presentation"] = presentation.clone();
     }
-    if let Some(follow_up) = output.get("goal_follow_up") {
+    if let Some(follow_up) = presentation.get("goal_follow_up") {
         decision["goal_follow_up"] = follow_up.clone();
     }
-    apply_compact_workflow_outcomes(&mut decision, true, Some(hygiene_checked));
-    let task_outputs = output
-        .get("task_outputs")
-        .and_then(|value| {
-            serde_json::from_value::<webcodex_core::task_outputs::TaskOutputs>(value.clone()).ok()
-        })
-        .filter(|outputs| outputs.valid());
-    if let Some(outputs) = task_outputs.as_ref() {
-        super::super::task_outputs::attach_task_outputs(&mut decision, &outputs);
+    let policy = install_closeout_decision(&mut decision, facts, initial_actions);
+    // The typed observation is retained from collection, not reconstructed from JSON.
+    let task_outputs = task_outputs.filter(|outputs| outputs.valid());
+    if let Some(outputs) = task_outputs {
+        super::super::task_outputs::attach_task_outputs(&mut decision, outputs);
     }
-    let verdict = decision
-        .get("verdict")
-        .cloned()
-        .unwrap_or_else(|| json!({}));
-    let mut actions = merged_suggested_next_actions(&decision, &verdict);
-    if task_outputs
-        .as_ref()
-        .is_some_and(|outputs| !outputs.items.is_empty())
-        && decision
-            .pointer("/validation/current_evidence/status")
-            .and_then(Value::as_str)
-            == Some("unproven")
+    let outputs_blocking =
+        task_outputs.is_some_and(super::super::task_outputs::task_outputs_block_closeout);
+    let mut actions = initial_actions.to_vec();
+    if outputs_blocking {
+        actions.push(super::super::task_outputs::UNVERIFIED_TASK_OUTPUTS_ACTION.to_string());
+    }
+    for action in &policy.actions {
+        if !actions.contains(action) {
+            actions.push(action.clone());
+        }
+    }
+    if task_outputs.is_some_and(|outputs| !outputs.items.is_empty())
+        && facts.validation.current_evidence_status == Some(ValidationStatus::Unproven)
     {
-        // Adapt guidance without upgrading the source/validation proof. Artifact
-        // observations establish identity, not task semantics or stable inputs.
+        // Artifact metadata establishes identity, not task semantics or stable inputs.
         for action in &mut actions {
             if action == super::super::handoff::UNPROVEN_SOURCE_REVIEW_ACTION {
                 *action = "Check task assertions and input/output stability; metadata confirms file identity, not content/counts. Report any limits alongside verified results. Rerunning alone does not establish stability.".into();
@@ -610,7 +617,10 @@ pub(super) fn finish_decision_output(output: &Value) -> Value {
         .as_object_mut()
         .expect("finish decision output is an object")
         .remove("verdict");
-    decision
+    FinishDecisionOutput {
+        blocking: policy.blocking() || outputs_blocking,
+        output: decision,
+    }
 }
 
 pub(super) fn compact_finish_output(decision: &Value) -> Value {
@@ -665,74 +675,35 @@ fn compact_finish_validation(validation: &Value) -> Value {
     })
 }
 
-pub(super) fn finish_suggested_next_actions(output: &Value) -> Vec<String> {
+pub(super) fn finish_suggested_next_actions(
+    facts: &CloseoutFacts,
+    review_continuation_available: bool,
+) -> Vec<String> {
     let mut actions = Vec::new();
-    let push = |actions: &mut Vec<String>, action: &str| {
-        if !actions.iter().any(|existing| existing == action) {
-            actions.push(action.to_string());
-        }
-    };
-    let tool_failures = output.get("tool_failures").unwrap_or(&Value::Null);
-    let expectation_mismatch_count = tool_failures
-        .get("expectation_mismatch_count")
-        .and_then(Value::as_u64)
-        .unwrap_or(0);
-    let unexpected_success_count = tool_failures
-        .get("unexpected_success_count")
-        .and_then(Value::as_u64)
-        .unwrap_or(0);
-
-    if actionable_unexpected_failure_count(tool_failures) > 0 {
-        push(
-            &mut actions,
-            "review unexpected failed tool calls before proceeding",
+    if facts.failures.actionable_unexpected_count > 0 {
+        actions.push("review unexpected failed tool calls before proceeding".into());
+    }
+    if facts.failures.expectation_mismatch_count > 0 {
+        actions.push("review result expectation mismatches before proceeding".into());
+    }
+    if facts.failures.unexpected_success_count > 0 {
+        actions.push("review failure expectations that unexpectedly succeeded".into());
+    }
+    if facts.workspace_clean() == Some(false) {
+        actions.push(
+            if review_continuation_available {
+                "continue the review with review_changes when its continuation is available"
+            } else {
+                "review workspace changes with review_changes"
+            }
+            .into(),
         );
     }
-    if expectation_mismatch_count > 0 {
-        push(
-            &mut actions,
-            "review result expectation mismatches before proceeding",
-        );
+    if facts.jobs.blocking_active_count > 0 {
+        actions.push("stop or await blocking active jobs".into());
     }
-    if unexpected_success_count > 0 {
-        push(
-            &mut actions,
-            "review failure expectations that unexpectedly succeeded",
-        );
-    }
-    if output
-        .get("workspace")
-        .and_then(|workspace| workspace.get("clean"))
-        .and_then(Value::as_bool)
-        == Some(false)
-    {
-        if output
-            .pointer("/changes/show_changes/diff_review_handoff/next_call/tool")
-            .and_then(Value::as_str)
-            == Some("read_git_diff_hunks")
-        {
-            push(
-                &mut actions,
-                "continue the review with review_changes when its continuation is available",
-            );
-        } else {
-            push(&mut actions, "review workspace changes with review_changes");
-        }
-    }
-    if output
-        .get("jobs")
-        .and_then(|jobs| jobs.get("blocking_active_count"))
-        .and_then(Value::as_u64)
-        .unwrap_or(0)
-        > 0
-    {
-        push(&mut actions, "stop or await blocking active jobs");
-    }
-    if validation_has_cargo_test_zero_tests(output.get("validation").unwrap_or(&Value::Null)) {
-        push(
-            &mut actions,
-            "cargo_test ran zero tests; verify the test filter or command",
-        );
+    if facts.validation.cargo_test_zero_tests {
+        actions.push("cargo_test ran zero tests; verify the test filter or command".into());
     }
     actions
 }

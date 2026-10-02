@@ -19,9 +19,8 @@ use super::git_review_snapshot::{
     GitReviewSnapshot,
 };
 use super::handoff::{
-    actionable_unexpected_failure_count, apply_compact_workflow_outcomes, closeout_work_projection,
-    compact_jobs, compact_review_evidence, compact_tool_failures, compact_validation,
-    reconcile_closeout_evidence, review_evidence_summary_for_session,
+    closeout_work_projection, compact_jobs, compact_review_evidence, compact_tool_failures,
+    compact_validation, reconcile_closeout_evidence, review_evidence_summary_for_session,
     validation_has_cargo_test_zero_tests,
 };
 use super::handoff_brief::{build_handoff_brief, HandoffBriefInput};

@@ -84,9 +84,11 @@ Retain its opaque outer `binding`. Describe requires `plugin:inspect` and
 session creation/discovery through this gateway: loading extensions/session hooks
 may have effects. Calls also pass existing WebCodex permission and recording
 Session guards. The current Runner registration must remain enabled and writable
-(`allow_patch = true`), even if the root path has not changed. This gate does not
-turn Pi's native execution into a filesystem sandbox. An outer call cannot change
-`project`, Runner, provider or tool.
+(`allow_patch = true`), and must still resolve to the same physical directory the
+provider was launched in. A rename followed by creating a different directory at the
+same path is rejected before dispatch. This gate does not turn Pi's native execution
+into a filesystem sandbox. An outer call cannot change `project`, Runner, provider
+or tool.
 
 Each subsequent `plugin_tool` call has this shape:
 

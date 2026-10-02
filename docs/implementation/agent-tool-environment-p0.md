@@ -72,14 +72,17 @@ The actual call reauthorizes that Project and its write scope, verifies the
 Runner, and selects permission policy for the explicit business Project.
 Recording Workflow Sessions still supply provenance/guards, never the target.
 
-The Runner snapshots the canonical provider launch root and rechecks the current
-registered Project id/root/fingerprint and enabled/write permission while holding
-the provider dispatch lock. Revoking `allow_patch` denies new native calls even
-when the provider instance and root path have not changed. The existing lightweight
-registry context carries this flag; tool admission does not spawn Git/status probes.
-Concurrent calls return `plugin_provider_busy`, rather than queuing an observed
-old target. A removed/replaced registry root, mismatched Project, stale schema,
-provider instance or Runner instance fails closed before native dispatch.
+The Runner snapshots both the canonical provider launch root and its physical
+directory identity, then rechecks the current registered Project id/root/fingerprint,
+physical root and enabled/write permission while holding the provider dispatch lock.
+This rejects rename + same-path directory replacement even though the textual path is
+unchanged and the already-running provider would otherwise retain its old cwd.
+Revoking `allow_patch` likewise denies new native calls without requiring a provider
+or path change. The existing lightweight registry context carries this flag; tool
+admission does not spawn Git/status probes. Concurrent calls return
+`plugin_provider_busy`, rather than queuing an observed old target. A removed/replaced
+registry root, mismatched Project, stale schema, provider instance or Runner instance
+fails closed before native dispatch.
 
 Trusted delegation provenance (Runner/provider instances and canonical Project)
 is rendered separately from untrusted Pi content. Direct MCP preserves the

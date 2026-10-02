@@ -88,6 +88,38 @@ fn project_bound_provider_rejects_retargeted_registry_and_missing_registry_autho
     assert_eq!(fixture.marker_count("call"), 0);
 }
 
+#[cfg(unix)]
+#[test]
+fn project_bound_provider_rejects_same_path_directory_replacement() {
+    let fixture = Fixture::new("project_bound", 5);
+    let root = fixture._temp.path().to_path_buf();
+    let registry = tempfile::tempdir().unwrap();
+    fs::write(
+        registry.path().join("bound.toml"),
+        format!("id = \"bound\"\npath = {:?}\n", root.to_string_lossy()),
+    )
+    .unwrap();
+    let target = PluginProjectTarget {
+        project_id: "bound".to_string(),
+        root_fingerprint: crate::webcodex_runner::projects::project_root_fingerprint(
+            &root.canonicalize().unwrap(),
+        ),
+    };
+    let retired = root.with_extension("retired");
+    fs::rename(&root, &retired).unwrap();
+    fs::create_dir(&root).unwrap();
+
+    let response = fixture
+        .manager
+        .handle_with_project_registry(request(&fixture, Some(target)), registry.path());
+    assert_eq!(response.dispatch_state, PluginDispatchState::NotStarted);
+    assert_eq!(response.error.unwrap().code, "plugin_project_mismatch");
+    assert_eq!(fixture.marker_count("call"), 0);
+
+    drop(fixture);
+    fs::remove_dir_all(retired).unwrap();
+}
+
 #[test]
 fn project_bound_calls_respect_write_revocation_without_a_path_or_provider_change() {
     let fixture = Fixture::new("project_bound", 5);

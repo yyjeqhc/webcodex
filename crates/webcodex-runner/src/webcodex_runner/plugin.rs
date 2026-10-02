@@ -145,6 +145,10 @@ struct ProviderEntry {
     config: PluginProviderConfig,
     // Frozen launch target. A changed cwd symlink must not retarget an existing process.
     launch_root: Option<PathBuf>,
+    // Physical directory identity frozen at provider launch. Canonical path
+    // equality alone cannot detect rename + same-path replacement while the
+    // provider process keeps its old cwd inode/handle.
+    launch_root_handle: Option<same_file::Handle>,
     instance_id: String,
     timeout: Duration,
     failed: AtomicBool,
@@ -1095,9 +1099,12 @@ impl ProviderEntry {
         target: Option<&webcodex_core::plugin::PluginProjectTarget>,
         registry: Option<&Path>,
     ) -> bool {
-        let (Some(target), Some(registry), Some(launch_root)) =
-            (target, registry, self.launch_root.as_deref())
-        else {
+        let (Some(target), Some(registry), Some(launch_root), Some(launch_root_handle)) = (
+            target,
+            registry,
+            self.launch_root.as_deref(),
+            self.launch_root_handle.as_ref(),
+        ) else {
             return false;
         };
         let Some(project) =
@@ -1111,8 +1118,14 @@ impl ProviderEntry {
         let Ok(root) = Path::new(&project.path).canonicalize() else {
             return false;
         };
-        root.is_dir()
-            && webcodex_runner_config::paths::paths_equal(&root, launch_root)
+        if !root.is_dir() {
+            return false;
+        }
+        let Ok(root_handle) = same_file::Handle::from_path(&root) else {
+            return false;
+        };
+        webcodex_runner_config::paths::paths_equal(&root, launch_root)
+            && root_handle == *launch_root_handle
             && super::projects::project_root_fingerprint(&root) == target.root_fingerprint
     }
 
@@ -1233,9 +1246,13 @@ fn prepare_provider(
         .cwd
         .as_deref()
         .and_then(|cwd| Path::new(cwd).canonicalize().ok());
+    let launch_root_handle = launch_root
+        .as_deref()
+        .and_then(|root| same_file::Handle::from_path(root).ok());
     let entry = Arc::new(ProviderEntry {
         config: config.clone(),
         launch_root: launch_root.clone(),
+        launch_root_handle,
         instance_id: uuid::Uuid::new_v4().simple().to_string(),
         timeout: config
             .timeout_secs

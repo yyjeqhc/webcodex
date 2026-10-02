@@ -5,8 +5,10 @@
 __pycache__/
 *.pyc
 
-# Local runtime data (SQLite DB and durable runtime state)
-data*
+# Root runtime data directories (WEBCODEX_DATA defaults to ./data).
+# Keep local variants/backups protected without hiding data*.rs or nested source.
+# Custom data paths outside these directories belong in .git/info/exclude.
+/data*/
 
 # Local Codex CLI workspace
 .codex

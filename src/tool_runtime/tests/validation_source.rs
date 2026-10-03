@@ -46,6 +46,33 @@ fn source_fence_handoff_and_generation_exhaustion_cannot_manufacture_quiescence(
     );
 }
 
+#[test]
+fn presentation_completion_does_not_manufacture_validation_quiescence() {
+    let registry = ValidationSourceRegistry::default();
+    registry
+        .begin("p")
+        .unwrap()
+        .finish(&crate::tool_runtime::ToolResult::ok(
+            serde_json::json!({"job_id":"wc_job_0123456789abcdef","execution_state":"pending"}),
+        ));
+    let pending = registry.capture_presentation("p").unwrap();
+    assert_eq!(pending.pending_jobs.len(), 1);
+    assert!(!registry.capture("p").unwrap().quiescent);
+    assert!(registry.resolve_presentation_jobs("p", &pending));
+    assert!(registry
+        .capture_presentation("p")
+        .unwrap()
+        .pending_jobs
+        .is_empty());
+    assert!(!registry.capture("p").unwrap().quiescent);
+    let old = registry.capture_presentation("p").unwrap();
+    let active = registry.begin("p").unwrap();
+    assert!(registry.capture_presentation("p").is_none());
+    assert!(!registry.resolve_presentation_jobs("p", &old));
+    drop(active);
+    assert!(registry.capture_presentation("p").is_none());
+}
+
 fn noop() -> crate::tool_runtime::ToolResult {
     crate::tool_runtime::ToolResult::ok(serde_json::json!({"state_changed": false}))
 }

@@ -2,12 +2,12 @@
 //! first. Canonical mutation fences are NOT filesystem revisions: external writes
 //! require a new observation, so a snapshot is reused for at most 30 seconds.
 //! Explicit refresh, presentation and closeout never read this cache.
+use super::validation_source::PresentationSourceFence;
 use super::{ToolResult, ToolRuntime};
 use crate::auth::AuthContext;
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
-use webcodex_core::validation_source::ValidationSourceFence;
 use webcodex_runner_registry::WorkspaceObservationIdentity;
 
 pub(crate) const REUSE_LEASE: Duration = Duration::from_secs(30);
@@ -19,7 +19,7 @@ type Key = (String, String, String);
 #[derive(Clone, PartialEq, Eq)]
 struct Stamp {
     target: WorkspaceObservationIdentity,
-    source: ValidationSourceFence,
+    source: PresentationSourceFence,
 }
 struct Entry {
     stamp: Stamp,
@@ -109,10 +109,24 @@ impl ToolRuntime {
         project: &str,
         auth: Option<&AuthContext>,
     ) -> Option<Stamp> {
-        let source = self
-            .validation_sources
-            .capture(project)
-            .filter(|source| source.quiescent)?;
+        let mut source = self.validation_sources.capture_presentation(project)?;
+        if !source.pending_jobs.is_empty() {
+            if !self.runner_registry.observation_jobs_ended_for_project(
+                crate::runner_http::runner_access_from_auth(auth).as_ref(),
+                project,
+                &source.pending_jobs,
+            ) || !self
+                .validation_sources
+                .resolve_presentation_jobs(project, &source)
+            {
+                tracing::debug!(target: "webcodex::phase", phase="workspace_reuse", outcome="pending_or_unknown_job", "workspace observation cache miss");
+                return None;
+            }
+            source = self.validation_sources.capture_presentation(project)?;
+            if !source.pending_jobs.is_empty() {
+                return None;
+            }
+        }
         let target = self
             .runner_registry
             .workspace_observation_identity_for_auth(
@@ -136,6 +150,7 @@ impl ToolRuntime {
         if automatic {
             if let (Some(key), Some(stamp)) = (&key, &before) {
                 if let Some(result) = self.work_result_workspace_cache.get(key, stamp) {
+                    tracing::debug!(target: "webcodex::phase", phase="workspace_reuse", outcome="hit", "reused presentation snapshot");
                     return (result, true);
                 }
             }
@@ -150,6 +165,20 @@ impl ToolRuntime {
             .workspace_metadata_for_presentation(project.to_string())
             .await;
         let after = self.work_result_observation_stamp(project, auth).await;
+        crate::tool_request_trace::record_phase_latency(
+            "workspace_observation",
+            observed,
+            if !result.success {
+                "failed"
+            } else if before.is_none() || after.is_none() {
+                "uncacheable"
+            } else if before != after {
+                "crossed_fence"
+            } else {
+                "fresh"
+            },
+        );
+
         if let (Some(key), Some(before), Some(after)) = (key, before, after) {
             if before == after {
                 self.work_result_workspace_cache

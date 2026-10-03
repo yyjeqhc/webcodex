@@ -187,7 +187,7 @@ impl RunnerRegistry {
         &self.observation_epoch
     }
     pub async fn admit_runtime_call(&self) -> Result<RuntimeCallPermit, &'static str> {
-        let inner = self.inner.lock().await;
+        let inner = self.inner.read().await;
         if inner
             .maintenance
             .as_ref()

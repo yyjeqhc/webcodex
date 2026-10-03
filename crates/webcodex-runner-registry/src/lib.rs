@@ -8,7 +8,9 @@ mod access;
 mod access_control;
 mod capabilities;
 mod console_snapshot;
-pub use console_snapshot::{ActiveJobAggregate, ConsoleRegistrySnapshot};
+pub use console_snapshot::{
+    ActiveJobAggregate, ConsoleRegistrySnapshot, WorkspaceObservationIdentity,
+};
 mod job_index;
 mod job_input;
 mod job_status;

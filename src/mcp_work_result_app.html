@@ -1615,7 +1615,7 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
     updateRefreshControl();
     if (!automatic) el("status").textContent = "Refreshing…";
     try {
-      const response = await send("tools/call", { name: "work_result_state", arguments: { project: identity.project, ...(explicitSession ? { session_id: explicitSession } : {}) } });
+      const response = await send("tools/call", { name: "work_result_state", arguments: { project: identity.project, ...(explicitSession ? { session_id: explicitSession } : {}), ...(automatic ? { automatic: true } : {}) } });
       if (tornDown) return;
       const structured = structuredOf(response);
       if (!structured) {
@@ -1650,6 +1650,9 @@ h2 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: .01em; color:
       el("status").textContent = completedNow ? "Live · final changes available"
         : changed ? (automatic ? "Live · updated" : "Updated")
         : (automatic ? "Live" : "Up to date");
+      el("status").title = state.workspace_observation?.reused === true
+        ? "Workspace metadata is a recent snapshot (at most 30 seconds). Refresh to observe external file changes now."
+        : "";
     } catch (_) {
       if (!tornDown) el("status").textContent = hadSnapshot ? "Refresh unavailable · showing last snapshot" : "Refresh unavailable · retry";
     } finally {

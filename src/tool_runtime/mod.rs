@@ -130,6 +130,7 @@ pub(crate) use webcodex_tool_contracts::{
 pub(crate) use webcodex_tool_runtime_contracts::recorder_metadata::parse_tool_call_with_recorder_metadata;
 pub(crate) use webcodex_tool_runtime_contracts::{tool_audit, tool_result};
 mod work_result;
+mod work_result_workspace;
 pub(crate) use window_activity::{ActiveWindowRequest, MAX_ACTIVE_REQUESTS_PER_WINDOW};
 
 #[cfg(test)]

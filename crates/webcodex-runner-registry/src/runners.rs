@@ -301,6 +301,7 @@ impl RunnerRegistry {
         let record = RunnerRecord {
             client_id: client_id.clone(),
             runner_instance_id: runner_instance_id.clone(),
+            registration_observation_epoch: uuid::Uuid::new_v4().to_string(),
             display_name: trim_string(body.display_name),
             owner: trim_string(body.owner),
             hostname: trim_string(body.hostname),

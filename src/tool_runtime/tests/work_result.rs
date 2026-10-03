@@ -504,6 +504,7 @@ async fn refresh_once(
             runtime
                 .dispatch_with_auth(
                     ToolCall::WorkResultState {
+                        automatic: false,
                         files: None,
                         project,
                         session_id: Some(session_id),
@@ -705,6 +706,7 @@ async fn work_result_state_reauthorizes_exact_identity_and_refresh_does_not_reco
     let dispatched_alias = runtime
         .dispatch_with_auth(
             ToolCall::WorkResultState {
+                automatic: false,
                 files: None,
                 project: "demo".to_string(),
                 session_id: Some(session.session_id.clone()),
@@ -730,6 +732,7 @@ async fn work_result_state_reauthorizes_exact_identity_and_refresh_does_not_reco
     assert_eq!(after.updated_at, before.updated_at);
     assert_eq!(
         ToolCall::WorkResultState {
+            automatic: false,
             files: None,
             project: project.clone(),
             session_id: Some(session.session_id.clone())
@@ -1448,3 +1451,4 @@ fn work_result_tool_contract_requires_project_and_accepts_optional_session() {
 mod frozen_changes;
 
 mod jobs;
+mod workspace_cache;

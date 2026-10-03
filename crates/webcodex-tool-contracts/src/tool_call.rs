@@ -1639,6 +1639,10 @@ pub enum ToolCall {
     /// selects authorized Server Job state and is deliberately excluded from generic recording.
     WorkResultState {
         project: String,
+        /// App timer polls may reuse a recent workspace observation. Missing/false
+        /// forces a fresh observation; never affects authorization or sealed Changes.
+        #[serde(default)]
+        automatic: bool,
         #[serde(default)]
         #[schemars(regex(
             pattern = "^(wc_sess_([A-Za-z0-9_-]{16}|[0-9a-f]{32})|~s[1-9][0-9]{0,18})$"

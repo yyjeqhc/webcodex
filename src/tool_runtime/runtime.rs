@@ -136,6 +136,8 @@ pub struct ToolRuntime {
         Arc<std::sync::Mutex<super::git_review_snapshot::GitReviewSnapshotRegistry>>,
     pub(super) changes_snapshots: Arc<std::sync::Mutex<super::changes::ChangesSnapshotRegistry>>,
     pub(crate) validation_sources: Arc<super::validation_source::ValidationSourceRegistry>,
+    pub(crate) work_result_workspace_cache:
+        Arc<super::work_result_workspace::WorkResultWorkspaceCache>,
     /// Process-local Project mutation serialization used only by orchestration
     /// frontends. Direct first-class mutations deliberately bypass this registry.
     #[cfg(feature = "experimental-code-mode")]
@@ -256,6 +258,7 @@ impl ToolRuntime {
             orchestration_mutation_fences: Arc::new(
                 super::orchestration_host::OrchestrationMutationFenceRegistry::default(),
             ),
+            work_result_workspace_cache: Arc::default(),
             read_files_deadline: super::read_files::DEFAULT_READ_FILES_DEADLINE,
             search_project_texts_deadline:
                 super::search_project_texts::DEFAULT_SEARCH_PROJECT_TEXTS_DEADLINE,

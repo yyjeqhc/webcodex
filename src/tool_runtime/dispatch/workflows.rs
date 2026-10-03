@@ -69,13 +69,16 @@ impl ToolRuntime {
                 project,
                 session_id,
                 files,
+                automatic,
             } => {
                 if let Some(files) = files {
                     self.work_result_files(project, session_id, files, auth)
                         .await
                 } else {
-                    self.work_result_state_for_window(project, session_id, auth, window)
-                        .await
+                    self.work_result_state_for_window_with_refresh(
+                        project, session_id, auth, window, automatic,
+                    )
+                    .await
                 }
             }
 

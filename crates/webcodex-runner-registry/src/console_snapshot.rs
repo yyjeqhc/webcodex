@@ -19,7 +19,53 @@ pub struct ConsoleRegistrySnapshot {
     pub project_families: usize,
 }
 
+/// Equality-only identity for short-lived presentation reuse. Not a filesystem
+/// revision or authorization grant. Never exposed on the wire.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceObservationIdentity {
+    registration_epoch: String,
+    root_fingerprint: String,
+    project_revision: String,
+    path: String,
+    git_head: Option<String>,
+    git_branch: Option<String>,
+    git_dirty: Option<bool>,
+}
+
 impl RunnerRegistry {
+    pub async fn workspace_observation_identity_for_auth(
+        &self,
+        auth: Option<&RunnerAccess>,
+        project_id: &str,
+    ) -> Option<WorkspaceObservationIdentity> {
+        let inner = self.inner.lock().await;
+        let now = crate::now_ts();
+        for runner in inner.runners.values() {
+            if !self.runner_visible_for_snapshot(auth, &inner, runner, now)
+                || runner.disconnected_at.is_some()
+                || now.saturating_sub(runner.last_seen) > crate::RUNNER_ONLINE_WINDOW_SECS
+                || runner.project_inventory.status.sync_state != "complete"
+            {
+                continue;
+            }
+            let Some(project) = runner.projects.iter().find(|p| {
+                !p.disabled && project_id == format!("agent:{}:{}", runner.client_id, p.id)
+            }) else {
+                continue;
+            };
+            return Some(WorkspaceObservationIdentity {
+                registration_epoch: runner.registration_observation_epoch.clone(),
+                root_fingerprint: project.root_fingerprint.clone().filter(|v| !v.is_empty())?,
+                project_revision: project.revision.clone().filter(|v| !v.is_empty())?,
+                path: project.path.clone(),
+                git_head: project.git_head.clone(),
+                git_branch: project.git_branch.clone(),
+                git_dirty: project.git_dirty,
+            });
+        }
+        None
+    }
+
     /// Batched form of exact_project_visible_for_auth_snapshot. Sharing one
     /// authorized Runner snapshot avoids O(anchors × registered Projects).
     pub async fn visible_project_ids_for_auth_snapshot(

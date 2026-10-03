@@ -1,3 +1,6 @@
+#[path = "tests/project_addition.rs"]
+mod project_addition;
+
 use super::*;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};

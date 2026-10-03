@@ -11,6 +11,8 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+mod project_addition;
+
 const HTTP_LIMIT: usize = 1024 * 1024;
 use webcodex_core::authority::{
     profiles::LOCAL_USER as USER_SCOPES, AGENT_SCOPES as RUNNER_SCOPES,
@@ -222,6 +224,7 @@ impl NativeEnvironment {
                 .unwrap_or(ProjectAddition {
                     path: path.clone(),
                     dispatched: false,
+                    config_change: None,
                 });
         if pending.path != path {
             return Err(diagnostic(
@@ -265,77 +268,15 @@ impl NativeEnvironment {
             ));
         }
         if visible.is_none() {
-            let config_path = store.root().join("runner.toml");
-            let before = read_secret(&config_path)?;
-            let mut config: toml::Value = toml::from_str(before.expose()).map_err(|_| {
-                diagnostic("runner_configuration", "Runner configuration is invalid")
-            })?;
-            if config.get("client_id").and_then(toml::Value::as_str) != Some(&client_id)
-                || config.get("server_url").and_then(toml::Value::as_str)
-                    != Some(record.request.server_url.as_str())
-            {
-                return Err(diagnostic(
-                    "runner_binding_conflict",
-                    "The local Runner binding has changed",
-                ));
-            }
-            if project_requires_authority(&config, &path)? {
-                let roots = config
-                    .get_mut("policy")
-                    .and_then(|v| v.get_mut("allowed_roots"))
-                    .and_then(toml::Value::as_array_mut)
-                    .ok_or_else(|| {
-                        diagnostic("runner_policy", "Runner allowed roots are missing")
-                    })?;
-                roots.push(toml::Value::String(path.to_string_lossy().into_owned()));
-                if read_secret(&config_path)?.expose() != before.expose() {
-                    return Err(diagnostic(
-                        "config_concurrent_change",
-                        "Runner configuration changed while preparing the project",
-                    ));
-                }
-                atomic_private_write(
-                    &config_path,
-                    toml::to_string(&config)
-                        .map_err(|_| SetupDiagnostic::io())?
-                        .as_bytes(),
-                )?;
-                let candidate = read_secret(&config_path)?;
-                let checked = self
-                    .post(
-                        &record.request.server_url,
-                        "/api/tools/call",
-                        Some(token.expose()),
-                        json!({"tool":"check_runner_config","params":{"client_id":client_id}}),
-                    )
-                    .await?;
-                let checked = tool_output(&checked)?;
-                if checked.get("valid").and_then(Value::as_bool) != Some(true)
-                    || checked.get("restart_required").and_then(Value::as_bool) == Some(true)
-                {
-                    return Err(diagnostic(
-                        "config_requires_attention",
-                        "Runner configuration cannot be hot reloaded",
-                    ));
-                }
-                let generation = checked
-                    .get("current_generation")
-                    .and_then(Value::as_u64)
-                    .ok_or_else(|| {
-                        diagnostic(
-                            "config_generation",
-                            "Runner did not report its configuration generation",
-                        )
-                    })?;
-                if candidate.expose() != read_secret(&config_path)?.expose() {
-                    return Err(diagnostic(
-                        "config_concurrent_change",
-                        "Runner configuration changed before reload",
-                    ));
-                }
-                let reload = self.post(&record.request.server_url, "/api/tools/call", Some(token.expose()), json!({"tool":"reload_runner_config","params":{"client_id":client_id,"expected_generation":generation}})).await?;
-                tool_output(&reload)?;
-            }
+            self.ensure_project_authority(
+                store,
+                &record,
+                &client_id,
+                &path,
+                token.expose(),
+                &mut pending,
+            )
+            .await?;
             pending.dispatched = true;
             store.write_json("add-project.json", &pending)?;
             // Lost responses are reconciled by exact path on the next invocation.
@@ -1693,6 +1634,8 @@ struct Enrollment {
 struct ProjectAddition {
     path: std::path::PathBuf,
     dispatched: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    config_change: Option<project_addition::ProjectConfigChange>,
 }
 #[derive(Serialize, Deserialize)]
 struct ProjectRemoval {

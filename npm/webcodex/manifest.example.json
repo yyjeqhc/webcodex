@@ -1,29 +1,29 @@
 {
-  "version": "0.4.5",
+  "version": "0.4.6",
   "binaries": ["webcodex", "webcodex-server", "webcodex-runner"],
   "artifacts": {
     "linux-x64": {
-      "url": "https://github.com/yyjeqhc/webcodex/releases/download/v0.4.5/webcodex-v0.4.5-linux-x64.tar.gz",
+      "url": "https://github.com/yyjeqhc/webcodex/releases/download/v0.4.6/webcodex-v0.4.6-linux-x64.tar.gz",
       "sha256": "REPLACE_WITH_RELEASE_ARTIFACT_SHA256"
     },
     "linux-arm64": {
-      "url": "https://github.com/yyjeqhc/webcodex/releases/download/v0.4.5/webcodex-v0.4.5-linux-arm64.tar.gz",
+      "url": "https://github.com/yyjeqhc/webcodex/releases/download/v0.4.6/webcodex-v0.4.6-linux-arm64.tar.gz",
       "sha256": "REPLACE_WITH_RELEASE_ARTIFACT_SHA256"
     },
     "darwin-x64": {
-      "url": "https://github.com/yyjeqhc/webcodex/releases/download/v0.4.5/webcodex-v0.4.5-darwin-x64.tar.gz",
+      "url": "https://github.com/yyjeqhc/webcodex/releases/download/v0.4.6/webcodex-v0.4.6-darwin-x64.tar.gz",
       "sha256": "REPLACE_WITH_RELEASE_ARTIFACT_SHA256"
     },
     "darwin-arm64": {
-      "url": "https://github.com/yyjeqhc/webcodex/releases/download/v0.4.5/webcodex-v0.4.5-darwin-arm64.tar.gz",
+      "url": "https://github.com/yyjeqhc/webcodex/releases/download/v0.4.6/webcodex-v0.4.6-darwin-arm64.tar.gz",
       "sha256": "REPLACE_WITH_RELEASE_ARTIFACT_SHA256"
     },
     "win32-x64": {
-      "url": "https://github.com/yyjeqhc/webcodex/releases/download/v0.4.5/webcodex-v0.4.5-win32-x64.tar.gz",
+      "url": "https://github.com/yyjeqhc/webcodex/releases/download/v0.4.6/webcodex-v0.4.6-win32-x64.tar.gz",
       "sha256": "REPLACE_WITH_RELEASE_ARTIFACT_SHA256"
     },
     "win32-arm64": {
-      "url": "https://github.com/yyjeqhc/webcodex/releases/download/v0.4.5/webcodex-v0.4.5-win32-arm64.tar.gz",
+      "url": "https://github.com/yyjeqhc/webcodex/releases/download/v0.4.6/webcodex-v0.4.6-win32-arm64.tar.gz",
       "sha256": "REPLACE_WITH_RELEASE_ARTIFACT_SHA256"
     }
   }

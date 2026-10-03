@@ -22,17 +22,30 @@ export function ProjectRows({ projects, onUnregister, busy = false }: { projects
 }
 function ProjectRow({ project, compact = false, onUnregister, busy }: { project: WorkspaceProject; compact?: boolean; onUnregister?: (project: WorkspaceProject) => void; busy?: boolean }) {  const p = useProduct(); const { locale } = useLocale();
   const [git, setGit] = useState<GitSummary | null>(null);
+  const [gitStatus, setGitStatus] = useState<"idle" | "loading" | "ready" | "unconfirmed">("idle");
   const { revision, busy: workspaceBusy, state } = useWorkspace();
-  useEffect(() => { setGit(null); }, [project.id, project.connected]);
+  useEffect(() => { setGit(null); setGitStatus("idle"); }, [project.id, project.connected]);
   useEffect(() => {
     if (workspaceBusy) return;
     let cancelled = false;
 
-    if (project.id && project.connected) void workspaceQuery<GitSummary>({ kind: "project_git", project: project.id }).then(value => { if (!cancelled) setGit(value); }).catch(() => undefined);
+    if (project.id && project.connected) {
+      // Refresh is a fresh observation boundary. Do not keep showing a branch
+      // from an older successful probe while the current workspace is missing
+      // or otherwise unavailable.
+      setGit(null);
+      setGitStatus("loading");
+      void workspaceQuery<GitSummary>({ kind: "project_git", project: project.id })
+        .then(value => { if (!cancelled) { setGit(value); setGitStatus("ready"); } })
+        .catch(() => { if (!cancelled) { setGit(null); setGitStatus("unconfirmed"); } });
+    } else {
+      setGit(null);
+      setGitStatus("idle");
+    }
     return () => { cancelled = true; };
   }, [project.id, project.connected, revision, workspaceBusy]);
   const name = projectName(project);
-  const branch = git?.branch || (git?.non_git_project ? p("notGit") : "—");
+  const branch = gitStatus === "unconfirmed" ? p("projectStatusUnconfirmed") : git?.branch || (git?.non_git_project ? p("notGit") : "—");
   const activity = project.sessions ? `${project.sessions.active_sessions}${project.sessions.sessions_truncated ? "+" : ""} ${p("activeSessions")}` : p(project.id ? "unknown" : "setup");
   const activityValue = project.sessions ? `${project.sessions.active_sessions}${project.sessions.sessions_truncated ? "+" : ""}` : "—";
   const path = displayProjectPath(project.path);

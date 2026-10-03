@@ -84,7 +84,7 @@ describe("product workspace task flows", () => {
     view.rerender(content(true));
     await act(async () => { for (const reject of pending.values()) reject(new Error("workspace_unavailable")); });
     expect(screen.getByText("Observation healthy")).toBeInTheDocument();
-    expect(screen.getAllByText("feat/export")).toHaveLength(2);
+    expect(screen.queryByText("feat/export")).not.toBeInTheDocument();
     native.invoke.mockClear();
     native.invoke.mockImplementation(normal);
     view.rerender(content(false));
@@ -93,6 +93,22 @@ describe("product workspace task flows", () => {
     expect(screen.getByText("Observation healthy")).toBeInTheDocument();
   });
 
+
+  it("clears stale Git observations and shows an unconfirmed state when refresh cannot inspect a project", async () => {
+    const normal = native.invoke.getMockImplementation()!;
+    render(wrap(<ProjectsPanel onState={vi.fn()} />));
+    const initial = await screen.findByRole("row", { name: "alpha" });
+    expect(await within(initial).findByText("feat/export")).toBeInTheDocument();
+
+    native.invoke.mockImplementation((command, value) => value.request.kind === "project_git" && value.request.project === alpha.id
+      ? Promise.reject(new Error("project path unavailable")) : normal(command, value));
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+
+    const refreshed = await screen.findByRole("row", { name: "alpha" });
+    await within(refreshed).findByText("Status unconfirmed");
+    expect(refreshed).not.toHaveTextContent("feat/export");
+    expect(screen.getByRole("button", { name: "Remove project alpha" })).toBeInTheDocument();
+  });
 
   it("shows no local Runner on a viewer while retaining raw stopped readiness", () => {
     const viewer = { ...state, readiness: { ...state.readiness, runner: "stopped" as const },

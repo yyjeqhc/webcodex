@@ -249,6 +249,7 @@ export const PRODUCT_MESSAGES = {
   starting: ["Starting", "启动中", "Startet", "Démarrage", "起動中", "시작 중", "啟動中"],
   unavailable: ["Unavailable", "暂不可用", "Nicht verfügbar", "Indisponible", "利用不可", "사용 불가", "暫不可用"],
   unknown: ["Not checked", "尚未检查", "Nicht geprüft", "Non vérifié", "未確認", "확인되지 않음", "尚未檢查"],
+  projectStatusUnconfirmed: ["Status unconfirmed", "状态未确认", "Status unbestätigt", "État non confirmé", "状態未確認", "상태 미확인", "狀態未確認"],
   noActivity: ["No activity observed yet", "尚未观察到活动", "Noch keine Aktivität beobachtet", "Aucune activité observée", "まだアクティビティはありません", "아직 관찰된 활동 없음", "尚未觀察到活動"],
   noChatgpt: ["No ChatGPT activity observed yet", "尚未观察到 ChatGPT 活动", "Noch keine ChatGPT-Aktivität beobachtet", "Aucune activité ChatGPT observée", "ChatGPT のアクティビティはまだ観測されていません", "아직 관찰된 ChatGPT 활동 없음", "尚未觀察到 ChatGPT 活動"],
   lastChatgpt: ["Last ChatGPT activity", "最近 ChatGPT 活动", "Letzte ChatGPT-Aktivität", "Dernière activité ChatGPT", "最新の ChatGPT アクティビティ", "최근 ChatGPT 활동", "最近 ChatGPT 活動"],

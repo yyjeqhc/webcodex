@@ -1059,8 +1059,11 @@ async fn uncertain_project_addition_is_not_dispatched_again() {
     environment.username = Some("alice".into());
     environment.runner_client_id = Some("alice-client".into());
     store.save_environment(&environment).unwrap();
+    // This fixture exercises registration uncertainty, not default-home policy.
+    // Temporary directories are not inside HOME on every supported platform.
     let config = format!(
-        "server_url = {url:?}\nclient_id = \"alice-client\"\n[policy]\nallowed_roots = []\n"
+        "server_url = {url:?}\nclient_id = \"alice-client\"\n[policy]\nallowed_roots = [{:?}]\n",
+        temp.path().canonicalize().unwrap().to_string_lossy()
     );
     atomic_private_write(&store.root().join("runner.toml"), config.as_bytes()).unwrap();
     let mut backend = NativeEnvironment::new().unwrap();

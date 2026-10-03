@@ -28,7 +28,7 @@ fn record_meaningful_window_activity(
 ) {
     let (principal_kind, principal_id) =
         crate::tool_runtime::runtime_observation_principal(Some(auth)).unwrap();
-    crate::action_audit_sessions::record_action_event(
+    let recorded = crate::action_audit_sessions::record_action_event(
         db,
         crate::action_audit_sessions::ActionAuditEventInput {
             explicit_session_id: None,
@@ -69,6 +69,30 @@ fn record_meaningful_window_activity(
             workflow_links: Vec::new(),
         },
     );
+    assert!(recorded, "canonical audit fixture insertion must succeed");
+}
+
+// These tests assert delivery/authority semantics, not a 40ms scheduling promise
+// on a concurrently loaded test host. Exercise the SAME projection with an
+// explicit fixture watchdog. Expired-budget/rollback behavior is tested below
+// and in postprocess + Store optional-projection tests, with production BUDGET
+// unchanged. No direct SQL route insertion or permission shortcut is used.
+fn project_peer_semantics(
+    runtime: &ToolRuntime,
+    result: &mut ToolResult,
+    auth: Option<&AuthContext>,
+    window: Option<&ClientWindow>,
+    project: Option<&str>,
+    acks: &[String],
+) {
+    runtime.add_peer_collaboration_projection_until(
+        result,
+        auth,
+        window,
+        project,
+        acks,
+        std::time::Instant::now() + std::time::Duration::from_secs(10),
+    );
 }
 
 fn establish_peer_route(
@@ -83,7 +107,8 @@ fn establish_peer_route(
 ) {
     record_meaningful_window_activity(db, auth, peer, project, operation, at_ms);
     let mut discovery = ToolResult::ok(json!({"success": true}));
-    runtime.add_peer_collaboration_projection(
+    project_peer_semantics(
+        &runtime,
         &mut discovery,
         Some(auth),
         Some(observer),
@@ -95,6 +120,86 @@ fn establish_peer_route(
         peer.peer_id(),
         "fixture must establish the same retained route production discovery exposes"
     );
+}
+
+#[test]
+fn expired_optional_discovery_cannot_establish_a_route_or_consume_later_delivery() {
+    let (_temp, db, runtime) = runtime_with_peer_db();
+    let auth = shared_key_auth_context("peer-expired-fixture");
+    let observer = ClientWindow::for_test("peer-expired-observer");
+    let peer = ClientWindow::for_test("peer-expired-peer");
+    let project = "agent:special:peer-expired";
+    let now = chrono::Utc::now().timestamp_millis();
+    record_meaningful_window_activity(&db, &auth, &peer, project, "read_files", now - 1000);
+    let mut result = ToolResult::ok(json!({"business":"unchanged"}));
+    runtime.add_peer_collaboration_projection_until(
+        &mut result,
+        Some(&auth),
+        Some(&observer),
+        Some(project),
+        &[],
+        std::time::Instant::now() - std::time::Duration::from_millis(1),
+    );
+    assert_eq!(result.output, json!({"business":"unchanged"}));
+    assert_eq!(
+        db.conn_for_tests()
+            .query_row("SELECT count(*) FROM window_peer_discoveries", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap(),
+        0
+    );
+    project_peer_semantics(
+        &runtime,
+        &mut result,
+        Some(&auth),
+        Some(&observer),
+        Some(project),
+        &[],
+    );
+    assert_eq!(
+        result.output["peer_awareness"]["new_peers"][0]["peer_id"],
+        peer.peer_id()
+    );
+    assert_eq!(
+        db.conn_for_tests()
+            .query_row("SELECT count(*) FROM window_peer_discoveries", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap(),
+        1
+    );
+}
+
+#[test]
+fn budgeted_peer_store_projection_keeps_native_errors_visible() {
+    // Separate SQL/API correctness from the production optional latency budget.
+    // Store deadline/rollback tests own the small-budget behavior.
+    let (_temp, db, _runtime) = runtime_with_peer_db();
+    let auth = shared_key_auth_context("peer-sql-contract");
+    let observer = ClientWindow::for_test("peer-sql-observer");
+    let peer = ClientWindow::for_test("peer-sql-target");
+    let project = "agent:special:peer-sql-contract";
+    let now = chrono::Utc::now().timestamp_millis();
+    record_meaningful_window_activity(&db, &auth, &peer, project, "read_files", now - 1000);
+    let (kind, principal) =
+        crate::tool_runtime::runtime_observation_principal(Some(&auth)).unwrap();
+    let peers = db
+        .project_recent_peers(
+            &kind,
+            &principal,
+            observer.key(),
+            project,
+            now - 600_000,
+            now,
+            4,
+            Some(std::time::Instant::now() + std::time::Duration::from_secs(10)),
+            |_| true,
+        )
+        .expect("budgeted native peer projection must not hide a SQLite/API failure")
+        .expect("uncontended synthetic query must complete within its fixture watchdog");
+    assert_eq!(peers.len(), 1);
+    assert_eq!(peers[0].client_window_key, peer.key());
 }
 
 async fn call_in_window(
@@ -456,7 +561,8 @@ async fn peer_route_requires_retained_discovery_or_message_state() {
     assert_eq!(undiscovered.output["failure_kind"], "peer_not_found");
 
     let mut discovery = ToolResult::ok(json!({"success": true}));
-    runtime.add_peer_collaboration_projection(
+    project_peer_semantics(
+        &runtime,
         &mut discovery,
         Some(&auth),
         Some(&sender),
@@ -513,7 +619,8 @@ async fn peer_discovery_is_same_project_but_contact_survives_project_change() {
     );
 
     let mut first_discovery = ToolResult::ok(json!({"success": true}));
-    runtime.add_peer_collaboration_projection(
+    project_peer_semantics(
+        &runtime,
         &mut first_discovery,
         Some(&auth),
         Some(&observer),
@@ -537,7 +644,8 @@ async fn peer_discovery_is_same_project_but_contact_survives_project_change() {
     );
 
     let mut repeated_discovery = ToolResult::ok(json!({"success": true}));
-    runtime.add_peer_collaboration_projection(
+    project_peer_semantics(
+        &runtime,
         &mut repeated_discovery,
         Some(&auth),
         Some(&observer),
@@ -906,7 +1014,8 @@ async fn oversized_result_rolls_back_one_shot_peer_projection() {
     let mut oversized = ToolResult::ok(json!({
         "blob": "x".repeat(webcodex_workspace::file_read_range::MAX_SERIALIZED_OUTPUT_BYTES)
     }));
-    runtime.add_peer_collaboration_projection(
+    project_peer_semantics(
+        &runtime,
         &mut oversized,
         Some(&auth),
         Some(&recipient),
@@ -916,7 +1025,14 @@ async fn oversized_result_rolls_back_one_shot_peer_projection() {
     assert!(oversized.output.get("peer_messages").is_none());
 
     let mut next = ToolResult::ok(json!({"ok": true}));
-    runtime.add_peer_collaboration_projection(&mut next, Some(&auth), Some(&recipient), None, &[]);
+    project_peer_semantics(
+        &runtime,
+        &mut next,
+        Some(&auth),
+        Some(&recipient),
+        None,
+        &[],
+    );
     assert_eq!(
         next.output["peer_messages"]["messages"][0]["message"],
         "must survive projection rollback"

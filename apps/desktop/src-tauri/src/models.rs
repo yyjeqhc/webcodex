@@ -237,6 +237,12 @@ pub struct ProjectSelection {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProjectInspection {
+    pub project: ProjectSelection,
+    pub authorization_required: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BinaryInfo {
     pub directory: String,
     pub version: String,

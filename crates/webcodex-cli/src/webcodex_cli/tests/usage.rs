@@ -156,6 +156,7 @@ fn project_registration_activation_and_login_help_prioritize_user_language() {
     assert!(project_help.contains("allowed_roots"));
     let activate_help = cli_exit(["project", "activate", "--help"]).unwrap();
     assert!(activate_help.contains("Activate one explicitly selected local project"));
+    assert!(activate_help.contains("reuses existing allowed_roots"));
     assert!(activate_help.contains("canonical exact project root"));
     assert!(activate_help.contains("generation CAS"));
     assert!(activate_help.contains("--user-token-file PATH"));

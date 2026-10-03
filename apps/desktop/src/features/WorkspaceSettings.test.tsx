@@ -41,14 +41,14 @@ beforeEach(() => {
     if (args.request.kind === "windows") return { windows: [] };
     return { instructions: { files: [], scan_complete: true }, skills: { available: true, catalog: { skills: [] } }, plugins: { available: true, catalog: { plugins: [] } }, can_reload_plugins: true };
   });
-  settings = { target, paths: { instruction_files: ["/fixture/global.md"], skill_roots: ["/fixture/skills"] }, file_access: { configured_roots: [], effective_roots: ["/Users/fixture"], using_default_roots: true, allow_cwd_anywhere: false }, plugin_ids: ["existing"], can_restart: true };
+  settings = { target, paths: { instruction_files: ["/fixture/global.md"], skill_roots: ["/fixture/skills"] }, file_access: { configured_roots: [], default_roots: ["/Users/fixture"], effective_roots: ["/Users/fixture"], using_default_roots: true, allow_cwd_anywhere: false }, plugin_ids: ["existing"], can_restart: true };
   api.runnerSettings.mockImplementation(async () => structuredClone(settings));
   api.managedInstructionsRead.mockResolvedValue({ path:"/fixture/desktop/instructions/AGENTS.md", exists:false, content:"", revision:"missing" });
   api.runnerCapabilityAuthorization.mockResolvedValue({ target, can_authorize: true, coding_agents: true, ssh_resources: true });
   api.authorizeRunnerCapabilities.mockResolvedValue({ target, can_authorize: true, coding_agents: true, ssh_resources: true });
   api.sshResources.mockResolvedValue({ runner: target.client_id, available: true, observation_id: "observed", resources: [], error_kind: null });
   api.updateRunnerSettings.mockImplementation(async (_target, _expected, paths) => { settings.paths = paths; return state; });
-  api.updateRunnerAllowedRoots.mockImplementation(async (_target, expected, roots) => { expect(expected).toEqual(settings.file_access.configured_roots); settings.file_access = { configured_roots: roots, effective_roots: roots.length ? roots : ["/Users/fixture"], using_default_roots: roots.length === 0, allow_cwd_anywhere: false }; return state; });
+  api.updateRunnerAllowedRoots.mockImplementation(async (_target, expected, roots) => { expect(expected).toEqual(settings.file_access.configured_roots); settings.file_access = { configured_roots: roots, default_roots: ["/Users/fixture"], effective_roots: roots.length ? roots : ["/Users/fixture"], using_default_roots: roots.length === 0, allow_cwd_anywhere: false }; return state; });
   api.addRunnerPlugin.mockImplementation(async (_target, provider) => { settings.plugin_ids.push(provider.id); return state; });
   api.restartOwnedRunner.mockResolvedValue(state); api.getState.mockResolvedValue(state); api.updateTunnelConfig.mockResolvedValue(state);
   api.computerPermissions.mockResolvedValue({ supported: true, foreground: false, execution_process: "WebCodex Runner", execution_path: "/Applications/WebCodex.app/Contents/Resources/webcodex-runner", runner_accessibility: "unknown", runner_screen_recording: "unknown", desktop_accessibility: false, desktop_screen_recording: false });
@@ -93,8 +93,25 @@ describe("workspace configuration boundaries", () => {
     await waitFor(() => expect(api.updateRunnerAllowedRoots).toHaveBeenLastCalledWith(target, ["/Users/fixture"], []));
   });
 
+  it("separates retained default access from extra folders and hides Windows device prefixes", () => {
+    settings.file_access = {
+      configured_roots: ["C:\\Users\\fixture", "\\\\?\\E:\\"],
+      default_roots: ["C:\\Users\\fixture"],
+      effective_roots: ["C:\\Users\\fixture", "\\\\?\\E:\\"],
+      using_default_roots: false,
+      allow_cwd_anywhere: false,
+    };
+    render(wrap(<FileAccessHarness />));
+    expect(screen.getByText("Current default access")).toBeInTheDocument();
+    expect(screen.getByText("Additional authorized folders")).toBeInTheDocument();
+    expect(screen.getAllByText("E:\\")).toHaveLength(2);
+    expect(screen.queryByText("\\\\?\\E:\\")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Remove folder: E:\\" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Remove folder: C:\\Users\\fixture" })).not.toBeInTheDocument();
+  });
+
   it("keeps Runner file-access failures visible and refreshes the canonical settings view", async () => {
-    settings.file_access = { configured_roots: ["/fixture/work"], effective_roots: ["/fixture/work"], using_default_roots: false, allow_cwd_anywhere: false };
+    settings.file_access = { configured_roots: ["/fixture/work"], default_roots: ["/Users/fixture"], effective_roots: ["/fixture/work"], using_default_roots: false, allow_cwd_anywhere: false };
     api.updateRunnerAllowedRoots.mockRejectedValueOnce({ code: "runner_config_reload_failed", message: "Runner rejected the file access reload", next_action: "The previous on-disk file access configuration was restored." });
     render(wrap(<FileAccessHarness />));
     fireEvent.click(screen.getByRole("button", { name: "Restore default access" }));

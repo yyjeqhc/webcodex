@@ -94,6 +94,22 @@ impl AppState {
         inspect_project_path(path).await
     }
 
+    pub async fn inspect_project_access(&self, path: &str) -> DesktopResult<ProjectInspection> {
+        let project = inspect_project_path(path).await?;
+        let settings = self.runner_settings().await?;
+        let project_path = PathBuf::from(&project.path);
+        let effective_roots = settings.file_access.effective_roots.iter().map(PathBuf::from).collect::<Vec<_>>();
+        let allow_cwd_anywhere = settings.file_access.allow_cwd_anywhere;
+        let authorization_required = tokio::task::spawn_blocking(move || {
+            let canonical_project = project_path.canonicalize().map_err(|_| {
+                DesktopError::new("project_unavailable", "The selected project directory could not be resolved", "Choose an existing directory that this account can access.")
+            })?;
+            let canonical_roots = webcodex_runner_config::paths::canonicalize_usable_allowed_roots(&effective_roots);
+            Ok::<_, DesktopError>(webcodex_runner_config::paths::validate_project_path_policy(&canonical_project, &canonical_roots, allow_cwd_anywhere).is_err())
+        }).await.map_err(|_| desktop_state_unavailable("Project authorization inspection worker stopped"))??;
+        Ok(ProjectInspection { project, authorization_required })
+    }
+
     pub async fn refresh_runtime_status(&self) -> DesktopResult<DesktopStateSnapshot> {
         let (operation, cancellation, mut core, baseline) = self
             .begin_operation(DesktopOperationKind::RuntimeRefresh, true)

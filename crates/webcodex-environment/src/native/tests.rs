@@ -962,6 +962,31 @@ async fn pairing_conflict_preserves_viewer_identity_and_saves_recovery_credentia
     );
 }
 
+#[test]
+fn project_authority_check_reuses_parent_root_and_expands_only_outside_it() {
+    let temp = crate::test_tempdir().unwrap();
+    let authorized = temp.path().join("authorized");
+    let covered = authorized.join("covered");
+    let outside = temp.path().join("outside");
+    std::fs::create_dir_all(&covered).unwrap();
+    std::fs::create_dir_all(&outside).unwrap();
+    let authorized = authorized.canonicalize().unwrap();
+    let covered = covered.canonicalize().unwrap();
+    let outside = outside.canonicalize().unwrap();
+
+    let config: toml::Value = toml::from_str(&format!(
+        "[policy]\nallowed_roots = [{:?}]\nallow_cwd_anywhere = false\n",
+        authorized.to_string_lossy()
+    ))
+    .unwrap();
+    assert!(!project_requires_authority(&config, &covered).unwrap());
+    assert!(project_requires_authority(&config, &outside).unwrap());
+
+    let anywhere: toml::Value =
+        toml::from_str("[policy]\nallowed_roots = []\nallow_cwd_anywhere = true\n").unwrap();
+    assert!(!project_requires_authority(&anywhere, &outside).unwrap());
+}
+
 #[tokio::test]
 async fn uncertain_project_removal_is_not_dispatched_again() {
     let (url, requests, server) = fixture(5, |request| match request.path.as_str() {
@@ -1037,16 +1062,8 @@ async fn uncertain_project_removal_is_not_dispatched_again() {
 
 #[tokio::test]
 async fn uncertain_project_addition_is_not_dispatched_again() {
-    let (url, requests, server) = fixture(6, |request| match request.path.as_str() {
+    let (url, requests, server) = fixture(4, |request| match request.path.as_str() {
         "/api/runtime-console/projects" => (200, vec![], json!({"projects":[]})),
-        "/api/tools/call" if request.body["tool"] == "check_runner_config" => (
-            200,
-            vec![],
-            json!({"success":true,"output":{"valid":true,"restart_required":false,"current_generation":7}}),
-        ),
-        "/api/tools/call" if request.body["tool"] == "reload_runner_config" => {
-            (200, vec![], json!({"success":true,"output":{}}))
-        }
         "/api/projects/resolve-or-register" => (503, vec![], json!({"error":"uncertain"})),
         other => panic!("unexpected addition route: {other}"),
     });

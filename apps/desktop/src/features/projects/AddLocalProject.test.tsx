@@ -5,7 +5,7 @@ import { LocaleProvider } from "../../i18n/locale";
 import type { DesktopState } from "../../models/topology";
 import { AddLocalProject } from "./AddLocalProject";
 
-const api = vi.hoisted(() => ({ inspectProject: vi.fn(), activateLocalProject: vi.fn() }));
+const api = vi.hoisted(() => ({ inspectProjectAccess: vi.fn(), activateLocalProject: vi.fn() }));
 const picker = vi.hoisted(() => ({ open: vi.fn() }));
 vi.mock("../../lib/desktop-api", () => ({ desktopApi: api }));
 vi.mock("@tauri-apps/plugin-dialog", () => picker);
@@ -18,7 +18,7 @@ function view(selected = state, onState = vi.fn(), onAdded = vi.fn()) {
 }
 beforeEach(() => {
   vi.resetAllMocks(); localStorage.setItem("webcodex.desktop.locale", "en-US");
-  picker.open.mockResolvedValue(folder.path); api.inspectProject.mockResolvedValue(folder);
+  picker.open.mockResolvedValue(folder.path); api.inspectProjectAccess.mockResolvedValue({ project: folder, authorization_required: true });
   api.activateLocalProject.mockResolvedValue({ ...state, project: folder });
 });
 
@@ -32,16 +32,25 @@ describe("manual local project registration", () => {
     expect(api.activateLocalProject).not.toHaveBeenCalled();
     expect(screen.getByText(folder.path)).toBeInTheDocument();
     expect(screen.queryByLabelText("API Key")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Authorize and add folder" }));
+    fireEvent.click(screen.getByRole("button", { name: "Authorize and add project" }));
     await waitFor(() => expect(onAdded).toHaveBeenCalledTimes(1));
     expect(api.activateLocalProject).toHaveBeenCalledExactlyOnceWith(folder.path);
     expect(onState).toHaveBeenCalledWith(expect.objectContaining({ project: folder }));
+  });
+  it("registers an already authorized folder without asking to expand file access", async () => {
+    api.inspectProjectAccess.mockResolvedValue({ project: folder, authorization_required: false });
+    render(view());
+    fireEvent.click(screen.getByRole("button", { name: "Add local folder" }));
+    await screen.findByRole("dialog");
+    expect(screen.getByText(/already within the Runner’s authorized file access/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Add project" }));
+    await waitFor(() => expect(api.activateLocalProject).toHaveBeenCalledExactlyOnceWith(folder.path));
   });
   it("does not mutate when the directory picker is cancelled", async () => {
     picker.open.mockResolvedValue(null); render(view());
     fireEvent.click(screen.getByRole("button", { name: "Add local folder" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "Add local folder" })).toBeEnabled());
-    expect(api.inspectProject).not.toHaveBeenCalled(); expect(api.activateLocalProject).not.toHaveBeenCalled();
+    expect(api.inspectProjectAccess).not.toHaveBeenCalled(); expect(api.activateLocalProject).not.toHaveBeenCalled();
   });
   it("hides registration for viewers and temporary sharing, and blocks a stopped Runtime", () => {
     const mounted = render(view({ ...state, topology: { ...state.topology!, runner: { kind: "none" } } } as DesktopState));
@@ -58,14 +67,14 @@ describe("manual local project registration", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add local folder" }));
     mounted.rerender(view({ ...state, persistent_environment: "different-environment" }));
     await act(async () => resolve(folder.path));
-    expect(api.inspectProject).not.toHaveBeenCalled(); expect(screen.queryByRole("dialog")).toBeNull();
+    expect(api.inspectProjectAccess).not.toHaveBeenCalled(); expect(screen.queryByRole("dialog")).toBeNull();
   });
   it("prevents duplicate registration and never exposes arbitrary error or credential text", async () => {
     let reject!: (reason: unknown) => void;
     api.activateLocalProject.mockImplementation(() => new Promise((_done, fail) => { reject = fail; }));
     render(view()); fireEvent.click(screen.getByRole("button", { name: "Add local folder" }));
     await screen.findByRole("dialog");
-    const add = screen.getByRole("button", { name: "Authorize and add folder" });
+    const add = screen.getByRole("button", { name: "Authorize and add project" });
     fireEvent.click(add); fireEvent.click(add);
     expect(api.activateLocalProject).toHaveBeenCalledTimes(1);
     await act(async () => reject(new Error("wc_user_do_not_render")));

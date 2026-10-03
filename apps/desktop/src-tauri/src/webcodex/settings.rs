@@ -239,9 +239,17 @@ fn validate(paths: &[String]) -> DesktopResult<()> {
     Ok(())
 }
 
-fn validate_allowed_roots(roots: &[String]) -> DesktopResult<()> {
+fn validate_allowed_roots(current: &[String], roots: &[String]) -> DesktopResult<()> {
     validate(roots)?;
     for root in roots {
+        if current.iter().any(|existing| {
+            webcodex_runner_config::paths::paths_equal(Path::new(existing), Path::new(root))
+        }) {
+            // Existing configured roots are not new authority. A directory may
+            // have disappeared since it was configured; keep that stale entry
+            // editable so users can remove stale roots one at a time.
+            continue;
+        }
         let canonical = Path::new(root).canonicalize().map_err(|_| error())?;
         if !canonical.is_dir() {
             return Err(error());
@@ -307,13 +315,14 @@ pub fn stage_allowed_roots_update(
     request: AllowedRootsUpdate,
 ) -> DesktopResult<PendingSettingsEdit> {
     verify_target(runtime, &request.target)?;
-    validate_allowed_roots(&request.roots)?;
     let path = runtime.runner_config.as_ref().ok_or_else(error)?;
     let original = read(path)?;
     let mut doc = parse(&original, runtime)?;
-    if configured_allowed_roots(&doc)? != request.expected {
+    let current = configured_allowed_roots(&doc)?;
+    if current != request.expected {
         return Err(error());
     }
+    validate_allowed_roots(&current, &request.roots)?;
     doc["policy"]["allowed_roots"] = toml_edit::value(request.roots.into_iter().collect::<Array>());
     let candidate = doc.to_string();
     persist_text(path, &original, &candidate)?;

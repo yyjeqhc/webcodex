@@ -230,6 +230,43 @@ fn file_access_empty_configuration_reports_home_default_and_rejects_missing_root
     assert_eq!(read(path).unwrap(), before);
 }
 
+#[test]
+fn file_access_can_remove_stale_roots_one_at_a_time() {
+    let f = Fixture::new();
+    let path = f.runtime.runner_config.as_ref().unwrap();
+    let stale_a = f.dir.join("removed-a").to_string_lossy().into_owned();
+    let stale_b = f.dir.join("removed-b").to_string_lossy().into_owned();
+
+    let original = read(path).unwrap();
+    let mut doc = original.parse::<DocumentMut>().unwrap();
+    doc["policy"]["allowed_roots"] = toml_edit::value(
+        vec![stale_a.clone(), stale_b.clone()]
+            .into_iter()
+            .collect::<Array>(),
+    );
+    let seeded = doc.to_string();
+    persist_text(path, &original, &seeded).unwrap();
+
+    let projection = inspect(&f.runtime, false).unwrap();
+    assert_eq!(
+        projection.file_access.configured_roots,
+        vec![stale_a.clone(), stale_b.clone()]
+    );
+
+    stage_allowed_roots_update(
+        &f.runtime,
+        AllowedRootsUpdate {
+            target: target(&f.runtime).unwrap(),
+            expected: vec![stale_a, stale_b.clone()],
+            roots: vec![stale_b.clone()],
+        },
+    )
+    .expect("removing one stale root must not revalidate an unchanged stale survivor");
+
+    let projection = inspect(&f.runtime, false).unwrap();
+    assert_eq!(projection.file_access.configured_roots, vec![stale_b]);
+}
+
 #[cfg(windows)]
 #[test]
 fn file_access_accepts_existing_windows_drive_root() {

@@ -76,6 +76,97 @@ fn history_read_snapshot_does_not_block_receipt_reference_or_audit_writes() {
 }
 
 #[test]
+fn window_event_pages_keep_links_in_one_snapshot_during_retention() {
+    use rusqlite::hooks::{AuthAction, AuthContext, Authorization};
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    for kind in ["ordinary", "composition", "goal"] {
+        for scoped in [false, true] {
+            let tmp = tempfile::tempdir().unwrap();
+            let path = tmp.path().join("page-snapshot.db");
+            let db = Database::open(&path).unwrap();
+            seed_session(&db);
+            append(
+                &db,
+                event("original", "w", "alice", "a", 1),
+                &[("session", "recording")],
+            );
+            let writer = Connection::open(&path).unwrap();
+            writer.pragma_update(None, "foreign_keys", true).unwrap();
+            let deleted = Arc::new(AtomicBool::new(false));
+            let observed = deleted.clone();
+            // At preparation of the second, batched link query, perform retention
+            // through a DIFFERENT WAL connection. No sleeps or production hooks:
+            // the original event page has already been consumed at this point.
+            db.lock_history_connection(crate::StoreDomain::WindowActivity)
+                .authorizer(Some(move |context: AuthContext<'_>| {
+                    if matches!(
+                        context.action,
+                        AuthAction::Read {
+                            table_name: "action_event_workflow_links",
+                            ..
+                        }
+                    ) && !observed.swap(true, Ordering::SeqCst)
+                    {
+                        assert_eq!(
+                            writer
+                                .execute("DELETE FROM action_events WHERE event_id='original'", [])
+                                .unwrap(),
+                            1
+                        );
+                    }
+                    Authorization::Allow
+                }));
+            let principal = scoped.then_some(("username", "alice"));
+            let page = match kind {
+                "ordinary" => db.list_window_activity_events("w", principal, 20),
+                "composition" => {
+                    db.list_window_activity_events_with_code_mode_composition("w", principal, 20)
+                }
+                "goal" => db.list_goal_window_activity_events("w", principal, 20),
+                _ => unreachable!(),
+            }
+            .unwrap();
+            assert!(
+                deleted.load(Ordering::SeqCst),
+                "retention must overlap {kind}/{scoped}"
+            );
+            assert_eq!(page.len(), 1);
+            assert_eq!(
+                page[0].workflow_links.len(),
+                1,
+                "{kind}/{scoped}: event and links must share the same WAL snapshot"
+            );
+            assert_eq!(page[0].workflow_links[0].workflow_session_id, "session");
+            let reader = db.lock_history_connection(crate::StoreDomain::WindowActivity);
+            reader.authorizer(None::<fn(AuthContext<'_>) -> Authorization>);
+            assert!(
+                reader.is_autocommit(),
+                "the page must release its read snapshot"
+            );
+            assert_eq!(
+                reader
+                    .query_row("SELECT COUNT(*) FROM action_events", [], |r| r
+                        .get::<_, i64>(0))
+                    .unwrap(),
+                0
+            );
+            assert_eq!(
+                reader
+                    .query_row(
+                        "SELECT COUNT(*) FROM action_event_workflow_links",
+                        [],
+                        |r| r.get::<_, i64>(0)
+                    )
+                    .unwrap(),
+                0
+            );
+        }
+    }
+    eprintln!("WINDOW_PAGE_SNAPSHOT projections=3 principal_modes=2 retention_during_link_query=true preserved_links=1");
+}
+
+#[test]
 fn history_connection_is_fixed_read_only_and_reopens_after_migration() {
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join("readonly.db");

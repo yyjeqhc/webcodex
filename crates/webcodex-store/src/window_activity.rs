@@ -166,7 +166,8 @@ impl Database {
         #[cfg(any(test, feature = "root-test-support"))]
         self.window_history_reads
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let conn = self.lock_history_connection(crate::StoreDomain::WindowActivity);
+        let mut reader = self.lock_history_connection(crate::StoreDomain::WindowActivity);
+        let conn = reader.transaction()?;
         let (principal_sql, kind, id) = principal_predicate(principal);
         let sql = format!(
             "SELECT e.event_id, e.client_window_key, e.client_window_source,
@@ -307,7 +308,8 @@ impl Database {
         #[cfg(any(test, feature = "root-test-support"))]
         self.window_history_reads
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let conn = self.lock_history_connection(crate::StoreDomain::WindowActivity);
+        let mut reader = self.lock_history_connection(crate::StoreDomain::WindowActivity);
+        let conn = reader.transaction()?;
         let (kind, id) = principal
             .map(|(kind, id)| (Some(kind), Some(id)))
             .unwrap_or((None, None));
@@ -365,7 +367,8 @@ impl Database {
         #[cfg(any(test, feature = "root-test-support"))]
         self.window_history_reads
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let conn = self.lock_history_connection(crate::StoreDomain::WindowActivity);
+        let mut reader = self.lock_history_connection(crate::StoreDomain::WindowActivity);
+        let conn = reader.transaction()?;
         let (principal_sql, kind, id) = principal_predicate(principal);
         let sql = format!(
             "SELECT e.event_id, e.client_window_key, e.client_window_source,
@@ -690,8 +693,9 @@ fn collect_window_event_rows(
             },
         });
     }
-    // Fetch links for the exact bounded page in one query while holding the same
-    // connection lock. Per-event queries made each Window list refresh perform
+    // Fetch links for the exact bounded page in one query. Historical callers
+    // hold an explicit read transaction: a reader mutex alone cannot preserve
+    // this page across concurrent Audit writes. Per-event queries made each refresh perform
     // thousands of statement preparations before it could return any rows.
     if !out.is_empty() {
         let ids = out

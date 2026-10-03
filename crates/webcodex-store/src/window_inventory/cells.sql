@@ -6,7 +6,7 @@ WITH source AS (
     FROM action_events e
     WHERE __SELECTION__ AND e.client_window_key IS NOT NULL
         AND e.window_started_at_ms IS NOT NULL AND e.window_ended_at_ms IS NOT NULL
-        AND COALESCE(e.operation,'') NOT IN ('present_work_result','get_work_result_state','send_work_result_message','read_changed_file_diff')
+        AND COALESCE(e.operation,'') NOT IN ('present_work_result','work_result_state','work_result_send_message','changes_file_diff')
 ), scoped AS (
     SELECT *, json_array(principal_correlation_kind,principal_correlation_id,project,json(anchors)) AS scope_key FROM source
 ), ranked AS (

@@ -985,9 +985,17 @@ fn project_authority_check_reuses_parent_root_and_expands_only_outside_it() {
     assert!(!project_requires_authority(&config, &covered).unwrap());
     assert!(project_requires_authority(&config, &outside).unwrap());
 
-    let anywhere: toml::Value =
-        toml::from_str("[policy]\nallowed_roots = []\nallow_cwd_anywhere = true\n").unwrap();
-    assert!(!project_requires_authority(&anywhere, &outside).unwrap());
+    // On macOS, tempfile canonicalizes beneath /private/var, which is
+    // intentionally blocked by allow_cwd_anywhere as a dangerous system root.
+    // Use the repository cwd as an ordinary local path for this relaxation check.
+    let ordinary = std::env::current_dir().unwrap().canonicalize().unwrap();
+    assert!(!ordinary.starts_with(&authorized));
+    let anywhere: toml::Value = toml::from_str(&format!(
+        "[policy]\nallowed_roots = [{:?}]\nallow_cwd_anywhere = true\n",
+        authorized.to_string_lossy()
+    ))
+    .unwrap();
+    assert!(!project_requires_authority(&anywhere, &ordinary).unwrap());
 }
 
 #[tokio::test]

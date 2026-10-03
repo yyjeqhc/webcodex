@@ -62,13 +62,13 @@ fn old_projection(tool: &str, result: &mut ToolResult) {
 }
 
 fn project(tool: &'static str, policy: ValidationSuccessPolicy, result: &mut ToolResult) {
-    ModelFacingProjectionPlan {
-        projection: ModelFacingProjection::Execution {
+    registry::ResultProjection::project(
+        Box::new(execution::ExecutionProjection {
             tool_name: tool,
             validation_policy: policy,
-        },
-    }
-    .project(result);
+        }),
+        result,
+    );
 }
 
 fn validate(tool: &str, result: &ToolResult) -> Result<(), String> {
@@ -438,5 +438,55 @@ fn validation_success_schema_rejects_duplicate_parser_and_assertion_fragments() 
             validate("project_validate", &project_rich).is_err(),
             "rich project_validate success accepted missing {key}"
         );
+    }
+}
+
+#[test]
+fn validation_success_registry_capture_preserves_cargo_postconditions() {
+    for policy in [
+        ValidationSuccessPolicy::default(),
+        ValidationSuccessPolicy {
+            require_tests: Some(true),
+            ..Default::default()
+        },
+        ValidationSuccessPolicy {
+            require_tests: Some(false),
+            ..Default::default()
+        },
+        ValidationSuccessPolicy {
+            no_run: Some(true),
+            ..Default::default()
+        },
+        ValidationSuccessPolicy {
+            min_tests: Some(3),
+            ..Default::default()
+        },
+    ] {
+        let mut args = json!({"project":"agent:fixture:validation"});
+        if let Some(value) = policy.require_tests {
+            args["require_tests"] = json!(value);
+        }
+        if let Some(value) = policy.no_run {
+            args["no_run"] = json!(value);
+        }
+        if let Some(value) = policy.min_tests {
+            args["min_tests"] = json!(value);
+        }
+        let call = ToolCall::from_tool_name("cargo_test", args.clone()).unwrap();
+        for stdout in [CARGO, ZERO, ""] {
+            let mut actual = fixture("cargo_test", "cargo_test", policy, stdout, "");
+            let mut expected = ToolResult {
+                success: actual.success,
+                output: actual.output.clone(),
+                error: actual.error.clone(),
+            };
+            project("cargo_test", policy, &mut expected);
+            ModelFacingProjectionPlan::capture(&call).project(&mut actual);
+            assert_eq!(
+                serde_json::to_value(&actual).unwrap(),
+                serde_json::to_value(&expected).unwrap(),
+                "captured policy changed for {args}: {stdout:?}",
+            );
+        }
     }
 }

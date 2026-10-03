@@ -1,5 +1,14 @@
 //! Request-scoped model result projection, after canonical evidence capture.
 //! No dispatch, authorization, Session selection or retry belongs here.
+mod edits;
+mod execution;
+mod reads;
+mod registry;
+mod searches;
+mod waits;
+
+pub(super) use registry::ModelFacingProjectionPlan;
+
 use super::{ResolvedProject, ToolCall, ToolResult};
 use serde_json::Value;
 
@@ -450,189 +459,6 @@ impl SearchModelProjection {
                 }),
             },
             _ => Self::None,
-        }
-    }
-}
-
-enum ModelFacingProjection {
-    None,
-    Execution {
-        tool_name: &'static str,
-        validation_policy: ValidationSuccessPolicy,
-    },
-    AgentWait,
-    JobReadiness,
-    ApplyTextEdits {
-        change_count: usize,
-        dry_run: bool,
-    },
-    Read(super::read_files::ReadModelProjection),
-    Search(SearchModelProjection),
-}
-
-/// Request facts needed only after canonical execution/recording has finished.
-/// Captured once before the ToolCall is moved, then consumed exactly once by the
-/// terminal model-facing projection stage. The concrete projection stays private
-/// so callers cannot branch on tool-specific result policy.
-pub(super) struct ModelFacingProjectionPlan {
-    projection: ModelFacingProjection,
-}
-
-impl ModelFacingProjectionPlan {
-    pub(super) fn capture(call: &ToolCall) -> Self {
-        let projection = match call {
-            ToolCall::WaitForAgentEvents { .. }
-            | ToolCall::ReadAgentWait { .. }
-            | ToolCall::CancelAgentWait { .. } => ModelFacingProjection::AgentWait,
-            ToolCall::WaitForJobReadiness { .. } => ModelFacingProjection::JobReadiness,
-            ToolCall::ApplyTextEdits {
-                changes, dry_run, ..
-            } => ModelFacingProjection::ApplyTextEdits {
-                change_count: changes.len(),
-                dry_run: dry_run.unwrap_or(false),
-            },
-            ToolCall::CargoTest {
-                require_tests,
-                no_run,
-                min_tests,
-                ..
-            } => ModelFacingProjection::Execution {
-                tool_name: call.tool_name(),
-                validation_policy: ValidationSuccessPolicy {
-                    require_tests: *require_tests,
-                    no_run: *no_run,
-                    min_tests: *min_tests,
-                },
-            },
-            ToolCall::ProjectBuild { .. }
-            | ToolCall::RunProcess { .. }
-            | ToolCall::RunSkillResource { .. }
-            | ToolCall::RunScript { .. }
-            | ToolCall::RunShell { .. }
-            | ToolCall::CargoFmt { .. }
-            | ToolCall::CargoCheck { .. }
-            | ToolCall::ProjectValidate { .. }
-            | ToolCall::GoTest { .. } => ModelFacingProjection::Execution {
-                tool_name: call.tool_name(),
-                validation_policy: ValidationSuccessPolicy::default(),
-            },
-            ToolCall::ReadFiles { .. } => {
-                ModelFacingProjection::Read(super::read_files::ReadModelProjection::capture(call))
-            }
-            ToolCall::SearchProjectTexts { .. } => {
-                ModelFacingProjection::Search(SearchModelProjection::capture(call))
-            }
-            _ => ModelFacingProjection::None,
-        };
-        Self { projection }
-    }
-
-    pub(super) fn bind_resolved_project(&mut self, resolved: Option<&ResolvedProject>) {
-        if let ModelFacingProjection::Read(projection) = &mut self.projection {
-            projection.bind_resolved_project(resolved);
-        }
-        let Some(resolved) = resolved else {
-            return;
-        };
-        if let ModelFacingProjection::Search(SearchModelProjection::Batch { project, .. }) =
-            &mut self.projection
-        {
-            *project = resolved.resolved_id.clone();
-        }
-    }
-
-    /// Consume the plan at the only stage allowed to turn canonical execution
-    /// output into the final model-facing shape. Session/audit
-    /// recorders must run before this method.
-    pub(super) fn project(self, result: &mut ToolResult) {
-        match self.projection {
-            ModelFacingProjection::None => {}
-            ModelFacingProjection::JobReadiness => {
-                super::observe_jobs::sparsify_job_readiness_model_result(result)
-            }
-            ModelFacingProjection::AgentWait => {
-                super::agent_wait::agent_wait_model_projection(result)
-            }
-            ModelFacingProjection::ApplyTextEdits {
-                change_count,
-                dry_run,
-            } => apply_text_edits_model_projection(result, change_count, dry_run),
-            ModelFacingProjection::Execution {
-                tool_name,
-                validation_policy,
-            } => {
-                sparsify_structured_validation_success_evidence(
-                    tool_name,
-                    validation_policy,
-                    result,
-                );
-                if tool_name == "run_shell" {
-                    sparsify_terminal_shell_success(result);
-                }
-                sparsify_terminal_structured_execution_success(tool_name, result);
-                sparsify_structured_validation_runtime_metadata(tool_name, result);
-                super::jobs::sparsify_job_handoff_model_result(result);
-            }
-            ModelFacingProjection::Read(projection) => {
-                let super::read_files::ReadModelProjection::Batch {
-                    max_result_bytes, ..
-                } = &projection
-                else {
-                    return;
-                };
-                super::read_files::apply_model_facing_output_budget(
-                    result,
-                    *max_result_bytes,
-                    &projection,
-                );
-                super::read_files::enforce_final_model_facing_hard_cap(result, &projection);
-                super::read_files::add_actionable_read_continuations(&projection, result);
-                sparsify_complete_read_success("read_files", result);
-            }
-            ModelFacingProjection::Search(projection) => {
-                if let SearchModelProjection::Batch {
-                    project,
-                    queries,
-                    session_id,
-                    default_timeouts,
-                    max_result_bytes,
-                } = &projection
-                {
-                    super::search_project_texts::apply_model_facing_output_budget(
-                        result,
-                        default_timeouts,
-                        *max_result_bytes,
-                        project,
-                        queries,
-                        session_id.as_deref(),
-                    );
-                    super::search_project_texts::enforce_final_model_facing_hard_cap(
-                        result,
-                        default_timeouts,
-                        project,
-                        queries,
-                        session_id.as_deref(),
-                        *max_result_bytes,
-                    );
-                }
-                sparsify_search_success_for_model(&projection, result);
-                if let SearchModelProjection::Batch {
-                    project,
-                    queries,
-                    session_id,
-                    max_result_bytes,
-                    ..
-                } = &projection
-                {
-                    super::search_project_texts::add_actionable_search_continuation(
-                        result,
-                        project,
-                        queries,
-                        session_id.as_deref(),
-                        *max_result_bytes,
-                    );
-                }
-            }
         }
     }
 }

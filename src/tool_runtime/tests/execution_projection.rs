@@ -2,13 +2,13 @@ use super::*;
 use serde_json::json;
 
 fn project(name: &'static str, result: &mut ToolResult) {
-    ModelFacingProjectionPlan {
-        projection: ModelFacingProjection::Execution {
+    registry::ResultProjection::project(
+        Box::new(execution::ExecutionProjection {
             tool_name: name,
             validation_policy: ValidationSuccessPolicy::default(),
-        },
-    }
-    .project(result);
+        }),
+        result,
+    );
 }
 
 #[test]

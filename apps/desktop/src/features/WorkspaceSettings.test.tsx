@@ -83,12 +83,12 @@ describe("workspace configuration boundaries", () => {
     render(wrap(<FileAccessHarness />));
     expect(screen.getByText("No custom folders configured.")).toBeInTheDocument();
     expect(screen.getByText("/Users/fixture")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Add folder" }));
+    fireEvent.click(screen.getByRole("button", { name: "Authorize folder" }));
     await waitFor(() => expect(api.updateRunnerAllowedRoots).toHaveBeenCalledWith(target, [], ["/Users/fixture", "/Volumes/Work"]));
     await waitFor(() => expect(screen.getAllByText("/Volumes/Work").length).toBeGreaterThanOrEqual(1));
-    fireEvent.click(screen.getByRole("button", { name: "Remove folder: /Volumes/Work" }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove access: /Volumes/Work" }));
     await waitFor(() => expect(api.updateRunnerAllowedRoots).toHaveBeenLastCalledWith(target, ["/Users/fixture", "/Volumes/Work"], ["/Users/fixture"]));
-    expect(screen.queryByRole("button", { name: "Remove folder: /Users/fixture" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Remove access: /Users/fixture" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Restore default access" }));
     await waitFor(() => expect(api.updateRunnerAllowedRoots).toHaveBeenLastCalledWith(target, ["/Users/fixture"], []));
   });
@@ -106,8 +106,8 @@ describe("workspace configuration boundaries", () => {
     expect(screen.getByText("Additional authorized folders")).toBeInTheDocument();
     expect(screen.getAllByText("E:\\")).toHaveLength(2);
     expect(screen.queryByText("\\\\?\\E:\\")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Remove folder: E:\\" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Remove folder: C:\\Users\\fixture" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Remove access: E:\\" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Remove access: C:\\Users\\fixture" })).not.toBeInTheDocument();
   });
 
   it("keeps Runner file-access failures visible and refreshes the canonical settings view", async () => {

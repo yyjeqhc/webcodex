@@ -14,6 +14,19 @@ pub struct PrivateUpdateCache {
     root: PathBuf,
 }
 
+/// Exclusive updater lease; inherited descriptors cannot prolong its ownership.
+#[derive(Debug)]
+pub struct UpdateCacheLock {
+    file: File,
+}
+
+impl Drop for UpdateCacheLock {
+    fn drop(&mut self) {
+        // Close alone can leave flock held by a child between fork and exec.
+        let _ = FileExt::unlock(&self.file);
+    }
+}
+
 fn failed<T>(_: T) -> UpdateError {
     UpdateError::CacheUnavailable
 }
@@ -59,7 +72,7 @@ impl PrivateUpdateCache {
     pub fn child(&self, name: &str) -> UpdateResult<Self> {
         Self::open(self.file(name)?)
     }
-    pub fn lock(&self) -> UpdateResult<File> {
+    pub fn lock(&self) -> UpdateResult<UpdateCacheLock> {
         let path = self.file("update.lock")?;
         let file = if path.exists() {
             open_existing_private(&path, true)
@@ -68,7 +81,7 @@ impl PrivateUpdateCache {
         }
         .map_err(failed)?;
         file.try_lock_exclusive().map_err(failed)?;
-        Ok(file)
+        Ok(UpdateCacheLock { file })
     }
     pub fn read(&self, name: &str, limit: u64) -> UpdateResult<Option<Vec<u8>>> {
         let path = self.file(name)?;
@@ -236,6 +249,26 @@ mod tests {
         drop(lock);
         assert!(cache.lock().is_ok());
     }
+    #[cfg(unix)]
+    #[test]
+    fn cache_lock_drop_releases_inherited_file_description() {
+        let temp = crate::test_tempdir().unwrap();
+        let cache = PrivateUpdateCache::open(temp.path().join("updates")).unwrap();
+        let lock = cache.lock().unwrap();
+        // Duplicate the open-file description to model the fork-to-exec window.
+        let inherited = lock.file.try_clone().unwrap();
+        assert!(cache.lock().is_err());
+        drop(lock);
+        let next = cache
+            .lock()
+            .expect("the completed updater must release its lock");
+        assert!(cache.lock().is_err());
+        drop(inherited);
+        assert!(cache.lock().is_err());
+        drop(next);
+        assert!(cache.lock().is_ok());
+    }
+
     #[cfg(unix)]
     #[test]
     fn planted_links_never_redirect_writes_reads_or_cleanup() {

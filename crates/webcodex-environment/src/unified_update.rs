@@ -7,7 +7,7 @@ mod network;
 mod source;
 mod strict_json;
 
-pub use cache::PrivateUpdateCache;
+pub use cache::{PrivateUpdateCache, UpdateCacheLock};
 #[cfg(unix)]
 pub use installer::{apply_verified_installer, verify_installed_update_cli, InstallerLaunchNotice};
 pub use network::{fetch_release, http_client, read_response, ReleaseArtifacts};

@@ -96,6 +96,11 @@ export interface ProjectSelection {
   runtime_project_id?: string | null;
 }
 
+export interface ProjectInspection {
+  project: ProjectSelection;
+  authorization_required: boolean;
+}
+
 export interface BinaryInfo {
   directory: string;
   version: string;
@@ -263,7 +268,7 @@ export interface ActivityEntry {
 
 
 export interface RunnerPaths { instruction_files: string[]; skill_roots: string[] }
-export interface RunnerFileAccess { configured_roots: string[]; effective_roots: string[]; using_default_roots: boolean; allow_cwd_anywhere: boolean }
+export interface RunnerFileAccess { configured_roots: string[]; default_roots?: string[]; effective_roots: string[]; using_default_roots: boolean; allow_cwd_anywhere: boolean }
 export interface SettingsTarget { config_path: string; client_id: string; server_url: string }
 export interface RunnerSettings { paths: RunnerPaths; file_access: RunnerFileAccess; plugin_ids: string[]; target: SettingsTarget; can_restart: boolean }
 export interface PluginRegistration { id: string; name: string; command: string; args: string[]; cwd: string | null }

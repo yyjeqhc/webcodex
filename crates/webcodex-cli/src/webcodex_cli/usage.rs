@@ -136,7 +136,7 @@ Options:\n\
 pub(crate) fn project_activate_usage() -> &'static str {
     "Usage: webcodex project activate --config PATH --user-token-file PATH <PROJECT> [OPTIONS]\n\n\
 Activate one explicitly selected local project on the existing Runner.\n\
-The command preserves Runner identity, grants only the canonical exact project root, hot-reloads policy with generation CAS, and asks that Runner to resolve/register the Project.\n\n\
+The command preserves Runner identity, reuses existing allowed_roots when they already cover the Project, otherwise grants only the canonical exact project root, hot-reloads policy with generation CAS, and asks that Runner to resolve/register the Project.\n\n\
 Options:\n\
   --config PATH              Active Runner configuration created by login/init\n\
   --user-token-file PATH     Existing user API token for operator Server calls\n\

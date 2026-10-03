@@ -1,7 +1,7 @@
 use crate::activity::ActivityEntry;
 use crate::desktop_shell;
 use crate::error::{DesktopError, DesktopResult};
-use crate::models::{DesktopStateSnapshot, ProjectSelection, TunnelProxyMode};
+use crate::models::{DesktopStateSnapshot, ProjectInspection, ProjectSelection, TunnelProxyMode};
 use crate::state::AppState;
 use crate::tray;
 use serde::Deserialize;
@@ -308,6 +308,14 @@ pub async fn inspect_project(
     state: State<'_, AppState>,
 ) -> Result<ProjectSelection, DesktopError> {
     state.inspect_project(&request.project_path).await
+}
+
+#[tauri::command]
+pub async fn inspect_project_access(
+    request: ProjectRequest,
+    state: State<'_, AppState>,
+) -> Result<ProjectInspection, DesktopError> {
+    state.inspect_project_access(&request.project_path).await
 }
 
 #[tauri::command]

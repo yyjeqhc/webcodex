@@ -27,6 +27,7 @@ pub struct RunnerPaths {
 #[serde(deny_unknown_fields)]
 pub struct RunnerFileAccess {
     pub configured_roots: Vec<String>,
+    pub default_roots: Vec<String>,
     pub effective_roots: Vec<String>,
     pub using_default_roots: bool,
     pub allow_cwd_anywhere: bool,
@@ -184,6 +185,11 @@ fn configured_allowed_roots(doc: &DocumentMut) -> DesktopResult<Vec<String>> {
 
 fn file_access(doc: &DocumentMut) -> DesktopResult<RunnerFileAccess> {
     let configured_roots = configured_allowed_roots(doc)?;
+    let default_roots = webcodex_runner_config::effective_allowed_roots(&[], true)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|path| path.to_string_lossy().into_owned())
+        .collect();
     let allow_cwd_anywhere = match doc.get("policy") {
         None => false,
         Some(policy) if policy.is_table_like() => policy
@@ -206,6 +212,7 @@ fn file_access(doc: &DocumentMut) -> DesktopResult<RunnerFileAccess> {
     Ok(RunnerFileAccess {
         using_default_roots: configured_roots.is_empty(),
         configured_roots,
+        default_roots,
         effective_roots,
         allow_cwd_anywhere,
     })

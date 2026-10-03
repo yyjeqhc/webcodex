@@ -20,10 +20,11 @@ use crate::deadline::Deadline;
 use crate::error::{DesktopError, DesktopResult};
 use crate::models::{
     aggregate_readiness, ChatGptActivitySnapshot, DesktopOperationKind, DesktopStateSnapshot,
-    Enrollment, Experience, Exposure, ExposureReadiness, ProjectReadiness, ProjectSelection,
-    QuickShareState, ReadinessNextActionKind, ReadinessSummaryKind, RegularConnectionPreference,
-    RunnerReadiness, RunnerTopology, RuntimeTopology, ServerReadiness, ServerTopology,
-    StoredDesktopConfig, StoredRuntime, TunnelProxyConfig, TunnelProxyMode, TunnelProxySnapshot,
+    Enrollment, Experience, Exposure, ExposureReadiness, ProjectInspection, ProjectReadiness,
+    ProjectSelection, QuickShareState, ReadinessNextActionKind, ReadinessSummaryKind,
+    RegularConnectionPreference, RunnerReadiness, RunnerTopology, RuntimeTopology, ServerReadiness,
+    ServerTopology, StoredDesktopConfig, StoredRuntime, TunnelProxyConfig, TunnelProxyMode,
+    TunnelProxySnapshot,
 };
 use crate::operation::{
     cancelled_error, CancellationContext, CancellationSignal, OperationAdmission,
@@ -183,6 +184,46 @@ impl AppState {
 
     pub async fn inspect_project(&self, path: &str) -> DesktopResult<ProjectSelection> {
         inspect_project_path(path).await
+    }
+
+    pub async fn inspect_project_access(&self, path: &str) -> DesktopResult<ProjectInspection> {
+        let project = inspect_project_path(path).await?;
+        let settings = self.runner_settings().await?;
+        let project_path = PathBuf::from(&project.path);
+        let effective_roots = settings
+            .file_access
+            .effective_roots
+            .iter()
+            .map(PathBuf::from)
+            .collect::<Vec<_>>();
+        let allow_cwd_anywhere = settings.file_access.allow_cwd_anywhere;
+        let authorization_required = tokio::task::spawn_blocking(move || {
+            let canonical_project = project_path.canonicalize().map_err(|_| {
+                DesktopError::new(
+                    "project_unavailable",
+                    "The selected project directory could not be resolved",
+                    "Choose an existing directory that this account can access.",
+                )
+            })?;
+            let canonical_roots =
+                webcodex_runner_config::paths::canonicalize_usable_allowed_roots(&effective_roots);
+            Ok::<_, DesktopError>(
+                webcodex_runner_config::paths::validate_project_path_policy(
+                    &canonical_project,
+                    &canonical_roots,
+                    allow_cwd_anywhere,
+                )
+                .is_err(),
+            )
+        })
+        .await
+        .map_err(|_| {
+            desktop_state_unavailable("Project authorization inspection worker stopped")
+        })??;
+        Ok(ProjectInspection {
+            project,
+            authorization_required,
+        })
     }
 
     pub async fn refresh_runtime_status(&self) -> DesktopResult<DesktopStateSnapshot> {

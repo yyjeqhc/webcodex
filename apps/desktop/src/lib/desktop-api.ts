@@ -8,6 +8,7 @@ import type {
   RunnerSettings,
   ComputerPermissions,
   DesktopState,
+  ProjectInspection,
   ProjectSelection,
   TunnelProxyMode,
 } from "../models/topology";
@@ -81,6 +82,10 @@ export const desktopApi = {
     }),
   inspectProject: (projectPath: string) =>
     invoke<ProjectSelection>("inspect_project", {
+      request: { projectPath },
+    }),
+  inspectProjectAccess: (projectPath: string) =>
+    invoke<ProjectInspection>("inspect_project_access", {
       request: { projectPath },
     }),
   configureLocal: (projectPath?: string) =>

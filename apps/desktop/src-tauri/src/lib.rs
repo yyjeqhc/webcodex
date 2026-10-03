@@ -129,6 +129,7 @@ pub fn run() {
             commands::runner_capability_authorization,
             commands::tunnel_profile_action,
             commands::inspect_project,
+            commands::inspect_project_access,
             commands::configure_local_setup,
             commands::configure_environment,
             commands::environment_service_action,

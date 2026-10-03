@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { desktopApi } from "../../lib/desktop-api";
 import { useProduct } from "../../i18n/product";
-import type { DesktopState, ProjectSelection } from "../../models/topology";
+import type { DesktopState, ProjectInspection } from "../../models/topology";
 import { WorkspaceDialog } from "../workspace/WorkspaceDialog";
 
 /** Optional manual registration; ordinary model-driven discovery is unchanged. */
@@ -10,7 +10,7 @@ export function AddLocalProject({ state, onState, onAdded }: {
   state: DesktopState; onState: (state: DesktopState) => void; onAdded: () => void;
 }) {
   const p = useProduct();
-  const [project, setProject] = useState<ProjectSelection | null>(null);
+  const [inspection, setInspection] = useState<ProjectInspection | null>(null);
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
   const inFlight = useRef(false);
@@ -19,7 +19,7 @@ export function AddLocalProject({ state, onState, onAdded }: {
   const currentTarget = useRef(target);
   currentTarget.current = target;
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
-  useEffect(() => { setProject(null); setFailed(false); }, [target]);
+  useEffect(() => { setInspection(null); setFailed(false); }, [target]);
   const local = state.topology?.experience === "full" && state.topology.runner.kind === "local"
     && (Boolean(state.persistent_environment) || state.topology.server.kind === "local");
   const disabled = busy || Boolean(state.current_operation) || !state.readiness.runtime_ready;
@@ -39,24 +39,24 @@ export function AddLocalProject({ state, onState, onAdded }: {
       onClick={() => void run(async isCurrent => {
         const path = await open({ title: p("addLocalFolder"), directory: true, multiple: false });
         if (typeof path !== "string" || !isCurrent()) return;
-        const inspected = await desktopApi.inspectProject(path);
-        if (isCurrent()) setProject(inspected);
+        const inspected = await desktopApi.inspectProjectAccess(path);
+        if (isCurrent()) setInspection(inspected);
       })}>{p("addLocalFolder")}</button>
     {!state.readiness.runtime_ready && <p className="field-help">{p("addLocalFolderNotReady")}</p>}
-    {!project && failed && <p role="alert">{p("addLocalFolderFailed")}</p>}
-    {project && <WorkspaceDialog title={p("addLocalFolder")} busy={busy} onClose={() => { setProject(null); setFailed(false); }}>
-      <code className="runtime-directory">{project.path}</code>
-      <p>{p("addLocalFolderConsent")}</p>
+    {!inspection && failed && <p role="alert">{p("addLocalFolderFailed")}</p>}
+    {inspection && <WorkspaceDialog title={p("addLocalFolder")} busy={busy} onClose={() => { setInspection(null); setFailed(false); }}>
+      <code className="runtime-directory">{inspection.project.path}</code>
+      <p>{p(inspection.authorization_required ? "addLocalFolderConsent" : "addLocalFolderAlreadyAuthorized")}</p>
       {failed && <p role="alert">{p("addLocalFolderFailed")}</p>}
       <div className="shell-actions">
         <button type="button" className="primary-button" disabled={disabled}
           onClick={() => void run(async isCurrent => {
-            const next = await desktopApi.activateLocalProject(project.path);
+            const next = await desktopApi.activateLocalProject(inspection.project.path);
             if (!isCurrent()) return;
-            onState(next); setProject(null); onAdded();
-          })}>{p("addLocalFolderConfirm")}</button>
+            onState(next); setInspection(null); onAdded();
+          })}>{p(inspection.authorization_required ? "addLocalFolderConfirm" : "addLocalProjectConfirm")}</button>
         <button type="button" className="secondary-button" disabled={busy}
-          onClick={() => { setProject(null); setFailed(false); }}>{p("cancel")}</button>
+          onClick={() => { setInspection(null); setFailed(false); }}>{p("cancel")}</button>
       </div>
     </WorkspaceDialog>}
   </div>;

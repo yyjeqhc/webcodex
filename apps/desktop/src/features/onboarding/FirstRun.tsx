@@ -134,6 +134,7 @@ export function FirstRun({ state, onState, chooseModeFirst = false, onComplete }
       <div className="eyebrow">{mode === "create" ? t("setup.localLabel") : t("setup.remoteLabel")}</div>
       <h1 id="setup-title">{mode === "create" ? t("setup.localTitle") : t("setup.remoteTitle")}</h1>
       <p className="lede">{mode === "create" ? t("setup.localDescription") : t("setup.remoteDescription")}</p>
+      {savedMode && !state.persistent_environment && <p className="workspace-notice" role="note">{scopeText("migrationHelp")}</p>}
       <div className="form-card">
         <label className="checkbox-row"><input type="checkbox" checked={runner}
           disabled={mutationBusy || Boolean(savedMode && state.topology?.runner.kind === "local")}
@@ -163,10 +164,15 @@ export function FirstRun({ state, onState, chooseModeFirst = false, onComplete }
           <p>{t(runner ? "setup.reuseRunnerRegistrationHelp" : "setup.reuseViewerCredentialHelp")}</p></div>}
       </div>}
       {(runner || mode === "create") && (!savedMode && !state.persistent_environment
-        ? <div className="form-card"><NativeSelect label={scopeText("title")} value={serviceScope} disabled={mutationBusy}
-            data={[{value:"user",label:scopeText("user")},{value:"system",label:scopeText("system")}]}
-            onChange={event => { const value=event.currentTarget.value; if (value === "user" || value === "system") setServiceScope(value); }} />
-            <p className="field-help">{scopeText(serviceScope === "user" ? "userHelp" : "systemHelp")}</p></div>
+        ? <div className="form-card">
+            <strong>{scopeText(serviceScope)}</strong>
+            <p className="field-help">{scopeText(serviceScope === "user" ? "userHelp" : "systemHelp")}</p>
+            <details><summary>{scopeText("advanced")}</summary>
+              <NativeSelect label={scopeText("title")} value={serviceScope} disabled={mutationBusy}
+                data={[{value:"user",label:scopeText("user")},{value:"system",label:scopeText("system")}]}
+                onChange={event => { const value=event.currentTarget.value; if (value === "user" || value === "system") setServiceScope(value); }} />
+            </details>
+          </div>
         : <p className="field-help">{t("setup.serviceConsent")}</p>)}
       {error && <div className="error-card" role="alert" id="setup-error">
         <strong>{presentation?.title}</strong><span>{presentation?.action}</span>

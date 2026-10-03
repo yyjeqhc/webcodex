@@ -1157,7 +1157,10 @@ Object.assign(RUNTIME_ZH_TEXT, {
 Object.assign(RUNTIME_ZH_TEXT, {
   "Tool calls": "工具调用",
   "Each call is shown separately, from first to last.": "按执行顺序逐条展示，从第一条到最近一条。",
-  "Earlier calls are not available in this view. Showing retained activity from oldest to newest.": "更早的调用已不在当前展示范围内，以下按时间顺序展示保留的记录。",
+  "Earlier calls are not available in this view. Only retained activity is shown.": "更早的调用已不在当前展示范围内，仅展示保留的记录。",
+  "Activity order": "活动排序",
+  "Newest first": "最新在前",
+  "Oldest first": "最早在前",
   "Succeeded": "成功",
   "Failed": "失败",
   "No tool calls yet": "暂无工具调用",

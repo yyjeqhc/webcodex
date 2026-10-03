@@ -41,6 +41,9 @@ describe("explicit environment setup", () => {
     await screen.findByRole("alert");
     expect(api.configureEnvironment).toHaveBeenCalledTimes(1);
     expect(api.configureEnvironment.mock.calls[0][0].serviceScope).toBe("user");
+    const advanced = screen.getByText("Advanced deployment options").closest("details")!;
+    expect(advanced).not.toHaveAttribute("open");
+    fireEvent.click(screen.getByText("Advanced deployment options"));
     fireEvent.change(screen.getByLabelText("Background startup"),{target:{value:"system"}});
     action(container,"configure-local");
     await waitFor(()=>expect(api.configureEnvironment).toHaveBeenCalledTimes(2));
@@ -116,9 +119,13 @@ describe("explicit environment setup", () => {
 
   it("preserves a legacy migration's recorded default without asking for a new project", async () => {
     const { container } = mount({ ...remote(true, false), project }, false);
+    expect(screen.getByRole("note")).toHaveTextContent("No new Tunnel credentials are needed.");
     action(container, "configure-remote");
     await waitFor(() => expect(api.configureEnvironment).toHaveBeenCalledWith(expect.objectContaining({ projectPath: project.path, runner: true })));
     expect(api.inspectProject).not.toHaveBeenCalled();
+    // Omit scope on recovery: Core defaults a new handoff to user sessions but
+    // retains an existing migration journal rather than silently changing owner.
+    expect(api.configureEnvironment.mock.calls[0][0]).not.toHaveProperty("serviceScope");
   });
 
   it("reuses a viewer credential but requires pairing when local work is explicitly enabled", async () => {

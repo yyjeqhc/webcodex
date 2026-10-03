@@ -19,8 +19,26 @@ use webcodex_core::authority::{
 /// The production adapter. Neither frontend supplies its own deployment backend.
 pub struct NativeEnvironment {
     client: reqwest::Client,
+    direct_client: reqwest::Client,
     pub readiness_timeout: Duration,
     preserve_legacy_listen: bool,
+}
+
+fn server_url_is_loopback(server: &str) -> bool {
+    let Ok(url) = reqwest::Url::parse(server) else {
+        return false;
+    };
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    let host = host
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .trim_end_matches('.');
+    host.eq_ignore_ascii_case("localhost")
+        || host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|address| address.is_loopback())
 }
 
 impl NativeEnvironment {
@@ -531,11 +549,35 @@ impl NativeEnvironment {
             .timeout(Duration::from_secs(15))
             .build()
             .map_err(|_| diagnostic("http_client", "Could not initialize the Server connection"))?;
+        // Local Desktop environments must never route loopback Server traffic
+        // through an OS/user proxy. Keep the ordinary client for remote Server
+        // URLs so existing proxy behavior remains available there.
+        let direct_client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .connect_timeout(Duration::from_secs(5))
+            .timeout(Duration::from_secs(15))
+            .no_proxy()
+            .build()
+            .map_err(|_| {
+                diagnostic(
+                    "http_client",
+                    "Could not initialize the direct Server connection",
+                )
+            })?;
         Ok(Self {
             client,
+            direct_client,
             readiness_timeout: Duration::from_secs(45),
             preserve_legacy_listen: false,
         })
+    }
+
+    fn client_for_server(&self, server: &str) -> &reqwest::Client {
+        if server_url_is_loopback(server) {
+            &self.direct_client
+        } else {
+            &self.client
+        }
     }
 
     pub async fn status(&mut self, store: &EnvironmentStore) -> SetupResultValue<SetupResult> {
@@ -744,7 +786,10 @@ impl NativeEnvironment {
         token: Option<&str>,
         body: Value,
     ) -> SetupResultValue<Value> {
-        let mut request = self.client.post(format!("{server}{route}")).json(&body);
+        let mut request = self
+            .client_for_server(server)
+            .post(format!("{server}{route}"))
+            .json(&body);
         if let Some(token) = token {
             request = request.bearer_auth(token);
         }
@@ -832,7 +877,7 @@ impl NativeEnvironment {
 
     async fn reachable(&self, record: &EnvironmentRecord) -> SetupResultValue<()> {
         let response = self
-            .client
+            .client_for_server(&record.request.server_url)
             .get(format!("{}/runtime", record.request.server_url))
             .send()
             .await
@@ -1957,19 +2002,29 @@ pub fn resolve_service_scope(
 ) -> SetupResultValue<service::ServiceScope> {
     let environment = store.load_environment()?;
     let journal = store.load_journal()?;
-    if let (Some(record), Some(journal)) = (&environment, &journal) {
-        if record.request.service_scope != journal.environment.request.service_scope {
-            return Err(diagnostic("service_scope_conflict","Saved environment and setup journal have different service managers; reconcile the original operation first"));
-        }
+    // A legacy handoff records intent before creating setup.json. Reading only
+    // the environment/setup records would silently change a pending SCM handoff
+    // into user tasks on retry after the Desktop default changes.
+    let migration = crate::migration_journal(store)?;
+    let scopes = [
+        environment
+            .as_ref()
+            .map(|record| record.request.service_scope),
+        journal
+            .as_ref()
+            .map(|journal| journal.environment.request.service_scope),
+        migration
+            .as_ref()
+            .map(|journal| journal.request.service_scope),
+    ];
+    let saved = scopes.into_iter().flatten().next();
+    if scopes
+        .into_iter()
+        .flatten()
+        .any(|scope| Some(scope) != saved)
+    {
+        return Err(diagnostic("service_scope_conflict", "Saved environment, setup and migration journals have different service managers; reconcile the original operation first"));
     }
-    let saved = environment
-        .as_ref()
-        .map(|record| record.request.service_scope)
-        .or_else(|| {
-            journal
-                .as_ref()
-                .map(|journal| journal.environment.request.service_scope)
-        });
     if saved.is_some() && requested.is_some() && saved != requested {
         return Err(diagnostic("service_scope_conflict", "This environment already belongs to another service manager; resume its saved scope instead of adopting or replacing services"));
     }

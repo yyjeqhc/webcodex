@@ -462,15 +462,14 @@ impl DesktopCore {
         crate::runtime_selection::verify_resolved_files(&binaries).await?;
         self.snapshot.binaries = Some(binaries.info());
         let request = SetupRequest {
-            service_scope: if legacy {
-                if input.service_scope.is_some_and(|scope| !scope.is_system()) {
-                    return Err(migration_target_conflict());
-                }
-                webcodex_environment::service::ServiceScope::System
-            } else {
-                webcodex_environment::resolve_service_scope(&store()?, input.service_scope)
-                    .map_err(desktop_error)?
-            },
+            // Desktop-owned processes are not historical SCM services. A new
+            // handoff uses the same user-session default as fresh setup; an
+            // interrupted handoff must retain its journal's exact manager.
+            service_scope: webcodex_environment::resolve_service_scope(
+                &store()?,
+                input.service_scope,
+            )
+            .map_err(desktop_error)?,
             runner: input.runner.or_else(|| {
                 self.config
                     .topology

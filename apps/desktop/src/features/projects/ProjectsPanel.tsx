@@ -4,8 +4,10 @@ import { useProduct } from "../../i18n/product";
 import { displayProjectPath, projectName, useWorkspace } from "../workspace/WorkspaceContext";
 import { ProjectRows } from "./ProjectRows";
 import { RunnerDevices } from "./RunnerDevices";
+import { AddLocalProject } from "./AddLocalProject";
+import type { DesktopState } from "../../models/topology";
 
-export function ProjectsPanel({ onComputerSettings }: { onComputerSettings?: () => void }) {
+export function ProjectsPanel({ onComputerSettings, onState }: { onComputerSettings?: () => void; onState?: (state: DesktopState) => void }) {
   const p = useProduct();
   const workspace = useWorkspace();
   const [query, setQuery] = useState("");
@@ -16,6 +18,7 @@ export function ProjectsPanel({ onComputerSettings }: { onComputerSettings?: () 
   );
   return <section className="page-section workspace-page" aria-labelledby="projects-title" data-webcodex-page="projects">
     <header className="page-heading-row"><h1 id="projects-title">{p("projects")} <span className="heading-count">{workspace.projects.length}</span></h1><button type="button" className="secondary-button" onClick={workspace.refresh} disabled={workspace.busy}>{p("refresh")}</button></header>
+    {onState && <AddLocalProject state={workspace.state} onState={onState} onAdded={workspace.refresh} />}
     {workspace.runner && <p className="workspace-notice">{p("projectAccessScope")}</p>}
     <div className="workspace-search"><TextInput id="projects-search" label={p("search")} type="search" value={query} onChange={event => setQuery(event.currentTarget.value)} /></div>
     {workspace.error && <div className="workspace-notice" role="alert">{p(workspace.errorReason)}</div>}

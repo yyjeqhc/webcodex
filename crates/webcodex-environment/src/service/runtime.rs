@@ -10,7 +10,7 @@ mod implementation {
     use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
     use std::sync::{Arc, Mutex, OnceLock};
     use tokio::sync::Notify;
-    use windows_sys::Win32::Foundation::GetLastError;
+    use windows_sys::Win32::Foundation::{GetLastError, ERROR_SERVICE_SPECIFIC_ERROR};
     use windows_sys::Win32::System::Services::*;
 
     type Entry = Box<dyn FnOnce(ServiceStop) -> Result<(), String> + Send + 'static>;
@@ -56,8 +56,14 @@ mod implementation {
             } else {
                 0
             },
-            dwWin32ExitCode: error,
-            dwServiceSpecificExitCode: 0,
+            // A runtime failure is service-specific, not Win32 error 1
+            // ("Incorrect function"), which sends users to the wrong diagnosis.
+            dwWin32ExitCode: if error == 0 {
+                0
+            } else {
+                ERROR_SERVICE_SPECIFIC_ERROR
+            },
+            dwServiceSpecificExitCode: error,
             dwCheckPoint: if matches!(state, SERVICE_START_PENDING | SERVICE_STOP_PENDING) {
                 1
             } else {

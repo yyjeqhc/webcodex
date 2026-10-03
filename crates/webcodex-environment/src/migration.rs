@@ -1,4 +1,4 @@
-//! Durable handoff from a known legacy process owner to native system services.
+//! Durable handoff from a known legacy process owner to its selected native service manager.
 //! The journal contains paths and process identities, never credential contents.
 #[cfg(windows)]
 use crate::service::ServiceCredential;
@@ -517,7 +517,7 @@ async fn preflight_new_owner(
         ServiceManager::preflight(&spec).map_err(service_diagnostic)?;
     }
     #[cfg(windows)]
-    if record.request.local_runner() {
+    if record.request.local_runner() && record.request.service_scope.is_system() {
         let credential = secrets
             .service_password
             .as_ref()
@@ -1144,6 +1144,83 @@ mod tests {
         assert!(stopped_legacy(&initial, &stopped).unwrap());
     }
     #[test]
+    fn migration_scope_is_retained_before_setup_exists() {
+        use crate::service::ServiceScope;
+        let temp = crate::test_tempdir().unwrap();
+        let store = EnvironmentStore::open(temp.path().join("environment")).unwrap();
+        assert_eq!(
+            crate::resolve_service_scope(&store, None).unwrap(),
+            ServiceScope::User
+        );
+        for scope in [ServiceScope::User, ServiceScope::System] {
+            let mut migration = MigrationJournal {
+                schema_version: MIGRATION_SCHEMA,
+                operation_id: "scope-test".into(),
+                phase: MigrationPhase::Prepared,
+                request: SetupRequest {
+                    service_scope: scope,
+                    mode: EnvironmentMode::Join,
+                    server_url: "https://server.example".into(),
+                    project: None,
+                    runner: Some(true),
+                    account: crate::LocalAccount {
+                        name: "owner".into(),
+                        identity: "1001".into(),
+                        home: temp.path().to_path_buf(),
+                    },
+                    binaries: crate::RuntimeBinaries {
+                        cli: temp.path().join("cli"),
+                        server: temp.path().join("server"),
+                        runner: temp.path().join("runner"),
+                    },
+                },
+                import: LegacyImport {
+                    server_env_file: None,
+                    runner_config_file: None,
+                    user_token_file: temp.path().join("token"),
+                    username: "owner".into(),
+                    runner_client_id: Some("runner".into()),
+                    projects: vec![],
+                    tunnel_profiles: vec![],
+                },
+                captured: LegacyOwnerSnapshot {
+                    owner_id: "desktop".into(),
+                    configuration_fingerprint: "binding".into(),
+                    processes: vec![],
+                },
+                last_diagnostic: None,
+            };
+            for phase in [
+                MigrationPhase::Prepared,
+                MigrationPhase::OldStopped,
+                MigrationPhase::RecoveryRequired,
+            ] {
+                migration.phase = phase;
+                save(&store, &migration).unwrap();
+                assert!(store.load_journal().unwrap().is_none());
+                assert_eq!(crate::resolve_service_scope(&store, None).unwrap(), scope);
+                assert_eq!(
+                    crate::resolve_service_scope(&store, Some(scope)).unwrap(),
+                    scope
+                );
+                let other = if scope == ServiceScope::User {
+                    ServiceScope::System
+                } else {
+                    ServiceScope::User
+                };
+                assert_eq!(
+                    crate::resolve_service_scope(&store, Some(other))
+                        .unwrap_err()
+                        .code,
+                    "service_scope_conflict"
+                );
+            }
+        }
+        fs::write(store.root().join("migration.json"), "broken").unwrap();
+        assert!(crate::resolve_service_scope(&store, None).is_err());
+    }
+
+    #[test]
     fn detects_ambiguous_server_environment() {
         assert_eq!(
             exactly_one_env(
@@ -1241,6 +1318,15 @@ mod tests {
 
         let lock = store.lock().unwrap();
         import_original_files(&store, &lock, &migration).unwrap();
+        // Conflicting handoff and setup journals must fail closed, not select
+        // whichever one happened to be loaded first.
+        let mut conflicting = migration.clone();
+        conflicting.request.service_scope = crate::service::ServiceScope::User;
+        save(&store, &conflicting).unwrap();
+        assert_eq!(
+            crate::resolve_service_scope(&store, None).unwrap_err().code,
+            "service_scope_conflict"
+        );
         let imported: toml::Value =
             toml::from_str(&fs::read_to_string(store.root().join("runner.toml")).unwrap()).unwrap();
         assert_eq!(imported["token"].as_str(), Some("wc_agent_existing"));

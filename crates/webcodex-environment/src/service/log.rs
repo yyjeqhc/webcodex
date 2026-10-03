@@ -176,18 +176,31 @@ fn validate_directory(directory: &Path) -> Result<(), String> {
     if !directory.is_absolute() {
         return Err("service lifecycle log directory must be absolute".into());
     }
+    #[cfg(windows)]
+    {
+        // The privileged Windows service adapter already validates every
+        // program/working-directory ancestor before install and again before an
+        // explicit start. Re-walking the owner profile here as a virtual service
+        // account requires metadata rights that are intentionally not granted to
+        // parent directories and prevents an otherwise valid service from
+        // opening its private lifecycle log. Revalidate the exact managed
+        // directory here; the log file itself is checked separately below.
+        use std::os::windows::fs::MetadataExt;
+        let metadata = std::fs::symlink_metadata(directory)
+            .map_err(|_| "service lifecycle log directory is unavailable")?;
+        if !metadata.is_dir()
+            || metadata.file_type().is_symlink()
+            || metadata.file_attributes() & 0x400 != 0
+        {
+            return Err("service lifecycle log directory contains a reparse point".into());
+        }
+    }
+    #[cfg(not(windows))]
     for ancestor in directory.ancestors() {
         let metadata = std::fs::symlink_metadata(ancestor)
             .map_err(|_| "service lifecycle log directory is unavailable")?;
         if !metadata.is_dir() || metadata.file_type().is_symlink() {
             return Err("service lifecycle log directory contains a link".into());
-        }
-        #[cfg(windows)]
-        {
-            use std::os::windows::fs::MetadataExt;
-            if metadata.file_attributes() & 0x400 != 0 {
-                return Err("service lifecycle log directory contains a reparse point".into());
-            }
         }
     }
     #[cfg(unix)]

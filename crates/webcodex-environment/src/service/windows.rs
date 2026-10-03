@@ -16,7 +16,8 @@ use windows_sys::Win32::Security::{
     DACL_SECURITY_INFORMATION, OBJECT_INHERIT_ACE, SID_NAME_USE, TOKEN_QUERY, TOKEN_USER,
 };
 use windows_sys::Win32::Storage::FileSystem::{
-    DELETE, FILE_ALL_ACCESS, FILE_ATTRIBUTE_REPARSE_POINT,
+    DELETE, FILE_ALL_ACCESS, FILE_ATTRIBUTE_REPARSE_POINT, FILE_GENERIC_EXECUTE, FILE_GENERIC_READ,
+    FILE_TRAVERSE,
 };
 use windows_sys::Win32::System::Services::*;
 use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
@@ -180,6 +181,63 @@ pub(super) fn grant_service_directory(spec: &ServiceSpec, path: &Path) -> Result
     }
     let mut paths = Vec::new();
     collect_safe_tree(&root, &mut paths)?;
+    grant_access_paths(
+        name,
+        paths
+            .into_iter()
+            .map(|path| (path, FILE_ALL_ACCESS, true))
+            .collect(),
+    )
+}
+
+/// Data access and program access are separate capabilities. Never grant a
+/// virtual service write access to the Desktop bundle, profile or its parents.
+fn program_access_paths(
+    program: &Path,
+    working: &Path,
+) -> Result<Vec<(PathBuf, u32, bool)>, ServiceError> {
+    if !program.is_absolute() || !working.is_absolute() || !program.is_file() || !working.is_dir() {
+        return Err(ServiceError::new(
+            ServiceErrorCode::MissingPrerequisite,
+            "service program and working directory must exist at absolute paths",
+        ));
+    }
+    let mut grants = vec![(
+        program.to_path_buf(),
+        FILE_GENERIC_READ | FILE_GENERIC_EXECUTE,
+        false,
+    )];
+    for path in program
+        .ancestors()
+        .skip(1)
+        .chain(working.ancestors().skip(1))
+    {
+        // Volume roots already permit traversal; do not change their ACLs.
+        if path.parent().is_some() && !grants.iter().any(|(existing, _, _)| existing == path) {
+            grants.push((path.to_path_buf(), FILE_TRAVERSE, false));
+        }
+    }
+    for (path, _, _) in &grants {
+        let metadata = std::fs::symlink_metadata(path).map_err(|_| {
+            ServiceError::new(
+                ServiceErrorCode::MissingPrerequisite,
+                "cannot inspect service program access path",
+            )
+        })?;
+        if metadata.file_type().is_symlink()
+            || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+        {
+            return Err(ServiceError::new(
+                ServiceErrorCode::OwnershipUnknown,
+                "service program access path contains a reparse point",
+            ));
+        }
+    }
+    Ok(grants)
+}
+
+// Callers have already verified the exact SCM ownership and stopped state.
+fn grant_access_paths(name: &str, paths: Vec<(PathBuf, u32, bool)>) -> Result<(), ServiceError> {
     let service_sid = account_sid(name)?;
     let sid_text = wide(&service_sid)?;
     let mut service_sid_ptr = null_mut();
@@ -198,7 +256,7 @@ pub(super) fn grant_service_directory(spec: &ServiceSpec, path: &Path) -> Result
         }
     }
     let service_sid = Sid(service_sid_ptr);
-    for item in paths {
+    for (item, permissions, inherit) in paths {
         let item_meta = std::fs::symlink_metadata(&item).map_err(|_| {
             ServiceError::new(
                 ServiceErrorCode::OutcomeUnknown,
@@ -258,13 +316,13 @@ pub(super) fn grant_service_directory(spec: &ServiceSpec, path: &Path) -> Result
         }
         let mut effective = 0u32;
         let rights = unsafe { GetEffectiveRightsFromAclW(old_acl, &trustee, &mut effective) };
-        if rights == 0 && effective & FILE_ALL_ACCESS == FILE_ALL_ACCESS {
+        if rights == 0 && effective & permissions == permissions {
             continue;
         }
         let entry = EXPLICIT_ACCESS_W {
-            grfAccessPermissions: FILE_ALL_ACCESS,
+            grfAccessPermissions: permissions,
             grfAccessMode: GRANT_ACCESS,
-            grfInheritance: if item_meta.is_dir() {
+            grfInheritance: if inherit && item_meta.is_dir() {
                 OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE
             } else {
                 0
@@ -486,6 +544,10 @@ fn query_description(handle: &Handle) -> Result<String, ServiceError> {
 }
 
 fn query_state(handle: &Handle) -> Result<u32, ServiceError> {
+    Ok(query_status(handle)?.dwCurrentState)
+}
+
+fn query_status(handle: &Handle) -> Result<SERVICE_STATUS_PROCESS, ServiceError> {
     let mut status = std::mem::MaybeUninit::<SERVICE_STATUS_PROCESS>::zeroed();
     let mut required = 0u32;
     if unsafe {
@@ -503,19 +565,22 @@ fn query_state(handle: &Handle) -> Result<u32, ServiceError> {
             "QueryServiceStatusEx",
         ));
     }
-    Ok(unsafe { status.assume_init().dwCurrentState })
+    Ok(unsafe { status.assume_init() })
 }
 
 fn wait_for_state(handle: &Handle, desired: u32) -> Result<(), ServiceError> {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
     loop {
-        let state = query_state(handle)?;
-        if state == desired {
+        let status = query_status(handle)?;
+        if status.dwCurrentState == desired {
             return Ok(());
         }
-        if state == SERVICE_STOPPED && desired == SERVICE_RUNNING
-            || std::time::Instant::now() >= deadline
-        {
+        if status.dwCurrentState == SERVICE_STOPPED && desired == SERVICE_RUNNING {
+            return Err(ServiceError::new(ServiceErrorCode::OperationFailed, format!(
+                "SCM service stopped during startup (Windows exit code {}, service-specific exit code {}); inspect the service lifecycle log and Windows Event Log before retrying",
+                status.dwWin32ExitCode, status.dwServiceSpecificExitCode)));
+        }
+        if std::time::Instant::now() >= deadline {
             return Err(ServiceError::new(
                 ServiceErrorCode::OutcomeUnknown,
                 "SCM control did not reach the requested state; inspect before retrying",
@@ -902,6 +967,16 @@ fn control(spec: &ServiceSpec, action: &str) -> Result<ServiceStatus, ServiceErr
     {
         return Ok(status);
     }
+    if action == "start" && status.running == Some(false) {
+        if let ServiceAccount::WindowsVirtual { name } = &spec.account {
+            // Also repairs an owned, partially completed 0.4.4/0.4.5 setup whose
+            // install step is already journaled. No delete/recreate or re-enroll.
+            grant_access_paths(
+                name,
+                program_access_paths(&spec.program, &spec.working_directory)?,
+            )?;
+        }
+    }
     let scm = manager(SC_MANAGER_CONNECT)?;
     let access = if action == "stop" {
         SERVICE_STOP
@@ -1026,6 +1101,41 @@ mod ownership_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn virtual_service_program_access_is_read_only_and_does_not_inherit() {
+        use windows_sys::Win32::Storage::FileSystem::{FILE_APPEND_DATA, FILE_WRITE_DATA};
+        let temp = crate::test_tempdir().unwrap();
+        let bundle = temp.path().join("Desktop Runtime");
+        let working = temp.path().join("environment/server");
+        std::fs::create_dir_all(&bundle).unwrap();
+        std::fs::create_dir_all(&working).unwrap();
+        let program = bundle.join("webcodex-server.exe");
+        let unrelated = bundle.join("private-credential");
+        std::fs::write(&program, "fixture").unwrap();
+        std::fs::write(&unrelated, "private").unwrap();
+        let grants = program_access_paths(&program, &working).unwrap();
+        assert_eq!(
+            grants[0],
+            (
+                program.clone(),
+                FILE_GENERIC_READ | FILE_GENERIC_EXECUTE,
+                false
+            )
+        );
+        assert!(!grants.iter().any(|(path, _, _)| path == &unrelated));
+        assert!(grants.iter().all(|(_, rights, inherit)| !inherit
+            && rights & (FILE_WRITE_DATA | FILE_APPEND_DATA | DELETE) == 0));
+        assert!(grants.iter().skip(1).all(|(path, rights, _)| path.is_dir()
+            && path.parent().is_some()
+            && *rights == FILE_TRAVERSE));
+        assert!(grants.iter().any(|(path, _, _)| path == &bundle));
+        assert!(grants
+            .iter()
+            .any(|(path, _, _)| path == &working.parent().unwrap()));
+        assert!(program_access_paths(Path::new("relative.exe"), &working).is_err());
+        assert!(program_access_paths(&bundle, &working).is_err());
+    }
+
     #[test]
     fn windows_command_line_quotes_backslashes_before_quote() {
         assert_eq!(quote(r#"C:\a\"b"#), r#""C:\a\\\"b""#);

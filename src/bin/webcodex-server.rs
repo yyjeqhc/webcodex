@@ -78,7 +78,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     match server_binary_action(args) {
-        ServerBinaryAction::Run { stop_on_stdin_eof } => {
+        ServerBinaryAction::Run {
+            stop_on_stdin_eof,
+            env_file,
+        } => {
+            // Task Scheduler uses this ordinary entrypoint, not SCM dispatch.
+            // Keep the saved task definition stable and load its exact env file
+            // before starting threads, just as the SCM entrypoint does.
+            if let Some(path) = env_file {
+                webcodex_environment::runtime_entry::validate_service_env_file(&path)
+                    .map_err(std::io::Error::other)?;
+                std::env::set_var("WEBCODEX_ENV_FILE", path);
+            }
             webcodex::prepare_server_process_environment().map_err(std::io::Error::other)?;
             build_server_runtime()?
                 .block_on(webcodex::run_server_with_parent_liveness(stop_on_stdin_eof))

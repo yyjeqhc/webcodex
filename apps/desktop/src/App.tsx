@@ -133,7 +133,7 @@ function DesktopApp() {
           />
         ))}
         {navigation === "projects" && (
-          <ProjectsPanel onComputerSettings={() => openSettings("access")} />
+          <ProjectsPanel onComputerSettings={() => openSettings("access")} onState={commitState} />
         )}
         {navigation === "connection" && <ConnectionPanel state={state} onState={commitState} onSettings={openSettings} />}
         {navigation === "activity" && <ActivityPanel activity={activity} />}

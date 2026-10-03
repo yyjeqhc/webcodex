@@ -8,17 +8,25 @@ Desktop 负责启动和维护本机 WebCodex Runtime；用户只需要在 ChatGP
 
 ## Runtime 项目清单
 
-**项目**页是当前 Runner 已观察到的 Runtime Project 只读清单，显示 Git 分支、活跃 Session 和最近活动。Runtime Project identity 仍然承担授权、路由、持久化、审计和 Session 边界，但它不是用户需要在 Desktop 中维护的前置资源。
+**项目**页显示当前 Runner 已观察到的 Runtime Project，包括 Git 分支、活跃 Session 和最近活动。**添加本机文件夹**是显式授权并注册本机其他目录的可选入口，不是模型开始工作的前置步骤。Runtime Project identity 仍然承担授权、路由、持久化、审计和 Session 边界，但它不是用户需要在 Desktop 中维护的前置资源。
 
 本机 Full Runtime 中，ChatGPT / 模型调用直接提供具体工作目录。`work_on_project(path)` 会复用已经注册的精确 Project；如果尚未注册且 Runner policy 允许，则按需自动注册。多个 Project 可以并发存在，打开一个不会撤销另一个。
 
 Runner 文件系统 policy 仍然是权限边界。全新 Desktop 的本机 Runner 使用 Runner 的正常默认策略；`allowed_roots` 为空时，其有效范围默认是当前用户的 home 目录。显式 Runner policy 可以进一步收窄范围。这个范围是 Runner 级授权，与 Runtime Project identity 分开：例如 E 盘中的 Project 不会因此获得 F 盘访问权，只有 F 盘目标路径也落在 `allowed_roots` 内时，Runtime 才能在那里解析或注册 Project。Project 注册本身不会扩大这个权限范围。
 
+## Windows 启动与升级
+
+**登录后启动（推荐）**使用用户会话内的 Task Scheduler 计划任务，是普通 Desktop 的默认路径，不需要管理员账户或服务密码。Server、Runner 和 Tunnel 使用已登录用户的身份。关闭 Desktop 不会停止这些任务；退出 Windows 登录后，用户会话路径结束。
+
+**计算机启动时（高级）**收在**高级部署选项**中，使用 SCM，面向需要登录前在线的长期运行或远程托管机器。它需要管理员授权，文件权限和桌面会话权限也与普通桌面进程不同；它不是普通启动方式的“更稳定、更强大版本”。
+
+旧 Desktop 自管环境升级时保留原有 Server、Runner 身份、项目及已保存的 Tunnel 凭据。新的迁移默认使用用户会话启动；中断的迁移和已经托管的环境沿用记录中的管理方式，不会悄悄把现有 SCM 服务换成第二套计划任务。应修复诊断所指问题后继续原操作，不要删除配置或重新创建连接。
+
 ## 第一次使用
 
 1. 启动 WebCodex Desktop，首次选择本机或远程环境。本机配置默认勾选**允许 AI 在此电脑上工作**，不需要默认 Project。确认配置后才会安装持久服务、请求系统授权；仅打开窗口不会抢先把新机器绑定到本地 Server。
 2. 直接在 ChatGPT 中描述工作。请求给出工作目录后，Runtime 会在 Runner 允许的范围内自动解析或注册对应 Project。后续打开 Desktop 只观察已保存的持久服务，不会自动重启被主动停止的组件。
-3. **项目**页仅用于观察已经出现的 Runtime Project；正常 Desktop UI 不再提供添加、激活、重新激活或取消注册 Project 的流程。
+3. **项目**页显示已经出现的 Runtime Project。需要手动添加本机目录时，点击**添加本机文件夹**，选择目录后确认**授权并添加文件夹**。这会显式允许现有本机 Runner 访问该目录及其子目录，并复用原有 Server 与 Tunnel 凭据；不需要新的 Tunnel ID 或 API Key。仅查看的 viewer 连接不提供本机目录添加入口。
 4. 只有需要让 ChatGPT 从外部访问本机时，才配置 **OpenAI Secure Tunnel**。Tunnel 负责连接，不定义 Project 权限。
 5. 观察到真实项目调用只能证明此前发生过客户端使用，不能证明宿主此刻在线。
 
@@ -30,7 +38,7 @@ Runner 文件系统 policy 仍然是权限边界。全新 Desktop 的本机 Runn
 
 首页仅显示 Server、Runner、连接状态、ChatGPT 工作入口，以及项目、活动与扩展的快捷入口。项目列表和调用记录分别在项目页、活动页查看。健康状态不再重复展示就绪信息；需要处理的故障仍显示恢复入口。本机 Full Runtime 即使没有默认 Project 也属于正常可用状态；Desktop 启动不以 Project readiness 为前置条件。
 
-- **项目**：只显示已观察到的 Runtime Project。Project 生命周期由模型 / Runtime 的路径解析驱动，而不是 Desktop 按钮。
+- **项目**：展示已观察到的 Runtime Project，并提供可选的**添加本机文件夹**入口。模型 / Runtime 的路径解析仍是正常工作方式。
 - **活动** 与 **扩展**：围绕所选 Session 或已观察上下文关联的 Runtime Project 工作。
 - **连接**：独立管理外部可达性，不改变 Project 权限。
 - **设置**：提供 Runner 配置、诊断和显式运维控制。

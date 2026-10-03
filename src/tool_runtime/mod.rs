@@ -87,6 +87,7 @@ mod read_files;
 mod read_revisions;
 #[cfg(test)]
 pub(crate) use read_revisions::ReadRevisionTarget;
+mod optional_enrichment;
 pub(crate) mod resource_references;
 mod result_projection;
 mod return_timing;

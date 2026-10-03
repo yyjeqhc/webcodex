@@ -254,6 +254,7 @@ pub(crate) use correlation::finalize_runner_result_correlation;
 pub(crate) use correlation::record_runner_request_enqueued;
 pub(crate) use lifecycle::capture_effective_arguments;
 pub(crate) use lifecycle::capture_execution_evidence;
+pub(crate) use lifecycle::record_phase_latency;
 pub(crate) use lifecycle::RequestCompletionTiming;
 pub use lifecycle::ToolRequestLifecycle;
 pub(crate) use payload::read_full_trace;

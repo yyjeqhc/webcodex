@@ -1114,6 +1114,7 @@ impl ToolRuntime {
         // Permission is evaluated once inside dispatch (pre-exec gate). Kernel
         // only reuses the attached decision for the outer recording session —
         // never re-evaluate (no second request id / inconsistent outcome).
+        let execution_started = std::time::Instant::now();
         let (mut result, result_projection, mut correlation) = self
             .dispatch_with_auth_transport_options_and_metadata_with_recording_mode_and_context_with_result_projection(
                 call,
@@ -1131,6 +1132,15 @@ impl ToolRuntime {
                 return_timing,
             )
             .await;
+        crate::tool_request_trace::record_phase_latency(
+            "canonical_execution",
+            execution_started,
+            if result.success {
+                "completed"
+            } else {
+                "failed"
+            },
+        );
         if result.success {
             if let Some(code) = input_normalization {
                 result.output["input_normalization"] =

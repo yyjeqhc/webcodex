@@ -366,7 +366,32 @@ impl Database {
         now: i64,
         limit: usize,
     ) -> anyhow::Result<WindowOperatorAttention> {
-        let mut conn = self.lock_connection(StoreDomain::Communication);
+        self.project_window_operator_attention(
+            kind,
+            principal,
+            window,
+            ack_ids,
+            now,
+            limit,
+            None,
+            |_| true,
+        )?
+        .ok_or_else(|| anyhow::anyhow!("required projection unavailable"))
+    }
+
+    pub fn project_window_operator_attention(
+        &self,
+        kind: &str,
+        principal: &str,
+        window: &str,
+        ack_ids: &[String],
+        now: i64,
+        limit: usize,
+        deadline: Option<std::time::Instant>,
+        accept: impl FnOnce(&WindowOperatorAttention) -> bool,
+    ) -> anyhow::Result<Option<WindowOperatorAttention>> {
+        let deadline = if ack_ids.is_empty() { deadline } else { None };
+        self.with_projection_connection(StoreDomain::Communication,deadline,|conn| {
         let tx = conn.transaction()?;
         let mut batch = WindowOperatorAttention::default();
         for id in ack_ids.iter().take(8) {
@@ -390,6 +415,9 @@ impl Database {
                 )?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
         }
+        let mut preview=batch.messages.clone();
+        for message in &mut preview { message.first_projected_at_ms.get_or_insert(now); }
+        if !accept(&WindowOperatorAttention { messages:preview, accepted_ack_ids:batch.accepted_ack_ids.clone(), projection_rollbacks:Vec::new() }) { batch.messages.clear(); }
         for message in &mut batch.messages {
             batch.projection_rollbacks.push(tx.query_row(
                 "SELECT last_projected_at_ms, projection_count
@@ -408,8 +436,10 @@ impl Database {
                 last_projected_at_ms=?2, projection_count=projection_count+1 WHERE message_id=?1",params![message.message_id,now])?;
             message.first_projected_at_ms.get_or_insert(now);
         }
+        crate::optional_projection::check_deadline(deadline)?;
         tx.commit()?;
         Ok(batch)
+        })
     }
 
     pub fn rollback_window_operator_attention(
